@@ -1,0 +1,153 @@
+version: "3.9"
+
+# ============================================================
+# Odin — Multi-Agent Orchestration Platform
+# Shares omni-postgres (DB: odin) and omni-redis (DB: 1)
+# ============================================================
+
+networks:
+  omni-network:
+    external: true
+  proxy-network:
+    external: true
+
+services:
+
+  # ============================================================
+  # Odin Auth Service — authentication & IAM (port 8701)
+  # ============================================================
+  odin-auth-service:
+    build:
+      context: ./auth_service
+      dockerfile: Dockerfile
+    container_name: odin-auth-service
+    expose:
+      - "8701"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8701"
+      DATABASE_URL: "postgresql://${ODIN_DB_USER:-odin}:${ODIN_DB_PASSWORD:-change_me}@omni-pgbouncer:5432/odin?options=-c%20search_path=auth_service"
+      JWT_SECRET: ${ODIN_JWT_SECRET:-change-this-jwt-secret}
+      CORS_ORIGINS: ${ODIN_CORS_ORIGINS:-http://localhost:3111}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    networks:
+      - omni-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8701/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ============================================================
+  # Odin Bridge — orchestrator API + WS (replica 1)
+  # ============================================================
+  odin-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: odin-bridge
+    expose:
+      - "8001"
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    environment:
+      ODIN_INSTANCE_ID: "bridge-1"
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8001"
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: "false"
+      DATABASE_HOST: "omni-pgbouncer"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "odin"
+      DATABASE_USER: ${ODIN_DB_USER:-odin}
+      DATABASE_PASSWORD: ${ODIN_DB_PASSWORD:-change_me}
+      REDIS_HOST: "omni-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "1"
+      REDIS_ENABLED: "true"
+      REDIS_SSL: "false"
+      AUTH_SERVICE_URL: "http://odin-auth-service:8701"
+      SECRET_KEY: ${ODIN_SECRET_KEY:-change-this-secret-key}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      CORS_ORIGINS: ${ODIN_CORS_ORIGINS:-http://localhost:3111}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: "json"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy-network"
+      - "traefik.http.routers.odin.rule=Host(`${ODIN_HOSTNAME:-odin.example.com}`)"
+      - "traefik.http.routers.odin.priority=20"
+      - "traefik.http.services.odin-svc.loadbalancer.server.port=8001"
+      - "traefik.http.services.odin-svc.loadbalancer.sticky.cookie=true"
+      - "traefik.http.services.odin-svc.loadbalancer.sticky.cookie.name=odin_sticky"
+      - "traefik.http.services.odin-svc.loadbalancer.sticky.cookie.httponly=true"
+      - "traefik.http.services.odin-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.odin-svc.loadbalancer.healthcheck.interval=10s"
+    networks:
+      - omni-network
+      - proxy-network
+    depends_on:
+      odin-auth-service:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ============================================================
+  # Odin Bridge Replica 2 — enable with: docker compose --profile replica up -d
+  # ============================================================
+  odin-bridge-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: odin-bridge-2
+    profiles: [replica]
+    expose:
+      - "8001"
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    environment:
+      ODIN_INSTANCE_ID: "bridge-2"
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8001"
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: "false"
+      DATABASE_HOST: "omni-pgbouncer"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "odin"
+      DATABASE_USER: ${ODIN_DB_USER:-odin}
+      DATABASE_PASSWORD: ${ODIN_DB_PASSWORD:-change_me}
+      REDIS_HOST: "omni-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "1"
+      REDIS_ENABLED: "true"
+      REDIS_SSL: "false"
+      AUTH_SERVICE_URL: "http://odin-auth-service:8701"
+      SECRET_KEY: ${ODIN_SECRET_KEY:-change-this-secret-key}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      CORS_ORIGINS: ${ODIN_CORS_ORIGINS:-http://localhost:3111}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: "json"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy-network"
+      - "traefik.http.services.odin-svc.loadbalancer.server.port=8001"
+      - "traefik.http.services.odin-svc.loadbalancer.sticky.cookie=true"
+      - "traefik.http.services.odin-svc.loadbalancer.sticky.cookie.name=odin_sticky"
+    networks:
+      - omni-network
+      - proxy-network
+    depends_on:
+      odin-auth-service:
+        condition: service_healthy
+    restart: unless-stopped

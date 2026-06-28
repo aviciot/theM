@@ -1,0 +1,87 @@
+# =============================================================================
+# MCP Auth Service
+# =============================================================================
+# Authentication and authorization service for MCP Gateway
+# Connects to PostgreSQL in mcp-gateway-net network
+
+services:
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-auth-service
+    restart: unless-stopped
+    
+    environment:
+      # Database connection
+      - DATABASE_URL=postgresql://omni:omni@omni_pg_db:5432/omni?options=-c%20search_path=auth_service
+      - ADMIN_DATABASE_URL=postgresql://omni:omni@omni_pg_db:5432/omni
+      
+
+      
+      # JWT Configuration
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-256-bit-change-this-in-production}
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRY=3600
+      - REFRESH_TOKEN_EXPIRY=604800
+      
+      # Service Configuration
+      - PORT=8700
+      - LOG_LEVEL=WARNING  # Reduced from INFO to minimize 401 noise
+      - DEFAULT_ROLE=viewer
+      
+      # Rate Limiting
+      - RATE_LIMIT_WINDOW=3600
+    
+    # ports:
+    #   - "8700:8700"  # Commented out - auth service should be internal only
+    
+    volumes:
+      - ./routes:/app/routes
+      - ./services:/app/services
+      - ./models:/app/models
+      - ./config:/app/config
+      - ./utils:/app/utils
+      - ./main.py:/app/main.py
+      - ./requirements.txt:/app/requirements.txt
+    
+    networks:
+      - mcp-gateway-net  # Join Traefik network
+      - db-net           # Join PostgreSQL network
+      - omni2-network    # Join omni2 network for Traefik-External
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8700/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    labels:
+      # Traefik auto-discovery labels
+      - "traefik.enable=true"
+      - "traefik.docker.network=omni2_omni2-network"
+      
+      # Router configuration
+      - "traefik.http.routers.auth-service.rule=PathPrefix(`/auth`)"
+      - "traefik.http.routers.auth-service.entrypoints=web"
+      - "traefik.http.routers.auth-service.priority=10"
+      - "traefik.http.routers.auth-service.middlewares=auth-strip,cors"
+      
+      # Strip /auth prefix before forwarding
+      - "traefik.http.middlewares.auth-strip.stripprefix.prefixes=/auth"
+      
+      # Service configuration
+      - "traefik.http.services.auth-service.loadbalancer.server.port=8700"
+
+# External networks (must exist)
+networks:
+  mcp-gateway-net:
+    external: true
+  
+  db-net:
+    external: true
+  
+  omni2-network:
+    external: true
+    name: omni2_omni2-network
