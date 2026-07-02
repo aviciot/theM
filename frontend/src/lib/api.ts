@@ -1,4 +1,5 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/odin';
+const HEALTH_BASE = '/api/bridge';
 
 function getToken() {
   if (typeof window === 'undefined') return null;
@@ -87,7 +88,9 @@ export interface BridgeHealth {
 }
 
 export const odinApi = {
-  health: () => api.get<BridgeHealth>('/health').catch(() => ({ status: 'error', postgres: 'unknown', redis: 'unknown' })),
+  health: () => fetch(`${HEALTH_BASE}/health`, { headers: { Authorization: `Bearer ${getToken()}` } })
+    .then((r) => r.json())
+    .catch(() => ({ status: 'error', postgres: 'unknown', redis: 'unknown' })),
   agents: () => api.get<Agent[]>('/admin/agents'),
   orchestrators: () => api.get<Orchestrator[]>('/admin/orchestrators'),
   runs: (limit = 20) => api.get<{ items: Run[]; total: number }>(`/runs?limit=${limit}`),

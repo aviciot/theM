@@ -6,7 +6,8 @@ const nextConfig: NextConfig = {
     const authBase = process.env.ODIN_AUTH_URL || 'http://odin-auth-service:8701';
     return [
       { source: '/api/odin/:path*', destination: `${apiBase}/api/v1/:path*` },
-      { source: '/api/auth/:path*', destination: `${authBase}/auth/:path*` },
+      { source: '/api/bridge/:path*', destination: `${apiBase}/:path*` },
+      { source: '/api/auth/:path*', destination: `${authBase}/api/v1/auth/:path*` },
     ];
   },
 };
