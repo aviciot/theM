@@ -2,27 +2,18 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
+import { isTokenValid } from '@/lib/jwt';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, isLoading, error, clearError, fetchUser } = useAuthStore();
+  const { login, isLoading, error, clearError } = useAuthStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
 
   useEffect(() => {
-    // If already have a valid token, skip login
-    try {
-      const token = localStorage.getItem('odin_access_token');
-      if (token) {
-        const seg = token.split('.')[1];
-        const b64 = seg.replace(/-/g, '+').replace(/_/g, '/') + '==';
-        const payload = JSON.parse(atob(b64));
-        if (payload.exp * 1000 > Date.now()) {
-          router.replace('/dashboard');
-        }
-      }
-    } catch {}
+    const token = localStorage.getItem('odin_access_token');
+    if (isTokenValid(token)) router.replace('/dashboard');
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {

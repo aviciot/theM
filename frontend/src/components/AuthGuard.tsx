@@ -1,31 +1,17 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-
-// Standalone check — does not use Zustand (avoids store hydration races)
-function isTokenValid(): boolean {
-  try {
-    const token = localStorage.getItem('odin_access_token');
-    if (!token) return false;
-    const seg = token.split('.')[1];
-    const b64 = seg.replace(/-/g, '+').replace(/_/g, '/') + '==';
-    const payload = JSON.parse(atob(b64));
-    // Give 10s leeway for clock skew
-    return payload.exp * 1000 > Date.now() - 10_000;
-  } catch {
-    return false;
-  }
-}
+import { isTokenValid } from '@/lib/jwt';
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (isTokenValid()) {
+    const token = localStorage.getItem('odin_access_token');
+    if (isTokenValid(token)) {
       setReady(true);
     } else {
-      // Clear any bad tokens
       localStorage.removeItem('odin_access_token');
       localStorage.removeItem('odin_refresh_token');
       router.replace('/login');
