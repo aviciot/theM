@@ -16,6 +16,7 @@ from app.routers import health
 from app.routers import admin_llm_providers
 from app.routers import admin_agents
 from app.routers import admin_orchestrators
+from app.routers import admin_tokens
 from app.services.agent_registry import start_change_listener
 
 
@@ -68,3 +69,4 @@ app.include_router(health.router, tags=["health"])
 app.include_router(admin_llm_providers.router, prefix="/api/v1")
 app.include_router(admin_agents.router, prefix="/api/v1")
 app.include_router(admin_orchestrators.router, prefix="/api/v1")
+app.include_router(admin_tokens.router, prefix="/api/v1")
