@@ -4,8 +4,16 @@ import type { AuthState, OdinUser, TokenResponse } from '@/types/auth';
 
 const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || '/api/auth';
 
+// JWT uses base64url (- and _ instead of + and /) — atob needs standard base64
+function decodeJwtPayload(token: string): Record<string, any> {
+  const base64url = token.split('.')[1];
+  const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64 + '='.repeat((4 - base64.length % 4) % 4);
+  return JSON.parse(atob(padded));
+}
+
 function decodeUser(token: string): OdinUser {
-  const payload = JSON.parse(atob(token.split('.')[1]));
+  const payload = decodeJwtPayload(token);
   return {
     id: parseInt(payload.sub),
     email: payload.username || payload.email,
@@ -53,13 +61,16 @@ export const useAuthStore = create<AuthState>((set) => ({
   fetchUser: async () => {
     if (typeof window === 'undefined') return false;
     const token = localStorage.getItem('odin_access_token');
-    if (!token) { set({ isAuthenticated: false, user: null, isLoading: false }); return false; }
-    set({ isLoading: true });
+    if (!token) {
+      set({ isAuthenticated: false, user: null, isLoading: false });
+      return false;
+    }
     try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
+      const payload = decodeJwtPayload(token);
       if (payload.exp && payload.exp * 1000 < Date.now()) {
+        // Token expired — try refresh
         const refresh = localStorage.getItem('odin_refresh_token');
-        if (!refresh) throw new Error('expired');
+        if (!refresh) throw new Error('no refresh token');
         const res = await fetch(`${AUTH_URL}/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -72,9 +83,11 @@ export const useAuthStore = create<AuthState>((set) => ({
         set({ user: decodeUser(data.access_token), isAuthenticated: true, isLoading: false });
         return true;
       }
+      // Token still valid — decode and set
       set({ user: decodeUser(token), isAuthenticated: true, isLoading: false });
       return true;
-    } catch {
+    } catch (err) {
+      console.error('[authStore] fetchUser failed:', err);
       localStorage.removeItem('odin_access_token');
       localStorage.removeItem('odin_refresh_token');
       set({ user: null, isAuthenticated: false, isLoading: false });
