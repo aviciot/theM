@@ -43,12 +43,15 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: () => {
-    localStorage.removeItem('odin_access_token');
-    localStorage.removeItem('odin_refresh_token');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('odin_access_token');
+      localStorage.removeItem('odin_refresh_token');
+    }
     set({ user: null, isAuthenticated: false, error: null });
   },
 
   fetchUser: async () => {
+    if (typeof window === 'undefined') return false;
     const token = localStorage.getItem('odin_access_token');
     if (!token) { set({ isAuthenticated: false, user: null, isLoading: false }); return false; }
     set({ isLoading: true });
