@@ -77,6 +77,9 @@ export interface OrchestratorFull {
   rate_limit_rpm: number;
   daily_budget_usd: string;
   enabled: boolean;
+  voice_enabled: boolean;
+  transcription_provider: string | null;
+  transcription_model: string | null;
 }
 
 export interface AccessToken {
@@ -117,6 +120,20 @@ export const odinApi = {
   updateOrchestrator: (id: string, body: unknown) => api.patch<OrchestratorFull>(`/admin/orchestrators/${id}`, body),
   deleteOrchestrator: (id: string) => api.delete<void>(`/admin/orchestrators/${id}`),
   testLlm: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-llm`, body),
+  getOrchestrator: async (name: string): Promise<OrchestratorFull | undefined> => {
+    const list = await api.get<OrchestratorFull[]>('/admin/orchestrators');
+    return list.find((o) => o.name === name);
+  },
+  transcribe: async (name: string, audio: Blob): Promise<{ text: string }> => {
+    const form = new FormData();
+    form.append('audio', audio, 'recording.webm');
+    const res = await fetch(`${API_BASE}/api/v1/orchestrators/${name}/transcribe`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
   tokens: () => api.get<AccessToken[]>('/admin/tokens'),
   createToken: (body: unknown) => api.post<AccessToken>('/admin/tokens', body),
   updateToken: (id: string, body: unknown) => api.patch<AccessToken>(`/admin/tokens/${id}`, body),

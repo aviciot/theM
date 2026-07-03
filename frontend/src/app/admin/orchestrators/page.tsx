@@ -5,7 +5,12 @@ import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import { odinApi, type OrchestratorFull } from '@/lib/api';
 
-// ── Model catalogue (last 5 per provider) ─────────────────────────────────
+// ── Model catalogues ──────────────────────────────────────────────────────
+const VOICE_MODELS: Record<string, string[]> = {
+  openai: ['whisper-1', 'gpt-4o-transcribe'],
+  groq:   ['whisper-large-v3-turbo'],
+};
+
 const MODELS: Record<string, string[]> = {
   anthropic: ['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
   openai:    ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini', 'o4-mini'],
@@ -19,6 +24,10 @@ const EMPTY_FORM = {
   max_iterations: 10, max_parallel_tools: 4, rate_limit_rpm: 30,
   daily_budget_usd: '0', enabled: true,
   allowed_agent_ids: [] as string[],
+  voice_enabled: false,
+  transcription_provider: 'openai',
+  transcription_model: 'whisper-1',
+  transcription_api_key: '',
 };
 
 // ── Sub-components ─────────────────────────────────────────────────────────
@@ -94,6 +103,10 @@ export default function OrchestratorsPage() {
       rate_limit_rpm: o.rate_limit_rpm, daily_budget_usd: o.daily_budget_usd,
       enabled: o.enabled,
       allowed_agent_ids: o.allowed_agent_ids ?? [],
+      voice_enabled: o.voice_enabled ?? false,
+      transcription_provider: o.transcription_provider ?? 'openai',
+      transcription_model: o.transcription_model ?? 'whisper-1',
+      transcription_api_key: '',
     });
     setFormError(''); setTestState({ loading: false });
     setShowForm(true);
@@ -139,7 +152,15 @@ export default function OrchestratorsPage() {
         max_iterations: Number(form.max_iterations),
         max_parallel_tools: Number(form.max_parallel_tools),
         rate_limit_rpm: Number(form.rate_limit_rpm),
+        voice_enabled: form.voice_enabled,
+        transcription_provider: form.voice_enabled ? form.transcription_provider : null,
+        transcription_model: form.voice_enabled ? form.transcription_model : null,
       };
+      if (form.transcription_api_key) {
+        body.transcription_api_key = form.transcription_api_key;
+      } else {
+        delete body.transcription_api_key;
+      }
       if (editing) {
         await odinApi.updateOrchestrator(editing.id, body);
       } else {
@@ -335,6 +356,58 @@ export default function OrchestratorsPage() {
                         </label>
                       );
                     })}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Voice ─────────────────────────────────────────────── */}
+              <div style={{ borderTop: '1px solid var(--tm-border)', paddingTop: 18, marginTop: 4 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm-accent)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 15 }}>mic</span>
+                  Voice
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 12 }}>
+                  <input type="checkbox" checked={form.voice_enabled} onChange={(e) => f('voice_enabled', e.target.checked)} style={{ width: 16, height: 16 }} />
+                  <span style={{ fontSize: 13, color: 'var(--tm-text)' }}>Enable voice input</span>
+                </label>
+                {form.voice_enabled && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <Field label="Transcription provider">
+                        <select
+                          value={form.transcription_provider}
+                          onChange={(e) => {
+                            f('transcription_provider', e.target.value);
+                            const models = VOICE_MODELS[e.target.value];
+                            if (models) f('transcription_model', models[0]);
+                          }}
+                          style={INP}
+                        >
+                          <option value="openai">OpenAI</option>
+                          <option value="groq">Groq</option>
+                        </select>
+                      </Field>
+                      <Field label="Transcription model">
+                        <select
+                          value={form.transcription_model}
+                          onChange={(e) => f('transcription_model', e.target.value)}
+                          style={INP}
+                        >
+                          {(VOICE_MODELS[form.transcription_provider] ?? []).map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
+                    <Field label="Transcription API key (optional override)">
+                      <input
+                        type="password"
+                        value={form.transcription_api_key}
+                        onChange={(e) => f('transcription_api_key', e.target.value)}
+                        placeholder="optional override"
+                        style={INP}
+                      />
+                    </Field>
                   </div>
                 )}
               </div>

@@ -43,6 +43,10 @@ class OrchestratorCreate(BaseModel):
     rate_limit_rpm: int = 30
     daily_budget_usd: Decimal = Decimal("0")
     enabled: bool = True
+    voice_enabled: bool = False
+    transcription_provider: Optional[str] = None
+    transcription_model: Optional[str] = None
+    transcription_api_key: Optional[str] = None
 
 
 class OrchestratorUpdate(BaseModel):
@@ -58,6 +62,10 @@ class OrchestratorUpdate(BaseModel):
     rate_limit_rpm: Optional[int] = None
     daily_budget_usd: Optional[Decimal] = None
     enabled: Optional[bool] = None
+    voice_enabled: Optional[bool] = None
+    transcription_provider: Optional[str] = None
+    transcription_model: Optional[str] = None
+    transcription_api_key: Optional[str] = None
 
 
 class OrchestratorOut(BaseModel):
@@ -75,6 +83,10 @@ class OrchestratorOut(BaseModel):
     rate_limit_rpm: int
     daily_budget_usd: Decimal
     enabled: bool
+    voice_enabled: bool
+    transcription_provider: Optional[str]
+    transcription_model: Optional[str]
+    transcription_api_key_hint: Optional[str]
 
     class Config:
         from_attributes = True
@@ -113,6 +125,10 @@ def _row_to_out(row: Orchestrator) -> OrchestratorOut:
         rate_limit_rpm=row.rate_limit_rpm,
         daily_budget_usd=row.daily_budget_usd,
         enabled=row.enabled,
+        voice_enabled=row.voice_enabled,
+        transcription_provider=row.transcription_provider,
+        transcription_model=row.transcription_model,
+        transcription_api_key_hint=key_hint(row.transcription_api_key_encrypted) if row.transcription_api_key_encrypted else None,
     )
 
 
@@ -207,6 +223,10 @@ async def create_orchestrator(body: OrchestratorCreate, db: AsyncSession = Depen
         rate_limit_rpm=body.rate_limit_rpm,
         daily_budget_usd=body.daily_budget_usd,
         enabled=body.enabled,
+        voice_enabled=body.voice_enabled,
+        transcription_provider=body.transcription_provider or None,
+        transcription_model=body.transcription_model or None,
+        transcription_api_key_encrypted=encrypt_value(body.transcription_api_key) if body.transcription_api_key else None,
     )
     db.add(row)
     await db.commit()
@@ -249,6 +269,14 @@ async def update_orchestrator(orch_id: uuid.UUID, body: OrchestratorUpdate, db: 
         row.daily_budget_usd = body.daily_budget_usd
     if body.enabled is not None:
         row.enabled = body.enabled
+    if body.voice_enabled is not None:
+        row.voice_enabled = body.voice_enabled
+    if body.transcription_provider is not None:
+        row.transcription_provider = body.transcription_provider or None
+    if body.transcription_model is not None:
+        row.transcription_model = body.transcription_model or None
+    if body.transcription_api_key:
+        row.transcription_api_key_encrypted = encrypt_value(body.transcription_api_key)
 
     name = row.name
     await db.commit()

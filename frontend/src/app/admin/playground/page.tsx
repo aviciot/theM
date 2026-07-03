@@ -18,6 +18,7 @@ function getBridgeWs(): string {
 
 type ChatMsg = { role: 'user' | 'assistant'; text: string; pending?: boolean };
 type TraceEvent = { ts: number; type: string; [key: string]: unknown };
+type RecordingState = 'idle' | 'recording' | 'transcribing';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,24 @@ function traceColor(type: string): string {
   return 'var(--tm-text-muted)';
 }
 
+// ── Mic SVG icon ───────────────────────────────────────────────────────────
+function MicIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V21h2v-3.07A7 7 0 0 0 19 11h-2z"/>
+    </svg>
+  );
+}
+
+// ── Spinner ────────────────────────────────────────────────────────────────
+function Spinner() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" style={{ animation: 'spin 1s linear infinite', transformOrigin: 'center' }} />
+    </svg>
+  );
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 export default function PlaygroundPage() {
@@ -55,6 +74,9 @@ export default function PlaygroundPage() {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [recordingState, setRecordingState] = useState<RecordingState>('idle');
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
 
   const chatWs = useRef<WebSocket | null>(null);
   const dashWs = useRef<WebSocket | null>(null);
@@ -63,12 +85,24 @@ export default function PlaygroundPage() {
   const chatBottom = useRef<HTMLDivElement>(null);
   const traceBottom = useRef<HTMLDivElement>(null);
 
+  // Load orchestrators list, then check voice_enabled for the selected one
   useEffect(() => {
     odinApi.orchestrators().then(list => {
-      setOrchestrators(list.filter(o => o.enabled));
-      if (!initialOrch && list.length > 0) setSelectedOrch(list[0].name);
+      const enabled = list.filter(o => o.enabled);
+      setOrchestrators(enabled);
+      const name = initialOrch || (enabled.length > 0 ? enabled[0].name : '');
+      if (!initialOrch && enabled.length > 0) setSelectedOrch(enabled[0].name);
+      const orch = enabled.find(o => o.name === name);
+      setVoiceEnabled(orch?.voice_enabled ?? false);
     });
   }, [initialOrch]);
+
+  // When selected orchestrator changes, update voice_enabled
+  useEffect(() => {
+    if (!selectedOrch) return;
+    const orch = orchestrators.find(o => o.name === selectedOrch);
+    setVoiceEnabled(orch?.voice_enabled ?? false);
+  }, [selectedOrch, orchestrators]);
 
   useEffect(() => {
     chatBottom.current?.scrollIntoView({ behavior: 'smooth' });
@@ -105,9 +139,8 @@ export default function PlaygroundPage() {
   }, []);
 
   // ── Send message ─────────────────────────────────────────────────────────
-  const send = useCallback(async () => {
-    if (!input.trim() || !selectedOrch || busy) return;
-    const text = input.trim();
+  const sendText = useCallback(async (text: string) => {
+    if (!text.trim() || !selectedOrch || busy) return;
     setInput('');
     setBusy(true);
     setTrace([]);
@@ -193,7 +226,9 @@ export default function PlaygroundPage() {
       console.log('Orchestrator WS closed', ev.code, ev.reason);
       if (busy) setBusy(false);
     };
-  }, [input, selectedOrch, busy, openDashWs]);
+  }, [selectedOrch, busy, openDashWs]);
+
+  const send = useCallback(() => sendText(input), [input, sendText]);
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -203,6 +238,72 @@ export default function PlaygroundPage() {
     setMessages([]);
     setTrace([]);
     setStatus('');
+  };
+
+  // ── Voice recording ───────────────────────────────────────────────────────
+  const startRecording = async () => {
+    if (recordingState !== 'idle' || !selectedOrch) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+        setRecordingState('transcribing');
+        try {
+          const result = await odinApi.transcribe(selectedOrch, blob);
+          if (result.text) {
+            await sendText(result.text);
+          }
+        } catch (e) {
+          console.error('Transcription error', e);
+          setStatus('Transcription failed');
+          setTimeout(() => setStatus(''), 3000);
+        } finally {
+          setRecordingState('idle');
+        }
+      };
+      recorder.start();
+      setMediaRecorder(recorder);
+      setRecordingState('recording');
+    } catch (e) {
+      console.error('Mic access error', e);
+      setStatus('Microphone access denied');
+      setTimeout(() => setStatus(''), 3000);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder && recordingState === 'recording') {
+      mediaRecorder.stop();
+      setMediaRecorder(null);
+    }
+  };
+
+  // Mic button style
+  const micBtnStyle = (): React.CSSProperties => {
+    if (recordingState === 'recording') {
+      return {
+        padding: '10px 14px', borderRadius: 12, border: 'none',
+        background: '#ef4444', color: '#fff', cursor: 'pointer',
+        alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        outline: '2px solid #f87171',
+      };
+    }
+    if (recordingState === 'transcribing') {
+      return {
+        padding: '10px 14px', borderRadius: 12, border: 'none',
+        background: 'var(--tm-surface)', color: 'var(--tm-text-muted)', cursor: 'not-allowed',
+        alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      };
+    }
+    return {
+      padding: '10px 14px', borderRadius: 12, border: 'none',
+      background: 'var(--tm-surface-2)', color: 'var(--tm-text-muted)', cursor: 'pointer',
+      alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    };
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -263,6 +364,19 @@ export default function PlaygroundPage() {
 
               {/* Input */}
               <div style={{ padding: '12px 16px', borderTop: '1px solid var(--tm-border)', display: 'flex', gap: 8 }}>
+                {voiceEnabled && (
+                  <button
+                    style={micBtnStyle()}
+                    onMouseDown={startRecording}
+                    onMouseUp={stopRecording}
+                    onTouchStart={startRecording}
+                    onTouchEnd={stopRecording}
+                    disabled={recordingState === 'transcribing' || busy || !selectedOrch}
+                    title={recordingState === 'recording' ? 'Release to transcribe' : 'Hold to record'}
+                  >
+                    {recordingState === 'transcribing' ? <Spinner /> : <MicIcon />}
+                  </button>
+                )}
                 <textarea
                   value={input}
                   onChange={e => setInput(e.target.value)}
