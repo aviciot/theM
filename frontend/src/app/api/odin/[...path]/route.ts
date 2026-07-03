@@ -26,7 +26,7 @@ async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
     const buf = await upstream.arrayBuffer();
     return new NextResponse(buf, { status: upstream.status, headers: { 'Content-Type': upstreamType } });
   }
-  const data = await upstream.json().catch(() => null);
+  const data = await upstream.json().catch(() => ({}));
   return NextResponse.json(data, { status: upstream.status });
 }
 
