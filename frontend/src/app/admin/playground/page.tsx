@@ -195,24 +195,24 @@ export default function PlaygroundPage() {
             const copy = [...prev];
             const last = copy[copy.length - 1];
             if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, pending: false };
-            // TTS: speak the final response
-            if (ttsEnabled && last?.role === 'assistant' && assistantBuf.current) {
-              const textToSpeak = assistantBuf.current;
-              const orchName = selectedOrch;
-              setSpeaking(true);
-              odinApi.tts(orchName, textToSpeak)
-                .then(buf => {
-                  const blob = new Blob([buf], { type: 'audio/mpeg' });
-                  const url = URL.createObjectURL(blob);
-                  const audio = new Audio(url);
-                  audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
-                  audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
-                  audio.play();
-                })
-                .catch(() => setSpeaking(false));
-            }
             return copy;
           });
+          // TTS outside setMessages to avoid React StrictMode double-fire
+          if (ttsEnabled && assistantBuf.current) {
+            const textToSpeak = assistantBuf.current;
+            const orchName = selectedOrch;
+            setSpeaking(true);
+            odinApi.tts(orchName, textToSpeak)
+              .then(buf => {
+                const blob = new Blob([buf], { type: 'audio/mpeg' });
+                const url = URL.createObjectURL(blob);
+                const audio = new Audio(url);
+                audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+                audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+                audio.play();
+              })
+              .catch(() => setSpeaking(false));
+          }
           setStatus(`Done — ${msg.iterations} iteration(s)`);
           setBusy(false);
           ws.close();
