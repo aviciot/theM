@@ -18,7 +18,8 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db, AsyncSessionLocal
+from app.database import get_db
+import app.database as _db
 from app.services.orchestrator_service import run_orchestrator
 from app.services.token_cache import validate_bearer_token
 from app.utils.logger import logger
@@ -46,12 +47,12 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
         await websocket.close(code=4001)
         return
 
-    if AsyncSessionLocal is None:
+    if _db.AsyncSessionLocal is None:
         await websocket.send_json({"type": "error", "message": "Service not ready"})
         await websocket.close(code=4003)
         return
 
-    async with AsyncSessionLocal() as db:
+    async with _db.AsyncSessionLocal() as db:
         token_payload = await validate_bearer_token(raw_token, db)
 
     if token_payload is None:
@@ -83,7 +84,7 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
 
     # ── Agentic loop ──────────────────────────────────────────────────
     try:
-        async with AsyncSessionLocal() as db:
+        async with _db.AsyncSessionLocal() as db:
             async for event in run_orchestrator(
                 orchestrator_name=name,
                 user_message=user_message,
