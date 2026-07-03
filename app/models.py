@@ -86,6 +86,10 @@ class Orchestrator(Base):
     transcription_provider: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     transcription_model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     transcription_api_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tts_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    tts_provider: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tts_voice: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tts_api_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -20,7 +20,13 @@ async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
     : undefined;
 
   const upstream = await fetch(url, { method: req.method, headers, body });
-  const data = upstream.status === 204 ? null : await upstream.json().catch(() => null);
+  const upstreamType = upstream.headers.get('content-type') || '';
+  if (upstream.status === 204) return new NextResponse(null, { status: 204 });
+  if (upstreamType.startsWith('audio/')) {
+    const buf = await upstream.arrayBuffer();
+    return new NextResponse(buf, { status: upstream.status, headers: { 'Content-Type': upstreamType } });
+  }
+  const data = await upstream.json().catch(() => null);
   return NextResponse.json(data, { status: upstream.status });
 }
 

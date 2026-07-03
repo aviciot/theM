@@ -21,6 +21,7 @@ from app.routers import ws_orchestrator
 from app.routers import ws_dashboard
 from app.routers import runs
 from app.routers import transcription
+from app.routers import tts
 from app.services.agent_registry import start_change_listener
 
 
@@ -78,3 +79,4 @@ app.include_router(ws_orchestrator.router)
 app.include_router(ws_dashboard.router)
 app.include_router(runs.router, prefix="/api/v1")
 app.include_router(transcription.router, prefix="/api/v1")
+app.include_router(tts.router, prefix="/api/v1")

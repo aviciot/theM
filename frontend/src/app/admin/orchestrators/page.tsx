@@ -11,6 +11,8 @@ const VOICE_MODELS: Record<string, string[]> = {
   groq:   ['whisper-large-v3-turbo'],
 };
 
+const TTS_VOICES = ['nova', 'alloy', 'echo', 'fable', 'onyx', 'shimmer'];
+
 const MODELS: Record<string, string[]> = {
   anthropic: ['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
   openai:    ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4o-mini', 'o4-mini'],
@@ -28,6 +30,10 @@ const EMPTY_FORM = {
   transcription_provider: 'openai',
   transcription_model: 'whisper-1',
   transcription_api_key: '',
+  tts_enabled: false,
+  tts_provider: 'openai',
+  tts_voice: 'nova',
+  tts_api_key: '',
 };
 
 // ── Sub-components ─────────────────────────────────────────────────────────
@@ -75,6 +81,7 @@ export default function OrchestratorsPage() {
   const [formError, setFormError] = useState('');
   const [testState, setTestState] = useState<{ loading: boolean; ok?: boolean; latency?: number; error?: string }>({ loading: false });
   const [voiceTestState, setVoiceTestState] = useState<{ loading: boolean; ok?: boolean; latency?: number; error?: string }>({ loading: false });
+  const [ttsTestState, setTtsTestState] = useState<{ loading: boolean; ok?: boolean; latency?: number; error?: string }>({ loading: false });
 
   async function load() {
     setLoading(true);
@@ -108,8 +115,12 @@ export default function OrchestratorsPage() {
       transcription_provider: o.transcription_provider ?? 'openai',
       transcription_model: o.transcription_model ?? 'whisper-1',
       transcription_api_key: '',
+      tts_enabled: o.tts_enabled ?? false,
+      tts_provider: o.tts_provider ?? 'openai',
+      tts_voice: o.tts_voice ?? 'nova',
+      tts_api_key: '',
     });
-    setFormError(''); setTestState({ loading: false });
+    setFormError(''); setTestState({ loading: false }); setVoiceTestState({ loading: false }); setTtsTestState({ loading: false });
     setShowForm(true);
   }
 
@@ -156,6 +167,21 @@ export default function OrchestratorsPage() {
     }
   }
 
+  async function testTts() {
+    if (!editing || !form.tts_provider || !form.tts_voice) return;
+    setTtsTestState({ loading: true });
+    try {
+      const res = await odinApi.testTts(editing.id, {
+        provider: form.tts_provider,
+        voice: form.tts_voice,
+        api_key: form.tts_api_key || undefined,
+      });
+      setTtsTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
+    } catch (e: any) {
+      setTtsTestState({ loading: false, ok: false, error: e.message });
+    }
+  }
+
   async function save() {
     setSaving(true); setFormError('');
     try {
@@ -171,11 +197,19 @@ export default function OrchestratorsPage() {
         voice_enabled: form.voice_enabled,
         transcription_provider: form.voice_enabled ? form.transcription_provider : null,
         transcription_model: form.voice_enabled ? form.transcription_model : null,
+        tts_enabled: form.tts_enabled,
+        tts_provider: form.tts_enabled ? form.tts_provider : null,
+        tts_voice: form.tts_enabled ? form.tts_voice : null,
       };
       if (form.transcription_api_key) {
         body.transcription_api_key = form.transcription_api_key;
       } else {
         delete body.transcription_api_key;
+      }
+      if (form.tts_api_key) {
+        body.tts_api_key = form.tts_api_key;
+      } else {
+        delete body.tts_api_key;
       }
       if (editing) {
         await odinApi.updateOrchestrator(editing.id, body);
@@ -432,6 +466,46 @@ export default function OrchestratorsPage() {
                         {voiceTestState.ok !== undefined && (
                           <span style={{ fontSize: 12, color: voiceTestState.ok ? '#4ade80' : '#f87171' }}>
                             {voiceTestState.ok ? `✓ ${voiceTestState.latency}ms — ${voiceTestState.error}` : `✗ ${voiceTestState.error}`}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* TTS */}
+              <div style={{ borderTop: '1px solid var(--tm-border)', paddingTop: 18, marginTop: 4 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 14 }}>Text-to-Speech (TTS)</div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 14 }}>
+                  <input type="checkbox" checked={form.tts_enabled} onChange={(e) => f('tts_enabled', e.target.checked)} style={{ width: 16, height: 16 }} />
+                  <span style={{ fontSize: 13 }}>Enable TTS — read responses aloud</span>
+                </label>
+                {form.tts_enabled && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <Field label="TTS provider">
+                        <select value={form.tts_provider} onChange={(e) => f('tts_provider', e.target.value)} style={INP}>
+                          <option value="openai">OpenAI</option>
+                        </select>
+                      </Field>
+                      <Field label="Voice">
+                        <select value={form.tts_voice} onChange={(e) => f('tts_voice', e.target.value)} style={INP}>
+                          {TTS_VOICES.map((v) => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      </Field>
+                    </div>
+                    <Field label="TTS API key (optional override)">
+                      <input type="password" value={form.tts_api_key} onChange={(e) => f('tts_api_key', e.target.value)} placeholder="optional override" style={INP} />
+                    </Field>
+                    {editing && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <button onClick={testTts} disabled={ttsTestState.loading} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text)', cursor: ttsTestState.loading ? 'wait' : 'pointer', fontSize: 13, fontWeight: 600 }}>
+                          {ttsTestState.loading ? '...' : 'Test connection'}
+                        </button>
+                        {ttsTestState.ok !== undefined && (
+                          <span style={{ fontSize: 12, color: ttsTestState.ok ? '#4ade80' : '#f87171' }}>
+                            {ttsTestState.ok ? `✓ ${ttsTestState.latency}ms` : `✗ ${ttsTestState.error}`}
                           </span>
                         )}
                       </div>

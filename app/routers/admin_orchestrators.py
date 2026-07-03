@@ -47,6 +47,10 @@ class OrchestratorCreate(BaseModel):
     transcription_provider: Optional[str] = None
     transcription_model: Optional[str] = None
     transcription_api_key: Optional[str] = None
+    tts_enabled: bool = False
+    tts_provider: Optional[str] = None
+    tts_voice: Optional[str] = None
+    tts_api_key: Optional[str] = None
 
 
 class OrchestratorUpdate(BaseModel):
@@ -66,6 +70,10 @@ class OrchestratorUpdate(BaseModel):
     transcription_provider: Optional[str] = None
     transcription_model: Optional[str] = None
     transcription_api_key: Optional[str] = None
+    tts_enabled: Optional[bool] = None
+    tts_provider: Optional[str] = None
+    tts_voice: Optional[str] = None
+    tts_api_key: Optional[str] = None
 
 
 class OrchestratorOut(BaseModel):
@@ -87,6 +95,10 @@ class OrchestratorOut(BaseModel):
     transcription_provider: Optional[str]
     transcription_model: Optional[str]
     transcription_api_key_hint: Optional[str]
+    tts_enabled: bool
+    tts_provider: Optional[str]
+    tts_voice: Optional[str]
+    tts_api_key_hint: Optional[str]
 
     class Config:
         from_attributes = True
@@ -129,6 +141,10 @@ def _row_to_out(row: Orchestrator) -> OrchestratorOut:
         transcription_provider=row.transcription_provider,
         transcription_model=row.transcription_model,
         transcription_api_key_hint=key_hint(row.transcription_api_key_encrypted) if row.transcription_api_key_encrypted else None,
+        tts_enabled=row.tts_enabled,
+        tts_provider=row.tts_provider,
+        tts_voice=row.tts_voice,
+        tts_api_key_hint=key_hint(row.tts_api_key_encrypted) if row.tts_api_key_encrypted else None,
     )
 
 
@@ -227,6 +243,10 @@ async def create_orchestrator(body: OrchestratorCreate, db: AsyncSession = Depen
         transcription_provider=body.transcription_provider or None,
         transcription_model=body.transcription_model or None,
         transcription_api_key_encrypted=encrypt_value(body.transcription_api_key) if body.transcription_api_key else None,
+        tts_enabled=body.tts_enabled,
+        tts_provider=body.tts_provider or None,
+        tts_voice=body.tts_voice or None,
+        tts_api_key_encrypted=encrypt_value(body.tts_api_key) if body.tts_api_key else None,
     )
     db.add(row)
     await db.commit()
@@ -277,6 +297,14 @@ async def update_orchestrator(orch_id: uuid.UUID, body: OrchestratorUpdate, db: 
         row.transcription_model = body.transcription_model or None
     if body.transcription_api_key:
         row.transcription_api_key_encrypted = encrypt_value(body.transcription_api_key)
+    if body.tts_enabled is not None:
+        row.tts_enabled = body.tts_enabled
+    if body.tts_provider is not None:
+        row.tts_provider = body.tts_provider or None
+    if body.tts_voice is not None:
+        row.tts_voice = body.tts_voice or None
+    if body.tts_api_key:
+        row.tts_api_key_encrypted = encrypt_value(body.tts_api_key)
 
     name = row.name
     await db.commit()
@@ -314,6 +342,12 @@ class VoiceTestRequest(BaseModel):
     api_key: Optional[str] = None
 
 
+class TTSTestRequest(BaseModel):
+    provider: str
+    voice: str
+    api_key: Optional[str] = None
+
+
 @router.post("/{orch_id}/test-voice", response_model=LLMTestResult)
 async def test_voice(orch_id: uuid.UUID, body: VoiceTestRequest, db: AsyncSession = Depends(get_db)):
     """Validate a transcription API key by listing available models."""
@@ -343,6 +377,35 @@ async def test_voice(orch_id: uuid.UUID, body: VoiceTestRequest, db: AsyncSessio
             return LLMTestResult(ok=True, latency_ms=ms, error=f"Available: {', '.join(audio_models) or 'none found'}")
         else:
             return LLMTestResult(ok=False, error=f"Unknown provider: {body.provider}")
+    except Exception as exc:
+        ms = int((time.monotonic() - start) * 1000)
+        return LLMTestResult(ok=False, error=str(exc), latency_ms=ms)
+
+
+@router.post("/{orch_id}/test-tts", response_model=LLMTestResult)
+async def test_tts(orch_id: uuid.UUID, body: TTSTestRequest, db: AsyncSession = Depends(get_db)):
+    """Validate a TTS API key with a minimal synthesis request."""
+    import time
+    api_key = body.api_key
+    if not api_key:
+        row = await _get_or_404(db, orch_id)
+        if not row.tts_api_key_encrypted:
+            raise HTTPException(status_code=400, detail="No TTS API key stored and none provided")
+        api_key = decrypt_value(row.tts_api_key_encrypted)
+
+    start = time.monotonic()
+    try:
+        if body.provider == "openai":
+            import openai
+            client = openai.AsyncOpenAI(api_key=api_key)
+            resp = await client.audio.speech.create(
+                model="tts-1", voice=body.voice, input="Hello", response_format="mp3"
+            )
+            await resp.aread()
+            ms = int((time.monotonic() - start) * 1000)
+            return LLMTestResult(ok=True, latency_ms=ms)
+        else:
+            return LLMTestResult(ok=False, error=f"Unknown TTS provider: {body.provider}")
     except Exception as exc:
         ms = int((time.monotonic() - start) * 1000)
         return LLMTestResult(ok=False, error=str(exc), latency_ms=ms)

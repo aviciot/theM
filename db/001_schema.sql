@@ -137,3 +137,15 @@ CREATE TABLE IF NOT EXISTS odin.audit_logs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_audit_created ON odin.audit_logs(created_at DESC);
+
+-- Voice transcription (added 2026-07-03)
+ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS voice_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS transcription_provider VARCHAR(32);
+ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS transcription_model VARCHAR(64);
+ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS transcription_api_key_encrypted TEXT;
+
+-- TTS (added 2026-07-03)
+ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS tts_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS tts_provider TEXT;
+ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS tts_voice TEXT;
+ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS tts_api_key_encrypted TEXT;

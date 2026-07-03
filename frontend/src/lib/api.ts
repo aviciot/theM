@@ -80,6 +80,9 @@ export interface OrchestratorFull {
   voice_enabled: boolean;
   transcription_provider: string | null;
   transcription_model: string | null;
+  tts_enabled: boolean;
+  tts_provider: string | null;
+  tts_voice: string | null;
 }
 
 export interface AccessToken {
@@ -121,6 +124,16 @@ export const odinApi = {
   deleteOrchestrator: (id: string) => api.delete<void>(`/admin/orchestrators/${id}`),
   testLlm: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-llm`, body),
   testVoice: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-voice`, body),
+  testTts: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-tts`, body),
+  tts: async (name: string, text: string): Promise<ArrayBuffer> => {
+    const res = await fetch(`/api/odin/orchestrators/${name}/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.arrayBuffer();
+  },
   getOrchestrator: async (name: string): Promise<OrchestratorFull | undefined> => {
     const list = await api.get<OrchestratorFull[]>('/admin/orchestrators');
     return list.find((o) => o.name === name);

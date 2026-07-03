@@ -75,6 +75,8 @@ export default function PlaygroundPage() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const [recordingState, setRecordingState] = useState<RecordingState>('idle');
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
 
@@ -94,14 +96,16 @@ export default function PlaygroundPage() {
       if (!initialOrch && enabled.length > 0) setSelectedOrch(enabled[0].name);
       const orch = enabled.find(o => o.name === name);
       setVoiceEnabled(orch?.voice_enabled ?? false);
+      setTtsEnabled(orch?.tts_enabled ?? false);
     });
   }, [initialOrch]);
 
-  // When selected orchestrator changes, update voice_enabled
+  // When selected orchestrator changes, update voice_enabled + tts_enabled
   useEffect(() => {
     if (!selectedOrch) return;
     const orch = orchestrators.find(o => o.name === selectedOrch);
     setVoiceEnabled(orch?.voice_enabled ?? false);
+    setTtsEnabled(orch?.tts_enabled ?? false);
   }, [selectedOrch, orchestrators]);
 
   useEffect(() => {
@@ -191,6 +195,22 @@ export default function PlaygroundPage() {
             const copy = [...prev];
             const last = copy[copy.length - 1];
             if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, pending: false };
+            // TTS: speak the final response
+            if (ttsEnabled && last?.role === 'assistant' && assistantBuf.current) {
+              const textToSpeak = assistantBuf.current;
+              const orchName = selectedOrch;
+              setSpeaking(true);
+              odinApi.tts(orchName, textToSpeak)
+                .then(buf => {
+                  const blob = new Blob([buf], { type: 'audio/mpeg' });
+                  const url = URL.createObjectURL(blob);
+                  const audio = new Audio(url);
+                  audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+                  audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+                  audio.play();
+                })
+                .catch(() => setSpeaking(false));
+            }
             return copy;
           });
           setStatus(`Done — ${msg.iterations} iteration(s)`);
@@ -244,7 +264,10 @@ export default function PlaygroundPage() {
   const startRecording = async () => {
     if (recordingState !== 'idle' || !selectedOrch) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaDevices = navigator.mediaDevices ??
+        // HTTP non-localhost: mediaDevices is undefined; nothing we can do
+        (() => { throw new Error('Microphone requires HTTPS or localhost'); })();
+      const stream = await mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       const chunks: Blob[] = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
@@ -324,7 +347,10 @@ export default function PlaygroundPage() {
                 <option key={o.id} value={o.name}>{o.display_name || o.name}</option>
               ))}
             </select>
-            {status && (
+            {speaking && (
+              <span style={{ fontSize: 12, color: '#a78bfa', marginLeft: 'auto' }}>🔊 Speaking…</span>
+            )}
+            {!speaking && status && (
               <span style={{ fontSize: 12, color: 'var(--tm-text-muted)', marginLeft: 'auto' }}>{status}</span>
             )}
             <button onClick={clearChat} style={{ marginLeft: status ? 0 : 'auto', padding: '4px 12px', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text-muted)', cursor: 'pointer', fontSize: 12 }}>
