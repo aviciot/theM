@@ -391,3 +391,29 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
+
+  # ── Vision Agent — Location Visualizer ──────────────────────────────────────
+  vision-agent:
+    build:
+      context: ./agents/vision_agent
+      dockerfile: Dockerfile
+    container_name: vision-agent
+    environment:
+      GOOGLE_MAPS_API_KEY: "${GOOGLE_MAPS_API_KEY:-}"
+      FAL_API_KEY: "${FAL_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      PORT: "9100"
+    networks:
+      - odin-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
