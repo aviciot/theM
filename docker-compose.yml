@@ -136,6 +136,8 @@ services:
     container_name: odin-bridge
     expose:
       - "8001"
+    ports:
+      - "8001:8001"
     volumes:
       - .:/app
       - ./volumes/logs:/app/logs
@@ -338,6 +340,7 @@ services:
       NODE_ENV: development
       ODIN_API_URL: "http://odin-bridge:8001"
       ODIN_AUTH_URL: "http://odin-auth-service:8701"
+      NEXT_PUBLIC_BRIDGE_WS_URL: "${ODIN_BRIDGE_WS_URL:-ws://localhost:8001}"
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy-network"

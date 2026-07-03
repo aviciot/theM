@@ -14,7 +14,7 @@ export default function AgentsPage() {
   }, []);
 
   const filtered = agents.filter((a) =>
-    a.name.toLowerCase().includes(search.toLowerCase()) ||
+    (a.display_name ?? '').toLowerCase().includes(search.toLowerCase()) ||
     a.slug.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -96,7 +96,7 @@ export default function AgentsPage() {
                           }}>
                             <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>smart_toy</span>
                           </div>
-                          <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--tm-text)' }}>{agent.name}</span>
+                          <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--tm-text)' }}>{agent.display_name}</span>
                         </div>
                       </td>
                       <td style={{ padding: '12px 16px' }}>

@@ -41,7 +41,7 @@ def build_reply(message: str) -> str:
 
 async def handle(ws) -> None:
     client = ws.remote_address
-    log.info(f"Connection from {client} path={path}")
+    log.info(f"Connection from {client}")
 
     # Optional auth check
     if AUTH_TOKEN:

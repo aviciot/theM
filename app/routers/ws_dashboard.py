@@ -6,12 +6,11 @@ Multiplexed named channels — client subscribes to one or more.
 
 Protocol:
   Client → Server (after connect):
-    {"type": "subscribe", "channels": ["runs", "agents", "metrics"]}
+    {"type": "subscribe", "channels": ["runs", "agents", "metrics", "run:abc-uuid"]}
 
   Server → Client (subscribed events):
-    {"channel": "runs",    "event": {...}}
-    {"channel": "agents",  "event": {...}}
-    {"channel": "metrics", "event": {...}}
+    {"channel": "runs",        "event": {...}}
+    {"channel": "run:abc-uuid","event": {...}}
 
   Server → Client (control):
     {"type": "subscribed", "channels": [...]}
@@ -32,8 +31,17 @@ from app.utils.logger import logger
 router = APIRouter()
 
 _DASH_PREFIX = "odin:dash:"
-_VALID_CHANNELS = {"runs", "agents", "metrics"}
+_STATIC_CHANNELS = {"runs", "agents", "metrics"}
 _PING_INTERVAL = 30
+
+
+def _is_valid_channel(ch: str) -> bool:
+    if ch in _STATIC_CHANNELS:
+        return True
+    # allow "run:<uuid>" dynamic per-run channels
+    if ch.startswith("run:") and len(ch) > 4:
+        return True
+    return False
 
 
 def _parse_bearer(ws: WebSocket) -> Optional[str]:
@@ -134,9 +142,9 @@ async def ws_dashboard(websocket: WebSocket):
         return
 
     requested = set(msg.get("channels", []))
-    channels = list(requested & _VALID_CHANNELS)
+    channels = [ch for ch in requested if _is_valid_channel(ch)]
     if not channels:
-        await websocket.send_json({"type": "error", "message": f"No valid channels. Valid: {sorted(_VALID_CHANNELS)}"})
+        await websocket.send_json({"type": "error", "message": "No valid channels. Use: runs, agents, metrics, run:<uuid>"})
         await websocket.close(code=4000)
         return
 

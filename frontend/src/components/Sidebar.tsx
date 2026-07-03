@@ -12,6 +12,7 @@ const NAV = [
 const ADMIN_NAV = [
   { href: '/admin/orchestrators', icon: 'account_tree', label: 'Orchestrators' },
   { href: '/admin/tokens',        icon: 'key',           label: 'Access Tokens' },
+  { href: '/admin/playground',    icon: 'science',       label: 'Playground' },
 ];
 
 export default function Sidebar() {

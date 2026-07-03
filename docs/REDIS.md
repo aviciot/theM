@@ -1,5 +1,5 @@
 # Odin Redis Key Space
-# Last updated: 2026-07-02
+# Last updated: 2026-07-03
 # Redis: odin-redis container (fully isolated). DB index: 0 (Odin owns this Redis entirely).
 
 ## Key Patterns
@@ -19,7 +19,10 @@
 |---|---|---|---|
 | `odin:agents:changed` | admin_agents.py on write | agent_registry.py | Invalidate agent cache on all replicas |
 | `odin:orchestrators:changed` | admin_orchestrators.py on write | orchestrator_service.py | Invalidate orchestrator config cache |
-| `odin:dash:{channel}` | various | ws_dashboard.py | Dashboard event fan-out (named channels) |
+| `odin:dash:runs` | orchestrator_service.py per run event | ws_dashboard.py (channel: runs) | Lightweight summary of every run event (no tool inputs) |
+| `odin:dash:agents` | (reserved) | ws_dashboard.py (channel: agents) | Agent registry change events |
+| `odin:dash:metrics` | (reserved) | ws_dashboard.py (channel: metrics) | System metrics |
+| `odin:dash:run:{run_id}` | orchestrator_service.py per run event | ws_dashboard.py (channel: run:{uuid}) | Full per-run trace: tool inputs/outputs, token usage, iteration events |
 
 ## Naming Rules
 - All keys MUST start with `odin:` or `rl:odin:`

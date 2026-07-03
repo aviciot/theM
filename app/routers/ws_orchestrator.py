@@ -1,7 +1,7 @@
 """
 WebSocket endpoint: /ws/orchestrate/{name}
 
-Auth: opaque Bearer token (odin.access_tokens) validated via token_cache.
+Auth: opaque Bearer token (odin.access_tokens) OR admin JWT.
 Protocol:
   Server → Client: {"type": "ready",      "run_id": "..."}
   Client → Server: {"content": "user goal text"}
@@ -16,10 +16,9 @@ import json
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
 import app.database as _db
+from app.services.auth_client import validate_jwt
 from app.services.orchestrator_service import run_orchestrator
 from app.services.token_cache import validate_bearer_token
 from app.utils.logger import logger
@@ -28,12 +27,25 @@ router = APIRouter()
 
 
 def _parse_bearer(websocket: WebSocket) -> str | None:
-    """Extract Bearer token from Authorization header."""
     auth = websocket.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
-    # Also check query param for clients that can't set headers
     return websocket.query_params.get("token")
+
+
+async def _resolve_auth(raw_token: str, db) -> dict | None:
+    """Try opaque access token first, then JWT (for admin playground use)."""
+    payload = await validate_bearer_token(raw_token, db)
+    if payload is not None:
+        return payload
+    # Fall back to JWT — allows admin users to use playground without access token
+    jwt_payload = await validate_jwt(raw_token)
+    if jwt_payload and jwt_payload.get("role") in ("admin", "super_admin"):
+        return {
+            "user_id": jwt_payload.get("user_id", 0),
+            "orchestrator_id": None,  # unrestricted
+        }
+    return None
 
 
 @router.websocket("/ws/orchestrate/{name}")
@@ -53,7 +65,7 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
         return
 
     async with _db.AsyncSessionLocal() as db:
-        token_payload = await validate_bearer_token(raw_token, db)
+        token_payload = await _resolve_auth(raw_token, db)
 
     if token_payload is None:
         await websocket.send_json({"type": "error", "message": "Invalid or disabled token"})

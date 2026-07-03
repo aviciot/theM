@@ -60,7 +60,7 @@ export default function RunsPage() {
                   <p style={{ fontSize: '10px', color: 'var(--tm-text-muted)', textTransform: 'uppercase' }}>Total runs</p>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <p style={{ fontSize: '18px', fontWeight: 700, color: 'var(--tm-text)' }}>${stats.total_cost_usd.toFixed(4)}</p>
+                  <p style={{ fontSize: '18px', fontWeight: 700, color: 'var(--tm-text)' }}>${Number(stats.total_cost_usd).toFixed(4)}</p>
                   <p style={{ fontSize: '10px', color: 'var(--tm-text-muted)', textTransform: 'uppercase' }}>Total cost</p>
                 </div>
               </div>
@@ -138,7 +138,7 @@ export default function RunsPage() {
                       </td>
                       <td style={{ padding: '12px 16px' }}>
                         <span style={{ fontSize: '13px', color: 'var(--tm-text-2)' }}>
-                          {run.cost_usd != null ? `$${run.cost_usd.toFixed(4)}` : '—'}
+                          {run.cost_usd != null ? `$${Number(run.cost_usd).toFixed(4)}` : '—'}
                         </span>
                       </td>
                     </tr>

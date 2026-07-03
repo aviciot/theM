@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import { odinApi, type OrchestratorFull } from '@/lib/api';
@@ -53,6 +54,7 @@ const INP: React.CSSProperties = {
 
 // ── Page ───────────────────────────────────────────────────────────────────
 export default function OrchestratorsPage() {
+  const router = useRouter();
   const [list, setList] = useState<OrchestratorFull[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -200,6 +202,9 @@ export default function OrchestratorsPage() {
                   <div style={{ fontSize: 13, color: 'var(--tm-text-muted)' }}>{o.rate_limit_rpm}</div>
                   <Badge on={o.enabled} />
                   <div style={{ display: 'flex', gap: 4 }}>
+                    <button onClick={() => router.push(`/admin/playground?orchestrator=${o.name}`)} title="Test in Playground" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#a78bfa', padding: 4 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>science</span>
+                    </button>
                     <button onClick={() => openEdit(o)} title="Edit" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--tm-text-muted)', padding: 4 }}>
                       <span className="material-symbols-outlined" style={{ fontSize: 18 }}>edit</span>
                     </button>

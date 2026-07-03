@@ -30,19 +30,25 @@ async def start_run(
     goal: str,
 ) -> uuid.UUID:
     """Insert a new run row (status=running). Returns run_id."""
-    run = Run(
-        orchestrator_id=orchestrator_id,
-        orchestrator_name=orchestrator_name,
-        user_id=user_id,
-        session_id=session_id,
-        goal=goal,
-        status="running",
-    )
-    db.add(run)
-    await db.commit()
-    await db.refresh(run)
-    logger.info("run started", run_id=str(run.id), orchestrator=orchestrator_name)
-    return run.id
+    try:
+        run = Run(
+            orchestrator_id=orchestrator_id,
+            orchestrator_name=orchestrator_name,
+            user_id=user_id,
+            session_id=session_id,
+            goal=goal,
+            status="running",
+        )
+        db.add(run)
+        await db.commit()
+        await db.refresh(run)
+        logger.info("run started", run_id=str(run.id), orchestrator=orchestrator_name)
+        return run.id
+    except Exception as exc:
+        logger.error("start_run failed — orchestrator may not exist in DB", orchestrator=orchestrator_name, error=str(exc))
+        await db.rollback()
+        # Return a dummy UUID so the run continues (won't persist steps/usage)
+        return uuid.uuid4()
 
 
 async def record_step(

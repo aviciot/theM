@@ -35,6 +35,22 @@ from app.utils.logger import logger
 
 _ORCH_PREFIX = "odin:orchestrators:"
 _ORCH_TTL = 600
+_DASH_RUN_PREFIX = "odin:dash:run:"
+_DASH_RUNS_CHANNEL = "odin:dash:runs"
+
+
+async def _publish_run_event(run_id: uuid.UUID, event: dict) -> None:
+    """Publish event to per-run channel and summary to global runs channel."""
+    if db_module.redis_client is None:
+        return
+    try:
+        data = json.dumps(event)
+        await db_module.redis_client.publish(f"{_DASH_RUN_PREFIX}{run_id}", data)
+        # Publish lightweight summary to global channel
+        summary = {"run_id": str(run_id), **{k: v for k, v in event.items() if k != "input"}}
+        await db_module.redis_client.publish(_DASH_RUNS_CHANNEL, json.dumps(summary))
+    except Exception as exc:
+        logger.warning("failed to publish run event", run_id=str(run_id), error=str(exc))
 
 
 # ------------------------------------------------------------------ #
@@ -297,12 +313,14 @@ async def run_orchestrator(
         goal=user_message,
     )
 
+    await _publish_run_event(run_id, {"type": "run_start", "orchestrator": orchestrator_name, "goal": user_message})
     yield _ws_ready(str(run_id))
 
     # Build provider
     try:
         provider = _build_provider(orch)
     except Exception as exc:
+        await _publish_run_event(run_id, {"type": "error", "message": str(exc)})
         yield _ws_error(f"LLM provider error: {exc}")
         await run_recorder.complete_run(db, run_id=run_id, status="failed", error=str(exc))
         return
@@ -324,6 +342,7 @@ async def run_orchestrator(
             iter_usage = TokenUsage()
             text_buffer = ""
 
+            await _publish_run_event(run_id, {"type": "iteration_start", "iteration": iteration})
             # Stream LLM call
             async for event in provider.stream_call(
                 system=orch.system_prompt,
@@ -359,6 +378,12 @@ async def run_orchestrator(
             # Record usage
             total_in += iter_usage.input_tokens
             total_out += iter_usage.output_tokens
+            await _publish_run_event(run_id, {
+                "type": "usage",
+                "iteration": iteration,
+                "input_tokens": iter_usage.input_tokens,
+                "output_tokens": iter_usage.output_tokens,
+            })
             await run_recorder.record_usage(
                 db,
                 run_id=run_id,
@@ -394,6 +419,7 @@ async def run_orchestrator(
             # Collect starts, run, collect results
             for tc in tool_calls_this_iter:
                 yield _ws_tool_start(tc.name, tc.input)
+                await _publish_run_event(run_id, {"type": "tool_start", "tool": tc.name, "input": tc.input, "iteration": iteration})
 
             tasks = [_run_one(tc) for tc in tool_calls_this_iter]
             results_pairs = await asyncio.gather(*tasks)
@@ -403,6 +429,7 @@ async def run_orchestrator(
                 slug = tc.name.removeprefix("agent__")
                 latency = 0  # approximate
                 yield _ws_tool_done(tc.name, latency)
+                await _publish_run_event(run_id, {"type": "tool_done", "tool": tc.name, "output": result, "iteration": iteration})
                 results.append(result)
 
             provider.append_tool_results(messages, tool_calls_this_iter, results)
@@ -431,6 +458,15 @@ async def run_orchestrator(
         total_tokens_out=total_out,
         total_cost_usd=total_cost,
     )
+
+    await _publish_run_event(run_id, {
+        "type": "run_end",
+        "status": run_status,
+        "iterations": iteration,
+        "total_tokens_in": total_in,
+        "total_tokens_out": total_out,
+        "error": run_error,
+    })
 
     if run_status == "completed":
         yield _ws_done(str(run_id), iteration)
