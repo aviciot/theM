@@ -5,9 +5,12 @@ auth_token is stored Fernet-encrypted; GET returns masked representation.
 """
 
 import re
+import time
 import uuid
 from typing import Any, Dict, List, Optional
 
+import httpx
+import websockets
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
@@ -219,6 +222,56 @@ async def update_agent(
     await invalidate_registry()
     logger.info("agent updated", agent_id=str(agent_id), slug=row.slug)
     return _row_to_out(row)
+
+
+@router.post("/{agent_id}/test")
+async def test_agent(agent_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """
+    Connectivity check:
+    - a2a: GET agent card URL (.well-known/agent-card.json), return name + skill count
+    - omni_ws: open WS connection, check it accepts, close immediately
+    """
+    row = await _get_or_404(db, agent_id)
+    token = decrypt_value(row.auth_token_encrypted) if row.auth_token_encrypted else ""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    t0 = time.monotonic()
+
+    try:
+        if row.transport == "a2a":
+            base = row.endpoint_url.rstrip("/")
+            card_url = f"{base}/.well-known/agent-card.json"
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(card_url, headers=headers)
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            if resp.status_code == 200:
+                card = resp.json()
+                return {
+                    "ok": True,
+                    "latency_ms": latency_ms,
+                    "detail": f"Agent card OK — {card.get('name', '?')} · {len(card.get('skills', []))} skills",
+                }
+            return {
+                "ok": False,
+                "latency_ms": latency_ms,
+                "detail": f"HTTP {resp.status_code}: {resp.text[:200]}",
+            }
+
+        elif row.transport == "omni_ws":
+            try:
+                async with websockets.connect(row.endpoint_url, additional_headers=headers, open_timeout=8):
+                    pass  # connection accepted — that's enough
+                latency_ms = int((time.monotonic() - t0) * 1000)
+                return {"ok": True, "latency_ms": latency_ms, "detail": "WebSocket handshake succeeded"}
+            except Exception as exc:
+                latency_ms = int((time.monotonic() - t0) * 1000)
+                return {"ok": False, "latency_ms": latency_ms, "detail": str(exc)}
+
+        else:
+            return {"ok": False, "latency_ms": 0, "detail": f"No test defined for transport '{row.transport}'"}
+
+    except Exception as exc:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        return {"ok": False, "latency_ms": latency_ms, "detail": str(exc)}
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
