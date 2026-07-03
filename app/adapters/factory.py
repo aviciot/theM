@@ -18,6 +18,10 @@ def get_adapter(agent) -> AgentAdapter:
             auth_token_encrypted=agent.auth_token_encrypted,
         )
     if transport == "a2a":
-        return A2aAdapter()
+        return A2aAdapter(
+            agent_slug=agent.slug,
+            endpoint_url=agent.endpoint_url,
+            auth_token_encrypted=agent.auth_token_encrypted,
+        )
 
     raise ValueError(f"Unknown agent transport: {transport!r}")

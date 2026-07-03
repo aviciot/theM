@@ -34,10 +34,25 @@ Connects to an Omni agentic gateway WebSocket endpoint.
 4. Decrypts `agent.auth_token_encrypted` via `crypto.decrypt_value()` at connect time
 5. Honours `agent.timeout_seconds` via `asyncio.wait_for()`
 
-## A2aAdapter (app/adapters/a2a_adapter.py) — STUB
+## A2aAdapter (app/adapters/a2a_adapter.py)
 
-Raises `NotImplementedError`. Do not create agents with `transport='a2a'` in production.
-A2A (Google Agent-to-Agent protocol) implementation is planned for a future phase.
+Calls an A2A v1.0 JSON-RPC 2.0 HTTP endpoint. Compatible with Omni's `/a2a/{gateway_name}/` router.
+
+**Protocol:**
+1. `POST {endpoint_url}` with JSON-RPC 2.0 `SendMessage` method
+2. Message body: `{"parts": [{"text": input["message"]}]}`
+3. Auth: `Authorization: Bearer <decrypted token>` header
+4. Omni returns a completed Task synchronously — result in `task.artifacts[0].parts[0].text`
+5. If task state is `WORKING`/`SUBMITTED`, polls via `GetTask` (up to 30s, 0.5s interval)
+6. Streams result word-by-word as `token` events, then emits `done`
+
+**Agent card discovery:** `GET {base_url}/a2a/{gateway_name}/.well-known/agent-card.json`
+Requires `Authorization` header — returns skills list, supported interfaces, security schemes.
+
+**To add an A2A agent in Odin:**
+- `transport`: `a2a`
+- `endpoint_url`: `http://<host>/a2a/<gateway_name>/`
+- `auth_token_encrypted`: bearer token encrypted via `crypto.encrypt_value()`
 
 ## Adding a New Transport
 
