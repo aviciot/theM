@@ -4,9 +4,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
 
 const NAV = [
-  { href: '/dashboard', icon: 'dashboard',         label: 'Command Center' },
-  { href: '/agents',   icon: 'smart_toy',           label: 'Agents' },
-  { href: '/runs',     icon: 'history',             label: 'Run History' },
+  { href: '/dashboard', icon: 'dashboard', label: 'Command Center' },
+  { href: '/runs',      icon: 'history',   label: 'Run History' },
 ];
 
 const ADMIN_NAV = [

@@ -18,6 +18,7 @@ const EMPTY_FORM = {
   llm_provider: '', llm_model: '', llm_api_key: '', llm_base_url: '',
   max_iterations: 10, max_parallel_tools: 4, rate_limit_rpm: 30,
   daily_budget_usd: '0', enabled: true,
+  allowed_agent_ids: [] as string[],
 };
 
 // ── Sub-components ─────────────────────────────────────────────────────────
@@ -56,6 +57,7 @@ const INP: React.CSSProperties = {
 export default function OrchestratorsPage() {
   const router = useRouter();
   const [list, setList] = useState<OrchestratorFull[]>([]);
+  const [allAgents, setAllAgents] = useState<import('@/lib/api').Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<OrchestratorFull | null>(null);
@@ -69,7 +71,10 @@ export default function OrchestratorsPage() {
     odinApi.orchestrators().then(setList).finally(() => setLoading(false));
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    odinApi.agents().then(setAllAgents);
+  }, []);
 
   function openCreate() {
     setEditing(null);
@@ -88,6 +93,7 @@ export default function OrchestratorsPage() {
       max_iterations: o.max_iterations, max_parallel_tools: o.max_parallel_tools,
       rate_limit_rpm: o.rate_limit_rpm, daily_budget_usd: o.daily_budget_usd,
       enabled: o.enabled,
+      allowed_agent_ids: o.allowed_agent_ids ?? [],
     });
     setFormError(''); setTestState({ loading: false });
     setShowForm(true);
@@ -295,6 +301,40 @@ export default function OrchestratorsPage() {
                         ? <span style={{ fontSize: 13, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({testState.latency}ms)</span>
                         : <span style={{ fontSize: 13, color: '#f87171' }}>✗ {testState.error}</span>
                     )}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Agents ────────────────────────────────────────────── */}
+              <div style={{ borderTop: '1px solid var(--tm-border)', paddingTop: 18, marginTop: 4 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm-accent)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 15 }}>smart_toy</span>
+                  Allowed Agents
+                </div>
+                {allAgents.length === 0 ? (
+                  <div style={{ fontSize: 13, color: 'var(--tm-text-muted)', fontStyle: 'italic' }}>No agents registered yet — add agents first</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {allAgents.map((a) => {
+                      const checked = form.allowed_agent_ids.includes(a.id);
+                      return (
+                        <label key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '8px 10px', borderRadius: 8, border: `1px solid ${checked ? 'var(--tm-accent)' : 'var(--tm-border)'}`, background: checked ? 'var(--tm-accent-bg)' : 'transparent' }}>
+                          <input type="checkbox" checked={checked} onChange={(e) => {
+                            const ids = e.target.checked
+                              ? [...form.allowed_agent_ids, a.id]
+                              : form.allowed_agent_ids.filter((id) => id !== a.id);
+                            f('allowed_agent_ids', ids);
+                          }} />
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tm-text)' }}>{a.display_name}</div>
+                            <div style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>
+                              <code style={{ background: 'var(--tm-surface-2)', padding: '1px 4px', borderRadius: 3 }}>{a.slug}</code>
+                              {' · '}{a.transport}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
                   </div>
                 )}
               </div>
