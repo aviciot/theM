@@ -79,22 +79,20 @@ except ImportError as exc:
     print(f"  [SKIP] factory tests — missing container deps ({exc})")
     print(f"         Run inside them-bridge container for full coverage.")
 
-# 5. A2aAdapter raises NotImplementedError
+# 5. A2aAdapter yields error event on connection failure (real impl, not a stub)
 async def _test_a2a():
     from app.adapters.a2a_adapter import A2aAdapter
-    adapter = A2aAdapter()
-    try:
-        async for _ in adapter.stream_invoke({}, timeout=5):
-            pass
-        return False
-    except NotImplementedError:
-        return True
+    adapter = A2aAdapter(agent_slug="test", endpoint_url="http://localhost:19999", auth_token_encrypted=None)
+    events = []
+    async for ev in adapter.stream_invoke({"message": "hi"}, timeout=3):
+        events.append(ev)
+    return len(events) > 0 and events[-1].type == "error"
 
 try:
     result = asyncio.run(_test_a2a())
-    check("A2aAdapter raises NotImplementedError", result)
+    check("A2aAdapter yields error event on unreachable endpoint", result)
 except Exception as exc:
-    check("A2aAdapter NotImplementedError", False, str(exc))
+    check("A2aAdapter error event", False, str(exc))
 
 # 6. AgentAdapter is abstract
 try:

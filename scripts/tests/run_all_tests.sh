@@ -18,7 +18,7 @@ run_test() {
 }
 
 echo "========================================"
-echo "  Odin Full Test Suite (Phases 0-7)"
+echo "  the-M Full Test Suite (Phases 0-7)"
 echo "========================================"
 
 # ── Phase 0-1: Infrastructure ─────────────────────────────────────────────────

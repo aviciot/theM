@@ -31,10 +31,10 @@ result=$(redis_cmd PING || echo "ERR")
 check "Redis PING" "$result" "PONG"
 
 # 2. Read/write/delete a canary key
-redis_cmd SET odin:test:canary "ok" EX 10 > /dev/null
-result=$(redis_cmd GET odin:test:canary || echo "ERR")
+redis_cmd SET them:test:canary "ok" EX 10 > /dev/null
+result=$(redis_cmd GET them:test:canary || echo "ERR")
 check "Redis DB $REDIS_DB read/write" "$result" "ok"
-redis_cmd DEL odin:test:canary > /dev/null
+redis_cmd DEL them:test:canary > /dev/null
 
 echo ""
 echo "Result: $PASS passed, $FAIL failed"

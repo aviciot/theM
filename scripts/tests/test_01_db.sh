@@ -6,8 +6,8 @@
 set -euo pipefail
 
 CONTAINER="${POSTGRES_CONTAINER:-them-postgres}"
-DB="${POSTGRES_DB:-odin}"
-USER="${POSTGRES_USER:-odin}"
+DB="${POSTGRES_DB:-them}"
+USER="${POSTGRES_USER:-them}"
 
 PASS=0
 FAIL=0
@@ -33,14 +33,14 @@ echo "=== test_01_db: Database & Schema ==="
 result=$(run_sql "SELECT 1" || echo "ERR")
 check "DB connectivity" "$result" "1"
 
-# 2. odin schema exists
-result=$(run_sql "SELECT count(*) FROM information_schema.schemata WHERE schema_name='odin'" || echo "ERR")
-check "odin schema exists" "$result" "1"
+# 2. them schema exists
+result=$(run_sql "SELECT count(*) FROM information_schema.schemata WHERE schema_name='them'" || echo "ERR")
+check "them schema exists" "$result" "1"
 
 # 3. Required tables
 for tbl in llm_providers config agents orchestrators access_tokens runs run_steps run_usage audit_logs; do
-    result=$(run_sql "SELECT count(*) FROM information_schema.tables WHERE table_schema='odin' AND table_name='$tbl'" || echo "ERR")
-    check "table odin.$tbl exists" "$result" "1"
+    result=$(run_sql "SELECT count(*) FROM information_schema.tables WHERE table_schema='them' AND table_name='$tbl'" || echo "ERR")
+    check "table them.$tbl exists" "$result" "1"
 done
 
 echo ""

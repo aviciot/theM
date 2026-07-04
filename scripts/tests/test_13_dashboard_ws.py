@@ -39,7 +39,7 @@ try:
     check("publish_run_step defined", "publish_run_step" in fns)
     check("publish_agents_changed defined", "publish_agents_changed" in fns)
     s = src("app/services/dashboard_broadcaster.py")
-    check("odin:dash: prefix used", "odin:dash:" in s)
+    check("them:dash: prefix used", "them:dash:" in s)
 except Exception as exc:
     check("dashboard_broadcaster", False, str(exc))
 
@@ -49,7 +49,7 @@ try:
     check("ws_dashboard route defined", "ws_dashboard" in s)
     check("/ws/dashboard path present", "/ws/dashboard" in s)
     check("subscribe message type handled", '"subscribe"' in s)
-    check("valid channels defined", "_VALID_CHANNELS" in s)
+    check("valid channels defined", "_STATIC_CHANNELS" in s or "_VALID_CHANNELS" in s)
     check("ping loop implemented", "_ping_loop" in s)
     check("JWT auth present", "validate_jwt" in s)
     check("WebSocketDisconnect handled", "WebSocketDisconnect" in s)
