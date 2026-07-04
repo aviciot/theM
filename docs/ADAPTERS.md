@@ -1,5 +1,5 @@
 # Agent Adapters
-# Last updated: 2026-06-28
+# Last updated: 2026-07-04
 
 ## AgentAdapter ABC (app/adapters/base.py)
 
@@ -36,22 +36,22 @@ Connects to an Omni agentic gateway WebSocket endpoint.
 
 ## A2aAdapter (app/adapters/a2a_adapter.py)
 
-Calls an A2A v1.0 JSON-RPC 2.0 HTTP endpoint. Compatible with Omni's `/a2a/{gateway_name}/` router.
+**Status: implemented.** Calls a generic A2A v1.0 JSON-RPC 2.0 HTTP endpoint.
 
 **Protocol:**
 1. `POST {endpoint_url}` with JSON-RPC 2.0 `SendMessage` method
 2. Message body: `{"parts": [{"text": input["message"]}]}`
 3. Auth: `Authorization: Bearer <decrypted token>` header
-4. Omni returns a completed Task synchronously — result in `task.artifacts[0].parts[0].text`
-5. If task state is `WORKING`/`SUBMITTED`, polls via `GetTask` (up to 30s, 0.5s interval)
-6. Streams result word-by-word as `token` events, then emits `done`
+4. If the returned task state is not yet terminal (`WORKING`, `SUBMITTED`, or any other non-terminal state), polls via `GetTask` — up to 30s (60 polls × 0.5s interval)
+5. Terminal states: `TASK_STATE_COMPLETED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, `TASK_STATE_REJECTED`
+6. On `TASK_STATE_COMPLETED`: streams result word-by-word as `token` events, then emits `done`
+7. On `TASK_STATE_FAILED` or `TASK_STATE_REJECTED`: emits `error` event
 
-**Agent card discovery:** `GET {base_url}/a2a/{gateway_name}/.well-known/agent-card.json`
-Requires `Authorization` header — returns skills list, supported interfaces, security schemes.
+**Limitation:** no native streaming — the full result is collected first, then re-streamed word-by-word as `token` events.
 
-**To add an A2A agent in Odin:**
+**To add an A2A agent in the-M:**
 - `transport`: `a2a`
-- `endpoint_url`: `http://<host>/a2a/<gateway_name>/`
+- `endpoint_url`: the A2A v1.0 endpoint URL (e.g. `http://<host>:<port>/`)
 - `auth_token_encrypted`: bearer token encrypted via `crypto.encrypt_value()`
 
 ## Adding a New Transport
@@ -59,6 +59,6 @@ Requires `Authorization` header — returns skills list, supported interfaces, s
 1. Create `app/adapters/{name}_adapter.py` implementing `AgentAdapter`
 2. Add `transport IN (...)` to the DB CHECK constraint in `db/001_schema.sql`
 3. Register in `app/adapters/factory.py` `get_adapter()` switch
-4. Add the transport name to `odin.agents.transport` CHECK constraint
+4. Add the transport name to `them.agents.transport` CHECK constraint
 5. Document the protocol here in this file
 6. Add a test in `tests/test_{name}_adapter.py`
