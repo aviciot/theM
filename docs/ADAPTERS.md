@@ -65,13 +65,14 @@ Connects to an Omni agentic gateway WebSocket endpoint.
 Synchronous A2A v1.0 JSON-RPC 2.0 over HTTP. Use for agents that complete quickly.
 
 **Protocol:**
-1. `POST {endpoint_url}` with JSON-RPC 2.0 `SendMessage`
-2. Message: `{"parts": [{"kind": "text", "text": input["message"]}]}`
-3. Auth: `Authorization: Bearer <decrypted token>`
-4. If task is not terminal: polls via `GetTask` up to 30s (60 × 0.5s)
-5. Terminal states: `TASK_STATE_COMPLETED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, `TASK_STATE_REJECTED`
-6. On completed: streams result word-by-word as `token` events, then `done`
-7. On failure: `error` event
+1. `POST {endpoint_url}` with JSON-RPC 2.0 `SendMessage` (method name is `"SendMessage"`, CamelCase)
+2. Message: `{"role": 1, "parts": [{"text": input["message"]}], "messageId": "<uuid>"}` — `role` is proto int `ROLE_USER=1`, Part has no `"kind"` key
+3. Headers: `A2A-Version: 1.0`, `Authorization: Bearer <decrypted token>`
+4. Config: `{"returnImmediately": True}` (not `blocking`)
+5. If task is not terminal: polls via `GetTask` up to 30s (60 × 0.5s)
+6. Terminal states: `TASK_STATE_COMPLETED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, `TASK_STATE_REJECTED` (SDK v1.1 proto enum names)
+7. On completed: streams result word-by-word as `token` events, then `done`
+8. On failure: `error` event
 
 **Passes** `contextId` in message when `context_id` is set (enables A2A context threading).
 

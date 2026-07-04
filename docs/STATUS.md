@@ -1,5 +1,5 @@
 # the-M Status
-# Last updated: 2026-07-04
+# Last updated: 2026-07-05
 
 ## Build Progress
 
@@ -83,10 +83,5 @@
 - **`vision-agent` unhealthy**: needs `GOOGLE_MAPS_API_KEY` and `FAL_API_KEY` set in `.env`. Not blocking anything else.
 - **Git hooks not wired**: test runner exists (`python scripts/tests/run_tests.py`) but no pre-push hook. Planned as GitHub Actions.
 - **Replica 2**: compose profile `replica`, not running by default. Enable with `--profile replica`.
-- **A2A test agents not seeded into live DB yet**: `db/002_seed.sql` has the rows but `them-postgres` was seeded before Phase 7. Re-run seed to add `a2a-echo`, `a2a-slow`, `a2a-stream` rows:
-  ```
-  docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
-  docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
-  ```
 - **DB reset trap**: if Postgres is wiped but Redis survives, orchestrator cache holds stale FK IDs → run INSERT fails. After any DB wipe: re-run DB init steps from CLAUDE.md, then recreate orchestrators via UI to refresh Redis cache.
 - **`them-frontend` shows unhealthy in `docker ps`**: false alarm — Docker healthcheck uses `curl -f -L` but Next.js dev mode takes >30s to compile first request. App works fine; healthcheck timing is aggressive.

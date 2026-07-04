@@ -23,7 +23,7 @@ Agentic loop (≤ max_iterations)
 Stream final answer to client
 ```
 
-Agents are transport-agnostic. Today: WebSocket (`omni_ws`), A2A (`a2a`). New transports: add an adapter.
+Agents are transport-agnostic. Today: WebSocket (`omni_ws`), A2A sync (`a2a`), A2A async (`a2a_async`). New transports: add an adapter.
 
 ---
 
@@ -152,6 +152,7 @@ Login: `admin` / `admin123` (pre-filled in dev mode)
 | `them-bridge` | Orchestrator API + WebSocket | **8001** |
 | `them-frontend` | Next.js dashboard | **3200** |
 | `mock-agent-*` | Mock WS agents for testing | internal |
+| `a2a-echo` / `a2a-slow` / `a2a-stream` | A2A v1.0 test agents (`--profile test-agents`) | internal |
 
 ---
 
@@ -200,7 +201,8 @@ odin/
 │   ├── adapters/               # Agent transport layer
 │   │   ├── base.py             # AgentAdapter ABC + AdapterEvent
 │   │   ├── omni_ws_adapter.py  # WebSocket transport
-│   │   ├── a2a_adapter.py      # A2A JSON-RPC transport
+│   │   ├── a2a_adapter.py      # A2A sync JSON-RPC transport
+│   │   ├── a2a_async_adapter.py # A2A async (submit → poll/SSE)
 │   │   └── factory.py          # Transport → adapter routing
 │   ├── routers/                # API endpoints
 │   │   ├── ws_orchestrator.py  # /ws/orchestrate/{name}
@@ -225,7 +227,10 @@ odin/
 │       ├── runs/               # Run history
 │       └── admin/              # Orchestrators, tokens, playground
 ├── agents/                     # Optional specialist agents
-│   └── vision_agent/
+│   ├── vision_agent/
+│   ├── a2a_echo/               # A2A v1.0 echo test agent (profile: test-agents)
+│   ├── a2a_slow/               # A2A v1.0 slow test agent (5s delay)
+│   └── a2a_stream/             # A2A v1.0 streaming test agent (word-by-word artifacts)
 ├── mock_agent/                 # Lightweight WS mock agents for testing
 ├── postgres/init/              # SQL auto-run on first Postgres boot
 ├── redis/config/               # Redis config (AOF, memory limits)
@@ -275,7 +280,7 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml --profile repli
 ## Testing
 
 ```bash
-# Full suite — cross-platform, 140 tests
+# Full suite — cross-platform, 61+ structural tests (test_16 adds A2A agent checks)
 python scripts/tests/run_tests.py
 
 # Sanity only (after docker compose up) — ~15s

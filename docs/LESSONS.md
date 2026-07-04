@@ -108,3 +108,71 @@
 **Root cause:** Docker Desktop on Windows does not add `docker` to WSL's PATH by default. The bash scripts used `docker exec` to run tests, which requires the host Docker CLI.
 **Fix:** Rewrote all tests as a single Python runner (`scripts/tests/run_tests.py`) using `subprocess.run(["docker", ...])`. Python on Windows has Docker CLI in PATH via Docker Desktop. Runner is cross-platform — same command on Windows PowerShell and Linux bash.
 **Watch for:** Never write test infrastructure that depends on bash + docker together. Python subprocess is the cross-platform safe choice. New tests go in `run_tests.py`, not new `.sh` files.
+
+---
+
+## 2026-07-05 — A2A SDK v1.1 broke AgentCard.url and added executor contract
+
+**Symptom:** A2A agent containers crashed at startup with `AttributeError: Protocol message AgentCard has no "url" field`.
+**Root cause:** SDK v1.1 removed `AgentCard.url`. The URL now lives in `card.supported_interfaces.add().url`.
+**Fix:** Replace `card.url = "http://..."` with:
+```python
+iface = card.supported_interfaces.add()
+iface.url = "http://..."
+```
+**Watch for:** Any agent built against SDK <1.1 will break on upgrade. Always check the AgentCard proto fields after an SDK upgrade.
+
+---
+
+## 2026-07-05 — A2A SDK v1.1 executor must enqueue Task object before TaskStatusUpdateEvent
+
+**Symptom:** SDK raised `INVALID_AGENT_RESPONSE`: "Agent should enqueue Task before TaskStatusUpdateEvent" after the executor called `enqueue_event(TaskStatusUpdateEvent(...))` first.
+**Root cause:** SDK v1.1 `DefaultRequestHandler` enforces ordering: the executor must enqueue a `Task` (with at minimum `id`, `context_id`, and `status.state=TASK_STATE_SUBMITTED`) before any `TaskStatusUpdateEvent`. The contract is documented in the `AgentExecutor.execute()` docstring.
+**Fix:** Add this block at the very start of every executor's `execute()` method:
+```python
+task = Task()
+task.id = context.task_id
+task.context_id = context.context_id
+task.status.state = TaskState.TASK_STATE_SUBMITTED
+await event_queue.enqueue_event(task)
+```
+**Watch for:** Every new `AgentExecutor` subclass needs this. Forgetting it gives a misleading "invalid response" error at the SDK handler level, not in your code.
+
+---
+
+## 2026-07-05 — A2A SDK v1.1 JSON-RPC requires sse-starlette at import time
+
+**Symptom:** A2A agent containers crashed with `ModuleNotFoundError: No module named 'sse_starlette'` even though `sse-starlette` was not listed in the agent's `requirements.txt`.
+**Root cause:** `a2a-sdk`'s `jsonrpc_dispatcher.py` does a top-level `from sse_starlette.sse import EventSourceResponse` — even if the SSE path is never called, the import happens at module load. Any app that imports from `a2a.server.routes` (which we do via `add_a2a_routes_to_fastapi`) transitively imports the dispatcher.
+**Fix:** Add `sse-starlette>=1.6.1` to every agent's `requirements.txt` that uses `a2a-sdk`.
+**Watch for:** `a2a-sdk` has hidden transitive dependencies not declared in its own pyproject. After any SDK upgrade, spin up containers and watch for import errors before running tests.
+
+---
+
+## 2026-07-05 — A2A v1.0 wire protocol: role is int, part has no "kind", method is "SendMessage"
+
+**Symptom:** Live test of `A2aAsyncAdapter` got three successive RPC errors when calling SDK v1.1 agents:
+  - `Invalid enum value user` (role field)
+  - `Message type has no field named kind` (part format)
+  - `Method not found (-32601)` (method name)
+  - `configuration has no field named blocking` (configuration field)
+  - `A2A version '0.3' is not supported` (missing version header)
+
+**Root cause:** Our adapter was written against an earlier spec. The A2A v1.0 proto enforces:
+  - `role` is an integer enum (`ROLE_USER=1`), not a string `"user"`
+  - `Part` uses oneof field names directly (`{"text": "..."}`) — no outer `"kind"` wrapper
+  - JSON-RPC method name is `"SendMessage"` (CamelCase), not `"message/send"`
+  - Non-blocking submit uses `configuration.returnImmediately: true`, not `blocking: false`
+  - `A2A-Version: 1.0` header required — missing header triggers version validation failure (defaults to `0.3`)
+  - Terminal state strings from SDK v1.1 are `TASK_STATE_COMPLETED` etc. (proto enum names), not lowercase `"completed"`
+
+**Fix:** Updated `app/adapters/a2a_async_adapter.py`:
+  - `_ROLE_USER = 1`, used directly as integer in message body
+  - Part: `{"text": message}` (no `"kind"` key)
+  - Method: `"SendMessage"`
+  - Config: `{"returnImmediately": True}`
+  - Headers: added `"A2A-Version": "1.0"`
+  - `_TERMINAL` / `_INPUT_REQUIRED` sets include both `TASK_STATE_*` names and lowercase variants
+  - `submit()` extracts `result.task.id` (SDK wraps result in `SendMessageResponse`)
+
+**Watch for:** If the A2A spec or SDK changes the proto field names, state enum names, or method names — all three must stay in sync: agent executors, platform adapter, and `_TERMINAL`/`_INPUT_REQUIRED` sets. Verify with a live `stream_invoke` call against a real container, not just structural tests.
