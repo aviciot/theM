@@ -13,14 +13,11 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import add_a2a_routes_to_fastapi, create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
-    AgentCapabilities,
     AgentCard,
-    AgentSkill,
     Artifact,
-    Part,
+    Task,
     TaskArtifactUpdateEvent,
     TaskState,
-    TaskStatus,
     TaskStatusUpdateEvent,
 )
 
@@ -32,6 +29,13 @@ class EchoExecutor(AgentExecutor):
             for part in context.message.parts:
                 if part.HasField("text"):
                     user_text += part.text
+
+        # SDK v1.1: must enqueue Task object first
+        task = Task()
+        task.id = context.task_id
+        task.context_id = context.context_id
+        task.status.state = TaskState.TASK_STATE_SUBMITTED
+        await event_queue.enqueue_event(task)
 
         # Transition to working
         working_event = TaskStatusUpdateEvent()
@@ -73,8 +77,9 @@ def make_agent_card() -> AgentCard:
     card = AgentCard()
     card.name = "a2a-echo"
     card.description = "Echoes the input message verbatim. A2A v1.0 test agent."
-    card.url = f"http://a2a-echo:{os.getenv('PORT', '9200')}"
     card.version = "1.0.0"
+    iface = card.supported_interfaces.add()
+    iface.url = f"http://a2a-echo:{os.getenv('PORT', '9200')}"
     card.capabilities.streaming = False
     card.capabilities.push_notifications = False
     skill = card.skills.add()

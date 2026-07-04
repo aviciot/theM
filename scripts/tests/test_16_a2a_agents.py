@@ -79,9 +79,9 @@ except Exception as exc:
 # 5. seed SQL has a2a agents
 try:
     src = (ROOT / "db/002_seed.sql").read_text(encoding="utf-8")
-    check("seed: a2a-echo seeded", "'a2a-echo'" in src)
-    check("seed: a2a-slow seeded", "'a2a-slow'" in src)
-    check("seed: a2a-stream seeded", "'a2a-stream'" in src)
+    check("seed: a2a_echo seeded", "'a2a_echo'" in src)
+    check("seed: a2a_slow seeded", "'a2a_slow'" in src)
+    check("seed: a2a_stream seeded", "'a2a_stream'" in src)
     check("seed: transport=a2a_async used", "a2a_async" in src)
     check("seed: supports_streaming seeded", "supports_streaming" in src)
 except Exception as exc:

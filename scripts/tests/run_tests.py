@@ -761,9 +761,9 @@ def test_16_a2a_agents():
     # db/002_seed.sql has a2a agent seeds
     try:
         seed_src = (ROOT / "db/002_seed.sql").read_text(encoding="utf-8")
-        check("seed: a2a-echo row", "'a2a-echo'" in seed_src)
-        check("seed: a2a-slow row", "'a2a-slow'" in seed_src)
-        check("seed: a2a-stream row", "'a2a-stream'" in seed_src)
+        check("seed: a2a_echo row", "'a2a_echo'" in seed_src)
+        check("seed: a2a_slow row", "'a2a_slow'" in seed_src)
+        check("seed: a2a_stream row", "'a2a_stream'" in seed_src)
         check("seed: transport a2a_async", "a2a_async" in seed_src)
         check("seed: supports_streaming column", "supports_streaming" in seed_src)
     except Exception as exc:

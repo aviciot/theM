@@ -17,6 +17,7 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
     AgentCard,
     Artifact,
+    Task,
     TaskArtifactUpdateEvent,
     TaskState,
     TaskStatusUpdateEvent,
@@ -28,6 +29,13 @@ WORD_DELAY_S = float(os.getenv("WORD_DELAY_S", "0.1"))
 
 class StreamExecutor(AgentExecutor):
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        # SDK v1.1: must enqueue Task object first
+        task = Task()
+        task.id = context.task_id
+        task.context_id = context.context_id
+        task.status.state = TaskState.TASK_STATE_SUBMITTED
+        await event_queue.enqueue_event(task)
+
         working_event = TaskStatusUpdateEvent()
         working_event.task_id = context.task_id
         working_event.context_id = context.context_id
@@ -74,8 +82,9 @@ def make_agent_card() -> AgentCard:
     card = AgentCard()
     card.name = "a2a-stream"
     card.description = "Streams a response word by word via A2A artifact chunks."
-    card.url = f"http://a2a-stream:{os.getenv('PORT', '9202')}"
     card.version = "1.0.0"
+    iface = card.supported_interfaces.add()
+    iface.url = f"http://a2a-stream:{os.getenv('PORT', '9202')}"
     card.capabilities.streaming = True
     card.capabilities.push_notifications = False
     skill = card.skills.add()

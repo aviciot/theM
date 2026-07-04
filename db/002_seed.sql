@@ -58,7 +58,7 @@ ON CONFLICT (slug) DO UPDATE SET
 INSERT INTO them.agents (slug, display_name, description, transport, endpoint_url, enabled, supports_streaming)
 VALUES
     (
-        'a2a-echo',
+        'a2a_echo',
         'A2A Echo',
         'Echoes the input message verbatim. A2A v1.0 test agent for basic task lifecycle validation.',
         'a2a_async',
@@ -67,7 +67,7 @@ VALUES
         false
     ),
     (
-        'a2a-slow',
+        'a2a_slow',
         'A2A Slow',
         'Waits 5 seconds before completing. Tests deadline enforcement and async delegation.',
         'a2a_async',
@@ -76,7 +76,7 @@ VALUES
         false
     ),
     (
-        'a2a-stream',
+        'a2a_stream',
         'A2A Stream',
         'Streams a response word by word via artifact chunks. Tests SSE streaming and artifact assembly.',
         'a2a_async',

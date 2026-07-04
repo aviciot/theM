@@ -20,8 +20,15 @@ from app.adapters.base import AdapterEvent, AgentAdapter
 from app.utils.crypto import decrypt_value
 from app.utils.logger import logger
 
-_TERMINAL = {"completed", "failed", "canceled", "rejected"}
-_INPUT_REQUIRED = "input-required"
+# A2A SDK v1.1 returns proto enum names (TASK_STATE_*) in JSON responses.
+# Also accept lowercase variants for forward-compatibility.
+_TERMINAL = {
+    "TASK_STATE_COMPLETED", "TASK_STATE_FAILED",
+    "TASK_STATE_CANCELED", "TASK_STATE_REJECTED",
+    "completed", "failed", "canceled", "rejected",
+}
+_INPUT_REQUIRED = {"TASK_STATE_INPUT_REQUIRED", "input-required"}
+_ROLE_USER = 1  # lf.a2a.v1.Role.ROLE_USER
 
 
 class A2aAsyncAdapter(AgentAdapter):
@@ -48,21 +55,26 @@ class A2aAsyncAdapter(AgentAdapter):
 
     def _headers(self) -> dict:
         token = decrypt_value(self._auth_token_encrypted) if self._auth_token_encrypted else ""
+        h: dict = {"Content-Type": "application/json", "A2A-Version": "1.0"}
         if token:
-            return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        return {"Content-Type": "application/json"}
+            h["Authorization"] = f"Bearer {token}"
+        return h
 
     def _send_message_body(self, message: str) -> dict:
+        # role=1 is ROLE_USER in the A2A v1.0 proto enum
         msg: dict = {
-            "role": "user",
-            "parts": [{"kind": "text", "text": message}],
+            "role": _ROLE_USER,
+            "parts": [{"text": message}],
             "messageId": str(uuid4()),
         }
         if self._context_id:
             msg["contextId"] = self._context_id
-        params: dict = {"message": msg}
+        params: dict = {
+            "message": msg,
+            "configuration": {"returnImmediately": True},
+        }
         if self._push_url:
-            params["pushNotificationConfig"] = {"url": self._push_url}
+            params["configuration"]["taskPushNotificationConfig"] = {"url": self._push_url}
         return {
             "jsonrpc": "2.0",
             "id": str(uuid4()),
@@ -93,10 +105,12 @@ class A2aAsyncAdapter(AgentAdapter):
             msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
             raise RuntimeError(f"A2A SendMessage RPC error: {msg}")
 
-        task = body.get("result", {})
+        result = body.get("result", {})
+        # SDK v1.1: result is SendMessageResponse with a "task" or "message" field
+        task = result.get("task") or result
         task_id = task.get("id")
         if not task_id:
-            raise RuntimeError("A2A SendMessage returned no task id")
+            raise RuntimeError(f"A2A SendMessage returned no task id. result={result}")
         return task_id
 
     async def _poll_events(
@@ -128,7 +142,7 @@ class A2aAsyncAdapter(AgentAdapter):
 
             if state and state != last_state:
                 last_state = state
-                if state == _INPUT_REQUIRED:
+                if state in _INPUT_REQUIRED:
                     yield AdapterEvent(type="status", state=state, input_required=True)
                 else:
                     yield AdapterEvent(type="status", state=state)
@@ -140,7 +154,7 @@ class A2aAsyncAdapter(AgentAdapter):
                     yield AdapterEvent(type="artifact", artifact=artifact)
 
             if state in _TERMINAL:
-                if state == "completed":
+                if state in ("TASK_STATE_COMPLETED", "completed"):
                     result_text = _extract_text(task)
                     yield AdapterEvent(type="done", result=result_text)
                 else:
@@ -194,13 +208,13 @@ class A2aAsyncAdapter(AgentAdapter):
                     if etype in ("task_status_update", "status"):
                         state = event.get("status", {}).get("state") or event.get("state", "")
                         if state:
-                            if state == _INPUT_REQUIRED:
+                            if state in _INPUT_REQUIRED:
                                 yield AdapterEvent(type="status", state=state, input_required=True)
                             else:
                                 yield AdapterEvent(type="status", state=state)
                             if state in _TERMINAL:
                                 task = event.get("task", event)
-                                if state == "completed":
+                                if state in ("TASK_STATE_COMPLETED", "completed"):
                                     yield AdapterEvent(type="done", result=_extract_text(task))
                                 else:
                                     err = _extract_text(task) or f"A2A task ended in state: {state}"
