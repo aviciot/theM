@@ -6,8 +6,9 @@ import { useAuthStore } from '@/stores/authStore';
 export default function LoginPage() {
   const router = useRouter();
   const { login, fetchUser, isLoading, error, clearError } = useAuthStore();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const isDev = process.env.NODE_ENV === 'development';
+  const [email, setEmail] = useState(isDev ? 'admin' : '');
+  const [password, setPassword] = useState(isDev ? 'admin123' : '');
   const [showPw, setShowPw] = useState(false);
 
   useEffect(() => {
@@ -141,7 +142,7 @@ export default function LoginPage() {
 
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-slate-300" htmlFor="email">Email address</label>
+                <label className="block text-sm font-medium text-slate-300" htmlFor="email">Username or email</label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <svg className="h-5 w-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -149,8 +150,8 @@ export default function LoginPage() {
                     </svg>
                   </div>
                   <input
-                    id="email" type="email" required autoComplete="email"
-                    placeholder="admin@them.local"
+                    id="email" type="text" required autoComplete="username"
+                    placeholder="admin or admin@them.local"
                     value={email} onChange={(e) => setEmail(e.target.value)}
                     className="brand-input"
                   />
