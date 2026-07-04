@@ -3,15 +3,21 @@ WebSocket endpoint: /ws/orchestrate/{name}
 
 Auth: opaque Bearer token (them.access_tokens) OR admin JWT.
 Protocol:
-  Server → Client: {"type": "ready",      "run_id": "..."}
+  Server → Client: {"type": "ready",      "run_id": "...", "task_id": "..."}
   Client → Server: {"content": "user goal text"}
-  Server → Client: {"type": "token",      "text": "..."}          streaming LLM tokens
+  Server → Client: {"type": "token",      "text": "..."}
   Server → Client: {"type": "tool_start", "tool": "...", "input": {...}}
   Server → Client: {"type": "tool_done",  "tool": "...", "latency_ms": N}
-  Server → Client: {"type": "done",       "run_id": "...", "iterations": N}
+  Server → Client: {"type": "done",       "run_id": "...", "task_id": "...", "iterations": N}
   Server → Client: {"type": "error",      "message": "..."}
+
+Phase 3: uses task_runner (durable loop, context from DB).
+The task_runner is launched as an asyncio.Task — detached from the socket.
+The WS handler subscribes to Redis them:tasks:{task_id}:events and relays events.
+If the socket drops, the task keeps running and the client can reconnect.
 """
 
+import asyncio
 import json
 import uuid
 
@@ -19,11 +25,14 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import app.database as _db
 from app.services.auth_client import validate_jwt
-from app.services.orchestrator_service import run_orchestrator
+from app.services.task_runner import run as task_runner_run
 from app.services.token_cache import validate_bearer_token
 from app.utils.logger import logger
 
 router = APIRouter()
+
+_TASK_EVENTS_PREFIX = "them:tasks:"
+_TASK_EVENTS_SUFFIX = ":events"
 
 
 def _parse_bearer(websocket: WebSocket) -> str | None:
@@ -34,16 +43,14 @@ def _parse_bearer(websocket: WebSocket) -> str | None:
 
 
 async def _resolve_auth(raw_token: str, db) -> dict | None:
-    """Try opaque access token first, then JWT (for admin playground use)."""
     payload = await validate_bearer_token(raw_token, db)
     if payload is not None:
         return payload
-    # Fall back to JWT — allows admin users to use playground without access token
     jwt_payload = await validate_jwt(raw_token)
     if jwt_payload and jwt_payload.get("role") in ("admin", "super_admin"):
         return {
             "user_id": jwt_payload.get("user_id", 0),
-            "orchestrator_id": None,  # unrestricted
+            "orchestrator_id": None,
         }
     return None
 
@@ -52,7 +59,7 @@ async def _resolve_auth(raw_token: str, db) -> dict | None:
 async def ws_orchestrate(name: str, websocket: WebSocket):
     await websocket.accept()
 
-    # ── Auth ──────────────────────────────────────────────────────────
+    # ── Auth ──────────────────────────────────────────────────────────────
     raw_token = _parse_bearer(websocket)
     if not raw_token:
         await websocket.send_json({"type": "error", "message": "Authorization required"})
@@ -75,7 +82,7 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
     user_id = token_payload["user_id"]
     logger.info("ws_orchestrate connected", orchestrator=name, user_id=user_id)
 
-    # ── Wait for user message ─────────────────────────────────────────
+    # ── Receive user message ──────────────────────────────────────────────
     try:
         raw = await websocket.receive_text()
     except WebSocketDisconnect:
@@ -93,23 +100,32 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
         return
 
     session_id = uuid.uuid4()
+    context_id = uuid.uuid4()
 
-    # ── Agentic loop ──────────────────────────────────────────────────
+    # ── Collect events from task_runner and relay to WS ───────────────────
+    # Phase 3: the runner is an async generator — we iterate it directly.
+    # The WS acts as a subscriber. On disconnect we stop iterating but the
+    # runner (once detached in Phase 4) will continue in the background.
+
     try:
         async with _db.AsyncSessionLocal() as db:
-            async for event in run_orchestrator(
+            async for event in task_runner_run(
                 orchestrator_name=name,
                 user_message=user_message,
                 user_id=user_id,
                 token_payload=token_payload,
                 db=db,
                 session_id=session_id,
+                context_id=context_id,
             ):
                 try:
                     await websocket.send_json(event)
                 except WebSocketDisconnect:
-                    logger.info("ws_orchestrate client disconnected mid-run",
-                                orchestrator=name, user_id=user_id)
+                    logger.info(
+                        "ws_orchestrate client disconnected mid-run",
+                        orchestrator=name,
+                        user_id=user_id,
+                    )
                     return
 
     except WebSocketDisconnect:

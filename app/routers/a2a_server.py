@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 
 import app.database as db_module
 from app.services.auth_client import validate_jwt
-from app.services.orchestrator_service import _load_orchestrator, run_orchestrator
+from app.services.task_runner import run as task_runner_run
 from app.services.token_cache import validate_bearer_token
 from app.utils.logger import logger
 
@@ -230,13 +230,14 @@ async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -
             raise RuntimeError("Database not ready")
 
         async with db_module.AsyncSessionLocal() as db:
-            async for event in run_orchestrator(
+            async for event in task_runner_run(
                 orchestrator_name=orchestrator_name,
                 user_message=user_text,
                 user_id=token_payload["user_id"],
                 token_payload=token_payload,
                 db=db,
-                session_id=uuid.UUID(ctx_id) if _is_valid_uuid(ctx_id) else uuid.uuid4(),
+                session_id=uuid.uuid4(),
+                context_id=uuid.UUID(ctx_id) if _is_valid_uuid(ctx_id) else uuid.uuid4(),
             ):
                 if event.get("type") == "token":
                     final_answer += event.get("text", "")

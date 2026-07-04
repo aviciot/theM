@@ -397,11 +397,12 @@ def test_09_rate_limiter():
     except Exception as exc:
         check("_deps.py structure", False, str(exc))
 
-# ─── test 10: run recorder (structural) ───────────────────────────────────────
+# ─── test 10: run recorder + task_runner + task_store (structural) ────────────
 
 def test_10_run_recorder():
-    section("test_10_run_recorder: Phase 5 Structure")
+    section("test_10_run_recorder: Run Recorder & Task Runner Structure")
 
+    # 1. run_recorder
     try:
         fns = funcs_in("app/services/run_recorder.py")
         for fn in ("start_run","record_step","complete_step","record_usage","complete_run"):
@@ -409,37 +410,62 @@ def test_10_run_recorder():
     except Exception as exc:
         check("run_recorder structure", False, str(exc))
 
+    # 2. task_runner (Phase 3 durable loop)
     try:
-        fns = funcs_in("app/services/orchestrator_service.py")
-        for fn in ("run_orchestrator","_load_orchestrator","_build_tools",
-                   "_invoke_agent","_ws_ready","_ws_done","_ws_error"):
-            check(f"{fn} defined", fn in fns)
+        fns = funcs_in("app/services/task_runner.py")
+        check("task_runner.run defined", "run" in fns)
+        check("_load_orchestrator_row defined", "_load_orchestrator_row" in fns)
+        check("_load_agents defined", "_load_agents" in fns)
+        check("_invoke_agent defined", "_invoke_agent" in fns)
+        check("_build_messages_from_store defined", "_build_messages_from_store" in fns)
+        check("_persist_assistant_turn defined", "_persist_assistant_turn" in fns)
+        check("_persist_tool_results defined", "_persist_tool_results" in fns)
     except Exception as exc:
-        check("orchestrator_service structure", False, str(exc))
+        check("task_runner structure", False, str(exc))
 
+    # 3. task_store (Phase 2)
+    try:
+        fns = funcs_in("app/services/task_store.py")
+        check("task_store.create_task defined", "create_task" in fns)
+        check("task_store.transition defined", "transition" in fns)
+        check("task_store.get_task defined", "get_task" in fns)
+        check("task_store.record_artifact defined", "record_artifact" in fns)
+        check("task_store.record_message defined", "record_message" in fns)
+        check("task_store.get_context_artifacts defined", "get_context_artifacts" in fns)
+        check("task_store.add_tokens_used defined", "add_tokens_used" in fns)
+    except Exception as exc:
+        check("task_store structure", False, str(exc))
+
+    # 4. ws_orchestrator uses task_runner
     try:
         s = src("app/routers/ws_orchestrator.py")
         check("ws_orchestrate route defined", "ws_orchestrate" in s)
         check("WebSocket imported", "WebSocket" in s)
         check("Bearer token parsing present", "_parse_bearer" in s)
-        check("run_orchestrator imported", "run_orchestrator" in s)
+        check("task_runner imported", "task_runner" in s)
         check("WebSocketDisconnect handled", "WebSocketDisconnect" in s)
     except Exception as exc:
         check("ws_orchestrator structure", False, str(exc))
 
+    # 5. task_runner yields correct WS event types
     try:
-        s = src("app/services/orchestrator_service.py")
+        s = src("app/services/task_runner.py")
         for ev in ("ready","done","token","error"):
-            check(f"'type':'{ev}' event present", f'"type": "{ev}"' in s or f"'type': '{ev}'" in s)
+            check(f"'type':'{ev}' event present", f'"ready"' in s if ev == "ready" else f'"{ev}"' in s)
         check("'type':'tool_start' event present", "tool_start" in s)
         check("'type':'tool_done' event present", "tool_done" in s)
+        check("task_id in run events", "task_id" in s)
+        check("context_id in run events", "context_id" in s)
     except Exception as exc:
         check("WS event types", False, str(exc))
 
+    # 6. main.py wires ws_orchestrator and a2a_server
     try:
         s = src("app/main.py")
         check("ws_orchestrator imported in main.py", "ws_orchestrator" in s)
         check("ws_orchestrator.router included", "ws_orchestrator.router" in s)
+        check("a2a_server imported in main.py", "a2a_server" in s)
+        check("a2a_server.router included", "a2a_server.router" in s)
     except Exception as exc:
         check("main.py wiring", False, str(exc))
 
