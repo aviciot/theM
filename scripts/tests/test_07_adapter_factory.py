@@ -1,6 +1,7 @@
 #!/usr/bin/env python3.12
 """
 test_07_adapter_factory.py — unit tests for adapter factory + base contract.
+Phase 8.1: only a2a_async transport remains.
 Usage: python scripts/tests/run_tests.py 07
 No containers required — pure Python.
 """
@@ -29,8 +30,8 @@ def check(desc: str, ok: bool, detail: str = ""):
 def make_agent(transport: str, **kwargs) -> MagicMock:
     agent = MagicMock()
     agent.transport = transport
-    agent.slug = kwargs.get("slug", "test-agent")
-    agent.endpoint_url = kwargs.get("endpoint_url", "http://localhost:9999/a2a")
+    agent.slug = kwargs.get("slug", "test_agent")
+    agent.endpoint_url = kwargs.get("endpoint_url", "http://localhost:9999/")
     agent.auth_token_encrypted = kwargs.get("auth_token_encrypted", None)
     agent.supports_streaming = kwargs.get("supports_streaming", False)
     return agent
@@ -38,7 +39,7 @@ def make_agent(transport: str, **kwargs) -> MagicMock:
 
 print("=== test_07_adapter_factory: Adapter Factory & Contract ===")
 
-# 1. AdapterEvent — existing types
+# 1. AdapterEvent — core types
 try:
     from app.adapters.base import AdapterEvent, AgentAdapter
     e = AdapterEvent(type="token", text="hello")
@@ -52,63 +53,50 @@ try:
 except Exception as exc:
     check("AdapterEvent import", False, str(exc))
 
-# 2. AdapterEvent — Phase 4 new types
+# 2. AdapterEvent — A2A event types
 try:
     from app.adapters.base import AdapterEvent
     e4 = AdapterEvent(type="task_created", remote_task_id="abc-123")
     check("AdapterEvent(type='task_created') has remote_task_id", e4.remote_task_id == "abc-123")
 
-    e5 = AdapterEvent(type="status", state="working")
-    check("AdapterEvent(type='status') has state", e5.state == "working")
+    e5 = AdapterEvent(type="status", state="TASK_STATE_WORKING")
+    check("AdapterEvent(type='status') has state", e5.state == "TASK_STATE_WORKING")
 
-    e6 = AdapterEvent(type="artifact", artifact={"artifactId": "x", "parts": [{"kind": "text", "text": "hi"}]})
+    e6 = AdapterEvent(type="artifact", artifact={"artifactId": "x", "parts": [{"text": "hi"}]})
     check("AdapterEvent(type='artifact') has artifact dict", isinstance(e6.artifact, dict))
 
-    e7 = AdapterEvent(type="status", state="input-required", input_required=True)
+    e7 = AdapterEvent(type="status", state="TASK_STATE_INPUT_REQUIRED", input_required=True)
     check("AdapterEvent input_required flag", e7.input_required is True)
 except Exception as exc:
-    check("AdapterEvent Phase 4 types", False, str(exc))
+    check("AdapterEvent A2A types", False, str(exc))
 
-# 3. Factory — all three transports
+# 3. Factory — only a2a_async survives (Phase 8.1)
 try:
     from app.adapters.factory import get_adapter
-    from app.adapters.omni_ws_adapter import OmniWsAdapter
-    from app.adapters.a2a_adapter import A2aAdapter
     from app.adapters.a2a_async_adapter import A2aAsyncAdapter
-
-    check("get_adapter('omni_ws') returns OmniWsAdapter",
-          isinstance(get_adapter(make_agent("omni_ws", endpoint_url="ws://localhost:9999/ws")), OmniWsAdapter))
-
-    check("get_adapter('a2a') returns A2aAdapter",
-          isinstance(get_adapter(make_agent("a2a")), A2aAdapter))
 
     check("get_adapter('a2a_async') returns A2aAsyncAdapter",
           isinstance(get_adapter(make_agent("a2a_async")), A2aAsyncAdapter))
 
-    raised = False
-    try:
-        get_adapter(make_agent("ftp"))
-    except ValueError:
-        raised = True
-    check("get_adapter(unknown) raises ValueError", raised)
+    check("get_adapter('a2a_async') with streaming flag",
+          isinstance(get_adapter(make_agent("a2a_async", supports_streaming=True)), A2aAsyncAdapter))
+
+    for dead_transport in ("omni_ws", "a2a", "ftp", "grpc"):
+        raised = False
+        try:
+            get_adapter(make_agent(dead_transport))
+        except ValueError:
+            raised = True
+        check(f"get_adapter('{dead_transport}') raises ValueError", raised)
 
 except ImportError as exc:
-    print(f"  [SKIP] factory tests — missing container deps ({exc})")
+    print(f"  [SKIP] factory tests — missing deps ({exc})")
 
-# 4. A2aAdapter yields error event on connection failure
-async def _test_a2a():
-    from app.adapters.a2a_adapter import A2aAdapter
-    adapter = A2aAdapter(agent_slug="test", endpoint_url="http://localhost:19999", auth_token_encrypted=None)
-    events = []
-    async for ev in adapter.stream_invoke({"message": "hi"}, timeout=3):
-        events.append(ev)
-    return len(events) > 0 and events[-1].type == "error"
-
-try:
-    result = asyncio.run(_test_a2a())
-    check("A2aAdapter yields error event on unreachable endpoint", result)
-except Exception as exc:
-    check("A2aAdapter error event", False, str(exc))
+# 4. Legacy adapter files are deleted
+check("omni_ws_adapter.py deleted",
+      not os.path.exists(os.path.join(os.path.dirname(__file__), "../../app/adapters/omni_ws_adapter.py")))
+check("a2a_adapter.py deleted",
+      not os.path.exists(os.path.join(os.path.dirname(__file__), "../../app/adapters/a2a_adapter.py")))
 
 # 5. A2aAsyncAdapter yields error event on connection failure
 async def _test_a2a_async():

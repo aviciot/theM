@@ -50,7 +50,7 @@ class Agent(Base):
     slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    transport: Mapped[str] = mapped_column(Text, nullable=False, default="omni_ws")
+    transport: Mapped[str] = mapped_column(Text, nullable=False, default="a2a_async")
     endpoint_url: Mapped[str] = mapped_column(Text, nullable=False)
     auth_token_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     input_schema: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)

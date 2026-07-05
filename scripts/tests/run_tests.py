@@ -272,15 +272,14 @@ def test_07_adapter_factory():
     except Exception as exc:
         check("AdapterEvent Phase 4 types", False, str(exc))
 
-    # Factory — all three transports
+    # Factory — only a2a_async (Phase 8.1)
     try:
+        import os as _os
         from app.adapters.factory import get_adapter
-        from app.adapters.omni_ws_adapter import OmniWsAdapter
-        from app.adapters.a2a_adapter import A2aAdapter
         from app.adapters.a2a_async_adapter import A2aAsyncAdapter
         from unittest.mock import MagicMock
 
-        def make(transport, url="http://localhost:9999/a2a"):
+        def make(transport, url="http://localhost:9999/"):
             a = MagicMock()
             a.transport = transport
             a.slug = "t"
@@ -289,36 +288,22 @@ def test_07_adapter_factory():
             a.supports_streaming = False
             return a
 
-        check("get_adapter('omni_ws') returns OmniWsAdapter",
-              isinstance(get_adapter(make("omni_ws", "ws://localhost:9999/ws")), OmniWsAdapter))
-        check("get_adapter('a2a') returns A2aAdapter",
-              isinstance(get_adapter(make("a2a")), A2aAdapter))
         check("get_adapter('a2a_async') returns A2aAsyncAdapter",
               isinstance(get_adapter(make("a2a_async")), A2aAsyncAdapter))
 
-        raised = False
-        try: get_adapter(make("ftp"))
-        except ValueError: raised = True
-        check("get_adapter(unknown) raises ValueError", raised)
+        for dead in ("omni_ws", "a2a", "ftp"):
+            raised = False
+            try: get_adapter(make(dead))
+            except ValueError: raised = True
+            check(f"get_adapter('{dead}') raises ValueError", raised)
+
+        check("omni_ws_adapter.py deleted",
+              not _os.path.exists(_os.path.join(_os.path.dirname(__file__), "../../app/adapters/omni_ws_adapter.py")))
+        check("a2a_adapter.py deleted",
+              not _os.path.exists(_os.path.join(_os.path.dirname(__file__), "../../app/adapters/a2a_adapter.py")))
 
     except ImportError as exc:
-        skip(f"factory tests — missing container deps: {exc}")
-
-    # A2aAdapter error on unreachable
-    async def _test_a2a():
-        from app.adapters.a2a_adapter import A2aAdapter
-        adapter = A2aAdapter(agent_slug="test", endpoint_url="http://localhost:19999",
-                             auth_token_encrypted=None)
-        events = []
-        async for ev in adapter.stream_invoke({"message": "hi"}, timeout=3):
-            events.append(ev)
-        return len(events) > 0 and events[-1].type == "error"
-
-    try:
-        result = asyncio.run(_test_a2a())
-        check("A2aAdapter yields error event on unreachable endpoint", result)
-    except Exception as exc:
-        check("A2aAdapter error event", False, str(exc))
+        skip(f"factory tests — missing deps: {exc}")
 
     # A2aAsyncAdapter error on unreachable
     async def _test_a2a_async():

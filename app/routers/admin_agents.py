@@ -10,7 +10,6 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import httpx
-import websockets
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
@@ -24,7 +23,7 @@ from app.utils.logger import logger
 
 router = APIRouter(prefix="/admin/agents", tags=["admin-agents"])
 
-VALID_TRANSPORTS = {"omni_ws", "a2a"}
+VALID_TRANSPORTS = {"a2a_async"}
 
 
 # ------------------------------------------------------------------ #
@@ -38,7 +37,7 @@ class AgentCreate(BaseModel):
     slug: str = Field(..., description="Unique slug — becomes agent__<slug> tool name. Pattern: [a-z0-9_], max 48 chars.")
     display_name: str
     description: str = Field(..., description="Used as the LLM tool description")
-    transport: str = Field("omni_ws", description="Transport type: omni_ws | a2a")
+    transport: str = Field("a2a_async", description="Transport type: a2a_async")
     endpoint_url: str
     auth_token: Optional[str] = Field(None, description="Plaintext — stored encrypted")
     input_schema: Dict[str, Any] = Field(default_factory=dict)

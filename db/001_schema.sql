@@ -206,10 +206,11 @@ ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS agent_card_url TEXT;
 ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS supports_streaming BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS supports_push BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Extend transport check to include a2a_async
+-- Phase 8.1: collapse to a2a_async only (migrate rows first, then tighten)
+-- Note: 003_phase8.sql handles the live migration. This reflects final desired state.
 ALTER TABLE them.agents DROP CONSTRAINT IF EXISTS agents_transport_check;
 ALTER TABLE them.agents ADD CONSTRAINT agents_transport_check
-    CHECK (transport IN ('omni_ws', 'a2a', 'a2a_async'));
+    CHECK (transport IN ('a2a_async'));
 
 -- Voice transcription
 ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS voice_enabled BOOLEAN NOT NULL DEFAULT FALSE;
