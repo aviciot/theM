@@ -60,6 +60,8 @@ class Agent(Base):
     tags: Mapped[List[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
     agent_card: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     agent_card_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    card_fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    skills: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     supports_streaming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     supports_push: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

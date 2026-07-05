@@ -37,7 +37,7 @@ STATUS=$(dcurl -o /dev/null -w "%{http_code}" "$BASE")
 check "GET /admin/agents returns 200" "$STATUS" "200"
 
 # 2. Create agent
-BODY='{"slug":"test_smoke_agent","display_name":"Smoke Test Agent","description":"Temp agent created by test_05","transport":"omni_ws","endpoint_url":"ws://localhost:9999/ws","auth_token":"test-token-abc123","timeout_seconds":60,"max_concurrency":2,"tags":["test","smoke"]}'
+BODY='{"slug":"test_smoke_agent","display_name":"Smoke Test Agent","description":"Temp agent created by test_05","transport":"a2a_async","endpoint_url":"http://localhost:9999/","auth_token":"test-token-abc123","timeout_seconds":60,"max_concurrency":2,"tags":["test","smoke"]}'
 
 RESPONSE=$(dcurl -X POST "$BASE" -H "Content-Type: application/json" -d "$BODY")
 AGENT_ID=$(echo "$RESPONSE" | py_field id)

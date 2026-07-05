@@ -7,6 +7,7 @@ auth_token is stored Fernet-encrypted; GET returns masked representation.
 import re
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -45,6 +46,11 @@ class AgentCreate(BaseModel):
     max_concurrency: int = 4
     enabled: bool = True
     tags: List[str] = Field(default_factory=list)
+    agent_card: Optional[Dict[str, Any]] = None
+    agent_card_url: Optional[str] = None
+    skills: List[Dict[str, Any]] = Field(default_factory=list)
+    supports_streaming: bool = False
+    supports_push: bool = False
 
     @field_validator('slug')
     @classmethod
@@ -65,6 +71,11 @@ class AgentUpdate(BaseModel):
     max_concurrency: Optional[int] = None
     enabled: Optional[bool] = None
     tags: Optional[List[str]] = None
+    agent_card: Optional[Dict[str, Any]] = None
+    agent_card_url: Optional[str] = None
+    skills: Optional[List[Dict[str, Any]]] = None
+    supports_streaming: Optional[bool] = None
+    supports_push: Optional[bool] = None
 
 
 class AgentOut(BaseModel):
@@ -81,9 +92,33 @@ class AgentOut(BaseModel):
     max_concurrency: int
     enabled: bool
     tags: List[str]
+    agent_card: Optional[Dict[str, Any]] = None
+    agent_card_url: Optional[str] = None
+    skills: List[Dict[str, Any]] = Field(default_factory=list)
+    supports_streaming: bool = False
+    supports_push: bool = False
+    card_fetched_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class DiscoverRequest(BaseModel):
+    endpoint_url: str
+    auth_token: Optional[str] = None
+
+
+class DiscoverResult(BaseModel):
+    ok: bool
+    detail: str = ""
+    suggested_slug: str = ""
+    display_name: str = ""
+    description: str = ""
+    skills: List[Dict[str, Any]] = Field(default_factory=list)
+    supports_streaming: bool = False
+    supports_push: bool = False
+    agent_card: Optional[Dict[str, Any]] = None
+    agent_card_url: str = ""
 
 
 # ------------------------------------------------------------------ #
@@ -118,6 +153,12 @@ def _row_to_out(row: Agent) -> AgentOut:
         max_concurrency=row.max_concurrency,
         enabled=row.enabled,
         tags=list(row.tags or []),
+        agent_card=row.agent_card,
+        agent_card_url=row.agent_card_url,
+        skills=list(row.skills or []),
+        supports_streaming=row.supports_streaming,
+        supports_push=row.supports_push,
+        card_fetched_at=getattr(row, "card_fetched_at", None),
     )
 
 
@@ -172,6 +213,12 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
         max_concurrency=body.max_concurrency,
         enabled=body.enabled,
         tags=body.tags,
+        agent_card=body.agent_card,
+        agent_card_url=body.agent_card_url,
+        skills=body.skills,
+        supports_streaming=body.supports_streaming,
+        supports_push=body.supports_push,
+        card_fetched_at=datetime.now(timezone.utc) if body.agent_card else None,
     )
     db.add(row)
     await db.commit()
@@ -215,6 +262,17 @@ async def update_agent(
         row.enabled = body.enabled
     if body.tags is not None:
         row.tags = body.tags
+    if body.agent_card is not None:
+        row.agent_card = body.agent_card
+        row.card_fetched_at = datetime.now(timezone.utc)
+    if body.agent_card_url is not None:
+        row.agent_card_url = body.agent_card_url
+    if body.skills is not None:
+        row.skills = body.skills
+    if body.supports_streaming is not None:
+        row.supports_streaming = body.supports_streaming
+    if body.supports_push is not None:
+        row.supports_push = body.supports_push
 
     await db.commit()
     await db.refresh(row)
@@ -236,41 +294,100 @@ async def test_agent(agent_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     t0 = time.monotonic()
 
     try:
-        if row.transport in ("a2a", "a2a_async"):
-            base = row.endpoint_url.rstrip("/")
-            card_url = f"{base}/.well-known/agent-card.json"
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(card_url, headers={**headers, "A2A-Version": "1.0"})
-            latency_ms = int((time.monotonic() - t0) * 1000)
-            if resp.status_code == 200:
-                card = resp.json()
-                return {
-                    "ok": True,
-                    "latency_ms": latency_ms,
-                    "detail": f"Agent card OK — {card.get('name', '?')} · {len(card.get('skills', []))} skills",
-                }
+        base = row.endpoint_url.rstrip("/")
+        card_url = f"{base}/.well-known/agent-card.json"
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(card_url, headers={**headers, "A2A-Version": "1.0"})
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        if resp.status_code == 200:
+            card = resp.json()
             return {
-                "ok": False,
+                "ok": True,
                 "latency_ms": latency_ms,
-                "detail": f"HTTP {resp.status_code}: {resp.text[:200]}",
+                "detail": f"Agent card OK — {card.get('name', '?')} · {len(card.get('skills', []))} skills",
             }
-
-        elif row.transport == "omni_ws":
-            try:
-                async with websockets.connect(row.endpoint_url, additional_headers=headers, open_timeout=8):
-                    pass  # connection accepted — that's enough
-                latency_ms = int((time.monotonic() - t0) * 1000)
-                return {"ok": True, "latency_ms": latency_ms, "detail": "WebSocket handshake succeeded"}
-            except Exception as exc:
-                latency_ms = int((time.monotonic() - t0) * 1000)
-                return {"ok": False, "latency_ms": latency_ms, "detail": str(exc)}
-
-        else:
-            return {"ok": False, "latency_ms": 0, "detail": f"No test defined for transport '{row.transport}'"}
+        return {
+            "ok": False,
+            "latency_ms": latency_ms,
+            "detail": f"HTTP {resp.status_code}: {resp.text[:200]}",
+        }
 
     except Exception as exc:
         latency_ms = int((time.monotonic() - t0) * 1000)
         return {"ok": False, "latency_ms": latency_ms, "detail": str(exc)}
+
+
+@router.post("/discover", response_model=DiscoverResult)
+async def discover_agent(body: DiscoverRequest) -> DiscoverResult:
+    """
+    Fetch /.well-known/agent-card.json from endpoint_url and return
+    suggested form values. Does NOT create or modify any DB row.
+    """
+    base = body.endpoint_url.rstrip("/")
+    card_url = f"{base}/.well-known/agent-card.json"
+    headers: Dict[str, str] = {"A2A-Version": "1.0"}
+    if body.auth_token:
+        headers["Authorization"] = f"Bearer {body.auth_token}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(card_url, headers=headers)
+    except Exception as exc:
+        return DiscoverResult(ok=False, detail=f"Connection failed: {exc}")
+
+    if resp.status_code != 200:
+        return DiscoverResult(ok=False, detail=f"HTTP {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        card = resp.json()
+    except Exception:
+        return DiscoverResult(ok=False, detail="Response is not valid JSON")
+
+    # Build suggested slug from card name
+    raw_name = card.get("name", "") or ""
+    suggested_slug = re.sub(r"[^a-z0-9]+", "_", raw_name.lower().strip()).strip("_")[:48] or "agent"
+
+    # Parse skills (A2A SDK v1.1 shape)
+    raw_skills = card.get("skills", []) or []
+    skills: List[Dict[str, Any]] = []
+    for s in raw_skills:
+        if isinstance(s, dict):
+            skills.append({
+                "id": s.get("id", ""),
+                "name": s.get("name", ""),
+                "description": s.get("description", ""),
+                "tags": s.get("tags", []),
+            })
+
+    # Build LLM tool description: card description + one line per skill
+    description_parts = []
+    if card.get("description"):
+        description_parts.append(card["description"].strip())
+    for s in skills:
+        if s.get("name"):
+            line = s["name"]
+            if s.get("description"):
+                line += f": {s['description']}"
+            description_parts.append(line)
+    description = "\n".join(description_parts) or raw_name
+
+    # Detect capabilities
+    caps = card.get("capabilities", {}) or {}
+    supports_streaming = bool(caps.get("streaming", False))
+    supports_push = bool(caps.get("pushNotifications", False))
+
+    logger.info("discover: card fetched", endpoint=base, slug=suggested_slug, skills=len(skills))
+    return DiscoverResult(
+        ok=True,
+        suggested_slug=suggested_slug,
+        display_name=card.get("name", raw_name),
+        description=description,
+        skills=skills,
+        supports_streaming=supports_streaming,
+        supports_push=supports_push,
+        agent_card=card,
+        agent_card_url=card_url,
+    )
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)

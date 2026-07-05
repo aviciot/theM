@@ -26,6 +26,26 @@ export const api = {
 
 // ── Typed API calls ──────────────────────────────────────────────────────────
 
+export interface AgentSkill {
+  id: string;
+  name: string;
+  description?: string;
+  tags?: string[];
+}
+
+export interface DiscoverResult {
+  ok: boolean;
+  detail: string;
+  suggested_slug: string;
+  display_name: string;
+  description: string;
+  skills: AgentSkill[];
+  supports_streaming: boolean;
+  supports_push: boolean;
+  agent_card: Record<string, unknown> | null;
+  agent_card_url: string;
+}
+
 export interface Agent {
   id: string;
   slug: string;
@@ -36,6 +56,16 @@ export interface Agent {
   enabled: boolean;
   max_concurrency: number;
   timeout_seconds: number;
+  auth_token_set?: boolean;
+  auth_token_masked?: string | null;
+  input_schema?: Record<string, unknown>;
+  tags?: string[];
+  skills?: AgentSkill[];
+  supports_streaming?: boolean;
+  supports_push?: boolean;
+  agent_card?: Record<string, unknown> | null;
+  agent_card_url?: string | null;
+  card_fetched_at?: string | null;
   created_at: string;
 }
 
@@ -161,6 +191,7 @@ export const themApi = {
   updateAgent: (id: string, body: unknown) => api.patch<Agent>(`/admin/agents/${id}`, body),
   deleteAgent: (id: string) => api.delete<void>(`/admin/agents/${id}`),
   testAgent: (id: string) => api.post<{ ok: boolean; latency_ms: number; detail: string }>(`/admin/agents/${id}/test`, {}),
+  discoverAgent: (body: { endpoint_url: string; auth_token?: string }) => api.post<DiscoverResult>('/admin/agents/discover', body),
   orchestrators: () => api.get<OrchestratorFull[]>('/admin/orchestrators'),
   createOrchestrator: (body: unknown) => api.post<OrchestratorFull>('/admin/orchestrators', body),
   updateOrchestrator: (id: string, body: unknown) => api.patch<OrchestratorFull>(`/admin/orchestrators/${id}`, body),

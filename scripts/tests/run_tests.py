@@ -168,8 +168,8 @@ def test_05_agents_api():
 
     body = json.dumps({
         "slug": "test_smoke_agent", "display_name": "Smoke Test Agent",
-        "description": "Temp agent for test_05", "transport": "omni_ws",
-        "endpoint_url": "ws://localhost:9999/ws", "auth_token": "test-token-abc123",
+        "description": "Temp agent for test_05", "transport": "a2a_async",
+        "endpoint_url": "http://localhost:9999/", "auth_token": "test-token-abc123",
         "timeout_seconds": 60, "max_concurrency": 2, "tags": ["test", "smoke"],
     })
     d = http_json(C, BASE, P, method="POST", body=body)
@@ -609,8 +609,8 @@ def test_14_e2e_orchestrate():
     # 2. Create agent + orchestrator
     agent_body = json.dumps({
         "slug": "e2e_echo_agent", "display_name": "E2E Echo Agent",
-        "description": "Echoes back the input for testing", "transport": "omni_ws",
-        "endpoint_url": "ws://localhost:9999/nonexistent",
+        "description": "Echoes back the input for testing", "transport": "a2a_async",
+        "endpoint_url": "http://localhost:9999/",
         "timeout_seconds": 5, "max_concurrency": 1,
     })
     d = http_json(C, "/api/v1/admin/agents", P, method="POST",

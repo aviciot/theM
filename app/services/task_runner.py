@@ -123,6 +123,25 @@ async def _load_agents(orch, db: AsyncSession) -> list[Agent]:
     return list(result.scalars().all())
 
 
+def _compose_tool_description(agent: Agent) -> str:
+    """
+    Build LLM tool description from agent card skills when available,
+    falling back to agent.description.
+    """
+    parts = []
+    if agent.description:
+        parts.append(agent.description.strip())
+    skills = getattr(agent, "skills", None) or []
+    for s in skills:
+        if not isinstance(s, dict):
+            continue
+        name = s.get("name", "")
+        desc = s.get("description", "")
+        if name:
+            parts.append(f"{name}: {desc}" if desc else name)
+    return "\n".join(parts) if parts else agent.description
+
+
 def _build_provider(orch) -> AnthropicProvider:
     from app.config import settings
     from app.utils.crypto import decrypt_value
@@ -384,7 +403,7 @@ async def run(
     tools: list[NeutralTool] = [
         {
             "name": f"agent__{a.slug}",
-            "description": a.description,
+            "description": _compose_tool_description(a),
             "schema": a.input_schema or {
                 "type": "object",
                 "properties": {"message": {"type": "string"}},

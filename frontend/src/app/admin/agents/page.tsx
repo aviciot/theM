@@ -2,20 +2,23 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Agent } from '@/lib/api';
-
-const TRANSPORTS = ['omni_ws', 'a2a'];
+import { themApi, type Agent, type AgentSkill } from '@/lib/api';
 
 const EMPTY_FORM = {
   slug: '',
   display_name: '',
   description: '',
-  transport: 'omni_ws',
+  transport: 'a2a_async',
   endpoint_url: '',
   auth_token: '',
   max_concurrency: 3,
   timeout_seconds: 60,
   enabled: true,
+  skills: [] as AgentSkill[],
+  supports_streaming: false,
+  supports_push: false,
+  agent_card: null as Record<string, unknown> | null,
+  agent_card_url: '',
 };
 
 type FormState = typeof EMPTY_FORM;
@@ -30,7 +33,7 @@ function Modal({
     }} onClick={onClose}>
       <div style={{
         background: 'var(--tm-surface)', border: '1px solid var(--tm-border)',
-        borderRadius: '16px', padding: '32px', width: '520px', maxHeight: '90vh',
+        borderRadius: '16px', padding: '32px', width: '560px', maxHeight: '90vh',
         overflowY: 'auto',
       }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -70,6 +73,8 @@ export default function AdminAgentsPage() {
   const [error, setError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency_ms: number; detail: string } | 'testing'>>({});
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverError, setDiscoverError] = useState('');
 
   const reload = () => themApi.agents().then(setAgents).finally(() => setLoading(false));
 
@@ -79,6 +84,7 @@ export default function AdminAgentsPage() {
     setEditing(null);
     setForm(EMPTY_FORM);
     setError('');
+    setDiscoverError('');
     setShowModal(true);
   }
 
@@ -94,9 +100,49 @@ export default function AdminAgentsPage() {
       max_concurrency: agent.max_concurrency,
       timeout_seconds: agent.timeout_seconds,
       enabled: agent.enabled,
+      skills: agent.skills || [],
+      supports_streaming: agent.supports_streaming || false,
+      supports_push: agent.supports_push || false,
+      agent_card: agent.agent_card || null,
+      agent_card_url: agent.agent_card_url || '',
     });
     setError('');
+    setDiscoverError('');
     setShowModal(true);
+  }
+
+  async function handleDiscover() {
+    if (!form.endpoint_url.trim()) {
+      setDiscoverError('Enter an endpoint URL first');
+      return;
+    }
+    setDiscovering(true);
+    setDiscoverError('');
+    try {
+      const result = await themApi.discoverAgent({
+        endpoint_url: form.endpoint_url.trim(),
+        auth_token: form.auth_token || undefined,
+      });
+      if (!result.ok) {
+        setDiscoverError(result.detail || 'Discovery failed');
+        return;
+      }
+      setForm((f) => ({
+        ...f,
+        display_name: result.display_name || f.display_name,
+        slug: editing ? f.slug : (result.suggested_slug || f.slug),
+        description: result.description || f.description,
+        skills: result.skills,
+        supports_streaming: result.supports_streaming,
+        supports_push: result.supports_push,
+        agent_card: result.agent_card,
+        agent_card_url: result.agent_card_url,
+      }));
+    } catch (e: unknown) {
+      setDiscoverError(e instanceof Error ? e.message : 'Discovery failed');
+    } finally {
+      setDiscovering(false);
+    }
   }
 
   async function handleSave() {
@@ -106,7 +152,7 @@ export default function AdminAgentsPage() {
       const body: Record<string, unknown> = { ...form };
       if (!body.auth_token) delete body.auth_token;
       if (editing) {
-        delete body.slug; // slug is immutable after creation
+        delete body.slug;
         await themApi.updateAgent(editing.id, body);
       } else {
         await themApi.createAgent(body);
@@ -157,7 +203,7 @@ export default function AdminAgentsPage() {
           }}>
             <div>
               <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--tm-accent)' }}>Agents</h2>
-              <p style={{ fontSize: '11px', color: 'var(--tm-text-muted)' }}>Manage agent transport connectors</p>
+              <p style={{ fontSize: '11px', color: 'var(--tm-text-muted)' }}>Manage A2A agent connectors</p>
             </div>
             <button onClick={openCreate} style={{
               display: 'flex', alignItems: 'center', gap: '6px',
@@ -174,7 +220,7 @@ export default function AdminAgentsPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--tm-border)' }}>
-                    {['Name', 'Slug', 'Transport', 'Endpoint', 'Status', ''].map((h) => (
+                    {['Name', 'Slug', 'Skills', 'Endpoint', 'Status', ''].map((h) => (
                       <th key={h} style={{
                         padding: '10px 16px', textAlign: 'left',
                         fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)',
@@ -208,7 +254,7 @@ export default function AdminAgentsPage() {
                           </div>
                           <div>
                             <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--tm-text)' }}>{agent.display_name}</div>
-                            {agent.description && <div style={{ fontSize: '11px', color: 'var(--tm-text-muted)', marginTop: '1px' }}>{agent.description.slice(0, 60)}{agent.description.length > 60 ? '…' : ''}</div>}
+                            {agent.description && <div style={{ fontSize: '11px', color: 'var(--tm-text-muted)', marginTop: '1px' }}>{agent.description.split('\n')[0].slice(0, 60)}{agent.description.split('\n')[0].length > 60 ? '…' : ''}</div>}
                           </div>
                         </div>
                       </td>
@@ -218,12 +264,13 @@ export default function AdminAgentsPage() {
                         </code>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
-                        <span style={{
-                          fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px',
-                          background: agent.transport === 'a2a' ? 'rgba(124,58,237,.12)' : 'var(--tm-accent-bg)',
-                          color: agent.transport === 'a2a' ? '#7c3aed' : 'var(--tm-accent)',
-                          textTransform: 'uppercase',
-                        }}>{agent.transport}</span>
+                        {agent.skills && agent.skills.length > 0 ? (
+                          <span style={{ fontSize: '11px', color: 'var(--tm-text-muted)' }} title={agent.skills.map((s) => s.name).join(', ')}>
+                            {agent.skills.length} skill{agent.skills.length !== 1 ? 's' : ''}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '11px', color: 'var(--tm-text-subtle)' }}>—</span>
+                        )}
                       </td>
                       <td style={{ padding: '12px 16px', maxWidth: '200px' }}>
                         <span style={{ fontSize: '12px', color: 'var(--tm-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
@@ -283,33 +330,82 @@ export default function AdminAgentsPage() {
         {/* Create / Edit Modal */}
         {showModal && (
           <Modal title={editing ? `Edit — ${editing.display_name}` : 'New Agent'} onClose={() => setShowModal(false)}>
+            {/* Endpoint URL + Discover — always first so Discover can populate everything else */}
+            <Field label="Endpoint URL">
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  style={{ ...inputStyle, flex: 1 }}
+                  value={form.endpoint_url}
+                  onChange={(e) => set('endpoint_url', e.target.value)}
+                  placeholder="http://host:port"
+                />
+                <button
+                  onClick={handleDiscover}
+                  disabled={discovering}
+                  style={{
+                    padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--tm-border)',
+                    background: 'var(--tm-surface-2)', cursor: discovering ? 'not-allowed' : 'pointer',
+                    fontSize: '12px', fontWeight: 600, color: 'var(--tm-accent)',
+                    whiteSpace: 'nowrap', opacity: discovering ? 0.6 : 1, flexShrink: 0,
+                  }}
+                >
+                  {discovering ? 'Discovering…' : 'Discover'}
+                </button>
+              </div>
+              {discoverError && (
+                <div style={{ fontSize: '11px', color: '#dc2626', marginTop: '4px' }}>{discoverError}</div>
+              )}
+              {form.agent_card_url && !discoverError && (
+                <div style={{ fontSize: '11px', color: '#005b3d', marginTop: '4px' }}>
+                  Card fetched — {form.skills.length} skill{form.skills.length !== 1 ? 's' : ''} discovered
+                  {form.supports_streaming && ' · streaming'}
+                  {form.supports_push && ' · push'}
+                </div>
+              )}
+            </Field>
+
             <Field label="Display Name">
-              <input style={inputStyle} value={form.display_name} onChange={(e) => set('display_name', e.target.value)} placeholder="Python Helper" />
+              <input style={inputStyle} value={form.display_name} onChange={(e) => set('display_name', e.target.value)} placeholder="Echo Agent" />
             </Field>
 
             {!editing && (
               <Field label="Slug">
-                <input style={inputStyle} value={form.slug} onChange={(e) => set('slug', e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))} placeholder="pyhelper" />
+                <input
+                  style={inputStyle}
+                  value={form.slug}
+                  onChange={(e) => set('slug', e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))}
+                  placeholder="echo_agent"
+                />
                 <div style={{ fontSize: '11px', color: 'var(--tm-text-muted)', marginTop: '4px' }}>lowercase letters, numbers, underscores only</div>
               </Field>
             )}
 
             <Field label="Description (shown to LLM)">
-              <textarea style={{ ...inputStyle, minHeight: '72px', resize: 'vertical', fontFamily: 'inherit' }}
-                value={form.description} onChange={(e) => set('description', e.target.value)}
-                placeholder="Executes Python code and answers programming questions" />
+              <textarea
+                style={{ ...inputStyle, minHeight: '72px', resize: 'vertical', fontFamily: 'inherit' }}
+                value={form.description}
+                onChange={(e) => set('description', e.target.value)}
+                placeholder="Echoes back any message it receives"
+              />
             </Field>
 
-            <Field label="Transport">
-              <select style={inputStyle} value={form.transport} onChange={(e) => set('transport', e.target.value)}>
-                {TRANSPORTS.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </Field>
-
-            <Field label="Endpoint URL">
-              <input style={inputStyle} value={form.endpoint_url} onChange={(e) => set('endpoint_url', e.target.value)}
-                placeholder={form.transport === 'a2a' ? 'http://host/a2a/gateway_name/' : 'ws://host:port'} />
-            </Field>
+            {/* Skills — read-only when discovered */}
+            {form.skills.length > 0 && (
+              <Field label={`Skills (${form.skills.length})`}>
+                <div style={{
+                  border: '1px solid var(--tm-border)', borderRadius: '8px',
+                  background: 'var(--tm-surface-2)', padding: '8px 12px',
+                  maxHeight: '120px', overflowY: 'auto',
+                }}>
+                  {form.skills.map((s, i) => (
+                    <div key={i} style={{ fontSize: '12px', color: 'var(--tm-text)', marginBottom: i < form.skills.length - 1 ? '6px' : 0 }}>
+                      <span style={{ fontWeight: 600 }}>{s.name}</span>
+                      {s.description && <span style={{ color: 'var(--tm-text-muted)' }}> — {s.description}</span>}
+                    </div>
+                  ))}
+                </div>
+              </Field>
+            )}
 
             <Field label={editing ? 'Auth Token (leave blank to keep existing)' : 'Auth Token (optional)'}>
               <input style={inputStyle} type="password" value={form.auth_token} onChange={(e) => set('auth_token', e.target.value)}

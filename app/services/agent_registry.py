@@ -40,6 +40,9 @@ def _agent_to_dict(agent: Agent) -> dict:
         "max_concurrency": agent.max_concurrency,
         "enabled": agent.enabled,
         "tags": list(agent.tags or []),
+        "skills": list(agent.skills or []),
+        "supports_streaming": agent.supports_streaming,
+        "supports_push": agent.supports_push,
     }
 
 
