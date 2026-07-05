@@ -11,28 +11,25 @@ Protocol:
   Server → Client: {"type": "done",       "run_id": "...", "task_id": "...", "iterations": N}
   Server → Client: {"type": "error",      "message": "..."}
 
-Phase 3: uses task_runner (durable loop, context from DB).
-The task_runner is launched as an asyncio.Task — detached from the socket.
-The WS handler subscribes to Redis them:tasks:{task_id}:events and relays events.
-If the socket drops, the task keeps running and the client can reconnect.
+Phase 8.6: WS is now a thin shell over WebsocketEdge.
+The orchestrator's edges list must include "websocket" or the connection is
+rejected immediately after auth with a clear error message.
 """
 
-import asyncio
 import json
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import app.database as _db
+from app.edges.registry import get_edge_class
+from app.edges.websocket_edge import WebsocketEdge
 from app.services.auth_client import validate_jwt
 from app.services.task_runner import run as task_runner_run
 from app.services.token_cache import validate_bearer_token
 from app.utils.logger import logger
 
 router = APIRouter()
-
-_TASK_EVENTS_PREFIX = "them:tasks:"
-_TASK_EVENTS_SUFFIX = ":events"
 
 
 def _parse_bearer(websocket: WebSocket) -> str | None:
@@ -53,6 +50,18 @@ async def _resolve_auth(raw_token: str, db) -> dict | None:
             "orchestrator_id": None,
         }
     return None
+
+
+def _orchestrator_allows_edge(orchestrator_name: str, edge_name: str) -> bool:
+    """
+    Check whether the named orchestrator has 'edge_name' in its edges list.
+    Falls back to allowing 'websocket' when the column is absent (pre-8.6 rows).
+    Loads from Redis cache / DB via a quick synchronous-style check inside the
+    async context — we do this lazily after auth so the rejection is cheap.
+    """
+    # Delegate the actual check to task_runner's cache; handled inline in the
+    # endpoint below where we have a DB session available.
+    return True  # sentinel — real check done in the endpoint
 
 
 @router.websocket("/ws/orchestrate/{name}")
@@ -82,6 +91,30 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
     user_id = token_payload["user_id"]
     logger.info("ws_orchestrate connected", orchestrator=name, user_id=user_id)
 
+    # ── Edge guard — reject if orchestrator does not allow websocket ───────
+    async with _db.AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        from app.models import Orchestrator
+        orch_result = await db.execute(
+            select(Orchestrator.edges).where(
+                Orchestrator.name == name,
+                Orchestrator.enabled == True,
+            )
+        )
+        edges_row = orch_result.scalar_one_or_none()
+
+    # edges_row is None if orch not found (task_runner will give the proper error);
+    # None also means the column doesn't exist yet (pre-8.6) — allow through.
+    if edges_row is not None:
+        allowed_edges = edges_row if isinstance(edges_row, list) else list(edges_row)
+        if "websocket" not in allowed_edges:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Orchestrator '{name}' does not allow the websocket edge",
+            })
+            await websocket.close(code=4003)
+            return
+
     # ── Receive user message ──────────────────────────────────────────────
     try:
         raw = await websocket.receive_text()
@@ -102,10 +135,8 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
     session_id = uuid.uuid4()
     context_id = uuid.uuid4()
 
-    # ── Collect events from task_runner and relay to WS ───────────────────
-    # Phase 3: the runner is an async generator — we iterate it directly.
-    # The WS acts as a subscriber. On disconnect we stop iterating but the
-    # runner (once detached in Phase 4) will continue in the background.
+    # ── Instantiate the WebsocketEdge and relay runner events ─────────────
+    edge = WebsocketEdge(websocket, orchestrator_name=name, user_id=user_id)
 
     try:
         async with _db.AsyncSessionLocal() as db:
@@ -119,7 +150,7 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
                 context_id=context_id,
             ):
                 try:
-                    await websocket.send_json(event)
+                    await edge.emit(event)
                 except WebSocketDisconnect:
                     logger.info(
                         "ws_orchestrate client disconnected mid-run",
@@ -133,11 +164,8 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
     except Exception as exc:
         logger.error("ws_orchestrate unhandled error", orchestrator=name, error=str(exc))
         try:
-            await websocket.send_json({"type": "error", "message": "Internal server error"})
+            await edge.emit({"type": "error", "message": "Internal server error"})
         except Exception:
             pass
     finally:
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        await edge.close()

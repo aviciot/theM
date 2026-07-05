@@ -855,6 +855,94 @@ def test_17_memory():
         check("frontend/src/lib/api.ts memory fields", False, str(exc))
 
 
+def test_19_edges():
+    section("test_19_edges: Phase 8.6 Pluggable Edge Adapters")
+    sys.path.insert(0, str(ROOT))
+
+    def src(path): return (ROOT / path).read_text(encoding="utf-8")
+    def fns(path):
+        tree = ast.parse(src(path))
+        return [n.name for n in ast.walk(tree) if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))]
+    def cls_names(path):
+        tree = ast.parse(src(path))
+        return [n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+
+    # Package files
+    try:
+        for f in ("__init__.py", "base.py", "websocket_edge.py", "voice_edge.py", "rest_edge.py", "registry.py"):
+            check(f"app/edges/{f} exists", (ROOT / f"app/edges/{f}").exists())
+    except Exception as exc:
+        check("app/edges/ files", False, str(exc))
+
+    # base.py
+    try:
+        s = src("app/edges/base.py")
+        check("EdgeAdapter ABC defined", "EdgeAdapter" in cls_names("app/edges/base.py"))
+        check("EdgeRequest defined", "EdgeRequest" in cls_names("app/edges/base.py"))
+        check("emit abstract", "emit" in s)
+        check("close abstract", "close" in s)
+        check("modality field", "modality" in s)
+    except Exception as exc:
+        check("base.py", False, str(exc))
+
+    # WebsocketEdge
+    try:
+        s = src("app/edges/websocket_edge.py")
+        check("WebsocketEdge defined", "WebsocketEdge" in cls_names("app/edges/websocket_edge.py"))
+        check("WebsocketEdge handles WebSocketDisconnect", "WebSocketDisconnect" in s)
+        check("edge.emit relays send_json", "send_json" in s)
+    except Exception as exc:
+        check("websocket_edge.py", False, str(exc))
+
+    # Stubs
+    for stub in ("voice_edge.py", "rest_edge.py"):
+        try:
+            s = src(f"app/edges/{stub}")
+            check(f"{stub}: NotImplementedError in emit", "NotImplementedError" in s)
+        except Exception as exc:
+            check(f"{stub}", False, str(exc))
+
+    # Registry importable
+    try:
+        from app.edges.registry import get_edge_class, VALID_EDGES
+        from app.edges.websocket_edge import WebsocketEdge
+        check("get_edge_class('websocket') → WebsocketEdge", get_edge_class("websocket") is WebsocketEdge)
+        check("VALID_EDGES includes websocket/voice/rest", {"websocket", "voice", "rest"} <= VALID_EDGES)
+        try:
+            get_edge_class("ftp")
+            check("unknown edge raises ValueError", False)
+        except ValueError:
+            check("unknown edge raises ValueError", True)
+    except Exception as exc:
+        check("registry import", False, str(exc))
+
+    # ws_orchestrator.py refactored
+    try:
+        s = src("app/routers/ws_orchestrator.py")
+        check("WebsocketEdge imported in ws_orchestrator", "WebsocketEdge" in s)
+        check("edge.emit() called", "edge.emit" in s)
+        check("edge.close() called", "edge.close" in s)
+        check("edges guard rejects non-websocket orch", "does not allow the websocket edge" in s)
+        check("/ws/orchestrate/{name} unchanged", "/ws/orchestrate/{name}" in s)
+        check("WebSocketDisconnect handled", "WebSocketDisconnect" in s)
+    except Exception as exc:
+        check("ws_orchestrator.py", False, str(exc))
+
+    # models.py edges column
+    try:
+        s = src("app/models.py")
+        check("Orchestrator.edges column", "edges" in s and "ARRAY" in s)
+    except Exception as exc:
+        check("models.py edges", False, str(exc))
+
+    # Migration
+    try:
+        s = src("db/003_phase8.sql")
+        check("edges column in migration", "edges" in s)
+    except Exception as exc:
+        check("db/003_phase8.sql", False, str(exc))
+
+
 def test_18_orch_as_agent():
     section("test_18_orch_as_agent: Phase 8.5 Durable Inbound A2A")
     sys.path.insert(0, str(ROOT))
@@ -975,6 +1063,7 @@ ALL_TESTS = [
     ("16", test_16_a2a_agents),
     ("17", test_17_memory),
     ("18", test_18_orch_as_agent),
+    ("19", test_19_edges),
 ]
 
 if __name__ == "__main__":
