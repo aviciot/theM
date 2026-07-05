@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     CORS_ENABLED: bool = True
     CORS_ORIGINS: str = "http://localhost:3111"
 
+    # The-M public URL (used in Agent Card and self-registration)
+    BRIDGE_URL: str = "http://localhost:8001"
+
     # LLM — Anthropic (default provider)
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
@@ -164,6 +167,7 @@ class GlobalConfig:
 
         self.openai_api_key: str = env.OPENAI_API_KEY
         self.openai_model: str = env.OPENAI_MODEL
+        self.bridge_url: str = env.BRIDGE_URL
 
         self.logging = LoggingConfig(
             level=env.LOG_LEVEL,

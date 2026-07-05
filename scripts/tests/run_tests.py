@@ -855,6 +855,105 @@ def test_17_memory():
         check("frontend/src/lib/api.ts memory fields", False, str(exc))
 
 
+def test_18_orch_as_agent():
+    section("test_18_orch_as_agent: Phase 8.5 Durable Inbound A2A")
+    sys.path.insert(0, str(ROOT))
+
+    def src(path): return (ROOT / path).read_text(encoding="utf-8")
+    def fns(path):
+        tree = ast.parse(src(path))
+        return [n.name for n in ast.walk(tree) if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))]
+
+    # _tasks dict deleted
+    try:
+        s = src("app/routers/a2a_server.py")
+        check("_tasks in-memory dict deleted", "_tasks: dict" not in s and "_tasks = {}" not in s)
+        check("_tasks[task_id] assignment deleted", "_tasks[task_id]" not in s)
+    except Exception as exc:
+        check("a2a_server.py _tasks removal", False, str(exc))
+
+    # Required functions
+    try:
+        fn_names = fns("app/routers/a2a_server.py")
+        check("_handle_send_message defined", "_handle_send_message" in fn_names)
+        check("_handle_get_task defined", "_handle_get_task" in fn_names)
+        check("_handle_cancel_task defined", "_handle_cancel_task" in fn_names)
+        check("_run_and_finalize defined", "_run_and_finalize" in fn_names)
+        check("agent_card defined", "agent_card" in fn_names)
+        check("a2a_rpc defined", "a2a_rpc" in fn_names)
+        check("a2a_push defined", "a2a_push" in fn_names)
+        check("_task_to_a2a defined", "_task_to_a2a" in fn_names)
+    except Exception as exc:
+        check("a2a_server.py functions", False, str(exc))
+
+    # Durable task_store usage
+    try:
+        s = src("app/routers/a2a_server.py")
+        check("task_store.create_task called", "task_store.create_task" in s)
+        check("task_store.get_task called", "task_store.get_task" in s)
+        check("task_store.transition called", "task_store.transition" in s)
+        check("task_store.get_context_artifacts called", "task_store.get_context_artifacts" in s)
+    except Exception as exc:
+        check("task_store usage", False, str(exc))
+
+    # Async detach / returnImmediately
+    try:
+        s = src("app/routers/a2a_server.py")
+        check("returnImmediately honored", "returnImmediately" in s)
+        check("asyncio.create_task used for detach", "asyncio.create_task" in s)
+    except Exception as exc:
+        check("async detach", False, str(exc))
+
+    # Recursion guard
+    try:
+        s = src("app/routers/a2a_server.py")
+        check("_MAX_TASKS_PER_CONTEXT defined", "_MAX_TASKS_PER_CONTEXT" in s)
+    except Exception as exc:
+        check("recursion guard", False, str(exc))
+
+    # Bridge URL from config
+    try:
+        s = src("app/routers/a2a_server.py")
+        check("bridge_url from config", "bridge_url" in s)
+        check("hardcoded localhost:8001 removed from card", 'url": "http://localhost:8001"' not in s)
+        s2 = src("app/config.py")
+        check("BRIDGE_URL in Settings", "BRIDGE_URL" in s2)
+        check("bridge_url in GlobalConfig", "bridge_url" in s2)
+    except Exception as exc:
+        check("config BRIDGE_URL", False, str(exc))
+
+    # Push webhook
+    try:
+        s = src("app/routers/a2a_server.py")
+        check("/a2a/push/{task_id} route present", "/a2a/push/{task_id}" in s)
+        check("terminal guard in push webhook", "_TERMINAL" in s)
+    except Exception as exc:
+        check("push webhook", False, str(exc))
+
+    # Models
+    try:
+        s = src("app/models.py")
+        check("Orchestrator.a2a_exposed column", "a2a_exposed" in s)
+        check("Orchestrator.budget_tokens column", "budget_tokens" in s)
+    except Exception as exc:
+        check("models.py", False, str(exc))
+
+    # Migration
+    try:
+        s = src("db/003_phase8.sql")
+        check("budget_tokens in migration", "budget_tokens" in s)
+    except Exception as exc:
+        check("db/003_phase8.sql", False, str(exc))
+
+    # main.py wiring
+    try:
+        s = src("app/main.py")
+        check("a2a_server imported in main.py", "a2a_server" in s)
+        check("a2a_server.router included", "a2a_server.router" in s)
+    except Exception as exc:
+        check("main.py wiring", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -875,6 +974,7 @@ ALL_TESTS = [
     ("15", test_15_compose_health),
     ("16", test_16_a2a_agents),
     ("17", test_17_memory),
+    ("18", test_18_orch_as_agent),
 ]
 
 if __name__ == "__main__":

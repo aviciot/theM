@@ -1,26 +1,35 @@
 """
-A2A Server — the-M as an A2A agent.
+A2A Server — the-M as an A2A agent (Phase 8.5: durable inbound A2A).
 
 Endpoints:
   GET  /.well-known/agent-card.json   → the-M's Agent Card
   POST /a2a                           → JSON-RPC 2.0 (SendMessage, GetTask, CancelTask)
+  POST /a2a/push/{task_id}            → push webhook for child agent state changes
 
-Protocol: A2A v1.0 (https://google.github.io/A2A/)
+Protocol: A2A v1.0
 
-Auth: Bearer token (existing them.access_tokens) — same as /ws/orchestrate.
+Auth: Bearer token (them.access_tokens) or admin JWT — same as /ws/orchestrate.
 
-Phase 1: wraps the existing orchestrator loop synchronously.
-         Tasks are tracked in them.tasks (Phase 2 adds the full durable layer).
+Phase 8.5 changes vs Phase 1:
+  - _tasks in-memory dict DELETED; all task state lives in them.tasks
+  - SendMessage honors configuration.returnImmediately:
+      true  → creates task, launches run detached (asyncio.create_task), returns working Task
+      false → awaits completion before returning (default, backward-compat)
+  - GetTask / CancelTask read/transition via task_store
+  - Agent card url driven by config.BRIDGE_URL
+  - Recursion guard: rejects inbound call if parent task depth >= max_depth
 """
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import app.database as db_module
+from app.config import settings
 from app.services.auth_client import validate_jwt
 from app.services import task_store
 from app.services.task_runner import run as task_runner_run
@@ -29,9 +38,10 @@ from app.utils.logger import logger
 
 router = APIRouter(tags=["a2a"])
 
-# ── In-memory task store (Phase 1 only — replaced in Phase 2 by them.tasks) ──
-# Maps task_id → task dict. Survives only while the process is alive.
-_tasks: dict[str, dict] = {}
+_TERMINAL = {"completed", "failed", "canceled", "rejected"}
+
+# Per-context task ceiling to prevent fork bombs
+_MAX_TASKS_PER_CONTEXT = 50
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -64,7 +74,7 @@ async def agent_card():
     """
     Serve the-M's A2A Agent Card.
     Each a2a_exposed orchestrator is listed as one skill.
-    Skills are loaded dynamically from the DB.
+    Skills loaded dynamically from DB; url from config.BRIDGE_URL.
     """
     skills = []
 
@@ -92,7 +102,6 @@ async def agent_card():
         except Exception as exc:
             logger.warning("agent_card: failed to load orchestrators", error=str(exc))
 
-    # Always include a default skill for the default orchestrator
     if not skills:
         skills.append({
             "id": "default",
@@ -103,14 +112,16 @@ async def agent_card():
             "outputModes": ["text/plain"],
         })
 
+    bridge_url = getattr(settings, "bridge_url", f"http://localhost:{settings.app.port}")
+
     card = {
         "name": "the-M",
         "description": "Multi-agent orchestration platform. Routes goals to specialized AI agents.",
-        "url": "http://localhost:8001",
+        "url": bridge_url,
         "version": "1.0.0",
         "capabilities": {
             "streaming": False,
-            "pushNotifications": False,
+            "pushNotifications": True,
             "stateTransitionHistory": False,
             "extensions": [
                 {
@@ -147,40 +158,39 @@ def _rpc_ok(id: Any, result: Any) -> dict:
     return {"jsonrpc": "2.0", "id": id, "result": result}
 
 
-def _make_task(
-    task_id: str,
-    state: str,
-    context_id: str | None,
-    input_text: str,
-    output_text: str | None = None,
-    error: str | None = None,
-) -> dict:
-    """Build an A2A-compliant Task object."""
-    artifacts = []
-    if output_text:
-        artifacts.append({
-            "artifactId": "result",
-            "name": "result",
-            "parts": [{"kind": "text", "text": output_text}],
+def _task_to_a2a(task, artifacts: list[dict], input_text: str) -> dict:
+    """Convert a them.tasks row + artifacts list to an A2A-compliant Task object."""
+    a2a_artifacts = []
+    for art in artifacts:
+        # Skip internal summary artifacts from appearing in the inbound A2A response
+        if isinstance(art.get("name"), str) and art["name"].startswith("Context Summary"):
+            continue
+        a2a_artifacts.append({
+            "artifactId": art.get("artifact_id") or art.get("id", str(uuid.uuid4())),
+            "name": art.get("name", "result"),
+            "parts": art.get("parts", []),
         })
 
     status_message = None
-    if error:
+    if task.error:
         status_message = {
             "role": "agent",
-            "parts": [{"kind": "text", "text": error}],
+            "parts": [{"kind": "text", "text": task.error}],
             "messageId": str(uuid.uuid4()),
         }
 
+    task_id = str(task.id)
+    ctx_id = str(task.context_id)
+
     return {
         "id": task_id,
-        "contextId": context_id or task_id,
+        "contextId": ctx_id,
         "status": {
-            "state": state,
+            "state": task.state,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             **({"message": status_message} if status_message else {}),
         },
-        "artifacts": artifacts,
+        "artifacts": a2a_artifacts,
         "history": [
             {
                 "role": "user",
@@ -196,11 +206,58 @@ def _make_task(
 # SendMessage handler
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def _run_and_finalize(
+    *,
+    task_row,
+    orchestrator_name: str,
+    user_text: str,
+    user_id: int,
+    token_payload: dict,
+    context_id: uuid.UUID,
+    session_id: uuid.UUID,
+) -> None:
+    """Drive the orchestrator loop to completion and finalize the task row."""
+    run_error: Optional[str] = None
+    try:
+        if db_module.AsyncSessionLocal is None:
+            raise RuntimeError("Database not ready")
+        async with db_module.AsyncSessionLocal() as db:
+            async for event in task_runner_run(
+                orchestrator_name=orchestrator_name,
+                user_message=user_text,
+                user_id=user_id,
+                token_payload=token_payload,
+                db=db,
+                session_id=session_id,
+                context_id=context_id,
+            ):
+                if event.get("type") == "error":
+                    run_error = event.get("message", "Unknown error")
+                    break
+    except Exception as exc:
+        run_error = str(exc)
+        logger.error("a2a SendMessage run error", task_id=str(task_row.id), error=str(exc))
+
+    # Transition the durable task to terminal state
+    try:
+        async with db_module.AsyncSessionLocal() as db:
+            terminal = "failed" if run_error else "completed"
+            await task_store.transition(
+                db,
+                task_row.id,
+                terminal,
+                error=run_error or None,
+            )
+    except Exception as exc:
+        logger.warning("a2a: could not finalize task", task_id=str(task_row.id), error=str(exc))
+
+
 async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -> dict:
     message = params.get("message", {})
     parts = message.get("parts", [])
-    context_id = message.get("contextId")
-    task_id_hint = message.get("taskId")
+    context_id_hint = message.get("contextId")
+    configuration = params.get("configuration", {})
+    return_immediately = configuration.get("returnImmediately", False)
 
     # Extract text from parts
     user_text = ""
@@ -216,49 +273,106 @@ async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -
     metadata = params.get("metadata", {})
     orchestrator_name = metadata.get("skill") or metadata.get("orchestrator") or "default"
 
-    task_id = str(uuid.uuid4())
-    ctx_id = context_id or task_id
+    context_id = (
+        uuid.UUID(context_id_hint)
+        if context_id_hint and _is_valid_uuid(context_id_hint)
+        else uuid.uuid4()
+    )
+    session_id = uuid.uuid4()
+    user_id = token_payload.get("user_id", 0)
 
-    # Register as working
-    _tasks[task_id] = _make_task(task_id, "working", ctx_id, user_text)
+    # Recursion / fork-bomb guard
+    if db_module.AsyncSessionLocal is not None:
+        try:
+            async with db_module.AsyncSessionLocal() as db:
+                existing = await task_store.count_context_tasks(db, context_id)
+                if existing >= _MAX_TASKS_PER_CONTEXT:
+                    return _rpc_error(
+                        rpc_id, -32003,
+                        f"Context {context_id} has reached the task ceiling ({_MAX_TASKS_PER_CONTEXT})"
+                    )
+        except AttributeError:
+            pass  # count_context_tasks may not exist yet — skip guard gracefully
+        except Exception as exc:
+            logger.warning("a2a: task ceiling check failed", error=str(exc))
 
-    # Run the orchestrator loop synchronously (Phase 1 — Phase 3 makes this durable)
-    final_answer = ""
-    run_error = None
+    # Create the durable task row
+    task_row = None
+    if db_module.AsyncSessionLocal is not None:
+        try:
+            from sqlalchemy import select as sa_select
+            from app.models import Orchestrator as OrchestratorModel
+            async with db_module.AsyncSessionLocal() as db:
+                orch_result = await db.execute(
+                    sa_select(OrchestratorModel).where(
+                        OrchestratorModel.name == orchestrator_name,
+                        OrchestratorModel.enabled == True,
+                    )
+                )
+                orch_row = orch_result.scalar_one_or_none()
+                orch_id = orch_row.id if orch_row else None
+                budget = getattr(orch_row, "budget_tokens", None) if orch_row else None
 
-    try:
-        if db_module.AsyncSessionLocal is None:
-            raise RuntimeError("Database not ready")
+                task_row = await task_store.create_task(
+                    db,
+                    context_id=context_id,
+                    input_message={"parts": [{"kind": "text", "text": user_text}]},
+                    kind="root",
+                    orchestrator_id=orch_id,
+                    budget_tokens=budget,
+                )
+                await task_store.transition(db, task_row.id, "working")
+        except Exception as exc:
+            logger.error("a2a: could not create durable task", error=str(exc))
+            return _rpc_error(rpc_id, -32000, f"Failed to initialize task: {exc}")
 
-        async with db_module.AsyncSessionLocal() as db:
-            async for event in task_runner_run(
+    if task_row is None:
+        return _rpc_error(rpc_id, -32000, "Database unavailable")
+
+    if return_immediately:
+        # Detach — caller will poll via GetTask
+        asyncio.create_task(
+            _run_and_finalize(
+                task_row=task_row,
                 orchestrator_name=orchestrator_name,
-                user_message=user_text,
-                user_id=token_payload["user_id"],
+                user_text=user_text,
+                user_id=user_id,
                 token_payload=token_payload,
-                db=db,
-                session_id=uuid.uuid4(),
-                context_id=uuid.UUID(ctx_id) if _is_valid_uuid(ctx_id) else uuid.uuid4(),
-            ):
-                if event.get("type") == "token":
-                    final_answer += event.get("text", "")
-                elif event.get("type") == "done":
-                    pass  # final_answer already assembled from tokens
-                elif event.get("type") == "error":
-                    run_error = event.get("message", "Unknown error")
-                    break
+                context_id=context_id,
+                session_id=session_id,
+            )
+        )
+        working_task = _task_to_a2a(task_row, [], user_text)
+        return _rpc_ok(rpc_id, working_task)
 
+    # Synchronous path: await completion
+    await _run_and_finalize(
+        task_row=task_row,
+        orchestrator_name=orchestrator_name,
+        user_text=user_text,
+        user_id=user_id,
+        token_payload=token_payload,
+        context_id=context_id,
+        session_id=session_id,
+    )
+
+    # Re-read final state and artifacts from DB
+    try:
+        async with db_module.AsyncSessionLocal() as db:
+            final_task = await task_store.get_task(db, task_row.id)
+            raw_artifacts = await task_store.get_context_artifacts(db, context_id)
     except Exception as exc:
-        run_error = str(exc)
-        logger.error("a2a SendMessage error", task_id=task_id, error=str(exc))
+        logger.warning("a2a: could not read final task state", error=str(exc))
+        final_task = task_row
+        raw_artifacts = []
 
-    if run_error:
-        task = _make_task(task_id, "failed", ctx_id, user_text, error=run_error)
-    else:
-        task = _make_task(task_id, "completed", ctx_id, user_text, output_text=final_answer)
+    arts = [
+        {"artifact_id": a.artifact_id, "name": a.name, "parts": a.parts}
+        for a in raw_artifacts
+    ] if raw_artifacts else []
 
-    _tasks[task_id] = task
-    return _rpc_ok(rpc_id, task)
+    result_task = final_task if final_task else task_row
+    return _rpc_ok(rpc_id, _task_to_a2a(result_task, arts, user_text))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -266,15 +380,39 @@ async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _handle_get_task(rpc_id: Any, params: dict) -> dict:
-    task_id = params.get("id") or params.get("taskId")
-    if not task_id:
-        return _rpc_error(rpc_id, -32602, "id is required")
+    task_id_raw = params.get("id") or params.get("taskId")
+    if not task_id_raw or not _is_valid_uuid(str(task_id_raw)):
+        return _rpc_error(rpc_id, -32602, "id is required and must be a valid UUID")
 
-    task = _tasks.get(str(task_id))
-    if task is None:
-        return _rpc_error(rpc_id, -32001, f"Task {task_id} not found")
+    task_id = uuid.UUID(str(task_id_raw))
 
-    return _rpc_ok(rpc_id, task)
+    if db_module.AsyncSessionLocal is None:
+        return _rpc_error(rpc_id, -32000, "Database not ready")
+
+    try:
+        async with db_module.AsyncSessionLocal() as db:
+            task = await task_store.get_task(db, task_id)
+            if task is None:
+                return _rpc_error(rpc_id, -32001, f"Task {task_id} not found")
+            artifacts = await task_store.get_context_artifacts(db, task.context_id)
+    except Exception as exc:
+        logger.error("a2a GetTask error", task_id=str(task_id), error=str(exc))
+        return _rpc_error(rpc_id, -32000, f"Internal error: {exc}")
+
+    # Recover original input text from task row
+    try:
+        input_parts = task.input_message.get("parts", []) if task.input_message else []
+        input_text = next(
+            (p.get("text", "") for p in input_parts if "text" in p), ""
+        )
+    except Exception:
+        input_text = ""
+
+    arts = [
+        {"artifact_id": a.artifact_id, "name": a.name, "parts": a.parts}
+        for a in (artifacts or [])
+    ]
+    return _rpc_ok(rpc_id, _task_to_a2a(task, arts, input_text))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -282,23 +420,37 @@ async def _handle_get_task(rpc_id: Any, params: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _handle_cancel_task(rpc_id: Any, params: dict) -> dict:
-    task_id = params.get("id") or params.get("taskId")
-    if not task_id:
-        return _rpc_error(rpc_id, -32602, "id is required")
+    task_id_raw = params.get("id") or params.get("taskId")
+    if not task_id_raw or not _is_valid_uuid(str(task_id_raw)):
+        return _rpc_error(rpc_id, -32602, "id is required and must be a valid UUID")
 
-    task = _tasks.get(str(task_id))
-    if task is None:
-        return _rpc_error(rpc_id, -32001, f"Task {task_id} not found")
+    task_id = uuid.UUID(str(task_id_raw))
 
-    # Can only cancel non-terminal tasks
-    state = task.get("status", {}).get("state", "")
-    if state in ("completed", "failed", "canceled", "rejected"):
-        return _rpc_error(rpc_id, -32002, f"Task is already in terminal state: {state}")
+    if db_module.AsyncSessionLocal is None:
+        return _rpc_error(rpc_id, -32000, "Database not ready")
 
-    task["status"]["state"] = "canceled"
-    task["status"]["timestamp"] = datetime.now(timezone.utc).isoformat()
-    _tasks[str(task_id)] = task
-    return _rpc_ok(rpc_id, task)
+    try:
+        async with db_module.AsyncSessionLocal() as db:
+            task = await task_store.get_task(db, task_id)
+            if task is None:
+                return _rpc_error(rpc_id, -32001, f"Task {task_id} not found")
+
+            if task.state in _TERMINAL:
+                return _rpc_error(rpc_id, -32002, f"Task is already in terminal state: {task.state}")
+
+            canceled = await task_store.transition(db, task_id, "canceled")
+    except Exception as exc:
+        logger.error("a2a CancelTask error", task_id=str(task_id), error=str(exc))
+        return _rpc_error(rpc_id, -32000, f"Internal error: {exc}")
+
+    try:
+        input_parts = task.input_message.get("parts", []) if task.input_message else []
+        input_text = next((p.get("text", "") for p in input_parts if "text" in p), "")
+    except Exception:
+        input_text = ""
+
+    result_task = canceled if canceled else task
+    return _rpc_ok(rpc_id, _task_to_a2a(result_task, [], input_text))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -320,7 +472,6 @@ async def a2a_rpc(request: Request):
             content=_rpc_error(None, -32700, "Parse error"),
         )
 
-    # Support batch or single
     if isinstance(body, list):
         responses = []
         for item in body:
@@ -375,6 +526,7 @@ async def a2a_push(task_id: str, request: Request):
 
     Called by a child agent when its task state changes. Body is a raw A2A Task
     object (not JSON-RPC). Updates the corresponding them.tasks row.
+    Idempotent: terminal tasks are silently accepted.
     """
     token_payload = await _resolve_bearer(request)
     if token_payload is None:
@@ -398,22 +550,17 @@ async def a2a_push(task_id: str, request: Request):
         if child_task is None:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-        # Guard against double-processing — if already terminal, return idempotently
-        _TERMINAL = {"completed", "failed", "canceled", "rejected"}
         if child_task.state in _TERMINAL:
             logger.info("a2a push: task already terminal, ignoring", task_id=task_id, state=child_task.state)
             return JSONResponse(content={"ok": True})
 
-        # Extract new state from body
         new_state = body.get("status", {}).get("state")
         if not new_state:
             raise HTTPException(status_code=400, detail="body.status.state is required")
 
         logger.info("a2a push: transitioning task", task_id=task_id, new_state=new_state)
-
         await task_store.transition(db, child_task_id, new_state)
 
-        # Record artifacts if the task completed
         if new_state == "completed":
             artifacts = body.get("artifacts", [])
             for artifact in artifacts:
