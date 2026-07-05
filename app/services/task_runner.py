@@ -224,85 +224,89 @@ async def _invoke_agent(
     run_id: uuid.UUID,
     root_task: Task,
     iteration: int,
-    db: AsyncSession,
+    db: AsyncSession,  # kept for signature compat — parallel calls open their own sessions
 ) -> str:
     sem = semaphores.get(str(agent.id))
     t0 = time.monotonic()
-
-    # Create child task row
-    child_task = await task_store.create_task(
-        db,
-        context_id=root_task.context_id,
-        input_message={"parts": [{"kind": "text", "text": tool_call.input.get("message", "")}]},
-        kind="delegated",
-        run_id=run_id,
-        parent_task_id=root_task.id,
-        agent_id=agent.id,
-    )
-    await task_store.transition(db, child_task.id, "working")
-
-    # Legacy run_step record (billing/analytics log kept intact)
-    step_id = await run_recorder.record_step(
-        db,
-        run_id=run_id,
-        iteration=iteration,
-        agent_id=agent.id,
-        agent_slug=agent.slug,
-        tool_call_id=tool_call.id,
-        input=tool_call.input,
-    )
 
     result_text = ""
     status = "completed"
     error_msg = None
 
-    try:
-        async with sem:
-            adapter = get_adapter(agent, context_id=str(root_task.context_id))
-            async for event in adapter.stream_invoke(
-                input=tool_call.input,
-                timeout=float(agent.timeout_seconds),
-            ):
-                if event.type == "token":
-                    result_text += event.text or ""
-                elif event.type == "done":
-                    result_text = event.result or result_text
-                    break
-                elif event.type == "error":
-                    error_msg = event.error
-                    status = "failed"
-                    break
-    except Exception as exc:
-        error_msg = str(exc)
-        status = "failed"
-        logger.error("task_runner: agent invocation error", agent=agent.slug, error=str(exc))
-
-    latency_ms = int((time.monotonic() - t0) * 1000)
-
-    # Update child task
-    child_state = "completed" if status == "completed" else "failed"
-    if child_state == "completed" and result_text:
-        await context_service.record_and_cache_artifact(
-            task_id=child_task.id,
+    # Each parallel invocation opens its own DB session to avoid concurrent
+    # access on the shared outer session (SQLAlchemy async sessions are not
+    # safe for concurrent use within a single transaction).
+    async with db_module.AsyncSessionLocal() as own_db:
+        # Create child task row
+        child_task = await task_store.create_task(
+            own_db,
             context_id=root_task.context_id,
-            artifact_id=f"{agent.slug}-{tool_call.id}",
-            parts=[{"kind": "text", "text": result_text}],
-            name=f"{agent.slug} result",
-            db=db,
+            input_message={"parts": [{"kind": "text", "text": tool_call.input.get("message", "")}]},
+            kind="delegated",
+            run_id=run_id,
+            parent_task_id=root_task.id,
+            agent_id=agent.id,
         )
-    await task_store.transition(
-        db, child_task.id, child_state,
-        error=error_msg,
-    )
+        await task_store.transition(own_db, child_task.id, "working")
 
-    await run_recorder.complete_step(
-        db,
-        step_id=step_id,
-        output=result_text if status == "completed" else None,
-        status=status,
-        error=error_msg,
-        latency_ms=latency_ms,
-    )
+        # Legacy run_step record (billing/analytics log kept intact)
+        step_id = await run_recorder.record_step(
+            own_db,
+            run_id=run_id,
+            iteration=iteration,
+            agent_id=agent.id,
+            agent_slug=agent.slug,
+            tool_call_id=tool_call.id,
+            input=tool_call.input,
+        )
+
+        try:
+            async with sem:
+                adapter = get_adapter(agent, context_id=str(root_task.context_id))
+                async for event in adapter.stream_invoke(
+                    input=tool_call.input,
+                    timeout=float(agent.timeout_seconds),
+                ):
+                    if event.type == "token":
+                        result_text += event.text or ""
+                    elif event.type == "done":
+                        result_text = event.result or result_text
+                        break
+                    elif event.type == "error":
+                        error_msg = event.error
+                        status = "failed"
+                        break
+        except Exception as exc:
+            error_msg = str(exc)
+            status = "failed"
+            logger.error("task_runner: agent invocation error", agent=agent.slug, error=str(exc))
+
+        latency_ms = int((time.monotonic() - t0) * 1000)
+
+        # Update child task
+        child_state = "completed" if status == "completed" else "failed"
+        if child_state == "completed" and result_text:
+            await context_service.record_and_cache_artifact(
+                task_id=child_task.id,
+                context_id=root_task.context_id,
+                artifact_id=f"{agent.slug}-{tool_call.id}",
+                parts=[{"kind": "text", "text": result_text}],
+                name=f"{agent.slug} result",
+                db=own_db,
+            )
+        await task_store.transition(
+            own_db, child_task.id, child_state,
+            error=error_msg,
+        )
+
+        await run_recorder.complete_step(
+            own_db,
+            step_id=step_id,
+            output=result_text if status == "completed" else None,
+            status=status,
+            error=error_msg,
+            latency_ms=latency_ms,
+        )
 
     if status == "failed":
         return f"[Agent {agent.slug} error: {error_msg}]"
