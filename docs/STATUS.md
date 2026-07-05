@@ -22,8 +22,16 @@
 | **A2A migration Phase 5** | ✓ Complete | context_service.py, Redis artifact cache `them:ctx:{ctx_id}:heads` |
 | **A2A migration Phase 6** | ✓ Complete | runs/{id}/tasks, runs/{id}/artifacts, runs/context/{ctx_id}/artifacts endpoints; playground debug tabs |
 | **A2A migration Phase 7** | ✓ Complete | a2a-echo, a2a-slow, a2a-stream agents; test-agents compose profile; seed SQL; test_16 |
+| **Phase 8.1** | ✓ Complete | Provider-neutral durable history: serialize_turn/deserialize_history on LLMProvider ABC |
+| **Phase 8.2** | ✓ Complete | OpenAI provider: full streaming, tool calls, durable history |
+| **Phase 8.3** | ✓ Complete | Provider factory, per-orchestrator LLM config, llm_api_key_encrypted |
+| **Phase 8.4** | ✓ Complete | Context summarization memory: memory_service.py, Redis `them:ctx:{id}:summary`, Haiku summarizer, memory UI in orchestrator admin |
+| **Phase 8.5** | ✓ Complete | Orchestrator-as-agent (durable inbound A2A): a2a_server.py rewired to them.tasks, returnImmediately, GetTask from DB, fork-bomb guard |
+| **Phase 8.6** | ✓ Complete | Pluggable edge adapters: app/edges/ (EdgeAdapter ABC, WebsocketEdge, VoiceEdge stub, RestEdge stub), ws_orchestrator uses WebsocketEdge |
+| **Agent discovery UI** | ✓ Complete | Row Discover button: fetches card, diffs vs stored, shows popup with changes highlighted, pulsing Save, orchestrator impact warning |
+| **Persistent context threading** | ✓ Complete | Frontend passes context_id on follow-up messages; server reuses it so memory summary carries across turns |
 
-## Infrastructure (as of 2026-07-04)
+## Infrastructure (as of 2026-07-05)
 
 | Container | Image/Source | Data | Port |
 |---|---|---|---|
@@ -32,9 +40,6 @@
 | `them-auth-service` | `auth_service/` | — | 8701 (internal) |
 | `them-bridge` | `app/` | `./data/them-logs/` | 8001 (host + internal) |
 | `them-frontend` | `frontend/` | — | 3200 (host + internal) |
-| `mock-agent-assistant` | `mock_agent/` | — | 9000 (internal) |
-| `mock-agent-researcher` | `mock_agent/` | — | 9000 (internal) |
-| `mock-agent-coder` | `mock_agent/` | — | 9000 (internal) |
 | `vision-agent` | `agents/vision_agent/` | — | 9100 (internal) — **unhealthy** |
 | `a2a-echo` | `agents/a2a_echo/` | — | 9200 (internal) — **profile: test-agents** |
 | `a2a-slow` | `agents/a2a_slow/` | — | 9201 (internal) — **profile: test-agents** |
@@ -54,6 +59,8 @@
 | `/health`, `/health/live`, `/health/ready` | GET | ✓ Live |
 | `/api/v1/admin/llm-providers` | CRUD | ✓ Live |
 | `/api/v1/admin/agents` | CRUD | ✓ Live |
+| `/api/v1/admin/agents/discover` | POST | ✓ Live — fetch & diff agent card; accepts agent_id to reuse stored token |
+| `/api/v1/admin/agents/{id}/test` | POST | ✓ Live |
 | `/api/v1/admin/orchestrators` | CRUD | ✓ Live |
 | `/api/v1/admin/orchestrators/{id}/test-llm` | POST | ✓ Live |
 | `/api/v1/admin/tokens` | CRUD | ✓ Live |
@@ -85,3 +92,8 @@
 - **Replica 2**: compose profile `replica`, not running by default. Enable with `--profile replica`.
 - **DB reset trap**: if Postgres is wiped but Redis survives, orchestrator cache holds stale FK IDs → run INSERT fails. After any DB wipe: re-run DB init steps from CLAUDE.md, then recreate orchestrators via UI to refresh Redis cache.
 - **`them-frontend` shows unhealthy in `docker ps`**: false alarm — Docker healthcheck uses `curl -f -L` but Next.js dev mode takes >30s to compile first request. App works fine; healthcheck timing is aggressive.
+- **Mock agents removed**: `mock-agent-assistant`, `mock-agent-researcher`, `mock-agent-coder` disabled in DB and stopped. Only real A2A agents remain.
+- **Tests 17/18/19 not in CLAUDE.md trigger map**: structural tests for Phase 8 memory, orchestrator-as-agent, and edges. Add to trigger map when updating CLAUDE.md.
+- **RestEdge / VoiceEdge stubs**: `app/edges/rest_edge.py` and `app/edges/voice_edge.py` raise `NotImplementedError` — not yet implemented.
+- **Persistent multi-turn chat**: playground opens a new WS per message. The LLM itself does not see prior turns — only agents see the memory summary. True multi-turn requires maintaining conversation history across connections.
+- **User management UI**: no frontend for managing auth_service users/teams.

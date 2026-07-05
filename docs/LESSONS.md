@@ -149,6 +149,24 @@ await event_queue.enqueue_event(task)
 
 ---
 
+## 2026-07-05 — SQLAlchemy AsyncSession is not safe for concurrent use
+
+**Symptom:** Parallel agent tool calls (via `asyncio.gather`) caused `Method 'rollback()' can't be called here; method '_prepare_impl()' is already in progress` — one session transaction corrupted by another coroutine touching it simultaneously.
+**Root cause:** SQLAlchemy's `AsyncSession` is not thread-safe or coroutine-safe for concurrent access within a single session. When `asyncio.gather` runs multiple `_invoke_agent` coroutines sharing the same outer `db` session, they step on each other's transaction state.
+**Fix:** Each parallel `_invoke_agent` call opens its own `AsyncSessionLocal()` context manager. The outer `db` session is kept for the planning loop only. The `db` parameter is retained in the signature for backwards compatibility but not used inside the function.
+**Watch for:** Any `asyncio.gather` across coroutines that accept the same `AsyncSession` — each must open its own session. Never share one session across concurrent coroutines.
+
+---
+
+## 2026-07-05 — agents FK to tasks must be ON DELETE SET NULL, not RESTRICT
+
+**Symptom:** Deleting an agent via the UI returned HTTP 500 with `ForeignKeyViolationError: update or delete on table "agents" violates foreign key constraint "tasks_agent_id_fkey"`.
+**Root cause:** `them.tasks.agent_id` and `them.run_steps.agent_id` were defined as plain `REFERENCES them.agents(id)` — which defaults to `ON DELETE RESTRICT`. Any agent that was ever invoked (has child task or run_step rows) cannot be deleted.
+**Fix:** Both FKs changed to `ON DELETE SET NULL`. Task and run_step history is preserved; `agent_id` becomes NULL to indicate the agent no longer exists. Applied live via `ALTER TABLE` and updated `db/001_schema.sql`.
+**Watch for:** Any new FK from a history/audit table to an admin-managed entity should default to `ON DELETE SET NULL` or `ON DELETE CASCADE`, not `RESTRICT`. History must survive entity deletion.
+
+---
+
 ## 2026-07-05 — A2A v1.0 wire protocol: role is int, part has no "kind", method is "SendMessage"
 
 **Symptom:** Live test of `A2aAsyncAdapter` got three successive RPC errors when calling SDK v1.1 agents:

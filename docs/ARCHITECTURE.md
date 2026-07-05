@@ -1,5 +1,5 @@
 # the-M Architecture
-# Last updated: 2026-07-04
+# Last updated: 2026-07-05
 
 ## Core Mental Model
 
@@ -104,6 +104,50 @@ Published by `task_store.transition()` and `task_store.record_artifact()`:
 - `them:tasks:{task_id}:events` — every state change and artifact chunk (consumed by ws_orchestrator)
 - `them:dash:run:{run_id}` — reformatted run trace events (consumed by ws_dashboard subscribers)
 
+## Context Memory (memory_service.py) — Phase 8.4
+
+When `orchestrator.memory_enabled = true`, the task_runner maintains a rolling summary of agent call results across iterations.
+
+```
+Every N agent calls (summarize_every_n_calls):
+  └─ memory_service.summarize_context(context_id, orch, artifacts, root_task_id, db)
+       └─ Fetches recent context artifacts
+       └─ Calls summarizer LLM (default: anthropic/haiku, cheapest available)
+       └─ Stores summary text in Redis: them:ctx:{context_id}:summary  TTL 3600s
+       └─ Persists as artifact: name="summary-{timestamp}" in them.artifacts
+
+On next agent call batch:
+  └─ memory_service.get_injected_context(context_id) → reads Redis summary
+  └─ Prepends "[Context summary]\n{summary}\n\n" to each agent tool call input
+```
+
+**Context threading:** The frontend passes `context_id` in the WS message payload on follow-up messages. The server reuses the same `context_id` instead of generating a fresh UUID — so the Redis summary from the previous turn is found and injected.
+
+**Redis key:** `them:ctx:{context_id}:summary` — TTL 3600s. Written by memory_service, read by task_runner before each agent batch.
+
+## Pluggable Edge Adapters (app/edges/) — Phase 8.6
+
+The WS endpoint is now a thin shell over an `EdgeAdapter`. All output goes through `edge.emit(event)`.
+
+```
+EdgeAdapter (base.py) — ABC
+  name: str
+  emit(event: dict) → None (async)
+  close() → None (async)
+
+WebsocketEdge (websocket_edge.py)
+  name = "websocket"
+  Wraps FastAPI WebSocket; re-raises WebSocketDisconnect
+
+VoiceEdge (voice_edge.py) — stub, NotImplementedError
+RestEdge (rest_edge.py)   — stub, NotImplementedError
+
+get_edge_class(name) → Type[EdgeAdapter]   # registry.py
+VALID_EDGES = frozenset({"websocket", "voice", "rest"})
+```
+
+**Edge guard:** `Orchestrator.edges TEXT[]` — if "websocket" is not in the list, the connection is rejected after auth with a clear error. Defaults to `{websocket}` for all existing orchestrators.
+
 ## Legacy Orchestrator (orchestrator_service.py) — Retained
 
 Kept for backward compatibility. Uses in-RAM accumulator, records to `them.runs`/`them.run_steps`/`them.run_usage`. No task graph or artifacts.
@@ -131,12 +175,16 @@ Redis key mapping: channel `run:abc` → pub/sub channel `them:dash:run:abc`
 Browser Playground
   ├─ Left pane: chat
   │    └─ WebSocket → /ws/orchestrate/{name}?token=<jwt>
-  │         streams: ready (with task_id, context_id), token, tool_start, tool_done, done, error
+  │         sends: {type:"message", content:"...", context_id:"<uuid>"}  ← context_id optional
+  │         streams: ready (run_id, task_id, context_id), token, tool_start, tool_done, done, error
+  │         context_id: server assigns fresh UUID on first message; client sends same UUID on
+  │                     follow-up messages so memory summary is reused across turns
   └─ Right pane: debug tabs
        ├─ Trace tab — WS → /ws/dashboard, subscribe: ["run:{run_id}"]
        ├─ Tasks tab — GET /api/v1/runs/{run_id}/tasks  (on done event)
        ├─ Artifacts tab — GET /api/v1/runs/{run_id}/artifacts  (on done event)
-       └─ Memory tab — per-agent "Fetch Agent Card" → GET {endpoint}/.well-known/agent-card.json
+       └─ Memory tab — context artifacts + per-agent "Fetch Agent Card" button
+                        GET {endpoint}/.well-known/agent-card.json (proxied via frontend API)
 ```
 
 ## Adapter Abstraction
