@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Agent, type AgentSkill } from '@/lib/api';
+import { themApi, type Agent, type AgentSkill, type DiscoverResult } from '@/lib/api';
 
 const EMPTY_FORM = {
   slug: '',
@@ -73,6 +73,9 @@ export default function AdminAgentsPage() {
   const [error, setError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency_ms: number; detail: string } | 'testing'>>({});
+  const [rowDiscoverResults, setRowDiscoverResults] = useState<Record<string, 'discovering'>>({});
+  const [discoverPopup, setDiscoverPopup] = useState<{ agent: Agent; result: DiscoverResult } | null>(null);
+  const [applyingDiscover, setApplyingDiscover] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [discoverError, setDiscoverError] = useState('');
 
@@ -173,6 +176,44 @@ export default function AdminAgentsPage() {
       setTestResults((r) => ({ ...r, [agent.id]: result }));
     } catch (e: unknown) {
       setTestResults((r) => ({ ...r, [agent.id]: { ok: false, latency_ms: 0, detail: e instanceof Error ? e.message : 'Test failed' } }));
+    }
+  }
+
+  async function handleRowDiscover(agent: Agent) {
+    setRowDiscoverResults((r) => ({ ...r, [agent.id]: 'discovering' }));
+    try {
+      const result = await themApi.discoverAgent({ endpoint_url: agent.endpoint_url });
+      if (!result.ok) {
+        alert(`Discovery failed: ${result.detail}`);
+        return;
+      }
+      setDiscoverPopup({ agent, result });
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Discovery failed');
+    } finally {
+      setRowDiscoverResults((r) => { const n = { ...r }; delete n[agent.id]; return n; });
+    }
+  }
+
+  async function handleApplyDiscover() {
+    if (!discoverPopup) return;
+    setApplyingDiscover(true);
+    try {
+      await themApi.updateAgent(discoverPopup.agent.id, {
+        display_name: discoverPopup.result.display_name || discoverPopup.agent.display_name,
+        description: discoverPopup.result.description || discoverPopup.agent.description,
+        skills: discoverPopup.result.skills,
+        supports_streaming: discoverPopup.result.supports_streaming,
+        supports_push: discoverPopup.result.supports_push,
+        agent_card: discoverPopup.result.agent_card,
+        agent_card_url: discoverPopup.result.agent_card_url,
+      });
+      setDiscoverPopup(null);
+      reload();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Apply failed');
+    } finally {
+      setApplyingDiscover(false);
     }
   }
 
@@ -289,6 +330,14 @@ export default function AdminAgentsPage() {
                       <td style={{ padding: '12px 16px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
                           <div style={{ display: 'flex', gap: '8px' }}>
+                            <button onClick={() => handleRowDiscover(agent)} disabled={!!rowDiscoverResults[agent.id]} style={{
+                              padding: '5px 12px', borderRadius: '6px', border: '1px solid rgba(167,139,250,.4)',
+                              background: 'transparent', cursor: rowDiscoverResults[agent.id] ? 'not-allowed' : 'pointer',
+                              fontSize: '12px', color: '#a78bfa',
+                              opacity: rowDiscoverResults[agent.id] ? 0.6 : 1,
+                            }}>
+                              {rowDiscoverResults[agent.id] ? 'Discovering…' : 'Discover'}
+                            </button>
                             <button onClick={() => handleTest(agent)} disabled={testResults[agent.id] === 'testing'} style={{
                               padding: '5px 12px', borderRadius: '6px', border: '1px solid var(--tm-border)',
                               background: 'transparent', cursor: 'pointer', fontSize: '12px', color: 'var(--tm-accent)',
@@ -440,6 +489,82 @@ export default function AdminAgentsPage() {
                 background: 'var(--tm-accent)', color: '#fff', cursor: saving ? 'not-allowed' : 'pointer',
                 fontSize: '14px', fontWeight: 600, opacity: saving ? 0.7 : 1,
               }}>{saving ? 'Saving…' : (editing ? 'Save Changes' : 'Create Agent')}</button>
+            </div>
+          </Modal>
+        )}
+
+        {/* Discover popup */}
+        {discoverPopup && (
+          <Modal title={`Agent Card — ${discoverPopup.result.display_name || discoverPopup.agent.display_name}`} onClose={() => setDiscoverPopup(null)}>
+            {/* Header badges */}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
+              {discoverPopup.result.supports_streaming && (
+                <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: 'rgba(91,127,255,.12)', color: '#5b7fff' }}>Streaming</span>
+              )}
+              {discoverPopup.result.supports_push && (
+                <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: 'rgba(167,139,250,.12)', color: '#a78bfa' }}>Push notifications</span>
+              )}
+              {!discoverPopup.result.supports_streaming && !discoverPopup.result.supports_push && (
+                <span style={{ fontSize: '11px', color: 'var(--tm-text-muted)' }}>No special capabilities</span>
+              )}
+            </div>
+
+            {/* Description */}
+            {discoverPopup.result.description && (
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Description</div>
+                <p style={{ fontSize: '13px', color: 'var(--tm-text)', lineHeight: 1.6, margin: 0, whiteSpace: 'pre-wrap' }}>{discoverPopup.result.description}</p>
+              </div>
+            )}
+
+            {/* Skills */}
+            {discoverPopup.result.skills.length > 0 && (
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
+                  Skills ({discoverPopup.result.skills.length})
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {discoverPopup.result.skills.map((s, i) => (
+                    <div key={i} style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--tm-border)', background: 'var(--tm-surface-2)' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tm-text)', marginBottom: s.description ? '4px' : 0 }}>{s.name}</div>
+                      {s.description && <div style={{ fontSize: '12px', color: 'var(--tm-text-muted)', lineHeight: 1.5 }}>{s.description}</div>}
+                      {s.tags && s.tags.length > 0 && (
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '6px' }}>
+                          {s.tags.map((t: string, ti: number) => (
+                            <span key={ti} style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(167,139,250,.1)', color: '#a78bfa' }}>{t}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Suggested slug */}
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Suggested Slug</div>
+              <code style={{ fontSize: '13px', color: 'var(--tm-text)', background: 'var(--tm-surface-2)', padding: '4px 8px', borderRadius: '6px' }}>
+                {discoverPopup.result.suggested_slug}
+              </code>
+            </div>
+
+            {/* Card URL */}
+            <div style={{ marginBottom: '24px' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Card URL</div>
+              <div style={{ fontSize: '12px', color: 'var(--tm-text-muted)', fontFamily: 'monospace', wordBreak: 'break-all' }}>{discoverPopup.result.agent_card_url}</div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setDiscoverPopup(null)} style={{
+                padding: '8px 20px', borderRadius: '8px', border: '1px solid var(--tm-border)',
+                background: 'transparent', cursor: 'pointer', fontSize: '14px', color: 'var(--tm-text)',
+              }}>Close</button>
+              <button onClick={handleApplyDiscover} disabled={applyingDiscover} style={{
+                padding: '8px 20px', borderRadius: '8px', border: 'none',
+                background: '#7c3aed', color: '#fff', cursor: applyingDiscover ? 'not-allowed' : 'pointer',
+                fontSize: '14px', fontWeight: 600, opacity: applyingDiscover ? 0.7 : 1,
+              }}>{applyingDiscover ? 'Applying…' : 'Apply to Agent'}</button>
             </div>
           </Modal>
         )}

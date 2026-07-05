@@ -449,7 +449,7 @@ async def run(
         "task_id": str(root_task.id),
         "context_id": str(context_id),
     })
-    yield {"type": "ready", "run_id": str(run_id), "task_id": str(root_task.id)}
+    yield {"type": "ready", "run_id": str(run_id), "task_id": str(root_task.id), "context_id": str(context_id)}
 
     # ── Build LLM provider ─────────────────────────────────────────────────
     try:

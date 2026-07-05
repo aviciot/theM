@@ -124,8 +124,10 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
     try:
         msg = json.loads(raw)
         user_message = msg.get("content", "").strip()
+        client_context_id = msg.get("context_id")
     except (json.JSONDecodeError, AttributeError):
         user_message = raw.strip()
+        client_context_id = None
 
     if not user_message:
         await websocket.send_json({"type": "error", "message": "Empty message"})
@@ -133,7 +135,11 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
         return
 
     session_id = uuid.uuid4()
-    context_id = uuid.uuid4()
+    # Reuse context_id supplied by client so memory carries across turns
+    try:
+        context_id = uuid.UUID(client_context_id) if client_context_id else uuid.uuid4()
+    except (ValueError, AttributeError):
+        context_id = uuid.uuid4()
 
     # ── Instantiate the WebsocketEdge and relay runner events ─────────────
     edge = WebsocketEdge(websocket, orchestrator_name=name, user_id=user_id)

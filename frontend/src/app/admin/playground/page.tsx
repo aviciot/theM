@@ -448,13 +448,12 @@ export default function PlaygroundPage() {
   }, []);
 
   // ── Send message ─────────────────────────────────────────────────────────
-  const sendText = useCallback(async (text: string) => {
+  const sendText = useCallback(async (text: string, currentContextId?: string | null) => {
     if (!text.trim() || !selectedOrch || busy) return;
     setInput('');
     setBusy(true);
     setTrace([]);
     setAgentInvocations([]);
-    setContextId(null);
     setMessages(prev => [...prev, { role: 'user', text }]);
 
     const r = await fetch('/api/auth/token');
@@ -467,7 +466,9 @@ export default function PlaygroundPage() {
 
     ws.onopen = () => {
       setStatus('Connected');
-      ws.send(JSON.stringify({ type: 'message', content: text }));
+      const payload: Record<string, string> = { type: 'message', content: text };
+      if (currentContextId) payload.context_id = currentContextId;
+      ws.send(JSON.stringify(payload));
     };
 
     ws.onmessage = (e) => {
@@ -588,7 +589,7 @@ export default function PlaygroundPage() {
     };
   }, [selectedOrch, busy, openDashWs]);
 
-  const send = useCallback(() => sendText(input), [input, sendText]);
+  const send = useCallback(() => sendText(input, contextId), [input, contextId, sendText]);
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -621,7 +622,7 @@ export default function PlaygroundPage() {
         try {
           const result = await themApi.transcribe(selectedOrch, blob);
           if (result.text) {
-            await sendText(result.text);
+            await sendText(result.text, contextId);
           }
         } catch (e) {
           console.error('Transcription error', e);
