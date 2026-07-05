@@ -237,11 +237,11 @@ async def test_agent(agent_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     t0 = time.monotonic()
 
     try:
-        if row.transport == "a2a":
+        if row.transport in ("a2a", "a2a_async"):
             base = row.endpoint_url.rstrip("/")
             card_url = f"{base}/.well-known/agent-card.json"
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(card_url, headers=headers)
+                resp = await client.get(card_url, headers={**headers, "A2A-Version": "1.0"})
             latency_ms = int((time.monotonic() - t0) * 1000)
             if resp.status_code == 200:
                 card = resp.json()
