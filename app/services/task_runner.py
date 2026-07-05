@@ -29,9 +29,9 @@ import app.database as db_module
 from app.adapters.factory import get_adapter
 from app.models import Agent, Orchestrator, Task
 from app.services import context_service, run_recorder, task_store
-from app.services.providers.anthropic import AnthropicProvider
+from app.services.providers import create_provider
 from app.services.providers.base import (
-    LLMStreamEvent, NeutralTool, ToolCall, TokenUsage,
+    LLMProvider, LLMStreamEvent, NeutralTool, ToolCall, TokenUsage,
 )
 from app.utils.logger import logger
 
@@ -142,12 +142,26 @@ def _compose_tool_description(agent: Agent) -> str:
     return "\n".join(parts) if parts else agent.description
 
 
-def _build_provider(orch) -> AnthropicProvider:
+_PROVIDER_DEFAULT_KEYS = {
+    "openai": lambda s: (s.openai_api_key, s.openai_model),
+    "anthropic": lambda s: (s.llm.api_key, s.llm.model),
+}
+
+
+def _build_provider(orch) -> LLMProvider:
     from app.config import settings
     from app.utils.crypto import decrypt_value
-    api_key = decrypt_value(orch.llm_api_key_encrypted) if orch.llm_api_key_encrypted else settings.llm.api_key
-    model = orch.llm_model or settings.llm.model
-    return AnthropicProvider(api_key=api_key, model=model)
+    provider_name = getattr(orch, "llm_provider", None) or "anthropic"
+    if orch.llm_api_key_encrypted:
+        api_key = decrypt_value(orch.llm_api_key_encrypted)
+        model = orch.llm_model or _PROVIDER_DEFAULT_KEYS.get(provider_name, _PROVIDER_DEFAULT_KEYS["anthropic"])(settings)[1]
+    else:
+        default_key, default_model = _PROVIDER_DEFAULT_KEYS.get(
+            provider_name, _PROVIDER_DEFAULT_KEYS["anthropic"]
+        )(settings)
+        api_key = default_key
+        model = orch.llm_model or default_model
+    return create_provider(provider_name, api_key=api_key, model=model)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -155,18 +169,15 @@ def _build_provider(orch) -> AnthropicProvider:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _build_messages_from_store(
-    provider: AnthropicProvider,
+    provider: LLMProvider,
     task: Task,
     db: AsyncSession,
 ) -> list:
     """
-    Reconstruct LLM message history from them.task_messages + them.artifacts.
-
-    For Phase 3, the root task has one user message (the goal) + any assistant
-    turns and tool results stored as task_messages. This is what makes the loop
-    resumable — no in-RAM accumulator.
+    Reconstruct provider-native LLM message history from them.task_messages.
+    Delegates format reconstruction to provider.deserialize_history() so the
+    loop works with any provider (Anthropic, OpenAI, etc.).
     """
-    # Load messages ordered by seq
     from sqlalchemy import select as _select
     from app.models import TaskMessage
     result = await db.execute(
@@ -177,27 +188,17 @@ async def _build_messages_from_store(
     rows = list(result.scalars().all())
 
     if not rows:
-        # First turn: use the input_message
         input_text = ""
         input_msg = task.input_message or {}
-        parts = input_msg.get("parts", [])
-        for part in parts:
-            if part.get("kind") == "text" or "text" in part:
-                input_text = part.get("text", "")
+        for part in input_msg.get("parts", []):
+            if "text" in part:
+                input_text = part["text"]
                 break
         if not input_text:
             input_text = str(input_msg)
         return provider.init_messages(input_text)
 
-    # Reconstruct from stored turns
-    messages = []
-    for row in rows:
-        parts = row.parts
-        if isinstance(parts, list):
-            messages.append({"role": row.role, "content": parts})
-        elif isinstance(parts, dict):
-            messages.append({"role": row.role, "content": parts.get("content", [])})
-    return messages
+    return provider.deserialize_history(rows)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -305,23 +306,11 @@ async def _persist_assistant_turn(
     task_id: uuid.UUID,
     raw_response,
     seq: int,
+    provider: LLMProvider,
 ) -> None:
-    """Store the raw Anthropic response content as a task_message for replay."""
+    """Serialize and store the provider's raw response as a task_message for replay."""
     try:
-        # Serialize the response blocks to a portable list
-        content = []
-        for block in raw_response.content:
-            block_type = getattr(block, "type", None)
-            if block_type == "text":
-                content.append({"type": "text", "text": block.text})
-            elif block_type == "tool_use":
-                content.append({
-                    "type": "tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input,
-                })
-
+        content = provider.serialize_turn(raw_response)
         await task_store.record_message(
             db,
             task_id=task_id,
@@ -546,7 +535,7 @@ async def run(
 
             # Persist assistant turn for context reconstruction
             if raw_response is not None:
-                await _persist_assistant_turn(db, root_task.id, raw_response, seq=msg_seq)
+                await _persist_assistant_turn(db, root_task.id, raw_response, seq=msg_seq, provider=provider)
                 msg_seq += 1
                 provider.append_assistant_response(messages, raw_response)
 

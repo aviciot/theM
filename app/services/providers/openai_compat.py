@@ -246,6 +246,68 @@ class OpenAICompatProvider(LLMProvider):
         )
 
 
+    # ------------------------------------------------------------------ #
+    # Durable history serialization                                        #
+    # ------------------------------------------------------------------ #
+
+    def serialize_turn(self, raw_response: Any) -> list[dict]:
+        """
+        Serialize an OpenAI ChatCompletion (or _SyntheticResponse) to portable
+        dicts for DB storage. Stored as a single-element list containing the
+        assistant message dict so deserialize_history can reconstruct it.
+        """
+        msg = raw_response.choices[0].message
+        entry: dict = {"role": "assistant", "content": msg.content}
+        if msg.tool_calls:
+            entry["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in msg.tool_calls
+            ]
+        return [entry]
+
+    def deserialize_history(self, rows: list) -> list:
+        """
+        Reconstruct OpenAI-shaped message list from stored task_message rows.
+        Each row was persisted via serialize_turn (assistant turn) or
+        append_tool_results (tool result turn).
+        """
+        messages = []
+        for row in rows:
+            parts = row.parts
+            if isinstance(parts, list):
+                # Could be a list of dicts from serialize_turn or tool results
+                for entry in parts:
+                    if isinstance(entry, dict):
+                        messages.append(entry)
+            elif isinstance(parts, dict):
+                # Anthropic-style {"content": [...]} wrapper — extract and adapt
+                content_blocks = parts.get("content", [])
+                # Check if it's a tool result block (Anthropic format)
+                if content_blocks and isinstance(content_blocks[0], dict):
+                    first = content_blocks[0]
+                    if first.get("type") == "tool_result":
+                        for block in content_blocks:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": block.get("tool_use_id", ""),
+                                "content": block.get("content", ""),
+                            })
+                        continue
+                # Generic dict content — reconstruct as assistant message
+                messages.append({
+                    "role": row.role if row.role != "agent" else "assistant",
+                    "content": content_blocks,
+                })
+        return messages
+
+
 class _SyntheticResponse:
     """
     Minimal stand-in for an OpenAI ChatCompletion when building message

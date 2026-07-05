@@ -189,3 +189,40 @@ class AnthropicProvider(LLMProvider):
             type="tool_calls_ready",
             result={"tool_calls": tool_calls, "raw_response": final_message, "usage": usage},
         )
+
+    # ------------------------------------------------------------------ #
+    # Durable history serialization                                        #
+    # ------------------------------------------------------------------ #
+
+    def serialize_turn(self, raw_response: Any) -> list[dict]:
+        """Serialize Anthropic response blocks to portable dicts for DB storage."""
+        result = []
+        for block in raw_response.content:
+            block_type = getattr(block, "type", None)
+            if block_type == "text":
+                result.append({"type": "text", "text": block.text})
+            elif block_type == "tool_use":
+                result.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input,
+                })
+        return result
+
+    def deserialize_history(self, rows: list) -> list:
+        """
+        Reconstruct Anthropic-shaped message list from stored task_message rows.
+        Rows have .role and .parts (stored as {"content": [...]} or a list directly).
+        """
+        messages = []
+        for row in rows:
+            parts = row.parts
+            if isinstance(parts, list):
+                content = parts
+            elif isinstance(parts, dict):
+                content = parts.get("content", [])
+            else:
+                continue
+            messages.append({"role": row.role if row.role != "agent" else "assistant", "content": content})
+        return messages

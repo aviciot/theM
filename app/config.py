@@ -101,11 +101,15 @@ class Settings(BaseSettings):
     CORS_ENABLED: bool = True
     CORS_ORIGINS: str = "http://localhost:3111"
 
-    # LLM
+    # LLM — Anthropic (default provider)
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
     ANTHROPIC_MAX_TOKENS: int = 4096
     ANTHROPIC_TIMEOUT: int = 30
+
+    # LLM — OpenAI (optional; used when orchestrator.llm_provider = 'openai')
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
 
     # Logging
     LOG_LEVEL: str = "INFO"
@@ -157,6 +161,9 @@ class GlobalConfig:
         )
 
         self.auth_service_url: str = env.AUTH_SERVICE_URL
+
+        self.openai_api_key: str = env.OPENAI_API_KEY
+        self.openai_model: str = env.OPENAI_MODEL
 
         self.logging = LoggingConfig(
             level=env.LOG_LEVEL,

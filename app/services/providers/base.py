@@ -128,3 +128,24 @@ class LLMProvider(ABC):
         """
         ...
         yield  # make type checker happy
+
+    @abstractmethod
+    def serialize_turn(self, raw_response: Any) -> list[dict]:
+        """
+        Convert a raw LLM response into a portable list of dicts
+        that can be stored in them.task_messages.parts and later
+        passed to deserialize_history().
+
+        Must be round-trippable: deserialize_history(serialize_turn(r)) ≈ r content.
+        """
+        ...
+
+    @abstractmethod
+    def deserialize_history(self, rows: list) -> list:
+        """
+        Reconstruct a provider-native message list from stored task_message rows
+        (each row has .role and .parts as stored by serialize_turn / append_tool_results).
+
+        Returns the list in the shape that can be passed directly to call() / stream_call().
+        """
+        ...
