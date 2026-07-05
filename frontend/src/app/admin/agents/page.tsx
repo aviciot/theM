@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Agent, type AgentSkill, type DiscoverResult } from '@/lib/api';
+import { themApi, type Agent, type AgentSkill, type DiscoverResult, type OrchestratorFull } from '@/lib/api';
 
 const EMPTY_FORM = {
   slug: '',
@@ -23,17 +23,88 @@ const EMPTY_FORM = {
 
 type FormState = typeof EMPTY_FORM;
 
-function Modal({
-  title, onClose, children,
-}: { title: string; onClose: () => void; children: React.ReactNode }) {
+// ── Diff helpers ──────────────────────────────────────────────────────────────
+
+type CardDiff = {
+  hasChanges: boolean;
+  displayName: { old: string; new: string; changed: boolean };
+  description: { old: string; new: string; changed: boolean };
+  skills: { old: AgentSkill[]; new: AgentSkill[]; changed: boolean };
+  streaming: { old: boolean; new: boolean; changed: boolean };
+  push: { old: boolean; new: boolean; changed: boolean };
+  version: { old: string; new: string; changed: boolean };
+  provider: { old: string; new: string; changed: boolean };
+};
+
+function buildDiff(agent: Agent, result: DiscoverResult): CardDiff {
+  const oldCard = (agent.agent_card ?? {}) as Record<string, unknown>;
+  const newCard = (result.agent_card ?? {}) as Record<string, unknown>;
+
+  const oldVersion = String(oldCard.version ?? '');
+  const newVersion = String(newCard.version ?? '');
+
+  const oldProvider = typeof oldCard.provider === 'object' && oldCard.provider
+    ? String((oldCard.provider as Record<string, unknown>).organization ?? '')
+    : '';
+  const newProvider = typeof newCard.provider === 'object' && newCard.provider
+    ? String((newCard.provider as Record<string, unknown>).organization ?? '')
+    : '';
+
+  const oldSkillsJson = JSON.stringify((agent.skills ?? []).map(s => ({ id: s.id, name: s.name, description: s.description ?? '', tags: (s.tags ?? []).sort() })));
+  const newSkillsJson = JSON.stringify((result.skills ?? []).map(s => ({ id: s.id, name: s.name, description: s.description ?? '', tags: (s.tags ?? []).sort() })));
+
+  const fields = {
+    displayName: { old: agent.display_name, new: result.display_name, changed: agent.display_name !== result.display_name },
+    description: { old: agent.description, new: result.description, changed: agent.description !== result.description },
+    skills: { old: agent.skills ?? [], new: result.skills, changed: oldSkillsJson !== newSkillsJson },
+    streaming: { old: !!agent.supports_streaming, new: result.supports_streaming, changed: !!agent.supports_streaming !== result.supports_streaming },
+    push: { old: !!agent.supports_push, new: result.supports_push, changed: !!agent.supports_push !== result.supports_push },
+    version: { old: oldVersion, new: newVersion, changed: oldVersion !== newVersion },
+    provider: { old: oldProvider, new: newProvider, changed: oldProvider !== newProvider },
+  };
+
+  const hasChanges = Object.values(fields).some(f => f.changed);
+  return { hasChanges, ...fields };
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+function timeAgo(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function cardVersion(card: Record<string, unknown> | null | undefined): string {
+  return card ? String(card.version ?? '') : '';
+}
+function cardProvider(card: Record<string, unknown> | null | undefined): string {
+  if (!card?.provider || typeof card.provider !== 'object') return '';
+  return String((card.provider as Record<string, unknown>).organization ?? '');
+}
+function cardDocUrl(card: Record<string, unknown> | null | undefined): string {
+  return card ? String(card.documentationUrl ?? '') : '';
+}
+function cardAuth(card: Record<string, unknown> | null | undefined): string[] {
+  if (!card?.authentication || !Array.isArray(card.authentication)) return [];
+  return (card.authentication as unknown[]).map(a => typeof a === 'string' ? a : String((a as Record<string, unknown>).scheme ?? a));
+}
+
+// ── Sub-components ─────────────────────────────────────────────────────────────
+
+function Modal({ title, onClose, wide, children }: { title: string; onClose: () => void; wide?: boolean; children: React.ReactNode }) {
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 100,
-      background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center',
     }} onClick={onClose}>
       <div style={{
         background: 'var(--tm-surface)', border: '1px solid var(--tm-border)',
-        borderRadius: '16px', padding: '32px', width: '560px', maxHeight: '90vh',
+        borderRadius: '16px', padding: '32px', width: wide ? '720px' : '560px', maxHeight: '90vh',
         overflowY: 'auto',
       }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -57,14 +128,47 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
+      {children}
+    </div>
+  );
+}
+
+function ChangedBadge({ old: oldVal, next: newVal }: { old: string; next: string }) {
+  return (
+    <span style={{ fontSize: '11px' }}>
+      <span style={{ color: '#94a3b8', textDecoration: 'line-through', marginRight: '6px' }}>{oldVal || '—'}</span>
+      <span style={{ color: '#4edea3', fontWeight: 600 }}>{newVal || '—'}</span>
+    </span>
+  );
+}
+
+function DiffRow({ label, changed, oldVal, newVal }: { label: string; changed: boolean; oldVal: string; newVal: string }) {
+  if (!changed && !newVal) return null;
+  return (
+    <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '6px 0', borderBottom: '1px solid var(--tm-border)' }}>
+      <span style={{ fontSize: '12px', color: 'var(--tm-text-muted)', minWidth: '110px', flexShrink: 0 }}>{label}</span>
+      {changed
+        ? <ChangedBadge old={oldVal} next={newVal} />
+        : <span style={{ fontSize: '12px', color: 'var(--tm-text)' }}>{newVal}</span>
+      }
+    </div>
+  );
+}
+
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '8px 12px', borderRadius: '8px',
   border: '1px solid var(--tm-border)', background: 'var(--tm-surface-2)',
   fontSize: '14px', color: 'var(--tm-text)', boxSizing: 'border-box',
 };
 
+// ── Main page ─────────────────────────────────────────────────────────────────
+
 export default function AdminAgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [orchestrators, setOrchestrators] = useState<OrchestratorFull[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Agent | null>(null);
@@ -73,13 +177,17 @@ export default function AdminAgentsPage() {
   const [error, setError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency_ms: number; detail: string } | 'testing'>>({});
-  const [rowDiscoverResults, setRowDiscoverResults] = useState<Record<string, 'discovering'>>({});
-  const [discoverPopup, setDiscoverPopup] = useState<{ agent: Agent; result: DiscoverResult } | null>(null);
+  const [rowDiscoverState, setRowDiscoverState] = useState<Record<string, 'discovering'>>({});
+  const [discoverPopup, setDiscoverPopup] = useState<{ agent: Agent; result: DiscoverResult; diff: CardDiff } | null>(null);
   const [applyingDiscover, setApplyingDiscover] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [discoverError, setDiscoverError] = useState('');
 
-  const reload = () => themApi.agents().then(setAgents).finally(() => setLoading(false));
+  const reload = () => {
+    Promise.all([themApi.agents(), themApi.orchestrators()])
+      .then(([a, o]) => { setAgents(a); setOrchestrators(o); })
+      .finally(() => setLoading(false));
+  };
 
   useEffect(() => { reload(); }, []);
 
@@ -115,21 +223,12 @@ export default function AdminAgentsPage() {
   }
 
   async function handleDiscover() {
-    if (!form.endpoint_url.trim()) {
-      setDiscoverError('Enter an endpoint URL first');
-      return;
-    }
+    if (!form.endpoint_url.trim()) { setDiscoverError('Enter an endpoint URL first'); return; }
     setDiscovering(true);
     setDiscoverError('');
     try {
-      const result = await themApi.discoverAgent({
-        endpoint_url: form.endpoint_url.trim(),
-        auth_token: form.auth_token || undefined,
-      });
-      if (!result.ok) {
-        setDiscoverError(result.detail || 'Discovery failed');
-        return;
-      }
+      const result = await themApi.discoverAgent({ endpoint_url: form.endpoint_url.trim(), auth_token: form.auth_token || undefined });
+      if (!result.ok) { setDiscoverError(result.detail || 'Discovery failed'); return; }
       setForm((f) => ({
         ...f,
         display_name: result.display_name || f.display_name,
@@ -180,33 +279,43 @@ export default function AdminAgentsPage() {
   }
 
   async function handleRowDiscover(agent: Agent) {
-    setRowDiscoverResults((r) => ({ ...r, [agent.id]: 'discovering' }));
+    setRowDiscoverState((r) => ({ ...r, [agent.id]: 'discovering' }));
     try {
-      const result = await themApi.discoverAgent({ endpoint_url: agent.endpoint_url });
-      if (!result.ok) {
-        alert(`Discovery failed: ${result.detail}`);
-        return;
-      }
-      setDiscoverPopup({ agent, result });
+      const result = await themApi.discoverAgent({ endpoint_url: agent.endpoint_url, agent_id: agent.id });
+      if (!result.ok) { alert(`Discovery failed: ${result.detail}`); return; }
+      const diff = buildDiff(agent, result);
+      setDiscoverPopup({ agent, result, diff });
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : 'Discovery failed');
     } finally {
-      setRowDiscoverResults((r) => { const n = { ...r }; delete n[agent.id]; return n; });
+      setRowDiscoverState((r) => { const n = { ...r }; delete n[agent.id]; return n; });
     }
   }
 
   async function handleApplyDiscover() {
     if (!discoverPopup) return;
+    const { agent, result, diff } = discoverPopup;
+
+    // Warn if agent is part of orchestrators
+    const affected = orchestrators.filter(o => o.allowed_agent_ids.includes(agent.id));
+    if (affected.length > 0 && diff.hasChanges) {
+      const names = affected.map(o => o.display_name || o.name).join(', ');
+      const confirmed = window.confirm(
+        `This agent is used by ${affected.length} orchestrator${affected.length > 1 ? 's' : ''}: ${names}\n\nTheir tool descriptions will update on the next run. Continue?`
+      );
+      if (!confirmed) return;
+    }
+
     setApplyingDiscover(true);
     try {
-      await themApi.updateAgent(discoverPopup.agent.id, {
-        display_name: discoverPopup.result.display_name || discoverPopup.agent.display_name,
-        description: discoverPopup.result.description || discoverPopup.agent.description,
-        skills: discoverPopup.result.skills,
-        supports_streaming: discoverPopup.result.supports_streaming,
-        supports_push: discoverPopup.result.supports_push,
-        agent_card: discoverPopup.result.agent_card,
-        agent_card_url: discoverPopup.result.agent_card_url,
+      await themApi.updateAgent(agent.id, {
+        display_name: result.display_name || agent.display_name,
+        description: result.description || agent.description,
+        skills: result.skills,
+        supports_streaming: result.supports_streaming,
+        supports_push: result.supports_push,
+        agent_card: result.agent_card,
+        agent_card_url: result.agent_card_url,
       });
       setDiscoverPopup(null);
       reload();
@@ -232,15 +341,20 @@ export default function AdminAgentsPage() {
 
   return (
     <AuthGuard>
+      <style>{`
+        @keyframes pulse-border {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(124,58,237,0.5); }
+          50% { box-shadow: 0 0 0 6px rgba(124,58,237,0); }
+        }
+        .save-pulse { animation: pulse-border 1.4s ease-in-out infinite; }
+      `}</style>
       <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--tm-bg)' }}>
         <Sidebar />
         <main style={{ marginLeft: '260px', flex: 1 }}>
-          {/* Header */}
           <header style={{
             position: 'sticky', top: 0, zIndex: 30, height: '56px',
             background: 'var(--tm-topbar)', borderBottom: '1px solid var(--tm-topbar-border)',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '0 32px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 32px',
           }}>
             <div>
               <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--tm-accent)' }}>Agents</h2>
@@ -261,7 +375,7 @@ export default function AdminAgentsPage() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--tm-border)' }}>
-                    {['Name', 'Slug', 'Skills', 'Endpoint', 'Status', ''].map((h) => (
+                    {['Name', 'Slug', 'Skills', 'Endpoint', 'Synced', 'Status', ''].map((h) => (
                       <th key={h} style={{
                         padding: '10px 16px', textAlign: 'left',
                         fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)',
@@ -273,10 +387,10 @@ export default function AdminAgentsPage() {
                 </thead>
                 <tbody>
                   {loading && (
-                    <tr><td colSpan={6} style={{ padding: '32px', textAlign: 'center', color: 'var(--tm-text-subtle)' }}>Loading…</td></tr>
+                    <tr><td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: 'var(--tm-text-subtle)' }}>Loading…</td></tr>
                   )}
                   {!loading && agents.length === 0 && (
-                    <tr><td colSpan={6} style={{ padding: '32px', textAlign: 'center', color: 'var(--tm-text-subtle)' }}>No agents yet — click New Agent to add one</td></tr>
+                    <tr><td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: 'var(--tm-text-subtle)' }}>No agents yet — click New Agent to add one</td></tr>
                   )}
                   {agents.map((agent, i) => (
                     <tr key={agent.id}
@@ -305,17 +419,19 @@ export default function AdminAgentsPage() {
                         </code>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
-                        {agent.skills && agent.skills.length > 0 ? (
-                          <span style={{ fontSize: '11px', color: 'var(--tm-text-muted)' }} title={agent.skills.map((s) => s.name).join(', ')}>
-                            {agent.skills.length} skill{agent.skills.length !== 1 ? 's' : ''}
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: '11px', color: 'var(--tm-text-subtle)' }}>—</span>
-                        )}
+                        {agent.skills && agent.skills.length > 0
+                          ? <span style={{ fontSize: '11px', color: 'var(--tm-text-muted)' }} title={agent.skills.map((s) => s.name).join(', ')}>{agent.skills.length} skill{agent.skills.length !== 1 ? 's' : ''}</span>
+                          : <span style={{ fontSize: '11px', color: 'var(--tm-text-subtle)' }}>—</span>
+                        }
                       </td>
-                      <td style={{ padding: '12px 16px', maxWidth: '200px' }}>
+                      <td style={{ padding: '12px 16px', maxWidth: '180px' }}>
                         <span style={{ fontSize: '12px', color: 'var(--tm-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
                           {agent.endpoint_url}
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--tm-text-muted)' }}>
+                          {agent.card_fetched_at ? timeAgo(agent.card_fetched_at) : '—'}
                         </span>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
@@ -330,13 +446,12 @@ export default function AdminAgentsPage() {
                       <td style={{ padding: '12px 16px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
                           <div style={{ display: 'flex', gap: '8px' }}>
-                            <button onClick={() => handleRowDiscover(agent)} disabled={!!rowDiscoverResults[agent.id]} style={{
+                            <button onClick={() => handleRowDiscover(agent)} disabled={!!rowDiscoverState[agent.id]} style={{
                               padding: '5px 12px', borderRadius: '6px', border: '1px solid rgba(167,139,250,.4)',
-                              background: 'transparent', cursor: rowDiscoverResults[agent.id] ? 'not-allowed' : 'pointer',
-                              fontSize: '12px', color: '#a78bfa',
-                              opacity: rowDiscoverResults[agent.id] ? 0.6 : 1,
+                              background: 'transparent', cursor: rowDiscoverState[agent.id] ? 'not-allowed' : 'pointer',
+                              fontSize: '12px', color: '#a78bfa', opacity: rowDiscoverState[agent.id] ? 0.6 : 1,
                             }}>
-                              {rowDiscoverResults[agent.id] ? 'Discovering…' : 'Discover'}
+                              {rowDiscoverState[agent.id] ? 'Discovering…' : 'Discover'}
                             </button>
                             <button onClick={() => handleTest(agent)} disabled={testResults[agent.id] === 'testing'} style={{
                               padding: '5px 12px', borderRadius: '6px', border: '1px solid var(--tm-border)',
@@ -379,73 +494,39 @@ export default function AdminAgentsPage() {
         {/* Create / Edit Modal */}
         {showModal && (
           <Modal title={editing ? `Edit — ${editing.display_name}` : 'New Agent'} onClose={() => setShowModal(false)}>
-            {/* Endpoint URL + Discover — always first so Discover can populate everything else */}
             <Field label="Endpoint URL">
               <div style={{ display: 'flex', gap: '8px' }}>
-                <input
-                  style={{ ...inputStyle, flex: 1 }}
-                  value={form.endpoint_url}
-                  onChange={(e) => set('endpoint_url', e.target.value)}
-                  placeholder="http://host:port"
-                />
-                <button
-                  onClick={handleDiscover}
-                  disabled={discovering}
-                  style={{
-                    padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--tm-border)',
-                    background: 'var(--tm-surface-2)', cursor: discovering ? 'not-allowed' : 'pointer',
-                    fontSize: '12px', fontWeight: 600, color: 'var(--tm-accent)',
-                    whiteSpace: 'nowrap', opacity: discovering ? 0.6 : 1, flexShrink: 0,
-                  }}
-                >
-                  {discovering ? 'Discovering…' : 'Discover'}
-                </button>
+                <input style={{ ...inputStyle, flex: 1 }} value={form.endpoint_url} onChange={(e) => set('endpoint_url', e.target.value)} placeholder="http://host:port" />
+                <button onClick={handleDiscover} disabled={discovering} style={{
+                  padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--tm-border)',
+                  background: 'var(--tm-surface-2)', cursor: discovering ? 'not-allowed' : 'pointer',
+                  fontSize: '12px', fontWeight: 600, color: 'var(--tm-accent)',
+                  whiteSpace: 'nowrap', opacity: discovering ? 0.6 : 1, flexShrink: 0,
+                }}>{discovering ? 'Discovering…' : 'Discover'}</button>
               </div>
-              {discoverError && (
-                <div style={{ fontSize: '11px', color: '#dc2626', marginTop: '4px' }}>{discoverError}</div>
-              )}
+              {discoverError && <div style={{ fontSize: '11px', color: '#dc2626', marginTop: '4px' }}>{discoverError}</div>}
               {form.agent_card_url && !discoverError && (
                 <div style={{ fontSize: '11px', color: '#005b3d', marginTop: '4px' }}>
                   Card fetched — {form.skills.length} skill{form.skills.length !== 1 ? 's' : ''} discovered
-                  {form.supports_streaming && ' · streaming'}
-                  {form.supports_push && ' · push'}
+                  {form.supports_streaming && ' · streaming'}{form.supports_push && ' · push'}
                 </div>
               )}
             </Field>
-
             <Field label="Display Name">
               <input style={inputStyle} value={form.display_name} onChange={(e) => set('display_name', e.target.value)} placeholder="Echo Agent" />
             </Field>
-
             {!editing && (
               <Field label="Slug">
-                <input
-                  style={inputStyle}
-                  value={form.slug}
-                  onChange={(e) => set('slug', e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))}
-                  placeholder="echo_agent"
-                />
+                <input style={inputStyle} value={form.slug} onChange={(e) => set('slug', e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))} placeholder="echo_agent" />
                 <div style={{ fontSize: '11px', color: 'var(--tm-text-muted)', marginTop: '4px' }}>lowercase letters, numbers, underscores only</div>
               </Field>
             )}
-
             <Field label="Description (shown to LLM)">
-              <textarea
-                style={{ ...inputStyle, minHeight: '72px', resize: 'vertical', fontFamily: 'inherit' }}
-                value={form.description}
-                onChange={(e) => set('description', e.target.value)}
-                placeholder="Echoes back any message it receives"
-              />
+              <textarea style={{ ...inputStyle, minHeight: '72px', resize: 'vertical', fontFamily: 'inherit' }} value={form.description} onChange={(e) => set('description', e.target.value)} placeholder="Echoes back any message it receives" />
             </Field>
-
-            {/* Skills — read-only when discovered */}
             {form.skills.length > 0 && (
               <Field label={`Skills (${form.skills.length})`}>
-                <div style={{
-                  border: '1px solid var(--tm-border)', borderRadius: '8px',
-                  background: 'var(--tm-surface-2)', padding: '8px 12px',
-                  maxHeight: '120px', overflowY: 'auto',
-                }}>
+                <div style={{ border: '1px solid var(--tm-border)', borderRadius: '8px', background: 'var(--tm-surface-2)', padding: '8px 12px', maxHeight: '120px', overflowY: 'auto' }}>
                   {form.skills.map((s, i) => (
                     <div key={i} style={{ fontSize: '12px', color: 'var(--tm-text)', marginBottom: i < form.skills.length - 1 ? '6px' : 0 }}>
                       <span style={{ fontWeight: 600 }}>{s.name}</span>
@@ -455,12 +536,9 @@ export default function AdminAgentsPage() {
                 </div>
               </Field>
             )}
-
             <Field label={editing ? 'Auth Token (leave blank to keep existing)' : 'Auth Token (optional)'}>
-              <input style={inputStyle} type="password" value={form.auth_token} onChange={(e) => set('auth_token', e.target.value)}
-                placeholder="Bearer token for the agent endpoint" />
+              <input style={inputStyle} type="password" value={form.auth_token} onChange={(e) => set('auth_token', e.target.value)} placeholder="Bearer token for the agent endpoint" />
             </Field>
-
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               <Field label="Max Concurrency">
                 <input style={inputStyle} type="number" min={1} max={20} value={form.max_concurrency} onChange={(e) => set('max_concurrency', Number(e.target.value))} />
@@ -469,105 +547,162 @@ export default function AdminAgentsPage() {
                 <input style={inputStyle} type="number" min={5} max={300} value={form.timeout_seconds} onChange={(e) => set('timeout_seconds', Number(e.target.value))} />
               </Field>
             </div>
-
             <Field label="Status">
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input type="checkbox" checked={form.enabled} onChange={(e) => set('enabled', e.target.checked)} />
                 <span style={{ fontSize: '14px', color: 'var(--tm-text)' }}>Enabled</span>
               </label>
             </Field>
-
             {error && <div style={{ padding: '10px 12px', borderRadius: '8px', background: 'rgba(220,38,38,.08)', color: '#dc2626', fontSize: '13px', marginBottom: '16px' }}>{error}</div>}
-
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
-              <button onClick={() => setShowModal(false)} style={{
-                padding: '8px 20px', borderRadius: '8px', border: '1px solid var(--tm-border)',
-                background: 'transparent', cursor: 'pointer', fontSize: '14px', color: 'var(--tm-text)',
-              }}>Cancel</button>
-              <button onClick={handleSave} disabled={saving} style={{
-                padding: '8px 20px', borderRadius: '8px', border: 'none',
-                background: 'var(--tm-accent)', color: '#fff', cursor: saving ? 'not-allowed' : 'pointer',
-                fontSize: '14px', fontWeight: 600, opacity: saving ? 0.7 : 1,
-              }}>{saving ? 'Saving…' : (editing ? 'Save Changes' : 'Create Agent')}</button>
+              <button onClick={() => setShowModal(false)} style={{ padding: '8px 20px', borderRadius: '8px', border: '1px solid var(--tm-border)', background: 'transparent', cursor: 'pointer', fontSize: '14px', color: 'var(--tm-text)' }}>Cancel</button>
+              <button onClick={handleSave} disabled={saving} style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: 'var(--tm-accent)', color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving…' : (editing ? 'Save Changes' : 'Create Agent')}</button>
             </div>
           </Modal>
         )}
 
         {/* Discover popup */}
-        {discoverPopup && (
-          <Modal title={`Agent Card — ${discoverPopup.result.display_name || discoverPopup.agent.display_name}`} onClose={() => setDiscoverPopup(null)}>
-            {/* Header badges */}
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
-              {discoverPopup.result.supports_streaming && (
-                <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: 'rgba(91,127,255,.12)', color: '#5b7fff' }}>Streaming</span>
-              )}
-              {discoverPopup.result.supports_push && (
-                <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: 'rgba(167,139,250,.12)', color: '#a78bfa' }}>Push notifications</span>
-              )}
-              {!discoverPopup.result.supports_streaming && !discoverPopup.result.supports_push && (
-                <span style={{ fontSize: '11px', color: 'var(--tm-text-muted)' }}>No special capabilities</span>
-              )}
-            </div>
+        {discoverPopup && (() => {
+          const { agent, result, diff } = discoverPopup;
+          const newCard = (result.agent_card ?? {}) as Record<string, unknown>;
+          const version = cardVersion(result.agent_card);
+          const provider = cardProvider(result.agent_card);
+          const docUrl = cardDocUrl(result.agent_card);
+          const authSchemes = cardAuth(result.agent_card);
+          const affectedOrchestrators = orchestrators.filter(o => o.allowed_agent_ids.includes(agent.id));
 
-            {/* Description */}
-            {discoverPopup.result.description && (
-              <div style={{ marginBottom: '20px' }}>
-                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Description</div>
-                <p style={{ fontSize: '13px', color: 'var(--tm-text)', lineHeight: 1.6, margin: 0, whiteSpace: 'pre-wrap' }}>{discoverPopup.result.description}</p>
+          return (
+            <Modal wide title={`Agent Card — ${result.display_name || agent.display_name}`} onClose={() => setDiscoverPopup(null)}>
+
+              {/* Status banner */}
+              <div style={{
+                padding: '10px 14px', borderRadius: '8px', marginBottom: '20px',
+                background: diff.hasChanges ? 'rgba(251,191,36,.08)' : 'rgba(78,222,163,.08)',
+                border: `1px solid ${diff.hasChanges ? 'rgba(251,191,36,.3)' : 'rgba(78,222,163,.3)'}`,
+                display: 'flex', alignItems: 'center', gap: '8px',
+              }}>
+                <span style={{ fontSize: '16px' }}>{diff.hasChanges ? '⚠️' : '✓'}</span>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: diff.hasChanges ? '#fbbf24' : '#4edea3' }}>
+                  {diff.hasChanges ? 'Changes detected — review and save to update this agent' : 'Up to date — no changes since last sync'}
+                </span>
               </div>
-            )}
 
-            {/* Skills */}
-            {discoverPopup.result.skills.length > 0 && (
-              <div style={{ marginBottom: '20px' }}>
-                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-                  Skills ({discoverPopup.result.skills.length})
+              {/* Two-column layout */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+
+                {/* Left: card info */}
+                <div>
+                  <SectionLabel>Agent Info</SectionLabel>
+                  <div style={{ border: '1px solid var(--tm-border)', borderRadius: '8px', overflow: 'hidden', marginBottom: '16px' }}>
+                    <DiffRow label="Name" changed={diff.displayName.changed} oldVal={diff.displayName.old} newVal={diff.displayName.new} />
+                    {version && <DiffRow label="Version" changed={diff.version.changed} oldVal={diff.version.old} newVal={version} />}
+                    {provider && <DiffRow label="Provider" changed={diff.provider.changed} oldVal={diff.provider.old} newVal={provider} />}
+                    {docUrl && (
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '6px 0 6px 0', borderBottom: '1px solid var(--tm-border)' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--tm-text-muted)', minWidth: '110px' }}>Docs</span>
+                        <a href={docUrl} target="_blank" rel="noreferrer" style={{ fontSize: '12px', color: '#5b7fff' }}>{docUrl}</a>
+                      </div>
+                    )}
+                    <DiffRow label="Streaming" changed={diff.streaming.changed} oldVal={diff.streaming.old ? 'yes' : 'no'} newVal={diff.streaming.new ? 'yes' : 'no'} />
+                    <DiffRow label="Push" changed={diff.push.changed} oldVal={diff.push.old ? 'yes' : 'no'} newVal={diff.push.new ? 'yes' : 'no'} />
+                    {authSchemes.length > 0 && (
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '6px 0' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--tm-text-muted)', minWidth: '110px' }}>Auth</span>
+                        <span style={{ fontSize: '12px', color: 'var(--tm-text)' }}>{authSchemes.join(', ')}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Card URL */}
+                  <SectionLabel>Card URL</SectionLabel>
+                  <div style={{ fontSize: '11px', color: 'var(--tm-text-muted)', fontFamily: 'monospace', wordBreak: 'break-all', marginBottom: '16px' }}>
+                    {result.agent_card_url}
+                  </div>
+
+                  {/* Orchestrators using this agent */}
+                  {affectedOrchestrators.length > 0 && (
+                    <>
+                      <SectionLabel>Used by orchestrators</SectionLabel>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {affectedOrchestrators.map(o => (
+                          <div key={o.id} style={{ fontSize: '12px', padding: '4px 8px', borderRadius: '6px', background: 'rgba(251,191,36,.08)', color: '#fbbf24', border: '1px solid rgba(251,191,36,.2)' }}>
+                            {o.display_name || o.name}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {discoverPopup.result.skills.map((s, i) => (
-                    <div key={i} style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--tm-border)', background: 'var(--tm-surface-2)' }}>
-                      <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tm-text)', marginBottom: s.description ? '4px' : 0 }}>{s.name}</div>
-                      {s.description && <div style={{ fontSize: '12px', color: 'var(--tm-text-muted)', lineHeight: 1.5 }}>{s.description}</div>}
-                      {s.tags && s.tags.length > 0 && (
-                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '6px' }}>
-                          {s.tags.map((t: string, ti: number) => (
-                            <span key={ti} style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(167,139,250,.1)', color: '#a78bfa' }}>{t}</span>
-                          ))}
-                        </div>
-                      )}
+
+                {/* Right: description + skills */}
+                <div>
+                  {/* Description */}
+                  <SectionLabel>Description</SectionLabel>
+                  <div style={{
+                    padding: '10px 12px', borderRadius: '8px', marginBottom: '16px',
+                    border: `1px solid ${diff.description.changed ? 'rgba(78,222,163,.4)' : 'var(--tm-border)'}`,
+                    background: diff.description.changed ? 'rgba(78,222,163,.04)' : 'var(--tm-surface-2)',
+                  }}>
+                    {diff.description.changed && (
+                      <div style={{ fontSize: '11px', color: '#94a3b8', textDecoration: 'line-through', marginBottom: '6px', whiteSpace: 'pre-wrap' }}>{diff.description.old || '—'}</div>
+                    )}
+                    <div style={{ fontSize: '12px', color: diff.description.changed ? '#4edea3' : 'var(--tm-text)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                      {result.description || '—'}
                     </div>
-                  ))}
+                  </div>
+
+                  {/* Skills */}
+                  <SectionLabel>Skills ({result.skills.length}){diff.skills.changed && <span style={{ color: '#fbbf24', marginLeft: '6px', textTransform: 'none', fontSize: '10px' }}>changed</span>}</SectionLabel>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '280px', overflowY: 'auto' }}>
+                    {result.skills.length === 0 && <div style={{ fontSize: '12px', color: 'var(--tm-text-muted)' }}>No skills declared</div>}
+                    {result.skills.map((s, i) => {
+                      const skillCard = ((newCard.skills ?? []) as Record<string, unknown>[])[i] ?? {};
+                      const inputModes = Array.isArray(skillCard.inputModes) ? (skillCard.inputModes as string[]) : [];
+                      const outputModes = Array.isArray(skillCard.outputModes) ? (skillCard.outputModes as string[]) : [];
+                      return (
+                        <div key={i} style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--tm-border)', background: 'var(--tm-surface-2)' }}>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tm-text)', marginBottom: '2px' }}>{s.name}</div>
+                          {s.description && <div style={{ fontSize: '11px', color: 'var(--tm-text-muted)', lineHeight: 1.4, marginBottom: '4px' }}>{s.description}</div>}
+                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                            {(s.tags ?? []).map((t, ti) => (
+                              <span key={ti} style={{ fontSize: '10px', padding: '1px 5px', borderRadius: '3px', background: 'rgba(167,139,250,.1)', color: '#a78bfa' }}>{t}</span>
+                            ))}
+                            {inputModes.map((m, mi) => (
+                              <span key={`in-${mi}`} style={{ fontSize: '10px', padding: '1px 5px', borderRadius: '3px', background: 'rgba(96,165,250,.1)', color: '#60a5fa' }}>in:{m}</span>
+                            ))}
+                            {outputModes.map((m, mi) => (
+                              <span key={`out-${mi}`} style={{ fontSize: '10px', padding: '1px 5px', borderRadius: '3px', background: 'rgba(78,222,163,.1)', color: '#4edea3' }}>out:{m}</span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            )}
 
-            {/* Suggested slug */}
-            <div style={{ marginBottom: '20px' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Suggested Slug</div>
-              <code style={{ fontSize: '13px', color: 'var(--tm-text)', background: 'var(--tm-surface-2)', padding: '4px 8px', borderRadius: '6px' }}>
-                {discoverPopup.result.suggested_slug}
-              </code>
-            </div>
-
-            {/* Card URL */}
-            <div style={{ marginBottom: '24px' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>Card URL</div>
-              <div style={{ fontSize: '12px', color: 'var(--tm-text-muted)', fontFamily: 'monospace', wordBreak: 'break-all' }}>{discoverPopup.result.agent_card_url}</div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button onClick={() => setDiscoverPopup(null)} style={{
-                padding: '8px 20px', borderRadius: '8px', border: '1px solid var(--tm-border)',
-                background: 'transparent', cursor: 'pointer', fontSize: '14px', color: 'var(--tm-text)',
-              }}>Close</button>
-              <button onClick={handleApplyDiscover} disabled={applyingDiscover} style={{
-                padding: '8px 20px', borderRadius: '8px', border: 'none',
-                background: '#7c3aed', color: '#fff', cursor: applyingDiscover ? 'not-allowed' : 'pointer',
-                fontSize: '14px', fontWeight: 600, opacity: applyingDiscover ? 0.7 : 1,
-              }}>{applyingDiscover ? 'Applying…' : 'Apply to Agent'}</button>
-            </div>
-          </Modal>
-        )}
+              {/* Actions */}
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--tm-border)' }}>
+                <button onClick={() => setDiscoverPopup(null)} style={{ padding: '8px 20px', borderRadius: '8px', border: '1px solid var(--tm-border)', background: 'transparent', cursor: 'pointer', fontSize: '14px', color: 'var(--tm-text)' }}>Close</button>
+                {diff.hasChanges && (
+                  <button
+                    onClick={handleApplyDiscover}
+                    disabled={applyingDiscover}
+                    className="save-pulse"
+                    style={{
+                      padding: '8px 24px', borderRadius: '8px', border: 'none',
+                      background: '#7c3aed', color: '#fff',
+                      cursor: applyingDiscover ? 'not-allowed' : 'pointer',
+                      fontSize: '14px', fontWeight: 700, opacity: applyingDiscover ? 0.7 : 1,
+                    }}
+                  >
+                    {applyingDiscover ? 'Saving…' : 'Save Changes'}
+                  </button>
+                )}
+              </div>
+            </Modal>
+          );
+        })()}
 
         {/* Delete confirm */}
         {deleteTarget && (
@@ -576,14 +711,8 @@ export default function AdminAgentsPage() {
               Delete <strong>{deleteTarget.display_name}</strong>? This cannot be undone and will remove it from any orchestrators that use it.
             </p>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button onClick={() => setDeleteTarget(null)} style={{
-                padding: '8px 20px', borderRadius: '8px', border: '1px solid var(--tm-border)',
-                background: 'transparent', cursor: 'pointer', fontSize: '14px', color: 'var(--tm-text)',
-              }}>Cancel</button>
-              <button onClick={handleDelete} style={{
-                padding: '8px 20px', borderRadius: '8px', border: 'none',
-                background: '#dc2626', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: 600,
-              }}>Delete</button>
+              <button onClick={() => setDeleteTarget(null)} style={{ padding: '8px 20px', borderRadius: '8px', border: '1px solid var(--tm-border)', background: 'transparent', cursor: 'pointer', fontSize: '14px', color: 'var(--tm-text)' }}>Cancel</button>
+              <button onClick={handleDelete} style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}>Delete</button>
             </div>
           </Modal>
         )}

@@ -106,6 +106,7 @@ class AgentOut(BaseModel):
 class DiscoverRequest(BaseModel):
     endpoint_url: str
     auth_token: Optional[str] = None
+    agent_id: Optional[uuid.UUID] = None  # when set, use stored token from DB
 
 
 class DiscoverResult(BaseModel):
@@ -318,16 +319,27 @@ async def test_agent(agent_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/discover", response_model=DiscoverResult)
-async def discover_agent(body: DiscoverRequest) -> DiscoverResult:
+async def discover_agent(body: DiscoverRequest, db: AsyncSession = Depends(get_db)) -> DiscoverResult:
     """
     Fetch /.well-known/agent-card.json from endpoint_url and return
     suggested form values. Does NOT create or modify any DB row.
+    If agent_id is provided, uses the stored encrypted token from that agent row.
     """
     base = body.endpoint_url.rstrip("/")
     card_url = f"{base}/.well-known/agent-card.json"
     headers: Dict[str, str] = {"A2A-Version": "1.0"}
-    if body.auth_token:
-        headers["Authorization"] = f"Bearer {body.auth_token}"
+
+    # Resolve auth token: explicit > stored in DB row
+    token = body.auth_token
+    if not token and body.agent_id:
+        row = await db.get(Agent, body.agent_id)
+        if row and row.auth_token_encrypted:
+            try:
+                token = decrypt_value(row.auth_token_encrypted)
+            except Exception:
+                pass
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:

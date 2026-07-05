@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS them.run_steps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     run_id UUID NOT NULL REFERENCES them.runs(id) ON DELETE CASCADE,
     iteration INTEGER NOT NULL,
-    agent_id UUID REFERENCES them.agents(id),
+    agent_id UUID REFERENCES them.agents(id) ON DELETE SET NULL,
     agent_slug TEXT NOT NULL,
     tool_call_id TEXT NOT NULL,
     input JSONB NOT NULL,
@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS them.tasks (
     run_id          UUID REFERENCES them.runs(id) ON DELETE SET NULL,
     parent_task_id  UUID REFERENCES them.tasks(id) ON DELETE CASCADE,
     orchestrator_id UUID REFERENCES them.orchestrators(id),
-    agent_id        UUID REFERENCES them.agents(id),
+    agent_id        UUID REFERENCES them.agents(id) ON DELETE SET NULL,
     context_id      UUID NOT NULL,
     state           TEXT NOT NULL DEFAULT 'submitted'
                     CHECK (state IN ('submitted','working','input-required',
