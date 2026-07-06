@@ -1,9 +1,7 @@
 """
 task_runner — durable A2A-native orchestration engine.
 
-Replaces the body of orchestrator_service.run_orchestrator.
-
-Key properties vs the old loop:
+Key properties:
 - LLM context is rebuilt from them.task_messages + them.artifacts on every
   planning turn. The run survives WS disconnects.
 - Each run creates a root them.tasks row. Agent invocations create child rows.

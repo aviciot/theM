@@ -142,7 +142,7 @@ async def test_ws_direct_answer(orchestrator: dict):
     mock_provider.stream_call = _make_final_answer_stream("Paris is the capital of France.")
 
     with patch("app.routers.ws_orchestrator.validate_jwt", new=_fake_validate_jwt):
-        with patch("app.services.orchestrator_service._build_provider", return_value=mock_provider):
+        with patch("app.services.task_runner._build_provider", return_value=mock_provider):
             with TestClient(app) as tc:
                 with tc.websocket_connect(
                     f"/ws/orchestrate/{orchestrator['name']}?token={token}"
@@ -173,7 +173,7 @@ async def test_ws_tool_call_and_answer(orchestrator: dict, agent: dict):
     mock_provider.stream_call = _make_tool_call_stream(slug="test_agent")
 
     with patch("app.routers.ws_orchestrator.validate_jwt", new=_fake_validate_jwt):
-        with patch("app.services.orchestrator_service._build_provider", return_value=mock_provider):
+        with patch("app.services.task_runner._build_provider", return_value=mock_provider):
             with TestClient(app) as tc:
                 with tc.websocket_connect(
                     f"/ws/orchestrate/{orchestrator['name']}?token={token}"
@@ -205,7 +205,7 @@ async def test_ws_run_saved_to_db(orchestrator: dict):
     mock_provider.stream_call = _make_final_answer_stream("Paris.")
 
     with patch("app.routers.ws_orchestrator.validate_jwt", new=_fake_validate_jwt):
-        with patch("app.services.orchestrator_service._build_provider", return_value=mock_provider):
+        with patch("app.services.task_runner._build_provider", return_value=mock_provider):
             with TestClient(app) as tc:
                 with tc.websocket_connect(
                     f"/ws/orchestrate/{orchestrator['name']}?token={token}"

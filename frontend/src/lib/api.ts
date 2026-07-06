@@ -85,11 +85,38 @@ export interface Run {
   orchestrator_name: string;
   status: string;
   user_message: string;
+  goal?: string;
   total_tokens: number;
   cost_usd: number;
   started_at: string;
   completed_at: string | null;
+  ended_at?: string | null;
   duration_ms: number | null;
+  iterations?: number;
+  final_output?: string | null;
+  error?: string | null;
+  total_tokens_in?: number;
+  total_tokens_out?: number;
+  total_cost_usd?: string;
+}
+
+export interface RunStep {
+  id: string;
+  iteration: number;
+  agent_slug: string;
+  tool_call_id: string;
+  input: Record<string, unknown>;
+  output: string | null;
+  status: string;
+  error: string | null;
+  latency_ms: number | null;
+  started_at: string;
+  ended_at: string | null;
+}
+
+export interface RunDetail extends Run {
+  steps: RunStep[];
+  usage: Array<{ provider: string; model: string; tokens_input: number; tokens_output: number; cost_usd: string }>;
 }
 
 export interface OrchestratorFull {
@@ -232,6 +259,7 @@ export const themApi = {
   updateToken: (id: string, body: unknown) => api.patch<AccessToken>(`/admin/tokens/${id}`, body),
   deleteToken: (id: string) => api.delete<void>(`/admin/tokens/${id}`),
   runs: (limit = 20) => api.get<{ items: Run[]; total: number }>(`/runs?limit=${limit}`),
+  runDetail: (runId: string) => api.get<RunDetail>(`/runs/${runId}`),
   runStats: () => api.get<RunStats>('/runs/stats'),
   runTasks: (runId: string) => api.get<TaskOut[]>(`/runs/${runId}/tasks`),
   runArtifacts: (runId: string) => api.get<ArtifactOut[]>(`/runs/${runId}/artifacts`),
