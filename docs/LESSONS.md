@@ -246,6 +246,30 @@ await event_queue.enqueue_event(task)
 
 ---
 
+## 2026-07-07 — Traefik silently stops routing when a container is unhealthy after restart
+
+**Symptom:** `http://<host>:8088` appeared unreachable after a `docker compose up -d`. No Traefik errors, no obvious reason.
+
+**Root cause:** Traefik's Docker provider drops any container from the routing table the moment it transitions to `unhealthy` or `starting`. A `docker compose up -d` that recreates containers puts them back in the `health: starting` window — during which Traefik refuses to route to them. If the healthcheck binary doesn't exist (e.g., `curl` missing on Alpine), the container stays `unhealthy` indefinitely.
+
+**Fix:** `docker compose ps` immediately — look for any container showing `(unhealthy)` or `(health: starting)`. That is the thing Traefik is not routing to. Fix the healthcheck binary, recreate the container, wait for `(healthy)`.
+
+**Watch for:** After any `docker compose up -d` that recreates `them-bridge` or `them-frontend`, give Traefik 10–20s to mark them healthy before assuming the URL is broken. Do not chase Traefik config or network issues until you've confirmed `docker compose ps` shows all containers `(healthy)`.
+
+---
+
+## 2026-07-07 — Multiple Traefik instances on one host — logs are not the same Traefik
+
+**Symptom:** Investigating `them-traefik` unreachability, found Traefik container logs showing health check failures for `omni-bridge-svc` and other services we didn't recognize. Concluded Traefik was misconfigured.
+
+**Root cause:** Multiple Traefik instances were running on the host — `them-traefik` (port 8088), `traefik-external` (8090/8091), `omni-traefik` (3000). All three share the Docker socket and pick up labels from all containers. The container whose logs we were reading was a *different* Traefik, not ours. Its errors were for Omni's containers, not the-M's.
+
+**Fix:** Always confirm which Traefik instance you are looking at: `docker logs them-traefik` (not `traefik` or another alias). `docker compose ps` in `/opt/docker/odin` shows only our containers; the other Traefik instances belong to other stacks.
+
+**Watch for:** On shared Docker hosts with multiple stacks, `docker ps` shows all containers from all projects. Always target by container name (`them-traefik`), never by image name alone.
+
+---
+
 ## 2026-07-07 — Token expiry not checked at API layer — token_cache payload must include expires_at
 
 **Symptom:** Access tokens with `expires_at` set in the DB were accepted by `/a2a` even after expiry, because `_row_to_payload` in `token_cache.py` didn't serialize `expires_at` into the cached dict.

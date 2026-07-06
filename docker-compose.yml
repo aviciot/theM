@@ -185,6 +185,7 @@ services:
       LOG_FORMAT: "json"
     labels:
       - "traefik.enable=true"
+      - "traefik-instance=them"
       - "traefik.docker.network=them-network"
       - "traefik.http.routers.them-api.rule=Host(`${THE_M_HOSTNAME:-localhost}`) && PathPrefix(`/api/v1`)"
       - "traefik.http.routers.them-api.entrypoints=web"
@@ -276,6 +277,7 @@ services:
       LOG_FORMAT: "json"
     labels:
       - "traefik.enable=true"
+      - "traefik-instance=them"
       - "traefik.docker.network=them-network"
       - "traefik.http.services.them-bridge-svc.loadbalancer.server.port=8001"
       - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie=true"
@@ -321,6 +323,7 @@ services:
       NEXT_PUBLIC_BRIDGE_WS_URL: ""
     labels:
       - "traefik.enable=true"
+      - "traefik-instance=them"
       - "traefik.docker.network=them-network"
       - "traefik.http.routers.them-ui.rule=Host(`${THE_M_HOSTNAME:-localhost}`)"
       - "traefik.http.routers.them-ui.entrypoints=web"

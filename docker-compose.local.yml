@@ -19,6 +19,7 @@ services:
   them-bridge:
     labels:
       - "traefik.enable=true"
+      - "traefik-instance=them"
       - "traefik.docker.network=them-network"
       - "traefik.http.routers.them-api.rule=PathPrefix(`/api/v1`)"
       - "traefik.http.routers.them-api.entrypoints=web"
@@ -49,6 +50,7 @@ services:
       NEXT_PUBLIC_BRIDGE_WS_URL: ""
     labels:
       - "traefik.enable=true"
+      - "traefik-instance=them"
       - "traefik.docker.network=them-network"
       - "traefik.http.routers.them-ui.rule=PathPrefix(`/`)"
       - "traefik.http.routers.them-ui.entrypoints=web"

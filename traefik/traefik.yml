@@ -8,6 +8,7 @@ providers:
   docker:
     exposedByDefault: false
     network: them-network
+    constraints: "Label(`traefik-instance`,`them`)"
 
 api:
   dashboard: true
