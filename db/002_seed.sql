@@ -15,41 +15,25 @@ INSERT INTO them.config (config_key, config_value)
 VALUES ('llm_routing', '{"provider": "anthropic", "model": "claude-sonnet-4-6", "max_tokens": 4096}')
 ON CONFLICT (config_key) DO NOTHING;
 
--- ── Mock Agents (dev/test only) ───────────────────────────────────────────────
--- These match the mock-agent-* containers in docker-compose.yml.
--- endpoint_url points to container-internal hostnames on port 9000.
+-- ── Vision Agent ─────────────────────────────────────────────────────────────
+-- Always-on agent (no profile). Container: vision-agent on port 9100.
 
-INSERT INTO them.agents (slug, display_name, description, transport, endpoint_url, enabled)
-VALUES
-    (
-        'assistant',
-        'Mock Assistant',
-        'A general-purpose assistant agent. Use for answering questions, summarising content, and general tasks.',
-        'omni_ws',
-        'ws://mock-agent-assistant:9000',
-        true
-    ),
-    (
-        'researcher',
-        'Mock Researcher',
-        'A research agent that retrieves and analyses information on a given topic.',
-        'omni_ws',
-        'ws://mock-agent-researcher:9000',
-        true
-    ),
-    (
-        'coder',
-        'Mock Coder',
-        'A coding agent that writes, reviews, and debugs code across multiple languages.',
-        'omni_ws',
-        'ws://mock-agent-coder:9000',
-        true
-    )
+INSERT INTO them.agents (slug, display_name, description, transport, endpoint_url, enabled, supports_streaming)
+VALUES (
+    'vision_agent',
+    'Vision Agent',
+    'Takes a real-world address and building description, fetches a street-level photo via Google Street View, then uses FLUX.1 Kontext AI to render the described building into the real photo. Returns a photorealistic composite image.',
+    'a2a_async',
+    'http://vision-agent:9100',
+    true,
+    false
+)
 ON CONFLICT (slug) DO UPDATE SET
-    display_name = EXCLUDED.display_name,
-    description  = EXCLUDED.description,
-    endpoint_url = EXCLUDED.endpoint_url,
-    enabled      = EXCLUDED.enabled;
+    display_name       = EXCLUDED.display_name,
+    description        = EXCLUDED.description,
+    endpoint_url       = EXCLUDED.endpoint_url,
+    enabled            = EXCLUDED.enabled,
+    supports_streaming = EXCLUDED.supports_streaming;
 
 -- ── A2A Test Agents (enable profile: test-agents) ────────────────────────────
 -- These match the a2a-* containers in docker-compose.yml under profile: test-agents.
@@ -91,12 +75,12 @@ ON CONFLICT (slug) DO UPDATE SET
     supports_streaming = EXCLUDED.supports_streaming;
 
 -- ── Default Orchestrator ──────────────────────────────────────────────────────
--- Wires all three mock agents together.
+-- Wires the vision agent as the default always-on agent.
 
 WITH agent_ids AS (
     SELECT ARRAY_AGG(id) AS ids
     FROM them.agents
-    WHERE slug IN ('assistant', 'researcher', 'coder')
+    WHERE slug IN ('vision_agent')
 )
 INSERT INTO them.orchestrators (
     name, display_name, system_prompt,
@@ -106,7 +90,7 @@ INSERT INTO them.orchestrators (
 SELECT
     'default',
     'Default Orchestrator',
-    'You are a helpful orchestrator with access to assistant, researcher, and coder agents. Route tasks to the most appropriate agent. For multi-step tasks, use agents sequentially. You may call multiple agents in parallel when tasks are independent.',
+    'You are a helpful orchestrator with access to a Vision Agent that can visualize real-world locations. Use it when the user provides an address and a building description to generate a photorealistic composite image.',
     agent_ids.ids,
     'anthropic',
     'claude-sonnet-4-6',
