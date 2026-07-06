@@ -21,14 +21,14 @@ services:
   # Traefik reverse proxy — path-based routing + LB
   # ============================================================
   them-traefik:
-    image: traefik:v3.3
+    image: traefik:v3.6
     container_name: them-traefik
     ports:
       - "8088:8088"
       - "127.0.0.1:8089:8089"
     volumes:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - proxy-network
       - them-network
@@ -331,7 +331,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "-L", "http://localhost:3200/login"]
+      test: ["CMD-SHELL", "wget -q -O/dev/null http://localhost:3200/login || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
