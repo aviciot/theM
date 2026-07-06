@@ -6,10 +6,10 @@ import AuthGuard from '@/components/AuthGuard';
 import { themApi, type OrchestratorFull, type TaskOut, type ArtifactOut, type AgentCard } from '@/lib/api';
 
 function getBridgeWs(): string {
-  if (typeof window === 'undefined') return 'ws://localhost:8001';
+  if (typeof window === 'undefined') return '';
   if (process.env.NEXT_PUBLIC_BRIDGE_WS_URL) return process.env.NEXT_PUBLIC_BRIDGE_WS_URL;
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${window.location.hostname}:8001`;
+  return `${proto}://${window.location.host}`;
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────

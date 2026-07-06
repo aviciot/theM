@@ -7,11 +7,12 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from sqlalchemy import select
 
+from app._deps import require_admin
 from app.config import settings
 import app.database as db_module
 from app.database import init_db, close_db
@@ -111,10 +112,10 @@ app.add_middleware(
 )
 
 app.include_router(health.router, tags=["health"])
-app.include_router(admin_llm_providers.router, prefix="/api/v1")
-app.include_router(admin_agents.router, prefix="/api/v1")
-app.include_router(admin_orchestrators.router, prefix="/api/v1")
-app.include_router(admin_tokens.router, prefix="/api/v1")
+app.include_router(admin_llm_providers.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
+app.include_router(admin_agents.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
+app.include_router(admin_orchestrators.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
+app.include_router(admin_tokens.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
 app.include_router(ws_orchestrator.router)
 app.include_router(ws_dashboard.router)
 app.include_router(runs.router, prefix="/api/v1")

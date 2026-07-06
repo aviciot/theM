@@ -1,0 +1,19 @@
+entryPoints:
+  web:
+    address: ":8088"
+  traefik:
+    address: ":8089"
+
+providers:
+  docker:
+    exposedByDefault: false
+    network: them-network
+
+api:
+  dashboard: true
+  insecure: true
+
+log:
+  level: INFO
+
+accessLog: {}

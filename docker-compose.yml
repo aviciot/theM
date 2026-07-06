@@ -18,6 +18,28 @@ networks:
 services:
 
   # ============================================================
+  # Traefik reverse proxy — path-based routing + LB
+  # ============================================================
+  them-traefik:
+    image: traefik:v2.11
+    container_name: them-traefik
+    ports:
+      - "8088:8088"
+      - "127.0.0.1:8089:8089"
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - proxy-network
+      - them-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ============================================================
   # the-M Postgres — isolated PG16, DB: them
   # ============================================================
   them-postgres:
@@ -135,8 +157,6 @@ services:
     container_name: them-bridge
     expose:
       - "8001"
-    ports:
-      - "8001:8001"
     volumes:
       - .:/app
       - ./data/them-logs:/app/logs
@@ -165,15 +185,27 @@ services:
       LOG_FORMAT: "json"
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=proxy-network"
-      - "traefik.http.routers.them.rule=Host(`${THE_M_HOSTNAME:-them.example.com}`)"
-      - "traefik.http.routers.them.priority=20"
-      - "traefik.http.services.them-svc.loadbalancer.server.port=8001"
-      - "traefik.http.services.them-svc.loadbalancer.sticky.cookie=true"
-      - "traefik.http.services.them-svc.loadbalancer.sticky.cookie.name=them_sticky"
-      - "traefik.http.services.them-svc.loadbalancer.sticky.cookie.httponly=true"
-      - "traefik.http.services.them-svc.loadbalancer.healthcheck.path=/health/live"
-      - "traefik.http.services.them-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-api.rule=Host(`${THE_M_HOSTNAME:-localhost}`) && PathPrefix(`/api/v1`)"
+      - "traefik.http.routers.them-api.entrypoints=web"
+      - "traefik.http.routers.them-api.priority=100"
+      - "traefik.http.routers.them-api.service=them-bridge-svc"
+      - "traefik.http.routers.them-ws.rule=Host(`${THE_M_HOSTNAME:-localhost}`) && PathPrefix(`/ws`)"
+      - "traefik.http.routers.them-ws.entrypoints=web"
+      - "traefik.http.routers.them-ws.priority=100"
+      - "traefik.http.routers.them-ws.service=them-bridge-svc"
+      - "traefik.http.routers.them-health.rule=Host(`${THE_M_HOSTNAME:-localhost}`) && PathPrefix(`/health`)"
+      - "traefik.http.routers.them-health.entrypoints=web"
+      - "traefik.http.routers.them-health.priority=90"
+      - "traefik.http.routers.them-health.service=them-bridge-svc"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.server.port=8001"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie=true"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie.name=them_lb"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie.httponly=true"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie.sameSite=strict"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.timeout=3s"
     networks:
       - them-network
       - proxy-network
@@ -243,10 +275,12 @@ services:
       LOG_FORMAT: "json"
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=proxy-network"
-      - "traefik.http.services.them-svc.loadbalancer.server.port=8001"
-      - "traefik.http.services.them-svc.loadbalancer.sticky.cookie=true"
-      - "traefik.http.services.them-svc.loadbalancer.sticky.cookie.name=them_sticky"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.server.port=8001"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie=true"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie.name=them_lb"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie.httponly=true"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie.sameSite=strict"
     networks:
       - them-network
       - proxy-network
@@ -272,8 +306,6 @@ services:
     container_name: them-frontend
     expose:
       - "3200"
-    ports:
-      - "3200:3200"
     volumes:
       - ./frontend:/app
       - /app/node_modules
@@ -282,12 +314,14 @@ services:
       NODE_ENV: development
       THE_M_API_URL: "http://them-bridge:8001"
       THE_M_AUTH_URL: "http://them-auth-service:8701"
-      NEXT_PUBLIC_BRIDGE_WS_URL: "${THE_M_BRIDGE_WS_URL:-ws://localhost:8001}"
+      NEXT_PUBLIC_BRIDGE_WS_URL: ""
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=proxy-network"
-      - "traefik.http.routers.them-ui.rule=Host(`${THE_M_UI_HOSTNAME:-them-ui.example.com}`)"
-      - "traefik.http.routers.them-ui.priority=10"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-ui.rule=Host(`${THE_M_HOSTNAME:-localhost}`)"
+      - "traefik.http.routers.them-ui.entrypoints=web"
+      - "traefik.http.routers.them-ui.priority=1"
+      - "traefik.http.routers.them-ui.service=them-ui-svc"
       - "traefik.http.services.them-ui-svc.loadbalancer.server.port=3200"
     networks:
       - them-network

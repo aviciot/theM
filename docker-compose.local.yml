@@ -17,16 +17,9 @@ networks:
     external: false
 
 services:
-  them-bridge:
-    labels: []
-
-  them-bridge-2:
-    labels: []
-
   them-frontend:
-    labels: []
     environment:
       NODE_ENV: development
       THE_M_API_URL: "http://them-bridge:8001"
       THE_M_AUTH_URL: "http://them-auth-service:8701"
-      NEXT_PUBLIC_BRIDGE_WS_URL: "ws://localhost:8001"
+      NEXT_PUBLIC_BRIDGE_WS_URL: ""

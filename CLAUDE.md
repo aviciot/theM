@@ -196,11 +196,11 @@ Full suite, ~30s. Zero failures required before committing.
 |---|---|
 | `db/001_schema.sql` or `app/models.py` | 01 (DB schema) |
 | `app/adapters/` | 07 (adapter factory) |
-| `app/services/rate_limiter.py` or `token_cache.py` | 09 (rate limiter) |
+| `app/services/rate_limiter.py` or `token_cache.py` | 08 09 (rate limiter + token cache) |
 | `app/services/run_recorder.py` or `orchestrator_service.py` | 10 (run recorder) |
 | `app/routers/admin_agents.py` | 05 (agents CRUD) |
 | `app/routers/admin_orchestrators.py` | 06 (orchestrators CRUD) |
-| `app/routers/admin_tokens.py` | 08 (tokens CRUD) |
+| `app/routers/admin_tokens.py` | 08 09 (tokens CRUD + cache) |
 | `app/routers/ws_orchestrator.py` | 11 (WS orchestrate) |
 | `app/routers/runs.py` | 12 (runs API) |
 | `app/routers/ws_dashboard.py` or `dashboard_broadcaster.py` | 13 (dashboard WS) |
@@ -239,6 +239,15 @@ ADMIN_JWT=<token> python scripts/tests/run_tests.py 14
 - Bug fix or non-obvious behavior → `docs/LESSONS.md`
 - Unresolved at session end → `docs/STATUS.md`
 - Trust code over docs; always update the doc when they diverge
+
+## Rules — Tests (mandatory, non-negotiable)
+
+- **Every code change that touches `app/` MUST have a corresponding test** — new behavior = new test, changed behavior = updated test
+- **After every change run the full suite** (`python3.12 scripts/tests/run_tests.py`) — zero new failures allowed before committing
+- **`scripts/tests/INDEX.md` MUST be updated** whenever a test is added, changed, or its coverage expands — description, type, trigger map
+- **`scripts/tests/run_tests.py` is the canonical runner** — standalone `.sh`/`.py` test files must mirror the same checks; if they diverge, fix both
+- **CLAUDE.md trigger map MUST be kept in sync** with `INDEX.md` — if you add/change a test, update both
+- Never commit with a test regression — if a test breaks, fix the code or the test before pushing; do not skip or delete tests to make the suite pass
 
 ---
 
