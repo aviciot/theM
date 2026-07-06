@@ -243,6 +243,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: odin-them-bridge:latest
     container_name: them-bridge-2
     profiles: [replica]
     expose:
@@ -281,6 +282,9 @@ services:
       - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie.name=them_lb"
       - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie.httponly=true"
       - "traefik.http.services.them-bridge-svc.loadbalancer.sticky.cookie.sameSite=strict"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.timeout=3s"
     networks:
       - them-network
       - proxy-network

@@ -1,0 +1,9 @@
+data/
+.git/
+frontend/node_modules/
+frontend/.next/
+__pycache__/
+*.pyc
+*.pyo
+.env
+secrets.local
