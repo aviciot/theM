@@ -1,0 +1,45 @@
+http:
+  routers:
+    them-api:
+      rule: "PathPrefix(`/api/v1`)"
+      entryPoints: [web]
+      service: them-bridge-svc
+      priority: 100
+
+    them-ws:
+      rule: "PathPrefix(`/ws`)"
+      entryPoints: [web]
+      service: them-bridge-svc
+      priority: 100
+
+    them-health:
+      rule: "PathPrefix(`/health`)"
+      entryPoints: [web]
+      service: them-bridge-svc
+      priority: 90
+
+    them-ui:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [web]
+      service: them-ui-svc
+      priority: 1
+
+  services:
+    them-bridge-svc:
+      loadBalancer:
+        sticky:
+          cookie:
+            name: them_lb
+            httpOnly: true
+            sameSite: strict
+        healthCheck:
+          path: /health/live
+          interval: 10s
+          timeout: 3s
+        servers:
+          - url: "http://them-bridge:8001"
+
+    them-ui-svc:
+      loadBalancer:
+        servers:
+          - url: "http://them-frontend:3200"

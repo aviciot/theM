@@ -21,14 +21,14 @@ services:
   # Traefik reverse proxy — path-based routing + LB
   # ============================================================
   them-traefik:
-    image: traefik:v2.11
+    image: traefik:v3.3
     container_name: them-traefik
     ports:
       - "8088:8088"
       - "127.0.0.1:8089:8089"
     volumes:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
     networks:
       - proxy-network
       - them-network
