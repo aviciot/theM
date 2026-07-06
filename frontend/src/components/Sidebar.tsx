@@ -41,35 +41,8 @@ export default function Sidebar() {
         display: 'flex', flexDirection: 'column', padding: '24px 0', zIndex: 40,
       }}>
         {/* Brand */}
-        <div style={{ padding: '0 24px', marginBottom: '32px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
-            {/* Mini logo */}
-            {/* Shield + M logo (sidebar mini) */}
-            <svg width="32" height="36" viewBox="0 0 90 100" xmlns="http://www.w3.org/2000/svg">
-              <path
-                d="M12 10 Q12 4 18 4 L72 4 Q78 4 78 10 L78 52 C78 74 45 96 45 96 C45 96 12 74 12 52 Z"
-                fill="rgba(59,77,255,0.15)"
-                stroke="rgba(232,234,237,0.7)"
-                strokeWidth="4"
-                strokeLinejoin="round"
-              />
-              <line x1="24" y1="28" x2="45" y2="56" stroke="rgba(232,234,237,0.7)" strokeWidth="2.5" strokeLinecap="round"/>
-              <line x1="45" y1="56" x2="66" y2="28" stroke="rgba(232,234,237,0.7)" strokeWidth="2.5" strokeLinecap="round"/>
-              <line x1="24" y1="28" x2="24" y2="72" stroke="rgba(232,234,237,0.7)" strokeWidth="2.5" strokeLinecap="round"/>
-              <line x1="66" y1="28" x2="66" y2="72" stroke="rgba(232,234,237,0.7)" strokeWidth="2.5" strokeLinecap="round"/>
-              <circle cx="24" cy="28" r="4.5" fill="rgba(232,234,237,0.9)" />
-              <circle cx="66" cy="28" r="4.5" fill="rgba(232,234,237,0.9)" />
-              <circle cx="24" cy="72" r="4.5" fill="rgba(232,234,237,0.9)" />
-              <circle cx="66" cy="72" r="4.5" fill="rgba(232,234,237,0.9)" />
-              <circle cx="45" cy="56" r="6" fill="#e63946" />
-            </svg>
-            <div>
-              <h1 style={{ color: '#e8eaed', fontWeight: 900, fontSize: '18px', letterSpacing: '-0.02em', lineHeight: 1 }}>the-M</h1>
-              <p style={{ color: 'rgba(255,255,255,.3)', fontSize: '9px', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-                Orchestration
-              </p>
-            </div>
-          </div>
+        <div style={{ padding: '0 24px', marginBottom: '32px', display: 'flex', justifyContent: 'center' }}>
+          <img src="/logos/theM-clean.svg" alt="the-M" style={{ height: '48px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 0 6px rgba(255,255,255,0.2))' }} />
         </div>
 
         {/* Nav */}
@@ -121,16 +94,8 @@ export default function Sidebar() {
           ) : null}
         </nav>
 
-        {/* Footer: status + user */}
+        {/* Footer: user */}
         <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(255,255,255,.06)' }}>
-          {/* System status */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-            <div className="pulse-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#4edea3', flexShrink: 0 }} />
-            <div>
-              <p style={{ fontSize: '10px', fontWeight: 700, color: '#e8eaed', textTransform: 'uppercase', letterSpacing: '0.05em' }}>System Status</p>
-              <p style={{ fontSize: '10px', color: '#4edea3' }}>All Systems Operational</p>
-            </div>
-          </div>
           {/* User */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.database as db_module
 from app.adapters.factory import get_adapter
-from app.models import Agent, Orchestrator, Task
+from app.models import Agent, LLMProvider, Orchestrator, Task
 from app.services import context_service, run_recorder, task_store
 from app.services.providers import create_provider
 from app.services.providers.base import (
@@ -449,6 +449,22 @@ async def run(
     })
     yield {"type": "ready", "run_id": str(run_id), "task_id": str(root_task.id), "context_id": str(context_id)}
 
+    # ── Load model pricing ─────────────────────────────────────────────────
+    provider_name = getattr(orch, "llm_provider", None) or "anthropic"
+    model_name = orch.llm_model or "unknown"
+    _pricing: dict = {}
+    try:
+        _llm_row = await db.execute(
+            select(LLMProvider).where(LLMProvider.name == provider_name)
+        )
+        _llm_row = _llm_row.scalar_one_or_none()
+        if _llm_row and _llm_row.model_pricing:
+            _pricing = _llm_row.model_pricing.get(model_name, {})
+    except Exception:
+        pass
+    _price_in  = Decimal(str(_pricing.get("input",  0))) / Decimal("1000000")
+    _price_out = Decimal(str(_pricing.get("output", 0))) / Decimal("1000000")
+
     # ── Build LLM provider ─────────────────────────────────────────────────
     try:
         provider = _build_provider(orch)
@@ -523,14 +539,20 @@ async def run(
             if run_status == "failed":
                 break
 
-            # Record token usage
+            # Record token usage + cost
             total_in += iter_usage.input_tokens
             total_out += iter_usage.output_tokens
+            iter_cost = (
+                Decimal(iter_usage.input_tokens)  * _price_in +
+                Decimal(iter_usage.output_tokens) * _price_out
+            )
+            total_cost += iter_cost
             await _publish_dash(run_id, {
                 "type": "usage",
                 "iteration": iteration,
                 "input_tokens": iter_usage.input_tokens,
                 "output_tokens": iter_usage.output_tokens,
+                "cost_usd": float(iter_cost),
             })
             await run_recorder.record_usage(
                 db,
@@ -539,6 +561,7 @@ async def run(
                 provider=orch.llm_provider,
                 model=orch.llm_model or "unknown",
                 usage=iter_usage,
+                cost_usd=iter_cost,
             )
             # Update root task token count
             if iter_usage.input_tokens + iter_usage.output_tokens > 0:

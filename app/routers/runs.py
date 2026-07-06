@@ -65,9 +65,11 @@ class RunOut(BaseModel):
     iterations: int
     total_tokens_in: int
     total_tokens_out: int
+    total_tokens: int = 0
     total_cost_usd: Decimal
     started_at: datetime
     ended_at: Optional[datetime]
+    duration_ms: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -83,6 +85,11 @@ class RunDetailOut(RunOut):
 # ------------------------------------------------------------------ #
 
 def _run_to_out(row: Run) -> RunOut:
+    tin  = row.total_tokens_in  or 0
+    tout = row.total_tokens_out or 0
+    duration_ms = None
+    if row.ended_at and row.started_at:
+        duration_ms = int((row.ended_at - row.started_at).total_seconds() * 1000)
     return RunOut(
         id=row.id,
         orchestrator_id=row.orchestrator_id,
@@ -94,11 +101,13 @@ def _run_to_out(row: Run) -> RunOut:
         final_output=row.final_output,
         error=row.error,
         iterations=row.iterations,
-        total_tokens_in=row.total_tokens_in,
-        total_tokens_out=row.total_tokens_out,
+        total_tokens_in=tin,
+        total_tokens_out=tout,
+        total_tokens=tin + tout,
         total_cost_usd=row.total_cost_usd,
         started_at=row.started_at,
         ended_at=row.ended_at,
+        duration_ms=duration_ms,
     )
 
 
@@ -156,9 +165,9 @@ async def run_stats(
     total_cost = await db.scalar(cost_q) or Decimal("0")
 
     return {
-        "total_runs": total,
-        "by_status": status_counts,
-        "total_cost_usd": str(total_cost),
+        "total": total,
+        "by_status": {k: v for k, v in status_counts.items() if v > 0},
+        "total_cost_usd": float(total_cost),
     }
 
 

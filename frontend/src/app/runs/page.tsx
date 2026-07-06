@@ -500,7 +500,7 @@ export default function RunsPage() {
 
   useEffect(() => {
     Promise.allSettled([themApi.runs(50), themApi.runStats()]).then(([r, s]) => {
-      if (r.status === 'fulfilled') setRuns(r.value?.items ?? []);
+      if (r.status === 'fulfilled') setRuns(Array.isArray(r.value) ? r.value : (r.value?.items ?? []));
       if (s.status === 'fulfilled') setStats(s.value);
       setLoading(false);
     });

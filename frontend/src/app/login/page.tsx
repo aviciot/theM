@@ -69,46 +69,9 @@ export default function LoginPage() {
 
         {/* Brand header */}
         <div className="z-10 text-center mb-10 w-full max-w-sm animate-entrance" style={{ animationDelay: '0.1s', opacity: 0 }}>
-          {/* the-M Logo — shield with agent-network M */}
-          <div className="mb-6 flex justify-center items-center gap-4">
-            <div className="relative flex items-center justify-center">
-              {/*
-                Shield: heraldic shape — rounded top shoulders, straight sides, pointed bottom.
-                M network: 4 outer nodes (top-L, top-R, bottom-L, bottom-R) + center-valley node.
-                Lines: top-L→valley, top-R→valley, top-L→bottom-L, top-R→bottom-R (M shape).
-                Red dot: center valley (the "meeting point" of the M).
-              */}
-              <svg width="90" height="100" viewBox="0 0 90 100" xmlns="http://www.w3.org/2000/svg">
-                {/* Heraldic shield: flat top with rounded corners, tapers to a point */}
-                <path
-                  d="M12 10 Q12 4 18 4 L72 4 Q78 4 78 10 L78 52 C78 74 45 96 45 96 C45 96 12 74 12 52 Z"
-                  fill="rgba(15,23,42,0.85)"
-                  stroke="#e8eaed"
-                  strokeWidth="3.5"
-                  strokeLinejoin="round"
-                />
-                {/* M network lines — drawn first so nodes sit on top */}
-                {/* top-L(24,28) → valley(45,56) → top-R(66,28) */}
-                <line x1="24" y1="28" x2="45" y2="56" stroke="#c8ccd4" strokeWidth="2" strokeLinecap="round"/>
-                <line x1="45" y1="56" x2="66" y2="28" stroke="#c8ccd4" strokeWidth="2" strokeLinecap="round"/>
-                {/* top-L → bottom-L(24,72), top-R → bottom-R(66,72) */}
-                <line x1="24" y1="28" x2="24" y2="72" stroke="#c8ccd4" strokeWidth="2" strokeLinecap="round"/>
-                <line x1="66" y1="28" x2="66" y2="72" stroke="#c8ccd4" strokeWidth="2" strokeLinecap="round"/>
-                {/* M network nodes */}
-                <circle cx="24" cy="28" r="4.5" fill="#e8eaed" />
-                <circle cx="66" cy="28" r="4.5" fill="#e8eaed" />
-                <circle cx="24" cy="72" r="4.5" fill="#e8eaed" />
-                <circle cx="66" cy="72" r="4.5" fill="#e8eaed" />
-                {/* Center valley — red dot */}
-                <circle cx="45" cy="56" r="6" fill="#e63946" className="logo-core" />
-              </svg>
-            </div>
-            <h1 style={{
-              fontSize: '42px', fontWeight: 900, letterSpacing: '-0.04em',
-              color: '#e8eaed', lineHeight: 1, userSelect: 'none',
-            }}>
-              the-<span style={{ color: '#3b4dff' }}>M</span>
-            </h1>
+          {/* the-M Logo */}
+          <div className="mb-6 flex justify-center items-center">
+            <img src="/logos/theM-clean.svg" alt="the-M" style={{ height: '132px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 0 12px rgba(255,255,255,0.25)) drop-shadow(0 0 4px rgba(255,255,255,0.15))' }} />
           </div>
 
           <p className="font-bold tracking-widest uppercase text-[10px] mb-4" style={{ color: '#3b4dff' }}>

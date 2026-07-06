@@ -1,12 +1,15 @@
-# the-M — Multi-Agent Orchestration Platform
-
-> Route any user goal through a pool of AI agents. Each agent is a tool. The LLM decides which ones to call, in what order, in parallel — then streams the answer back.
+<div align="center">
+  <img src="logo/logo_black.png" alt="the-M" height="120" />
+  <h1>the-M</h1>
+  <p><strong>Multi-Agent Orchestration Platform</strong></p>
+  <p>Route any user goal through a pool of AI agents. Each agent is a tool.<br/>The LLM decides which ones to call, in what order, in parallel — then streams the answer back.</p>
+</div>
 
 ---
 
 ## What is the-M?
 
-**the-M** (them) is a production-grade multi-agent orchestration platform built on a clean agentic loop:
+**the-M** is a production-grade multi-agent orchestration platform built on a clean agentic loop:
 
 ```
 User message
@@ -23,7 +26,7 @@ Agentic loop (≤ max_iterations)
 Stream final answer to client
 ```
 
-Agents are transport-agnostic. Today: WebSocket (`omni_ws`), A2A sync (`a2a`), A2A async (`a2a_async`). New transports: add an adapter.
+Agents are transport-agnostic. Supported today: WebSocket (`omni_ws`), A2A sync (`a2a`), A2A async (`a2a_async`). New transports: add an adapter file.
 
 ---
 
@@ -55,7 +58,7 @@ Agents are transport-agnostic. Today: WebSocket (`omni_ws`), A2A sync (`a2a`), A
                     └─────────────────────────────────────────┘
 ```
 
-**Fully isolated.** Zero dependency on any external stack — own Postgres, own Redis, own network. All data bind-mounted under `data/` and survives `docker compose down --build`.
+**Fully isolated.** Zero dependency on any external stack — own Postgres, own Redis, own network. All data bind-mounted under `data/` and survives `docker compose down`.
 
 ---
 
@@ -76,13 +79,17 @@ Agents are transport-agnostic. Today: WebSocket (`omni_ws`), A2A sync (`a2a`), A
 
 - **Agentic loop** — LLM drives tool selection over multiple iterations
 - **Parallel fan-out** — multiple tool calls per iteration via `asyncio.gather()`, bounded by `max_parallel_tools` and per-agent `max_concurrency`
+- **A2A protocol** — native support for Google A2A v1.0 agents (async, streaming, push notifications)
+- **Durable task graph** — every run, task, and artifact stored in Postgres; survives WS disconnects
+- **Context memory** — rolling summary injected across turns so agents retain prior context
 - **WebSocket streaming** — tokens stream to the client in real time; tool events visible as they happen
-- **Run recording** — every run, step, token count, and cost written to Postgres
+- **Agent discovery** — fetch and diff A2A agent cards from the admin UI; highlights changes, warns on orchestrator impact
+- **Run history** — node graph view of each orchestration run with parallel agents at the same level
 - **Agent registry** — CRUD API, auth tokens Fernet-encrypted at rest, L1+L2 Redis cache with pub/sub invalidation
 - **Two auth paths** — opaque Bearer tokens for WS orchestration; JWT for admin REST API
 - **Rate limiting** — Redis INCR fixed-window per user per hour
 - **Dashboard WS** — multiplexed channels (`runs`, `agents`, `metrics`) via Redis pub/sub
-- **Playground UI** — split-pane chat + real-time trace pane
+- **Playground UI** — split-pane chat + real-time trace, tasks, artifacts, and memory tabs
 
 ---
 
@@ -110,7 +117,6 @@ cd odin
 ### 2. Start the stack
 
 ```bash
-# Local dev (no Traefik required)
 docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 ```
 
@@ -151,7 +157,6 @@ Login: `admin` / `admin123` (pre-filled in dev mode)
 | `them-auth-service` | Auth / IAM microservice | 8701 (internal) |
 | `them-bridge` | Orchestrator API + WebSocket | **8001** |
 | `them-frontend` | Next.js dashboard | **3200** |
-| `mock-agent-*` | Mock WS agents for testing | internal |
 | `a2a-echo` / `a2a-slow` / `a2a-stream` | A2A v1.0 test agents (`--profile test-agents`) | internal |
 
 ---
@@ -176,15 +181,18 @@ Login: `admin` / `admin123` (pre-filled in dev mode)
 | CRUD | `/api/v1/admin/orchestrators` | JWT | Orchestrator configs |
 | CRUD | `/api/v1/admin/tokens` | JWT | Access token management |
 | GET | `/api/v1/runs` | JWT | Run history + stats |
+| GET | `/api/v1/runs/{id}/tasks` | JWT | Task graph for a run |
+| GET | `/api/v1/runs/{id}/artifacts` | JWT | Artifacts for a run |
+| POST | `/a2a/push/{task_id}` | Bearer | A2A push webhook |
+| GET | `/.well-known/agent-card.json` | — | the-M's own A2A agent card |
 
 ### WebSocket orchestration protocol
 ```jsonc
-// Client connects: ws://host:8001/ws/orchestrate/{name}?token=<bearer>
 // Client sends:
-{ "content": "Summarize last week's transactions" }
+{ "type": "message", "content": "Summarize last week's transactions", "context_id": "<uuid>" }
 
 // Server streams:
-{ "type": "ready", "orchestrator": "default" }
+{ "type": "ready", "run_id": "...", "task_id": "...", "context_id": "..." }
 { "type": "tool_start", "tool": "agent__assistant", "iteration": 1 }
 { "type": "token", "text": "Based on the data..." }
 { "type": "tool_done", "tool": "agent__assistant", "duration_ms": 1240 }
@@ -197,61 +205,57 @@ Login: `admin` / `admin123` (pre-filled in dev mode)
 
 ```
 odin/
-├── app/                        # them-bridge (FastAPI)
-│   ├── adapters/               # Agent transport layer
-│   │   ├── base.py             # AgentAdapter ABC + AdapterEvent
-│   │   ├── omni_ws_adapter.py  # WebSocket transport
-│   │   ├── a2a_adapter.py      # A2A sync JSON-RPC transport
+├── app/                         # them-bridge (FastAPI)
+│   ├── adapters/                # Agent transport layer
+│   │   ├── base.py              # AgentAdapter ABC + AdapterEvent
+│   │   ├── omni_ws_adapter.py   # WebSocket transport
+│   │   ├── a2a_adapter.py       # A2A sync JSON-RPC transport
 │   │   ├── a2a_async_adapter.py # A2A async (submit → poll/SSE)
-│   │   └── factory.py          # Transport → adapter routing
-│   ├── routers/                # API endpoints
-│   │   ├── ws_orchestrator.py  # /ws/orchestrate/{name}
-│   │   ├── ws_dashboard.py     # /ws/dashboard
+│   │   └── factory.py           # Transport → adapter routing
+│   ├── edges/                   # Pluggable output edges (WebSocket, Voice stub, REST stub)
+│   ├── routers/                 # API endpoints
+│   │   ├── ws_orchestrator.py   # /ws/orchestrate/{name}
+│   │   ├── ws_dashboard.py      # /ws/dashboard
 │   │   ├── admin_agents.py
 │   │   ├── admin_orchestrators.py
 │   │   ├── admin_tokens.py
 │   │   └── runs.py
 │   └── services/
-│       ├── orchestrator_service.py   # Agentic loop
-│       ├── agent_registry.py         # L1+L2 cached agent list
-│       ├── token_cache.py            # Bearer token validation
-│       ├── rate_limiter.py           # Redis INCR rate limiting
-│       ├── run_recorder.py           # Postgres run logging
-│       └── dashboard_broadcaster.py  # Redis pub/sub events
-├── auth_service/               # them-auth-service (FastAPI)
-├── frontend/                   # them-frontend (Next.js 16)
+│       ├── task_runner.py        # Durable agentic loop (primary)
+│       ├── task_store.py         # Task state machine + Redis events
+│       ├── context_service.py    # Artifact cache + context queries
+│       ├── memory_service.py     # Rolling summary memory
+│       ├── agent_registry.py     # L1+L2 cached agent list
+│       ├── token_cache.py        # Bearer token validation
+│       ├── rate_limiter.py       # Redis INCR rate limiting
+│       ├── run_recorder.py       # Postgres run logging
+│       └── dashboard_broadcaster.py # Redis pub/sub events
+├── auth_service/                # them-auth-service (FastAPI)
+├── frontend/                    # them-frontend (Next.js 16)
 │   └── src/app/
-│       ├── login/              # Login page
-│       ├── dashboard/          # Command center
-│       ├── agents/             # Agent registry view
-│       ├── runs/               # Run history
-│       └── admin/              # Orchestrators, tokens, playground
-├── agents/                     # Optional specialist agents
-│   ├── vision_agent/
-│   ├── a2a_echo/               # A2A v1.0 echo test agent (profile: test-agents)
-│   ├── a2a_slow/               # A2A v1.0 slow test agent (5s delay)
-│   └── a2a_stream/             # A2A v1.0 streaming test agent (word-by-word artifacts)
-├── mock_agent/                 # Lightweight WS mock agents for testing
-├── postgres/init/              # SQL auto-run on first Postgres boot
-├── redis/config/               # Redis config (AOF, memory limits)
-├── db/                         # Schema DDL + seed data
+│       ├── login/               # Login page
+│       ├── dashboard/           # Command center
+│       ├── agents/              # Agent registry + discover
+│       ├── runs/                # Run history + node graph modal
+│       └── admin/               # Orchestrators, tokens, playground
+├── agents/                      # Specialist agents
+│   ├── a2a_echo/                # A2A v1.0 echo test agent
+│   ├── a2a_slow/                # A2A v1.0 slow test agent (5s delay)
+│   └── a2a_stream/              # A2A v1.0 streaming test agent
+├── db/                          # Schema DDL + seed data
 │   ├── 001_schema.sql
 │   └── 002_seed.sql
-├── data/                       # Bind-mounted persistent data (git-ignored)
-│   ├── them-postgres/pgdata/
-│   ├── them-redis/
-│   └── them-logs/
+├── data/                        # Bind-mounted persistent data (git-ignored)
 ├── scripts/
 │   └── tests/
-│       ├── run_tests.py        # Cross-platform test runner (Windows + Linux)
-│       └── INDEX.md            # Test index — what each test covers
-├── docs/                       # Architecture, schema, Redis, lessons learned
-│   └── INDEX.md                # Doc index — what each doc covers + update triggers
-├── generate-env.ps1            # Secret derivation (Windows)
-├── generate-env.sh             # Secret derivation (Linux/Mac)
-├── secrets.local.example       # Template for secrets.local
-├── docker-compose.yml          # Production compose (Traefik-ready)
-└── docker-compose.local.yml    # Local dev override (no Traefik)
+│       ├── run_tests.py         # Cross-platform test runner
+│       └── INDEX.md             # Test index
+├── docs/                        # Architecture, schema, Redis, lessons learned
+├── logo/                        # Brand assets
+├── generate-env.ps1             # Secret derivation (Windows)
+├── generate-env.sh              # Secret derivation (Linux/Mac)
+├── docker-compose.yml           # Production compose (Traefik-ready)
+└── docker-compose.local.yml     # Local dev override
 ```
 
 ---
@@ -267,7 +271,7 @@ the-M is multi-replica from day one:
 | Rate limiting | Redis INCR `rl:them:*` | Yes |
 | Agent registry | Redis `them:agents:registry` + pub/sub | Yes — invalidated on write |
 | Orchestrator config | Redis `them:orchestrators:{name}` TTL 600s | Yes |
-| Run state | Postgres `them.runs` | Yes |
+| Task + artifact state | Postgres `them.tasks`, `them.artifacts` | Yes |
 | WS connections | In-process per replica | By design — Traefik sticky sessions |
 
 Enable replica 2:
@@ -280,7 +284,7 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml --profile repli
 ## Testing
 
 ```bash
-# Full suite — cross-platform, 61+ structural tests (test_16 adds A2A agent checks)
+# Full suite — cross-platform
 python scripts/tests/run_tests.py
 
 # Sanity only (after docker compose up) — ~15s
@@ -318,8 +322,8 @@ All secrets are derived from a single master passphrase in `secrets.local`. Run 
   "slug": "my_agent",
   "display_name": "My Agent",
   "description": "What this agent does — the LLM reads this to decide when to call it",
-  "transport": "omni_ws",
-  "endpoint_url": "ws://my-agent-host:9000/ws",
+  "transport": "a2a_async",
+  "endpoint_url": "http://my-agent-host:9000",
   "auth_token": "plaintext-token-stored-encrypted",
   "timeout_seconds": 30,
   "max_concurrency": 3

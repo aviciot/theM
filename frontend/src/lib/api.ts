@@ -258,7 +258,7 @@ export const themApi = {
   createToken: (body: unknown) => api.post<AccessToken>('/admin/tokens', body),
   updateToken: (id: string, body: unknown) => api.patch<AccessToken>(`/admin/tokens/${id}`, body),
   deleteToken: (id: string) => api.delete<void>(`/admin/tokens/${id}`),
-  runs: (limit = 20) => api.get<{ items: Run[]; total: number }>(`/runs?limit=${limit}`),
+  runs: (limit = 20) => api.get<Run[]>(`/runs?limit=${limit}`),
   runDetail: (runId: string) => api.get<RunDetail>(`/runs/${runId}`),
   runStats: () => api.get<RunStats>('/runs/stats'),
   runTasks: (runId: string) => api.get<TaskOut[]>(`/runs/${runId}/tasks`),
