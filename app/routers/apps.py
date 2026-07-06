@@ -1,22 +1,22 @@
 """
-Pluggable application entry points — Phase 9 Phase 3.
+Pluggable application entry points — Phase 9 / Phase 10.
 
 Routes:
   GET  /apps                          → list all enabled applications
   GET  /apps/{slug}                   → get one application by slug
-  POST /apps/{slug}                   → REST entry point (fire-and-forget → returns task_id)
+  POST /apps/{slug}                   → fire-and-forget; returns task_id for polling
   GET  /apps/{slug}/tasks/{task_id}   → poll task state
-  WS   /apps/{slug}/ws               → WebSocket chat entry point
+  WS   /apps/{slug}/ws               → WebSocket streaming chat
+  GET  /apps/{slug}/sse               → SSE streaming (text/event-stream)
 
 Auth:
   - Bearer token (them.access_tokens) — same token validation as /ws/orchestrate
-  - access_policy {"mode":"public"} → no auth required (fire-and-forget POST only)
+  - access_policy {"mode":"public"} → no auth required
   - access_policy {"mode":"token"}  → Bearer required for all methods
 
 Design:
   Entry points are thin adapters. They load the Application row, verify auth,
-  look up the bound orchestrator, then delegate to the existing
-  task_runner.run() and task_store layer — zero new business logic.
+  look up the bound orchestrator, then delegate to task_runner.run().
 """
 
 import asyncio
@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +36,7 @@ from app.services.auth_client import validate_jwt
 from app.services import task_store
 from app.services.task_runner import run as task_runner_run
 from app.services.token_cache import validate_bearer_token
+from app.edges.sse_edge import SSEEdge
 from app.utils.logger import logger
 
 router = APIRouter(tags=["apps"])
@@ -44,7 +45,7 @@ _DEFAULT_DEADLINE_MINUTES = 30
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Auth helper (same pattern as a2a_server + ws_orchestrator)
+# Auth helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _resolve_bearer(request: Request) -> dict | None:
@@ -160,7 +161,7 @@ async def get_app(slug: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# REST entry point — POST /apps/{slug}
+# REST fire-and-forget — POST /apps/{slug}
 # ─────────────────────────────────────────────────────────────────────────────
 
 class RestRequest(BaseModel):
@@ -178,8 +179,8 @@ class RestResponse(BaseModel):
 @router.post("/apps/{slug}", response_model=RestResponse, tags=["apps"])
 async def rest_entry(slug: str, body: RestRequest, request: Request):
     """
-    Fire-and-forget REST entry point.
-    Creates a task, launches the orchestrator loop detached, returns task_id for polling.
+    Fire-and-forget entry point. Returns task_id immediately; caller polls
+    GET /apps/{slug}/tasks/{task_id} for the result.
     Auth: Bearer required unless access_policy.mode == 'public'.
     """
     if db_module.AsyncSessionLocal is None:
@@ -198,13 +199,11 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
 
         user_id = token_payload.get("user_id", 0)
 
-        # Resolve orchestrator name
         from app.models import Orchestrator
         orch = await db.get(Orchestrator, app_row.orchestrator_id)
         if orch is None or not orch.enabled:
             raise HTTPException(status_code=503, detail="Bound orchestrator unavailable")
 
-        # Enforce token orchestrator scope
         token_orch_id = token_payload.get("orchestrator_id")
         if token_orch_id and str(orch.id) != token_orch_id:
             raise HTTPException(status_code=403, detail="Token not authorized for this application")
@@ -227,7 +226,6 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
         )
         await task_store.transition(db, task_row.id, "working")
 
-    # Detach — caller polls via GET /apps/{slug}/tasks/{task_id}
     async def _run():
         run_error: Optional[str] = None
         try:
@@ -303,7 +301,6 @@ async def poll_task(slug: str, task_id: str, request: Request):
         if token_payload and not task_store.owns_task(task, token_payload.get("user_id")):
             raise HTTPException(status_code=404, detail="Task not found")
 
-        # Extract result text from artifacts if completed
         result_text: Optional[str] = None
         if task.state == "completed":
             artifacts = await task_store.get_context_artifacts(db, task.context_id)
@@ -325,7 +322,99 @@ async def poll_task(slug: str, task_id: str, request: Request):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# WebSocket entry point — /apps/{slug}/ws
+# SSE streaming — GET /apps/{slug}/sse
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/apps/{slug}/sse", tags=["apps"])
+async def sse_entry(slug: str, request: Request, message: str, context_id: Optional[str] = None):
+    """
+    SSE streaming entry point.
+
+    Client sends message as query param; receives a text/event-stream response.
+
+    Stream format:
+      data: <token text>\n\n          — LLM token (one per frame)
+      event: tool_start\ndata: {...}  — tool invocation started
+      event: tool_done\ndata: {...}   — tool invocation finished
+      event: error\ndata: {...}       — run failed
+      event: done\ndata: {}          — stream complete
+
+    Auth: Bearer token in Authorization header (or ?token= query param).
+    access_policy.mode=public skips auth.
+
+    Ideal for TTS pipelines: pipe token frames directly to a TTS engine as
+    they arrive.
+    """
+    if db_module.AsyncSessionLocal is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    if not message.strip():
+        raise HTTPException(status_code=400, detail="message is required")
+
+    async with db_module.AsyncSessionLocal() as db:
+        app_row = await _load_app(db, slug)
+
+        policy = app_row.access_policy or {}
+        if policy.get("mode") != "public":
+            token_payload = await _resolve_bearer(request)
+            if token_payload is None:
+                raise HTTPException(status_code=401, detail="Authorization required")
+        else:
+            token_payload = {"user_id": 0, "orchestrator_id": None, "expires_at": None}
+
+        user_id = token_payload.get("user_id", 0)
+
+        from app.models import Orchestrator
+        orch = await db.get(Orchestrator, app_row.orchestrator_id)
+        if orch is None or not orch.enabled:
+            raise HTTPException(status_code=503, detail="Bound orchestrator unavailable")
+
+        token_orch_id = token_payload.get("orchestrator_id")
+        if token_orch_id and str(orch.id) != token_orch_id:
+            raise HTTPException(status_code=403, detail="Token not authorized for this application")
+
+    ctx_id = (
+        uuid.UUID(context_id)
+        if context_id and _is_valid_uuid(context_id)
+        else uuid.uuid4()
+    )
+    session_id = uuid.uuid4()
+    edge = SSEEdge()
+    orch_name = orch.name
+
+    async def _run_and_stream():
+        try:
+            async with db_module.AsyncSessionLocal() as run_db:
+                async for event in task_runner_run(
+                    orchestrator_name=orch_name,
+                    user_message=message,
+                    user_id=user_id,
+                    token_payload=token_payload,
+                    db=run_db,
+                    session_id=session_id,
+                    context_id=ctx_id,
+                ):
+                    await edge.emit(event)
+        except Exception as exc:
+            logger.error("apps sse_entry error", slug=slug, error=str(exc))
+            await edge.emit({"type": "error", "message": str(exc)})
+        finally:
+            await edge.close()
+
+    asyncio.create_task(_run_and_stream())
+
+    return StreamingResponse(
+        edge.stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable Nginx/Traefik response buffering
+        },
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WebSocket — WS /apps/{slug}/ws
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.websocket("/apps/{slug}/ws")
@@ -348,7 +437,6 @@ async def ws_entry(slug: str, websocket: WebSocket):
         await websocket.close(code=4003)
         return
 
-    # Load application
     try:
         async with db_module.AsyncSessionLocal() as db:
             app_row = await _load_app(db, slug)
@@ -366,14 +454,12 @@ async def ws_entry(slug: str, websocket: WebSocket):
         await websocket.close(code=4004)
         return
 
-    # Auth
     if policy.get("mode") != "public":
         token_payload = await _resolve_bearer_ws(websocket)
         if token_payload is None:
             await websocket.send_json({"type": "error", "message": "Authorization required"})
             await websocket.close(code=4001)
             return
-        # Scope check
         token_orch_id = token_payload.get("orchestrator_id")
         if token_orch_id and str(orch_id) != token_orch_id:
             await websocket.send_json({"type": "error", "message": "Token not authorized for this application"})
@@ -384,7 +470,6 @@ async def ws_entry(slug: str, websocket: WebSocket):
 
     user_id = token_payload.get("user_id", 0)
 
-    # Receive user message
     try:
         raw = await websocket.receive_json()
     except WebSocketDisconnect:
@@ -408,7 +493,6 @@ async def ws_entry(slug: str, websocket: WebSocket):
     )
     session_id = uuid.uuid4()
 
-    # Stream orchestrator loop events to client
     try:
         async with db_module.AsyncSessionLocal() as db:
             async for event in task_runner_run(

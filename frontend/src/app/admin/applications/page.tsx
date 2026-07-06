@@ -4,27 +4,25 @@ import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import { themApi, type Application, type OrchestratorFull } from '@/lib/api';
 
-const ENTRY_POINT_TYPES = ['websocket_chat', 'rest', 'voice', 'webrtc'] as const;
+const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc'] as const;
 type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 
 const EP_LABELS: Record<EntryPointType, string> = {
-  websocket_chat: 'WebSocket Chat',
-  rest:           'REST (fire & poll)',
-  voice:          'Voice',
-  webrtc:         'WebRTC',
+  websocket: 'WebSocket',
+  sse:       'SSE (streaming)',
+  webrtc:    'WebRTC',
 };
 
 const EP_ICONS: Record<EntryPointType, string> = {
-  websocket_chat: 'chat',
-  rest:           'api',
-  voice:          'mic',
-  webrtc:         'videocam',
+  websocket: 'chat',
+  sse:       'stream',
+  webrtc:    'videocam',
 };
 
 const EMPTY_FORM = {
   name: '',
   slug: '',
-  entry_point_type: 'websocket_chat' as EntryPointType,
+  entry_point_type: 'websocket' as EntryPointType,
   orchestrator_id: '',
   access_mode: 'token' as 'token' | 'public',
   enabled: true,
@@ -105,7 +103,7 @@ export default function ApplicationsPage() {
     setForm({
       name: app.name,
       slug: app.slug,
-      entry_point_type: (app.entry_point_type as EntryPointType) ?? 'websocket_chat',
+      entry_point_type: (app.entry_point_type as EntryPointType) ?? 'websocket',
       orchestrator_id: app.orchestrator_id,
       access_mode: ((app.access_policy as any)?.mode ?? 'token') as 'token' | 'public',
       enabled: app.enabled,
@@ -253,17 +251,14 @@ export default function ApplicationsPage() {
                         textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
                         Entry Point URLs
                       </div>
-                      {(app.entry_point_type === 'websocket_chat' || app.entry_point_type === 'voice') && (
+                      {app.entry_point_type === 'websocket' && (
                         <CopyBox label="WebSocket" value={wsUrl(app.slug)} />
                       )}
-                      {(app.entry_point_type === 'rest') && (
-                        <>
-                          <CopyBox label="POST" value={restUrl(app.slug)} />
-                          <CopyBox label="Poll" value={`${restUrl(app.slug)}/tasks/{task_id}`} />
-                        </>
+                      {app.entry_point_type === 'sse' && (
+                        <CopyBox label="SSE" value={`${restUrl(app.slug)}/sse?message={your message}`} />
                       )}
                       {app.entry_point_type === 'webrtc' && (
-                        <CopyBox label="WebSocket" value={wsUrl(app.slug)} />
+                        <CopyBox label="WebRTC (coming soon)" value={wsUrl(app.slug)} />
                       )}
                       <div style={{ marginTop: 10, fontSize: 11, color: 'var(--tm-text-muted)' }}>
                         {(app.access_policy as any)?.mode === 'public'

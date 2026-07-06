@@ -36,6 +36,7 @@
 | **Phase 9 — A2A production hardening** | ✓ Complete | Token expiry enforcement, ownership isolation (owns_task), rate limiting (10 rpm), agent card strips system_prompt, default 30-min task deadline, 512 KB body + 10-item batch limits, TOCTOU scope check; `them.tasks.user_id` + `them.applications` schema; test_21 (47 checks) |
 | **Phase 9 Phase 2 — Applications CRUD** | ✓ Complete | `app/routers/admin_applications.py`: CRUD for `them.applications`, slug+entry_point_type validation, orchestrator name join; wired in `main.py` |
 | **Phase 9 Phase 3 — Pluggable entry points** | ✓ Complete | `app/routers/apps.py`: `GET /apps`, `POST /apps/{slug}` (REST fire-and-forget), `GET /apps/{slug}/tasks/{task_id}` (poll), `WS /apps/{slug}/ws` (streaming chat); public/token access policy; ownership isolation; frontend Applications page + Sidebar nav; test_22 (51 checks) |
+| **Phase 10 — SSE edge** | ✓ Complete | `app/edges/sse_edge.py`: asyncio queue-backed streaming; `GET /apps/{slug}/sse` route; `entry_point_type` updated to `websocket\|sse\|webrtc`; DB migration 005_phase10.sql; test_19 + test_22 updated |
 
 ## Infrastructure (as of 2026-07-06)
 
@@ -84,6 +85,7 @@
 | `/apps/{slug}` | POST | ✓ Live — REST fire-and-forget entry point |
 | `/apps/{slug}/tasks/{task_id}` | GET | ✓ Live — task poll |
 | `/apps/{slug}/ws` | WebSocket | ✓ Live — streaming chat entry point |
+| `/apps/{slug}/sse` | GET (SSE) | ✓ Live — SSE streaming entry point (text/event-stream) |
 
 ## Frontend Pages (live, http://localhost:8088)
 
@@ -105,6 +107,6 @@
 - **DB reset trap**: if Postgres is wiped but Redis survives, orchestrator cache holds stale FK IDs → run INSERT fails. After any DB wipe: re-run DB init steps from CLAUDE.md, then recreate orchestrators via UI to refresh Redis cache.
 - **Mock agents removed**: `mock-agent-assistant`, `mock-agent-researcher`, `mock-agent-coder` disabled in DB and stopped. Only real A2A agents remain.
 - **RestEdge / VoiceEdge real implementations**: planned next — see Open Items below.
-- **RestEdge / VoiceEdge stubs**: `app/edges/rest_edge.py` and `app/edges/voice_edge.py` raise `NotImplementedError` — real implementations planned next.
+- **WebRTCEdge**: planned future phase — real-time audio, needs ASR + TTS + signaling server.
 - **Persistent multi-turn chat**: playground opens a new WS per message. The LLM itself does not see prior turns — only agents see the memory summary. True multi-turn requires maintaining conversation history across connections.
 - **User management UI**: no frontend for managing auth_service users/teams.

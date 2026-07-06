@@ -951,7 +951,7 @@ def test_19_edges():
 
     # Package files
     try:
-        for f in ("__init__.py", "base.py", "websocket_edge.py", "voice_edge.py", "rest_edge.py", "registry.py"):
+        for f in ("__init__.py", "base.py", "websocket_edge.py", "sse_edge.py", "registry.py"):
             check(f"app/edges/{f} exists", (ROOT / f"app/edges/{f}").exists())
     except Exception as exc:
         check("app/edges/ files", False, str(exc))
@@ -976,20 +976,27 @@ def test_19_edges():
     except Exception as exc:
         check("websocket_edge.py", False, str(exc))
 
-    # Stubs
-    for stub in ("voice_edge.py", "rest_edge.py"):
-        try:
-            s = src(f"app/edges/{stub}")
-            check(f"{stub}: NotImplementedError in emit", "NotImplementedError" in s)
-        except Exception as exc:
-            check(f"{stub}", False, str(exc))
+    # SSEEdge
+    try:
+        s = src("app/edges/sse_edge.py")
+        check("SSEEdge defined", "SSEEdge" in s)
+        check("SSEEdge.stream() generator defined", "async def stream" in s)
+        check("SSEEdge enqueues sentinel on close", "_SENTINEL" in s)
+        check("SSEEdge emits token as data: frame", '"data: "' in s or "f\"data: {" in s)
+        check("SSEEdge emits other events as event: frame", '"event: "' in s or "f\"event: {" in s)
+        check("SSEEdge emits done sentinel frame", "done" in s)
+    except Exception as exc:
+        check("sse_edge.py", False, str(exc))
 
     # Registry importable
     try:
         from app.edges.registry import get_edge_class, VALID_EDGES
         from app.edges.websocket_edge import WebsocketEdge
+        from app.edges.sse_edge import SSEEdge
         check("get_edge_class('websocket') → WebsocketEdge", get_edge_class("websocket") is WebsocketEdge)
-        check("VALID_EDGES includes websocket/voice/rest", {"websocket", "voice", "rest"} <= VALID_EDGES)
+        check("get_edge_class('sse') → SSEEdge", get_edge_class("sse") is SSEEdge)
+        check("VALID_EDGES includes websocket and sse", {"websocket", "sse"} <= VALID_EDGES)
+        check("VALID_EDGES does not include rest/voice", not ({"rest", "voice"} & VALID_EDGES))
         try:
             get_edge_class("ftp")
             check("unknown edge raises ValueError", False)
@@ -1523,6 +1530,8 @@ def test_22_applications():
         check("prefix /admin/applications", "/admin/applications" in s)
         check("slug regex validation", "_SLUG_RE" in s)
         check("entry_point_type validation", "VALID_ENTRY_POINT_TYPES" in s)
+        check("entry_point_type allows websocket/sse/webrtc", '"websocket"' in s and '"sse"' in s)
+        check("entry_point_type rejects legacy rest/voice", "websocket_chat" not in s and '"rest"' not in s)
         check("409 on duplicate slug", "409" in s or "HTTP_409_CONFLICT" in s)
         check("orchestrator FK verified on create", "Orchestrator" in s)
         check("orchestrator_name join in list", "orch_map" in s)
@@ -1540,6 +1549,7 @@ def test_22_applications():
         check("get_app defined", "get_app" in fn_names)
         check("rest_entry defined", "rest_entry" in fn_names)
         check("poll_task defined", "poll_task" in fn_names)
+        check("sse_entry defined", "sse_entry" in fn_names)
         check("ws_entry defined", "ws_entry" in fn_names)
         check("_resolve_bearer defined", "_resolve_bearer" in fn_names)
         check("_resolve_bearer_ws defined", "_resolve_bearer_ws" in fn_names)
@@ -1548,7 +1558,12 @@ def test_22_applications():
         check("GET /apps route", '"/apps"' in s or "'/apps'" in s)
         check("POST /apps/{slug} route", '"/apps/{slug}"' in s or "'/apps/{slug}'" in s)
         check("WS /apps/{slug}/ws route", '"/apps/{slug}/ws"' in s or "'/apps/{slug}/ws'" in s)
+        check("GET /apps/{slug}/sse route", '"/apps/{slug}/sse"' in s or "'/apps/{slug}/sse'" in s)
         check("GET /apps/{slug}/tasks/{task_id}", "tasks/{task_id}" in s)
+        check("SSEEdge imported in apps.py", "SSEEdge" in s)
+        check("StreamingResponse used in sse_entry", "StreamingResponse" in s)
+        check("text/event-stream media type", "text/event-stream" in s)
+        check("X-Accel-Buffering header set", "X-Accel-Buffering" in s)
         check("public access_policy supported", '"public"' in s)
         check("token expiry checked in apps bearer", "expires_at" in s)
         check("owns_task called in poll", "task_store.owns_task" in s)
@@ -1586,6 +1601,10 @@ def test_22_applications():
         check("orchestrator dropdown in form", "orchestrators" in s2)
         check("access_mode selector", "access_mode" in s2)
         check("URL copy panel", "CopyBox" in s2)
+        check("websocket entry_point_type present", "'websocket'" in s2 or '"websocket"' in s2)
+        check("sse entry_point_type present", "'sse'" in s2 or '"sse"' in s2)
+        check("no legacy websocket_chat type", "websocket_chat" not in s2)
+        check("SSE URL uses /sse suffix", "/sse" in s2)
     except FileNotFoundError as exc:
         check("frontend applications page", False, str(exc))
     except Exception as exc:

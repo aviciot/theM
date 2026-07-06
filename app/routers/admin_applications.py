@@ -21,7 +21,7 @@ router = APIRouter(prefix="/admin/applications", tags=["admin-applications"])
 
 _SLUG_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 
-VALID_ENTRY_POINT_TYPES = {"websocket_chat", "rest", "voice", "webrtc"}
+VALID_ENTRY_POINT_TYPES = {"websocket", "sse", "webrtc"}
 
 
 # ------------------------------------------------------------------ #
@@ -31,7 +31,7 @@ VALID_ENTRY_POINT_TYPES = {"websocket_chat", "rest", "voice", "webrtc"}
 class ApplicationCreate(BaseModel):
     name: str
     slug: str = Field(..., description="Unique slug — ^[a-z0-9_-]{1,64}$")
-    entry_point_type: str = Field(..., description="websocket_chat | rest | voice | webrtc")
+    entry_point_type: str = Field(..., description="websocket | sse | webrtc")
     orchestrator_id: uuid.UUID
     access_policy: Dict[str, Any] = Field(default_factory=lambda: {"mode": "token"})
     presentation: Dict[str, Any] = Field(default_factory=dict)

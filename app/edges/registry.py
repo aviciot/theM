@@ -1,21 +1,24 @@
 """
-Edge registry (Phase 8.6).
+Edge registry (Phase 8.6, updated Phase 10).
 
 Maps edge name → EdgeAdapter class.
 Raises ValueError for unknown names so orchestrator validation fails loudly.
+
+Registered edges:
+  websocket — WebsocketEdge (bidirectional JSON over WS)
+  sse       — SSEEdge (streaming HTTP Server-Sent Events)
+  webrtc    — future (not yet implemented)
 """
 
 from typing import Type
 
 from app.edges.base import EdgeAdapter
 from app.edges.websocket_edge import WebsocketEdge
-from app.edges.voice_edge import VoiceEdge
-from app.edges.rest_edge import RestEdge
+from app.edges.sse_edge import SSEEdge
 
 _REGISTRY: dict[str, Type[EdgeAdapter]] = {
     WebsocketEdge.name: WebsocketEdge,
-    VoiceEdge.name:     VoiceEdge,
-    RestEdge.name:      RestEdge,
+    SSEEdge.name:       SSEEdge,
 }
 
 VALID_EDGES = frozenset(_REGISTRY.keys())

@@ -125,10 +125,16 @@ docker compose logs -f them-bridge
 docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
 docker cp auth_service/SCHEMA.sql them-postgres:/tmp/them_auth_schema.sql
 docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
+docker cp db/003_phase8.sql them-postgres:/tmp/them_003_phase8.sql
+docker cp db/004_phase9.sql them-postgres:/tmp/them_004_phase9.sql
+docker cp db/005_phase10.sql them-postgres:/tmp/them_005_phase10.sql
 docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
 docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_003_phase8.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_004_phase9.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_005_phase10.sql
 
 # DB access
 docker exec -it them-postgres psql -U them -d them

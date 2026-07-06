@@ -119,6 +119,7 @@ User message → WS /ws/orchestrate/{name}
 - **Context memory** — rolling LLM-generated summary injected across turns; agents retain cross-session context
 - **Single port** — Traefik reverse proxy routes all traffic on `:8088`; no exposed internal ports
 - **Multi-replica ready** — sticky sessions via `them_lb` cookie; shared state in Postgres + Redis; heartbeat pub/sub invalidation
+- **Pluggable edges** — WebSocket (chat, Slack), SSE (streaming HTTP for TTS/voice pipelines), WebRTC planned; same orchestrator behind every edge
 - **WebSocket streaming** — tokens stream to the client in real time; tool events visible as they happen
 - **Agent discovery** — fetch and diff A2A agent cards from the admin UI; highlights changes, warns on orchestrator impact
 - **Run history** — node graph view of each orchestration run with parallel agents at the same level
@@ -182,11 +183,17 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
 docker cp auth_service/SCHEMA.sql them-postgres:/tmp/them_auth_schema.sql
 docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
+docker cp db/003_phase8.sql them-postgres:/tmp/them_003_phase8.sql
+docker cp db/004_phase9.sql them-postgres:/tmp/them_004_phase9.sql
+docker cp db/005_phase10.sql them-postgres:/tmp/them_005_phase10.sql
 
 docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
 docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_003_phase8.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_004_phase9.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_005_phase10.sql
 ```
 
 ### 5. Verify and open
@@ -217,11 +224,17 @@ Open **http://localhost:8088** — login with `admin` / `admin123` (credentials 
 | CRUD | `/api/v1/admin/agents` | JWT | Agent registry |
 | CRUD | `/api/v1/admin/orchestrators` | JWT | Orchestrator configs |
 | CRUD | `/api/v1/admin/tokens` | JWT | Access token management |
+| CRUD | `/api/v1/admin/applications` | JWT | Application entry points |
 | GET | `/api/v1/runs` | JWT | Run history + stats |
 | GET | `/api/v1/runs/{id}/tasks` | JWT | Task graph for a run |
 | GET | `/api/v1/runs/{id}/artifacts` | JWT | Artifacts for a run |
 | POST | `/a2a/push/{task_id}` | Bearer | A2A push webhook |
 | GET | `/.well-known/agent-card.json` | — | the-M's own A2A agent card |
+| GET | `/apps` | — | Public application catalogue |
+| POST | `/apps/{slug}` | Bearer\|public | Fire-and-forget REST entry point |
+| GET | `/apps/{slug}/tasks/{task_id}` | Bearer\|public | Poll task state |
+| GET | `/apps/{slug}/sse` | Bearer\|public | SSE streaming entry point |
+| WS | `/apps/{slug}/ws` | Bearer\|public | WebSocket streaming entry point |
 
 ### WebSocket orchestration (via Traefik :8088)
 
@@ -239,6 +252,45 @@ Open **http://localhost:8088** — login with `admin` / `admin123` (credentials 
 { "type": "done",       "run_id": "...", "total_tokens": 1820, "iterations": 2 }
 ```
 
+### Application Entry Points
+
+Applications bind an orchestrator to a transport edge. Create one via **Admin → Applications**.
+
+**WebSocket** — full-duplex streaming chat (same protocol as `/ws/orchestrate`):
+```
+ws://<host>:8088/apps/{slug}/ws?token=<bearer>
+```
+
+**SSE** — streaming HTTP, ideal for TTS pipelines (pipe tokens directly to a speech engine):
+```
+GET http://<host>:8088/apps/{slug}/sse?message=Hello&context_id=<uuid>
+Authorization: Bearer <token>
+
+# Stream format:
+data: The answer is        ← LLM tokens, one per frame
+data:  forty-two.
+
+event: tool_start
+data: {"tool": "agent__coder", "iteration": 1}
+
+event: done
+data: {}
+```
+
+**REST + poll** — fire-and-forget for webhooks and serverless callers:
+```bash
+# Submit
+curl -X POST http://<host>:8088/apps/{slug} \
+  -H "Authorization: Bearer <token>" \
+  -d '{"message": "Summarize today'\''s data"}'
+# → {"task_id": "...", "poll_url": "/apps/{slug}/tasks/..."}
+
+# Poll
+curl http://<host>:8088/apps/{slug}/tasks/{task_id} \
+  -H "Authorization: Bearer <token>"
+# → {"state": "completed", "result": "Today'\''s summary..."}
+```
+
 ---
 
 ## Project Structure
@@ -250,12 +302,14 @@ odin/
 │   │   ├── base.py               # AgentAdapter ABC + AdapterEvent
 │   │   ├── a2a_async_adapter.py  # A2A async (submit → SSE / poll)
 │   │   └── factory.py            # Transport → adapter routing
-│   ├── edges/                    # Pluggable output edges (WebSocket, Voice stub, REST stub)
+│   ├── edges/                    # Pluggable output edges (WebSocket, SSE)
 │   ├── routers/                  # API endpoints
 │   │   ├── ws_orchestrator.py    # /ws/orchestrate/{name}
 │   │   ├── ws_dashboard.py       # /ws/dashboard
+│   │   ├── apps.py               # /apps/{slug} — WS, SSE, REST entry points
 │   │   ├── admin_agents.py
 │   │   ├── admin_orchestrators.py
+│   │   ├── admin_applications.py
 │   │   ├── admin_tokens.py
 │   │   └── runs.py
 │   └── services/
@@ -280,9 +334,12 @@ odin/
 │   └── a2a_stream/               # Streaming test agent (SSE)
 ├── traefik/                      # Traefik static config
 │   └── traefik.yml
-├── db/                           # Schema DDL + seed data
-│   ├── 001_schema.sql
-│   └── 002_seed.sql
+├── db/                           # Schema DDL + migrations
+│   ├── 001_schema.sql            # Base schema
+│   ├── 002_seed.sql              # Initial data
+│   ├── 003_phase8.sql            # Memory + A2A inbound + edges columns
+│   ├── 004_phase9.sql            # tasks.user_id + them.applications
+│   └── 005_phase10.sql           # entry_point_type updated (websocket|sse|webrtc)
 ├── scripts/tests/                # Cross-platform test runner
 │   ├── run_tests.py
 │   └── INDEX.md

@@ -149,9 +149,9 @@ On next agent call batch:
 
 **Redis key:** `them:ctx:{context_id}:summary` — TTL 3600s. Written by memory_service, read by task_runner before each agent batch.
 
-## Pluggable Edge Adapters (app/edges/) — Phase 8.6
+## Pluggable Edge Adapters (app/edges/) — Phase 8.6 / Phase 10
 
-The WS endpoint is now a thin shell over an `EdgeAdapter`. All output goes through `edge.emit(event)`.
+Edges are transport wrappers. They translate a client protocol into `EdgeRequest` and relay `task_runner` events back in that protocol's encoding. Zero business logic — same orchestrator and agents regardless of edge.
 
 ```
 EdgeAdapter (base.py) — ABC
@@ -162,15 +162,32 @@ EdgeAdapter (base.py) — ABC
 WebsocketEdge (websocket_edge.py)
   name = "websocket"
   Wraps FastAPI WebSocket; re-raises WebSocketDisconnect
+  Used by: /ws/orchestrate/{name}, /apps/{slug}/ws
 
-VoiceEdge (voice_edge.py) — stub, NotImplementedError
-RestEdge (rest_edge.py)   — stub, NotImplementedError
+SSEEdge (sse_edge.py)
+  name = "sse"
+  asyncio.Queue-backed. stream() yields raw SSE byte frames.
+  Token events → data: <text>\n\n
+  Other events → event: <type>\ndata: <json>\n\n
+  Terminal    → event: done\ndata: {}\n\n
+  Used by: GET /apps/{slug}/sse
+
+WebRTCEdge — planned (future phase)
 
 get_edge_class(name) → Type[EdgeAdapter]   # registry.py
-VALID_EDGES = frozenset({"websocket", "voice", "rest"})
+VALID_EDGES = frozenset({"websocket", "sse"})
 ```
 
-**Edge guard:** `Orchestrator.edges TEXT[]` — if "websocket" is not in the list, the connection is rejected after auth with a clear error. Defaults to `{websocket}` for all existing orchestrators.
+**Edge guard:** `Orchestrator.edges TEXT[]` — if "websocket" is not in the list, the WS connection is rejected after auth with a clear error. Defaults to `{websocket}` for all existing orchestrators.
+
+**SSE entry point flow:**
+```
+GET /apps/{slug}/sse?message=<text>&context_id=<uuid>
+  → auth + app load → SSEEdge() created
+  → asyncio.create_task(_run_and_stream())  ← detached task fills the queue
+  → StreamingResponse(edge.stream())        ← HTTP response drains the queue
+  → X-Accel-Buffering: no                   ← disables Traefik/Nginx response buffering
+```
 
 ## Legacy Orchestrator (orchestrator_service.py) — Retained
 
