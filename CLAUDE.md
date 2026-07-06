@@ -206,6 +206,9 @@ Full suite, ~30s. Zero failures required before committing.
 | `app/routers/ws_dashboard.py` or `dashboard_broadcaster.py` | 13 (dashboard WS) |
 | Any infrastructure change | 15 (compose health) |
 | `agents/a2a_*`, docker-compose test-agents profile | 16 (A2A agent structure) |
+| `app/services/memory_service.py`, `db/003_phase8.sql` (memory columns) | 17 (context summarization memory) |
+| `app/routers/a2a_server.py` (orch-as-agent sections), `app/models.py` (a2a_exposed/budget_tokens) | 18 (orchestrator-as-agent) |
+| `app/edges/` | 19 (pluggable edge adapters) |
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.local.yml` | 20 (Traefik routing + multi-replica) |
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 (A2A Phase 9 hardening) |
 | `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 (applications CRUD + entry points) |

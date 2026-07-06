@@ -32,6 +32,7 @@
 | **Persistent context threading** | ✓ Complete | Frontend passes context_id on follow-up messages; server reuses it so memory summary carries across turns |
 | **Traefik reverse proxy** | ✓ Complete | traefik:v3.6, single port 8088, path-based routing, sticky sessions (`them_lb` cookie), Docker provider label discovery |
 | **JWT auto-refresh** | ✓ Complete | `/api/auth/token` auto-refreshes when token has < 30s left; WS URL derived from `window.location` (no hardcoded port) |
+| **Traefik stack isolation** | ✓ Complete | `traefik-instance=them` constraint — them-traefik ignores all non-the-M containers on shared Docker socket |
 | **Phase 9 — A2A production hardening** | ✓ Complete | Token expiry enforcement, ownership isolation (owns_task), rate limiting (10 rpm), agent card strips system_prompt, default 30-min task deadline, 512 KB body + 10-item batch limits, TOCTOU scope check; `them.tasks.user_id` + `them.applications` schema; test_21 (47 checks) |
 | **Phase 9 Phase 2 — Applications CRUD** | ✓ Complete | `app/routers/admin_applications.py`: CRUD for `them.applications`, slug+entry_point_type validation, orchestrator name join; wired in `main.py` |
 | **Phase 9 Phase 3 — Pluggable entry points** | ✓ Complete | `app/routers/apps.py`: `GET /apps`, `POST /apps/{slug}` (REST fire-and-forget), `GET /apps/{slug}/tasks/{task_id}` (poll), `WS /apps/{slug}/ws` (streaming chat); public/token access policy; ownership isolation; frontend Applications page + Sidebar nav; test_22 (51 checks) |
@@ -103,8 +104,7 @@
 - **Replica 2**: compose profile `replica`, not running by default. Enable with `--profile replica`.
 - **DB reset trap**: if Postgres is wiped but Redis survives, orchestrator cache holds stale FK IDs → run INSERT fails. After any DB wipe: re-run DB init steps from CLAUDE.md, then recreate orchestrators via UI to refresh Redis cache.
 - **Mock agents removed**: `mock-agent-assistant`, `mock-agent-researcher`, `mock-agent-coder` disabled in DB and stopped. Only real A2A agents remain.
-- **Tests 17/18/19 not in CLAUDE.md trigger map**: structural tests for Phase 8 memory, orchestrator-as-agent, and edges. Add to trigger map when updating CLAUDE.md.
-- **RestEdge / VoiceEdge stubs**: `app/edges/rest_edge.py` and `app/edges/voice_edge.py` raise `NotImplementedError` — the `/apps/{slug}/ws` WS entry point uses `task_runner` directly; the pluggable edge layer remains optional for now.
-- **RestEdge / VoiceEdge stubs**: `app/edges/rest_edge.py` and `app/edges/voice_edge.py` raise `NotImplementedError` — not yet implemented.
+- **RestEdge / VoiceEdge real implementations**: planned next — see Open Items below.
+- **RestEdge / VoiceEdge stubs**: `app/edges/rest_edge.py` and `app/edges/voice_edge.py` raise `NotImplementedError` — real implementations planned next.
 - **Persistent multi-turn chat**: playground opens a new WS per message. The LLM itself does not see prior turns — only agents see the memory summary. True multi-turn requires maintaining conversation history across connections.
 - **User management UI**: no frontend for managing auth_service users/teams.

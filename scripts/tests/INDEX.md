@@ -25,6 +25,9 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 | 14 | `run_tests.py::test_14_e2e_orchestrate` | e2e | yes + JWT | Full flow: create token → create agent+orch → hit WS route → check runs API → cleanup |
 | 15 | `run_tests.py::test_15_compose_health` | live | yes | All core containers running + healthy, HTTP endpoints, inter-container TCP connectivity |
 | 16 | `run_tests.py::test_16_a2a_agents` | structural | no | A2A test agents exist (echo/slow/stream), docker-compose test-agents profile, seed SQL, A2aAsyncAdapter importable |
+| 17 | `run_tests.py::test_17_memory` | structural | no | Phase 8.4 context summarization memory: memory_service.py functions, Redis key prefix, models.py memory columns, task_runner integration, REDIS.md docs, 003_phase8.sql migration, api.ts types |
+| 18 | `run_tests.py::test_18_orch_as_agent` | structural | no | Phase 8.5 durable inbound A2A: a2a_server.py rewired to them.tasks (_tasks dict removed), SendMessage/GetTask/CancelTask handlers, returnImmediately, push webhook, a2a_exposed + budget_tokens columns |
+| 19 | `run_tests.py::test_19_edges` | structural | no | Phase 8.6 pluggable edge adapters: app/edges/ files (base, websocket, voice stub, rest stub, registry), EdgeAdapter ABC, WebsocketEdge wired in ws_orchestrator, VALID_EDGES set, edges column in migration |
 | 20 | `run_tests.py::test_20_traefik` | live + structural | yes | Traefik routing (bridge + frontend), sticky session cookie, docker-compose label correctness, multi-replica LB + shared Postgres (skips replica checks if bridge-2 not running) |
 | 21 | `run_tests.py::test_21_a2a_hardening` | structural | no | Phase 9 A2A hardening: rate limit, body+batch limits, token expiry, ownership isolation, agent card system_prompt strip, default deadline, TOCTOU scope fix, task_store helpers, Application model, 004_phase9.sql migration |
 | 22 | `run_tests.py::test_22_applications` | structural | no | Phase 9 Phase 2+3: admin_applications.py CRUD, apps.py entry points (REST + WS + poll), main.py wiring, api.ts Application type + methods, frontend applications page, Sidebar nav |
@@ -66,6 +69,9 @@ python scripts/tests/run_tests.py
 | `app/routers/ws_dashboard.py`, `app/services/dashboard_broadcaster.py` | 13 |
 | `docker-compose.yml`, `Dockerfile`, infra config | 15 |
 | `agents/a2a_*`, `docker-compose.yml` test-agents profile | 16 |
+| `app/services/memory_service.py`, `db/003_phase8.sql` (memory columns) | 17 |
+| `app/routers/a2a_server.py` (orch-as-agent sections), `app/models.py` (a2a_exposed/budget_tokens) | 18 |
+| `app/edges/` | 19 |
 | `docker-compose.yml` (bridge/frontend labels), `traefik/traefik.yml`, `docker-compose.local.yml` | 20 |
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 |
 | `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 |
