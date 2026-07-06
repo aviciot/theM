@@ -25,6 +25,7 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 | 14 | `run_tests.py::test_14_e2e_orchestrate` | e2e | yes + JWT | Full flow: create token → create agent+orch → hit WS route → check runs API → cleanup |
 | 15 | `run_tests.py::test_15_compose_health` | live | yes | All core containers running + healthy, HTTP endpoints, inter-container TCP connectivity |
 | 16 | `run_tests.py::test_16_a2a_agents` | structural | no | A2A test agents exist (echo/slow/stream), docker-compose test-agents profile, seed SQL, A2aAsyncAdapter importable |
+| 20 | `run_tests.py::test_20_traefik` | live + structural | yes | Traefik routing (bridge + frontend), sticky session cookie, docker-compose label correctness, multi-replica LB + shared Postgres (skips replica checks if bridge-2 not running) |
 
 **Types:**
 - **live** — makes real HTTP/Docker calls against the running stack
@@ -63,6 +64,7 @@ python scripts/tests/run_tests.py
 | `app/routers/ws_dashboard.py`, `app/services/dashboard_broadcaster.py` | 13 |
 | `docker-compose.yml`, `Dockerfile`, infra config | 15 |
 | `agents/a2a_*`, `docker-compose.yml` test-agents profile | 16 |
+| `docker-compose.yml` (bridge/frontend labels), `traefik/traefik.yml`, `docker-compose.local.yml` | 20 |
 | Before release / PR merge | all + 14 (with JWT) |
 
 ---

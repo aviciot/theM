@@ -94,6 +94,14 @@ def http_json(container, path, port, method="GET", body=None, headers=None, host
     except Exception:
         return {}
 
+def wget_status(container, url):
+    """Use wget (available in Alpine) to get HTTP status code."""
+    raw = dexec(container, "wget", "-S", "-O", "/dev/null", "--server-response", url)
+    # wget -S prints headers to stderr, but docker exec merges them; look for HTTP/
+    import re
+    m = re.search(r"HTTP/\S+\s+(\d{3})", raw)
+    return m.group(1) if m else ""
+
 def src(rel_path):
     return (ROOT / rel_path).read_text(encoding="utf-8")
 
@@ -1116,6 +1124,268 @@ def test_18_orch_as_agent():
         check("main.py wiring", False, str(exc))
 
 
+# ─── test 20: Traefik routing + multi-replica ────────────────────────────────
+
+def test_20_traefik():
+    section("test_20_traefik: Traefik Routing & Multi-Replica")
+
+    # ── Structural: docker-compose labels ────────────────────────────────────
+    print()
+    print("── docker-compose label structure")
+
+    compose_src = src("docker-compose.yml")
+
+    check("them-traefik service defined",     "them-traefik:" in compose_src)
+    check("traefik:v3.6 image",               "traefik:v3.6" in compose_src)
+    check("port 8088 exposed",                "8088:8088" in compose_src)
+    check("traefik.yml mounted",              "traefik/traefik.yml" in compose_src)
+    check("bridge: traefik.enable=true",      compose_src.count("traefik.enable=true") >= 2)
+    check("bridge: them-bridge-svc defined",  compose_src.count("them-bridge-svc") >= 4)
+    check("bridge-2: image reuse label",      "odin-them-bridge:latest" in compose_src)
+    check("sticky cookie them_lb",            "them_lb" in compose_src)
+    check("healthcheck path /health/live",    "healthcheck.path=/health/live" in compose_src)
+    check("frontend: them-ui-svc defined",    "them-ui-svc" in compose_src)
+
+    # bridge-2 must have identical service labels to bridge-1 (no subset)
+    # Simple check: both sticky cookie blocks and healthcheck present in bridge-2 section
+    b2_start = compose_src.find("them-bridge-2:")
+    b2_end   = compose_src.find("\n  # Mock agents", b2_start)
+    b2_block  = compose_src[b2_start:b2_end] if b2_start > 0 else ""
+    check("bridge-2: sticky cookie labels present",      "them_lb" in b2_block)
+    check("bridge-2: healthcheck labels present",         "healthcheck.path" in b2_block)
+
+    local_src = src("docker-compose.local.yml")
+    check("local: proxy-network defined",     "them-proxy-local" in local_src)
+    check("local: path-only router rules",    "PathPrefix(`/api/v1`)" in local_src)
+    check("local: frontend catch-all /",      'PathPrefix(`/`)' in local_src)
+
+    traefik_yml = src("traefik/traefik.yml")
+    check("traefik.yml: entrypoint 8088",     "8088" in traefik_yml)
+    check("traefik.yml: docker provider",     "docker:" in traefik_yml)
+    check("traefik.yml: exposedByDefault false", "exposedByDefault: false" in traefik_yml)
+    check("traefik.yml: log level INFO",      "level: INFO" in traefik_yml)
+
+    check(".dockerignore exists",             (ROOT / ".dockerignore").exists())
+    dockerignore = (ROOT / ".dockerignore").read_text() if (ROOT / ".dockerignore").exists() else ""
+    check(".dockerignore excludes data/",     "data/" in dockerignore)
+
+    # ── Live: Traefik container running ──────────────────────────────────────
+    print()
+    print("── Traefik container")
+
+    status = docker("inspect", "--format={{.State.Status}}", "them-traefik").strip()
+    check("them-traefik running", status == "running", f"got '{status}'")
+
+    # ── Live: routing through Traefik (port 8088) ────────────────────────────
+    print()
+    print("── Routing via :8088")
+
+    # Bridge routes — use wget (curl not in Traefik Alpine image)
+    raw_health = dexec("them-traefik", "wget", "-qO-", "http://localhost:8088/health/live")
+    try:
+        d_health = json.loads(raw_health)
+        check("GET /health/live → bridge 200", d_health.get("status") == "ok", raw_health[:100])
+    except Exception:
+        check("GET /health/live → bridge 200", False, raw_health[:100])
+
+    # 401 from bridge = routing works, unauthenticated
+    # wget exits non-zero on 401, so use python to check
+    raw_api = dexec("them-bridge", "python3", "-c",
+        "import urllib.request,urllib.error\n"
+        "try:\n"
+        "    urllib.request.urlopen('http://them-traefik:8088/api/v1/admin/agents')\n"
+        "    print('200')\n"
+        "except urllib.error.HTTPError as e:\n"
+        "    print(e.code)\n"
+    )
+    check("GET /api/v1/... → bridge (401 expected)", raw_api.strip() == "401", f"got '{raw_api.strip()}'")
+
+    # Frontend catch-all — just check we get HTML back (200)
+    raw_fe = dexec("them-traefik", "wget", "-qO-", "http://localhost:8088/login")
+    check("GET /login → frontend HTML",
+          "<!DOCTYPE html>" in raw_fe or "<html" in raw_fe, raw_fe[:80])
+
+    # Traefik dashboard reachable
+    raw_dash = dexec("them-traefik", "wget", "-qO-", "http://localhost:8089/api/http/routers")
+    check("Traefik dashboard API reachable",  raw_dash.startswith("[") or raw_dash.startswith("{"),
+          raw_dash[:80])
+
+    # them-api and them-ui routers registered
+    routers_raw = dexec("them-traefik", "wget", "-qO-", "http://localhost:8089/api/http/routers")
+    try:
+        routers = json.loads(routers_raw)
+        names = [r.get("name","") for r in routers]
+        check("them-api@docker router enabled",
+              any("them-api" in n for n in names),  f"routers: {names}")
+        check("them-ui@docker router enabled",
+              any("them-ui" in n for n in names),   f"routers: {names}")
+    except Exception as e:
+        check("traefik routers parseable", False, str(e))
+        check("them-api@docker router enabled", False, "parse failed")
+        check("them-ui@docker router enabled",  False, "parse failed")
+
+    # them-bridge-svc has at least 1 server UP
+    svc_raw = dexec("them-traefik", "wget", "-qO-", "http://localhost:8089/api/http/services")
+    try:
+        svcs = json.loads(svc_raw)
+        bridge_svc = next((s for s in svcs if "them-bridge-svc" in s.get("name","")), None)
+        check("them-bridge-svc registered",
+              bridge_svc is not None,
+              "not found in " + str([s.get("name") for s in svcs if "them" in s.get("name","")]))
+        if bridge_svc:
+            server_statuses = bridge_svc.get("serverStatus", {})
+            up_count = sum(1 for v in server_statuses.values() if v == "UP")
+            check("them-bridge-svc has ≥1 server UP", up_count >= 1,
+                  f"serverStatus: {server_statuses}")
+    except Exception as e:
+        check("traefik services parseable", False, str(e))
+        check("them-bridge-svc registered", False, "parse failed")
+
+    # ── Live: sticky session cookie ───────────────────────────────────────────
+    print()
+    print("── Sticky sessions")
+
+    # Use Python inside bridge to make HTTP calls that go through Traefik
+    # and inspect the Set-Cookie header
+    sticky_script = """
+import asyncio, sys; sys.path.insert(0,'/app')
+import httpx, json
+
+async def t():
+    async with httpx.AsyncClient(follow_redirects=True) as c:
+        # First request — no cookie
+        r1 = await c.get('http://them-traefik:8088/health/live')
+        cookie_hdr = r1.headers.get('set-cookie','')
+        print('cookie:', cookie_hdr)
+        # Extract cookie value
+        import re
+        m = re.search(r'them_lb=([^;]+)', cookie_hdr)
+        if not m:
+            print('no_cookie')
+            return
+        cookie_val = m.group(1)
+        # 4 more requests with that cookie
+        ids = set()
+        for _ in range(4):
+            r2 = await c.get('http://them-traefik:8088/health/live',
+                             cookies={'them_lb': cookie_val})
+            try:
+                ids.add(r2.json().get('instance_id','?'))
+            except Exception:
+                pass
+        print('instances:', json.dumps(list(ids)))
+
+asyncio.run(t())
+"""
+    sticky_out = dexec("them-bridge", "python3", "-c", sticky_script)
+    check("them_lb cookie set on first request", "them_lb=" in sticky_out, sticky_out[:200])
+    import re as _re
+    m2 = _re.search(r'instances: (\[.*?\])', sticky_out)
+    if m2:
+        instances = json.loads(m2.group(1))
+        check("sticky cookie always hits same instance",
+              len(instances) == 1, f"hit instances: {instances}")
+    else:
+        skip("sticky cookie value extraction")
+
+    # ── Live: bridge instance_id in health response ───────────────────────────
+    print()
+    print("── Bridge instance identity")
+
+    d1 = http_json("them-bridge", "/health/live", 8001)
+    check("bridge-1 instance_id=bridge-1", d1.get("instance_id") == "bridge-1",
+          f"got {d1.get('instance_id')}")
+
+    # bridge-2 only if running
+    b2_status = docker("inspect", "--format={{.State.Status}}", "them-bridge-2").strip()
+    if b2_status == "running":
+        print()
+        print("── Replica 2 (running)")
+
+        d2 = http_json("them-bridge-2", "/health/live", 8001)
+        check("bridge-2 instance_id=bridge-2", d2.get("instance_id") == "bridge-2",
+              f"got {d2.get('instance_id')}")
+
+        # Traefik should show 2 servers UP
+        try:
+            svcs2 = json.loads(svc_raw)
+            bridge_svc2 = next((s for s in svcs2 if "them-bridge-svc" in s.get("name","")), None)
+            if bridge_svc2:
+                server_statuses2 = bridge_svc2.get("serverStatus", {})
+                up_count2 = sum(1 for v in server_statuses2.values() if v == "UP")
+                check("them-bridge-svc has 2 servers UP with replica", up_count2 == 2,
+                      f"serverStatus: {server_statuses2}")
+        except Exception as e:
+            check("2-server check parseable", False, str(e))
+
+        # LB distributes across both replicas (10 requests without cookie)
+        seen = set()
+        for _ in range(10):
+            r3 = dexec("them-traefik", "wget", "-qO-", "http://localhost:8088/health/live")
+            try:
+                seen.add(json.loads(r3).get("instance_id","?"))
+            except Exception:
+                pass
+        check("load balanced across both replicas", len(seen) == 2, f"only hit: {seen}")
+
+        # Shared Postgres: write on bridge-1, read on bridge-2
+        import uuid as _uuid
+        test_label = f"replica-test-{_uuid.uuid4().hex[:8]}"
+        create_script = f"""
+import asyncio, sys; sys.path.insert(0,'/app')
+import httpx
+async def t():
+    async with httpx.AsyncClient() as c:
+        r = await c.post('http://them-auth-service:8701/api/v1/auth/login',
+            json={{'username':'admin','password':'admin123'}})
+        jwt = r.json()['access_token']
+        uid = (await c.get('http://them-auth-service:8701/api/v1/auth/me',
+            headers={{'Authorization':'Bearer '+jwt}})).json()['id']
+        r2 = await c.post('http://localhost:8001/api/v1/admin/tokens',
+            headers={{'Authorization':'Bearer '+jwt}},
+            json={{'label':'{test_label}','user_id':uid}})
+        print(r2.json().get('id',''))
+asyncio.run(t())
+"""
+        token_id = dexec("them-bridge", "python3", "-c", create_script).strip()
+
+        read_script = f"""
+import asyncio, sys; sys.path.insert(0,'/app')
+import httpx
+async def t():
+    async with httpx.AsyncClient() as c:
+        r = await c.post('http://them-auth-service:8701/api/v1/auth/login',
+            json={{'username':'admin','password':'admin123'}})
+        jwt = r.json()['access_token']
+        r2 = await c.get('http://localhost:8001/api/v1/admin/tokens',
+            headers={{'Authorization':'Bearer '+jwt}})
+        ids = [t.get('id') for t in r2.json()]
+        print('found' if '{token_id}' in ids else 'not_found')
+asyncio.run(t())
+"""
+        found = dexec("them-bridge-2", "python3", "-c", read_script).strip()
+        check("shared Postgres: bridge-1 write visible on bridge-2", found == "found",
+              f"got '{found}'")
+
+        # Cleanup
+        if token_id:
+            cleanup = f"""
+import asyncio, sys; sys.path.insert(0,'/app')
+import httpx
+async def t():
+    async with httpx.AsyncClient() as c:
+        r = await c.post('http://them-auth-service:8701/api/v1/auth/login',
+            json={{'username':'admin','password':'admin123'}})
+        jwt = r.json()['access_token']
+        await c.delete('http://localhost:8001/api/v1/admin/tokens/{token_id}',
+            headers={{'Authorization':'Bearer '+jwt}})
+asyncio.run(t())
+"""
+            dexec("them-bridge", "python3", "-c", cleanup)
+    else:
+        skip("bridge-2 replica tests (them-bridge-2 not running — start with --profile replica)")
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -1138,6 +1408,7 @@ ALL_TESTS = [
     ("17", test_17_memory),
     ("18", test_18_orch_as_agent),
     ("19", test_19_edges),
+    ("20", test_20_traefik),
 ]
 
 if __name__ == "__main__":
