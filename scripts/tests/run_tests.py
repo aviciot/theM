@@ -1261,10 +1261,15 @@ def test_20_traefik():
     )
     check("GET /api/v1/... → bridge (401 expected)", raw_api.strip() == "401", f"got '{raw_api.strip()}'")
 
-    # Frontend catch-all — just check we get HTML back (200)
-    raw_fe = dexec("them-traefik", "wget", "-qO-", "http://localhost:8088/login")
-    check("GET /login → frontend HTML",
-          "<!DOCTYPE html>" in raw_fe or "<html" in raw_fe, raw_fe[:80])
+    frontend_running = docker("inspect", "--format={{.State.Running}}", "them-frontend").strip() == "true"
+
+    # Frontend catch-all — skip if them-frontend not running (e.g. CI without frontend)
+    if frontend_running:
+        raw_fe = dexec("them-traefik", "wget", "-qO-", "http://localhost:8088/login")
+        check("GET /login → frontend HTML",
+              "<!DOCTYPE html>" in raw_fe or "<html" in raw_fe, raw_fe[:80])
+    else:
+        skip("GET /login → frontend HTML (them-frontend not running)")
 
     # Traefik dashboard reachable
     raw_dash = dexec("them-traefik", "wget", "-qO-", "http://localhost:8089/api/http/routers")
@@ -1278,12 +1283,16 @@ def test_20_traefik():
         names = [r.get("name","") for r in routers]
         check("them-api@docker router enabled",
               any("them-api" in n for n in names),  f"routers: {names}")
-        check("them-ui@docker router enabled",
-              any("them-ui" in n for n in names),   f"routers: {names}")
+        if frontend_running:
+            check("them-ui@docker router enabled",
+                  any("them-ui" in n for n in names), f"routers: {names}")
+        else:
+            skip("them-ui@docker router enabled (them-frontend not running)")
     except Exception as e:
         check("traefik routers parseable", False, str(e))
         check("them-api@docker router enabled", False, "parse failed")
-        check("them-ui@docker router enabled",  False, "parse failed")
+        if frontend_running:
+            check("them-ui@docker router enabled",  False, "parse failed")
 
     # them-bridge-svc has at least 1 server UP
     svc_raw = dexec("them-traefik", "wget", "-qO-", "http://localhost:8089/api/http/services")
