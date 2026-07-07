@@ -18,7 +18,7 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 | 07 | `run_tests.py::test_07_adapter_factory` | structural | no | `AdapterEvent`, `get_adapter()`, `A2aAdapter` error path, `AgentAdapter` abstractness |
 | 08 | `run_tests.py::test_08_tokens_api` | live | yes | Access tokens admin API — full CRUD + enable/disable + revocation rejected on WS connect |
 | 09 | `run_tests.py::test_09_rate_limiter` | structural | no | `_slot()`, `check_rate_limit()` with no Redis, token hash logic, `_deps.py` structure, `token_cache` L1 logic + `_is_user_active` / `invalidate_user_active` present |
-| 10 | `run_tests.py::test_10_run_recorder` | structural | no | `run_recorder.py` functions, `orchestrator_service.py` functions, WS event types, `ws_orchestrator.py` structure |
+| 10 | `run_tests.py::test_10_run_recorder` | structural | no | `run_recorder.py` functions, `task_runner.py` functions + multi-turn (`_load_context_history`, user msg seq=0, prior_history prepend), WS event types, `ws_orchestrator.py` structure |
 | 11 | `run_tests.py::test_11_ws_orchestrate` | live | yes | WS route exists + responds, bearer token creation, bridge still healthy |
 | 12 | `run_tests.py::test_12_runs_api` | live | yes | Runs API requires auth (401/403), bad JWT rejected, bridge healthy |
 | 13 | `run_tests.py::test_13_dashboard_ws` | structural | no | `dashboard_broadcaster.py` functions, `ws_dashboard.py` structure, `runs.py` functions, `main.py` wiring |
@@ -60,7 +60,7 @@ python scripts/tests/run_tests.py
 | `db/001_schema.sql`, `app/models.py` | 01 |
 | `app/adapters/` | 07 |
 | `app/services/rate_limiter.py`, `token_cache.py` | 08 09 |
-| `app/services/run_recorder.py`, `orchestrator_service.py` | 10 |
+| `app/services/run_recorder.py`, `app/services/task_runner.py`, `orchestrator_service.py` | 10 |
 | `app/routers/admin_agents.py` | 05 |
 | `app/routers/admin_orchestrators.py` | 06 |
 | `app/routers/admin_tokens.py` | 08 09 |

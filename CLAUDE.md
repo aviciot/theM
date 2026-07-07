@@ -203,7 +203,7 @@ Full suite, ~30s. Zero failures required before committing.
 | `db/001_schema.sql` or `app/models.py` | 01 (DB schema) |
 | `app/adapters/` | 07 (adapter factory) |
 | `app/services/rate_limiter.py` or `token_cache.py` | 08 09 (rate limiter + token cache) |
-| `app/services/run_recorder.py` or `orchestrator_service.py` | 10 (run recorder) |
+| `app/services/run_recorder.py`, `app/services/task_runner.py`, or `orchestrator_service.py` | 10 (run recorder + task runner) |
 | `app/routers/admin_agents.py` | 05 (agents CRUD) |
 | `app/routers/admin_orchestrators.py` | 06 (orchestrators CRUD) |
 | `app/routers/admin_tokens.py` | 08 09 (tokens CRUD + cache) |

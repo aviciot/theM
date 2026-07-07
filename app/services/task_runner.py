@@ -211,6 +211,66 @@ async def _build_messages_from_store(
     return provider.deserialize_history(rows)
 
 
+async def _load_context_history(
+    provider: LLMProvider,
+    context_id: uuid.UUID,
+    current_task_id: uuid.UUID,
+    db: AsyncSession,
+) -> list:
+    """
+    Load all task_messages from prior root tasks in this context_id (excluding
+    the current task). Returns a flat provider-native message list suitable for
+    prepending before the current turn's messages.
+
+    Only root tasks are included — delegated child tasks are internal agent
+    calls and should not appear in the user-facing conversation history.
+    """
+    from sqlalchemy import select as _select
+    from app.models import TaskMessage
+
+    prior_tasks_result = await db.execute(
+        _select(Task)
+        .where(
+            Task.context_id == context_id,
+            Task.id != current_task_id,
+            Task.kind == "root",
+        )
+        .order_by(Task.created_at)
+    )
+    prior_tasks = list(prior_tasks_result.scalars().all())
+    if not prior_tasks:
+        return []
+
+    all_rows: list[TaskMessage] = []
+    for pt in prior_tasks:
+        msgs_result = await db.execute(
+            _select(TaskMessage)
+            .where(TaskMessage.task_id == pt.id)
+            .order_by(TaskMessage.seq)
+        )
+        rows = list(msgs_result.scalars().all())
+        if rows:
+            all_rows.extend(rows)
+        else:
+            # task_messages not saved (old runs before multi-turn) — synthesize from input_message
+            input_text = ""
+            for part in (pt.input_message or {}).get("parts", []):
+                if "text" in part:
+                    input_text = part["text"]
+                    break
+            if input_text:
+                class _SyntheticRow:
+                    role = "user"
+                    parts: dict
+                r = _SyntheticRow()
+                r.parts = {"content": input_text}
+                all_rows.append(r)  # type: ignore[arg-type]
+
+    if not all_rows:
+        return []
+    return provider.deserialize_history(all_rows)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent invocation (creates child task row)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -440,6 +500,15 @@ async def run(
     )
     await task_store.transition(db, root_task.id, "working")
 
+    # Save user message as the first task_message so multi-turn history replay works.
+    await task_store.record_message(
+        db,
+        task_id=root_task.id,
+        role="user",
+        parts={"content": user_message},
+        seq=0,
+    )
+
     await _publish_dash(run_id, {
         "type": "run_start",
         "orchestrator": orchestrator_name,
@@ -482,8 +551,15 @@ async def run(
     final_answer = ""
     run_status = "completed"
     run_error = None
-    msg_seq = 0
+    msg_seq = 1  # seq=0 is the user message saved above
     agent_calls_since_summary = 0  # memory: incremented per agent call batch
+
+    # Load prior turns from this context for multi-turn conversation history.
+    prior_history: list = []
+    try:
+        prior_history = await _load_context_history(provider, context_id, root_task.id, db)
+    except Exception as exc:
+        logger.warning("task_runner: failed to load context history", context_id=str(context_id), error=str(exc))
 
     try:
         while iteration < orch.max_iterations:
@@ -504,8 +580,10 @@ async def run(
                     yield {"type": "error", "message": run_error}
                     break
 
-            # Rebuild context from DB (the durable-planner key property)
-            messages = await _build_messages_from_store(provider, root_task, db)
+            # Rebuild current-task context from DB (durable-planner key property).
+            # Prepend prior turns so the LLM sees the full multi-turn conversation.
+            current_messages = await _build_messages_from_store(provider, root_task, db)
+            messages = prior_history + current_messages
 
             # Stream LLM call
             async for event in provider.stream_call(

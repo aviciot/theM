@@ -37,6 +37,7 @@
 | **Phase 9 Phase 2 — Applications CRUD** | ✓ Complete | `app/routers/admin_applications.py`: CRUD for `them.applications`, slug+entry_point_type validation, orchestrator name join; wired in `main.py` |
 | **Phase 9 Phase 3 — Pluggable entry points** | ✓ Complete | `app/routers/apps.py`: `GET /apps`, `POST /apps/{slug}` (REST fire-and-forget), `GET /apps/{slug}/tasks/{task_id}` (poll), `WS /apps/{slug}/ws` (streaming chat); public/token access policy; ownership isolation; frontend Applications page + Sidebar nav; test_22 (51 checks) |
 | **Phase 10 — SSE edge** | ✓ Complete | `app/edges/sse_edge.py`: asyncio queue-backed streaming; `GET /apps/{slug}/sse` route; `entry_point_type` updated to `websocket\|sse\|webrtc`; DB migration 005_phase10.sql; test_19 + test_22 updated |
+| **Phase 11 — Multi-turn chat** | ✓ Complete | `task_runner.py`: user message saved as `task_message seq=0`; `_load_context_history()` loads prior root tasks' messages for `context_id`; prior history prepended to LLM messages each turn; test_10 updated |
 
 ## Infrastructure (as of 2026-07-06)
 
@@ -108,5 +109,5 @@
 - **Mock agents removed**: `mock-agent-assistant`, `mock-agent-researcher`, `mock-agent-coder` disabled in DB and stopped. Only real A2A agents remain.
 - **RestEdge / VoiceEdge real implementations**: planned next — see Open Items below.
 - **WebRTCEdge**: planned future phase — real-time audio, needs ASR + TTS + signaling server.
-- **Persistent multi-turn chat**: playground opens a new WS per message. The LLM itself does not see prior turns — only agents see the memory summary. True multi-turn requires maintaining conversation history across connections.
+- **Multi-turn chat**: implemented — `task_runner.py` loads prior turns via `_load_context_history()` and prepends to LLM context. Frontend already threads `context_id`. Works across reconnects.
 - **User management UI**: no frontend for managing auth_service users/teams.

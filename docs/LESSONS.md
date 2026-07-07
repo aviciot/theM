@@ -270,6 +270,16 @@ await event_queue.enqueue_event(task)
 
 ---
 
+## 2026-07-07 — Multi-turn: user message must be written to task_messages at task creation, not reconstructed on demand
+
+**Symptom:** When building prior-turn history in `_load_context_history`, tasks that had no `task_messages` (e.g. if the agentic loop was interrupted before any messages were persisted) produced empty history, silently dropping the user's prior message from LLM context.
+
+**Fix:** Save the user message as `task_message seq=0` immediately after root task creation, before entering the agentic loop. This makes the user message DB-durable at creation time, independent of whether the loop completes. Future turns always find it via `_load_context_history`.
+
+**Watch for:** Any new "initial" data that subsequent turns need (system metadata, injected context, etc.) should also be stored in `task_messages` at task creation time — don't rely on `task.input_message` being available to future turns, as `_load_context_history` only reads `task_messages`.
+
+---
+
 ## 2026-07-07 — Token expiry not checked at API layer — token_cache payload must include expires_at
 
 **Symptom:** Access tokens with `expires_at` set in the DB were accepted by `/a2a` even after expiry, because `_row_to_payload` in `token_cache.py` didn't serialize `expires_at` into the cached dict.

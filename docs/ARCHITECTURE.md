@@ -147,6 +147,29 @@ On next agent call batch:
 
 **Context threading:** The frontend passes `context_id` in the WS message payload on follow-up messages. The server reuses the same `context_id` instead of generating a fresh UUID — so the Redis summary from the previous turn is found and injected.
 
+## Multi-Turn Conversation History (Phase 11)
+
+Each user message creates a new root task. Multi-turn history is reconstructed from `them.task_messages` on every new turn.
+
+```
+Turn 1 (context_id=X):
+  root_task_1 created
+  task_messages: seq=0 user msg, seq=1 assistant response, seq=2 tool results, ...
+
+Turn 2 (same context_id=X):
+  root_task_2 created
+  _load_context_history(context_id=X, exclude=root_task_2)
+    → loads root_task_1's task_messages in order
+    → returns [{role:user, content:"turn 1"}, {role:assistant, content:[...]}, ...]
+  messages = prior_history + [current user msg]  ← sent to LLM
+```
+
+**Key invariant:** user message is saved as `task_message seq=0` immediately after root task creation, before the agentic loop. This ensures it's available to future turns' `_load_context_history`.
+
+**Resilient across reconnects:** history is DB-backed — survives WS disconnects, bridge restarts, or replica changes. The full conversation is reconstructed from Postgres on every turn.
+
+**Memory + multi-turn:** both coexist. Memory summarizes agent call artifacts (what agents did); multi-turn history preserves the user↔orchestrator dialogue. They complement each other.
+
 **Redis key:** `them:ctx:{context_id}:summary` — TTL 3600s. Written by memory_service, read by task_runner before each agent batch.
 
 ## Pluggable Edge Adapters (app/edges/) — Phase 8.6 / Phase 10

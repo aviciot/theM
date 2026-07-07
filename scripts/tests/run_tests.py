@@ -522,10 +522,20 @@ def test_10_run_recorder():
         check("_load_agents defined", "_load_agents" in fns)
         check("_invoke_agent defined", "_invoke_agent" in fns)
         check("_build_messages_from_store defined", "_build_messages_from_store" in fns)
+        check("_load_context_history defined", "_load_context_history" in fns)
         check("_persist_assistant_turn defined", "_persist_assistant_turn" in fns)
         check("_persist_tool_results defined", "_persist_tool_results" in fns)
     except Exception as exc:
         check("task_runner structure", False, str(exc))
+
+    # 2b. multi-turn: user message saved + prior history loaded
+    try:
+        s = src("app/services/task_runner.py")
+        check("user message saved as seq=0 task_message", "seq=0" in s)
+        check("prior_history loaded before loop", "prior_history" in s)
+        check("prior_history prepended to messages", "prior_history + current_messages" in s)
+    except Exception as exc:
+        check("multi-turn structure", False, str(exc))
 
     # 3. task_store (Phase 2)
     try:
