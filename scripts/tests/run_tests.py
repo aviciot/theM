@@ -102,6 +102,26 @@ def wget_status(container, url):
     m = re.search(r"HTTP/\S+\s+(\d{3})", raw)
     return m.group(1) if m else ""
 
+_cached_admin_jwt = None
+
+def _admin_jwt():
+    """Fetch (and cache) an admin JWT from the auth service running inside them-bridge."""
+    global _cached_admin_jwt
+    if _cached_admin_jwt:
+        return _cached_admin_jwt
+    body = json.dumps({"username": "admin", "password": "admin123"})
+    raw = dexec("them-bridge", "python3", "-c",
+        f"import urllib.request, json\n"
+        f"req = urllib.request.Request('http://them-auth-service:8701/api/v1/auth/login',"
+        f"  data={repr(body.encode())}, headers={{'Content-Type':'application/json'}}, method='POST')\n"
+        f"with urllib.request.urlopen(req, timeout=10) as r: print(r.read().decode())\n"
+    )
+    try:
+        _cached_admin_jwt = json.loads(raw).get("access_token", "")
+    except Exception:
+        _cached_admin_jwt = ""
+    return _cached_admin_jwt
+
 def src(rel_path):
     return (ROOT / rel_path).read_text(encoding="utf-8")
 
@@ -170,8 +190,12 @@ def test_05_agents_api():
     section("test_05_agents_api: Agents CRUD")
     C, P = "them-bridge", 8001
     BASE = "/api/v1/admin/agents"
+    jwt = _admin_jwt()
+    if not jwt:
+        skip("Could not fetch admin JWT — skipping test_05"); return
+    auth = [f"Authorization: Bearer {jwt}"]
 
-    s = http_status(C, BASE, P)
+    s = http_status(C, BASE, P, headers=auth)
     check("GET /admin/agents returns 200", s == "200", f"got {s}")
 
     body = json.dumps({
@@ -180,7 +204,7 @@ def test_05_agents_api():
         "endpoint_url": "http://localhost:9999/", "auth_token": "test-token-abc123",
         "timeout_seconds": 60, "max_concurrency": 2, "tags": ["test", "smoke"],
     })
-    d = http_json(C, BASE, P, method="POST", body=body)
+    d = http_json(C, BASE, P, method="POST", body=body, headers=auth)
     agent_id = d.get("id", "")
     check("POST creates agent", d.get("slug") == "test_smoke_agent", str(d))
     check("auth_token_set=True", d.get("auth_token_set") is True, str(d))
@@ -188,25 +212,26 @@ def test_05_agents_api():
     if not agent_id:
         check("agent ID present (skipping remaining)", False); return
 
-    s = http_status(C, f"{BASE}/{agent_id}", P)
+    s = http_status(C, f"{BASE}/{agent_id}", P, headers=auth)
     check("GET /admin/agents/{id} returns 200", s == "200", f"got {s}")
 
     d = http_json(C, f"{BASE}/{agent_id}", P, method="PATCH",
-                  body='{"display_name":"Smoke Test Agent (updated)"}')
+                  body='{"display_name":"Smoke Test Agent (updated)"}', headers=auth)
     check("PATCH updates display_name",
           d.get("display_name") == "Smoke Test Agent (updated)", str(d))
 
-    s = http_status(C, BASE, P, method="POST", body=body)
+    s = http_status(C, BASE, P, method="POST", body=body, headers=auth)
     check("POST duplicate slug returns 409", s == "409", f"got {s}")
 
     s = http_status(C, BASE, P, method="POST",
-                    body='{"slug":"x","display_name":"x","description":"x","transport":"invalid","endpoint_url":"ws://x"}')
+                    body='{"slug":"x","display_name":"x","description":"x","transport":"invalid","endpoint_url":"ws://x"}',
+                    headers=auth)
     check("POST invalid transport returns 422", s == "422", f"got {s}")
 
-    s = http_status(C, f"{BASE}/{agent_id}", P, method="DELETE")
+    s = http_status(C, f"{BASE}/{agent_id}", P, method="DELETE", headers=auth)
     check("DELETE returns 204", s == "204", f"got {s}")
 
-    s = http_status(C, f"{BASE}/{agent_id}", P)
+    s = http_status(C, f"{BASE}/{agent_id}", P, headers=auth)
     check("GET deleted agent returns 404", s == "404", f"got {s}")
 
 # ─── test 06: orchestrators API CRUD ─────────────────────────────────────────
@@ -215,8 +240,12 @@ def test_06_orchestrators_api():
     section("test_06_orchestrators_api: Orchestrators CRUD")
     C, P = "them-bridge", 8001
     BASE = "/api/v1/admin/orchestrators"
+    jwt = _admin_jwt()
+    if not jwt:
+        skip("Could not fetch admin JWT — skipping test_06"); return
+    auth = [f"Authorization: Bearer {jwt}"]
 
-    s = http_status(C, BASE, P)
+    s = http_status(C, BASE, P, headers=auth)
     check("GET /admin/orchestrators returns 200", s == "200", f"got {s}")
 
     body = json.dumps({
@@ -225,27 +254,27 @@ def test_06_orchestrators_api():
         "max_iterations": 5, "max_parallel_tools": 2,
         "rate_limit_rpm": 10, "daily_budget_usd": "1.00",
     })
-    d = http_json(C, BASE, P, method="POST", body=body)
+    d = http_json(C, BASE, P, method="POST", body=body, headers=auth)
     orch_id = d.get("id", "")
     check("POST creates orchestrator", d.get("name") == "test_smoke_orch", str(d))
 
     if not orch_id:
         check("orchestrator ID present (skipping remaining)", False); return
 
-    s = http_status(C, f"{BASE}/{orch_id}", P)
+    s = http_status(C, f"{BASE}/{orch_id}", P, headers=auth)
     check("GET /admin/orchestrators/{id} returns 200", s == "200", f"got {s}")
 
     d = http_json(C, f"{BASE}/{orch_id}", P, method="PATCH",
-                  body='{"display_name":"Smoke Orch (updated)","max_iterations":8}')
+                  body='{"display_name":"Smoke Orch (updated)","max_iterations":8}', headers=auth)
     check("PATCH updates max_iterations", d.get("max_iterations") == 8, str(d))
 
-    s = http_status(C, BASE, P, method="POST", body=body)
+    s = http_status(C, BASE, P, method="POST", body=body, headers=auth)
     check("POST duplicate name returns 409", s == "409", f"got {s}")
 
-    s = http_status(C, f"{BASE}/{orch_id}", P, method="DELETE")
+    s = http_status(C, f"{BASE}/{orch_id}", P, method="DELETE", headers=auth)
     check("DELETE returns 204", s == "204", f"got {s}")
 
-    s = http_status(C, f"{BASE}/{orch_id}", P)
+    s = http_status(C, f"{BASE}/{orch_id}", P, headers=auth)
     check("GET deleted orchestrator returns 404", s == "404", f"got {s}")
 
 # ─── test 07: adapter factory (structural) ────────────────────────────────────
@@ -342,12 +371,16 @@ def test_08_tokens_api():
     section("test_08_tokens_api: Access Tokens CRUD")
     C, P = "them-bridge", 8001
     BASE = "/api/v1/admin/tokens"
+    jwt = _admin_jwt()
+    if not jwt:
+        skip("Could not fetch admin JWT — skipping test_08"); return
+    auth = [f"Authorization: Bearer {jwt}"]
 
-    s = http_status(C, BASE, P)
+    s = http_status(C, BASE, P, headers=auth)
     check("GET /admin/tokens returns 200", s == "200", f"got {s}")
 
     d = http_json(C, BASE, P, method="POST",
-                  body='{"label":"smoke-test-token","user_id":1}')
+                  body='{"label":"smoke-test-token","user_id":1}', headers=auth)
     token_id = d.get("id", "")
     token_val = d.get("token", "")
     check("POST creates token", d.get("label") == "smoke-test-token", str(d))
@@ -357,28 +390,28 @@ def test_08_tokens_api():
     if not token_id:
         check("token ID present (skipping remaining)", False); return
 
-    s = http_status(C, f"{BASE}/{token_id}", P)
+    s = http_status(C, f"{BASE}/{token_id}", P, headers=auth)
     check("GET /admin/tokens/{id} returns 200", s == "200", f"got {s}")
 
-    d = http_json(C, f"{BASE}/{token_id}", P, method="PATCH", body='{"enabled":false}')
+    d = http_json(C, f"{BASE}/{token_id}", P, method="PATCH", body='{"enabled":false}', headers=auth)
     check("PATCH disables token", d.get("enabled") is False, str(d))
 
-    d = http_json(C, f"{BASE}/{token_id}", P, method="PATCH", body='{"enabled":true}')
+    d = http_json(C, f"{BASE}/{token_id}", P, method="PATCH", body='{"enabled":true}', headers=auth)
     check("PATCH re-enables token", d.get("enabled") is True, str(d))
 
-    s = http_status(C, f"{BASE}/{token_id}", P, method="DELETE")
+    s = http_status(C, f"{BASE}/{token_id}", P, method="DELETE", headers=auth)
     check("DELETE returns 204", s == "204", f"got {s}")
 
-    s = http_status(C, f"{BASE}/{token_id}", P)
+    s = http_status(C, f"{BASE}/{token_id}", P, headers=auth)
     check("GET deleted token returns 404", s == "404", f"got {s}")
 
     # Revocation: disabled token sends error message on WS connect
-    d2 = http_json(C, BASE, P, method="POST", body='{"label":"revoke-test","user_id":1}')
+    d2 = http_json(C, BASE, P, method="POST", body='{"label":"revoke-test","user_id":1}', headers=auth)
     rev_id = d2.get("id", "")
     rev_val = d2.get("token", "")
     if rev_id and rev_val:
         # Disable — PATCH calls invalidate_token which flushes L1 + L2 cache
-        http_json(C, f"{BASE}/{rev_id}", P, method="PATCH", body='{"enabled":false}')
+        http_json(C, f"{BASE}/{rev_id}", P, method="PATCH", body='{"enabled":false}', headers=auth)
         # Use Python websockets to connect and read the error message
         ws_script = (
             f"import asyncio\n"
@@ -399,7 +432,7 @@ def test_08_tokens_api():
             "Invalid or disabled token" in ws_out or "closed:" in ws_out,
             ws_out[:80],
         )
-        http_status(C, f"{BASE}/{rev_id}", P, method="DELETE")
+        http_status(C, f"{BASE}/{rev_id}", P, method="DELETE", headers=auth)
     else:
         check("revocation test token created", False, "token creation failed")
 
@@ -595,18 +628,22 @@ def test_10_run_recorder():
 def test_11_ws_orchestrate():
     section("test_11_ws_orchestrate: WS Orchestrator Endpoint")
     C, P = "them-bridge", 8001
+    jwt = _admin_jwt()
+    if not jwt:
+        skip("Could not fetch admin JWT — skipping test_11"); return
+    auth = [f"Authorization: Bearer {jwt}"]
 
     s = http_status(C, "/ws/orchestrate/test", P)
     check("WS route responds (not 500)",
           s in ("403","404","400","426"), f"got {s}")
 
     d = http_json(C, "/api/v1/admin/tokens", P, method="POST",
-                  body='{"label":"ws-test-token","user_id":99}')
+                  body='{"label":"ws-test-token","user_id":99}', headers=auth)
     token_id = d.get("id", "")
     check("Can create bearer token for WS auth", bool(token_id), str(d))
 
     if token_id:
-        http_status(C, f"/api/v1/admin/tokens/{token_id}", P, method="DELETE")
+        http_status(C, f"/api/v1/admin/tokens/{token_id}", P, method="DELETE", headers=auth)
 
     s = http_status(C, "/health/live", P)
     check("Bridge healthy after ws_orchestrator mount", s == "200", f"got {s}")

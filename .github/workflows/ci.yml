@@ -36,6 +36,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install bridge dependencies
+        run: pip install -r requirements.txt
+
       - name: Generate .env from fixed CI secret
         run: |
           echo "THE_M_MASTER_SECRET=ci-fixed-secret-not-for-production-use" > secrets.local
@@ -50,7 +53,7 @@ jobs:
             -f docker-compose.yml \
             -f docker-compose.local.yml \
             -f .github/docker-compose.ci.yml \
-            up -d them-postgres them-redis them-auth-service them-bridge
+            up -d them-postgres them-redis them-auth-service them-bridge them-traefik
         timeout-minutes: 5
 
       - name: Wait for stack to be healthy
