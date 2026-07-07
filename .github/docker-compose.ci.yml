@@ -1,0 +1,15 @@
+version: "3.9"
+
+# ============================================================
+# CI override — used in GitHub Actions live job
+#
+# Differences from base docker-compose.yml:
+#   - them-network created by compose (not external) so CI runners
+#     don't need to pre-create it and avoid label mismatch
+# ============================================================
+
+networks:
+  them-network:
+    name: them-network
+    driver: bridge
+    external: false
