@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Job 1: structural checks — no Docker needed, fast ─────────────────────
+  structural:
+    name: Structural checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run structural tests
+        run: |
+          python scripts/tests/run_tests.py 07 09 10 13 16 17 18 19 21 22
+
+  # ── Job 2: live stack — full suite against running containers ─────────────
+  live:
+    name: Live stack tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate .env from fixed CI secret
+        run: |
+          echo "THE_M_MASTER_SECRET=ci-fixed-secret-not-for-production-use" > secrets.local
+          bash generate-env.sh
+          # Append CI-specific overrides
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env
+          echo "THE_M_CORS_ORIGINS=http://localhost:3200,http://localhost:8088" >> .env
+
+      - name: Create external Docker network
+        run: docker network create them-network || true
+
+      - name: Build and start stack
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.local.yml up -d \
+            them-postgres them-redis them-auth-service them-bridge
+        timeout-minutes: 5
+
+      - name: Wait for stack to be healthy
+        run: |
+          echo "Waiting for containers to be healthy..."
+          for i in $(seq 1 30); do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' them-bridge 2>/dev/null || echo "starting")
+            echo "  attempt $i: them-bridge = $STATUS"
+            if [ "$STATUS" = "healthy" ]; then break; fi
+            sleep 3
+          done
+          docker compose -f docker-compose.yml -f docker-compose.local.yml ps
+
+      - name: Apply DB migrations
+        run: |
+          docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
+          docker cp auth_service/SCHEMA.sql them-postgres:/tmp/them_auth_schema.sql
+          docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
+          docker cp db/003_phase8.sql them-postgres:/tmp/them_003_phase8.sql
+          docker cp db/004_phase9.sql them-postgres:/tmp/them_004_phase9.sql
+          docker cp db/005_phase10.sql them-postgres:/tmp/them_005_phase10.sql
+          docker cp db/006_phase11.sql them-postgres:/tmp/them_006_phase11.sql
+          docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
+          docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
+          docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
+          docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
+          docker exec them-postgres psql -U them -d them -f /tmp/them_003_phase8.sql
+          docker exec them-postgres psql -U them -d them -f /tmp/them_004_phase9.sql
+          docker exec them-postgres psql -U them -d them -f /tmp/them_005_phase10.sql
+          docker exec them-postgres psql -U them -d them -f /tmp/them_006_phase11.sql
+
+      - name: Run full test suite
+        run: python scripts/tests/run_tests.py
+
+      - name: Print bridge logs on failure
+        if: failure()
+        run: docker logs them-bridge --tail 100
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.local.yml down -v
