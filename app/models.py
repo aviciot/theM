@@ -104,6 +104,7 @@ class Orchestrator(Base):
     summarizer_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     summarizer_api_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     edges: Mapped[List[str]] = mapped_column(ARRAY(Text), nullable=False, default=lambda: ["websocket"])
+    history_window: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     budget_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

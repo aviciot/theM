@@ -528,12 +528,14 @@ def test_10_run_recorder():
     except Exception as exc:
         check("task_runner structure", False, str(exc))
 
-    # 2b. multi-turn: user message saved + prior history loaded
+    # 2b. multi-turn: user message saved + prior history loaded + window applied
     try:
         s = src("app/services/task_runner.py")
         check("user message saved as seq=0 task_message", "seq=0" in s)
         check("prior_history loaded before loop", "prior_history" in s)
         check("prior_history prepended to messages", "prior_history + current_messages" in s)
+        check("history_window applied in _load_context_history", "history_window" in s)
+        check("history_window passed from orch config", "getattr(orch, \"history_window\"" in s)
     except Exception as exc:
         check("multi-turn structure", False, str(exc))
 

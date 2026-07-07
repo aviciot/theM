@@ -82,6 +82,7 @@ async def _load_orchestrator_row(name: str, db: AsyncSession) -> Optional[Orches
                 p.summarizer_provider = data.get("summarizer_provider")
                 p.summarizer_model = data.get("summarizer_model")
                 p.summarizer_api_key_encrypted = data.get("summarizer_api_key_encrypted")
+                p.history_window = data.get("history_window", 20)
                 return p  # type: ignore[return-value]
         except Exception as exc:
             logger.warning("task_runner: orchestrator cache miss", name=name, error=str(exc))
@@ -117,6 +118,7 @@ async def _load_orchestrator_row(name: str, db: AsyncSession) -> Optional[Orches
                 "summarizer_provider": getattr(row, "summarizer_provider", None),
                 "summarizer_model": getattr(row, "summarizer_model", None),
                 "summarizer_api_key_encrypted": getattr(row, "summarizer_api_key_encrypted", None),
+                "history_window": getattr(row, "history_window", 20),
             }
             await db_module.redis_client.setex(f"{_ORCH_PREFIX}{name}", _ORCH_TTL, json.dumps(payload))
         except Exception:
@@ -216,19 +218,17 @@ async def _load_context_history(
     context_id: uuid.UUID,
     current_task_id: uuid.UUID,
     db: AsyncSession,
+    history_window: int = 20,
 ) -> list:
     """
-    Load all task_messages from prior root tasks in this context_id (excluding
-    the current task). Returns a flat provider-native message list suitable for
-    prepending before the current turn's messages.
-
-    Only root tasks are included — delegated child tasks are internal agent
-    calls and should not appear in the user-facing conversation history.
+    Load prior root task messages for this context_id (excluding current task).
+    history_window: max number of prior turns to include (-1 = unlimited).
+    Returns a flat provider-native message list for prepending before the current turn.
     """
     from sqlalchemy import select as _select
     from app.models import TaskMessage
 
-    prior_tasks_result = await db.execute(
+    q = (
         _select(Task)
         .where(
             Task.context_id == context_id,
@@ -237,7 +237,12 @@ async def _load_context_history(
         )
         .order_by(Task.created_at)
     )
+    prior_tasks_result = await db.execute(q)
     prior_tasks = list(prior_tasks_result.scalars().all())
+
+    # Apply window — keep only the most recent N turns
+    if history_window >= 0 and len(prior_tasks) > history_window:
+        prior_tasks = prior_tasks[-history_window:]
     if not prior_tasks:
         return []
 
@@ -557,7 +562,10 @@ async def run(
     # Load prior turns from this context for multi-turn conversation history.
     prior_history: list = []
     try:
-        prior_history = await _load_context_history(provider, context_id, root_task.id, db)
+        prior_history = await _load_context_history(
+            provider, context_id, root_task.id, db,
+            history_window=getattr(orch, "history_window", 20),
+        )
     except Exception as exc:
         logger.warning("task_runner: failed to load context history", context_id=str(context_id), error=str(exc))
 

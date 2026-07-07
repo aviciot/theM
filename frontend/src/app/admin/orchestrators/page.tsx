@@ -40,6 +40,7 @@ const EMPTY_FORM = {
   summarizer_provider: '',
   summarizer_model: '',
   summarizer_api_key: '',
+  history_window: 20,
 };
 
 // ── Sub-components ─────────────────────────────────────────────────────────
@@ -131,6 +132,7 @@ export default function OrchestratorsPage() {
       summarizer_provider: o.summarizer_provider ?? '',
       summarizer_model: o.summarizer_model ?? '',
       summarizer_api_key: '',
+      history_window: o.history_window ?? 20,
     });
     setFormError(''); setTestState({ loading: false }); setVoiceTestState({ loading: false }); setTtsTestState({ loading: false });
     setShowForm(true);
@@ -217,6 +219,7 @@ export default function OrchestratorsPage() {
         memory_raw_fallback_n: Number(form.memory_raw_fallback_n),
         summarizer_provider: form.memory_enabled ? (form.summarizer_provider || null) : null,
         summarizer_model: form.memory_enabled ? (form.summarizer_model || null) : null,
+        history_window: Number(form.history_window),
       };
       if (form.transcription_api_key) {
         body.transcription_api_key = form.transcription_api_key;
@@ -594,6 +597,9 @@ export default function OrchestratorsPage() {
                   </Field>
                   <Field label="Parallel tools">
                     <input type="number" value={form.max_parallel_tools} onChange={(e) => f('max_parallel_tools', e.target.value)} style={INP} />
+                  </Field>
+                  <Field label="History window (turns, -1 = unlimited)">
+                    <input type="number" min={-1} value={form.history_window} onChange={(e) => f('history_window', e.target.value)} style={INP} />
                   </Field>
                   <Field label="Rate limit (rpm)">
                     <input type="number" value={form.rate_limit_rpm} onChange={(e) => f('rate_limit_rpm', e.target.value)} style={INP} />
