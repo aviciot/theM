@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type OrchestratorFull, type TaskOut, type ArtifactOut, type AgentCard } from '@/lib/api';
+import { themApi, type OrchestratorFull, type TaskOut, type ArtifactOut, type AgentCard, type ContextSession } from '@/lib/api';
 
 function getBridgeWs(): string {
   if (typeof window === 'undefined') return '';
@@ -17,7 +17,7 @@ function getBridgeWs(): string {
 type ChatMsg = { role: 'user' | 'assistant'; text: string; pending?: boolean };
 type TraceEvent = { ts: number; type: string; [key: string]: unknown };
 type RecordingState = 'idle' | 'recording' | 'transcribing';
-type DebugTab = 'trace' | 'tasks' | 'artifacts' | 'memory';
+type DebugTab = 'trace' | 'tasks' | 'artifacts' | 'memory' | 'sessions';
 
 type AgentInvocation = {
   slug: string;
@@ -198,11 +198,25 @@ function ArtifactsTab({ runId }: { runId: string | null }) {
   if (err) return <div style={{ color: '#f87171', fontSize: 12, padding: 16 }}>{err}</div>;
   if (artifacts.length === 0) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>No artifacts yet</div>;
 
+  const downloadPart = (text: string, filename: string, mediaType: string) => {
+    const blob = new Blob([text], { type: mediaType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       {artifacts.map(a => {
         const isOpen = expanded.has(a.id);
-        const textParts = a.parts.filter(p => p.text !== undefined);
+        const filePart = a.parts.find(p => p.filename || p.media_type);
+        const isHtml = filePart?.media_type === 'text/html';
+        const isMarkdown = filePart?.media_type === 'text/markdown';
+        const textParts = a.parts.filter(p => !p.filename && !p.media_type && p.text !== undefined);
+
         return (
           <div key={a.id} style={{ border: '1px solid var(--tm-border)', borderRadius: 8, background: 'var(--tm-surface)', overflow: 'hidden' }}>
             <button
@@ -210,21 +224,69 @@ function ArtifactsTab({ runId }: { runId: string | null }) {
               style={{ width: '100%', padding: '8px 12px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }}
             >
               <span style={{ fontSize: 11, color: '#a78bfa', fontWeight: 600 }}>{a.artifact_id}</span>
-              {a.name && <span style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>{a.name}</span>}
-              <span style={{ fontSize: 10, color: 'var(--tm-text-muted)', marginLeft: 'auto' }}>{a.parts.length} part{a.parts.length !== 1 ? 's' : ''}</span>
-              <span style={{ fontSize: 10, color: 'var(--tm-text-muted)' }}>{isOpen ? '▲' : '▼'}</span>
+              {filePart?.filename
+                ? <span style={{ fontSize: 11, color: '#4edea3', fontWeight: 600 }}>{filePart.filename}</span>
+                : a.name && <span style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>{a.name}</span>
+              }
+              {filePart?.media_type && (
+                <span style={{ fontSize: 10, color: 'var(--tm-text-muted)', padding: '1px 6px', border: '1px solid var(--tm-border)', borderRadius: 4 }}>{filePart.media_type}</span>
+              )}
+              <span style={{ fontSize: 10, color: 'var(--tm-text-muted)', marginLeft: 'auto' }}>{isOpen ? '▲' : '▼'}</span>
             </button>
+
             {isOpen && (
-              <div style={{ padding: '0 12px 10px', borderTop: '1px solid var(--tm-border)' }}>
-                {textParts.map((p, i) => (
-                  <pre key={i} style={{ fontSize: 11, color: 'var(--tm-text)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: '8px 0 0' }}>
-                    {p.text}
-                  </pre>
-                ))}
-                {textParts.length === 0 && (
-                  <pre style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', margin: '8px 0 0' }}>
-                    {JSON.stringify(a.parts, null, 2)}
-                  </pre>
+              <div style={{ borderTop: '1px solid var(--tm-border)' }}>
+                {/* HTML artifact — inline iframe */}
+                {isHtml && filePart?.text && (
+                  <div>
+                    <div style={{ padding: '6px 12px', display: 'flex', justifyContent: 'flex-end', borderBottom: '1px solid var(--tm-border)' }}>
+                      <button
+                        onClick={() => downloadPart(filePart.text!, filePart.filename!, filePart.media_type!)}
+                        style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--tm-border)', background: 'transparent', color: '#a78bfa', cursor: 'pointer' }}
+                      >
+                        Download
+                      </button>
+                    </div>
+                    <iframe
+                      srcDoc={filePart.text}
+                      style={{ width: '100%', height: 500, border: 'none', display: 'block' }}
+                      sandbox="allow-scripts"
+                      title={filePart.filename || 'preview'}
+                    />
+                  </div>
+                )}
+
+                {/* Markdown / slides — styled pre with download */}
+                {isMarkdown && filePart?.text && (
+                  <div style={{ padding: '0 12px 10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 0' }}>
+                      <button
+                        onClick={() => downloadPart(filePart.text!, filePart.filename!, filePart.media_type!)}
+                        style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--tm-border)', background: 'transparent', color: '#a78bfa', cursor: 'pointer' }}
+                      >
+                        Download
+                      </button>
+                    </div>
+                    <pre style={{ fontSize: 12, color: 'var(--tm-text)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, maxHeight: 400, overflowY: 'auto' }}>
+                      {filePart.text}
+                    </pre>
+                  </div>
+                )}
+
+                {/* Plain text parts */}
+                {!filePart && (
+                  <div style={{ padding: '0 12px 10px' }}>
+                    {textParts.map((p, i) => (
+                      <pre key={i} style={{ fontSize: 11, color: 'var(--tm-text)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: '8px 0 0' }}>
+                        {p.text}
+                      </pre>
+                    ))}
+                    {textParts.length === 0 && (
+                      <pre style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', margin: '8px 0 0' }}>
+                        {JSON.stringify(a.parts, null, 2)}
+                      </pre>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -341,6 +403,62 @@ function MemoryTab({ contextId, agentInvocations, allAgents }: {
           <div style={{ color: 'var(--tm-text-muted)', fontSize: 12 }}>No context artifacts yet</div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Sessions tab ──────────────────────────────────────────────────────────
+function SessionsTab({ onResume, currentContextId }: {
+  onResume: (session: ContextSession) => void;
+  currentContextId: string | null;
+}) {
+  const [sessions, setSessions] = useState<ContextSession[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    themApi.contexts().then(s => { setSessions(s); setLoading(false); }).catch(() => setLoading(false));
+  }, [currentContextId]);
+
+  const fmt = (iso: string) => {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = now.getTime() - d.getTime();
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return d.toLocaleDateString();
+  };
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px' }}>
+      {loading && <div style={{ color: 'var(--tm-text-muted)', fontSize: 12 }}>Loading…</div>}
+      {!loading && sessions.length === 0 && (
+        <div style={{ color: 'var(--tm-text-muted)', fontSize: 12 }}>No past sessions yet</div>
+      )}
+      {sessions.map(s => {
+        const isCurrent = s.context_id === currentContextId;
+        return (
+          <div key={s.context_id} style={{
+            padding: '8px 10px', borderRadius: 8, marginBottom: 6,
+            border: `1px solid ${isCurrent ? '#7c3aed' : 'var(--tm-border)'}`,
+            background: isCurrent ? 'rgba(124,58,237,0.08)' : 'var(--tm-surface)',
+            cursor: 'pointer',
+          }} onClick={() => !isCurrent && onResume(s)}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--tm-text)', marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {s.title}
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: '#a78bfa' }}>{s.orchestrator_name}</span>
+              <span style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>{s.turn_count} turn{s.turn_count !== 1 ? 's' : ''}</span>
+              <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', marginLeft: 'auto' }}>{fmt(s.last_active)}</span>
+            </div>
+            {isCurrent && (
+              <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 3 }}>current session</div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -796,6 +914,7 @@ export default function PlaygroundPage() {
                 <TabBtn label="Tasks" active={debugTab === 'tasks'} onClick={() => setDebugTab('tasks')} />
                 <TabBtn label="Artifacts" active={debugTab === 'artifacts'} onClick={() => setDebugTab('artifacts')} />
                 <TabBtn label="Memory" active={debugTab === 'memory'} onClick={() => setDebugTab('memory')} />
+                <TabBtn label="Sessions" active={debugTab === 'sessions'} onClick={() => setDebugTab('sessions')} />
               </div>
               {/* Tab content */}
               <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -807,6 +926,17 @@ export default function PlaygroundPage() {
                     contextId={contextId}
                     agentInvocations={agentInvocations}
                     allAgents={null}
+                  />
+                )}
+                {debugTab === 'sessions' && (
+                  <SessionsTab
+                    currentContextId={contextId}
+                    onResume={s => {
+                      setContextId(s.context_id);
+                      if (s.orchestrator_name !== selectedOrch) setSelectedOrch(s.orchestrator_name);
+                      setMessages([{ role: 'assistant', text: `↩ Resumed session — ${s.turn_count} prior turn${s.turn_count !== 1 ? 's' : ''}` }]);
+                      setDebugTab('trace');
+                    }}
                   />
                 )}
               </div>

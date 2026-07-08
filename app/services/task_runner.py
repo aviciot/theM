@@ -37,6 +37,7 @@ _ORCH_PREFIX = "them:orchestrators:"
 _ORCH_TTL = 600
 _DASH_RUN_PREFIX = "them:dash:run:"
 _DASH_RUNS_CHANNEL = "them:dash:runs"
+_CARD_TTL_SECONDS = 3600  # re-fetch A2A agent card at most once per hour
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -133,6 +134,76 @@ async def _load_agents(orch, db: AsyncSession) -> list[Agent]:
         q = q.where(Agent.id.in_(orch.allowed_agent_ids))
     result = await db.execute(q.order_by(Agent.slug))
     return list(result.scalars().all())
+
+
+async def _ensure_agent_skills(agent: Agent, db: AsyncSession) -> None:
+    """
+    Lazily fetch the A2A agent card and populate agent.skills.
+
+    Re-fetches when skills are missing or card_fetched_at is older than
+    _CARD_TTL_SECONDS. Never raises — on any failure the run proceeds with
+    whatever skills/description are already on the agent row.
+    """
+    from datetime import datetime, timezone
+    import httpx
+    from app.utils.crypto import decrypt_value
+
+    now = datetime.now(timezone.utc)
+    fetched_at = getattr(agent, "card_fetched_at", None)
+    has_skills = bool(getattr(agent, "skills", None))
+    if has_skills and fetched_at is not None:
+        if (now - fetched_at).total_seconds() < _CARD_TTL_SECONDS:
+            return
+
+    if not agent.endpoint_url:
+        return
+
+    card_url = agent.endpoint_url.rstrip("/") + "/.well-known/agent-card.json"
+    headers = {"A2A-Version": "1.0"}
+    token = decrypt_value(agent.auth_token_encrypted) if agent.auth_token_encrypted else ""
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(card_url, headers=headers)
+        resp.raise_for_status()
+        card = resp.json()
+    except Exception as exc:
+        logger.warning(
+            "task_runner: agent card fetch failed — using existing skills/description",
+            agent=agent.slug, url=card_url, error=str(exc),
+        )
+        return
+
+    raw_skills = card.get("skills", []) or []
+    skills = [
+        {
+            "id": s.get("id", ""),
+            "name": s.get("name", ""),
+            "description": s.get("description", ""),
+            "tags": s.get("tags", []),
+        }
+        for s in raw_skills
+        if isinstance(s, dict)
+    ]
+
+    agent.skills = skills
+    agent.agent_card = card
+    agent.agent_card_url = card_url
+    agent.card_fetched_at = now
+    try:
+        await db.commit()
+        logger.info(
+            "task_runner: agent skills auto-discovered",
+            agent=agent.slug, skills=len(skills),
+        )
+    except Exception as exc:
+        await db.rollback()
+        logger.warning(
+            "task_runner: failed to persist discovered skills",
+            agent=agent.slug, error=str(exc),
+        )
 
 
 def _compose_tool_description(agent: Agent) -> str:
@@ -323,6 +394,8 @@ async def _invoke_agent(
             input=tool_call.input,
         )
 
+        file_parts: list[dict] = []  # file parts from artifact events (filename + media_type)
+
         try:
             async with sem:
                 adapter = get_adapter(agent, context_id=str(root_task.context_id))
@@ -332,6 +405,13 @@ async def _invoke_agent(
                 ):
                     if event.type == "token":
                         result_text += event.text or ""
+                    elif event.type == "artifact":
+                        # Collect file parts (parts with filename/media_type) from A2A artifacts
+                        for p in (event.artifact or {}).get("parts", []):
+                            if p.get("filename") or p.get("media_type"):
+                                file_parts.append(p)
+                            elif p.get("text") and not file_parts:
+                                result_text += p.get("text", "")
                     elif event.type == "done":
                         result_text = event.result or result_text
                         break
@@ -346,14 +426,15 @@ async def _invoke_agent(
 
         latency_ms = int((time.monotonic() - t0) * 1000)
 
-        # Update child task
+        # Update child task — persist file parts if present, otherwise plain text
         child_state = "completed" if status == "completed" else "failed"
-        if child_state == "completed" and result_text:
+        if child_state == "completed" and (result_text or file_parts):
+            parts = file_parts if file_parts else [{"kind": "text", "text": result_text}]
             await context_service.record_and_cache_artifact(
                 task_id=child_task.id,
                 context_id=root_task.context_id,
                 artifact_id=f"{agent.slug}-{tool_call.id}",
-                parts=[{"kind": "text", "text": result_text}],
+                parts=parts,
                 name=f"{agent.slug} result",
                 db=own_db,
             )
@@ -462,11 +543,14 @@ async def run(
         yield {"type": "error", "message": "Token is not authorized for this orchestrator"}
         return
 
-    # ── Load agents ────────────────────────────────────────────────────────
+    # ── Load agents + auto-discover skills from A2A agent cards ───────────
     agents = await _load_agents(orch, db)
     if not agents:
         yield {"type": "error", "message": "No agents available for this orchestrator"}
         return
+
+    for a in agents:
+        await _ensure_agent_skills(a, db)
 
     tools: list[NeutralTool] = [
         {

@@ -32,6 +32,8 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 | 21 | `run_tests.py::test_21_a2a_hardening` | structural | no | Phase 9 A2A hardening: rate limit, body+batch limits, token expiry, ownership isolation, agent card system_prompt strip, default deadline, TOCTOU scope fix, task_store helpers, Application model, 004_phase9.sql migration |
 | 22 | `run_tests.py::test_22_applications` | structural | no | Phase 9 Phase 2+3: admin_applications.py CRUD, apps.py entry points (REST + WS + poll), main.py wiring, api.ts Application type + methods, frontend applications page, Sidebar nav |
 
+| 23 | `run_tests.py::test_23_a2a_skill_discovery` | structural | no | A2A agent card auto-discovery: `_ensure_agent_skills` helper, TTL constant, httpx fetch, A2A-Version header, Bearer auth, write-back to DB (skills/agent_card/card_fetched_at), failure handling, call order before tool list, docu_writer agent files, 007_docu_stack.sql seed |
+
 | MT | `scripts/test_multiturn.py` | e2e | yes + JWT (auto-fetched) | Multi-turn conversation history: recall across fresh WS connections, `history_window` behavioral proof (window=1 forgets old turns) |
 
 **Types:**

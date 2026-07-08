@@ -428,6 +428,33 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ── Documentation Writer — enable with: docker compose --profile docu up -d ──
+  docu-writer:
+    build:
+      context: ./agents/docu_writer
+      dockerfile: Dockerfile
+    container_name: docu-writer
+    profiles: [docu]
+    expose:
+      - "9300"
+    environment:
+      PORT: "9300"
+      ANTHROPIC_API_KEY: "${DOCU_WRITER_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9300/.well-known/agent-card.json')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ── Vision Agent — Location Visualizer ──────────────────────────────────────
   vision-agent:
     build:

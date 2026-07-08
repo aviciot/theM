@@ -10,11 +10,11 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Run, RunStep, RunUsage, Task, Artifact
+from app.models import Run, RunStep, RunUsage, Task, Artifact, TaskMessage
 from app._deps import require_jwt
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -78,6 +78,14 @@ class RunOut(BaseModel):
 class RunDetailOut(RunOut):
     steps: List[RunStepOut] = []
     usage: List[RunUsageOut] = []
+
+
+class ContextSession(BaseModel):
+    context_id: uuid.UUID
+    orchestrator_name: str
+    turn_count: int
+    title: str
+    last_active: datetime
 
 
 # ------------------------------------------------------------------ #
@@ -169,6 +177,82 @@ async def run_stats(
         "by_status": {k: v for k, v in status_counts.items() if v > 0},
         "total_cost_usd": float(total_cost),
     }
+
+
+@router.get("/contexts", response_model=List[ContextSession])
+async def list_contexts(
+    orchestrator: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    user: dict = Depends(require_jwt),
+    db: AsyncSession = Depends(get_db),
+):
+    """List distinct conversation sessions (context_ids), most recent first."""
+    is_admin = user.get("role") in ("admin", "superadmin", "super_admin")
+
+    # Subquery: per context_id — turn count, last active, orchestrator name
+    # Join to runs to get orchestrator_name; use the most recent run per context
+    ctx_q = (
+        select(
+            Task.context_id,
+            func.count(Task.id).label("turn_count"),
+            func.max(Task.created_at).label("last_active"),
+        )
+        .where(Task.kind == "root")
+        .group_by(Task.context_id)
+    )
+    if not is_admin:
+        ctx_q = ctx_q.where(Task.user_id == user["user_id"])
+
+    ctx_result = await db.execute(ctx_q.order_by(text("last_active DESC")).limit(limit))
+    rows = ctx_result.all()
+
+    sessions = []
+    for row in rows:
+        cid, turn_count, last_active = row
+
+        # Orchestrator name — from the most recent run for this context
+        run_row = await db.scalar(
+            select(Run.orchestrator_name)
+            .join(Task, Task.run_id == Run.id)
+            .where(Task.context_id == cid, Task.kind == "root")
+            .order_by(Run.started_at.desc())
+            .limit(1)
+        )
+        orch_name = run_row or "unknown"
+        if orchestrator and orch_name != orchestrator:
+            continue
+
+        # Title — first user message of the first turn
+        first_msg = await db.scalar(
+            select(TaskMessage.parts)
+            .join(Task, TaskMessage.task_id == Task.id)
+            .where(Task.context_id == cid, Task.kind == "root", TaskMessage.role == "user", TaskMessage.seq == 0)
+            .order_by(Task.created_at.asc())
+            .limit(1)
+        )
+        title = ""
+        if first_msg:
+            content = first_msg.get("content", "")
+            if isinstance(content, list):
+                # Anthropic-style parts list
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        title = part.get("text", "")[:80]
+                        break
+            elif isinstance(content, str):
+                title = content[:80]
+        if not title:
+            title = f"Session {str(cid)[:8]}…"
+
+        sessions.append(ContextSession(
+            context_id=cid,
+            orchestrator_name=orch_name,
+            turn_count=turn_count,
+            title=title,
+            last_active=last_active,
+        ))
+
+    return sessions
 
 
 @router.get("/{run_id}", response_model=RunDetailOut)

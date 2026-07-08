@@ -198,6 +198,8 @@ export interface TaskOut {
 export interface ArtifactPart {
   kind?: string;
   text?: string;
+  filename?: string;
+  media_type?: string;
   [key: string]: unknown;
 }
 
@@ -211,6 +213,14 @@ export interface ArtifactOut {
   append_index: number;
   last_chunk: boolean;
   created_at: string;
+}
+
+export interface ContextSession {
+  context_id: string;
+  orchestrator_name: string;
+  turn_count: number;
+  title: string;
+  last_active: string;
 }
 
 export interface AgentCard {
@@ -283,6 +293,8 @@ export const themApi = {
   runArtifacts: (runId: string) => api.get<ArtifactOut[]>(`/runs/${runId}/artifacts`),
   contextArtifacts: (contextId: string, limit = 100) =>
     api.get<ArtifactOut[]>(`/runs/context/${contextId}/artifacts?limit=${limit}`),
+  contexts: (orchestrator?: string, limit = 50) =>
+    api.get<ContextSession[]>(`/runs/contexts?limit=${limit}${orchestrator ? `&orchestrator=${orchestrator}` : ''}`),
   fetchAgentCard: async (endpointUrl: string): Promise<AgentCard> => {
     const base = endpointUrl.replace(/\/+$/, '');
     const res = await fetch(`${base}/.well-known/agent-card.json`);

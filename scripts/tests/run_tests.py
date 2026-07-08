@@ -563,6 +563,7 @@ def test_10_run_recorder():
         check("_load_context_history defined", "_load_context_history" in fns)
         check("_persist_assistant_turn defined", "_persist_assistant_turn" in fns)
         check("_persist_tool_results defined", "_persist_tool_results" in fns)
+        check("_ensure_agent_skills defined", "_ensure_agent_skills" in fns)
     except Exception as exc:
         check("task_runner structure", False, str(exc))
 
@@ -1681,6 +1682,102 @@ def test_22_applications():
         check("Sidebar nav", False, str(exc))
 
 
+# ─── test 23: A2A skill auto-discovery (structural) ──────────────────────────
+
+def test_23_a2a_skill_discovery():
+    section("test_23_a2a_skill_discovery: A2A Agent Card Auto-Discovery")
+
+    # 1. _ensure_agent_skills exists and is async
+    try:
+        fns = funcs_in("app/services/task_runner.py")
+        check("_ensure_agent_skills defined", "_ensure_agent_skills" in fns)
+        s = src("app/services/task_runner.py")
+        check("_ensure_agent_skills is async", "async def _ensure_agent_skills" in s)
+    except Exception as exc:
+        check("_ensure_agent_skills structure", False, str(exc))
+
+    # 2. TTL constant defined
+    try:
+        s = src("app/services/task_runner.py")
+        check("_CARD_TTL_SECONDS constant defined", "_CARD_TTL_SECONDS" in s)
+    except Exception as exc:
+        check("TTL constant", False, str(exc))
+
+    # 3. Uses httpx to fetch the agent card
+    try:
+        s = src("app/services/task_runner.py")
+        check("httpx used for card fetch", "httpx" in s)
+        check("fetches /.well-known/agent-card.json", ".well-known/agent-card.json" in s)
+        check("A2A-Version header sent", "A2A-Version" in s)
+    except Exception as exc:
+        check("httpx card fetch", False, str(exc))
+
+    # 4. Auth token decrypted for card fetch
+    try:
+        s = src("app/services/task_runner.py")
+        check("decrypt_value used for card fetch auth", "decrypt_value" in s)
+        check("Authorization Bearer set for card fetch", "Authorization" in s)
+    except Exception as exc:
+        check("card fetch auth", False, str(exc))
+
+    # 5. Writes back skills + agent_card + card_fetched_at to DB
+    try:
+        s = src("app/services/task_runner.py")
+        check("agent.skills written back", "agent.skills = skills" in s)
+        check("agent.agent_card written back", "agent.agent_card = card" in s)
+        check("agent.card_fetched_at written back", "agent.card_fetched_at = now" in s)
+        check("db.commit() called after write-back", "await db.commit()" in s)
+        check("db.rollback() on commit failure", "await db.rollback()" in s)
+    except Exception as exc:
+        check("write-back structure", False, str(exc))
+
+    # 6. Failure is caught — never raises to caller
+    try:
+        s = src("app/services/task_runner.py")
+        check("except block in _ensure_agent_skills", "logger.warning" in s and "agent card fetch failed" in s)
+        check("returns on fetch failure (no raise)", "return" in s)
+    except Exception as exc:
+        check("failure handling", False, str(exc))
+
+    # 7. Called before tool list is built in run()
+    try:
+        s = src("app/services/task_runner.py")
+        ensure_pos = s.find("_ensure_agent_skills")
+        tools_pos = s.find("tools: list[NeutralTool]")
+        check("_ensure_agent_skills called before tool list", ensure_pos != -1 and tools_pos != -1 and ensure_pos < tools_pos)
+    except Exception as exc:
+        check("call order", False, str(exc))
+
+    # 8. _compose_tool_description still uses skills
+    try:
+        s = src("app/services/task_runner.py")
+        check("_compose_tool_description reads agent.skills", "agent.skills" in s or 'getattr(agent, "skills"' in s)
+    except Exception as exc:
+        check("_compose_tool_description", False, str(exc))
+
+    # 9. docu-writer agent files exist
+    try:
+        check("agents/docu_writer/main.py exists", os.path.exists("agents/docu_writer/main.py"))
+        check("agents/docu_writer/Dockerfile exists", os.path.exists("agents/docu_writer/Dockerfile"))
+        check("agents/docu_writer/requirements.txt exists", os.path.exists("agents/docu_writer/requirements.txt"))
+        s = src("agents/docu_writer/main.py")
+        check("docu_writer uses ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY" in s)
+        check("docu_writer sets filename on artifact part", "part.filename" in s)
+        check("docu_writer sets media_type on artifact part", "part.media_type" in s)
+    except Exception as exc:
+        check("docu_writer agent structure", False, str(exc))
+
+    # 10. Seed SQL for docu stack exists
+    try:
+        check("db/007_docu_stack.sql exists", os.path.exists("db/007_docu_stack.sql"))
+        s = src("db/007_docu_stack.sql")
+        check("code_agent seeded", "code_agent" in s)
+        check("docu_writer seeded", "docu_writer" in s)
+        check("docu_orchestrator seeded", "docu_orchestrator" in s)
+    except Exception as exc:
+        check("seed SQL", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -1706,6 +1803,7 @@ ALL_TESTS = [
     ("20", test_20_traefik),
     ("21", test_21_a2a_hardening),
     ("22", test_22_applications),
+    ("23", test_23_a2a_skill_discovery),
 ]
 
 if __name__ == "__main__":
