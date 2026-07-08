@@ -1778,6 +1778,76 @@ def test_23_a2a_skill_discovery():
         check("seed SQL", False, str(exc))
 
 
+def test_24_code_agent_live():
+    """Live: verify A2A call to code_agent returns real data (not a serialization error)."""
+    section("test_24_code_agent_live: code_agent A2A live call")
+
+    try:
+        import urllib.request as _req
+        import json as _json
+        import time as _time
+
+        endpoint = "http://10.55.125.43:3000/a2a/codeagent/"
+        token = "omni2_mcp_BOkrx6jGd2YyU3CLQ7MohlBHphde-140mHQvPgNkumI"
+
+        # 1. Agent card is reachable and has skills
+        try:
+            card_req = _req.Request(
+                endpoint + ".well-known/agent-card.json",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            r = _req.urlopen(card_req, timeout=10)
+            card = _json.loads(r.read())
+            skills = card.get("skills", [])
+            skill_ids = [s.get("id", "") for s in skills]
+            check("agent card reachable", bool(card.get("name")))
+            check("list_repos skill present", any("list_repos" in sid for sid in skill_ids))
+            check("query_graph skill present", any("query_graph" in sid for sid in skill_ids))
+        except Exception as e:
+            check("agent card reachable", False, str(e))
+            return
+
+        # 2. SendMessage → list_repos returns real repo data (not a serialization error)
+        try:
+            body = _json.dumps({
+                "jsonrpc": "2.0", "id": "t24-1", "method": "SendMessage",
+                "params": {
+                    "message": {"role": 1, "parts": [{"text": "List all repos."}], "messageId": "t24-msg"},
+                    "configuration": {"returnImmediately": True}
+                }
+            }).encode()
+            rpc_req = _req.Request(
+                endpoint,
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {token}",
+                    "A2A-Version": "1.0"
+                }
+            )
+            r = _req.urlopen(rpc_req, timeout=30)
+            resp = _json.loads(r.read())
+            task = resp.get("result", {})
+            state = task.get("status", {}).get("state", "")
+            check("task completed", state in ("TASK_STATE_COMPLETED", "completed"), f"state={state}")
+
+            # Extract result text
+            result_text = ""
+            for art in task.get("artifacts", []):
+                for p in art.get("parts", []):
+                    result_text += p.get("text", "")
+
+            # Must NOT contain the serialization error
+            check("no TextContent serialization error", "Object of type TextContent is not JSON serializable" not in result_text, result_text[:100])
+            # Must contain actual repo data
+            check("response contains repo data", any(kw in result_text for kw in ["report-hub", "billing-payments", "repos", "repository", "healthy"]), result_text[:100])
+        except Exception as e:
+            check("SendMessage to code_agent", False, str(e))
+
+    except ImportError as e:
+        skip("test_24_code_agent_live", f"missing: {e}")
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -1804,6 +1874,7 @@ ALL_TESTS = [
     ("21", test_21_a2a_hardening),
     ("22", test_22_applications),
     ("23", test_23_a2a_skill_discovery),
+    ("24", test_24_code_agent_live),
 ]
 
 if __name__ == "__main__":
