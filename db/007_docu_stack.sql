@@ -14,8 +14,8 @@ VALUES (
     'Code Agent',
     'Reads and analyzes source code files or repositories. Returns structured explanations of business logic, architecture, data flows, and component relationships, including Mermaid diagrams where relevant.',
     'a2a_async',
-    'http://10.55.125.43:3111/a2a/codeagent',
-    'omni2_mcp_BOkrx6jGd2YyU3CLQ7MohlBHphde-140mHQvPgNkumI',
+    'http://10.55.125.43:3000/a2a/codeagent/',
+    'enc:gAAAAABqTmy_7qj_PlBUfLNg68ffug3tRPXDbmYZcfdFqaf99FOgSHY9GRIosUt7KMh-pJRX2zfydhZI3SLz0DE5v88SAzABeqYppPSoRmGDm_Zf8ZfAeVce2l7afoNKi73_px2adfCMruhWlgPjj1xXkB-2lGAlRw==',
     true,
     false,
     300

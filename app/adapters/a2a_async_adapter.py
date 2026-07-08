@@ -45,7 +45,7 @@ class A2aAsyncAdapter(AgentAdapter):
         max_poll_seconds: float = 300.0,
     ) -> None:
         self._slug = agent_slug
-        self._endpoint_url = endpoint_url.rstrip("/")
+        self._endpoint_url = endpoint_url.rstrip("/") + "/"
         self._auth_token_encrypted = auth_token_encrypted
         self._context_id = context_id
         self._push_url = push_url
@@ -186,7 +186,7 @@ class A2aAsyncAdapter(AgentAdapter):
         timeout: float,
     ) -> AsyncGenerator[AdapterEvent, None]:
         """Subscribe to SSE stream from the remote agent for live events."""
-        sse_url = self._endpoint_url + f"/tasks/{remote_task_id}/events"
+        sse_url = self._endpoint_url + f"tasks/{remote_task_id}/events"
         headers = {**self._headers(), "Accept": "text/event-stream"}
         yielded_artifact_ids: set[str] = set()
 
@@ -248,7 +248,7 @@ class A2aAsyncAdapter(AgentAdapter):
 
         try:
             async with asyncio.timeout(effective_timeout):
-                async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout)) as client:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout), follow_redirects=True) as client:
                     remote_task_id = await self.submit(client, message)
                     logger.info(
                         "A2aAsyncAdapter task submitted",
