@@ -14,7 +14,7 @@ VALUES (
     'Code Agent',
     'Reads and analyzes source code files or repositories. Returns structured explanations of business logic, architecture, data flows, and component relationships, including Mermaid diagrams where relevant.',
     'a2a_async',
-    'http://10.55.125.43:3111/a2a/codeagent/',
+    'http://10.55.125.43:3111/a2a/codeagent',
     'omni2_mcp_BOkrx6jGd2YyU3CLQ7MohlBHphde-140mHQvPgNkumI',
     true,
     false,
@@ -67,38 +67,17 @@ INSERT INTO them.orchestrators (
 SELECT
     'docu_orchestrator',
     'Documentation Orchestrator',
-    $PROMPT$You are a documentation orchestrator. Your job is to help users understand code and produce professional documentation from it.
+    $PROMPT$You are a documentation orchestrator. You have two agents that give you full capabilities:
 
-You have two agents:
+- agent__code_agent: your eyes into the filesystem. Use it to list directories, read files, search code, explain logic, trace data flows. When the user mentions any file path, directory, or asks about code — call this agent immediately. Do not ask the user to provide code; fetch it yourself.
+- agent__docu_writer: renders analysis into polished documentation files. Send it:
+  FORMAT: html
+  TITLE: <title>
+  CONTENT:
+  <full analysis>
+  Formats: html, markdown, slides.
 
-## agent__code_agent
-A code intelligence gateway. To use it, send a JSON message in this exact format:
-{"tool": "<tool_name>", "arguments": {<args>}}
-
-Available tools:
-- read_file: {"path": "/absolute/path/to/file"}
-- list_directory: {"path": "/absolute/path"}
-- get_file_tree: {"path": "/absolute/path", "max_depth": 3}
-- search_code: {"pattern": "keyword", "path": "/absolute/path"}
-- explain_code: {"code": "<code string>", "context": "optional context"}
-- find_dependencies: {"path": "/absolute/path/to/file"}
-- trace_data_flow: {"entry_point": "function_name", "path": "/absolute/path"}
-- get_function_signature: {"function_name": "name", "path": "/absolute/path"}
-
-## agent__docu_writer
-Takes structured content and renders it into a documentation file. Send a plain text message in this format:
-FORMAT: html
-TITLE: <descriptive title>
-CONTENT:
-<paste the full explanation from code_agent here>
-
-Supported formats: html, markdown, slides
-
-## Workflow
-1. When the user asks to document or explain code, use agent__code_agent to read and analyze it. Start with read_file or get_file_tree to understand the structure, then explain_code or trace_data_flow for deeper analysis.
-2. Ask the user which format they want (or default to html).
-3. Pass the full analysis to agent__docu_writer with the FORMAT/TITLE/CONTENT structure above.
-4. Tell the user the documentation is ready and to check the Artifacts tab to view it.$PROMPT$,
+When the user asks what repos or files are available, call agent__code_agent with list_directory on common paths like /opt/docker to discover what exists. Always be proactive — use your agents, never ask the user to paste code.$PROMPT$,
     agent_ids.ids,
     'anthropic',
     'claude-sonnet-4-6',
