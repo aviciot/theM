@@ -1755,6 +1755,29 @@ def test_23_a2a_skill_discovery():
     except Exception as exc:
         check("_compose_tool_description", False, str(exc))
 
+    # 8b. _build_agent_tool_schema: typed schema for json agents
+    try:
+        s = src("app/services/task_runner.py")
+        check("_build_agent_tool_schema defined", "_build_agent_tool_schema" in s)
+        check("_build_agent_tool_schema: skill enum in properties", '"skill"' in s and '"enum"' in s)
+        check("_build_agent_tool_schema: skill is required field", '"required": ["skill"]' in s or "\"required\": [\"skill\"]" in s or "'skill'" in s and "'required'" in s)
+        check("_build_agent_tool_schema: fallback to message for mixed modes", '"message"' in s and 'input_schema' in s)
+        check("_build_agent_tool_schema used in tool list", '_build_agent_tool_schema(a)' in s)
+        check("_build_agent_tool_schema: tags used as param names", 'tags' in s and 'param' in s.lower())
+        # Omni side: _extract_data_from_message
+        omni_a2a = "app/routers/a2a.py"
+        omni_path = "/opt/docker/omni-stack/" + omni_a2a
+        import os as _os
+        if _os.path.exists(omni_path):
+            omni_s = open(omni_path).read()
+            check("omni: _extract_data_from_message defined", "_extract_data_from_message" in omni_s)
+            check("omni: data part checked before text parse", omni_s.index("_extract_data_from_message") < omni_s.index("_parse_tool_call(text_content"))
+            check("omni: skill key routes directly", '"skill" in data_part' in omni_s or "\"skill\" in data_part" in omni_s)
+        else:
+            check("omni: a2a.py found (skip — omni-stack not at expected path)", False, "omni-stack not mounted here")
+    except Exception as exc:
+        check("_build_agent_tool_schema", False, str(exc))
+
     # 9. docu-writer agent files exist
     try:
         check("agents/docu_writer/main.py exists", os.path.exists("agents/docu_writer/main.py"))

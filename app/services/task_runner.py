@@ -259,6 +259,77 @@ def _compose_tool_description(agent: Agent) -> str:
     return "\n".join(parts) if parts else agent.description
 
 
+def _build_agent_tool_schema(agent: Agent) -> dict:
+    """
+    Build the JSON schema exposed to the LLM for this agent tool.
+
+    For A2A agents that declare application/json on all skills, generate a
+    typed schema with a required `skill` enum plus any per-skill parameters
+    derived from skill tags. This causes the LLM to fill typed fields that
+    the adapter sends as A2A data parts, bypassing the internal LLM call
+    on the remote agent side.
+
+    Falls back to the generic {message: string} schema when:
+    - agent has no skills, or
+    - agent does not declare application/json on any skill, or
+    - agent has an explicit input_schema set.
+    """
+    if agent.input_schema:
+        return agent.input_schema
+
+    skills = getattr(agent, "skills", None) or []
+    if not skills:
+        return {
+            "type": "object",
+            "properties": {"message": {"type": "string"}},
+            "required": ["message"],
+        }
+
+    # Check if ALL skills declare application/json input mode
+    json_skills = [
+        s for s in skills
+        if isinstance(s, dict) and "application/json" in (s.get("input_modes") or [])
+    ]
+    if len(json_skills) != len(skills):
+        # Mixed modes — use generic schema
+        return {
+            "type": "object",
+            "properties": {"message": {"type": "string"}},
+            "required": ["message"],
+        }
+
+    skill_names = [s["name"] for s in json_skills if s.get("name")]
+    if not skill_names:
+        return {
+            "type": "object",
+            "properties": {"message": {"type": "string"}},
+            "required": ["message"],
+        }
+
+    # Collect all unique parameter names from skill tags (tags = parameter field names)
+    all_params: dict[str, str] = {}
+    for s in json_skills:
+        for tag in (s.get("tags") or []):
+            if tag and tag not in all_params:
+                all_params[tag] = f"string"  # noqa: F541
+
+    properties: dict = {
+        "skill": {
+            "type": "string",
+            "enum": skill_names,
+            "description": "Which skill to invoke on the remote agent.",
+        }
+    }
+    for param in all_params:
+        properties[param] = {"type": "string"}
+
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": ["skill"],
+    }
+
+
 _PROVIDER_DEFAULT_KEYS = {
     "openai": lambda s: (s.openai_api_key, s.openai_model),
     "anthropic": lambda s: (s.llm.api_key, s.llm.model),
@@ -590,11 +661,7 @@ async def run(
         {
             "name": f"agent__{a.slug}",
             "description": _compose_tool_description(a),
-            "schema": a.input_schema or {
-                "type": "object",
-                "properties": {"message": {"type": "string"}},
-                "required": ["message"],
-            },
+            "schema": _build_agent_tool_schema(a),
         }
         for a in agents
     ]
