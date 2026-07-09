@@ -22,11 +22,11 @@ Supported formats:
 """
 
 import os
-import re
 import uvicorn
 from fastapi import FastAPI
 
 import anthropic
+from google.protobuf import json_format
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events.event_queue import EventQueue
@@ -98,23 +98,29 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _parse_input(raw: str) -> tuple[str, str, str]:
-    """Parse FORMAT / TITLE / CONTENT from the message. Returns (fmt, title, content)."""
+def _extract_input(context: "RequestContext") -> tuple[str, str, str]:
+    """
+    Extract (fmt, title, content) from the A2A message parts.
+
+    Prefers a typed data part: {"format": "html", "title": "...", "content": "..."}.
+    Falls back to the first text part as raw content with defaults.
+    """
     fmt = "html"
     title = "Documentation"
-    content = raw
+    content = ""
 
-    fmt_match = re.search(r"^FORMAT:\s*(\S+)", raw, re.MULTILINE | re.IGNORECASE)
-    if fmt_match:
-        fmt = fmt_match.group(1).strip().lower()
+    if not context.message:
+        return fmt, title, content
 
-    title_match = re.search(r"^TITLE:\s*(.+)$", raw, re.MULTILINE | re.IGNORECASE)
-    if title_match:
-        title = title_match.group(1).strip()
-
-    content_match = re.search(r"^CONTENT:\s*\n(.*)", raw, re.MULTILINE | re.IGNORECASE | re.DOTALL)
-    if content_match:
-        content = content_match.group(1).strip()
+    for part in context.message.parts:
+        if part.HasField("data"):
+            data = json_format.MessageToDict(part.data.struct_value)
+            fmt = data.get("format", fmt).lower()
+            title = data.get("title", title)
+            content = data.get("content", content)
+            break
+        elif part.HasField("text") and not content:
+            content = part.text
 
     if fmt not in _FORMAT_META:
         fmt = "html"
@@ -133,12 +139,6 @@ def _build_prompt(fmt: str, title: str, content: str) -> str:
 
 class DocuWriterExecutor(AgentExecutor):
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
-        user_text = ""
-        if context.message:
-            for part in context.message.parts:
-                if part.HasField("text"):
-                    user_text += part.text
-
         # Enqueue initial task state
         task = Task()
         task.id = context.task_id
@@ -153,7 +153,7 @@ class DocuWriterExecutor(AgentExecutor):
         await event_queue.enqueue_event(working)
 
         try:
-            fmt, title, content = _parse_input(user_text)
+            fmt, title, content = _extract_input(context)
             meta = _FORMAT_META[fmt]
 
             if not ANTHROPIC_API_KEY:
@@ -227,7 +227,12 @@ def make_agent_card() -> AgentCard:
         skill = card.skills.add()
         skill.id = f"render_{fmt}"
         skill.name = f"Render {fmt.capitalize()}"
-        skill.description = f"Produce a {meta['filename']} documentation file."
+        skill.description = (
+            f"Renders technical analysis into a {meta['filename']} file. "
+            f"Input: JSON with fields: format (html|markdown|slides), title (string), content (markdown string). "
+            f"Output: complete {fmt} file artifact."
+        )
+        skill.input_modes.append("application/json")
         skill.input_modes.append("text/plain")
         skill.output_modes.append(meta["media_type"])
 

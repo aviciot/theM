@@ -183,6 +183,8 @@ async def _ensure_agent_skills(agent: Agent, db: AsyncSession) -> None:
             "name": s.get("name", ""),
             "description": s.get("description", ""),
             "tags": s.get("tags", []),
+            "input_modes": s.get("inputModes") or s.get("input_modes") or [],
+            "output_modes": s.get("outputModes") or s.get("output_modes") or [],
         }
         for s in raw_skills
         if isinstance(s, dict)

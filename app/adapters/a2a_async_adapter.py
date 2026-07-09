@@ -43,6 +43,7 @@ class A2aAsyncAdapter(AgentAdapter):
         supports_streaming: bool = False,
         poll_interval: float = 1.0,
         max_poll_seconds: float = 300.0,
+        input_modes: list[str] | None = None,
     ) -> None:
         self._slug = agent_slug
         self._endpoint_url = endpoint_url.rstrip("/") + "/"
@@ -52,6 +53,7 @@ class A2aAsyncAdapter(AgentAdapter):
         self._supports_streaming = supports_streaming
         self._poll_interval = poll_interval
         self._max_poll_seconds = max_poll_seconds
+        self._input_modes = input_modes or ["text/plain"]
 
     def _headers(self) -> dict:
         token = decrypt_value(self._auth_token_encrypted) if self._auth_token_encrypted else ""
@@ -60,11 +62,31 @@ class A2aAsyncAdapter(AgentAdapter):
             h["Authorization"] = f"Bearer {token}"
         return h
 
-    def _send_message_body(self, message: str) -> dict:
+    def _build_parts(self, input: str | dict) -> list[dict]:
+        """
+        Build the A2A message parts list based on the agent's declared input_modes.
+
+        - If the agent declares application/json and input is a dict: send a data part.
+          A leading text part carries any context summary (keyed as "__context__").
+        - Otherwise: send a single text part.
+        """
+        if "application/json" in self._input_modes and isinstance(input, dict):
+            parts: list[dict] = []
+            # Context summary is passed as a separate text part, not mixed into data
+            ctx = input.pop("__context__", None)
+            if ctx:
+                parts.append({"text": ctx})
+            parts.append({"data": input})
+            return parts
+        # Plain text fallback — extract message string if input is a dict
+        text = input if isinstance(input, str) else input.get("message", str(input))
+        return [{"text": text}]
+
+    def _send_message_body(self, input: str | dict) -> dict:
         # role=1 is ROLE_USER in the A2A v1.0 proto enum
         msg: dict = {
             "role": _ROLE_USER,
-            "parts": [{"text": message}],
+            "parts": self._build_parts(input),
             "messageId": str(uuid4()),
         }
         if self._context_id:
@@ -90,12 +112,12 @@ class A2aAsyncAdapter(AgentAdapter):
             "params": {"id": task_id},
         }
 
-    async def submit(self, client: httpx.AsyncClient, message: str) -> str:
+    async def submit(self, client: httpx.AsyncClient, input: str | dict) -> str:
         """POST SendMessage and return the remote_task_id."""
         resp = await client.post(
             self._endpoint_url,
             headers=self._headers(),
-            json=self._send_message_body(message),
+            json=self._send_message_body(input),
         )
         resp.raise_for_status()
         body = resp.json()
@@ -243,13 +265,14 @@ class A2aAsyncAdapter(AgentAdapter):
         input: dict,
         timeout: float,
     ) -> AsyncGenerator[AdapterEvent, None]:
-        message = input.get("message", "")
+        # Pass the full input dict so _build_parts can detect typed vs text mode.
+        # For text-only agents, _build_parts extracts input["message"] as a string.
         effective_timeout = min(timeout, self._max_poll_seconds)
 
         try:
             async with asyncio.timeout(effective_timeout):
                 async with httpx.AsyncClient(timeout=httpx.Timeout(effective_timeout), follow_redirects=True) as client:
-                    remote_task_id = await self.submit(client, message)
+                    remote_task_id = await self.submit(client, dict(input))
                     logger.info(
                         "A2aAsyncAdapter task submitted",
                         agent=self._slug,

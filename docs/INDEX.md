@@ -30,6 +30,7 @@ One line per doc. Read this first, then open only what you need.
 | `SCHEMA.md` | Touching `app/models.py`, `db/001_schema.sql`, or writing queries — covers all `them.*` tables with column descriptions and FK rationale | Adding/changing any DB table or column |
 | `REDIS.md` | Touching anything that reads/writes Redis — covers every key pattern, TTL, owner, pub/sub channels | Adding/renaming any Redis key or channel |
 | `ADAPTERS.md` | Adding or changing an agent transport — covers `AgentAdapter` contract, `AdapterEvent`, `omni_ws` protocol, how to add new transports | New transport type, changed adapter interface |
+| `A2A_REFERENCE.md` | A2A SDK v1.1.0 reference — Part types (text/data/raw/url), AgentCard/AgentSkill fields, wire format, typed input examples, current gaps vs true A2A | A2A SDK version bump or spec changes |
 | `A2A_AGENTS.md` | Working with A2A test agents — start/stop commands, DB enable/disable, cache bust, playground prompts, raw JSON-RPC test, adapter integration test | A2A agent code changes, new test agents added |
 | `AUTH.md` | Touching auth flow, cookies, JWT, bearer tokens — covers JWT (dashboard) vs bearer tokens (WS), cache flow, token hashing, cookie names | Auth flow changes, new token types |
 | `FLOWS.md` | Understanding end-to-end orchestration — covers full sequence for a multi-agent run, Redis pub/sub trace events | Orchestration flow changes |

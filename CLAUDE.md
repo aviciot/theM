@@ -16,6 +16,7 @@ Before touching any code, read these docs if you haven't this session:
 | `docs/REDIS.md` | Touching anything that reads/writes Redis |
 | `docs/ADAPTERS.md` | Adding/changing an agent transport |
 | `docs/A2A_AGENTS.md` | Working with A2A test agents — start/stop, enable, test commands |
+| `docs/A2A_REFERENCE.md` | A2A SDK v1.1.0 ground truth — Part types, AgentCard/Skill fields, wire format, platform gaps |
 | `docs/STATUS.md` | Know what's broken/pending before you start |
 | `docs/LESSONS.md` | Before any judgment call — read what burned us before |
 | `scripts/tests/INDEX.md` | Before running or writing tests |
@@ -249,6 +250,7 @@ ADMIN_JWT=<token> python scripts/tests/run_tests.py 14
 - **Never** use DB name `odin` or schema `odin` — everything is `them`
 - Naming: UI/docs = **the-M**, code identifiers = **them** / **THE_M_**
 - Use Opus for architecture/planning decisions, Sonnet for coding and QA
+- **A2A work** (adapters, agents, agent cards, typed parts, orchestrator↔agent wiring) → invoke `/a2a` skill first — it loads the full SDK reference and platform gap list
 
 ---
 
