@@ -1886,6 +1886,8 @@ def test_25_true_a2a():
         check("adapter: __context__ key for context separation", "__context__" in s)
         check("adapter: submit accepts str|dict input", "str | dict" in s)
         check("adapter: stream_invoke passes full input dict", "dict(input)" in s)
+        # Guard: only sends data part when typed fields present (not just {message: str})
+        check("adapter: typed_keys guard avoids data part for generic message", "typed_keys" in s)
     except Exception as exc:
         check("adapter typed parts structure", False, str(exc))
 

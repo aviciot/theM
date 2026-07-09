@@ -66,18 +66,24 @@ class A2aAsyncAdapter(AgentAdapter):
         """
         Build the A2A message parts list based on the agent's declared input_modes.
 
-        - If the agent declares application/json and input is a dict: send a data part.
-          A leading text part carries any context summary (keyed as "__context__").
-        - Otherwise: send a single text part.
+        Sends a data part only when application/json is declared AND the input
+        contains typed fields beyond the generic {message: string} contract.
+        If the dict only has a "message" key, it means the LLM used the fallback
+        tool schema — treat it as plain text regardless of input_modes.
         """
         if "application/json" in self._input_modes and isinstance(input, dict):
-            parts: list[dict] = []
-            # Context summary is passed as a separate text part, not mixed into data
             ctx = input.pop("__context__", None)
-            if ctx:
-                parts.append({"text": ctx})
-            parts.append({"data": input})
-            return parts
+            # Only use data part when there are typed fields (not just the generic message key)
+            typed_keys = {k for k in input if k != "message"}
+            if typed_keys:
+                parts: list[dict] = []
+                if ctx:
+                    parts.append({"text": ctx})
+                parts.append({"data": input})
+                return parts
+            # Fall through — LLM used generic schema, restore ctx if any
+            if ctx and "message" in input:
+                input["message"] = f"[Context summary]\n{ctx}\n\n{input['message']}"
         # Plain text fallback — extract message string if input is a dict
         text = input if isinstance(input, str) else input.get("message", str(input))
         return [{"text": text}]

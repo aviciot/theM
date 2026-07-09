@@ -85,9 +85,15 @@ function TabBtn({ label, active, onClick }: { label: string; active: boolean; on
   );
 }
 
-function TraceTab({ trace, traceBottom }: { trace: TraceEvent[]; traceBottom: React.RefObject<HTMLDivElement | null> }) {
+function TraceTab({ trace, traceBottom, runId, contextId }: { trace: TraceEvent[]; traceBottom: React.RefObject<HTMLDivElement | null>; runId?: string | null; contextId?: string | null }) {
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {(runId || contextId) && (
+        <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--tm-text-muted)', background: 'var(--tm-surface)', border: '1px solid var(--tm-border)', borderRadius: 4, padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 4 }}>
+          {runId && <span title={runId}><span style={{ opacity: 0.6 }}>run_id: </span>{runId}</span>}
+          {contextId && <span title={contextId}><span style={{ opacity: 0.6 }}>ctx_id: </span>{contextId}</span>}
+        </div>
+      )}
       {trace.length === 0 && (
         <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, textAlign: 'center', marginTop: 40 }}>
           Trace events appear here when a run starts
@@ -918,7 +924,7 @@ export default function PlaygroundPage() {
               </div>
               {/* Tab content */}
               <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                {debugTab === 'trace' && <TraceTab trace={trace} traceBottom={traceBottom} />}
+                {debugTab === 'trace' && <TraceTab trace={trace} traceBottom={traceBottom} runId={runId.current} contextId={contextId} />}
                 {debugTab === 'tasks' && <TasksTab runId={runId.current} />}
                 {debugTab === 'artifacts' && <ArtifactsTab runId={runId.current} />}
                 {debugTab === 'memory' && (
