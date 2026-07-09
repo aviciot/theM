@@ -242,91 +242,36 @@ async def _ensure_agent_skills(agent: Agent, db: AsyncSession) -> None:
 
 def _compose_tool_description(agent: Agent) -> str:
     """
-    Build LLM tool description from agent card skills when available,
-    falling back to agent.description.
+    Return agent.description as the tool description shown to the orchestrator LLM.
+
+    Agent card skills describe the sub-agent's internal capabilities for routing
+    decisions — they are NOT a menu of operations for the orchestrator to call
+    individually. Exposing them here caused the orchestrator LLM to micro-manage
+    each skill call instead of delegating a complete goal to the sub-agent.
     """
-    parts = []
-    if agent.description:
-        parts.append(agent.description.strip())
-    skills = getattr(agent, "skills", None) or []
-    for s in skills:
-        if not isinstance(s, dict):
-            continue
-        name = s.get("name", "")
-        desc = s.get("description", "")
-        if name:
-            parts.append(f"{name}: {desc}" if desc else name)
-    return "\n".join(parts) if parts else agent.description
+    return (agent.description or "").strip()
 
 
 def _build_agent_tool_schema(agent: Agent) -> dict:
     """
-    Build the JSON schema exposed to the LLM for this agent tool.
+    Build the JSON schema for this agent's tool as seen by the orchestrator LLM.
 
-    For A2A agents that declare application/json on all skills, generate a
-    typed schema with a required `skill` enum plus any per-skill parameters
-    derived from skill tags. This causes the LLM to fill typed fields that
-    the adapter sends as A2A data parts, bypassing the internal LLM call
-    on the remote agent side.
+    A2A agents are autonomous: the orchestrator sends a goal as a text message and
+    the sub-agent's own LLM handles the breakdown. The schema is always
+    {message: string} so the orchestrator composes a rich goal, not individual
+    skill calls.
 
-    Falls back to the generic {message: string} schema when:
-    - agent has no skills, or
-    - agent does not declare application/json on any skill, or
-    - agent has an explicit input_schema set.
+    Exception: agents with an explicit non-empty input_schema (e.g. docu_writer)
+    get their declared typed schema — they explicitly want structured input.
     """
-    if agent.input_schema:
-        return agent.input_schema
-
-    skills = getattr(agent, "skills", None) or []
-    if not skills:
-        return {
-            "type": "object",
-            "properties": {"message": {"type": "string"}},
-            "required": ["message"],
-        }
-
-    # Check if ALL skills declare application/json input mode
-    json_skills = [
-        s for s in skills
-        if isinstance(s, dict) and "application/json" in (s.get("input_modes") or [])
-    ]
-    if len(json_skills) != len(skills):
-        # Mixed modes — use generic schema
-        return {
-            "type": "object",
-            "properties": {"message": {"type": "string"}},
-            "required": ["message"],
-        }
-
-    skill_names = [s["name"] for s in json_skills if s.get("name")]
-    if not skill_names:
-        return {
-            "type": "object",
-            "properties": {"message": {"type": "string"}},
-            "required": ["message"],
-        }
-
-    # Collect all unique parameter names from skill tags (tags = parameter field names)
-    all_params: dict[str, str] = {}
-    for s in json_skills:
-        for tag in (s.get("tags") or []):
-            if tag and tag not in all_params:
-                all_params[tag] = f"string"  # noqa: F541
-
-    properties: dict = {
-        "skill": {
-            "type": "string",
-            "enum": skill_names,
-            "description": "Which skill to invoke on the remote agent.",
-        }
-    }
-    for param in all_params:
-        properties[param] = {"type": "string"}
+    schema = agent.input_schema or {}
+    if schema.get("properties"):
+        return schema
 
     return {
         "type": "object",
-        "properties": properties,
-        "required": ["skill"],
+        "properties": {"message": {"type": "string"}},
+        "required": ["message"],
     }
 
 
@@ -873,17 +818,14 @@ async def run(
                 if agent is None:
                     return tc, f"[Unknown agent: {slug}]"
                 tc_input = dict(tc.input)
-                # For typed agents (application/json input_mode): pass structured dict.
-                # Context summary travels as __context__ key — adapter sends it as a
-                # separate text part alongside the data part (never concatenated into data).
-                skills = getattr(agent, "skills", None) or []
-                agent_input_modes = {m for s in skills for m in (s.get("input_modes") or [])}
-                if "application/json" in agent_input_modes:
-                    # LLM already fills the typed fields; inject context as separate key
+                # Typed agents (explicit input_schema with properties) get context as a
+                # separate __context__ key so the adapter sends it as a text part alongside
+                # the data part. Text-only agents get it prepended to the message string.
+                is_typed = bool((agent.input_schema or {}).get("properties"))
+                if is_typed:
                     if _injected_ctx:
                         tc_input["__context__"] = _injected_ctx
                 else:
-                    # Text-only agent: prepend context to message string as before
                     if _injected_ctx and "message" in tc_input:
                         tc_input["message"] = f"[Context summary]\n{_injected_ctx}\n\n{tc_input['message']}"
                 tc = ToolCall(id=tc.id, name=tc.name, input=tc_input)

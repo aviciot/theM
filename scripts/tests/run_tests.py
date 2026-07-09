@@ -1748,22 +1748,24 @@ def test_23_a2a_skill_discovery():
     except Exception as exc:
         check("call order", False, str(exc))
 
-    # 8. _compose_tool_description still uses skills
+    # 8. _compose_tool_description — simplified to agent.description only
     try:
         s = src("app/services/task_runner.py")
-        check("_compose_tool_description reads agent.skills", "agent.skills" in s or 'getattr(agent, "skills"' in s)
+        check("_compose_tool_description returns agent.description", "agent.description" in s)
+        # Must NOT expose skill list to orchestrator LLM
+        check("_compose_tool_description: no skill list in description", "Skills:" not in s or s.index("Skills:") > s.index("def _compose_tool_description"))
     except Exception as exc:
         check("_compose_tool_description", False, str(exc))
 
-    # 8b. _build_agent_tool_schema: typed schema for json agents
+    # 8b. _build_agent_tool_schema: always {message:string} unless explicit input_schema
     try:
         s = src("app/services/task_runner.py")
         check("_build_agent_tool_schema defined", "_build_agent_tool_schema" in s)
-        check("_build_agent_tool_schema: skill enum in properties", '"skill"' in s and '"enum"' in s)
-        check("_build_agent_tool_schema: skill is required field", '"required": ["skill"]' in s or "\"required\": [\"skill\"]" in s or "'skill'" in s and "'required'" in s)
-        check("_build_agent_tool_schema: fallback to message for mixed modes", '"message"' in s and 'input_schema' in s)
+        check("_build_agent_tool_schema: uses input_schema.properties", 'schema.get("properties")' in s)
+        check("_build_agent_tool_schema: fallback to {message:string}", '"message"' in s and 'input_schema' in s)
         check("_build_agent_tool_schema used in tool list", '_build_agent_tool_schema(a)' in s)
-        check("_build_agent_tool_schema: tags used as param names", 'tags' in s and 'param' in s.lower())
+        # Must NOT generate skill enum schemas for orchestrator
+        check("_build_agent_tool_schema: no skill enum exposed to orchestrator", '"skill"' not in s or s.index('"skill"') > s.index("def _build_agent_tool_schema") + 500)
         # Omni side: _extract_data_from_message
         omni_a2a = "app/routers/a2a.py"
         omni_path = "/opt/docker/omni-stack/" + omni_a2a
@@ -1932,11 +1934,10 @@ def test_25_true_a2a():
     except Exception as exc:
         check("_ensure_agent_skills input_modes storage", False, str(exc))
 
-    # ── Step 3: _run_one uses typed input for application/json agents ────────
+    # ── Step 3: _run_one context injection — typed vs text ────────────────────
     try:
         s = src("app/services/task_runner.py")
-        check("task_runner: agent_input_modes set built from skills", "agent_input_modes" in s)
-        check("task_runner: typed branch for application/json", '"application/json" in agent_input_modes' in s)
+        check("task_runner: is_typed uses input_schema.properties", "is_typed" in s and 'input_schema' in s)
         check("task_runner: __context__ injected for typed agents", '__context__' in s)
         check("task_runner: text concat only for text-only agents", "Context summary" in s)
     except Exception as exc:
