@@ -179,7 +179,7 @@ class A2aAsyncAdapter(AgentAdapter):
                 artifact_id = artifact.get("artifactId") or artifact.get("index")
                 if artifact_id not in yielded_artifact_ids:
                     yielded_artifact_ids.add(artifact_id)
-                    yield AdapterEvent(type="artifact", artifact=artifact)
+                    yield AdapterEvent(type="artifact", artifact=_normalize_artifact(artifact))
 
             if state in _TERMINAL:
                 if state in ("TASK_STATE_COMPLETED", "completed"):
@@ -249,13 +249,13 @@ class A2aAsyncAdapter(AgentAdapter):
                                     yield AdapterEvent(type="error", error=err)
                                 return
                     elif etype in ("task_artifact_update", "artifact"):
-                        artifact = event.get("artifact", event)
+                        artifact = _normalize_artifact(event.get("artifact", event))
                         artifact_id = artifact.get("artifactId") or artifact.get("index")
                         if artifact_id not in yielded_artifact_ids:
                             yielded_artifact_ids.add(artifact_id)
                             yield AdapterEvent(type="artifact", artifact=artifact)
                         for part in artifact.get("parts", []):
-                            if "text" in part:
+                            if "text" in part and not part.get("filename"):
                                 yield AdapterEvent(type="token", text=part["text"])
         except httpx.HTTPStatusError:
             logger.warning(
@@ -306,6 +306,26 @@ class A2aAsyncAdapter(AgentAdapter):
         except Exception as exc:
             logger.error("A2aAsyncAdapter error", agent=self._slug, error=str(exc))
             yield AdapterEvent(type="error", error=str(exc))
+
+
+def _normalize_part(part: dict) -> dict:
+    """
+    Normalize A2A wire-format part to snake_case field names.
+
+    The A2A SDK serializes protobuf via MessageToDict which produces camelCase:
+      media_type → mediaType
+    We normalize here — once, at ingestion — so all downstream code uses snake_case.
+    """
+    if "mediaType" in part and "media_type" not in part:
+        part = {**part, "media_type": part["mediaType"]}
+    return part
+
+
+def _normalize_artifact(artifact: dict) -> dict:
+    """Normalize all parts in an artifact dict."""
+    if "parts" in artifact:
+        artifact = {**artifact, "parts": [_normalize_part(p) for p in artifact["parts"]]}
+    return artifact
 
 
 def _extract_text(task: dict) -> str:

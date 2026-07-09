@@ -199,7 +199,8 @@ export interface ArtifactPart {
   kind?: string;
   text?: string;
   filename?: string;
-  media_type?: string;
+  media_type?: string;   // snake_case (normalized by adapter from v1.1+)
+  mediaType?: string;    // camelCase (older records in DB — wire format from A2A SDK)
   [key: string]: unknown;
 }
 

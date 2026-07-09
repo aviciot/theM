@@ -14,7 +14,8 @@ function getBridgeWs(): string {
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type ChatMsg = { role: 'user' | 'assistant'; text: string; pending?: boolean };
+type FileMsg = { filename: string; media_type: string; text: string };
+type ChatMsg = { role: 'user' | 'assistant'; text: string; pending?: boolean; file?: FileMsg };
 type TraceEvent = { ts: number; type: string; [key: string]: unknown };
 type RecordingState = 'idle' | 'recording' | 'transcribing';
 type DebugTab = 'trace' | 'tasks' | 'artifacts' | 'memory' | 'sessions';
@@ -218,10 +219,12 @@ function ArtifactsTab({ runId }: { runId: string | null }) {
     <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       {artifacts.map(a => {
         const isOpen = expanded.has(a.id);
-        const filePart = a.parts.find(p => p.filename || p.media_type);
-        const isHtml = filePart?.media_type === 'text/html';
-        const isMarkdown = filePart?.media_type === 'text/markdown';
-        const textParts = a.parts.filter(p => !p.filename && !p.media_type && p.text !== undefined);
+        const filePart = a.parts.find(p => p.filename || p.media_type || p.mediaType);
+        // Resolve media_type from either casing (old DB records use camelCase mediaType)
+        const resolvedMediaType = filePart?.media_type || filePart?.mediaType;
+        const isHtml = resolvedMediaType === 'text/html';
+        const isMarkdown = resolvedMediaType === 'text/markdown';
+        const textParts = a.parts.filter(p => !p.filename && !p.media_type && !p.mediaType && p.text !== undefined);
 
         return (
           <div key={a.id} style={{ border: '1px solid var(--tm-border)', borderRadius: 8, background: 'var(--tm-surface)', overflow: 'hidden' }}>
@@ -234,8 +237,8 @@ function ArtifactsTab({ runId }: { runId: string | null }) {
                 ? <span style={{ fontSize: 11, color: '#4edea3', fontWeight: 600 }}>{filePart.filename}</span>
                 : a.name && <span style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>{a.name}</span>
               }
-              {filePart?.media_type && (
-                <span style={{ fontSize: 10, color: 'var(--tm-text-muted)', padding: '1px 6px', border: '1px solid var(--tm-border)', borderRadius: 4 }}>{filePart.media_type}</span>
+              {resolvedMediaType && (
+                <span style={{ fontSize: 10, color: 'var(--tm-text-muted)', padding: '1px 6px', border: '1px solid var(--tm-border)', borderRadius: 4 }}>{resolvedMediaType}</span>
               )}
               <span style={{ fontSize: 10, color: 'var(--tm-text-muted)', marginLeft: 'auto' }}>{isOpen ? '▲' : '▼'}</span>
             </button>
@@ -247,7 +250,7 @@ function ArtifactsTab({ runId }: { runId: string | null }) {
                   <div>
                     <div style={{ padding: '6px 12px', display: 'flex', justifyContent: 'flex-end', borderBottom: '1px solid var(--tm-border)' }}>
                       <button
-                        onClick={() => downloadPart(filePart.text!, filePart.filename!, filePart.media_type!)}
+                        onClick={() => downloadPart(filePart.text!, filePart.filename!, resolvedMediaType!)}
                         style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--tm-border)', background: 'transparent', color: '#a78bfa', cursor: 'pointer' }}
                       >
                         Download
@@ -256,7 +259,7 @@ function ArtifactsTab({ runId }: { runId: string | null }) {
                     <iframe
                       srcDoc={filePart.text}
                       style={{ width: '100%', height: 500, border: 'none', display: 'block' }}
-                      sandbox="allow-scripts"
+                      sandbox="allow-scripts allow-same-origin"
                       title={filePart.filename || 'preview'}
                     />
                   </div>
@@ -267,7 +270,7 @@ function ArtifactsTab({ runId }: { runId: string | null }) {
                   <div style={{ padding: '0 12px 10px' }}>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 0' }}>
                       <button
-                        onClick={() => downloadPart(filePart.text!, filePart.filename!, filePart.media_type!)}
+                        onClick={() => downloadPart(filePart.text!, filePart.filename!, resolvedMediaType!)}
                         style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--tm-border)', background: 'transparent', color: '#a78bfa', cursor: 'pointer' }}
                       >
                         Download
@@ -634,11 +637,28 @@ export default function PlaygroundPage() {
               : a
           ));
 
+        } else if (msg.type === 'file') {
+          // File artifact from A2A agent — inject as a separate chat bubble with download
+          const fm: FileMsg = {
+            filename: msg.filename as string,
+            media_type: msg.media_type as string,
+            text: msg.text as string ?? '',
+          };
+          setMessages(prev => {
+            // Close any pending assistant bubble first
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last?.role === 'assistant' && last.pending) {
+              copy[copy.length - 1] = { ...last, pending: false };
+            }
+            return [...copy, { role: 'assistant', text: '', file: fm }];
+          });
+
         } else if (msg.type === 'done') {
           setMessages(prev => {
             const copy = [...prev];
             const last = copy[copy.length - 1];
-            if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, pending: false };
+            if (last?.role === 'assistant' && !last.file) copy[copy.length - 1] = { ...last, pending: false };
             return copy;
           });
           // TTS — stream audio chunks via MediaSource for low-latency playback
@@ -861,19 +881,83 @@ export default function PlaygroundPage() {
                 )}
                 {messages.map((m, i) => (
                   <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                    <div style={{
-                      maxWidth: '75%',
-                      padding: '10px 14px',
-                      borderRadius: m.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                      background: m.role === 'user' ? '#7c3aed' : 'var(--tm-surface)',
-                      color: m.role === 'user' ? '#fff' : 'var(--tm-text)',
-                      fontSize: 14,
-                      lineHeight: 1.5,
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                    }}>
-                      {m.text || (m.pending ? <span style={{ opacity: 0.5 }}>thinking…</span> : '')}
-                    </div>
+                    {m.file ? (
+                      /* ── File artifact bubble ── */
+                      <div style={{
+                        maxWidth: '80%',
+                        borderRadius: '16px 16px 16px 4px',
+                        border: '1px solid var(--tm-border)',
+                        background: 'var(--tm-surface)',
+                        overflow: 'hidden',
+                      }}>
+                        {/* Header bar */}
+                        <div style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '8px 14px',
+                          borderBottom: '1px solid var(--tm-border)',
+                          background: 'rgba(124,58,237,0.08)',
+                        }}>
+                          <span style={{ fontSize: 16 }}>
+                            {m.file.media_type === 'text/html' ? '🌐' : m.file.media_type === 'text/markdown' ? '📝' : '📄'}
+                          </span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--tm-text)', flex: 1 }}>
+                            {m.file.filename}
+                          </span>
+                          <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', padding: '2px 6px', border: '1px solid var(--tm-border)', borderRadius: 4 }}>
+                            {m.file.media_type}
+                          </span>
+                          <button
+                            onClick={() => {
+                              const blob = new Blob([m.file!.text], { type: m.file!.media_type });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url; a.download = m.file!.filename; a.click();
+                              URL.revokeObjectURL(url);
+                            }}
+                            style={{
+                              padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                              background: '#7c3aed', color: '#fff', border: 'none', cursor: 'pointer',
+                            }}
+                          >
+                            Download
+                          </button>
+                        </div>
+                        {/* Inline preview for HTML */}
+                        {m.file.media_type === 'text/html' && m.file.text && (
+                          <iframe
+                            srcDoc={m.file.text}
+                            style={{ width: '100%', height: 400, border: 'none', display: 'block' }}
+                            sandbox="allow-scripts allow-same-origin"
+                            title={m.file.filename}
+                          />
+                        )}
+                        {/* Inline preview for markdown/slides */}
+                        {m.file.media_type === 'text/markdown' && m.file.text && (
+                          <pre style={{
+                            margin: 0, padding: '12px 14px', fontSize: 12,
+                            fontFamily: 'monospace', color: 'var(--tm-text)',
+                            whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 300, overflowY: 'auto',
+                          }}>
+                            {m.file.text}
+                          </pre>
+                        )}
+                      </div>
+                    ) : (
+                      /* ── Normal text bubble ── */
+                      <div style={{
+                        maxWidth: '75%',
+                        padding: '10px 14px',
+                        borderRadius: m.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                        background: m.role === 'user' ? '#7c3aed' : 'var(--tm-surface)',
+                        color: m.role === 'user' ? '#fff' : 'var(--tm-text)',
+                        fontSize: 14,
+                        lineHeight: 1.5,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                      }}>
+                        {m.text || (m.pending ? <span style={{ opacity: 0.5 }}>thinking…</span> : '')}
+                      </div>
+                    )}
                   </div>
                 ))}
                 <div ref={chatBottom} />

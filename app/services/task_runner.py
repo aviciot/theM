@@ -409,7 +409,8 @@ async def _invoke_agent(
     root_task: Task,
     iteration: int,
     db: AsyncSession,  # kept for signature compat — parallel calls open their own sessions
-) -> str:
+) -> tuple[str, list[dict]]:
+    """Returns (result_text, file_parts) where file_parts are A2A artifact parts with filename/media_type."""
     sem = semaphores.get(str(agent.id))
     t0 = time.monotonic()
 
@@ -503,8 +504,8 @@ async def _invoke_agent(
         )
 
     if status == "failed":
-        return f"[Agent {agent.slug} error: {error_msg}]"
-    return result_text
+        return f"[Agent {agent.slug} error: {error_msg}]", []
+    return result_text, file_parts
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -812,11 +813,11 @@ async def run(
                 from app.services.memory_service import get_injected_context
                 _injected_ctx = await get_injected_context(context_id)
 
-            async def _run_one(tc: ToolCall) -> tuple[ToolCall, str]:
+            async def _run_one(tc: ToolCall) -> tuple[ToolCall, str, list[dict]]:
                 slug = tc.name.removeprefix("agent__")
                 agent = agent_by_slug.get(slug)
                 if agent is None:
-                    return tc, f"[Unknown agent: {slug}]"
+                    return tc, f"[Unknown agent: {slug}]", []
                 tc_input = dict(tc.input)
                 # Typed agents (explicit input_schema with properties) get context as a
                 # separate __context__ key so the adapter sends it as a text part alongside
@@ -830,15 +831,15 @@ async def run(
                         tc_input["message"] = f"[Context summary]\n{_injected_ctx}\n\n{tc_input['message']}"
                 tc = ToolCall(id=tc.id, name=tc.name, input=tc_input)
                 async with parallel_sem:
-                    result = await _invoke_agent(
+                    result_text, file_parts = await _invoke_agent(
                         agent, tc, semaphores, run_id, root_task, iteration, db
                     )
-                return tc, result
+                return tc, result_text, file_parts
 
             results_pairs = await asyncio.gather(*[_run_one(tc) for tc in tool_calls_this_iter])
 
             results: list[str] = []
-            for tc, result in results_pairs:
+            for tc, result, fp in results_pairs:
                 yield {"type": "tool_done", "tool": tc.name, "latency_ms": 0}
                 await _publish_dash(run_id, {
                     "type": "tool_done",
@@ -846,6 +847,15 @@ async def run(
                     "output": result,
                     "iteration": iteration,
                 })
+                # Emit file events over WS for each A2A file artifact part
+                for part in fp:
+                    if part.get("filename") and part.get("media_type"):
+                        yield {
+                            "type": "file",
+                            "filename": part["filename"],
+                            "media_type": part["media_type"],
+                            "text": part.get("text", ""),
+                        }
                 results.append(result)
 
             # Persist tool results for context reconstruction
