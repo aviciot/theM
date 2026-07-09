@@ -26,7 +26,8 @@ ON CONFLICT (slug) DO UPDATE SET
     endpoint_url         = EXCLUDED.endpoint_url,
     auth_token_encrypted = EXCLUDED.auth_token_encrypted,
     enabled              = EXCLUDED.enabled,
-    timeout_seconds      = EXCLUDED.timeout_seconds;
+    timeout_seconds      = EXCLUDED.timeout_seconds,
+    input_schema         = '{}'::jsonb;  -- empty = let _build_agent_tool_schema derive typed schema from skills
 
 -- docu_writer: local A2A agent that renders content into documentation files
 INSERT INTO them.agents (
