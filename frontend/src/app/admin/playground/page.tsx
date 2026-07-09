@@ -683,6 +683,11 @@ export default function PlaygroundPage() {
           ws.close();
           dashWs.current?.close();
 
+        } else if (msg.type === 'canceled') {
+          // Server confirmed cancel — state already cleaned up by stopRun()
+          ws.close();
+          dashWs.current?.close();
+
         } else if (msg.type === 'error') {
           setMessages(prev => {
             const copy = [...prev];
@@ -714,6 +719,24 @@ export default function PlaygroundPage() {
   }, [selectedOrch, busy, openDashWs]);
 
   const send = useCallback(() => sendText(input, contextId), [input, contextId, sendText]);
+
+  const stopRun = useCallback(() => {
+    if (chatWs.current && chatWs.current.readyState === WebSocket.OPEN) {
+      chatWs.current.send(JSON.stringify({ type: 'cancel' }));
+    }
+    setBusy(false);
+    setStatus('Canceled');
+    setMessages(prev => {
+      const copy = [...prev];
+      const last = copy[copy.length - 1];
+      if (last?.role === 'assistant' && last.pending) {
+        copy[copy.length - 1] = { ...last, text: last.text || '(stopped)', pending: false };
+      }
+      return copy;
+    });
+    chatWs.current?.close();
+    dashWs.current?.close();
+  }, []);
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -892,23 +915,42 @@ export default function PlaygroundPage() {
                     lineHeight: 1.5,
                   }}
                 />
-                <button
-                  onClick={send}
-                  disabled={busy || !input.trim() || !selectedOrch}
-                  style={{
-                    padding: '10px 18px',
-                    borderRadius: 12,
-                    border: 'none',
-                    background: busy ? 'var(--tm-surface)' : '#7c3aed',
-                    color: busy ? 'var(--tm-text-muted)' : '#fff',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: busy ? 'not-allowed' : 'pointer',
-                    alignSelf: 'flex-end',
-                  }}
-                >
-                  {busy ? '…' : 'Send'}
-                </button>
+                {busy ? (
+                  <button
+                    onClick={stopRun}
+                    style={{
+                      padding: '10px 18px',
+                      borderRadius: 12,
+                      border: '1.5px solid #ef4444',
+                      background: 'transparent',
+                      color: '#ef4444',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      alignSelf: 'flex-end',
+                    }}
+                  >
+                    Stop
+                  </button>
+                ) : (
+                  <button
+                    onClick={send}
+                    disabled={!input.trim() || !selectedOrch}
+                    style={{
+                      padding: '10px 18px',
+                      borderRadius: 12,
+                      border: 'none',
+                      background: !input.trim() || !selectedOrch ? 'var(--tm-surface)' : '#7c3aed',
+                      color: !input.trim() || !selectedOrch ? 'var(--tm-text-muted)' : '#fff',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: !input.trim() || !selectedOrch ? 'not-allowed' : 'pointer',
+                      alignSelf: 'flex-end',
+                    }}
+                  >
+                    Send
+                  </button>
+                )}
               </div>
             </div>
 

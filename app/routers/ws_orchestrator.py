@@ -16,6 +16,7 @@ The orchestrator's edges list must include "websocket" or the connection is
 rejected immediately after auth with a clear error message.
 """
 
+import asyncio
 import json
 import uuid
 
@@ -144,8 +145,12 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
     # ── Instantiate the WebsocketEdge and relay runner events ─────────────
     edge = WebsocketEdge(websocket, orchestrator_name=name, user_id=user_id)
 
-    try:
-        async with _db.AsyncSessionLocal() as db:
+    # Track run_id so we can mark it canceled on client-initiated stop.
+    active_run_id: list[uuid.UUID | None] = [None]
+    canceled_by_client = False
+
+    async def _run_loop(db):
+        try:
             async for event in task_runner_run(
                 orchestrator_name=name,
                 user_message=user_message,
@@ -155,15 +160,65 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
                 session_id=session_id,
                 context_id=context_id,
             ):
+                if event.get("type") == "ready" and event.get("run_id"):
+                    active_run_id[0] = uuid.UUID(event["run_id"])
+                await edge.emit(event)
+        except WebSocketDisconnect:
+            pass
+
+    async def _cancel_listener():
+        """Wait for a cancel message from the client."""
+        while True:
+            try:
+                raw = await websocket.receive_text()
+                msg = json.loads(raw)
+                if msg.get("type") == "cancel":
+                    return True
+            except (WebSocketDisconnect, Exception):
+                return False
+
+    try:
+        async with _db.AsyncSessionLocal() as db:
+            loop_task = asyncio.ensure_future(_run_loop(db))
+            cancel_task = asyncio.ensure_future(_cancel_listener())
+
+            done, pending = await asyncio.wait(
+                [loop_task, cancel_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            # Cancel whichever is still running
+            for t in pending:
+                t.cancel()
                 try:
-                    await edge.emit(event)
-                except WebSocketDisconnect:
-                    logger.info(
-                        "ws_orchestrate client disconnected mid-run",
-                        orchestrator=name,
-                        user_id=user_id,
-                    )
-                    return
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            # If cancel listener finished first → client pressed Stop
+            if cancel_task in done and cancel_task.result() is True:
+                canceled_by_client = True
+                loop_task.cancel()
+                logger.info("ws_orchestrate canceled by client", orchestrator=name, user_id=user_id)
+
+                # Mark run as canceled in DB
+                if active_run_id[0] is not None:
+                    from app.services import run_recorder
+                    try:
+                        async with _db.AsyncSessionLocal() as cancel_db:
+                            await run_recorder.complete_run(
+                                cancel_db,
+                                run_id=active_run_id[0],
+                                status="canceled",
+                                error="Canceled by user",
+                            )
+                    except Exception as exc:
+                        logger.warning("ws_orchestrate: failed to mark run canceled", error=str(exc))
+
+                try:
+                    await edge.emit({"type": "canceled"})
+                except Exception:
+                    pass
 
     except WebSocketDisconnect:
         logger.info("ws_orchestrate disconnected", orchestrator=name, user_id=user_id)
