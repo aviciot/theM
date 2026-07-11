@@ -86,9 +86,9 @@ bounded by `orchestrator.max_parallel_tools` and per-agent `max_concurrency` sem
 
 | Concern | Location |
 |---|---|
-| Orchestrator agentic loop | `app/services/orchestrator_service.py` |
+| Orchestrator agentic loop | `app/services/task_runner.py` |
 | Agent registry → NeutralTool list | `app/services/agent_registry.py` |
-| Agent transport adapters | `app/adapters/` (base, omni_ws_adapter, a2a_adapter, factory) |
+| Agent transport adapters | `app/adapters/` (base, a2a_async_adapter, factory) |
 | Orchestrator WS endpoint | `app/routers/ws_orchestrator.py` |
 | Dashboard WS (multiplexed channels) | `app/routers/ws_dashboard.py` |
 | LLM providers | `app/services/providers/` |
@@ -210,7 +210,7 @@ Full suite, ~30s. Zero failures required before committing.
 | `db/001_schema.sql` or `app/models.py` | 01 (DB schema) |
 | `app/adapters/` | 07 (adapter factory) |
 | `app/services/rate_limiter.py` or `token_cache.py` | 08 09 (rate limiter + token cache) |
-| `app/services/run_recorder.py`, `app/services/task_runner.py`, or `orchestrator_service.py` | 10 (run recorder + task runner) |
+| `app/services/run_recorder.py` or `app/services/task_runner.py` | 10 (run recorder + task runner) |
 | `app/routers/admin_agents.py` | 05 (agents CRUD) |
 | `app/routers/admin_orchestrators.py` | 06 (orchestrators CRUD) |
 | `app/routers/admin_tokens.py` | 08 09 (tokens CRUD + cache) |
