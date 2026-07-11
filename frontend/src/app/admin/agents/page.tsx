@@ -96,7 +96,6 @@ function cardAuth(card: Record<string, unknown> | null | undefined): string[] {
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
-// Risk colors — embossed dark-panel style matching the card design language
 function riskColors(risk: 'low' | 'medium' | 'high') {
   if (risk === 'low') return {
     bg: 'linear-gradient(145deg, rgba(66,217,139,.14) 0%, rgba(42,181,109,.08) 100%)',
@@ -124,11 +123,51 @@ function statusIcon(status: 'pass' | 'fail' | 'warn') {
   return { icon: '✗', color: '#f87171' };
 }
 
-// Score ring color
 function scoreRingColor(score: number) {
   if (score >= 75) return '#4edea3';
   if (score >= 45) return '#e6b85c';
   return '#f87171';
+}
+
+// ── Category / accent helpers ─────────────────────────────────────────────────
+
+function agentCategory(agent: Agent): string {
+  const slug = agent.slug.toLowerCase();
+  const transport = agent.transport.toLowerCase();
+  if (slug.includes('vision')) return 'Vision';
+  if (slug.includes('cod') || slug.includes('coder')) return 'Coding';
+  if (slug.includes('research')) return 'Research';
+  if (transport === 'a2a' || transport === 'a2a_async') return 'A2A';
+  // check first skill tag
+  const firstTag = (agent.skills?.[0]?.tags ?? [])[0];
+  if (firstTag) return firstTag.charAt(0).toUpperCase() + firstTag.slice(1);
+  return 'Agent';
+}
+
+function categoryBadgeStyle(category: string): React.CSSProperties {
+  switch (category) {
+    case 'A2A':
+      return { background: 'rgba(99,102,241,0.2)', color: '#818cf8' };
+    case 'Research':
+      return { background: 'rgba(168,85,247,0.2)', color: '#c084fc' };
+    case 'Coding':
+      return { background: 'rgba(0,209,255,0.15)', color: '#00d1ff' };
+    case 'Vision':
+      return { background: 'rgba(59,130,246,0.2)', color: '#60a5fa' };
+    default:
+      return { background: 'rgba(100,116,139,0.2)', color: '#94a3b8' };
+  }
+}
+
+function iconAccentColor(agent: Agent): string {
+  const category = agentCategory(agent);
+  switch (category) {
+    case 'A2A': return '#6366f1';
+    case 'Coding': return '#00d1ff';
+    case 'Vision': return '#3b82f6';
+    case 'Research': return '#a855f7';
+    default: return '#a855f7';
+  }
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -151,12 +190,10 @@ function Modal({ title, onClose, wide, children }: { title: string; onClose: () 
         overflowY: 'auto',
         boxShadow: '0 24px 64px rgba(0,0,0,.55), 0 6px 18px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.06), inset 0 -1px 0 rgba(0,0,0,.3)',
       }} onClick={(e) => e.stopPropagation()}>
-        {/* Inner inset highlight ring */}
         <div style={{
           position: 'absolute', inset: '1px', borderRadius: '17px', pointerEvents: 'none',
           boxShadow: 'inset 0 0 0 1px rgba(255,255,255,.018)',
         }} />
-        {/* Top accent line */}
         <div style={{
           position: 'absolute', top: 0, left: '24px', right: '24px', height: '1px', pointerEvents: 'none',
           background: 'linear-gradient(90deg, transparent, rgba(40,215,238,.38), transparent)',
@@ -219,7 +256,6 @@ function DiffRow({ label, changed, oldVal, newVal }: { label: string; changed: b
   );
 }
 
-// Nested surface — used for stat boxes, probe rows, skill rows
 const nestedSurface: React.CSSProperties = {
   background: 'linear-gradient(145deg, rgba(255,255,255,.018), rgba(0,0,0,.05)), rgba(5,15,28,.50)',
   border: '1px solid rgba(132,157,188,.12)',
@@ -236,6 +272,279 @@ const inputStyle: React.CSSProperties = {
 
 // Module-level set — survives tab switches (component unmount/remount)
 const _inFlightScans = new Set<string>();
+
+// ── Agent Card Component ───────────────────────────────────────────────────────
+
+function AgentCard({
+  agent,
+  scanResult,
+  testResult,
+  isDiscovering,
+  onTest,
+  onScan,
+  onDiscover,
+  onEdit,
+  onDelete,
+  onOpenScanModal,
+}: {
+  agent: Agent;
+  scanResult: ScanResult | 'scanning' | undefined;
+  testResult: { ok: boolean; latency_ms: number; detail: string } | 'testing' | undefined;
+  isDiscovering: boolean;
+  onTest: () => void;
+  onScan: () => void;
+  onDiscover: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onOpenScanModal: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [showOverflow, setShowOverflow] = useState(false);
+  const overflowRef = useRef<HTMLDivElement>(null);
+  const category = agentCategory(agent);
+  const accent = iconAccentColor(agent);
+  const catStyle = categoryBadgeStyle(category);
+
+  useEffect(() => {
+    if (!showOverflow) return;
+    function handler(e: MouseEvent) {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+        setShowOverflow(false);
+      }
+    }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showOverflow]);
+
+  function copyEndpoint() {
+    navigator.clipboard.writeText(agent.endpoint_url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  return (
+    <article className="glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', borderRadius: '32px', position: 'relative' }}>
+      {/* Header: icon + name + enabled badge */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
+          {/* Icon tile */}
+          <div style={{
+            width: '64px', height: '64px', flexShrink: 0,
+            background: '#0a1525',
+            border: `1px solid ${accent}`,
+            borderRadius: '16px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: `0 0 12px ${accent}33`,
+          }}>
+            <span className="material-symbols-outlined" style={{ fontSize: '28px', color: accent }}>smart_toy</span>
+          </div>
+          <div style={{ paddingTop: '4px' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#fff', margin: '0 0 6px 0', lineHeight: 1.2 }}>{agent.display_name}</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{
+                fontSize: '10px', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+                padding: '2px 8px', borderRadius: '4px', display: 'inline-block',
+                background: agent.enabled ? 'rgba(52,211,153,0.1)' : 'rgba(107,114,128,0.1)',
+                color: agent.enabled ? '#34d399' : '#6b7280',
+                border: `1px solid ${agent.enabled ? 'rgba(52,211,153,0.2)' : 'rgba(107,114,128,0.2)'}`,
+              }}>
+                {agent.enabled ? 'Enabled' : 'Disabled'}
+              </span>
+              {/* Security score badge */}
+              {scanResult && scanResult !== 'scanning' && (() => {
+                const rc = riskColors(scanResult.risk);
+                return (
+                  <button
+                    className="score-badge"
+                    onClick={onOpenScanModal}
+                    style={{ background: rc.bg, borderColor: rc.border, color: rc.color }}
+                    title="Click to view security report"
+                  >
+                    <span style={{ fontSize: '11px' }}>🛡</span>
+                    {scanResult.score} · {scanResult.risk}
+                  </button>
+                );
+              })()}
+              {scanResult === 'scanning' && (
+                <span className="scanning-pill">
+                  <span style={{ fontSize: '11px' }}>🛡</span> Scanning…
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Overflow menu button */}
+        <div ref={overflowRef} style={{ position: 'relative' }}>
+          <button
+            onClick={() => setShowOverflow(v => !v)}
+            style={{
+              width: '36px', height: '36px', borderRadius: '8px', cursor: 'pointer',
+              background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.05)',
+              color: '#94a3b8', fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >⋮</button>
+          {showOverflow && (
+            <div style={{
+              position: 'absolute', top: '42px', right: 0, zIndex: 20,
+              background: '#0c1425', border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: '10px', overflow: 'hidden', minWidth: '140px',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            }} onClick={() => setShowOverflow(false)}>
+              <button onClick={onEdit} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'none', border: 'none', color: '#cbd5e1', fontSize: '13px', cursor: 'pointer' }}>Edit</button>
+              <button onClick={onDiscover} disabled={isDiscovering} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'none', border: 'none', color: '#a78bfa', fontSize: '13px', cursor: 'pointer', opacity: isDiscovering ? 0.5 : 1 }}>
+                {isDiscovering ? 'Discovering…' : 'Discover'}
+              </button>
+              <button onClick={onDelete} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'none', border: 'none', color: '#f87171', fontSize: '13px', cursor: 'pointer' }}>Delete</button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Category badge */}
+      <div>
+        <span style={{
+          fontSize: '10px', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+          padding: '2px 8px', borderRadius: '4px', display: 'inline-block',
+          ...catStyle,
+        }}>{category}</span>
+      </div>
+
+      {/* Description */}
+      <p style={{ fontSize: '13px', color: '#94a3b8', lineHeight: 1.6, margin: 0, minHeight: '48px' }}>
+        {agent.description
+          ? (agent.description.length > 120 ? agent.description.slice(0, 120) + '…' : agent.description)
+          : <span style={{ opacity: 0.4 }}>No description</span>
+        }
+      </p>
+
+      {/* Stats grid */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: '1fr 1fr',
+        gap: '16px', padding: '16px', borderRadius: '12px',
+        background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.05)',
+      }}>
+        <div>
+          <p style={{ fontSize: '13px', color: '#cbd5e1', margin: '0 0 2px 0', fontWeight: 500 }}>
+            {agent.skills && agent.skills.length > 0
+              ? `${agent.skills.length} skill${agent.skills.length !== 1 ? 's' : ''}`
+              : '—'
+            }
+          </p>
+          <p style={{ fontSize: '10px', color: '#475569', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: 0 }}>skills</p>
+        </div>
+        <div>
+          <p style={{ fontSize: '13px', color: '#cbd5e1', margin: '0 0 2px 0', fontWeight: 500 }}>
+            {agent.card_fetched_at ? timeAgo(agent.card_fetched_at) : '—'}
+          </p>
+          <p style={{ fontSize: '10px', color: '#475569', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: 0 }}>last sync</p>
+        </div>
+      </div>
+
+      {/* Endpoint */}
+      <div>
+        <label style={{ fontSize: '10px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: '6px' }}>Endpoint</label>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.05)',
+          borderRadius: '8px', padding: '8px 12px',
+        }}>
+          <span style={{ fontSize: '11px', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace', flex: 1, marginRight: '8px' }}>
+            {agent.endpoint_url || '—'}
+          </span>
+          <button onClick={copyEndpoint} style={{
+            background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0,
+            color: copied ? '#34d399' : '#64748b', fontSize: '13px', padding: '2px',
+          }} title="Copy endpoint">
+            {copied ? '✓' : '⧉'}
+          </button>
+        </div>
+      </div>
+
+      {/* Test result inline */}
+      {testResult && testResult !== 'testing' && (() => {
+        const r = testResult as { ok: boolean; latency_ms: number; detail: string };
+        return (
+          <div style={{
+            fontSize: '11px', padding: '6px 10px', borderRadius: '6px',
+            background: r.ok ? 'rgba(52,211,153,0.08)' : 'rgba(220,38,38,0.08)',
+            border: `1px solid ${r.ok ? 'rgba(52,211,153,0.2)' : 'rgba(220,38,38,0.2)'}`,
+            color: r.ok ? '#4edea3' : '#f87171',
+          }}>
+            {r.ok ? `✓ ${r.latency_ms}ms — ` : '✗ '}{r.detail}
+          </div>
+        );
+      })()}
+
+      {/* Actions: Test (primary cyan), Open (ghost), Scan shield */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '8px', marginTop: 'auto' }}>
+        <button
+          onClick={onTest}
+          disabled={testResult === 'testing'}
+          className="card-btn-primary"
+          style={{ flex: 1 }}
+        >
+          {testResult === 'testing' ? 'Testing…' : '▶ Test'}
+        </button>
+        <a
+          href={agent.endpoint_url || '#'}
+          target="_blank"
+          rel="noreferrer"
+          className="card-btn-ghost"
+          style={{ flex: 1, textDecoration: 'none', textAlign: 'center' }}
+        >
+          ↗ Open
+        </a>
+        <button
+          onClick={onScan}
+          disabled={scanResult === 'scanning'}
+          className="scan-btn-card"
+          title="Security scan"
+        >
+          🛡
+        </button>
+      </div>
+    </article>
+  );
+}
+
+// ── Deploy CTA card ────────────────────────────────────────────────────────────
+
+function DeployCard({ onClick }: { onClick: () => void }) {
+  return (
+    <article
+      onClick={onClick}
+      style={{
+        borderRadius: '24px',
+        border: '1px dashed rgba(99,102,241,0.5)',
+        background: 'rgba(15,23,42,0.2)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        gap: '16px', padding: '48px 24px', cursor: 'pointer', minHeight: '280px',
+        transition: 'border-color 200ms ease, background 200ms ease',
+      }}
+      className="deploy-card"
+    >
+      <div style={{
+        width: '56px', height: '56px', borderRadius: '16px',
+        background: 'rgba(99,102,241,0.1)', border: '1px dashed rgba(99,102,241,0.4)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '28px', color: '#6366f1',
+      }}>+</div>
+      <div style={{ textAlign: 'center' }}>
+        <p style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0', margin: '0 0 6px 0' }}>Deploy a new agent</p>
+        <p style={{ fontSize: '13px', color: '#475569', margin: 0 }}>Connect an A2A agent endpoint</p>
+      </div>
+      <button style={{
+        padding: '10px 24px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+        background: '#6366f1', color: '#fff', fontSize: '13px', fontWeight: 600,
+        boxShadow: '0 0 15px rgba(99,102,241,0.3)',
+      }}>
+        Deploy New Agent
+      </button>
+    </article>
+  );
+}
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
@@ -259,6 +568,8 @@ export default function AdminAgentsPage() {
   const [scanModal, setScanModal] = useState<{ agent: Agent; result: ScanResult } | null>(null);
   const dashWsRef = useRef<WebSocket | null>(null);
   const agentIdsKeyRef = useRef<string>('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [activeCategory, setActiveCategory] = useState('All');
 
   const reload = () => {
     Promise.all([themApi.agents(), themApi.orchestrators()])
@@ -527,9 +838,105 @@ export default function AdminAgentsPage() {
 
   const set = (k: keyof FormState, v: unknown) => setForm((f) => ({ ...f, [k]: v }));
 
+  const CATEGORY_PILLS = ['All', 'Enabled', 'A2A', 'Vision', 'Coding', 'Research'];
+
+  const filteredAgents = agents.filter((a) => {
+    const q = searchTerm.toLowerCase();
+    const matchSearch = !q ||
+      a.display_name.toLowerCase().includes(q) ||
+      a.slug.toLowerCase().includes(q) ||
+      (a.description ?? '').toLowerCase().includes(q) ||
+      (a.endpoint_url ?? '').toLowerCase().includes(q);
+    const cat = agentCategory(a);
+    const matchCategory =
+      activeCategory === 'All' ? true :
+      activeCategory === 'Enabled' ? a.enabled :
+      cat === activeCategory;
+    return matchSearch && matchCategory;
+  });
+
   return (
     <AuthGuard>
       <style>{`
+        /* Glass card */
+        .glass-card {
+          background: linear-gradient(135deg, rgba(20,30,50,0.5) 0%, rgba(10,15,30,0.5) 100%);
+          border: 1px solid rgba(255,255,255,0.05);
+          backdrop-filter: blur(10px);
+          transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+        }
+        .glass-card:hover {
+          border-color: rgba(0,209,255,0.2);
+          box-shadow: 0 0 20px rgba(0,209,255,0.08);
+          transform: translateY(-2px);
+        }
+
+        /* Deploy card hover */
+        .deploy-card:hover {
+          border-color: rgba(99,102,241,0.8) !important;
+          background: rgba(99,102,241,0.05) !important;
+        }
+
+        /* Card primary button (cyan) */
+        .card-btn-primary {
+          padding: 10px 0;
+          border-radius: 8px;
+          border: none;
+          cursor: pointer;
+          background: #00d1ff;
+          color: #000;
+          font-size: 12px;
+          font-weight: 700;
+          box-shadow: 0 0 15px rgba(0,209,255,0.4);
+          transition: box-shadow 200ms ease, transform 200ms ease;
+        }
+        .card-btn-primary:hover:not(:disabled) {
+          box-shadow: 0 0 22px rgba(0,209,255,0.55);
+          transform: translateY(-1px);
+        }
+        .card-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+
+        /* Card ghost button */
+        .card-btn-ghost {
+          padding: 10px 0;
+          border-radius: 8px;
+          border: 1px solid rgba(255,255,255,0.05);
+          cursor: pointer;
+          background: rgba(30,41,59,0.5);
+          color: #fff;
+          font-size: 12px;
+          font-weight: 700;
+          display: block;
+          transition: border-color 200ms ease, background 200ms ease;
+        }
+        .card-btn-ghost:hover {
+          border-color: rgba(255,255,255,0.12);
+          background: rgba(30,41,59,0.8);
+        }
+
+        /* Scan button on card */
+        .scan-btn-card {
+          width: 40px;
+          height: 40px;
+          border-radius: 8px;
+          border: 1px solid rgba(0,209,255,0.25);
+          background: rgba(0,209,255,0.08);
+          color: #00d1ff;
+          font-size: 16px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: border-color 200ms ease, background 200ms ease;
+          flex-shrink: 0;
+        }
+        .scan-btn-card:hover:not(:disabled) {
+          border-color: rgba(0,209,255,0.5);
+          background: rgba(0,209,255,0.15);
+        }
+        .scan-btn-card:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        /* Legacy button classes (used in modals) */
         @keyframes pulse-border {
           0%, 100% { box-shadow: 0 0 0 0 rgba(124,58,237,0.5); }
           50% { box-shadow: 0 0 0 6px rgba(124,58,237,0); }
@@ -541,50 +948,54 @@ export default function AdminAgentsPage() {
           50% { opacity: 0.45; }
         }
 
-        @keyframes scan-shimmer {
-          0% { background-position: -200% center; }
-          100% { background-position: 200% center; }
+        /* ── Filter pills ─────────────────────────────────────── */
+        .filter-pill {
+          padding: 6px 16px; border-radius: 9999px;
+          border: 1px solid rgba(255,255,255,0.08);
+          background: rgba(255,255,255,0.04);
+          color: #64748b; font-size: 12px; font-weight: 600;
+          cursor: pointer; white-space: nowrap;
+          transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+        }
+        .filter-pill:hover { border-color: rgba(255,255,255,0.14); color: #94a3b8; background: rgba(255,255,255,0.07); }
+        .filter-pill-active {
+          padding: 6px 16px; border-radius: 9999px;
+          border: 1px solid rgba(0,209,255,0.45);
+          background: rgba(0,209,255,0.12);
+          color: #00d1ff; font-size: 12px; font-weight: 700;
+          cursor: pointer; white-space: nowrap;
+          transition: border-color 150ms ease;
         }
 
-        @media (prefers-reduced-motion: reduce) {
-          .agent-row, .agent-row * { transition: none !important; }
-          .scan-btn-shimmer { animation: none !important; }
-        }
-
-        .agent-row {
-          transition: background 160ms ease, box-shadow 160ms ease;
-        }
-        .agent-row:hover {
-          background: rgba(255,255,255,.022) !important;
-        }
-
-        /* Scan button — embossed shield style */
-        .scan-btn {
-          position: relative;
-          overflow: hidden;
+        .ghost-btn {
           padding: 5px 11px;
           border-radius: 7px;
-          border: 1px solid rgba(40,215,238,.32);
-          background: linear-gradient(145deg, rgba(40,215,238,.10) 0%, rgba(24,197,223,.04) 100%), rgba(5,15,28,.60);
-          box-shadow: 0 4px 12px rgba(40,215,238,.08), inset 0 1px 0 rgba(255,255,255,.06), inset 0 -1px 0 rgba(0,0,0,.22);
+          border: 1px solid rgba(132,158,190,.18);
+          background: linear-gradient(145deg, rgba(255,255,255,.018), rgba(0,0,0,.05)), rgba(5,15,28,.40);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.025), inset 0 -1px 0 rgba(0,0,0,.18);
           cursor: pointer;
           font-size: 12px;
-          font-weight: 600;
-          color: #28d7ee;
-          letter-spacing: 0.01em;
-          transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+          color: var(--tm-text-muted);
+          transition: border-color 160ms ease, color 160ms ease;
         }
-        .scan-btn:hover:not(:disabled) {
-          border-color: rgba(40,215,238,.52);
-          box-shadow: 0 6px 18px rgba(40,215,238,.14), inset 0 1px 0 rgba(255,255,255,.08), inset 0 -1px 0 rgba(0,0,0,.28);
-          transform: translateY(-1px);
+        .ghost-btn:hover { border-color: rgba(132,158,190,.32); color: var(--tm-text); }
+
+        .delete-btn {
+          padding: 5px 11px;
+          border-radius: 7px;
+          border: 1px solid rgba(220,38,38,.22);
+          background: linear-gradient(145deg, rgba(220,38,38,.06) 0%, rgba(185,28,28,.02) 100%), rgba(5,15,28,.40);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.025), inset 0 -1px 0 rgba(0,0,0,.18);
+          cursor: pointer;
+          font-size: 12px;
+          color: #f87171;
+          transition: border-color 160ms ease, box-shadow 160ms ease;
         }
-        .scan-btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
+        .delete-btn:hover {
+          border-color: rgba(220,38,38,.42);
+          box-shadow: 0 3px 10px rgba(220,38,38,.1), inset 0 1px 0 rgba(255,255,255,.03), inset 0 -1px 0 rgba(0,0,0,.2);
         }
 
-        /* Discover button */
         .discover-btn {
           padding: 5px 11px;
           border-radius: 7px;
@@ -604,58 +1015,6 @@ export default function AdminAgentsPage() {
         }
         .discover-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        /* Test button */
-        .test-btn {
-          padding: 5px 11px;
-          border-radius: 7px;
-          border: 1px solid rgba(96,165,250,.28);
-          background: linear-gradient(145deg, rgba(96,165,250,.08) 0%, rgba(59,130,246,.04) 100%), rgba(5,15,28,.50);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.05), inset 0 -1px 0 rgba(0,0,0,.2);
-          cursor: pointer;
-          font-size: 12px;
-          font-weight: 600;
-          color: #60a5fa;
-          transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
-        }
-        .test-btn:hover:not(:disabled) {
-          border-color: rgba(96,165,250,.44);
-          box-shadow: 0 4px 12px rgba(96,165,250,.1), inset 0 1px 0 rgba(255,255,255,.07), inset 0 -1px 0 rgba(0,0,0,.25);
-          transform: translateY(-1px);
-        }
-        .test-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
-        /* Edit / neutral button */
-        .ghost-btn {
-          padding: 5px 11px;
-          border-radius: 7px;
-          border: 1px solid rgba(132,158,190,.18);
-          background: linear-gradient(145deg, rgba(255,255,255,.018), rgba(0,0,0,.05)), rgba(5,15,28,.40);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.025), inset 0 -1px 0 rgba(0,0,0,.18);
-          cursor: pointer;
-          font-size: 12px;
-          color: var(--tm-text-muted);
-          transition: border-color 160ms ease, color 160ms ease;
-        }
-        .ghost-btn:hover { border-color: rgba(132,158,190,.32); color: var(--tm-text); }
-
-        /* Delete button */
-        .delete-btn {
-          padding: 5px 11px;
-          border-radius: 7px;
-          border: 1px solid rgba(220,38,38,.22);
-          background: linear-gradient(145deg, rgba(220,38,38,.06) 0%, rgba(185,28,28,.02) 100%), rgba(5,15,28,.40);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.025), inset 0 -1px 0 rgba(0,0,0,.18);
-          cursor: pointer;
-          font-size: 12px;
-          color: #f87171;
-          transition: border-color 160ms ease, box-shadow 160ms ease;
-        }
-        .delete-btn:hover {
-          border-color: rgba(220,38,38,.42);
-          box-shadow: 0 3px 10px rgba(220,38,38,.1), inset 0 1px 0 rgba(255,255,255,.03), inset 0 -1px 0 rgba(0,0,0,.2);
-        }
-
-        /* Score badge — clickable pill */
         .score-badge {
           display: inline-flex;
           align-items: center;
@@ -672,7 +1031,6 @@ export default function AdminAgentsPage() {
         }
         .score-badge:hover { filter: brightness(1.15); transform: translateY(-1px); }
 
-        /* Scanning pill */
         .scanning-pill {
           display: inline-flex;
           align-items: center;
@@ -689,7 +1047,6 @@ export default function AdminAgentsPage() {
           animation: pulse 1.6s ease-in-out infinite;
         }
 
-        /* Score ring in modal */
         .score-ring {
           position: relative;
           width: 80px;
@@ -703,7 +1060,6 @@ export default function AdminAgentsPage() {
           box-shadow: 0 6px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.06), inset 0 -1px 0 rgba(0,0,0,.25);
         }
 
-        /* Probe row */
         .probe-row {
           display: flex;
           align-items: center;
@@ -713,7 +1069,6 @@ export default function AdminAgentsPage() {
           margin-bottom: 6px;
         }
 
-        /* Finding card */
         .finding-card {
           padding: 11px 13px;
           border-radius: 10px;
@@ -722,7 +1077,6 @@ export default function AdminAgentsPage() {
         }
         .finding-card:hover { border-color: rgba(132,158,190,.22) !important; }
 
-        /* Primary modal button — scan / rescan */
         .btn-primary-scan {
           padding: 9px 22px;
           border-radius: 9px;
@@ -745,249 +1099,120 @@ export default function AdminAgentsPage() {
           transform: translateY(-1px);
         }
         .btn-primary-scan:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        @media (prefers-reduced-motion: reduce) {
+          .glass-card { transition: none !important; }
+          .scanning-pill { animation: none !important; }
+        }
       `}</style>
 
-      <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--tm-bg)' }}>
+      <div style={{ display: 'flex', minHeight: '100vh', background: '#060a14' }}>
         <Sidebar />
-        <main style={{ marginLeft: '260px', flex: 1 }}>
-          <header style={{
-            position: 'sticky', top: 0, zIndex: 30, height: '56px',
-            background: 'var(--tm-topbar)', borderBottom: '1px solid var(--tm-topbar-border)',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 32px',
+        <main style={{ marginLeft: '260px', flex: 1, background: '#060a14' }}>
+
+          {/* Page header */}
+          <div style={{
+            padding: '40px 32px 24px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           }}>
             <div>
-              <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--tm-accent)' }}>Agents</h2>
-              <p style={{ fontSize: '11px', color: 'var(--tm-text-muted)' }}>Manage A2A agent connectors</p>
+              <h2 style={{ fontSize: '40px', fontWeight: 800, color: '#fff', margin: '0 0 6px 0', letterSpacing: '-0.03em', lineHeight: 1.1 }}>Agents</h2>
+              <p style={{ fontSize: '14px', color: '#64748b', margin: 0 }}>Manage A2A (Agent-to-Agent) orchestrators and node connectors.</p>
             </div>
             <button onClick={openCreate} style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-              background: 'var(--tm-accent)', color: '#fff', fontSize: '13px', fontWeight: 600,
+              display: 'flex', alignItems: 'center', gap: '8px',
+              padding: '12px 24px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+              background: '#00d1ff', color: '#000', fontSize: '14px', fontWeight: 700,
+              boxShadow: '0 0 20px rgba(0,209,255,0.4)',
+              transition: 'box-shadow 200ms ease, transform 200ms ease',
             }}>
-              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add</span>
-              New Agent
+              <span style={{ fontSize: '18px', lineHeight: 1 }}>+</span>
+              Deploy New Agent
             </button>
-          </header>
+          </div>
 
-          <div style={{ padding: '32px' }}>
-            {/* Embossed table container */}
+          {/* Filter bar */}
+          <div style={{ padding: '0 32px 28px' }}>
             <div style={{
-              position: 'relative',
-              background: 'linear-gradient(145deg, rgba(255,255,255,.022) 0%, rgba(255,255,255,.006) 36%, rgba(0,0,0,.04) 100%), rgba(10,21,36,.96)',
-              border: '1px solid rgba(132,158,190,.16)',
-              borderRadius: '16px',
-              overflow: 'hidden',
-              boxShadow: '0 14px 34px rgba(0,0,0,.28), 0 3px 10px rgba(0,0,0,.16), inset 0 1px 0 rgba(255,255,255,.045), inset 0 -1px 0 rgba(0,0,0,.28)',
+              display: 'flex', alignItems: 'center', gap: '12px',
+              background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+              borderRadius: '12px', padding: '10px 16px',
             }}>
-              {/* Inner inset ring */}
-              <div style={{
-                position: 'absolute', inset: '1px', borderRadius: '15px', pointerEvents: 'none', zIndex: 0,
-                boxShadow: 'inset 0 0 0 1px rgba(255,255,255,.014)',
-              }} />
-              {/* Top accent */}
-              <div style={{
-                position: 'absolute', top: 0, left: '20px', right: '20px', height: '1px', pointerEvents: 'none', zIndex: 1,
-                background: 'linear-gradient(90deg, transparent, rgba(40,215,238,.28), transparent)',
-              }} />
-              <table style={{ width: '100%', borderCollapse: 'collapse', position: 'relative', zIndex: 1 }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(132,158,190,.12)' }}>
-                    {['Name', 'Slug', 'Skills', 'Endpoint', 'Synced', 'Status', ''].map((h) => (
-                      <th key={h} style={{
-                        padding: '11px 16px', textAlign: 'left',
-                        fontSize: '10px', fontWeight: 700, color: 'var(--tm-text-muted)',
-                        textTransform: 'uppercase', letterSpacing: '0.07em',
-                        background: 'rgba(5,15,28,.40)',
-                        borderBottom: '1px solid rgba(132,158,190,.10)',
-                      }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading && (
-                    <tr><td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--tm-text-subtle)' }}>Loading…</td></tr>
-                  )}
-                  {!loading && agents.length === 0 && (
-                    <tr><td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--tm-text-subtle)' }}>No agents yet — click New Agent to add one</td></tr>
-                  )}
-                  {agents.map((agent, i) => (
-                    <tr key={agent.id}
-                      className="agent-row"
-                      style={{
-                        borderBottom: i < agents.length - 1 ? '1px solid rgba(132,158,190,.08)' : 'none',
-                        background: 'transparent',
-                      }}
-                    >
-                      {/* Name */}
-                      <td style={{ padding: '13px 16px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          {/* Icon tile — nested surface */}
-                          <div style={{
-                            width: '34px', height: '34px', borderRadius: '9px', flexShrink: 0,
-                            background: 'radial-gradient(circle at 30% 20%, rgba(40,215,238,.15), transparent 60%), linear-gradient(145deg, rgba(27,47,68,.96), rgba(8,20,35,.96))',
-                            border: '1px solid rgba(40,215,238,.30)',
-                            boxShadow: '0 5px 14px rgba(0,0,0,.24), 0 0 10px rgba(40,215,238,.08), inset 0 1px 0 rgba(255,255,255,.06), inset 0 -1px 0 rgba(0,0,0,.22)',
-                            color: '#28d7ee',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>smart_toy</span>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--tm-text)' }}>{agent.display_name}</div>
-                            {agent.description && (
-                              <div style={{ fontSize: '11px', color: 'var(--tm-text-muted)', marginTop: '1px' }}>
-                                {agent.description.split('\n')[0].slice(0, 60)}{agent.description.split('\n')[0].length > 60 ? '…' : ''}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* Slug */}
-                      <td style={{ padding: '13px 16px' }}>
-                        <code style={{
-                          fontSize: '11px', color: 'var(--tm-text-muted)',
-                          background: 'linear-gradient(145deg, rgba(255,255,255,.018), rgba(0,0,0,.05)), rgba(5,15,28,.50)',
-                          border: '1px solid rgba(132,157,188,.12)',
-                          boxShadow: 'inset 0 1px 0 rgba(255,255,255,.025)',
-                          padding: '2px 7px', borderRadius: '5px',
-                        }}>
-                          {agent.slug}
-                        </code>
-                      </td>
-
-                      {/* Skills */}
-                      <td style={{ padding: '13px 16px' }}>
-                        {agent.skills && agent.skills.length > 0
-                          ? <span style={{
-                              fontSize: '11px', color: 'var(--tm-text-muted)',
-                              background: 'linear-gradient(145deg, rgba(255,255,255,.018), rgba(0,0,0,.05)), rgba(5,15,28,.40)',
-                              border: '1px solid rgba(132,157,188,.10)',
-                              padding: '2px 7px', borderRadius: '5px',
-                            }} title={agent.skills.map((s) => s.name).join(', ')}>
-                              {agent.skills.length} skill{agent.skills.length !== 1 ? 's' : ''}
-                            </span>
-                          : <span style={{ fontSize: '11px', color: 'var(--tm-text-subtle)' }}>—</span>
-                        }
-                      </td>
-
-                      {/* Endpoint */}
-                      <td style={{ padding: '13px 16px', maxWidth: '180px' }}>
-                        <span style={{
-                          fontSize: '11px', color: 'var(--tm-text-muted)',
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block',
-                          fontFamily: 'monospace',
-                        }}>
-                          {agent.endpoint_url}
-                        </span>
-                      </td>
-
-                      {/* Synced */}
-                      <td style={{ padding: '13px 16px' }}>
-                        <span style={{ fontSize: '11px', color: 'var(--tm-text-muted)' }}>
-                          {agent.card_fetched_at ? timeAgo(agent.card_fetched_at) : '—'}
-                        </span>
-                      </td>
-
-                      {/* Status + score */}
-                      <td style={{ padding: '13px 16px' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
-                          {/* Enabled badge — nested surface pill */}
-                          <span style={{
-                            fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '5px', letterSpacing: '0.04em',
-                            background: agent.enabled
-                              ? 'linear-gradient(145deg, rgba(66,217,139,.14), rgba(42,181,109,.06))'
-                              : 'linear-gradient(145deg, rgba(107,114,128,.10), rgba(75,80,90,.04))',
-                            border: `1px solid ${agent.enabled ? 'rgba(66,217,139,.24)' : 'rgba(107,114,128,.18)'}`,
-                            boxShadow: 'inset 0 1px 0 rgba(255,255,255,.03)',
-                            color: agent.enabled ? '#4edea3' : '#6b7280',
-                          }}>
-                            {agent.enabled ? 'Enabled' : 'Disabled'}
-                          </span>
-
-                          {/* Security score badge */}
-                          {(() => {
-                            const sr = scanResults[agent.id];
-                            if (!sr) return null;
-                            if (sr === 'scanning') return (
-                              <span className="scanning-pill">
-                                <span style={{ fontSize: '11px' }}>🛡</span> Scanning…
-                              </span>
-                            );
-                            const rc = riskColors(sr.risk);
-                            return (
-                              <button
-                                className="score-badge"
-                                onClick={() => setScanModal({ agent, result: sr })}
-                                style={{
-                                  background: rc.bg,
-                                  borderColor: rc.border,
-                                  color: rc.color,
-                                }}
-                                title="Click to view security report"
-                              >
-                                <span style={{ fontSize: '11px' }}>🛡</span>
-                                {sr.score} · {sr.risk}
-                              </button>
-                            );
-                          })()}
-                        </div>
-                      </td>
-
-                      {/* Actions */}
-                      <td style={{ padding: '13px 16px' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', alignItems: 'flex-end' }}>
-                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                            <button
-                              className="discover-btn"
-                              onClick={() => handleRowDiscover(agent)}
-                              disabled={!!rowDiscoverState[agent.id]}
-                            >
-                              {rowDiscoverState[agent.id] ? 'Discovering…' : 'Discover'}
-                            </button>
-                            <button
-                              className="scan-btn"
-                              onClick={() => handleScan(agent)}
-                              disabled={scanResults[agent.id] === 'scanning'}
-                            >
-                              <span style={{ fontSize: '11px' }}>🛡</span>
-                              {scanResults[agent.id] === 'scanning' ? 'Scanning…' : 'Scan'}
-                            </button>
-                            <button
-                              className="test-btn"
-                              onClick={() => handleTest(agent)}
-                              disabled={testResults[agent.id] === 'testing'}
-                            >
-                              {testResults[agent.id] === 'testing' ? 'Testing…' : 'Test'}
-                            </button>
-                            <button className="ghost-btn" onClick={() => openEdit(agent)}>Edit</button>
-                            <button className="delete-btn" onClick={() => setDeleteTarget(agent)}>Delete</button>
-                          </div>
-
-                          {/* Test result inline */}
-                          {testResults[agent.id] && testResults[agent.id] !== 'testing' && (() => {
-                            const r = testResults[agent.id] as { ok: boolean; latency_ms: number; detail: string };
-                            return (
-                              <div style={{
-                                fontSize: '11px', padding: '3px 9px', borderRadius: '5px', maxWidth: '280px', textAlign: 'right',
-                                background: r.ok
-                                  ? 'linear-gradient(145deg, rgba(66,217,139,.10), rgba(42,181,109,.04))'
-                                  : 'linear-gradient(145deg, rgba(220,38,38,.10), rgba(185,28,28,.04))',
-                                border: `1px solid ${r.ok ? 'rgba(66,217,139,.20)' : 'rgba(220,38,38,.20)'}`,
-                                boxShadow: 'inset 0 1px 0 rgba(255,255,255,.025)',
-                                color: r.ok ? '#4edea3' : '#f87171',
-                              }}>
-                                {r.ok ? `✓ ${r.latency_ms}ms — ` : '✗ '}{r.detail}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {/* Search */}
+              <div style={{ position: 'relative', flex: '0 0 240px' }}>
+                <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#475569', fontSize: '14px', pointerEvents: 'none' }}>🔍</span>
+                <input
+                  type="text"
+                  placeholder="Search agents…"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  style={{
+                    width: '100%', padding: '7px 12px 7px 32px', borderRadius: '8px', boxSizing: 'border-box',
+                    background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.07)',
+                    color: '#e2e8f0', fontSize: '13px', outline: 'none',
+                  }}
+                />
+              </div>
+              {/* Divider */}
+              <div style={{ width: '1px', height: '20px', background: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
+              {/* Category pills */}
+              {CATEGORY_PILLS.map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setActiveCategory(cat)}
+                  className={activeCategory === cat ? 'filter-pill-active' : 'filter-pill'}
+                >
+                  {cat}
+                </button>
+              ))}
             </div>
+          </div>
+
+          {/* Card grid */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: '24px',
+            padding: '0 32px 48px',
+          }}>
+            {loading && (
+              <div style={{ gridColumn: '1 / -1', padding: '80px', textAlign: 'center', color: '#475569', fontSize: '14px' }}>
+                Loading agents…
+              </div>
+            )}
+
+            {!loading && agents.length === 0 && (
+              <DeployCard onClick={openCreate} />
+            )}
+
+            {!loading && agents.length > 0 && filteredAgents.length === 0 && (
+              <div style={{ gridColumn: '1 / -1', padding: '60px', textAlign: 'center', color: '#475569', fontSize: '14px' }}>
+                No agents match your filter
+              </div>
+            )}
+
+            {!loading && filteredAgents.map((agent) => (
+              <AgentCard
+                key={agent.id}
+                agent={agent}
+                scanResult={scanResults[agent.id]}
+                testResult={testResults[agent.id]}
+                isDiscovering={!!rowDiscoverState[agent.id]}
+                onTest={() => handleTest(agent)}
+                onScan={() => handleScan(agent)}
+                onDiscover={() => handleRowDiscover(agent)}
+                onEdit={() => openEdit(agent)}
+                onDelete={() => setDeleteTarget(agent)}
+                onOpenScanModal={() => {
+                  const sr = scanResults[agent.id];
+                  if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
+                }}
+              />
+            ))}
+
+            {!loading && agents.length > 0 && (
+              <DeployCard onClick={openCreate} />
+            )}
           </div>
         </main>
 
@@ -1074,7 +1299,6 @@ export default function AdminAgentsPage() {
 
           return (
             <Modal wide title={`Agent Card — ${result.display_name || agent.display_name}`} onClose={() => setDiscoverPopup(null)}>
-              {/* Status banner */}
               <div style={{
                 padding: '10px 14px', borderRadius: '9px', marginBottom: '20px',
                 background: diff.hasChanges
@@ -1207,7 +1431,6 @@ export default function AdminAgentsPage() {
           const ringColor = scoreRingColor(result.score);
           return (
             <Modal wide title="" onClose={() => setScanModal(null)}>
-              {/* Modal header with shield icon + agent name */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px', marginTop: '-8px' }}>
                 <div style={{
                   width: '40px', height: '40px', borderRadius: '11px', flexShrink: 0,
@@ -1223,15 +1446,13 @@ export default function AdminAgentsPage() {
                 </div>
               </div>
 
-              {/* Score + risk header */}
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px',
                 padding: '16px 18px', borderRadius: '12px',
-                background: `linear-gradient(145deg, rgba(255,255,255,.020) 0%, rgba(255,255,255,.006) 36%, rgba(0,0,0,.04) 100%), rgba(8,18,32,.80)`,
+                background: 'linear-gradient(145deg, rgba(255,255,255,.020) 0%, rgba(255,255,255,.006) 36%, rgba(0,0,0,.04) 100%), rgba(8,18,32,.80)',
                 border: `1px solid ${rc.border}`,
                 boxShadow: `0 6px 18px rgba(0,0,0,.22), 0 0 24px ${rc.glow}, inset 0 1px 0 rgba(255,255,255,.04)`,
               }}>
-                {/* Score ring */}
                 <div className="score-ring" style={{
                   background: `radial-gradient(circle at 40% 30%, ${ringColor}22, transparent 60%), linear-gradient(145deg, rgba(20,38,60,.96), rgba(8,18,32,.96))`,
                   border: `2px solid ${ringColor}55`,
@@ -1243,11 +1464,8 @@ export default function AdminAgentsPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                     <span style={{
                       fontSize: '10px', fontWeight: 700, padding: '3px 10px', borderRadius: '5px', letterSpacing: '0.06em',
-                      textTransform: 'uppercase',
-                      background: rc.bg,
-                      border: `1px solid ${rc.border}`,
-                      boxShadow: 'inset 0 1px 0 rgba(255,255,255,.04)',
-                      color: rc.color,
+                      textTransform: 'uppercase', background: rc.bg, border: `1px solid ${rc.border}`,
+                      boxShadow: 'inset 0 1px 0 rgba(255,255,255,.04)', color: rc.color,
                     }}>
                       {result.risk} risk
                     </span>
@@ -1259,7 +1477,6 @@ export default function AdminAgentsPage() {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-                {/* Left: findings */}
                 <div>
                   <SectionLabel>Findings</SectionLabel>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
@@ -1267,21 +1484,11 @@ export default function AdminAgentsPage() {
                       const si = statusIcon(f.status);
                       const frc = riskColors(f.risk);
                       return (
-                        <div
-                          key={i}
-                          className="finding-card"
-                          style={{
-                            ...nestedSurface,
-                            borderRadius: '10px',
-                            padding: '11px 13px',
-                            marginBottom: '7px',
-                          }}
-                        >
+                        <div key={i} className="finding-card" style={{ ...nestedSurface, borderRadius: '10px', padding: '11px 13px', marginBottom: '7px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                             <span style={{
                               width: '22px', height: '22px', borderRadius: '6px', flexShrink: 0,
-                              background: `${si.color}18`,
-                              border: `1px solid ${si.color}30`,
+                              background: `${si.color}18`, border: `1px solid ${si.color}30`,
                               display: 'flex', alignItems: 'center', justifyContent: 'center',
                               fontSize: '12px', color: si.color, fontWeight: 700,
                             }}>{si.icon}</span>
@@ -1304,7 +1511,6 @@ export default function AdminAgentsPage() {
                   </div>
                 </div>
 
-                {/* Right: HTTP probes + meta */}
                 <div>
                   <SectionLabel>HTTP Probes</SectionLabel>
                   <div style={{ marginBottom: '20px' }}>
@@ -1315,11 +1521,7 @@ export default function AdminAgentsPage() {
                     ].map(({ label, value }) => {
                       const pass = value === 'pass';
                       return (
-                        <div key={label} className="probe-row" style={{
-                          ...nestedSurface,
-                          borderRadius: '8px',
-                          marginBottom: '6px',
-                        }}>
+                        <div key={label} className="probe-row" style={{ ...nestedSurface, borderRadius: '8px', marginBottom: '6px' }}>
                           <span style={{ fontSize: '12px', color: 'var(--tm-text-muted)', fontWeight: 500 }}>{label}</span>
                           <span style={{
                             fontSize: '10px', fontWeight: 700, padding: '2px 9px', borderRadius: '4px', letterSpacing: '0.04em',
@@ -1353,7 +1555,6 @@ export default function AdminAgentsPage() {
                 </div>
               </div>
 
-              {/* Actions */}
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(132,158,190,.10)' }}>
                 <button className="ghost-btn" onClick={() => setScanModal(null)} style={{ padding: '8px 20px', fontSize: '14px' }}>Close</button>
                 <button
