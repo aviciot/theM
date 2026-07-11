@@ -919,6 +919,7 @@ export default function PlaygroundPage() {
   const [debugTab, setDebugTab] = useState<DebugTab>('trace');
   const [agentInvocations, setAgentInvocations] = useState<AgentInvocation[]>([]);
   const [contextId, setContextId] = useState<string | null>(null);
+  const [restoredSession, setRestoredSession] = useState<ContextSession | null>(null);
   const [activities, setActivities] = useState<AgentActivity[]>([]);
   const activitiesRef = useRef<AgentActivity[]>([]);
 
@@ -928,6 +929,23 @@ export default function PlaygroundPage() {
   const assistantBuf = useRef('');
   const chatBottom = useRef<HTMLDivElement>(null);
   const traceBottom = useRef<HTMLDivElement | null>(null);
+
+  // Restore last session from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('them:playground:context_id');
+    if (!saved) return;
+    // Verify the session still exists and fetch its metadata
+    themApi.contexts().then(sessions => {
+      const match = sessions.find(s => s.context_id === saved);
+      if (match) setRestoredSession(match);
+      else localStorage.removeItem('them:playground:context_id');
+    }).catch(() => {});
+  }, []);
+
+  // Persist context_id to localStorage whenever it changes
+  useEffect(() => {
+    if (contextId) localStorage.setItem('them:playground:context_id', contextId);
+  }, [contextId]);
 
   // Load orchestrators list, then check voice_enabled for the selected one
   useEffect(() => {
@@ -1223,7 +1241,17 @@ export default function PlaygroundPage() {
     setActivities([]);
     activitiesRef.current = [];
     setContextId(null);
+    setRestoredSession(null);
     runId.current = null;
+    localStorage.removeItem('them:playground:context_id');
+  };
+
+  const resumeSession = (s: ContextSession) => {
+    setRestoredSession(null);
+    setContextId(s.context_id);
+    if (s.orchestrator_name !== selectedOrch) setSelectedOrch(s.orchestrator_name);
+    setMessages([{ role: 'assistant', text: `↩ Resumed: **${s.title}** — ${s.turn_count} prior turn${s.turn_count !== 1 ? 's' : ''}. Continue the conversation below.` }]);
+    setDebugTab('trace');
   };
 
   // ── Voice recording ───────────────────────────────────────────────────────
@@ -1329,7 +1357,48 @@ export default function PlaygroundPage() {
             {/* Chat pane */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--tm-border)' }}>
               <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                {messages.length === 0 && (
+                {messages.length === 0 && restoredSession && (
+                  <div style={{
+                    margin: '40px auto', maxWidth: 400, padding: '16px 20px',
+                    borderRadius: 12, border: '1px solid #7c3aed',
+                    background: 'rgba(124,58,237,0.08)',
+                    display: 'flex', flexDirection: 'column', gap: 10,
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tm-text)' }}>
+                      ↩ Resume last conversation?
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--tm-text-muted)' }}>
+                      <span style={{ color: '#a78bfa', fontWeight: 600 }}>{restoredSession.orchestrator_name}</span>
+                      {' · '}{restoredSession.turn_count} turn{restoredSession.turn_count !== 1 ? 's' : ''}
+                      {' · '}{(() => {
+                        const d = new Date(restoredSession.last_active);
+                        const diff = Date.now() - d.getTime();
+                        if (diff < 60000) return 'just now';
+                        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+                        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+                        return d.toLocaleDateString();
+                      })()}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--tm-text)', fontStyle: 'italic', opacity: 0.8 }}>
+                      "{restoredSession.title}"
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button onClick={() => resumeSession(restoredSession)} style={{
+                        flex: 1, padding: '7px 0', borderRadius: 8, border: 'none',
+                        background: '#7c3aed', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                      }}>
+                        Resume
+                      </button>
+                      <button onClick={() => { setRestoredSession(null); localStorage.removeItem('them:playground:context_id'); }} style={{
+                        flex: 1, padding: '7px 0', borderRadius: 8, border: '1px solid var(--tm-border)',
+                        background: 'transparent', color: 'var(--tm-text-muted)', fontSize: 12, cursor: 'pointer',
+                      }}>
+                        Start fresh
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {messages.length === 0 && !restoredSession && (
                   <div style={{ color: 'var(--tm-text-muted)', fontSize: 14, textAlign: 'center', marginTop: 60 }}>
                     Select an orchestrator and send a message to begin
                   </div>
@@ -1527,12 +1596,7 @@ export default function PlaygroundPage() {
                 {debugTab === 'sessions' && (
                   <SessionsTab
                     currentContextId={contextId}
-                    onResume={s => {
-                      setContextId(s.context_id);
-                      if (s.orchestrator_name !== selectedOrch) setSelectedOrch(s.orchestrator_name);
-                      setMessages([{ role: 'assistant', text: `↩ Resumed session — ${s.turn_count} prior turn${s.turn_count !== 1 ? 's' : ''}` }]);
-                      setDebugTab('trace');
-                    }}
+                    onResume={resumeSession}
                   />
                 )}
               </div>

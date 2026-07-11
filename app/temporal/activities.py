@@ -31,6 +31,7 @@ from app.temporal.loaders import (
 )
 from app.temporal.serde import build_tools_for_agents
 from app.temporal.shared import (
+    RecordToolResultsInput,
     AgentConfig,
     FinalizeRunInput,
     InitRunResult,
@@ -137,33 +138,51 @@ async def load_orchestration_context_activity(
 
 def _sanitize_history(messages: list) -> list:
     """
-    Strip trailing assistant messages whose tool_use IDs have no matching tool_result
-    in the next message. This prevents corrupted history from failed runs poisoning
-    the next run's context.
+    Remove any assistant message whose tool_use IDs have no matching tool_result
+    in the immediately following user message. Also drops the orphaned tool_result
+    message that would follow a dropped assistant turn (to keep role alternation valid).
+    Handles both mid-conversation gaps (pre-fix runs) and trailing orphans (failed runs).
     """
     if not messages:
         return messages
-    # Collect all tool_result IDs present in the history
+
+    # First pass: collect all tool_result IDs that exist anywhere in the history
     result_ids: set[str] = set()
     for msg in messages:
-        if msg.get("role") == "user":
-            for block in (msg.get("content") if isinstance(msg.get("content"), list) else []):
-                if isinstance(block, dict) and block.get("type") == "tool_result":
-                    result_ids.add(block.get("tool_use_id", ""))
-    # Drop any trailing assistant message that has unmatched tool_use blocks
-    while messages:
-        last = messages[-1]
-        if last.get("role") != "assistant":
-            break
-        content = last.get("content", [])
-        if not isinstance(content, list):
-            break
-        tool_use_ids = [b["id"] for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
-        if tool_use_ids and not all(tid in result_ids for tid in tool_use_ids):
-            messages = messages[:-1]
-        else:
-            break
-    return messages
+        if msg.get("role") in ("user", "tool"):
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        result_ids.add(block.get("tool_use_id", ""))
+
+    # Second pass: rebuild, skipping assistant messages with unmatched tool_use IDs
+    # and skipping the immediately following user message if it only has tool_results
+    # for the dropped assistant turn.
+    sanitized: list = []
+    skip_next_tool_result = False
+    for msg in messages:
+        role = msg.get("role")
+
+        if skip_next_tool_result:
+            skip_next_tool_result = False
+            content = msg.get("content", [])
+            if isinstance(content, list) and all(
+                isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+            ):
+                continue  # drop the orphaned tool_result message
+
+        if role == "assistant":
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                tool_use_ids = [b["id"] for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
+                if tool_use_ids and not all(tid in result_ids for tid in tool_use_ids):
+                    skip_next_tool_result = True
+                    continue  # drop this orphaned assistant message
+
+        sanitized.append(msg)
+
+    return sanitized
 
 
 async def _load_context_history(provider, context_id: str, current_task_id: str, db, history_window: int = 20) -> list:
@@ -758,6 +777,30 @@ async def summarize_context_activity(inp: SummarizeContextInput) -> Optional[str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Activity: record_tool_results
+# ─────────────────────────────────────────────────────────────────────────────
+
+@activity.defn(name="record_tool_results")
+async def record_tool_results_activity(inp: RecordToolResultsInput) -> None:
+    """Persist the tool_result (user-role) message so history loads correctly."""
+    async with db_module.AsyncSessionLocal() as db:
+        try:
+            content = [
+                {"type": "tool_result", "tool_use_id": r["tool_use_id"], "content": r["content"]}
+                for r in inp.tool_results
+            ]
+            await task_store.record_message(
+                db,
+                task_id=uuid.UUID(inp.root_task_id),
+                role="user",
+                parts={"content": content},
+                seq=inp.msg_seq,
+            )
+        except Exception as exc:
+            logger.warning("record_tool_results: persist failed", error=str(exc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Activity: finalize_run
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -841,6 +884,7 @@ ALL_ACTIVITIES = [
     init_run_activity,
     plan_turn_activity,
     invoke_agent_activity,
+    record_tool_results_activity,
     summarize_context_activity,
     finalize_run_activity,
 ]

@@ -24,8 +24,10 @@ from app.temporal.activities import (
     invoke_agent_activity,
     load_orchestration_context_activity,
     plan_turn_activity,
+    record_tool_results_activity,
     summarize_context_activity,
 )
+from app.temporal.shared import RecordToolResultsInput
 from app.temporal.serde import (
     deserialize_messages,
     dict_to_tool_call,
@@ -301,9 +303,22 @@ class OrchestrationWorkflow:
                         run_error = "Human response timeout (10 minutes)"
                         break
 
-                # Append tool results to message state
+                # Append tool results to message state and persist to DB
                 tool_result_msg = _build_tool_results_message(plan_result.tool_calls, invoke_results)
                 self.messages.append(tool_result_msg)
+                await workflow.execute_activity(
+                    record_tool_results_activity,
+                    RecordToolResultsInput(
+                        root_task_id=root_task_id,
+                        msg_seq=msg_seq,
+                        tool_results=[
+                            {"tool_use_id": tc["id"], "content": res.result_text}
+                            for tc, res in zip(plan_result.tool_calls, invoke_results)
+                        ],
+                    ),
+                    schedule_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
                 msg_seq += 1
 
                 agent_calls_since_summary += len(plan_result.tool_calls)

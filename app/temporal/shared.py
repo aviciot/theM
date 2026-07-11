@@ -163,6 +163,13 @@ class SummarizeContextInput:
 
 
 @dataclass
+class RecordToolResultsInput:
+    root_task_id: str
+    msg_seq: int
+    tool_results: list[dict]    # [{tool_use_id, content}]
+
+
+@dataclass
 class FinalizeRunInput:
     run_id: str
     root_task_id: str
