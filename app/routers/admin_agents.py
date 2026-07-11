@@ -4,6 +4,8 @@ CRUD for them.agents. Publishes them:agents:changed on any write.
 auth_token is stored Fernet-encrypted; GET returns masked representation.
 """
 
+import asyncio
+import json
 import re
 import time
 import uuid
@@ -16,8 +18,11 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.database as db_module
 from app.database import get_db
 from app.models import Agent
+from app.adapters.a2a_async_adapter import A2aAsyncAdapter
+from app.services import dashboard_broadcaster
 from app.services.agent_registry import invalidate_registry
 from app.utils.crypto import decrypt_value, encrypt_value
 from app.utils.logger import logger
@@ -25,6 +30,7 @@ from app.utils.logger import logger
 router = APIRouter(prefix="/admin/agents", tags=["admin-agents"])
 
 VALID_TRANSPORTS = {"a2a_async"}
+SCANNER_SLUG = "security_scanner"
 
 
 # ------------------------------------------------------------------ #
@@ -98,6 +104,8 @@ class AgentOut(BaseModel):
     supports_streaming: bool = False
     supports_push: bool = False
     card_fetched_at: Optional[datetime] = None
+    last_scan_at: Optional[datetime] = None
+    last_scan_result: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
@@ -160,6 +168,8 @@ def _row_to_out(row: Agent) -> AgentOut:
         supports_streaming=row.supports_streaming,
         supports_push=row.supports_push,
         card_fetched_at=getattr(row, "card_fetched_at", None),
+        last_scan_at=getattr(row, "last_scan_at", None),
+        last_scan_result=getattr(row, "last_scan_result", None),
     )
 
 
@@ -410,3 +420,110 @@ async def delete_agent(agent_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await invalidate_registry()
     logger.info("agent deleted", agent_id=str(agent_id), slug=slug)
+
+
+# ------------------------------------------------------------------ #
+# Security scan                                                        #
+# ------------------------------------------------------------------ #
+
+class ScanResponse(BaseModel):
+    job_id: str
+    agent_id: uuid.UUID
+
+
+@router.post("/{agent_id}/security-scan", response_model=ScanResponse, status_code=202)
+async def security_scan(agent_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """
+    Trigger a security scan for the given agent. Returns 202 immediately.
+    Progress and result are delivered via WS dashboard channel agent:<agent_id>.
+    """
+    target = await _get_or_404(db, agent_id)
+
+    scanner = (
+        await db.execute(select(Agent).where(Agent.slug == SCANNER_SLUG))
+    ).scalar_one_or_none()
+    if scanner is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Security scanner agent not registered — run db/009_security_scan.sql migration",
+        )
+
+    # Snapshot payload before session closes — never send auth token plaintext
+    payload = {
+        "agent_id": str(target.id),
+        "slug": target.slug,
+        "display_name": target.display_name,
+        "description": target.description,
+        "endpoint_url": target.endpoint_url,
+        "agent_card": target.agent_card or {},
+        "skills": list(target.skills or []),
+        "supports_streaming": target.supports_streaming,
+        "supports_push": target.supports_push,
+        "has_auth_token": bool(target.auth_token_encrypted),
+    }
+    scanner_endpoint = scanner.endpoint_url
+    scanner_token_enc = scanner.auth_token_encrypted
+    scanner_timeout = float(scanner.timeout_seconds or 120)
+
+    job_id = str(uuid.uuid4())
+    asyncio.create_task(
+        _run_scan_job(agent_id, payload, scanner_endpoint, scanner_token_enc, scanner_timeout)
+    )
+    logger.info("security scan started", agent_id=str(agent_id), slug=target.slug, job_id=job_id)
+    return ScanResponse(job_id=job_id, agent_id=agent_id)
+
+
+async def _run_scan_job(
+    agent_id: uuid.UUID,
+    payload: dict,
+    scanner_endpoint: str,
+    scanner_token_enc: Optional[str],
+    timeout: float,
+) -> None:
+    """Background task: calls security scanner agent, persists result, publishes to WS."""
+    aid = str(agent_id)
+    await dashboard_broadcaster.publish_scan_started(aid)
+
+    adapter = A2aAsyncAdapter(
+        agent_slug=SCANNER_SLUG,
+        endpoint_url=scanner_endpoint,
+        auth_token_encrypted=scanner_token_enc,
+        input_modes=["application/json"],
+        max_poll_seconds=timeout,
+    )
+
+    result_text: Optional[str] = None
+    err: Optional[str] = None
+    try:
+        async for ev in adapter.stream_invoke(payload, timeout=timeout):
+            if ev.type == "done":
+                result_text = ev.result
+            elif ev.type == "error":
+                err = ev.error
+    except Exception as exc:
+        err = str(exc)
+
+    if err or not result_text:
+        await dashboard_broadcaster.publish_scan_failed(aid, err or "scanner returned no result")
+        return
+
+    try:
+        result = json.loads(result_text)
+    except Exception:
+        await dashboard_broadcaster.publish_scan_failed(aid, "scanner returned non-JSON result")
+        return
+
+    # Persist result in a fresh session (request session is already closed)
+    if db_module.AsyncSessionLocal is not None:
+        try:
+            async with db_module.AsyncSessionLocal() as db:
+                row = await db.get(Agent, agent_id)
+                if row is not None:
+                    row.last_scan_result = result
+                    row.last_scan_at = datetime.now(timezone.utc)
+                    await db.commit()
+        except Exception as exc:
+            logger.warning("scan result persist failed", agent_id=aid, error=str(exc))
+
+    await dashboard_broadcaster.publish_scan_complete(aid, result)
+    logger.info("security scan complete", agent_id=aid, score=result.get("score"), risk=result.get("risk"))

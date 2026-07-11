@@ -66,7 +66,27 @@ export interface Agent {
   agent_card?: Record<string, unknown> | null;
   agent_card_url?: string | null;
   card_fetched_at?: string | null;
+  last_scan_at?: string | null;
+  last_scan_result?: ScanResult | null;
   created_at: string;
+}
+
+export interface ScanFinding {
+  id: string;
+  label: string;
+  status: 'pass' | 'fail' | 'warn';
+  risk: 'low' | 'medium' | 'high';
+  detail: string;
+  recommendation: string;
+}
+
+export interface ScanResult {
+  score: number;
+  risk: 'low' | 'medium' | 'high';
+  summary: string;
+  findings: ScanFinding[];
+  http_probes: { tls: string; auth_required: string; reachable: boolean };
+  scanned_at: string;
 }
 
 export interface Orchestrator {
@@ -248,6 +268,7 @@ export const themApi = {
   updateAgent: (id: string, body: unknown) => api.patch<Agent>(`/admin/agents/${id}`, body),
   deleteAgent: (id: string) => api.delete<void>(`/admin/agents/${id}`),
   testAgent: (id: string) => api.post<{ ok: boolean; latency_ms: number; detail: string }>(`/admin/agents/${id}/test`, {}),
+  scanAgent: (id: string) => api.post<{ job_id: string; agent_id: string }>(`/admin/agents/${id}/security-scan`, {}),
   discoverAgent: (body: { endpoint_url: string; auth_token?: string; agent_id?: string }) => api.post<DiscoverResult>('/admin/agents/discover', body),
   orchestrators: () => api.get<OrchestratorFull[]>('/admin/orchestrators'),
   createOrchestrator: (body: unknown) => api.post<OrchestratorFull>('/admin/orchestrators', body),

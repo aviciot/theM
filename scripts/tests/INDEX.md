@@ -35,6 +35,7 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 | 23 | `run_tests.py::test_23_a2a_skill_discovery` | structural | no | A2A agent card auto-discovery: `_ensure_agent_skills` helper, TTL constant, httpx fetch, A2A-Version header, Bearer auth, write-back to DB (skills/agent_card/card_fetched_at), failure handling, call order before tool list, docu_writer agent files, 007_docu_stack.sql seed |
 | 24 | `run_tests.py::test_24_code_agent_live` | live | yes | code_agent A2A live call: agent card reachable, list_repos + query_graph skills present, SendMessage returns real repo data, no TextContent serialization error |
 | 25 | `run_tests.py::test_25_true_a2a` | structural | no | True A2A typed input: docu_writer data parts + no regex, adapter input_modes + _build_parts, factory wiring, task_runner _OrchestratorProxy dataclass + typed _run_one branch, seed SQL prompt cleanup |
+| 26 | `run_tests.py::test_26_security_scan` | structural + unit | no | Agent Security Scanner: agent files (main.py/scanner.py/Dockerfile/requirements.txt), A2A structure, docker-compose service (profile: security, port 9500), db/009 migration columns + seed, ws_dashboard agent: channel, dashboard_broadcaster scan helpers, admin_agents scan endpoint + background task, score formula unit tests (no-TLS+no-auth=45, all-pass=100, LLM cap), frontend api.ts types + scanAgent, page scan state + WS handling |
 
 | MT | `scripts/test_multiturn.py` | e2e | yes + JWT (auto-fetched) | Multi-turn conversation history: recall across fresh WS connections, `history_window` behavioral proof (window=1 forgets old turns) |
 
@@ -82,6 +83,7 @@ python scripts/tests/run_tests.py
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 |
 | `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 |
 | `app/services/task_runner.py` (history), `app/models.py` (history_window), `app/routers/admin_orchestrators.py` | 10 + MT |
+| `agents/security_scanner/`, `app/routers/admin_agents.py` (security-scan), `app/routers/ws_dashboard.py` (agent: channel), `app/services/dashboard_broadcaster.py`, `db/009_security_scan.sql`, `frontend/src/app/admin/agents/page.tsx` | 26 |
 | Before release / PR merge | all + 14 (with JWT) + MT |
 
 ---

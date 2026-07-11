@@ -455,6 +455,34 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ── Security Scanner — enable with: docker compose --profile security up -d ──
+
+  them-security-agent:
+    build:
+      context: ./agents/security_scanner
+      dockerfile: Dockerfile
+    container_name: them-security-agent
+    profiles: [security]
+    expose:
+      - "9500"
+    environment:
+      PORT: "9500"
+      ANTHROPIC_API_KEY: "${SECURITY_SCANNER_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9500/.well-known/agent-card.json')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ── Debate Agents — enable with: docker compose --profile debate up -d ───────
 
   agent-evidence:

@@ -62,3 +62,24 @@ async def publish_run_step(run_id: str, agent_slug: str, iteration: int, status:
 
 async def publish_agents_changed() -> None:
     await publish("agents", {"type": "agents_changed"})
+
+
+async def publish_scan_started(agent_id: str) -> None:
+    await publish(f"agent:{agent_id}", {"type": "scan_started", "agent_id": agent_id})
+
+
+async def publish_scan_complete(agent_id: str, result: dict) -> None:
+    await publish(f"agent:{agent_id}", {
+        "type": "scan_complete",
+        "agent_id": agent_id,
+        "score": result["score"],
+        "risk": result["risk"],
+        "summary": result["summary"],
+        "findings": result["findings"],
+        "http_probes": result.get("http_probes", {}),
+        "scanned_at": result.get("scanned_at", ""),
+    })
+
+
+async def publish_scan_failed(agent_id: str, error: str) -> None:
+    await publish(f"agent:{agent_id}", {"type": "scan_failed", "agent_id": agent_id, "error": error})

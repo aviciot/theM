@@ -53,8 +53,22 @@ The agent registry. Each enabled row = one LLM tool named `agent__<slug>`.
 | **agent_card** | JSONB | cached agent card fetched via `GET {endpoint}/.well-known/agent-card.json` |
 | **supports_streaming** | BOOL | agent declared SSE streaming support |
 | **input_modes** | TEXT[] | MIME types agent accepts (e.g. `{"application/json"}`) |
+| **last_scan_at** | TIMESTAMPTZ | Timestamp of the most recent security scan (NULL = never scanned) |
+| **last_scan_result** | JSONB | Latest scan result — `{score, risk, summary, findings[], http_probes, scanned_at}` (see shape below) |
 
 **Note:** `agent_card`, `supports_streaming`, `input_modes` are populated by the Discover button in the admin UI (or `_ensure_agent_skills` in the task runner). They drive typed A2A input (`_build_parts()` in the adapter).
+
+**`last_scan_result` shape** (written by `_run_scan_job` in `admin_agents.py`):
+```json
+{
+  "score": 72,
+  "risk": "low|medium|high",
+  "summary": "One-sentence plain-English finding",
+  "findings": [{ "id": "tls", "label": "TLS Enforcement", "status": "pass|warn|fail", "risk": "low|medium|high", "detail": "...", "recommendation": "..." }],
+  "http_probes": { "tls": "pass|fail", "auth_required": "pass|fail", "reachable": true },
+  "scanned_at": "2026-07-11T10:00:00Z"
+}
+```
 
 ---
 

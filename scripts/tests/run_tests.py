@@ -1956,6 +1956,190 @@ def test_25_true_a2a():
         check("seed SQL system prompt", False, str(exc))
 
 
+def test_26_security_scan():
+    section("test_26_security_scan: Agent Security Scanner")
+
+    # 1. Agent files exist
+    for f in ["agents/security_scanner/main.py", "agents/security_scanner/scanner.py",
+              "agents/security_scanner/Dockerfile", "agents/security_scanner/requirements.txt"]:
+        check(f"exists: {f}", (ROOT / f).exists())
+
+    # 2. main.py structure
+    try:
+        fns = funcs_in("agents/security_scanner/main.py")
+        for fn in ["execute", "cancel", "make_agent_card", "create_app"]:
+            check(f"main.py defines {fn}", fn in fns)
+        s = src("agents/security_scanner/main.py")
+        check("uses AgentExecutor", "AgentExecutor" in s)
+        check("uses add_a2a_routes_to_fastapi", "add_a2a_routes_to_fastapi" in s)
+        check("uses InMemoryTaskStore", "InMemoryTaskStore" in s)
+        check("imports scanner.run_scan", "from scanner import run_scan" in s)
+        check("TASK_STATE_COMPLETED emitted", "TASK_STATE_COMPLETED" in s)
+        check("TASK_STATE_FAILED emitted", "TASK_STATE_FAILED" in s)
+    except Exception as exc:
+        check("main.py structure", False, str(exc))
+
+    # 3. scanner.py structure
+    try:
+        fns = funcs_in("agents/security_scanner/scanner.py")
+        for fn in ["http_probes", "llm_card_analysis", "run_scan", "compute_score"]:
+            check(f"scanner.py defines {fn}", fn in fns)
+        s = src("agents/security_scanner/scanner.py")
+        check("uses httpx for probes", "httpx" in s)
+        check("uses asyncio.to_thread for Haiku call", "asyncio.to_thread" in s)
+        check("uses claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001" in s)
+        check("run_scan returns score key", '"score"' in s)
+        check("run_scan returns risk key", '"risk"' in s)
+        check("run_scan returns findings key", '"findings"' in s)
+    except Exception as exc:
+        check("scanner.py structure", False, str(exc))
+
+    # 4. requirements.txt
+    try:
+        s = src("agents/security_scanner/requirements.txt")
+        check("req: a2a-sdk==1.1.0", "a2a-sdk==1.1.0" in s)
+        check("req: anthropic", "anthropic" in s)
+        check("req: httpx", "httpx" in s)
+    except Exception as exc:
+        check("requirements.txt", False, str(exc))
+
+    # 5. Dockerfile
+    try:
+        s = src("agents/security_scanner/Dockerfile")
+        check("Dockerfile copies main.py", "main.py" in s)
+        check("Dockerfile copies scanner.py", "scanner.py" in s)
+        check("Dockerfile exposes 9500", "9500" in s)
+    except Exception as exc:
+        check("Dockerfile", False, str(exc))
+
+    # 6. docker-compose.yml service
+    try:
+        s = src("docker-compose.yml")
+        check("them-security-agent service defined", "them-security-agent" in s)
+        check("profile: security", "security" in s)
+        check("port 9500 exposed", "9500" in s)
+        check("SECURITY_SCANNER_ANTHROPIC_API_KEY env", "SECURITY_SCANNER_ANTHROPIC_API_KEY" in s)
+    except Exception as exc:
+        check("docker-compose security agent", False, str(exc))
+
+    # 7. DB migration
+    try:
+        s = src("db/009_security_scan.sql")
+        check("migration: last_scan_at column", "last_scan_at" in s)
+        check("migration: last_scan_result column", "last_scan_result" in s)
+        check("migration: security_scanner seed", "security_scanner" in s)
+        check("migration: application/json input_modes", "application/json" in s)
+        check("migration: ADD COLUMN IF NOT EXISTS", "ADD COLUMN IF NOT EXISTS" in s)
+    except Exception as exc:
+        check("db/009 migration", False, str(exc))
+
+    # 8. models.py columns
+    try:
+        s = src("app/models.py")
+        check("models.py: last_scan_at column", "last_scan_at" in s)
+        check("models.py: last_scan_result column", "last_scan_result" in s)
+    except Exception as exc:
+        check("models.py columns", False, str(exc))
+
+    # 9. ws_dashboard.py agent: channel
+    try:
+        s = src("app/routers/ws_dashboard.py")
+        check("ws_dashboard accepts agent: channels", 'startswith("agent:")' in s)
+        # Import and test the function directly
+        import importlib.util, sys as _sys
+        spec = importlib.util.spec_from_file_location("ws_dashboard", ROOT / "app/routers/ws_dashboard.py")
+    except Exception as exc:
+        check("ws_dashboard agent: channel", False, str(exc))
+
+    # 10. dashboard_broadcaster.py scan helpers
+    try:
+        s = src("app/services/dashboard_broadcaster.py")
+        check("publish_scan_started defined", "publish_scan_started" in s)
+        check("publish_scan_complete defined", "publish_scan_complete" in s)
+        check("publish_scan_failed defined", "publish_scan_failed" in s)
+        check("publishes to agent:{agent_id}", 'f"agent:{agent_id}"' in s)
+    except Exception as exc:
+        check("dashboard_broadcaster scan helpers", False, str(exc))
+
+    # 11. admin_agents.py scan endpoint
+    try:
+        s = src("app/routers/admin_agents.py")
+        check("security-scan route defined", "security-scan" in s)
+        check("ScanResponse model defined", "ScanResponse" in s)
+        check("_run_scan_job defined", "_run_scan_job" in s)
+        check("SCANNER_SLUG constant", "SCANNER_SLUG" in s)
+        check("asyncio.create_task used", "asyncio.create_task" in s)
+        check("A2aAsyncAdapter imported", "A2aAsyncAdapter" in s)
+        check("dashboard_broadcaster imported", "dashboard_broadcaster" in s)
+        check("AsyncSessionLocal used in background task", "AsyncSessionLocal" in s)
+        check("publish_scan_started called", "publish_scan_started" in s)
+        check("publish_scan_complete called", "publish_scan_complete" in s)
+        check("publish_scan_failed called", "publish_scan_failed" in s)
+    except Exception as exc:
+        check("admin_agents.py scan endpoint", False, str(exc))
+
+    # 12. Score formula unit tests (import scanner directly)
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "scanner", ROOT / "agents/security_scanner/scanner.py"
+        )
+        scanner_mod = importlib.util.module_from_spec(spec)
+        # scanner.py imports httpx and anthropic — skip exec if not installed
+        try:
+            spec.loader.exec_module(scanner_mod)
+            cs = scanner_mod.compute_score
+
+            # HTTP-only: no TLS + no auth → 100 - 30 - 25 = 45 → high risk
+            result = cs({"tls": "fail", "auth_required": "fail", "reachable": True}, [])
+            check("score: no-TLS + no-auth = 45", result == 45)
+
+            # Clean: all pass, no LLM findings → 100
+            result = cs({"tls": "pass", "auth_required": "pass", "reachable": True}, [])
+            check("score: all pass = 100", result == 100)
+
+            # One high finding → 100 - 20 = 80
+            result = cs({"tls": "pass", "auth_required": "pass", "reachable": True},
+                        [{"risk": "high"}])
+            check("score: one high finding = 80", result == 80)
+
+            # LLM penalty capped at 40 (5 high findings = 100 but capped)
+            findings = [{"risk": "high"}] * 5
+            result = cs({"tls": "pass", "auth_required": "pass", "reachable": True}, findings)
+            check("score: LLM penalty capped at 40 → 60", result == 60)
+
+        except ImportError:
+            skip("score formula unit tests — httpx/anthropic not installed in test env")
+    except Exception as exc:
+        check("score formula unit tests", False, str(exc))
+
+    # 13. Frontend api.ts
+    try:
+        s = src("frontend/src/lib/api.ts")
+        check("api.ts: ScanResult type", "ScanResult" in s)
+        check("api.ts: ScanFinding type", "ScanFinding" in s)
+        check("api.ts: scanAgent method", "scanAgent" in s)
+        check("api.ts: last_scan_result on Agent", "last_scan_result" in s)
+    except Exception as exc:
+        check("frontend api.ts", False, str(exc))
+
+    # 14. Frontend page
+    try:
+        s = src("frontend/src/app/admin/agents/page.tsx")
+        check("page: scanResults state", "scanResults" in s)
+        check("page: scanModal state", "scanModal" in s)
+        check("page: handleScan function", "handleScan" in s)
+        check("page: dashWsRef", "dashWsRef" in s)
+        check("page: scan_started event handled", "scan_started" in s)
+        check("page: scan_complete event handled", "scan_complete" in s)
+        check("page: scan_failed event handled", "scan_failed" in s)
+        check("page: 🛡️ Scan button", "🛡️ Scan" in s)
+        check("page: riskColors helper", "riskColors" in s)
+        check("page: statusIcon helper", "statusIcon" in s)
+    except Exception as exc:
+        check("frontend page", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -1984,6 +2168,7 @@ ALL_TESTS = [
     ("23", test_23_a2a_skill_discovery),
     ("24", test_24_code_agent_live),
     ("25", test_25_true_a2a),
+    ("26", test_26_security_scan),
 ]
 
 if __name__ == "__main__":

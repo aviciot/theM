@@ -60,6 +60,7 @@ ANTHROPIC_API_KEY=
 # Leave blank to fall back to ANTHROPIC_API_KEY
 DOCU_WRITER_ANTHROPIC_API_KEY=
 DEBATE_ANTHROPIC_API_KEY=
+SECURITY_SCANNER_ANTHROPIC_API_KEY=
 
 # ─── Network ─────────────────────────────────────────────────
 THE_M_HOSTNAME=them.example.com

@@ -76,6 +76,7 @@ bounded by `orchestrator.max_parallel_tools` and per-agent `max_concurrency` sem
 | `them-bridge-2` | Replica 2 (`profiles: [replica]`) | 8001 (internal) | `app/` |
 | `them-frontend` | Next.js dashboard | 3200 (internal) | `frontend/` |
 | `vision-agent` | Vision/maps agent | 9100 (internal) | `agents/vision_agent/` |
+| `them-security-agent` | Security scanner A2A agent (`profiles: [security]`) | 9500 (internal) | `agents/security_scanner/` |
 | `a2a-echo` | A2A v1.0 echo test agent (`profiles: [test-agents]`) | 9200 (internal) | `agents/a2a_echo/` |
 | `a2a-slow` | A2A v1.0 slow test agent (5s delay) (`profiles: [test-agents]`) | 9201 (internal) | `agents/a2a_slow/` |
 | `a2a-stream` | A2A v1.0 streaming test agent (`profiles: [test-agents]`) | 9202 (internal) | `agents/a2a_stream/` |
@@ -144,6 +145,7 @@ docker cp db/003_phase8.sql them-postgres:/tmp/them_003_phase8.sql
 docker cp db/004_phase9.sql them-postgres:/tmp/them_004_phase9.sql
 docker cp db/005_phase10.sql them-postgres:/tmp/them_005_phase10.sql
 docker cp db/006_phase11.sql them-postgres:/tmp/them_006_phase11.sql
+docker cp db/009_security_scan.sql them-postgres:/tmp/them_009_security_scan.sql
 docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
 docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
@@ -152,6 +154,7 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_003_phase8.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_004_phase9.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_005_phase10.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_006_phase11.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_009_security_scan.sql
 
 # DB access
 docker exec -it them-postgres psql -U them -d them
@@ -170,6 +173,17 @@ docker exec them-bridge python3 /tmp/test_multiturn.py
 
 # Enable replica 2
 docker compose -f docker-compose.yml -f docker-compose.local.yml --profile replica up -d them-bridge-2
+
+# Security Scanner (profile: security)
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile security up -d --build them-security-agent
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile security ps
+# Apply migration (run once after first up or after wiping DB)
+docker cp db/009_security_scan.sql them-postgres:/tmp/ && docker exec them-postgres psql -U them -d them -f /tmp/009_security_scan.sql
+# Bust agent cache after migration
+docker exec them-redis redis-cli DEL them:agents:registry
+# Rebuild after code change
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile security build them-security-agent
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile security up -d them-security-agent
 
 # A2A test agents (profile: test-agents)
 docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents up -d
@@ -242,6 +256,7 @@ Full suite, ~30s. Zero failures required before committing.
 | `app/services/task_runner.py` (`_ensure_agent_skills`, `_CARD_TTL_SECONDS`), `agents/docu_writer/`, `db/007_docu_stack.sql` | 23 (A2A skill auto-discovery) |
 | `db/007_docu_stack.sql` code_agent endpoint/token | 24 (code_agent live) |
 | `agents/docu_writer/main.py`, `app/adapters/a2a_async_adapter.py`, `app/adapters/factory.py`, `app/services/task_runner.py` (typed A2A), `db/007_docu_stack.sql` | 25 (true A2A typed input) |
+| `agents/security_scanner/`, `app/routers/admin_agents.py` (security-scan endpoint), `app/routers/ws_dashboard.py` (agent: channel), `app/services/dashboard_broadcaster.py` (scan helpers), `db/009_security_scan.sql`, `frontend/src/app/admin/agents/page.tsx` (scan UI) | 26 (security scan) |
 | `app/services/task_runner.py` (history), `app/models.py` (history_window), `app/routers/admin_orchestrators.py` | 10 + MT (multi-turn behavioral) |
 | `app/temporal/activities.py`, `app/temporal/workflows.py`, `app/temporal/serde.py` | Full suite + `scripts/test_temporal_workflow.py` (inside them-worker) |
 | `app/temporal/bridge_client.py`, `app/routers/ws_orchestrator.py` (Temporal path) | 10 11 + `scripts/test_temporal_workflow.py` |

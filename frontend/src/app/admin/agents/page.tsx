@@ -1,8 +1,8 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Agent, type AgentSkill, type DiscoverResult, type OrchestratorFull } from '@/lib/api';
+import { themApi, type Agent, type AgentSkill, type DiscoverResult, type OrchestratorFull, type ScanResult } from '@/lib/api';
 
 const EMPTY_FORM = {
   slug: '',
@@ -158,11 +158,26 @@ function DiffRow({ label, changed, oldVal, newVal }: { label: string; changed: b
   );
 }
 
+function riskColors(risk: 'low' | 'medium' | 'high') {
+  if (risk === 'low') return { bg: 'rgba(0,118,80,.12)', color: '#005b3d' };
+  if (risk === 'medium') return { bg: 'rgba(251,191,36,.14)', color: '#b45309' };
+  return { bg: 'rgba(220,38,38,.12)', color: '#dc2626' };
+}
+
+function statusIcon(status: 'pass' | 'fail' | 'warn') {
+  if (status === 'pass') return { icon: '✓', color: '#005b3d' };
+  if (status === 'warn') return { icon: '⚠', color: '#b45309' };
+  return { icon: '✗', color: '#dc2626' };
+}
+
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '8px 12px', borderRadius: '8px',
   border: '1px solid var(--tm-border)', background: 'var(--tm-surface-2)',
   fontSize: '14px', color: 'var(--tm-text)', boxSizing: 'border-box',
 };
+
+// Module-level set — survives tab switches (component unmount/remount)
+const _inFlightScans = new Set<string>();
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
@@ -182,14 +197,120 @@ export default function AdminAgentsPage() {
   const [applyingDiscover, setApplyingDiscover] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [discoverError, setDiscoverError] = useState('');
+  const [scanResults, setScanResults] = useState<Record<string, ScanResult | 'scanning'>>({});
+  const [scanModal, setScanModal] = useState<{ agent: Agent; result: ScanResult } | null>(null);
+  const dashWsRef = useRef<WebSocket | null>(null);
+  const agentIdsKeyRef = useRef<string>('');
 
   const reload = () => {
     Promise.all([themApi.agents(), themApi.orchestrators()])
-      .then(([a, o]) => { setAgents(a); setOrchestrators(o); })
+      .then(([a, o]) => {
+        setAgents(a);
+        setOrchestrators(o);
+        setScanResults((prev) => {
+          const next = { ...prev };
+          for (const agent of a) {
+            if (_inFlightScans.has(agent.id)) {
+              // Scan was in-flight when we left — check if it completed while away
+              if (agent.last_scan_result) {
+                next[agent.id] = agent.last_scan_result;
+                _inFlightScans.delete(agent.id);
+              } else {
+                // Still running — restore the scanning badge
+                next[agent.id] = 'scanning';
+              }
+            } else if (agent.last_scan_result && !next[agent.id]) {
+              next[agent.id] = agent.last_scan_result;
+            } else if (agent.last_scan_result && next[agent.id] === 'scanning') {
+              next[agent.id] = agent.last_scan_result;
+            }
+          }
+          return next;
+        });
+      })
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { reload(); }, []);
+
+  // Dashboard WS — subscribe to agent:<id> channels for live scan events
+  useEffect(() => {
+    if (agents.length === 0) return;
+    const key = agents.map((a) => a.id).sort().join(',');
+    if (key === agentIdsKeyRef.current) return;
+    agentIdsKeyRef.current = key;
+
+    // Close existing connection before opening a new one
+    if (dashWsRef.current) {
+      dashWsRef.current.close();
+      dashWsRef.current = null;
+    }
+
+    let ws: WebSocket;
+    fetch('/api/auth/token')
+      .then((r) => r.json())
+      .then((data: { access_token?: string }) => {
+        if (!data.access_token) return;
+        const wsBase = window.location.origin
+          .replace('http://', 'ws://')
+          .replace('https://', 'wss://');
+        ws = new WebSocket(`${wsBase}/ws/dashboard?token=${data.access_token}`);
+        dashWsRef.current = ws;
+
+        ws.onopen = () => {
+          ws.send(JSON.stringify({
+            type: 'subscribe',
+            channels: agents.map((a) => `agent:${a.id}`),
+          }));
+        };
+
+        ws.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'ping') return;
+            const ch: string = msg.channel ?? '';
+            if (!ch.startsWith('agent:')) return;
+            const event = msg.event ?? {};
+            const agentId: string = event.agent_id ?? '';
+            if (event.type === 'scan_started') {
+              _inFlightScans.add(agentId);
+              setScanResults((r) => ({ ...r, [agentId]: 'scanning' }));
+            } else if (event.type === 'scan_complete') {
+              _inFlightScans.delete(agentId);
+              const partial: ScanResult = {
+                score: event.score,
+                risk: event.risk,
+                summary: event.summary,
+                findings: event.findings ?? [],
+                http_probes: event.http_probes ?? { tls: '', auth_required: '', reachable: false },
+                scanned_at: event.scanned_at ?? new Date().toISOString(),
+              };
+              setScanResults((r) => ({ ...r, [agentId]: partial }));
+              reload();
+            } else if (event.type === 'scan_failed') {
+              _inFlightScans.delete(agentId);
+              setScanResults((r) => {
+                const n = { ...r };
+                delete n[agentId];
+                return n;
+              });
+              alert(`Scan failed: ${event.error ?? 'unknown error'}`);
+            }
+          } catch { /* ignore parse errors */ }
+        };
+
+        ws.onerror = () => { /* silent — scan still works, just no live update */ };
+      })
+      .catch(() => { /* auth fetch failed — scan still works */ });
+
+    return () => {
+      if (dashWsRef.current) {
+        dashWsRef.current.close();
+        dashWsRef.current = null;
+      }
+      agentIdsKeyRef.current = '';
+    };
+  }, [agents]);
 
   function openCreate() {
     setEditing(null);
@@ -278,6 +399,20 @@ export default function AdminAgentsPage() {
     }
   }
 
+  async function handleScan(agent: Agent) {
+    _inFlightScans.add(agent.id);
+    setScanResults((r) => ({ ...r, [agent.id]: 'scanning' }));
+    setScanModal(null);
+    try {
+      await themApi.scanAgent(agent.id);
+      // Result arrives via WS — no further action needed here
+    } catch (e: unknown) {
+      _inFlightScans.delete(agent.id);
+      setScanResults((r) => { const n = { ...r }; delete n[agent.id]; return n; });
+      alert(e instanceof Error ? e.message : 'Scan failed');
+    }
+  }
+
   async function handleRowDiscover(agent: Agent) {
     setRowDiscoverState((r) => ({ ...r, [agent.id]: 'discovering' }));
     try {
@@ -347,6 +482,7 @@ export default function AdminAgentsPage() {
           50% { box-shadow: 0 0 0 6px rgba(124,58,237,0); }
         }
         .save-pulse { animation: pulse-border 1.4s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
       `}</style>
       <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--tm-bg)' }}>
         <Sidebar />
@@ -435,13 +571,35 @@ export default function AdminAgentsPage() {
                         </span>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
-                        <span style={{
-                          fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px',
-                          background: agent.enabled ? 'rgba(0,118,80,.12)' : 'rgba(107,114,128,.1)',
-                          color: agent.enabled ? '#005b3d' : '#6b7280',
-                        }}>
-                          {agent.enabled ? 'Enabled' : 'Disabled'}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
+                          <span style={{
+                            fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px',
+                            background: agent.enabled ? 'rgba(0,118,80,.12)' : 'rgba(107,114,128,.1)',
+                            color: agent.enabled ? '#005b3d' : '#6b7280',
+                          }}>
+                            {agent.enabled ? 'Enabled' : 'Disabled'}
+                          </span>
+                          {/* Security score badge */}
+                          {(() => {
+                            const sr = scanResults[agent.id];
+                            if (!sr) return null;
+                            if (sr === 'scanning') return (
+                              <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: 'rgba(167,139,250,.1)', color: '#a78bfa', animation: 'pulse 1.5s ease-in-out infinite' }}>
+                                🛡️ Scanning…
+                              </span>
+                            );
+                            const { bg, color } = riskColors(sr.risk);
+                            return (
+                              <button
+                                onClick={() => setScanModal({ agent, result: sr })}
+                                style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '4px', background: bg, color, border: 'none', cursor: 'pointer' }}
+                                title="Click to view security report"
+                              >
+                                🛡️ {sr.score} · {sr.risk}
+                              </button>
+                            );
+                          })()}
+                        </div>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
@@ -452,6 +610,13 @@ export default function AdminAgentsPage() {
                               fontSize: '12px', color: '#a78bfa', opacity: rowDiscoverState[agent.id] ? 0.6 : 1,
                             }}>
                               {rowDiscoverState[agent.id] ? 'Discovering…' : 'Discover'}
+                            </button>
+                            <button onClick={() => handleScan(agent)} disabled={scanResults[agent.id] === 'scanning'} style={{
+                              padding: '5px 12px', borderRadius: '6px', border: '1px solid rgba(34,197,94,.4)',
+                              background: 'transparent', cursor: scanResults[agent.id] === 'scanning' ? 'not-allowed' : 'pointer',
+                              fontSize: '12px', color: '#16a34a', opacity: scanResults[agent.id] === 'scanning' ? 0.6 : 1,
+                            }}>
+                              {scanResults[agent.id] === 'scanning' ? '🛡️ Scanning…' : '🛡️ Scan'}
                             </button>
                             <button onClick={() => handleTest(agent)} disabled={testResults[agent.id] === 'testing'} style={{
                               padding: '5px 12px', borderRadius: '6px', border: '1px solid var(--tm-border)',
@@ -699,6 +864,102 @@ export default function AdminAgentsPage() {
                     {applyingDiscover ? 'Saving…' : 'Save Changes'}
                   </button>
                 )}
+              </div>
+            </Modal>
+          );
+        })()}
+
+        {/* Security scan detail modal */}
+        {scanModal && (() => {
+          const { agent, result } = scanModal;
+          const { bg, color } = riskColors(result.risk);
+          return (
+            <Modal wide title={`Security Report — ${agent.display_name}`} onClose={() => setScanModal(null)}>
+              {/* Score + risk header */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '20px' }}>
+                <div style={{
+                  width: '72px', height: '72px', borderRadius: '50%', flexShrink: 0,
+                  background: bg, color, display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <span style={{ fontSize: '22px', fontWeight: 800, lineHeight: 1 }}>{result.score}</span>
+                  <span style={{ fontSize: '9px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>/ 100</span>
+                </div>
+                <div>
+                  <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '4px', background: bg, color, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    {result.risk} risk
+                  </span>
+                  <p style={{ fontSize: '15px', color: 'var(--tm-text)', marginTop: '8px', lineHeight: 1.5, fontWeight: 500 }}>
+                    {result.summary}
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                {/* Left: findings */}
+                <div>
+                  <SectionLabel>Findings</SectionLabel>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {result.findings.map((f, i) => {
+                      const si = statusIcon(f.status);
+                      const rc = riskColors(f.risk);
+                      return (
+                        <div key={i} style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--tm-border)', background: 'var(--tm-surface-2)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                            <span style={{ fontSize: '14px', color: si.color, fontWeight: 700 }}>{si.icon}</span>
+                            <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--tm-text)', flex: 1 }}>{f.label}</span>
+                            <span style={{ fontSize: '9px', fontWeight: 700, padding: '1px 6px', borderRadius: '3px', background: rc.bg, color: rc.color, textTransform: 'uppercase' }}>{f.risk}</span>
+                          </div>
+                          <p style={{ fontSize: '12px', color: 'var(--tm-text-muted)', margin: '0 0 4px 22px', lineHeight: 1.4 }}>{f.detail}</p>
+                          {f.recommendation !== 'No action needed.' && (
+                            <p style={{ fontSize: '11px', color: '#60a5fa', margin: '0 0 0 22px', lineHeight: 1.4 }}>→ {f.recommendation}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Right: HTTP probes + meta */}
+                <div>
+                  <SectionLabel>HTTP Probes</SectionLabel>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '20px' }}>
+                    {[
+                      { label: 'TLS', value: result.http_probes.tls },
+                      { label: 'Auth Required', value: result.http_probes.auth_required },
+                      { label: 'Reachable', value: result.http_probes.reachable ? 'pass' : 'fail' },
+                    ].map(({ label, value }) => {
+                      const pass = value === 'pass' || value === true;
+                      return (
+                        <div key={label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', borderRadius: '6px', background: 'var(--tm-surface-2)', border: '1px solid var(--tm-border)' }}>
+                          <span style={{ fontSize: '12px', color: 'var(--tm-text-muted)' }}>{label}</span>
+                          <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '3px', background: pass ? 'rgba(0,118,80,.12)' : 'rgba(220,38,38,.12)', color: pass ? '#005b3d' : '#dc2626' }}>
+                            {pass ? '✓ pass' : '✗ fail'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <SectionLabel>Scanned</SectionLabel>
+                  <p style={{ fontSize: '12px', color: 'var(--tm-text-muted)', marginBottom: '20px' }}>
+                    {timeAgo(result.scanned_at)} — {new Date(result.scanned_at).toLocaleString()}
+                  </p>
+
+                  <SectionLabel>Agent</SectionLabel>
+                  <p style={{ fontSize: '12px', color: 'var(--tm-text-muted)' }}>
+                    <code style={{ background: 'var(--tm-surface-2)', padding: '2px 6px', borderRadius: '4px' }}>{agent.slug}</code>
+                    <br />
+                    <span style={{ wordBreak: 'break-all' }}>{agent.endpoint_url}</span>
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--tm-border)' }}>
+                <button onClick={() => setScanModal(null)} style={{ padding: '8px 20px', borderRadius: '8px', border: '1px solid var(--tm-border)', background: 'transparent', cursor: 'pointer', fontSize: '14px', color: 'var(--tm-text)' }}>Close</button>
+                <button onClick={() => handleScan(agent)} disabled={scanResults[agent.id] === 'scanning'} style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: '#16a34a', color: '#fff', cursor: 'pointer', fontSize: '14px', fontWeight: 600, opacity: scanResults[agent.id] === 'scanning' ? 0.6 : 1 }}>
+                  🛡️ Re-scan
+                </button>
               </div>
             </Modal>
           );

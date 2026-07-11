@@ -41,6 +41,9 @@ def _is_valid_channel(ch: str) -> bool:
     # allow "run:<uuid>" dynamic per-run channels
     if ch.startswith("run:") and len(ch) > 4:
         return True
+    # allow "agent:<id>" dynamic per-agent channels (scan events, test results, etc.)
+    if ch.startswith("agent:") and len(ch) > 6:
+        return True
     return False
 
 
@@ -144,7 +147,7 @@ async def ws_dashboard(websocket: WebSocket):
     requested = set(msg.get("channels", []))
     channels = [ch for ch in requested if _is_valid_channel(ch)]
     if not channels:
-        await websocket.send_json({"type": "error", "message": "No valid channels. Use: runs, agents, metrics, run:<uuid>"})
+        await websocket.send_json({"type": "error", "message": "No valid channels. Use: runs, agents, metrics, run:<uuid>, agent:<id>"})
         await websocket.close(code=4000)
         return
 
