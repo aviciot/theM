@@ -49,12 +49,15 @@ _DASH_RUN_PREFIX = "them:dash:run:"
 _DASH_RUNS_CHANNEL = "them:dash:runs"
 
 
-async def _publish_dash(run_id: str, event: dict) -> None:
+async def _publish_dash(run_id: str, event: dict, context_id: Optional[str] = None) -> None:
     if db_module.redis_client is None:
         return
     try:
         data = json.dumps(event)
         await db_module.redis_client.publish(f"{_DASH_RUN_PREFIX}{run_id}", data)
+        # Also publish to context channel so bridge can subscribe before run_id is known
+        if context_id:
+            await db_module.redis_client.publish(f"{_DASH_RUN_PREFIX}{context_id}:ctx", data)
         summary = {"run_id": run_id, **{k: v for k, v in event.items() if k != "input"}}
         await db_module.redis_client.publish(_DASH_RUNS_CHANNEL, json.dumps(summary))
     except Exception as exc:
@@ -243,16 +246,38 @@ async def init_run_activity(
             seq=0,
         )
 
-    await _publish_dash(str(actual_run_id), {
+    actual_run_id_str = str(actual_run_id)
+    root_task_id_str = str(root_task.id)
+
+    await _publish_dash(actual_run_id_str, {
         "type": "run_start",
         "orchestrator": orchestrator_name,
         "goal": user_message,
-        "task_id": str(root_task.id),
+        "task_id": root_task_id_str,
         "context_id": context_id,
-    })
+    }, context_id=context_id)
 
-    logger.info("init_run: run created", run_id=str(actual_run_id), root_task_id=str(root_task.id))
-    return {"run_id": str(actual_run_id), "root_task_id": str(root_task.id)}
+    # Publish the ready event to the context channel so bridge can bootstrap
+    if db_module.redis_client is not None:
+        try:
+            ready_event = json.dumps({
+                "type": "ready",
+                "run_id": actual_run_id_str,
+                "task_id": root_task_id_str,
+                "context_id": context_id,
+            })
+            await db_module.redis_client.publish(
+                f"{_DASH_RUN_PREFIX}{context_id}:ctx", ready_event
+            )
+            # Also publish to run-specific token channel so the bridge can switch
+            await db_module.redis_client.publish(
+                f"{_DASH_RUN_PREFIX}{actual_run_id_str}:tokens", ready_event
+            )
+        except Exception as exc:
+            logger.warning("init_run: ready event publish failed", error=str(exc))
+
+    logger.info("init_run: run created", run_id=actual_run_id_str, root_task_id=root_task_id_str)
+    return {"run_id": actual_run_id_str, "root_task_id": root_task_id_str}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

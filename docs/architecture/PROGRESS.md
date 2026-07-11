@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 1 | Infrastructure — Temporal server, worker, UI | ✅ Complete | Containers in `temporal` profile |
 | 2 | Port core loop to Workflow + Activity | ✅ Complete | UnsandboxedWorkflowRunner; DB init at startup |
-| 3 | Token streaming + bridge integration | 🔄 Pending | |
+| 3 | Token streaming + bridge integration | ✅ Complete | Dual-channel Redis (ctx + run), TEMPORAL_ENABLED flag |
 | 4 | Remaining agents (vision, docu-writer, debate) | 🔄 Pending | |
 | 5 | Human-in-the-loop Signal-based pause/resume | 🔄 Pending | |
 | 6 | Cutover — remove reaper, sticky sessions | 🔄 Pending | |
@@ -121,9 +121,27 @@ docker exec them-worker python3 /tmp/test_temporal_workflow.py
 
 ---
 
-## Phase 3 — Bridge Integration 🔄
+## Phase 3 — Bridge Integration ✅
 
-*Not started*
+**Completed**: 2026-07-11
+
+### What was done
+
+- `app/temporal/bridge_client.py` — two functions: `start_orchestration_workflow()` (starts or attaches to existing workflow), `stream_run_events()` (dual-phase Redis subscription: context channel → run-specific channel), `cancel_workflow()`
+- `app/routers/ws_orchestrator.py` — `TEMPORAL_ENABLED` flag, `_run_temporal()` and `_run_legacy()` helpers, cancel propagates to `workflow_handle.cancel()`
+- `app/routers/apps.py` — same flag in REST fire-and-forget, SSE, and WS entry points
+
+### Key design decisions
+
+- Bridge subscribes to `them:dash:run:{context_id}:ctx` first (known upfront) to receive `ready` event with `run_id`
+- Then switches to `them:dash:run:{run_id}:tokens` for all subsequent events (tokens, tool_start, tool_done, done)
+- `init_run_activity` publishes `ready` event to both channels so the switch is seamless
+- `TEMPORAL_ENABLED=false` (default) leaves all existing paths 100% unchanged — legacy branch is unmodified code
+
+### Validation
+
+- Tests 10, 11, 15: 64 passed, 0 failures
+- Bridge imports compile cleanly; `_TEMPORAL_ENABLED=False` by default so no behavior change
 
 ---
 

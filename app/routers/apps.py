@@ -39,6 +39,16 @@ from app.services.token_cache import validate_bearer_token
 from app.edges.sse_edge import SSEEdge
 from app.utils.logger import logger
 
+# Temporal feature flag — read once at import time
+def _temporal_enabled() -> bool:
+    try:
+        from app.config import Settings
+        return Settings().TEMPORAL_ENABLED
+    except Exception:
+        return False
+
+_TEMPORAL_ENABLED = _temporal_enabled()
+
 router = APIRouter(tags=["apps"])
 
 _DEFAULT_DEADLINE_MINUTES = 30
@@ -226,21 +236,37 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
         )
         await task_store.transition(db, task_row.id, "working")
 
+    orch_name_for_task = orch.name
+
     async def _run():
         run_error: Optional[str] = None
         try:
-            async with db_module.AsyncSessionLocal() as run_db:
-                async for event in task_runner_run(
-                    orchestrator_name=orch.name,
+            if _TEMPORAL_ENABLED:
+                from app.temporal.bridge_client import start_orchestration_workflow, stream_run_events
+                handle, _ = await start_orchestration_workflow(
+                    orchestrator_name=orch_name_for_task,
                     user_message=body.message,
                     user_id=user_id,
                     token_payload=token_payload,
-                    db=run_db,
                     context_id=context_id,
-                ):
-                    if event.get("type") == "error":
-                        run_error = event.get("message")
-                        break
+                    session_id=uuid.uuid4(),
+                )
+                result = await handle.result()
+                if result.get("status") != "completed":
+                    run_error = result.get("error")
+            else:
+                async with db_module.AsyncSessionLocal() as run_db:
+                    async for event in task_runner_run(
+                        orchestrator_name=orch_name_for_task,
+                        user_message=body.message,
+                        user_id=user_id,
+                        token_payload=token_payload,
+                        db=run_db,
+                        context_id=context_id,
+                    ):
+                        if event.get("type") == "error":
+                            run_error = event.get("message")
+                            break
         except Exception as exc:
             run_error = str(exc)
         try:
@@ -384,17 +410,33 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
 
     async def _run_and_stream():
         try:
-            async with db_module.AsyncSessionLocal() as run_db:
-                async for event in task_runner_run(
+            if _TEMPORAL_ENABLED:
+                from app.temporal.bridge_client import start_orchestration_workflow, stream_run_events
+                handle, _ = await start_orchestration_workflow(
                     orchestrator_name=orch_name,
                     user_message=message,
                     user_id=user_id,
                     token_payload=token_payload,
-                    db=run_db,
-                    session_id=session_id,
                     context_id=ctx_id,
-                ):
-                    await edge.emit(event)
+                    session_id=session_id,
+                )
+                await stream_run_events(
+                    context_id=str(ctx_id),
+                    workflow_handle=handle,
+                    emit_fn=edge.emit,
+                )
+            else:
+                async with db_module.AsyncSessionLocal() as run_db:
+                    async for event in task_runner_run(
+                        orchestrator_name=orch_name,
+                        user_message=message,
+                        user_id=user_id,
+                        token_payload=token_payload,
+                        db=run_db,
+                        session_id=session_id,
+                        context_id=ctx_id,
+                    ):
+                        await edge.emit(event)
         except Exception as exc:
             logger.error("apps sse_entry error", slug=slug, error=str(exc))
             await edge.emit({"type": "error", "message": str(exc)})
@@ -494,22 +536,73 @@ async def ws_entry(slug: str, websocket: WebSocket):
     session_id = uuid.uuid4()
 
     try:
-        async with db_module.AsyncSessionLocal() as db:
-            async for event in task_runner_run(
+        if _TEMPORAL_ENABLED:
+            from app.temporal.bridge_client import (
+                cancel_workflow,
+                start_orchestration_workflow,
+                stream_run_events,
+            )
+            handle, workflow_id = await start_orchestration_workflow(
                 orchestrator_name=orchestrator_name,
                 user_message=user_message,
                 user_id=user_id,
                 token_payload=token_payload,
-                db=db,
-                session_id=session_id,
                 context_id=context_id,
-            ):
+                session_id=session_id,
+            )
+            cancel_evt = asyncio.Event()
+
+            async def _ws_emit(event: dict) -> None:
                 try:
                     await websocket.send_json(event)
-                except WebSocketDisconnect:
-                    return
                 except Exception:
-                    return
+                    cancel_evt.set()
+
+            async def _ws_cancel_listener():
+                while True:
+                    try:
+                        raw_cancel = await websocket.receive_json()
+                        if raw_cancel.get("type") == "cancel":
+                            cancel_evt.set()
+                            return
+                    except (WebSocketDisconnect, Exception):
+                        return
+
+            stream_t = asyncio.ensure_future(
+                stream_run_events(
+                    context_id=str(context_id),
+                    workflow_handle=handle,
+                    emit_fn=_ws_emit,
+                    cancel_event=cancel_evt,
+                )
+            )
+            cancel_t = asyncio.ensure_future(_ws_cancel_listener())
+            done, pending = await asyncio.wait([stream_t, cancel_t], return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if cancel_evt.is_set():
+                await cancel_workflow(workflow_id)
+        else:
+            async with db_module.AsyncSessionLocal() as db:
+                async for event in task_runner_run(
+                    orchestrator_name=orchestrator_name,
+                    user_message=user_message,
+                    user_id=user_id,
+                    token_payload=token_payload,
+                    db=db,
+                    session_id=session_id,
+                    context_id=context_id,
+                ):
+                    try:
+                        await websocket.send_json(event)
+                    except WebSocketDisconnect:
+                        return
+                    except Exception:
+                        return
     except WebSocketDisconnect:
         pass
     except Exception as exc:
