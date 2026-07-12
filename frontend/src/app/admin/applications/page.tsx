@@ -78,6 +78,54 @@ const CANVAS_STYLES = `
     font-family: inherit;
     box-sizing: border-box;
   }
+  /* Tooltip */
+  .nl-tooltip {
+    position: relative;
+  }
+  .nl-tooltip .nl-tip {
+    display: none;
+    position: absolute;
+    left: calc(100% + 10px);
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(8,18,36,0.97);
+    border: 1px solid rgba(0,240,255,0.22);
+    border-radius: 8px;
+    padding: 8px 11px;
+    width: 220px;
+    z-index: 999;
+    pointer-events: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  .nl-tooltip:hover .nl-tip {
+    display: block;
+  }
+  /* Section subscroll */
+  .nl-section-list {
+    max-height: 258px; /* ~6 items × 43px */
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0,240,255,0.2) transparent;
+  }
+  .nl-section-list::-webkit-scrollbar { width: 4px; }
+  .nl-section-list::-webkit-scrollbar-track { background: transparent; }
+  .nl-section-list::-webkit-scrollbar-thumb { background: rgba(0,240,255,0.2); border-radius: 4px; }
+  .nl-section-list::-webkit-scrollbar-thumb:hover { background: rgba(0,240,255,0.4); }
+  /* Resize handle */
+  .nl-resize-handle {
+    width: 4px;
+    flex-shrink: 0;
+    cursor: col-resize;
+    background: transparent;
+    transition: background 150ms ease;
+    position: relative;
+    z-index: 10;
+  }
+  .nl-resize-handle:hover,
+  .nl-resize-handle.dragging {
+    background: rgba(0,240,255,0.35);
+  }
 `;
 
 // ── Node Components ──────────────────────────────────────────────────────────
@@ -297,11 +345,68 @@ function buildNodesFromApp(
   return { nodes, edges };
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function agentIconForLibrary(a: Agent): string {
+  const s = (a.icon || a.slug || '').toLowerCase();
+  if (s.includes('vision') || s.includes('map'))  return 'visibility';
+  if (s.includes('code') || s.includes('coder'))  return 'code';
+  if (s.includes('doc') || s.includes('write'))   return 'description';
+  if (s.includes('search') || s.includes('research')) return 'search';
+  if (s.includes('security') || s.includes('scan')) return 'security';
+  if (s.includes('echo'))  return 'record_voice_over';
+  if (s.includes('slow'))  return 'hourglass_bottom';
+  if (s.includes('stream')) return 'stream';
+  return 'smart_toy';
+}
+
+const EP_META: Record<string, { emoji: string; title: string; desc: string }> = {
+  websocket: { emoji: '⚡', title: 'WebSocket', desc: 'Full-duplex, persistent connection. Client and server can send messages at any time. Best for chat, real-time collaboration, and interactive agents.' },
+  sse:       { emoji: '📡', title: 'Server-Sent Events', desc: 'One-way server→client stream over HTTP. Lightweight, works through proxies. Best for dashboards, notifications, and read-only agent output.' },
+};
+
+function trunc(s: string | null | undefined, n = 120) {
+  if (!s) return '—';
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
 // ── Node Library panel ────────────────────────────────────────────────────────
-function NodeLibrary({ orchestrators, agents }: { orchestrators: OrchestratorFull[]; agents: Agent[] }) {
+function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
+  orchestrators: OrchestratorFull[];
+  agents: Agent[];
+  width: number;
+  onWidthChange: (w: number) => void;
+}) {
   const [openEP, setOpenEP] = useState(true);
   const [openOrch, setOpenOrch] = useState(true);
   const [openAgents, setOpenAgents] = useState(true);
+  const dragging = useRef(false);
+  const startX = useRef(0);
+  const startW = useRef(0);
+
+  function onResizeMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    dragging.current = true;
+    startX.current = e.clientX;
+    startW.current = width;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(ev: MouseEvent) {
+      if (!dragging.current) return;
+      const delta = ev.clientX - startX.current;
+      const next = Math.min(480, Math.max(200, startW.current + delta));
+      onWidthChange(next);
+    }
+    function onUp() {
+      dragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
 
   function dragItem(e: DragEvent, nodeType: string, nodeData: object) {
     e.dataTransfer.setData('nodeType', nodeType);
@@ -324,97 +429,133 @@ function NodeLibrary({ orchestrators, agents }: { orchestrators: OrchestratorFul
         marginBottom: open ? 8 : 0,
       }}>
         {label}
-        <span className="material-icons" style={{ fontSize: 14, color: C.textMuted, transition: 'transform 0.15s', transform: open ? 'rotate(180deg)' : 'none' }}>expand_more</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, transition: 'transform 0.15s', transform: open ? 'rotate(180deg)' : 'none' }}>expand_more</span>
       </button>
     );
   }
 
   return (
-    <div style={{
-      width: 280, flexShrink: 0, height: '100%', overflowY: 'auto',
-      ...glass, borderRight: `1px solid ${C.glassBorder}`, padding: '16px 14px',
-      display: 'flex', flexDirection: 'column', gap: 20,
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', paddingBottom: 8, borderBottom: `1px solid ${C.outlineVariant}` }}>
-        Node Library
+    <div style={{ display: 'flex', height: '100%', flexShrink: 0 }}>
+      {/* Panel body */}
+      <div style={{
+        width, height: '100%', overflowY: 'auto',
+        ...glass, borderRight: 'none', padding: '16px 14px',
+        display: 'flex', flexDirection: 'column', gap: 20,
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', paddingBottom: 8, borderBottom: `1px solid ${C.outlineVariant}` }}>
+          Node Library
+        </div>
+
+        {/* Entry Points */}
+        <div>
+          <SectionHeader label="Entry Points" open={openEP} onToggle={() => setOpenEP(v => !v)} />
+          {openEP && (
+            <div className="nl-section-list">
+              {(['websocket', 'sse'] as const).map(ep => {
+                const meta = EP_META[ep];
+                return (
+                  <div key={ep} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
+                    <div
+                      draggable
+                      onDragStart={e => dragItem(e, 'entryPoint', { epType: ep, label: meta.title, accessMode: 'token', slug: '' })}
+                      style={{ ...itemStyle, background: C.cyanBg, borderColor: C.cyanBorder, marginBottom: 0 }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,240,255,0.1)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = C.cyanBg)}
+                    >
+                      <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>{meta.emoji}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{meta.title}</div>
+                        <div style={{ fontSize: 10, color: C.textMuted }}>Entry point</div>
+                      </div>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', opacity: 0.5 }}>drag_indicator</span>
+                    </div>
+                    <div className="nl-tip">
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.cyan, marginBottom: 4 }}>{meta.title}</div>
+                      <div style={{ fontSize: 11, color: '#cbd5e1', lineHeight: 1.5 }}>{meta.desc}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Orchestrators */}
+        <div>
+          <SectionHeader label="Orchestrators" open={openOrch} onToggle={() => setOpenOrch(v => !v)} />
+          {openOrch && (
+            <div className="nl-section-list">
+              {orchestrators.filter(o => o.enabled).map(o => (
+                <div key={o.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
+                  <div
+                    draggable
+                    onDragStart={e => dragItem(e, 'orchestrator', { orchestratorId: o.id, name: o.name, displayName: o.display_name, model: o.llm_model, maxParallelTools: o.max_parallel_tools })}
+                    style={{ ...itemStyle, background: C.purpleBg, borderColor: 'rgba(208,188,255,0.2)', marginBottom: 0 }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(87,27,193,0.2)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = C.purpleBg)}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.purple, flexShrink: 0 }}>hub</span>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.display_name}</div>
+                      <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {o.llm_model ?? o.name}
+                      </div>
+                    </div>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }}>drag_indicator</span>
+                  </div>
+                  <div className="nl-tip">
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.purple, marginBottom: 4 }}>{o.display_name}</div>
+                    {o.llm_model && <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', marginBottom: 6 }}>{o.llm_model}</div>}
+                    <div style={{ fontSize: 11, color: '#cbd5e1', lineHeight: 1.5 }}>{trunc(o.system_prompt ?? o.name)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Agents */}
+        <div>
+          <SectionHeader label="Agents" open={openAgents} onToggle={() => setOpenAgents(v => !v)} />
+          {openAgents && (
+            <div className="nl-section-list">
+              {agents.filter(a => a.enabled).map(a => {
+                const icon = a.icon || agentIconForLibrary(a);
+                return (
+                  <div key={a.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
+                    <div
+                      draggable
+                      onDragStart={e => dragItem(e, 'agent', { agentId: a.id, name: a.slug, displayName: a.display_name, description: a.description, transport: a.transport, endpointUrl: a.endpoint_url })}
+                      style={{ ...itemStyle, background: C.greenBg, borderColor: C.greenBorder, marginBottom: 0 }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(74,222,128,0.1)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = C.greenBg)}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.green, flexShrink: 0 }}>{icon}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.display_name}</div>
+                        <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.transport}</div>
+                      </div>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }}>drag_indicator</span>
+                    </div>
+                    <div className="nl-tip">
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.green, marginBottom: 4 }}>{a.display_name}</div>
+                      <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>{a.transport} · {a.slug}</div>
+                      <div style={{ fontSize: 11, color: '#cbd5e1', lineHeight: 1.5 }}>{trunc(a.description)}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Entry Points */}
-      <div>
-        <SectionHeader label="Entry Points" open={openEP} onToggle={() => setOpenEP(v => !v)} />
-        {openEP && (
-          <div>
-            {(['websocket', 'sse'] as const).map(ep => (
-              <div key={ep}
-                draggable
-                onDragStart={e => dragItem(e, 'entryPoint', { epType: ep, label: ep === 'websocket' ? 'WebSocket' : 'SSE', accessMode: 'token', slug: '' })}
-                style={{ ...itemStyle, background: C.cyanBg, borderColor: C.cyanBorder }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,240,255,0.1)')}
-                onMouseLeave={e => (e.currentTarget.style.background = C.cyanBg)}
-              >
-                <span className="material-icons" style={{ fontSize: 18, color: C.cyan, flexShrink: 0 }}>
-                  {ep === 'sse' ? 'stream' : 'settings_input_component'}
-                </span>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{ep === 'websocket' ? 'WebSocket' : 'SSE'}</div>
-                  <div style={{ fontSize: 11, color: C.textMuted }}>Entry point</div>
-                </div>
-                <span className="material-icons" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', opacity: 0.5 }}>drag_indicator</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Orchestrators */}
-      <div>
-        <SectionHeader label="Orchestrators" open={openOrch} onToggle={() => setOpenOrch(v => !v)} />
-        {openOrch && (
-          <div>
-            {orchestrators.filter(o => o.enabled).map(o => (
-              <div key={o.id}
-                draggable
-                onDragStart={e => dragItem(e, 'orchestrator', { orchestratorId: o.id, name: o.name, displayName: o.display_name, model: o.llm_model, maxParallelTools: o.max_parallel_tools })}
-                style={{ ...itemStyle, background: C.purpleBg, borderColor: 'rgba(208,188,255,0.2)' }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(87,27,193,0.2)')}
-                onMouseLeave={e => (e.currentTarget.style.background = C.purpleBg)}
-              >
-                <span className="material-icons" style={{ fontSize: 18, color: C.purple, flexShrink: 0 }}>hub</span>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.display_name}</div>
-                  <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{o.name}</div>
-                </div>
-                <span className="material-icons" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }}>drag_indicator</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Agents */}
-      <div>
-        <SectionHeader label="Agents" open={openAgents} onToggle={() => setOpenAgents(v => !v)} />
-        {openAgents && (
-          <div>
-            {agents.filter(a => a.enabled).map(a => (
-              <div key={a.id}
-                draggable
-                onDragStart={e => dragItem(e, 'agent', { agentId: a.id, name: a.slug, displayName: a.display_name, description: a.description, transport: a.transport, endpointUrl: a.endpoint_url })}
-                style={{ ...itemStyle, background: C.greenBg, borderColor: C.greenBorder }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(74,222,128,0.1)')}
-                onMouseLeave={e => (e.currentTarget.style.background = C.greenBg)}
-              >
-                <span className="material-icons" style={{ fontSize: 18, color: C.green, flexShrink: 0 }}>smart_toy</span>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.display_name}</div>
-                  <div style={{ fontSize: 11, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.transport}</div>
-                </div>
-                <span className="material-icons" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }}>drag_indicator</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Resize handle */}
+      <div
+        className="nl-resize-handle"
+        onMouseDown={onResizeMouseDown}
+        style={{ borderRight: `1px solid ${C.glassBorder}` }}
+      />
     </div>
   );
 }
@@ -732,6 +873,7 @@ function BuilderView({
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [libWidth, setLibWidth] = useState(280);
   const rfWrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition } = useReactFlow();
 
@@ -863,7 +1005,7 @@ function BuilderView({
 
       {/* Builder area */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }} ref={rfWrapper}>
-        <NodeLibrary orchestrators={orchestrators} agents={agents} />
+        <NodeLibrary orchestrators={orchestrators} agents={agents} width={libWidth} onWidthChange={setLibWidth} />
 
         {/* Canvas */}
         <div style={{ flex: 1, position: 'relative', height: 'calc(100vh - 56px)' }}>
@@ -1042,7 +1184,7 @@ function AppCard({
   useEffect(() => {
     if (!menuOpen) return;
     function handler(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+      if (menuRef.current && !menuRef.current.contains(e.target as unknown as globalThis.Node)) setMenuOpen(false);
     }
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
