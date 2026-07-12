@@ -67,7 +67,7 @@ type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 
 interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; [key: string]: unknown; }
 interface OrchestratorData { orchestratorId: string; name: string; displayName: string; model: string | null; maxParallelTools: number; [key: string]: unknown; }
-interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; [key: string]: unknown; }
+interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; tags?: string[]; [key: string]: unknown; }
 
 interface AdvisorMessage { role: 'user' | 'assistant'; text: string; streaming?: boolean; }
 
@@ -184,6 +184,35 @@ const CANVAS_STYLES = `
 `;
 
 // ── Node Components ──────────────────────────────────────────────────────────
+// Tiny the-M logo badge for internal nodes — sits in top-left corner
+function InternalMBadge() {
+  return (
+    <div title="Internal the-M system component" style={{
+      position: 'absolute', top: 6, left: 8,
+      display: 'flex', alignItems: 'center', gap: 4,
+      pointerEvents: 'none',
+    }}>
+      <svg width="14" height="11" viewBox="0 0 1407 1118" style={{ opacity: 0.55, flexShrink: 0 }}>
+        <polygon points="88,77 184,146 244,191 281,217 336,259 355,272 358,272 367,267 372,266 379,262 391,258 433,239 440,237 473,222 513,206 520,202 546,192 555,187 558,187 446,102 433,91 421,83 403,68 397,65 392,60 331,15 318,4 274,19 264,21 246,28 239,29 217,37 214,37 211,39 201,41 189,46 186,46 154,57 151,57 148,59 141,60 138,62 104,73 101,73 98,75" fill="#a0f0d0"/>
+        <polygon points="1323,77 1313,75 1292,67 1289,67 1239,50 1236,50 1233,48 1230,48 1189,34 1176,31 1094,4 1085,12 1074,19 1053,36 959,106 855,187 876,196 881,197 973,237 980,239 1034,263 1048,268 1055,272 1059,272 1139,213 1146,209 1177,185 1188,178 1208,162 1284,107" fill="#a0f0d0"/>
+        <polygon points="70,97 70,334 71,335 72,350 76,365 104,429 108,435 180,486 184,490 245,534 345,609 339,293 305,269 281,250 252,230 182,177 179,176 153,156 150,155" fill="#a0f0d0"/>
+        <polygon points="1342,97 1252,162 1248,166 1152,236 1148,240 1126,255 1122,259 1112,265 1103,273 1074,293 1073,296 1073,317 1072,318 1072,355 1071,356 1071,415 1070,416 1070,461 1069,462 1069,526 1068,527 1067,609 1306,433 1325,392 1336,365 1341,343 1341,331 1342,330" fill="#a0f0d0"/>
+        <polygon points="682,361 576,210 381,292 532,410 577,395 580,395 586,392 595,390 613,384 616,382 622,381 664,367 667,365" fill="#a0f0d0"/>
+        <polygon points="732,361 803,384 806,386 809,386 831,394 834,394 860,404 863,404 881,410 1033,291 837,210 764,315 760,319 759,322 740,348" fill="#a0f0d0"/>
+        <polygon points="367,314 367,373 368,374 368,430 369,431 371,567 380,574 383,575 388,580 396,585 505,669 508,611 509,610 509,595 510,594 512,540 513,539 513,524 514,523 514,504 515,503 515,490 516,489 517,454 518,453 518,434 519,433 504,421 501,420 490,410 468,394 427,361 423,359 395,336 392,335" fill="#a0f0d0"/>
+        <polygon points="1046,314 894,433 895,456 896,457 896,475 897,476 897,494 898,495 898,513 899,514 901,561 902,562 902,579 903,580 903,594 904,595 906,650 907,651 907,666 908,669 934,648 971,621 1041,567" fill="#a0f0d0"/>
+        <polygon points="549,424 693,539 693,534 694,533 693,532 693,377 676,382 664,387 660,387 657,389 654,389 635,396 632,396" fill="#a0f0d0"/>
+        <polygon points="864,424 815,407 812,407 791,400 779,395 776,395 721,377 721,539 732,529 736,527 752,513" fill="#a0f0d0"/>
+        <polygon points="535,446 532,511 531,512 531,531 530,532 530,546 529,547 529,567 528,568 527,600 526,601 526,616 525,617 525,634 524,635 524,650 523,651 523,662 522,663 522,682 543,697 628,763 640,771 645,776 649,778 692,812 693,809 693,799 692,798 692,793 693,792 693,572 685,567 679,561 675,559 649,537 611,508 605,502 602,501" fill="#a0f0d0"/>
+        <polygon points="878,446 721,572 721,594 720,595 720,775 721,776 720,780 721,781 721,812 752,787 756,785 816,738 892,681 891,669 890,668 890,650 889,649 889,633 888,632 888,619 887,618 885,567 884,566 884,554 883,553 883,532 882,531 882,513 881,512" fill="#a0f0d0"/>
+        <polygon points="100,461 95,488 89,506 87,509 86,515 77,534 75,541 55,582 38,613 16,647 13,656 13,662 16,670 26,679 42,685 62,690 67,693 74,700 76,705 76,720 68,743 68,749 70,755 75,763 87,770 97,772 125,772 126,771 130,772 128,775 112,781 89,784 83,791 81,797 81,805 83,811 89,818 100,824 105,829 109,836 111,843 111,860 105,889 105,910 108,922 115,933 121,939 173,974 286,1057 326,1088 345,1105 345,641" fill="#a0f0d0"/>
+        <polygon points="1312,462 1273,489 1230,522 1227,523 1143,586 1067,641 1067,1106 1080,1093 1135,1050 1138,1049 1172,1023 1235,978 1239,974 1249,968 1253,964 1256,963 1270,952 1292,938 1301,928 1305,920 1307,912 1308,897 1307,896 1307,888 1301,858 1302,839 1307,829 1312,824 1323,818 1328,813 1331,806 1331,796 1330,792 1324,784 1311,783 1297,780 1286,776 1282,773 1284,771 1287,772 1316,772 1328,769 1335,765 1340,760 1344,750 1344,742 1336,717 1336,706 1339,699 1344,694 1353,689 1371,685 1386,679 1394,673 1399,663 1399,655 1397,649 1372,610 1339,546 1321,500 1321,497 1316,484" fill="#a0f0d0"/>
+      </svg>
+      <span style={{ fontSize: 8, fontWeight: 700, color: '#a0f0d0', letterSpacing: 0.8, textTransform: 'uppercase', opacity: 0.7 }}>internal</span>
+    </div>
+  );
+}
+
 // Change 2: EntryPointNode with inline SVG icon + font fixes + hover animation
 function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean }; selected?: boolean }) {
   const slugMissing = !data.slug;
@@ -285,17 +314,21 @@ function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointDa
   );
 }
 
+const INTERNAL_ORCHESTRATOR_NAMES = new Set(['workflow_advisor']);
+
 // Change 3: OrchestratorNode with inline SVG icon + font fixes + hover animation
 function OrchestratorNode({ id, data, selected }: { id: string; data: OrchestratorData & { _scanning?: boolean }; selected?: boolean }) {
+  const isInternal = INTERNAL_ORCHESTRATOR_NAMES.has(data.name);
   return (
     <div
       style={{
         minWidth: 200, width: 'fit-content', padding: '16px 20px', borderRadius: 12,
-        background: C.purpleBg,
-        border: `2px solid ${data._scanning ? C.cyan : selected ? '#e8d5ff' : C.purpleBorder}`,
-        boxShadow: data._scanning ? '0 0 24px rgba(0,240,255,0.7)' : selected ? '0 0 24px rgba(208,188,255,0.4)' : C.purpleGlow,
+        background: isInternal ? 'rgba(0,160,120,0.08)' : C.purpleBg,
+        border: `2px solid ${data._scanning ? C.cyan : selected ? (isInternal ? '#a0f0d0' : '#e8d5ff') : (isInternal ? 'rgba(160,240,208,0.35)' : C.purpleBorder)}`,
+        boxShadow: data._scanning ? '0 0 24px rgba(0,240,255,0.7)' : selected ? (isInternal ? '0 0 24px rgba(160,240,208,0.3)' : '0 0 24px rgba(208,188,255,0.4)') : (isInternal ? '0 0 10px rgba(160,240,208,0.08)' : C.purpleGlow),
         fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
         transformOrigin: 'center', position: 'relative',
+        paddingTop: isInternal ? '24px' : '16px',
       }}
       onMouseEnter={e => {
         e.currentTarget.style.transform = 'scale(1.03)';
@@ -324,22 +357,23 @@ function OrchestratorNode({ id, data, selected }: { id: string; data: Orchestrat
       <Handle type="target" position={Position.Top} style={{ background: C.purple, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
       <Handle type="source" position={Position.Bottom} style={{ background: C.purple, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(208,188,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.purple} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {isInternal && <InternalMBadge />}
+        <div style={{ width: 32, height: 32, borderRadius: 8, background: isInternal ? 'rgba(160,240,208,0.12)' : 'rgba(208,188,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isInternal ? '#a0f0d0' : C.purple} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M2 20h20"/>
             <path d="M5 20l2-8 5 4 5-4 2 8"/>
-            <circle cx="12" cy="4" r="2" fill={C.purple}/>
+            <circle cx="12" cy="4" r="2" fill={isInternal ? '#a0f0d0' : C.purple}/>
           </svg>
         </div>
         <div>
           <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: 'Inter, sans-serif' }}>{data.displayName}</div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: C.purple, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2, fontFamily: 'Inter, sans-serif' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: isInternal ? '#a0f0d0' : C.purple, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2, fontFamily: 'Inter, sans-serif' }}>
             Orchestrator
           </div>
         </div>
       </div>
       {data.model && (
-        <div style={{ marginTop: 10, padding: '4px 8px', borderRadius: 6, background: 'rgba(208,188,255,0.08)', fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
+        <div style={{ marginTop: 10, padding: '4px 8px', borderRadius: 6, background: isInternal ? 'rgba(160,240,208,0.06)' : 'rgba(208,188,255,0.08)', fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
           {data.model}
         </div>
       )}
@@ -349,15 +383,17 @@ function OrchestratorNode({ id, data, selected }: { id: string; data: Orchestrat
 
 // Change 4: AgentNode with inline SVG icon + font fixes + hover animation
 function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _scanning?: boolean }; selected?: boolean }) {
+  const isInternal = data.tags?.includes('internal') ?? false;
   return (
     <div
       style={{
         minWidth: 160, maxWidth: 220, width: 'fit-content', padding: '12px 16px', borderRadius: 12,
-        background: C.greenBg,
-        border: `1px solid ${data._scanning ? C.cyan : selected ? C.green : C.greenBorder}`,
-        boxShadow: data._scanning ? '0 0 24px rgba(0,240,255,0.7)' : selected ? '0 0 20px rgba(74,222,128,0.25)' : '0 0 10px rgba(74,222,128,0.08)',
+        background: isInternal ? 'rgba(0,160,120,0.08)' : C.greenBg,
+        border: `1px solid ${data._scanning ? C.cyan : selected ? (isInternal ? '#a0f0d0' : C.green) : (isInternal ? 'rgba(160,240,208,0.35)' : C.greenBorder)}`,
+        boxShadow: data._scanning ? '0 0 24px rgba(0,240,255,0.7)' : selected ? '0 0 20px rgba(160,240,208,0.25)' : '0 0 10px rgba(160,240,208,0.08)',
         fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
         transformOrigin: 'center', position: 'relative',
+        paddingTop: isInternal ? '22px' : '12px',
       }}
       onMouseEnter={e => {
         e.currentTarget.style.transform = 'scale(1.03)';
@@ -383,14 +419,15 @@ function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _sc
           title="Delete node (or press Delete key)"
         >✕</button>
       )}
-      <Handle type="target" position={Position.Top} style={{ background: C.green, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
+      {isInternal && <InternalMBadge />}
+      <Handle type="target" position={Position.Top} style={{ background: isInternal ? '#a0f0d0' : C.green, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        <div style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(74,222,128,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.green} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <div style={{ width: 28, height: 28, borderRadius: 7, background: isInternal ? 'rgba(160,240,208,0.12)' : 'rgba(74,222,128,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isInternal ? '#a0f0d0' : C.green} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <rect x="7" y="7" width="10" height="12" rx="2"/>
             <path d="M10 7V5a2 2 0 0 1 4 0v2"/>
-            <circle cx="10.5" cy="12" r="1" fill={C.green}/>
-            <circle cx="13.5" cy="12" r="1" fill={C.green}/>
+            <circle cx="10.5" cy="12" r="1" fill={isInternal ? '#a0f0d0' : C.green}/>
+            <circle cx="13.5" cy="12" r="1" fill={isInternal ? '#a0f0d0' : C.green}/>
             <path d="M10 15.5h4"/>
           </svg>
         </div>
@@ -398,7 +435,7 @@ function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _sc
           <div style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'Inter, sans-serif' }}>
             {data.displayName}
           </div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: C.green, letterSpacing: 1, textTransform: 'uppercase', marginTop: 1, fontFamily: 'Inter, sans-serif' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: isInternal ? '#a0f0d0' : C.green, letterSpacing: 1, textTransform: 'uppercase', marginTop: 1, fontFamily: 'Inter, sans-serif' }}>
             Agent
           </div>
           {data.description && (
@@ -498,6 +535,7 @@ function buildNodesFromApp(
           description: agent.description,
           transport: agent.transport,
           endpointUrl: agent.endpoint_url,
+          tags: agent.tags ?? [],
         } satisfies AgentData,
       });
       edges.push({ id: `e_orch_agent_${i}`, source: orchId, target: aId, animated: true, style: EDGE_STYLE });
@@ -648,7 +686,7 @@ function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
           <SectionHeader label="Orchestrators" open={openOrch} onToggle={() => setOpenOrch(v => !v)} />
           {openOrch && (
             <div className="nl-section-list">
-              {orchestrators.filter(o => o.enabled && o.name !== 'workflow_advisor').map(o => (
+              {orchestrators.filter(o => o.enabled && !INTERNAL_ORCHESTRATOR_NAMES.has(o.name)).map(o => (
                 <div key={o.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
                   <div
                     draggable
