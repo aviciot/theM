@@ -27,7 +27,6 @@ const TOKEN_CSS = `
       0 8px 32px rgba(0,0,0,0.4),
       0 2px 8px rgba(0,0,0,0.25),
       inset 0 1px 0 rgba(255,255,255,0.04);
-    overflow: hidden;
   }
   .token-row {
     display: grid;
@@ -136,6 +135,7 @@ export default function TokensPage() {
   const [form, setForm]                   = useState({ label: '', user_id: 1, orchestrator_id: '' });
   const [saving, setSaving]               = useState(false);
   const [error, setError]                 = useState('');
+  const [expandedId, setExpandedId]       = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -229,18 +229,34 @@ export default function TokensPage() {
               )}
 
               {/* Token rows */}
-              {list.map((t) => (
-                <div key={t.id} className="token-row">
+              {list.map((t) => {
+                const expanded = expandedId === t.id;
+                const orchFull = orchestrators.find((o) => o.id === t.orchestrator_id);
+                return (
+                <div key={t.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <div
+                  className="token-row"
+                  style={{ cursor: 'default', borderBottom: 'none', userSelect: 'none' }}
+                >
 
-                  {/* Icon + label + user */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                  {/* Icon + label + user — click to expand */}
+                  <div
+                    onClick={() => setExpandedId(expanded ? null : t.id)}
+                    title={expanded ? 'Click to collapse' : 'Click to expand'}
+                    style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, cursor: 'pointer' }}
+                  >
                     <div style={{
                       width: 38, height: 38, borderRadius: 10, flexShrink: 0,
-                      background: 'radial-gradient(circle at 30% 30%, rgba(245,158,11,0.22), transparent 70%)',
-                      border: '1px solid rgba(245,158,11,0.38)',
+                      background: expanded
+                        ? 'radial-gradient(circle at 30% 30%, rgba(0,209,255,0.18), transparent 70%)'
+                        : 'radial-gradient(circle at 30% 30%, rgba(245,158,11,0.22), transparent 70%)',
+                      border: expanded ? '1px solid rgba(0,209,255,0.4)' : '1px solid rgba(245,158,11,0.38)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      transition: 'background 200ms ease, border-color 200ms ease',
                     }}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 18, color: AMBER }}>key</span>
+                      <span className="material-symbols-outlined" style={{ fontSize: 18, color: expanded ? CYAN : AMBER }}>
+                        {expanded ? 'expand_less' : 'key'}
+                      </span>
                     </div>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontWeight: 700, fontSize: 14, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -305,7 +321,33 @@ export default function TokensPage() {
                     </button>
                   </div>
                 </div>
-              ))}
+
+                {/* Detail drawer */}
+                {expanded && (
+                  <div style={{
+                    padding: '14px 20px 16px 72px',
+                    background: 'rgba(0,209,255,0.025)',
+                    borderTop: '1px solid rgba(0,209,255,0.1)',
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                    gap: '12px 24px',
+                  }}>
+                    {[
+                      { label: 'Token ID', value: t.id, mono: true },
+                      { label: 'Created', value: fmt(t.created_at), mono: true },
+                      { label: 'Orchestrator', value: orchFull?.display_name ?? (t.orchestrator_id ? t.orchestrator_id.slice(0, 16) + '…' : 'All orchestrators'), mono: false },
+                      { label: 'User ID', value: `#${t.user_id}`, mono: true },
+                    ].map(({ label, value, mono }) => (
+                      <div key={label}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 4 }}>{label}</div>
+                        <div style={{ fontSize: 12, color: TEXT, fontFamily: mono ? 'JetBrains Mono, monospace' : 'Inter, sans-serif', wordBreak: 'break-all' }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                </div>
+                );
+              })}
 
               {/* Add new row at bottom */}
               <div className="token-new-row" onClick={openCreate}>
