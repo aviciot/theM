@@ -67,6 +67,40 @@ interface AgentData { agentId: string; name: string; displayName: string; descri
 
 // ── Change 1: CSS animations + font inheritance ───────────────────────────────
 const CANVAS_STYLES = `
+  /* Force all text bright — builder lives on a dark bg, globals.css light-mode vars bleed in */
+  .builder-root, .builder-root * {
+    color: inherit;
+  }
+  .builder-root input,
+  .builder-root select,
+  .builder-root textarea {
+    color: #e2e8f0 !important;
+    background-color: #0d1c2d !important;
+    -webkit-text-fill-color: #e2e8f0 !important;
+  }
+  .builder-root input::placeholder,
+  .builder-root textarea::placeholder {
+    color: #4a6580 !important;
+    -webkit-text-fill-color: #4a6580 !important;
+  }
+  .builder-root input[style*="color: #f59e0b"],
+  .builder-root input[style*="color:#f59e0b"] {
+    color: #f59e0b !important;
+    -webkit-text-fill-color: #f59e0b !important;
+  }
+  /* Slug input on entry-point node */
+  .ep-slug-set {
+    color: #e2e8f0 !important;
+    -webkit-text-fill-color: #e2e8f0 !important;
+  }
+  .ep-slug-missing {
+    color: #f59e0b !important;
+    -webkit-text-fill-color: #f59e0b !important;
+  }
+  .ep-slug-missing::placeholder {
+    color: rgba(245,158,11,0.5) !important;
+    -webkit-text-fill-color: rgba(245,158,11,0.5) !important;
+  }
   @keyframes handlePulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(0,240,255,0.4); }
     50% { box-shadow: 0 0 0 5px rgba(0,240,255,0); }
@@ -179,7 +213,7 @@ function EntryPointNode({ data, selected }: { data: EntryPointData; selected?: b
           {slugMissing ? '⚠ Slug required' : 'Slug'}
         </div>
         <input
-          className="nodrag"
+          className={`nodrag ${slugMissing ? 'ep-slug-missing' : 'ep-slug-set'}`}
           value={data.slug}
           onChange={() => {/* updated via Properties panel */}}
           placeholder="my-app"
@@ -189,7 +223,6 @@ function EntryPointNode({ data, selected }: { data: EntryPointData; selected?: b
             fontFamily: 'JetBrains Mono, monospace', boxSizing: 'border-box',
             background: 'rgba(0,0,0,0.25)',
             border: `1px solid ${slugMissing ? 'rgba(245,158,11,0.5)' : 'rgba(0,240,255,0.2)'}`,
-            color: slugMissing ? '#f59e0b' : '#e2e8f0',
             cursor: 'default',
           }}
           title="Click the node then set slug in the Properties panel →"
@@ -1128,7 +1161,7 @@ function BuilderView({
   const chain = analyzeChain(nodes, edges);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
+    <div className="builder-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
       {/* Top bar */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 16, padding: '0 24px', height: 56, flexShrink: 0,
