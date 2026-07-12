@@ -118,7 +118,7 @@ class WorkflowAdvisorExecutor(AgentExecutor):
                 art_event = TaskArtifactUpdateEvent()
                 art_event.task_id = context.task_id
                 art_event.context_id = context.context_id
-                art_event.append_index = chunk_index
+                art_event.append = chunk_index > 0
                 art_event.last_chunk = False
 
                 artifact = art_event.artifact
@@ -135,7 +135,7 @@ class WorkflowAdvisorExecutor(AgentExecutor):
             final_event = TaskArtifactUpdateEvent()
             final_event.task_id = context.task_id
             final_event.context_id = context.context_id
-            final_event.append_index = chunk_index
+            final_event.append = True
             final_event.last_chunk = True
 
             final_artifact = final_event.artifact
