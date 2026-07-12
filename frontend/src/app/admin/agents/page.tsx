@@ -135,10 +135,10 @@ function agentCategory(agent: Agent): string {
   const slug = agent.slug.toLowerCase();
   const transport = agent.transport.toLowerCase();
   if (slug.includes('vision')) return 'Vision';
-  if (slug.includes('cod') || slug.includes('coder')) return 'Coding';
-  if (slug.includes('research')) return 'Research';
+  if (slug.includes('security') || slug.includes('scanner')) return 'Security';
+  if (slug.includes('debate') || slug.includes('judge') || slug.includes('evidence') || slug.includes('logic') || slug.includes('creative')) return 'Research';
+  if (slug.includes('cod') || slug.includes('coder') || slug.includes('docu')) return 'Coding';
   if (transport === 'a2a' || transport === 'a2a_async') return 'A2A';
-  // check first skill tag
   const firstTag = (agent.skills?.[0]?.tags ?? [])[0];
   if (firstTag) return firstTag.charAt(0).toUpperCase() + firstTag.slice(1);
   return 'Agent';
@@ -146,27 +146,50 @@ function agentCategory(agent: Agent): string {
 
 function categoryBadgeStyle(category: string): React.CSSProperties {
   switch (category) {
-    case 'A2A':
-      return { background: 'rgba(99,102,241,0.2)', color: '#818cf8' };
-    case 'Research':
-      return { background: 'rgba(168,85,247,0.2)', color: '#c084fc' };
-    case 'Coding':
-      return { background: 'rgba(0,209,255,0.15)', color: '#00d1ff' };
-    case 'Vision':
-      return { background: 'rgba(59,130,246,0.2)', color: '#60a5fa' };
-    default:
-      return { background: 'rgba(100,116,139,0.2)', color: '#94a3b8' };
+    case 'A2A':      return { background: 'rgba(99,102,241,0.18)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)' };
+    case 'Research': return { background: 'rgba(168,85,247,0.18)', color: '#c084fc', border: '1px solid rgba(168,85,247,0.3)' };
+    case 'Coding':   return { background: 'rgba(0,209,255,0.12)',  color: '#00d1ff', border: '1px solid rgba(0,209,255,0.28)' };
+    case 'Vision':   return { background: 'rgba(59,130,246,0.18)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)' };
+    case 'Security': return { background: 'rgba(245,158,11,0.15)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.28)' };
+    default:         return { background: 'rgba(100,116,139,0.18)', color: '#94a3b8', border: '1px solid rgba(100,116,139,0.28)' };
   }
 }
 
-function iconAccentColor(agent: Agent): string {
-  const category = agentCategory(agent);
+function categoryAccent(category: string): { color: string; glow: string; border: string } {
   switch (category) {
-    case 'A2A': return '#6366f1';
-    case 'Coding': return '#00d1ff';
-    case 'Vision': return '#3b82f6';
-    case 'Research': return '#a855f7';
-    default: return '#a855f7';
+    case 'A2A':      return { color: '#818cf8', glow: 'rgba(99,102,241,0.25)',  border: 'rgba(99,102,241,0.45)' };
+    case 'Coding':   return { color: '#00d1ff', glow: 'rgba(0,209,255,0.22)',   border: 'rgba(0,209,255,0.42)' };
+    case 'Vision':   return { color: '#60a5fa', glow: 'rgba(59,130,246,0.22)',  border: 'rgba(59,130,246,0.42)' };
+    case 'Research': return { color: '#c084fc', glow: 'rgba(168,85,247,0.22)',  border: 'rgba(168,85,247,0.42)' };
+    case 'Security': return { color: '#fbbf24', glow: 'rgba(245,158,11,0.22)',  border: 'rgba(245,158,11,0.42)' };
+    default:         return { color: '#94a3b8', glow: 'rgba(100,116,139,0.18)', border: 'rgba(100,116,139,0.35)' };
+  }
+}
+
+// Unique icon per agent slug/category
+function agentIcon(agent: Agent, category: string): string {
+  const s = agent.slug.toLowerCase();
+  if (s.includes('vision'))   return 'visibility';
+  if (s.includes('security') || s.includes('scanner')) return 'security';
+  if (s.includes('echo'))     return 'wifi_tethering';
+  if (s.includes('slow'))     return 'hourglass_empty';
+  if (s.includes('stream'))   return 'stream';
+  if (s.includes('judge'))    return 'gavel';
+  if (s.includes('debate'))   return 'forum';
+  if (s.includes('evidence')) return 'fact_check';
+  if (s.includes('logic'))    return 'psychology';
+  if (s.includes('creative')) return 'auto_awesome';
+  if (s.includes('docu'))     return 'description';
+  if (s.includes('cod') || s.includes('coder')) return 'code';
+  if (s.includes('research')) return 'biotech';
+  if (s.includes('assistant')) return 'assistant';
+  switch (category) {
+    case 'A2A':      return 'hub';
+    case 'Coding':   return 'terminal';
+    case 'Vision':   return 'image_search';
+    case 'Research': return 'manage_search';
+    case 'Security': return 'shield';
+    default:         return 'smart_toy';
   }
 }
 
@@ -302,8 +325,9 @@ function AgentCard({
   const [showOverflow, setShowOverflow] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
   const category = agentCategory(agent);
-  const accent = iconAccentColor(agent);
+  const accent = categoryAccent(category);
   const catStyle = categoryBadgeStyle(category);
+  const icon = agentIcon(agent, category);
 
   useEffect(() => {
     if (!showOverflow) return;
@@ -324,185 +348,227 @@ function AgentCard({
   }
 
   return (
-    <article className="glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', borderRadius: '32px', position: 'relative' }}>
-      {/* Header: icon + name + enabled badge */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
-          {/* Icon tile */}
-          <div style={{
-            width: '64px', height: '64px', flexShrink: 0,
-            background: '#0a1525',
-            border: `1px solid ${accent}`,
-            borderRadius: '16px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: `0 0 12px ${accent}33`,
-          }}>
-            <span className="material-symbols-outlined" style={{ fontSize: '28px', color: accent }}>smart_toy</span>
-          </div>
-          <div style={{ paddingTop: '4px' }}>
-            <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#fff', margin: '0 0 6px 0', lineHeight: 1.2 }}>{agent.display_name}</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <span style={{
-                fontSize: '10px', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-                padding: '2px 8px', borderRadius: '4px', display: 'inline-block',
-                background: agent.enabled ? 'rgba(52,211,153,0.1)' : 'rgba(107,114,128,0.1)',
-                color: agent.enabled ? '#34d399' : '#6b7280',
-                border: `1px solid ${agent.enabled ? 'rgba(52,211,153,0.2)' : 'rgba(107,114,128,0.2)'}`,
-              }}>
-                {agent.enabled ? 'Enabled' : 'Disabled'}
-              </span>
-              {/* Security score badge */}
-              {scanResult && scanResult !== 'scanning' && (() => {
-                const rc = riskColors(scanResult.risk);
-                return (
-                  <button
-                    className="score-badge"
-                    onClick={onOpenScanModal}
-                    style={{ background: rc.bg, borderColor: rc.border, color: rc.color }}
-                    title="Click to view security report"
-                  >
-                    <span style={{ fontSize: '11px' }}>🛡</span>
-                    {scanResult.score} · {scanResult.risk}
-                  </button>
-                );
-              })()}
-              {scanResult === 'scanning' && (
-                <span className="scanning-pill">
-                  <span style={{ fontSize: '11px' }}>🛡</span> Scanning…
-                </span>
-              )}
-            </div>
-          </div>
+    <article className="glass-card" style={{
+      padding: '22px', display: 'flex', flexDirection: 'column', gap: '14px',
+      borderRadius: '20px', position: 'relative',
+    }}>
+
+      {/* ── Header row: icon + name/badges + overflow ── */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+
+        {/* Icon tile — polished gradient with category glow */}
+        <div style={{
+          width: '56px', height: '56px', flexShrink: 0, borderRadius: '14px',
+          background: `radial-gradient(circle at 30% 25%, ${accent.glow}, transparent 65%),
+                       linear-gradient(145deg, rgba(20,32,52,0.96), rgba(8,16,30,0.96))`,
+          border: `1px solid ${accent.border}`,
+          boxShadow: `0 0 18px ${accent.glow}, inset 0 1px 0 rgba(255,255,255,0.07)`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: '26px', color: accent.color }}>{icon}</span>
         </div>
 
-        {/* Overflow menu button */}
-        <div ref={overflowRef} style={{ position: 'relative' }}>
-          <button
-            onClick={() => setShowOverflow(v => !v)}
-            style={{
-              width: '36px', height: '36px', borderRadius: '8px', cursor: 'pointer',
-              background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.05)',
-              color: '#94a3b8', fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >⋮</button>
+        {/* Name + status badges */}
+        <div style={{ flex: 1, minWidth: 0, paddingTop: '2px' }}>
+          <h3 style={{
+            fontSize: '16px', fontWeight: 700, color: '#e2e8f0', margin: '0 0 6px 0',
+            lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>{agent.display_name}</h3>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            {/* Enabled / disabled chip */}
+            <span style={{
+              fontSize: '9px', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase',
+              padding: '2px 7px', borderRadius: '9999px', display: 'inline-flex', alignItems: 'center', gap: '4px',
+              background: agent.enabled ? 'rgba(16,185,129,0.12)' : 'rgba(100,116,139,0.12)',
+              color: agent.enabled ? '#34d399' : '#64748b',
+              border: `1px solid ${agent.enabled ? 'rgba(16,185,129,0.28)' : 'rgba(100,116,139,0.22)'}`,
+            }}>
+              {agent.enabled && <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#34d399', boxShadow: '0 0 5px #34d399', display: 'inline-block' }} />}
+              {agent.enabled ? 'Enabled' : 'Disabled'}
+            </span>
+
+            {/* Category badge */}
+            <span style={{
+              fontSize: '9px', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+              padding: '2px 7px', borderRadius: '9999px', display: 'inline-block',
+              ...catStyle,
+            }}>{category}</span>
+          </div>
+
+          {/* Security score badge — shown below name when scan result exists */}
+          {scanResult && scanResult !== 'scanning' && (() => {
+            const rc = riskColors(scanResult.risk);
+            return (
+              <button onClick={onOpenScanModal} title="View security report" style={{
+                marginTop: '5px', display: 'inline-flex', alignItems: 'center', gap: '4px',
+                fontSize: '9px', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
+                padding: '2px 8px', borderRadius: '9999px', cursor: 'pointer',
+                background: rc.bg, border: `1px solid ${rc.border}`, color: rc.color,
+                boxShadow: `0 0 8px ${rc.glow}`,
+              }}>
+                <span style={{ fontSize: '10px' }}>🛡</span>{scanResult.score} · {scanResult.risk} risk
+              </button>
+            );
+          })()}
+          {scanResult === 'scanning' && (
+            <span style={{
+              marginTop: '5px', display: 'inline-flex', alignItems: 'center', gap: '4px',
+              fontSize: '9px', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
+              padding: '2px 8px', borderRadius: '9999px',
+              background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.28)', color: '#a78bfa',
+              animation: 'pulse 1.6s ease-in-out infinite',
+            }}>
+              <span style={{ fontSize: '10px' }}>🛡</span> Scanning…
+            </span>
+          )}
+        </div>
+
+        {/* Three-dot overflow menu */}
+        <div ref={overflowRef} style={{ position: 'relative', flexShrink: 0 }}>
+          <button onClick={() => setShowOverflow(v => !v)} style={{
+            width: '32px', height: '32px', borderRadius: '8px', cursor: 'pointer',
+            background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)',
+            color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'color 150ms ease, border-color 150ms ease',
+          }}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
+            </svg>
+          </button>
           {showOverflow && (
             <div style={{
-              position: 'absolute', top: '42px', right: 0, zIndex: 20,
-              background: '#0c1425', border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: '10px', overflow: 'hidden', minWidth: '140px',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+              position: 'absolute', top: '36px', right: 0, zIndex: 20,
+              background: '#0c1830', border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: '10px', overflow: 'hidden', minWidth: '130px',
+              boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
             }} onClick={() => setShowOverflow(false)}>
-              <button onClick={onEdit} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'none', border: 'none', color: '#cbd5e1', fontSize: '13px', cursor: 'pointer' }}>Edit</button>
-              <button onClick={onDiscover} disabled={isDiscovering} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'none', border: 'none', color: '#a78bfa', fontSize: '13px', cursor: 'pointer', opacity: isDiscovering ? 0.5 : 1 }}>
-                {isDiscovering ? 'Discovering…' : 'Discover'}
+              <button onClick={onEdit} style={{ width: '100%', padding: '9px 14px', textAlign: 'left', background: 'none', border: 'none', color: '#cbd5e1', fontSize: '12px', cursor: 'pointer' }}>
+                ✎ Edit
               </button>
-              <button onClick={onDelete} style={{ width: '100%', padding: '10px 14px', textAlign: 'left', background: 'none', border: 'none', color: '#f87171', fontSize: '13px', cursor: 'pointer' }}>Delete</button>
+              <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '0 8px' }} />
+              <button onClick={onDelete} style={{ width: '100%', padding: '9px 14px', textAlign: 'left', background: 'none', border: 'none', color: '#f87171', fontSize: '12px', cursor: 'pointer' }}>
+                ✕ Delete
+              </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* Category badge */}
-      <div>
-        <span style={{
-          fontSize: '10px', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
-          padding: '2px 8px', borderRadius: '4px', display: 'inline-block',
-          ...catStyle,
-        }}>{category}</span>
-      </div>
-
-      {/* Description */}
-      <p style={{ fontSize: '13px', color: '#94a3b8', lineHeight: 1.6, margin: 0, minHeight: '48px' }}>
-        {agent.description
-          ? (agent.description.length > 120 ? agent.description.slice(0, 120) + '…' : agent.description)
-          : <span style={{ opacity: 0.4 }}>No description</span>
-        }
+      {/* ── Description — 2 lines max ── */}
+      <p style={{
+        fontSize: '13px', color: '#64748b', lineHeight: 1.55, margin: 0,
+        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+        minHeight: '40px',
+      }}>
+        {agent.description || <span style={{ opacity: 0.35 }}>No description</span>}
       </p>
 
-      {/* Stats grid */}
-      <div style={{
-        display: 'grid', gridTemplateColumns: '1fr 1fr',
-        gap: '16px', padding: '16px', borderRadius: '12px',
-        background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.05)',
-      }}>
-        <div>
-          <p style={{ fontSize: '13px', color: '#cbd5e1', margin: '0 0 2px 0', fontWeight: 500 }}>
-            {agent.skills && agent.skills.length > 0
-              ? `${agent.skills.length} skill${agent.skills.length !== 1 ? 's' : ''}`
-              : '—'
-            }
-          </p>
-          <p style={{ fontSize: '10px', color: '#475569', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: 0 }}>skills</p>
+      {/* ── Stats: two compact equal tiles ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        {/* Skills tile */}
+        <div style={{
+          padding: '10px 12px', borderRadius: '10px',
+          background: 'rgba(0,0,0,0.28)', border: '1px solid rgba(255,255,255,0.05)',
+          display: 'flex', alignItems: 'center', gap: '8px',
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: '#475569', flexShrink: 0 }}>hub</span>
+          <div>
+            <p style={{ fontSize: '15px', fontWeight: 700, color: '#e2e8f0', margin: 0, lineHeight: 1 }}>
+              {agent.skills && agent.skills.length > 0 ? agent.skills.length : '—'}
+            </p>
+            <p style={{ fontSize: '9px', color: '#475569', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>skills</p>
+          </div>
         </div>
-        <div>
-          <p style={{ fontSize: '13px', color: '#cbd5e1', margin: '0 0 2px 0', fontWeight: 500 }}>
-            {agent.card_fetched_at ? timeAgo(agent.card_fetched_at) : '—'}
-          </p>
-          <p style={{ fontSize: '10px', color: '#475569', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: 0 }}>last sync</p>
+        {/* Last sync tile */}
+        <div style={{
+          padding: '10px 12px', borderRadius: '10px',
+          background: 'rgba(0,0,0,0.28)', border: '1px solid rgba(255,255,255,0.05)',
+          display: 'flex', alignItems: 'center', gap: '8px',
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: '#475569', flexShrink: 0 }}>sync</span>
+          <div>
+            <p style={{ fontSize: '13px', fontWeight: 700, color: '#e2e8f0', margin: 0, lineHeight: 1, whiteSpace: 'nowrap' }}>
+              {agent.card_fetched_at ? timeAgo(agent.card_fetched_at) : '—'}
+            </p>
+            <p style={{ fontSize: '9px', color: '#475569', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>last sync</p>
+          </div>
         </div>
       </div>
 
-      {/* Endpoint */}
+      {/* ── Endpoint field ── */}
       <div>
-        <label style={{ fontSize: '10px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: '6px' }}>Endpoint</label>
+        <p style={{ fontSize: '9px', fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 5px 0' }}>Endpoint</p>
         <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.05)',
-          borderRadius: '8px', padding: '8px 12px',
+          display: 'flex', alignItems: 'center',
+          background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.05)',
+          borderRadius: '8px', padding: '7px 10px', gap: '6px',
         }}>
-          <span style={{ fontSize: '11px', color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace', flex: 1, marginRight: '8px' }}>
+          <span style={{
+            fontSize: '11px', color: '#475569', fontFamily: 'monospace',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+          }}>
             {agent.endpoint_url || '—'}
           </span>
-          <button onClick={copyEndpoint} style={{
-            background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0,
-            color: copied ? '#34d399' : '#64748b', fontSize: '13px', padding: '2px',
-          }} title="Copy endpoint">
-            {copied ? '✓' : '⧉'}
+          <button onClick={copyEndpoint} title="Copy" style={{
+            background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, padding: '2px 4px',
+            color: copied ? '#34d399' : '#334155', fontSize: '14px',
+            transition: 'color 150ms ease',
+          }}>
+            {copied
+              ? <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>check</span>
+              : <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>content_copy</span>
+            }
           </button>
         </div>
       </div>
 
-      {/* Test result inline */}
+      {/* ── Test result inline ── */}
       {testResult && testResult !== 'testing' && (() => {
         const r = testResult as { ok: boolean; latency_ms: number; detail: string };
         return (
           <div style={{
             fontSize: '11px', padding: '6px 10px', borderRadius: '6px',
-            background: r.ok ? 'rgba(52,211,153,0.08)' : 'rgba(220,38,38,0.08)',
-            border: `1px solid ${r.ok ? 'rgba(52,211,153,0.2)' : 'rgba(220,38,38,0.2)'}`,
-            color: r.ok ? '#4edea3' : '#f87171',
+            background: r.ok ? 'rgba(16,185,129,0.08)' : 'rgba(220,38,38,0.08)',
+            border: `1px solid ${r.ok ? 'rgba(16,185,129,0.2)' : 'rgba(220,38,38,0.2)'}`,
+            color: r.ok ? '#34d399' : '#f87171',
           }}>
             {r.ok ? `✓ ${r.latency_ms}ms — ` : '✗ '}{r.detail}
           </div>
         );
       })()}
 
-      {/* Actions: Test (primary cyan), Open (ghost), Scan shield */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '8px', marginTop: 'auto' }}>
+      {/* ── Action buttons: Test / Discover / Scan — equal width ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginTop: 'auto', paddingTop: '4px' }}>
+        {/* Test — primary cyan */}
         <button
           onClick={onTest}
           disabled={testResult === 'testing'}
-          className="card-btn-primary"
-          style={{ flex: 1 }}
+          className="card-action-btn card-action-btn--primary"
         >
-          {testResult === 'testing' ? 'Testing…' : '▶ Test'}
+          <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>play_arrow</span>
+          {testResult === 'testing' ? 'Testing…' : 'Test'}
         </button>
-        <a
-          href={agent.endpoint_url || '#'}
-          target="_blank"
-          rel="noreferrer"
-          className="card-btn-ghost"
-          style={{ flex: 1, textDecoration: 'none', textAlign: 'center' }}
+
+        {/* Discover — secondary dark */}
+        <button
+          onClick={onDiscover}
+          disabled={isDiscovering}
+          className="card-action-btn card-action-btn--secondary"
         >
-          ↗ Open
-        </a>
+          <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>radar</span>
+          {isDiscovering ? 'Loading…' : 'Discover'}
+        </button>
+
+        {/* Security Scan — secondary dark with shield tint */}
         <button
           onClick={onScan}
           disabled={scanResult === 'scanning'}
-          className="scan-btn-card"
+          className="card-action-btn card-action-btn--scan"
           title="Security scan"
         >
-          🛡
+          <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>security</span>
+          {scanResult === 'scanning' ? 'Scanning…' : 'Scan'}
         </button>
       </div>
     </article>
@@ -858,83 +924,89 @@ export default function AdminAgentsPage() {
   return (
     <AuthGuard>
       <style>{`
-        /* Glass card */
+        /* ── Glass card ─────────────────────────────────────── */
         .glass-card {
-          background: linear-gradient(135deg, rgba(20,30,50,0.5) 0%, rgba(10,15,30,0.5) 100%);
-          border: 1px solid rgba(255,255,255,0.05);
-          backdrop-filter: blur(10px);
+          background:
+            linear-gradient(160deg, rgba(255,255,255,0.032) 0%, rgba(255,255,255,0.006) 40%, rgba(0,0,0,0.06) 100%),
+            rgba(10,18,32,0.92);
+          border: 1px solid rgba(255,255,255,0.07);
+          backdrop-filter: blur(12px);
+          box-shadow:
+            0 8px 32px rgba(0,0,0,0.4),
+            0 2px 8px rgba(0,0,0,0.25),
+            inset 0 1px 0 rgba(255,255,255,0.04);
           transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
         }
         .glass-card:hover {
-          border-color: rgba(0,209,255,0.2);
-          box-shadow: 0 0 20px rgba(0,209,255,0.08);
-          transform: translateY(-2px);
+          border-color: rgba(0,209,255,0.22);
+          box-shadow:
+            0 14px 40px rgba(0,0,0,0.48),
+            0 4px 12px rgba(0,0,0,0.28),
+            0 0 24px rgba(0,209,255,0.07),
+            inset 0 1px 0 rgba(255,255,255,0.055);
+          transform: translateY(-3px);
         }
 
-        /* Deploy card hover */
+        /* ── Deploy card hover ─────────────────────────────── */
         .deploy-card:hover {
-          border-color: rgba(99,102,241,0.8) !important;
-          background: rgba(99,102,241,0.05) !important;
+          border-color: rgba(99,102,241,0.7) !important;
+          background: rgba(99,102,241,0.04) !important;
         }
 
-        /* Card primary button (cyan) */
-        .card-btn-primary {
-          padding: 10px 0;
-          border-radius: 8px;
-          border: none;
-          cursor: pointer;
-          background: #00d1ff;
-          color: #000;
-          font-size: 12px;
-          font-weight: 700;
-          box-shadow: 0 0 15px rgba(0,209,255,0.4);
-          transition: box-shadow 200ms ease, transform 200ms ease;
-        }
-        .card-btn-primary:hover:not(:disabled) {
-          box-shadow: 0 0 22px rgba(0,209,255,0.55);
-          transform: translateY(-1px);
-        }
-        .card-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
-
-        /* Card ghost button */
-        .card-btn-ghost {
-          padding: 10px 0;
-          border-radius: 8px;
-          border: 1px solid rgba(255,255,255,0.05);
-          cursor: pointer;
-          background: rgba(30,41,59,0.5);
-          color: #fff;
-          font-size: 12px;
-          font-weight: 700;
-          display: block;
-          transition: border-color 200ms ease, background 200ms ease;
-        }
-        .card-btn-ghost:hover {
-          border-color: rgba(255,255,255,0.12);
-          background: rgba(30,41,59,0.8);
-        }
-
-        /* Scan button on card */
-        .scan-btn-card {
-          width: 40px;
-          height: 40px;
-          border-radius: 8px;
-          border: 1px solid rgba(0,209,255,0.25);
-          background: rgba(0,209,255,0.08);
-          color: #00d1ff;
-          font-size: 16px;
-          cursor: pointer;
+        /* ── Card action buttons — equal-width three-column ── */
+        .card-action-btn {
           display: flex;
           align-items: center;
           justify-content: center;
-          transition: border-color 200ms ease, background 200ms ease;
-          flex-shrink: 0;
+          gap: 5px;
+          padding: 9px 4px;
+          border-radius: 8px;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.01em;
+          cursor: pointer;
+          transition: border-color 180ms ease, background 180ms ease,
+                      box-shadow 180ms ease, transform 180ms ease;
+          white-space: nowrap;
         }
-        .scan-btn-card:hover:not(:disabled) {
-          border-color: rgba(0,209,255,0.5);
-          background: rgba(0,209,255,0.15);
+        .card-action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        /* Primary — solid cyan */
+        .card-action-btn--primary {
+          background: #00d1ff;
+          color: #021520;
+          border: none;
+          box-shadow: 0 0 14px rgba(0,209,255,0.38);
         }
-        .scan-btn-card:disabled { opacity: 0.45; cursor: not-allowed; }
+        .card-action-btn--primary:hover:not(:disabled) {
+          background: #22dcff;
+          box-shadow: 0 0 22px rgba(0,209,255,0.55);
+          transform: translateY(-1px);
+        }
+
+        /* Secondary — dark ghost (Discover) */
+        .card-action-btn--secondary {
+          background: rgba(30,41,59,0.55);
+          color: #94a3b8;
+          border: 1px solid rgba(255,255,255,0.08);
+        }
+        .card-action-btn--secondary:hover:not(:disabled) {
+          border-color: rgba(129,140,248,0.45);
+          color: #818cf8;
+          background: rgba(99,102,241,0.1);
+        }
+
+        /* Scan — dark with cyan-shield tint */
+        .card-action-btn--scan {
+          background: rgba(30,41,59,0.55);
+          color: #94a3b8;
+          border: 1px solid rgba(255,255,255,0.08);
+        }
+        .card-action-btn--scan:hover:not(:disabled) {
+          border-color: rgba(0,209,255,0.42);
+          color: #00d1ff;
+          background: rgba(0,209,255,0.08);
+        }
 
         /* Legacy button classes (used in modals) */
         @keyframes pulse-border {
