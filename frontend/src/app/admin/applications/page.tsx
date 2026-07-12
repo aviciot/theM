@@ -1016,7 +1016,7 @@ const LOGO_STATES: Record<LogoState, LogoStateDef> = {
   dirty:    { opacity: 0.22, filter: 'drop-shadow(0 0 14px rgba(245,158,11,0.25))',   animation: 'logo-sway 2.5s ease-in-out infinite' },
   warning:  { opacity: 0.30, filter: 'drop-shadow(0 0 16px rgba(245,158,11,0.35))',   animation: 'logo-breathe 1.8s ease-in-out infinite' },
   error:    { opacity: 0.35, filter: 'drop-shadow(0 0 18px rgba(255,107,138,0.4))',   animation: 'logo-shake 0.5s ease-in-out' },
-  success:  { opacity: 0.9,  filter: 'drop-shadow(0 0 28px rgba(74,222,128,0.7))',    animation: 'logo-burst 1.2s ease-out forwards' },
+  success:  { opacity: 1.0,  filter: 'drop-shadow(0 0 40px rgba(74,222,128,0.9))',    animation: 'logo-burst 1.8s ease-out forwards' },
   thinking: { opacity: 0.28, filter: 'drop-shadow(0 0 16px rgba(208,188,255,0.3))',   animation: 'logo-flip 1.4s linear infinite' },
 };
 
@@ -1041,16 +1041,17 @@ const LOGO_KEYFRAMES = `
   90%     { transform: translateX(4px); }
 }
 @keyframes logo-burst {
-  0%   { transform: scale(1);    opacity: 0.08; filter: drop-shadow(0 0 28px rgba(74,222,128,0.7)); }
-  30%  { transform: scale(1.18); opacity: 1;    filter: drop-shadow(0 0 60px rgba(74,222,128,1)); }
-  60%  { transform: scale(0.96); opacity: 0.8; }
-  100% { transform: scale(1);    opacity: 0.08; filter: drop-shadow(0 0 18px rgba(0,240,255,0.18)); }
+  0%   { opacity: 0.13; filter: drop-shadow(0 0 18px rgba(0,240,255,0.18)); }
+  15%  { opacity: 1;    filter: drop-shadow(0 0 80px rgba(74,222,128,1)) drop-shadow(0 0 40px rgba(255,255,255,0.8)); }
+  100% { opacity: 0.13; filter: drop-shadow(0 0 18px rgba(0,240,255,0.18)); }
 }
 @keyframes logo-explode {
-  0%   { transform: translate(0,0) scale(1); opacity: 1; }
-  40%  { transform: translate(var(--ex), var(--ey)) scale(1.3); opacity: 0.9; }
-  70%  { transform: translate(calc(var(--ex)*1.6), calc(var(--ey)*1.6)) scale(0.8); opacity: 0.4; }
-  100% { transform: translate(0,0) scale(1); opacity: 1; }
+  0%   { transform: translate(0,0) scale(1) rotate(0deg);                                              opacity: 1; }
+  20%  { transform: translate(calc(var(--ex)*60px), calc(var(--ey)*60px)) scale(1.15) rotate(var(--rot)); opacity: 1; }
+  55%  { transform: translate(calc(var(--ex)*140px), calc(var(--ey)*140px)) scale(0.7) rotate(calc(var(--rot)*2)); opacity: 0.6; }
+  80%  { transform: translate(calc(var(--ex)*180px), calc(var(--ey)*180px)) scale(0.3) rotate(calc(var(--rot)*3)); opacity: 0.0; }
+  81%  { transform: translate(0,0) scale(0) rotate(0deg);                                              opacity: 0; }
+  100% { transform: translate(0,0) scale(1) rotate(0deg);                                              opacity: 1; }
 }
 @keyframes logo-flip {
   0%   { transform: perspective(600px) rotateY(0deg); }
@@ -1106,10 +1107,11 @@ function CanvasLogo({ state }: { state: LogoState }) {
               fillRule="evenodd"
               style={isExplode ? {
                 // @ts-ignore
-                '--ex': `${ex * 55}px`,
-                '--ey': `${ey * 55}px`,
-                animation: 'logo-explode 1.2s ease-out forwards',
-                animationDelay: `${i * 0.035}s`,
+                '--ex': ex,
+                '--ey': ey,
+                '--rot': `${(ex + ey) * 45}deg`,
+                animation: 'logo-explode 1.8s cubic-bezier(0.25,0.46,0.45,0.94) forwards',
+                animationDelay: `${i * 0.06}s`,
                 transformOrigin: 'center',
                 transformBox: 'fill-box',
               } as React.CSSProperties : undefined}
