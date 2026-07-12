@@ -1018,7 +1018,7 @@ const LOGO_STATES: Record<LogoState, LogoStateDef> = {
     color: '#00f0ff',
     opacity: 0.13,
     filter: 'drop-shadow(0 0 18px rgba(0,240,255,0.18))',
-    animation: 'logo-breathe 4s ease-in-out infinite',
+    animation: 'logo-breathe 8s ease-in-out infinite',
   },
   dirty: {
     color: '#f59e0b',
