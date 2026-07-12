@@ -1055,9 +1055,9 @@ const LOGO_STATES: Record<LogoState, LogoStateDef> = {
 
 const LOGO_KEYFRAMES = `
 @keyframes logo-breathe {
-  0%   { fill-opacity: 0.10; }
-  50%  { fill-opacity: 0.22; }
-  100% { fill-opacity: 0.10; }
+  0%   { opacity: 0.08; }
+  50%  { opacity: 0.25; }
+  100% { opacity: 0.08; }
 }
 @keyframes logo-sway {
   0%, 100% { transform: rotate3d(0,1,0,0deg); }
@@ -1074,10 +1074,10 @@ const LOGO_KEYFRAMES = `
   90%     { transform: translateX(4px); }
 }
 @keyframes logo-burst {
-  0%   { transform: scale(1);    opacity: 0.13; filter: drop-shadow(0 0 28px rgba(74,222,128,0.7)); }
+  0%   { transform: scale(1);    opacity: 0.08; filter: drop-shadow(0 0 28px rgba(74,222,128,0.7)); }
   30%  { transform: scale(1.18); opacity: 1;    filter: drop-shadow(0 0 60px rgba(74,222,128,1)); }
   60%  { transform: scale(0.96); opacity: 0.8; }
-  100% { transform: scale(1);    opacity: 0.13; filter: drop-shadow(0 0 18px rgba(0,240,255,0.18)); }
+  100% { transform: scale(1);    opacity: 0.08; filter: drop-shadow(0 0 18px rgba(0,240,255,0.18)); }
 }
 @keyframes logo-explode {
   0%   { transform: translate(0,0) scale(1); opacity: 1; }
@@ -1130,61 +1130,39 @@ function CanvasLogo({ state }: { state: LogoState }) {
     "422,133 368,96 321,126 321,335 387,286 387,269 395,263 387,257 387,242 397,235 387,228 387,213 399,206 387,197 387,184",
   ];
 
-  const isIdle = state === 'idle';
-
   return (
-    <div
-      style={{
-        position: 'absolute', inset: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        pointerEvents: 'none', zIndex: 1,
-        perspective: '600px',
-      }}
-    >
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 1 }}>
       <style>{LOGO_KEYFRAMES}</style>
-      <div
+      <svg
         key={key}
+        xmlns="http://www.w3.org/2000/svg"
+        width="720" height="576"
+        viewBox="0 0 422 336"
+        fill={def.color}
         style={{
-          animation: isIdle ? undefined : def.animation,
-          opacity: isIdle ? 1 : def.opacity,
+          animation: def.animation,
           filter: def.filter,
-          willChange: 'transform, opacity, filter',
         }}
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="720" height="576"
-          viewBox="0 0 422 336"
-          fill="none"
-        >
-          {polygons.map((pts, i) => {
-            const [ex, ey] = EXPLODE_VECTORS[i] ?? [0, 0];
-            const delay = `${i * 0.03}s`;
-            const idleStyle: React.CSSProperties = {
-              animation: 'logo-breathe 20s ease-in-out infinite',
-              animationDelay: `${i * 0.15}s`,
-            };
-            const explodeStyle: React.CSSProperties = {
-              // @ts-ignore
-              '--ex': `${ex * 55}px`,
-              '--ey': `${ey * 55}px`,
-              animation: def.polygonAnimation,
-              animationDelay: delay,
-              transformOrigin: 'center',
-              transformBox: 'fill-box',
-            };
-            return (
-              <polygon
-                key={i}
-                points={pts}
-                fill={def.color}
-                fillOpacity={isIdle ? 0.13 : 1}
-                style={isIdle ? idleStyle : def.polygonAnimation ? explodeStyle : undefined}
-              />
-            );
-          })}
-        </svg>
-      </div>
+        {polygons.map((pts, i) => {
+          const [ex, ey] = EXPLODE_VECTORS[i] ?? [0, 0];
+          return (
+            <polygon
+              key={i}
+              points={pts}
+              style={def.polygonAnimation ? {
+                // @ts-ignore
+                '--ex': `${ex * 55}px`,
+                '--ey': `${ey * 55}px`,
+                animation: def.polygonAnimation,
+                animationDelay: `${i * 0.03}s`,
+                transformOrigin: 'center',
+                transformBox: 'fill-box',
+              } as React.CSSProperties : undefined}
+            />
+          );
+        })}
+      </svg>
     </div>
   );
 }
