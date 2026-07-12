@@ -504,6 +504,7 @@ services:
     environment:
       PORT: "9600"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-claude-sonnet-4-6}"
     networks:
       - them-network
     restart: unless-stopped

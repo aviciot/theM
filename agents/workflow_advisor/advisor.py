@@ -13,7 +13,10 @@ are broken vs healthy.
 
 import asyncio
 import json
+import os
 from typing import AsyncIterator
+
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 # ── System prompt ──────────────────────────────────────────────────────────────
 #
@@ -226,7 +229,7 @@ async def stream_analysis(
     def _run_stream():
         chunks = []
         with client.messages.stream(
-            model="claude-sonnet-4-6",
+            model=ANTHROPIC_MODEL,
             max_tokens=1200,
             temperature=0.3,
             system=_SYSTEM_PROMPT,
