@@ -1,5 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback, useRef, DragEvent } from 'react';
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import { themApi, type Application, type OrchestratorFull, type Agent } from '@/lib/api';
@@ -797,10 +799,29 @@ function PropertiesPanel({
   );
 }
 
+// ── Dagre auto-layout ─────────────────────────────────────────────────────────
+const NODE_WIDTH  = 220;
+const NODE_HEIGHT = 100;
+
+function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: 'LR', nodesep: 60, ranksep: 100, marginx: 40, marginy: 40 });
+
+  nodes.forEach(n => g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
+  edges.forEach(e => g.setEdge(e.source, e.target));
+
+  dagre.layout(g);
+
+  return nodes.map(n => {
+    const pos = g.node(n.id);
+    return { ...n, position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 } };
+  });
+}
+
 // ── Canvas inner (needs ReactFlow context) ────────────────────────────────────
-// Change 5: inject styles + replace toolbar with slider + icon buttons
 function CanvasInner({
-  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge,
+  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout,
 }: {
   nodes: Node[];
   edges: Edge[];
@@ -813,6 +834,7 @@ function CanvasInner({
   setSelectedNode: (n: Node | null) => void;
   onUpdateNode: (id: string, data: Record<string, unknown>) => void;
   onDeleteEdge: (edgeId: string) => void;
+  onAutoLayout: () => void;
 }) {
   const { fitView, zoomIn, zoomOut, getZoom, setViewport, getViewport } = useReactFlow();
   const [zoom, setZoom] = useState(100);
@@ -891,6 +913,23 @@ function CanvasInner({
             <polyline points="9 21 3 21 3 15"/>
             <line x1="21" y1="3" x2="14" y2="10"/>
             <line x1="3" y1="21" x2="10" y2="14"/>
+          </svg>
+        </button>
+        <div style={{ width: 1, height: 18, background: C.outlineVariant, margin: '0 4px' }} />
+        <button
+          onClick={() => { onAutoLayout(); setTimeout(() => fitView({ padding: 0.2 }), 50); }}
+          title="Auto-arrange nodes"
+          style={iconBtn}
+          onMouseEnter={e => (e.currentTarget.style.color = C.purple)}
+          onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="3" width="6" height="6" rx="1"/>
+            <rect x="9" y="3" width="6" height="6" rx="1"/>
+            <rect x="16" y="3" width="6" height="6" rx="1"/>
+            <line x1="5" y1="9" x2="5" y2="21"/>
+            <line x1="12" y1="9" x2="12" y2="21"/>
+            <line x1="19" y1="9" x2="19" y2="21"/>
           </svg>
         </button>
       </div>
@@ -1111,6 +1150,10 @@ function BuilderView({
     setEdges(eds => eds.filter(e => e.id !== edgeId));
   }
 
+  function autoLayout() {
+    setNodes(nds => applyDagreLayout(nds, edgesRef.current));
+  }
+
   function updateNodeData(id: string, partialData: Record<string, unknown>) {
     setNodes((nds: Node[]) => nds.map((n: Node) => n.id === id ? { ...n, data: { ...n.data, ...partialData } } : n));
     setSelectedNode((prev: Node | null) => prev && prev.id === id ? { ...prev, data: { ...prev.data, ...partialData } } : prev);
@@ -1227,6 +1270,7 @@ function BuilderView({
             setSelectedNode={setSelectedNode}
             onUpdateNode={updateNodeData}
             onDeleteEdge={deleteEdge}
+            onAutoLayout={autoLayout}
           />
         </div>
 
