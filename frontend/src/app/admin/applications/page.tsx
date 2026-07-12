@@ -78,6 +78,14 @@ const CANVAS_STYLES = `
     font-family: inherit;
     box-sizing: border-box;
   }
+  .react-flow__edge:hover .react-flow__edge-path {
+    stroke-width: 3;
+    filter: drop-shadow(0 0 4px rgba(248,113,113,0.6));
+    cursor: pointer;
+  }
+  .react-flow__edge-path {
+    cursor: pointer;
+  }
   /* Tooltip */
   .nl-tooltip {
     position: relative;
@@ -181,7 +189,7 @@ function EntryPointNode({ data, selected }: { data: EntryPointData; selected?: b
             fontFamily: 'JetBrains Mono, monospace', boxSizing: 'border-box',
             background: 'rgba(0,0,0,0.25)',
             border: `1px solid ${slugMissing ? 'rgba(245,158,11,0.5)' : 'rgba(0,240,255,0.2)'}`,
-            color: slugMissing ? '#f59e0b' : C.text,
+            color: slugMissing ? '#f59e0b' : '#e2e8f0',
             cursor: 'default',
           }}
           title="Click the node then set slug in the Properties panel →"
@@ -598,13 +606,13 @@ function PropertiesPanel({
     );
   }
 
-  const labelStyle: React.CSSProperties = { fontSize: 12, color: C.textMuted, marginBottom: 4, display: 'block' };
+  const labelStyle: React.CSSProperties = { fontSize: 12, color: '#94a3b8', marginBottom: 4, display: 'block' };
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '7px 10px', borderRadius: 6,
     border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
-    color: C.text, fontSize: 13, boxSizing: 'border-box', outline: 'none',
+    color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box', outline: 'none',
   };
-  const readOnlyStyle: React.CSSProperties = { ...inputStyle, opacity: 0.6, cursor: 'default' };
+  const readOnlyStyle: React.CSSProperties = { ...inputStyle, color: '#cbd5e1', background: 'rgba(10,18,32,0.6)', cursor: 'default' };
   const fieldWrap: React.CSSProperties = { marginBottom: 14 };
 
   return (
@@ -759,7 +767,7 @@ function PropertiesPanel({
 // ── Canvas inner (needs ReactFlow context) ────────────────────────────────────
 // Change 5: inject styles + replace toolbar with slider + icon buttons
 function CanvasInner({
-  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode,
+  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge,
 }: {
   nodes: Node[];
   edges: Edge[];
@@ -771,6 +779,7 @@ function CanvasInner({
   selectedNode: Node | null;
   setSelectedNode: (n: Node | null) => void;
   onUpdateNode: (id: string, data: Record<string, unknown>) => void;
+  onDeleteEdge: (edgeId: string) => void;
 }) {
   const { fitView, zoomIn, zoomOut, getZoom, setViewport, getViewport } = useReactFlow();
   const [zoom, setZoom] = useState(100);
@@ -864,6 +873,7 @@ function CanvasInner({
         nodeTypes={NODE_TYPES}
         onNodeClick={(_evt: React.MouseEvent, node: Node) => setSelectedNode(node)}
         onPaneClick={() => setSelectedNode(null)}
+        onEdgeDoubleClick={(_evt: React.MouseEvent, edge: Edge) => onDeleteEdge(edge.id)}
         fitView
         fitViewOptions={{ padding: 0.15 }}
         style={{ background: C.bg }}
@@ -1064,6 +1074,10 @@ function BuilderView({
     setNodes((nds: Node[]) => [...nds, newNode]);
   }
 
+  function deleteEdge(edgeId: string) {
+    setEdges(eds => eds.filter(e => e.id !== edgeId));
+  }
+
   function updateNodeData(id: string, partialData: Record<string, unknown>) {
     setNodes((nds: Node[]) => nds.map((n: Node) => n.id === id ? { ...n, data: { ...n.data, ...partialData } } : n));
     setSelectedNode((prev: Node | null) => prev && prev.id === id ? { ...prev, data: { ...prev.data, ...partialData } } : prev);
@@ -1179,6 +1193,7 @@ function BuilderView({
             selectedNode={selectedNode}
             setSelectedNode={setSelectedNode}
             onUpdateNode={updateNodeData}
+            onDeleteEdge={deleteEdge}
           />
         </div>
 
