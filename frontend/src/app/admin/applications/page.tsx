@@ -446,7 +446,7 @@ function buildNodesFromApp(
           transport: agent.transport,
           endpointUrl: agent.endpoint_url,
           tags: agent.tags ?? [],
-          icon: agent.icon ?? null,
+          icon: agent.icon || agentIconForLibrary(agent),
         } satisfies AgentData,
       });
       edges.push({ id: `e_orch_agent_${i}`, source: orchId, target: aId, animated: true, style: EDGE_STYLE });
@@ -459,16 +459,7 @@ function buildNodesFromApp(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function agentIconForLibrary(a: Agent): string {
-  const s = (a.icon || a.slug || '').toLowerCase();
-  if (s.includes('vision') || s.includes('map'))  return 'visibility';
-  if (s.includes('code') || s.includes('coder'))  return 'code';
-  if (s.includes('doc') || s.includes('write'))   return 'description';
-  if (s.includes('search') || s.includes('research')) return 'search';
-  if (s.includes('security') || s.includes('scan')) return 'security';
-  if (s.includes('echo'))  return 'record_voice_over';
-  if (s.includes('slow'))  return 'hourglass_bottom';
-  if (s.includes('stream')) return 'stream';
-  return 'smart_toy';
+  return a.icon || 'smart_toy';
 }
 
 const EP_META: Record<string, { emoji: string; title: string; desc: string }> = {
@@ -637,7 +628,7 @@ function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
                   <div key={a.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
                     <div
                       draggable
-                      onDragStart={e => dragItem(e, 'agent', { agentId: a.id, name: a.slug, displayName: a.display_name, description: a.description, transport: a.transport, endpointUrl: a.endpoint_url, icon: a.icon ?? null })}
+                      onDragStart={e => dragItem(e, 'agent', { agentId: a.id, name: a.slug, displayName: a.display_name, description: a.description, transport: a.transport, endpointUrl: a.endpoint_url, icon: a.icon || agentIconForLibrary(a) })}
                       style={{ ...itemStyle, background: C.greenBg, borderColor: C.greenBorder, marginBottom: 0 }}
                       onMouseEnter={e => (e.currentTarget.style.background = 'rgba(74,222,128,0.1)')}
                       onMouseLeave={e => (e.currentTarget.style.background = C.greenBg)}
@@ -924,7 +915,7 @@ function PropertiesPanel({
           {/* Agent properties */}
           {selectedNode.type === 'agent' && propTab === 'properties' && (() => {
             const d = selectedNode.data as AgentData;
-            const icon = agentIconForLibrary({ slug: d.name, icon: null } as any);
+            const icon = d.icon || agentIconForLibrary({ slug: d.name, icon: d.icon } as any);
             return (
               <div>
                 {/* Header tile */}
@@ -1548,6 +1539,45 @@ function toSlug(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
 }
 
+// ── Entry Point Picker modal ──────────────────────────────────────────────────
+interface EpPickerEntry { epNode: Node; orchName: string; slug: string; label: string; epType: string; }
+
+function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPickerEntry[]; onSelect: (e: EpPickerEntry) => void; onClose: () => void; }) {
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam' };
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(5,20,36,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div style={{ ...glass, borderRadius: 16, padding: '28px 32px', minWidth: 360, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Choose Entry Point to Test</div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>close</span>
+          </button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {entries.map(entry => (
+            <button key={entry.slug} onClick={() => onSelect(entry)} style={{
+              padding: '12px 16px', borderRadius: 10, border: `1px solid ${C.outlineVariant}`,
+              background: C.surfaceLow, color: C.text, cursor: 'pointer', textAlign: 'left',
+              display: 'flex', alignItems: 'center', gap: 12, transition: 'border-color 0.15s, background 0.15s',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = C.cyan; e.currentTarget.style.background = 'rgba(0,240,255,0.05)'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.outlineVariant; e.currentTarget.style.background = C.surfaceLow; }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 22, color: C.cyan, flexShrink: 0 }}>{EP_MS_ICON[entry.epType] ?? 'bolt'}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{entry.label || entry.slug}</div>
+                <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', marginTop: 2 }}>{entry.slug}</div>
+                {entry.orchName && <div style={{ fontSize: 11, color: C.purple, marginTop: 2 }}>{entry.orchName}</div>}
+              </div>
+              <span className="material-symbols-outlined" style={{ fontSize: 16, color: C.textMuted, marginLeft: 'auto', flexShrink: 0 }}>arrow_forward</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Builder view ──────────────────────────────────────────────────────────────
 function BuilderView({
   app,
@@ -1572,12 +1602,14 @@ function BuilderView({
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [currentApp, setCurrentApp] = useState<Application | null>(app);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [libWidth, setLibWidth] = useState(280);
   const [appName, setAppName] = useState(app?.name ?? '');
   const [slugLocked, setSlugLocked] = useState(!!app?.slug);
   const [isDirty, setIsDirty] = useState(false);
+  const [testPickerOpen, setTestPickerOpen] = useState(false);
   const [logoState, setLogoState] = useState<LogoState>('idle');
   const logoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rfWrapper = useRef<HTMLDivElement>(null);
@@ -1839,13 +1871,49 @@ function BuilderView({
     let nodeData: Record<string, unknown>;
     try { nodeData = JSON.parse(rawData) as Record<string, unknown>; } catch { return; }
 
-    // Entry points: allow multiple, but auto-clear slug to force uniqueness
     if (nodeType === 'entryPoint') {
       nodeData = { ...nodeData, slug: '' };
     }
 
     const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-    const newNode: Node = { id: makeId(), type: nodeType, position, data: nodeData };
+    const orchId = makeId();
+    const newNode: Node = { id: orchId, type: nodeType, position, data: nodeData };
+
+    if (nodeType === 'orchestrator') {
+      const full = orchestrators.find(o => o.id === (nodeData.orchestratorId as string));
+      const connectedAgents = full ? agents.filter(a => full.allowed_agent_ids.includes(a.id)) : [];
+
+      if (connectedAgents.length > 0) {
+        const spread = Math.max(connectedAgents.length * 140, 300);
+        const startX = position.x - spread / 2 + 70;
+        const agentNodes: Node[] = connectedAgents.map((agent, i) => ({
+          id: makeId(),
+          type: 'agent',
+          position: { x: startX + i * 140, y: position.y + 160 },
+          data: {
+            agentId: agent.id,
+            name: agent.slug,
+            displayName: agent.display_name,
+            description: agent.description,
+            transport: agent.transport,
+            endpointUrl: agent.endpoint_url,
+            tags: agent.tags ?? [],
+            icon: agent.icon || agentIconForLibrary(agent),
+          } satisfies AgentData,
+        }));
+        const agentEdges: Edge[] = agentNodes.map((an, i) => ({
+          id: `e_${orchId}_agent_${i}`,
+          source: orchId,
+          target: an.id,
+          animated: true,
+          style: EDGE_STYLE,
+        }));
+        setNodes(nds => [...nds, newNode, ...agentNodes]);
+        setEdges(eds => [...eds, ...agentEdges]);
+        return;
+      }
+    }
+
     setNodes((nds: Node[]) => [...nds, newNode]);
   }
 
@@ -1888,14 +1956,16 @@ function BuilderView({
         entry_point_type: epData.epType,
         orchestrator_id: orchData.orchestratorId,
         access_policy: { mode: epData.accessMode },
-        enabled: deploy ? true : (app?.enabled ?? false),
+        enabled: deploy ? true : (currentApp?.enabled ?? false),
       };
 
-      if (app?.id) {
-        await themApi.updateApplication(app.id, body);
+      let saved: Application;
+      if (currentApp?.id) {
+        saved = await themApi.updateApplication(currentApp.id, body);
       } else {
-        await themApi.createApplication(body);
+        saved = await themApi.createApplication(body);
       }
+      setCurrentApp(saved);
       setIsDirty(false);
       triggerLogo('success', deploy ? 2500 : 1800);
       showToast(deploy ? '🚀 Application deployed!' : 'Saved successfully', true);
@@ -1908,7 +1978,34 @@ function BuilderView({
     }
   }
 
+  function handleTest() {
+    if (!currentApp?.enabled) { showToast('Deploy the application first', false); return; }
+    const epNodes = nodes.filter((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug);
+    if (epNodes.length === 0) { showToast('No entry points configured', false); return; }
+    const buildEntry = (n: Node): EpPickerEntry => {
+      const d = n.data as EntryPointData;
+      const orchEdge = edges.find((e: Edge) => e.source === n.id);
+      const orchNode = orchEdge ? nodes.find((nd: Node) => nd.id === orchEdge.target && nd.type === 'orchestrator') : undefined;
+      return { epNode: n, orchName: orchNode ? (orchNode.data as OrchestratorData).name : '', slug: d.slug, label: d.label, epType: d.epType };
+    };
+    if (epNodes.length === 1) {
+      const entry = buildEntry(epNodes[0]);
+      const url = entry.orchName ? `/admin/playground?orchestrator=${encodeURIComponent(entry.orchName)}` : '/admin/playground';
+      window.open(url, '_blank', 'noopener');
+    } else {
+      setTestPickerOpen(true);
+    }
+  }
+
   const chain = analyzeChain(nodes, edges);
+  const epPickerEntries: EpPickerEntry[] = nodes
+    .filter((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug)
+    .map((n: Node) => {
+      const d = n.data as EntryPointData;
+      const orchEdge = edges.find((e: Edge) => e.source === n.id);
+      const orchNode = orchEdge ? nodes.find((nd: Node) => nd.id === orchEdge.target && nd.type === 'orchestrator') : undefined;
+      return { epNode: n, orchName: orchNode ? (orchNode.data as OrchestratorData).name : '', slug: d.slug, label: d.label, epType: d.epType };
+    });
 
   return (
     <div className="builder-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
@@ -1970,6 +2067,21 @@ function BuilderView({
             }}
           >
             {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            onClick={handleTest}
+            disabled={saving}
+            title={!currentApp?.enabled ? 'Deploy first to test' : 'Open in playground'}
+            style={{
+              padding: '7px 18px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`,
+              background: 'transparent', color: currentApp?.enabled ? C.green : C.textMuted,
+              cursor: saving ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600,
+              opacity: saving ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 6,
+              transition: 'all 0.2s',
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>play_arrow</span>
+            Test
           </button>
           <button
             onClick={() => handleSave(true)}
@@ -2039,7 +2151,7 @@ function BuilderView({
             if (!slugLocked && epNode) updateNodeData(epNode.id, { slug: toSlug(name) });
           }}
           chain={chain}
-          app={app}
+          app={currentApp}
         />
       </div>
 
@@ -2061,6 +2173,19 @@ function BuilderView({
         <span style={{ color: C.outlineVariant }}>·</span>
         <span>Edges: {edges.length}</span>
       </div>
+
+      {/* Entry Point Picker */}
+      {testPickerOpen && (
+        <EpPickerModal
+          entries={epPickerEntries}
+          onSelect={entry => {
+            setTestPickerOpen(false);
+            const url = entry.orchName ? `/admin/playground?orchestrator=${encodeURIComponent(entry.orchName)}` : '/admin/playground';
+            window.open(url, '_blank', 'noopener');
+          }}
+          onClose={() => setTestPickerOpen(false)}
+        />
+      )}
 
       {/* Toast */}
       {toast && (
