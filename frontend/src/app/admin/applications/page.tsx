@@ -1012,7 +1012,7 @@ interface LogoStateDef {
 }
 
 const LOGO_STATES: Record<LogoState, LogoStateDef> = {
-  idle:     { opacity: 0.13, filter: 'drop-shadow(0 0 18px rgba(0,240,255,0.18))',    animation: 'logo-breathe 20s ease-in-out infinite' },
+  idle:     { opacity: 0.18, filter: 'drop-shadow(0 0 18px rgba(0,240,255,0.18))',    animation: 'logo-breathe 20s ease-in-out infinite' },
   dirty:    { opacity: 0.22, filter: 'drop-shadow(0 0 14px rgba(245,158,11,0.25))',   animation: 'logo-sway 2.5s ease-in-out infinite' },
   warning:  { opacity: 0.30, filter: 'drop-shadow(0 0 16px rgba(245,158,11,0.35))',   animation: 'logo-breathe 1.8s ease-in-out infinite' },
   error:    { opacity: 0.35, filter: 'drop-shadow(0 0 18px rgba(255,107,138,0.4))',   animation: 'logo-shake 0.5s ease-in-out' },
@@ -1022,9 +1022,9 @@ const LOGO_STATES: Record<LogoState, LogoStateDef> = {
 
 const LOGO_KEYFRAMES = `
 @keyframes logo-breathe {
-  0%   { opacity: 0.08; }
-  50%  { opacity: 0.25; }
-  100% { opacity: 0.08; }
+  0%   { opacity: 0.10; }
+  50%  { opacity: 0.32; }
+  100% { opacity: 0.10; }
 }
 @keyframes logo-sway {
   0%, 100% { transform: rotate3d(0,1,0,0deg); }
@@ -1094,16 +1094,16 @@ function CanvasLogo({ state }: { state: LogoState }) {
         xmlns="http://www.w3.org/2000/svg"
         width={720} height={572}
         viewBox="0 0 412 327"
-        fill={def.filter ? '#ffffff' : '#ffffff'}
+        overflow="visible"
         opacity={def.opacity}
-        style={{ animation: def.animation, filter: def.filter }}
+        style={{ animation: def.animation, filter: def.filter, overflow: 'visible' }}
       >
         <g transform="translate(-493 -62)">
           {LOGO_PATHS.map(({ id, d, ex, ey }, i) => (
             <path
               key={id}
               d={d}
-              fill="#ffffff"
+              fill="#00f0ff"
               fillRule="evenodd"
               style={isExplode ? {
                 // @ts-ignore
