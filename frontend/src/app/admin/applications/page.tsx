@@ -1039,10 +1039,6 @@ function AppCard({
   }, [menuOpen]);
 
   const ep = epIconColor(app.entry_point_type);
-  const primaryUrl = app.entry_point_type === 'websocket'
-    ? `ws://<host>/apps/${app.slug}/ws`
-    : `http://<host>/apps/${app.slug}/sse`;
-  const urlCopyId = `card_${app.id}_url`;
   const accessMode = (app.access_policy as any)?.mode ?? 'token';
 
   return (
@@ -1106,13 +1102,15 @@ function AppCard({
           <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
             <button
               onClick={() => setMenuOpen(v => !v)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', padding: 4, borderRadius: 6 }}
+              style={{ width: 32, height: 32, borderRadius: 8, cursor: 'pointer', background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 150ms ease, border-color 150ms ease' }}
             >
-              <span className="material-icons" style={{ fontSize: 18 }}>more_vert</span>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
+              </svg>
             </button>
             {menuOpen && (
               <div style={{
-                position: 'absolute', top: 28, right: 0, zIndex: 50, minWidth: 130,
+                position: 'absolute', top: 36, right: 0, zIndex: 50, minWidth: 130,
                 background: 'rgba(10,18,32,0.97)', border: '1px solid rgba(255,255,255,0.1)',
                 borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', overflow: 'hidden',
               }}>
@@ -1122,7 +1120,7 @@ function AppCard({
                   onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,180,171,0.08)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                 >
-                  <span className="material-icons" style={{ fontSize: 16 }}>delete</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
                   Delete
                 </button>
               </div>
@@ -1134,17 +1132,17 @@ function AppCard({
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           {/* Orchestrator tile */}
           <div style={{ padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="material-icons" style={{ fontSize: 15, color: '#a78bfa', flexShrink: 0 }}>hub</span>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#a78bfa', flexShrink: 0 }}>hub</span>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Orchestrator</div>
               <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {app.orchestrator_name ?? <span style={{ color: C.textMuted, fontStyle: 'italic' }}>None</span>}
+                {app.orchestrator_name ?? <span style={{ color: C.textMuted, fontStyle: 'italic' }}>none</span>}
               </div>
             </div>
           </div>
           {/* Access policy tile */}
           <div style={{ padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="material-icons" style={{ fontSize: 15, color: accessMode === 'public' ? C.green : '#f59e0b', flexShrink: 0 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18, color: accessMode === 'public' ? C.green : '#f59e0b', flexShrink: 0 }}>
               {accessMode === 'public' ? 'lock_open' : 'lock'}
             </span>
             <div style={{ minWidth: 0 }}>
@@ -1152,22 +1150,6 @@ function AppCard({
               <div style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>{accessMode === 'public' ? 'Public' : 'Token'}</div>
             </div>
           </div>
-        </div>
-
-        {/* Endpoint URL row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.05)' }}
-          onClick={e => e.stopPropagation()}
-        >
-          <code style={{ flex: 1, fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {primaryUrl}
-          </code>
-          <button
-            onClick={() => onCopy(primaryUrl, urlCopyId)}
-            title="Copy URL"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: copiedId === urlCopyId ? C.green : C.textMuted, display: 'flex', alignItems: 'center', flexShrink: 0, padding: 2, transition: 'color 0.15s' }}
-          >
-            <span className="material-icons" style={{ fontSize: 14 }}>{copiedId === urlCopyId ? 'check' : 'content_copy'}</span>
-          </button>
         </div>
       </div>
 
