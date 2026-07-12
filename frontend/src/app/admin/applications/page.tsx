@@ -59,6 +59,8 @@ const glass = {
   border: `1px solid ${C.glassBorder}`,
 };
 
+const deleteNodeRef = { current: (_id: string) => {} };
+
 // ── Types ────────────────────────────────────────────────────────────────────
 const ENTRY_POINT_TYPES = ['websocket', 'sse'] as const;
 type EntryPointType = typeof ENTRY_POINT_TYPES[number];
@@ -174,7 +176,7 @@ const CANVAS_STYLES = `
 
 // ── Node Components ──────────────────────────────────────────────────────────
 // Change 2: EntryPointNode with inline SVG icon + font fixes + hover animation
-function EntryPointNode({ data, selected }: { data: EntryPointData; selected?: boolean }) {
+function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData; selected?: boolean }) {
   const slugMissing = !data.slug;
   return (
     <div
@@ -184,9 +186,24 @@ function EntryPointNode({ data, selected }: { data: EntryPointData; selected?: b
         border: `1px solid ${slugMissing ? 'rgba(255,180,100,0.6)' : selected ? C.cyan : C.cyanBorder}`,
         boxShadow: selected ? '0 0 20px rgba(0,240,255,0.3)' : C.cyanGlow,
         fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
-        transformOrigin: 'center',
+        transformOrigin: 'center', position: 'relative',
       }}
     >
+      {selected && (
+        <button
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          style={{
+            position: 'absolute', top: -8, right: -8,
+            width: 18, height: 18, borderRadius: '50%',
+            background: '#f87171', border: '2px solid #051424',
+            color: '#fff', fontSize: 10, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            lineHeight: 1, padding: 0, zIndex: 10,
+          }}
+          title="Delete node (or press Delete key)"
+        >✕</button>
+      )}
       <Handle type="source" position={Position.Bottom} style={{ background: C.cyan, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(0,240,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -235,7 +252,7 @@ function EntryPointNode({ data, selected }: { data: EntryPointData; selected?: b
 }
 
 // Change 3: OrchestratorNode with inline SVG icon + font fixes + hover animation
-function OrchestratorNode({ data, selected }: { data: OrchestratorData; selected?: boolean }) {
+function OrchestratorNode({ id, data, selected }: { id: string; data: OrchestratorData; selected?: boolean }) {
   return (
     <div
       style={{
@@ -243,7 +260,7 @@ function OrchestratorNode({ data, selected }: { data: OrchestratorData; selected
         background: C.purpleBg, border: `2px solid ${selected ? '#e8d5ff' : C.purpleBorder}`,
         boxShadow: selected ? '0 0 24px rgba(208,188,255,0.4)' : C.purpleGlow,
         fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
-        transformOrigin: 'center',
+        transformOrigin: 'center', position: 'relative',
       }}
       onMouseEnter={e => {
         e.currentTarget.style.transform = 'scale(1.03)';
@@ -254,6 +271,21 @@ function OrchestratorNode({ data, selected }: { data: OrchestratorData; selected
         e.currentTarget.style.boxShadow = selected ? '0 0 24px rgba(208,188,255,0.4)' : C.purpleGlow;
       }}
     >
+      {selected && (
+        <button
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          style={{
+            position: 'absolute', top: -8, right: -8,
+            width: 18, height: 18, borderRadius: '50%',
+            background: '#f87171', border: '2px solid #051424',
+            color: '#fff', fontSize: 10, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            lineHeight: 1, padding: 0, zIndex: 10,
+          }}
+          title="Delete node (or press Delete key)"
+        >✕</button>
+      )}
       <Handle type="target" position={Position.Top} style={{ background: C.purple, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
       <Handle type="source" position={Position.Bottom} style={{ background: C.purple, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -281,7 +313,7 @@ function OrchestratorNode({ data, selected }: { data: OrchestratorData; selected
 }
 
 // Change 4: AgentNode with inline SVG icon + font fixes + hover animation
-function AgentNode({ data, selected }: { data: AgentData; selected?: boolean }) {
+function AgentNode({ id, data, selected }: { id: string; data: AgentData; selected?: boolean }) {
   return (
     <div
       style={{
@@ -289,7 +321,7 @@ function AgentNode({ data, selected }: { data: AgentData; selected?: boolean }) 
         background: C.greenBg, border: `1px solid ${selected ? C.green : C.greenBorder}`,
         boxShadow: selected ? '0 0 20px rgba(74,222,128,0.25)' : '0 0 10px rgba(74,222,128,0.08)',
         fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
-        transformOrigin: 'center',
+        transformOrigin: 'center', position: 'relative',
       }}
       onMouseEnter={e => {
         e.currentTarget.style.transform = 'scale(1.03)';
@@ -300,6 +332,21 @@ function AgentNode({ data, selected }: { data: AgentData; selected?: boolean }) 
         e.currentTarget.style.boxShadow = selected ? '0 0 20px rgba(74,222,128,0.25)' : '0 0 10px rgba(74,222,128,0.08)';
       }}
     >
+      {selected && (
+        <button
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          style={{
+            position: 'absolute', top: -8, right: -8,
+            width: 18, height: 18, borderRadius: '50%',
+            background: '#f87171', border: '2px solid #051424',
+            color: '#fff', fontSize: 10, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            lineHeight: 1, padding: 0, zIndex: 10,
+          }}
+          title="Delete node (or press Delete key)"
+        >✕</button>
+      )}
       <Handle type="target" position={Position.Top} style={{ background: C.green, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
         <div style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(74,222,128,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
@@ -344,6 +391,26 @@ const EDGE_STYLE = {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function makeId() { return `node_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`; }
+
+// ── Dagre auto-layout ─────────────────────────────────────────────────────────
+const NODE_WIDTH  = 240;
+const NODE_HEIGHT = 80;
+
+function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
+
+  nodes.forEach(n => g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
+  edges.forEach(e => g.setEdge(e.source, e.target));
+
+  dagre.layout(g);
+
+  return nodes.map(n => {
+    const pos = g.node(n.id);
+    return { ...n, position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 } };
+  });
+}
 
 function buildNodesFromApp(
   app: Application,
@@ -401,7 +468,8 @@ function buildNodesFromApp(
     });
   }
 
-  return { nodes, edges };
+  const laid = applyDagreLayout(nodes, edges);
+  return { nodes: laid, edges };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -623,9 +691,13 @@ function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
 function PropertiesPanel({
   selectedNode,
   onUpdateNode,
+  slugLocked,
+  onSlugManualEdit,
 }: {
   selectedNode: Node | null;
   onUpdateNode: (id: string, data: Record<string, unknown>) => void;
+  slugLocked: boolean;
+  onSlugManualEdit: () => void;
 }) {
   const [propTab, setPropTab] = useState<'properties' | 'configuration'>('properties');
 
@@ -696,8 +768,11 @@ function PropertiesPanel({
                   </select>
                 </div>
                 <div style={fieldWrap}>
-                  <label style={labelStyle}>Slug</label>
-                  <input style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace' }} value={d.slug} onChange={e => onUpdateNode(selectedNode.id, { slug: e.target.value })} placeholder="my-app-slug" />
+                  <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    Slug
+                    {!slugLocked && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: 'rgba(0,240,255,0.1)', color: C.cyan, border: '1px solid rgba(0,240,255,0.3)', fontWeight: 600 }}>auto</span>}
+                  </label>
+                  <input style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace' }} value={d.slug} onChange={e => { onSlugManualEdit(); onUpdateNode(selectedNode.id, { slug: e.target.value }); }} placeholder="my-app-slug" />
                   {d.slug && (
                     <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6, padding: '5px 8px', background: C.surfaceLow, borderRadius: 5, fontFamily: 'JetBrains Mono, monospace', wordBreak: 'break-all' }}>
                       {d.epType === 'websocket' ? `ws://<host>:8088/apps/${d.slug}/ws` : `http://<host>:8088/apps/${d.slug}/sse`}
@@ -797,26 +872,6 @@ function PropertiesPanel({
       )}
     </div>
   );
-}
-
-// ── Dagre auto-layout ─────────────────────────────────────────────────────────
-const NODE_WIDTH  = 240;
-const NODE_HEIGHT = 80;
-
-function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
-
-  nodes.forEach(n => g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
-  edges.forEach(e => g.setEdge(e.source, e.target));
-
-  dagre.layout(g);
-
-  return nodes.map(n => {
-    const pos = g.node(n.id);
-    return { ...n, position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 } };
-  });
 }
 
 // ── Canvas inner (needs ReactFlow context) ────────────────────────────────────
@@ -1076,6 +1131,10 @@ function styledEdges(edges: Edge[], nodes: Node[]): Edge[] {
   });
 }
 
+function toSlug(s: string) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+}
+
 // ── Builder view ──────────────────────────────────────────────────────────────
 function BuilderView({
   app,
@@ -1103,14 +1162,38 @@ function BuilderView({
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [libWidth, setLibWidth] = useState(280);
+  const [appName, setAppName] = useState(app?.name ?? '');
+  const [slugLocked, setSlugLocked] = useState(!!app?.slug);
   const rfWrapper = useRef<HTMLDivElement>(null);
   const nodesRef = useRef<Node[]>(initial.nodes);
   const edgesRef = useRef<Edge[]>(initial.edges);
   const { screenToFlowPosition } = useReactFlow();
 
+  const epNode = nodes.find((n: Node) => n.type === 'entryPoint');
+
+  deleteNodeRef.current = (id: string) => {
+    setNodes((nds: Node[]) => nds.filter(n => n.id !== id));
+    setEdges((eds: Edge[]) => eds.filter(e => e.source !== id && e.target !== id));
+    setSelectedNode((prev: Node | null) => prev?.id === id ? null : prev);
+  };
+
   // Keep refs in sync so onConnect can read current state synchronously
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { edgesRef.current = edges; }, [edges]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNode) {
+        const tag = (document.activeElement as HTMLElement)?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        setNodes((nds: Node[]) => nds.filter(n => n.id !== selectedNode.id));
+        setEdges((eds: Edge[]) => eds.filter(e => e.source !== selectedNode.id && e.target !== selectedNode.id));
+        setSelectedNode(null);
+      }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [selectedNode, setNodes, setEdges]);
 
   function showToast(msg: string, ok: boolean) {
     setToast({ msg, ok });
@@ -1179,7 +1262,7 @@ function BuilderView({
       await themApi.updateOrchestrator(orchData.orchestratorId, { allowed_agent_ids: agentIds });
 
       const body = {
-        name: epData.label || epData.slug,
+        name: appName || epData.label || epData.slug,
         slug: epData.slug,
         entry_point_type: epData.epType,
         orchestrator_id: orchData.orchestratorId,
@@ -1215,10 +1298,27 @@ function BuilderView({
         </button>
         <div style={{ width: 1, height: 20, background: C.outlineVariant }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: 'Geist, sans-serif' }}>
-            {app ? app.name : 'New Application'}
-          </div>
-          {app && <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{app.slug}</div>}
+          <input
+            className="nodrag"
+            value={appName}
+            onChange={e => {
+              setAppName(e.target.value);
+              if (!slugLocked && epNode) {
+                updateNodeData(epNode.id, { slug: toSlug(e.target.value) });
+              }
+            }}
+            placeholder="Application name…"
+            style={{
+              background: 'transparent', border: 'none', outline: 'none',
+              fontSize: 15, fontWeight: 700, color: '#e2e8f0',
+              fontFamily: 'Geist, sans-serif', width: '100%', padding: 0,
+            }}
+          />
+          {epNode && (
+            <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
+              {(epNode.data as EntryPointData).slug || (app?.slug ?? '')}
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>
@@ -1274,7 +1374,7 @@ function BuilderView({
           />
         </div>
 
-        <PropertiesPanel selectedNode={selectedNode} onUpdateNode={updateNodeData} />
+        <PropertiesPanel selectedNode={selectedNode} onUpdateNode={updateNodeData} slugLocked={slugLocked} onSlugManualEdit={() => setSlugLocked(true)} />
       </div>
 
       {/* Status bar */}
