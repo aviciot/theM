@@ -364,12 +364,7 @@ export default function OrchestratorsPage() {
             </p>
           </div>
 
-          {loading ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: MUTED, padding: '40px 0' }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 18, animation: 'spin 1s linear infinite' }}>autorenew</span>
-              Loading…
-            </div>
-          ) : list.length === 0 ? (
+          {!loading && list.length === 0 ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
               <div className="orch-deploy-card" onClick={openCreate} style={{ borderRadius: 16, border: '2px dashed rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.02)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, cursor: 'pointer', minHeight: 260, transition: 'border-color 200ms ease, background 200ms ease' }}>
                 <div style={{ width: 52, height: 52, borderRadius: 14, border: '2px dashed rgba(99,102,241,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

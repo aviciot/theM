@@ -1220,12 +1220,7 @@ function ListView({
         </div>
       </div>
 
-      {loading ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: C.textMuted, padding: '40px 0', fontFamily: 'Inter, sans-serif' }}>
-          <span className="material-icons" style={{ fontSize: 18, animation: 'spin 1s linear infinite' }}>autorenew</span>
-          Loading…
-        </div>
-      ) : list.length === 0 ? (
+      {!loading && list.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '80px 0', color: C.textMuted }}>
           <span className="material-icons" style={{ fontSize: 56, marginBottom: 16, opacity: 0.25, display: 'block' }}>apps</span>
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: C.text, fontFamily: 'Geist, sans-serif' }}>No applications yet</div>
