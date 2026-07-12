@@ -1461,7 +1461,7 @@ export default function AdminAgentsPage() {
                     {diff.description.changed && (
                       <div style={{ fontSize: '11px', color: '#94a3b8', textDecoration: 'line-through', marginBottom: '6px', whiteSpace: 'pre-wrap' }}>{diff.description.old || '—'}</div>
                     )}
-                    <div style={{ fontSize: '12px', color: diff.description.changed ? '#4edea3' : 'var(--tm-text)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                    <div style={{ fontSize: '12px', color: diff.description.changed ? '#4edea3' : '#e2e8f0', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
                       {result.description || '—'}
                     </div>
                   </div>
@@ -1476,7 +1476,7 @@ export default function AdminAgentsPage() {
                       return (
                         <div key={i} style={{ ...nestedSurface, padding: '8px 10px', borderRadius: '8px' }}>
                           <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tm-text)', marginBottom: '2px' }}>{s.name}</div>
-                          {s.description && <div style={{ fontSize: '11px', color: 'var(--tm-text-muted)', lineHeight: 1.4, marginBottom: '4px' }}>{s.description}</div>}
+                          {s.description && <div style={{ fontSize: '11px', color: '#cbd5e1', lineHeight: 1.4, marginBottom: '4px' }}>{s.description}</div>}
                           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                             {(s.tags ?? []).map((t, ti) => (
                               <span key={ti} style={{ fontSize: '10px', padding: '1px 5px', borderRadius: '3px', background: 'rgba(167,139,250,.12)', color: '#a78bfa', border: '1px solid rgba(167,139,250,.18)' }}>{t}</span>
@@ -1565,7 +1565,7 @@ export default function AdminAgentsPage() {
                       {result.risk} risk
                     </span>
                   </div>
-                  <p style={{ fontSize: '14px', color: 'var(--tm-text)', lineHeight: 1.55, fontWeight: 500, margin: 0 }}>
+                  <p style={{ fontSize: '14px', color: '#e2e8f0', lineHeight: 1.55, fontWeight: 500, margin: 0 }}>
                     {result.summary}
                   </p>
                 </div>
