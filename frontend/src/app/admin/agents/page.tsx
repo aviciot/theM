@@ -325,7 +325,7 @@ function AgentCard({
   const [copied, setCopied] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
-  const isInternal = agent.tags?.includes('internal') ?? false;
+  const isInternal = agent.tags?.includes('internal') || agent.slug === 'workflow_advisor';
   const category = agentCategory(agent);
   const accent = isInternal
     ? { color: '#a0f0d0', border: 'rgba(160,240,208,0.45)', glow: 'rgba(160,240,208,0.18)' }
@@ -355,7 +355,7 @@ function AgentCard({
     <article className="glass-card" style={{
       padding: '22px', display: 'flex', flexDirection: 'column', gap: '14px',
       borderRadius: '20px', position: 'relative',
-      ...(isInternal ? { border: '1px solid rgba(160,240,208,0.25)', boxShadow: '0 0 18px rgba(160,240,208,0.06)' } : {}),
+      ...(isInternal ? { border: '2px solid rgba(160,240,208,0.6)', boxShadow: '0 0 24px rgba(160,240,208,0.2)' } : {}),
     }}>
 
       {/* Internal indicator — mini the-M logo + badge */}
