@@ -847,6 +847,113 @@ const toolBtnStyle: React.CSSProperties = {
   transition: 'all 0.1s',
 };
 
+// ── Connection rule system ────────────────────────────────────────────────────
+// To add a new node type: add one entry here. The validator needs no changes.
+interface NodePortDef {
+  accepts: string[];       // signal types this node can receive
+  emits: string[];         // signal types this node produces
+  maxOutgoing?: number;    // undefined = unlimited
+  maxIncoming?: number;    // undefined = unlimited
+}
+
+const NODE_PORTS: Record<string, NodePortDef> = {
+  entryPoint:   { accepts: [],                     emits: ['request'],        maxOutgoing: 1 },
+  orchestrator: { accepts: ['request', 'signal'],   emits: ['task', 'signal'] },
+  agent:        { accepts: ['task'],                emits: ['result'] },
+  // future: router, condition, webhook, llm, transform …
+};
+
+function validateConnection(
+  sourceType: string,
+  targetType: string,
+  sourceId: string,
+  targetId: string,
+  edges: Edge[],
+): string | null {
+  const src = NODE_PORTS[sourceType];
+  const tgt = NODE_PORTS[targetType];
+  if (!src || !tgt) return `Unknown node type`;
+
+  const compatible = src.emits.some(sig => tgt.accepts.includes(sig));
+  if (!compatible) return `${sourceType} → ${targetType} is not a valid connection`;
+
+  if (src.maxOutgoing !== undefined) {
+    const out = edges.filter(e => e.source === sourceId).length;
+    if (out >= src.maxOutgoing) return `${sourceType} supports at most ${src.maxOutgoing} outgoing connection`;
+  }
+
+  if (tgt.maxIncoming !== undefined) {
+    const inc = edges.filter(e => e.target === targetId).length;
+    if (inc >= tgt.maxIncoming) return `${targetType} supports at most ${tgt.maxIncoming} incoming connection`;
+  }
+
+  // Prevent duplicate edge
+  if (edges.some(e => e.source === sourceId && e.target === targetId)) {
+    return `Already connected`;
+  }
+
+  return null;
+}
+
+// ── Chain analysis ────────────────────────────────────────────────────────────
+interface ChainStatus {
+  ready: boolean;
+  label: string;
+  color: string;
+  epNode?: Node;
+  orchNode?: Node;
+  agentCount: number;
+}
+
+function analyzeChain(nodes: Node[], edges: Edge[]): ChainStatus {
+  const miss = (msg: string) => ({ ready: false, label: msg, color: C.error, agentCount: 0 });
+
+  const epNode = nodes.find(n => n.type === 'entryPoint');
+  if (!epNode) return miss('Drop an Entry Point to start');
+
+  const epData = epNode.data as EntryPointData;
+  if (!epData.slug) return miss('Entry point needs a slug');
+  if (!/^[a-z0-9_-]{1,64}$/.test(epData.slug)) return miss('Slug: lowercase letters, numbers, _ or - only');
+
+  const orchEdge = edges.find(e => e.source === epNode.id);
+  const orchNode = orchEdge ? nodes.find(n => n.id === orchEdge.target && n.type === 'orchestrator') : undefined;
+  if (!orchNode) return miss('Connect an Orchestrator to the Entry Point');
+
+  const agentCount = edges
+    .filter(e => e.source === orchNode.id)
+    .map(e => nodes.find(n => n.id === e.target && n.type === 'agent'))
+    .filter(Boolean).length;
+
+  return {
+    ready: true,
+    label: `Ready · ${epData.epType.toUpperCase()} · ${(orchNode.data as OrchestratorData).displayName} · ${agentCount} agent${agentCount !== 1 ? 's' : ''}`,
+    color: C.green,
+    epNode,
+    orchNode,
+    agentCount,
+  };
+}
+
+// ── Compute styled edges based on chain validity ──────────────────────────────
+function styledEdges(edges: Edge[], nodes: Node[]): Edge[] {
+  const epNode = nodes.find(n => n.type === 'entryPoint');
+  const orchEdge = epNode ? edges.find(e => e.source === epNode.id) : undefined;
+  const orchNode = orchEdge ? nodes.find(n => n.id === orchEdge.target && n.type === 'orchestrator') : undefined;
+
+  return edges.map(e => {
+    const isChain =
+      (epNode && orchNode && e.source === epNode.id && e.target === orchNode.id) ||
+      (orchNode && e.source === orchNode.id);
+    return {
+      ...e,
+      animated: !!isChain,
+      style: isChain
+        ? { stroke: C.cyan, strokeWidth: 2 }
+        : { stroke: C.error, strokeWidth: 1.5, strokeDasharray: '5 4' },
+    };
+  });
+}
+
 // ── Builder view ──────────────────────────────────────────────────────────────
 function BuilderView({
   app,
@@ -883,8 +990,18 @@ function BuilderView({
   }
 
   const onConnect = useCallback((c: Connection) => {
-    setEdges((eds: Edge[]) => addEdge({ ...c, animated: true, style: EDGE_STYLE }, eds));
-  }, [setEdges]);
+    setNodes((nds: Node[]) => {
+      setEdges((eds: Edge[]) => {
+        const srcNode = nds.find(n => n.id === c.source);
+        const tgtNode = nds.find(n => n.id === c.target);
+        if (!srcNode || !tgtNode) return eds;
+        const err = validateConnection(srcNode.type!, tgtNode.type!, c.source!, c.target!, eds);
+        if (err) { showToast(err, false); return eds; }
+        return addEdge({ ...c, animated: true, style: { stroke: C.cyan, strokeWidth: 2 } }, eds);
+      });
+      return nds;
+    });
+  }, [setEdges, setNodes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function onDragOver(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
@@ -910,31 +1027,23 @@ function BuilderView({
   }
 
   async function handleSave(deploy = false) {
-    // Find entry point
-    const epNode = nodes.find((n: Node) => n.type === 'entryPoint');
-    if (!epNode) { showToast('Add an Entry Point node first', false); return; }
-    const epData = epNode.data as EntryPointData;
-    if (!epData.slug) { showToast('Entry point needs a slug', false); return; }
+    const chain = analyzeChain(nodes, edges);
+    if (!chain.ready) { showToast(chain.label, false); return; }
 
-    // Find orchestrator connected to entry point
-    const orchEdge = edges.find((e: Edge) => e.source === epNode.id);
-    const orchNode = orchEdge ? nodes.find((n: Node) => n.id === orchEdge.target && n.type === 'orchestrator') : undefined;
-    if (!orchNode) { showToast('Connect an Orchestrator to the Entry Point', false); return; }
-    const orchData = orchNode.data as OrchestratorData;
+    const epData = chain.epNode!.data as EntryPointData;
+    const orchData = chain.orchNode!.data as OrchestratorData;
 
-    // Find agents connected to orchestrator
-    const agentEdges = edges.filter((e: Edge) => e.source === orchNode.id);
-    const agentIds = agentEdges
+    // Collect agent IDs from orchestrator edges (full replace — empty array clears them)
+    const agentIds = edges
+      .filter((e: Edge) => e.source === chain.orchNode!.id)
       .map((e: Edge) => nodes.find((n: Node) => n.id === e.target && n.type === 'agent'))
       .filter((n: Node | undefined): n is Node => Boolean(n))
       .map((n: Node) => (n.data as AgentData).agentId);
 
     setSaving(true);
     try {
-      // Update orchestrator's allowed_agent_ids
-      if (agentIds.length > 0) {
-        await themApi.updateOrchestrator(orchData.orchestratorId, { allowed_agent_ids: agentIds });
-      }
+      // Always update orchestrator agent list (full replace)
+      await themApi.updateOrchestrator(orchData.orchestratorId, { allowed_agent_ids: agentIds });
 
       const body = {
         name: epData.label || epData.slug,
@@ -942,7 +1051,7 @@ function BuilderView({
         entry_point_type: epData.epType,
         orchestrator_id: orchData.orchestratorId,
         access_policy: { mode: epData.accessMode },
-        enabled: true,
+        enabled: deploy ? true : (app?.enabled ?? false),
       };
 
       if (app?.id) {
@@ -950,7 +1059,7 @@ function BuilderView({
       } else {
         await themApi.createApplication(body);
       }
-      showToast(deploy ? 'Application deployed!' : 'Saved successfully', true);
+      showToast(deploy ? '🚀 Application deployed!' : 'Saved successfully', true);
       onSaved();
     } catch (err: any) {
       showToast(err?.message ?? 'Save failed', false);
@@ -958,6 +1067,9 @@ function BuilderView({
       setSaving(false);
     }
   }
+
+  const chain = analyzeChain(nodes, edges);
+  const displayEdges = styledEdges(edges, nodes);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
@@ -991,11 +1103,16 @@ function BuilderView({
           </button>
           <button
             onClick={() => handleSave(true)}
-            disabled={saving}
+            disabled={saving || !chain.ready}
             style={{
               padding: '7px 18px', borderRadius: 8, border: 'none',
-              background: C.cyan, color: '#00363a', cursor: 'pointer', fontSize: 13, fontWeight: 700,
-              opacity: saving ? 0.6 : 1, boxShadow: `0 0 12px rgba(0,240,255,0.25)`,
+              background: chain.ready ? C.cyan : C.outlineVariant,
+              color: chain.ready ? '#00363a' : C.textMuted,
+              cursor: saving || !chain.ready ? 'not-allowed' : 'pointer',
+              fontSize: 13, fontWeight: 700,
+              opacity: saving ? 0.6 : 1,
+              boxShadow: chain.ready ? `0 0 12px rgba(0,240,255,0.25)` : 'none',
+              transition: 'all 0.2s ease',
             }}
           >
             Deploy
@@ -1011,7 +1128,7 @@ function BuilderView({
         <div style={{ flex: 1, position: 'relative', height: 'calc(100vh - 56px)' }}>
           <CanvasInner
             nodes={nodes}
-            edges={edges}
+            edges={displayEdges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
@@ -1028,15 +1145,21 @@ function BuilderView({
 
       {/* Status bar */}
       <div style={{
-        height: 28, display: 'flex', alignItems: 'center', gap: 16, padding: '0 16px',
+        height: 28, display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px',
         ...glass, borderTop: `1px solid ${C.glassBorder}`, fontSize: 11, color: C.textMuted, flexShrink: 0,
       }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
+            background: chain.color,
+            boxShadow: chain.ready ? `0 0 6px ${chain.color}` : 'none',
+          }} />
+          <span style={{ color: chain.color, fontWeight: 600 }}>{chain.label}</span>
+        </span>
+        <span style={{ color: C.outlineVariant }}>·</span>
         <span>Nodes: {nodes.length}</span>
-        <span>·</span>
+        <span style={{ color: C.outlineVariant }}>·</span>
         <span>Edges: {edges.length}</span>
-        {nodes.some((n: Node) => n.type === 'entryPoint') && <><span>·</span><span style={{ color: C.cyan }}>Entry point wired</span></>}
-        {nodes.some((n: Node) => n.type === 'orchestrator') && <><span>·</span><span style={{ color: C.purple }}>Orchestrator connected</span></>}
-        {nodes.filter((n: Node) => n.type === 'agent').length > 0 && <><span>·</span><span style={{ color: C.green }}>{nodes.filter((n: Node) => n.type === 'agent').length} agent(s)</span></>}
       </div>
 
       {/* Toast */}
