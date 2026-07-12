@@ -69,6 +69,15 @@ interface EntryPointData { label: string; epType: EntryPointType; accessMode: 't
 interface OrchestratorData { orchestratorId: string; name: string; displayName: string; model: string | null; maxParallelTools: number; [key: string]: unknown; }
 interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; [key: string]: unknown; }
 
+interface AdvisorMessage { role: 'user' | 'assistant'; text: string; streaming?: boolean; }
+
+function getBridgeWs(): string {
+  if (typeof window === 'undefined') return '';
+  if (process.env.NEXT_PUBLIC_BRIDGE_WS_URL) return process.env.NEXT_PUBLIC_BRIDGE_WS_URL;
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}`;
+}
+
 // ── Change 1: CSS animations + font inheritance ───────────────────────────────
 const CANVAS_STYLES = `
   /* Force all text bright — builder lives on a dark bg, globals.css light-mode vars bleed in */
@@ -176,15 +185,15 @@ const CANVAS_STYLES = `
 
 // ── Node Components ──────────────────────────────────────────────────────────
 // Change 2: EntryPointNode with inline SVG icon + font fixes + hover animation
-function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData; selected?: boolean }) {
+function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean }; selected?: boolean }) {
   const slugMissing = !data.slug;
   return (
     <div
       style={{
         minWidth: 200, width: 'fit-content', padding: '14px 18px', borderRadius: 12,
         background: C.cyanBg,
-        border: `1px solid ${slugMissing ? 'rgba(255,180,100,0.6)' : selected ? C.cyan : C.cyanBorder}`,
-        boxShadow: selected ? '0 0 20px rgba(0,240,255,0.3)' : C.cyanGlow,
+        border: `1px solid ${data._scanning ? C.cyan : slugMissing ? 'rgba(255,180,100,0.6)' : selected ? C.cyan : C.cyanBorder}`,
+        boxShadow: data._scanning ? '0 0 24px rgba(0,240,255,0.7)' : selected ? '0 0 20px rgba(0,240,255,0.3)' : C.cyanGlow,
         fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
         transformOrigin: 'center', position: 'relative',
       }}
@@ -277,13 +286,14 @@ function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointDa
 }
 
 // Change 3: OrchestratorNode with inline SVG icon + font fixes + hover animation
-function OrchestratorNode({ id, data, selected }: { id: string; data: OrchestratorData; selected?: boolean }) {
+function OrchestratorNode({ id, data, selected }: { id: string; data: OrchestratorData & { _scanning?: boolean }; selected?: boolean }) {
   return (
     <div
       style={{
         minWidth: 200, width: 'fit-content', padding: '16px 20px', borderRadius: 12,
-        background: C.purpleBg, border: `2px solid ${selected ? '#e8d5ff' : C.purpleBorder}`,
-        boxShadow: selected ? '0 0 24px rgba(208,188,255,0.4)' : C.purpleGlow,
+        background: C.purpleBg,
+        border: `2px solid ${data._scanning ? C.cyan : selected ? '#e8d5ff' : C.purpleBorder}`,
+        boxShadow: data._scanning ? '0 0 24px rgba(0,240,255,0.7)' : selected ? '0 0 24px rgba(208,188,255,0.4)' : C.purpleGlow,
         fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
         transformOrigin: 'center', position: 'relative',
       }}
@@ -338,13 +348,14 @@ function OrchestratorNode({ id, data, selected }: { id: string; data: Orchestrat
 }
 
 // Change 4: AgentNode with inline SVG icon + font fixes + hover animation
-function AgentNode({ id, data, selected }: { id: string; data: AgentData; selected?: boolean }) {
+function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _scanning?: boolean }; selected?: boolean }) {
   return (
     <div
       style={{
         minWidth: 160, maxWidth: 220, width: 'fit-content', padding: '12px 16px', borderRadius: 12,
-        background: C.greenBg, border: `1px solid ${selected ? C.green : C.greenBorder}`,
-        boxShadow: selected ? '0 0 20px rgba(74,222,128,0.25)' : '0 0 10px rgba(74,222,128,0.08)',
+        background: C.greenBg,
+        border: `1px solid ${data._scanning ? C.cyan : selected ? C.green : C.greenBorder}`,
+        boxShadow: data._scanning ? '0 0 24px rgba(0,240,255,0.7)' : selected ? '0 0 20px rgba(74,222,128,0.25)' : '0 0 10px rgba(74,222,128,0.08)',
         fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
         transformOrigin: 'center', position: 'relative',
       }}
@@ -637,7 +648,7 @@ function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
           <SectionHeader label="Orchestrators" open={openOrch} onToggle={() => setOpenOrch(v => !v)} />
           {openOrch && (
             <div className="nl-section-list">
-              {orchestrators.filter(o => o.enabled).map(o => (
+              {orchestrators.filter(o => o.enabled && o.name !== 'workflow_advisor').map(o => (
                 <div key={o.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
                   <div
                     draggable
@@ -671,7 +682,7 @@ function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
           <SectionHeader label="Agents" open={openAgents} onToggle={() => setOpenAgents(v => !v)} />
           {openAgents && (
             <div className="nl-section-list">
-              {agents.filter(a => a.enabled).map(a => {
+              {agents.filter(a => a.enabled && !a.tags?.includes('internal')).map(a => {
                 const icon = a.icon || agentIconForLibrary(a);
                 return (
                   <div key={a.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
@@ -1124,9 +1135,142 @@ function CanvasLogo({ state }: { state: LogoState }) {
   );
 }
 
+// ── Advisor panel ─────────────────────────────────────────────────────────────
+function AdvisorPanel({
+  messages, busy, input, scanning,
+  onInputChange, onSend, onClose, onRescan,
+}: {
+  messages: AdvisorMessage[];
+  busy: boolean;
+  input: string;
+  scanning: boolean;
+  onInputChange: (v: string) => void;
+  onSend: (text: string) => void;
+  onClose: () => void;
+  onRescan: () => void;
+}) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  return (
+    <div style={{
+      width: 360, flexShrink: 0, height: '100%', display: 'flex', flexDirection: 'column',
+      background: 'rgba(10,14,23,0.97)', borderLeft: `1px solid rgba(0,240,255,0.15)`,
+      boxShadow: '-4px 0 24px rgba(0,0,0,0.4)',
+    }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '11px 14px',
+        borderBottom: `1px solid ${C.glassBorder}`, flexShrink: 0,
+      }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 17, color: C.cyan }}>assistant</span>
+        <span style={{ fontWeight: 700, fontSize: 13, color: C.text, flex: 1 }}>AI Workflow Advisor</span>
+        {scanning && (
+          <span style={{ fontSize: 11, color: C.cyan, fontStyle: 'italic' }}>Scanning…</span>
+        )}
+        <button
+          onClick={onRescan}
+          title="Re-analyze workflow"
+          disabled={busy || scanning}
+          style={{ width: 26, height: 26, borderRadius: 5, border: 'none', background: 'transparent',
+            color: busy || scanning ? C.outlineVariant : C.textMuted, cursor: busy || scanning ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onMouseEnter={e => { if (!busy && !scanning) e.currentTarget.style.color = C.cyan; }}
+          onMouseLeave={e => { e.currentTarget.style.color = C.textMuted; }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>refresh</span>
+        </button>
+        <button
+          onClick={onClose}
+          style={{ width: 26, height: 26, borderRadius: 5, border: 'none', background: 'transparent',
+            color: C.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onMouseEnter={e => (e.currentTarget.style.color = C.text)}
+          onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>close</span>
+        </button>
+      </div>
+
+      {/* Messages */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {messages.length === 0 && !busy && !scanning && (
+          <div style={{ fontSize: 13, color: C.textMuted, fontStyle: 'italic', textAlign: 'center', marginTop: 40 }}>
+            Scanning your workflow…
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+            {m.role === 'assistant' && (
+              <span style={{ fontSize: 10, color: C.textMuted, marginBottom: 3, paddingLeft: 2 }}>AI Advisor</span>
+            )}
+            <div style={{
+              maxWidth: '92%', padding: '9px 12px',
+              borderRadius: m.role === 'user' ? '12px 12px 2px 12px' : '2px 12px 12px 12px',
+              background: m.role === 'user' ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${m.role === 'user' ? 'rgba(0,240,255,0.2)' : C.outlineVariant}`,
+              fontSize: 13, color: m.role === 'user' ? C.text : '#d1d5db',
+              lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            }}>
+              {m.text}
+              {m.streaming && <span style={{ opacity: 0.6, marginLeft: 2 }}>▋</span>}
+            </div>
+          </div>
+        ))}
+        {busy && messages[messages.length - 1]?.role !== 'assistant' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 2 }}>
+            <span style={{ fontSize: 11, color: C.cyan, fontStyle: 'italic' }}>Thinking…</span>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      <div style={{ padding: '10px 14px', borderTop: `1px solid ${C.glassBorder}`, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+          <textarea
+            value={input}
+            onChange={e => onInputChange(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!busy && !scanning && input.trim()) { onSend(input.trim()); onInputChange(''); }
+              }
+            }}
+            placeholder="Ask a follow-up question…"
+            disabled={busy || scanning}
+            rows={2}
+            style={{
+              flex: 1, background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.outlineVariant}`,
+              borderRadius: 8, color: '#e2e8f0', fontSize: 13, padding: '7px 10px',
+              resize: 'none', outline: 'none', fontFamily: 'inherit',
+              opacity: (busy || scanning) ? 0.5 : 1,
+            }}
+          />
+          <button
+            onClick={() => { if (!busy && !scanning && input.trim()) { onSend(input.trim()); onInputChange(''); } }}
+            disabled={busy || scanning || !input.trim()}
+            style={{
+              padding: '8px 12px', borderRadius: 8, border: 'none', flexShrink: 0,
+              background: (!busy && !scanning && input.trim()) ? C.cyan : C.outlineVariant,
+              color: (!busy && !scanning && input.trim()) ? '#00363a' : C.textMuted,
+              cursor: (!busy && !scanning && input.trim()) ? 'pointer' : 'not-allowed',
+              fontWeight: 700, fontSize: 12,
+            }}
+          >
+            Send
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 5, paddingLeft: 2 }}>
+          Shift+Enter for newline · Enter to send
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Canvas inner (needs ReactFlow context) ────────────────────────────────────
 function CanvasInner({
-  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, logoState,
+  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, logoState, advisorOpen, onAdvisorOpen,
 }: {
   nodes: Node[];
   edges: Edge[];
@@ -1141,6 +1285,8 @@ function CanvasInner({
   onDeleteEdge: (edgeId: string) => void;
   onAutoLayout: () => void;
   logoState: LogoState;
+  advisorOpen: boolean;
+  onAdvisorOpen: () => void;
 }) {
   const { fitView, zoomIn, zoomOut, getZoom, setViewport, getViewport } = useReactFlow();
   const [zoom, setZoom] = useState(100);
@@ -1237,6 +1383,24 @@ function CanvasInner({
             <line x1="12" y1="9" x2="12" y2="21"/>
             <line x1="19" y1="9" x2="19" y2="21"/>
           </svg>
+        </button>
+        <div style={{ width: 1, height: 18, background: C.outlineVariant, margin: '0 4px' }} />
+        <button
+          onClick={onAdvisorOpen}
+          title="AI Workflow Advisor"
+          style={{
+            ...iconBtn,
+            width: 'auto', height: 30, padding: '0 10px', gap: 5,
+            display: 'flex', alignItems: 'center', borderRadius: 6,
+            border: advisorOpen ? `1px solid rgba(0,240,255,0.35)` : '1px solid transparent',
+            background: advisorOpen ? 'rgba(0,240,255,0.08)' : 'transparent',
+            color: advisorOpen ? C.cyan : C.textMuted,
+          }}
+          onMouseEnter={e => { if (!advisorOpen) { e.currentTarget.style.color = C.cyan; e.currentTarget.style.border = `1px solid rgba(0,240,255,0.2)`; } }}
+          onMouseLeave={e => { if (!advisorOpen) { e.currentTarget.style.color = C.textMuted; e.currentTarget.style.border = '1px solid transparent'; } }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>assistant</span>
+          <span style={{ fontSize: 11, fontWeight: 600 }}>AI Advisor</span>
         </button>
       </div>
 
@@ -1430,6 +1594,17 @@ function BuilderView({
   const logoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rfWrapper = useRef<HTMLDivElement>(null);
 
+  // ── Advisor state ────────────────────────────────────────────────────────────
+  const [advisorOpen, setAdvisorOpen] = useState(false);
+  const [advisorMessages, setAdvisorMessages] = useState<AdvisorMessage[]>([]);
+  const [advisorBusy, setAdvisorBusy] = useState(false);
+  const [advisorInput, setAdvisorInput] = useState('');
+  const [advisorContextId, setAdvisorContextId] = useState<string | null>(null);
+  const [advisorScanning, setAdvisorScanning] = useState(false);
+  const advisorWsRef = useRef<WebSocket | null>(null);
+  const advisorBufRef = useRef('');
+  const advisorScanningRef = useRef(false);
+
   function triggerLogo(state: LogoState, duration = 2000) {
     if (logoTimerRef.current) clearTimeout(logoTimerRef.current);
     setLogoState(state);
@@ -1493,6 +1668,160 @@ function BuilderView({
   function showToast(msg: string, ok: boolean) {
     setToast({ msg, ok });
     setTimeout(() => setToast(null), 3000);
+  }
+
+  // ── Advisor functions ────────────────────────────────────────────────────────
+
+  function serializeWorkflow(): object {
+    const nds = nodesRef.current;
+    const eds = edgesRef.current;
+    return {
+      nodes: nds.map(n => {
+        if (n.type === 'entryPoint') {
+          const d = n.data as EntryPointData;
+          return { type: 'entry_point', id: n.id, epType: d.epType, accessMode: d.accessMode, slug: d.slug };
+        }
+        if (n.type === 'orchestrator') {
+          const d = n.data as OrchestratorData;
+          const full = orchestrators.find(o => o.id === d.orchestratorId);
+          const rawPrompt = full?.system_prompt ?? '';
+          return {
+            type: 'orchestrator', id: n.id, name: d.name, displayName: d.displayName,
+            model: d.model, maxParallelTools: d.maxParallelTools,
+            systemPrompt: rawPrompt.slice(0, 600) + (rawPrompt.length > 600 ? '…' : ''),
+            allowedAgentIds: full?.allowed_agent_ids ?? [],
+          };
+        }
+        if (n.type === 'agent') {
+          const d = n.data as AgentData;
+          const full = agents.find(a => a.id === d.agentId);
+          return {
+            type: 'agent', id: n.id, slug: d.name, displayName: d.displayName,
+            description: d.description, transport: d.transport,
+            hasAuthToken: full?.auth_token_set ?? false,
+            lastScanResult: full?.last_scan_result
+              ? { score: full.last_scan_result.score, risk: full.last_scan_result.risk, summary: full.last_scan_result.summary }
+              : null,
+          };
+        }
+        return { type: n.type, id: n.id };
+      }),
+      edges: eds.map(e => ({ source: e.source, target: e.target })),
+    };
+  }
+
+  async function advisorSend(text: string | null, isInitial = false) {
+    if (advisorBusy) return;
+    setAdvisorBusy(true);
+    advisorBufRef.current = '';
+
+    const content = isInitial
+      ? `Analyze this workflow:\n\n${JSON.stringify(serializeWorkflow(), null, 2)}`
+      : (text ?? '').trim();
+
+    if (!isInitial && !content) { setAdvisorBusy(false); return; }
+
+    setAdvisorMessages(prev => [
+      ...prev,
+      { role: 'user', text: isInitial ? '🔍 Analyzing your workflow…' : content },
+    ]);
+
+    let token: string;
+    try {
+      const r = await fetch('/api/auth/token');
+      if (!r.ok) throw new Error('auth');
+      ({ token } = await r.json());
+    } catch {
+      setAdvisorMessages(prev => [...prev, { role: 'assistant', text: 'Could not connect — please refresh and try again.' }]);
+      setAdvisorBusy(false);
+      return;
+    }
+
+    const ws = new WebSocket(`${getBridgeWs()}/ws/orchestrate/workflow_advisor?token=${encodeURIComponent(token)}`);
+    advisorWsRef.current = ws;
+
+    ws.onopen = () => {
+      const payload: Record<string, string> = { type: 'message', content };
+      if (advisorContextId) payload.context_id = advisorContextId;
+      ws.send(JSON.stringify(payload));
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data as string);
+        if (msg.type === 'ready') {
+          if (msg.context_id) setAdvisorContextId(msg.context_id as string);
+          setAdvisorMessages(prev => [...prev, { role: 'assistant', text: '', streaming: true }]);
+        } else if (msg.type === 'token') {
+          advisorBufRef.current += (msg.text ?? '') as string;
+          const buf = advisorBufRef.current;
+          setAdvisorMessages(prev => {
+            const last = prev[prev.length - 1];
+            if (last?.role === 'assistant') {
+              return [...prev.slice(0, -1), { role: 'assistant', text: buf, streaming: true }];
+            }
+            return [...prev, { role: 'assistant', text: buf, streaming: true }];
+          });
+        } else if (msg.type === 'done') {
+          setAdvisorMessages(prev => {
+            const last = prev[prev.length - 1];
+            if (last?.role === 'assistant') return [...prev.slice(0, -1), { ...last, streaming: false }];
+            return prev;
+          });
+          setAdvisorBusy(false);
+          ws.close();
+        } else if (msg.type === 'error') {
+          setAdvisorMessages(prev => [...prev, { role: 'assistant', text: `⚠️ ${msg.message ?? 'Something went wrong.'}` }]);
+          setAdvisorBusy(false);
+          ws.close();
+        }
+      } catch { /* ignore parse errors */ }
+    };
+
+    ws.onerror = () => { setAdvisorBusy(false); };
+    ws.onclose = () => { setAdvisorBusy(false); };
+  }
+
+  async function handleAdvisorOpen() {
+    if (advisorScanningRef.current) return;
+
+    // If already open, just re-focus (no re-scan)
+    if (advisorOpen) { setAdvisorOpen(false); return; }
+
+    advisorScanningRef.current = true;
+    setAdvisorScanning(true);
+    setAdvisorOpen(true);
+
+    // Scan animation — nodes light up sequentially
+    const nodeIds = nodesRef.current.map(n => n.id);
+    if (nodeIds.length > 0) {
+      const delay = Math.min(200, Math.floor(1200 / nodeIds.length));
+      for (let i = 0; i < nodeIds.length; i++) {
+        setNodes(nds => nds.map(n => ({
+          ...n,
+          data: { ...n.data, _scanning: n.id === nodeIds[i] },
+        })));
+        await new Promise(r => setTimeout(r, delay));
+      }
+      // Clear scan highlight
+      setNodes(nds => nds.map(n => ({ ...n, data: { ...n.data, _scanning: false } })));
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    advisorScanningRef.current = false;
+    setAdvisorScanning(false);
+
+    // Only send initial analysis if fresh session
+    if (advisorMessages.length === 0) {
+      await advisorSend(null, true);
+    }
+  }
+
+  function handleAdvisorRescan() {
+    setAdvisorMessages([]);
+    setAdvisorContextId(null);
+    advisorBufRef.current = '';
+    handleAdvisorOpen();
   }
 
   const onConnect = useCallback((c: Connection) => {
@@ -1690,8 +2019,23 @@ function BuilderView({
             onDeleteEdge={deleteEdge}
             onAutoLayout={autoLayout}
             logoState={logoState}
+            advisorOpen={advisorOpen}
+            onAdvisorOpen={handleAdvisorOpen}
           />
         </div>
+
+        {advisorOpen && (
+          <AdvisorPanel
+            messages={advisorMessages}
+            busy={advisorBusy}
+            input={advisorInput}
+            scanning={advisorScanning}
+            onInputChange={setAdvisorInput}
+            onSend={text => advisorSend(text)}
+            onClose={() => setAdvisorOpen(false)}
+            onRescan={handleAdvisorRescan}
+          />
+        )}
 
         <PropertiesPanel
           selectedNode={selectedNode}
