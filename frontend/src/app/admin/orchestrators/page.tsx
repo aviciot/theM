@@ -43,23 +43,106 @@ const EMPTY_FORM = {
   history_window: 20,
 };
 
-// ── Sub-components ─────────────────────────────────────────────────────────
-function Badge({ on }: { on: boolean }) {
-  return (
-    <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: on ? '#4edea318' : '#f8717118', color: on ? '#4edea3' : '#f87171' }}>
-      {on ? 'enabled' : 'disabled'}
-    </span>
-  );
+// ── Design tokens (matches agents/applications pages) ──────────────────────
+const BG      = '#060a14';
+const CYAN    = '#00d1ff';
+const PURPLE  = '#a78bfa';
+const GREEN   = '#34d399';
+const TEXT    = '#e2e8f0';
+const MUTED   = '#64748b';
+const BORDER  = 'rgba(255,255,255,0.07)';
+
+// provider → accent color
+function providerColor(p: string | null): string {
+  if (!p) return MUTED;
+  if (p === 'anthropic') return '#d97706';   // amber
+  if (p === 'openai')    return '#10b981';   // emerald
+  if (p === 'groq')      return '#f59e0b';   // yellow
+  if (p === 'gemini')    return '#3b82f6';   // blue
+  return CYAN;
 }
 
-function LLMBadge({ provider, model }: { provider: string | null; model: string | null }) {
-  if (!provider) return <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontStyle: 'italic' }}>env default</span>;
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 6, background: 'var(--tm-accent-subtle)', fontSize: 11, fontWeight: 600, color: 'var(--tm-accent)' }}>
-      {provider} / {model ?? '—'}
-    </span>
-  );
+// provider → Material Symbols icon
+function providerIcon(p: string | null): string {
+  if (!p) return 'auto_awesome';
+  if (p === 'anthropic') return 'brightness_7';
+  if (p === 'openai')    return 'hub';
+  if (p === 'groq')      return 'bolt';
+  if (p === 'gemini')    return 'diamond';
+  return 'smart_toy';
 }
+
+const ORCH_CARD_CSS = `
+  .orch-glass-card {
+    background:
+      linear-gradient(160deg, rgba(255,255,255,0.032) 0%, rgba(255,255,255,0.006) 40%, rgba(0,0,0,0.06) 100%),
+      rgba(10,18,32,0.92);
+    border: 1px solid rgba(255,255,255,0.07);
+    backdrop-filter: blur(12px);
+    box-shadow:
+      0 8px 32px rgba(0,0,0,0.4),
+      0 2px 8px rgba(0,0,0,0.25),
+      inset 0 1px 0 rgba(255,255,255,0.04);
+    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+  }
+  .orch-glass-card:hover {
+    border-color: rgba(0,209,255,0.22);
+    box-shadow:
+      0 14px 40px rgba(0,0,0,0.48),
+      0 4px 12px rgba(0,0,0,0.28),
+      0 0 24px rgba(0,209,255,0.07),
+      inset 0 1px 0 rgba(255,255,255,0.055);
+    transform: translateY(-3px);
+  }
+  .orch-card-btn {
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 9px 4px; border-radius: 8px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.01em;
+    cursor: pointer; white-space: nowrap;
+    transition: border-color 180ms ease, background 180ms ease,
+                box-shadow 180ms ease, transform 180ms ease;
+  }
+  .orch-card-btn--test {
+    background: ${CYAN}; color: #021520; border: none;
+    box-shadow: 0 0 14px rgba(0,209,255,0.38);
+  }
+  .orch-card-btn--test:hover {
+    background: #22dcff;
+    box-shadow: 0 0 22px rgba(0,209,255,0.55);
+    transform: translateY(-1px);
+  }
+  .orch-card-btn--edit {
+    background: rgba(30,41,59,0.55); color: #94a3b8;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .orch-card-btn--edit:hover {
+    border-color: rgba(129,140,248,0.45);
+    color: #818cf8;
+    background: rgba(99,102,241,0.1);
+  }
+  .orch-card-btn--toggle-on {
+    background: rgba(30,41,59,0.55); color: #f87171;
+    border: 1px solid rgba(248,113,113,0.2);
+  }
+  .orch-card-btn--toggle-on:hover {
+    border-color: rgba(248,113,113,0.5);
+    background: rgba(248,113,113,0.08);
+  }
+  .orch-card-btn--toggle-off {
+    background: rgba(30,41,59,0.55); color: #34d399;
+    border: 1px solid rgba(52,211,153,0.2);
+  }
+  .orch-card-btn--toggle-off:hover {
+    border-color: rgba(52,211,153,0.5);
+    background: rgba(52,211,153,0.08);
+  }
+  .orch-deploy-card:hover {
+    border-color: rgba(99,102,241,0.7) !important;
+    background: rgba(99,102,241,0.04) !important;
+  }
+`;
+
+// ── Sub-components ─────────────────────────────────────────────────────────
 
 function Field({ label, children, disabled }: { label: string; children: React.ReactNode; disabled?: boolean }) {
   return (
@@ -260,64 +343,189 @@ export default function OrchestratorsPage() {
 
   return (
     <AuthGuard>
-      <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--tm-bg)' }}>
+      <style>{ORCH_CARD_CSS}</style>
+      <div style={{ display: 'flex', minHeight: '100vh', background: BG }}>
         <Sidebar />
-        <main style={{ marginLeft: 260, flex: 1 }}>
-          <header style={{ position: 'sticky', top: 0, zIndex: 30, height: 56, background: 'var(--tm-topbar)', borderBottom: '1px solid var(--tm-topbar-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 28px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span className="material-symbols-outlined" style={{ color: 'var(--tm-accent)', fontSize: 20 }}>account_tree</span>
-              <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--tm-text)' }}>Orchestrators</span>
-            </div>
-            <button onClick={openCreate} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--tm-accent)', color: '#fff', fontSize: 13, fontWeight: 600 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>add</span>New orchestrator
-            </button>
-          </header>
-
-          <div style={{ padding: 28 }}>
-            <div style={{ background: 'var(--tm-surface)', border: '1px solid var(--tm-border)', borderRadius: 12, overflow: 'hidden' }}>
-              {/* Table header */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 200px 80px 80px 80px 80px', padding: '8px 20px', gap: 12, background: 'rgba(255,255,255,.02)', borderBottom: '1px solid var(--tm-border)' }}>
-                {['Name', 'LLM', 'Max iter', 'RPM', 'Status', ''].map((h) => (
-                  <div key={h} style={{ fontSize: 11, fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</div>
-                ))}
-              </div>
-
-              {loading ? (
-                <div style={{ padding: 40, textAlign: 'center', color: 'var(--tm-text-muted)', fontSize: 13 }}>Loading…</div>
-              ) : list.length === 0 ? (
-                <div style={{ padding: 60, textAlign: 'center' }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 40, color: 'var(--tm-text-muted)', display: 'block', marginBottom: 12 }}>account_tree</span>
-                  <div style={{ color: 'var(--tm-text-muted)', fontSize: 14, marginBottom: 16 }}>No orchestrators yet</div>
-                  <button onClick={openCreate} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--tm-accent)', color: '#fff', fontWeight: 600, fontSize: 13 }}>Create first orchestrator</button>
-                </div>
-              ) : list.map((o) => (
-                <div key={o.id} style={{ display: 'grid', gridTemplateColumns: '1fr 200px 80px 80px 80px 80px', alignItems: 'center', padding: '14px 20px', gap: 12, borderBottom: '1px solid var(--tm-border-subtle)' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, color: 'var(--tm-text)', fontSize: 13 }}>{o.display_name}</div>
-                    <code style={{ fontSize: 11, color: 'var(--tm-text-muted)', background: 'var(--tm-surface-2)', padding: '1px 5px', borderRadius: 4 }}>{o.name}</code>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <LLMBadge provider={o.llm_provider} model={o.llm_model} />
-                    {o.llm_api_key_hint && <span title={`Key: ${o.llm_api_key_hint}`} className="material-symbols-outlined" style={{ fontSize: 14, color: '#4edea3' }}>key</span>}
-                  </div>
-                  <div style={{ fontSize: 13, color: 'var(--tm-text-muted)' }}>{o.max_iterations}</div>
-                  <div style={{ fontSize: 13, color: 'var(--tm-text-muted)' }}>{o.rate_limit_rpm}</div>
-                  <Badge on={o.enabled} />
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    <button onClick={() => router.push(`/admin/playground?orchestrator=${o.name}`)} title="Test in Playground" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#a78bfa', padding: 4 }}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>science</span>
-                    </button>
-                    <button onClick={() => openEdit(o)} title="Edit" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--tm-text-muted)', padding: 4 }}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>edit</span>
-                    </button>
-                    <button onClick={() => del(o)} title="Delete" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#f87171', padding: 4 }}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 18 }}>delete</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+        <main style={{ marginLeft: 260, flex: 1, padding: '36px 48px' }}>
+          {/* Page header */}
+          <div style={{ marginBottom: 32 }}>
+            <h1 style={{ fontSize: 26, fontWeight: 700, color: TEXT, margin: 0, fontFamily: 'Geist, sans-serif', letterSpacing: -0.5 }}>
+              Orchestrators
+            </h1>
+            <p style={{ fontSize: 13, color: MUTED, margin: '6px 0 0', fontFamily: 'Inter, sans-serif' }}>
+              Configure LLM pipelines, allowed agents, rate limits and voice capabilities.
+            </p>
           </div>
+
+          {loading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: MUTED, padding: '40px 0' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 18, animation: 'spin 1s linear infinite' }}>autorenew</span>
+              Loading…
+            </div>
+          ) : list.length === 0 ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
+              <div className="orch-deploy-card" onClick={openCreate} style={{ borderRadius: 16, border: '2px dashed rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.02)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, cursor: 'pointer', minHeight: 260, transition: 'border-color 200ms ease, background 200ms ease' }}>
+                <div style={{ width: 52, height: 52, borderRadius: 14, border: '2px dashed rgba(99,102,241,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 26, color: '#818cf8' }}>add</span>
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#818cf8', fontFamily: 'Geist, sans-serif' }}>New Orchestrator</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
+              {list.map((o) => {
+                const pColor = providerColor(o.llm_provider);
+                const pGlow  = `${pColor}38`;
+                const pBorder = `${pColor}70`;
+                const agentCount = o.allowed_agent_ids?.length ?? 0;
+                const hasVoice = o.voice_enabled;
+                const hasMemory = o.memory_enabled;
+
+                return (
+                  <div key={o.id} className="orch-glass-card" style={{ borderRadius: 20, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+                    {/* Card body — click to edit */}
+                    <div style={{ padding: '22px 22px 16px', flex: 1, display: 'flex', flexDirection: 'column', gap: 14, cursor: 'pointer' }} onClick={() => openEdit(o)}>
+
+                      {/* Header: icon + name + three-dot */}
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+                        {/* Icon tile */}
+                        <div style={{
+                          width: 56, height: 56, borderRadius: 14, flexShrink: 0,
+                          background: `radial-gradient(circle at 30% 25%, ${pGlow}, transparent 65%),
+                                       linear-gradient(145deg, rgba(20,32,52,0.96), rgba(8,16,30,0.96))`,
+                          border: `1px solid ${pBorder}`,
+                          boxShadow: `0 0 18px ${pGlow}, inset 0 1px 0 rgba(255,255,255,0.07)`,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 26, color: pColor }}>{providerIcon(o.llm_provider)}</span>
+                        </div>
+
+                        {/* Name + badges */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 16, color: TEXT, fontFamily: 'Geist, sans-serif', marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {o.display_name}
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                            {/* Enabled pill */}
+                            <span style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 5,
+                              padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+                              background: o.enabled ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)',
+                              color: o.enabled ? GREEN : '#f87171',
+                              border: `1px solid ${o.enabled ? 'rgba(52,211,153,0.3)' : 'rgba(248,113,113,0.3)'}`,
+                            }}>
+                              {o.enabled && <span style={{ width: 5, height: 5, borderRadius: '50%', background: GREEN, display: 'inline-block', boxShadow: `0 0 5px ${GREEN}` }} />}
+                              {o.enabled ? 'live' : 'disabled'}
+                            </span>
+                            {/* Provider badge */}
+                            {o.llm_provider && (
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+                                background: 'rgba(255,255,255,0.04)', color: pColor,
+                                border: `1px solid ${pBorder}`,
+                              }}>
+                                {o.llm_provider}
+                              </span>
+                            )}
+                          </div>
+                          {/* Slug */}
+                          <div style={{ fontSize: 11, color: MUTED, fontFamily: 'JetBrains Mono, monospace', marginTop: 5 }}>{o.name}</div>
+                        </div>
+
+                        {/* Three-dot overflow */}
+                        <div style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                          <button
+                            onClick={() => del(o)}
+                            title="Delete orchestrator"
+                            style={{ width: 32, height: 32, borderRadius: 8, cursor: 'pointer', background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 150ms ease, border-color 150ms ease' }}
+                            onMouseEnter={e => { e.currentTarget.style.color = '#f87171'; e.currentTarget.style.borderColor = 'rgba(248,113,113,0.4)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.color = '#64748b'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Stat tiles */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        {/* Model tile */}
+                        <div style={{ padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 18, color: PURPLE, flexShrink: 0 }}>psychology</span>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 10, color: MUTED, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Model</div>
+                            <div style={{ fontSize: 12, color: TEXT, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'JetBrains Mono, monospace' }}>
+                              {o.llm_model ?? <span style={{ color: MUTED, fontStyle: 'italic' }}>env default</span>}
+                            </div>
+                          </div>
+                        </div>
+                        {/* Agents tile */}
+                        <div style={{ padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 18, color: CYAN, flexShrink: 0 }}>smart_toy</span>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 10, color: MUTED, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Agents</div>
+                            <div style={{ fontSize: 12, color: TEXT, fontWeight: 600 }}>{agentCount} allowed</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Limits row */}
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, color: MUTED, padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORDER}` }}>
+                          ⚡ {o.max_iterations} iters
+                        </span>
+                        <span style={{ fontSize: 11, color: MUTED, padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORDER}` }}>
+                          🔄 {o.rate_limit_rpm} rpm
+                        </span>
+                        {hasVoice && (
+                          <span style={{ fontSize: 11, color: CYAN, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,209,255,0.06)', border: '1px solid rgba(0,209,255,0.2)' }}>
+                            🎙 voice
+                          </span>
+                        )}
+                        {hasMemory && (
+                          <span style={{ fontSize: 11, color: PURPLE, padding: '3px 8px', borderRadius: 6, background: 'rgba(167,139,250,0.06)', border: '1px solid rgba(167,139,250,0.2)' }}>
+                            🧠 memory
+                          </span>
+                        )}
+                        {o.llm_api_key_hint && (
+                          <span title={`Key: ${o.llm_api_key_hint}`} style={{ fontSize: 11, color: GREEN, padding: '3px 8px', borderRadius: 6, background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.2)' }}>
+                            🔑 key set
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div style={{ borderTop: `1px solid ${BORDER}`, padding: '12px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                      <button className="orch-card-btn orch-card-btn--test" onClick={() => router.push(`/admin/playground?orchestrator=${o.name}`)}>
+                        🧪 Test
+                      </button>
+                      <button className="orch-card-btn orch-card-btn--edit" onClick={() => openEdit(o)}>
+                        ✏️ Edit
+                      </button>
+                      {o.enabled ? (
+                        <button className="orch-card-btn orch-card-btn--toggle-on" onClick={async () => { await themApi.updateOrchestrator(o.id, { enabled: false }); load(); }}>
+                          🔴 Disable
+                        </button>
+                      ) : (
+                        <button className="orch-card-btn orch-card-btn--toggle-off" onClick={async () => { await themApi.updateOrchestrator(o.id, { enabled: true }); load(); }}>
+                          🟢 Enable
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* New orchestrator deploy card */}
+              <div className="orch-deploy-card" onClick={openCreate} style={{ borderRadius: 16, border: '2px dashed rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.02)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, cursor: 'pointer', minHeight: 220, transition: 'border-color 200ms ease, background 200ms ease' }}>
+                <div style={{ width: 52, height: 52, borderRadius: 14, border: '2px dashed rgba(99,102,241,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 26, color: '#818cf8' }}>add</span>
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#818cf8', fontFamily: 'Geist, sans-serif' }}>New Orchestrator</div>
+              </div>
+            </div>
+          )}
         </main>
       </div>
 
