@@ -1103,18 +1103,18 @@ function CanvasLogo({ state }: { state: LogoState }) {
             <path
               key={id}
               d={d}
-              fill="#00f0ff"
               fillRule="evenodd"
               style={isExplode ? {
                 // @ts-ignore
                 '--ex': ex,
                 '--ey': ey,
                 '--rot': `${(ex + ey) * 45}deg`,
+                fill: '#00f0ff',
                 animation: 'logo-explode 1.8s cubic-bezier(0.25,0.46,0.45,0.94) forwards',
                 animationDelay: `${i * 0.06}s`,
                 transformOrigin: 'center',
                 transformBox: 'fill-box',
-              } as React.CSSProperties : undefined}
+              } as React.CSSProperties : { fill: '#00f0ff' }}
             />
           ))}
         </g>
