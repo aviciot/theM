@@ -1018,7 +1018,7 @@ const LOGO_STATES: Record<LogoState, LogoStateDef> = {
     color: '#00f0ff',
     opacity: 0.13,
     filter: 'drop-shadow(0 0 18px rgba(0,240,255,0.18))',
-    animation: 'logo-breathe 12s cubic-bezier(0.45,0,0.55,1) infinite',
+    animation: 'logo-breathe 20s ease-in-out infinite',
   },
   dirty: {
     color: '#f59e0b',
@@ -1106,7 +1106,9 @@ const EXPLODE_VECTORS = [
 
 function CanvasLogo({ state }: { state: LogoState }) {
   const def = LOGO_STATES[state];
-  const key = state; // re-mount on state change to restart animations
+  // Re-mount on state change to restart animations (intentional for error/success/thinking)
+  // idle and dirty use a shared key so they don't interrupt each other mid-breathe
+  const key = (state === 'idle' || state === 'dirty') ? 'calm' : state;
 
   const polygons = [
     // top outer wings
