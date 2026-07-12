@@ -917,6 +917,21 @@ function BuilderView({
 
 // ── List view ─────────────────────────────────────────────────────────────────
 const APP_CARD_STYLES = `
+@keyframes app-card-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.app-card-grid > * {
+  animation: app-card-in 300ms ease both;
+}
+.app-card-grid > *:nth-child(1) { animation-delay:  0ms; }
+.app-card-grid > *:nth-child(2) { animation-delay: 40ms; }
+.app-card-grid > *:nth-child(3) { animation-delay: 80ms; }
+.app-card-grid > *:nth-child(4) { animation-delay:120ms; }
+.app-card-grid > *:nth-child(5) { animation-delay:160ms; }
+.app-card-grid > *:nth-child(6) { animation-delay:200ms; }
+.app-card-grid > *:nth-child(7) { animation-delay:240ms; }
+.app-card-grid > *:nth-child(8) { animation-delay:280ms; }
 .app-glass-card {
   background:
     linear-gradient(160deg, rgba(255,255,255,0.032) 0%, rgba(255,255,255,0.006) 40%, rgba(0,0,0,0.06) 100%),
@@ -1235,7 +1250,7 @@ function ListView({
           </button>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
+        <div className="app-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
           {list.map(app => (
             <AppCard
               key={app.id}

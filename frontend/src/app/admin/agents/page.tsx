@@ -929,6 +929,22 @@ export default function AdminAgentsPage() {
   return (
     <AuthGuard>
       <style>{`
+        /* ── Card grid fade-in ──────────────────────────────── */
+        @keyframes card-in {
+          from { opacity: 0; }
+          to   { opacity: 1; }
+        }
+        .agent-card-grid > * { animation: card-in 300ms ease both; }
+        .agent-card-grid > *:nth-child(1) { animation-delay:  0ms; }
+        .agent-card-grid > *:nth-child(2) { animation-delay: 40ms; }
+        .agent-card-grid > *:nth-child(3) { animation-delay: 80ms; }
+        .agent-card-grid > *:nth-child(4) { animation-delay:120ms; }
+        .agent-card-grid > *:nth-child(5) { animation-delay:160ms; }
+        .agent-card-grid > *:nth-child(6) { animation-delay:200ms; }
+        .agent-card-grid > *:nth-child(7) { animation-delay:240ms; }
+        .agent-card-grid > *:nth-child(8) { animation-delay:280ms; }
+        .agent-card-grid > *:nth-child(9) { animation-delay:320ms; }
+
         /* ── Glass card ─────────────────────────────────────── */
         .glass-card {
           background:
@@ -1256,7 +1272,7 @@ export default function AdminAgentsPage() {
           </div>
 
           {/* Card grid */}
-          <div style={{
+          <div className="agent-card-grid" style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(3, 1fr)',
             gap: '24px',

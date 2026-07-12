@@ -73,6 +73,19 @@ function providerIcon(p: string | null): string {
 }
 
 const ORCH_CARD_CSS = `
+  @keyframes orch-card-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  .orch-card-grid > * { animation: orch-card-in 300ms ease both; }
+  .orch-card-grid > *:nth-child(1) { animation-delay:  0ms; }
+  .orch-card-grid > *:nth-child(2) { animation-delay: 40ms; }
+  .orch-card-grid > *:nth-child(3) { animation-delay: 80ms; }
+  .orch-card-grid > *:nth-child(4) { animation-delay:120ms; }
+  .orch-card-grid > *:nth-child(5) { animation-delay:160ms; }
+  .orch-card-grid > *:nth-child(6) { animation-delay:200ms; }
+  .orch-card-grid > *:nth-child(7) { animation-delay:240ms; }
+  .orch-card-grid > *:nth-child(8) { animation-delay:280ms; }
   .orch-glass-card {
     background:
       linear-gradient(160deg, rgba(255,255,255,0.032) 0%, rgba(255,255,255,0.006) 40%, rgba(0,0,0,0.06) 100%),
@@ -370,7 +383,7 @@ export default function OrchestratorsPage() {
               Loading…
             </div>
           ) : list.length === 0 ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
+            <div className="orch-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
               <div className="orch-deploy-card" onClick={openCreate} style={{ borderRadius: 16, border: '2px dashed rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.02)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, cursor: 'pointer', minHeight: 260, transition: 'border-color 200ms ease, background 200ms ease' }}>
                 <div style={{ width: 52, height: 52, borderRadius: 14, border: '2px dashed rgba(99,102,241,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 26, color: '#818cf8' }}>add</span>
@@ -379,7 +392,7 @@ export default function OrchestratorsPage() {
               </div>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
+            <div className="orch-card-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
               {list.map((o) => {
                 const pColor = providerColor(o.llm_provider);
                 const pGlow  = `${pColor}38`;
