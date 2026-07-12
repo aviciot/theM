@@ -17,6 +17,7 @@ const EMPTY_FORM = {
   skills: [] as AgentSkill[],
   supports_streaming: false,
   supports_push: false,
+  icon: '',
   agent_card: null as Record<string, unknown> | null,
   agent_card_url: '',
 };
@@ -327,7 +328,7 @@ function AgentCard({
   const category = agentCategory(agent);
   const accent = categoryAccent(category);
   const catStyle = categoryBadgeStyle(category);
-  const icon = agentIcon(agent, category);
+  const icon = agent.icon || agentIcon(agent, category);
 
   useEffect(() => {
     if (!showOverflow) return;
@@ -767,6 +768,7 @@ export default function AdminAgentsPage() {
       skills: agent.skills || [],
       supports_streaming: agent.supports_streaming || false,
       supports_push: agent.supports_push || false,
+      icon: agent.icon || '',
       agent_card: agent.agent_card || null,
       agent_card_url: agent.agent_card_url || '',
     });
@@ -790,6 +792,7 @@ export default function AdminAgentsPage() {
         skills: result.skills,
         supports_streaming: result.supports_streaming,
         supports_push: result.supports_push,
+        ...(result.icon ? { icon: result.icon } : {}),
         agent_card: result.agent_card,
         agent_card_url: result.agent_card_url,
       }));
@@ -806,6 +809,7 @@ export default function AdminAgentsPage() {
     try {
       const body: Record<string, unknown> = { ...form };
       if (!body.auth_token) delete body.auth_token;
+      if (!body.icon) body.icon = null;
       if (editing) {
         delete body.slug;
         await themApi.updateAgent(editing.id, body);
@@ -879,6 +883,7 @@ export default function AdminAgentsPage() {
         skills: result.skills,
         supports_streaming: result.supports_streaming,
         supports_push: result.supports_push,
+        ...(result.icon ? { icon: result.icon } : {}),
         agent_card: result.agent_card,
         agent_card_url: result.agent_card_url,
       });
@@ -1341,6 +1346,14 @@ export default function AdminAgentsPage() {
                 <input style={inputStyle} type="number" min={5} max={300} value={form.timeout_seconds} onChange={(e) => set('timeout_seconds', Number(e.target.value))} />
               </Field>
             </div>
+            <Field label="Icon (Material Symbols name, optional)">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input style={{ ...inputStyle, flex: 1 }} value={form.icon} onChange={(e) => set('icon', e.target.value)} placeholder="e.g. hub, visibility, code — leave blank to auto-detect" />
+                {form.icon && (
+                  <span className="material-symbols-outlined" style={{ fontSize: '24px', color: '#00d1ff', flexShrink: 0 }}>{form.icon}</span>
+                )}
+              </div>
+            </Field>
             <Field label="Status">
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                 <input type="checkbox" checked={form.enabled} onChange={(e) => set('enabled', e.target.checked)} />

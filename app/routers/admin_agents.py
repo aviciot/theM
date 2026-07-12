@@ -57,6 +57,7 @@ class AgentCreate(BaseModel):
     skills: List[Dict[str, Any]] = Field(default_factory=list)
     supports_streaming: bool = False
     supports_push: bool = False
+    icon: Optional[str] = None
 
     @field_validator('slug')
     @classmethod
@@ -82,6 +83,7 @@ class AgentUpdate(BaseModel):
     skills: Optional[List[Dict[str, Any]]] = None
     supports_streaming: Optional[bool] = None
     supports_push: Optional[bool] = None
+    icon: Optional[str] = None
 
 
 class AgentOut(BaseModel):
@@ -103,6 +105,7 @@ class AgentOut(BaseModel):
     skills: List[Dict[str, Any]] = Field(default_factory=list)
     supports_streaming: bool = False
     supports_push: bool = False
+    icon: Optional[str] = None
     card_fetched_at: Optional[datetime] = None
     last_scan_at: Optional[datetime] = None
     last_scan_result: Optional[Dict[str, Any]] = None
@@ -126,6 +129,7 @@ class DiscoverResult(BaseModel):
     skills: List[Dict[str, Any]] = Field(default_factory=list)
     supports_streaming: bool = False
     supports_push: bool = False
+    icon: Optional[str] = None
     agent_card: Optional[Dict[str, Any]] = None
     agent_card_url: str = ""
 
@@ -167,6 +171,7 @@ def _row_to_out(row: Agent) -> AgentOut:
         skills=list(row.skills or []),
         supports_streaming=row.supports_streaming,
         supports_push=row.supports_push,
+        icon=getattr(row, "icon", None),
         card_fetched_at=getattr(row, "card_fetched_at", None),
         last_scan_at=getattr(row, "last_scan_at", None),
         last_scan_result=getattr(row, "last_scan_result", None),
@@ -229,6 +234,7 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
         skills=body.skills,
         supports_streaming=body.supports_streaming,
         supports_push=body.supports_push,
+        icon=body.icon,
         card_fetched_at=datetime.now(timezone.utc) if body.agent_card else None,
     )
     db.add(row)
@@ -284,6 +290,8 @@ async def update_agent(
         row.supports_streaming = body.supports_streaming
     if body.supports_push is not None:
         row.supports_push = body.supports_push
+    if body.icon is not None:
+        row.icon = body.icon
 
     await db.commit()
     await db.refresh(row)
@@ -398,6 +406,11 @@ async def discover_agent(body: DiscoverRequest, db: AsyncSession = Depends(get_d
     supports_streaming = bool(caps.get("streaming", False))
     supports_push = bool(caps.get("pushNotifications", False))
 
+    # Parse iconUrl from card — Material Symbols name expected (e.g. "hub", "visibility")
+    icon: Optional[str] = card.get("iconUrl") or card.get("icon_url") or None
+    if icon:
+        icon = str(icon).strip() or None
+
     logger.info("discover: card fetched", endpoint=base, slug=suggested_slug, skills=len(skills))
     return DiscoverResult(
         ok=True,
@@ -407,6 +420,7 @@ async def discover_agent(body: DiscoverRequest, db: AsyncSession = Depends(get_d
         skills=skills,
         supports_streaming=supports_streaming,
         supports_push=supports_push,
+        icon=icon,
         agent_card=card,
         agent_card_url=card_url,
     )

@@ -42,6 +42,7 @@ export interface DiscoverResult {
   skills: AgentSkill[];
   supports_streaming: boolean;
   supports_push: boolean;
+  icon: string | null;
   agent_card: Record<string, unknown> | null;
   agent_card_url: string;
 }
@@ -63,6 +64,7 @@ export interface Agent {
   skills?: AgentSkill[];
   supports_streaming?: boolean;
   supports_push?: boolean;
+  icon?: string | null;
   agent_card?: Record<string, unknown> | null;
   agent_card_url?: string | null;
   card_fetched_at?: string | null;
