@@ -1131,7 +1131,7 @@ function CanvasLogo({ state }: { state: LogoState }) {
   ];
 
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 1 }}>
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 0 }}>
       <style>{LOGO_KEYFRAMES}</style>
       <svg
         key={key}
@@ -1139,6 +1139,7 @@ function CanvasLogo({ state }: { state: LogoState }) {
         width="720" height="576"
         viewBox="0 0 422 336"
         fill={def.color}
+        opacity={def.opacity}
         style={{
           animation: def.animation,
           filter: def.filter,
@@ -1211,7 +1212,6 @@ function CanvasInner({
   return (
     <div style={{ flex: 1, position: 'relative', height: '100%' }}>
       <style>{CANVAS_STYLES}</style>
-      <CanvasLogo state={logoState} />
       {/* Canvas toolbar */}
       <div style={{
         position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)',
@@ -1303,6 +1303,7 @@ function CanvasInner({
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} color="rgba(132,148,149,0.15)" gap={22} size={1} />
+        <CanvasLogo state={logoState} />
         <MiniMap
           style={{ background: C.surfaceLow, border: `1px solid ${C.outlineVariant}`, borderRadius: 8 }}
           nodeColor={(n: Node) => n.type === 'entryPoint' ? C.cyan : n.type === 'orchestrator' ? C.purple : C.green}
