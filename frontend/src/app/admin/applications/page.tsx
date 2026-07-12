@@ -1074,7 +1074,7 @@ const LOGO_KEYFRAMES = `
   90%     { transform: translateX(4px); }
 }
 @keyframes logo-burst {
-  0%   { transform: scale(1);    opacity: var(--logo-op); filter: drop-shadow(0 0 28px rgba(74,222,128,0.7)); }
+  0%   { transform: scale(1);    opacity: 0.13; filter: drop-shadow(0 0 28px rgba(74,222,128,0.7)); }
   30%  { transform: scale(1.18); opacity: 1;              filter: drop-shadow(0 0 60px rgba(74,222,128,1)); }
   60%  { transform: scale(0.96); opacity: 0.8; }
   100% { transform: scale(1);    opacity: 0.13;           filter: drop-shadow(0 0 18px rgba(0,240,255,0.18)); }
@@ -1144,7 +1144,6 @@ function CanvasLogo({ state }: { state: LogoState }) {
       <div
         style={{
           animation: def.animation,
-          opacity: def.opacity,
           filter: def.filter,
           willChange: 'transform, opacity, filter',
         }}
