@@ -1028,7 +1028,7 @@ const LOGO_STATES: Record<LogoState, LogoStateDef> = {
   warning:  { opacity: 0.45, filter: 'drop-shadow(0 0 18px rgba(255,120,120,0.4))',    animation: 'logo-warn-flash 1.2s ease-in-out 1 forwards' },
   error:    { opacity: 0.35, filter: 'drop-shadow(0 0 18px rgba(255,107,138,0.4))',   animation: 'logo-shake 0.5s ease-in-out' },
   success:  { opacity: 1.0,  filter: 'drop-shadow(0 0 40px rgba(74,222,128,0.9))',    animation: 'logo-burst 1.8s ease-out forwards' },
-  thinking: { opacity: 0.28, filter: 'drop-shadow(0 0 16px rgba(208,188,255,0.3))',   animation: 'logo-flip 1.4s linear infinite' },
+  thinking: { opacity: 1.0,  filter: 'none',                                           animation: 'none' },
 };
 
 const LOGO_KEYFRAMES = `
@@ -1068,6 +1068,10 @@ const LOGO_KEYFRAMES = `
   0%   { transform: perspective(600px) rotateY(0deg); }
   100% { transform: perspective(600px) rotateY(360deg); }
 }
+@keyframes logo-polygon-flicker {
+  0%,100% { opacity: 0.08; fill: #4ab8a0; }
+  50%     { opacity: 0.55; fill: #00b8c8; filter: drop-shadow(0 0 6px rgba(0,180,200,0.6)); }
+}
 @keyframes logo-warn-flash {
   0%   { opacity: 0.18; filter: drop-shadow(0 0 12px rgba(255,120,120,0.15)); }
   40%  { opacity: 0.48; filter: drop-shadow(0 0 22px rgba(255,120,120,0.5)); }
@@ -1096,10 +1100,22 @@ const LOGO_PATHS: Array<{ id: string; points: string; ex: number; ey: number }> 
 
 const LOGO_COLOR = '#a0f0d0';
 
+// Stable per-polygon random delays for the thinking flicker — generated once at module load
+const THINK_DELAYS = LOGO_PATHS.map((_, i) => {
+  // cheap deterministic pseudo-random from index
+  const r = ((i * 2654435761) >>> 0) / 0xffffffff;
+  return +(r * 2.4).toFixed(2); // 0–2.4s spread
+});
+const THINK_DURATIONS = LOGO_PATHS.map((_, i) => {
+  const r = (((i + 7) * 2246822519) >>> 0) / 0xffffffff;
+  return +(0.9 + r * 1.4).toFixed(2); // 0.9–2.3s per polygon
+});
+
 function CanvasLogo({ state }: { state: LogoState }) {
   const def = LOGO_STATES[state];
   const key = (state === 'idle' || state === 'dirty') ? 'calm' : state;
   const isExplode = state === 'success';
+  const isThinking = state === 'thinking';
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 0 }}>
@@ -1127,6 +1143,8 @@ function CanvasLogo({ state }: { state: LogoState }) {
               animationDelay: `${i * 0.06}s`,
               transformOrigin: 'center',
               transformBox: 'fill-box',
+            } as React.CSSProperties : isThinking ? {
+              animation: `logo-polygon-flicker ${THINK_DURATIONS[i]}s ease-in-out ${THINK_DELAYS[i]}s infinite`,
             } as React.CSSProperties : { fill: state === 'warning' ? '#ff8080' : LOGO_COLOR }}
           />
         ))}
@@ -1714,6 +1732,7 @@ function BuilderView({
     if (advisorBusy) return;
     setAdvisorBusy(true);
     advisorBufRef.current = '';
+    triggerLogo('thinking', 120000); // hold until done
 
     const content = isInitial
       ? `Analyze this workflow:\n\n${JSON.stringify(serializeWorkflow(), null, 2)}`
@@ -1769,16 +1788,18 @@ function BuilderView({
             return prev;
           });
           setAdvisorBusy(false);
+          triggerLogo('idle', 1);
           ws.close();
         } else if (msg.type === 'error') {
           setAdvisorMessages(prev => [...prev, { role: 'assistant', text: `⚠️ ${msg.message ?? 'Something went wrong.'}` }]);
           setAdvisorBusy(false);
+          triggerLogo('idle', 1);
           ws.close();
         }
       } catch { /* ignore parse errors */ }
     };
 
-    ws.onerror = () => { setAdvisorBusy(false); };
+    ws.onerror = () => { setAdvisorBusy(false); triggerLogo('idle', 1); };
     ws.onclose = () => { setAdvisorBusy(false); };
   }
 
