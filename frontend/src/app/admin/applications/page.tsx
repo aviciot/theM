@@ -246,6 +246,31 @@ function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointDa
           }}
           title="Click the node then set slug in the Properties panel →"
         />
+        {!slugMissing && (
+          <div
+            className="nodrag"
+            title="Click to copy endpoint URL"
+            onClick={() => navigator.clipboard.writeText(
+              data.epType === 'websocket'
+                ? `ws://localhost:8088/apps/${data.slug}/ws`
+                : `http://localhost:8088/apps/${data.slug}/sse`
+            )}
+            style={{
+              marginTop: 5, padding: '3px 6px', borderRadius: 4,
+              background: 'rgba(0,240,255,0.06)', border: '1px solid rgba(0,240,255,0.15)',
+              fontSize: 10, color: 'rgba(0,240,255,0.7)', fontFamily: 'JetBrains Mono, monospace',
+              cursor: 'pointer', wordBreak: 'break-all', lineHeight: 1.4,
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}
+          >
+            <span style={{ flex: 1 }}>
+              {data.epType === 'websocket' ? `ws://<host>/apps/${data.slug}/ws` : `http://<host>/apps/${data.slug}/sse`}
+            </span>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -807,6 +832,24 @@ function PropertiesPanel({
                     </div>
                   </div>
                 ))}
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>A2A Endpoint</label>
+                  <div style={{
+                    fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace',
+                    wordBreak: 'break-all', padding: '7px 10px', borderRadius: 6,
+                    border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
+                  }}>
+                    <span>http://&lt;host&gt;:8088/a2a/{d.name}</span>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(`http://localhost:8088/a2a/${d.name}`)}
+                      title="Copy A2A URL"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.purple, flexShrink: 0, padding: 0 }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>content_copy</span>
+                    </button>
+                  </div>
+                </div>
                 <a href="/admin/orchestrators" style={{ fontSize: 12, color: C.purple, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, marginTop: 8, opacity: 0.8 }}
                   onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
                   onMouseLeave={e => (e.currentTarget.style.opacity = '0.8')}
@@ -1034,7 +1077,7 @@ interface NodePortDef {
 }
 
 const NODE_PORTS: Record<string, NodePortDef> = {
-  entryPoint:   { accepts: [],                     emits: ['request'],        maxOutgoing: 1 },
+  entryPoint:   { accepts: [],                     emits: ['request'] },  // multiple allowed, unique by slug
   orchestrator: { accepts: ['request', 'signal'],   emits: ['task', 'signal'] },
   agent:        { accepts: ['task'],                emits: ['result'] },
   // future: router, condition, webhook, llm, transform …
@@ -1085,12 +1128,21 @@ interface ChainStatus {
 function analyzeChain(nodes: Node[], edges: Edge[]): ChainStatus {
   const miss = (msg: string) => ({ ready: false, label: msg, color: C.error, agentCount: 0 });
 
-  const epNode = nodes.find(n => n.type === 'entryPoint');
-  if (!epNode) return miss('Drop an Entry Point to start');
+  const epNodes = nodes.filter(n => n.type === 'entryPoint');
+  if (epNodes.length === 0) return miss('Drop an Entry Point to start');
 
+  // All entry points must have unique non-empty slugs
+  const epSlugs = epNodes.map(n => (n.data as EntryPointData).slug?.trim() ?? '');
+  const missingSlug = epNodes.find(n => !(n.data as EntryPointData).slug);
+  if (missingSlug) return miss('Every entry point needs a unique slug');
+  const slugSet = new Set(epSlugs);
+  if (slugSet.size !== epSlugs.length) return miss('Duplicate entry point slug — each slug must be unique');
+  const badSlug = epSlugs.find(s => !/^[a-z0-9_-]{1,64}$/.test(s));
+  if (badSlug) return miss(`Slug "${badSlug}": lowercase letters, numbers, _ or - only`);
+
+  // For chain analysis use first EP that connects to an orchestrator
+  const epNode = epNodes.find(n => edges.some(e => e.source === n.id && nodes.find(t => t.id === e.target && t.type === 'orchestrator'))) ?? epNodes[0];
   const epData = epNode.data as EntryPointData;
-  if (!epData.slug) return miss('Entry point needs a slug (set it in Properties panel)');
-  if (!/^[a-z0-9_-]{1,64}$/.test(epData.slug)) return miss('Slug: use lowercase letters, numbers, _ or - only');
 
   const orchEdge = edges.find(e => e.source === epNode.id);
   const orchNode = orchEdge ? nodes.find(n => n.id === orchEdge.target && n.type === 'orchestrator') : undefined;
@@ -1164,6 +1216,7 @@ function BuilderView({
   const [libWidth, setLibWidth] = useState(280);
   const [appName, setAppName] = useState(app?.name ?? '');
   const [slugLocked, setSlugLocked] = useState(!!app?.slug);
+  const [isDirty, setIsDirty] = useState(false);
   const rfWrapper = useRef<HTMLDivElement>(null);
   const nodesRef = useRef<Node[]>(initial.nodes);
   const edgesRef = useRef<Edge[]>(initial.edges);
@@ -1180,6 +1233,24 @@ function BuilderView({
   // Keep refs in sync so onConnect can read current state synchronously
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { edgesRef.current = edges; }, [edges]);
+
+  // Dirty tracking — set on any change after mount
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    if (!mountedRef.current) { mountedRef.current = true; return; }
+    setIsDirty(true);
+  }, [nodes, edges, appName]);
+
+  // Warn before leaving when dirty
+  useEffect(() => {
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (!isDirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [isDirty]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -1223,6 +1294,11 @@ function BuilderView({
     if (!nodeType || !rawData) return;
     let nodeData: Record<string, unknown>;
     try { nodeData = JSON.parse(rawData) as Record<string, unknown>; } catch { return; }
+
+    // Entry points: allow multiple, but auto-clear slug to force uniqueness
+    if (nodeType === 'entryPoint') {
+      nodeData = { ...nodeData, slug: '' };
+    }
 
     const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
     const newNode: Node = { id: makeId(), type: nodeType, position, data: nodeData };
@@ -1275,6 +1351,7 @@ function BuilderView({
       } else {
         await themApi.createApplication(body);
       }
+      setIsDirty(false);
       showToast(deploy ? '🚀 Application deployed!' : 'Saved successfully', true);
       onSaved();
     } catch (err: any) {
@@ -1293,30 +1370,44 @@ function BuilderView({
         display: 'flex', alignItems: 'center', gap: 16, padding: '0 24px', height: 56, flexShrink: 0,
         ...glass, borderBottom: `1px solid ${C.glassBorder}`, zIndex: 20,
       }}>
-        <button onClick={onBack} style={{ ...toolBtnStyle, padding: '6px 10px', color: C.textMuted }}>
-          <span className="material-icons" style={{ fontSize: 18 }}>arrow_back</span>
+        <button
+          onClick={() => {
+            if (isDirty && !confirm('You have unsaved changes. Leave anyway?')) return;
+            onBack();
+          }}
+          style={{ ...toolBtnStyle, padding: '6px 10px', color: C.textMuted }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
         </button>
         <div style={{ width: 1, height: 20, background: C.outlineVariant }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <input
-            className="nodrag"
-            value={appName}
-            onChange={e => {
-              setAppName(e.target.value);
-              if (!slugLocked && epNode) {
-                updateNodeData(epNode.id, { slug: toSlug(e.target.value) });
-              }
-            }}
-            placeholder="Application name…"
-            style={{
-              background: 'transparent', border: 'none', outline: 'none',
-              fontSize: 15, fontWeight: 700, color: '#e2e8f0',
-              fontFamily: 'Geist, sans-serif', width: '100%', padding: 0,
-            }}
-          />
-          {epNode && (
-            <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
-              {(epNode.data as EntryPointData).slug || (app?.slug ?? '')}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <input
+              className="nodrag"
+              value={appName}
+              onChange={e => {
+                setAppName(e.target.value);
+                if (!slugLocked && epNode) {
+                  updateNodeData(epNode.id, { slug: toSlug(e.target.value) });
+                }
+              }}
+              placeholder="Application name…"
+              style={{
+                background: 'transparent', border: 'none', outline: 'none',
+                fontSize: 15, fontWeight: 700, color: '#e2e8f0',
+                fontFamily: 'Geist, sans-serif', width: '100%', padding: 0,
+              }}
+            />
+            {epNode && (
+              <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
+                {(epNode.data as EntryPointData).slug || (app?.slug ?? '')}
+              </div>
+            )}
+          </div>
+          {isDirty && (
+            <div title="Unsaved changes" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 6, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)' }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f59e0b', boxShadow: '0 0 6px #f59e0b', display: 'inline-block' }} />
+              <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>Unsaved</span>
             </div>
           )}
         </div>
