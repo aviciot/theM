@@ -654,24 +654,31 @@ function PropertiesPanel({
             const d = selectedNode.data as OrchestratorData;
             return (
               <div>
-                <div style={fieldWrap}>
-                  <label style={labelStyle}>Display Name</label>
-                  <input style={readOnlyStyle} value={d.displayName} readOnly />
+                {/* Header tile */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 16, background: C.purpleBg, border: '1px solid rgba(208,188,255,0.2)' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 22, color: C.purple }}>hub</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.displayName}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{d.name}</div>
+                  </div>
                 </div>
-                <div style={fieldWrap}>
-                  <label style={labelStyle}>Slug</label>
-                  <input style={{ ...readOnlyStyle, fontFamily: 'JetBrains Mono, monospace' }} value={d.name} readOnly />
-                </div>
-                <div style={fieldWrap}>
-                  <label style={labelStyle}>Model</label>
-                  <input style={{ ...readOnlyStyle, fontFamily: 'JetBrains Mono, monospace' }} value={d.model ?? '—'} readOnly />
-                </div>
-                <div style={fieldWrap}>
-                  <label style={labelStyle}>Max Parallel Tools</label>
-                  <input style={readOnlyStyle} value={d.maxParallelTools} readOnly />
-                </div>
-                <a href="/admin/orchestrators" style={{ fontSize: 12, color: C.cyan, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }}>
-                  Configure in Orchestrators <span className="material-icons" style={{ fontSize: 14 }}>arrow_forward</span>
+                {[
+                  { label: 'Model', value: d.model ?? '—', mono: true },
+                  { label: 'Max Parallel Tools', value: String(d.maxParallelTools), mono: false },
+                ].map(({ label, value, mono }) => (
+                  <div key={label} style={fieldWrap}>
+                    <label style={labelStyle}>{label}</label>
+                    <div style={{ ...readOnlyStyle, fontFamily: mono ? 'JetBrains Mono, monospace' : 'inherit', fontSize: mono ? 12 : 13, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow, color: C.text }}>
+                      {value}
+                    </div>
+                  </div>
+                ))}
+                <a href="/admin/orchestrators" style={{ fontSize: 12, color: C.purple, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, marginTop: 8, opacity: 0.8 }}
+                  onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                  onMouseLeave={e => (e.currentTarget.style.opacity = '0.8')}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>open_in_new</span>
+                  Configure in Orchestrators
                 </a>
               </div>
             );
@@ -680,26 +687,42 @@ function PropertiesPanel({
           {/* Agent properties */}
           {selectedNode.type === 'agent' && propTab === 'properties' && (() => {
             const d = selectedNode.data as AgentData;
+            const icon = agentIconForLibrary({ slug: d.name, icon: null } as any);
             return (
               <div>
-                <div style={fieldWrap}>
-                  <label style={labelStyle}>Display Name</label>
-                  <input style={readOnlyStyle} value={d.displayName} readOnly />
+                {/* Header tile */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 16, background: C.greenBg, border: `1px solid ${C.greenBorder}` }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 22, color: C.green }}>{icon}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.displayName}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{d.name}</div>
+                  </div>
                 </div>
                 <div style={fieldWrap}>
                   <label style={labelStyle}>Description</label>
-                  <textarea style={{ ...readOnlyStyle, resize: 'none', height: 70 }} value={d.description} readOnly />
-                </div>
-                <div style={fieldWrap}>
-                  <label style={labelStyle}>Endpoint URL</label>
-                  <input style={{ ...readOnlyStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }} value={d.endpointUrl} readOnly />
+                  <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.55, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
+                    {d.description || <span style={{ opacity: 0.4 }}>No description</span>}
+                  </div>
                 </div>
                 <div style={fieldWrap}>
                   <label style={labelStyle}>Transport</label>
-                  <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: C.greenBg, color: C.green, border: `1px solid ${C.greenBorder}` }}>{d.transport}</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: C.greenBg, color: C.green, border: `1px solid ${C.greenBorder}` }}>
+                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: C.green, boxShadow: `0 0 5px ${C.green}` }} />
+                    {d.transport}
+                  </span>
                 </div>
-                <a href="/admin/agents" style={{ fontSize: 12, color: C.green, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, marginTop: 8 }}>
-                  Configure in Agents <span className="material-icons" style={{ fontSize: 14 }}>arrow_forward</span>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Endpoint</label>
+                  <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', wordBreak: 'break-all', padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
+                    {d.endpointUrl}
+                  </div>
+                </div>
+                <a href="/admin/agents" style={{ fontSize: 12, color: C.green, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, marginTop: 8, opacity: 0.8 }}
+                  onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                  onMouseLeave={e => (e.currentTarget.style.opacity = '0.8')}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>open_in_new</span>
+                  Configure in Agents
                 </a>
               </div>
             );
@@ -735,6 +758,7 @@ function CanvasInner({
 }) {
   const { fitView, zoomIn, zoomOut, getZoom, setViewport, getViewport } = useReactFlow();
   const [zoom, setZoom] = useState(100);
+  const visualEdges = styledEdges(edges, nodes);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -815,7 +839,7 @@ function CanvasInner({
 
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={visualEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -912,8 +936,8 @@ function analyzeChain(nodes: Node[], edges: Edge[]): ChainStatus {
   if (!epNode) return miss('Drop an Entry Point to start');
 
   const epData = epNode.data as EntryPointData;
-  if (!epData.slug) return miss('Entry point needs a slug');
-  if (!/^[a-z0-9_-]{1,64}$/.test(epData.slug)) return miss('Slug: lowercase letters, numbers, _ or - only');
+  if (!epData.slug) return miss('Entry point needs a slug (set it in Properties panel)');
+  if (!/^[a-z0-9_-]{1,64}$/.test(epData.slug)) return miss('Slug: use lowercase letters, numbers, _ or - only');
 
   const orchEdge = edges.find(e => e.source === epNode.id);
   const orchNode = orchEdge ? nodes.find(n => n.id === orchEdge.target && n.type === 'orchestrator') : undefined;
@@ -1069,7 +1093,6 @@ function BuilderView({
   }
 
   const chain = analyzeChain(nodes, edges);
-  const displayEdges = styledEdges(edges, nodes);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
@@ -1128,7 +1151,7 @@ function BuilderView({
         <div style={{ flex: 1, position: 'relative', height: 'calc(100vh - 56px)' }}>
           <CanvasInner
             nodes={nodes}
-            edges={displayEdges}
+            edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
