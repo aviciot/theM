@@ -179,7 +179,7 @@ function NodeCard({ node, expanded, onToggle }: { node: GraphNode; expanded: boo
         <div style={{ fontSize: '10px', color: 'var(--tm-text-muted)', marginBottom: expanded ? '10px' : 0 }}>iter {step.iteration} · {step.status}</div>
         {expanded && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {step.input?.message && (
+            {!!step.input?.message && (
               <div>
                 <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '3px' }}>Input</div>
                 <div style={{ fontSize: '11px', color: 'var(--tm-text)', background: 'var(--tm-surface-2)', borderRadius: '6px', padding: '6px 8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '120px', overflowY: 'auto' }}>
@@ -426,9 +426,9 @@ function RunModal({ run, onClose }: { run: Run; onClose: () => void }) {
                           <span style={{ fontSize: '11px', color: 'var(--tm-text-muted)', marginLeft: 'auto' }}>{step.latency_ms}ms</span>
                         )}
                       </div>
-                      {(step.input?.message || step.output) && (
+                      {(!!step.input?.message || step.output) && (
                         <div style={{ padding: '0 14px 12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          {step.input?.message && (
+                          {!!step.input?.message && (
                             <div>
                               <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '3px' }}>Input</div>
                               <pre style={{ fontSize: '11px', color: 'var(--tm-text)', background: 'var(--tm-surface-2)', borderRadius: '6px', padding: '8px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, maxHeight: '100px', overflowY: 'auto' }}>
@@ -501,7 +501,7 @@ export default function RunsPage() {
 
   useEffect(() => {
     Promise.allSettled([themApi.runs(50), themApi.runStats()]).then(([r, s]) => {
-      if (r.status === 'fulfilled') setRuns(Array.isArray(r.value) ? r.value : (r.value?.items ?? []));
+      if (r.status === 'fulfilled') setRuns(r.value ?? []);
       if (s.status === 'fulfilled') setStats(s.value);
       setLoading(false);
     });

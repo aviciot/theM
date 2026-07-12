@@ -167,6 +167,7 @@ export interface OrchestratorFull {
   memory_raw_fallback_n: number;
   summarizer_provider: string | null;
   summarizer_model: string | null;
+  history_window?: number | null;
 }
 
 export interface Application {
