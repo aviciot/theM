@@ -102,7 +102,7 @@ const CANVAS_STYLES = `
   }
   /* Section subscroll */
   .nl-section-list {
-    max-height: 258px; /* ~6 items × 43px */
+    max-height: 430px; /* ~10 items × 43px */
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-width: thin;
