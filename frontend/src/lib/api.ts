@@ -326,4 +326,13 @@ export const themApi = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   },
+  // Live reachability check for a deployed application slug
+  pingApp: async (slug: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/apps/${slug}`, { method: 'GET' });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  },
 };

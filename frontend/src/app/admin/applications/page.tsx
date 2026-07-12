@@ -1723,6 +1723,7 @@ function AppCard({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [reachable, setReachable] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -1732,6 +1733,14 @@ function AppCard({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [menuOpen]);
+
+  // Liveness probe — only run for enabled apps, once on mount
+  useEffect(() => {
+    if (!app.enabled) { setReachable(null); return; }
+    let cancelled = false;
+    themApi.pingApp(app.slug).then(ok => { if (!cancelled) setReachable(ok); });
+    return () => { cancelled = true; };
+  }, [app.enabled, app.slug]);
 
   const ep = epIconColor(app.entry_point_type);
   const accessMode = (app.access_policy as any)?.mode ?? 'token';
@@ -1766,16 +1775,31 @@ function AppCard({
               {app.name}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-              {/* Enabled pill */}
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', gap: 5,
-                padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700,
-                background: app.enabled ? 'rgba(74,222,128,0.1)' : 'rgba(255,180,171,0.1)',
-                color: app.enabled ? C.green : C.error,
-                border: `1px solid ${app.enabled ? C.greenBorder : 'rgba(255,180,171,0.3)'}`,
-              }}>
-                {app.enabled && <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, display: 'inline-block', boxShadow: '0 0 6px rgba(74,222,128,0.8)' }} />}
-                {app.enabled ? 'live' : 'disabled'}
+              {/* Enabled + reachability pill */}
+              <span
+                title={app.enabled ? (reachable === null ? 'Checking reachability…' : reachable ? 'Endpoint reachable' : 'Endpoint unreachable — check routing') : 'Disabled'}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+                  background: app.enabled
+                    ? reachable === false ? 'rgba(245,158,11,0.1)' : 'rgba(74,222,128,0.1)'
+                    : 'rgba(255,180,171,0.1)',
+                  color: app.enabled
+                    ? reachable === false ? '#f59e0b' : C.green
+                    : C.error,
+                  border: `1px solid ${app.enabled
+                    ? reachable === false ? 'rgba(245,158,11,0.4)' : C.greenBorder
+                    : 'rgba(255,180,171,0.3)'}`,
+                }}
+              >
+                {app.enabled && (
+                  <span style={{
+                    width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
+                    background: reachable === null ? C.textMuted : reachable ? C.green : '#f59e0b',
+                    boxShadow: reachable ? '0 0 6px rgba(74,222,128,0.8)' : reachable === false ? '0 0 6px rgba(245,158,11,0.8)' : 'none',
+                  }} />
+                )}
+                {app.enabled ? (reachable === null ? 'live' : reachable ? 'live ✓' : 'unreachable') : 'disabled'}
               </span>
               {/* Entry-point type badge */}
               <span style={{
