@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_redis
-from app.models import Agent
+from app.models import Agent, Orchestrator
 from app.utils.logger import logger
 
 _REGISTRY_KEY = "them:agents:registry"
@@ -46,12 +46,41 @@ def _agent_to_dict(agent: Agent) -> dict:
     }
 
 
+def _orch_to_pseudo_agent_dict(orch: Orchestrator) -> dict:
+    """Map an a2a_exposed Orchestrator to the same dict shape as _agent_to_dict."""
+    return {
+        "id": str(orch.id),
+        "slug": f"orch__{orch.name}",
+        "display_name": orch.display_name or orch.name,
+        "description": (orch.system_prompt or "")[:500] or f"Sub-orchestrator: {orch.display_name or orch.name}",
+        "transport": "sub_orchestrator",
+        "endpoint_url": None,
+        "auth_token_encrypted": None,
+        "input_schema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]},
+        "timeout_seconds": 600,
+        "max_concurrency": 1,
+        "enabled": True,
+        "tags": ["sub-orchestrator"],
+        "skills": [],
+        "supports_streaming": False,
+        "supports_push": False,
+    }
+
+
 async def _load_from_db(db: AsyncSession) -> list[dict]:
     result = await db.execute(
         select(Agent).where(Agent.enabled == True).order_by(Agent.slug)
     )
-    agents = result.scalars().all()
-    return [_agent_to_dict(a) for a in agents]
+    agents = [_agent_to_dict(a) for a in result.scalars().all()]
+
+    # Also expose a2a_exposed orchestrators as sub_orchestrator pseudo-agents
+    orch_result = await db.execute(
+        select(Orchestrator).where(Orchestrator.enabled == True, Orchestrator.a2a_exposed == True)
+    )
+    for orch in orch_result.scalars().all():
+        agents.append(_orch_to_pseudo_agent_dict(orch))
+
+    return agents
 
 
 async def get_enabled_agents(db: AsyncSession) -> list[dict]:

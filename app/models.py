@@ -147,6 +147,9 @@ class Run(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, default="running")
     final_output: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parent_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("them.runs.id", ondelete="SET NULL"), nullable=True
+    )
     iterations: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_tokens_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

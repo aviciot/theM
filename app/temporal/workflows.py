@@ -43,6 +43,8 @@ from app.temporal.shared import (
     SummarizeContextInput,
 )
 
+_MAX_SUB_ORCH_DEPTH = 3
+
 
 @workflow.defn(name="OrchestrationWorkflow")
 class OrchestrationWorkflow:
@@ -142,6 +144,7 @@ class OrchestrationWorkflow:
                     generated_run_id,
                     generated_root_task_id,
                     orch_config.get("budget_tokens"),
+                    inp.parent_run_id,
                 ],
                 schedule_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=3),
@@ -231,6 +234,57 @@ class OrchestrationWorkflow:
                             latency_ms=0,
                             error=f"Unknown agent: {slug}",
                         )
+
+                    # Sub-orchestrator: dispatch as a Temporal child workflow
+                    if agent_dict.get("transport") == "sub_orchestrator":
+                        if inp.depth + 1 > _MAX_SUB_ORCH_DEPTH:
+                            return InvokeAgentResult(
+                                status="failed",
+                                result_text=f"[Sub-orchestrator depth limit ({_MAX_SUB_ORCH_DEPTH}) exceeded]",
+                                file_parts=[],
+                                latency_ms=0,
+                                error="sub_orchestrator_depth_exceeded",
+                            )
+                        child_orch_name = slug.removeprefix("orch__")
+                        child_message = tc_dict["input"].get("message", "")
+                        child_context_id = str(workflow.uuid4())
+                        child_session_id = str(workflow.uuid4())
+                        child_input = OrchestrationInput(
+                            orchestrator_name=child_orch_name,
+                            user_message=child_message,
+                            user_id=inp.user_id,
+                            token_payload=inp.token_payload,
+                            session_id=child_session_id,
+                            context_id=child_context_id,
+                            history_window=inp.history_window,
+                            depth=inp.depth + 1,
+                            parent_run_id=run_id,
+                        )
+                        try:
+                            async with parallel_sem:
+                                child_result = await workflow.execute_child_workflow(
+                                    OrchestrationWorkflow.run,
+                                    child_input,
+                                    id=f"ctx-{child_context_id}",
+                                    task_queue=workflow.info().task_queue,
+                                )
+                            return InvokeAgentResult(
+                                status="completed" if child_result.get("status") == "completed" else "failed",
+                                result_text=child_result.get("final_answer") or "",
+                                file_parts=[],
+                                latency_ms=0,
+                                error=child_result.get("error"),
+                            )
+                        except (ActivityError, Exception) as exc:
+                            cause_str = str(getattr(exc, "cause", None) or exc)
+                            return InvokeAgentResult(
+                                status="failed",
+                                result_text=f"[Sub-orchestrator {child_orch_name} failed: {cause_str}]",
+                                file_parts=[],
+                                latency_ms=0,
+                                error=cause_str,
+                            )
+
                     invoke_inp = InvokeAgentInput(
                         run_id=run_id,
                         context_id=inp.context_id,
@@ -372,6 +426,9 @@ class OrchestrationWorkflow:
                         tokens_used_carry=self.tokens_used,
                         iteration_carry=self.iteration,
                         history_window=inp.history_window,
+                        depth=inp.depth,
+                        parent_run_id=inp.parent_run_id,
+                        budget_tokens_carry=inp.budget_tokens_carry,
                     )
                     workflow.continue_as_new(carry)
 
@@ -426,6 +483,7 @@ class OrchestrationWorkflow:
             "status": run_status,
             "iterations": self.iteration,
             "error": run_error,
+            "final_answer": final_answer,
         }
 
 

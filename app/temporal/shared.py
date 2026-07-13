@@ -26,6 +26,10 @@ class OrchestrationInput:
     # history_window passed in so the context loader uses the right value
     # before orch_config is available; default matches DB column default
     history_window: int = 20
+    # Sub-orchestrator nesting depth (0 = top-level). Carried across continue_as_new.
+    depth: int = 0
+    parent_run_id: Optional[str] = None
+    budget_tokens_carry: Optional[int] = None
 
 
 @dataclass
@@ -72,6 +76,7 @@ class AgentConfig:
     input_schema: Optional[dict]
     skills: Optional[list]
     max_retries: int = 2
+    is_sub_orchestrator: bool = False  # True when this AgentConfig represents an a2a_exposed orchestrator
 
 
 @dataclass

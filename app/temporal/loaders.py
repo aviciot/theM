@@ -144,15 +144,30 @@ def _orchestrator_to_cache_dict(row) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def load_agents(orch, db: AsyncSession) -> list:
+    ids = orch.allowed_agent_ids or []
     q = select(Agent).where(Agent.enabled == True)
-    if orch.allowed_agent_ids:
-        q = q.where(Agent.id.in_(orch.allowed_agent_ids))
-    result = await db.execute(q.order_by(Agent.slug))
-    return list(result.scalars().all())
+    if ids:
+        q = q.where(Agent.id.in_(ids))
+    agents = list((await db.execute(q.order_by(Agent.slug))).scalars().all())
+
+    # Also include any a2a_exposed orchestrators whose ID is in allowed_agent_ids
+    if ids:
+        oq = select(Orchestrator).where(
+            Orchestrator.enabled == True,
+            Orchestrator.a2a_exposed == True,
+            Orchestrator.id.in_(ids),
+            Orchestrator.id != orch.id,
+        )
+        agents.extend(list((await db.execute(oq)).scalars().all()))
+
+    return agents
 
 
 async def ensure_agent_skills(agent, db: AsyncSession) -> None:
     """Lazily fetch A2A agent card and populate agent.skills. Never raises."""
+    # Sub-orchestrator pseudo-agents (Orchestrator rows) have no transport attr — skip
+    if not hasattr(agent, "transport"):
+        return
     from datetime import datetime, timezone
     import httpx
     from app.utils.crypto import decrypt_value
@@ -302,6 +317,23 @@ async def load_model_pricing(provider_name: str, model_name: str, db: AsyncSessi
 # ─────────────────────────────────────────────────────────────────────────────
 
 def agent_to_config(agent) -> AgentConfig:
+    # Orchestrator rows (sub-orchestrators) have no `transport` attr
+    if not hasattr(agent, "transport"):
+        return AgentConfig(
+            id=str(agent.id),
+            slug=f"orch__{agent.name}",
+            name=agent.display_name or agent.name,
+            description=(agent.system_prompt or "")[:500] or f"Sub-orchestrator: {agent.display_name or agent.name}",
+            transport="sub_orchestrator",
+            endpoint_url=None,
+            auth_token_encrypted=None,
+            timeout_seconds=600,
+            max_concurrency=1,
+            max_retries=1,
+            input_schema={"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]},
+            skills=None,
+            is_sub_orchestrator=True,
+        )
     return AgentConfig(
         id=str(agent.id),
         slug=agent.slug,
@@ -315,6 +347,7 @@ def agent_to_config(agent) -> AgentConfig:
         max_retries=max(1, int(getattr(agent, "max_retries", 2) or 2)),
         input_schema=agent.input_schema,
         skills=agent.skills,
+        is_sub_orchestrator=False,
     )
 
 

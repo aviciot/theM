@@ -62,6 +62,7 @@ class RunOut(BaseModel):
     status: str
     final_output: Optional[str]
     error: Optional[str]
+    parent_run_id: Optional[uuid.UUID] = None
     iterations: int
     total_tokens_in: int
     total_tokens_out: int
@@ -78,6 +79,7 @@ class RunOut(BaseModel):
 class RunDetailOut(RunOut):
     steps: List[RunStepOut] = []
     usage: List[RunUsageOut] = []
+    children: List["RunOut"] = []
 
 
 class ContextSession(BaseModel):
@@ -108,6 +110,7 @@ def _run_to_out(row: Run) -> RunOut:
         status=row.status,
         final_output=row.final_output,
         error=row.error,
+        parent_run_id=row.parent_run_id,
         iterations=row.iterations,
         total_tokens_in=tin,
         total_tokens_out=tout,
@@ -277,9 +280,14 @@ async def get_run(
         select(RunUsage).where(RunUsage.run_id == run_id).order_by(RunUsage.created_at)
     )
 
+    children_result = await db.execute(
+        select(Run).where(Run.parent_run_id == run_id).order_by(Run.started_at)
+    )
+
     out = RunDetailOut(**_run_to_out(row).model_dump())
     out.steps = [RunStepOut.model_validate(s) for s in steps_result.scalars()]
     out.usage = [RunUsageOut.model_validate(u) for u in usage_result.scalars()]
+    out.children = [_run_to_out(c) for c in children_result.scalars()]
     return out
 
 
