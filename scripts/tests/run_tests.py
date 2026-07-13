@@ -2133,7 +2133,7 @@ def test_26_security_scan():
         check("page: scan_started event handled", "scan_started" in s)
         check("page: scan_complete event handled", "scan_complete" in s)
         check("page: scan_failed event handled", "scan_failed" in s)
-        check("page: 🛡️ Scan button", "🛡️ Scan" in s)
+        check("page: Scan button", "card-action-btn--scan" in s)
         check("page: riskColors helper", "riskColors" in s)
         check("page: statusIcon helper", "statusIcon" in s)
     except Exception as exc:
