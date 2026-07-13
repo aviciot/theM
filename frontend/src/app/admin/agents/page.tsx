@@ -485,7 +485,7 @@ function AgentCard({
 
       {/* ── Description — 2 lines max ── */}
       <p style={{
-        fontSize: '13px', color: '#64748b', lineHeight: 1.55, margin: 0,
+        fontSize: '13px', color: '#94a3b8', lineHeight: 1.55, margin: 0,
         display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
         minHeight: '40px',
       }}>
@@ -500,12 +500,12 @@ function AgentCard({
           background: 'rgba(0,0,0,0.28)', border: '1px solid rgba(255,255,255,0.05)',
           display: 'flex', alignItems: 'center', gap: '8px',
         }}>
-          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: '#475569', flexShrink: 0 }}>hub</span>
+          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: '#94a3b8', flexShrink: 0 }}>hub</span>
           <div>
             <p style={{ fontSize: '15px', fontWeight: 700, color: '#e2e8f0', margin: 0, lineHeight: 1 }}>
               {agent.skills && agent.skills.length > 0 ? agent.skills.length : '—'}
             </p>
-            <p style={{ fontSize: '9px', color: '#475569', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>skills</p>
+            <p style={{ fontSize: '9px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>skills</p>
           </div>
         </div>
         {/* Last sync tile */}
@@ -514,33 +514,33 @@ function AgentCard({
           background: 'rgba(0,0,0,0.28)', border: '1px solid rgba(255,255,255,0.05)',
           display: 'flex', alignItems: 'center', gap: '8px',
         }}>
-          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: '#475569', flexShrink: 0 }}>sync</span>
+          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: '#94a3b8', flexShrink: 0 }}>sync</span>
           <div>
             <p style={{ fontSize: '13px', fontWeight: 700, color: '#e2e8f0', margin: 0, lineHeight: 1, whiteSpace: 'nowrap' }}>
               {agent.card_fetched_at ? timeAgo(agent.card_fetched_at) : '—'}
             </p>
-            <p style={{ fontSize: '9px', color: '#475569', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>last sync</p>
+            <p style={{ fontSize: '9px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>last sync</p>
           </div>
         </div>
       </div>
 
       {/* ── Endpoint field ── */}
       <div>
-        <p style={{ fontSize: '9px', fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 5px 0' }}>Endpoint</p>
+        <p style={{ fontSize: '9px', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '0 0 5px 0' }}>Endpoint</p>
         <div style={{
           display: 'flex', alignItems: 'center',
           background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.05)',
           borderRadius: '8px', padding: '7px 10px', gap: '6px',
         }}>
           <span style={{
-            fontSize: '11px', color: '#475569', fontFamily: 'monospace',
+            fontSize: '11px', color: '#cbd5e1', fontFamily: 'monospace',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
           }}>
             {agent.endpoint_url || '—'}
           </span>
           <button onClick={copyEndpoint} title="Copy" style={{
             background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, padding: '2px 4px',
-            color: copied ? '#34d399' : '#334155', fontSize: '14px',
+            color: copied ? '#34d399' : '#94a3b8', fontSize: '14px',
             transition: 'color 150ms ease',
           }}>
             {copied
@@ -627,7 +627,7 @@ function DeployCard({ onClick }: { onClick: () => void }) {
       }}>+</div>
       <div style={{ textAlign: 'center' }}>
         <p style={{ fontSize: '16px', fontWeight: 600, color: '#e2e8f0', margin: '0 0 6px 0' }}>Deploy a new agent</p>
-        <p style={{ fontSize: '13px', color: '#475569', margin: 0 }}>Connect an A2A agent endpoint</p>
+        <p style={{ fontSize: '13px', color: '#94a3b8', margin: 0 }}>Connect an A2A agent endpoint</p>
       </div>
       <button style={{
         padding: '10px 24px', borderRadius: '8px', border: 'none', cursor: 'pointer',
@@ -1231,7 +1231,7 @@ export default function AdminAgentsPage() {
           }}>
             <div>
               <h2 style={{ fontSize: '40px', fontWeight: 800, color: '#fff', margin: '0 0 6px 0', letterSpacing: '-0.03em', lineHeight: 1.1 }}>Agents</h2>
-              <p style={{ fontSize: '14px', color: '#64748b', margin: 0 }}>Manage A2A (Agent-to-Agent) orchestrators and node connectors.</p>
+              <p style={{ fontSize: '14px', color: '#94a3b8', margin: 0 }}>Manage A2A (Agent-to-Agent) orchestrators and node connectors.</p>
             </div>
             <button onClick={openCreate} style={{
               display: 'flex', alignItems: 'center', gap: '8px',
@@ -1254,7 +1254,7 @@ export default function AdminAgentsPage() {
             }}>
               {/* Search */}
               <div style={{ position: 'relative', flex: '0 0 240px' }}>
-                <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#475569', fontSize: '14px', pointerEvents: 'none' }}>🔍</span>
+                <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: '14px', pointerEvents: 'none' }}>🔍</span>
                 <input
                   type="text"
                   placeholder="Search agents…"
@@ -1290,7 +1290,7 @@ export default function AdminAgentsPage() {
             padding: '0 32px 48px',
           }}>
             {loading && (
-              <div style={{ gridColumn: '1 / -1', padding: '80px', textAlign: 'center', color: '#475569', fontSize: '14px' }}>
+              <div style={{ gridColumn: '1 / -1', padding: '80px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>
                 Loading agents…
               </div>
             )}
@@ -1300,7 +1300,7 @@ export default function AdminAgentsPage() {
             )}
 
             {!loading && agents.length > 0 && filteredAgents.length === 0 && (
-              <div style={{ gridColumn: '1 / -1', padding: '60px', textAlign: 'center', color: '#475569', fontSize: '14px' }}>
+              <div style={{ gridColumn: '1 / -1', padding: '60px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>
                 No agents match your filter
               </div>
             )}
