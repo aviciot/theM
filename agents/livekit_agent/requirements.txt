@@ -1,0 +1,2 @@
+livekit-agents[openai,silero]==0.8.5
+websockets>=12.0

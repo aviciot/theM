@@ -30,6 +30,7 @@ from app.routers import transcription
 from app.routers import tts
 from app.routers import a2a_server
 from app.routers import apps as apps_router
+from app.routers import webrtc as webrtc_router
 from app.services.agent_registry import start_change_listener
 from app.services import task_store
 from app.services.dashboard_broadcaster import publish_app_status
@@ -173,3 +174,4 @@ app.include_router(transcription.router, prefix="/api/v1")
 app.include_router(tts.router, prefix="/api/v1")
 app.include_router(a2a_server.router)
 app.include_router(apps_router.router)
+app.include_router(webrtc_router.router)

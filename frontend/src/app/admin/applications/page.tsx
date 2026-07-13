@@ -62,7 +62,7 @@ const glass = {
 const deleteNodeRef = { current: (_id: string) => {} };
 
 // ── Types ────────────────────────────────────────────────────────────────────
-const ENTRY_POINT_TYPES = ['websocket', 'sse'] as const;
+const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc'] as const;
 type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 
 interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; [key: string]: unknown; }
@@ -523,9 +523,10 @@ function agentIconForLibrary(a: Agent): string {
   return a.icon || 'smart_toy';
 }
 
-const EP_META: Record<string, { emoji: string; title: string; desc: string }> = {
+const EP_META: Record<string, { emoji: string; title: string; desc: string; color?: string }> = {
   websocket: { emoji: '⚡', title: 'WebSocket', desc: 'Full-duplex, persistent connection. Client and server can send messages at any time. Best for chat, real-time collaboration, and interactive agents.' },
   sse:       { emoji: '📡', title: 'Server-Sent Events', desc: 'One-way server→client stream over HTTP. Lightweight, works through proxies. Best for dashboards, notifications, and read-only agent output.' },
+  webrtc:    { emoji: '🎙️', title: 'WebRTC Voice', desc: 'Real-time voice via LiveKit WebRTC. Low-latency bidirectional audio with automatic voice activity detection. Best for voice assistants and spoken-word agents.', color: '#a78bfa' },
 };
 
 function trunc(s: string | null | undefined, n = 120) {
@@ -615,7 +616,7 @@ function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
           <SectionHeader label="Entry Points" open={openEP} onToggle={() => setOpenEP(v => !v)} />
           {openEP && (
             <div className="nl-section-list">
-              {(['websocket', 'sse'] as const).map(ep => {
+              {(['websocket', 'sse', 'webrtc'] as const).map(ep => {
                 const meta = EP_META[ep];
                 return (
                   <div key={ep} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
@@ -902,6 +903,7 @@ function PropertiesPanel({
                   <select style={{ ...inputStyle }} value={d.epType} onChange={e => onUpdateNode(selectedNode.id, { epType: e.target.value as EntryPointType })}>
                     <option value="websocket">WebSocket</option>
                     <option value="sse">SSE</option>
+                    <option value="webrtc">WebRTC Voice</option>
                   </select>
                 </div>
                 <div style={fieldWrap}>
@@ -924,12 +926,16 @@ function PropertiesPanel({
                       wordBreak: 'break-all', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
                     }}>
                       <span style={{ flex: 1 }}>
-                        {d.epType === 'websocket' ? `ws://<host>:8088/apps/${d.slug}/ws` : `http://<host>:8088/apps/${d.slug}/sse`}
+                        {d.epType === 'websocket' ? `ws://<host>:8088/apps/${d.slug}/ws`
+                          : d.epType === 'webrtc' ? `http://<host>:8088/apps/${d.slug}/voice`
+                          : `http://<host>:8088/apps/${d.slug}/sse`}
                       </span>
                       <button
                         onClick={() => navigator.clipboard.writeText(
                           d.epType === 'websocket'
                             ? `ws://localhost:8088/apps/${d.slug}/ws`
+                            : d.epType === 'webrtc'
+                            ? `http://localhost:8088/apps/${d.slug}/voice`
                             : `http://localhost:8088/apps/${d.slug}/sse`
                         )}
                         title="Copy endpoint URL"
@@ -2607,6 +2613,7 @@ const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', w
 function epIconColor(type: string): { color: string; glow: string; border: string } {
   if (type === 'websocket') return { color: '#00d1ff', glow: 'rgba(0,209,255,0.25)', border: 'rgba(0,209,255,0.45)' };
   if (type === 'sse')       return { color: '#a78bfa', glow: 'rgba(167,139,250,0.22)', border: 'rgba(167,139,250,0.42)' };
+  if (type === 'webrtc')    return { color: '#a78bfa', glow: 'rgba(167,139,250,0.22)', border: 'rgba(167,139,250,0.42)' };
   return { color: '#94a3b8', glow: 'rgba(148,163,184,0.15)', border: 'rgba(148,163,184,0.3)' };
 }
 
@@ -2763,13 +2770,35 @@ function AppCard({
       </div>
 
       {/* Action buttons */}
-      <div style={{ borderTop: '1px solid var(--tm-divider)', padding: '10px 14px', display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 8 }}>
+      <div style={{
+        borderTop: '1px solid var(--tm-divider)', padding: '10px 14px', display: 'grid',
+        gridTemplateColumns: app.entry_point_type === 'webrtc' ? '2fr 1fr 1fr 1fr' : '2fr 1fr 1fr',
+        gap: 8,
+      }}>
         {/* Open builder — primary, full-width feel */}
         <button className="app-card-btn app-card-btn--open" onClick={() => onEdit(app)}
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           <span className="material-symbols-outlined" style={{ fontSize: 15 }}>open_in_new</span>
           Open Builder
         </button>
+        {app.entry_point_type === 'webrtc' && (
+          <button
+            className="app-card-btn"
+            onClick={() => window.open(`/apps/${app.slug}/voice`, '_blank', 'noopener')}
+            title="Open voice room"
+            style={{
+              background: 'rgba(167,139,250,0.1)',
+              color: '#a78bfa',
+              border: '1px solid rgba(167,139,250,0.3)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.2)'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.5)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.1)'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.3)'; }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>mic</span>
+            Voice
+          </button>
+        )}
         <button className="app-card-btn app-card-btn--urls" onClick={() => onUrls(app)}>
           URLs
         </button>
@@ -2962,7 +2991,10 @@ function ListView({
               const urls: Array<{ label: string; val: string }> = [];
               if (app.entry_point_type === 'websocket') urls.push({ label: 'WebSocket', val: `ws://<host>:8088/apps/${app.slug}/ws` });
               if (app.entry_point_type === 'sse') urls.push({ label: 'SSE', val: `http://<host>:8088/apps/${app.slug}/sse` }, { label: 'REST', val: `http://<host>:8088/apps/${app.slug}` });
-              if (app.entry_point_type === 'webrtc') urls.push({ label: 'WebRTC (soon)', val: `ws://<host>:8088/apps/${app.slug}/ws` });
+              if (app.entry_point_type === 'webrtc') urls.push(
+                { label: 'Voice Page', val: `http://<host>:8088/apps/${app.slug}/voice` },
+                { label: 'Token API', val: `http://<host>:8088/apps/${app.slug}/webrtc/token` },
+              );
               return urls.map(({ label, val }) => {
                 const cid = `modal_${app.id}_${label}`;
                 return (

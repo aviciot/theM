@@ -187,6 +187,10 @@ services:
       TEMPORAL_HOST: "temporal-frontend:7233"
       TEMPORAL_NAMESPACE: "default"
       TEMPORAL_TASK_QUEUE: "them-orchestration"
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-}"
+      LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://localhost:8088/livekit}"
     labels:
       - "traefik.enable=true"
       - "traefik-instance=them"
@@ -287,6 +291,10 @@ services:
       TEMPORAL_HOST: "temporal-frontend:7233"
       TEMPORAL_NAMESPACE: "default"
       TEMPORAL_TASK_QUEUE: "them-orchestration"
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-}"
+      LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://localhost:8088/livekit}"
     labels:
       - "traefik.enable=true"
       - "traefik-instance=them"
@@ -785,6 +793,72 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── LiveKit — WebRTC SFU (profile: voice) ───────────────────────────────────
+  livekit:
+    image: livekit/livekit-server:v1.8.2
+    container_name: livekit
+    profiles: [voice]
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}:${LIVEKIT_API_SECRET}"
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7882:7882/udp"
+    expose:
+      - "7880"
+      - "7881"
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-livekit.rule=PathPrefix(`/livekit`)"
+      - "traefik.http.routers.them-livekit.entrypoints=web"
+      - "traefik.http.routers.them-livekit.priority=100"
+      - "traefik.http.routers.them-livekit.service=them-livekit-svc"
+      - "traefik.http.routers.them-livekit.middlewares=livekit-strip"
+      - "traefik.http.middlewares.livekit-strip.stripprefix.prefixes=/livekit"
+      - "traefik.http.services.them-livekit-svc.loadbalancer.server.port=7880"
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7880/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── LiveKit Agent — WebRTC voice bridge (profile: voice) ─────────────────────
+  livekit-agent:
+    build:
+      context: ./agents/livekit_agent
+      dockerfile: Dockerfile
+    container_name: livekit-agent
+    profiles: [voice]
+    environment:
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      THEM_BRIDGE_WS: "ws://them-bridge:8001"
+    networks:
+      - them-network
+    depends_on:
+      - livekit
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "main.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     logging:
       driver: "json-file"
       options:

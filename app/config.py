@@ -62,6 +62,13 @@ class LoggingConfig(BaseModel):
     file: str = "logs/them.log"
 
 
+class LiveKitConfig(BaseModel):
+    api_key: str = ""
+    api_secret: str = ""
+    url: str = "ws://livekit:7880"
+    public_url: str = "ws://localhost:8088/livekit"
+
+
 class Settings(BaseSettings):
     model_config = {
         "env_file": ".env",
@@ -119,6 +126,12 @@ class Settings(BaseSettings):
     TEMPORAL_HOST: str = "temporal-frontend:7233"
     TEMPORAL_NAMESPACE: str = "default"
     TEMPORAL_TASK_QUEUE: str = "them-orchestration"
+
+    # LiveKit WebRTC
+    LIVEKIT_API_KEY: str = ""
+    LIVEKIT_API_SECRET: str = ""
+    LIVEKIT_URL: str = "ws://livekit:7880"
+    LIVEKIT_PUBLIC_URL: str = "ws://localhost:8088/livekit"
 
     # Logging
     LOG_LEVEL: str = "INFO"
@@ -178,6 +191,13 @@ class GlobalConfig:
         self.logging = LoggingConfig(
             level=env.LOG_LEVEL,
             format=env.LOG_FORMAT,
+        )
+
+        self.livekit = LiveKitConfig(
+            api_key=env.LIVEKIT_API_KEY,
+            api_secret=env.LIVEKIT_API_SECRET,
+            url=env.LIVEKIT_URL,
+            public_url=env.LIVEKIT_PUBLIC_URL,
         )
 
 
