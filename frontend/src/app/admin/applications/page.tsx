@@ -732,6 +732,8 @@ function PropertiesPanel({
   onSlugManualEdit,
   appName,
   onAppNameChange,
+  convTokenLimit,
+  onConvTokenLimitChange,
   chain,
   app,
 }: {
@@ -741,6 +743,8 @@ function PropertiesPanel({
   onSlugManualEdit: () => void;
   appName: string;
   onAppNameChange: (name: string) => void;
+  convTokenLimit: string;
+  onConvTokenLimitChange: (val: string) => void;
   chain: ChainStatus;
   app: Application | null;
 }) {
@@ -805,6 +809,26 @@ function PropertiesPanel({
               value={appName}
               onChange={e => onAppNameChange(e.target.value)}
               placeholder="My Application"
+            />
+          </div>
+
+          {/* Conversation token limit */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4, display: 'block' }}>
+              Conversation Token Limit
+              <span style={{ marginLeft: 6, fontSize: 10, color: '#64748b' }}>per session · blank = unlimited</span>
+            </label>
+            <input
+              type="number"
+              min={1}
+              style={{
+                width: '100%', padding: '7px 10px', borderRadius: 6,
+                border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
+                color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box', outline: 'none',
+              }}
+              value={convTokenLimit}
+              onChange={e => onConvTokenLimitChange(e.target.value)}
+              placeholder="e.g. 50000"
             />
           </div>
 
@@ -1792,6 +1816,9 @@ function BuilderView({
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [libWidth, setLibWidth] = useState(280);
   const [appName, setAppName] = useState(app?.name ?? '');
+  const [convTokenLimit, setConvTokenLimit] = useState<string>(
+    app?.conversation_token_limit != null ? String(app.conversation_token_limit) : ''
+  );
   const [slugLocked, setSlugLocked] = useState(!!app?.slug);
   const [isDirty, setIsDirty] = useState(false);
   const [testPickerOpen, setTestPickerOpen] = useState(false);
@@ -2227,6 +2254,7 @@ function BuilderView({
         orchestrator_id: orchData.orchestratorId,
         access_policy: { mode: epData.accessMode },
         enabled: deploy ? true : (currentApp?.enabled ?? false),
+        conversation_token_limit: convTokenLimit !== '' ? parseInt(convTokenLimit, 10) : null,
       };
 
       let saved: Application;
@@ -2422,6 +2450,8 @@ function BuilderView({
             setAppName(name);
             if (!slugLocked && epNode) updateNodeData(epNode.id, { slug: toSlug(name) });
           }}
+          convTokenLimit={convTokenLimit}
+          onConvTokenLimitChange={val => { setConvTokenLimit(val); setIsDirty(true); }}
           chain={chain}
           app={currentApp}
         />

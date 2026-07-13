@@ -58,6 +58,7 @@ class OrchestratorCreate(BaseModel):
     summarizer_model: Optional[str] = None
     summarizer_api_key: Optional[str] = None
     history_window: int = 20
+    budget_tokens: Optional[int] = None
 
 
 class OrchestratorUpdate(BaseModel):
@@ -88,6 +89,7 @@ class OrchestratorUpdate(BaseModel):
     summarizer_model: Optional[str] = None
     summarizer_api_key: Optional[str] = None
     history_window: Optional[int] = None
+    budget_tokens: Optional[int] = None
 
 
 class OrchestratorOut(BaseModel):
@@ -120,6 +122,7 @@ class OrchestratorOut(BaseModel):
     summarizer_model: Optional[str] = None
     summarizer_api_key_hint: Optional[str] = None
     history_window: int = 20
+    budget_tokens: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -173,6 +176,7 @@ def _row_to_out(row: Orchestrator) -> OrchestratorOut:
         summarizer_model=getattr(row, "summarizer_model", None),
         summarizer_api_key_hint=key_hint(row.summarizer_api_key_encrypted) if getattr(row, "summarizer_api_key_encrypted", None) else None,
         history_window=getattr(row, "history_window", 20),
+        budget_tokens=getattr(row, "budget_tokens", None),
     )
 
 
@@ -282,6 +286,7 @@ async def create_orchestrator(body: OrchestratorCreate, db: AsyncSession = Depen
         summarizer_model=body.summarizer_model or None,
         summarizer_api_key_encrypted=encrypt_value(body.summarizer_api_key) if body.summarizer_api_key else None,
         history_window=body.history_window,
+        budget_tokens=body.budget_tokens,
     )
     db.add(row)
     await db.commit()
@@ -354,6 +359,8 @@ async def update_orchestrator(orch_id: uuid.UUID, body: OrchestratorUpdate, db: 
         row.summarizer_api_key_encrypted = encrypt_value(body.summarizer_api_key)
     if body.history_window is not None:
         row.history_window = body.history_window
+    if body.budget_tokens is not None:
+        row.budget_tokens = body.budget_tokens
 
     name = row.name
     await db.commit()

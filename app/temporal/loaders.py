@@ -312,6 +312,7 @@ def agent_to_config(agent) -> AgentConfig:
         auth_token_encrypted=getattr(agent, "auth_token_encrypted", None),
         timeout_seconds=int(agent.timeout_seconds or 30),
         max_concurrency=int(agent.max_concurrency or 1),
+        max_retries=max(1, int(getattr(agent, "max_retries", 2) or 2)),
         input_schema=agent.input_schema,
         skills=agent.skills,
     )

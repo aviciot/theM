@@ -50,6 +50,7 @@ class AgentCreate(BaseModel):
     input_schema: Dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: int = 120
     max_concurrency: int = 4
+    max_retries: int = 2
     enabled: bool = True
     tags: List[str] = Field(default_factory=list)
     agent_card: Optional[Dict[str, Any]] = None
@@ -76,6 +77,7 @@ class AgentUpdate(BaseModel):
     input_schema: Optional[Dict[str, Any]] = None
     timeout_seconds: Optional[int] = None
     max_concurrency: Optional[int] = None
+    max_retries: Optional[int] = None
     enabled: Optional[bool] = None
     tags: Optional[List[str]] = None
     agent_card: Optional[Dict[str, Any]] = None
@@ -98,6 +100,7 @@ class AgentOut(BaseModel):
     input_schema: Dict[str, Any]
     timeout_seconds: int
     max_concurrency: int
+    max_retries: int
     enabled: bool
     tags: List[str]
     agent_card: Optional[Dict[str, Any]] = None
@@ -164,6 +167,7 @@ def _row_to_out(row: Agent) -> AgentOut:
         input_schema=row.input_schema or {},
         timeout_seconds=row.timeout_seconds,
         max_concurrency=row.max_concurrency,
+        max_retries=row.max_retries,
         enabled=row.enabled,
         tags=list(row.tags or []),
         agent_card=row.agent_card,
@@ -227,6 +231,7 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
         input_schema=body.input_schema,
         timeout_seconds=body.timeout_seconds,
         max_concurrency=body.max_concurrency,
+        max_retries=body.max_retries,
         enabled=body.enabled,
         tags=body.tags,
         agent_card=body.agent_card,
@@ -275,6 +280,8 @@ async def update_agent(
         row.timeout_seconds = body.timeout_seconds
     if body.max_concurrency is not None:
         row.max_concurrency = body.max_concurrency
+    if body.max_retries is not None:
+        row.max_retries = max(1, body.max_retries)
     if body.enabled is not None:
         row.enabled = body.enabled
     if body.tags is not None:

@@ -100,12 +100,14 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
         from sqlalchemy import select
         from app.models import Orchestrator
         orch_result = await db.execute(
-            select(Orchestrator.edges).where(
+            select(Orchestrator.edges, Orchestrator.history_window).where(
                 Orchestrator.name == name,
                 Orchestrator.enabled == True,
             )
         )
-        edges_row = orch_result.scalar_one_or_none()
+        orch_row = orch_result.one_or_none()
+        edges_row = orch_row[0] if orch_row is not None else None
+        history_window = int(orch_row[1]) if orch_row is not None and orch_row[1] is not None else 20
 
     # edges_row is None if orch not found (task_runner will give the proper error);
     # None also means the column doesn't exist yet (pre-8.6) — allow through.
@@ -151,7 +153,7 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
     try:
         await _run_temporal(
             name, user_message, user_id, token_payload,
-            context_id, session_id, edge, websocket,
+            context_id, session_id, edge, websocket, history_window,
         )
     except WebSocketDisconnect:
         logger.info("ws_orchestrate disconnected", orchestrator=name, user_id=user_id)
@@ -168,6 +170,7 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
 async def _run_temporal(
     name: str, user_message: str, user_id: int, token_payload: dict,
     context_id: uuid.UUID, session_id: uuid.UUID, edge, websocket: WebSocket,
+    history_window: int = 20,
 ) -> None:
     """Temporal OrchestrationWorkflow path — used when TEMPORAL_ENABLED=true."""
     from app.temporal.bridge_client import (
@@ -184,6 +187,7 @@ async def _run_temporal(
             token_payload=token_payload,
             context_id=context_id,
             session_id=session_id,
+            history_window=history_window,
         )
     except Exception as exc:
         await edge.emit({"type": "error", "message": f"Failed to start workflow: {exc}"})
@@ -205,8 +209,14 @@ async def _run_temporal(
                 if msg.get("type") == "cancel":
                     cancel_event.set()
                     return True
+            except (json.JSONDecodeError, AttributeError):
+                continue
             except (WebSocketDisconnect, Exception):
-                return False
+                # Client disconnected without sending cancel — treat as implicit
+                # cancel so the Temporal workflow doesn't keep burning tokens.
+                # cancel_workflow() is idempotent and safe on completed workflows.
+                cancel_event.set()
+                return True
 
     stream_task = asyncio.ensure_future(
         stream_run_events(

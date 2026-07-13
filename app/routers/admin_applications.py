@@ -36,6 +36,7 @@ class ApplicationCreate(BaseModel):
     access_policy: Dict[str, Any] = Field(default_factory=lambda: {"mode": "token"})
     presentation: Dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
+    conversation_token_limit: Optional[int] = Field(None, description="Max tokens per conversation session. NULL = no limit.")
 
 
 class ApplicationUpdate(BaseModel):
@@ -46,6 +47,7 @@ class ApplicationUpdate(BaseModel):
     access_policy: Optional[Dict[str, Any]] = None
     presentation: Optional[Dict[str, Any]] = None
     enabled: Optional[bool] = None
+    conversation_token_limit: Optional[int] = None
 
 
 class ApplicationOut(BaseModel):
@@ -58,6 +60,7 @@ class ApplicationOut(BaseModel):
     access_policy: Dict[str, Any]
     presentation: Dict[str, Any]
     enabled: bool
+    conversation_token_limit: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
@@ -108,6 +111,7 @@ def _row_to_out(row: Application, orch_name: Optional[str]) -> ApplicationOut:
         access_policy=row.access_policy or {"mode": "token"},
         presentation=row.presentation or {},
         enabled=row.enabled,
+        conversation_token_limit=getattr(row, "conversation_token_limit", None),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -168,6 +172,7 @@ async def create_application(body: ApplicationCreate, db: AsyncSession = Depends
         access_policy=body.access_policy,
         presentation=body.presentation,
         enabled=body.enabled,
+        conversation_token_limit=body.conversation_token_limit,
     )
     db.add(row)
     await db.commit()
@@ -221,6 +226,8 @@ async def update_application(
         row.presentation = body.presentation
     if body.enabled is not None:
         row.enabled = body.enabled
+    if body.conversation_token_limit is not None:
+        row.conversation_token_limit = body.conversation_token_limit
 
     await db.commit()
     await db.refresh(row)

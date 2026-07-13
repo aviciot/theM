@@ -14,6 +14,7 @@ import uuid
 from typing import Callable, Coroutine, Optional
 
 from temporalio.client import WorkflowHandle
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 import app.database as db_module
 from app.temporal.client import get_temporal_client
@@ -43,6 +44,7 @@ async def start_orchestration_workflow(
     token_payload: dict,
     context_id: uuid.UUID,
     session_id: uuid.UUID,
+    history_window: int = 20,
 ) -> tuple[WorkflowHandle, str]:
     """
     Start or signal-resume an OrchestrationWorkflow for the given context_id.
@@ -63,6 +65,7 @@ async def start_orchestration_workflow(
         token_payload=token_payload,
         session_id=str(session_id),
         context_id=str(context_id),
+        history_window=history_window,
     )
 
     try:
@@ -77,13 +80,9 @@ async def start_orchestration_workflow(
             workflow_id=workflow_id,
             orchestrator=orchestrator_name,
         )
-    except Exception as exc:
-        # Workflow may already be running for this context — get the existing handle
-        if "already exists" in str(exc).lower() or "WorkflowExecutionAlreadyStarted" in str(type(exc).__name__):
-            handle = client.get_workflow_handle(workflow_id)
-            logger.info("bridge_client: attached to existing workflow", workflow_id=workflow_id)
-        else:
-            raise
+    except WorkflowAlreadyStartedError:
+        handle = client.get_workflow_handle(workflow_id)
+        logger.info("bridge_client: attached to existing workflow", workflow_id=workflow_id)
 
     return handle, workflow_id
 

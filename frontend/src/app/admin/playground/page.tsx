@@ -505,6 +505,18 @@ function TraceTab({ trace, traceBottom, runId, contextId }: { trace: TraceEvent[
         <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--tm-text-muted)', background: 'var(--tm-surface)', border: '1px solid var(--tm-border)', borderRadius: 4, padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 4 }}>
           {runId && <span title={runId}><span style={{ opacity: 0.6 }}>run_id: </span>{runId}</span>}
           {contextId && <span title={contextId}><span style={{ opacity: 0.6 }}>ctx_id: </span>{contextId}</span>}
+          {contextId && (
+            <a
+              href={`/temporal/namespaces/default/workflows/ctx-${contextId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: 'var(--tm-accent, #6ee7b7)', textDecoration: 'none', opacity: 0.85 }}
+              onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+              onMouseLeave={e => (e.currentTarget.style.opacity = '0.85')}
+            >
+              ↗ Temporal workflow
+            </a>
+          )}
         </div>
       )}
       {trace.length === 0 && (
@@ -1175,6 +1187,8 @@ export default function PlaygroundPage() {
 
         } else if (msg.type === 'canceled') {
           setActivities([]); activitiesRef.current = [];
+          setBusy(false);
+          setStatus('Canceled');
           ws.close();
           dashWs.current?.close();
 
@@ -1216,7 +1230,7 @@ export default function PlaygroundPage() {
       chatWs.current.send(JSON.stringify({ type: 'cancel' }));
     }
     setBusy(false);
-    setStatus('Canceled');
+    setStatus('Canceling…');
     setMessages(prev => {
       const copy = [...prev];
       const last = copy[copy.length - 1];
@@ -1225,8 +1239,12 @@ export default function PlaygroundPage() {
       }
       return copy;
     });
-    chatWs.current?.close();
-    dashWs.current?.close();
+    // Let the server send a 'canceled' event which closes sockets cleanly.
+    // Fallback: force-close after 3s if the server never responds.
+    setTimeout(() => {
+      chatWs.current?.close();
+      dashWs.current?.close();
+    }, 3000);
   }, []);
 
   const onKey = (e: React.KeyboardEvent) => {

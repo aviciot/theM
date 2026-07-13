@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS them.agents (
     input_schema JSONB NOT NULL DEFAULT '{"type":"object","properties":{"message":{"type":"string"}},"required":["message"]}',
     timeout_seconds INTEGER NOT NULL DEFAULT 120,
     max_concurrency INTEGER NOT NULL DEFAULT 4,
+    max_retries INTEGER NOT NULL DEFAULT 2,
     enabled BOOLEAN NOT NULL DEFAULT true,
     tags TEXT[] NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

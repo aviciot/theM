@@ -20,6 +20,12 @@ class OrchestrationInput:
     token_payload: dict
     session_id: str
     context_id: str
+    # Carried across continue_as_new so budget/iteration counters are not reset
+    tokens_used_carry: int = 0
+    iteration_carry: int = 0
+    # history_window passed in so the context loader uses the right value
+    # before orch_config is available; default matches DB column default
+    history_window: int = 20
 
 
 @dataclass
@@ -65,6 +71,7 @@ class AgentConfig:
     max_concurrency: int
     input_schema: Optional[dict]
     skills: Optional[list]
+    max_retries: int = 2
 
 
 @dataclass
@@ -135,6 +142,7 @@ class InvokeAgentInput:
     tool_input: dict
     injected_context: Optional[str]
     input_schema: Optional[dict]
+    max_retries: int = 2
 
 
 @dataclass

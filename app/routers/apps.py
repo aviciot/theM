@@ -31,7 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.database as db_module
-from app.models import Application
+from app.models import Application, Task
 from app.services.auth_client import validate_jwt
 from app.services import task_store
 from app.services.task_runner import run as task_runner_run
@@ -118,6 +118,36 @@ async def _load_app(db: AsyncSession, slug: str) -> Application:
     if app_row is None:
         raise HTTPException(status_code=404, detail=f"Application '{slug}' not found")
     return app_row
+
+
+async def _check_conversation_budget(
+    db: AsyncSession,
+    app_row: Application,
+    context_id: uuid.UUID,
+) -> None:
+    """Raise 429 if this context has already consumed the application's conversation_token_limit."""
+    limit = getattr(app_row, "conversation_token_limit", None)
+    if not limit:
+        return
+    from sqlalchemy import func
+    result = await db.execute(
+        select(func.coalesce(func.sum(Task.tokens_used), 0)).where(
+            Task.context_id == context_id
+        )
+    )
+    tokens_used = result.scalar() or 0
+    if tokens_used >= limit:
+        logger.warning(
+            "conversation budget exceeded",
+            slug=app_row.slug,
+            context_id=str(context_id),
+            tokens_used=tokens_used,
+            limit=limit,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=f"Conversation token limit reached ({tokens_used}/{limit}). Start a new conversation.",
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -223,6 +253,7 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
             if body.context_id and _is_valid_uuid(body.context_id)
             else uuid.uuid4()
         )
+        await _check_conversation_budget(db, app_row, context_id)
         deadline = datetime.now(timezone.utc) + timedelta(minutes=_DEFAULT_DEADLINE_MINUTES)
 
         task_row = await task_store.create_task(
@@ -404,6 +435,7 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
         if context_id and _is_valid_uuid(context_id)
         else uuid.uuid4()
     )
+    await _check_conversation_budget(db, app_row, ctx_id)
     session_id = uuid.uuid4()
     edge = SSEEdge()
     orch_name = orch.name
@@ -533,6 +565,13 @@ async def ws_entry(slug: str, websocket: WebSocket):
         if context_id_raw and _is_valid_uuid(context_id_raw)
         else uuid.uuid4()
     )
+    async with db_module.AsyncSessionLocal() as budget_db:
+        try:
+            await _check_conversation_budget(budget_db, app_row, context_id)
+        except HTTPException as exc:
+            await websocket.send_json({"type": "error", "message": exc.detail})
+            await websocket.close(code=4029)
+            return
     session_id = uuid.uuid4()
 
     try:

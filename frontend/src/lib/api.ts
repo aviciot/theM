@@ -180,6 +180,7 @@ export interface Application {
   access_policy: Record<string, unknown>;
   presentation: Record<string, unknown>;
   enabled: boolean;
+  conversation_token_limit: number | null;
   created_at: string;
   updated_at: string;
 }

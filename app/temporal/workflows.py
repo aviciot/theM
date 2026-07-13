@@ -56,6 +56,8 @@ class OrchestrationWorkflow:
         self.context_summary: Optional[str] = None
         self.tokens_used: int = 0
         self.iteration: int = 0
+        self._tokens_carry: int = 0
+        self._iteration_carry: int = 0
         # Signal state
         self._human_response: Optional[dict] = None
         self._cancel_requested: bool = False
@@ -88,6 +90,10 @@ class OrchestrationWorkflow:
         total_cost = Decimal("0")
         msg_seq = 1
 
+        # Restore counters carried across continue_as_new (0 on a fresh start)
+        self.tokens_used = inp.tokens_used_carry
+        self.iteration = inp.iteration_carry
+
         try:
             # ── 1. Load orchestration context (agents, tools, prior history) ──
             ctx_result = await workflow.execute_activity(
@@ -100,7 +106,7 @@ class OrchestrationWorkflow:
                     # current_task_id not yet known; pass placeholder — loader
                     # uses it only to exclude current task from history
                     "00000000-0000-0000-0000-000000000000",
-                    20,
+                    inp.history_window,
                 ],
                 schedule_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=3),
@@ -242,6 +248,7 @@ class OrchestrationWorkflow:
                         tool_input=tc_dict["input"],
                         injected_context=self.context_summary,
                         input_schema=agent_dict.get("input_schema"),
+                        max_retries=max(1, int(agent_dict.get("max_retries", 2) or 2)),
                     )
                     try:
                         async with parallel_sem:
@@ -251,7 +258,7 @@ class OrchestrationWorkflow:
                                 invoke_inp,
                                 schedule_to_close_timeout=timedelta(seconds=agent_timeout + 60),
                                 heartbeat_timeout=timedelta(seconds=agent_timeout + 30),
-                                retry_policy=RetryPolicy(maximum_attempts=2),
+                                retry_policy=RetryPolicy(maximum_attempts=invoke_inp.max_retries),
                             )
                     except (ActivityError, Exception) as exc:
                         cause_str = str(exc.cause) if hasattr(exc, "cause") and exc.cause else str(exc)
@@ -355,8 +362,18 @@ class OrchestrationWorkflow:
                 # continue_as_new threshold: prevent unbounded Event History
                 total_messages = len(self.messages)
                 if total_messages > 200 or self.iteration >= 50:
-                    # Carry state forward into a fresh Workflow execution
-                    workflow.continue_as_new(inp)
+                    carry = OrchestrationInput(
+                        orchestrator_name=inp.orchestrator_name,
+                        user_message=inp.user_message,
+                        user_id=inp.user_id,
+                        token_payload=inp.token_payload,
+                        session_id=inp.session_id,
+                        context_id=inp.context_id,
+                        tokens_used_carry=self.tokens_used,
+                        iteration_carry=self.iteration,
+                        history_window=inp.history_window,
+                    )
+                    workflow.continue_as_new(carry)
 
             else:
                 run_status = "stopped"
