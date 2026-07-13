@@ -211,6 +211,7 @@ def make_agent_card() -> AgentCard:
         "Output: scores per agent, winner, winner_reason, and synthesis (if final=true)."
     )
     card.version = "1.0.0"
+    card.icon_url = "gavel"
     iface = card.supported_interfaces.add()
     iface.url = f"http://agent-judge:{PORT}"
     card.capabilities.streaming = False

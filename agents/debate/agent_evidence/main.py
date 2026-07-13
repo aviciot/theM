@@ -204,6 +204,7 @@ def make_agent_card() -> AgentCard:
         "Output: structured argument with key evidence, confidence score, and main point."
     )
     card.version = "1.0.0"
+    card.icon_url = "fact_check"
     iface = card.supported_interfaces.add()
     iface.url = f"http://agent-evidence:{PORT}"
     card.capabilities.streaming = False

@@ -131,6 +131,7 @@ def make_agent_card() -> AgentCard:
         "input guardrails. Returns a 0-100 score, risk level, summary, and actionable findings."
     )
     card.version = "1.0.0"
+    card.icon_url = "security"
     iface = card.supported_interfaces.add()
     iface.url = f"http://them-security-agent:{PORT}"
     card.capabilities.streaming = False

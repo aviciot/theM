@@ -218,6 +218,7 @@ def make_agent_card() -> AgentCard:
         "and returns a ready-to-use file artifact with Mermaid diagrams and syntax highlighting."
     )
     card.version = "1.0.0"
+    card.icon_url = "description"
     iface = card.supported_interfaces.add()
     iface.url = f"http://docu-writer:{PORT}"
     card.capabilities.streaming = False

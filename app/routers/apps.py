@@ -122,11 +122,11 @@ async def _load_app(db: AsyncSession, slug: str) -> Application:
 
 async def _check_conversation_budget(
     db: AsyncSession,
-    app_row: Application,
+    limit: Optional[int],
+    slug: str,
     context_id: uuid.UUID,
 ) -> None:
     """Raise 429 if this context has already consumed the application's conversation_token_limit."""
-    limit = getattr(app_row, "conversation_token_limit", None)
     if not limit:
         return
     from sqlalchemy import func
@@ -139,7 +139,7 @@ async def _check_conversation_budget(
     if tokens_used >= limit:
         logger.warning(
             "conversation budget exceeded",
-            slug=app_row.slug,
+            slug=slug,
             context_id=str(context_id),
             tokens_used=tokens_used,
             limit=limit,
@@ -253,7 +253,7 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
             if body.context_id and _is_valid_uuid(body.context_id)
             else uuid.uuid4()
         )
-        await _check_conversation_budget(db, app_row, context_id)
+        await _check_conversation_budget(db, app_row.conversation_token_limit, app_row.slug, context_id)
         deadline = datetime.now(timezone.utc) + timedelta(minutes=_DEFAULT_DEADLINE_MINUTES)
 
         task_row = await task_store.create_task(
@@ -435,7 +435,7 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
         if context_id and _is_valid_uuid(context_id)
         else uuid.uuid4()
     )
-    await _check_conversation_budget(db, app_row, ctx_id)
+    await _check_conversation_budget(db, app_row.conversation_token_limit, app_row.slug, ctx_id)
     session_id = uuid.uuid4()
     edge = SSEEdge()
     orch_name = orch.name
@@ -515,6 +515,7 @@ async def ws_entry(slug: str, websocket: WebSocket):
         async with db_module.AsyncSessionLocal() as db:
             app_row = await _load_app(db, slug)
             policy = app_row.access_policy or {}
+            conv_token_limit = app_row.conversation_token_limit  # capture before session closes
             from app.models import Orchestrator
             orch = await db.get(Orchestrator, app_row.orchestrator_id)
             if orch is None or not orch.enabled:
@@ -567,7 +568,7 @@ async def ws_entry(slug: str, websocket: WebSocket):
     )
     async with db_module.AsyncSessionLocal() as budget_db:
         try:
-            await _check_conversation_budget(budget_db, app_row, context_id)
+            await _check_conversation_budget(budget_db, conv_token_limit, slug, context_id)
         except HTTPException as exc:
             await websocket.send_json({"type": "error", "message": exc.detail})
             await websocket.close(code=4029)

@@ -196,6 +196,7 @@ def make_agent_card() -> AgentCard:
         "Output: structured argument with logical chain, confidence score, and main point."
     )
     card.version = "1.0.0"
+    card.icon_url = "psychology"
     iface = card.supported_interfaces.add()
     iface.url = f"http://agent-logic:{PORT}"
     card.capabilities.streaming = False

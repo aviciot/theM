@@ -283,6 +283,7 @@ def make_agent_card() -> AgentCard:
         "Call argue_creative with JSON {question, position, round, fields (optional), opponent_arguments (round 2)} to argue."
     )
     card.version = "1.0.0"
+    card.icon_url = "auto_awesome"
     iface = card.supported_interfaces.add()
     iface.url = f"http://agent-creative:{PORT}"
     card.capabilities.streaming = False
