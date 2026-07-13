@@ -2854,43 +2854,42 @@ function ListView({
   }
 
   return (
-    <div style={{ marginLeft: 260, minHeight: '100vh', background: C.bg, padding: '36px 48px' }}>
+    <div style={{ marginLeft: 260, flex: 1, background: C.bg, minHeight: '100vh' }}>
       <style>{APP_CARD_STYLES}</style>
 
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 32 }}>
+      {/* Page header */}
+      <div style={{ padding: '40px 32px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <h1 style={{ fontSize: 26, fontWeight: 700, color: C.text, margin: 0, fontFamily: 'Geist, sans-serif', letterSpacing: -0.5 }}>
+          <h2 style={{ fontSize: 40, fontWeight: 800, color: C.text, margin: '0 0 6px 0', letterSpacing: '-0.03em', lineHeight: 1.1 }}>
             Applications
-          </h1>
-          <p style={{ fontSize: 13, color: C.textMuted, margin: '6px 0 0', fontFamily: 'Inter, sans-serif' }}>
+          </h2>
+          <p style={{ fontSize: 14, color: C.textMuted, margin: 0 }}>
             Compose orchestrators and entry points into deployable agentic applications.
           </p>
         </div>
+        <button
+          onClick={onNew}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer',
+            background: '#00d1ff', color: '#000', fontSize: 14, fontWeight: 700,
+            boxShadow: '0 0 20px rgba(0,209,255,0.4)',
+          }}
+        >
+          <span style={{ fontSize: 18, lineHeight: 1 }}>+</span>
+          New Application
+        </button>
       </div>
 
-      {!loading && list.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '80px 0', color: C.textMuted }}>
-          <span className="material-icons" style={{ fontSize: 56, marginBottom: 16, opacity: 0.25, display: 'block' }}>apps</span>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: C.text, fontFamily: 'Geist, sans-serif' }}>No applications yet</div>
-          <div style={{ fontSize: 13, fontFamily: 'Inter, sans-serif' }}>Create one to expose an orchestrator as a shareable endpoint.</div>
-          <button onClick={onNew} style={{ marginTop: 24, padding: '10px 22px', borderRadius: 10, border: 'none', cursor: 'pointer', background: C.cyan, color: '#00363a', fontWeight: 700, fontSize: 14, boxShadow: '0 0 14px rgba(0,240,255,0.3)', fontFamily: 'Inter, sans-serif' }}>
-            + New Application
-          </button>
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
-          {list.map((app) => (
-            <AppCard
-              key={app.id}
-              app={app}
-              liveness={appStatuses[app.slug] ?? null}
-              onEdit={onEdit}
-              onToggle={onToggle}
-              onDelete={onDelete}
-              onUrls={setUrlModalApp}
-            />
-          ))}
-          {/* Deploy / New card */}
+      {/* Card grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24, padding: '0 32px 48px' }}>
+        {loading && (
+          <div style={{ gridColumn: '1 / -1', padding: 80, textAlign: 'center', color: C.textMuted, fontSize: 14 }}>
+            Loading…
+          </div>
+        )}
+
+        {!loading && list.length === 0 && (
           <div
             className="app-deploy-card"
             onClick={onNew}
@@ -2901,16 +2900,44 @@ function ListView({
               gap: 14, cursor: 'pointer', minHeight: 220, transition: 'border-color 200ms ease, background 200ms ease',
             }}
           >
-            <div style={{
-              width: 52, height: 52, borderRadius: 14, border: '2px dashed rgba(99,102,241,0.5)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
+            <div style={{ width: 52, height: 52, borderRadius: 14, border: '2px dashed rgba(99,102,241,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <span className="material-icons" style={{ fontSize: 26, color: '#818cf8' }}>add</span>
             </div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: '#818cf8', fontFamily: 'Geist, sans-serif' }}>New Application</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#818cf8' }}>New Application</div>
           </div>
-        </div>
-      )}
+        )}
+
+        {!loading && list.map((app) => (
+          <AppCard
+            key={app.id}
+            app={app}
+            liveness={appStatuses[app.slug] ?? null}
+            onEdit={onEdit}
+            onToggle={onToggle}
+            onDelete={onDelete}
+            onUrls={setUrlModalApp}
+          />
+        ))}
+
+        {/* Deploy / New card — always last */}
+        {!loading && list.length > 0 && (
+          <div
+            className="app-deploy-card"
+            onClick={onNew}
+            style={{
+              borderRadius: 16, border: '2px dashed rgba(99,102,241,0.35)',
+              background: 'rgba(99,102,241,0.02)',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: 14, cursor: 'pointer', minHeight: 220, transition: 'border-color 200ms ease, background 200ms ease',
+            }}
+          >
+            <div style={{ width: 52, height: 52, borderRadius: 14, border: '2px dashed rgba(99,102,241,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span className="material-icons" style={{ fontSize: 26, color: '#818cf8' }}>add</span>
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#818cf8' }}>New Application</div>
+          </div>
+        )}
+      </div>
 
       {/* URL Modal */}
       {urlModalApp && (
