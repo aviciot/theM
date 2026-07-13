@@ -83,3 +83,11 @@ async def publish_scan_complete(agent_id: str, result: dict) -> None:
 
 async def publish_scan_failed(agent_id: str, error: str) -> None:
     await publish(f"agent:{agent_id}", {"type": "scan_failed", "agent_id": agent_id, "error": error})
+
+
+async def publish_app_status(statuses: dict[str, dict]) -> None:
+    """Publish liveness probe results for all apps to them:dash:apps.
+
+    statuses: {slug: {"reachable": bool, "latency_ms": int | None}}
+    """
+    await publish("apps", {"type": "app_status", "statuses": statuses})

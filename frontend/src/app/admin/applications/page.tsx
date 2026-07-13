@@ -2512,8 +2512,8 @@ const APP_CARD_STYLES = `
 .app-glass-card {
   background:
     linear-gradient(160deg, rgba(255,255,255,0.032) 0%, rgba(255,255,255,0.006) 40%, rgba(0,0,0,0.06) 100%),
-    rgba(10,18,32,0.92);
-  border: 1px solid rgba(255,255,255,0.07);
+    var(--tm-card);
+  border: 1px solid var(--tm-card-border);
   backdrop-filter: blur(12px);
   box-shadow:
     0 8px 32px rgba(0,0,0,0.4),
@@ -2567,9 +2567,9 @@ const APP_CARD_STYLES = `
   box-shadow: 0 0 10px rgba(0,209,255,0.3);
 }
 .app-card-btn--urls {
-  background: rgba(30,41,59,0.55);
+  background: var(--tm-btn-2-bg);
   color: var(--tm-card-text-subtle);
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid var(--tm-btn-2-border);
 }
 .app-card-btn--urls:hover {
   border-color: rgba(129,140,248,0.45);
@@ -2577,7 +2577,7 @@ const APP_CARD_STYLES = `
   background: rgba(99,102,241,0.1);
 }
 .app-card-btn--toggle-on {
-  background: rgba(30,41,59,0.55);
+  background: var(--tm-btn-2-bg);
   color: #f87171;
   border: 1px solid rgba(248,113,113,0.2);
 }
@@ -2586,7 +2586,7 @@ const APP_CARD_STYLES = `
   background: rgba(248,113,113,0.08);
 }
 .app-card-btn--toggle-off {
-  background: rgba(30,41,59,0.55);
+  background: var(--tm-btn-2-bg);
   color: #34d399;
   border: 1px solid rgba(52,211,153,0.2);
 }
@@ -2613,26 +2613,21 @@ function epIconColor(type: string): { color: string; glow: string; border: strin
 // ── AppCard sub-component ─────────────────────────────────────────────────────
 function AppCard({
   app,
-  index,
+  liveness,
   onEdit,
   onToggle,
   onDelete,
   onUrls,
-  onCopy,
-  copiedId,
 }: {
   app: Application;
-  index: number;
+  liveness: { reachable: boolean; latency_ms: number | null } | null;
   onEdit: (a: Application) => void;
   onToggle: (a: Application) => void;
   onDelete: (a: Application) => void;
   onUrls: (a: Application) => void;
-  onCopy: (val: string, id: string) => void;
-  copiedId: string | null;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [reachable, setReachable] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -2643,96 +2638,63 @@ function AppCard({
     return () => document.removeEventListener('mousedown', handler);
   }, [menuOpen]);
 
-  // Liveness probe — staggered by card index to avoid simultaneous requests
-  useEffect(() => {
-    if (!app.enabled) { setReachable(null); return; }
-    let cancelled = false;
-    const t = setTimeout(() => {
-      themApi.pingApp(app.slug).then(ok => { if (!cancelled) setReachable(ok); });
-    }, index * 150);
-    return () => { cancelled = true; clearTimeout(t); };
-  }, [app.enabled, app.slug, index]);
-
   const ep = epIconColor(app.entry_point_type);
   const accessMode = (app.access_policy as any)?.mode ?? 'token';
+
+  // Liveness derived from multiplexed WS push (no per-card polling)
+  const reachable = app.enabled ? (liveness?.reachable ?? null) : false;
+  const latencyMs = liveness?.latency_ms ?? null;
+
+  const statusColor = !app.enabled ? C.error : reachable === null ? C.textMuted : reachable ? C.green : '#f59e0b';
+  const statusLabel = !app.enabled ? 'disabled' : reachable === null ? 'checking…' : reachable ? 'live' : 'unreachable';
+  const statusBg    = !app.enabled ? 'rgba(255,180,171,0.1)' : reachable === null ? 'rgba(255,255,255,0.04)' : reachable ? 'rgba(74,222,128,0.08)' : 'rgba(245,158,11,0.08)';
+  const statusBorder = !app.enabled ? 'rgba(255,180,171,0.3)' : reachable === null ? 'rgba(255,255,255,0.1)' : reachable ? C.greenBorder : 'rgba(245,158,11,0.4)';
 
   return (
     <div
       className="app-glass-card"
       style={{ borderRadius: 16, overflow: 'visible', display: 'flex', flexDirection: 'column', position: 'relative' }}
     >
-      {/* Clickable top section → opens builder */}
-      <div
-        style={{ padding: '20px 20px 16px', flex: 1, display: 'flex', flexDirection: 'column', gap: 14, cursor: 'pointer' }}
-        onClick={() => onEdit(app)}
-      >
-        {/* Icon + name row */}
+      {/* Top section */}
+      <div style={{ padding: '20px 20px 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+        {/* Icon + name + menu row */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-          {/* Icon tile 56×56 */}
+          {/* Icon tile */}
           <div style={{
-            width: 56, height: 56, borderRadius: 12, flexShrink: 0,
+            width: 52, height: 52, borderRadius: 12, flexShrink: 0,
             background: `radial-gradient(circle at 30% 30%, ${ep.glow}, transparent 70%)`,
             border: `1px solid ${ep.border}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 26, color: ep.color }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 24, color: ep.color }}>
               {EP_ICON[app.entry_point_type] ?? 'extension'}
             </span>
           </div>
 
-          {/* Name + badges */}
+          {/* Name + slug + type badge */}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 16, color: C.text, fontFamily: 'Geist, sans-serif', marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: C.text, fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: 3 }}>
               {app.name}
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-              {/* Enabled + reachability pill */}
-              <span
-                title={app.enabled ? (reachable === null ? 'Checking reachability…' : reachable ? 'Endpoint reachable' : 'Endpoint unreachable — check routing') : 'Disabled'}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 5,
-                  padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700,
-                  background: app.enabled
-                    ? reachable === false ? 'rgba(245,158,11,0.1)' : 'rgba(74,222,128,0.1)'
-                    : 'rgba(255,180,171,0.1)',
-                  color: app.enabled
-                    ? reachable === false ? '#f59e0b' : C.green
-                    : C.error,
-                  border: `1px solid ${app.enabled
-                    ? reachable === false ? 'rgba(245,158,11,0.4)' : C.greenBorder
-                    : 'rgba(255,180,171,0.3)'}`,
-                }}
-              >
-                {app.enabled && (
-                  <span style={{
-                    width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
-                    background: reachable === null ? C.textMuted : reachable ? C.green : '#f59e0b',
-                    boxShadow: reachable ? '0 0 6px rgba(74,222,128,0.8)' : reachable === false ? '0 0 6px rgba(245,158,11,0.8)' : 'none',
-                  }} />
-                )}
-                {app.enabled ? (reachable === null ? 'live' : reachable ? 'live ✓' : 'unreachable') : 'disabled'}
-              </span>
-              {/* Entry-point type badge */}
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700,
-                background: 'rgba(255,255,255,0.04)', color: ep.color,
-                border: `1px solid ${ep.border}`,
-              }}>
-                {EP_LABEL[app.entry_point_type] ?? app.entry_point_type}
-              </span>
-            </div>
-            {/* Slug subtext */}
-            <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', marginTop: 5 }}>
+            <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', marginBottom: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {app.slug}
             </div>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '2px 7px', borderRadius: 20, fontSize: 10, fontWeight: 700,
+              background: 'var(--tm-filter-bg)', color: ep.color,
+              border: `1px solid ${ep.border}`,
+            }}>
+              {EP_LABEL[app.entry_point_type] ?? app.entry_point_type}
+            </span>
           </div>
 
-          {/* Three-dot menu (top-right) */}
+          {/* Three-dot menu */}
           <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
             <button
               onClick={() => setMenuOpen(v => !v)}
-              style={{ width: 32, height: 32, borderRadius: 8, cursor: 'pointer', background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 150ms ease, border-color 150ms ease' }}
+              style={{ width: 30, height: 30, borderRadius: 7, cursor: 'pointer', background: 'var(--tm-btn-2-bg)', border: '1px solid var(--tm-btn-2-border)', color: 'var(--tm-card-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 150ms ease' }}
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                 <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
@@ -2740,9 +2702,9 @@ function AppCard({
             </button>
             {menuOpen && (
               <div style={{
-                position: 'absolute', top: 36, right: 0, zIndex: 50, minWidth: 130,
-                background: 'rgba(10,18,32,0.97)', border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', overflow: 'hidden',
+                position: 'absolute', top: 34, right: 0, zIndex: 50, minWidth: 130,
+                background: 'var(--tm-menu-bg)', border: '1px solid var(--tm-menu-border)',
+                borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.35)', overflow: 'hidden',
               }}>
                 <button
                   onClick={() => { setMenuOpen(false); onDelete(app); }}
@@ -2758,11 +2720,29 @@ function AppCard({
           </div>
         </div>
 
-        {/* Two stat tiles */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          {/* Orchestrator tile */}
-          <div style={{ padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: '#a78bfa', flexShrink: 0 }}>hub</span>
+        {/* Live status bar */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '8px 12px', borderRadius: 10,
+          background: statusBg, border: `1px solid ${statusBorder}`,
+        }}>
+          {app.enabled && (
+            <span style={{
+              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+              background: statusColor,
+              boxShadow: reachable ? `0 0 7px ${statusColor}` : 'none',
+            }} />
+          )}
+          <span style={{ fontSize: 12, fontWeight: 700, color: statusColor }}>{statusLabel}</span>
+          {reachable && latencyMs != null && (
+            <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 'auto' }}>{latencyMs}ms</span>
+          )}
+        </div>
+
+        {/* Info tiles: orchestrator + access */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, paddingBottom: 16 }}>
+          <div style={{ padding: '8px 12px', borderRadius: 10, background: 'var(--tm-filter-bg)', border: '1px solid var(--tm-divider)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#a78bfa', flexShrink: 0 }}>hub</span>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Orchestrator</div>
               <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -2770,9 +2750,8 @@ function AppCard({
               </div>
             </div>
           </div>
-          {/* Access policy tile */}
-          <div style={{ padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 18, color: accessMode === 'public' ? C.green : '#f59e0b', flexShrink: 0 }}>
+          <div style={{ padding: '8px 12px', borderRadius: 10, background: 'var(--tm-filter-bg)', border: '1px solid var(--tm-divider)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, color: accessMode === 'public' ? C.green : '#f59e0b', flexShrink: 0 }}>
               {accessMode === 'public' ? 'lock_open' : 'lock'}
             </span>
             <div style={{ minWidth: 0 }}>
@@ -2783,26 +2762,65 @@ function AppCard({
         </div>
       </div>
 
-      {/* Action buttons (3-column grid) */}
-      <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '12px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-        <button className="app-card-btn app-card-btn--open" onClick={() => onEdit(app)}>
-          🖥️ Open
+      {/* Action buttons */}
+      <div style={{ borderTop: '1px solid var(--tm-divider)', padding: '10px 14px', display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 8 }}>
+        {/* Open builder — primary, full-width feel */}
+        <button className="app-card-btn app-card-btn--open" onClick={() => onEdit(app)}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>open_in_new</span>
+          Open Builder
         </button>
         <button className="app-card-btn app-card-btn--urls" onClick={() => onUrls(app)}>
-          🔗 URLs
+          URLs
         </button>
         {app.enabled ? (
-          <button className="app-card-btn app-card-btn--toggle-on" onClick={() => onToggle(app)}>
-            🔴 Disable
-          </button>
+          <button className="app-card-btn app-card-btn--toggle-on" onClick={() => onToggle(app)}>Disable</button>
         ) : (
-          <button className="app-card-btn app-card-btn--toggle-off" onClick={() => onToggle(app)}>
-            🟢 Enable
-          </button>
+          <button className="app-card-btn app-card-btn--toggle-off" onClick={() => onToggle(app)}>Enable</button>
         )}
       </div>
     </div>
   );
+}
+
+type AppLiveness = { reachable: boolean; latency_ms: number | null };
+
+function useDashAppStatuses(token: string | null): Record<string, AppLiveness> {
+  const [statuses, setStatuses] = useState<Record<string, AppLiveness>>({});
+
+  useEffect(() => {
+    if (!token) return;
+    const wsUrl = `${window.location.origin.replace(/^http/, 'ws').replace(/^https/, 'wss')}/ws/dashboard?token=${token}`;
+    let ws: WebSocket;
+    let dead = false;
+
+    function connect() {
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'subscribe', channels: ['apps'] }));
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.channel === 'apps' && msg.event?.type === 'app_status') {
+            setStatuses(prev => ({ ...prev, ...msg.event.statuses }));
+          }
+        } catch {}
+      };
+      ws.onclose = () => {
+        if (!dead) setTimeout(connect, 4000);
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    connect();
+    return () => {
+      dead = true;
+      ws?.close();
+    };
+  }, [token]);
+
+  return statuses;
 }
 
 function ListView({
@@ -2818,6 +2836,16 @@ function ListView({
 }) {
   const [urlModalApp, setUrlModalApp] = useState<Application | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Read JWT for WS auth — same cookie the rest of the app uses
+  const [token, setToken] = useState<string | null>(null);
+  useEffect(() => {
+    fetch('/api/auth/token').then(r => r.ok ? r.json() : null).then(d => {
+      if (d?.token) setToken(d.token);
+    }).catch(() => {});
+  }, []);
+
+  const appStatuses = useDashAppStatuses(token);
 
   function copy(val: string, id: string) {
     navigator.clipboard?.writeText(val).catch(() => {});
@@ -2851,17 +2879,15 @@ function ListView({
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
-          {list.map((app, i) => (
+          {list.map((app) => (
             <AppCard
               key={app.id}
               app={app}
-              index={i}
+              liveness={appStatuses[app.slug] ?? null}
               onEdit={onEdit}
               onToggle={onToggle}
               onDelete={onDelete}
               onUrls={setUrlModalApp}
-              onCopy={copy}
-              copiedId={copiedId}
             />
           ))}
           {/* Deploy / New card */}

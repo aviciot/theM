@@ -24,6 +24,7 @@
 | `them:dash:runs` | task_runner.py per run event | ws_dashboard.py (channel: runs) | Lightweight summary of every run event (no tool inputs) |
 | `them:dash:agents` | (reserved) | ws_dashboard.py (channel: agents) | Agent registry change events |
 | `them:dash:metrics` | (reserved) | ws_dashboard.py (channel: metrics) | System metrics |
+| `them:dash:apps` | main.py `_app_liveness_loop` every 30s | ws_dashboard.py (channel: apps) | App liveness probe results: `{type: "app_status", statuses: {slug: {reachable, latency_ms}}}` |
 | `them:dash:run:{run_id}` | task_runner.py per run event | ws_dashboard.py (channel: run:{uuid}) | Full per-run trace: tool inputs/outputs, token usage, iteration events |
 | `them:dash:agent:{agent_id}` | admin_agents.py `_run_scan_job` | ws_dashboard.py (channel: agent:{id}) | Per-agent events: `scan_started`, `scan_complete`, `scan_failed`. Transient pub/sub — no TTL, no persistence. |
 | `them:tasks:{task_id}:events` | task_store.py on every state transition | ws_orchestrator.py subscribers | Task lifecycle events (created, state, artifact) |

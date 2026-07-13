@@ -32,7 +32,51 @@ from app.routers import a2a_server
 from app.routers import apps as apps_router
 from app.services.agent_registry import start_change_listener
 from app.services import task_store
-from app.models import Task
+from app.services.dashboard_broadcaster import publish_app_status
+from app.models import Task, Application
+
+
+async def _app_liveness_loop() -> None:
+    """Background coroutine: probe all enabled apps every 30s, publish to them:dash:apps."""
+    import time
+    import httpx
+    _INTERVAL = 30
+    _TIMEOUT  = 5.0
+
+    try:
+        while True:
+            await asyncio.sleep(_INTERVAL)
+            if db_module.AsyncSessionLocal is None:
+                continue
+            try:
+                async with db_module.AsyncSessionLocal() as db:
+                    result = await db.execute(
+                        select(Application).where(Application.enabled == True)
+                    )
+                    apps = list(result.scalars().all())
+
+                statuses: dict[str, dict] = {}
+                async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                    async def _probe(slug: str, base_url: str) -> None:
+                        t0 = time.monotonic()
+                        try:
+                            r = await client.get(f"{base_url}/apps/{slug}")
+                            ok = r.status_code < 500
+                        except Exception:
+                            ok = False
+                        latency_ms = int((time.monotonic() - t0) * 1000)
+                        statuses[slug] = {"reachable": ok, "latency_ms": latency_ms if ok else None}
+
+                    bridge_url = settings.bridge_url or "http://localhost:8001"
+                    await asyncio.gather(*[_probe(a.slug, bridge_url) for a in apps])
+
+                if statuses:
+                    await publish_app_status(statuses)
+                    logger.debug("app_liveness: probed apps", count=len(statuses))
+            except Exception as exc:
+                logger.error("app_liveness: iteration error", error=str(exc))
+    except asyncio.CancelledError:
+        pass
 
 
 async def _reaper_loop() -> None:
@@ -82,6 +126,8 @@ async def lifespan(app: FastAPI):
     listener_task = asyncio.create_task(start_change_listener())
     # Background task: reap tasks that have exceeded their deadline
     reaper_task = asyncio.create_task(_reaper_loop())
+    # Background task: probe app liveness and broadcast to them:dash:apps
+    liveness_task = asyncio.create_task(_app_liveness_loop())
 
     logger.info(
         "the-M ready",
@@ -93,6 +139,7 @@ async def lifespan(app: FastAPI):
 
     listener_task.cancel()
     reaper_task.cancel()
+    liveness_task.cancel()
     logger.info("the-M shutting down", instance_id=settings.instance_id)
     await close_db()
     logger.info("the-M shutdown complete")
