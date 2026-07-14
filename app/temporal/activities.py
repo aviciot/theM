@@ -253,6 +253,7 @@ async def init_run_activity(
     root_task_id: str,
     budget_tokens: Optional[int],
     parent_run_id: Optional[str] = None,
+    entry_point_slug: Optional[str] = None,
 ) -> dict:
     """
     Create them.runs + them.tasks rows and emit run_start dashboard event.
@@ -277,6 +278,7 @@ async def init_run_activity(
             session_id=session_id_uuid,
             goal=user_message,
             parent_run_id=parent_run_uuid,
+            entry_point_slug=entry_point_slug,
         )
         # If start_run returned a different UUID (on failure it returns a dummy),
         # we use run_id_uuid as intended. On success, actual_run_id == run_id_uuid

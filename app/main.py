@@ -34,7 +34,7 @@ from app.routers import webrtc as webrtc_router
 from app.services.agent_registry import start_change_listener
 from app.services import task_store
 from app.services.dashboard_broadcaster import publish_app_status
-from app.models import Task, Application
+from app.models import Task, Application, EntryPoint
 
 
 async def _app_liveness_loop() -> None:
@@ -52,9 +52,11 @@ async def _app_liveness_loop() -> None:
             try:
                 async with db_module.AsyncSessionLocal() as db:
                     result = await db.execute(
-                        select(Application).where(Application.enabled == True)
+                        select(EntryPoint)
+                        .join(Application, EntryPoint.application_id == Application.id)
+                        .where(EntryPoint.enabled == True, Application.enabled == True)
                     )
-                    apps = list(result.scalars().all())
+                    eps = list(result.scalars().all())
 
                 statuses: dict[str, dict] = {}
                 async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -69,7 +71,7 @@ async def _app_liveness_loop() -> None:
                         statuses[slug] = {"reachable": ok, "latency_ms": latency_ms if ok else None}
 
                     bridge_url = settings.bridge_url or "http://localhost:8001"
-                    await asyncio.gather(*[_probe(a.slug, bridge_url) for a in apps])
+                    await asyncio.gather(*[_probe(ep.slug, bridge_url) for ep in eps])
 
                 if statuses:
                     await publish_app_status(statuses)

@@ -56,6 +56,7 @@ class RunOut(BaseModel):
     id: uuid.UUID
     orchestrator_id: uuid.UUID
     orchestrator_name: str
+    entry_point_slug: Optional[str] = None
     user_id: int
     session_id: uuid.UUID
     goal: str
@@ -104,6 +105,7 @@ def _run_to_out(row: Run) -> RunOut:
         id=row.id,
         orchestrator_id=row.orchestrator_id,
         orchestrator_name=row.orchestrator_name,
+        entry_point_slug=getattr(row, "entry_point_slug", None),
         user_id=row.user_id,
         session_id=row.session_id,
         goal=row.goal,

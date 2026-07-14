@@ -30,6 +30,7 @@ class OrchestrationInput:
     depth: int = 0
     parent_run_id: Optional[str] = None
     budget_tokens_carry: Optional[int] = None
+    entry_point_slug: Optional[str] = None
 
 
 @dataclass

@@ -171,17 +171,26 @@ export interface OrchestratorFull {
   history_window?: number | null;
 }
 
+export interface EntryPoint {
+  id: string;
+  application_id: string;
+  slug: string;
+  entry_point_type: 'websocket' | 'sse' | 'webrtc';
+  access_policy: Record<string, unknown>;
+  conversation_token_limit: number | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Application {
   id: string;
   name: string;
-  slug: string;
-  entry_point_type: string;
   orchestrator_id: string;
   orchestrator_name: string | null;
-  access_policy: Record<string, unknown>;
   presentation: Record<string, unknown>;
   enabled: boolean;
-  conversation_token_limit: number | null;
+  entry_points: EntryPoint[];
   created_at: string;
   updated_at: string;
 }

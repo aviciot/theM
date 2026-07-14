@@ -1,9 +1,9 @@
 """
-Pluggable application entry points — Phase 9 / Phase 10.
+Pluggable application entry points — Phase 10 (multi-EP model).
 
 Routes:
-  GET  /apps                          → list all enabled applications
-  GET  /apps/{slug}                   → get one application by slug
+  GET  /apps                          → list all enabled entry points (public catalogue)
+  GET  /apps/{slug}                   → get one entry point by slug
   POST /apps/{slug}                   → fire-and-forget; returns task_id for polling
   GET  /apps/{slug}/tasks/{task_id}   → poll task state
   WS   /apps/{slug}/ws               → WebSocket streaming chat
@@ -15,8 +15,10 @@ Auth:
   - access_policy {"mode":"token"}  → Bearer required for all methods
 
 Design:
-  Entry points are thin adapters. They load the Application row, verify auth,
-  look up the bound orchestrator, then delegate to task_runner.run().
+  Entry points are thin adapters. They load the EntryPoint row (joined to its
+  Application for orchestrator_id), verify auth, then delegate to task_runner.run().
+  entry_point_slug is threaded through to run_recorder so logs/history show
+  which door a run came through.
 """
 
 import asyncio
@@ -29,9 +31,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 import app.database as db_module
-from app.models import Application, Task
+from app.models import Application, EntryPoint, Task
 from app.services.auth_client import validate_jwt
 from app.services import task_store
 from app.services.task_runner import run as task_runner_run
@@ -39,7 +42,6 @@ from app.services.token_cache import validate_bearer_token
 from app.edges.sse_edge import SSEEdge
 from app.utils.logger import logger
 
-# Temporal feature flag — read once at import time
 def _temporal_enabled() -> bool:
     try:
         from app.config import Settings
@@ -55,7 +57,7 @@ _DEFAULT_DEADLINE_MINUTES = 30
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Auth helpers
+# Auth helpers (unchanged from Phase 9)
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _resolve_bearer(request: Request) -> dict | None:
@@ -107,17 +109,25 @@ async def _resolve_bearer_ws(websocket: WebSocket) -> dict | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Application loader
+# Entry point loader — queries entry_points table, joins to application
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _load_app(db: AsyncSession, slug: str) -> Application:
+async def _load_entry_point(db: AsyncSession, slug: str) -> EntryPoint:
+    """Load an enabled EntryPoint (with its Application) by slug."""
     result = await db.execute(
-        select(Application).where(Application.slug == slug, Application.enabled == True)
+        select(EntryPoint)
+        .join(Application, EntryPoint.application_id == Application.id)
+        .where(
+            EntryPoint.slug == slug,
+            EntryPoint.enabled == True,   # noqa: E712
+            Application.enabled == True,  # noqa: E712
+        )
+        .options(selectinload(EntryPoint.application))
     )
-    app_row = result.scalar_one_or_none()
-    if app_row is None:
+    ep = result.scalar_one_or_none()
+    if ep is None:
         raise HTTPException(status_code=404, detail=f"Application '{slug}' not found")
-    return app_row
+    return ep
 
 
 async def _check_conversation_budget(
@@ -126,7 +136,6 @@ async def _check_conversation_budget(
     slug: str,
     context_id: uuid.UUID,
 ) -> None:
-    """Raise 429 if this context has already consumed the application's conversation_token_limit."""
     if not limit:
         return
     from sqlalchemy import func
@@ -139,10 +148,8 @@ async def _check_conversation_budget(
     if tokens_used >= limit:
         logger.warning(
             "conversation budget exceeded",
-            slug=slug,
-            context_id=str(context_id),
-            tokens_used=tokens_used,
-            limit=limit,
+            slug=slug, context_id=str(context_id),
+            tokens_used=tokens_used, limit=limit,
         )
         raise HTTPException(
             status_code=429,
@@ -164,39 +171,43 @@ class AppInfo(BaseModel):
 
 @router.get("/apps", response_model=list[AppInfo], tags=["apps"])
 async def list_apps():
-    """List all enabled applications (public catalogue)."""
+    """List all enabled entry points (public catalogue)."""
     if db_module.AsyncSessionLocal is None:
         return []
     async with db_module.AsyncSessionLocal() as db:
         result = await db.execute(
-            select(Application).where(Application.enabled == True).order_by(Application.name)
+            select(EntryPoint)
+            .join(Application, EntryPoint.application_id == Application.id)
+            .where(EntryPoint.enabled == True, Application.enabled == True)  # noqa: E712
+            .options(selectinload(EntryPoint.application))
+            .order_by(Application.name, EntryPoint.slug)
         )
-        rows = result.scalars().all()
+        eps = result.scalars().all()
     return [
         AppInfo(
-            slug=r.slug,
-            name=r.name,
-            entry_point_type=r.entry_point_type,
-            access_policy=r.access_policy or {},
-            presentation=r.presentation or {},
+            slug=ep.slug,
+            name=ep.application.name,
+            entry_point_type=ep.entry_point_type,
+            access_policy=ep.access_policy or {},
+            presentation=ep.application.presentation or {},
         )
-        for r in rows
+        for ep in eps
     ]
 
 
 @router.get("/apps/{slug}", response_model=AppInfo, tags=["apps"])
 async def get_app(slug: str):
-    """Get a single application by slug."""
+    """Get a single entry point by slug."""
     if db_module.AsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Service not ready")
     async with db_module.AsyncSessionLocal() as db:
-        app_row = await _load_app(db, slug)
+        ep = await _load_entry_point(db, slug)
     return AppInfo(
-        slug=app_row.slug,
-        name=app_row.name,
-        entry_point_type=app_row.entry_point_type,
-        access_policy=app_row.access_policy or {},
-        presentation=app_row.presentation or {},
+        slug=ep.slug,
+        name=ep.application.name,
+        entry_point_type=ep.entry_point_type,
+        access_policy=ep.access_policy or {},
+        presentation=ep.application.presentation or {},
     )
 
 
@@ -218,18 +229,14 @@ class RestResponse(BaseModel):
 
 @router.post("/apps/{slug}", response_model=RestResponse, tags=["apps"])
 async def rest_entry(slug: str, body: RestRequest, request: Request):
-    """
-    Fire-and-forget entry point. Returns task_id immediately; caller polls
-    GET /apps/{slug}/tasks/{task_id} for the result.
-    Auth: Bearer required unless access_policy.mode == 'public'.
-    """
     if db_module.AsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Service not ready")
 
     async with db_module.AsyncSessionLocal() as db:
-        app_row = await _load_app(db, slug)
+        ep = await _load_entry_point(db, slug)
+        app_row = ep.application
 
-        policy = app_row.access_policy or {}
+        policy = ep.access_policy or {}
         if policy.get("mode") != "public":
             token_payload = await _resolve_bearer(request)
             if token_payload is None:
@@ -253,7 +260,7 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
             if body.context_id and _is_valid_uuid(body.context_id)
             else uuid.uuid4()
         )
-        await _check_conversation_budget(db, app_row.conversation_token_limit, app_row.slug, context_id)
+        await _check_conversation_budget(db, ep.conversation_token_limit, slug, context_id)
         deadline = datetime.now(timezone.utc) + timedelta(minutes=_DEFAULT_DEADLINE_MINUTES)
 
         task_row = await task_store.create_task(
@@ -281,6 +288,7 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
                     token_payload=token_payload,
                     context_id=context_id,
                     session_id=uuid.uuid4(),
+                    entry_point_slug=slug,
                 )
                 result = await handle.result()
                 if result.get("status") != "completed":
@@ -294,6 +302,7 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
                         token_payload=token_payload,
                         db=run_db,
                         context_id=context_id,
+                        entry_point_slug=slug,
                     ):
                         if event.get("type") == "error":
                             run_error = event.get("message")
@@ -311,7 +320,6 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
             pass
 
     asyncio.create_task(_run())
-
     return RestResponse(
         task_id=str(task_row.id),
         context_id=str(context_id),
@@ -334,17 +342,14 @@ class TaskPollResponse(BaseModel):
 
 @router.get("/apps/{slug}/tasks/{task_id}", response_model=TaskPollResponse, tags=["apps"])
 async def poll_task(slug: str, task_id: str, request: Request):
-    """Poll the state of a task created via the REST entry point."""
     if not _is_valid_uuid(task_id):
         raise HTTPException(status_code=400, detail="Invalid task_id")
-
     if db_module.AsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Service not ready")
 
     async with db_module.AsyncSessionLocal() as db:
-        app_row = await _load_app(db, slug)
-
-        policy = app_row.access_policy or {}
+        ep = await _load_entry_point(db, slug)
+        policy = ep.access_policy or {}
         token_payload: Optional[dict] = None
         if policy.get("mode") != "public":
             token_payload = await _resolve_bearer(request)
@@ -354,7 +359,6 @@ async def poll_task(slug: str, task_id: str, request: Request):
         task = await task_store.get_task(db, uuid.UUID(task_id))
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
-
         if token_payload and not task_store.owns_task(task, token_payload.get("user_id")):
             raise HTTPException(status_code=404, detail="Task not found")
 
@@ -384,34 +388,16 @@ async def poll_task(slug: str, task_id: str, request: Request):
 
 @router.get("/apps/{slug}/sse", tags=["apps"])
 async def sse_entry(slug: str, request: Request, message: str, context_id: Optional[str] = None):
-    """
-    SSE streaming entry point.
-
-    Client sends message as query param; receives a text/event-stream response.
-
-    Stream format:
-      data: <token text>\n\n          — LLM token (one per frame)
-      event: tool_start\ndata: {...}  — tool invocation started
-      event: tool_done\ndata: {...}   — tool invocation finished
-      event: error\ndata: {...}       — run failed
-      event: done\ndata: {}          — stream complete
-
-    Auth: Bearer token in Authorization header (or ?token= query param).
-    access_policy.mode=public skips auth.
-
-    Ideal for TTS pipelines: pipe token frames directly to a TTS engine as
-    they arrive.
-    """
     if db_module.AsyncSessionLocal is None:
         raise HTTPException(status_code=503, detail="Service not ready")
-
     if not message.strip():
         raise HTTPException(status_code=400, detail="message is required")
 
     async with db_module.AsyncSessionLocal() as db:
-        app_row = await _load_app(db, slug)
+        ep = await _load_entry_point(db, slug)
+        app_row = ep.application
 
-        policy = app_row.access_policy or {}
+        policy = ep.access_policy or {}
         if policy.get("mode") != "public":
             token_payload = await _resolve_bearer(request)
             if token_payload is None:
@@ -435,7 +421,9 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
         if context_id and _is_valid_uuid(context_id)
         else uuid.uuid4()
     )
-    await _check_conversation_budget(db, app_row.conversation_token_limit, app_row.slug, ctx_id)
+    async with db_module.AsyncSessionLocal() as budget_db:
+        await _check_conversation_budget(budget_db, ep.conversation_token_limit, slug, ctx_id)
+
     session_id = uuid.uuid4()
     edge = SSEEdge()
     orch_name = orch.name
@@ -451,6 +439,7 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
                     token_payload=token_payload,
                     context_id=ctx_id,
                     session_id=session_id,
+                    entry_point_slug=slug,
                 )
                 await stream_run_events(
                     context_id=str(ctx_id),
@@ -467,6 +456,7 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
                         db=run_db,
                         session_id=session_id,
                         context_id=ctx_id,
+                        entry_point_slug=slug,
                     ):
                         await edge.emit(event)
         except Exception as exc:
@@ -476,14 +466,10 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
             await edge.close()
 
     asyncio.create_task(_run_and_stream())
-
     return StreamingResponse(
         edge.stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # disable Nginx/Traefik response buffering
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -493,17 +479,6 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
 
 @router.websocket("/apps/{slug}/ws")
 async def ws_entry(slug: str, websocket: WebSocket):
-    """
-    WebSocket chat entry point for a named application.
-    Protocol mirrors /ws/orchestrate/{name}:
-      Client → { "content": "user message", "context_id": "<uuid>" }
-      Server → { "type": "ready", "task_id": "...", "context_id": "..." }
-      Server → { "type": "token", "text": "..." }
-      Server → { "type": "tool_start", "tool": "...", "iteration": N }
-      Server → { "type": "tool_done",  "tool": "...", "duration_ms": N }
-      Server → { "type": "done", "task_id": "...", "total_tokens": N }
-      Server → { "type": "error", "message": "..." }
-    """
     await websocket.accept()
 
     if db_module.AsyncSessionLocal is None:
@@ -513,9 +488,11 @@ async def ws_entry(slug: str, websocket: WebSocket):
 
     try:
         async with db_module.AsyncSessionLocal() as db:
-            app_row = await _load_app(db, slug)
-            policy = app_row.access_policy or {}
-            conv_token_limit = app_row.conversation_token_limit  # capture before session closes
+            ep = await _load_entry_point(db, slug)
+            app_row = ep.application
+            policy = ep.access_policy or {}
+            conv_token_limit = ep.conversation_token_limit
+
             from app.models import Orchestrator
             orch = await db.get(Orchestrator, app_row.orchestrator_id)
             if orch is None or not orch.enabled:
@@ -573,15 +550,12 @@ async def ws_entry(slug: str, websocket: WebSocket):
             await websocket.send_json({"type": "error", "message": exc.detail})
             await websocket.close(code=4029)
             return
+
     session_id = uuid.uuid4()
 
     try:
         if _TEMPORAL_ENABLED:
-            from app.temporal.bridge_client import (
-                cancel_workflow,
-                start_orchestration_workflow,
-                stream_run_events,
-            )
+            from app.temporal.bridge_client import cancel_workflow, start_orchestration_workflow, stream_run_events
             handle, workflow_id = await start_orchestration_workflow(
                 orchestrator_name=orchestrator_name,
                 user_message=user_message,
@@ -589,6 +563,7 @@ async def ws_entry(slug: str, websocket: WebSocket):
                 token_payload=token_payload,
                 context_id=context_id,
                 session_id=session_id,
+                entry_point_slug=slug,
             )
             cancel_evt = asyncio.Event()
 
@@ -636,6 +611,7 @@ async def ws_entry(slug: str, websocket: WebSocket):
                     db=db,
                     session_id=session_id,
                     context_id=context_id,
+                    entry_point_slug=slug,
                 ):
                     try:
                         await websocket.send_json(event)

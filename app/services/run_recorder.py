@@ -29,6 +29,7 @@ async def start_run(
     session_id: uuid.UUID,
     goal: str,
     parent_run_id: Optional[uuid.UUID] = None,
+    entry_point_slug: Optional[str] = None,
 ) -> uuid.UUID:
     """Insert a new run row (status=running). Returns run_id."""
     try:
@@ -40,6 +41,7 @@ async def start_run(
             goal=goal,
             status="running",
             parent_run_id=parent_run_id,
+            entry_point_slug=entry_point_slug,
         )
         db.add(run)
         await db.commit()

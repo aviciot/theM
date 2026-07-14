@@ -1587,7 +1587,7 @@ def test_22_applications():
         check("entry_point_type rejects legacy rest/voice", "websocket_chat" not in s and '"rest"' not in s)
         check("409 on duplicate slug", "409" in s or "HTTP_409_CONFLICT" in s)
         check("orchestrator FK verified on create", "Orchestrator" in s)
-        check("orchestrator_name join in list", "orch_map" in s)
+        check("orchestrator_name join in list", "orch_map" in s or "_batch_orch_names" in s)
         check("ApplicationCreate defined", "ApplicationCreate" in s)
         check("ApplicationUpdate defined", "ApplicationUpdate" in s)
         check("ApplicationOut defined", "ApplicationOut" in s)

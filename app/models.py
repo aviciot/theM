@@ -150,6 +150,7 @@ class Run(Base):
     parent_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("them.runs.id", ondelete="SET NULL"), nullable=True
     )
+    entry_point_slug: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     iterations: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_tokens_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -276,7 +277,7 @@ class TaskMessage(Base):
     task: Mapped["Task"] = relationship("Task", back_populates="messages")
 
 
-# ── Phase 9: Applications (pluggable entry points) ────────────────────────────
+# ── Phase 10: Applications (parent) + EntryPoints (children) ─────────────────
 
 class Application(Base):
     __tablename__ = "applications"
@@ -284,12 +285,34 @@ class Application(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    entry_point_type: Mapped[str] = mapped_column(Text, nullable=False)
-    orchestrator_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("them.orchestrators.id", ondelete="CASCADE"), nullable=False)
-    access_policy: Mapped[dict] = mapped_column(JSONB, nullable=False, default=lambda: {"mode": "token"})
+    orchestrator_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("them.orchestrators.id", ondelete="CASCADE"), nullable=False
+    )
     presentation: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    conversation_token_limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    entry_points: Mapped[List["EntryPoint"]] = relationship(
+        "EntryPoint", back_populates="application",
+        cascade="all, delete-orphan", order_by="EntryPoint.created_at",
+    )
+
+
+class EntryPoint(Base):
+    __tablename__ = "entry_points"
+    __table_args__ = {"schema": "them"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("them.applications.id", ondelete="CASCADE"), nullable=False
+    )
+    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    entry_point_type: Mapped[str] = mapped_column(Text, nullable=False)
+    access_policy: Mapped[dict] = mapped_column(JSONB, nullable=False, default=lambda: {"mode": "token"})
+    conversation_token_limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    application: Mapped["Application"] = relationship("Application", back_populates="entry_points")

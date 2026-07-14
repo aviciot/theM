@@ -592,6 +592,7 @@ async def run(
     db: AsyncSession,
     session_id: Optional[uuid.UUID] = None,
     context_id: Optional[uuid.UUID] = None,
+    entry_point_slug: Optional[str] = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Durable agentic loop. Yields WS-ready event dicts.
@@ -645,6 +646,7 @@ async def run(
         user_id=user_id,
         session_id=session_id,
         goal=user_message,
+        entry_point_slug=entry_point_slug,
     )
 
     root_task = await task_store.create_task(

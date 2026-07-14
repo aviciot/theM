@@ -45,6 +45,7 @@ async def start_orchestration_workflow(
     context_id: uuid.UUID,
     session_id: uuid.UUID,
     history_window: int = 20,
+    entry_point_slug: Optional[str] = None,
 ) -> tuple[WorkflowHandle, str]:
     """
     Start or signal-resume an OrchestrationWorkflow for the given context_id.
@@ -66,6 +67,7 @@ async def start_orchestration_workflow(
         session_id=str(session_id),
         context_id=str(context_id),
         history_window=history_window,
+        entry_point_slug=entry_point_slug,
     )
 
     try:

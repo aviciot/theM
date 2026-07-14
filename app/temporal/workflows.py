@@ -145,6 +145,7 @@ class OrchestrationWorkflow:
                     generated_root_task_id,
                     orch_config.get("budget_tokens"),
                     inp.parent_run_id,
+                    inp.entry_point_slug,
                 ],
                 schedule_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=3),

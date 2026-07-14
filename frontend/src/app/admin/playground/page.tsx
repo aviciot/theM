@@ -985,11 +985,12 @@ export default function PlaygroundPage() {
   useEffect(() => {
     if (!selectedOrch) { setWebrtcSlug(null); return; }
     themApi.applications().then(apps => {
-      const match = apps.find(
-        (a: any) => a.entry_point_type === 'webrtc' && a.enabled &&
-          a.orchestrator_name === selectedOrch
-      );
-      setWebrtcSlug(match?.slug ?? null);
+      for (const a of apps) {
+        if (!a.enabled || a.orchestrator_name !== selectedOrch) continue;
+        const webrtcEp = a.entry_points?.find((ep: any) => ep.entry_point_type === 'webrtc' && ep.enabled);
+        if (webrtcEp) { setWebrtcSlug(webrtcEp.slug); return; }
+      }
+      setWebrtcSlug(null);
     }).catch(() => setWebrtcSlug(null));
   }, [selectedOrch]);
 

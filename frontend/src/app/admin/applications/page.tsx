@@ -65,7 +65,7 @@ const deleteNodeRef = { current: (_id: string) => {} };
 const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc'] as const;
 type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 
-interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; appName?: string; convTokenLimit?: string; [key: string]: unknown; }
+interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; appName?: string; convTokenLimit?: string; _epId?: string; [key: string]: unknown; }
 interface OrchestratorData { orchestratorId: string; name: string; displayName: string; model: string | null; maxParallelTools: number; [key: string]: unknown; }
 interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; tags?: string[]; icon?: string | null; [key: string]: unknown; }
 
@@ -460,25 +460,24 @@ function buildNodesFromApp(
   app: Application,
   orch: OrchestratorFull | undefined,
   agents: Agent[],
-  siblingApps: Application[] = [],
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
-  // All apps sharing this orchestrator (primary + siblings)
-  const allEpApps = [app, ...siblingApps.filter(s => s.id !== app.id)];
-  allEpApps.forEach((epApp, idx) => {
+  // One EP node per entry-point row
+  app.entry_points.forEach((ep, idx) => {
     const epId = `ep_${idx}`;
     nodes.push({
       id: epId, type: 'entryPoint',
       position: { x: 150 + idx * 240, y: 60 },
       data: {
-        label: epApp.name,
-        epType: (epApp.entry_point_type as EntryPointType) ?? 'websocket',
-        accessMode: ((epApp.access_policy as any)?.mode ?? 'token') as 'token' | 'public',
-        slug: epApp.slug,
-        appName: epApp.name,
-        convTokenLimit: epApp.conversation_token_limit != null ? String(epApp.conversation_token_limit) : '',
+        label: app.name,
+        epType: (ep.entry_point_type as EntryPointType) ?? 'websocket',
+        accessMode: ((ep.access_policy as any)?.mode ?? 'token') as 'token' | 'public',
+        slug: ep.slug,
+        appName: app.name,
+        convTokenLimit: ep.conversation_token_limit != null ? String(ep.conversation_token_limit) : '',
+        _epId: ep.id,
       } satisfies EntryPointData,
     });
     if (orch) {
@@ -1811,7 +1810,6 @@ function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPickerEntry[
 // ── Builder view ──────────────────────────────────────────────────────────────
 function BuilderView({
   app,
-  allApps,
   orchestrators,
   agents,
   onBack,
@@ -1820,7 +1818,6 @@ function BuilderView({
   onAgentsChange,
 }: {
   app: Application | null;
-  allApps: Application[];
   orchestrators: OrchestratorFull[];
   agents: Agent[];
   onBack: () => void;
@@ -1833,7 +1830,6 @@ function BuilderView({
         app,
         orchestrators.find(o => o.id === app.orchestrator_id),
         agents,
-        allApps.filter(a => a.orchestrator_id === app.orchestrator_id),
       )
     : {
         nodes: [],
@@ -1849,9 +1845,9 @@ function BuilderView({
   const [libWidth, setLibWidth] = useState(280);
   const [appName, setAppName] = useState(app?.name ?? '');
   const [convTokenLimit, setConvTokenLimit] = useState<string>(
-    app?.conversation_token_limit != null ? String(app.conversation_token_limit) : ''
+    app?.entry_points?.[0]?.conversation_token_limit != null ? String(app.entry_points[0].conversation_token_limit) : ''
   );
-  const [slugLocked, setSlugLocked] = useState(!!app?.slug);
+  const [slugLocked, setSlugLocked] = useState(!!(app?.entry_points?.[0]?.slug));
   const [isDirty, setIsDirty] = useState(false);
   const [testPickerOpen, setTestPickerOpen] = useState(false);
   const [logoState, setLogoState] = useState<LogoState>('idle');
@@ -1881,16 +1877,7 @@ function BuilderView({
   const epNode = nodes.find((n: Node) => n.type === 'entryPoint');
 
   deleteNodeRef.current = (id: string) => {
-    const node = nodesRef.current.find(n => n.id === id);
-    // If deleting an entry point that maps to a saved app row, delete it from DB too
-    if (node?.type === 'entryPoint') {
-      const epData = node.data as EntryPointData;
-      const existing = allApps.find(a => a.slug === epData.slug);
-      if (existing?.id) {
-        themApi.deleteApplication(existing.id).catch(() => {});
-        onSaved(); // refresh parent list
-      }
-    }
+    // Deleting an EP node just removes it from the canvas; the diff is applied on next Save.
     setNodes((nds: Node[]) => nds.filter(n => n.id !== id));
     setEdges((eds: Edge[]) => eds.filter(e => e.source !== id && e.target !== id));
     setSelectedNode((prev: Node | null) => prev?.id === id ? null : prev);
@@ -2285,53 +2272,55 @@ function BuilderView({
 
     if (connectedEps.length === 0) { showToast('Connect an entry point to an orchestrator', false); return; }
 
+    // All EPs must share the same orchestrator (builder constraint: one orch node)
+    const orchData = connectedEps[0].orchNode.data as OrchestratorData;
+
     setSaving(true);
     setLogoState('thinking');
     try {
-      // Update each orchestrator's agent list (deduplicated by orchestrator id)
-      const updatedOrchIds = new Set<string>();
-      for (const { orchNode } of connectedEps) {
-        const orchData = orchNode.data as OrchestratorData;
-        if (updatedOrchIds.has(orchData.orchestratorId)) continue;
-        updatedOrchIds.add(orchData.orchestratorId);
-        const agentIds = edges
-          .filter((e: Edge) => e.source === orchNode.id)
-          .map((e: Edge) => nodes.find((n: Node) => n.id === e.target && n.type === 'agent'))
-          .filter((n: Node | undefined): n is Node => Boolean(n))
-          .map((n: Node) => (n.data as AgentData).agentId);
-        await themApi.updateOrchestrator(orchData.orchestratorId, { allowed_agent_ids: agentIds });
-      }
+      // Update orchestrator's agent list
+      const agentIds = edges
+        .filter((e: Edge) => e.source === connectedEps[0].orchNode.id)
+        .map((e: Edge) => nodes.find((n: Node) => n.id === e.target && n.type === 'agent'))
+        .filter((n: Node | undefined): n is Node => Boolean(n))
+        .map((n: Node) => (n.data as AgentData).agentId);
+      await themApi.updateOrchestrator(orchData.orchestratorId, { allowed_agent_ids: agentIds });
 
-      // Fetch a fresh app list so we don't create duplicates if allApps prop is stale
-      const freshApps: Application[] = await themApi.applications().catch(() => allApps);
-
-      // Save each entry point as its own app row (create or update by slug)
-      const savedMap: Record<string, Application> = {};
-      for (const { epNode, orchNode } of connectedEps) {
-        const epData = epNode.data as EntryPointData;
-        const orchData = orchNode.data as OrchestratorData;
-        const existing = freshApps.find(a => a.slug === epData.slug) ?? (connectedEps.length === 1 ? currentApp : null);
-        // Per-node name/limit take priority; fall back to shared top-bar values for single-EP
-        const resolvedName = epData.appName?.trim() || epData.label || epData.slug;
-        const resolvedLimit = epData.convTokenLimit !== undefined ? epData.convTokenLimit : (connectedEps.length === 1 ? convTokenLimit : '');
-        const body = {
-          name: resolvedName,
-          slug: epData.slug,
-          entry_point_type: epData.epType,
-          orchestrator_id: orchData.orchestratorId,
-          access_policy: { mode: epData.accessMode },
-          enabled: deploy ? true : (existing?.enabled ?? false),
-          conversation_token_limit: resolvedLimit !== '' ? parseInt(resolvedLimit, 10) : null,
+      // Build entry_points array (send full desired array; server diffs atomically)
+      const entryPoints = connectedEps.map(({ epNode }) => {
+        const d = epNode.data as EntryPointData;
+        const limit = d.convTokenLimit !== undefined && d.convTokenLimit !== '' ? parseInt(d.convTokenLimit, 10) : null;
+        return {
+          ...(d._epId ? { id: d._epId } : {}),
+          slug: d.slug,
+          entry_point_type: d.epType,
+          access_policy: { mode: d.accessMode },
+          conversation_token_limit: limit,
+          enabled: true,
         };
-        const saved = existing?.id
-          ? await themApi.updateApplication(existing.id, body)
-          : await themApi.createApplication(body);
-        savedMap[epData.slug] = saved;
-      }
+      });
 
-      // currentApp tracks the primary app (the one the builder was opened with)
-      const primarySaved = app?.slug ? savedMap[app.slug] : Object.values(savedMap)[0] ?? null;
-      if (primarySaved) setCurrentApp(primarySaved);
+      const resolvedName = appName.trim() || connectedEps[0].epNode.data.appName || connectedEps[0].epNode.data.slug;
+
+      const body = {
+        name: resolvedName,
+        orchestrator_id: orchData.orchestratorId,
+        enabled: deploy ? true : (currentApp?.enabled ?? false),
+        entry_points: entryPoints,
+      };
+
+      let saved: Application;
+      if (currentApp?.id) {
+        saved = await themApi.updateApplication(currentApp.id, body);
+      } else {
+        saved = await themApi.createApplication(body);
+      }
+      setCurrentApp(saved);
+      // Update EP node data with new DB ids from saved response
+      saved.entry_points.forEach(ep => {
+        const matchingNode = nodes.find((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === ep.slug);
+        if (matchingNode) updateNodeData(matchingNode.id, { _epId: ep.id });
+      });
       setIsDirty(false);
       triggerLogo('success', deploy ? 2500 : 1800);
       showToast(deploy ? '🚀 Application deployed!' : 'Saved successfully', true);
@@ -2345,7 +2334,7 @@ function BuilderView({
   }
 
   function handleTest() {
-    const anyEnabled = currentApp?.enabled || allApps.some(a => nodes.some((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === a.slug && a.enabled));
+    const anyEnabled = currentApp?.enabled || currentApp?.entry_points?.some(ep => ep.enabled);
     if (!anyEnabled) { showToast('Deploy the application first', false); return; }
     const epNodes = nodes.filter((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug);
     if (epNodes.length === 0) { showToast('No entry points configured', false); return; }
@@ -2411,7 +2400,7 @@ function BuilderView({
             />
             {epNode && (
               <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
-                {(epNode.data as EntryPointData).slug || (app?.slug ?? '')}
+                {(epNode.data as EntryPointData).slug || (app?.entry_points?.[0]?.slug ?? '')}
               </div>
             )}
           </div>
@@ -2438,10 +2427,10 @@ function BuilderView({
           <button
             onClick={handleTest}
             disabled={saving}
-            title={!currentApp?.enabled && !allApps.some(a => nodes.some((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === a.slug && a.enabled)) ? 'Deploy first to test' : 'Open in playground'}
+            title={!currentApp?.enabled && !currentApp?.entry_points?.some(ep => ep.enabled) ? 'Deploy first to test' : 'Open in playground'}
             style={{
               padding: '7px 18px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`,
-              background: 'transparent', color: (currentApp?.enabled || allApps.some(a => nodes.some((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === a.slug && a.enabled))) ? C.green : C.textMuted,
+              background: 'transparent', color: (currentApp?.enabled || currentApp?.entry_points?.some(ep => ep.enabled)) ? C.green : C.textMuted,
               cursor: saving ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600,
               opacity: saving ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 6,
               transition: 'all 0.2s',
@@ -2709,8 +2698,9 @@ function AppCard({
     return () => document.removeEventListener('mousedown', handler);
   }, [menuOpen]);
 
-  const ep = epIconColor(app.entry_point_type);
-  const accessMode = (app.access_policy as any)?.mode ?? 'token';
+  const firstEp = app.entry_points?.[0];
+  const ep = epIconColor(firstEp?.entry_point_type ?? 'websocket');
+  const accessMode = (firstEp?.access_policy as any)?.mode ?? 'token';
 
   // Liveness derived from multiplexed WS push (no per-card polling)
   const reachable = app.enabled ? (liveness?.reachable ?? null) : false;
@@ -2737,19 +2727,35 @@ function AppCard({
             background: `radial-gradient(circle at 30% 30%, ${ep.glow}, transparent 70%)`,
             border: `1px solid ${ep.border}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
+            position: 'relative',
           }}>
             <span className="material-symbols-outlined" style={{ fontSize: 24, color: ep.color }}>
-              {EP_ICON[app.entry_point_type] ?? 'extension'}
+              {EP_ICON[firstEp?.entry_point_type ?? ''] ?? 'extension'}
             </span>
+            {app.entry_points.length > 1 && (
+              <span style={{
+                position: 'absolute', top: -6, right: -6,
+                minWidth: 18, height: 18, borderRadius: 9,
+                background: '#00d1ff', color: '#021520',
+                fontSize: 10, fontWeight: 700,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                padding: '0 4px',
+              }}>{app.entry_points.length}</span>
+            )}
           </div>
 
-          {/* Name + slug + type badge */}
+          {/* Name + slugs + type badge */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 15, color: C.text, fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: 3 }}>
               {app.name}
             </div>
-            <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', marginBottom: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {app.slug}
+            <div style={{ marginBottom: 5 }}>
+              {app.entry_points.map(epRow => (
+                <div key={epRow.id} style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 11, color: epIconColor(epRow.entry_point_type).color, flexShrink: 0 }}>{EP_ICON[epRow.entry_point_type] ?? 'bolt'}</span>
+                  {epRow.slug}
+                </div>
+              ))}
             </div>
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -2757,7 +2763,7 @@ function AppCard({
               background: 'var(--tm-filter-bg)', color: ep.color,
               border: `1px solid ${ep.border}`,
             }}>
-              {EP_LABEL[app.entry_point_type] ?? app.entry_point_type}
+              {EP_LABEL[firstEp?.entry_point_type ?? ''] ?? firstEp?.entry_point_type ?? '—'}
             </span>
           </div>
 
@@ -2834,44 +2840,49 @@ function AppCard({
       </div>
 
       {/* Action buttons */}
-      <div style={{
-        borderTop: '1px solid var(--tm-divider)', padding: '10px 14px', display: 'grid',
-        gridTemplateColumns: app.entry_point_type === 'webrtc' ? '2fr 1fr 1fr 1fr' : '2fr 1fr 1fr',
-        gap: 8,
-      }}>
-        {/* Open builder — primary, full-width feel */}
-        <button className="app-card-btn app-card-btn--open" onClick={() => onEdit(app)}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>open_in_new</span>
-          Open Builder
-        </button>
-        {app.entry_point_type === 'webrtc' && (
-          <button
-            className="app-card-btn"
-            onClick={() => window.open(`/apps/${app.slug}/voice`, '_blank', 'noopener')}
-            title="Open voice room"
-            style={{
-              background: 'rgba(167,139,250,0.1)',
-              color: '#a78bfa',
-              border: '1px solid rgba(167,139,250,0.3)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.2)'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.5)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.1)'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.3)'; }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>mic</span>
-            Voice
-          </button>
-        )}
-        <button className="app-card-btn app-card-btn--urls" onClick={() => onUrls(app)}>
-          URLs
-        </button>
-        {app.enabled ? (
-          <button className="app-card-btn app-card-btn--toggle-on" onClick={() => onToggle(app)}>Disable</button>
-        ) : (
-          <button className="app-card-btn app-card-btn--toggle-off" onClick={() => onToggle(app)}>Enable</button>
-        )}
-      </div>
+      {(() => {
+        const webrtcEp = app.entry_points.find(e => e.entry_point_type === 'webrtc');
+        return (
+          <div style={{
+            borderTop: '1px solid var(--tm-divider)', padding: '10px 14px', display: 'grid',
+            gridTemplateColumns: webrtcEp ? '2fr 1fr 1fr 1fr' : '2fr 1fr 1fr',
+            gap: 8,
+          }}>
+            {/* Open builder — primary, full-width feel */}
+            <button className="app-card-btn app-card-btn--open" onClick={() => onEdit(app)}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>open_in_new</span>
+              Open Builder
+            </button>
+            {webrtcEp && (
+              <button
+                className="app-card-btn"
+                onClick={() => window.open(`/apps/${webrtcEp.slug}/voice`, '_blank', 'noopener')}
+                title="Open voice room"
+                style={{
+                  background: 'rgba(167,139,250,0.1)',
+                  color: '#a78bfa',
+                  border: '1px solid rgba(167,139,250,0.3)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.2)'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.5)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.1)'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.3)'; }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>mic</span>
+                Voice
+              </button>
+            )}
+            <button className="app-card-btn app-card-btn--urls" onClick={() => onUrls(app)}>
+              URLs
+            </button>
+            {app.enabled ? (
+              <button className="app-card-btn app-card-btn--toggle-on" onClick={() => onToggle(app)}>Disable</button>
+            ) : (
+              <button className="app-card-btn app-card-btn--toggle-off" onClick={() => onToggle(app)}>Enable</button>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -3004,7 +3015,7 @@ function ListView({
           <AppCard
             key={app.id}
             app={app}
-            liveness={appStatuses[app.slug] ?? null}
+            liveness={appStatuses[app.entry_points?.[0]?.slug ?? ''] ?? null}
             onEdit={onEdit}
             onToggle={onToggle}
             onDelete={onDelete}
@@ -3050,33 +3061,44 @@ function ListView({
                 <span className="material-icons" style={{ fontSize: 20 }}>close</span>
               </button>
             </div>
-            {(() => {
-              const app = urlModalApp;
+            {urlModalApp.entry_points.map((epRow, epIdx) => {
               const urls: Array<{ label: string; val: string }> = [];
-              if (app.entry_point_type === 'websocket') urls.push({ label: 'WebSocket', val: `ws://<host>:8088/apps/${app.slug}/ws` });
-              if (app.entry_point_type === 'sse') urls.push({ label: 'SSE', val: `http://<host>:8088/apps/${app.slug}/sse` }, { label: 'REST', val: `http://<host>:8088/apps/${app.slug}` });
-              if (app.entry_point_type === 'webrtc') urls.push(
-                { label: 'Voice Page', val: `http://<host>:8088/apps/${app.slug}/voice` },
-                { label: 'Token API', val: `http://<host>:8088/apps/${app.slug}/webrtc/token` },
+              if (epRow.entry_point_type === 'websocket') urls.push({ label: 'WebSocket', val: `ws://<host>:8088/apps/${epRow.slug}/ws` });
+              if (epRow.entry_point_type === 'sse') urls.push({ label: 'SSE', val: `http://<host>:8088/apps/${epRow.slug}/sse` }, { label: 'REST', val: `http://<host>:8088/apps/${epRow.slug}` });
+              if (epRow.entry_point_type === 'webrtc') urls.push(
+                { label: 'Voice Page', val: `http://<host>:8088/apps/${epRow.slug}/voice` },
+                { label: 'Token API', val: `http://<host>:8088/apps/${epRow.slug}/webrtc/token` },
               );
-              return urls.map(({ label, val }) => {
-                const cid = `modal_${app.id}_${label}`;
-                return (
-                  <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                    <span style={{ fontSize: 11, color: C.textMuted, minWidth: 100, fontFamily: 'Inter, sans-serif' }}>{label}</span>
-                    <code style={{ flex: 1, fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.text, background: C.surfaceContainer, padding: '5px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val}</code>
-                    <button
-                      onClick={() => copy(val, cid)}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: 'transparent', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: copiedId === cid ? C.green : C.textMuted, transition: 'all 0.15s' }}
-                    >
-                      {copiedId === cid ? 'Copied!' : 'Copy'}
-                    </button>
-                  </div>
-                );
-              });
-            })()}
+              const epColor = epIconColor(epRow.entry_point_type);
+              return (
+                <div key={epRow.id} style={{ marginBottom: epIdx < urlModalApp.entry_points.length - 1 ? 18 : 0 }}>
+                  {urlModalApp.entry_points.length > 1 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: epColor.color }}>{EP_ICON[epRow.entry_point_type] ?? 'bolt'}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: epColor.color, fontFamily: 'JetBrains Mono, monospace' }}>{epRow.slug}</span>
+                      <span style={{ fontSize: 10, color: C.textMuted }}>· {(epRow.access_policy as any)?.mode === 'public' ? 'public' : 'token'}</span>
+                    </div>
+                  )}
+                  {urls.map(({ label, val }) => {
+                    const cid = `modal_${epRow.id}_${label}`;
+                    return (
+                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: C.textMuted, minWidth: 100, fontFamily: 'Inter, sans-serif' }}>{label}</span>
+                        <code style={{ flex: 1, fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.text, background: C.surfaceContainer, padding: '5px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val}</code>
+                        <button
+                          onClick={() => copy(val, cid)}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: 'transparent', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: copiedId === cid ? C.green : C.textMuted, transition: 'all 0.15s' }}
+                        >
+                          {copiedId === cid ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
             <div style={{ marginTop: 14, fontSize: 11, color: C.textMuted, fontFamily: 'Inter, sans-serif' }}>
-              {(urlModalApp.access_policy as any)?.mode === 'public'
+              {urlModalApp.entry_points.every(ep => (ep.access_policy as any)?.mode === 'public')
                 ? 'No auth required — public access'
                 : 'Bearer token required — use /admin/tokens to create one'}
             </div>
@@ -3138,7 +3160,6 @@ export default function ApplicationsPage() {
             <ReactFlowProvider>
               <BuilderView
                 app={editApp}
-                allApps={list}
                 orchestrators={orchestrators}
                 agents={agents}
                 onBack={backToList}
