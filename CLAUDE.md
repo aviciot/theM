@@ -1,6 +1,6 @@
 # the-M — Claude Session Guide
 # multi-agent orchestration platform
-# Last updated: 2026-07-07
+# Last updated: 2026-07-14
 
 ---
 
@@ -252,14 +252,14 @@ Full suite, ~30s. Zero failures required before committing.
 | `app/edges/` | 19 (pluggable edge adapters) |
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.local.yml` | 20 (Traefik routing + multi-replica) |
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 (A2A Phase 9 hardening) |
-| `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 (applications CRUD + entry points) |
+| `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `app/models.py` (EntryPoint), `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts` | 22 + `scripts/test_multi_ep.py` (inside them-bridge) |
 | `app/services/task_runner.py` (`_ensure_agent_skills`, `_CARD_TTL_SECONDS`), `agents/docu_writer/`, `db/007_docu_stack.sql` | 23 (A2A skill auto-discovery) |
 | `db/007_docu_stack.sql` code_agent endpoint/token | 24 (code_agent live) |
 | `agents/docu_writer/main.py`, `app/adapters/a2a_async_adapter.py`, `app/adapters/factory.py`, `app/services/task_runner.py` (typed A2A), `db/007_docu_stack.sql` | 25 (true A2A typed input) |
 | `agents/security_scanner/`, `app/routers/admin_agents.py` (security-scan endpoint), `app/routers/ws_dashboard.py` (agent: channel), `app/services/dashboard_broadcaster.py` (scan helpers), `db/009_security_scan.sql`, `frontend/src/app/admin/agents/page.tsx` (scan UI) | 26 (security scan) |
 | `app/services/task_runner.py` (history), `app/models.py` (history_window), `app/routers/admin_orchestrators.py` | 10 + MT (multi-turn behavioral) |
-| `app/temporal/activities.py`, `app/temporal/workflows.py`, `app/temporal/serde.py` | Full suite + `scripts/test_temporal_workflow.py` (inside them-worker) |
-| `app/temporal/bridge_client.py`, `app/routers/ws_orchestrator.py` (Temporal path) | 10 11 + `scripts/test_temporal_workflow.py` |
+| `app/temporal/activities.py`, `app/temporal/workflows.py`, `app/temporal/serde.py` | Full suite + `scripts/test_temporal_workflow.py` (inside them-worker) + **restart them-worker** |
+| `app/temporal/bridge_client.py`, `app/routers/ws_orchestrator.py` (Temporal path) | 10 11 + `scripts/test_temporal_workflow.py` + **restart them-worker** |
 | `app/routers/runs.py` (signal endpoint) | 12 + `scripts/test_temporal_phase5.py` |
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.local.yml` | 20 (Traefik routing + multi-replica) |
 | Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) + MT + `scripts/test_temporal_workflow.py` |
@@ -272,6 +272,25 @@ curl -s -X POST http://localhost:8701/auth/login -H "Content-Type: application/j
 
 # Then run:
 ADMIN_JWT=<token> python scripts/tests/run_tests.py 14
+```
+
+**Multi-entry-point integration test — verifies multi-EP app creation, parallel WS sessions, and entry_point_slug traceability in them.runs:**
+```
+# Copy and run inside bridge container (needs echo_test orchestrator with agents):
+docker cp scripts/test_multi_ep.py them-bridge:/tmp/test_multi_ep.py
+docker exec them-bridge python3 /tmp/test_multi_ep.py
+# Expected: creates app with 2 WS entry points, runs 4 parallel sessions (2 per door),
+# verifies entry_point_slug in them.runs matches the door each session used.
+```
+
+**Temporal worker restart — REQUIRED after editing activity/workflow files:**
+```
+# Temporal activities are registered at worker startup. If you edit:
+#   app/temporal/activities.py, app/temporal/workflows.py, app/temporal/shared.py
+# the running worker still has the OLD code. Always restart after changes:
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal restart them-worker
+docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
+# Symptom if forgotten: new params on activities silently receive None at runtime.
 ```
 
 ---
@@ -314,14 +333,14 @@ ADMIN_JWT=<token> python scripts/tests/run_tests.py 14
 Tables: `roles`, `users`, `teams`, `team_members`, `user_overrides`, `auth_audit`, `user_sessions`, `blacklisted_tokens`
 
 **`them` schema** — owned by `them-bridge`.
-Tables: `llm_providers`, `config`, `agents`, `orchestrators`, `access_tokens`, `runs`, `run_steps`, `run_usage`, `audit_logs`, `tasks`, `artifacts`, `task_messages`, `applications`
+Tables: `llm_providers`, `config`, `agents`, `orchestrators`, `access_tokens`, `runs` (has `entry_point_slug`), `run_steps`, `run_usage`, `audit_logs`, `tasks`, `artifacts`, `task_messages`, `applications` (parent), `entry_points` (child of applications — one row per WS/SSE/WebRTC door)
 
 **Credentials:** derived via HMAC-SHA256 from `secrets.local`. Re-run `.\generate-env.ps1` to regenerate `.env`.
 DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
 
 ---
 
-## Known State (2026-07-11)
+## Known State (2026-07-14)
 
 - **Stack:** fully deployed locally. All core containers healthy. Temporal stack running (`--profile temporal`).
 - **Temporal migration:** COMPLETE (all 7 phases). See `docs/architecture/PROGRESS.md`.
@@ -332,7 +351,8 @@ DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
 - **Agents seeded:** assistant, coder, researcher (mock WS) + a2a_echo, a2a_slow, a2a_stream (A2A test agents)
 - **Orchestrators seeded:** `default` (claude-sonnet-4-6), `a2a_test` (haiku, all 3 A2A agents)
 - **A2A test agents:** running (`--profile test-agents`), all enabled in DB, ready to use via `a2a_test` orchestrator
-- **Phase 9 applied:** `db/004_phase9.sql` migrated to running Postgres (tasks.user_id + them.applications table)
+- **Phase 10 applied (multi-EP):** `db/010_app_entrypoints.sql` migrated. `them.applications` is now the parent; `them.entry_points` is the child (one row per WS/SSE/WebRTC door). `them.runs.entry_point_slug` tracks which door each run came through. See `docs/architecture/APP_MODEL_DECISION.md`.
+- **Multi-EP integration test:** `scripts/test_multi_ep.py` — runs inside them-bridge, creates a 2-door WS app, runs 4 parallel sessions, verifies entry_point_slug traceability. All pass.
 - **ANTHROPIC_API_KEY:** set in `.env` — bridge picks it up on restart
 - **Dev login:** pre-filled in login page when `NODE_ENV=development`
 - **`vision-agent`:** unhealthy — needs `GOOGLE_MAPS_API_KEY` and `FAL_API_KEY` in `.env`
