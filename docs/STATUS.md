@@ -1,5 +1,5 @@
 # the-M Status
-# Last updated: 2026-07-11
+# Last updated: 2026-07-14
 
 ## Build Progress
 
@@ -43,8 +43,11 @@
 | **Debate stack** | ✓ Complete | 4 A2A debate agents (evidence, logic, creative on Haiku; judge on Sonnet); `debate_flow` orchestrator; context compaction (JSON-aware); db/008_debate_stack.sql |
 | **Session resume in playground** | ✓ Complete | `context_id` persisted to localStorage; "Resume last conversation?" banner on page load; Sessions debug tab; full history reconstructed from DB on resume |
 | **History sanitization (full-pass)** | ✓ Complete | `_sanitize_history` drops orphaned tool_use/tool_result pairs anywhere in history, not just at the tail; prevents HTTP 400 on Anthropic API for resumed sessions |
+| **Multi-EP playground** | ✓ Complete | Tabs (each EP = persistent live WS, switching is view toggle) + Compare mode (all tabs side-by-side, shared composer broadcasts to all). WebRTC EPs show voice-room button only. |
+| **Poisoned context_id fix** | ✓ Complete | `DeadContextError` + pre-subscribe pattern: bridge checks if existing workflow is closed before re-attaching; client receives `context_id: null` signal and clears localStorage. Eliminates hung sessions after workflow failure. |
+| **Entry point diff by slug** | ✓ Complete | `_apply_entry_point_diff` now keys on slug (not id). Frontend never needs to send EP id. Existing slug → UPDATE, new slug → CREATE, missing slug → DELETE. Eliminates 500 on canvas save when `_epId` was lost. |
 
-## Infrastructure (as of 2026-07-11)
+## Infrastructure (as of 2026-07-14)
 
 | Container | Image/Source | Data | Port |
 |---|---|---|---|
@@ -111,7 +114,8 @@
 | Run History | `/runs` | ✓ |
 | Orchestrators | `/admin/orchestrators` | ✓ |
 | Access Tokens | `/admin/tokens` | ✓ |
-| Playground | `/admin/playground` | ✓ — chat + debug tabs (Trace, Tasks, Artifacts, Memory, Sessions) + session resume |
+| Playground | `/admin/playground` | ✓ — chat + debug tabs + session resume + multi-EP tabs + Compare mode |
+| Applications | `/admin/applications` | ✓ — canvas builder: multi-EP, slug-based diff, orchestrator wiring |
 
 ## Open Items
 

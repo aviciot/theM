@@ -407,3 +407,54 @@ Original system prompt instructed the orchestrator to forward complete agent arg
 - Every assistant turn that includes tool_use blocks MUST be followed immediately by a user message containing one `tool_result` block per tool_use. This is an Anthropic API hard requirement.
 - Always persist tool_results to DB before the next planning turn — if the bridge crashes between agents completing and the next LLM call, the DB must have enough data to reconstruct a valid history.
 - `_sanitize_history` is a last-resort safety net; it should never need to drop rows in a healthy run.
+
+---
+
+## 2026-07-14 — Multi-replica deploy: always restart ALL bridge replicas
+
+**Symptom:** One WS session works, the other is silent — but no error is logged on the bridge you're watching.
+
+**Root cause:** Traefik load-balances WS connections across all running bridge replicas. When only one replica was restarted with new code, half of connections (routed by Traefik to the old replica) silently ran the old code — without the pre-subscribe fix or `DeadContextError` — and hung.
+
+**Fix:** Always restart ALL replicas when deploying code changes:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile replica restart them-bridge them-bridge-2
+```
+
+**Watch for:** If parallel sessions behave differently (one works, one silent), check `docker logs them-bridge-2` — the affected session may be on a replica you didn't touch.
+
+---
+
+## 2026-07-14 — Ready-event race: subscribe to Redis BEFORE starting the workflow
+
+**Symptom:** WS client hangs for 15 seconds then receives "Timed out waiting for workflow ready event", even though the workflow completed successfully.
+
+**Root cause:** `stream_run_events` subscribed to the Redis context channel AFTER calling `start_workflow`. Fast workflows (echo agents) published their `ready` event before the subscriber was registered — the event was missed, the 15s timeout fired.
+
+**Fix:** In `start_orchestration_workflow`, subscribe to the context channel BEFORE calling `client.start_workflow()`. Return the pre-subscribed `pubsub` object to the caller, who passes it to `stream_run_events(..., pubsub=pubsub)`. `stream_run_events` skips its own subscribe when a pre-subscribed pubsub is passed in.
+
+**Watch for:** Any new code path that starts a Temporal workflow and then tries to listen for its Redis events must use the pre-subscribe pattern. Subscribe first, start second — never the reverse.
+
+---
+
+## 2026-07-14 — Poisoned context_id: dead workflow silently swallows all future messages
+
+**Symptom:** User sends a message, gets an error. Subsequent messages on the same context are also silent — no response, no error.
+
+**Root cause:** On `WorkflowAlreadyStartedError`, the old code re-attached to the existing workflow handle without checking if it was already closed. A closed workflow streams nothing and returns immediately — every subsequent message attached to the same dead workflow ID and silently completed with no output.
+
+**Fix:** On `WorkflowAlreadyStartedError`, call `handle.describe()` and check the status. If the workflow is in a closed state (`COMPLETED`, `FAILED`, `CANCELED`, `TERMINATED`, `TIMED_OUT`), raise `DeadContextError`. The router catches it and emits `{"type": "error", "context_id": null}` — the `null` context_id is the protocol signal for the client to clear its stored context_id and start fresh.
+
+**Watch for:** Any new entry point (WS, SSE, REST) that calls `start_orchestration_workflow` must catch `DeadContextError` and emit `context_id: null` to the client. Without this signal, the client's localStorage retains the dead context_id and every future session on that tab is poisoned.
+
+---
+
+## 2026-07-14 — Entry point save 500: diff keyed on id that the frontend lost
+
+**Symptom:** Saving an existing application in the canvas builder returns 500 with `UniqueViolationError: duplicate key value violates unique constraint "entry_points_slug_key"`.
+
+**Root cause:** `_apply_entry_point_diff` matched entry points by their database `id`. The frontend stored this id in `_epId` on each canvas node. If `_epId` was missing (lost due to any canvas interaction), the server treated the existing EP as a new insert, hit the slug unique constraint, and crashed.
+
+**Fix:** Changed the diff to key on `slug` instead of `id`. Slug is already globally unique (DB constraint) and immutable by design (it's a URL — renaming is a breaking change). The server owns identity: existing slug → UPDATE, new slug → CREATE, missing slug → DELETE. Frontend never needs to track or send `id`.
+
+**Watch for:** Slug is now the stable identity for entry points. If a user wants to "rename" a slug they must delete the old EP and create a new one — this is intentional, as renaming a slug breaks external clients pointing at the old URL.
