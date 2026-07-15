@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef, DragEvent } from 'react';
 const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Application, type OrchestratorFull, type Agent, type MiddlewareDef, type AppOrchestratorOut } from '@/lib/api';
+import { themApi, type Application, type Agent, type MiddlewareDef, type AppOrchestratorOut } from '@/lib/api';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -647,8 +647,7 @@ function trunc(s: string | null | undefined, n = 120) {
 }
 
 // ── Node Library panel ────────────────────────────────────────────────────────
-function NodeLibrary({ orchestrators, agents, middlewareDefs, width, onWidthChange }: {
-  orchestrators: OrchestratorFull[];
+function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
   agents: Agent[];
   middlewareDefs: MiddlewareDef[];
   width: number;
@@ -764,38 +763,34 @@ function NodeLibrary({ orchestrators, agents, middlewareDefs, width, onWidthChan
           <SectionHeader label="Orchestrators" open={openOrch} onToggle={() => setOpenOrch(v => !v)} />
           {openOrch && (
             <div className="nl-section-list">
-              {orchestrators.filter(o => o.enabled && !INTERNAL_ORCHESTRATOR_NAMES.has(o.name)).map(o => (
-                <div key={o.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
-                  <div
-                    draggable
-                    onDragStart={e => dragItem(e, 'orchestrator', {
-                      orchestratorId: o.id, appOrchestratorId: null, name: o.name, displayName: o.display_name,
-                      model: o.llm_model, maxParallelTools: o.max_parallel_tools,
-                      systemPrompt: o.system_prompt, allowedAgentIds: o.allowed_agent_ids ?? [],
-                      llmProvider: o.llm_provider, llmModel: o.llm_model, maxIterations: o.max_iterations,
-                      historyWindow: o.history_window ?? 20, delegatable: o.delegatable ?? false,
-                      kind: 'standard', budgetTokens: null,
-                    })}
-                    style={{ ...itemStyle, background: C.purpleBg, borderColor: 'rgba(208,188,255,0.2)', marginBottom: 0 }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(87,27,193,0.2)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = C.purpleBg)}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.purple, flexShrink: 0 }}>hub</span>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.display_name}</div>
-                      <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {o.llm_model ?? o.name}
-                      </div>
-                    </div>
-                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }}>drag_indicator</span>
+              <div className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
+                <div
+                  draggable
+                  onDragStart={e => dragItem(e, 'orchestrator', {
+                    orchestratorId: null, appOrchestratorId: null,
+                    name: '', displayName: 'New Orchestrator',
+                    model: 'claude-sonnet-4-6', maxParallelTools: 3,
+                    systemPrompt: '', allowedAgentIds: [],
+                    llmProvider: 'anthropic', llmModel: 'claude-sonnet-4-6',
+                    maxIterations: 10, historyWindow: 20,
+                    delegatable: false, kind: 'standard', budgetTokens: null,
+                  })}
+                  style={{ ...itemStyle, background: C.purpleBg, borderColor: 'rgba(208,188,255,0.2)', marginBottom: 0 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(87,27,193,0.2)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = C.purpleBg)}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.purple, flexShrink: 0 }}>hub</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Orchestrator</div>
+                    <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>claude-sonnet-4-6</div>
                   </div>
-                  <div className="nl-tip">
-                    <div style={{ fontSize: 11, fontWeight: 700, color: C.purple, marginBottom: 4 }}>{o.display_name}</div>
-                    {o.llm_model && <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', marginBottom: 6 }}>{o.llm_model}</div>}
-                    <div style={{ fontSize: 11, color: 'var(--tm-card-text-hint)', lineHeight: 1.5 }}>{trunc(o.system_prompt ?? o.name)}</div>
-                  </div>
+                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }}>drag_indicator</span>
                 </div>
-              ))}
+                <div className="nl-tip">
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.purple, marginBottom: 4 }}>Orchestrator</div>
+                  <div style={{ fontSize: 11, color: 'var(--tm-card-text-hint)', lineHeight: 1.5 }}>Drop onto canvas to create a new orchestrator instance. Configure model, system prompt, and agents in the inspector.</div>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -2170,19 +2165,15 @@ function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPickerEntry[
 // ── Builder view ──────────────────────────────────────────────────────────────
 function BuilderView({
   app,
-  orchestrators,
   agents,
   onBack,
   onSaved,
-  onOrchestratorsChange,
   onAgentsChange,
 }: {
   app: Application | null;
-  orchestrators: OrchestratorFull[];
   agents: Agent[];
   onBack: () => void;
   onSaved: () => void;
-  onOrchestratorsChange: (update: (prev: OrchestratorFull[]) => OrchestratorFull[]) => void;
   onAgentsChange: (update: (prev: Agent[]) => Agent[]) => void;
 }) {
   const initial = app
@@ -2311,20 +2302,19 @@ function BuilderView({
         }
         if (n.type === 'orchestrator') {
           const d = n.data as OrchestratorData;
-          const full = orchestrators.find(o => o.id === d.orchestratorId);
-          const rawPrompt = full?.system_prompt ?? '';
-          const assignedAgentIds = full?.allowed_agent_ids ?? [];
+          const rawPrompt = d.systemPrompt ?? '';
+          const assignedAgentIds = (d.allowedAgentIds ?? []) as string[];
           return {
             type: 'orchestrator',
             id: n.id,
-            orchestratorId: full?.id,
+            orchestratorId: d.appOrchestratorId ?? null,
             name: d.name,
             displayName: d.displayName,
             model: d.model,
             maxParallelTools: d.maxParallelTools,
-            maxIterations: full?.max_iterations ?? 10,
-            historyWindow: full?.history_window ?? null,
-            memoryEnabled: full?.memory_enabled ?? false,
+            maxIterations: d.maxIterations ?? 10,
+            historyWindow: d.historyWindow ?? null,
+            memoryEnabled: d.memoryEnabled ?? false,
             systemPrompt: rawPrompt.slice(0, 800) + (rawPrompt.length > 800 ? '…[truncated]' : ''),
             assignedAgents: assignedAgentIds.map(aid => ({
               id: aid,
@@ -2488,22 +2478,20 @@ function BuilderView({
     }));
   }
 
-  function reflectProposalOnCanvas(proposal: Proposal, updated: OrchestratorFull | Agent) {
-    // Update the full lists in parent so re-serialization sees the new value
-    if (proposal.targetType === 'orchestrator') {
-      onOrchestratorsChange(prev => prev.map(o => o.id === proposal.targetId ? updated as OrchestratorFull : o));
-    } else {
-      onAgentsChange(prev => prev.map(a => a.id === proposal.targetId ? updated as Agent : a));
+  function reflectProposalOnCanvas(proposal: Proposal, updated?: Agent) {
+    if (proposal.targetType === 'agent' && updated) {
+      onAgentsChange(prev => prev.map(a => a.id === proposal.targetId ? updated : a));
     }
     // Update canvas node data for fields that live there
     const nodeId = nodesRef.current.find(n => {
       const d = n.data as Record<string, unknown>;
-      return d.orchestratorId === proposal.targetId || d.agentId === proposal.targetId;
+      return d.appOrchestratorId === proposal.targetId || d.orchestratorId === proposal.targetId || d.agentId === proposal.targetId;
     })?.id;
     if (!nodeId) return;
     if (proposal.field === 'display_name') updateNodeData(nodeId, { displayName: proposal.suggested });
     if (proposal.field === 'description') updateNodeData(nodeId, { description: proposal.suggested });
     if (proposal.field === 'max_parallel_tools') updateNodeData(nodeId, { maxParallelTools: proposal.suggested });
+    if (proposal.field === 'system_prompt') updateNodeData(nodeId, { systemPrompt: proposal.suggested });
   }
 
   async function applyProposal(msgIndex: number, proposal: Proposal) {
@@ -2511,13 +2499,13 @@ function BuilderView({
     setProposalStatus(msgIndex, proposal.id, 'applying');
     try {
       const body: Record<string, unknown> = { [proposal.field]: proposal.suggested };
-      let updated: OrchestratorFull | Agent;
       if (proposal.targetType === 'orchestrator') {
-        updated = await themApi.updateOrchestrator(proposal.targetId, body);
+        // Orchestrators are now app-scoped — reflect change on canvas only (save will persist)
+        reflectProposalOnCanvas(proposal);
       } else {
-        updated = await themApi.updateAgent(proposal.targetId, body);
+        const updated = await themApi.updateAgent(proposal.targetId, body);
+        reflectProposalOnCanvas(proposal, updated);
       }
-      reflectProposalOnCanvas(proposal, updated);
       setProposalStatus(msgIndex, proposal.id, 'applied');
       showToast(`Applied: ${FIELD_LABEL[proposal.field] ?? proposal.field} on ${proposal.targetName}`, true);
     } catch (e) {
@@ -2568,8 +2556,8 @@ function BuilderView({
     const newNode: Node = { id: orchId, type: nodeType, position, data: nodeData };
 
     if (nodeType === 'orchestrator') {
-      const full = orchestrators.find(o => o.id === (nodeData.orchestratorId as string));
-      const connectedAgents = full ? agents.filter(a => full.allowed_agent_ids.includes(a.id)) : [];
+      const preAssigned = (nodeData.allowedAgentIds as string[] | undefined) ?? [];
+      const connectedAgents = preAssigned.length > 0 ? agents.filter(a => preAssigned.includes(a.id)) : [];
 
       if (connectedAgents.length > 0) {
         const spread = Math.max(connectedAgents.length * 140, 300);
@@ -2869,7 +2857,7 @@ function BuilderView({
 
       {/* Builder area */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }} ref={rfWrapper}>
-        <NodeLibrary orchestrators={orchestrators} agents={agents} middlewareDefs={middlewareDefs} width={libWidth} onWidthChange={setLibWidth} />
+        <NodeLibrary agents={agents} middlewareDefs={middlewareDefs} width={libWidth} onWidthChange={setLibWidth} />
 
         {/* Canvas */}
         <div style={{ flex: 1, position: 'relative', height: 'calc(100vh - 56px)' }}>
@@ -3340,10 +3328,9 @@ function useDashAppStatuses(token: string | null): Record<string, AppLiveness> {
 }
 
 function ListView({
-  list, orchestrators, loading, onNew, onEdit, onToggle, onDelete,
+  list, loading, onNew, onEdit, onToggle, onDelete,
 }: {
   list: Application[];
-  orchestrators: OrchestratorFull[];
   loading: boolean;
   onNew: () => void;
   onEdit: (app: Application) => void;
@@ -3524,7 +3511,6 @@ function ListView({
 // ── Page root ─────────────────────────────────────────────────────────────────
 export default function ApplicationsPage() {
   const [list, setList] = useState<Application[]>([]);
-  const [orchestrators, setOrchestrators] = useState<OrchestratorFull[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'builder'>('list');
@@ -3532,8 +3518,8 @@ export default function ApplicationsPage() {
 
   async function load() {
     setLoading(true);
-    Promise.all([themApi.applications(), themApi.orchestrators(), themApi.agents()])
-      .then(([apps, orchs, ags]) => { setList(apps); setOrchestrators(orchs); setAgents(ags); })
+    Promise.all([themApi.applications(), themApi.agents()])
+      .then(([apps, ags]) => { setList(apps); setAgents(ags); })
       .finally(() => setLoading(false));
   }
 
@@ -3572,11 +3558,9 @@ export default function ApplicationsPage() {
             <ReactFlowProvider>
               <BuilderView
                 app={editApp}
-                orchestrators={orchestrators}
                 agents={agents}
                 onBack={backToList}
                 onSaved={onBuilderSaved}
-                onOrchestratorsChange={setOrchestrators}
                 onAgentsChange={setAgents}
               />
             </ReactFlowProvider>
@@ -3592,7 +3576,6 @@ export default function ApplicationsPage() {
         <Sidebar />
         <ListView
           list={list}
-          orchestrators={orchestrators}
           loading={loading}
           onNew={() => openBuilder(null)}
           onEdit={(app) => openBuilder(app)}
