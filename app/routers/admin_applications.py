@@ -590,6 +590,7 @@ async def list_applications(
         .options(
             selectinload(Application.entry_points).selectinload(EntryPoint.app_orchestrator),
             selectinload(Application.app_orchestrators),
+            selectinload(Application.middleware_wirings),
         )
         .order_by(Application.name)
     )
