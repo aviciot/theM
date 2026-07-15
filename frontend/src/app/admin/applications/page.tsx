@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef, DragEvent } from 'react';
 const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Application, type OrchestratorFull, type Agent, type MiddlewareDef } from '@/lib/api';
+import { themApi, type Application, type OrchestratorFull, type Agent, type MiddlewareDef, type AppOrchestratorOut } from '@/lib/api';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -66,11 +66,29 @@ const glass = {
 const deleteNodeRef = { current: (_id: string) => {} };
 
 // ── Types ────────────────────────────────────────────────────────────────────
-const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a'] as const;
+const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc'] as const;
 type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 
 interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; appName?: string; convTokenLimit?: string; _epId?: string; [key: string]: unknown; }
-interface OrchestratorData { orchestratorId: string; name: string; displayName: string; model: string | null; maxParallelTools: number; [key: string]: unknown; }
+interface OrchestratorData {
+  orchestratorId: string;          // template global orch id (for library seeding)
+  name: string;
+  displayName: string;
+  model: string | null;            // alias of llmModel — kept for compat
+  maxParallelTools: number;
+  // app_orchestrators fields:
+  appOrchestratorId: string | null;  // app_orchestrators.id; null = unsaved new instance
+  systemPrompt: string | null;
+  allowedAgentIds: string[];
+  llmProvider: string | null;
+  llmModel: string | null;
+  maxIterations: number;
+  historyWindow: number;
+  delegatable: boolean;
+  kind: string;
+  budgetTokens: number | null;
+  [key: string]: unknown;
+}
 interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; tags?: string[]; icon?: string | null; [key: string]: unknown; }
 interface MiddlewareData { defId: string; slug: string; kind: 'guard' | 'cache'; displayName: string; description: string; config: Record<string, unknown>; configOverride: Record<string, unknown>; nodeId: string; [key: string]: unknown; }
 
@@ -291,7 +309,7 @@ function InternalMBadge() {
 function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean }; selected?: boolean }) {
   const slugMissing = !data.slug;
   const accent = slugMissing ? '#f59e0b' : C.cyan;
-  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2' };
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam' };
   const msIcon = EP_MS_ICON[data.epType] ?? 'bolt';
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
@@ -511,11 +529,23 @@ function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
 
 function buildNodesFromApp(
   app: Application,
-  orch: OrchestratorFull | undefined,
   agents: Agent[],
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
+
+  // Build a lookup from app_orchestrator id → AppOrchestratorOut
+  const aoById = new Map<string, AppOrchestratorOut>();
+  (app.app_orchestrators ?? []).forEach(ao => aoById.set(ao.id, ao));
+  // Also pick up inline app_orchestrator objects from entry_points
+  app.entry_points.forEach(ep => {
+    if (ep.app_orchestrator) aoById.set(ep.app_orchestrator.id, ep.app_orchestrator);
+  });
+
+  // Track which app_orchestrator node ids have already been emitted
+  const emittedOrchIds = new Set<string>();
+  // Track which agent node ids have been emitted (agent_{agentId}_{aoId})
+  const emittedAgentNodeIds = new Set<string>();
 
   // One EP node per entry-point row
   app.entry_points.forEach((ep, idx) => {
@@ -533,46 +563,67 @@ function buildNodesFromApp(
         _epId: ep.id,
       } satisfies EntryPointData,
     });
-    if (orch) {
-      edges.push({ id: `e_ep_orch_${idx}`, source: epId, target: `orch_${orch.id}`, animated: true, style: EDGE_STYLE });
+
+    const aoId = ep.app_orchestrator_id ?? ep.app_orchestrator?.id;
+    if (aoId) {
+      const orchNodeId = `orch_${aoId}`;
+      edges.push({ id: `e_ep_orch_${idx}`, source: epId, target: orchNodeId, animated: true, style: EDGE_STYLE });
+
+      if (!emittedOrchIds.has(aoId)) {
+        emittedOrchIds.add(aoId);
+        const ao = aoById.get(aoId);
+        if (ao) {
+          nodes.push({
+            id: orchNodeId, type: 'orchestrator',
+            position: { x: 250, y: 220 },
+            data: {
+              appOrchestratorId: ao.id,
+              orchestratorId: ao.id,
+              name: ao.name,
+              displayName: ao.display_name || ao.name,
+              model: ao.llm_model,
+              maxParallelTools: ao.max_parallel_tools,
+              systemPrompt: ao.system_prompt,
+              allowedAgentIds: ao.allowed_agent_ids,
+              llmProvider: ao.llm_provider,
+              llmModel: ao.llm_model,
+              maxIterations: ao.max_iterations,
+              historyWindow: ao.history_window ?? 20,
+              delegatable: ao.delegatable,
+              kind: ao.kind,
+              budgetTokens: ao.budget_tokens,
+            } as OrchestratorData,
+          });
+
+          // Emit agent nodes + orch→agent edges
+          const allowedAgents = agents.filter(a => ao.allowed_agent_ids.includes(a.id));
+          const spread = Math.max(allowedAgents.length * 180, 400);
+          const startX = 300 - spread / 2 + 90;
+          allowedAgents.forEach((agent, i) => {
+            const agentNodeId = `agent_${agent.id}_${aoId}`;
+            if (!emittedAgentNodeIds.has(agentNodeId)) {
+              emittedAgentNodeIds.add(agentNodeId);
+              nodes.push({
+                id: agentNodeId, type: 'agent',
+                position: { x: startX + i * 190, y: 420 },
+                data: {
+                  agentId: agent.id,
+                  name: agent.slug,
+                  displayName: agent.display_name,
+                  description: agent.description,
+                  transport: agent.transport,
+                  endpointUrl: agent.endpoint_url,
+                  tags: agent.tags ?? [],
+                  icon: agent.icon || agentIconForLibrary(agent),
+                } satisfies AgentData,
+              });
+            }
+            edges.push({ id: `e_orch_agent_${aoId}_${i}`, source: orchNodeId, target: agentNodeId, animated: true, style: EDGE_STYLE });
+          });
+        }
+      }
     }
   });
-
-  if (orch) {
-    const orchId = `orch_${orch.id}`;
-    nodes.push({
-      id: orchId, type: 'orchestrator',
-      position: { x: 250, y: 220 },
-      data: {
-        orchestratorId: orch.id,
-        name: orch.name,
-        displayName: orch.display_name,
-        model: orch.llm_model,
-        maxParallelTools: orch.max_parallel_tools,
-      } satisfies OrchestratorData,
-    });
-    const allowedAgents = agents.filter(a => orch.allowed_agent_ids.includes(a.id));
-    const spread = Math.max(allowedAgents.length * 180, 400);
-    const startX = 300 - spread / 2 + 90;
-    allowedAgents.forEach((agent, i) => {
-      const aId = `agent_${agent.id}`;
-      nodes.push({
-        id: aId, type: 'agent',
-        position: { x: startX + i * 190, y: 420 },
-        data: {
-          agentId: agent.id,
-          name: agent.slug,
-          displayName: agent.display_name,
-          description: agent.description,
-          transport: agent.transport,
-          endpointUrl: agent.endpoint_url,
-          tags: agent.tags ?? [],
-          icon: agent.icon || agentIconForLibrary(agent),
-        } satisfies AgentData,
-      });
-      edges.push({ id: `e_orch_agent_${i}`, source: orchId, target: aId, animated: true, style: EDGE_STYLE });
-    });
-  }
 
   const laid = applyDagreLayout(nodes, edges);
   return { nodes: laid, edges };
@@ -587,7 +638,6 @@ const EP_META: Record<string, { emoji: string; title: string; desc: string; colo
   websocket: { emoji: '⚡', title: 'WebSocket', desc: 'Full-duplex, persistent connection. Client and server can send messages at any time. Best for chat, real-time collaboration, and interactive agents.' },
   sse:       { emoji: '📡', title: 'Server-Sent Events', desc: 'One-way server→client stream over HTTP. Lightweight, works through proxies. Best for dashboards, notifications, and read-only agent output.' },
   webrtc:    { emoji: '🎙️', title: 'WebRTC Voice', desc: 'Real-time voice via LiveKit WebRTC. Low-latency bidirectional audio with automatic voice activity detection. Best for voice assistants and spoken-word agents.', color: '#a78bfa' },
-  a2a:       { emoji: '🤖', title: 'A2A', desc: 'Agent-to-Agent endpoint. Exposes this application as an A2A skill callable by other orchestrators or external platforms.', color: '#f59e0b' },
 };
 
 function trunc(s: string | null | undefined, n = 120) {
@@ -679,7 +729,7 @@ function NodeLibrary({ orchestrators, agents, middlewareDefs, width, onWidthChan
           <SectionHeader label="Entry Points" open={openEP} onToggle={() => setOpenEP(v => !v)} />
           {openEP && (
             <div className="nl-section-list">
-              {ENTRY_POINT_TYPES.map(ep => {
+              {(['websocket', 'sse', 'webrtc'] as const).map(ep => {
                 const meta = EP_META[ep];
                 return (
                   <div key={ep} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
@@ -717,7 +767,14 @@ function NodeLibrary({ orchestrators, agents, middlewareDefs, width, onWidthChan
                 <div key={o.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
                   <div
                     draggable
-                    onDragStart={e => dragItem(e, 'orchestrator', { orchestratorId: o.id, name: o.name, displayName: o.display_name, model: o.llm_model, maxParallelTools: o.max_parallel_tools })}
+                    onDragStart={e => dragItem(e, 'orchestrator', {
+                      orchestratorId: o.id, appOrchestratorId: null, name: o.name, displayName: o.display_name,
+                      model: o.llm_model, maxParallelTools: o.max_parallel_tools,
+                      systemPrompt: o.system_prompt, allowedAgentIds: o.allowed_agent_ids ?? [],
+                      llmProvider: o.llm_provider, llmModel: o.llm_model, maxIterations: o.max_iterations,
+                      historyWindow: o.history_window ?? 20, delegatable: o.delegatable ?? false,
+                      kind: 'standard', budgetTokens: null,
+                    })}
                     style={{ ...itemStyle, background: C.purpleBg, borderColor: 'rgba(208,188,255,0.2)', marginBottom: 0 }}
                     onMouseEnter={e => (e.currentTarget.style.background = 'rgba(87,27,193,0.2)')}
                     onMouseLeave={e => (e.currentTarget.style.background = C.purpleBg)}
@@ -842,6 +899,8 @@ function PropertiesPanel({
   chain,
   app,
   epCount,
+  nodes,
+  edges,
 }: {
   selectedNode: Node | null;
   onUpdateNode: (id: string, data: Record<string, unknown>) => void;
@@ -854,6 +913,8 @@ function PropertiesPanel({
   chain: ChainStatus;
   app: Application | null;
   epCount: number;
+  nodes: Node[];
+  edges: Edge[];
 }) {
   const [propTab, setPropTab] = useState<'properties' | 'configuration'>('properties');
 
@@ -1019,7 +1080,6 @@ function PropertiesPanel({
                     <option value="websocket">WebSocket</option>
                     <option value="sse">SSE</option>
                     <option value="webrtc">WebRTC Voice</option>
-                    <option value="a2a">A2A</option>
                   </select>
                 </div>
                 <div style={fieldWrap}>
@@ -1044,7 +1104,6 @@ function PropertiesPanel({
                       <span style={{ flex: 1 }}>
                         {d.epType === 'websocket' ? `ws://<host>:8088/apps/${d.slug}/ws`
                           : d.epType === 'webrtc' ? `http://<host>:8088/apps/${d.slug}/voice`
-                          : d.epType === 'a2a' ? `http://<host>:8088/a2a  (skill: ${d.slug})`
                           : `http://<host>:8088/apps/${d.slug}/sse`}
                       </span>
                       <button
@@ -1053,8 +1112,6 @@ function PropertiesPanel({
                             ? `ws://localhost:8088/apps/${d.slug}/ws`
                             : d.epType === 'webrtc'
                             ? `http://localhost:8088/apps/${d.slug}/voice`
-                            : d.epType === 'a2a'
-                            ? `http://localhost:8088/a2a`
                             : `http://localhost:8088/apps/${d.slug}/sse`
                         )}
                         title="Copy endpoint URL"
@@ -1072,6 +1129,10 @@ function PropertiesPanel({
           {/* Orchestrator properties */}
           {selectedNode.type === 'orchestrator' && propTab === 'properties' && (() => {
             const d = selectedNode.data as OrchestratorData;
+            // Count outgoing Orch→Agent edges for read-only display
+            const connectedAgentCount = chain.epNode
+              ? edges.filter(e => e.source === selectedNode.id && nodes.find(n => n.id === e.target && n.type === 'agent')).length
+              : 0;
             return (
               <div>
                 {/* Header tile */}
@@ -1082,42 +1143,50 @@ function PropertiesPanel({
                     <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{d.name}</div>
                   </div>
                 </div>
-                {[
-                  { label: 'Model', value: d.model ?? '—', mono: true },
-                  { label: 'Max Parallel Tools', value: String(d.maxParallelTools), mono: false },
-                ].map(({ label, value, mono }) => (
-                  <div key={label} style={fieldWrap}>
-                    <label style={labelStyle}>{label}</label>
-                    <div style={{ ...readOnlyStyle, fontFamily: mono ? 'JetBrains Mono, monospace' : 'inherit', fontSize: mono ? 12 : 13, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow, color: C.text }}>
-                      {value}
-                    </div>
-                  </div>
-                ))}
                 <div style={fieldWrap}>
-                  <label style={labelStyle}>A2A Endpoint</label>
-                  <div style={{
-                    fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace',
-                    wordBreak: 'break-all', padding: '7px 10px', borderRadius: 6,
-                    border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
-                  }}>
-                    <span>http://&lt;host&gt;:8088/a2a/{d.name}</span>
-                    <button
-                      onClick={() => navigator.clipboard.writeText(`http://localhost:8088/a2a/${d.name}`)}
-                      title="Copy A2A URL"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.purple, flexShrink: 0, padding: 0 }}
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: 14 }}>content_copy</span>
-                    </button>
+                  <label style={labelStyle}>Display Name</label>
+                  <input style={inputStyle} value={d.displayName} onChange={e => onUpdateNode(selectedNode.id, { displayName: e.target.value })} placeholder="Display name" />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>LLM Model</label>
+                  <input style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace' }} value={d.llmModel ?? ''} onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })} placeholder="e.g. claude-sonnet-4-5" />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>System Prompt</label>
+                  <textarea
+                    style={{ ...inputStyle, resize: 'vertical', minHeight: 80, fontFamily: 'inherit', fontSize: 12 }}
+                    value={d.systemPrompt ?? ''}
+                    onChange={e => onUpdateNode(selectedNode.id, { systemPrompt: e.target.value })}
+                    placeholder="You are a helpful assistant…"
+                  />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div style={fieldWrap}>
+                    <label style={labelStyle}>Max Iterations</label>
+                    <input type="number" min={1} max={100} style={inputStyle} value={d.maxIterations} onChange={e => onUpdateNode(selectedNode.id, { maxIterations: parseInt(e.target.value, 10) || 10 })} />
+                  </div>
+                  <div style={fieldWrap}>
+                    <label style={labelStyle}>History Window</label>
+                    <input type="number" min={0} max={200} style={inputStyle} value={d.historyWindow} onChange={e => onUpdateNode(selectedNode.id, { historyWindow: parseInt(e.target.value, 10) || 20 })} />
                   </div>
                 </div>
-                <a href="/admin/orchestrators" style={{ fontSize: 12, color: C.purple, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, marginTop: 8, opacity: 0.8 }}
-                  onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
-                  onMouseLeave={e => (e.currentTarget.style.opacity = '0.8')}
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>open_in_new</span>
-                  Configure in Orchestrators
-                </a>
+                <div style={{ ...fieldWrap, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!d.delegatable}
+                      onChange={e => onUpdateNode(selectedNode.id, { delegatable: e.target.checked })}
+                      style={{ accentColor: C.purple }}
+                    />
+                    Delegatable (A2A)
+                  </label>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Connected Agents</label>
+                  <div style={{ fontSize: 12, color: C.textMuted, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
+                    {connectedAgentCount} agent{connectedAgentCount !== 1 ? 's' : ''} — connect via canvas
+                  </div>
+                </div>
               </div>
             );
           })()}
@@ -1919,7 +1988,6 @@ function validateConnection(
   return null;
 }
 
-// ── Chain analysis ────────────────────────────────────────────────────────────
 interface ChainStatus {
   ready: boolean;
   label: string;
@@ -1929,38 +1997,103 @@ interface ChainStatus {
   agentCount: number;
 }
 
+// ── Canvas rule engine ────────────────────────────────────────────────────────
+type RuleSeverity = 'block' | 'warn';
+interface CanvasRule {
+  id: string;
+  severity: RuleSeverity;
+  message: (ctx: { nodes: Node[]; edges: Edge[] }) => string | null; // null = rule passes
+}
+
+const CANVAS_RULES: CanvasRule[] = [
+  {
+    id: 'AT_LEAST_ONE_EP',
+    severity: 'block',
+    message: ({ nodes }) => nodes.filter(n => n.type === 'entryPoint').length === 0
+      ? 'Drop an Entry Point to start' : null,
+  },
+  {
+    id: 'EP_SLUG_NONEMPTY',
+    severity: 'block',
+    message: ({ nodes }) => {
+      const bad = nodes.filter(n => n.type === 'entryPoint' && !(n.data as EntryPointData).slug);
+      return bad.length > 0 ? 'Every entry point needs a slug' : null;
+    },
+  },
+  {
+    id: 'EP_SLUG_UNIQUE',
+    severity: 'block',
+    message: ({ nodes }) => {
+      const slugs = nodes.filter(n => n.type === 'entryPoint').map(n => (n.data as EntryPointData).slug ?? '');
+      return new Set(slugs).size !== slugs.length ? 'Duplicate entry point slug — each slug must be unique' : null;
+    },
+  },
+  {
+    id: 'EP_SLUG_FORMAT',
+    severity: 'block',
+    message: ({ nodes }) => {
+      const bad = nodes.filter(n => n.type === 'entryPoint' && !(n.data as EntryPointData).slug?.match(/^[a-z0-9_-]{1,64}$/));
+      return bad.length > 0 ? `Slug "${(bad[0].data as EntryPointData).slug}": lowercase letters, numbers, _ or - only` : null;
+    },
+  },
+  {
+    id: 'EP_HAS_ORCH',
+    severity: 'block',
+    message: ({ nodes, edges }) => {
+      const epNodes = nodes.filter(n => n.type === 'entryPoint');
+      const unconnected = epNodes.filter(ep => !edges.some(e => e.source === ep.id && nodes.find(n => n.id === e.target && n.type === 'orchestrator')));
+      return unconnected.length > 0 ? 'Every entry point must connect to an orchestrator' : null;
+    },
+  },
+  {
+    id: 'ORCH_HAS_AGENT',
+    severity: 'warn',
+    message: ({ nodes, edges }) => {
+      const orchNodes = nodes.filter(n => n.type === 'orchestrator');
+      const empty = orchNodes.filter(o => !edges.some(e => e.source === o.id && nodes.find(n => n.id === e.target && n.type === 'agent')));
+      return empty.length > 0 ? `${empty.length} orchestrator${empty.length > 1 ? 's have' : ' has'} no agents` : null;
+    },
+  },
+];
+
+function runRules(nodes: Node[], edges: Edge[], mode: 'save' | 'deploy'): { ok: boolean; message: string | null; warnings: string[] } {
+  const ctx = { nodes, edges };
+  for (const rule of CANVAS_RULES) {
+    if (rule.severity === 'block') {
+      const msg = rule.message(ctx);
+      if (msg) return { ok: false, message: msg, warnings: [] };
+    }
+  }
+  const warnings: string[] = [];
+  for (const rule of CANVAS_RULES) {
+    if (rule.severity === 'warn') {
+      const msg = rule.message(ctx);
+      if (msg) {
+        if (mode === 'deploy') return { ok: false, message: msg, warnings: [] };
+        warnings.push(msg);
+      }
+    }
+  }
+  return { ok: true, message: null, warnings };
+}
+
+// ── Chain analysis ────────────────────────────────────────────────────────────
 function analyzeChain(nodes: Node[], edges: Edge[]): ChainStatus {
-  const miss = (msg: string) => ({ ready: false, label: msg, color: C.error, agentCount: 0 });
+  const result = runRules(nodes, edges, 'save');
+  if (!result.ok) return { ready: false, label: result.message!, color: C.error, agentCount: 0 };
 
   const epNodes = nodes.filter(n => n.type === 'entryPoint');
-  if (epNodes.length === 0) return miss('Drop an Entry Point to start');
-
-  // All entry points must have unique non-empty slugs
-  const epSlugs = epNodes.map(n => (n.data as EntryPointData).slug?.trim() ?? '');
-  const missingSlug = epNodes.find(n => !(n.data as EntryPointData).slug);
-  if (missingSlug) return miss('Every entry point needs a unique slug');
-  const slugSet = new Set(epSlugs);
-  if (slugSet.size !== epSlugs.length) return miss('Duplicate entry point slug — each slug must be unique');
-  const badSlug = epSlugs.find(s => !/^[a-z0-9_-]{1,64}$/.test(s));
-  if (badSlug) return miss(`Slug "${badSlug}": lowercase letters, numbers, _ or - only`);
-
-  // For chain analysis use first EP that connects to an orchestrator
-  const epNode = epNodes.find(n => edges.some(e => e.source === n.id && nodes.find(t => t.id === e.target && t.type === 'orchestrator'))) ?? epNodes[0];
-  const epData = epNode.data as EntryPointData;
-
+  const orchNodes = nodes.filter(n => n.type === 'orchestrator');
+  const agentCount = nodes.filter(n => n.type === 'agent').length;
+  const epNode = epNodes[0];
   const orchEdge = edges.find(e => e.source === epNode.id);
-  const orchNode = orchEdge ? nodes.find(n => n.id === orchEdge.target && n.type === 'orchestrator') : undefined;
-  if (!orchNode) return miss('Connect an Orchestrator to the Entry Point');
+  const orchNode = orchEdge ? nodes.find(n => n.id === orchEdge.target) : undefined;
 
-  const agentCount = edges
-    .filter(e => e.source === orchNode.id)
-    .map(e => nodes.find(n => n.id === e.target && n.type === 'agent'))
-    .filter(Boolean).length;
-
+  const warnLabel = result.warnings.length > 0 ? ` · ${result.warnings[0]}` : '';
   return {
     ready: true,
-    label: `Ready · ${epData.epType.toUpperCase()} · ${(orchNode.data as OrchestratorData).displayName} · ${agentCount} agent${agentCount !== 1 ? 's' : ''}`,
-    color: C.green,
+    label: `Ready · ${epNodes.length} EP · ${orchNodes.length} Orch · ${agentCount} agent${agentCount !== 1 ? 's' : ''}${warnLabel}`,
+    color: result.warnings.length > 0 ? C.amber : C.green,
     epNode,
     orchNode,
     agentCount,
@@ -1969,22 +2102,25 @@ function analyzeChain(nodes: Node[], edges: Edge[]): ChainStatus {
 
 // ── Compute styled edges based on chain validity ──────────────────────────────
 function styledEdges(edges: Edge[], nodes: Node[]): Edge[] {
-  const epNode = nodes.find(n => n.type === 'entryPoint');
-  const orchEdge = epNode ? edges.find(e => e.source === epNode.id) : undefined;
-  const orchNode = orchEdge ? nodes.find(n => n.id === orchEdge.target && n.type === 'orchestrator') : undefined;
-
-  return edges.map(e => {
-    const isChain =
-      (epNode && orchNode && e.source === epNode.id && e.target === orchNode.id) ||
-      (orchNode && e.source === orchNode.id);
-    return {
-      ...e,
-      animated: !!isChain,
-      style: isChain
-        ? { stroke: C.cyan, strokeWidth: 2 }
-        : { stroke: C.error, strokeWidth: 1.5, strokeDasharray: '5 4' },
-    };
-  });
+  // Compute set of all edges that are part of a valid EP→Orch→(MW→)*Agent chain
+  const chainEdgeIds = new Set<string>();
+  const epNodes = nodes.filter(n => n.type === 'entryPoint');
+  for (const epNode of epNodes) {
+    const orchEdge = edges.find(e => e.source === epNode.id && nodes.some(n => n.id === e.target && n.type === 'orchestrator'));
+    if (!orchEdge) continue;
+    chainEdgeIds.add(orchEdge.id);
+    const orchNode = nodes.find(n => n.id === orchEdge.target)!;
+    for (const downEdge of edges.filter(e => e.source === orchNode.id)) {
+      chainEdgeIds.add(downEdge.id);
+    }
+  }
+  return edges.map(e => ({
+    ...e,
+    animated: chainEdgeIds.has(e.id),
+    style: chainEdgeIds.has(e.id)
+      ? { stroke: C.cyan, strokeWidth: 2 }
+      : { stroke: C.error, strokeWidth: 1.5, strokeDasharray: '5 4' },
+  }));
 }
 
 function toSlug(s: string) {
@@ -1995,7 +2131,7 @@ function toSlug(s: string) {
 interface EpPickerEntry { epNode: Node; orchName: string; slug: string; label: string; epType: string; }
 
 function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPickerEntry[]; onSelect: (e: EpPickerEntry) => void; onClose: () => void; }) {
-  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2' };
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam' };
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(5,20,36,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
       <div style={{ ...glass, borderRadius: 16, padding: '28px 32px', minWidth: 360, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
@@ -2049,11 +2185,7 @@ function BuilderView({
   onAgentsChange: (update: (prev: Agent[]) => Agent[]) => void;
 }) {
   const initial = app
-    ? buildNodesFromApp(
-        app,
-        orchestrators.find(o => o.id === app.orchestrator_id),
-        agents,
-      )
+    ? buildNodesFromApp(app, agents)
     : {
         nodes: [],
         edges: [],
@@ -2486,39 +2618,37 @@ function BuilderView({
   }
 
   async function handleSave(deploy = false) {
-    const chain = analyzeChain(nodes, edges);
-    if (!chain.ready) { showToast(chain.label, false); triggerLogo('error', 1800); return; }
+    const validation = runRules(nodes, edges, deploy ? 'deploy' : 'save');
+    if (!validation.ok) { showToast(validation.message!, false); triggerLogo('error', 1800); return; }
 
-    // Collect all connected EP→orchestrator pairs
-    const connectedEps = nodes
+    // Collect all EP nodes + their connected orch nodes
+    const epPairs = nodes
       .filter((n: Node) => n.type === 'entryPoint')
       .map((epNode: Node) => {
-        const orchEdge = edges.find((e: Edge) => e.source === epNode.id);
-        const orchNode = orchEdge ? nodes.find((n: Node) => n.id === orchEdge.target && n.type === 'orchestrator') : undefined;
+        const orchEdge = edges.find((e: Edge) => e.source === epNode.id && nodes.some(n => n.id === e.target && n.type === 'orchestrator'));
+        const orchNode = orchEdge ? nodes.find((n: Node) => n.id === orchEdge.target) : undefined;
         return orchNode ? { epNode, orchNode } : null;
       })
       .filter(Boolean) as { epNode: Node; orchNode: Node }[];
 
-    if (connectedEps.length === 0) { showToast('Connect an entry point to an orchestrator', false); return; }
-
-    // All EPs must share the same orchestrator (builder constraint: one orch node)
-    const orchData = connectedEps[0].orchNode.data as OrchestratorData;
+    if (epPairs.length === 0) { showToast('Connect entry points to orchestrators', false); return; }
 
     setSaving(true);
     setLogoState('thinking');
     try {
-      // Update orchestrator's agent list
-      const agentIds = edges
-        .filter((e: Edge) => e.source === connectedEps[0].orchNode.id)
-        .map((e: Edge) => nodes.find((n: Node) => n.id === e.target && n.type === 'agent'))
-        .filter((n: Node | undefined): n is Node => Boolean(n))
-        .map((n: Node) => (n.data as AgentData).agentId);
-      await themApi.updateOrchestrator(orchData.orchestratorId, { allowed_agent_ids: agentIds });
-
-      // Build entry_points array (send full desired array; server diffs atomically)
-      const entryPoints = connectedEps.map(({ epNode }) => {
+      // Build entry_points array with inline orchestrator config per EP
+      const entryPoints = epPairs.map(({ epNode, orchNode }) => {
         const d = epNode.data as EntryPointData;
+        const od = orchNode.data as OrchestratorData;
         const limit = d.convTokenLimit !== undefined && d.convTokenLimit !== '' ? parseInt(d.convTokenLimit, 10) : null;
+
+        // Collect agent ids from outgoing Orch→Agent edges
+        const agentIds = edges
+          .filter((e: Edge) => e.source === orchNode.id)
+          .map((e: Edge) => nodes.find((n: Node) => n.id === e.target && n.type === 'agent'))
+          .filter((n: Node | undefined): n is Node => Boolean(n))
+          .map((n: Node) => (n.data as AgentData).agentId);
+
         return {
           ...(d._epId ? { id: d._epId } : {}),
           slug: d.slug,
@@ -2526,14 +2656,24 @@ function BuilderView({
           access_policy: { mode: d.accessMode },
           conversation_token_limit: limit,
           enabled: true,
+          orchestrator: {
+            ...(od.appOrchestratorId ? { id: od.appOrchestratorId } : {}),
+            allowed_agent_ids: agentIds,
+            display_name: od.displayName,
+            system_prompt: od.systemPrompt,
+            llm_provider: od.llmProvider,
+            llm_model: od.llmModel,
+            max_iterations: od.maxIterations,
+            history_window: od.historyWindow,
+            delegatable: od.delegatable,
+          },
         };
       });
 
-      const resolvedName = appName.trim() || connectedEps[0].epNode.data.appName || connectedEps[0].epNode.data.slug;
+      const resolvedName = appName.trim() || epPairs[0].epNode.data.appName || epPairs[0].epNode.data.slug;
 
-      const body = {
+      const body: Record<string, unknown> = {
         name: resolvedName,
-        orchestrator_id: orchData.orchestratorId,
         enabled: deploy ? true : (currentApp?.enabled ?? false),
         entry_points: entryPoints,
       };
@@ -2545,56 +2685,48 @@ function BuilderView({
         saved = await themApi.createApplication(body);
       }
       setCurrentApp(saved);
-      // Update EP node data with new DB ids from saved response
+
+      // Write back DB ids to EP nodes and orch nodes
       saved.entry_points.forEach(ep => {
-        const matchingNode = nodes.find((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === ep.slug);
-        if (matchingNode) updateNodeData(matchingNode.id, { _epId: ep.id });
+        const matchingEpNode = nodes.find((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === ep.slug);
+        if (matchingEpNode) {
+          updateNodeData(matchingEpNode.id, { _epId: ep.id });
+          // Also write back the AppOrchestrator id to the connected orch node
+          const orchEdge = edges.find((e: Edge) => e.source === matchingEpNode.id);
+          const orchNode = orchEdge ? nodes.find((n: Node) => n.id === orchEdge.target) : undefined;
+          if (orchNode && ep.app_orchestrator?.id) {
+            updateNodeData(orchNode.id, { appOrchestratorId: ep.app_orchestrator.id });
+          }
+        }
       });
 
-      // ── Sync middleware wirings ──────────────────────────────────────────────
-      // Traverse the graph: for each orch→middleware→...→agent chain, collect wirings.
-      // A middleware node between orch and agent: Orch → MW → Agent (or MW → MW → Agent)
+      // Sync middleware wirings — iterate all orch nodes
       try {
-        const orchNodeForMW = connectedEps[0].orchNode;
         const wirings: Array<{ def_id: string; agent_id: string; position: number; config_override: Record<string, unknown>; node_id: string; enabled: boolean }> = [];
-
-        // Walk from orch: for each outgoing edge from orch
-        for (const orchEdge of edges.filter((e: Edge) => e.source === orchNodeForMW.id)) {
-          const firstTarget = nodes.find((n: Node) => n.id === orchEdge.target);
-          if (!firstTarget) continue;
-          if (firstTarget.type === 'middleware') {
-            // Follow the chain until we hit an agent node
-            const chain: Node[] = [];
+        const orchNodes = [...new Set(epPairs.map(p => p.orchNode))];
+        for (const orchNodeForMW of orchNodes) {
+          for (const orchEdge of edges.filter((e: Edge) => e.source === orchNodeForMW.id)) {
+            const firstTarget = nodes.find((n: Node) => n.id === orchEdge.target);
+            if (!firstTarget || firstTarget.type !== 'middleware') continue;
+            const mwChain: Node[] = [];
             let current: Node | undefined = firstTarget;
             while (current && current.type === 'middleware') {
-              chain.push(current);
+              mwChain.push(current);
               const nextEdge = edges.find((e: Edge) => e.source === current!.id);
               current = nextEdge ? nodes.find((n: Node) => n.id === nextEdge.target) : undefined;
             }
             const agentNode = current && current.type === 'agent' ? current : undefined;
             if (agentNode) {
               const agentId = (agentNode.data as AgentData).agentId;
-              chain.forEach((mwNode, idx) => {
+              mwChain.forEach((mwNode, idx) => {
                 const md = mwNode.data as MiddlewareData;
-                wirings.push({
-                  def_id: md.defId,
-                  agent_id: agentId,
-                  position: idx,
-                  config_override: (md.configOverride ?? {}) as Record<string, unknown>,
-                  node_id: mwNode.id,
-                  enabled: true,
-                });
+                wirings.push({ def_id: md.defId, agent_id: agentId, position: idx, config_override: md.configOverride ?? {}, node_id: mwNode.id, enabled: true });
               });
             }
           }
-          // If firstTarget is an agent (direct edge), no middleware — skip
         }
-
         await themApi.putMiddlewareWirings(saved.id, wirings);
-      } catch {
-        // Non-fatal — wirings are best-effort; main save succeeded
-      }
-      // ── End middleware wirings sync ──────────────────────────────────────────
+      } catch { /* non-fatal */ }
 
       setIsDirty(false);
       triggerLogo('success', deploy ? 2500 : 1800);
@@ -2605,6 +2737,7 @@ function BuilderView({
       showToast(err?.message ?? 'Save failed', false);
     } finally {
       setSaving(false);
+      setLogoState('idle');
     }
   }
 
@@ -2788,6 +2921,8 @@ function BuilderView({
           chain={chain}
           app={currentApp}
           epCount={nodes.filter((n: Node) => n.type === 'entryPoint').length}
+          nodes={nodes}
+          edges={edges}
         />
       </div>
 
@@ -2935,14 +3070,13 @@ const APP_CARD_STYLES = `
 `;
 
 // EP metadata
-const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2' };
-const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC', a2a: 'A2A' };
+const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam' };
+const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC' };
 
 function epIconColor(type: string): { color: string; glow: string; border: string } {
   if (type === 'websocket') return { color: '#00d1ff', glow: 'rgba(0,209,255,0.25)', border: 'rgba(0,209,255,0.45)' };
   if (type === 'sse')       return { color: '#a78bfa', glow: 'rgba(167,139,250,0.22)', border: 'rgba(167,139,250,0.42)' };
   if (type === 'webrtc')    return { color: '#a78bfa', glow: 'rgba(167,139,250,0.22)', border: 'rgba(167,139,250,0.42)' };
-  if (type === 'a2a')       return { color: '#f59e0b', glow: 'rgba(245,158,11,0.22)', border: 'rgba(245,158,11,0.42)' };
   return { color: '#94a3b8', glow: 'rgba(148,163,184,0.15)', border: 'rgba(148,163,184,0.3)' };
 }
 

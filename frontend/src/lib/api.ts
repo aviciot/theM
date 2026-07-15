@@ -170,41 +170,21 @@ export interface OrchestratorFull {
   summarizer_provider: string | null;
   summarizer_model: string | null;
   history_window?: number | null;
-}
-
-export interface AppOrchestratorOut {
-  id: string;
-  name: string;
-  display_name: string | null;
-  system_prompt: string | null;
-  llm_provider: string | null;
-  llm_model: string | null;
-  max_iterations: number;
-  max_parallel_tools: number;
-  allowed_agent_ids: string[];
-  delegatable: boolean;
-  kind: string;
-  node_id: string | null;
-  enabled: boolean;
-  history_window: number;
-  budget_tokens: number | null;
-  voice_enabled: boolean;
-  tts_enabled: boolean;
-  memory_enabled: boolean;
+  delegatable?: boolean | null;
 }
 
 export interface EntryPoint {
   id: string;
   application_id: string;
   slug: string;
-  entry_point_type: 'websocket' | 'sse' | 'webrtc' | 'a2a';
+  entry_point_type: 'websocket' | 'sse' | 'webrtc';
   access_policy: Record<string, unknown>;
   conversation_token_limit: number | null;
   enabled: boolean;
-  app_orchestrator_id: string | null;
-  app_orchestrator: AppOrchestratorOut | null;
   created_at: string;
   updated_at: string;
+  app_orchestrator_id?: string | null;
+  app_orchestrator?: AppOrchestratorOut | null;
 }
 
 export interface Application {
@@ -215,9 +195,40 @@ export interface Application {
   presentation: Record<string, unknown>;
   enabled: boolean;
   entry_points: EntryPoint[];
-  app_orchestrators: AppOrchestratorOut[];
+  app_orchestrators?: AppOrchestratorOut[];
   created_at: string;
   updated_at: string;
+}
+
+export interface AppOrchestratorOut {
+  id: string;
+  application_id: string;
+  name: string;
+  display_name: string | null;
+  system_prompt: string | null;
+  llm_provider: string | null;
+  llm_model: string | null;
+  max_iterations: number;
+  max_parallel_tools: number;
+  history_window: number | null;
+  delegatable: boolean;
+  kind: string;
+  budget_tokens: number | null;
+  allowed_agent_ids: string[];
+}
+
+export interface AppOrchestratorIn {
+  id?: string;
+  display_name?: string | null;
+  system_prompt?: string | null;
+  llm_provider?: string | null;
+  llm_model?: string | null;
+  max_iterations?: number | null;
+  max_parallel_tools?: number | null;
+  history_window?: number | null;
+  delegatable?: boolean | null;
+  budget_tokens?: number | null;
+  allowed_agent_ids?: string[] | null;
 }
 
 export interface MiddlewareDef {
