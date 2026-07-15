@@ -371,32 +371,11 @@ CREATE TABLE IF NOT EXISTS them.middleware_wirings (
 );
 CREATE INDEX IF NOT EXISTS idx_mw_wirings_app_agent ON them.middleware_wirings(application_id, agent_id);
 
--- ── Phase 15: Canvas graph storage ───────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS them.app_nodes (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    application_id  UUID        NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
-    node_id         TEXT        NOT NULL,
-    node_type       TEXT        NOT NULL,
-    ref_id          UUID,
-    position_x      DOUBLE PRECISION NOT NULL DEFAULT 0,
-    position_y      DOUBLE PRECISION NOT NULL DEFAULT 0,
-    data            JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_app_nodes_app_node UNIQUE (application_id, node_id),
-    CONSTRAINT ck_app_nodes_type CHECK (node_type IN ('entry_point','orchestrator','agent','middleware'))
-);
-CREATE INDEX IF NOT EXISTS idx_app_nodes_application_id ON them.app_nodes(application_id);
-
-CREATE TABLE IF NOT EXISTS them.app_edges (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    application_id  UUID        NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
-    edge_id         TEXT        NOT NULL,
-    source_node_id  TEXT        NOT NULL,
-    target_node_id  TEXT        NOT NULL,
-    data            JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_app_edges_app_edge UNIQUE (application_id, edge_id)
-);
-CREATE INDEX IF NOT EXISTS idx_app_edges_application_id ON them.app_edges(application_id);
+-- System-agents config seed (classifier role, disabled by default)
+INSERT INTO them.config (config_key, config_value, updated_at)
+VALUES (
+    'system_agents',
+    '{"roles": {"classifier": {"enabled": false, "provider": null, "model": null, "base_url": null, "system_prompt": null, "api_key_encrypted": null}}}',
+    NOW()
+)
+ON CONFLICT (config_key) DO NOTHING;

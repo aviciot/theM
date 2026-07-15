@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
-from sqlalchemy import select, func, text
+from pydantic import BaseModel, Field
+from sqlalchemy import select, func, text, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -258,6 +258,26 @@ async def list_contexts(
         ))
 
     return sessions
+
+
+class BulkDeleteRunsIn(BaseModel):
+    run_ids: List[uuid.UUID] = Field(..., max_length=500)
+
+
+@router.post("/bulk-delete", status_code=200)
+async def bulk_delete_runs(
+    body: BulkDeleteRunsIn,
+    db: AsyncSession = Depends(get_db),
+    token: dict = Depends(require_jwt),
+):
+    """Bulk delete runs by id list. Admin only. Max 500 ids per call."""
+    if token.get("role") not in ("admin", "superadmin", "super_admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+    if not body.run_ids:
+        return {"deleted": 0}
+    await db.execute(delete(Run).where(Run.id.in_(body.run_ids)))
+    await db.commit()
+    return {"deleted": len(body.run_ids)}
 
 
 @router.get("/{run_id}", response_model=RunDetailOut)

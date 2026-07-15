@@ -24,6 +24,7 @@ from app.routers import admin_orchestrators
 from app.routers import admin_tokens
 from app.routers import admin_applications
 from app.routers import admin_middleware
+from app.routers import admin_system_agents
 from app.routers import ws_orchestrator
 from app.routers import ws_dashboard
 from app.routers import runs
@@ -45,12 +46,10 @@ async def _app_liveness_loop() -> None:
     _INTERVAL = 30
     _TIMEOUT  = 5.0
 
-    # Brief startup delay so DB/Redis are ready, then probe immediately (don't wait 30s).
-    await asyncio.sleep(5)
     try:
         while True:
+            await asyncio.sleep(_INTERVAL)
             if db_module.AsyncSessionLocal is None:
-                await asyncio.sleep(_INTERVAL)
                 continue
             try:
                 async with db_module.AsyncSessionLocal() as db:
@@ -81,7 +80,6 @@ async def _app_liveness_loop() -> None:
                     logger.debug("app_liveness: probed apps", count=len(statuses))
             except Exception as exc:
                 logger.error("app_liveness: iteration error", error=str(exc))
-            await asyncio.sleep(_INTERVAL)
     except asyncio.CancelledError:
         pass
 
@@ -174,6 +172,7 @@ app.include_router(admin_orchestrators.router, prefix="/api/v1", dependencies=[D
 app.include_router(admin_tokens.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
 app.include_router(admin_applications.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
 app.include_router(admin_middleware.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
+app.include_router(admin_system_agents.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
 app.include_router(ws_orchestrator.router)
 app.include_router(ws_dashboard.router)
 app.include_router(runs.router, prefix="/api/v1")

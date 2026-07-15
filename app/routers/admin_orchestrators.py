@@ -7,7 +7,6 @@ import uuid
 from decimal import Decimal
 from typing import List, Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -15,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, get_redis
 from app.models import Orchestrator
+from app.services.llm_probe import probe_llm
 from app.utils.crypto import encrypt_value, decrypt_value, key_hint
 from app.utils.logger import logger
 
@@ -197,45 +197,9 @@ async def _invalidate(name: str) -> None:
 
 
 async def _test_llm(provider: str, model: str, api_key: str, base_url: Optional[str]) -> LLMTestResult:
-    """Send a minimal request to the provider to validate the key."""
-    import time
-    start = time.monotonic()
-    try:
-        if provider == "anthropic":
-            url = (base_url or "https://api.anthropic.com") + "/v1/messages"
-            headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-            payload = {"model": model, "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]}
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.post(url, headers=headers, json=payload)
-        elif provider == "openai":
-            url = (base_url or "https://api.openai.com") + "/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
-            payload = {"model": model, "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]}
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.post(url, headers=headers, json=payload)
-        elif provider == "groq":
-            url = (base_url or "https://api.groq.com") + "/openai/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
-            payload = {"model": model, "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]}
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.post(url, headers=headers, json=payload)
-        elif provider == "gemini":
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            payload = {"contents": [{"parts": [{"text": "hi"}]}], "generationConfig": {"maxOutputTokens": 5}}
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.post(url, json=payload)
-        else:
-            return LLMTestResult(ok=False, error=f"Unknown provider: {provider}")
-
-        ms = int((time.monotonic() - start) * 1000)
-        if r.status_code in (200, 201):
-            return LLMTestResult(ok=True, latency_ms=ms)
-        body = r.json()
-        msg = body.get("error", {}).get("message") or body.get("error") or str(r.status_code)
-        return LLMTestResult(ok=False, error=str(msg), latency_ms=ms)
-    except Exception as exc:
-        ms = int((time.monotonic() - start) * 1000)
-        return LLMTestResult(ok=False, error=str(exc), latency_ms=ms)
+    """Thin wrapper around probe_llm; returns router-local LLMTestResult."""
+    result = await probe_llm(provider, model, api_key, base_url)
+    return LLMTestResult(ok=result.ok, latency_ms=result.latency_ms, error=result.error)
 
 
 # ------------------------------------------------------------------ #

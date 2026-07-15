@@ -502,14 +502,19 @@ export default function RunsPage() {
   const [loading, setLoading] = useState(true);
   const [selectedRun, setSelectedRun] = useState<Run | null>(null);
   const [canceling, setCanceling] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectAll, setSelectAll] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     Promise.allSettled([themApi.runs(50), themApi.runStats()]).then(([r, s]) => {
       if (r.status === 'fulfilled') setRuns(r.value ?? []);
       if (s.status === 'fulfilled') setStats(s.value);
       setLoading(false);
     });
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const handleCancel = useCallback(async (e: React.MouseEvent, runId: string) => {
     e.stopPropagation();
@@ -523,6 +528,39 @@ export default function RunsPage() {
       setCanceling(prev => { const s = new Set(prev); s.delete(runId); return s; });
     }
   }, []);
+
+  const handleToggleSelect = useCallback((runId: string, checked: boolean) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      checked ? next.add(runId) : next.delete(runId);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback((checked: boolean) => {
+    setSelectAll(checked);
+    if (checked) {
+      setSelected(new Set(runs.map(r => r.id)));
+    } else {
+      setSelected(new Set());
+    }
+  }, [runs]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selected.size === 0) return;
+    if (!window.confirm(`Delete ${selected.size} run${selected.size !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    try {
+      await themApi.bulkDeleteRuns(Array.from(selected));
+      setSelected(new Set());
+      setSelectAll(false);
+      load();
+    } catch (err) {
+      alert(`Bulk delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBulkDeleting(false);
+    }
+  }, [selected, load]);
 
   const closeModal = useCallback(() => setSelectedRun(null), []);
 
@@ -555,25 +593,55 @@ export default function RunsPage() {
           </header>
 
           <div style={{ padding: '32px' }}>
-            {stats && Object.keys(stats.by_status).length > 0 && (
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
-                {Object.entries(stats.by_status).map(([status, count]) => (
-                  <div key={status} style={{
+            {/* Status filter pills + bulk-delete button row */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px', flexWrap: 'wrap' }}>
+              {stats && Object.keys(stats.by_status).length > 0 && (
+                Object.entries(stats.by_status).map(([s, count]) => (
+                  <div key={s} style={{
                     display: 'flex', alignItems: 'center', gap: '6px',
                     padding: '6px 12px', borderRadius: '20px',
                     background: 'var(--tm-surface)', border: '1px solid var(--tm-border)',
                   }}>
-                    <StatusBadge status={status} />
+                    <StatusBadge status={s} />
                     <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tm-text)' }}>{count as number}</span>
                   </div>
-                ))}
-              </div>
-            )}
+                ))
+              )}
+              {selected.size > 0 && (
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleting}
+                  style={{
+                    marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px',
+                    padding: '6px 16px', borderRadius: '8px', fontSize: '13px', fontWeight: 600,
+                    border: '1px solid #f87171', background: 'rgba(248,113,113,0.12)',
+                    color: '#f87171', cursor: bulkDeleting ? 'not-allowed' : 'pointer',
+                    opacity: bulkDeleting ? 0.6 : 1, transition: 'opacity 0.15s',
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '15px' }}>delete</span>
+                  {bulkDeleting ? 'Deleting…' : `Delete selected (${selected.size})`}
+                </button>
+              )}
+            </div>
 
             <div style={{ background: 'var(--tm-surface)', border: '1px solid var(--tm-border)', borderRadius: '12px', overflow: 'hidden' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--tm-border)' }}>
+                    {/* Checkbox select-all */}
+                    <th style={{
+                      padding: '10px 12px', width: '40px',
+                      background: 'var(--tm-surface-2)',
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={selectAll}
+                        onChange={e => handleSelectAll(e.target.checked)}
+                        title="Select all"
+                        style={{ cursor: 'pointer' }}
+                      />
+                    </th>
                     {['Message', 'Orchestrator', 'Status', 'Started', 'Duration', 'Tokens', 'Cost', ''].map((h) => (
                       <th key={h} style={{
                         padding: '10px 16px', textAlign: 'left',
@@ -586,10 +654,10 @@ export default function RunsPage() {
                 </thead>
                 <tbody>
                   {loading && (
-                    <tr><td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: 'var(--tm-text-subtle)' }}>Loading…</td></tr>
+                    <tr><td colSpan={9} style={{ padding: '32px', textAlign: 'center', color: 'var(--tm-text-subtle)' }}>Loading…</td></tr>
                   )}
                   {!loading && runs.length === 0 && (
-                    <tr><td colSpan={8} style={{ padding: '48px', textAlign: 'center', color: 'var(--tm-text-subtle)' }}>
+                    <tr><td colSpan={9} style={{ padding: '48px', textAlign: 'center', color: 'var(--tm-text-subtle)' }}>
                       <span className="material-symbols-outlined" style={{ fontSize: '40px', display: 'block', marginBottom: '8px', opacity: 0.3 }}>history</span>
                       No runs yet
                     </td></tr>
@@ -597,10 +665,23 @@ export default function RunsPage() {
                   {runs.map((run, i) => (
                     <tr key={run.id}
                       onClick={() => setSelectedRun(run)}
-                      style={{ borderBottom: i < runs.length - 1 ? '1px solid var(--tm-border-subtle)' : 'none', cursor: 'pointer' }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--tm-surface-2)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      style={{
+                        borderBottom: i < runs.length - 1 ? '1px solid var(--tm-border-subtle)' : 'none',
+                        cursor: 'pointer',
+                        background: selected.has(run.id) ? 'rgba(248,113,113,0.06)' : 'transparent',
+                      }}
+                      onMouseEnter={(e) => { if (!selected.has(run.id)) e.currentTarget.style.background = 'var(--tm-surface-2)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = selected.has(run.id) ? 'rgba(248,113,113,0.06)' : 'transparent'; }}
                     >
+                      {/* Checkbox cell — stopPropagation prevents row-click modal */}
+                      <td style={{ padding: '12px 12px', width: '40px' }} onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(run.id)}
+                          onChange={e => handleToggleSelect(run.id, e.target.checked)}
+                          style={{ cursor: 'pointer' }}
+                        />
+                      </td>
                       <td style={{ padding: '12px 16px', maxWidth: '240px' }}>
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
                           {run.parent_run_id && (

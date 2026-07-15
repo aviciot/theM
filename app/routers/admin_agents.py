@@ -24,6 +24,7 @@ from app.models import Agent
 from app.adapters.a2a_async_adapter import A2aAsyncAdapter
 from app.services import dashboard_broadcaster
 from app.services.agent_registry import invalidate_registry
+from app.services.system_agents import classify_agent
 from app.utils.crypto import decrypt_value, encrypt_value
 from app.utils.logger import logger
 
@@ -135,6 +136,7 @@ class DiscoverResult(BaseModel):
     icon: Optional[str] = None
     agent_card: Optional[Dict[str, Any]] = None
     agent_card_url: str = ""
+    category: Optional[str] = None
 
 
 # ------------------------------------------------------------------ #
@@ -243,6 +245,20 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
         card_fetched_at=datetime.now(timezone.utc) if body.agent_card else None,
     )
     db.add(row)
+
+    if row.icon is None:
+        try:
+            classification = await classify_agent(
+                db,
+                display_name=body.display_name,
+                description=body.description or "",
+                skills=[s.model_dump() for s in (body.skills or [])],
+            )
+            if classification and not row.icon:
+                row.icon = classification.get("icon")
+        except Exception:
+            pass
+
     await db.commit()
     await db.refresh(row)
     await invalidate_registry()
@@ -418,6 +434,22 @@ async def discover_agent(body: DiscoverRequest, db: AsyncSession = Depends(get_d
     if icon:
         icon = str(icon).strip() or None
 
+    # Best-effort classifier enrichment
+    category: Optional[str] = None
+    try:
+        classification = await classify_agent(
+            db,
+            display_name=card.get("name", raw_name),
+            description=description,
+            skills=skills,
+        )
+        if classification:
+            category = classification.get("category")
+            if not icon:
+                icon = classification.get("icon")
+    except Exception:
+        pass
+
     logger.info("discover: card fetched", endpoint=base, slug=suggested_slug, skills=len(skills))
     return DiscoverResult(
         ok=True,
@@ -430,6 +462,7 @@ async def discover_agent(body: DiscoverRequest, db: AsyncSession = Depends(get_d
         icon=icon,
         agent_card=card,
         agent_card_url=card_url,
+        category=category,
     )
 
 

@@ -570,6 +570,38 @@ async def _apply_entry_point_diff(
 # Routes                                                               #
 # ------------------------------------------------------------------ #
 
+class BulkDeleteAppsIn(BaseModel):
+    app_ids: List[uuid.UUID] = Field(..., max_length=200)
+
+
+@router.post("/bulk-delete", status_code=200)
+async def bulk_delete_applications(
+    body: BulkDeleteAppsIn,
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk delete applications by id list. Max 200 ids per call."""
+    if not body.app_ids:
+        return {"deleted": 0}
+
+    q = (
+        select(Application)
+        .where(Application.id.in_(body.app_ids))
+        .options(selectinload(Application.app_orchestrators))
+    )
+    rows = (await db.execute(q)).scalars().all()
+
+    all_orch_names: list[str] = []
+    for app in rows:
+        all_orch_names.extend(ao.name for ao in (app.app_orchestrators or []))
+
+    await db.execute(delete(Application).where(Application.id.in_(body.app_ids)))
+    await db.commit()
+
+    await _flush_orch_caches(all_orch_names)
+    logger.info("applications bulk deleted", count=len(rows))
+    return {"deleted": len(rows)}
+
+
 @router.get("", response_model=List[ApplicationOut])
 async def list_applications(
     enabled_only: bool = False,

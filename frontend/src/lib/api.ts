@@ -46,6 +46,29 @@ export interface DiscoverResult {
   icon: string | null;
   agent_card: Record<string, unknown> | null;
   agent_card_url: string;
+  category?: string;
+}
+
+export interface SystemAgentRoleOut {
+  enabled: boolean;
+  provider: string | null;
+  model: string | null;
+  base_url: string | null;
+  system_prompt: string | null;
+  api_key_hint: string | null;
+}
+
+export interface SystemAgentsOut {
+  roles: Record<string, SystemAgentRoleOut>;
+}
+
+export interface SystemAgentRoleIn {
+  enabled?: boolean;
+  provider?: string | null;
+  model?: string | null;
+  base_url?: string | null;
+  system_prompt?: string | null;
+  api_key?: string | null;
 }
 
 export interface Agent {
@@ -188,8 +211,9 @@ export interface EntryPoint {
 }
 
 export interface CanvasLayout {
-  layout: Record<string, { x: number; y: number }>;
-  viewport?: { x: number; y: number; zoom: number };
+  nodes?: Array<{ id: string; type?: string; position?: { x: number; y: number }; data?: Record<string, unknown> }>;
+  edges?: Array<{ id: string; source: string; target: string; [k: string]: unknown }>;
+  [k: string]: unknown;
 }
 
 export interface Application {
@@ -197,9 +221,9 @@ export interface Application {
   name: string;
   presentation: Record<string, unknown>;
   enabled: boolean;
+  canvas?: CanvasLayout | null;
   entry_points: EntryPoint[];
   app_orchestrators?: AppOrchestratorOut[];
-  canvas?: CanvasLayout | null;
   created_at: string;
   updated_at: string;
 }
@@ -219,11 +243,10 @@ export interface AppOrchestratorOut {
   kind: string;
   budget_tokens: number | null;
   allowed_agent_ids: string[];
-  node_id: string | null;
 }
 
 export interface AppOrchestratorIn {
-  id?: string | null;    // reference existing AO by DB id
+  id?: string;
   display_name?: string | null;
   system_prompt?: string | null;
   llm_provider?: string | null;
@@ -402,6 +425,13 @@ export const themApi = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   },
+  getSystemAgents: () => api.get<SystemAgentsOut>('/admin/system-agents'),
+  putSystemAgents: (body: { roles: Record<string, SystemAgentRoleIn> }) => api.put<SystemAgentsOut>('/admin/system-agents', body),
+  testSystemAgentLlm: (role: string, body: { provider: string; model: string; api_key?: string; base_url?: string }) =>
+    api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/system-agents/${role}/test-llm`, body),
+  deleteRun: (runId: string) => api.delete<void>(`/runs/${runId}`),
+  bulkDeleteRuns: (runIds: string[]) => api.post<{ deleted: number }>('/runs/bulk-delete', { run_ids: runIds }),
+  bulkDeleteApplications: (appIds: string[]) => api.post<{ deleted: number }>('/admin/applications/bulk-delete', { app_ids: appIds }),
   // Live reachability check for a deployed application slug
   pingApp: async (slug: string): Promise<boolean> => {
     try {

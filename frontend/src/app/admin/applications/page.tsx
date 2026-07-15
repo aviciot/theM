@@ -3114,6 +3114,8 @@ function epIconColor(type: string): { color: string; glow: string; border: strin
 function AppCard({
   app,
   liveness,
+  selected,
+  onToggleSelect,
   onEdit,
   onToggle,
   onDelete,
@@ -3121,6 +3123,8 @@ function AppCard({
 }: {
   app: Application;
   liveness: { reachable: boolean; latency_ms: number | null } | null;
+  selected?: boolean;
+  onToggleSelect?: (id: string, checked: boolean) => void;
   onEdit: (a: Application) => void;
   onToggle: (a: Application) => void;
   onDelete: (a: Application) => void;
@@ -3154,8 +3158,18 @@ function AppCard({
   return (
     <div
       className="app-glass-card"
-      style={{ borderRadius: 16, overflow: 'visible', display: 'flex', flexDirection: 'column', position: 'relative' }}
+      style={{ borderRadius: 16, overflow: 'visible', display: 'flex', flexDirection: 'column', position: 'relative', outline: selected ? '2px solid #00d1ff' : undefined }}
     >
+      {/* Bulk-select checkbox */}
+      {onToggleSelect && (
+        <input
+          type="checkbox"
+          checked={!!selected}
+          onChange={(e) => { e.stopPropagation(); onToggleSelect(app.id, e.target.checked); }}
+          title="Select for bulk delete"
+          style={{ position: 'absolute', top: 10, left: 10, width: 16, height: 16, accentColor: '#00d1ff', cursor: 'pointer', zIndex: 10 }}
+        />
+      )}
       {/* Top section */}
       <div style={{ padding: '20px 20px 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
@@ -3369,6 +3383,7 @@ function useDashAppStatuses(token: string | null): Record<string, AppLiveness> {
 
 function ListView({
   list, loading, onNew, onEdit, onToggle, onDelete,
+  selectedApps, onToggleSelect, onSelectAll, onBulkDelete, bulkDeleting,
 }: {
   list: Application[];
   loading: boolean;
@@ -3376,6 +3391,11 @@ function ListView({
   onEdit: (app: Application) => void;
   onToggle: (app: Application) => void;
   onDelete: (app: Application) => void;
+  selectedApps: Set<string>;
+  onToggleSelect: (id: string, checked: boolean) => void;
+  onSelectAll: (checked: boolean) => void;
+  onBulkDelete: () => void;
+  bulkDeleting: boolean;
 }) {
   const [urlModalApp, setUrlModalApp] = useState<Application | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -3410,18 +3430,47 @@ function ListView({
             Compose orchestrators and entry points into deployable agentic applications.
           </p>
         </div>
-        <button
-          onClick={onNew}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer',
-            background: '#00d1ff', color: '#000', fontSize: 14, fontWeight: 700,
-            boxShadow: '0 0 20px rgba(0,209,255,0.4)',
-          }}
-        >
-          <span style={{ fontSize: 18, lineHeight: 1 }}>+</span>
-          New Application
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {list.length > 0 && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13, color: C.textMuted }}>
+              <input
+                type="checkbox"
+                checked={selectedApps.size > 0 && selectedApps.size === list.length}
+                ref={el => { if (el) el.indeterminate = selectedApps.size > 0 && selectedApps.size < list.length; }}
+                onChange={e => onSelectAll(e.target.checked)}
+                style={{ accentColor: '#00d1ff' }}
+              />
+              All
+            </label>
+          )}
+          {selectedApps.size > 0 && (
+            <button
+              onClick={onBulkDelete}
+              disabled={bulkDeleting}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '10px 18px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.4)',
+                background: 'rgba(248,113,113,0.08)', color: '#f87171',
+                fontSize: 13, fontWeight: 600, cursor: bulkDeleting ? 'not-allowed' : 'pointer',
+                opacity: bulkDeleting ? 0.6 : 1, transition: 'opacity 0.15s',
+              }}
+            >
+              {bulkDeleting ? 'Deleting…' : `Delete selected (${selectedApps.size})`}
+            </button>
+          )}
+          <button
+            onClick={onNew}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              background: '#00d1ff', color: '#000', fontSize: 14, fontWeight: 700,
+              boxShadow: '0 0 20px rgba(0,209,255,0.4)',
+            }}
+          >
+            <span style={{ fontSize: 18, lineHeight: 1 }}>+</span>
+            New Application
+          </button>
+        </div>
       </div>
 
       {/* Card grid */}
@@ -3468,6 +3517,8 @@ function ListView({
             key={app.id}
             app={app}
             liveness={aggLiveness}
+            selected={selectedApps.has(app.id)}
+            onToggleSelect={onToggleSelect}
             onEdit={onEdit}
             onToggle={onToggle}
             onDelete={onDelete}
@@ -3569,6 +3620,8 @@ export default function ApplicationsPage() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'builder'>('list');
   const [editApp, setEditApp] = useState<Application | null>(null);
+  const [selectedApps, setSelectedApps] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -3586,6 +3639,31 @@ export default function ApplicationsPage() {
   async function handleDelete(app: Application) {
     if (!confirm(`Delete application "${app.name}"?`)) return;
     try { await themApi.deleteApplication(app.id); await load(); } catch {/* ignore */}
+  }
+
+  function handleToggleSelect(id: string, checked: boolean) {
+    setSelectedApps(prev => {
+      const next = new Set(prev);
+      checked ? next.add(id) : next.delete(id);
+      return next;
+    });
+  }
+
+  function handleSelectAll(checked: boolean) {
+    setSelectedApps(checked ? new Set(list.map(a => a.id)) : new Set());
+  }
+
+  async function handleBulkDelete() {
+    if (selectedApps.size === 0) return;
+    if (!confirm(`Delete ${selectedApps.size} application${selectedApps.size !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    try {
+      await themApi.bulkDeleteApplications(Array.from(selectedApps));
+      setSelectedApps(new Set());
+      await load();
+    } catch {/* ignore */} finally {
+      setBulkDeleting(false);
+    }
   }
 
   function openBuilder(app: Application | null) {
@@ -3635,6 +3713,11 @@ export default function ApplicationsPage() {
           onEdit={(app) => openBuilder(app)}
           onToggle={handleToggle}
           onDelete={handleDelete}
+          selectedApps={selectedApps}
+          onToggleSelect={handleToggleSelect}
+          onSelectAll={handleSelectAll}
+          onBulkDelete={handleBulkDelete}
+          bulkDeleting={bulkDeleting}
         />
       </div>
     </AuthGuard>

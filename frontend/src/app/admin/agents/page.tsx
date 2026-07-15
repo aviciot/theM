@@ -4,6 +4,40 @@ import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import { themApi, type Agent, type AgentSkill, type DiscoverResult, type OrchestratorFull, type ScanResult } from '@/lib/api';
 
+// ── Folder state ───────────────────────────────────────────────────────────────
+
+interface AgentFolder {
+  id: string;
+  name: string;
+  agentIds: string[];
+  collapsed: boolean;
+}
+
+interface FolderState {
+  folders: AgentFolder[];
+}
+
+const FOLDER_KEY = 'them:agents:folders';
+
+function loadFolders(): FolderState {
+  if (typeof window === 'undefined') return { folders: [] };
+  try {
+    const raw = localStorage.getItem(FOLDER_KEY);
+    if (!raw) return { folders: [] };
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.folders)) return parsed as FolderState;
+  } catch { /* ignore */ }
+  return { folders: [] };
+}
+
+function saveFolders(state: FolderState): void {
+  try { localStorage.setItem(FOLDER_KEY, JSON.stringify(state)); } catch { /* ignore */ }
+}
+
+function genId(): string {
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+
 const EMPTY_FORM = {
   slug: '',
   display_name: '',
@@ -310,6 +344,11 @@ function AgentCard({
   onEdit,
   onDelete,
   onOpenScanModal,
+  isDragOver,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onRemoveFromFolder,
 }: {
   agent: Agent;
   scanResult: ScanResult | 'scanning' | undefined;
@@ -321,6 +360,11 @@ function AgentCard({
   onEdit: () => void;
   onDelete: () => void;
   onOpenScanModal: () => void;
+  isDragOver?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
+  onRemoveFromFolder?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
@@ -352,11 +396,42 @@ function AgentCard({
   }
 
   return (
-    <article className="glass-card" style={{
-      padding: '22px', display: 'flex', flexDirection: 'column', gap: '14px',
-      borderRadius: '20px', position: 'relative',
-      ...(isInternal ? { background: 'linear-gradient(160deg, rgba(0,160,120,0.08) 0%, rgba(0,80,60,0.06) 100%), var(--tm-card)' } : {}),
-    }}>
+    <article
+      className="glass-card"
+      draggable
+      onDragStart={(e) => {
+        if ((e.target as HTMLElement).closest('button, input, a, textarea, select')) {
+          e.preventDefault();
+          return;
+        }
+        onDragStart?.(e);
+      }}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      style={{
+        padding: '22px', display: 'flex', flexDirection: 'column', gap: '14px',
+        borderRadius: '20px', position: 'relative', cursor: 'grab',
+        ...(isInternal ? { background: 'linear-gradient(160deg, rgba(0,160,120,0.08) 0%, rgba(0,80,60,0.06) 100%), var(--tm-card)' } : {}),
+        ...(isDragOver ? { borderColor: '#00d1ff', boxShadow: '0 0 0 2px rgba(0,209,255,0.25), 0 8px 32px rgba(0,0,0,0.4)' } : {}),
+      }}
+    >
+
+      {/* ── Remove from folder button ── */}
+      {onRemoveFromFolder && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onRemoveFromFolder(); }}
+          title="Remove from folder"
+          style={{
+            position: 'absolute', top: '10px', left: '10px', zIndex: 5,
+            width: '20px', height: '20px', borderRadius: '50%',
+            background: 'rgba(220,38,38,0.18)', border: '1px solid rgba(220,38,38,0.35)',
+            color: '#f87171', fontSize: '11px', lineHeight: 1,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', padding: 0,
+            transition: 'background 150ms ease, border-color 150ms ease',
+          }}
+        >×</button>
+      )}
 
       {/* ── Header row: icon + name/badges + overflow ── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
@@ -603,6 +678,107 @@ function AgentCard({
   );
 }
 
+// ── Folder Header component ───────────────────────────────────────────────────
+
+function FolderHeader({
+  folder,
+  count,
+  isDragOver,
+  onToggleCollapse,
+  onRename,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+}: {
+  folder: AgentFolder;
+  count: number;
+  isDragOver: boolean;
+  onToggleCollapse: () => void;
+  onRename: (name: string) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: (e: React.DragEvent) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editVal, setEditVal] = useState(folder.name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing && inputRef.current) inputRef.current.focus();
+  }, [editing]);
+
+  function commitRename() {
+    const v = editVal.trim();
+    if (v) onRename(v);
+    else setEditVal(folder.name);
+    setEditing(false);
+  }
+
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      style={{
+        display: 'flex', alignItems: 'center', gap: '10px',
+        padding: '10px 16px',
+        background: isDragOver ? 'rgba(0,209,255,0.06)' : 'rgba(255,255,255,0.04)',
+        border: `1px solid ${isDragOver ? 'rgba(0,209,255,0.4)' : 'rgba(255,255,255,0.10)'}`,
+        borderRadius: folder.collapsed ? '8px' : '8px 8px 0 0',
+        cursor: 'pointer',
+        transition: 'background 150ms ease, border-color 150ms ease',
+        userSelect: 'none',
+      }}
+    >
+      <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#94a3b8', flexShrink: 0 }}>
+        {folder.collapsed ? 'folder' : 'folder_open'}
+      </span>
+
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={editVal}
+          onChange={(e) => setEditVal(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { setEditVal(folder.name); setEditing(false); } }}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            flex: 1, background: 'transparent', border: 'none',
+            borderBottom: '1px solid rgba(0,209,255,0.5)',
+            color: 'var(--tm-card-text)', fontSize: '14px', fontWeight: 600,
+            outline: 'none', padding: '0 2px',
+          }}
+        />
+      ) : (
+        <span
+          onDoubleClick={(e) => { e.stopPropagation(); setEditVal(folder.name); setEditing(true); }}
+          onClick={onToggleCollapse}
+          style={{ flex: 1, fontSize: '14px', fontWeight: 600, color: 'var(--tm-card-text)' }}
+        >
+          {folder.name}
+        </span>
+      )}
+
+      <span style={{ fontSize: '11px', color: 'var(--tm-card-text-muted)', flexShrink: 0, fontWeight: 600 }}>
+        {count}
+      </span>
+
+      <button
+        onClick={(e) => { e.stopPropagation(); onToggleCollapse(); }}
+        style={{
+          background: 'none', border: 'none', cursor: 'pointer', padding: '2px',
+          color: 'var(--tm-card-text-muted)', display: 'flex', alignItems: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
+          {folder.collapsed ? 'expand_more' : 'expand_less'}
+        </span>
+      </button>
+    </div>
+  );
+}
+
 // ── Deploy CTA card ────────────────────────────────────────────────────────────
 
 function DeployCard({ onClick }: { onClick: () => void }) {
@@ -664,6 +840,122 @@ export default function AdminAgentsPage() {
   const agentIdsKeyRef = useRef<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
+
+  // ── Folder state ──────────────────────────────────────────────────────────
+  const [folderState, setFolderState] = useState<FolderState>(() => loadFolders());
+  // dragOverId: the card/folder being hovered during a drag
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  // pendingFolder: when we need to prompt for a folder name
+  const [pendingFolder, setPendingFolder] = useState<{ agentA: Agent; agentB: Agent } | null>(null);
+  const [folderNameInput, setFolderNameInput] = useState('');
+
+  function updateFolders(next: FolderState) {
+    setFolderState(next);
+    saveFolders(next);
+  }
+
+  function handleAgentDrop(draggedAgentId: string, targetAgentId: string) {
+    if (draggedAgentId === targetAgentId) return;
+    const allFolders = folderState.folders;
+
+    // Find if target is already in a folder
+    const targetFolder = allFolders.find(f => f.agentIds.includes(targetAgentId));
+
+    if (targetFolder) {
+      // Add dragged agent to target's folder (if not already there)
+      if (!targetFolder.agentIds.includes(draggedAgentId)) {
+        const next: FolderState = {
+          folders: allFolders.map(f =>
+            f.id === targetFolder.id
+              ? { ...f, agentIds: [...f.agentIds.filter(id => id !== draggedAgentId), draggedAgentId] }
+              : { ...f, agentIds: f.agentIds.filter(id => id !== draggedAgentId) }
+          ).filter(f => f.agentIds.length > 0),
+        };
+        updateFolders(next);
+      }
+    } else {
+      // Both ungrouped — prompt for folder name
+      const agentA = agents.find(a => a.id === draggedAgentId);
+      const agentB = agents.find(a => a.id === targetAgentId);
+      if (agentA && agentB) {
+        const suggestion = agentA.display_name.split(' ')[0] + ' & ' + agentB.display_name.split(' ')[0];
+        setFolderNameInput(suggestion);
+        setPendingFolder({ agentA, agentB });
+      }
+    }
+  }
+
+  function handleDropOntoFolder(draggedAgentId: string, folderId: string) {
+    const allFolders = folderState.folders;
+    const targetFolder = allFolders.find(f => f.id === folderId);
+    if (!targetFolder || targetFolder.agentIds.includes(draggedAgentId)) return;
+    const next: FolderState = {
+      folders: allFolders.map(f => {
+        if (f.id === folderId) return { ...f, agentIds: [...f.agentIds, draggedAgentId] };
+        return { ...f, agentIds: f.agentIds.filter(id => id !== draggedAgentId) };
+      }).filter(f => f.agentIds.length > 0),
+    };
+    updateFolders(next);
+  }
+
+  function confirmCreateFolder() {
+    if (!pendingFolder) return;
+    const name = folderNameInput.trim() || 'Folder';
+    // Remove both agents from any existing folder they might be in
+    const cleaned = folderState.folders.map(f => ({
+      ...f,
+      agentIds: f.agentIds.filter(id => id !== pendingFolder.agentA.id && id !== pendingFolder.agentB.id),
+    })).filter(f => f.agentIds.length > 0);
+    const next: FolderState = {
+      folders: [...cleaned, { id: genId(), name, agentIds: [pendingFolder.agentA.id, pendingFolder.agentB.id], collapsed: false }],
+    };
+    updateFolders(next);
+    setPendingFolder(null);
+    setFolderNameInput('');
+  }
+
+  function removeAgentFromFolder(agentId: string) {
+    const next: FolderState = {
+      folders: folderState.folders.map(f => ({
+        ...f,
+        agentIds: f.agentIds.filter(id => id !== agentId),
+      })).filter(f => f.agentIds.length > 0),
+    };
+    updateFolders(next);
+  }
+
+  function toggleFolderCollapse(folderId: string) {
+    const next: FolderState = {
+      folders: folderState.folders.map(f =>
+        f.id === folderId ? { ...f, collapsed: !f.collapsed } : f
+      ),
+    };
+    updateFolders(next);
+  }
+
+  function renameFolderInline(folderId: string, newName: string) {
+    const next: FolderState = {
+      folders: folderState.folders.map(f =>
+        f.id === folderId ? { ...f, name: newName } : f
+      ),
+    };
+    updateFolders(next);
+  }
+
+  // Prune deleted agent ids from folder state whenever agents list changes
+  useEffect(() => {
+    if (agents.length === 0) return;
+    const liveIds = new Set(agents.map(a => a.id));
+    const pruned: FolderState = {
+      folders: folderState.folders.map(f => ({
+        ...f,
+        agentIds: f.agentIds.filter(id => liveIds.has(id)),
+      })).filter(f => f.agentIds.length > 0),
+    };
+    const changed = JSON.stringify(pruned) !== JSON.stringify(folderState);
+    if (changed) updateFolders(pruned);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agents]);
 
   const reload = () => {
     Promise.all([themApi.agents(), themApi.orchestrators()])
@@ -1282,52 +1574,178 @@ export default function AdminAgentsPage() {
             </div>
           </div>
 
-          {/* Card grid */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: '24px',
-            padding: '0 32px 48px',
-          }}>
-            {loading && (
-              <div style={{ gridColumn: '1 / -1', padding: '80px', textAlign: 'center', color: 'var(--tm-card-text-muted)', fontSize: '14px' }}>
-                Loading agents…
+          {/* Card grid — folders + ungrouped */}
+          {(() => {
+            const isFiltering = searchTerm.trim() !== '' || activeCategory !== 'All';
+
+            // When filtering: flatten all agents and apply the existing filter
+            if (isFiltering) {
+              return (
+                <div style={{
+                  display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+                  gap: '24px', padding: '0 32px 48px',
+                }}>
+                  {loading && (
+                    <div style={{ gridColumn: '1 / -1', padding: '80px', textAlign: 'center', color: 'var(--tm-card-text-muted)', fontSize: '14px' }}>
+                      Loading agents…
+                    </div>
+                  )}
+                  {!loading && filteredAgents.length === 0 && (
+                    <div style={{ gridColumn: '1 / -1', padding: '60px', textAlign: 'center', color: 'var(--tm-card-text-muted)', fontSize: '14px' }}>
+                      No agents match your filter
+                    </div>
+                  )}
+                  {!loading && filteredAgents.map((agent) => (
+                    <AgentCard
+                      key={agent.id}
+                      agent={agent}
+                      scanResult={scanResults[agent.id]}
+                      testResult={testResults[agent.id]}
+                      isDiscovering={!!rowDiscoverState[agent.id]}
+                      onTest={() => handleTest(agent)}
+                      onScan={() => handleScan(agent)}
+                      onDiscover={() => handleRowDiscover(agent)}
+                      onEdit={() => openEdit(agent)}
+                      onDelete={() => setDeleteTarget(agent)}
+                      onOpenScanModal={() => {
+                        const sr = scanResults[agent.id];
+                        if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
+                      }}
+                    />
+                  ))}
+                  {!loading && agents.length > 0 && <DeployCard onClick={openCreate} />}
+                </div>
+              );
+            }
+
+            // No filter: show folder structure
+            const folderedAgentIds = new Set(folderState.folders.flatMap(f => f.agentIds));
+            const ungroupedAgents = agents.filter(a => !folderedAgentIds.has(a.id));
+
+            return (
+              <div style={{ padding: '0 32px 48px' }}>
+                {loading && (
+                  <div style={{ padding: '80px', textAlign: 'center', color: 'var(--tm-card-text-muted)', fontSize: '14px' }}>
+                    Loading agents…
+                  </div>
+                )}
+
+                {!loading && agents.length === 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}>
+                    <DeployCard onClick={openCreate} />
+                  </div>
+                )}
+
+                {/* Folders */}
+                {!loading && folderState.folders.map(folder => {
+                  const folderAgents = folder.agentIds.map(id => agents.find(a => a.id === id)).filter(Boolean) as Agent[];
+                  return (
+                    <div key={folder.id} style={{ marginBottom: '24px' }}>
+                      {/* Folder header */}
+                      <FolderHeader
+                        folder={folder}
+                        count={folderAgents.length}
+                        isDragOver={dragOverId === `folder:${folder.id}`}
+                        onToggleCollapse={() => toggleFolderCollapse(folder.id)}
+                        onRename={(name) => renameFolderInline(folder.id, name)}
+                        onDragOver={(e) => { e.preventDefault(); setDragOverId(`folder:${folder.id}`); }}
+                        onDragLeave={() => setDragOverId(null)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setDragOverId(null);
+                          const draggedId = e.dataTransfer.getData('agentId');
+                          if (draggedId) handleDropOntoFolder(draggedId, folder.id);
+                        }}
+                      />
+                      {/* Folder cards */}
+                      {!folder.collapsed && (
+                        <div style={{
+                          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px',
+                          padding: '16px',
+                          background: 'rgba(255,255,255,0.02)',
+                          border: '1px solid rgba(255,255,255,0.06)',
+                          borderTop: 'none',
+                          borderRadius: '0 0 12px 12px',
+                        }}>
+                          {folderAgents.map(agent => (
+                            <AgentCard
+                              key={agent.id}
+                              agent={agent}
+                              scanResult={scanResults[agent.id]}
+                              testResult={testResults[agent.id]}
+                              isDiscovering={!!rowDiscoverState[agent.id]}
+                              onTest={() => handleTest(agent)}
+                              onScan={() => handleScan(agent)}
+                              onDiscover={() => handleRowDiscover(agent)}
+                              onEdit={() => openEdit(agent)}
+                              onDelete={() => setDeleteTarget(agent)}
+                              onOpenScanModal={() => {
+                                const sr = scanResults[agent.id];
+                                if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
+                              }}
+                              isDragOver={dragOverId === agent.id}
+                              onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); setDragOverId(null); }}
+                              onDragOver={(e) => { e.preventDefault(); setDragOverId(agent.id); }}
+                              onDrop={(e) => {
+                                e.preventDefault();
+                                setDragOverId(null);
+                                const draggedId = e.dataTransfer.getData('agentId');
+                                if (draggedId) handleAgentDrop(draggedId, agent.id);
+                              }}
+                              onRemoveFromFolder={() => removeAgentFromFolder(agent.id)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Ungrouped agents */}
+                {!loading && ungroupedAgents.length > 0 && (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px',
+                  }}>
+                    {ungroupedAgents.map(agent => (
+                      <AgentCard
+                        key={agent.id}
+                        agent={agent}
+                        scanResult={scanResults[agent.id]}
+                        testResult={testResults[agent.id]}
+                        isDiscovering={!!rowDiscoverState[agent.id]}
+                        onTest={() => handleTest(agent)}
+                        onScan={() => handleScan(agent)}
+                        onDiscover={() => handleRowDiscover(agent)}
+                        onEdit={() => openEdit(agent)}
+                        onDelete={() => setDeleteTarget(agent)}
+                        onOpenScanModal={() => {
+                          const sr = scanResults[agent.id];
+                          if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
+                        }}
+                        isDragOver={dragOverId === agent.id}
+                        onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); setDragOverId(null); }}
+                        onDragOver={(e) => { e.preventDefault(); setDragOverId(agent.id); }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setDragOverId(null);
+                          const draggedId = e.dataTransfer.getData('agentId');
+                          if (draggedId) handleAgentDrop(draggedId, agent.id);
+                        }}
+                      />
+                    ))}
+                    <DeployCard onClick={openCreate} />
+                  </div>
+                )}
+
+                {/* No ungrouped agents but there are folders — still show DeployCard */}
+                {!loading && agents.length > 0 && ungroupedAgents.length === 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px', marginTop: '8px' }}>
+                    <DeployCard onClick={openCreate} />
+                  </div>
+                )}
               </div>
-            )}
-
-            {!loading && agents.length === 0 && (
-              <DeployCard onClick={openCreate} />
-            )}
-
-            {!loading && agents.length > 0 && filteredAgents.length === 0 && (
-              <div style={{ gridColumn: '1 / -1', padding: '60px', textAlign: 'center', color: 'var(--tm-card-text-muted)', fontSize: '14px' }}>
-                No agents match your filter
-              </div>
-            )}
-
-            {!loading && filteredAgents.map((agent) => (
-              <AgentCard
-                key={agent.id}
-                agent={agent}
-                scanResult={scanResults[agent.id]}
-                testResult={testResults[agent.id]}
-                isDiscovering={!!rowDiscoverState[agent.id]}
-                onTest={() => handleTest(agent)}
-                onScan={() => handleScan(agent)}
-                onDiscover={() => handleRowDiscover(agent)}
-                onEdit={() => openEdit(agent)}
-                onDelete={() => setDeleteTarget(agent)}
-                onOpenScanModal={() => {
-                  const sr = scanResults[agent.id];
-                  if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
-                }}
-              />
-            ))}
-
-            {!loading && agents.length > 0 && (
-              <DeployCard onClick={openCreate} />
-            )}
-          </div>
+            );
+          })()}
         </main>
 
         {/* ── Create / Edit Modal ── */}
@@ -1724,6 +2142,36 @@ export default function AdminAgentsPage() {
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
               <button className="ghost-btn" onClick={() => setDeleteTarget(null)} style={{ padding: '8px 20px', fontSize: '14px' }}>Cancel</button>
               <button className="delete-btn" onClick={handleDelete} style={{ padding: '8px 20px', fontSize: '14px', fontWeight: 700 }}>Delete</button>
+            </div>
+          </Modal>
+        )}
+
+        {/* ── Name folder modal ── */}
+        {pendingFolder && (
+          <Modal title="Name this folder" onClose={() => { setPendingFolder(null); setFolderNameInput(''); }}>
+            <p style={{ color: 'var(--tm-card-text-muted)', fontSize: '13px', marginBottom: '20px', lineHeight: 1.55 }}>
+              Grouping <strong style={{ color: 'var(--tm-card-text)' }}>{pendingFolder.agentA.display_name}</strong> and <strong style={{ color: 'var(--tm-card-text)' }}>{pendingFolder.agentB.display_name}</strong> into a folder.
+            </p>
+            <Field label="Folder name">
+              <input
+                style={inputStyle}
+                autoFocus
+                value={folderNameInput}
+                onChange={(e) => setFolderNameInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') confirmCreateFolder(); if (e.key === 'Escape') { setPendingFolder(null); setFolderNameInput(''); } }}
+                placeholder="e.g. Research Agents"
+              />
+            </Field>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
+              <button className="ghost-btn" onClick={() => { setPendingFolder(null); setFolderNameInput(''); }} style={{ padding: '8px 20px', fontSize: '14px' }}>Cancel</button>
+              <button
+                onClick={confirmCreateFolder}
+                style={{
+                  padding: '8px 22px', borderRadius: '9px', border: 'none',
+                  background: 'var(--tm-accent)', color: '#fff',
+                  cursor: 'pointer', fontSize: '14px', fontWeight: 600,
+                }}
+              >Create Folder</button>
             </div>
           </Modal>
         )}
