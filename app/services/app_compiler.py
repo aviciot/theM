@@ -269,13 +269,24 @@ async def compile_graph(
     # ── 2. Upsert app_orchestrators (keyed by node_id) ────────────────────────
 
     existing_ao_by_node_id = {ao.node_id: ao for ao in existing_ao_list}
+    # Also index by AO DB id — frontend always sends appOrchestratorId in node data,
+    # so we can match existing rows even when the canvas node_id differs from what
+    # migration 018 backfilled (e.g. "orch_<uuid>" vs "orch-<uuid>").
+    existing_ao_by_db_id = {str(ao.id): ao for ao in existing_ao_list}
     touched_names: list[str] = []
     node_id_to_ao: dict[str, AppOrchestrator] = {}
 
     for orch_node in orch_nodes:
         node_id = orch_node.id
         d = orch_node.data
-        existing_ao = existing_ao_by_node_id.get(node_id)
+        ao_db_id = d.get("appOrchestratorId") or d.get("app_orchestrator_id")
+        existing_ao = (
+            existing_ao_by_node_id.get(node_id)
+            or (existing_ao_by_db_id.get(str(ao_db_id)) if ao_db_id else None)
+        )
+        # If matched by DB id with a different node_id, update so future saves use exact match
+        if existing_ao and existing_ao.node_id != node_id:
+            existing_ao.node_id = node_id
 
         # Derive allowed_agent_ids from edges
         derived_agent_ids = _resolve_agents_for_orch(node_id, graph)
