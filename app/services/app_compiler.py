@@ -276,6 +276,14 @@ async def compile_graph(
     touched_names: list[str] = []
     node_id_to_ao: dict[str, AppOrchestrator] = {}
 
+    # Derive delegatable from graph structure: an orch is delegatable iff another
+    # orch has an outgoing edge to it. No checkbox needed — the edge IS the declaration.
+    orch_node_ids = {n.id for n in orch_nodes}
+    delegatable_node_ids = {
+        e.target for e in graph.edges
+        if e.source in orch_node_ids and e.target in orch_node_ids
+    }
+
     for orch_node in orch_nodes:
         node_id = orch_node.id
         d = orch_node.data
@@ -288,12 +296,13 @@ async def compile_graph(
         if existing_ao and existing_ao.node_id != node_id:
             existing_ao.node_id = node_id
 
-        # Derive allowed_agent_ids from edges
+        # Derive allowed_agent_ids and delegatable from edges — not from node data
         derived_agent_ids = _resolve_agents_for_orch(node_id, graph)
+        is_delegatable = node_id in delegatable_node_ids
 
         if existing_ao is not None:
             # Update mutable fields — name is immutable
-            _apply_orch_data(existing_ao, d, derived_agent_ids)
+            _apply_orch_data(existing_ao, d, derived_agent_ids, is_delegatable)
             node_id_to_ao[node_id] = existing_ao
             touched_names.append(existing_ao.name)
         else:
@@ -315,7 +324,7 @@ async def compile_graph(
                 max_iterations=d.get("maxIterations") or d.get("max_iterations") or 10,
                 max_parallel_tools=d.get("maxParallelTools") or d.get("max_parallel_tools") or 3,
                 history_window=d.get("historyWindow") or d.get("history_window") or 20,
-                delegatable=bool(d.get("delegatable", False)),
+                delegatable=is_delegatable,
                 kind=d.get("kind") or "standard",
                 budget_tokens=d.get("budgetTokens") or d.get("budget_tokens"),
                 allowed_agent_ids=[str(a) for a in derived_agent_ids],
@@ -432,7 +441,7 @@ async def compile_graph(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _apply_orch_data(ao: AppOrchestrator, d: Dict[str, Any], derived_agent_ids: List[str]) -> None:
+def _apply_orch_data(ao: AppOrchestrator, d: Dict[str, Any], derived_agent_ids: List[str], delegatable: bool = False) -> None:
     """Apply graph node data onto an existing AppOrchestrator row. Name is immutable."""
     def _get(key1: str, key2: str, default: Any = None) -> Any:
         v = d.get(key1)
@@ -459,9 +468,7 @@ def _apply_orch_data(ao: AppOrchestrator, d: Dict[str, Any], derived_agent_ids: 
     hw = _get("historyWindow", "history_window")
     if hw is not None:
         ao.history_window = int(hw)
-    delegatable = _get("delegatable", "delegatable")
-    if delegatable is not None:
-        ao.delegatable = bool(delegatable)
+    ao.delegatable = delegatable  # always derived from graph structure, not node data
     kind = d.get("kind")
     if kind is not None:
         ao.kind = kind

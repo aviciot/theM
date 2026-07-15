@@ -1215,18 +1215,6 @@ function PropertiesPanel({
                     <input type="number" min={0} max={200} style={inputStyle} value={d.historyWindow} onChange={e => onUpdateNode(selectedNode.id, { historyWindow: parseInt(e.target.value, 10) || 20 })} />
                   </div>
                 </div>
-                <div style={{ ...fieldWrap, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}
-                    title="When enabled, this orchestrator can be called as a tool by other orchestrators. Required for Orch→Orch delegation on the canvas.">
-                    <input
-                      type="checkbox"
-                      checked={!!d.delegatable}
-                      onChange={e => onUpdateNode(selectedNode.id, { delegatable: e.target.checked })}
-                      style={{ accentColor: C.purple }}
-                    />
-                    Delegatable — expose as sub-orchestrator
-                  </label>
-                </div>
                 <div style={fieldWrap}>
                   <label style={labelStyle}>Connected Agents</label>
                   <div style={{ fontSize: 12, color: C.textMuted, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
