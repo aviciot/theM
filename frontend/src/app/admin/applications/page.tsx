@@ -531,25 +531,10 @@ function buildNodesFromApp(
   app: Application,
   agents: Agent[],
 ): { nodes: Node[]; edges: Edge[] } {
-  // Preferred: read from persisted graph (positions authoritative, no reconstruction)
-  if (app.nodes && app.nodes.length > 0) {
-    const nodes: Node[] = app.nodes.map(gn => ({
-      id: gn.node_id,
-      type: gn.node_type === 'entry_point' ? 'entryPoint' : gn.node_type,
-      position: { x: gn.position_x, y: gn.position_y },
-      data: gn.data,
-    }));
-    const edges: Edge[] = (app.edges ?? []).map(ge => ({
-      id: ge.edge_id,
-      source: ge.source_node_id,
-      target: ge.target_node_id,
-      animated: true,
-      style: EDGE_STYLE,
-    }));
-    return { nodes, edges };
-  }
+  // Canvas layout is a ref-keyed position map: {"ep:<slug>": {x,y}, "orch:<ao_id>": {x,y}, ...}
+  // Reconstruct logical graph from typed tables, then apply saved positions (if any).
+  const layout = app.canvas?.layout ?? {};
 
-  // Fallback: reconstruct from typed tables (pre-graph apps or API clients that don't send graph)
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
@@ -566,12 +551,15 @@ function buildNodesFromApp(
   // Track which agent node ids have been emitted (agent_{agentId}_{aoId})
   const emittedAgentNodeIds = new Set<string>();
 
+  // Helper: get saved position or null (dagre will fill in missing ones)
+  const pos = (key: string) => layout[key] ?? null;
+
   // One EP node per entry-point row
   app.entry_points.forEach((ep, idx) => {
-    const epId = `ep_${idx}`;
+    const epId = `ep_${ep.slug}`;
     nodes.push({
       id: epId, type: 'entryPoint',
-      position: { x: 150 + idx * 240, y: 60 },
+      position: pos(`ep:${ep.slug}`) ?? { x: 150 + idx * 240, y: 60 },
       data: {
         label: app.name,
         epType: (ep.entry_point_type as EntryPointType) ?? 'websocket',
@@ -586,7 +574,7 @@ function buildNodesFromApp(
     const aoId = ep.app_orchestrator_id ?? ep.app_orchestrator?.id;
     if (aoId) {
       const orchNodeId = `orch_${aoId}`;
-      edges.push({ id: `e_ep_orch_${idx}`, source: epId, target: orchNodeId, animated: true, style: EDGE_STYLE });
+      edges.push({ id: `e_ep_orch_${ep.slug}`, source: epId, target: orchNodeId, animated: true, style: EDGE_STYLE });
 
       if (!emittedOrchIds.has(aoId)) {
         emittedOrchIds.add(aoId);
@@ -594,7 +582,7 @@ function buildNodesFromApp(
         if (ao) {
           nodes.push({
             id: orchNodeId, type: 'orchestrator',
-            position: { x: 250, y: 220 },
+            position: pos(`orch:${aoId}`) ?? { x: 250, y: 220 },
             data: {
               appOrchestratorId: ao.id,
               orchestratorId: ao.id,
@@ -619,12 +607,12 @@ function buildNodesFromApp(
           const spread = Math.max(allowedAgents.length * 180, 400);
           const startX = 300 - spread / 2 + 90;
           allowedAgents.forEach((agent, i) => {
-            const agentNodeId = `agent_${agent.id}_${aoId}`;
+            const agentNodeId = `agent_${agent.id}`;
             if (!emittedAgentNodeIds.has(agentNodeId)) {
               emittedAgentNodeIds.add(agentNodeId);
               nodes.push({
                 id: agentNodeId, type: 'agent',
-                position: { x: startX + i * 190, y: 420 },
+                position: pos(`agent:${agent.id}`) ?? { x: startX + i * 190, y: 420 },
                 data: {
                   agentId: agent.id,
                   name: agent.slug,
@@ -637,15 +625,20 @@ function buildNodesFromApp(
                 } satisfies AgentData,
               });
             }
-            edges.push({ id: `e_orch_agent_${aoId}_${i}`, source: orchNodeId, target: agentNodeId, animated: true, style: EDGE_STYLE });
+            edges.push({ id: `e_orch_agent_${aoId}_${agent.id}`, source: orchNodeId, target: agentNodeId, animated: true, style: EDGE_STYLE });
           });
         }
       }
     }
   });
 
-  const laid = applyDagreLayout(nodes, edges);
-  return { nodes: laid, edges };
+  // Only apply dagre auto-layout if we have NO saved positions (new app or import without canvas)
+  const hasLayout = Object.keys(layout).length > 0;
+  if (!hasLayout) {
+    const laid = applyDagreLayout(nodes, edges);
+    return { nodes: laid, edges };
+  }
+  return { nodes, edges };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -2240,7 +2233,7 @@ function BuilderView({
   }
   const nodesRef = useRef<Node[]>(initial.nodes);
   const edgesRef = useRef<Edge[]>(initial.edges);
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, getViewport } = useReactFlow();
 
   const epNode = nodes.find((n: Node) => n.type === 'entryPoint');
 
@@ -2681,39 +2674,31 @@ function BuilderView({
 
       const resolvedName = appName.trim() || epPairs[0].epNode.data.appName || epPairs[0].epNode.data.slug;
 
-      const cleanData = (d: Record<string, unknown>): Record<string, unknown> => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { _shake, _error, _errorMsg, _scanning, ...rest } = d;
-        return rest;
-      };
-
-      const graphNodes = nodes.map((n: Node) => ({
-        node_id: n.id,
-        node_type: n.type === 'entryPoint' ? 'entry_point' : (n.type ?? 'agent'),
-        ref_id:
-          n.type === 'orchestrator'
-            ? ((n.data as OrchestratorData).appOrchestratorId ?? null)
-            : n.type === 'agent'
-            ? ((n.data as AgentData).agentId ?? null)
-            : null,
-        position_x: n.position.x,
-        position_y: n.position.y,
-        data: cleanData(n.data as Record<string, unknown>),
-      }));
-
-      const graphEdges = edges.map((e: Edge) => ({
-        edge_id: e.id,
-        source_node_id: e.source,
-        target_node_id: e.target,
-        data: (e.data ?? {}) as Record<string, unknown>,
-      }));
+      // Build canvas layout: ref-keyed position map for each node.
+      // Key format: "ep:<slug>", "orch:<ao_id>", "agent:<agent_id>", "mw:<node_id>"
+      // No structural data — only positions + viewport. Runtime never reads this.
+      const canvasLayout: Record<string, { x: number; y: number }> = {};
+      nodes.forEach((n: Node) => {
+        if (n.type === 'entryPoint') {
+          const slug = (n.data as EntryPointData).slug;
+          if (slug) canvasLayout[`ep:${slug}`] = { x: n.position.x, y: n.position.y };
+        } else if (n.type === 'orchestrator') {
+          const aoId = (n.data as OrchestratorData).appOrchestratorId;
+          if (aoId) canvasLayout[`orch:${aoId}`] = { x: n.position.x, y: n.position.y };
+        } else if (n.type === 'agent') {
+          const agentId = (n.data as AgentData).agentId;
+          if (agentId) canvasLayout[`agent:${agentId}`] = { x: n.position.x, y: n.position.y };
+        } else if (n.type === 'middleware') {
+          const nodeId = (n.data as MiddlewareData).nodeId;
+          if (nodeId) canvasLayout[`mw:${nodeId}`] = { x: n.position.x, y: n.position.y };
+        }
+      });
 
       const body: Record<string, unknown> = {
         name: resolvedName,
         enabled: deploy ? true : (currentApp?.enabled ?? false),
         entry_points: entryPoints,
-        nodes: graphNodes,
-        edges: graphEdges,
+        canvas: { layout: canvasLayout, viewport: getViewport() },
       };
 
       let saved: Application;
@@ -2723,25 +2708,12 @@ function BuilderView({
         saved = await themApi.createApplication(body);
       }
       setCurrentApp(saved);
-      // Rehydrate canvas from the authoritative saved graph so ids + positions are consistent.
-      if (saved.nodes && saved.nodes.length > 0) {
+      // Rehydrate canvas from the saved application so EP ids, AO ids, and positions are correct.
+      // buildNodesFromApp reads saved.canvas.layout for positions; writes back correct DB ids.
+      {
         const rebuilt = buildNodesFromApp(saved, agents);
         setNodes(rebuilt.nodes);
         setEdges(rebuilt.edges);
-      } else {
-        // Fallback: server didn't return a graph — write back ids to existing nodes manually.
-        saved.entry_points.forEach(ep => {
-          const matchingEpNode = nodes.find((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === ep.slug);
-          if (matchingEpNode) {
-            updateNodeData(matchingEpNode.id, { _epId: ep.id });
-            // Also write back the AppOrchestrator id to the connected orch node
-            const orchEdge = edges.find((e: Edge) => e.source === matchingEpNode.id);
-            const orchNode = orchEdge ? nodes.find((n: Node) => n.id === orchEdge.target) : undefined;
-            if (orchNode && ep.app_orchestrator?.id) {
-              updateNodeData(orchNode.id, { appOrchestratorId: ep.app_orchestrator.id });
-            }
-          }
-        });
       }
 
       // Sync middleware wirings — iterate all orch nodes

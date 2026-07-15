@@ -145,8 +145,7 @@ def test_01_db():
 
     for tbl in ("llm_providers","config","agents","orchestrators",
                 "access_tokens","runs","run_steps","run_usage","audit_logs",
-                "applications","entry_points","app_orchestrators",
-                "app_nodes","app_edges"):
+                "applications","entry_points","app_orchestrators"):
         r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc",
                   f"SELECT count(*) FROM information_schema.tables "
                   f"WHERE table_schema='them' AND table_name='{tbl}'")
@@ -165,6 +164,19 @@ def test_01_db():
               "SELECT count(*) FROM information_schema.columns "
               "WHERE table_schema='them' AND table_name='entry_points' AND column_name='app_orchestrator_id'")
     check("entry_points.app_orchestrator_id column exists", r.strip() == "1")
+
+    # applications.canvas JSONB column (Phase 16)
+    r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc",
+              "SELECT count(*) FROM information_schema.columns "
+              "WHERE table_schema='them' AND table_name='applications' AND column_name='canvas'")
+    check("applications.canvas column exists", r.strip() == "1")
+
+    # app_nodes and app_edges tables must NOT exist (dropped in Phase 16)
+    for dropped_tbl in ("app_nodes", "app_edges"):
+        r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc",
+                  f"SELECT count(*) FROM information_schema.tables "
+                  f"WHERE table_schema='them' AND table_name='{dropped_tbl}'")
+        check(f"table them.{dropped_tbl} dropped", r.strip() == "0")
 
     # orchestrators.delegatable column
     r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc",
@@ -2225,32 +2237,32 @@ def test_27_canvas_rules():
         check("orchestrator inspector: delegatable", "delegatable" in s)
         check("orchestrator inspector: systemPrompt", "systemPrompt" in s)
 
-        # Phase 15: graph hydration branch
+        # Phase 16: canvas JSONB layout
         check("orchFingerprint deleted", "orchFingerprint" not in s)
-        check("buildNodesFromApp: app.nodes graph hydration branch", "app.nodes" in s)
-        check("buildNodesFromApp: position_x used", "position_x" in s)
-        check("handleSave: cleanData strips transient flags", "cleanData" in s)
-        check("handleSave: graphNodes payload sent", "graphNodes" in s)
-        check("handleSave: graphEdges payload sent", "graphEdges" in s)
+        check("buildNodesFromApp: canvas.layout used for positions", "canvas?.layout" in s or "canvas.layout" in s or "app.canvas" in s)
+        check("buildNodesFromApp: ref-keyed layout (ep: prefix)", '"ep:"' in s or "'ep:'" in s or "`ep:${" in s)
+        check("handleSave: canvasLayout built", "canvasLayout" in s)
+        check("handleSave: canvas payload sent", "canvas:" in s or '"canvas"' in s or "'canvas'" in s)
+        check("handleSave: no graphNodes payload", "graphNodes" not in s)
+        check("handleSave: no graphEdges payload", "graphEdges" not in s)
 
-        # Phase 15: models + backend
+        # Phase 16: models + backend
         models_src = src("app/models.py")
-        check("AppNode class defined in models.py", "class AppNode(Base)" in models_src)
-        check("AppEdge class defined in models.py", "class AppEdge(Base)" in models_src)
-        check("graph_nodes relationship on Application", "graph_nodes" in models_src)
-        check("graph_edges relationship on Application", "graph_edges" in models_src)
+        check("AppNode class removed from models.py", "class AppNode(Base)" not in models_src)
+        check("AppEdge class removed from models.py", "class AppEdge(Base)" not in models_src)
+        check("Application.canvas JSONB column", "canvas" in models_src)
 
         admin_apps_src = src("app/routers/admin_applications.py")
-        check("_save_graph helper defined", "_save_graph" in admin_apps_src)
-        check("NodeIn Pydantic model", "class NodeIn" in admin_apps_src)
-        check("EdgeIn Pydantic model", "class EdgeIn" in admin_apps_src)
-        check("_save_graph called in create_application", admin_apps_src.count("_save_graph") >= 2)
+        check("_save_graph helper removed", "_save_graph" not in admin_apps_src)
+        check("NodeIn Pydantic model removed", "class NodeIn" not in admin_apps_src)
+        check("EdgeIn Pydantic model removed", "class EdgeIn" not in admin_apps_src)
+        check("ApplicationCreate has canvas field", "canvas" in admin_apps_src)
 
-        migration_src = src("db/016_graph_storage.sql")
-        check("016_graph_storage.sql exists", True)
-        check("migration has uq_app_nodes_app_node constraint", "uq_app_nodes_app_node" in migration_src)
-        check("migration is additive (no DROP TABLE)", "DROP TABLE" not in migration_src)
-        check("migration is additive (no ALTER TABLE DROP)", "ALTER TABLE" not in migration_src or "DROP" not in migration_src)
+        migration_src = src("db/017_canvas_layout.sql")
+        check("017_canvas_layout.sql exists", True)
+        check("migration adds canvas column", "canvas" in migration_src)
+        check("migration drops app_nodes", "DROP TABLE IF EXISTS them.app_nodes" in migration_src)
+        check("migration drops app_edges", "DROP TABLE IF EXISTS them.app_edges" in migration_src)
         check("migration wrapped in transaction", "BEGIN;" in migration_src and "COMMIT;" in migration_src)
 
     except FileNotFoundError as exc:

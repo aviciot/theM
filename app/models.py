@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, Float, Integer, Numeric,
+    BigInteger, Boolean, DateTime, Integer, Numeric,
     String, Text, func, ForeignKey,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
@@ -349,6 +349,8 @@ class Application(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     presentation: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Canvas layout: {layout: {"ep:<slug>": {x,y}, "orch:<ao_id>": {x,y}, ...}, viewport: {x,y,zoom}}
+    canvas: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -360,16 +362,6 @@ class Application(Base):
         "AppOrchestrator", back_populates="application",
         cascade="all, delete-orphan",
         foreign_keys="[AppOrchestrator.application_id]",
-    )
-    graph_nodes: Mapped[List["AppNode"]] = relationship(
-        "AppNode", back_populates="application",
-        cascade="all, delete-orphan",
-        foreign_keys="[AppNode.application_id]",
-    )
-    graph_edges: Mapped[List["AppEdge"]] = relationship(
-        "AppEdge", back_populates="application",
-        cascade="all, delete-orphan",
-        foreign_keys="[AppEdge.application_id]",
     )
 
 
@@ -449,44 +441,3 @@ class MiddlewareWiring(Base):
     definition: Mapped["MiddlewareDef"] = relationship("MiddlewareDef", back_populates="wirings")
 
 
-# ── Phase 15: Canvas graph storage ───────────────────────────────────────────
-
-class AppNode(Base):
-    __tablename__ = "app_nodes"
-    __table_args__ = {"schema": "them"}
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    application_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("them.applications.id", ondelete="CASCADE"), nullable=False
-    )
-    node_id: Mapped[str] = mapped_column(Text, nullable=False)
-    node_type: Mapped[str] = mapped_column(Text, nullable=False)
-    ref_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    position_x: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    position_y: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    data: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    application: Mapped["Application"] = relationship(
-        "Application", back_populates="graph_nodes", foreign_keys=[application_id],
-    )
-
-
-class AppEdge(Base):
-    __tablename__ = "app_edges"
-    __table_args__ = {"schema": "them"}
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    application_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("them.applications.id", ondelete="CASCADE"), nullable=False
-    )
-    edge_id: Mapped[str] = mapped_column(Text, nullable=False)
-    source_node_id: Mapped[str] = mapped_column(Text, nullable=False)
-    target_node_id: Mapped[str] = mapped_column(Text, nullable=False)
-    data: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    application: Mapped["Application"] = relationship(
-        "Application", back_populates="graph_edges", foreign_keys=[application_id],
-    )
