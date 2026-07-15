@@ -1112,8 +1112,8 @@ function PropertiesPanel({
             return (
               <div>
                 <div style={fieldWrap}>
-                  <label style={labelStyle}>App Name</label>
-                  <input style={inputStyle} value={d.appName ?? d.label} onChange={e => onUpdateNode(selectedNode.id, { appName: e.target.value, label: e.target.value })} placeholder="My Application" />
+                  <label style={labelStyle}>Display Name</label>
+                  <input style={inputStyle} value={d.appName ?? d.label} onChange={e => onUpdateNode(selectedNode.id, { appName: e.target.value, label: e.target.value })} placeholder="e.g. Customer Support" />
                 </div>
                 <div style={fieldWrap}>
                   <label style={labelStyle}>Token Limit <span style={{ fontSize: 10, color: '#64748b' }}>per session · blank = unlimited</span></label>
@@ -1216,14 +1216,15 @@ function PropertiesPanel({
                   </div>
                 </div>
                 <div style={{ ...fieldWrap, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}
+                    title="When enabled, this orchestrator can be called as a tool by other orchestrators. Required for Orch→Orch delegation on the canvas.">
                     <input
                       type="checkbox"
                       checked={!!d.delegatable}
                       onChange={e => onUpdateNode(selectedNode.id, { delegatable: e.target.checked })}
                       style={{ accentColor: C.purple }}
                     />
-                    Delegatable (A2A)
+                    Delegatable — expose as sub-orchestrator
                   </label>
                 </div>
                 <div style={fieldWrap}>
