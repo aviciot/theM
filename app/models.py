@@ -93,6 +93,7 @@ class Orchestrator(Base):
     daily_budget_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     a2a_exposed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    delegatable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     voice_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     transcription_provider: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     transcription_model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -115,6 +116,68 @@ class Orchestrator(Base):
 
     runs: Mapped[List["Run"]] = relationship("Run", back_populates="orchestrator")
     access_tokens: Mapped[List["AccessToken"]] = relationship("AccessToken", back_populates="orchestrator")
+
+
+# ── Phase 14: App-scoped orchestrator instances ───────────────────────────────
+
+class AppOrchestrator(Base):
+    __tablename__ = "app_orchestrators"
+    __table_args__ = {"schema": "them"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("them.applications.id", ondelete="CASCADE"), nullable=False
+    )
+    orchestrator_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("them.orchestrators.id", ondelete="SET NULL"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    node_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False, default="standard")
+    delegatable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # ── Config columns (cloned from them.orchestrators) ───────────────────────
+    display_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    system_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    allowed_agent_ids: Mapped[List[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), nullable=False, default=list)
+    llm_provider: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    llm_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    llm_api_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    llm_base_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    max_iterations: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    max_parallel_tools: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    rate_limit_rpm: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    daily_budget_usd: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
+    voice_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    transcription_provider: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    transcription_model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    transcription_api_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tts_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    tts_provider: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tts_voice: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tts_api_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    memory_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    summarize_every_n_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    memory_raw_fallback_n: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    summarizer_provider: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summarizer_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summarizer_api_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Intentional divergence: JSONB instead of ARRAY(Text) — supports richer edge config
+    edges: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    history_window: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    budget_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # ── Timestamps ────────────────────────────────────────────────────────────
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    application: Mapped["Application"] = relationship(
+        "Application", back_populates="app_orchestrators",
+        foreign_keys=[application_id],
+    )
+    entry_points: Mapped[List["EntryPoint"]] = relationship(
+        "EntryPoint", back_populates="app_orchestrator",
+        foreign_keys="[EntryPoint.app_orchestrator_id]",
+    )
 
 
 class AccessToken(Base):
@@ -297,6 +360,11 @@ class Application(Base):
         "EntryPoint", back_populates="application",
         cascade="all, delete-orphan", order_by="EntryPoint.created_at",
     )
+    app_orchestrators: Mapped[List["AppOrchestrator"]] = relationship(
+        "AppOrchestrator", back_populates="application",
+        cascade="all, delete-orphan",
+        foreign_keys="[AppOrchestrator.application_id]",
+    )
 
 
 class EntryPoint(Base):
@@ -315,7 +383,18 @@ class EntryPoint(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    application: Mapped["Application"] = relationship("Application", back_populates="entry_points")
+    app_orchestrator_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("them.app_orchestrators.id", ondelete="CASCADE"), nullable=True
+    )
+
+    application: Mapped["Application"] = relationship(
+        "Application", back_populates="entry_points",
+        foreign_keys=[application_id],
+    )
+    app_orchestrator: Mapped[Optional["AppOrchestrator"]] = relationship(
+        "AppOrchestrator", back_populates="entry_points",
+        foreign_keys=[app_orchestrator_id],
+    )
 
 
 # ── Phase 13: Agentic Middleware ──────────────────────────────────────────────
