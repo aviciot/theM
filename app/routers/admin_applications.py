@@ -5,7 +5,7 @@ One app = parent row (name, orchestrator, presentation).
 N entry points = child rows (slug, type, access_policy, token_limit, enabled).
 Each entry point owns one AppOrchestrator instance (canvas node).
 PATCH sends full desired entry_points array; server diffs atomically.
-No Redis cache — not on hot path.
+Writes flush them:orchestrators:{name} + them:agents:registry on create/update/delete.
 """
 
 import re
@@ -567,6 +567,7 @@ async def create_application(body: ApplicationCreate, db: AsyncSession = Depends
     await db.refresh(app)
     # reload with children (eager load AppOrchestrators + EP.app_orchestrator)
     app = await _get_or_404(db, app.id)
+    await _flush_orch_caches([ao.name for ao in app.app_orchestrators])
     logger.info("application created", app_id=str(app.id), name=body.name,
                 slugs=[ep.slug for ep in app.entry_points])
     return _to_out(app, orch.name)
@@ -615,6 +616,7 @@ async def update_application(
 
     await db.commit()
     app = await _get_or_404(db, app_id)
+    await _flush_orch_caches([ao.name for ao in app.app_orchestrators])
     orch_names = await _batch_orch_names(db, {app.orchestrator_id})
     logger.info("application updated", app_id=str(app_id), name=app.name,
                 slugs=[ep.slug for ep in app.entry_points])
@@ -625,8 +627,10 @@ async def update_application(
 async def delete_application(app_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     app = await _get_or_404(db, app_id)
     name = app.name
+    orch_names_to_flush = [ao.name for ao in app.app_orchestrators]
     await db.delete(app)
     await db.commit()
+    await _flush_orch_caches(orch_names_to_flush)
     logger.info("application deleted", app_id=str(app_id), name=name)
 
 
@@ -663,6 +667,25 @@ async def _flush_mw_chain_cache(app_id: uuid.UUID) -> None:
                 break
     except Exception as exc:
         logger.warning("mw chain cache flush failed", app_id=str(app_id), error=str(exc))
+
+
+async def _flush_orch_caches(orch_names: list[str]) -> None:
+    """Bust Redis orchestrator config cache for named AppOrchestrator instances.
+
+    Called after any write that changes an AppOrchestrator row so the Temporal
+    worker and bridge replicas pick up the updated config on next request.
+    Also busts the agent registry because delegatable changes affect tool lists.
+    """
+    redis = db_module.redis_client
+    if redis is None or not orch_names:
+        return
+    try:
+        keys = [f"them:orchestrators:{n}" for n in orch_names]
+        keys.append("them:agents:registry")
+        await redis.delete(*keys)
+        logger.info("orch cache flushed", names=orch_names)
+    except Exception as exc:
+        logger.warning("orch cache flush failed", names=orch_names, error=str(exc))
 
 
 @router.put("/{app_id}/middleware-wirings", status_code=status.HTTP_204_NO_CONTENT)
