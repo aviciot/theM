@@ -484,3 +484,5 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml --profile repli
 **Fix:** Before dropping a column: `grep -rn "column_name" app/` across the whole codebase, not just the files you remember touching. Check every reference — some will be load-bearing code paths, others will be dead fallbacks.
 
 **Watch for:** When you see `if row.old_column: ...` as a fallback in an expand/contract migration, treat it as a time bomb. It must be removed in the same PR that drops the column. Also: any loader that queries by a model attribute (e.g. `Application.slug`) is a lie until you've confirmed that attribute exists in `models.py`. grep for it before assuming.
+
+Corollary: **always restart the bridge after a column drop**, even if the code change looks complete. The running Python process has the old ORM module in memory. Until restarted it generates queries for the dropped column and returns HTTP 500 on every affected endpoint.

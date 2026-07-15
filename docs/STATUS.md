@@ -165,7 +165,12 @@ Run after `db/014_app_orchestrators.sql` has been applied and all code is on Pha
 docker cp db/015_phase12_drop_deprecated.sql them-postgres:/tmp/them_015_phase12.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_015_phase12.sql
 
-# 2. Restart Temporal worker (loaders.py + shared.py changed)
+# 2. Restart bridge — REQUIRED (running process still has old ORM code that
+#    queries applications.orchestrator_id; will 500 on every agents/applications
+#    request until restarted)
+docker compose -f docker-compose.yml -f docker-compose.local.yml restart them-bridge
+
+# 3. Restart Temporal worker (loaders.py + shared.py changed)
 docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal restart them-worker
 docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 ```
