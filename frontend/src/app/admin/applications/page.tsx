@@ -66,7 +66,7 @@ const glass = {
 const deleteNodeRef = { current: (_id: string) => {} };
 
 // ── Types ────────────────────────────────────────────────────────────────────
-const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc'] as const;
+const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a'] as const;
 type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 
 interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; appName?: string; convTokenLimit?: string; _epId?: string; [key: string]: unknown; }
@@ -291,7 +291,7 @@ function InternalMBadge() {
 function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean }; selected?: boolean }) {
   const slugMissing = !data.slug;
   const accent = slugMissing ? '#f59e0b' : C.cyan;
-  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam' };
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2' };
   const msIcon = EP_MS_ICON[data.epType] ?? 'bolt';
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
@@ -587,6 +587,7 @@ const EP_META: Record<string, { emoji: string; title: string; desc: string; colo
   websocket: { emoji: '⚡', title: 'WebSocket', desc: 'Full-duplex, persistent connection. Client and server can send messages at any time. Best for chat, real-time collaboration, and interactive agents.' },
   sse:       { emoji: '📡', title: 'Server-Sent Events', desc: 'One-way server→client stream over HTTP. Lightweight, works through proxies. Best for dashboards, notifications, and read-only agent output.' },
   webrtc:    { emoji: '🎙️', title: 'WebRTC Voice', desc: 'Real-time voice via LiveKit WebRTC. Low-latency bidirectional audio with automatic voice activity detection. Best for voice assistants and spoken-word agents.', color: '#a78bfa' },
+  a2a:       { emoji: '🤖', title: 'A2A', desc: 'Agent-to-Agent endpoint. Exposes this application as an A2A skill callable by other orchestrators or external platforms.', color: '#f59e0b' },
 };
 
 function trunc(s: string | null | undefined, n = 120) {
@@ -678,7 +679,7 @@ function NodeLibrary({ orchestrators, agents, middlewareDefs, width, onWidthChan
           <SectionHeader label="Entry Points" open={openEP} onToggle={() => setOpenEP(v => !v)} />
           {openEP && (
             <div className="nl-section-list">
-              {(['websocket', 'sse', 'webrtc'] as const).map(ep => {
+              {ENTRY_POINT_TYPES.map(ep => {
                 const meta = EP_META[ep];
                 return (
                   <div key={ep} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
@@ -1018,6 +1019,7 @@ function PropertiesPanel({
                     <option value="websocket">WebSocket</option>
                     <option value="sse">SSE</option>
                     <option value="webrtc">WebRTC Voice</option>
+                    <option value="a2a">A2A</option>
                   </select>
                 </div>
                 <div style={fieldWrap}>
@@ -1042,6 +1044,7 @@ function PropertiesPanel({
                       <span style={{ flex: 1 }}>
                         {d.epType === 'websocket' ? `ws://<host>:8088/apps/${d.slug}/ws`
                           : d.epType === 'webrtc' ? `http://<host>:8088/apps/${d.slug}/voice`
+                          : d.epType === 'a2a' ? `http://<host>:8088/a2a  (skill: ${d.slug})`
                           : `http://<host>:8088/apps/${d.slug}/sse`}
                       </span>
                       <button
@@ -1050,6 +1053,8 @@ function PropertiesPanel({
                             ? `ws://localhost:8088/apps/${d.slug}/ws`
                             : d.epType === 'webrtc'
                             ? `http://localhost:8088/apps/${d.slug}/voice`
+                            : d.epType === 'a2a'
+                            ? `http://localhost:8088/a2a`
                             : `http://localhost:8088/apps/${d.slug}/sse`
                         )}
                         title="Copy endpoint URL"
@@ -1990,7 +1995,7 @@ function toSlug(s: string) {
 interface EpPickerEntry { epNode: Node; orchName: string; slug: string; label: string; epType: string; }
 
 function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPickerEntry[]; onSelect: (e: EpPickerEntry) => void; onClose: () => void; }) {
-  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam' };
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2' };
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(5,20,36,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
       <div style={{ ...glass, borderRadius: 16, padding: '28px 32px', minWidth: 360, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
@@ -2930,13 +2935,14 @@ const APP_CARD_STYLES = `
 `;
 
 // EP metadata
-const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam' };
-const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC' };
+const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2' };
+const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC', a2a: 'A2A' };
 
 function epIconColor(type: string): { color: string; glow: string; border: string } {
   if (type === 'websocket') return { color: '#00d1ff', glow: 'rgba(0,209,255,0.25)', border: 'rgba(0,209,255,0.45)' };
   if (type === 'sse')       return { color: '#a78bfa', glow: 'rgba(167,139,250,0.22)', border: 'rgba(167,139,250,0.42)' };
   if (type === 'webrtc')    return { color: '#a78bfa', glow: 'rgba(167,139,250,0.22)', border: 'rgba(167,139,250,0.42)' };
+  if (type === 'a2a')       return { color: '#f59e0b', glow: 'rgba(245,158,11,0.22)', border: 'rgba(245,158,11,0.42)' };
   return { color: '#94a3b8', glow: 'rgba(148,163,184,0.15)', border: 'rgba(148,163,184,0.3)' };
 }
 

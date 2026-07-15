@@ -172,14 +172,37 @@ export interface OrchestratorFull {
   history_window?: number | null;
 }
 
+export interface AppOrchestratorOut {
+  id: string;
+  name: string;
+  display_name: string | null;
+  system_prompt: string | null;
+  llm_provider: string | null;
+  llm_model: string | null;
+  max_iterations: number;
+  max_parallel_tools: number;
+  allowed_agent_ids: string[];
+  delegatable: boolean;
+  kind: string;
+  node_id: string | null;
+  enabled: boolean;
+  history_window: number;
+  budget_tokens: number | null;
+  voice_enabled: boolean;
+  tts_enabled: boolean;
+  memory_enabled: boolean;
+}
+
 export interface EntryPoint {
   id: string;
   application_id: string;
   slug: string;
-  entry_point_type: 'websocket' | 'sse' | 'webrtc';
+  entry_point_type: 'websocket' | 'sse' | 'webrtc' | 'a2a';
   access_policy: Record<string, unknown>;
   conversation_token_limit: number | null;
   enabled: boolean;
+  app_orchestrator_id: string | null;
+  app_orchestrator: AppOrchestratorOut | null;
   created_at: string;
   updated_at: string;
 }
@@ -192,6 +215,7 @@ export interface Application {
   presentation: Record<string, unknown>;
   enabled: boolean;
   entry_points: EntryPoint[];
+  app_orchestrators: AppOrchestratorOut[];
   created_at: string;
   updated_at: string;
 }
