@@ -122,7 +122,10 @@ async def _load_entry_point(db: AsyncSession, slug: str) -> EntryPoint:
             EntryPoint.enabled == True,   # noqa: E712
             Application.enabled == True,  # noqa: E712
         )
-        .options(selectinload(EntryPoint.application))
+        .options(
+            selectinload(EntryPoint.application),
+            selectinload(EntryPoint.app_orchestrator),
+        )
     )
     ep = result.scalar_one_or_none()
     if ep is None:
@@ -246,8 +249,15 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
 
         user_id = token_payload.get("user_id", 0)
 
-        from app.models import Orchestrator
-        orch = await db.get(Orchestrator, app_row.orchestrator_id)
+        if ep.entry_point_type == "a2a":
+            raise HTTPException(status_code=400, detail="This entry point is A2A-only. Use the /a2a endpoint.")
+
+        orch = ep.app_orchestrator
+        if orch is None:
+            # fallback for pre-migration rows without app_orchestrator_id
+            from app.models import Orchestrator
+            if app_row and app_row.orchestrator_id:
+                orch = await db.get(Orchestrator, app_row.orchestrator_id)
         if orch is None or not orch.enabled:
             raise HTTPException(status_code=503, detail="Bound orchestrator unavailable")
 
@@ -281,7 +291,7 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
         try:
             if _TEMPORAL_ENABLED:
                 from app.temporal.bridge_client import start_orchestration_workflow, stream_run_events
-                handle, _ = await start_orchestration_workflow(
+                handle, _, pubsub_rest = await start_orchestration_workflow(
                     orchestrator_name=orch_name_for_task,
                     user_message=body.message,
                     user_id=user_id,
@@ -290,6 +300,12 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
                     session_id=uuid.uuid4(),
                     entry_point_slug=slug,
                 )
+                # REST path polls result directly — close the pubsub we don't need
+                if pubsub_rest is not None:
+                    try:
+                        await pubsub_rest.aclose()
+                    except Exception:
+                        pass
                 result = await handle.result()
                 if result.get("status") != "completed":
                     run_error = result.get("error")
@@ -407,8 +423,15 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
 
         user_id = token_payload.get("user_id", 0)
 
-        from app.models import Orchestrator
-        orch = await db.get(Orchestrator, app_row.orchestrator_id)
+        if ep.entry_point_type == "a2a":
+            raise HTTPException(status_code=400, detail="This entry point is A2A-only. Use the /a2a endpoint.")
+
+        orch = ep.app_orchestrator
+        if orch is None:
+            # fallback for pre-migration rows without app_orchestrator_id
+            from app.models import Orchestrator
+            if app_row and app_row.orchestrator_id:
+                orch = await db.get(Orchestrator, app_row.orchestrator_id)
         if orch is None or not orch.enabled:
             raise HTTPException(status_code=503, detail="Bound orchestrator unavailable")
 
@@ -432,7 +455,7 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
         try:
             if _TEMPORAL_ENABLED:
                 from app.temporal.bridge_client import start_orchestration_workflow, stream_run_events
-                handle, _ = await start_orchestration_workflow(
+                handle, _, pubsub_sse = await start_orchestration_workflow(
                     orchestrator_name=orch_name,
                     user_message=message,
                     user_id=user_id,
@@ -445,6 +468,7 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
                     context_id=str(ctx_id),
                     workflow_handle=handle,
                     emit_fn=edge.emit,
+                    pubsub=pubsub_sse,
                 )
             else:
                 async with db_module.AsyncSessionLocal() as run_db:
@@ -493,8 +517,17 @@ async def ws_entry(slug: str, websocket: WebSocket):
             policy = ep.access_policy or {}
             conv_token_limit = ep.conversation_token_limit
 
-            from app.models import Orchestrator
-            orch = await db.get(Orchestrator, app_row.orchestrator_id)
+            if ep.entry_point_type == "a2a":
+                await websocket.send_json({"type": "error", "message": "This entry point is A2A-only. Use the /a2a endpoint."})
+                await websocket.close(code=4000)
+                return
+
+            orch = ep.app_orchestrator
+            if orch is None:
+                # fallback for pre-migration rows without app_orchestrator_id
+                from app.models import Orchestrator
+                if app_row and app_row.orchestrator_id:
+                    orch = await db.get(Orchestrator, app_row.orchestrator_id)
             if orch is None or not orch.enabled:
                 await websocket.send_json({"type": "error", "message": "Bound orchestrator unavailable"})
                 await websocket.close(code=4003)
@@ -555,16 +588,20 @@ async def ws_entry(slug: str, websocket: WebSocket):
 
     try:
         if _TEMPORAL_ENABLED:
-            from app.temporal.bridge_client import cancel_workflow, start_orchestration_workflow, stream_run_events
-            handle, workflow_id = await start_orchestration_workflow(
-                orchestrator_name=orchestrator_name,
-                user_message=user_message,
-                user_id=user_id,
-                token_payload=token_payload,
-                context_id=context_id,
-                session_id=session_id,
-                entry_point_slug=slug,
-            )
+            from app.temporal.bridge_client import cancel_workflow, start_orchestration_workflow, stream_run_events, DeadContextError
+            try:
+                handle, workflow_id, pubsub = await start_orchestration_workflow(
+                    orchestrator_name=orchestrator_name,
+                    user_message=user_message,
+                    user_id=user_id,
+                    token_payload=token_payload,
+                    context_id=context_id,
+                    session_id=session_id,
+                    entry_point_slug=slug,
+                )
+            except DeadContextError as exc:
+                await websocket.send_json({"type": "error", "message": str(exc), "context_id": None})
+                return
             cancel_evt = asyncio.Event()
 
             async def _ws_emit(event: dict) -> None:
@@ -589,6 +626,7 @@ async def ws_entry(slug: str, websocket: WebSocket):
                     workflow_handle=handle,
                     emit_fn=_ws_emit,
                     cancel_event=cancel_evt,
+                    pubsub=pubsub,
                 )
             )
             cancel_t = asyncio.ensure_future(_ws_cancel_listener())
