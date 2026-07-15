@@ -16,14 +16,14 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, delete, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import app.database as db_module
 from app.database import get_db
-from app.models import Application, EntryPoint, Orchestrator, MiddlewareWiring, AppOrchestrator
+from app.models import Application, EntryPoint, Orchestrator, MiddlewareWiring, AppOrchestrator, AppNode, AppEdge
 # Note: Orchestrator is imported for _load_all_orch_names shared-namespace uniqueness check only.
 from app.utils.logger import logger
 
@@ -75,6 +75,37 @@ class AppOrchestratorIn(BaseModel):
     memory_raw_fallback_n: Optional[int] = None
     summarizer_provider: Optional[str] = None
     summarizer_model: Optional[str] = None
+
+
+class NodeIn(BaseModel):
+    node_id: str
+    node_type: str
+    ref_id: Optional[uuid.UUID] = None
+    position_x: float = 0.0
+    position_y: float = 0.0
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+class EdgeIn(BaseModel):
+    edge_id: str
+    source_node_id: str
+    target_node_id: str
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+class NodeOut(BaseModel):
+    node_id: str
+    node_type: str
+    ref_id: Optional[uuid.UUID] = None
+    position_x: float
+    position_y: float
+    data: Dict[str, Any]
+    model_config = ConfigDict(from_attributes=True)
+
+class EdgeOut(BaseModel):
+    edge_id: str
+    source_node_id: str
+    target_node_id: str
+    data: Dict[str, Any]
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AppOrchestratorOut(BaseModel):
@@ -131,6 +162,8 @@ class ApplicationCreate(BaseModel):
     presentation: Dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     entry_points: List[EntryPointIn] = Field(..., min_length=1)
+    nodes: Optional[List[NodeIn]] = None
+    edges: Optional[List[EdgeIn]] = None
 
 
 class ApplicationUpdate(BaseModel):
@@ -138,6 +171,8 @@ class ApplicationUpdate(BaseModel):
     presentation: Optional[Dict[str, Any]] = None
     enabled: Optional[bool] = None
     entry_points: Optional[List[EntryPointIn]] = None  # None = don't touch; [] = rejected
+    nodes: Optional[List[NodeIn]] = None
+    edges: Optional[List[EdgeIn]] = None
 
 
 class ApplicationOut(BaseModel):
@@ -148,6 +183,8 @@ class ApplicationOut(BaseModel):
     enabled: bool
     entry_points: List[EntryPointOut]
     app_orchestrators: List[AppOrchestratorOut] = Field(default_factory=list)
+    nodes: List[NodeOut] = Field(default_factory=list)
+    edges: List[EdgeOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -214,6 +251,8 @@ async def _get_or_404(db: AsyncSession, app_id: uuid.UUID) -> Application:
         .options(
             selectinload(Application.entry_points).selectinload(EntryPoint.app_orchestrator),
             selectinload(Application.app_orchestrators),
+            selectinload(Application.graph_nodes),
+            selectinload(Application.graph_edges),
         )
     )
     row = result.scalar_one_or_none()
@@ -295,6 +334,26 @@ def _to_out(app: Application) -> ApplicationOut:
             app_orchestrator=ao_out,
         ))
     ao_list = [_app_orch_out(ao) for ao in (app.app_orchestrators or [])]
+    node_outs = [
+        NodeOut(
+            node_id=n.node_id,
+            node_type=n.node_type,
+            ref_id=n.ref_id,
+            position_x=n.position_x,
+            position_y=n.position_y,
+            data=n.data or {},
+        )
+        for n in (app.graph_nodes or [])
+    ]
+    edge_outs = [
+        EdgeOut(
+            edge_id=e.edge_id,
+            source_node_id=e.source_node_id,
+            target_node_id=e.target_node_id,
+            data=e.data or {},
+        )
+        for e in (app.graph_edges or [])
+    ]
     return ApplicationOut(
         id=app.id,
         name=app.name,
@@ -303,6 +362,8 @@ def _to_out(app: Application) -> ApplicationOut:
         enabled=app.enabled,
         entry_points=ep_outs,
         app_orchestrators=ao_list,
+        nodes=node_outs,
+        edges=edge_outs,
         created_at=app.created_at,
         updated_at=app.updated_at,
     )
@@ -421,6 +482,44 @@ def _update_app_orchestrator(ao: AppOrchestrator, orch_cfg: AppOrchestratorIn) -
         ao.summarizer_model = orch_cfg.summarizer_model
 
 
+async def _save_graph(
+    db: AsyncSession,
+    app_id: uuid.UUID,
+    nodes: List[NodeIn],
+    edges: Optional[List[EdgeIn]],
+) -> None:
+    """Full-replace canvas graph for one application. Canvas-only — not read by runtime."""
+    edges = edges or []
+    node_ids = {n.node_id for n in nodes}
+    if len(node_ids) != len(nodes):
+        raise HTTPException(422, "Duplicate node_id within nodes")
+    for e in edges:
+        if e.source_node_id not in node_ids or e.target_node_id not in node_ids:
+            raise HTTPException(422, f"Edge '{e.edge_id}' references unknown node")
+
+    await db.execute(delete(AppEdge).where(AppEdge.application_id == app_id))
+    await db.execute(delete(AppNode).where(AppNode.application_id == app_id))
+
+    for n in nodes:
+        db.add(AppNode(
+            application_id=app_id,
+            node_id=n.node_id,
+            node_type=n.node_type,
+            ref_id=n.ref_id,
+            position_x=n.position_x,
+            position_y=n.position_y,
+            data=n.data,
+        ))
+    for e in edges:
+        db.add(AppEdge(
+            application_id=app_id,
+            edge_id=e.edge_id,
+            source_node_id=e.source_node_id,
+            target_node_id=e.target_node_id,
+            data=e.data,
+        ))
+
+
 async def _apply_entry_point_diff(
     db: AsyncSession,
     app: Application,
@@ -502,6 +601,8 @@ async def list_applications(
         .options(
             selectinload(Application.entry_points).selectinload(EntryPoint.app_orchestrator),
             selectinload(Application.app_orchestrators),
+            selectinload(Application.graph_nodes),
+            selectinload(Application.graph_edges),
         )
         .order_by(Application.name)
     )
@@ -540,6 +641,9 @@ async def create_application(body: ApplicationCreate, db: AsyncSession = Depends
             enabled=ep_in.enabled,
             app_orchestrator_id=ao.id,
         ))
+
+    if body.nodes is not None:
+        await _save_graph(db, app.id, body.nodes, body.edges)
 
     await db.commit()
     await db.refresh(app)
@@ -582,6 +686,9 @@ async def update_application(
         await _check_slug_conflicts(db, [ep.slug for ep in body.entry_points], exclude_app_id=app_id)
         all_names = await _load_all_orch_names(db)
         await _apply_entry_point_diff(db, app, body.entry_points, all_names)
+
+    if body.nodes is not None:
+        await _save_graph(db, app_id, body.nodes, body.edges)
 
     await db.commit()
     app = await _get_or_404(db, app_id)

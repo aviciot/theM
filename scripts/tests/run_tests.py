@@ -145,7 +145,8 @@ def test_01_db():
 
     for tbl in ("llm_providers","config","agents","orchestrators",
                 "access_tokens","runs","run_steps","run_usage","audit_logs",
-                "applications","entry_points","app_orchestrators"):
+                "applications","entry_points","app_orchestrators",
+                "app_nodes","app_edges"):
         r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc",
                   f"SELECT count(*) FROM information_schema.tables "
                   f"WHERE table_schema='them' AND table_name='{tbl}'")
@@ -2223,6 +2224,34 @@ def test_27_canvas_rules():
         # Orchestrator inspector: editable fields
         check("orchestrator inspector: delegatable", "delegatable" in s)
         check("orchestrator inspector: systemPrompt", "systemPrompt" in s)
+
+        # Phase 15: graph hydration branch
+        check("orchFingerprint deleted", "orchFingerprint" not in s)
+        check("buildNodesFromApp: app.nodes graph hydration branch", "app.nodes" in s)
+        check("buildNodesFromApp: position_x used", "position_x" in s)
+        check("handleSave: cleanData strips transient flags", "cleanData" in s)
+        check("handleSave: graphNodes payload sent", "graphNodes" in s)
+        check("handleSave: graphEdges payload sent", "graphEdges" in s)
+
+        # Phase 15: models + backend
+        models_src = src("app/models.py")
+        check("AppNode class defined in models.py", "class AppNode(Base)" in models_src)
+        check("AppEdge class defined in models.py", "class AppEdge(Base)" in models_src)
+        check("graph_nodes relationship on Application", "graph_nodes" in models_src)
+        check("graph_edges relationship on Application", "graph_edges" in models_src)
+
+        admin_apps_src = src("app/routers/admin_applications.py")
+        check("_save_graph helper defined", "_save_graph" in admin_apps_src)
+        check("NodeIn Pydantic model", "class NodeIn" in admin_apps_src)
+        check("EdgeIn Pydantic model", "class EdgeIn" in admin_apps_src)
+        check("_save_graph called in create_application", admin_apps_src.count("_save_graph") >= 2)
+
+        migration_src = src("db/016_graph_storage.sql")
+        check("016_graph_storage.sql exists", True)
+        check("migration has uq_app_nodes_app_node constraint", "uq_app_nodes_app_node" in migration_src)
+        check("migration is additive (no DROP TABLE)", "DROP TABLE" not in migration_src)
+        check("migration is additive (no ALTER TABLE DROP)", "ALTER TABLE" not in migration_src or "DROP" not in migration_src)
+        check("migration wrapped in transaction", "BEGIN;" in migration_src and "COMMIT;" in migration_src)
 
     except FileNotFoundError as exc:
         check("applications page.tsx", False, str(exc))

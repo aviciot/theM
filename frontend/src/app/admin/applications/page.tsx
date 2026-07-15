@@ -531,6 +531,25 @@ function buildNodesFromApp(
   app: Application,
   agents: Agent[],
 ): { nodes: Node[]; edges: Edge[] } {
+  // Preferred: read from persisted graph (positions authoritative, no reconstruction)
+  if (app.nodes && app.nodes.length > 0) {
+    const nodes: Node[] = app.nodes.map(gn => ({
+      id: gn.node_id,
+      type: gn.node_type === 'entry_point' ? 'entryPoint' : gn.node_type,
+      position: { x: gn.position_x, y: gn.position_y },
+      data: gn.data,
+    }));
+    const edges: Edge[] = (app.edges ?? []).map(ge => ({
+      id: ge.edge_id,
+      source: ge.source_node_id,
+      target: ge.target_node_id,
+      animated: true,
+      style: EDGE_STYLE,
+    }));
+    return { nodes, edges };
+  }
+
+  // Fallback: reconstruct from typed tables (pre-graph apps or API clients that don't send graph)
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
@@ -2662,10 +2681,39 @@ function BuilderView({
 
       const resolvedName = appName.trim() || epPairs[0].epNode.data.appName || epPairs[0].epNode.data.slug;
 
+      const cleanData = (d: Record<string, unknown>): Record<string, unknown> => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { _shake, _error, _errorMsg, _scanning, ...rest } = d;
+        return rest;
+      };
+
+      const graphNodes = nodes.map((n: Node) => ({
+        node_id: n.id,
+        node_type: n.type === 'entryPoint' ? 'entry_point' : (n.type ?? 'agent'),
+        ref_id:
+          n.type === 'orchestrator'
+            ? ((n.data as OrchestratorData).appOrchestratorId ?? null)
+            : n.type === 'agent'
+            ? ((n.data as AgentData).agentId ?? null)
+            : null,
+        position_x: n.position.x,
+        position_y: n.position.y,
+        data: cleanData(n.data as Record<string, unknown>),
+      }));
+
+      const graphEdges = edges.map((e: Edge) => ({
+        edge_id: e.id,
+        source_node_id: e.source,
+        target_node_id: e.target,
+        data: (e.data ?? {}) as Record<string, unknown>,
+      }));
+
       const body: Record<string, unknown> = {
         name: resolvedName,
         enabled: deploy ? true : (currentApp?.enabled ?? false),
         entry_points: entryPoints,
+        nodes: graphNodes,
+        edges: graphEdges,
       };
 
       let saved: Application;
@@ -2675,20 +2723,26 @@ function BuilderView({
         saved = await themApi.createApplication(body);
       }
       setCurrentApp(saved);
-
-      // Write back DB ids to EP nodes and orch nodes
-      saved.entry_points.forEach(ep => {
-        const matchingEpNode = nodes.find((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === ep.slug);
-        if (matchingEpNode) {
-          updateNodeData(matchingEpNode.id, { _epId: ep.id });
-          // Also write back the AppOrchestrator id to the connected orch node
-          const orchEdge = edges.find((e: Edge) => e.source === matchingEpNode.id);
-          const orchNode = orchEdge ? nodes.find((n: Node) => n.id === orchEdge.target) : undefined;
-          if (orchNode && ep.app_orchestrator?.id) {
-            updateNodeData(orchNode.id, { appOrchestratorId: ep.app_orchestrator.id });
+      // Rehydrate canvas from the authoritative saved graph so ids + positions are consistent.
+      if (saved.nodes && saved.nodes.length > 0) {
+        const rebuilt = buildNodesFromApp(saved, agents);
+        setNodes(rebuilt.nodes);
+        setEdges(rebuilt.edges);
+      } else {
+        // Fallback: server didn't return a graph — write back ids to existing nodes manually.
+        saved.entry_points.forEach(ep => {
+          const matchingEpNode = nodes.find((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === ep.slug);
+          if (matchingEpNode) {
+            updateNodeData(matchingEpNode.id, { _epId: ep.id });
+            // Also write back the AppOrchestrator id to the connected orch node
+            const orchEdge = edges.find((e: Edge) => e.source === matchingEpNode.id);
+            const orchNode = orchEdge ? nodes.find((n: Node) => n.id === orchEdge.target) : undefined;
+            if (orchNode && ep.app_orchestrator?.id) {
+              updateNodeData(orchNode.id, { appOrchestratorId: ep.app_orchestrator.id });
+            }
           }
-        }
-      });
+        });
+      }
 
       // Sync middleware wirings — iterate all orch nodes
       try {

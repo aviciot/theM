@@ -187,6 +187,22 @@ export interface EntryPoint {
   app_orchestrator?: AppOrchestratorOut | null;
 }
 
+export interface AppNodeOut {
+  node_id: string;
+  node_type: 'entry_point' | 'orchestrator' | 'agent' | 'middleware';
+  ref_id: string | null;
+  position_x: number;
+  position_y: number;
+  data: Record<string, unknown>;
+}
+
+export interface AppEdgeOut {
+  edge_id: string;
+  source_node_id: string;
+  target_node_id: string;
+  data: Record<string, unknown>;
+}
+
 export interface Application {
   id: string;
   name: string;
@@ -196,6 +212,8 @@ export interface Application {
   enabled: boolean;
   entry_points: EntryPoint[];
   app_orchestrators?: AppOrchestratorOut[];
+  nodes?: AppNodeOut[];
+  edges?: AppEdgeOut[];
   created_at: string;
   updated_at: string;
 }
