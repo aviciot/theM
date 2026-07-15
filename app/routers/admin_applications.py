@@ -55,6 +55,7 @@ class AppOrchestratorIn(BaseModel):
     silently resets unchanged ones to their defaults.  _update_app_orchestrator
     guards every assignment with `if value is not None`.
     """
+    id: Optional[uuid.UUID] = None      # present = reference existing AO by DB id
     name: Optional[str] = None          # auto-generated if omitted
     display_name: Optional[str] = None
     system_prompt: Optional[str] = None
@@ -359,7 +360,7 @@ async def _create_app_orchestrator(
         history_window=(orch_cfg.history_window if (orch_cfg and orch_cfg.history_window is not None) else 20),
         budget_tokens=orch_cfg.budget_tokens if orch_cfg else None,
         enabled=(orch_cfg.enabled if (orch_cfg and orch_cfg.enabled is not None) else True),
-        node_id=orch_cfg.node_id if orch_cfg else None,
+        node_id=(orch_cfg.node_id if (orch_cfg and orch_cfg.node_id) else f"orch_{uuid.uuid4().hex[:8]}"),
         kind=(orch_cfg.kind if (orch_cfg and orch_cfg.kind is not None) else "standard"),
         voice_enabled=(orch_cfg.voice_enabled if (orch_cfg and orch_cfg.voice_enabled is not None) else False),
         transcription_provider=orch_cfg.transcription_provider if orch_cfg else None,
@@ -597,6 +598,9 @@ async def create_application(body: ApplicationCreate, db: AsyncSession = Depends
         enabled=body.enabled,
         canvas=body.canvas,
     )
+    app.entry_points = []
+    app.app_orchestrators = []
+    app.middleware_wirings = []
     db.add(app)
     await db.flush()  # get app.id before inserting children
 

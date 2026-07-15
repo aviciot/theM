@@ -223,7 +223,7 @@ export interface AppOrchestratorOut {
 }
 
 export interface AppOrchestratorIn {
-  id?: string;
+  id?: string | null;    // reference existing AO by DB id
   display_name?: string | null;
   system_prompt?: string | null;
   llm_provider?: string | null;
