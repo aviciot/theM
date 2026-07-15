@@ -46,7 +46,7 @@
 | **Multi-EP playground** | ✓ Complete | Tabs (each EP = persistent live WS, switching is view toggle) + Compare mode (all tabs side-by-side, shared composer broadcasts to all). WebRTC EPs show voice-room button only. |
 | **Poisoned context_id fix** | ✓ Complete | `DeadContextError` + pre-subscribe pattern: bridge checks if existing workflow is closed before re-attaching; client receives `context_id: null` signal and clears localStorage. Eliminates hung sessions after workflow failure. |
 | **Entry point diff by slug** | ✓ Complete | `_apply_entry_point_diff` now keys on slug (not id). Frontend never needs to send EP id. Existing slug → UPDATE, new slug → CREATE, missing slug → DELETE. Eliminates 500 on canvas save when `_epId` was lost. |
-| **App-scoped orchestrators (Phases 1–9)** | ✓ Complete | `them.app_orchestrators`: per-app orchestrator instances owning their own config. Migration `db/014_app_orchestrators.sql`. Canvas saves inline `orchestrator:` block per EP; no more global-orch writes. `CANVAS_RULES` engine: 5 block + 1 warn rule, Save vs Deploy modes. A2A EP type. `delegatable` replaces `a2a_exposed`. Temporal path resolves `app_orchestrators` first. |
+| **App-scoped orchestrators (Phases 1–12)** | ✓ Complete | `them.app_orchestrators`: per-app orchestrator instances owning their own config. Migration `db/014_app_orchestrators.sql`. Canvas saves inline `orchestrator:` block per EP; no more global-orch writes. `CANVAS_RULES` engine: 5 block + 1 warn rule, Save vs Deploy modes. A2A EP type. `delegatable` replaces `a2a_exposed`. Temporal path resolves `app_orchestrators` first. Phase 12: dropped `applications.orchestrator_id` + `orchestrators.a2a_exposed`; `webrtc.py` fixed to load via `EntryPoint.slug`; all pre-migration fallback paths removed. |
 
 ## Infrastructure (as of 2026-07-14)
 
@@ -128,9 +128,7 @@
 - **User management UI**: no frontend for managing auth_service users/teams. Admin only via psql or curl.
 - **WebRTCEdge**: planned future phase — real-time audio, needs ASR + TTS + signaling server.
 - **Debate stack ANTHROPIC_API_KEY**: debate agents read `ANTHROPIC_API_KEY` from `.env`. Must be set and non-empty or debate runs will fail on agent invocation.
-- **Token scope for app orchestrators (Phase 12)**: `them.access_tokens.orchestrator_id` still FK to `them.orchestrators.id`. Scoped tokens cannot reach `app_orchestrators` entries until Phase 12 migrates the FK. Unscoped tokens (orchestrator_id=NULL) work today.
-- **`applications.orchestrator_id` deprecation (Phase 12)**: still present as a fallback for pre-migration rows; `drop NOT NULL + drop column` deferred to Phase 12.
-- **Test suite (Phase 11)**: tests 01/18/21/22 need updating for `app_orchestrators` columns; new tests 27/28/29 for canvas rule engine + inline save + a2a EP routing.
+- **Token scope for app orchestrators**: `them.access_tokens.orchestrator_id` is still FK to `them.orchestrators.id`. Scoped tokens cannot target `app_orchestrators` entries by UUID — unscoped tokens (orchestrator_id=NULL) are the correct approach for app-EP auth until this FK is migrated.
 
 ## Ops Runbook — Applying db/014_app_orchestrators.sql
 
@@ -157,3 +155,21 @@ docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 - Adds `app_orchestrator_id UUID FK` to `them.entry_points`
 - Widens entry_point_type CHECK to include `'a2a'`
 - Backfills `entry_points.app_orchestrator_id` for all existing EPs
+
+## Ops Runbook — Applying db/015_phase12_drop_deprecated.sql
+
+Run after `db/014_app_orchestrators.sql` has been applied and all code is on Phase 12+.
+
+```bash
+# 1. Apply migration (idempotent — IF EXISTS guards both drops)
+docker cp db/015_phase12_drop_deprecated.sql them-postgres:/tmp/them_015_phase12.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_015_phase12.sql
+
+# 2. Restart Temporal worker (loaders.py + shared.py changed)
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal restart them-worker
+docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
+```
+
+**What the migration does:**
+- Drops `them.applications.orchestrator_id` (superseded by `app_orchestrators` per-EP config)
+- Drops `them.orchestrators.a2a_exposed` (superseded by `delegatable` on both tables)

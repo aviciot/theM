@@ -472,3 +472,15 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml --profile repli
 **Fix:** Carry `"is_app_orchestrator": isinstance(row, AppOrchestrator)` in the cache dict, evaluated on the DB-miss path where `row` IS a real ORM object. Populate the `_OrchestratorProxy` field as `data.get("is_app_orchestrator", False)`. Consume at call sites as `orch.is_app_orchestrator` — a plain `bool` attribute, no `isinstance` anywhere outside the cache writer.
 
 **Watch for:** Never use `isinstance(obj, OrmModel)` on objects returned from a cache-loading function. The cache layer always returns a proxy/dataclass, not an ORM row. If a type distinction must influence runtime behavior, carry a type-flag in the serialized cache dict and read it back as a plain attribute on the proxy. This rule applies to any future cache layer wrapping SQLAlchemy models (`Agent`, `AccessToken`, `EntryPoint`, etc.).
+
+---
+
+## 2026-07-15 — Expand/contract: drop fallback paths before dropping the column
+
+**Symptom:** Phase 12 dropped `applications.orchestrator_id` and `orchestrators.a2a_exposed`. Several files still had fallback branches that referenced those columns at runtime: `apps.py` (REST/SSE/WS), `a2a_server.py` (legacy `Application.orchestrator_id → Orchestrator.name` resolution), `webrtc.py` (`_load_app` queried `Application.slug` — a column that never existed), and `loaders.py` (the `a2a_exposed == True` fallback query in `load_agents`). None of these caused an import error; they would all have blown up at request time.
+
+**Root cause:** The expand/contract pattern (`add column → use both → drop old`) requires an explicit audit pass before the drop. The fallback code was written to be safe during the expand phase, but it was never removed going into the drop phase. The pre-migration fallback in `apps.py` masked the real bug in `webrtc.py`: `_load_app` was querying `Application.slug` which does not exist on the `Application` model — slug lives on `EntryPoint`. This would have raised `AttributeError` at query time, but was never exercised because `webrtc.py` is not covered by the live test suite.
+
+**Fix:** Before dropping a column: `grep -rn "column_name" app/` across the whole codebase, not just the files you remember touching. Check every reference — some will be load-bearing code paths, others will be dead fallbacks.
+
+**Watch for:** When you see `if row.old_column: ...` as a fallback in an expand/contract migration, treat it as a time bomb. It must be removed in the same PR that drops the column. Also: any loader that queries by a model attribute (e.g. `Application.slug`) is a lie until you've confirmed that attribute exists in `models.py`. grep for it before assuming.
