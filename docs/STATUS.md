@@ -1,5 +1,5 @@
 # the-M Status
-# Last updated: 2026-07-14
+# Last updated: 2026-07-15
 
 ## Build Progress
 
@@ -46,6 +46,7 @@
 | **Multi-EP playground** | ✓ Complete | Tabs (each EP = persistent live WS, switching is view toggle) + Compare mode (all tabs side-by-side, shared composer broadcasts to all). WebRTC EPs show voice-room button only. |
 | **Poisoned context_id fix** | ✓ Complete | `DeadContextError` + pre-subscribe pattern: bridge checks if existing workflow is closed before re-attaching; client receives `context_id: null` signal and clears localStorage. Eliminates hung sessions after workflow failure. |
 | **Entry point diff by slug** | ✓ Complete | `_apply_entry_point_diff` now keys on slug (not id). Frontend never needs to send EP id. Existing slug → UPDATE, new slug → CREATE, missing slug → DELETE. Eliminates 500 on canvas save when `_epId` was lost. |
+| **App-scoped orchestrators (Phases 1–9)** | ✓ Complete | `them.app_orchestrators`: per-app orchestrator instances owning their own config. Migration `db/014_app_orchestrators.sql`. Canvas saves inline `orchestrator:` block per EP; no more global-orch writes. `CANVAS_RULES` engine: 5 block + 1 warn rule, Save vs Deploy modes. A2A EP type. `delegatable` replaces `a2a_exposed`. Temporal path resolves `app_orchestrators` first. |
 
 ## Infrastructure (as of 2026-07-14)
 
@@ -127,3 +128,32 @@
 - **User management UI**: no frontend for managing auth_service users/teams. Admin only via psql or curl.
 - **WebRTCEdge**: planned future phase — real-time audio, needs ASR + TTS + signaling server.
 - **Debate stack ANTHROPIC_API_KEY**: debate agents read `ANTHROPIC_API_KEY` from `.env`. Must be set and non-empty or debate runs will fail on agent invocation.
+- **Token scope for app orchestrators (Phase 12)**: `them.access_tokens.orchestrator_id` still FK to `them.orchestrators.id`. Scoped tokens cannot reach `app_orchestrators` entries until Phase 12 migrates the FK. Unscoped tokens (orchestrator_id=NULL) work today.
+- **`applications.orchestrator_id` deprecation (Phase 12)**: still present as a fallback for pre-migration rows; `drop NOT NULL + drop column` deferred to Phase 12.
+- **Test suite (Phase 11)**: tests 01/18/21/22 need updating for `app_orchestrators` columns; new tests 27/28/29 for canvas rule engine + inline save + a2a EP routing.
+
+## Ops Runbook — Applying db/014_app_orchestrators.sql
+
+Run once on any environment that has existing `them.applications` rows:
+
+```bash
+# 1. Apply migration (idempotent — safe to re-run)
+docker cp db/014_app_orchestrators.sql them-postgres:/tmp/them_014_app_orchestrators.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_014_app_orchestrators.sql
+
+# 2. Bust Redis orchestrator cache so bridge picks up app_orchestrators names
+#    (only needed if bridge is already running — cache TTL is 600s otherwise)
+docker exec them-redis redis-cli KEYS 'them:orchestrators:*' | xargs -r docker exec them-redis redis-cli DEL
+docker exec them-redis redis-cli DEL them:agents:registry
+
+# 3. Restart Temporal worker (activities.py changed — loaders.py queries app_orchestrators first)
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal restart them-worker
+docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
+```
+
+**What the migration does:**
+- Creates `them.app_orchestrators` (one row per existing app, config cloned from bound orchestrator)
+- Adds `delegatable BOOLEAN` to `them.orchestrators` (backfilled from `a2a_exposed`)
+- Adds `app_orchestrator_id UUID FK` to `them.entry_points`
+- Widens entry_point_type CHECK to include `'a2a'`
+- Backfills `entry_points.app_orchestrator_id` for all existing EPs

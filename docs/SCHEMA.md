@@ -106,8 +106,46 @@ Named orchestrator configs. One row per WS endpoint `/ws/orchestrate/{name}`.
 | summarizer_model | TEXT | NULL = env default |
 | summarizer_api_key_encrypted | TEXT | optional key override for summarizer |
 | **history_window** | INT | max prior turns to load in `_load_context_history` (default 20) |
-| **a2a_exposed** | BOOL | expose this orchestrator as an A2A agent via `/.well-known/agent-card.json` |
+| **a2a_exposed** | BOOL | **deprecated** — use `delegatable` on `app_orchestrators`; kept for backward compat (Phase 12 drops) |
+| **delegatable** | BOOL | allow this orchestrator to be used as a sub-orchestrator tool (`orch__<name>`) — backfilled from `a2a_exposed` |
 | **budget_tokens** | INT | NULL = no token budget; if set, workflow aborts when tokens_used_so_far exceeds this |
+
+---
+
+## them.app_orchestrators ⭐
+Per-application orchestrator instances. Each row is one orchestrator node on the canvas, owned by one application. Runtime key = `name` (globally unique slug). Resolved by `loaders.load_orchestrator_row()` before `them.orchestrators` fallback.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| application_id | UUID FK→applications CASCADE | owning app |
+| orchestrator_id | UUID FK→orchestrators SET NULL | seed template (nullable) |
+| name | TEXT UNIQUE `^[a-z0-9_-]{1,64}$` | **runtime key** — Redis cache `them:orchestrators:{name}`, Temporal routing, A2A skill id |
+| node_id | TEXT | canvas node identity (for save reconciliation) |
+| kind | TEXT | `standard`, `router`, `voice` |
+| delegatable | BOOL | allow use as sub-orchestrator tool (`orch__<name>`) |
+| display_name | TEXT | UI label (does not affect routing) |
+| system_prompt | TEXT | LLM system prompt |
+| allowed_agent_ids | UUID[] | agents this orchestrator can invoke |
+| llm_provider / llm_model / llm_api_key_encrypted / llm_base_url | TEXT | same semantics as `them.orchestrators` |
+| max_iterations | INT | agentic loop bound (default 10) |
+| max_parallel_tools | INT | concurrent agent calls (default 3) |
+| rate_limit_rpm | INT | per-user rate limit |
+| daily_budget_usd | NUMERIC | 0 = unlimited |
+| voice_enabled / transcription_provider / transcription_model / transcription_api_key_encrypted | — | voice/STT config |
+| tts_enabled / tts_provider / tts_voice / tts_api_key_encrypted | — | TTS config |
+| memory_enabled / summarize_every_n_calls / memory_raw_fallback_n / summarizer_* | — | context summarization config |
+| history_window | INT | max prior turns (default 20) |
+| budget_tokens | INT | NULL = no token budget |
+| enabled | BOOL | |
+| created_at / updated_at | TIMESTAMPTZ | |
+
+**Name immutability:** `name` is the Temporal workflow key, Redis cache key, A2A skill id, and `orch__<name>` delegation slug. Never change it after creation — doing so orphans in-flight workflows, stale Redis cache entries, and A2A skill references.
+
+**Resolution order in `load_orchestrator_row(name)`:**
+1. Redis `them:orchestrators:{name}` (TTL 600s) → proxy object
+2. `them.app_orchestrators WHERE name = name AND enabled = true`
+3. `them.orchestrators WHERE name = name AND enabled = true` (legacy fallback)
 
 ---
 

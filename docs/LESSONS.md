@@ -458,3 +458,17 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml --profile repli
 **Fix:** Changed the diff to key on `slug` instead of `id`. Slug is already globally unique (DB constraint) and immutable by design (it's a URL — renaming is a breaking change). The server owns identity: existing slug → UPDATE, new slug → CREATE, missing slug → DELETE. Frontend never needs to track or send `id`.
 
 **Watch for:** Slug is now the stable identity for entry points. If a user wants to "rename" a slug they must delete the old EP and create a new one — this is intentional, as renaming a slug breaks external clients pointing at the old URL.
+
+---
+
+## 2026-07-15 — `isinstance()` on ORM class fails for cache-hit proxy objects
+
+**Symptom:** Phase 6 used `isinstance(orch, AppOrchestrator)` to detect app orchestrators and conditionally enforce scope. The check worked on the DB-miss path (fresh SQLAlchemy row) but silently returned `False` on cache hits, because `load_orchestrator_row` returns an `_OrchestratorProxy` dataclass on cache hits — not an ORM instance.
+
+**Root cause:** The cache layer deserializes Redis JSON into a plain dataclass (`_OrchestratorProxy`). `isinstance(proxy, AppOrchestrator)` always returns `False` regardless of what the original DB row was. Two successive wrong fixes made things worse:
+1. *First wrong fix:* Skipped scope enforcement entirely when `isinstance` returned `False` — no check at all on cache hits, a security hole.
+2. *Second wrong fix:* Added a parent FK fallback (`str(getattr(orch, "orchestrator_id", None) or "")`) — still wrong because `orchestrator_id` isn't serialized into the cache dict, so cache-hit proxies returned empty string → `PermissionError` on every legitimate unscoped request.
+
+**Fix:** Carry `"is_app_orchestrator": isinstance(row, AppOrchestrator)` in the cache dict, evaluated on the DB-miss path where `row` IS a real ORM object. Populate the `_OrchestratorProxy` field as `data.get("is_app_orchestrator", False)`. Consume at call sites as `orch.is_app_orchestrator` — a plain `bool` attribute, no `isinstance` anywhere outside the cache writer.
+
+**Watch for:** Never use `isinstance(obj, OrmModel)` on objects returned from a cache-loading function. The cache layer always returns a proxy/dataclass, not an ORM row. If a type distinction must influence runtime behavior, carry a type-flag in the serialized cache dict and read it back as a plain attribute on the proxy. This rule applies to any future cache layer wrapping SQLAlchemy models (`Agent`, `AccessToken`, `EntryPoint`, etc.).

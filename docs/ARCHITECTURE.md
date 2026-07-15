@@ -133,6 +133,35 @@ OrchestrationWorkflow.run():
 | `summarize_context` | Rolling context summary artifact for memory injection |
 | `finalize_run` | Complete run, write Final Answer artifact, transition root task |
 
+### Orchestrator Resolution (`app/temporal/loaders.py`)
+
+`load_orchestrator_row(name, db)` resolves an orchestrator name to a config object in three
+steps:
+
+```
+1. Redis cache  them:orchestrators:{name}  (TTL 600s)
+   → deserializes to _OrchestratorProxy dataclass
+   → proxy.is_app_orchestrator = data.get("is_app_orchestrator", False)
+
+2. them.app_orchestrators WHERE name = name AND enabled = true   (Phase 6 primary)
+   → sets is_app_orchestrator = True when written to cache
+
+3. them.orchestrators WHERE name = name AND enabled = true       (legacy fallback)
+   → sets is_app_orchestrator = False when written to cache
+```
+
+**`_OrchestratorProxy`** is a dataclass with an `is_app_orchestrator: bool = False` field.
+On a **cache hit** the return value is always a `_OrchestratorProxy`, never an ORM instance,
+so `isinstance(proxy, AppOrchestrator)` always returns `False` — code must check
+`proxy.is_app_orchestrator` to distinguish the two table sources.
+
+**`load_agents(orch, db)`** builds the tool list for an orchestrator. Beyond real `them.agents`
+rows it also includes delegatable sub-orchestrators whose IDs appear in
+`orch.allowed_agent_ids`:
+
+- Primary: `AppOrchestrator` rows with `delegatable = True` (Phase 6 field)
+- Fallback: legacy `Orchestrator` rows with `a2a_exposed = True` (pre-migration rows)
+
 ### Determinism & Durability Guarantees
 
 - Workflow uses `workflow.uuid4()` for `run_id`/`root_task_id` — retries are idempotent.
