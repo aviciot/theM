@@ -195,8 +195,6 @@ export interface CanvasLayout {
 export interface Application {
   id: string;
   name: string;
-  orchestrator_id: string;
-  orchestrator_name: string | null;
   presentation: Record<string, unknown>;
   enabled: boolean;
   entry_points: EntryPoint[];

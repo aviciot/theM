@@ -1444,7 +1444,7 @@ function TargetSelector({ orchestrators, applications, value, onChange }: Target
       for (const app of applications) {
         const ep = app.entry_points.find(e => e.slug === slug);
         if (ep && (ep.entry_point_type === 'websocket' || ep.entry_point_type === 'sse')) {
-          return { kind: 'entrypoint', slug, epType: ep.entry_point_type, appName: app.name, orchName: app.orchestrator_name ?? '' };
+          return { kind: 'entrypoint', slug, epType: ep.entry_point_type, appName: app.name, orchName: app.app_orchestrators?.[0]?.name ?? '' };
         }
       }
     }
@@ -1522,7 +1522,8 @@ export default function PlaygroundPage() {
       for (const a of apps) {
         if (!a.enabled) continue;
         const ep = a.entry_points.find(e => e.enabled && e.entry_point_type === 'webrtc');
-        if (ep && a.orchestrator_name && !m[a.orchestrator_name]) m[a.orchestrator_name] = ep.slug;
+        const aoName = a.app_orchestrators?.[0]?.name;
+        if (ep && aoName && !m[aoName]) m[aoName] = ep.slug;
       }
       setWebrtcSlugs(m);
     }).catch(() => {});

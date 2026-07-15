@@ -131,7 +131,7 @@ class AppOrchestrator(Base):
         UUID(as_uuid=True), ForeignKey("them.orchestrators.id", ondelete="SET NULL"), nullable=True
     )
     name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    node_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    node_id: Mapped[str] = mapped_column(Text, nullable=False)
     kind: Mapped[str] = mapped_column(Text, nullable=False, default="standard")
     delegatable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # ── Config columns (cloned from them.orchestrators) ───────────────────────

@@ -162,13 +162,11 @@ class ApplicationUpdate(BaseModel):
 class ApplicationOut(BaseModel):
     id: uuid.UUID
     name: str
-    orchestrator_name: Optional[str] = None  # kept for backward compat; always None after Phase 12
     presentation: Dict[str, Any]
     enabled: bool
     entry_points: List[EntryPointOut]
     app_orchestrators: List[AppOrchestratorOut] = Field(default_factory=list)
     canvas: Optional[Dict[str, Any]] = None
-    graph: Optional[Dict[str, Any]] = None   # nodes+edges representation (export-friendly)
     created_at: datetime
     updated_at: datetime
 
@@ -317,23 +315,14 @@ def _to_out(app: Application) -> ApplicationOut:
             app_orchestrator=ao_out,
         ))
     ao_list = [_app_orch_out(ao) for ao in (app.app_orchestrators or [])]
-    # Include graph representation for export/reload
-    graph_out = export_graph(
-        entry_points=list(app.entry_points),
-        ao_list=list(app.app_orchestrators or []),
-        mw_wirings=list(app.middleware_wirings if hasattr(app, 'middleware_wirings') else []),
-        canvas=app.canvas,
-    )
     return ApplicationOut(
         id=app.id,
         name=app.name,
-        orchestrator_name=None,
         presentation=app.presentation or {},
         enabled=app.enabled,
         entry_points=ep_outs,
         app_orchestrators=ao_list,
         canvas=app.canvas,
-        graph=graph_out,
         created_at=app.created_at,
         updated_at=app.updated_at,
     )

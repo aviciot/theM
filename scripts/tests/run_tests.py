@@ -1636,7 +1636,7 @@ def test_22_applications():
         check("ApplicationCreate defined", "ApplicationCreate" in s)
         check("ApplicationUpdate defined", "ApplicationUpdate" in s)
         check("ApplicationOut defined", "ApplicationOut" in s)
-        check("ApplicationOut has orchestrator_name", "orchestrator_name" in s)
+        check("ApplicationOut has app_orchestrators field", "app_orchestrators" in s)
     except Exception as exc:
         check("admin_applications.py", False, str(exc))
 

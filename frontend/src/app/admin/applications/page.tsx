@@ -2954,7 +2954,11 @@ function BuilderView({
             if (!slugLocked && epNode) updateNodeData(epNode.id, { slug: toSlug(name) });
           }}
           convTokenLimit={convTokenLimit}
-          onConvTokenLimitChange={val => { setConvTokenLimit(val); setIsDirty(true); }}
+          onConvTokenLimitChange={val => {
+            setConvTokenLimit(val);
+            if (epNode) updateNodeData(epNode.id, { convTokenLimit: val });
+            setIsDirty(true);
+          }}
           chain={chain}
           app={currentApp}
           epCount={nodes.filter((n: Node) => n.type === 'entryPoint').length}
@@ -3271,7 +3275,7 @@ function AppCard({
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Orchestrator</div>
               <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {app.orchestrator_name ?? <span style={{ color: C.textMuted, fontStyle: 'italic' }}>none</span>}
+                {app.app_orchestrators?.[0]?.display_name ?? app.app_orchestrators?.[0]?.name ?? <span style={{ color: C.textMuted, fontStyle: 'italic' }}>none</span>}
               </div>
             </div>
           </div>
