@@ -969,7 +969,7 @@ function PropertiesPanel({
     if (!d.llmProvider || !d.llmModel || !d.appOrchestratorId || !app) return;
     setOrchTestState({ loading: true });
     try {
-      const res = await themApi.testAppOrchLlm(app.id, d.appOrchestratorId, { provider: d.llmProvider, model: d.llmModel });
+      const res = await themApi.testAppOrchLlm(app.id, d.appOrchestratorId, { provider: d.llmProvider, model: d.llmModel, api_key: d.llmApiKey || undefined });
       setOrchTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
     } catch (e: any) {
       setOrchTestState({ loading: false, ok: false, error: e.message });

@@ -17,11 +17,21 @@ def add_app_context(logger: WrappedLogger, method_name: str, event_dict: EventDi
 
 
 def censor_sensitive_data(logger: WrappedLogger, method_name: str, event_dict: EventDict) -> EventDict:
-    sensitive_keys = {"password", "api_key", "secret", "token", "authorization"}
-    for key in list(event_dict.keys()):
-        if any(s in key.lower() for s in sensitive_keys):
-            event_dict[key] = "***REDACTED***"
-    return event_dict
+    sensitive_keys = {"password", "api_key", "apikey", "secret", "token", "authorization"}
+
+    def _censor(obj: object, depth: int = 0) -> object:
+        if depth > 6:
+            return obj
+        if isinstance(obj, dict):
+            return {
+                k: "***REDACTED***" if any(s in k.lower() for s in sensitive_keys) else _censor(v, depth + 1)
+                for k, v in obj.items()
+            }
+        if isinstance(obj, list):
+            return [_censor(item, depth + 1) for item in obj]
+        return obj
+
+    return _censor(event_dict, 0)  # type: ignore[return-value]
 
 
 def setup_logging() -> None:
