@@ -489,6 +489,22 @@ Corollary: **always restart the bridge after a column drop**, even if the code c
 
 ---
 
+## 2026-07-16 — omni-traefik ingested them-bridge labels → 503 on all A2A calls
+
+**Symptom:** Test and Discover on any external A2A agent (e.g. `http://10.55.125.43:3000/a2a/codeagent/`) returned `503 - no available server`. The bridge could reach the host fine; the proxy on the other machine had the route but no healthy backend.
+
+**Root cause:** `omni-traefik` (the reverse proxy on `10.55.125.43:3000`) had no `--providers.docker.constraints` set, so it ingested Traefik labels from **all** containers visible on the Docker socket — including `them-bridge` from this stack. `them-bridge` registers `/a2a/` at priority 100; OMNI's own A2A router was only priority 25. them-bridge won every route match and forwarded to its own (dead) backends → 503.
+
+**Fix applied on OMNI side:**
+- *Immediate:* raised OMNI's A2A router priority to 110 so it beats them-bridge even when both labels are visible.
+- *Structural:* added `--providers.docker.constraints=!Label('traefik-instance','them')` to `omni-traefik` — it now ignores all `them-*` containers entirely.
+
+**Watch for:** Any time two independent stacks share a Docker socket (same host), their Traefik instances will cross-contaminate unless both have `--providers.docker.constraints` set to filter out the other stack's labels. `them-traefik` already does this correctly — verify `omni-traefik` does too after any OMNI upgrade or redeploy.
+
+**Corollary for this stack:** `them-traefik` is correctly isolated — verify by checking `traefik/traefik.yml` has a constraints filter that excludes OMNI labels. If `them-traefik` ever gets a socket mount without constraints, it will ingest OMNI's labels the same way.
+
+---
+
 ## Canvas save: graph-centric model prevents "3 EPs → 3 orchs" duplication (2026-07-15)
 
 **What burned us:** When 3 entry points all wired to the same orchestrator node were saved, the old EP-centric save code created a separate `app_orchestrators` row per EP. On reload it looked like 3 independent orchestrators. Root cause: upsert keyed by orchestrator *name* alone — multiple rows with the same name could coexist when the loop ran per-EP.
