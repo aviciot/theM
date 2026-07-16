@@ -718,16 +718,31 @@ function FolderHeader({
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState(folder.name);
   const inputRef = useRef<HTMLInputElement>(null);
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (editing && inputRef.current) inputRef.current.focus();
   }, [editing]);
+
+  useEffect(() => () => { if (clickTimer.current) clearTimeout(clickTimer.current); }, []);
 
   function commitRename() {
     const v = editVal.trim();
     if (v) onRename(v);
     else setEditVal(folder.name);
     setEditing(false);
+  }
+
+  function handlePillClick() {
+    // defer toggle so a double-click can cancel it
+    clickTimer.current = setTimeout(() => onToggleCollapse(), 220);
+  }
+
+  function handlePillDoubleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (clickTimer.current) { clearTimeout(clickTimer.current); clickTimer.current = null; }
+    setEditVal(folder.name);
+    setEditing(true);
   }
 
   const previewAgents = folderAgents.slice(0, 4);
@@ -739,7 +754,8 @@ function FolderHeader({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        onClick={onToggleCollapse}
+        onClick={handlePillClick}
+        onDoubleClick={handlePillDoubleClick}
         style={{
           position: 'relative',
           display: 'flex', alignItems: 'center', gap: '12px',
@@ -823,10 +839,7 @@ function FolderHeader({
             }}
           />
         ) : (
-          <span
-            onDoubleClick={(e) => { e.stopPropagation(); setEditVal(folder.name); setEditing(true); }}
-            style={{ flex: 1, minWidth: 0, fontSize: '13px', fontWeight: 600, color: 'var(--tm-card-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          >
+          <span style={{ flex: 1, minWidth: 0, fontSize: '13px', fontWeight: 600, color: 'var(--tm-card-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {folder.name}
           </span>
         )}
