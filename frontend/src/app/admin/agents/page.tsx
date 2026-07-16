@@ -1868,8 +1868,28 @@ export default function AdminAgentsPage() {
                         );
                       })}
 
-                      {/* ── Ungrouped agent grid ── */}
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}>
+                      {/* ── Ungrouped agent grid — also a drop target to eject agents from folders ── */}
+                      <div
+                        onDragOver={(e) => { e.preventDefault(); setDragOverId('ungrouped'); }}
+                        onDragLeave={(e) => {
+                          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setDragOverId(null);
+                          const draggedId = e.dataTransfer.getData('agentId');
+                          if (draggedId && folderedAgentIds2.has(draggedId)) removeAgentFromFolder(draggedId);
+                        }}
+                        style={{
+                          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px',
+                          borderRadius: '16px', padding: '12px', margin: '-12px',
+                          transition: 'background 150ms ease, box-shadow 150ms ease',
+                          ...(dragOverId === 'ungrouped' ? {
+                            background: 'rgba(0,209,255,0.04)',
+                            boxShadow: 'inset 0 0 0 2px rgba(0,209,255,0.25)',
+                          } : {}),
+                        }}
+                      >
                         {ungroupedAgents2.map(agent => (
                           <AgentCard
                             key={agent.id}
