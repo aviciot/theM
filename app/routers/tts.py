@@ -37,11 +37,11 @@ async def _get_orchestrator_by_name(db: AsyncSession, name: str) -> Orchestrator
     return row
 
 
-async def _stream_openai_tts(api_key: str, voice: str, text: str) -> AsyncIterator[bytes]:
+async def _stream_openai_tts(api_key: str, voice: str, text: str, model: str = "tts-1") -> AsyncIterator[bytes]:
     import openai
     client = openai.AsyncOpenAI(api_key=api_key)
     async with client.audio.speech.with_streaming_response.create(
-        model="tts-1",
+        model=model,
         voice=voice,
         input=text,
         response_format="mp3",

@@ -265,7 +265,7 @@ CREATE TABLE IF NOT EXISTS them.entry_points (
     id                       UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     application_id           UUID        NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
     slug                     TEXT        NOT NULL UNIQUE CHECK (slug ~ '^[a-z0-9_-]{1,64}$'),
-    entry_point_type         TEXT        NOT NULL CHECK (entry_point_type IN ('websocket', 'sse', 'webrtc', 'a2a')),
+    entry_point_type         TEXT        NOT NULL CHECK (entry_point_type IN ('websocket', 'sse', 'webrtc', 'a2a', 'voice')),
     access_policy            JSONB       NOT NULL DEFAULT '{"mode":"token"}',
     conversation_token_limit INTEGER,
     enabled                  BOOLEAN     NOT NULL DEFAULT TRUE,

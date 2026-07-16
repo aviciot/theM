@@ -30,11 +30,6 @@ class TranscriptionOut(BaseModel):
     model: str
 
 
-class TranscriptionError(BaseModel):
-    error: str
-    detail: Optional[str] = None
-
-
 async def _get_orchestrator_by_name(db: AsyncSession, name: str) -> Orchestrator:
     result = await db.execute(select(Orchestrator).where(Orchestrator.name == name))
     row = result.scalar_one_or_none()

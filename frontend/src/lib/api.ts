@@ -244,6 +244,12 @@ export interface AppOrchestratorOut {
   kind: string;
   budget_tokens: number | null;
   allowed_agent_ids: string[];
+  transcription_provider: string | null;
+  transcription_model: string | null;
+  tts_provider: string | null;
+  tts_voice: string | null;
+  voice_enabled?: boolean;
+  tts_enabled?: boolean;
 }
 
 export interface AppOrchestratorIn {

@@ -67,7 +67,7 @@ const glass = {
 const deleteNodeRef = { current: (_id: string) => {} };
 
 // ── Types ────────────────────────────────────────────────────────────────────
-const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a'] as const;
+const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const;
 type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 
 interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; appName?: string; convTokenLimit?: string; _epId?: string; [key: string]: unknown; }
@@ -89,6 +89,12 @@ interface OrchestratorData {
   delegatable: boolean;
   kind: string;
   budgetTokens: number | null;
+  transcriptionProvider: string | null;
+  transcriptionModel: string | null;
+  transcriptionApiKey: string | null;
+  ttsProvider: string | null;
+  ttsVoice: string | null;
+  ttsApiKey: string | null;
   [key: string]: unknown;
 }
 interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; tags?: string[]; icon?: string | null; [key: string]: unknown; }
@@ -329,8 +335,9 @@ function InternalMBadge() {
 function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
   const slugMissing = !data.slug;
   const hasError = data._error || data._shake;
-  const accent = hasError ? '#f87171' : slugMissing ? '#f59e0b' : C.cyan;
-  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2' };
+  const isVoice = data.epType === 'voice';
+  const accent = hasError ? '#f87171' : slugMissing ? '#f59e0b' : isVoice ? C.amber : C.cyan;
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
   const msIcon = EP_MS_ICON[data.epType] ?? 'bolt';
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
@@ -364,7 +371,7 @@ function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointDa
       </div>
       <div style={{ marginTop: 6, textAlign: 'center' }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, transition: 'color 0.18s' }}>
-          {data.label || (data.epType === 'sse' ? 'SSE' : 'WebSocket')}
+          {data.label || (data.epType === 'sse' ? 'SSE' : data.epType === 'voice' ? 'Voice' : data.epType === 'webrtc' ? 'WebRTC' : data.epType === 'a2a' ? 'A2A' : 'WebSocket')}
         </div>
         {data.slug ? (
           <div style={{ fontSize: 10, color: C.cyan, fontFamily: 'JetBrains Mono, monospace', opacity: 0.8, marginTop: 1 }}>{data.slug}</div>
@@ -637,6 +644,12 @@ function buildNodesFromApp(
               delegatable: ao.delegatable,
               kind: ao.kind,
               budgetTokens: ao.budget_tokens,
+              transcriptionProvider: ao.transcription_provider ?? null,
+              transcriptionModel: ao.transcription_model ?? null,
+              transcriptionApiKey: null,
+              ttsProvider: ao.tts_provider ?? null,
+              ttsVoice: ao.tts_voice ?? null,
+              ttsApiKey: null,
             } as OrchestratorData,
           });
 
@@ -689,6 +702,7 @@ const EP_META: Record<string, { emoji: string; title: string; desc: string; colo
   sse:       { emoji: '📡', title: 'Server-Sent Events', desc: 'One-way server→client stream over HTTP. Lightweight, works through proxies. Best for dashboards, notifications, and read-only agent output.' },
   webrtc:    { emoji: '🎙️', title: 'WebRTC Voice', desc: 'Real-time voice via LiveKit WebRTC. Low-latency bidirectional audio with automatic voice activity detection. Best for voice assistants and spoken-word agents.', color: '#a78bfa' },
   a2a:       { emoji: '🤖', title: 'A2A External', desc: 'Expose this orchestrator as an A2A agent for external callers. The A2A skill id is the entry point slug. Best for machine-to-machine orchestration.', color: '#f59e0b' },
+  voice:     { emoji: '🎤', title: 'Voice (STT/TTS)', desc: 'Speech-to-speech over HTTP. Browser sends audio → STT → orchestrator → TTS → audio reply. Requires STT + TTS config on the connected orchestrator.', color: '#f59e0b' },
 };
 
 function trunc(s: string | null | undefined, n = 120) {
@@ -779,16 +793,17 @@ function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
           <SectionHeader label="Entry Points" open={openEP} onToggle={() => setOpenEP(v => !v)} />
           {openEP && (
             <div className="nl-section-list">
-              {(['websocket', 'sse', 'webrtc', 'a2a'] as const).map(ep => {
+              {(['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const).map(ep => {
                 const meta = EP_META[ep];
+                const isAmber = ep === 'a2a' || ep === 'voice';
                 return (
                   <div key={ep} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
                     <div
                       draggable
                       onDragStart={e => dragItem(e, 'entryPoint', { epType: ep, label: meta.title, accessMode: 'token', slug: '' })}
-                      style={{ ...itemStyle, background: ep === 'a2a' ? C.amberBg : C.cyanBg, borderColor: ep === 'a2a' ? C.amberBorder : C.cyanBorder, marginBottom: 0 }}
-                      onMouseEnter={e => (e.currentTarget.style.background = ep === 'a2a' ? 'rgba(245,158,11,0.1)' : 'rgba(0,240,255,0.1)')}
-                      onMouseLeave={e => (e.currentTarget.style.background = ep === 'a2a' ? C.amberBg : C.cyanBg)}
+                      style={{ ...itemStyle, background: isAmber ? C.amberBg : C.cyanBg, borderColor: isAmber ? C.amberBorder : C.cyanBorder, marginBottom: 0 }}
+                      onMouseEnter={e => (e.currentTarget.style.background = isAmber ? 'rgba(245,158,11,0.1)' : 'rgba(0,240,255,0.1)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = isAmber ? C.amberBg : C.cyanBg)}
                     >
                       <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>{meta.emoji}</span>
                       <div style={{ minWidth: 0 }}>
@@ -824,6 +839,8 @@ function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
                     maxIterations: null, historyWindow: null,
                     maxParallelTools: null,
                     delegatable: false, kind: 'standard', budgetTokens: null,
+                    transcriptionProvider: null, transcriptionModel: null, transcriptionApiKey: null,
+                    ttsProvider: null, ttsVoice: null, ttsApiKey: null,
                   })}
                   style={{ ...itemStyle, background: C.purpleBg, borderColor: 'rgba(208,188,255,0.2)', marginBottom: 0 }}
                   onMouseEnter={e => (e.currentTarget.style.background = 'rgba(87,27,193,0.2)')}
@@ -1139,6 +1156,7 @@ function PropertiesPanel({
                     <option value="websocket">WebSocket</option>
                     <option value="sse">SSE</option>
                     <option value="webrtc">WebRTC Voice</option>
+                    <option value="voice">Voice (STT/TTS)</option>
                   </select>
                 </div>
                 <div style={fieldWrap}>
@@ -1163,6 +1181,7 @@ function PropertiesPanel({
                       <span style={{ flex: 1 }}>
                         {d.epType === 'websocket' ? `ws://<host>:8088/apps/${d.slug}/ws`
                           : d.epType === 'webrtc' ? `http://<host>:8088/apps/${d.slug}/voice`
+                          : d.epType === 'voice' ? `http://<host>:8088/apps/${d.slug}/voice/transcribe · /voice/tts`
                           : `http://<host>:8088/apps/${d.slug}/sse`}
                       </span>
                       <button
@@ -1171,6 +1190,8 @@ function PropertiesPanel({
                             ? `ws://localhost:8088/apps/${d.slug}/ws`
                             : d.epType === 'webrtc'
                             ? `http://localhost:8088/apps/${d.slug}/voice`
+                            : d.epType === 'voice'
+                            ? `http://localhost:8088/apps/${d.slug}/voice/transcribe`
                             : `http://localhost:8088/apps/${d.slug}/sse`
                         )}
                         title="Copy endpoint URL"
@@ -1181,6 +1202,42 @@ function PropertiesPanel({
                     </div>
                   )}
                 </div>
+                {/* Test EP button */}
+                {(() => {
+                  const orchEdge = edges.find((e: Edge) => e.source === selectedNode.id);
+                  const orchNode = orchEdge ? nodes.find((nd: Node) => nd.id === orchEdge.target && nd.type === 'orchestrator') : undefined;
+                  const orchName = orchNode ? (orchNode.data as OrchestratorData).name : '';
+                  const isSaved = !!(app?.entry_points?.find((ep: { slug: string }) => ep.slug === d.slug));
+                  const testUrl = d.epType === 'voice' || d.epType === 'webrtc'
+                    ? `/apps/${d.slug}/voice`
+                    : orchName ? `/admin/playground?orchestrator=${encodeURIComponent(orchName)}` : '/admin/playground';
+                  return (
+                    <div style={{ marginTop: 12 }}>
+                      <button
+                        disabled={!isSaved}
+                        onClick={() => { if (isSaved) window.open(testUrl, '_blank', 'noopener'); }}
+                        title={isSaved ? 'Open test interface' : 'Save the application first to enable testing'}
+                        style={{
+                          width: '100%', padding: '8px 0', borderRadius: 8, border: `1px solid ${isSaved ? C.green : C.outlineVariant}`,
+                          background: 'transparent', color: isSaved ? C.green : C.textMuted,
+                          cursor: isSaved ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 600,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                          opacity: isSaved ? 1 : 0.5,
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+                          {d.epType === 'voice' ? 'mic' : d.epType === 'webrtc' ? 'videocam' : 'play_arrow'}
+                        </span>
+                        Test Entry Point
+                      </button>
+                      {!isSaved && (
+                        <div style={{ fontSize: 10, color: C.textMuted, textAlign: 'center', marginTop: 4 }}>
+                          Save the application first to enable testing
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
@@ -1200,6 +1257,17 @@ function PropertiesPanel({
             const knownModels = ORCH_PROVIDERS[currentProvider] ?? [];
             const isCustomModel = !!d.llmModel && knownModels.length > 0 && !knownModels.includes(d.llmModel);
             const selectVal = isCustomModel ? CUSTOM : (d.llmModel ?? '');
+            const connectedEpTypes = new Set<string>(
+              edges
+                .filter(e => e.target === selectedNode.id)
+                .map(e => nodes.find(n => n.id === e.source && n.type === 'entryPoint'))
+                .filter((n): n is Node => !!n)
+                .map(n => (n.data as EntryPointData).epType as string)
+            );
+            const hasVoice = connectedEpTypes.has('voice');
+            const hasWebrtc = connectedEpTypes.has('webrtc');
+            const hasLlmEp = hasVoice || connectedEpTypes.has('websocket') || connectedEpTypes.has('sse');
+            const noEp = connectedEpTypes.size === 0;
             return (
               <div>
                 {/* Header tile */}
@@ -1217,169 +1285,298 @@ function PropertiesPanel({
                   <input style={inputStyle} value={d.displayName} onChange={e => onUpdateNode(selectedNode.id, { displayName: e.target.value })} placeholder="Display name" />
                 </div>
 
-                {/* LLM Provider */}
-                <div style={fieldWrap}>
-                  <label style={labelStyle}>LLM Provider</label>
-                  <select
-                    style={{ ...inputStyle, cursor: 'pointer' }}
-                    value={currentProvider}
-                    onChange={e => {
-                      const p = e.target.value;
-                      const firstModel = ORCH_PROVIDERS[p]?.[0] ?? '';
-                      onUpdateNode(selectedNode.id, { llmProvider: p || null, llmModel: firstModel || null, model: firstModel || null });
-                    }}
-                  >
-                    <option value="">— inherit default —</option>
-                    {Object.keys(ORCH_PROVIDERS).map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-
-                {/* LLM Model */}
-                <div style={fieldWrap}>
-                  <label style={labelStyle}>LLM Model</label>
-                  {knownModels.length > 0 ? (
-                    <>
-                      <select
-                        style={{ ...inputStyle, cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
-                        value={selectVal}
-                        onChange={e => {
-                          const v = e.target.value;
-                          if (v !== CUSTOM) onUpdateNode(selectedNode.id, { llmModel: v, model: v });
-                          else onUpdateNode(selectedNode.id, { llmModel: '', model: '' });
-                        }}
-                      >
-                        {knownModels.map(m => <option key={m} value={m}>{m}</option>)}
-                        <option value={CUSTOM}>Custom…</option>
-                      </select>
-                      {(selectVal === CUSTOM || isCustomModel) && (
-                        <input
-                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11, marginTop: 6 }}
-                          value={d.llmModel ?? ''}
-                          onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })}
-                          placeholder="Enter model ID"
-                          autoFocus
-                        />
-                      )}
-                    </>
-                  ) : (
-                    <input
-                      style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
-                      value={d.llmModel ?? ''}
-                      onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })}
-                      placeholder="e.g. claude-sonnet-4-6"
-                    />
-                  )}
-                </div>
-
-                {/* API Key */}
-                <div style={fieldWrap}>
-                  <label style={labelStyle}>API Key</label>
-                  <input
-                    type="password"
-                    style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
-                    value={d.llmApiKey ?? ''}
-                    onChange={e => onUpdateNode(selectedNode.id, { llmApiKey: e.target.value })}
-                    placeholder={d.appOrchestratorId ? '••••••••  (leave blank to keep existing)' : 'Enter API key'}
-                  />
-                </div>
-
-                {/* System Prompt */}
-                <div style={fieldWrap}>
-                  <label style={labelStyle}>System Prompt</label>
-                  <textarea
-                    style={{ ...inputStyle, resize: 'vertical', minHeight: 80, fontFamily: 'inherit', fontSize: 12 }}
-                    value={d.systemPrompt ?? ''}
-                    onChange={e => onUpdateNode(selectedNode.id, { systemPrompt: e.target.value })}
-                    placeholder="You are a helpful assistant…"
-                  />
-                </div>
-
-                {/* Numeric row 1: Max Iterations + History Window */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <div style={fieldWrap}>
-                    <label style={labelStyle}>Max Iterations</label>
-                    <input type="number" min={1} max={100} style={inputStyle} value={d.maxIterations ?? ''} onChange={e => onUpdateNode(selectedNode.id, { maxIterations: parseInt(e.target.value, 10) || 10 })} placeholder="10" />
-                  </div>
-                  <div style={fieldWrap}>
-                    <label style={labelStyle}>History Window</label>
-                    <input type="number" min={0} max={200} style={inputStyle} value={d.historyWindow ?? ''} onChange={e => onUpdateNode(selectedNode.id, { historyWindow: parseInt(e.target.value, 10) || 20 })} placeholder="20" />
-                  </div>
-                </div>
-
-                {/* Numeric row 2: Max Parallel Tools + Budget Tokens */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <div style={fieldWrap}>
-                    <label style={labelStyle}>Parallel Tools</label>
-                    <input type="number" min={1} max={20} style={inputStyle} value={d.maxParallelTools ?? ''} onChange={e => onUpdateNode(selectedNode.id, { maxParallelTools: parseInt(e.target.value, 10) || 4 })} placeholder="4" />
-                  </div>
-                  <div style={fieldWrap}>
-                    <label style={labelStyle}>Budget Tokens</label>
-                    <input type="number" min={0} style={inputStyle} value={d.budgetTokens ?? ''} onChange={e => { const v = e.target.value; onUpdateNode(selectedNode.id, { budgetTokens: v === '' ? null : parseInt(v, 10) }); }} placeholder="unlimited" />
-                  </div>
-                </div>
-
-                {/* Kind + Delegatable row */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <div style={fieldWrap}>
-                    <label style={labelStyle}>Kind</label>
-                    <select style={{ ...inputStyle, cursor: 'pointer' }} value={d.kind || 'standard'} onChange={e => onUpdateNode(selectedNode.id, { kind: e.target.value })}>
-                      <option value="standard">standard</option>
-                      <option value="supervisor">supervisor</option>
-                      <option value="delegator">delegator</option>
-                    </select>
-                  </div>
-                  <div style={fieldWrap}>
-                    <label style={labelStyle}>Delegatable</label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow, cursor: 'pointer' }} onClick={() => onUpdateNode(selectedNode.id, { delegatable: !d.delegatable })}>
-                      <div style={{ width: 32, height: 18, borderRadius: 9, background: d.delegatable ? C.purple : 'rgba(255,255,255,0.12)', transition: 'background 200ms', position: 'relative', flexShrink: 0 }}>
-                        <div style={{ position: 'absolute', top: 2, left: d.delegatable ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left 200ms', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
-                      </div>
-                      <span style={{ fontSize: 12, color: d.delegatable ? C.purple : C.textMuted }}>{d.delegatable ? 'Yes' : 'No'}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Test LLM connection */}
-                {d.llmProvider && d.llmModel && (
-                  <div style={{ marginTop: 4, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                    <button
-                      onClick={() => testOrchLlm(d)}
-                      disabled={orchTestState.loading || !d.appOrchestratorId}
-                      title={!d.appOrchestratorId ? 'Save the application first to enable testing' : undefined}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 6,
-                        padding: '7px 14px', borderRadius: 8,
-                        border: `1px solid ${C.purpleBorder}`,
-                        background: 'rgba(208,188,255,0.07)',
-                        color: (!d.appOrchestratorId || orchTestState.loading) ? C.textMuted : C.purple,
-                        cursor: (!d.appOrchestratorId || orchTestState.loading) ? 'not-allowed' : 'pointer',
-                        fontSize: 12, fontWeight: 600, opacity: !d.appOrchestratorId ? 0.5 : 1,
-                        transition: 'all 150ms',
-                      }}
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: 15 }}>bolt</span>
-                      {orchTestState.loading ? 'Testing…' : 'Test connection'}
-                    </button>
-                    {!orchTestState.loading && orchTestState.ok !== undefined && (
-                      orchTestState.ok
-                        ? <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({orchTestState.latency}ms)</span>
-                        : <span style={{ fontSize: 12, color: '#f87171' }}>✗ {orchTestState.error ?? 'Failed'}</span>
-                    )}
-                    {!d.appOrchestratorId && (
-                      <span style={{ fontSize: 11, color: C.textMuted }}>
-                        Save the application first to enable testing
-                      </span>
-                    )}
+                {/* No EP placeholder */}
+                {noEp && (
+                  <div style={{ padding: '12px', borderRadius: 8, background: C.surfaceLow, border: `1px solid ${C.outlineVariant}`, color: C.textMuted, fontSize: 12, textAlign: 'center', marginTop: 8 }}>
+                    Connect an entry point to start configuring
                   </div>
                 )}
 
-                {/* Connected Agents read-only */}
-                <div style={fieldWrap}>
-                  <label style={labelStyle}>Connected Agents</label>
-                  <div style={{ fontSize: 12, color: C.textMuted, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
-                    {connectedAgentCount} agent{connectedAgentCount !== 1 ? 's' : ''} — connect via canvas
+                {/* LLM section — shown when at least one non-webrtc EP is connected, or webrtc */}
+                {(hasLlmEp || hasWebrtc) && (
+                  <>
+                    {/* LLM Provider */}
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>LLM Provider</label>
+                      <select
+                        style={{ ...inputStyle, cursor: 'pointer' }}
+                        value={currentProvider}
+                        onChange={e => {
+                          const p = e.target.value;
+                          const firstModel = ORCH_PROVIDERS[p]?.[0] ?? '';
+                          onUpdateNode(selectedNode.id, { llmProvider: p || null, llmModel: firstModel || null, model: firstModel || null });
+                        }}
+                      >
+                        <option value="">— inherit default —</option>
+                        {Object.keys(ORCH_PROVIDERS).map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </div>
+
+                    {/* LLM Model */}
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>LLM Model</label>
+                      {knownModels.length > 0 ? (
+                        <>
+                          <select
+                            style={{ ...inputStyle, cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                            value={selectVal}
+                            onChange={e => {
+                              const v = e.target.value;
+                              if (v !== CUSTOM) onUpdateNode(selectedNode.id, { llmModel: v, model: v });
+                              else onUpdateNode(selectedNode.id, { llmModel: '', model: '' });
+                            }}
+                          >
+                            {knownModels.map(m => <option key={m} value={m}>{m}</option>)}
+                            <option value={CUSTOM}>Custom…</option>
+                          </select>
+                          {(selectVal === CUSTOM || isCustomModel) && (
+                            <input
+                              style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11, marginTop: 6 }}
+                              value={d.llmModel ?? ''}
+                              onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })}
+                              placeholder="Enter model ID"
+                              autoFocus
+                            />
+                          )}
+                        </>
+                      ) : (
+                        <input
+                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                          value={d.llmModel ?? ''}
+                          onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })}
+                          placeholder="e.g. claude-sonnet-4-6"
+                        />
+                      )}
+                    </div>
+
+                    {/* API Key */}
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>API Key</label>
+                      <input
+                        type="password"
+                        style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                        value={d.llmApiKey ?? ''}
+                        onChange={e => onUpdateNode(selectedNode.id, { llmApiKey: e.target.value })}
+                        placeholder={d.appOrchestratorId ? '••••••••  (leave blank to keep existing)' : 'Enter API key'}
+                      />
+                    </div>
+
+                    {/* System Prompt */}
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>System Prompt</label>
+                      <textarea
+                        style={{ ...inputStyle, resize: 'vertical', minHeight: 80, fontFamily: 'inherit', fontSize: 12 }}
+                        value={d.systemPrompt ?? ''}
+                        onChange={e => onUpdateNode(selectedNode.id, { systemPrompt: e.target.value })}
+                        placeholder="You are a helpful assistant…"
+                      />
+                    </div>
+
+                    {/* Numeric row 1: Max Iterations + History Window */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Max Iterations</label>
+                        <input type="number" min={1} max={100} style={inputStyle} value={d.maxIterations ?? ''} onChange={e => onUpdateNode(selectedNode.id, { maxIterations: parseInt(e.target.value, 10) || 10 })} placeholder="10" />
+                      </div>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>History Window</label>
+                        <input type="number" min={0} max={200} style={inputStyle} value={d.historyWindow ?? ''} onChange={e => onUpdateNode(selectedNode.id, { historyWindow: parseInt(e.target.value, 10) || 20 })} placeholder="20" />
+                      </div>
+                    </div>
+
+                    {/* Numeric row 2: Max Parallel Tools + Budget Tokens */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Parallel Tools</label>
+                        <input type="number" min={1} max={20} style={inputStyle} value={d.maxParallelTools ?? ''} onChange={e => onUpdateNode(selectedNode.id, { maxParallelTools: parseInt(e.target.value, 10) || 4 })} placeholder="4" />
+                      </div>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Budget Tokens</label>
+                        <input type="number" min={0} style={inputStyle} value={d.budgetTokens ?? ''} onChange={e => { const v = e.target.value; onUpdateNode(selectedNode.id, { budgetTokens: v === '' ? null : parseInt(v, 10) }); }} placeholder="unlimited" />
+                      </div>
+                    </div>
+
+                    {/* Kind + Delegatable row */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Kind</label>
+                        <select style={{ ...inputStyle, cursor: 'pointer' }} value={d.kind || 'standard'} onChange={e => onUpdateNode(selectedNode.id, { kind: e.target.value })}>
+                          <option value="standard">standard</option>
+                          <option value="supervisor">supervisor</option>
+                          <option value="delegator">delegator</option>
+                        </select>
+                      </div>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Delegatable</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow, cursor: 'pointer' }} onClick={() => onUpdateNode(selectedNode.id, { delegatable: !d.delegatable })}>
+                          <div style={{ width: 32, height: 18, borderRadius: 9, background: d.delegatable ? C.purple : 'rgba(255,255,255,0.12)', transition: 'background 200ms', position: 'relative', flexShrink: 0 }}>
+                            <div style={{ position: 'absolute', top: 2, left: d.delegatable ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left 200ms', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
+                          </div>
+                          <span style={{ fontSize: 12, color: d.delegatable ? C.purple : C.textMuted }}>{d.delegatable ? 'Yes' : 'No'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Test LLM connection */}
+                    {d.llmProvider && d.llmModel && (
+                      <div style={{ marginTop: 4, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => testOrchLlm(d)}
+                          disabled={orchTestState.loading || !d.appOrchestratorId}
+                          title={!d.appOrchestratorId ? 'Save the application first to enable testing' : undefined}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            padding: '7px 14px', borderRadius: 8,
+                            border: `1px solid ${C.purpleBorder}`,
+                            background: 'rgba(208,188,255,0.07)',
+                            color: (!d.appOrchestratorId || orchTestState.loading) ? C.textMuted : C.purple,
+                            cursor: (!d.appOrchestratorId || orchTestState.loading) ? 'not-allowed' : 'pointer',
+                            fontSize: 12, fontWeight: 600, opacity: !d.appOrchestratorId ? 0.5 : 1,
+                            transition: 'all 150ms',
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>bolt</span>
+                          {orchTestState.loading ? 'Testing…' : 'Test connection'}
+                        </button>
+                        {!orchTestState.loading && orchTestState.ok !== undefined && (
+                          orchTestState.ok
+                            ? <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({orchTestState.latency}ms)</span>
+                            : <span style={{ fontSize: 12, color: '#f87171' }}>✗ {orchTestState.error ?? 'Failed'}</span>
+                        )}
+                        {!d.appOrchestratorId && (
+                          <span style={{ fontSize: 11, color: C.textMuted }}>
+                            Save the application first to enable testing
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Connected Agents read-only */}
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Connected Agents</label>
+                      <div style={{ fontSize: 12, color: C.textMuted, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
+                        {connectedAgentCount} agent{connectedAgentCount !== 1 ? 's' : ''} — connect via canvas
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* STT section — voice EP only */}
+                {hasVoice && (
+                  <div style={{ marginTop: 16, borderTop: `1px solid ${C.outlineVariant}`, paddingTop: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 15, color: C.amber }}>mic</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Speech-to-Text</span>
+                      <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 9999, background: C.amberBg, border: `1px solid ${C.amberBorder}`, color: C.amber, fontWeight: 600 }}>Required</span>
+                    </div>
+
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Provider</label>
+                      <select style={{ ...inputStyle, cursor: 'pointer' }}
+                        value={d.transcriptionProvider || ''}
+                        onChange={e => {
+                          const p = e.target.value;
+                          const model = p === 'openai' ? 'whisper-1' : p === 'groq' ? 'whisper-large-v3' : '';
+                          onUpdateNode(selectedNode.id, { transcriptionProvider: p || null, transcriptionModel: model || null });
+                        }}
+                      >
+                        <option value="">— select provider —</option>
+                        <option value="openai">OpenAI Whisper</option>
+                        <option value="groq">Groq whisper-large-v3</option>
+                      </select>
+                    </div>
+
+                    {d.transcriptionProvider && (
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Model</label>
+                        <input style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                          value={d.transcriptionModel ?? ''}
+                          onChange={e => onUpdateNode(selectedNode.id, { transcriptionModel: e.target.value })}
+                          placeholder="e.g. whisper-1"
+                        />
+                      </div>
+                    )}
+
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>API Key</label>
+                      <input type="password"
+                        style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                        value={d.transcriptionApiKey ?? ''}
+                        onChange={e => onUpdateNode(selectedNode.id, { transcriptionApiKey: e.target.value })}
+                        placeholder={d.appOrchestratorId ? '••••••••  (leave blank to keep existing)' : 'Enter API key'}
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* TTS section — voice EP only */}
+                {hasVoice && (
+                  <div style={{ marginTop: 16, borderTop: `1px solid ${C.outlineVariant}`, paddingTop: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 15, color: C.amber }}>volume_up</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Text-to-Speech</span>
+                      <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 9999, background: C.amberBg, border: `1px solid ${C.amberBorder}`, color: C.amber, fontWeight: 600 }}>Required</span>
+                    </div>
+
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Provider</label>
+                      <select style={{ ...inputStyle, cursor: 'pointer' }}
+                        value={d.ttsProvider || ''}
+                        onChange={e => onUpdateNode(selectedNode.id, { ttsProvider: e.target.value || null, ttsVoice: null })}
+                      >
+                        <option value="">— select provider —</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="elevenlabs">ElevenLabs</option>
+                      </select>
+                    </div>
+
+                    {d.ttsProvider === 'openai' && (
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Voice</label>
+                        <select style={{ ...inputStyle, cursor: 'pointer' }}
+                          value={d.ttsVoice || ''}
+                          onChange={e => onUpdateNode(selectedNode.id, { ttsVoice: e.target.value || null })}
+                        >
+                          <option value="">— select voice —</option>
+                          {['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'].map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      </div>
+                    )}
+                    {d.ttsProvider === 'elevenlabs' && (
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Voice ID</label>
+                        <input style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                          value={d.ttsVoice ?? ''}
+                          onChange={e => onUpdateNode(selectedNode.id, { ttsVoice: e.target.value || null })}
+                          placeholder="ElevenLabs voice ID"
+                        />
+                      </div>
+                    )}
+
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>API Key</label>
+                      <input type="password"
+                        style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                        value={d.ttsApiKey ?? ''}
+                        onChange={e => onUpdateNode(selectedNode.id, { ttsApiKey: e.target.value })}
+                        placeholder={d.appOrchestratorId ? '••••••••  (leave blank to keep existing)' : 'Enter API key'}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Realtime section — webrtc EP only */}
+                {hasWebrtc && (
+                  <div style={{ marginTop: 16, borderTop: `1px solid ${C.outlineVariant}`, paddingTop: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 15, color: C.cyan }}>sensors</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: C.cyan, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Realtime Voice</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: C.textMuted, padding: '10px 12px', borderRadius: 8, background: C.surfaceLow, border: `1px solid ${C.outlineVariant}` }}>
+                      WebRTC entry points require a realtime-capable model (e.g. gpt-4o-realtime-preview). Configure the LLM model above accordingly.
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -2265,6 +2462,37 @@ const CANVAS_RULES: CanvasRule[] = [
     errorNodeIds: ({ nodes, edges }) =>
       nodes.filter(n => n.type === 'orchestrator' && !edges.some(e => e.source === n.id && nodes.find(m => m.id === e.target && m.type === 'agent'))).map(n => n.id),
   },
+  {
+    id: 'VOICE_EP_NEEDS_STT_TTS',
+    severity: 'warn',
+    message: ({ nodes, edges }) => {
+      const voiceEps = nodes.filter(n => n.type === 'entryPoint' && (n.data as EntryPointData).epType === 'voice');
+      for (const ep of voiceEps) {
+        const orchEdge = edges.find(e => e.source === ep.id);
+        if (!orchEdge) continue;
+        const orch = nodes.find(n => n.id === orchEdge.target && n.type === 'orchestrator');
+        if (!orch) continue;
+        const d = orch.data as OrchestratorData;
+        if (!d.transcriptionProvider || !d.ttsProvider) {
+          return `Voice entry point requires STT and TTS providers configured on its orchestrator`;
+        }
+      }
+      return null;
+    },
+    errorNodeIds: ({ nodes, edges }) => {
+      const bad: string[] = [];
+      const voiceEps = nodes.filter(n => n.type === 'entryPoint' && (n.data as EntryPointData).epType === 'voice');
+      for (const ep of voiceEps) {
+        const orchEdge = edges.find(e => e.source === ep.id);
+        if (!orchEdge) continue;
+        const orch = nodes.find(n => n.id === orchEdge.target && n.type === 'orchestrator');
+        if (!orch) continue;
+        const d = orch.data as OrchestratorData;
+        if (!d.transcriptionProvider || !d.ttsProvider) bad.push(ep.id, orch.id);
+      }
+      return bad;
+    },
+  },
 ];
 
 // Returns a map of nodeId → error message for all currently violated rules
@@ -2358,7 +2586,7 @@ function toSlug(s: string) {
 interface EpPickerEntry { epNode: Node; orchName: string; slug: string; label: string; epType: string; }
 
 function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPickerEntry[]; onSelect: (e: EpPickerEntry) => void; onClose: () => void; }) {
-  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2' };
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(5,20,36,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
       <div style={{ ...glass, borderRadius: 16, padding: '28px 32px', minWidth: 360, maxWidth: 480 }} onClick={e => e.stopPropagation()}>

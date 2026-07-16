@@ -162,20 +162,7 @@ def _resolve_mw_chains(orch_id: str, graph: AppGraph) -> List[Tuple[str, str, in
     node_by_id = {n.id: n for n in graph.nodes}
     result: list[tuple[str, str, int, str, dict]] = []
 
-    def _walk_mw(node_id: str, depth: int, target_agent_id: Optional[str]) -> None:
-        for edge in graph.edges:
-            if edge.source != node_id:
-                continue
-            target = node_by_id.get(edge.target)
-            if target is None:
-                continue
-            if target.type == "middleware":
-                _walk_mw(target.id, depth + 1, target_agent_id)
-            elif target.type == "agent":
-                # Record mw→agent pairing — walk back up to collect mw nodes
-                pass
-
-    # Simpler flat approach: for each orch→mw edge, follow the chain
+    # Flat approach: for each orch→mw edge, follow the chain
     for edge in graph.edges:
         if edge.source != orch_id:
             continue
@@ -315,6 +302,10 @@ async def compile_graph(
             all_orch_names.add(ao_name)
 
             _raw_key = d.get("llmApiKey") or d.get("llm_api_key")
+            _raw_transcription_key = d.get("transcriptionApiKey") or d.get("transcription_api_key")
+            _raw_tts_key = d.get("ttsApiKey") or d.get("tts_api_key")
+            _transcription_provider = d.get("transcriptionProvider") or d.get("transcription_provider")
+            _tts_provider = d.get("ttsProvider") or d.get("tts_provider")
             ao = AppOrchestrator(
                 application_id=app_id,
                 node_id=node_id,
@@ -332,6 +323,14 @@ async def compile_graph(
                 budget_tokens=d.get("budgetTokens") or d.get("budget_tokens"),
                 allowed_agent_ids=[str(a) for a in derived_agent_ids],
                 enabled=True,
+                transcription_provider=_transcription_provider,
+                transcription_model=d.get("transcriptionModel") or d.get("transcription_model"),
+                transcription_api_key_encrypted=encrypt_value(_raw_transcription_key) if _raw_transcription_key else None,
+                tts_provider=_tts_provider,
+                tts_voice=d.get("ttsVoice") or d.get("tts_voice"),
+                tts_api_key_encrypted=encrypt_value(_raw_tts_key) if _raw_tts_key else None,
+                voice_enabled=bool(_transcription_provider),
+                tts_enabled=bool(_tts_provider),
             )
             db.add(ao)
             await db.flush()
@@ -481,6 +480,27 @@ def _apply_orch_data(ao: AppOrchestrator, d: Dict[str, Any], derived_agent_ids: 
     api_key = _get("llmApiKey", "llm_api_key")
     if api_key:
         ao.llm_api_key_encrypted = encrypt_value(api_key)
+    transcription_provider = _get("transcriptionProvider", "transcription_provider")
+    if transcription_provider is not None:
+        ao.transcription_provider = transcription_provider or None
+    transcription_model = _get("transcriptionModel", "transcription_model")
+    if transcription_model is not None:
+        ao.transcription_model = transcription_model or None
+    tts_provider = _get("ttsProvider", "tts_provider")
+    if tts_provider is not None:
+        ao.tts_provider = tts_provider or None
+    tts_voice = _get("ttsVoice", "tts_voice")
+    if tts_voice is not None:
+        ao.tts_voice = tts_voice or None
+    transcription_api_key = _get("transcriptionApiKey", "transcription_api_key")
+    if transcription_api_key:
+        ao.transcription_api_key_encrypted = encrypt_value(transcription_api_key)
+    tts_api_key = _get("ttsApiKey", "tts_api_key")
+    if tts_api_key:
+        ao.tts_api_key_encrypted = encrypt_value(tts_api_key)
+    # Derive enable flags from provider presence (always set so clearing a provider disables voice)
+    ao.voice_enabled = bool(ao.transcription_provider)
+    ao.tts_enabled = bool(ao.tts_provider)
     # Always overwrite allowed_agent_ids from derived edges
     ao.allowed_agent_ids = [str(a) for a in derived_agent_ids]
 
@@ -539,6 +559,10 @@ def export_graph(
                 "kind": ao.kind,
                 "budgetTokens": ao.budget_tokens,
                 "name": ao.name,
+                "transcriptionProvider": ao.transcription_provider,
+                "transcriptionModel": ao.transcription_model,
+                "ttsProvider": ao.tts_provider,
+                "ttsVoice": ao.tts_voice,
             },
         })
         for agent_id in (ao.allowed_agent_ids or []):

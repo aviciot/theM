@@ -109,6 +109,10 @@ class AppOrchestratorOut(BaseModel):
     voice_enabled: bool
     tts_enabled: bool
     memory_enabled: bool
+    transcription_provider: Optional[str] = None
+    transcription_model: Optional[str] = None
+    tts_provider: Optional[str] = None
+    tts_voice: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -296,6 +300,10 @@ def _app_orch_out(ao: AppOrchestrator) -> AppOrchestratorOut:
         voice_enabled=ao.voice_enabled,
         tts_enabled=ao.tts_enabled,
         memory_enabled=ao.memory_enabled,
+        transcription_provider=ao.transcription_provider,
+        transcription_model=ao.transcription_model,
+        tts_provider=ao.tts_provider,
+        tts_voice=ao.tts_voice,
     )
 
 

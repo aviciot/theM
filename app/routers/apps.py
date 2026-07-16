@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -39,6 +39,7 @@ from app.services.auth_client import validate_jwt
 from app.services import task_store
 from app.services.task_runner import run as task_runner_run
 from app.services.token_cache import validate_bearer_token
+from app.services.voice_service import transcribe as stt_transcribe, stream_tts
 from app.edges.sse_edge import SSEEdge
 from app.utils.logger import logger
 
@@ -659,3 +660,111 @@ def _is_valid_uuid(value: str) -> bool:
         return True
     except (ValueError, AttributeError):
         return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Voice entry points — POST /apps/{slug}/voice/transcribe + /voice/tts
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/apps/{slug}/voice/transcribe", tags=["apps"])
+async def voice_transcribe(
+    slug: str,
+    audio: UploadFile = File(...),
+    request: Request = None,
+):
+    """STT endpoint for voice entry points. Transcribes uploaded audio using the app orchestrator's STT config."""
+    if db_module.AsyncSessionLocal is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    async with db_module.AsyncSessionLocal() as db:
+        ep = await _load_entry_point(db, slug)
+
+        if ep.entry_point_type != "voice":
+            raise HTTPException(status_code=400, detail="Entry point is not a voice type")
+
+        policy = ep.access_policy or {}
+        if policy.get("mode") != "public":
+            if request is None:
+                raise HTTPException(status_code=401, detail="Authorization required")
+            token_payload = await _resolve_bearer(request)
+            if token_payload is None:
+                raise HTTPException(status_code=401, detail="Authorization required")
+
+        ao = ep.app_orchestrator
+        if not ao or not ao.transcription_provider:
+            raise HTTPException(status_code=400, detail="Voice entry point has no STT provider configured")
+
+        # Resolve API key
+        api_key = None
+        if ao.transcription_api_key_encrypted:
+            from app.utils.crypto import decrypt_value
+            api_key = decrypt_value(ao.transcription_api_key_encrypted)
+        if not api_key:
+            import os
+            api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("GROQ_API_KEY", "")
+
+        audio_bytes = await audio.read()
+
+    text = await stt_transcribe(
+        provider=ao.transcription_provider,
+        model=ao.transcription_model or "whisper-1",
+        api_key=api_key,
+        audio_bytes=audio_bytes,
+        filename=audio.filename or "audio.webm",
+        content_type=audio.content_type or "audio/webm",
+    )
+    return {"text": text, "provider": ao.transcription_provider, "model": ao.transcription_model}
+
+
+@router.post("/apps/{slug}/voice/tts", tags=["apps"])
+async def voice_tts(
+    slug: str,
+    body: dict,
+    request: Request = None,
+):
+    """TTS endpoint for voice entry points. Converts text to audio using the app orchestrator's TTS config."""
+    if db_module.AsyncSessionLocal is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    async with db_module.AsyncSessionLocal() as db:
+        ep = await _load_entry_point(db, slug)
+
+        if ep.entry_point_type != "voice":
+            raise HTTPException(status_code=400, detail="Entry point is not a voice type")
+
+        policy = ep.access_policy or {}
+        if policy.get("mode") != "public":
+            if request is None:
+                raise HTTPException(status_code=401, detail="Authorization required")
+            token_payload = await _resolve_bearer(request)
+            if token_payload is None:
+                raise HTTPException(status_code=401, detail="Authorization required")
+
+        ao = ep.app_orchestrator
+        if not ao or not ao.tts_provider:
+            raise HTTPException(status_code=400, detail="Voice entry point has no TTS provider configured")
+
+        text = body.get("text", "")
+        if not text:
+            raise HTTPException(status_code=400, detail="text is required")
+
+        api_key = None
+        if ao.tts_api_key_encrypted:
+            from app.utils.crypto import decrypt_value
+            api_key = decrypt_value(ao.tts_api_key_encrypted)
+        if not api_key:
+            import os
+            api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("ELEVENLABS_API_KEY", "")
+
+        tts_provider = ao.tts_provider
+        tts_voice = ao.tts_voice or "alloy"
+
+    return StreamingResponse(
+        stream_tts(
+            provider=tts_provider,
+            voice=tts_voice,
+            api_key=api_key,
+            text=text,
+        ),
+        media_type="audio/mpeg",
+    )
