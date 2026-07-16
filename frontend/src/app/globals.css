@@ -206,3 +206,94 @@ input::placeholder {
 .custom-scrollbar::-webkit-scrollbar { width: 4px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--tm-border); border-radius: 10px; }
+
+/* ── ChromaGrid ────────────────────────────────────────────────────────────── */
+
+.chroma-grid {
+  position: relative;
+  width: 100%;
+  --x: 50%;
+  --y: 50%;
+  --r: 320px;
+}
+
+.chroma-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  border: 1px solid #2a2a3a;
+  background: var(--card-gradient, var(--tm-card));
+  transition: border-color 0.3s ease;
+  --mouse-x: 50%;
+  --mouse-y: 50%;
+  --spotlight-color: rgba(255, 255, 255, 0.12);
+}
+
+.chroma-card:hover {
+  border-color: var(--card-border, var(--tm-accent));
+}
+
+/* Inner white highlight that follows per-card cursor */
+.chroma-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle 220px at var(--mouse-x) var(--mouse-y),
+    rgba(255,255,255,0.3) 0%,
+    rgba(255,255,255,0.08) 50%,
+    transparent 70%
+  );
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 2;
+}
+
+.chroma-card:hover::before {
+  opacity: 1;
+}
+
+/* Grayscale overlay — masks out to a hole around cursor */
+.chroma-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  backdrop-filter: grayscale(1) brightness(0.78);
+  -webkit-backdrop-filter: grayscale(1) brightness(0.78);
+  background: rgba(0, 0, 0, 0.001);
+  mask-image: radial-gradient(
+    circle var(--r) at var(--x) var(--y),
+    transparent 0%,
+    transparent 20%,
+    rgba(0,0,0,0.10) 35%,
+    rgba(0,0,0,0.25) 50%,
+    rgba(0,0,0,0.45) 65%,
+    rgba(0,0,0,0.65) 80%,
+    black 100%
+  );
+  -webkit-mask-image: radial-gradient(
+    circle var(--r) at var(--x) var(--y),
+    transparent 0%,
+    transparent 20%,
+    rgba(0,0,0,0.10) 35%,
+    rgba(0,0,0,0.25) 50%,
+    rgba(0,0,0,0.45) 65%,
+    rgba(0,0,0,0.65) 80%,
+    black 100%
+  );
+}
+
+/* Fade layer — plain full-coverage desaturate shown at rest, JS fades it to 0 on enter */
+.chroma-fade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  backdrop-filter: grayscale(1) brightness(0.78);
+  -webkit-backdrop-filter: grayscale(1) brightness(0.78);
+  background: rgba(0, 0, 0, 0.001);
+  opacity: 1;
+}
+/* ─────────────────────────────────────────────────────────────────────────── */

@@ -66,6 +66,7 @@ class Agent(Base):
     supports_streaming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     supports_push: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     icon: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    category: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_scan_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_scan_result: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

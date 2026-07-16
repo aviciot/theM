@@ -87,6 +87,7 @@ class AgentUpdate(BaseModel):
     supports_streaming: Optional[bool] = None
     supports_push: Optional[bool] = None
     icon: Optional[str] = None
+    category: Optional[str] = None
 
 
 class AgentOut(BaseModel):
@@ -110,6 +111,7 @@ class AgentOut(BaseModel):
     supports_streaming: bool = False
     supports_push: bool = False
     icon: Optional[str] = None
+    category: Optional[str] = None
     card_fetched_at: Optional[datetime] = None
     last_scan_at: Optional[datetime] = None
     last_scan_result: Optional[Dict[str, Any]] = None
@@ -178,6 +180,7 @@ def _row_to_out(row: Agent) -> AgentOut:
         supports_streaming=row.supports_streaming,
         supports_push=row.supports_push,
         icon=getattr(row, "icon", None),
+        category=getattr(row, "category", None),
         card_fetched_at=getattr(row, "card_fetched_at", None),
         last_scan_at=getattr(row, "last_scan_at", None),
         last_scan_result=getattr(row, "last_scan_result", None),
@@ -246,7 +249,7 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
     )
     db.add(row)
 
-    if row.icon is None:
+    if row.icon is None or row.category is None:
         try:
             classification = await classify_agent(
                 db,
@@ -254,8 +257,11 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
                 description=body.description or "",
                 skills=[s.model_dump() for s in (body.skills or [])],
             )
-            if classification and not row.icon:
-                row.icon = classification.get("icon")
+            if classification:
+                if not row.icon:
+                    row.icon = classification.get("icon")
+                if not row.category:
+                    row.category = classification.get("category")
         except Exception:
             pass
 
@@ -315,6 +321,8 @@ async def update_agent(
         row.supports_push = body.supports_push
     if body.icon is not None:
         row.icon = body.icon
+    if body.category is not None:
+        row.category = body.category or None
 
     await db.commit()
     await db.refresh(row)

@@ -73,6 +73,13 @@ class SystemAgentsIn(BaseModel):
     roles: Dict[str, RoleConfigIn]
 
 
+class LLMTestRequest(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None   # plaintext; if omitted, use stored key
+    base_url: Optional[str] = None
+
+
 class LLMTestResult(BaseModel):
     ok: bool
     latency_ms: Optional[int] = None
@@ -157,34 +164,42 @@ async def put_system_agents(body: SystemAgentsIn, db: AsyncSession = Depends(get
 
 
 @router.post("/{role}/test-llm", response_model=LLMTestResult)
-async def test_role_llm(role: str, db: AsyncSession = Depends(get_db)) -> LLMTestResult:
-    """Validate the stored API key for a system agent role."""
+async def test_role_llm(
+    role: str,
+    body: LLMTestRequest,
+    db: AsyncSession = Depends(get_db),
+) -> LLMTestResult:
+    """Test LLM connectivity for a system agent role.
+
+    Request body fields override the stored config; stored config fills any gaps.
+    This allows testing unsaved form values without requiring a Save first.
+    """
     row = await db.get(Config, _CONFIG_KEY)
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No config stored for role '{role}'")
+    stored_role: Dict = {}
+    if row is not None:
+        stored_role = (row.config_value or {}).get("roles", {}).get(role, {})
 
-    roles = (row.config_value or {}).get("roles", {})
-    role_data = roles.get(role)
-    if role_data is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Role '{role}' not found")
+    # Inline request body takes priority; fall back to stored config
+    provider = body.provider or stored_role.get("provider")
+    model    = body.model    or stored_role.get("model")
+    base_url = body.base_url or stored_role.get("base_url")
 
-    provider = role_data.get("provider")
-    model = role_data.get("model")
-    enc_key = role_data.get("api_key_encrypted")
+    # API key: use plaintext from body if provided, else decrypt stored key
+    if body.api_key:
+        api_key = body.api_key
+    else:
+        enc_key = stored_role.get("api_key_encrypted")
+        api_key = decrypt_value(enc_key) if enc_key else ""
 
     if not provider or not model:
-        raise HTTPException(status_code=400, detail="Role has no provider or model configured")
-    if not enc_key:
-        raise HTTPException(status_code=400, detail="No API key stored for this role")
-
-    api_key = decrypt_value(enc_key)
+        raise HTTPException(status_code=400, detail="Provider and model are required")
     if not api_key:
-        raise HTTPException(status_code=400, detail="Stored API key could not be decrypted")
+        raise HTTPException(status_code=400, detail="No API key provided or stored for this role")
 
     result = await probe_llm(
         provider=provider,
         model=model,
         api_key=api_key,
-        base_url=role_data.get("base_url"),
+        base_url=base_url or None,
     )
     return LLMTestResult(ok=result.ok, latency_ms=result.latency_ms, error=result.error)

@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useRef, DragEvent } from 'react';
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
 const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 import Sidebar from '@/components/Sidebar';
+import ChromaGrid from '@/components/ChromaGrid';
 import AuthGuard from '@/components/AuthGuard';
 import { themApi, type Application, type Agent, type MiddlewareDef, type AppOrchestratorOut } from '@/lib/api';
 import {
@@ -3155,10 +3156,18 @@ function AppCard({
   const statusBg    = !app.enabled ? 'rgba(255,180,171,0.1)' : reachable === null ? 'rgba(255,255,255,0.04)' : reachable ? 'rgba(74,222,128,0.08)' : 'rgba(245,158,11,0.08)';
   const statusBorder = !app.enabled ? 'rgba(255,180,171,0.3)' : reachable === null ? 'rgba(255,255,255,0.1)' : reachable ? C.greenBorder : 'rgba(245,158,11,0.4)';
 
+  const chromaAccent = !app.enabled ? '#64748b' : reachable === false ? '#f59e0b' : '#6366f1';
+  const chromaGrad = `linear-gradient(145deg, ${chromaAccent}1a 0%, ${chromaAccent}08 40%, #07090f 100%)`;
+
   return (
     <div
-      className="app-glass-card"
-      style={{ borderRadius: 16, overflow: 'visible', display: 'flex', flexDirection: 'column', position: 'relative', outline: selected ? '2px solid #00d1ff' : undefined }}
+      className="app-glass-card chroma-card"
+      style={{
+        borderRadius: 16, overflow: 'visible', display: 'flex', flexDirection: 'column', position: 'relative',
+        outline: selected ? '2px solid #00d1ff' : undefined,
+        '--card-border': chromaAccent,
+        '--card-gradient': chromaGrad,
+      } as React.CSSProperties}
     >
       {/* Bulk-select checkbox */}
       {onToggleSelect && (
@@ -3474,7 +3483,8 @@ function ListView({
       </div>
 
       {/* Card grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24, padding: '0 32px 48px' }}>
+      <ChromaGrid radius={420} damping={0.09} fadeOutMs={800} style={{ padding: '0 32px 48px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }}>
         {loading && (
           <div style={{ gridColumn: '1 / -1', padding: 80, textAlign: 'center', color: C.textMuted, fontSize: 14 }}>
             Loading…
@@ -3546,6 +3556,7 @@ function ListView({
           </div>
         )}
       </div>
+      </ChromaGrid>
 
       {/* URL Modal */}
       {urlModalApp && (

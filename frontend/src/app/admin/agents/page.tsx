@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
+import ChromaGrid from '@/components/ChromaGrid';
 import { themApi, type Agent, type AgentSkill, type DiscoverResult, type OrchestratorFull, type ScanResult } from '@/lib/api';
 
 // ── Folder state ───────────────────────────────────────────────────────────────
@@ -98,7 +99,11 @@ function buildDiff(agent: Agent, result: DiscoverResult): CardDiff {
     provider: { old: oldProvider, new: newProvider, changed: oldProvider !== newProvider },
   };
 
-  const hasChanges = Object.values(fields).some(f => f.changed);
+  // icon/category from classifier — not shown as diff rows but count as changes
+  const iconChanged = !!(result.icon && result.icon !== (agent.icon ?? ''));
+  const categoryChanged = !!(result.category && result.category !== (agent.category ?? ''));
+
+  const hasChanges = Object.values(fields).some(f => f.changed) || iconChanged || categoryChanged;
   return { hasChanges, ...fields };
 }
 
@@ -167,6 +172,9 @@ function scoreRingColor(score: number) {
 // ── Category / accent helpers ─────────────────────────────────────────────────
 
 function agentCategory(agent: Agent): string {
+  // Stored classification wins — set by the classifier system agent
+  if (agent.category) return agent.category;
+  // Fall back to slug/transport heuristics
   const slug = agent.slug.toLowerCase();
   const transport = agent.transport.toLowerCase();
   if (slug.includes('vision')) return 'Vision';
@@ -199,6 +207,11 @@ function categoryAccent(category: string): { color: string; glow: string; border
     case 'Security': return { color: '#fbbf24', glow: 'rgba(245,158,11,0.22)',  border: 'rgba(245,158,11,0.42)' };
     default:         return { color: '#94a3b8', glow: 'rgba(100,116,139,0.18)', border: 'rgba(100,116,139,0.35)' };
   }
+}
+
+// Build a subtle dark gradient using the category accent color for ChromaGrid reveal
+function chromaGradient(accentColor: string): string {
+  return `linear-gradient(145deg, ${accentColor}22 0%, ${accentColor}08 40%, #0a0d14 100%)`;
 }
 
 // Unique icon per agent slug/category
@@ -411,7 +424,7 @@ function AgentCard({
 
   return (
     <article
-      className="glass-card"
+      className="glass-card chroma-card"
       draggable
       onDragStart={(e) => {
         if ((e.target as HTMLElement).closest('button, input, a, textarea, select')) {
@@ -425,9 +438,12 @@ function AgentCard({
       style={{
         padding: '22px', display: 'flex', flexDirection: 'column', gap: '14px',
         borderRadius: '20px', position: 'relative', cursor: 'grab',
-        ...(isInternal ? { background: 'linear-gradient(160deg, rgba(0,160,120,0.08) 0%, rgba(0,80,60,0.06) 100%), var(--tm-card)' } : {}),
+        '--card-border': accent.color,
+        '--card-gradient': isInternal
+          ? 'linear-gradient(145deg, rgba(0,160,120,0.12) 0%, rgba(0,80,60,0.08) 40%, #0a0d14 100%)'
+          : chromaGradient(accent.color),
         ...(isDragOver ? { borderColor: '#00d1ff', boxShadow: '0 0 0 2px rgba(0,209,255,0.25), 0 8px 32px rgba(0,0,0,0.4)' } : {}),
-      }}
+      } as React.CSSProperties}
     >
 
       {/* ── Remove from folder button ── */}
@@ -738,79 +754,94 @@ function FolderHeader({
   const previewAgents = folderAgents.slice(0, 4);
 
   if (folder.collapsed) {
-    // ── Collapsed: horizontal pill in the folders strip ───────────────────────
+    // ── Collapsed: iOS-style square folder card ───────────────────────────────
+    const slots = [0, 1, 2, 3];
     return (
       <div
+        className="chroma-card"
+        onClick={onToggleCollapse}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         style={{
           position: 'relative',
-          display: 'flex', alignItems: 'center', gap: '12px',
-          padding: '10px 16px 10px 12px',
-          borderRadius: '14px',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          gap: '10px',
+          padding: '20px 16px 16px',
+          borderRadius: '20px',
+          ['--card-border' as string]: isDragOver ? 'rgba(0,209,255,0.45)' : 'rgba(91,127,255,0.35)',
+          ['--card-gradient' as string]: isDragOver
+            ? 'linear-gradient(160deg, rgba(0,209,255,0.10) 0%, rgba(0,209,255,0.04) 100%)'
+            : 'linear-gradient(160deg, rgba(91,127,255,0.09) 0%, rgba(91,127,255,0.03) 100%)',
           background: isDragOver
-            ? 'linear-gradient(90deg, rgba(0,209,255,0.10), rgba(0,209,255,0.04))'
-            : 'linear-gradient(90deg, rgba(255,255,255,0.055), rgba(255,255,255,0.022))',
-          border: `1px solid ${isDragOver ? 'rgba(0,209,255,0.45)' : 'rgba(255,255,255,0.12)'}`,
-          backdropFilter: 'blur(14px)',
+            ? 'linear-gradient(160deg, rgba(0,209,255,0.10) 0%, rgba(0,209,255,0.04) 100%)'
+            : 'linear-gradient(160deg, rgba(255,255,255,0.072) 0%, rgba(255,255,255,0.028) 100%)',
+          border: `1px solid ${isDragOver ? 'rgba(0,209,255,0.45)' : 'rgba(255,255,255,0.13)'}`,
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
           boxShadow: isDragOver
-            ? '0 0 0 2px rgba(0,209,255,0.15), 0 4px 16px rgba(0,0,0,0.3)'
-            : '0 4px 16px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06)',
+            ? '0 0 0 2px rgba(0,209,255,0.15), 0 8px 32px rgba(0,0,0,0.4)'
+            : '0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.09)',
           cursor: 'pointer',
           transition: 'background 180ms ease, border-color 180ms ease, box-shadow 180ms ease',
           userSelect: 'none',
-          overflow: 'hidden',
+          minHeight: '160px',
         }}
       >
         {/* Top shine */}
         <div style={{
-          position: 'absolute', top: 0, left: '16px', right: '16px', height: '1px',
-          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent)',
+          position: 'absolute', top: 0, left: '20px', right: '20px', height: '1px',
+          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent)',
           pointerEvents: 'none',
         }} />
 
-        {/* Mini icon strip — up to 4, overlapping slightly — click to expand */}
-        <div onClick={onToggleCollapse} style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer' }}>
-          {previewAgents.map((a, i) => {
+        {/* Count badge — top-right corner */}
+        <div style={{
+          position: 'absolute', top: '10px', right: '12px',
+          fontSize: '10px', fontWeight: 700, color: 'rgba(255,255,255,0.5)',
+          background: 'rgba(255,255,255,0.09)', border: '1px solid rgba(255,255,255,0.12)',
+          borderRadius: '9999px', padding: '1px 6px', lineHeight: '16px',
+        }}>{count}</div>
+
+        {/* 2×2 icon grid */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px',
+          padding: '10px',
+          background: 'rgba(0,0,0,0.18)',
+          borderRadius: '16px',
+          border: '1px solid rgba(255,255,255,0.07)',
+          boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.25)',
+        }}>
+          {slots.map(i => {
+            const a = previewAgents[i];
+            if (!a) {
+              return (
+                <div key={i} style={{
+                  width: '36px', height: '36px', borderRadius: '9px',
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                }} />
+              );
+            }
             const cat = agentCategory(a);
             const acc = categoryAccent(cat);
             const ico = agentIcon(a, cat);
             return (
               <div key={a.id} style={{
-                width: '32px', height: '32px',
-                borderRadius: '8px',
-                marginLeft: i > 0 ? '-6px' : 0,
+                width: '36px', height: '36px', borderRadius: '9px',
                 background: `radial-gradient(circle at 30% 25%, ${acc.glow}, transparent 65%),
-                             linear-gradient(145deg, rgba(20,32,52,0.95), rgba(8,16,30,0.95))`,
+                             linear-gradient(145deg, rgba(20,32,52,0.97), rgba(8,16,30,0.97))`,
                 border: `1px solid ${acc.border}`,
-                boxShadow: `0 0 8px ${acc.glow}, 0 2px 4px rgba(0,0,0,0.4)`,
+                boxShadow: `0 0 10px ${acc.glow}`,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                flexShrink: 0,
-                zIndex: previewAgents.length - i,
               }}>
-                <span className="material-symbols-outlined" style={{ fontSize: '15px', color: acc.color }}>{ico}</span>
+                <span className="material-symbols-outlined" style={{ fontSize: '16px', color: acc.color }}>{ico}</span>
               </div>
             );
           })}
-          {count > 4 && (
-            <div style={{
-              width: '32px', height: '32px', borderRadius: '8px',
-              marginLeft: '-6px',
-              background: 'rgba(255,255,255,0.07)',
-              border: '1px solid rgba(255,255,255,0.14)',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.4)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              flexShrink: 0,
-              fontSize: '10px', fontWeight: 700, color: 'var(--tm-card-text-muted)',
-            }}>+{count - 4}</div>
-          )}
         </div>
 
-        {/* Divider */}
-        <div onClick={onToggleCollapse} style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.10)', flexShrink: 0, cursor: 'pointer' }} />
-
-        {/* Name */}
+        {/* Folder name */}
         {editing ? (
           <input
             ref={inputRef}
@@ -820,32 +851,25 @@ function FolderHeader({
             onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { setEditVal(folder.name); setEditing(false); } }}
             onClick={(e) => e.stopPropagation()}
             style={{
-              flex: 1, minWidth: 0, background: 'transparent', border: 'none',
+              background: 'transparent', border: 'none',
               borderBottom: '1px solid rgba(0,209,255,0.5)',
-              color: 'var(--tm-card-text)', fontSize: '13px', fontWeight: 600,
-              outline: 'none', padding: '0 2px',
+              color: 'var(--tm-card-text)', fontSize: '12px', fontWeight: 600,
+              outline: 'none', padding: '0 2px', textAlign: 'center', width: '100%',
             }}
           />
         ) : (
           <span
             onClick={startRename}
             title="Click to rename"
-            style={{ flex: 1, minWidth: 0, fontSize: '13px', fontWeight: 600, color: 'var(--tm-card-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'text' }}
+            style={{
+              fontSize: '12px', fontWeight: 600, color: 'rgba(255,255,255,0.75)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              maxWidth: '100%', cursor: 'text', textAlign: 'center',
+            }}
           >
             {folder.name}
           </span>
         )}
-
-        {/* Count badge + caret — click to expand */}
-        <span onClick={onToggleCollapse} style={{
-          fontSize: '10px', fontWeight: 700, color: 'var(--tm-card-text-muted)',
-          background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.10)',
-          borderRadius: '9999px', padding: '2px 7px', flexShrink: 0, cursor: 'pointer',
-        }}>{count}</span>
-
-        <span onClick={onToggleCollapse} className="material-symbols-outlined" style={{ fontSize: '16px', color: 'var(--tm-card-text-muted)', flexShrink: 0, cursor: 'pointer' }}>
-          expand_more
-        </span>
       </div>
     );
   }
@@ -1249,6 +1273,7 @@ export default function AdminAgentsPage() {
         supports_streaming: result.supports_streaming,
         supports_push: result.supports_push,
         ...(result.icon ? { icon: result.icon } : {}),
+        ...(result.category ? { category: result.category } : {}),
         agent_card: result.agent_card,
         agent_card_url: result.agent_card_url,
       }));
@@ -1340,6 +1365,7 @@ export default function AdminAgentsPage() {
         supports_streaming: result.supports_streaming,
         supports_push: result.supports_push,
         ...(result.icon ? { icon: result.icon } : {}),
+        ...(result.category ? { category: result.category } : {}),
         agent_card: result.agent_card,
         agent_card_url: result.agent_card_url,
       });
@@ -1778,9 +1804,11 @@ export default function AdminAgentsPage() {
 
                   return (
                     <>
-                      {/* ── Folders strip (collapsed pills, flex-wrap row) ── */}
+                      {/* ── Collapsed folders (iOS-style square cards in 3-col grid) ── */}
                       {collapsedFolders.length > 0 && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '24px' }}>
+                        <ChromaGrid radius={420} damping={0.09} fadeOutMs={800} style={{
+                          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px',
+                        }}>
                           {collapsedFolders.map(folder => {
                             const folderAgents = folder.agentIds.map(id => agents.find(a => a.id === id)).filter(Boolean) as Agent[];
                             return (
@@ -1803,7 +1831,7 @@ export default function AdminAgentsPage() {
                               />
                             );
                           })}
-                        </div>
+                        </ChromaGrid>
                       )}
 
                       {/* ── Expanded folders (full-width, above agent grid) ── */}
@@ -1827,7 +1855,7 @@ export default function AdminAgentsPage() {
                                 if (draggedId) handleDropOntoFolder(draggedId, folder.id);
                               }}
                             />
-                            <div style={{
+                            <ChromaGrid radius={420} damping={0.09} fadeOutMs={800} style={{
                               display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px',
                               padding: '16px',
                               background: 'rgba(255,255,255,0.02)',
@@ -1863,31 +1891,31 @@ export default function AdminAgentsPage() {
                                   onRemoveFromFolder={() => removeAgentFromFolder(agent.id)}
                                 />
                               ))}
-                            </div>
+                            </ChromaGrid>
                           </div>
                         );
                       })}
 
                       {/* ── Ungrouped agent grid — also a drop target to eject agents from folders ── */}
-                      <div
-                        onDragOver={(e) => { e.preventDefault(); setDragOverId('ungrouped'); }}
-                        onDragLeave={(e) => {
-                          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null);
-                        }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          setDragOverId(null);
-                          const draggedId = e.dataTransfer.getData('agentId');
-                          if (draggedId && folderedAgentIds2.has(draggedId)) removeAgentFromFolder(draggedId);
-                        }}
+                      <ChromaGrid radius={420} damping={0.09} fadeOutMs={800}
                         style={{
                           display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px',
-                          borderRadius: '16px', padding: '12px', margin: '-12px',
                           transition: 'background 150ms ease, box-shadow 150ms ease',
                           ...(dragOverId === 'ungrouped' ? {
                             background: 'rgba(0,209,255,0.04)',
                             boxShadow: 'inset 0 0 0 2px rgba(0,209,255,0.25)',
+                            borderRadius: '12px',
                           } : {}),
+                        }}
+                        onDragOver={(e: React.DragEvent) => { e.preventDefault(); setDragOverId('ungrouped'); }}
+                        onDragLeave={(e: React.DragEvent) => {
+                          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null);
+                        }}
+                        onDrop={(e: React.DragEvent) => {
+                          e.preventDefault();
+                          setDragOverId(null);
+                          const draggedId = e.dataTransfer.getData('agentId');
+                          if (draggedId && folderedAgentIds2.has(draggedId)) removeAgentFromFolder(draggedId);
                         }}
                       >
                         {ungroupedAgents2.map(agent => (
@@ -1918,7 +1946,7 @@ export default function AdminAgentsPage() {
                           />
                         ))}
                         <DeployCard onClick={openCreate} />
-                      </div>
+                      </ChromaGrid>
                     </>
                   );
                 })()}
@@ -2071,6 +2099,8 @@ export default function AdminAgentsPage() {
                     )}
                     <DiffRow label="Streaming" changed={diff.streaming.changed} oldVal={diff.streaming.old ? 'yes' : 'no'} newVal={diff.streaming.new ? 'yes' : 'no'} />
                     <DiffRow label="Push" changed={diff.push.changed} oldVal={diff.push.old ? 'yes' : 'no'} newVal={diff.push.new ? 'yes' : 'no'} />
+                    {result.category && <DiffRow label="Category" changed={result.category !== (agent.category ?? '')} oldVal={agent.category || '—'} newVal={result.category} />}
+                    {result.icon && <DiffRow label="Icon" changed={result.icon !== (agent.icon ?? '')} oldVal={agent.icon || '—'} newVal={result.icon} />}
                     {authSchemes.length > 0 && (
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '6px 0' }}>
                         <span style={{ fontSize: '12px', color: 'var(--tm-text-muted)', minWidth: '110px' }}>Auth</span>
