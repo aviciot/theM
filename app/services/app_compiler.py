@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Agent, AppOrchestrator, EntryPoint, MiddlewareWiring
+from app.utils.crypto import encrypt_value
 from app.utils.logger import logger
 
 
@@ -313,6 +314,7 @@ async def compile_graph(
             ao_name = _generate_orch_name(proposed, hint, all_orch_names, _re, _secrets)
             all_orch_names.add(ao_name)
 
+            _raw_key = d.get("llmApiKey") or d.get("llm_api_key")
             ao = AppOrchestrator(
                 application_id=app_id,
                 node_id=node_id,
@@ -321,6 +323,7 @@ async def compile_graph(
                 system_prompt=d.get("systemPrompt") or d.get("system_prompt"),
                 llm_provider=d.get("llmProvider") or d.get("llm_provider"),
                 llm_model=d.get("llmModel") or d.get("llm_model"),
+                llm_api_key_encrypted=encrypt_value(_raw_key) if _raw_key else None,
                 max_iterations=d.get("maxIterations") or d.get("max_iterations") or 10,
                 max_parallel_tools=d.get("maxParallelTools") or d.get("max_parallel_tools") or 3,
                 history_window=d.get("historyWindow") or d.get("history_window") or 20,
@@ -475,6 +478,9 @@ def _apply_orch_data(ao: AppOrchestrator, d: Dict[str, Any], derived_agent_ids: 
     bt = _get("budgetTokens", "budget_tokens")
     if bt is not None:
         ao.budget_tokens = int(bt)
+    api_key = _get("llmApiKey", "llm_api_key")
+    if api_key:
+        ao.llm_api_key_encrypted = encrypt_value(api_key)
     # Always overwrite allowed_agent_ids from derived edges
     ao.allowed_agent_ids = [str(a) for a in derived_agent_ids]
 

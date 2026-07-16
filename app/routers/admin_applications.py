@@ -35,6 +35,7 @@ from app.services.app_compiler import (
     validate_graph, compile_graph, export_graph,
 )
 # Note: Orchestrator is imported for _load_all_orch_names shared-namespace uniqueness check only.
+from app.utils.crypto import decrypt_value
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/admin/applications", tags=["admin-applications"])
@@ -936,3 +937,39 @@ async def put_middleware_wirings(
     await db.commit()
     await _flush_mw_chain_cache(app_id)
     logger.info("middleware wirings replaced", app_id=str(app_id), count=len(body.wirings))
+
+
+# ── App-orchestrator LLM test ─────────────────────────────────────────────────
+
+class _AOTestRequest(BaseModel):
+    provider: str
+    model: str
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+class _LLMTestResult(BaseModel):
+    ok: bool
+    latency_ms: Optional[int] = None
+    error: Optional[str] = None
+
+
+@router.post("/{app_id}/orchestrators/{ao_id}/test-llm", response_model=_LLMTestResult)
+async def test_app_orch_llm(
+    app_id: uuid.UUID,
+    ao_id: uuid.UUID,
+    body: _AOTestRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Test LLM connectivity for a specific app_orchestrator row."""
+    row = await db.get(AppOrchestrator, ao_id)
+    if not row or row.application_id != app_id:
+        raise HTTPException(status_code=404, detail="App orchestrator not found")
+
+    api_key = body.api_key
+    if not api_key:
+        if not row.llm_api_key_encrypted:
+            raise HTTPException(status_code=400, detail="No API key stored and none provided")
+        api_key = decrypt_value(row.llm_api_key_encrypted)
+
+    from app.routers.admin_orchestrators import _test_llm
+    return await _test_llm(body.provider, body.model, api_key, body.base_url)

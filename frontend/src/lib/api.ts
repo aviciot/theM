@@ -430,6 +430,8 @@ export const themApi = {
   putSystemAgents: (body: { roles: Record<string, SystemAgentRoleIn> }) => api.put<SystemAgentsOut>('/admin/system-agents', body),
   testSystemAgentLlm: (role: string, body: { provider: string; model: string; api_key?: string; base_url?: string }) =>
     api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/system-agents/${role}/test-llm`, body),
+  testAppOrchLlm: (appId: string, aoId: string, body: { provider: string; model: string; api_key?: string; base_url?: string }) =>
+    api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/orchestrators/${aoId}/test-llm`, body),
   deleteRun: (runId: string) => api.delete<void>(`/runs/${runId}`),
   bulkDeleteRuns: (runIds: string[]) => api.post<{ deleted: number }>('/runs/bulk-delete', { run_ids: runIds }),
   bulkDeleteApplications: (appIds: string[]) => api.post<{ deleted: number }>('/admin/applications/bulk-delete', { app_ids: appIds }),

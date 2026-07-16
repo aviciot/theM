@@ -774,24 +774,31 @@ function FolderHeader({
             ? 'linear-gradient(160deg, rgba(0,209,255,0.10) 0%, rgba(0,209,255,0.04) 100%)'
             : 'linear-gradient(160deg, rgba(91,127,255,0.09) 0%, rgba(91,127,255,0.03) 100%)',
           background: isDragOver
-            ? 'linear-gradient(160deg, rgba(0,209,255,0.10) 0%, rgba(0,209,255,0.04) 100%)'
-            : 'linear-gradient(160deg, rgba(255,255,255,0.072) 0%, rgba(255,255,255,0.028) 100%)',
-          border: `1px solid ${isDragOver ? 'rgba(0,209,255,0.45)' : 'rgba(255,255,255,0.13)'}`,
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
+            ? 'linear-gradient(160deg, rgba(0,209,255,0.13) 0%, rgba(0,209,255,0.05) 100%)'
+            : 'linear-gradient(160deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.04) 60%, rgba(91,127,255,0.06) 100%)',
+          border: `1px solid ${isDragOver ? 'rgba(0,209,255,0.55)' : 'rgba(255,255,255,0.22)'}`,
+          backdropFilter: 'blur(28px) saturate(1.6)',
+          WebkitBackdropFilter: 'blur(28px) saturate(1.6)',
           boxShadow: isDragOver
-            ? '0 0 0 2px rgba(0,209,255,0.15), 0 8px 32px rgba(0,0,0,0.4)'
-            : '0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.09)',
+            ? '0 0 0 2px rgba(0,209,255,0.18), 0 8px 32px rgba(0,0,0,0.4)'
+            : '0 8px 32px rgba(0,0,0,0.4), inset 0 1.5px 0 rgba(255,255,255,0.28), inset 0 -1px 0 rgba(0,0,0,0.18)',
           cursor: 'pointer',
           transition: 'background 180ms ease, border-color 180ms ease, box-shadow 180ms ease',
           userSelect: 'none',
           minHeight: '160px',
         }}
       >
-        {/* Top shine */}
+        {/* Gloss sweep — upper half highlight */}
         <div style={{
-          position: 'absolute', top: 0, left: '20px', right: '20px', height: '1px',
-          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent)',
+          position: 'absolute', top: 0, left: 0, right: 0, height: '55%',
+          borderRadius: '20px 20px 60% 60% / 20px 20px 40px 40px',
+          background: 'linear-gradient(180deg, rgba(255,255,255,0.13) 0%, rgba(255,255,255,0.03) 60%, transparent 100%)',
+          pointerEvents: 'none',
+        }} />
+        {/* Top edge shine */}
+        <div style={{
+          position: 'absolute', top: 0, left: '16px', right: '16px', height: '1px',
+          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.45), transparent)',
           pointerEvents: 'none',
         }} />
 

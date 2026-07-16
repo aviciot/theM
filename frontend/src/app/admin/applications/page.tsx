@@ -83,6 +83,7 @@ interface OrchestratorData {
   allowedAgentIds: string[];
   llmProvider: string | null;
   llmModel: string | null;
+  llmApiKey: string | null;
   maxIterations: number;
   historyWindow: number;
   delegatable: boolean;
@@ -819,7 +820,7 @@ function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
                     orchestratorId: null, appOrchestratorId: null,
                     name: '', displayName: '',
                     systemPrompt: '', allowedAgentIds: [],
-                    llmProvider: '', llmModel: '',
+                    llmProvider: '', llmModel: '', llmApiKey: '',
                     maxIterations: null, historyWindow: null,
                     maxParallelTools: null,
                     delegatable: false, kind: 'standard', budgetTokens: null,
@@ -962,6 +963,18 @@ function PropertiesPanel({
   edges: Edge[];
 }) {
   const [propTab, setPropTab] = useState<'properties' | 'configuration'>('properties');
+  const [orchTestState, setOrchTestState] = useState<{ loading?: boolean; ok?: boolean; latency?: number; error?: string }>({});
+
+  async function testOrchLlm(d: OrchestratorData) {
+    if (!d.llmProvider || !d.llmModel || !d.appOrchestratorId || !app) return;
+    setOrchTestState({ loading: true });
+    try {
+      const res = await themApi.testAppOrchLlm(app.id, d.appOrchestratorId, { provider: d.llmProvider, model: d.llmModel });
+      setOrchTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
+    } catch (e: any) {
+      setOrchTestState({ loading: false, ok: false, error: e.message });
+    }
+  }
 
   function TabBtn({ id, label }: { id: 'properties' | 'configuration'; label: string }) {
     const active = propTab === id;
@@ -1175,28 +1188,102 @@ function PropertiesPanel({
           {/* Orchestrator properties */}
           {selectedNode.type === 'orchestrator' && propTab === 'properties' && (() => {
             const d = selectedNode.data as OrchestratorData;
-            // Count outgoing Orch→Agent edges for read-only display
-            const connectedAgentCount = chain.epNode
-              ? edges.filter(e => e.source === selectedNode.id && nodes.find(n => n.id === e.target && n.type === 'agent')).length
-              : 0;
+            const connectedAgentCount = edges.filter(e => e.source === selectedNode.id && nodes.find(n => n.id === e.target && n.type === 'agent')).length;
+            const ORCH_PROVIDERS: Record<string, string[]> = {
+              anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+              openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o3-mini'],
+              groq:      ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+              gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro'],
+            };
+            const CUSTOM = '__custom__';
+            const currentProvider = d.llmProvider || '';
+            const knownModels = ORCH_PROVIDERS[currentProvider] ?? [];
+            const isCustomModel = !!d.llmModel && knownModels.length > 0 && !knownModels.includes(d.llmModel);
+            const selectVal = isCustomModel ? CUSTOM : (d.llmModel ?? '');
             return (
               <div>
                 {/* Header tile */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 16, background: C.purpleBg, border: '1px solid rgba(208,188,255,0.2)' }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 22, color: C.purple }}>hub</span>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.displayName}</div>
-                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{d.name}</div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.displayName || <span style={{ opacity: 0.4 }}>Unnamed</span>}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{d.name || '—'}</div>
                   </div>
                 </div>
+
+                {/* Display Name */}
                 <div style={fieldWrap}>
                   <label style={labelStyle}>Display Name</label>
                   <input style={inputStyle} value={d.displayName} onChange={e => onUpdateNode(selectedNode.id, { displayName: e.target.value })} placeholder="Display name" />
                 </div>
+
+                {/* LLM Provider */}
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>LLM Provider</label>
+                  <select
+                    style={{ ...inputStyle, cursor: 'pointer' }}
+                    value={currentProvider}
+                    onChange={e => {
+                      const p = e.target.value;
+                      const firstModel = ORCH_PROVIDERS[p]?.[0] ?? '';
+                      onUpdateNode(selectedNode.id, { llmProvider: p || null, llmModel: firstModel || null, model: firstModel || null });
+                    }}
+                  >
+                    <option value="">— inherit default —</option>
+                    {Object.keys(ORCH_PROVIDERS).map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+
+                {/* LLM Model */}
                 <div style={fieldWrap}>
                   <label style={labelStyle}>LLM Model</label>
-                  <input style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace' }} value={d.llmModel ?? ''} onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })} placeholder="e.g. claude-sonnet-4-5" />
+                  {knownModels.length > 0 ? (
+                    <>
+                      <select
+                        style={{ ...inputStyle, cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                        value={selectVal}
+                        onChange={e => {
+                          const v = e.target.value;
+                          if (v !== CUSTOM) onUpdateNode(selectedNode.id, { llmModel: v, model: v });
+                          else onUpdateNode(selectedNode.id, { llmModel: '', model: '' });
+                        }}
+                      >
+                        {knownModels.map(m => <option key={m} value={m}>{m}</option>)}
+                        <option value={CUSTOM}>Custom…</option>
+                      </select>
+                      {(selectVal === CUSTOM || isCustomModel) && (
+                        <input
+                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11, marginTop: 6 }}
+                          value={d.llmModel ?? ''}
+                          onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })}
+                          placeholder="Enter model ID"
+                          autoFocus
+                        />
+                      )}
+                    </>
+                  ) : (
+                    <input
+                      style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                      value={d.llmModel ?? ''}
+                      onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })}
+                      placeholder="e.g. claude-sonnet-4-6"
+                    />
+                  )}
                 </div>
+
+                {/* API Key */}
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>API Key</label>
+                  <input
+                    type="password"
+                    style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                    value={d.llmApiKey ?? ''}
+                    onChange={e => onUpdateNode(selectedNode.id, { llmApiKey: e.target.value })}
+                    placeholder={d.appOrchestratorId ? '••••••••  (leave blank to keep existing)' : 'Enter API key'}
+                  />
+                </div>
+
+                {/* System Prompt */}
                 <div style={fieldWrap}>
                   <label style={labelStyle}>System Prompt</label>
                   <textarea
@@ -1206,6 +1293,8 @@ function PropertiesPanel({
                     placeholder="You are a helpful assistant…"
                   />
                 </div>
+
+                {/* Numeric row 1: Max Iterations + History Window */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div style={fieldWrap}>
                     <label style={labelStyle}>Max Iterations</label>
@@ -1216,6 +1305,75 @@ function PropertiesPanel({
                     <input type="number" min={0} max={200} style={inputStyle} value={d.historyWindow ?? ''} onChange={e => onUpdateNode(selectedNode.id, { historyWindow: parseInt(e.target.value, 10) || 20 })} placeholder="20" />
                   </div>
                 </div>
+
+                {/* Numeric row 2: Max Parallel Tools + Budget Tokens */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div style={fieldWrap}>
+                    <label style={labelStyle}>Parallel Tools</label>
+                    <input type="number" min={1} max={20} style={inputStyle} value={d.maxParallelTools ?? ''} onChange={e => onUpdateNode(selectedNode.id, { maxParallelTools: parseInt(e.target.value, 10) || 4 })} placeholder="4" />
+                  </div>
+                  <div style={fieldWrap}>
+                    <label style={labelStyle}>Budget Tokens</label>
+                    <input type="number" min={0} style={inputStyle} value={d.budgetTokens ?? ''} onChange={e => { const v = e.target.value; onUpdateNode(selectedNode.id, { budgetTokens: v === '' ? null : parseInt(v, 10) }); }} placeholder="unlimited" />
+                  </div>
+                </div>
+
+                {/* Kind + Delegatable row */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div style={fieldWrap}>
+                    <label style={labelStyle}>Kind</label>
+                    <select style={{ ...inputStyle, cursor: 'pointer' }} value={d.kind || 'standard'} onChange={e => onUpdateNode(selectedNode.id, { kind: e.target.value })}>
+                      <option value="standard">standard</option>
+                      <option value="supervisor">supervisor</option>
+                      <option value="delegator">delegator</option>
+                    </select>
+                  </div>
+                  <div style={fieldWrap}>
+                    <label style={labelStyle}>Delegatable</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow, cursor: 'pointer' }} onClick={() => onUpdateNode(selectedNode.id, { delegatable: !d.delegatable })}>
+                      <div style={{ width: 32, height: 18, borderRadius: 9, background: d.delegatable ? C.purple : 'rgba(255,255,255,0.12)', transition: 'background 200ms', position: 'relative', flexShrink: 0 }}>
+                        <div style={{ position: 'absolute', top: 2, left: d.delegatable ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left 200ms', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
+                      </div>
+                      <span style={{ fontSize: 12, color: d.delegatable ? C.purple : C.textMuted }}>{d.delegatable ? 'Yes' : 'No'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Test LLM connection */}
+                {d.llmProvider && d.llmModel && (
+                  <div style={{ marginTop: 4, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => testOrchLlm(d)}
+                      disabled={orchTestState.loading || !d.appOrchestratorId}
+                      title={!d.appOrchestratorId ? 'Save the application first to enable testing' : undefined}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '7px 14px', borderRadius: 8,
+                        border: `1px solid ${C.purpleBorder}`,
+                        background: 'rgba(208,188,255,0.07)',
+                        color: (!d.appOrchestratorId || orchTestState.loading) ? C.textMuted : C.purple,
+                        cursor: (!d.appOrchestratorId || orchTestState.loading) ? 'not-allowed' : 'pointer',
+                        fontSize: 12, fontWeight: 600, opacity: !d.appOrchestratorId ? 0.5 : 1,
+                        transition: 'all 150ms',
+                      }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 15 }}>bolt</span>
+                      {orchTestState.loading ? 'Testing…' : 'Test connection'}
+                    </button>
+                    {!orchTestState.loading && orchTestState.ok !== undefined && (
+                      orchTestState.ok
+                        ? <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({orchTestState.latency}ms)</span>
+                        : <span style={{ fontSize: 12, color: '#f87171' }}>✗ {orchTestState.error ?? 'Failed'}</span>
+                    )}
+                    {!d.appOrchestratorId && (
+                      <span style={{ fontSize: 11, color: C.textMuted }}>
+                        Save the application first to enable testing
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Connected Agents read-only */}
                 <div style={fieldWrap}>
                   <label style={labelStyle}>Connected Agents</label>
                   <div style={{ fontSize: 12, color: C.textMuted, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
