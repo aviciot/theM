@@ -389,10 +389,24 @@ function AgentCard({
   }, [showOverflow]);
 
   function copyEndpoint() {
-    navigator.clipboard.writeText(agent.endpoint_url).then(() => {
+    const text = agent.endpoint_url;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      });
+    } else {
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.style.position = 'fixed';
+      el.style.opacity = '0';
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    });
+    }
   }
 
   return (
