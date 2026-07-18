@@ -125,6 +125,8 @@ class EntryPointIn(BaseModel):
     access_policy: Dict[str, Any] = Field(default_factory=lambda: {"mode": "token"})
     conversation_token_limit: Optional[int] = None
     max_concurrent_sessions: Optional[int] = None
+    queue_timeout_seconds: Optional[int] = None
+    queue_message: Optional[str] = None
     enabled: bool = True
     orchestrator: Optional[AppOrchestratorIn] = None
 
@@ -136,6 +138,8 @@ class EntryPointOut(BaseModel):
     access_policy: Dict[str, Any]
     conversation_token_limit: Optional[int] = None
     max_concurrent_sessions: Optional[int] = None
+    queue_timeout_seconds: Optional[int] = None
+    queue_message: Optional[str] = None
     enabled: bool
     created_at: datetime
     updated_at: datetime
@@ -331,6 +335,8 @@ def _to_out(app: Application) -> ApplicationOut:
             access_policy=ep.access_policy or {"mode": "token"},
             conversation_token_limit=ep.conversation_token_limit,
             max_concurrent_sessions=ep.max_concurrent_sessions,
+            queue_timeout_seconds=ep.queue_timeout_seconds,
+            queue_message=ep.queue_message,
             enabled=ep.enabled,
             created_at=ep.created_at,
             updated_at=ep.updated_at,
@@ -514,6 +520,8 @@ async def _apply_entry_point_diff(
             ep.access_policy = ep_in.access_policy
             ep.conversation_token_limit = ep_in.conversation_token_limit
             ep.max_concurrent_sessions = ep_in.max_concurrent_sessions
+            ep.queue_timeout_seconds = ep_in.queue_timeout_seconds
+            ep.queue_message = ep_in.queue_message
             ep.enabled = ep_in.enabled
             # Update linked AppOrchestrator config if provided
             if ep_in.orchestrator is not None and ep.app_orchestrator is not None:
@@ -553,6 +561,8 @@ async def _apply_entry_point_diff(
                         access_policy=ep_in.access_policy,
                         conversation_token_limit=ep_in.conversation_token_limit,
                         max_concurrent_sessions=ep_in.max_concurrent_sessions,
+                        queue_timeout_seconds=ep_in.queue_timeout_seconds,
+                        queue_message=ep_in.queue_message,
                         enabled=ep_in.enabled,
                         app_orchestrator_id=existing_ao.id,
                     ))
@@ -570,6 +580,8 @@ async def _apply_entry_point_diff(
                     access_policy=ep_in.access_policy,
                     conversation_token_limit=ep_in.conversation_token_limit,
                     max_concurrent_sessions=ep_in.max_concurrent_sessions,
+                    queue_timeout_seconds=ep_in.queue_timeout_seconds,
+                    queue_message=ep_in.queue_message,
                     enabled=ep_in.enabled,
                     app_orchestrator_id=ao.id,
                 ))
@@ -586,6 +598,9 @@ async def _apply_entry_point_diff(
                 entry_point_type=ep_in.entry_point_type,
                 access_policy=ep_in.access_policy,
                 conversation_token_limit=ep_in.conversation_token_limit,
+                max_concurrent_sessions=ep_in.max_concurrent_sessions,
+                queue_timeout_seconds=ep_in.queue_timeout_seconds,
+                queue_message=ep_in.queue_message,
                 enabled=ep_in.enabled,
                 app_orchestrator_id=ao.id,
             ))

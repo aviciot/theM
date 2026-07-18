@@ -70,7 +70,7 @@ const deleteNodeRef = { current: (_id: string) => {} };
 const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const;
 type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 
-interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; appName?: string; convTokenLimit?: string; _epId?: string; [key: string]: unknown; }
+interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; appName?: string; convTokenLimit?: string; maxConcurrentSessions?: string; queueTimeout?: string; queueMessage?: string; _epId?: string; [key: string]: unknown; }
 interface OrchestratorData {
   orchestratorId: string;          // template global orch id (for library seeding)
   name: string;
@@ -612,6 +612,9 @@ function buildNodesFromApp(
         slug: ep.slug,
         appName: app.name,
         convTokenLimit: ep.conversation_token_limit != null ? String(ep.conversation_token_limit) : '',
+        maxConcurrentSessions: ep.max_concurrent_sessions != null ? String(ep.max_concurrent_sessions) : '',
+        queueTimeout: ep.queue_timeout_seconds != null ? String(ep.queue_timeout_seconds) : '',
+        queueMessage: ep.queue_message ?? '',
         _epId: ep.id,
       } satisfies EntryPointData,
     });
@@ -1149,6 +1152,18 @@ function PropertiesPanel({
                 <div style={fieldWrap}>
                   <label style={labelStyle}>Token Limit <span style={{ fontSize: 10, color: '#64748b' }}>per session · blank = unlimited</span></label>
                   <input type="number" min={1} style={inputStyle} value={d.convTokenLimit ?? ''} onChange={e => onUpdateNode(selectedNode.id, { convTokenLimit: e.target.value })} placeholder="e.g. 50000" />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Max Concurrent Sessions <span style={{ fontSize: 10, color: '#64748b' }}>blank = unlimited</span></label>
+                  <input type="number" min={1} style={inputStyle} value={d.maxConcurrentSessions ?? ''} onChange={e => onUpdateNode(selectedNode.id, { maxConcurrentSessions: e.target.value })} placeholder="e.g. 10" />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Queue Timeout (seconds) <span style={{ fontSize: 10, color: '#64748b' }}>blank = reject immediately</span></label>
+                  <input type="number" min={1} style={inputStyle} value={d.queueTimeout ?? ''} onChange={e => onUpdateNode(selectedNode.id, { queueTimeout: e.target.value })} placeholder="e.g. 60" />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Queue Message <span style={{ fontSize: 10, color: '#64748b' }}>shown while waiting</span></label>
+                  <input style={inputStyle} value={d.queueMessage ?? ''} onChange={e => onUpdateNode(selectedNode.id, { queueMessage: e.target.value })} placeholder="All agents are busy, please wait..." />
                 </div>
                 <div style={fieldWrap}>
                   <label style={labelStyle}>Type</label>
@@ -2775,7 +2790,7 @@ function BuilderView({
       nodes: nds.map(n => {
         if (n.type === 'entryPoint') {
           const d = n.data as EntryPointData;
-          return { type: 'entry_point', id: n.id, epType: d.epType, accessMode: d.accessMode, slug: d.slug };
+          return { type: 'entry_point', id: n.id, epType: d.epType, accessMode: d.accessMode, slug: d.slug, convTokenLimit: d.convTokenLimit, maxConcurrentSessions: d.maxConcurrentSessions, queueTimeout: d.queueTimeout, queueMessage: d.queueMessage };
         }
         if (n.type === 'orchestrator') {
           const d = n.data as OrchestratorData;
@@ -4065,14 +4080,12 @@ const SESSIONS_STYLES = `
 `;
 
 // Read-only canvas node wrappers — same visuals as builder, but with session count badge
-function EPNodeRO({ data }: { data: { label?: string; slug?: string; epType?: string; _sessCount?: number; _maxSessions?: number | null; _heatStyle?: React.CSSProperties } }) {
+function EPNodeRO({ data }: { data: { label?: string; slug?: string; epType?: string; _sessCount?: number; _heatStyle?: React.CSSProperties } }) {
   const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
   const msIcon = EP_MS_ICON[data.epType ?? 'websocket'] ?? 'bolt';
   const count = data._sessCount ?? 0;
-  const maxSess = data._maxSessions ?? null;
-  const atCap = maxSess !== null && count >= maxSess;
-  const accent = atCap ? '#f59e0b' : C.cyan;
-  const badgeTitle = maxSess !== null ? `${count} / ${maxSess} sessions` : `${count} sessions`;
+  const accent = C.cyan;
+  const badgeTitle = `${count} sessions`;
   const baseStyle: React.CSSProperties = {
     width: 56, height: 56, borderRadius: '50%',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -4081,7 +4094,7 @@ function EPNodeRO({ data }: { data: { label?: string; slug?: string; epType?: st
   };
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
-      {count > 0 && <div className={`sess-badge${count > 0 ? ' active' : ''}`} title={badgeTitle} style={atCap ? { background: 'rgba(245,158,11,0.18)', border: '1.5px solid rgba(245,158,11,0.7)', color: '#f59e0b', boxShadow: '0 0 8px rgba(245,158,11,0.3)' } : undefined}>{count}{maxSess !== null ? `/${maxSess}` : ''}</div>}
+      {count > 0 && <div className={`sess-badge${count > 0 ? ' active' : ''}`} title={badgeTitle}>{count}</div>}
       <div style={{ ...baseStyle, ...(count > 0 && data._heatStyle ? data._heatStyle : {}) }}>
         <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent }}>{msIcon}</span>
       </div>
@@ -4221,39 +4234,6 @@ function SessionsView({
     }
   }
 
-  // Per-EP limit editing
-  const [epLimits, setEpLimits] = useState<Record<string, string>>({});
-  const [savingEpLimit, setSavingEpLimit] = useState<string | null>(null);
-
-  async function saveEpLimit(ep: EntryPoint) {
-    const raw = epLimits[ep.id];
-    const val = raw === '' ? null : parseInt(raw, 10);
-    if (raw !== undefined && raw !== '' && (isNaN(val as number) || (val as number) < 1)) return;
-    setSavingEpLimit(ep.id);
-    try {
-      const updatedEps = app.entry_points.map(e =>
-        e.id === ep.id ? { ...e, max_concurrent_sessions: val ?? null } : e
-      );
-      const updated = await themApi.updateApplication(app.id, {
-        entry_points: updatedEps.map(e => ({
-          id: e.id,
-          slug: e.slug,
-          entry_point_type: e.entry_point_type,
-          access_policy: e.access_policy,
-          conversation_token_limit: e.conversation_token_limit,
-          max_concurrent_sessions: e.max_concurrent_sessions,
-          enabled: e.enabled,
-        })),
-      });
-      setApp(updated);
-      setEpLimits(prev => { const n = { ...prev }; delete n[ep.id]; return n; });
-    } catch {
-      // leave input dirty so user can retry
-    } finally {
-      setSavingEpLimit(null);
-    }
-  }
-
   // Load monitoring config once
   useEffect(() => {
     themApi.getMonitoringConfig().then(setMonCfg).catch(() => {});
@@ -4272,12 +4252,6 @@ function SessionsView({
     if (s.ep_slug) epCountBySlug.set(s.ep_slug, (epCountBySlug.get(s.ep_slug) ?? 0) + 1);
   });
 
-  // Build ep max map for badge display
-  const epMaxBySlug = new Map<string, number | null>();
-  app.entry_points.forEach(ep => {
-    epMaxBySlug.set(ep.slug, ep.max_concurrent_sessions ?? null);
-  });
-
   const { nodes: baseNodes, edges: baseEdges } = buildNodesFromApp(app, agents);
 
   // Build active node id sets for edge coloring
@@ -4288,9 +4262,8 @@ function SessionsView({
     if (n.type === 'entryPoint' && n.data?.slug) {
       const slug = n.data.slug as string;
       const count = epCountBySlug.get(slug) ?? 0;
-      const maxSess = epMaxBySlug.get(slug) ?? null;
       if (count > 0) activeEpNodeIds.add(n.id);
-      return { ...n, data: { ...n.data, _sessCount: count, _maxSessions: maxSess, _heatStyle: heatmapStyle(count, monCfg, 'ep') } };
+      return { ...n, data: { ...n.data, _sessCount: count, _heatStyle: heatmapStyle(count, monCfg, 'ep') } };
     }
     if (n.type === 'orchestrator') {
       const orchName = (n.data as any)?.name ?? '';
@@ -4555,53 +4528,6 @@ function SessionsView({
               );
             })}
           </div>
-
-          {/* Entry Point Limits panel */}
-          {app.entry_points.length > 0 && (
-            <div style={{
-              borderTop: `1px solid ${C.outline}`,
-              padding: '12px 16px',
-              flexShrink: 0,
-              background: 'rgba(255,255,255,0.01)',
-            }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>
-                Entry Point Limits
-              </div>
-              {app.entry_points.map(ep => {
-                const current = epCountBySlug.get(ep.slug) ?? 0;
-                const max = ep.max_concurrent_sessions;
-                const atCap = max !== null && current >= max;
-                const inputVal = epLimits[ep.id] !== undefined ? epLimits[ep.id] : (max !== null ? String(max) : '');
-                return (
-                  <div key={ep.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <span style={{ fontSize: 11, color: C.cyan, fontFamily: 'JetBrains Mono, monospace', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}
-                      title={ep.slug}>{ep.slug}</span>
-                    <span style={{ fontSize: 11, color: atCap ? '#f59e0b' : C.textMuted, flexShrink: 0 }}>
-                      {current}/{max ?? '∞'}
-                    </span>
-                    <input
-                      type="number"
-                      min={1}
-                      placeholder="∞"
-                      value={inputVal}
-                      onChange={e => setEpLimits(prev => ({ ...prev, [ep.id]: e.target.value }))}
-                      onBlur={() => saveEpLimit(ep)}
-                      onKeyDown={e => { if (e.key === 'Enter') saveEpLimit(ep); }}
-                      disabled={savingEpLimit !== null}
-                      style={{
-                        width: 52, height: 24, borderRadius: 5, border: `1px solid ${C.outline}`,
-                        background: 'rgba(255,255,255,0.05)', color: C.text,
-                        fontSize: 11, textAlign: 'center', outline: 'none',
-                        fontFamily: 'JetBrains Mono, monospace',
-                        opacity: savingEpLimit !== null ? 0.5 : 1,
-                      }}
-                      title="Max concurrent sessions (blank = unlimited)"
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          )}
 
           {/* Session detail drawer */}
           {selectedSession && (() => {

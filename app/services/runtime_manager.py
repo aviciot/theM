@@ -17,6 +17,8 @@ Gate order (app-level first, then entry-point-level):
   5. EP session cap  — Lua EVAL on them:ep:{ep_slug}:sessions vs ep_max_concurrent
                        Lua atomically prunes ghost entries (pod-crash leftovers), checks cap,
                        SADDs the new session_id.
+                       If cap hit AND queue_timeout_seconds is set → raises RuntimeQueueFull
+                       so caller can wait and retry via ep_gate_try().
   6. Orchestrator rate limit — check_rate_limit(user_id, rate_limit_rpm)
 
 Redis keys used:
@@ -73,6 +75,38 @@ class RuntimeLimitError(Exception):
         self.detail = detail
 
 
+class RuntimeQueueFull(Exception):
+    """Raised when EP is at cap but queuing is enabled — caller should wait and retry via ep_gate_try()."""
+    def __init__(self, queue_message: Optional[str], deadline: float) -> None:
+        self.queue_message = queue_message or "All agents are busy, please wait..."
+        self.deadline = deadline
+
+
+async def ep_gate_try(
+    ep_slug: str,
+    session_id: uuid.UUID,
+    ep_max_concurrent: int,
+) -> bool:
+    """
+    Single atomic attempt to acquire an EP slot.
+    Returns True if slot acquired, False if at cap.
+    Fail-open on Redis error (returns True).
+    """
+    redis = _db.redis_client
+    if redis is None:
+        return True
+    ep_set_key = f"them:ep:{ep_slug}:sessions"
+    try:
+        result = await redis.eval(
+            _LUA_GATE, 1, ep_set_key,
+            str(session_id), str(ep_max_concurrent), _SESS_PREFIX_FOR_LUA,
+        )
+        return int(result) != -1
+    except Exception as exc:
+        logger.warning("ep_gate_try: Lua eval failed — allowing", ep_slug=ep_slug, error=str(exc))
+        return True
+
+
 async def runtime_gate(
     ep_slug: Optional[str],
     app_id: Optional[str],
@@ -82,6 +116,8 @@ async def runtime_gate(
     app_runtime: Optional[dict] = None,
     ep_max_concurrent: Optional[int] = None,
     rate_limit_rpm: int = 0,
+    queue_timeout_seconds: Optional[int] = None,
+    queue_message: Optional[str] = None,
 ) -> None:
     """
     Gate called after auth, before workflow start.
@@ -167,41 +203,25 @@ async def runtime_gate(
 
     # ── 6. EP session cap (atomic Lua: prune ghosts + check + SADD) ──────────
     if ep_slug and ep_max_concurrent is not None:
-        redis = _db.redis_client
-        if redis is None:
-            logger.warning("runtime_gate: Redis unavailable — skipping EP session cap", ep_slug=ep_slug)
-            return
-
-        ep_set_key = f"them:ep:{ep_slug}:sessions"
-        try:
-            result = await redis.eval(
-                _LUA_GATE,
-                1,
-                ep_set_key,
-                str(session_id),
-                str(ep_max_concurrent),
-                _SESS_PREFIX_FOR_LUA,
+        acquired = await ep_gate_try(ep_slug, session_id, ep_max_concurrent)
+        if not acquired:
+            if queue_timeout_seconds:
+                deadline = time.time() + queue_timeout_seconds
+                raise RuntimeQueueFull(queue_message, deadline)
+            raise RuntimeLimitError(
+                reason="session_cap",
+                ws_code=4403,
+                detail=(
+                    f"Entry point '{ep_slug}' is at capacity "
+                    f"({ep_max_concurrent} concurrent sessions). Try again later."
+                ),
             )
-            if int(result) == -1:
-                raise RuntimeLimitError(
-                    reason="session_cap",
-                    ws_code=4403,
-                    detail=(
-                        f"Entry point '{ep_slug}' is at capacity "
-                        f"({ep_max_concurrent} concurrent sessions). Try again later."
-                    ),
-                )
-            logger.info(
-                "runtime_gate: EP session slot reserved",
-                ep_slug=ep_slug,
-                session_id=str(session_id),
-                current_count=int(result),
-                max=ep_max_concurrent,
-            )
-        except RuntimeLimitError:
-            raise
-        except Exception as exc:
-            logger.warning("runtime_gate: Lua eval failed — skipping EP cap", ep_slug=ep_slug, error=str(exc))
+        logger.info(
+            "runtime_gate: EP session slot reserved",
+            ep_slug=ep_slug,
+            session_id=str(session_id),
+            max=ep_max_concurrent,
+        )
 
 
 async def signal_disconnect(session_id: uuid.UUID) -> bool:

@@ -386,6 +386,8 @@ class EntryPoint(Base):
     access_policy: Mapped[dict] = mapped_column(JSONB, nullable=False, default=lambda: {"mode": "token"})
     conversation_token_limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     max_concurrent_sessions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    queue_timeout_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    queue_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -381,11 +381,34 @@ async def compile_graph(
             except (ValueError, TypeError):
                 pass
 
+        max_concurrent_raw = d.get("maxConcurrentSessions") or d.get("max_concurrent_sessions")
+        max_concurrent: Optional[int] = None
+        if max_concurrent_raw is not None and str(max_concurrent_raw).strip() not in ("", "null", "None"):
+            try:
+                max_concurrent = int(max_concurrent_raw)
+            except (ValueError, TypeError):
+                pass
+
+        queue_timeout_raw = d.get("queueTimeout") or d.get("queue_timeout_seconds")
+        queue_timeout: Optional[int] = None
+        if queue_timeout_raw is not None and str(queue_timeout_raw).strip() not in ("", "null", "None"):
+            try:
+                queue_timeout = int(queue_timeout_raw)
+            except (ValueError, TypeError):
+                pass
+
+        queue_msg = d.get("queueMessage") or d.get("queue_message") or None
+        if queue_msg is not None:
+            queue_msg = str(queue_msg).strip() or None
+
         existing_ep = existing_ep_by_slug.get(slug)
         if existing_ep is not None:
             existing_ep.entry_point_type = ep_type
             existing_ep.access_policy = access_policy
             existing_ep.conversation_token_limit = token_limit
+            existing_ep.max_concurrent_sessions = max_concurrent
+            existing_ep.queue_timeout_seconds = queue_timeout
+            existing_ep.queue_message = queue_msg
             existing_ep.app_orchestrator_id = ao.id
         else:
             db.add(EntryPoint(
@@ -394,6 +417,9 @@ async def compile_graph(
                 entry_point_type=ep_type,
                 access_policy=access_policy,
                 conversation_token_limit=token_limit,
+                max_concurrent_sessions=max_concurrent,
+                queue_timeout_seconds=queue_timeout,
+                queue_message=queue_msg,
                 enabled=True,
                 app_orchestrator_id=ao.id,
             ))
@@ -590,6 +616,9 @@ def export_graph(
                 "epType": ep.entry_point_type,
                 "accessMode": (ep.access_policy or {}).get("mode", "token"),
                 "convTokenLimit": ep.conversation_token_limit,
+                "maxConcurrentSessions": ep.max_concurrent_sessions,
+                "queueTimeout": ep.queue_timeout_seconds,
+                "queueMessage": ep.queue_message,
             },
         })
         if ep.app_orchestrator_id:

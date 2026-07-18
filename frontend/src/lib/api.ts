@@ -205,6 +205,8 @@ export interface EntryPoint {
   access_policy: Record<string, unknown>;
   conversation_token_limit: number | null;
   max_concurrent_sessions: number | null;
+  queue_timeout_seconds: number | null;
+  queue_message: string | null;
   enabled: boolean;
   created_at: string;
   updated_at: string;

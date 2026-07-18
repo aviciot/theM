@@ -23,6 +23,7 @@ Design:
 
 import asyncio
 import hashlib
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -39,7 +40,7 @@ from app.config import settings as _settings
 from app.models import Application, EntryPoint, Task
 from app.services.auth_client import validate_jwt
 from app.services import task_store
-from app.services.runtime_manager import RuntimeLimitError, _SESS_CONTROL_PREFIX, runtime_gate
+from app.services.runtime_manager import RuntimeLimitError, RuntimeQueueFull, _SESS_CONTROL_PREFIX, ep_gate_try, runtime_gate
 from app.services.session_manager import end as session_end
 from app.services.session_manager import register as session_register
 from app.services.task_runner import run as task_runner_run
@@ -596,7 +597,23 @@ async def ws_entry(slug: str, websocket: WebSocket):
             app_runtime=(ep.application.runtime_config or {}),
             ep_max_concurrent=ep.max_concurrent_sessions,
             rate_limit_rpm=orch.rate_limit_rpm or 0,
+            queue_timeout_seconds=ep.queue_timeout_seconds,
+            queue_message=ep.queue_message,
         )
+    except RuntimeQueueFull as q:
+        # EP is at cap but queuing is enabled — send waiting message then poll for a slot
+        _default_msg = "All agents are busy, please wait..."
+        await websocket.send_json({"type": "waiting", "message": q.queue_message or _default_msg})
+        acquired = False
+        while time.time() < q.deadline:
+            await asyncio.sleep(3)
+            acquired = await ep_gate_try(slug, session_id, ep.max_concurrent_sessions)
+            if acquired:
+                break
+        if not acquired:
+            await websocket.send_json({"type": "error", "message": f"Entry point '{slug}' is still at capacity. Try again later."})
+            await websocket.close(code=4403)
+            return
     except RuntimeLimitError as exc:
         await websocket.send_json({"type": "error", "message": exc.detail})
         await websocket.close(code=exc.ws_code)

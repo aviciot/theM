@@ -2685,11 +2685,8 @@ def test_33_runtime_manager():
         check("hiddenSessions optimistic state", "hiddenSessions" in fe)
         check("handleTerminate function", "handleTerminate" in fe)
         check("Terminate button rendered", "Terminate" in fe)
-        check("EP limits panel rendered", "Entry Point Limits" in fe or "epLimits" in fe)
-        check("saveEpLimit function", "saveEpLimit" in fe)
-        check("_maxSessions passed to EP node", "_maxSessions" in fe)
-        check("atCap badge coloring", "atCap" in fe)
         check("visibleSessions used (filtered by hidden)", "visibleSessions" in fe)
+        # Note: EP limit editing (saveEpLimit, _maxSessions, atCap) moved to builder in test_35
     except Exception as exc:
         check("frontend SessionsView runtime additions", False, str(exc))
 
@@ -2800,6 +2797,66 @@ def test_34_app_runtime():
         check("frontend page.tsx RuntimeView", False, str(exc))
 
 
+def test_35_ep_queue():
+    section("test_35_ep_queue: EP queue config — migration, compiler, runtime, builder UI")
+
+    # migration 024
+    m = src("db/024_ep_queue.sql")
+    check("migration 024 exists", True)
+    check("adds queue_timeout_seconds", "queue_timeout_seconds" in m)
+    check("adds queue_message", "queue_message" in m)
+
+    # models.py
+    md = src("app/models.py")
+    check("EntryPoint.queue_timeout_seconds in models", "queue_timeout_seconds" in md)
+    check("EntryPoint.queue_message in models", "queue_message" in md)
+
+    # app_compiler.py
+    ac = src("app/services/app_compiler.py")
+    check("queueTimeout read from node data", "queueTimeout" in ac or "queue_timeout" in ac)
+    check("queueMessage read from node data", "queueMessage" in ac or "queue_message" in ac)
+    check("maxConcurrentSessions read from node data", "maxConcurrentSessions" in ac or "max_concurrent" in ac)
+    check("queue_timeout_seconds written to EP", "queue_timeout_seconds" in ac)
+    check("queue_message written to EP", "queue_message" in ac)
+
+    # admin_applications.py
+    aa = src("app/routers/admin_applications.py")
+    check("queue_timeout_seconds in EntryPointIn", "queue_timeout_seconds" in aa)
+    check("queue_message in EntryPointIn", "queue_message" in aa)
+
+    # runtime_manager.py
+    rm = src("app/services/runtime_manager.py")
+    check("RuntimeQueueFull class defined", "class RuntimeQueueFull" in rm)
+    check("ep_gate_try function defined", "async def ep_gate_try(" in rm)
+    check("queue_timeout_seconds param in runtime_gate", "queue_timeout_seconds" in rm)
+    check("queue_message param in runtime_gate", "queue_message" in rm)
+    check("raises RuntimeQueueFull when queuing enabled", "RuntimeQueueFull" in rm)
+
+    # apps.py
+    a = src("app/routers/apps.py")
+    check("RuntimeQueueFull imported in apps.py", "RuntimeQueueFull" in a)
+    check("ep_gate_try imported in apps.py", "ep_gate_try" in a)
+    check("waiting message sent to WS", '"waiting"' in a)
+    check("queue retry loop in apps.py", "asyncio.sleep" in a)
+    check("queue_timeout_seconds passed from EP", "queue_timeout_seconds=ep.queue_timeout_seconds" in a or "queue_timeout_seconds" in a)
+
+    # frontend api.ts
+    api = src("frontend/src/lib/api.ts")
+    check("queue_timeout_seconds in EntryPoint type", "queue_timeout_seconds" in api)
+    check("queue_message in EntryPoint type", "queue_message" in api)
+
+    # frontend page.tsx
+    fe = src("frontend/src/app/admin/applications/page.tsx")
+    check("maxConcurrentSessions in EntryPointData", "maxConcurrentSessions" in fe)
+    check("queueTimeout in EntryPointData", "queueTimeout" in fe)
+    check("queueMessage in EntryPointData", "queueMessage" in fe)
+    check("Max Concurrent Sessions field in EP panel", "Max Concurrent Sessions" in fe)
+    check("Queue Timeout field in EP panel", "Queue Timeout" in fe)
+    check("Queue Message field in EP panel", "Queue Message" in fe)
+    check("saveEpLimit removed from SessionsView", "saveEpLimit" not in fe)
+    check("Entry Point Limits panel removed from SessionsView", "Entry Point Limits" not in fe)
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -2837,6 +2894,7 @@ ALL_TESTS = [
     ("32", test_32_monitoring_config),
     ("33", test_33_runtime_manager),
     ("34", test_34_app_runtime),
+    ("35", test_35_ep_queue),
 ]
 
 if __name__ == "__main__":
