@@ -999,10 +999,10 @@ function PropertiesPanel({
   }
 
   async function testStt(d: OrchestratorData) {
-    if (!d.transcriptionProvider || !d.transcriptionModel || !d.appOrchestratorId) return;
+    if (!d.transcriptionProvider || !d.transcriptionModel || !d.appOrchestratorId || !app) return;
     setSttTestState({ loading: true });
     try {
-      const res = await themApi.testVoice(d.appOrchestratorId, { provider: d.transcriptionProvider, model: d.transcriptionModel });
+      const res = await themApi.testAppOrchVoice(app.id, d.appOrchestratorId, { provider: d.transcriptionProvider, model: d.transcriptionModel });
       setSttTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
     } catch (e: any) {
       setSttTestState({ loading: false, ok: false, error: e.message });
@@ -1010,10 +1010,10 @@ function PropertiesPanel({
   }
 
   async function testTts(d: OrchestratorData) {
-    if (!d.ttsProvider || !d.ttsVoice || !d.appOrchestratorId) return;
+    if (!d.ttsProvider || !d.ttsVoice || !d.appOrchestratorId || !app) return;
     setTtsTestState({ loading: true });
     try {
-      const res = await themApi.testTts(d.appOrchestratorId, { provider: d.ttsProvider, voice: d.ttsVoice });
+      const res = await themApi.testAppOrchTts(app.id, d.appOrchestratorId, { provider: d.ttsProvider, voice: d.ttsVoice });
       setTtsTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
     } catch (e: any) {
       setTtsTestState({ loading: false, ok: false, error: e.message });

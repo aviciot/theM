@@ -473,6 +473,10 @@ export const themApi = {
     api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/system-agents/${role}/test-llm`, body),
   testAppOrchLlm: (appId: string, aoId: string, body: { provider: string; model: string; api_key?: string; base_url?: string }) =>
     api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/orchestrators/${aoId}/test-llm`, body),
+  testAppOrchVoice: (appId: string, aoId: string, body: { provider: string; model: string }) =>
+    api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/orchestrators/${aoId}/test-voice`, body),
+  testAppOrchTts: (appId: string, aoId: string, body: { provider: string; voice: string }) =>
+    api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/orchestrators/${aoId}/test-tts`, body),
   deleteRun: (runId: string) => api.delete<void>(`/runs/${runId}`),
   bulkDeleteRuns: (runIds: string[]) => api.post<{ deleted: number }>('/runs/bulk-delete', { run_ids: runIds }),
   bulkDeleteApplications: (appIds: string[]) => api.post<{ deleted: number }>('/admin/applications/bulk-delete', { app_ids: appIds }),

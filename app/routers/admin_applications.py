@@ -1031,3 +1031,102 @@ async def test_app_orch_llm(
 
     from app.routers.admin_orchestrators import _test_llm
     return await _test_llm(body.provider, body.model, api_key, body.base_url)
+
+
+class _AOVoiceTestRequest(BaseModel):
+    provider: str
+    model: str
+    api_key: Optional[str] = None
+
+class _AOTTSTestRequest(BaseModel):
+    provider: str
+    voice: str
+    api_key: Optional[str] = None
+
+
+@router.post("/{app_id}/orchestrators/{ao_id}/test-voice", response_model=_LLMTestResult)
+async def test_app_orch_voice(
+    app_id: uuid.UUID,
+    ao_id: uuid.UUID,
+    body: _AOVoiceTestRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    row = await db.get(AppOrchestrator, ao_id)
+    if not row or row.application_id != app_id:
+        raise HTTPException(status_code=404, detail="App orchestrator not found")
+
+    api_key = body.api_key
+    if not api_key:
+        if not row.transcription_api_key_encrypted:
+            raise HTTPException(status_code=400, detail="No STT API key stored and none provided")
+        api_key = decrypt_value(row.transcription_api_key_encrypted)
+
+    import time
+    start = time.monotonic()
+    try:
+        if body.provider == "openai":
+            import openai
+            client = openai.AsyncOpenAI(api_key=api_key)
+            models = await client.models.list()
+            ms = int((time.monotonic() - start) * 1000)
+            whisper_models = [m.id for m in models.data if "whisper" in m.id or "transcribe" in m.id]
+            return _LLMTestResult(ok=True, latency_ms=ms, error=f"Available: {', '.join(whisper_models) or 'none found'}")
+        elif body.provider == "groq":
+            from groq import AsyncGroq
+            client = AsyncGroq(api_key=api_key)
+            models = await client.models.list()
+            ms = int((time.monotonic() - start) * 1000)
+            audio_models = [m.id for m in models.data if "whisper" in m.id]
+            return _LLMTestResult(ok=True, latency_ms=ms, error=f"Available: {', '.join(audio_models) or 'none found'}")
+        else:
+            return _LLMTestResult(ok=False, error=f"Unknown provider: {body.provider}")
+    except Exception as exc:
+        ms = int((time.monotonic() - start) * 1000)
+        return _LLMTestResult(ok=False, error=str(exc), latency_ms=ms)
+
+
+@router.post("/{app_id}/orchestrators/{ao_id}/test-tts", response_model=_LLMTestResult)
+async def test_app_orch_tts(
+    app_id: uuid.UUID,
+    ao_id: uuid.UUID,
+    body: _AOTTSTestRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    row = await db.get(AppOrchestrator, ao_id)
+    if not row or row.application_id != app_id:
+        raise HTTPException(status_code=404, detail="App orchestrator not found")
+
+    api_key = body.api_key
+    if not api_key:
+        if not row.tts_api_key_encrypted:
+            raise HTTPException(status_code=400, detail="No TTS API key stored and none provided")
+        api_key = decrypt_value(row.tts_api_key_encrypted)
+
+    import time
+    start = time.monotonic()
+    try:
+        if body.provider == "openai":
+            import openai
+            client = openai.AsyncOpenAI(api_key=api_key)
+            resp = await client.audio.speech.create(
+                model="tts-1", voice=body.voice, input="Hello", response_format="mp3"
+            )
+            await resp.aread()
+            ms = int((time.monotonic() - start) * 1000)
+            return _LLMTestResult(ok=True, latency_ms=ms)
+        elif body.provider == "elevenlabs":
+            import httpx
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.post(
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{body.voice}/stream",
+                    headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+                    json={"text": "Hello", "model_id": "eleven_monolingual_v1"},
+                )
+                r.raise_for_status()
+            ms = int((time.monotonic() - start) * 1000)
+            return _LLMTestResult(ok=True, latency_ms=ms)
+        else:
+            return _LLMTestResult(ok=False, error=f"Unknown TTS provider: {body.provider}")
+    except Exception as exc:
+        ms = int((time.monotonic() - start) * 1000)
+        return _LLMTestResult(ok=False, error=str(exc), latency_ms=ms)
