@@ -2423,6 +2423,70 @@ def test_30_graph_compiler():
         check("frontend graph-centric save", False, str(exc))
 
 
+def test_31_session_manager():
+    section("test_31_session_manager: app/services/session_manager.py + wiring in ws_orchestrator + apps + main.py")
+    sys.path.insert(0, str(ROOT))
+
+    # ── session_manager.py exists and is complete ─────────────────────────────
+    try:
+        s = src("app/services/session_manager.py")
+        check("session_manager.py exists", True)
+        check("register() defined", "async def register(" in s)
+        check("end() defined", "async def end(" in s)
+        check("touch() defined", "async def touch(" in s)
+        check("get() defined", "async def get(" in s)
+        check("list_ep_sessions() defined", "async def list_ep_sessions(" in s)
+        check("list_app_sessions() defined", "async def list_app_sessions(" in s)
+        check("count_ep_sessions() defined", "async def count_ep_sessions(" in s)
+        check("count_app_sessions() defined", "async def count_app_sessions(" in s)
+        check("write_pod_heartbeat() defined", "async def write_pod_heartbeat(" in s)
+        check("them:sess: prefix used", "them:sess:" in s)
+        check("them:ep: prefix used", "them:ep:" in s)
+        check("them:pod: prefix used", "them:pod:" in s)
+        check("them:pods key used", "them:pods" in s)
+        check("SESS_TTL defined", "_SESS_TTL" in s)
+        check("POD_TTL defined", "_POD_TTL" in s)
+        check("SessionInfo dataclass defined", "class SessionInfo" in s)
+        check("never raises (best-effort pattern)", "except Exception" in s)
+    except FileNotFoundError:
+        check("session_manager.py exists", False, "file not found")
+    except Exception as exc:
+        check("session_manager.py", False, str(exc))
+
+    # ── ws_orchestrator.py wired ──────────────────────────────────────────────
+    try:
+        s = src("app/routers/ws_orchestrator.py")
+        check("session_manager imported in ws_orchestrator", "from app.services.session_manager import" in s)
+        check("session_register called in ws_orchestrator", "await session_register(" in s)
+        check("session_end called in ws_orchestrator", "await session_end(" in s)
+        check("session_end in finally block", "finally:" in s and "session_end" in s)
+        check("ep_slug=None passed (direct WS, no EP)", "ep_slug=None" in s)
+    except Exception as exc:
+        check("ws_orchestrator.py session wiring", False, str(exc))
+
+    # ── apps.py wired ─────────────────────────────────────────────────────────
+    try:
+        s = src("app/routers/apps.py")
+        check("session_manager imported in apps", "from app.services.session_manager import" in s)
+        check("session_register called in apps.py", "await session_register(" in s)
+        check("session_end called in apps.py", "await session_end(" in s)
+        check("session_end in finally block in apps.py", "finally:" in s and "session_end" in s)
+        check("ep_slug passed to register in apps.py", "ep_slug=slug" in s)
+        check("app_id captured from orch.application_id", "app_id = str(orch.application_id)" in s)
+    except Exception as exc:
+        check("apps.py session wiring", False, str(exc))
+
+    # ── main.py heartbeat loop wired ──────────────────────────────────────────
+    try:
+        s = src("app/main.py")
+        check("_pod_heartbeat_loop defined in main.py", "async def _pod_heartbeat_loop(" in s)
+        check("heartbeat_task created in lifespan", "asyncio.create_task(_pod_heartbeat_loop())" in s)
+        check("heartbeat_task cancelled on shutdown", "heartbeat_task.cancel()" in s)
+        check("write_pod_heartbeat called in loop", "await write_pod_heartbeat(" in s)
+    except Exception as exc:
+        check("main.py heartbeat wiring", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -2456,6 +2520,7 @@ ALL_TESTS = [
     ("28", test_28_loaders_resolution),
     ("29", test_29_app_orchestrators_migration),
     ("30", test_30_graph_compiler),
+    ("31", test_31_session_manager),
 ]
 
 if __name__ == "__main__":

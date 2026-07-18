@@ -26,12 +26,16 @@ import app.database as _db
 from app.edges.registry import get_edge_class
 from app.edges.websocket_edge import WebsocketEdge
 from app.services.auth_client import validate_jwt
+from app.services.session_manager import end as session_end
+from app.services.session_manager import register as session_register
 from app.services.task_runner import run as task_runner_run
 from app.services.token_cache import validate_bearer_token
 from app.utils.logger import logger
 
 # Phase 7: always route through Temporal (TEMPORAL_ENABLED=true is now the default)
 _TEMPORAL_ENABLED = True
+
+from app.config import settings as _settings
 
 router = APIRouter()
 
@@ -150,6 +154,15 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
     # ── Instantiate the WebsocketEdge and relay runner events ─────────────
     edge = WebsocketEdge(websocket, orchestrator_name=name, user_id=user_id)
 
+    await session_register(
+        session_id=session_id,
+        instance_id=_settings.instance_id,
+        user_id=user_id,
+        orchestrator_name=name,
+        context_id=context_id,
+        ep_slug=None,   # direct /ws/orchestrate — no entry point
+        app_id=None,
+    )
     try:
         await _run_temporal(
             name, user_message, user_id, token_payload,
@@ -164,6 +177,7 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
         except Exception:
             pass
     finally:
+        await session_end(session_id, ep_slug=None, app_id=None)
         await edge.close()
 
 

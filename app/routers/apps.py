@@ -34,9 +34,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import app.database as db_module
+from app.config import settings as _settings
 from app.models import Application, EntryPoint, Task
 from app.services.auth_client import validate_jwt
 from app.services import task_store
+from app.services.session_manager import end as session_end
+from app.services.session_manager import register as session_register
 from app.services.task_runner import run as task_runner_run
 from app.services.token_cache import validate_bearer_token
 from app.services.voice_service import transcribe as stt_transcribe, stream_tts
@@ -517,6 +520,7 @@ async def ws_entry(slug: str, websocket: WebSocket):
                 return
             orchestrator_name = orch.name
             orch_id = orch.id
+            app_id = str(orch.application_id)
     except HTTPException as exc:
         await websocket.send_json({"type": "error", "message": exc.detail})
         await websocket.close(code=4004)
@@ -568,6 +572,15 @@ async def ws_entry(slug: str, websocket: WebSocket):
             return
 
     session_id = uuid.uuid4()
+    await session_register(
+        session_id=session_id,
+        instance_id=_settings.instance_id,
+        user_id=user_id,
+        orchestrator_name=orchestrator_name,
+        context_id=context_id,
+        ep_slug=slug,
+        app_id=app_id,
+    )
 
     try:
         if _TEMPORAL_ENABLED:
@@ -648,6 +661,8 @@ async def ws_entry(slug: str, websocket: WebSocket):
             await websocket.send_json({"type": "error", "message": str(exc)})
         except Exception:
             pass
+    finally:
+        await session_end(session_id, ep_slug=slug, app_id=app_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
