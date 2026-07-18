@@ -514,3 +514,51 @@ Corollary: **always restart the bridge after a column drop**, even if the code c
 **Corollary:** Canvas positions must be keyed by the React Flow **node id** that was actually used when saving. The load function (`buildNodesFromApp`) generates its own node ids (`ep_<slug>`, `orch_<ao_id>`, `agent_<agent_id>`). After a save, positions are stored under those ids — the load function must look them up by the same id it just generated, with legacy-prefix fallback for old saves.
 
 **Watch for:** If you add a new node type to the canvas, make sure `handleSave` includes its id in `canvasLayout` and `buildNodesFromApp` uses `pos(nodeId, legacyKey)` to restore its position.
+
+---
+
+## 2026-07-16 — Live notifications that survive page navigation: Hash + Pub/Sub pattern
+
+**Symptom:** Scan progress badge stuck on "Scanning…" after navigating away and back. Pub/Sub events fired while WS was closed are gone forever.
+
+**Root cause:** Redis Pub/Sub is fire-and-forget. No replay. If the browser is not subscribed at the exact moment an event fires, it is lost permanently.
+
+**The correct pattern — Hash (snapshot) + Pub/Sub (live):**
+
+```
+On every state update (backend):
+  1. HSET them:<feature>:state:<id>  field value  ← update snapshot first
+  2. PUBLISH them:dash:<channel>  {payload}        ← then publish live
+
+On WS subscribe (server):
+  1. Subscribe to Pub/Sub first                    ← no gap, events buffered
+  2. HGETALL them:<feature>:state:<id>             ← read current snapshot
+  3. Send snapshot to browser as one message       ← browser renders current state
+  4. Forward live Pub/Sub events as they arrive    ← live updates from here
+
+On scan complete:
+  DEL them:<feature>:state:<id>  (or short TTL)
+```
+
+**Why subscribe to Pub/Sub BEFORE reading the Hash:**
+If you read the Hash first, then subscribe — any event that fires in that gap is missed. Subscribe first means Pub/Sub is already buffering before you read the snapshot. No gap.
+
+**Why update Hash BEFORE publishing:**
+Pub/Sub is faster than a Hash read. If you publish first, a reconnecting client might read a stale Hash. Hash first guarantees snapshot is never behind live events.
+
+**Frontend:**
+- Handle a `snapshot` event type that sets state directly (not incremental)
+- Use a version/sequence number so a delayed Pub/Sub event cannot overwrite newer state
+
+**Apply this pattern anywhere you need:**
+- Live progress that survives page navigation
+- Any feature where the browser might connect after events already fired
+- Any "current state" that a new subscriber needs immediately
+
+**What NOT to do:**
+- Do not use Pub/Sub alone for anything that needs replay
+- Do not use Redis Streams for live UIs — they replay ALL history, causing stale messages to flash on screen
+- Do not poll the DB for N items on reconnect — use the Hash snapshot via the existing WS subscribe flow
+- Do not add complex reconnect logic on the frontend — the server handles catch-up, frontend just reconnects normally
+
+**Watch for:** Any new real-time feature (run progress, agent status, task updates) — always ask: "can the user navigate away while this is running?" If yes, use Hash + Pub/Sub.

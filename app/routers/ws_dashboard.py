@@ -26,7 +26,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import app.database as db_module
 from app.services.auth_client import validate_jwt
-from app.services.dashboard_broadcaster import get_cached_app_status
+from app.services.dashboard_broadcaster import get_cached_app_status, get_scan_state
 from app.utils.logger import logger
 
 router = APIRouter()
@@ -59,14 +59,30 @@ async def _listen_channels(
     websocket: WebSocket,
     channels: list[str],
 ) -> None:
-    """Subscribe to Redis pub/sub channels and relay events to the WS client."""
+    """Subscribe to Redis pub/sub channels and relay events to the WS client.
+
+    For agent:<id> channels: subscribes to Pub/Sub first (no gap), then sends
+    the current scan state snapshot so clients reconnecting mid-scan see current state.
+    """
     if db_module.redis_client is None:
         await websocket.send_json({"type": "error", "message": "Redis unavailable"})
         return
 
     pubsub = db_module.redis_client.pubsub()
     redis_channels = [f"{_DASH_PREFIX}{ch}" for ch in channels]
+    # Subscribe to Pub/Sub FIRST — ensures no events are missed during snapshot read.
     await pubsub.subscribe(*redis_channels)
+
+    # Send scan state snapshot for any agent:<id> channels.
+    for ch in channels:
+        if ch.startswith("agent:"):
+            agent_id = ch[len("agent:"):]
+            state = await get_scan_state(agent_id)
+            if state:
+                try:
+                    await websocket.send_json({"channel": ch, "event": state})
+                except Exception:
+                    pass
 
     ping_task = asyncio.create_task(_ping_loop(websocket))
 

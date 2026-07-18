@@ -349,6 +349,7 @@ const _inFlightScans = new Set<string>();
 function AgentCard({
   agent,
   scanResult,
+  scanStep,
   testResult,
   isDiscovering,
   onTest,
@@ -365,6 +366,7 @@ function AgentCard({
 }: {
   agent: Agent;
   scanResult: ScanResult | 'scanning' | undefined;
+  scanStep?: string;
   testResult: { ok: boolean; latency_ms: number; detail: string } | 'testing' | undefined;
   isDiscovering: boolean;
   onTest: () => void;
@@ -424,7 +426,7 @@ function AgentCard({
 
   return (
     <article
-      className="glass-card chroma-card"
+      className={`glass-card chroma-card${scanResult === 'scanning' ? ' scanning-card' : ''}`}
       draggable
       onDragStart={(e) => {
         if ((e.target as HTMLElement).closest('button, input, a, textarea, select')) {
@@ -445,6 +447,7 @@ function AgentCard({
         ...(isDragOver ? { borderColor: '#00d1ff', boxShadow: '0 0 0 2px rgba(0,209,255,0.25), 0 8px 32px rgba(0,0,0,0.4)' } : {}),
       } as React.CSSProperties}
     >
+      {scanResult === 'scanning' && <div className="laser-beam" />}
 
       {/* ── Remove from folder button ── */}
       {onRemoveFromFolder && (
@@ -548,11 +551,14 @@ function AgentCard({
             <span style={{
               marginTop: '5px', display: 'inline-flex', alignItems: 'center', gap: '4px',
               fontSize: '9px', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
-              padding: '2px 8px', borderRadius: '9999px',
-              background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.28)', color: '#a78bfa',
+              padding: '2px 8px', borderRadius: '9999px', maxWidth: '160px', overflow: 'hidden',
+              background: 'rgba(0,209,255,0.08)', border: '1px solid rgba(0,209,255,0.3)', color: '#00d1ff',
               animation: 'pulse 1.6s ease-in-out infinite',
             }}>
-              <span style={{ fontSize: '10px' }}>🛡</span> Scanning…
+              <span style={{ fontSize: '10px', flexShrink: 0 }}>🛡</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {scanStep || 'Scanning…'}
+              </span>
             </span>
           )}
         </div>
@@ -1003,9 +1009,11 @@ export default function AdminAgentsPage() {
   const [discovering, setDiscovering] = useState(false);
   const [discoverError, setDiscoverError] = useState('');
   const [scanResults, setScanResults] = useState<Record<string, ScanResult | 'scanning'>>({});
+  const [scanSteps, setScanSteps] = useState<Record<string, string>>({});
   const [scanModal, setScanModal] = useState<{ agent: Agent; result: ScanResult } | null>(null);
   const dashWsRef = useRef<WebSocket | null>(null);
   const agentIdsKeyRef = useRef<string>('');
+  const wsAliveRef = useRef(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
 
@@ -1154,82 +1162,102 @@ export default function AdminAgentsPage() {
 
   useEffect(() => { reload(); }, []);
 
-  // Dashboard WS — subscribe to agent:<id> channels for live scan events
+  // Dashboard WS — subscribes to agent:<id> channels for live scan events.
+  // On (re)connect the server sends a snapshot of current scan state from Redis Hash,
+  // then relays live Pub/Sub events. Frontend handles both identically.
   useEffect(() => {
     if (agents.length === 0) return;
+
     const key = agents.map((a) => a.id).sort().join(',');
     if (key === agentIdsKeyRef.current) return;
     agentIdsKeyRef.current = key;
+    wsAliveRef.current = true;
 
-    if (dashWsRef.current) {
-      dashWsRef.current.close();
-      dashWsRef.current = null;
-    }
+    const channels = agents.map((a) => `agent:${a.id}`);
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    let ws: WebSocket;
-    fetch('/api/auth/token')
-      .then((r) => r.json())
-      .then((data: { access_token?: string }) => {
-        if (!data.access_token) return;
-        const wsBase = window.location.origin
-          .replace('http://', 'ws://')
-          .replace('https://', 'wss://');
-        ws = new WebSocket(`${wsBase}/ws/dashboard?token=${data.access_token}`);
-        dashWsRef.current = ws;
+    const handleEvent = (event: Record<string, unknown>) => {
+      const agentId = (event.agent_id as string) ?? '';
+      if (!agentId) return;
+      if (event.type === 'scan_started') {
+        _inFlightScans.add(agentId);
+        setScanResults((r) => ({ ...r, [agentId]: 'scanning' }));
+        setScanSteps((s) => ({ ...s, [agentId]: 'Starting…' }));
+      } else if (event.type === 'scan_step') {
+        setScanResults((r) => ({ ...r, [agentId]: 'scanning' }));
+        setScanSteps((s) => ({ ...s, [agentId]: (event.step as string) ?? '' }));
+      } else if (event.type === 'scan_complete') {
+        _inFlightScans.delete(agentId);
+        setScanSteps((s) => { const n = { ...s }; delete n[agentId]; return n; });
+        setScanResults((r) => ({ ...r, [agentId]: {
+          score: event.score as number,
+          risk: event.risk as string,
+          summary: event.summary as string,
+          findings: (event.findings as ScanResult['findings']) ?? [],
+          http_probes: (event.http_probes as ScanResult['http_probes']) ?? { tls: '', auth_required: '', reachable: false },
+          scanned_at: (event.scanned_at as string) ?? new Date().toISOString(),
+        } as ScanResult }));
+        reload();
+      } else if (event.type === 'scan_failed') {
+        _inFlightScans.delete(agentId);
+        setScanSteps((s) => { const n = { ...s }; delete n[agentId]; return n; });
+        setScanResults((r) => { const n = { ...r }; delete n[agentId]; return n; });
+        alert(`Scan failed: ${(event.error as string) ?? 'unknown error'}`);
+      }
+    };
 
-        ws.onopen = () => {
-          ws.send(JSON.stringify({
-            type: 'subscribe',
-            channels: agents.map((a) => `agent:${a.id}`),
-          }));
-        };
+    const connect = () => {
+      if (!wsAliveRef.current) return;
+      if (dashWsRef.current) { dashWsRef.current.close(); dashWsRef.current = null; }
 
-        ws.onmessage = (e) => {
-          try {
-            const msg = JSON.parse(e.data);
-            if (msg.type === 'ping') return;
-            const ch: string = msg.channel ?? '';
-            if (!ch.startsWith('agent:')) return;
-            const event = msg.event ?? {};
-            const agentId: string = event.agent_id ?? '';
-            if (event.type === 'scan_started') {
-              _inFlightScans.add(agentId);
-              setScanResults((r) => ({ ...r, [agentId]: 'scanning' }));
-            } else if (event.type === 'scan_complete') {
-              _inFlightScans.delete(agentId);
-              const partial: ScanResult = {
-                score: event.score,
-                risk: event.risk,
-                summary: event.summary,
-                findings: event.findings ?? [],
-                http_probes: event.http_probes ?? { tls: '', auth_required: '', reachable: false },
-                scanned_at: event.scanned_at ?? new Date().toISOString(),
-              };
-              setScanResults((r) => ({ ...r, [agentId]: partial }));
-              reload();
-            } else if (event.type === 'scan_failed') {
-              _inFlightScans.delete(agentId);
-              setScanResults((r) => {
-                const n = { ...r };
-                delete n[agentId];
-                return n;
-              });
-              alert(`Scan failed: ${event.error ?? 'unknown error'}`);
-            }
-          } catch { /* ignore parse errors */ }
-        };
+      fetch('/api/auth/token')
+        .then((r) => r.json())
+        .then((data: { token?: string }) => {
+          if (!wsAliveRef.current || !data.token) return;
+          const wsBase = window.location.origin.replace('http://', 'ws://').replace('https://', 'wss://');
+          const ws = new WebSocket(`${wsBase}/ws/dashboard?token=${data.token}`);
+          dashWsRef.current = ws;
 
-        ws.onerror = () => { /* silent */ };
-      })
-      .catch(() => { /* auth fetch failed */ });
+          ws.onopen = () => {
+            ws.send(JSON.stringify({ type: 'subscribe', channels }));
+            // Server will immediately send Hash snapshot for each agent:<id> channel,
+            // then relay live Pub/Sub events — no extra logic needed here.
+          };
+
+          ws.onmessage = (e) => {
+            try {
+              const msg = JSON.parse(e.data);
+              if (msg.type === 'ping') return;
+              const ch: string = msg.channel ?? '';
+              if (!ch.startsWith('agent:')) return;
+              handleEvent(msg.event ?? {});
+            } catch { /* ignore parse errors */ }
+          };
+
+          ws.onerror = () => { /* handled by onclose */ };
+          ws.onclose = () => {
+            if (dashWsRef.current === ws) dashWsRef.current = null;
+            if (!wsAliveRef.current) return;
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(connect, 1000);
+          };
+        })
+        .catch(() => {
+          if (!wsAliveRef.current) return;
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connect, 1000);
+        });
+    };
+
+    connect();
 
     return () => {
-      if (dashWsRef.current) {
-        dashWsRef.current.close();
-        dashWsRef.current = null;
-      }
+      wsAliveRef.current = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (dashWsRef.current) { dashWsRef.current.close(); dashWsRef.current = null; }
       agentIdsKeyRef.current = '';
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents]);
 
   function openCreate() {
@@ -1326,12 +1354,14 @@ export default function AdminAgentsPage() {
   async function handleScan(agent: Agent) {
     _inFlightScans.add(agent.id);
     setScanResults((r) => ({ ...r, [agent.id]: 'scanning' }));
+    setScanSteps((s) => ({ ...s, [agent.id]: 'Starting…' }));
     setScanModal(null);
     try {
       await themApi.scanAgent(agent.id);
     } catch (e: unknown) {
       _inFlightScans.delete(agent.id);
       setScanResults((r) => { const n = { ...r }; delete n[agent.id]; return n; });
+      setScanSteps((s) => { const n = { ...s }; delete n[agent.id]; return n; });
       alert(e instanceof Error ? e.message : 'Scan failed');
     }
   }
@@ -1522,6 +1552,55 @@ export default function AdminAgentsPage() {
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.45; }
+        }
+
+        /* ── Security scan laser sweep ─────────────────────────── */
+        @keyframes laser-sweep {
+          0%   { top: -4px; opacity: 0; }
+          5%   { opacity: 1; }
+          95%  { opacity: 1; }
+          100% { top: 100%; opacity: 0; }
+        }
+        @keyframes laser-trail {
+          0%   { top: -20px; opacity: 0; }
+          5%   { opacity: 0.25; }
+          95%  { opacity: 0.25; }
+          100% { top: 100%; opacity: 0; }
+        }
+        @keyframes scan-glow {
+          0%, 100% { box-shadow: var(--glass-shadow, 0 8px 32px rgba(0,0,0,0.4)), 0 0 0 1px rgba(0,255,80,0.15); }
+          50%      { box-shadow: var(--glass-shadow, 0 8px 32px rgba(0,0,0,0.4)), 0 0 0 1.5px rgba(0,255,80,0.5), 0 0 24px rgba(0,255,80,0.18); }
+        }
+        .scanning-card {
+          animation: scan-glow 1.8s ease-in-out infinite;
+          overflow: hidden;
+        }
+        .laser-beam {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: -4px;
+          height: 2px;
+          pointer-events: none;
+          z-index: 5;
+          border-radius: 1px;
+          background: linear-gradient(90deg,
+            rgba(0,255,80,0) 0%,
+            rgba(0,255,80,0.5) 20%,
+            rgba(180,255,200,1) 50%,
+            rgba(0,255,80,0.5) 80%,
+            rgba(0,255,80,0) 100%);
+          box-shadow: 0 0 6px 2px rgba(0,255,80,0.8), 0 0 18px rgba(0,255,80,0.4);
+          animation: laser-sweep 1.6s linear infinite;
+        }
+        .laser-beam::after {
+          content: '';
+          position: absolute;
+          left: 0; right: 0;
+          top: 2px;
+          height: 16px;
+          background: linear-gradient(180deg, rgba(0,255,80,0.18) 0%, transparent 100%);
+          pointer-events: none;
         }
 
         /* ── Filter pills ─────────────────────────────────────── */
@@ -1770,6 +1849,7 @@ export default function AdminAgentsPage() {
                       key={agent.id}
                       agent={agent}
                       scanResult={scanResults[agent.id]}
+                      scanStep={scanSteps[agent.id]}
                       testResult={testResults[agent.id]}
                       isDiscovering={!!rowDiscoverState[agent.id]}
                       onTest={() => handleTest(agent)}
@@ -1875,6 +1955,7 @@ export default function AdminAgentsPage() {
                                   key={agent.id}
                                   agent={agent}
                                   scanResult={scanResults[agent.id]}
+                                  scanStep={scanSteps[agent.id]}
                                   testResult={testResults[agent.id]}
                                   isDiscovering={!!rowDiscoverState[agent.id]}
                                   onTest={() => handleTest(agent)}
@@ -1930,6 +2011,7 @@ export default function AdminAgentsPage() {
                             key={agent.id}
                             agent={agent}
                             scanResult={scanResults[agent.id]}
+                            scanStep={scanSteps[agent.id]}
                             testResult={testResults[agent.id]}
                             isDiscovering={!!rowDiscoverState[agent.id]}
                             onTest={() => handleTest(agent)}

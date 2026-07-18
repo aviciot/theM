@@ -546,6 +546,28 @@ async def _run_scan_job(
     aid = str(agent_id)
     await dashboard_broadcaster.publish_scan_started(aid)
 
+    # Emit progress steps on a schedule while the scan runs (best-effort, cancelled on finish).
+    _STEPS = [
+        (0.8, "Submitting to scanner…"),
+        (1.5, "Probing endpoint…"),
+        (4.0, "Analyzing agent card…"),
+        (7.0, "Computing risk score…"),
+    ]
+    scan_done = asyncio.Event()
+
+    async def _emit_steps() -> None:
+        for delay, label in _STEPS:
+            try:
+                await asyncio.wait_for(asyncio.shield(scan_done.wait()), timeout=delay)
+                return  # scan finished before this step — stop emitting
+            except asyncio.TimeoutError:
+                pass
+            if scan_done.is_set():
+                return
+            await dashboard_broadcaster.publish_scan_step(aid, label)
+
+    step_task = asyncio.create_task(_emit_steps())
+
     adapter = A2aAsyncAdapter(
         agent_slug=SCANNER_SLUG,
         endpoint_url=scanner_endpoint,
@@ -564,6 +586,13 @@ async def _run_scan_job(
                 err = ev.error
     except Exception as exc:
         err = str(exc)
+    finally:
+        scan_done.set()
+        step_task.cancel()
+        try:
+            await step_task
+        except asyncio.CancelledError:
+            pass
 
     if err or not result_text:
         await dashboard_broadcaster.publish_scan_failed(aid, err or "scanner returned no result")
