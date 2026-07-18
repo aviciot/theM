@@ -52,7 +52,7 @@ class AppGraph(BaseModel):
 
 _VALID_NODE_TYPES = {"entryPoint", "orchestrator", "agent", "middleware"}
 _SLUG_RE = __import__("re").compile(r"^[a-z0-9_-]{1,64}$")
-_VALID_EP_TYPES = {"websocket", "sse", "webrtc", "a2a"}
+_VALID_EP_TYPES = {"websocket", "sse", "webrtc", "a2a", "voice"}
 
 
 # ── Validation ────────────────────────────────────────────────────────────────
