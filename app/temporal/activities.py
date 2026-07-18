@@ -621,76 +621,87 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
                 ctx=mw_ctx,
                 context_id=inp.context_id,
             )
-            async for event in adapter.stream_invoke(
-                input=effective_input,
-                timeout=float(inp.timeout_seconds),
-            ):
-                if event.type == "task_created":
-                    # Heartbeat immediately after submit — the POST can take many seconds
-                    activity.heartbeat({"phase": "submitted", "agent": inp.agent_slug})
+            if inp.session_id_str and inp.application_id:
+                from app.services.session_manager import set_active_agent, clear_active_agent
+                _sess_uuid = uuid.UUID(inp.session_id_str)
+                await set_active_agent(_sess_uuid, inp.agent_slug, inp.application_id)
+            else:
+                _sess_uuid = None
+            try:
+                async for event in adapter.stream_invoke(
+                    input=effective_input,
+                    timeout=float(inp.timeout_seconds),
+                ):
+                    if event.type == "task_created":
+                        # Heartbeat immediately after submit — the POST can take many seconds
+                        activity.heartbeat({"phase": "submitted", "agent": inp.agent_slug})
 
-                elif event.type == "token":
-                    result_text += event.text or ""
+                    elif event.type == "token":
+                        result_text += event.text or ""
 
-                elif event.type == "status" and event.state:
-                    # Heartbeat with remote task state for Temporal Event History
-                    activity.heartbeat({"state": event.state, "agent": inp.agent_slug})
-                    elapsed = int((time.monotonic() - t0) * 1000)
-                    if event.input_required:
-                        # Surface input-required to the workflow so it can pause
-                        status = "input-required"
+                    elif event.type == "status" and event.state:
+                        # Heartbeat with remote task state for Temporal Event History
+                        activity.heartbeat({"state": event.state, "agent": inp.agent_slug})
+                        elapsed = int((time.monotonic() - t0) * 1000)
+                        if event.input_required:
+                            # Surface input-required to the workflow so it can pause
+                            status = "input-required"
+                            if db_module.redis_client is not None:
+                                try:
+                                    await db_module.redis_client.publish(
+                                        f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
+                                        json.dumps({
+                                            "type": "input_required",
+                                            "agent": inp.agent_slug,
+                                            "tool_call_id": inp.tool_call_id,
+                                            "elapsed_ms": elapsed,
+                                        }),
+                                    )
+                                except Exception:
+                                    pass
+                            break
+                        # Publish regular status to bridge stream
                         if db_module.redis_client is not None:
                             try:
                                 await db_module.redis_client.publish(
                                     f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
                                     json.dumps({
-                                        "type": "input_required",
+                                        "type": "agent_status",
                                         "agent": inp.agent_slug,
-                                        "tool_call_id": inp.tool_call_id,
+                                        "state": event.state,
                                         "elapsed_ms": elapsed,
                                     }),
                                 )
                             except Exception:
                                 pass
+
+                    elif event.type == "artifact":
+                        for p in (event.artifact or {}).get("parts", []):
+                            media_type = p.get("media_type") or p.get("mediaType")
+                            filename = p.get("filename")
+                            is_json_data = media_type == "application/json" and not filename
+                            if is_json_data:
+                                result_text += p.get("text", "")
+                            elif filename or media_type:
+                                normalized = {**p}
+                                if media_type:
+                                    normalized["media_type"] = media_type
+                                file_parts.append(normalized)
+                            elif p.get("text") and not file_parts:
+                                result_text += p.get("text", "")
+
+                    elif event.type == "done":
+                        result_text = event.result or result_text
                         break
-                    # Publish regular status to bridge stream
-                    if db_module.redis_client is not None:
-                        try:
-                            await db_module.redis_client.publish(
-                                f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                                json.dumps({
-                                    "type": "agent_status",
-                                    "agent": inp.agent_slug,
-                                    "state": event.state,
-                                    "elapsed_ms": elapsed,
-                                }),
-                            )
-                        except Exception:
-                            pass
 
-                elif event.type == "artifact":
-                    for p in (event.artifact or {}).get("parts", []):
-                        media_type = p.get("media_type") or p.get("mediaType")
-                        filename = p.get("filename")
-                        is_json_data = media_type == "application/json" and not filename
-                        if is_json_data:
-                            result_text += p.get("text", "")
-                        elif filename or media_type:
-                            normalized = {**p}
-                            if media_type:
-                                normalized["media_type"] = media_type
-                            file_parts.append(normalized)
-                        elif p.get("text") and not file_parts:
-                            result_text += p.get("text", "")
+                    elif event.type == "error":
+                        error_msg = event.error
+                        status = "failed"
+                        break
 
-                elif event.type == "done":
-                    result_text = event.result or result_text
-                    break
-
-                elif event.type == "error":
-                    error_msg = event.error
-                    status = "failed"
-                    break
+            finally:
+                if _sess_uuid is not None:
+                    await clear_active_agent(_sess_uuid, inp.application_id, inp.agent_slug)
 
         except asyncio.CancelledError:
             error_msg = "activity cancelled"

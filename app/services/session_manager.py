@@ -196,6 +196,61 @@ async def count_app_sessions(app_id: str) -> int:
         return 0
 
 
+_ACTIVE_AGENTS_SUFFIX = ":active"  # them:sess:{session_id}:active  — Redis Set, TTL matches session
+
+
+async def set_active_agent(
+    session_id: uuid.UUID,
+    agent_slug: str,
+    app_id: Optional[str],
+) -> None:
+    """Add agent_slug to the session's active-agents set. Best-effort."""
+    redis = db_module.redis_client
+    if redis is None:
+        return
+    try:
+        active_key = f"{_SESS_PREFIX}{session_id}{_ACTIVE_AGENTS_SUFFIX}"
+        await redis.sadd(active_key, agent_slug)
+        await redis.expire(active_key, _SESS_TTL)
+        if app_id:
+            slugs = await redis.smembers(active_key)
+            active_list = [s.decode() if isinstance(s, bytes) else s for s in slugs]
+            from app.services.dashboard_broadcaster import publish_session_event
+            await publish_session_event(
+                app_id, "", "session_update", str(session_id),
+                {"active_agents": active_list},
+            )
+    except Exception:
+        pass
+
+
+async def clear_active_agent(
+    session_id: uuid.UUID,
+    app_id: Optional[str],
+    agent_slug: Optional[str] = None,
+) -> None:
+    """Remove agent_slug from the session's active-agents set (or clear all). Best-effort."""
+    redis = db_module.redis_client
+    if redis is None:
+        return
+    try:
+        active_key = f"{_SESS_PREFIX}{session_id}{_ACTIVE_AGENTS_SUFFIX}"
+        if agent_slug:
+            await redis.srem(active_key, agent_slug)
+        else:
+            await redis.delete(active_key)
+        if app_id:
+            slugs = await redis.smembers(active_key)
+            active_list = [s.decode() if isinstance(s, bytes) else s for s in slugs]
+            from app.services.dashboard_broadcaster import publish_session_event
+            await publish_session_event(
+                app_id, "", "session_update", str(session_id),
+                {"active_agents": active_list},
+            )
+    except Exception:
+        pass
+
+
 # ── Pod heartbeat (called from main.py lifespan loop) ─────────────────────────
 
 async def write_pod_heartbeat(instance_id: str, session_count: int) -> None:

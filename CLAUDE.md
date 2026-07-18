@@ -165,9 +165,9 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_018_graph_compiler.s
 # DB access
 docker exec -it them-postgres psql -U them -d them
 
-# Run tests (cross-platform — Windows + Linux)
-python scripts/tests/run_tests.py            # full suite
-python scripts/tests/run_tests.py 01 02 03 04 15   # sanity only
+# Run tests (MUST use python3.12 — system python3 is 3.6 and silently breaks all docker calls)
+python3.12 scripts/tests/run_tests.py            # full suite
+python3.12 scripts/tests/run_tests.py 01 02 03 04 15   # sanity only
 
 # Multi-turn behavioral test (runs inside bridge; auto-fetches JWT)
 docker cp scripts/test_multiturn.py them-bridge:/tmp/test_multiturn.py
@@ -227,15 +227,22 @@ See `scripts/tests/INDEX.md` for full test descriptions.
 
 **Sanity (tests 01 02 03 04 15) — run after every `docker compose up` or deploy:**
 ```
-python scripts/tests/run_tests.py 01 02 03 04 15
+python3.12 scripts/tests/run_tests.py 01 02 03 04 15
 ```
 Takes ~15s. Confirms DB, Redis, auth service, bridge, and all containers are healthy.
 
 **After touching `app/`:**
 ```
-python scripts/tests/run_tests.py
+python3.12 scripts/tests/run_tests.py
 ```
 Full suite, ~30s. Zero failures required before committing.
+
+**Expected clean result: N passed, 0 failed, ≤5 skipped**
+Skips are legitimate env gaps — not failures:
+- `structlog`/`fastapi` missing on host (tests 07/19 import checks) → skip, run fine in CI
+- `ADMIN_JWT` not set (test 14 e2e) → set via `ADMIN_JWT=<token> python3.12 ...`
+- `code_agent` unreachable (test 24) → external service, expected skip
+If you see `got ''` on live tests (01–04, 12, 15), you're using the wrong Python — switch to `python3.12`.
 
 **Trigger map — which tests to run after changing what:**
 
@@ -282,7 +289,7 @@ curl -s -X POST http://localhost:8701/auth/login -H "Content-Type: application/j
   -d '{"username":"admin","password":"admin123"}' | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])"
 
 # Then run:
-ADMIN_JWT=<token> python scripts/tests/run_tests.py 14
+ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14
 ```
 
 **Multi-entry-point integration test — verifies multi-EP app creation, parallel WS sessions, and entry_point_slug traceability in them.runs:**

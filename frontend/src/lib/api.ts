@@ -384,6 +384,7 @@ export interface SessionInfo {
   app_id: string | null;
   context_id: string;
   started_at: string; // ISO8601
+  active_agents?: string[];
 }
 
 export const themApi = {

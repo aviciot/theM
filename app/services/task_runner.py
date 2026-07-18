@@ -660,6 +660,7 @@ async def run(
     session_id: Optional[uuid.UUID] = None,
     context_id: Optional[uuid.UUID] = None,
     entry_point_slug: Optional[str] = None,
+    app_id: Optional[str] = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Durable agentic loop. Yields WS-ready event dicts.
@@ -927,11 +928,16 @@ async def run(
                         tc_input["message"] = f"[Context summary]\n{_injected_ctx}\n\n{tc_input['message']}"
                 tc = ToolCall(id=tc.id, name=tc.name, input=tc_input)
                 t_start = time.monotonic()
-                async with parallel_sem:
-                    result_text, file_parts = await _invoke_agent(
-                        agent, tc, semaphores, run_id, root_task, iteration, db,
-                        status_queue=_status_q,
-                    )
+                from app.services.session_manager import set_active_agent, clear_active_agent
+                await set_active_agent(session_id, slug, app_id)
+                try:
+                    async with parallel_sem:
+                        result_text, file_parts = await _invoke_agent(
+                            agent, tc, semaphores, run_id, root_task, iteration, db,
+                            status_queue=_status_q,
+                        )
+                finally:
+                    await clear_active_agent(session_id, app_id, slug)
                 elapsed_ms = int((time.monotonic() - t_start) * 1000)
                 return tc, result_text, file_parts, elapsed_ms
 

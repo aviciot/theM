@@ -562,3 +562,30 @@ Pub/Sub is faster than a Hash read. If you publish first, a reconnecting client 
 - Do not add complex reconnect logic on the frontend — the server handles catch-up, frontend just reconnects normally
 
 **Watch for:** Any new real-time feature (run progress, agent status, task updates) — always ask: "can the user navigate away while this is running?" If yes, use Hash + Pub/Sub.
+
+---
+
+## 2026-07-18 — System `python3` is 3.6 — silently breaks the entire test runner
+
+**Symptom:** Running `python scripts/tests/run_tests.py` produced `0 passed, 57+ failed` with every live test showing `(got '')`. No exception, no error message — just empty strings everywhere.
+**Root cause:** The host OS is RHEL/CentOS 8 — system `python3` is Python 3.6. `subprocess.run(..., capture_output=True)` was added in Python 3.7. Every `docker()` helper call hit the `except Exception: return ""` fallback silently.
+**Fix:** Always use `python3.12` (installed at `/usr/bin/python3.12`) — this is the same Python the app and containers run on. CLAUDE.md and INDEX.md both updated to say `python3.12`.
+**Watch for:** Any script that runs `python` or `python3` directly. The system Python is 3.6 — it won't crash, it will silently degrade. The tell is everything returning `""`.
+
+---
+
+## 2026-07-18 — CI migration list must be kept in sync manually
+
+**Symptom:** GitHub Actions CI was failing on live tests with schema errors even though everything passed locally. The `ci.yml` "Apply DB migrations" step was frozen at `006_phase11.sql` — 15 newer migrations (007–021) were never being applied in CI, so `them.canvas_layout`, `them.app_orchestrators`, `them.entry_points` etc. didn't exist on the CI schema.
+**Root cause:** Migrations are added to `db/` incrementally but `ci.yml` is a static list that nobody updated for 15 consecutive migrations.
+**Fix:** Expanded `ci.yml` to apply all 21 migrations in order (001–021). Going forward, every new `db/0NN_*.sql` file MUST also be added to both `ci.yml` and `CLAUDE.md` common DB commands.
+**Watch for:** After adding any new migration file — immediately add it to `ci.yml` and `CLAUDE.md`. If CI fails with "column does not exist" or "table does not exist" on a live test, the first thing to check is whether all migrations are in `ci.yml`.
+
+---
+
+## 2026-07-18 — Stale migration breaks clean schema apply (entry_point_type constraint)
+
+**Symptom:** CI live job failed on test_01 (schema check) with "column does not exist" errors on `them.canvas_layout` — seemingly unrelated tables. The real failure was earlier and silent: `005_phase10.sql` aborted its transaction, which caused psql to skip that migration without a clear error, leaving the schema partially applied and cascading failures downstream.
+**Root cause:** `005_phase10.sql` tried to `ADD CONSTRAINT ... CHECK (entry_point_type IN ...)` on `them.applications`. That column was moved to `them.entry_points` by `010_app_entrypoints.sql`. On a live DB that already had `010` applied, the constraint was already gone. On a clean CI schema, the column never existed — so the ALTER TABLE failed, aborted the transaction, and the rest of that migration was skipped.
+**Fix:** Neutralized `005_phase10.sql` to only `DROP CONSTRAINT IF EXISTS` (always a no-op). Principle: never ADD or reference a column that a later migration moves or drops — either update the earlier migration or make it a no-op.
+**Watch for:** Any migration that does `ADD CONSTRAINT`, `ADD COLUMN`, or `ALTER COLUMN` on a table that a later migration restructures. On a live DB it looks fine (the column exists from the original schema); on a clean CI schema it fails because that migration runs before the column is added.

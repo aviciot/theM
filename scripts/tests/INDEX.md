@@ -98,21 +98,59 @@ python scripts/tests/run_tests.py
 
 ## Running Tests
 
+**Always use `python3.12` on this host — system `python3` is 3.6 and silently breaks all `docker exec` calls (`capture_output` added in 3.7).**
+
 ```bash
 # Full suite
-python scripts/tests/run_tests.py
+python3.12 scripts/tests/run_tests.py
 
 # Specific tests
-python scripts/tests/run_tests.py 01 02 03 04 15
+python3.12 scripts/tests/run_tests.py 01 02 03 04 15
 
 # E2E (needs a JWT — get one from auth service first)
-ADMIN_JWT=<token> python scripts/tests/run_tests.py 14   # Linux/Mac
-$env:ADMIN_JWT="<token>"; python scripts/tests/run_tests.py 14   # Windows PowerShell
+ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14   # Linux/Mac
+$env:ADMIN_JWT="<token>"; python3.12 scripts/tests/run_tests.py 14   # Windows PowerShell
 
 # Multi-turn behavioral test (auto-fetches JWT, must run inside bridge container)
 docker cp scripts/test_multiturn.py them-bridge:/tmp/test_multiturn.py
 docker exec them-bridge python3 /tmp/test_multiturn.py
 ```
+
+## Expected Clean Result
+
+```
+Total: N passed, 0 failed, ≤5 skipped
+```
+
+Legitimate skips (not failures):
+| Skip message | Reason | How to run fully |
+|---|---|---|
+| `missing deps: No module named 'structlog'` | Tests 07/16 import app.* — deps only in container | Run full suite from inside bridge if needed |
+| `missing deps: No module named 'fastapi'` | Test 19 imports edge registry | Same |
+| `ADMIN_JWT not set` | Test 14 e2e needs a JWT | `ADMIN_JWT=<token> python3.12 ...` |
+| `code_agent not reachable` / `state=TASK_STATE_SUBMITTED` | Test 24 hits external service | Expected when code_agent is down |
+
+If you see `[FAIL] ... (got '')` on live tests (01–04, 12, 15) — you are using the wrong Python version. Every docker call returns empty string silently.
+
+## How CI Works
+
+Two jobs in `.github/workflows/ci.yml`:
+
+**Structural job** (fast, no Docker, runs on every push):
+- `pip install -r requirements.txt` first (so app.* imports work)
+- Runs structural tests only: `07 09 10 13 16 17 18 19 21 22 23 25 26 27 28 29 30 31 32`
+
+**Live job** (full stack, runs on every push):
+- Spins up Docker stack, applies ALL migrations in order (001 → 021)
+- Runs full suite `python scripts/tests/run_tests.py` (GitHub Actions Python = 3.12+)
+
+**When CI fails:** always look at the live job first — structural job failures are rare and indicate real code regressions. Live job failures are usually: (a) missing migration in `ci.yml`, (b) stale/broken migration SQL, (c) real test regression.
+
+## Keeping CI in Sync
+
+When you add a new migration file (`db/0NN_*.sql`), you MUST also add it to the `Apply DB migrations` step in `.github/workflows/ci.yml` — otherwise CI runs with an incomplete schema and test_01 fails.
+
+When you add a new structural test (no stack needed), add its ID to the `Run structural tests` step in `ci.yml`.
 
 ## Adding a New Test
 
@@ -120,3 +158,5 @@ docker exec them-bridge python3 /tmp/test_multiturn.py
 2. Register it in the `ALL_TESTS` list at the bottom of that file
 3. Add a row to this INDEX.md
 4. Add a trigger rule in CLAUDE.md under "Rules — Testing"
+5. If structural (no stack): add test ID to structural job in `ci.yml`
+6. If it uses imports that need app deps: wrap in `except ImportError as exc: skip(...)` not `except Exception`

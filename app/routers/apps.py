@@ -317,6 +317,7 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
                         db=run_db,
                         context_id=context_id,
                         entry_point_slug=slug,
+                        app_id=app_id,
                     ):
                         if event.get("type") == "error":
                             run_error = event.get("message")
@@ -473,6 +474,7 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
                         session_id=session_id,
                         context_id=ctx_id,
                         entry_point_slug=slug,
+                        app_id=app_id,
                     ):
                         await edge.emit(event)
         except Exception as exc:
@@ -646,6 +648,7 @@ async def ws_entry(slug: str, websocket: WebSocket):
                     session_id=session_id,
                     context_id=context_id,
                     entry_point_slug=slug,
+                    app_id=app_id,
                 ):
                     try:
                         await websocket.send_json(event)

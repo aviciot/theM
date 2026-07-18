@@ -3844,6 +3844,12 @@ function useDashSessions(token: string | null, appId: string | null): {
             });
           } else if (evt?.type === 'session_end') {
             setSessions(prev => prev.filter(s => s.session_id !== evt.session_id));
+          } else if (evt?.type === 'session_update' && evt.session_id) {
+            setSessions(prev => prev.map(s =>
+              s.session_id === evt.session_id
+                ? { ...s, ...evt.session_info }
+                : s
+            ));
           }
         } catch {}
       };
@@ -4085,13 +4091,19 @@ function SessionsView({
     return n;
   });
 
+  // Which agent slugs are actively being called right now (across all sessions, parallel-safe)
+  const activeAgentSlugs = new Set(
+    sessions.flatMap(s => s.active_agents ?? [])
+  );
+
   // Count sessions flowing through each edge path for thickness scaling
   const epOrchSessionCount = sessions.length; // total sessions = load on ep→orch path
 
-  // Style edges: active edges get animated dash + proportional stroke width
+  // Style edges: EP→orch always active when sessions exist; orch→agent only when that agent is being called
   const edges = baseEdges.map(e => {
     const isEpOrch    = activeEpNodeIds.has(e.source) && activeOrchNodeIds.has(e.target);
-    const isOrchAgent = activeOrchNodeIds.has(e.source);
+    const targetSlug  = (baseNodes.find(n => n.id === e.target)?.data as any)?.name ?? '';
+    const isOrchAgent = activeOrchNodeIds.has(e.source) && activeAgentSlugs.has(targetSlug);
 
     if (isEpOrch) {
       const sw = edgeStrokeWidth(epOrchSessionCount, monCfg);
@@ -4103,8 +4115,7 @@ function SessionsView({
       };
     }
     if (isOrchAgent) {
-      const orchName = (baseNodes.find(n => n.id === e.source)?.data as any)?.name ?? '';
-      const orchCount = sessions.filter(s => s.orchestrator_name === orchName).length;
+      const orchCount = sessions.filter(s => s.active_agents?.includes(targetSlug)).length;
       const sw = edgeStrokeWidth(orchCount, monCfg);
       return {
         ...e,
