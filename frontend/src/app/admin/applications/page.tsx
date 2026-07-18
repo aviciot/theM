@@ -984,6 +984,8 @@ function PropertiesPanel({
 }) {
   const [propTab, setPropTab] = useState<'properties' | 'configuration'>('properties');
   const [orchTestState, setOrchTestState] = useState<{ loading?: boolean; ok?: boolean; latency?: number; error?: string }>({});
+  const [sttTestState,  setSttTestState]  = useState<{ loading?: boolean; ok?: boolean; latency?: number; error?: string }>({});
+  const [ttsTestState,  setTtsTestState]  = useState<{ loading?: boolean; ok?: boolean; latency?: number; error?: string }>({});
 
   async function testOrchLlm(d: OrchestratorData) {
     if (!d.llmProvider || !d.llmModel || !d.appOrchestratorId || !app) return;
@@ -993,6 +995,28 @@ function PropertiesPanel({
       setOrchTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
     } catch (e: any) {
       setOrchTestState({ loading: false, ok: false, error: e.message });
+    }
+  }
+
+  async function testStt(d: OrchestratorData) {
+    if (!d.transcriptionProvider || !d.transcriptionModel || !d.appOrchestratorId) return;
+    setSttTestState({ loading: true });
+    try {
+      const res = await themApi.testVoice(d.appOrchestratorId, { provider: d.transcriptionProvider, model: d.transcriptionModel });
+      setSttTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
+    } catch (e: any) {
+      setSttTestState({ loading: false, ok: false, error: e.message });
+    }
+  }
+
+  async function testTts(d: OrchestratorData) {
+    if (!d.ttsProvider || !d.ttsVoice || !d.appOrchestratorId) return;
+    setTtsTestState({ loading: true });
+    try {
+      const res = await themApi.testTts(d.appOrchestratorId, { provider: d.ttsProvider, voice: d.ttsVoice });
+      setTtsTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
+    } catch (e: any) {
+      setTtsTestState({ loading: false, ok: false, error: e.message });
     }
   }
 
@@ -1521,6 +1545,37 @@ function PropertiesPanel({
                         placeholder={d.appOrchestratorId ? '••••••••  (leave blank to keep existing)' : 'Enter API key'}
                       />
                     </div>
+
+                    {d.transcriptionProvider && d.transcriptionModel && (
+                      <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => testStt(d)}
+                          disabled={sttTestState.loading || !d.appOrchestratorId}
+                          title={!d.appOrchestratorId ? 'Save the application first to enable testing' : undefined}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            padding: '7px 14px', borderRadius: 8,
+                            border: `1px solid ${C.amberBorder}`,
+                            background: 'rgba(251,191,36,0.07)',
+                            color: (!d.appOrchestratorId || sttTestState.loading) ? C.textMuted : C.amber,
+                            cursor: (!d.appOrchestratorId || sttTestState.loading) ? 'not-allowed' : 'pointer',
+                            fontSize: 12, fontWeight: 600, opacity: !d.appOrchestratorId ? 0.5 : 1,
+                            transition: 'all 150ms',
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>mic</span>
+                          {sttTestState.loading ? 'Testing…' : 'Test STT'}
+                        </button>
+                        {!sttTestState.loading && sttTestState.ok !== undefined && (
+                          sttTestState.ok
+                            ? <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({sttTestState.latency}ms)</span>
+                            : <span style={{ fontSize: 12, color: '#f87171' }}>✗ {sttTestState.error ?? 'Failed'}</span>
+                        )}
+                        {!d.appOrchestratorId && (
+                          <span style={{ fontSize: 11, color: C.textMuted }}>Save first to enable testing</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1577,6 +1632,37 @@ function PropertiesPanel({
                         placeholder={d.appOrchestratorId ? '••••••••  (leave blank to keep existing)' : 'Enter API key'}
                       />
                     </div>
+
+                    {d.ttsProvider && d.ttsVoice && (
+                      <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => testTts(d)}
+                          disabled={ttsTestState.loading || !d.appOrchestratorId}
+                          title={!d.appOrchestratorId ? 'Save the application first to enable testing' : undefined}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            padding: '7px 14px', borderRadius: 8,
+                            border: `1px solid ${C.amberBorder}`,
+                            background: 'rgba(251,191,36,0.07)',
+                            color: (!d.appOrchestratorId || ttsTestState.loading) ? C.textMuted : C.amber,
+                            cursor: (!d.appOrchestratorId || ttsTestState.loading) ? 'not-allowed' : 'pointer',
+                            fontSize: 12, fontWeight: 600, opacity: !d.appOrchestratorId ? 0.5 : 1,
+                            transition: 'all 150ms',
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>volume_up</span>
+                          {ttsTestState.loading ? 'Testing…' : 'Test TTS'}
+                        </button>
+                        {!ttsTestState.loading && ttsTestState.ok !== undefined && (
+                          ttsTestState.ok
+                            ? <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({ttsTestState.latency}ms)</span>
+                            : <span style={{ fontSize: 12, color: '#f87171' }}>✗ {ttsTestState.error ?? 'Failed'}</span>
+                        )}
+                        {!d.appOrchestratorId && (
+                          <span style={{ fontSize: 11, color: C.textMuted }}>Save first to enable testing</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
