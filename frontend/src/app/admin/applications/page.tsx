@@ -3870,6 +3870,13 @@ const SESSIONS_STYLES = `
   0%,100% { opacity:1; transform:scale(1); }
   50%      { opacity:0.7; transform:scale(1.08); }
 }
+@keyframes edge-flow-glow {
+  0%,100% { filter: drop-shadow(0 0 3px rgba(0,240,255,0.5)) drop-shadow(0 0 6px rgba(0,240,255,0.25)); }
+  50%     { filter: drop-shadow(0 0 6px rgba(0,240,255,0.9)) drop-shadow(0 0 14px rgba(0,240,255,0.5)); }
+}
+.react-flow__edge.active-flow path {
+  animation: edge-flow-glow 1.6s ease-in-out infinite;
+}
 .sess-badge {
   position:absolute; top:-8px; right:-8px;
   min-width:20px; height:20px; border-radius:10px;
@@ -4010,18 +4017,54 @@ function SessionsView({
     if (s.ep_slug) epCountBySlug.set(s.ep_slug, (epCountBySlug.get(s.ep_slug) ?? 0) + 1);
   });
 
-  const { nodes: baseNodes, edges } = buildNodesFromApp(app, agents);
+  const { nodes: baseNodes, edges: baseEdges } = buildNodesFromApp(app, agents);
+
+  // Build active node id sets for edge coloring
+  const activeEpNodeIds = new Set<string>();
+  const activeOrchNodeIds = new Set<string>();
+
   const nodes = baseNodes.map(n => {
     if (n.type === 'entryPoint' && n.data?.slug) {
-      return { ...n, data: { ...n.data, _sessCount: epCountBySlug.get(n.data.slug as string) ?? 0 } };
+      const count = epCountBySlug.get(n.data.slug as string) ?? 0;
+      if (count > 0) activeEpNodeIds.add(n.id);
+      return { ...n, data: { ...n.data, _sessCount: count } };
     }
     if (n.type === 'orchestrator') {
-      // Count sessions whose orchestrator_name matches this node's name
       const orchName = (n.data as any)?.name ?? '';
       const orchCount = sessions.filter(s => s.orchestrator_name === orchName).length;
+      if (orchCount > 0) activeOrchNodeIds.add(n.id);
       return { ...n, data: { ...n.data, _sessCount: orchCount } };
     }
     return n;
+  });
+
+  // Style edges: active (EP→orch both hot) get bright animated glow; others dimmed
+  const edges = baseEdges.map(e => {
+    const sourceActive = activeEpNodeIds.has(e.source) || activeOrchNodeIds.has(e.source);
+    const targetActive = activeOrchNodeIds.has(e.target) || activeEpNodeIds.has(e.target);
+    const isActive = sourceActive && targetActive;
+    if (isActive) {
+      return {
+        ...e,
+        animated: true,
+        className: 'active-flow',
+        style: {
+          stroke: '#00f0ff',
+          strokeWidth: 2.5,
+          filter: 'drop-shadow(0 0 4px rgba(0,240,255,0.7)) drop-shadow(0 0 8px rgba(0,240,255,0.35))',
+        },
+      };
+    }
+    // Dim inactive edges
+    return {
+      ...e,
+      animated: false,
+      style: {
+        stroke: 'rgba(148,163,184,0.2)',
+        strokeWidth: 1,
+        strokeDasharray: '4,4',
+      },
+    };
   });
 
   const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
