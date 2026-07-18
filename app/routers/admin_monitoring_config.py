@@ -9,10 +9,10 @@ PUT  /api/v1/admin/monitoring-config
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app._deps import get_db, require_admin
+from app._deps import get_db
 from app.models import Config
 
 router = APIRouter(prefix="/admin/monitoring-config", tags=["admin-monitoring"])
@@ -20,30 +20,34 @@ router = APIRouter(prefix="/admin/monitoring-config", tags=["admin-monitoring"])
 _CONFIG_KEY = "monitoring"
 
 _DEFAULTS: Dict[str, Any] = {
-    # Heatmap intensity thresholds — sessions per node
-    "heatmap_low":    1,    # >= this: soft glow
-    "heatmap_medium": 10,   # >= this: medium intensity
-    "heatmap_high":   50,   # >= this: full bright + strong glow
-    # Edge thickness scaling — sessions per edge path
-    "edge_thin":      1,    # >= this: 1.5px
-    "edge_medium":    10,   # >= this: 3px
-    "edge_thick":     50,   # >= this: 5px
-    # Max sessions to show in the right panel list before pagination
-    "panel_max_sessions": 50,
-    # Rolling window for throughput stats (seconds)
+    "heatmap_low":         1,
+    "heatmap_medium":      10,
+    "heatmap_high":        50,
+    "edge_thin":           1,
+    "edge_medium":         10,
+    "edge_thick":          50,
+    "panel_max_sessions":  50,
     "stats_window_seconds": 300,
 }
 
 
 class MonitoringConfig(BaseModel):
-    heatmap_low:           int = 1
-    heatmap_medium:        int = 10
-    heatmap_high:          int = 50
-    edge_thin:             int = 1
-    edge_medium:           int = 10
-    edge_thick:            int = 50
-    panel_max_sessions:    int = 50
-    stats_window_seconds:  int = 300
+    heatmap_low:           int = Field(1,   gt=0, le=10000)
+    heatmap_medium:        int = Field(10,  gt=0, le=10000)
+    heatmap_high:          int = Field(50,  gt=0, le=10000)
+    edge_thin:             int = Field(1,   gt=0, le=10000)
+    edge_medium:           int = Field(10,  gt=0, le=10000)
+    edge_thick:            int = Field(50,  gt=0, le=10000)
+    panel_max_sessions:    int = Field(50,  gt=0, le=10000)
+    stats_window_seconds:  int = Field(300, gt=0, le=86400)
+
+    @model_validator(mode='after')
+    def check_threshold_ordering(self) -> 'MonitoringConfig':
+        if not (self.heatmap_low < self.heatmap_medium < self.heatmap_high):
+            raise ValueError("heatmap thresholds must satisfy low < medium < high")
+        if not (self.edge_thin < self.edge_medium < self.edge_thick):
+            raise ValueError("edge thresholds must satisfy thin < medium < thick")
+        return self
 
 
 def _load(row: Config | None) -> Dict[str, Any]:
@@ -57,7 +61,6 @@ def _load(row: Config | None) -> Dict[str, Any]:
 @router.get("", response_model=MonitoringConfig)
 async def get_monitoring_config(
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(require_admin),
 ) -> MonitoringConfig:
     row = await db.get(Config, _CONFIG_KEY)
     return MonitoringConfig(**_load(row))
@@ -67,7 +70,6 @@ async def get_monitoring_config(
 async def put_monitoring_config(
     body: MonitoringConfig,
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(require_admin),
 ) -> MonitoringConfig:
     row = await db.get(Config, _CONFIG_KEY)
     data = body.model_dump()

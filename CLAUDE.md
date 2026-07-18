@@ -1,6 +1,6 @@
 # the-M — Claude Session Guide
 # multi-agent orchestration platform
-# Last updated: 2026-07-15
+# Last updated: 2026-07-18
 
 ---
 
@@ -263,6 +263,7 @@ Full suite, ~30s. Zero failures required before committing.
 | `db/014_app_orchestrators.sql`, `app/models.py` (AppOrchestrator), `app/routers/admin_applications.py` (_flush_orch_caches) | 01 29 (app_orchestrators migration + model) |
 | `app/services/app_compiler.py`, `db/018_graph_compiler.sql`, `app/routers/admin_applications.py` (graph/export/import/restore), `frontend/src/app/admin/applications/page.tsx` (handleSave graph payload) | 27 30 (canvas rules + graph compiler) |
 | `app/services/session_manager.py`, `app/routers/ws_orchestrator.py` (session wiring), `app/routers/apps.py` (session wiring), `app/main.py` (_pod_heartbeat_loop) | 31 (session context manager) |
+| `app/routers/admin_monitoring_config.py`, `frontend/src/app/admin/settings/page.tsx` (Monitoring tab), `frontend/src/app/admin/applications/page.tsx` (SessionsView heatmap) | 32 (monitoring config CRUD + heatmap thresholds) |
 | `app/services/task_runner.py` (`_ensure_agent_skills`, `_CARD_TTL_SECONDS`), `agents/docu_writer/`, `db/007_docu_stack.sql` | 23 (A2A skill auto-discovery) |
 | `db/007_docu_stack.sql` code_agent endpoint/token | 24 (code_agent live) |
 | `agents/docu_writer/main.py`, `app/adapters/a2a_async_adapter.py`, `app/adapters/factory.py`, `app/services/task_runner.py` (typed A2A), `db/007_docu_stack.sql` | 25 (true A2A typed input) |

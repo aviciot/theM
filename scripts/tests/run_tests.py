@@ -2487,6 +2487,85 @@ def test_31_session_manager():
         check("main.py heartbeat wiring", False, str(exc))
 
 
+def test_32_monitoring_config():
+    section("test_32_monitoring_config: admin_monitoring_config.py + settings page + SessionsView")
+    sys.path.insert(0, str(ROOT))
+
+    # ── backend router ────────────────────────────────────────────────────────
+    try:
+        s = src("app/routers/admin_monitoring_config.py")
+        check("admin_monitoring_config.py exists", True)
+        check("_CONFIG_KEY = 'monitoring'", "_CONFIG_KEY = \"monitoring\"" in s)
+        check("_DEFAULTS dict defined", "_DEFAULTS" in s and "heatmap_low" in s)
+        check("MonitoringConfig model defined", "class MonitoringConfig" in s)
+        check("all 8 fields present", all(f in s for f in [
+            "heatmap_low", "heatmap_medium", "heatmap_high",
+            "edge_thin", "edge_medium", "edge_thick",
+            "panel_max_sessions", "stats_window_seconds",
+        ]))
+        check("Field() with gt=0 bounds on fields", "gt=0" in s)
+        check("model_validator for threshold ordering", "model_validator" in s)
+        check("low < medium < high check", "heatmap_low < self.heatmap_medium" in s or "self.heatmap_low < self.heatmap_medium" in s)
+        check("edge ordering check", "edge_thin < self.edge_medium" in s or "self.edge_thin < self.edge_medium" in s)
+        check("_load() helper defined", "def _load(" in s)
+        check("_load() merges defaults with stored", "merged.update(" in s)
+        check("get_monitoring_config defined", "async def get_monitoring_config(" in s)
+        check("put_monitoring_config defined", "async def put_monitoring_config(" in s)
+        check("no per-endpoint require_admin (router-level dep covers it)", "Depends(require_admin)" not in s)
+        check("router prefix /admin/monitoring-config", '"/admin/monitoring-config"' in s)
+    except FileNotFoundError:
+        check("admin_monitoring_config.py exists", False, "file not found")
+    except Exception as exc:
+        check("admin_monitoring_config.py", False, str(exc))
+
+    # ── main.py wired ─────────────────────────────────────────────────────────
+    try:
+        s = src("app/main.py")
+        check("admin_monitoring_config imported in main.py", "from app.routers import admin_monitoring_config" in s)
+        check("admin_monitoring_config.router included", "admin_monitoring_config.router" in s)
+    except Exception as exc:
+        check("main.py monitoring wiring", False, str(exc))
+
+    # ── api.ts ────────────────────────────────────────────────────────────────
+    try:
+        s = src("frontend/src/lib/api.ts")
+        check("MonitoringConfig interface in api.ts", "interface MonitoringConfig" in s)
+        check("getMonitoringConfig method defined", "getMonitoringConfig" in s)
+        check("putMonitoringConfig method defined", "putMonitoringConfig" in s)
+        check("monitoring-config path in api.ts", "monitoring-config" in s)
+    except Exception as exc:
+        check("api.ts monitoring config", False, str(exc))
+
+    # ── settings page ─────────────────────────────────────────────────────────
+    try:
+        s = src("frontend/src/app/admin/settings/page.tsx")
+        check("MonitoringConfig imported in settings page", "MonitoringConfig" in s)
+        check("MONITORING_DEFAULTS defined", "MONITORING_DEFAULTS" in s)
+        check("monConfig state defined", "monConfig" in s)
+        check("handleSaveMonitoring defined", "handleSaveMonitoring" in s)
+        check("monitoring tab in tab bar", "'monitoring'" in s)
+        check("SliderField component defined", "function SliderField(" in s)
+        check("getMonitoringConfig called on load", "getMonitoringConfig" in s)
+        check("putMonitoringConfig called on save", "putMonitoringConfig" in s)
+    except Exception as exc:
+        check("settings page monitoring tab", False, str(exc))
+
+    # ── SessionsView heatmap ──────────────────────────────────────────────────
+    try:
+        s = src("frontend/src/app/admin/applications/page.tsx")
+        check("MonitoringConfig imported in applications page", "MonitoringConfig" in s)
+        check("MON_DEFAULTS defined", "MON_DEFAULTS" in s)
+        check("heatmapStyle() defined", "function heatmapStyle(" in s)
+        check("edgeStrokeWidth() defined", "function edgeStrokeWidth(" in s)
+        check("getMonitoringConfig called in SessionsView", "getMonitoringConfig" in s)
+        check("monCfg state in SessionsView", "monCfg" in s)
+        check("_heatStyle passed to node data", "_heatStyle" in s)
+        check("panel_max_sessions cap applied", "panel_max_sessions" in s)
+        check("displaySessions used in list", "displaySessions" in s)
+    except Exception as exc:
+        check("applications page SessionsView heatmap", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -2521,6 +2600,7 @@ ALL_TESTS = [
     ("29", test_29_app_orchestrators_migration),
     ("30", test_30_graph_compiler),
     ("31", test_31_session_manager),
+    ("32", test_32_monitoring_config),
 ]
 
 if __name__ == "__main__":
