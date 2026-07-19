@@ -22,10 +22,11 @@ import (
 )
 
 const (
-	drainTimeout = 5 * time.Second
-	readTimeout  = 15 * time.Second
-	writeTimeout = 30 * time.Second
-	idleTimeout  = 60 * time.Second
+	drainTimeout      = 5 * time.Second
+	readHeaderTimeout = 5 * time.Second
+	readTimeout       = 15 * time.Second
+	writeTimeout      = 30 * time.Second
+	idleTimeout       = 60 * time.Second
 )
 
 // Closer groups the Close/shutdown calls for all long-lived dependencies so
@@ -50,6 +51,7 @@ func buildRouter(h *health.Handler) *chi.Mux {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
+	r.Use(middleware.Logger)
 
 	// Health routes
 	r.Get("/health/live", h.Live)
@@ -69,11 +71,12 @@ func New(addr string, healthHandler *health.Handler, logger *slog.Logger, closer
 	r := buildRouter(healthHandler)
 
 	httpSrv := &http.Server{
-		Addr:         addr,
-		Handler:      r,
-		ReadTimeout:  readTimeout,
-		WriteTimeout: writeTimeout,
-		IdleTimeout:  idleTimeout,
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 
 	return &Server{

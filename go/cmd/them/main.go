@@ -30,10 +30,7 @@ func run() error {
 	// ── 1. Load and validate configuration ───────────────────────────────────
 	cfg, err := config.Load()
 	if err != nil {
-		// Config errors occur before the logger is available; write directly to
-		// stderr so the failure is always visible.
-		fmt.Fprintf(os.Stderr, "FATAL config error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("config: %w", err)
 	}
 
 	// ── 2. Set up telemetry (structured logger) ───────────────────────────────

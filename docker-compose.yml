@@ -883,6 +883,7 @@ services:
       - DATABASE_PASSWORD=${THE_M_DB_PASSWORD:-them_secret}
       - REDIS_HOST=them-redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
       - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
       - THE_M_INSTANCE_ID=go-bridge-1
       - LOG_FORMAT=json
