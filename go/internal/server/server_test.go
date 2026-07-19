@@ -18,7 +18,7 @@ func (o *okPinger) Ping(_ context.Context) error { return nil }
 
 func newTestRouter() http.Handler {
 	h := health.New("test-instance", &okPinger{}, &okPinger{})
-	return server.NewRouter(h)
+	return server.NewRouter(h, server.AuthMiddlewares{})
 }
 
 func TestRoutes_LiveEndpointRegistered(t *testing.T) {

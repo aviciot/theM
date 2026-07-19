@@ -62,9 +62,17 @@ func run() error {
 	healthHandler := health.New(cfg.InstanceID, database, redisCache)
 	addr := fmt.Sprintf("%s:%d", cfg.AppHost, cfg.AppPort)
 
+	// Phase 2: wire auth middlewares when configured.
+	// JWT middleware is enabled when JWT_PUBLIC_KEY_PEM is set in config.
+	// Bearer middleware requires a token cache (wired in a later phase when
+	// the full DB-backed cache is initialised). For now the server starts in
+	// bearer-only mode with no active token validation middleware — actual
+	// bearer validation is added in Phase 3 when routes are mounted.
+	authMW := server.AuthMiddlewares{}
+
 	// Register dependencies as Closers so ListenAndServe releases them on
 	// shutdown in the correct order (HTTP drains first, then DB, then Redis).
-	srv := server.New(addr, healthHandler, log, database, redisCache)
+	srv := server.New(addr, healthHandler, authMW, log, database, redisCache)
 
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)
 
