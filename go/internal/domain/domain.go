@@ -73,7 +73,38 @@ const (
 	RunFailed    RunStatus = "failed"
 	RunCanceled  RunStatus = "canceled"
 	RunStopped   RunStatus = "stopped"
+
+	// Aliases used by the Phase 6 orchestration layer.
+	RunStatusPending       = RunRunning   // treat pending as running for simplicity
+	RunStatusRunning       = RunRunning
+	RunStatusCompleted     = RunCompleted
+	RunStatusFailed        = RunFailed
+	RunStatusInputRequired RunStatus = "input_required"
+	RunStatusCancelled     = RunCanceled
 )
+
+// ─── Message helpers ──────────────────────────────────────────────────────────
+
+// TextMessage creates a single-part text message with the given role.
+func TextMessage(role string, text string) Message {
+	return Message{
+		Role:      role,
+		Parts:     []ContentPart{{Type: "text", Text: text}},
+		CreatedAt: time.Now().UTC(),
+	}
+}
+
+// Text returns the concatenated text of all "text" parts in the message.
+// This is a convenience method for system/user messages that contain only text.
+func (m Message) Text() string {
+	var s string
+	for _, p := range m.Parts {
+		if p.Type == "text" {
+			s += p.Text
+		}
+	}
+	return s
+}
 
 // ─── Run ──────────────────────────────────────────────────────────────────────
 

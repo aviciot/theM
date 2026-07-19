@@ -53,6 +53,7 @@ func WithAuth(jwt, bearer func(http.Handler) http.Handler) AuthMiddlewares {
 // Server wraps an http.Server and the chi router, and owns the shutdown logic.
 type Server struct {
 	httpServer *http.Server
+	router     *chi.Mux
 	logger     *slog.Logger
 	closers    []Closer
 	eventBus   event.Bus
@@ -123,6 +124,7 @@ func NewWithBus(addr string, healthHandler *health.Handler, auth AuthMiddlewares
 
 	return &Server{
 		httpServer: httpSrv,
+		router:     r,
 		logger:     logger,
 		closers:    closers,
 		eventBus:   bus,
@@ -133,6 +135,12 @@ func NewWithBus(addr string, healthHandler *health.Handler, auth AuthMiddlewares
 // was provided.
 func (s *Server) EventBus() event.Bus {
 	return s.eventBus
+}
+
+// MountWS mounts a WebSocket handler under the /ws prefix.
+// Call before ListenAndServe.
+func (s *Server) MountWS(wsHandler http.Handler) {
+	s.router.Mount("/ws", wsHandler)
 }
 
 // NewRouter returns the chi router with all routes mounted, without starting a

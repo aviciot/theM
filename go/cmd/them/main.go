@@ -1,7 +1,7 @@
-// Command them is the Phase 4 Foundation entrypoint for the THEM v2 Go platform.
+// Command them is the Phase 6 entrypoint for the THEM v2 Go platform.
 // It wires configuration, database, Redis, telemetry, health checks, the
-// in-process event bus, and the HTTP server together, then blocks until a
-// shutdown signal is received.
+// in-process event bus, the orchestration layer, and the WebSocket handler
+// together, then blocks until a shutdown signal is received.
 package main
 
 import (
@@ -10,13 +10,19 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/health"
+	"github.com/aviciot/them/internal/llm"
+	"github.com/aviciot/them/internal/orchestrator"
+	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/server"
+	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/telemetry"
+	"github.com/aviciot/them/internal/ws"
 )
 
 func main() {
@@ -26,8 +32,7 @@ func main() {
 	}
 }
 
-// run contains all startup and shutdown logic. It returns an error on any
-// unrecoverable condition so that main can log and exit cleanly.
+// run contains all startup and shutdown logic.
 func run() error {
 	// ── 1. Load and validate configuration ───────────────────────────────────
 	cfg, err := config.Load()
@@ -61,31 +66,58 @@ func run() error {
 	log.Info("redis connected", "addr", cfg.RedisAddr(), "db", cfg.RedisDB)
 
 	// ── 5. Create in-process event bus ───────────────────────────────────────
-	// The bus is the backbone for streaming events from Temporal workflows to
-	// WebSocket clients and for Redis pub/sub bridge events. It requires no
-	// cleanup (pure in-memory), so it is not registered as a Closer.
 	bus := event.NewBus()
 	log.Info("event bus initialised")
 
-	// ── 6. Build health handler and HTTP server ───────────────────────────────
+	// ── 6. Create session store ───────────────────────────────────────────────
+	sessionRedis := cache.NewSessionRedisClient(redisCache.Client())
+	sessionStore := session.NewStore(sessionRedis, cfg.InstanceID, log)
+	log.Info("session store initialised")
+
+	// ── 7. Create run recorder ────────────────────────────────────────────────
+	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(database.Pool()))
+
+	// ── 8. Create LLM provider ────────────────────────────────────────────────
+	var llmProvider llm.Provider
+	if cfg.AnthropicAPIKey != "" {
+		llmProvider = llm.NewAnthropicProvider(cfg.AnthropicAPIKey, "", 0)
+		log.Info("LLM: Anthropic provider configured")
+	} else {
+		llmProvider = &llm.MockProvider{}
+		log.Warn("LLM: no ANTHROPIC_API_KEY set — using mock provider")
+	}
+
+	// ── 9. Create orchestrator ────────────────────────────────────────────────
+	orchCfg := orchestrator.Config{
+		MaxIterations: 10,
+	}
+	orch := orchestrator.New(orchCfg, llmProvider, nil /* agents wired in Phase 7 */, recorder, bus, log)
+
+	// ── 10. Build health handler and HTTP server ──────────────────────────────
 	healthHandler := health.New(cfg.InstanceID, database, redisCache)
 	addr := fmt.Sprintf("%s:%d", cfg.AppHost, cfg.AppPort)
 
-	// Phase 2: wire auth middlewares when configured.
-	// JWT middleware is enabled when JWT_PUBLIC_KEY_PEM is set in config.
-	// Bearer middleware requires a token cache (wired in a later phase when
-	// the full DB-backed cache is initialised). For now the server starts in
-	// bearer-only mode with no active token validation middleware — actual
-	// bearer validation is added in Phase 3 when routes are mounted.
 	authMW := server.AuthMiddlewares{}
-
-	// Register dependencies as Closers so ListenAndServe releases them on
-	// shutdown in the correct order (HTTP drains first, then DB, then Redis).
 	srv := server.NewWithBus(addr, healthHandler, authMW, bus, log, database, redisCache)
+
+	// ── 11. Wire WebSocket handler ────────────────────────────────────────────
+	// auth.Cache satisfies the ws.Authenticator interface but we don't have a
+	// token cache wired here yet; use a pass-through stub for Phase 6.
+	wsHandler := ws.NewHandler(sessionStore, recorder, orch, bus, &noopAuth{}, cfg.InstanceID, log)
+	srv.MountWS(wsHandler.Routes())
 
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)
 
-	// ListenAndServe blocks until SIGTERM/SIGINT, drains connections, and
-	// calls Close on each registered Closer before returning.
 	return srv.ListenAndServe()
+}
+
+// noopAuth is a placeholder authenticator that accepts any non-empty token.
+// Replace with auth.Cache when the bearer token infrastructure is wired.
+type noopAuth struct{}
+
+func (n *noopAuth) Validate(_ context.Context, token string) (*auth.TokenInfo, error) {
+	if token == "" {
+		return nil, fmt.Errorf("empty token")
+	}
+	return &auth.TokenInfo{TokenID: 1}, nil
 }
