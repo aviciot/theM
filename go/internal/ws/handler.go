@@ -255,7 +255,22 @@ func (h *Handler) streamEvents(ctx context.Context, cancel context.CancelFunc, c
 				return
 			}
 		case <-orchDone:
-			return
+			// Drain any buffered events (e.g., the "done" event published just
+			// before orchDone closed) before returning.
+			for {
+				select {
+				case ev, ok := <-evCh:
+					if !ok {
+						return
+					}
+					_ = h.writeEvent(conn, ev)
+					if ev.Type == "done" || ev.Type == "error" {
+						return
+					}
+				default:
+					return
+				}
+			}
 		case <-clientGone:
 			cancel()
 			return
