@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/health"
 )
 
@@ -54,6 +55,7 @@ type Server struct {
 	httpServer *http.Server
 	logger     *slog.Logger
 	closers    []Closer
+	eventBus   event.Bus
 }
 
 // buildRouter constructs and returns the chi router with all routes mounted.
@@ -62,6 +64,8 @@ type Server struct {
 // auth is optional: health and metrics routes are always unauthenticated.
 // Authenticated application routes (added in later phases) receive the auth
 // middlewares via sub-routers. Passing a zero-value AuthMiddlewares is safe.
+// bus is stored in the server and made available to route handlers via
+// NewWithBus; buildRouter itself just wires the standard routes.
 func buildRouter(h *health.Handler, auth AuthMiddlewares) *chi.Mux {
 	r := chi.NewRouter()
 
@@ -99,6 +103,13 @@ func buildRouter(h *health.Handler, auth AuthMiddlewares) *chi.Mux {
 // WithAuth to construct; pass zero value to disable). closers are called in
 // order during graceful shutdown after the HTTP server stops.
 func New(addr string, healthHandler *health.Handler, auth AuthMiddlewares, logger *slog.Logger, closers ...Closer) *Server {
+	return NewWithBus(addr, healthHandler, auth, nil, logger, closers...)
+}
+
+// NewWithBus is identical to New but also accepts an event.Bus that is stored
+// on the server and made available to route handlers in later phases. Passing
+// nil is safe — bus is simply not set.
+func NewWithBus(addr string, healthHandler *health.Handler, auth AuthMiddlewares, bus event.Bus, logger *slog.Logger, closers ...Closer) *Server {
 	r := buildRouter(healthHandler, auth)
 
 	httpSrv := &http.Server{
@@ -114,7 +125,14 @@ func New(addr string, healthHandler *health.Handler, auth AuthMiddlewares, logge
 		httpServer: httpSrv,
 		logger:     logger,
 		closers:    closers,
+		eventBus:   bus,
 	}
+}
+
+// EventBus returns the event.Bus registered with this server, or nil if none
+// was provided.
+func (s *Server) EventBus() event.Bus {
+	return s.eventBus
 }
 
 // NewRouter returns the chi router with all routes mounted, without starting a
