@@ -864,3 +864,41 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # ── Go Bridge — Phase 1 Foundation (profile: go) ─────────────────────────────
+  # Enable with: docker compose --profile go up -d them-go-bridge
+  them-go-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.go
+    container_name: them-go-bridge
+    ports: []
+    environment:
+      - APP_PORT=8002
+      - APP_ENV=development
+      - DATABASE_HOST=them-postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=them
+      - DATABASE_USER=${THE_M_DB_USER:-them}
+      - DATABASE_PASSWORD=${THE_M_DB_PASSWORD:-them_secret}
+      - REDIS_HOST=them-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      - THE_M_INSTANCE_ID=go-bridge-1
+      - LOG_FORMAT=json
+    networks:
+      - them-network
+    depends_on:
+      - them-postgres
+      - them-redis
+    labels:
+      - "traefik.enable=false"
+    profiles:
+      - go
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
