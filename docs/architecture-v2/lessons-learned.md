@@ -62,9 +62,60 @@ The Python auth_service issues JWTs with `user_name` (not `username`). The Go `C
 
 ---
 
-## Phase 3 (upcoming) — Session Manager
+## Phase 3 — Session Manager
 
-Work items identified from Phase 1/2 review:
-- Atomic Lua scripts for Set+shadow-key membership: Set has no TTL in Python; shadow keys carry TTL so ghosts are detectable.
-- Pod heartbeat using `atomic.LoadInt32(&activeSessions)` instead of hardcoded 0.
-- Ghost pruning on each session gate call (not only on cap-full condition).
+### Atomic Lua scripts are the only safe way to combine multiple Redis operations
+
+The session gate must atomically check the session count, increment it, and create a shadow TTL key in one operation. Any gap between these steps (e.g., two separate `SET` + `EXPIRE` calls) creates a window where a concurrent pod can observe inconsistent state. Lua scripts run atomically on the Redis server — no other commands can interleave. Use a Lua script for any "read-modify-write" or "check-and-set" pattern on Redis.
+
+### Shadow TTL keys are the ghost-detection mechanism
+
+The session set (`them:session:ep:{id}:members`) is not TTL-based — it is a plain Redis Set. Each member key (`them:session:ep:{id}:member:{session_id}`) is a separate TTL key. When a pod dies without cleanup, the member set retains the orphaned `session_id` but the member key expires. Ghost pruning checks each member for the presence of its key; missing = ghost; remove from set and decrement counter. Always prune on every gate call, not only when the cap is full — a missed ghost grows the effective session count above the cap.
+
+### Pod heartbeat must report real active sessions, not a hardcoded constant
+
+The original Python bridge hardcoded `active_sessions=0` in heartbeat payloads. The Go rewrite uses `atomic.LoadInt32(&activeSessions)` to report the real count. Correct counts are required for the dashboard heat map and for capacity planning. The atomic counter is incremented on `Gate` (claim) and decremented on `Release` (cleanup) — never in any other path.
+
+---
+
+## Phase 4 — Event Bus, Domain Types, Run Recorder
+
+### In-process fan-out bus: hold a read lock during Publish for concurrent safety
+
+The event bus map (`topic → []subscriber`) must be read-locked during `Publish` so that multiple publishers can proceed concurrently. A write lock would serialise all publishers, which is unnecessary because `Publish` only reads the map (it does not add or remove subscribers). Write-lock only in `Subscribe` and the unsubscribe function. This is the standard "many readers, few writers" pattern.
+
+### Drop on full channel, never block — bus must never block on a slow consumer
+
+The bus uses `select { case s.ch <- e: default: }` for every subscriber send. If the subscriber's buffer is full the event is silently dropped for that subscriber. Blocking would propagate back-pressure from a single slow WebSocket client to all publishers, including Temporal activity callbacks. The trade-off is intentional: real-time streaming events (token deltas) are not worth queuing indefinitely.
+
+### Buffered mock channel of size 1 — not len(responses) — for cancellation tests
+
+When writing the MockProvider (Phase 5), using `make(chan StreamEvent, len(responses))` as the internal buffer caused all events to be enqueued before the goroutine's `select` could observe context cancellation. Using a buffer of 1 forces the goroutine to block on each send, making the `ctx.Done()` arm reachable after each event. This is the correct pattern for testing "does cancellation stop a stream mid-way?"
+
+### DBQuerier interface isolates recorder from pgxpool — no live DB in tests
+
+`runrecorder.DBQuerier` exposes only `Exec(ctx, sql, args...) error`. The mock captures calls in a slice. Tests assert SQL fragments and argument ordering without starting Postgres. The interface is intentionally narrow — only the methods the recorder actually uses. Wider interfaces (e.g., including `Query`) create unused surface that mocks must implement.
+
+### Wrap DB errors with context (runID, step type) before returning
+
+All recorder methods return `fmt.Errorf("runrecorder: CreateRun %s: %w", run.ID, err)`. This means the caller's error log always includes the run ID and operation name without needing to repeat them at every call site. The `%w` verb preserves `errors.Is` unwrapping so callers can check for sentinel errors if needed.
+
+---
+
+## Phase 5 — LLM Provider Abstraction
+
+### Provider interface is the only LLM abstraction — no SDK, no shared globals
+
+`llm.Provider` takes `[]domain.Message` and `[]llm.ToolDef` (canonical types), not Anthropic-specific structs. Provider implementations translate at the boundary. This is the fix for High finding #7 (provider format leaked into DB) and ensures that swapping providers requires changing only the wiring in `main.go`, not orchestration logic.
+
+### ctx cancellation on HTTP streaming: use NewRequestWithContext, not req.WithContext
+
+`http.NewRequestWithContext(ctx, ...)` binds the context at construction. When ctx is cancelled, the underlying TCP connection is closed by the http transport, which causes the SSE `bufio.Scanner` reading the response body to return an error on the next `Scan()` call. The goroutine then exits, the channel is closed, and the caller's `range ch` loop terminates. No extra plumbing is needed — the stdlib handles it.
+
+### SSE parsing: "data: " prefix, blank line separators, "[DONE]" terminator
+
+Anthropic's streaming API uses standard SSE framing. Each event is a line beginning with `data: ` followed by a JSON object. Events are separated by blank lines. The stream ends with `data: [DONE]`. When `bufio.Scanner` hits a `message_stop` event type in the JSON payload, close the channel immediately rather than waiting for EOF — the stream may keep the connection open briefly after the logical end.
+
+### ToolDef.Validate() at the call site, not inside Stream()
+
+`Stream()` does not validate tools. The caller is responsible for calling `td.Validate()` before passing tools to `Stream()`. This keeps the hot path (streaming) free of error-return allocations and makes the validation boundary explicit. In orchestration code, validate tools once at startup/config-load, not on every LLM call.
