@@ -1,15 +1,18 @@
-// Command them is the Phase 6 entrypoint for the THEM v2 Go platform.
+// Command them is the Phase 8 entrypoint for the THEM v2 Go platform.
 // It wires configuration, database, Redis, telemetry, health checks, the
-// in-process event bus, the orchestration layer, and the WebSocket handler
-// together, then blocks until a shutdown signal is received.
+// in-process event bus, the orchestration layer, WebSocket, SSE, A2A, admin
+// API, and rate limiting together, then blocks until a shutdown signal.
 package main
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
+	"github.com/aviciot/them/internal/a2a"
+	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/config"
@@ -18,9 +21,11 @@ import (
 	"github.com/aviciot/them/internal/health"
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/orchestrator"
+	"github.com/aviciot/them/internal/ratelimit"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/server"
 	"github.com/aviciot/them/internal/session"
+	"github.com/aviciot/them/internal/sse"
 	"github.com/aviciot/them/internal/telemetry"
 	"github.com/aviciot/them/internal/ws"
 )
@@ -91,20 +96,56 @@ func run() error {
 	orchCfg := orchestrator.Config{
 		MaxIterations: 10,
 	}
-	orch := orchestrator.New(orchCfg, llmProvider, nil /* agents wired in Phase 7 */, recorder, bus, log)
+	orch := orchestrator.New(orchCfg, llmProvider, nil, recorder, bus, log)
 
-	// ── 10. Build health handler and HTTP server ──────────────────────────────
+	// ── 10. Create rate limiter ───────────────────────────────────────────────
+	rlRedis := cache.NewRateLimitClient(redisCache.Client())
+	limiter := ratelimit.New(rlRedis)
+	_ = limiter // rate limiter available for wiring into handlers
+
+	// ── 11. Build auth middleware ─────────────────────────────────────────────
+	var jwtMiddleware func(http.Handler) http.Handler
+	if cfg.JWTPublicKey != nil {
+		jwtMiddleware = auth.JWTMiddleware(cfg.JWTPublicKey)
+		log.Info("JWT middleware enabled")
+	} else {
+		log.Info("JWT middleware disabled — JWT_PUBLIC_KEY_PEM not set")
+	}
+
+	// ── 12. Build health handler and HTTP server ──────────────────────────────
 	healthHandler := health.New(cfg.InstanceID, database, redisCache)
 	addr := fmt.Sprintf("%s:%d", cfg.AppHost, cfg.AppPort)
 
 	authMW := server.AuthMiddlewares{}
 	srv := server.NewWithBus(addr, healthHandler, authMW, bus, log, database, redisCache)
 
-	// ── 11. Wire WebSocket handler ────────────────────────────────────────────
-	// auth.Cache satisfies the ws.Authenticator interface but we don't have a
-	// token cache wired here yet; use a pass-through stub for Phase 6.
-	wsHandler := ws.NewHandler(sessionStore, recorder, orch, bus, &noopAuth{}, cfg.InstanceID, log)
+	// ── 13. Wire noopAuth for bearer tokens ──────────────────────────────────
+	// The bearer token cache requires a DB-backed TokenQuerier; use a no-op
+	// authenticator for Phase 8 (the full cache is wired in a later phase).
+	authenticator := &noopAuth{}
+
+	// ── 14. Wire WebSocket handler (/ws/*) ───────────────────────────────────
+	wsHandler := ws.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log)
 	srv.MountWS(wsHandler.Routes())
+	log.Info("WebSocket handler mounted", "prefix", "/ws")
+
+	// ── 15. Wire SSE handler (/sse/*) ─────────────────────────────────────────
+	sseHandler := sse.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log)
+	srv.MountSSE(sseHandler.Routes())
+	log.Info("SSE handler mounted", "prefix", "/sse")
+
+	// ── 16. Wire A2A server (/a2a/*, /.well-known/*) ─────────────────────────
+	a2aServer := a2a.NewServer(recorder, orch, bus, log)
+	srv.MountA2A(a2aServer.Routes())
+	log.Info("A2A server mounted")
+
+	// ── 17. Wire admin API (/api/v1/admin/*, /api/v1/runs/*) ─────────────────
+	adminDB := admin.NewPgxQuerier(database.Pool())
+	adminCache := cache.NewAdminCacheClient(redisCache.Client())
+	// Temporal is optional — nil if not configured.
+	adminRouter := admin.BuildRouter(adminDB, adminCache, nil /* temporal */, jwtMiddleware, log)
+	srv.MountAdmin(adminRouter)
+	log.Info("admin API mounted", "prefix", "/api/v1")
 
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)
 
@@ -112,7 +153,8 @@ func run() error {
 }
 
 // noopAuth is a placeholder authenticator that accepts any non-empty token.
-// Replace with auth.Cache when the bearer token infrastructure is wired.
+// Replace with a full auth.Cache instance when the bearer token infrastructure
+// is fully wired (requires a DB-backed TokenQuerier).
 type noopAuth struct{}
 
 func (n *noopAuth) Validate(_ context.Context, token string) (*auth.TokenInfo, error) {

@@ -143,6 +143,32 @@ func (s *Server) MountWS(wsHandler http.Handler) {
 	s.router.Mount("/ws", wsHandler)
 }
 
+// MountSSE mounts an SSE handler under the /sse prefix.
+// Call before ListenAndServe.
+func (s *Server) MountSSE(sseHandler http.Handler) {
+	s.router.Mount("/sse", sseHandler)
+}
+
+// MountA2A mounts an A2A JSON-RPC handler at the router root.
+// The handler is responsible for registering /a2a/* and /.well-known/* routes.
+// Call before ListenAndServe.
+func (s *Server) MountA2A(a2aHandler http.Handler) {
+	s.router.Mount("/", a2aHandler)
+}
+
+// MountAdmin mounts the admin API handler under the /api/v1 prefix.
+// Call before ListenAndServe.
+func (s *Server) MountAdmin(adminHandler http.Handler) {
+	s.router.Mount("/api/v1", adminHandler)
+}
+
+// Handler returns the underlying chi router as an http.Handler. Intended for
+// use in integration tests that need to wrap the router in an httptest.Server
+// without calling ListenAndServe.
+func (s *Server) Handler() http.Handler {
+	return s.router
+}
+
 // NewRouter returns the chi router with all routes mounted, without starting a
 // server. Intended for use in tests that need to probe routes via httptest.
 // auth carries optional JWT/bearer middleware; pass zero value to disable.

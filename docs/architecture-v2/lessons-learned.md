@@ -174,3 +174,39 @@ The A2A protocol (see `docs/A2A_REFERENCE.md`) uses JSON-RPC 2.0 over HTTP POST.
 ### ErrUnknownAgent — return it as a typed sentinel, never a fmt.Errorf string
 
 `agentregistry.ErrUnknownAgent` is declared as `var ErrUnknownAgent = errors.New("agentregistry: unknown agent slug")`. Callers use `errors.Is(err, ErrUnknownAgent)` to distinguish "agent not configured" from "agent returned an error". If `Invoke` returns `fmt.Errorf("unknown agent %s", slug)` instead, callers cannot reliably identify the case without string matching, which breaks across refactors.
+
+---
+
+## Phase 8 — SSE, A2A Server, Admin API, Rate Limiter, Full Route Wiring
+
+### Subscribe to the event bus BEFORE starting the orchestrator goroutine
+
+The SSE handler (like the WS handler) must call `bus.Subscribe(ctx, contextID, bufSize)` before launching the `orch.Run` goroutine. If the subscribe happens after Run starts, the first few events (often the token events for short responses) are already published before anyone is listening — they are lost. This is the same "ready bootstrap" pattern from Phase 5. The rule: subscribe first, then act.
+
+### SSE and HTTP: WriteHeader must come before any Write
+
+In the SSE handler, `w.WriteHeader(http.StatusOK)` is called before setting up the orchestrator goroutine. Calling `http.Error()` after the SSE headers are sent silently writes to an already-started response. Authenticate and validate all inputs before writing any headers. A 401 or 400 must be sent before `Content-Type: text/event-stream`.
+
+### A2A server: synchronous orchestration is safe for short requests
+
+The A2A `message/send` handler calls `orch.Run` synchronously in the request handler. This works for the "orchestrator-as-agent" pattern because: (1) the caller expects to block until completion, (2) the Go HTTP server uses a goroutine per connection so no event loop is blocked, and (3) A2A callers have their own timeout (the HTTP client timeout). The tradeoff vs. async+polling is simplicity — no task store needed.
+
+### Admin DBQuerier needs Query/QueryRow/Exec/ExecReturning — not just Exec
+
+The `runrecorder.DBQuerier` only has `Exec`. Admin handlers need `Query` (for list endpoints), `QueryRow` (for get-by-id), and `ExecReturning` (for INSERT RETURNING id). Rather than expanding the runrecorder interface, define a separate `admin.DBQuerier` in the admin package and provide `admin.PgxQuerier` as the production implementation. Interface segregation keeps each package's DB surface minimal.
+
+### JSON list endpoints: use `make([]T, 0)` not `var slice []T`
+
+`var agents []Agent` initialises to nil. When marshalled by `encoding/json`, nil slices become JSON `null`, not `[]`. Admin API consumers (the frontend) break on null where they expect an empty array. Always initialise list accumulator variables with `make([]T, 0)` to guarantee `[]` in the JSON output.
+
+### Rate limiter key includes the minute bucket, not a fixed window
+
+Using `time.Now().Unix() / 60` as the bucket means each request participates in the current minute's counter. There is no startup initialization or cleanup — Redis TTL of 90s handles expiry automatically. The 90s TTL (vs. 60s bucket size) gives a 30s grace window for clock skew between replicas. A 60s TTL would risk evicting a bucket that is still current on replicas with slightly different clocks.
+
+### Integration tests: use server.Handler() not httptest.NewServer(srv)
+
+`server.Server` owns an `*http.Server` internally. `httptest.NewServer` accepts an `http.Handler`, not a `*server.Server`. Adding a `Handler() http.Handler` method to `server.Server` returns the chi router, allowing integration tests to wrap it in `httptest.NewServer` without touching the production `ListenAndServe` path. This avoids port conflicts and signal handling in tests.
+
+### Mount ordering matters for chi: most-specific routes must be mounted first
+
+In chi, `r.Mount("/", handler)` matches ALL paths not already matched. The A2A server mounts at `/` (to handle both `/a2a/{slug}` and `/.well-known/agent.json`). This mount must come after `/ws`, `/sse`, `/health`, and `/metrics` are registered. If it is mounted first, it absorbs all traffic. The server's `MountA2A` method appends to the router, so callers must call `MountWS/MountSSE` before `MountA2A`.
