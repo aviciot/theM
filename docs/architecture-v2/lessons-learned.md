@@ -119,3 +119,58 @@ Anthropic's streaming API uses standard SSE framing. Each event is a line beginn
 ### ToolDef.Validate() at the call site, not inside Stream()
 
 `Stream()` does not validate tools. The caller is responsible for calling `td.Validate()` before passing tools to `Stream()`. This keeps the hot path (streaming) free of error-return allocations and makes the validation boundary explicit. In orchestration code, validate tools once at startup/config-load, not on every LLM call.
+
+---
+
+## Phase 6 — Orchestration Loop, Temporal Workflow, WebSocket Entry Point
+
+### Subscribe to the event bus BEFORE starting the orchestrator goroutine — never after
+
+The WebSocket handler subscribes to the event bus topic (`h.bus.Subscribe(r.Context(), contextID, 256)`) before launching the `h.orch.Run` goroutine. If the order is reversed — start the goroutine first, then subscribe — the first token events emitted by the orchestrator's `publishJSON` are published to an empty subscriber list and silently dropped. The client never sees them. The rule: establish all consumers before producing any events. This mirrors the Temporal activity design where the workflow's Signal channel is set up before `ExecuteActivity` returns.
+
+### Two-level domain type hierarchy: use existing domain types, never re-declare them
+
+Phase 6 initially created `internal/domain/message.go` to introduce a typed `Role`, `Part` struct (with `Kind` field), and `TextMessage` helper. The file conflicted with the pre-existing `internal/domain/domain.go` which already defined `ContentPart` (with `Type` field), untyped `Role` constants, and `Message`. The extra file had to be deleted. The lesson: read the entire target package before adding new types. When extending a package, add to the existing file or a new file that does not redeclare types.
+
+### ContentPart.Type is "tool_use" and "tool_result" — not "tool_call"
+
+The existing `domain.ContentPart` struct (written to match Anthropic's wire format) uses `Type: "tool_use"` for LLM tool invocation requests and `Type: "tool_result"` for the results fed back to the model. New code that uses `"tool_call"` as the type silently stores messages that no provider can interpret. When building `domain.ContentPart` values in the orchestrator, always use `"tool_use"` (for assistant messages) and `"tool_result"` (for user/tool messages).
+
+### rueidis Receive API: use client.Receive(ctx, subscribeCmd, fn) — not NewSubscriber
+
+rueidis v1.0.43 does not have a `NewSubscriber()` method. The correct pub/sub pattern is:
+```go
+cmd := client.B().Subscribe().Channel(channel).Build()
+err := client.Receive(ctx, cmd, func(msg rueidis.PubSubMessage) {
+    handler(msg.Message)
+})
+```
+`Receive` blocks until ctx is cancelled (returns `nil`) or a network error occurs. This is exposed via the `CoreClient` interface, which `rueidis.Client` embeds. Using a non-existent method causes a compile-time error; using the wrong pattern (e.g., wrapping in a custom subscriber loop) causes resource leaks.
+
+### Temporal heartbeat goroutine must check ctx.Done — not just ticker
+
+The `RunOrchestratorActivity` heartbeat goroutine uses:
+```go
+select { case <-ticker.C: activity.RecordHeartbeat(ctx, "alive"); case <-ctx.Done(): return }
+```
+Without the `ctx.Done()` arm, the goroutine leaks after the activity completes (ctx is cancelled by the Temporal SDK when the activity finishes). A leaked goroutine still holding the ticker fires on the next tick and panics because the activity context is no longer valid.
+
+### Temporal workflow re-entrancy: rebuild history on HITL resume
+
+When `OrchestrationWorkflow` receives a `SignalHumanInput` message after the activity returned `TaskInputRequired`, it appends the original `UserMessage` and the human response to `History`, then sets `UserMessage = humanResponse` before re-executing the activity. This ensures the re-run sees the full conversation history (original + human response) without the orchestrator needing special resume logic. The workflow, not the activity, is the source of truth for conversation state.
+
+---
+
+## Phase 7 — Agent Registry
+
+### Two-level agent cache: in-process sync.Map + Redis hash — pub/sub invalidation
+
+The agent registry uses a `sync.Map` (L1) for zero-allocation read on the hot path and a Redis hash (`them:agents:registry`) with a 600 s TTL (L2) to share configuration across replicas. On any write to `them.agents` in Postgres, the admin API publishes to `them:agents:invalidate`. Every replica's `Subscribe` goroutine receives the message, clears L1 and deletes the L2 key, then re-loads from Postgres on the next `Invoke` call. This is the same pattern as Phase 2 token revocation, applied to agent configuration.
+
+### A2A invocation is JSON-RPC 2.0 `message/send` — not REST
+
+The A2A protocol (see `docs/A2A_REFERENCE.md`) uses JSON-RPC 2.0 over HTTP POST. The method is `message/send`. The request body is `{"jsonrpc":"2.0","id":"<uuid>","method":"message/send","params":{"message":{...}}}`. The response body is `{"jsonrpc":"2.0","id":"<uuid>","result":{...}}`. Using REST semantics (PUT/PATCH with a REST path) against an A2A endpoint silently returns a 404 or method-not-allowed and the caller receives an opaque error. Always use the JSON-RPC envelope.
+
+### ErrUnknownAgent — return it as a typed sentinel, never a fmt.Errorf string
+
+`agentregistry.ErrUnknownAgent` is declared as `var ErrUnknownAgent = errors.New("agentregistry: unknown agent slug")`. Callers use `errors.Is(err, ErrUnknownAgent)` to distinguish "agent not configured" from "agent returned an error". If `Invoke` returns `fmt.Errorf("unknown agent %s", slug)` instead, callers cannot reliably identify the case without string matching, which breaks across refactors.

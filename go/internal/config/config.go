@@ -52,6 +52,13 @@ type Config struct {
 	// JWTPublicKey is parsed from JWTPublicKeyPEM at startup. Nil when
 	// JWTPublicKeyPEM is empty.
 	JWTPublicKey *rsa.PublicKey
+
+	// LLM providers
+	AnthropicAPIKey string
+
+	// Temporal
+	TemporalEnabled  bool
+	TemporalHostPort string
 }
 
 // DefaultSecretKey is the insecure placeholder that must never reach production.
@@ -85,6 +92,11 @@ func Load() (*Config, error) {
 		SecretKey: getEnv("SECRET_KEY", ""),
 
 		JWTPublicKeyPEM: getEnv("JWT_PUBLIC_KEY_PEM", ""),
+
+		AnthropicAPIKey: getEnv("ANTHROPIC_API_KEY", ""),
+
+		TemporalEnabled:  getEnvBool("TEMPORAL_ENABLED", false),
+		TemporalHostPort: getEnv("TEMPORAL_HOST_PORT", "localhost:7233"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -145,17 +157,23 @@ func (c *Config) SafeString() string {
 	if c.JWTPublicKey != nil {
 		jwtMode = "enabled"
 	}
+	anthropicMode := "not-set"
+	if c.AnthropicAPIKey != "" {
+		anthropicMode = "set"
+	}
 	return fmt.Sprintf(
 		"app_env=%s app_host=%s app_port=%d instance_id=%s "+
 			"db_host=%s db_port=%d db_name=%s db_user=%s db_password=*** "+
 			"db_pool_size=%d redis_host=%s redis_port=%d redis_db=%d "+
 			"log_level=%s log_format=%s otel_enabled=%v secret_key=*** "+
-			"jwt_middleware=%s",
+			"jwt_middleware=%s anthropic_api_key=%s "+
+			"temporal_enabled=%v temporal_host_port=%s",
 		c.AppEnv, c.AppHost, c.AppPort, c.InstanceID,
 		c.DBHost, c.DBPort, c.DBName, c.DBUser,
 		c.DBPoolSize, c.RedisHost, c.RedisPort, c.RedisDB,
 		c.LogLevel, c.LogFormat, c.OtelEnabled,
-		jwtMode,
+		jwtMode, anthropicMode,
+		c.TemporalEnabled, c.TemporalHostPort,
 	)
 }
 
