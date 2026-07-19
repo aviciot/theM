@@ -35,6 +35,20 @@ type Closer interface {
 	Close()
 }
 
+// AuthMiddlewares carries the optional JWT and bearer token HTTP middlewares.
+// Both fields are optional: a nil middleware is not registered.
+// Use WithAuth() to construct this.
+type AuthMiddlewares struct {
+	JWT    func(http.Handler) http.Handler
+	Bearer func(http.Handler) http.Handler
+}
+
+// WithAuth returns an AuthMiddlewares value for the provided middleware
+// functions. Either argument may be nil (nil = disabled).
+func WithAuth(jwt, bearer func(http.Handler) http.Handler) AuthMiddlewares {
+	return AuthMiddlewares{JWT: jwt, Bearer: bearer}
+}
+
 // Server wraps an http.Server and the chi router, and owns the shutdown logic.
 type Server struct {
 	httpServer *http.Server
@@ -44,16 +58,20 @@ type Server struct {
 
 // buildRouter constructs and returns the chi router with all routes mounted.
 // Extracted so it can be shared by New (production) and NewRouter (tests).
-func buildRouter(h *health.Handler) *chi.Mux {
+//
+// auth is optional: health and metrics routes are always unauthenticated.
+// Authenticated application routes (added in later phases) receive the auth
+// middlewares via sub-routers. Passing a zero-value AuthMiddlewares is safe.
+func buildRouter(h *health.Handler, auth AuthMiddlewares) *chi.Mux {
 	r := chi.NewRouter()
 
-	// Standard middleware
+	// Standard middleware — applies to all routes.
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Logger)
 
-	// Health routes
+	// Health and metrics routes — always unauthenticated.
 	r.Get("/health/live", h.Live)
 	r.Get("/health/ready", h.Ready)
 
@@ -61,14 +79,27 @@ func buildRouter(h *health.Handler) *chi.Mux {
 	// includes Go runtime and process collectors out of the box.
 	r.Handle("/metrics", promhttp.Handler())
 
+	// Protected API sub-router — auth middlewares applied when provided.
+	// Routes requiring authentication are mounted here in later phases.
+	r.Group(func(protected chi.Router) {
+		if auth.JWT != nil {
+			protected.Use(auth.JWT)
+		}
+		if auth.Bearer != nil {
+			protected.Use(auth.Bearer)
+		}
+		// TODO Phase 3+: mount protected API routes here.
+	})
+
 	return r
 }
 
 // New builds and returns a Server with all routes mounted. healthHandler handles
-// the /health/* routes. closers are called in order during graceful shutdown
-// after the HTTP server stops.
-func New(addr string, healthHandler *health.Handler, logger *slog.Logger, closers ...Closer) *Server {
-	r := buildRouter(healthHandler)
+// the /health/* routes. auth carries optional JWT/bearer middleware (use
+// WithAuth to construct; pass zero value to disable). closers are called in
+// order during graceful shutdown after the HTTP server stops.
+func New(addr string, healthHandler *health.Handler, auth AuthMiddlewares, logger *slog.Logger, closers ...Closer) *Server {
+	r := buildRouter(healthHandler, auth)
 
 	httpSrv := &http.Server{
 		Addr:              addr,
@@ -88,8 +119,9 @@ func New(addr string, healthHandler *health.Handler, logger *slog.Logger, closer
 
 // NewRouter returns the chi router with all routes mounted, without starting a
 // server. Intended for use in tests that need to probe routes via httptest.
-func NewRouter(healthHandler *health.Handler) http.Handler {
-	return buildRouter(healthHandler)
+// auth carries optional JWT/bearer middleware; pass zero value to disable.
+func NewRouter(healthHandler *health.Handler, auth AuthMiddlewares) http.Handler {
+	return buildRouter(healthHandler, auth)
 }
 
 // ListenAndServe starts the HTTP server and blocks until a SIGTERM or SIGINT is

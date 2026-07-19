@@ -4,7 +4,12 @@
 package config
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -38,6 +43,15 @@ type Config struct {
 
 	// Security — never log this value
 	SecretKey string
+
+	// JWT (RS256 local validation)
+	// JWT_PUBLIC_KEY_PEM is a PEM-encoded RSA public key. When set, JWT
+	// middleware is enabled and tokens are validated locally without any
+	// HTTP call to the auth service. When empty, bearer-only mode is used.
+	JWTPublicKeyPEM string
+	// JWTPublicKey is parsed from JWTPublicKeyPEM at startup. Nil when
+	// JWTPublicKeyPEM is empty.
+	JWTPublicKey *rsa.PublicKey
 }
 
 // DefaultSecretKey is the insecure placeholder that must never reach production.
@@ -69,10 +83,26 @@ func Load() (*Config, error) {
 		RedisDB:       getEnvInt("REDIS_DB", 0),
 
 		SecretKey: getEnv("SECRET_KEY", ""),
+
+		JWTPublicKeyPEM: getEnv("JWT_PUBLIC_KEY_PEM", ""),
 	}
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
+	}
+
+	// Parse and validate JWT public key if provided.
+	// Fail fast on malformed PEM — better to crash at startup than to silently
+	// fall back to unauthenticated access at runtime.
+	if cfg.JWTPublicKeyPEM != "" {
+		key, err := parseRSAPublicKey([]byte(cfg.JWTPublicKeyPEM))
+		if err != nil {
+			return nil, fmt.Errorf("JWT_PUBLIC_KEY_PEM is malformed: %w", err)
+		}
+		cfg.JWTPublicKey = key
+		slog.Info("auth: JWT middleware enabled (RS256 local validation)")
+	} else {
+		slog.Info("auth: JWT middleware disabled — bearer-only mode (JWT_PUBLIC_KEY_PEM not set)")
 	}
 
 	return cfg, nil
@@ -111,16 +141,53 @@ func (c *Config) RedisAddr() string {
 // SafeString returns a log-safe representation of the config — all secret
 // fields replaced with "***".
 func (c *Config) SafeString() string {
+	jwtMode := "disabled"
+	if c.JWTPublicKey != nil {
+		jwtMode = "enabled"
+	}
 	return fmt.Sprintf(
 		"app_env=%s app_host=%s app_port=%d instance_id=%s "+
 			"db_host=%s db_port=%d db_name=%s db_user=%s db_password=*** "+
 			"db_pool_size=%d redis_host=%s redis_port=%d redis_db=%d "+
-			"log_level=%s log_format=%s otel_enabled=%v secret_key=***",
+			"log_level=%s log_format=%s otel_enabled=%v secret_key=*** "+
+			"jwt_middleware=%s",
 		c.AppEnv, c.AppHost, c.AppPort, c.InstanceID,
 		c.DBHost, c.DBPort, c.DBName, c.DBUser,
 		c.DBPoolSize, c.RedisHost, c.RedisPort, c.RedisDB,
 		c.LogLevel, c.LogFormat, c.OtelEnabled,
+		jwtMode,
 	)
+}
+
+// parseRSAPublicKey decodes a PEM block and parses it as an RSA public key.
+// It accepts both PKIX (BEGIN PUBLIC KEY) and PKCS#1 (BEGIN RSA PUBLIC KEY)
+// formats. This is the config-layer copy; the canonical implementation lives
+// in internal/auth where the jwt.go validation logic is also kept.
+func parseRSAPublicKey(pemBytes []byte) (*rsa.PublicKey, error) {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, errors.New("failed to decode PEM block — ensure the key uses standard PEM encoding")
+	}
+	switch block.Type {
+	case "PUBLIC KEY":
+		pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse PKIX public key: %w", err)
+		}
+		rsaKey, ok := pub.(*rsa.PublicKey)
+		if !ok {
+			return nil, errors.New("PEM does not contain an RSA public key")
+		}
+		return rsaKey, nil
+	case "RSA PUBLIC KEY":
+		pub, err := x509.ParsePKCS1PublicKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse PKCS1 public key: %w", err)
+		}
+		return pub, nil
+	default:
+		return nil, fmt.Errorf("unsupported PEM block type %q; expected \"PUBLIC KEY\" or \"RSA PUBLIC KEY\"", block.Type)
+	}
 }
 
 // getEnv returns the value of the named environment variable, or fallback when
