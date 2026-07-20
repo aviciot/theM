@@ -316,6 +316,41 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ---
 
+### S1-18 · EP config loader — `internal/epconfig/epconfig_test.go`
+
+**Purpose:** Entry point and application runtime configuration resolution from DB — precedence rules, fail-closed policy, in-process TTL cache, cache invalidation. The single typed model shared by both WS and SSE handlers.
+
+| Test | What it proves |
+|---|---|
+| `TestLoad_EPMaxConcurrentSessions` | `entry_points.max_concurrent_sessions` → `EPMaxConcurrent` |
+| `TestLoad_AppMaxConcurrentSessions` | `runtime_config.max_concurrent_sessions` → `AppMaxConcurrent` |
+| `TestLoad_BothLimitsSet` | EP and app limits are independent fields, both resolved correctly |
+| `TestLoad_RateLimitRPM` | `runtime_config.rate_limit_rpm` → `RateLimitRPM` |
+| `TestLoad_QueueTimeout` | `entry_points.queue_timeout_seconds` → `QueueTimeout` as duration |
+| `TestLoad_NullQueueTimeout` | NULL `queue_timeout_seconds` → 0 (no queue) |
+| `TestCheckAccess_DisabledEP` | `EPEnabled=false` → `ErrDisabled` (fail-closed 403) |
+| `TestCheckAccess_DisabledApp` | `AppEnabled=false` → `ErrDisabled` (fail-closed 403) |
+| `TestLoad_PublicEP` | `access_policy.mode=public` → `AccessModePublic` |
+| `TestLoad_AuthenticatedEP` | `access_policy.mode=token` → `AccessModeToken` |
+| `TestCheckAccess_BlockedToken` | Token hash on block-list → `ErrBlocked` (fail-closed 403) |
+| `TestCheckAccess_BlockedUserID` | User ID on block-list → `ErrBlocked` (fail-closed 403) |
+| `TestCheckAccess_NotBlocked` | Token and user NOT on block-lists → no error |
+| `TestLoad_EPNotFound` | No EP row for slug → `ErrNotFound` |
+| `TestLoad_DBUnavailable` | Any non-ErrNotFound DB error → `ErrDBUnavailable` (fail-closed 503) |
+| `TestLoad_MalformedRuntimeConfig` | Invalid JSONB → treated as `{}` (unlimited), no error returned |
+| `TestLoad_NullAndZeroLimits` | NULL/0 limits → 0 = unlimited for all fields |
+| `TestLoad_NegativeLimitsTreatedAsUnlimited` | Negative limits clamped to 0 (unlimited) |
+| `TestLoad_CacheHit` | Second `Load` for same slug → DB called only once |
+| `TestLoad_DisabledEPNotCached` | Disabled EP never cached → DB queried every call |
+| `TestInvalidate_EvictsEntry` | `Invalidate(slug)` → next `Load` re-queries DB |
+| `TestInvalidateApp_EvictsAppEntries` | `InvalidateApp(appID)` → only EPs for that app evicted |
+| `TestLoad_MissingAccessPolicyDefaultsToToken` | NULL `access_policy` → defaults to `"token"` auth |
+| `TestLoad_AppIDPropagated` | `AppID` from DB propagated correctly to `EPConfig.AppID` |
+
+**Trigger:** any change to `internal/epconfig/epconfig.go` or `internal/epconfig/pgx.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -399,6 +434,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/` (any file) | S1-15 |
 | `internal/ratelimit/limiter.go` | S1-16 |
 | `internal/gate/gate.go` | S1-17 |
+| `internal/epconfig/epconfig.go` | S1-18 |
+| `internal/epconfig/pgx.go` | S1-18 |
 | `cmd/them/main.go` | S1 (full suite) |
 | `go.mod` or `go.sum` | S1 (full suite) |
 | `Dockerfile.go` | S1 + rebuild + S2 |
@@ -444,8 +481,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-15 | admin | 5 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
-| **S1 total** | | **105** |
+| S1-18 | epconfig | 24 |
+| **S1 total** | | **129** |
 | S2-01 | integration | 4 |
 | **S2 total** | | **4** |
 | S3 live | manual | 23 |
-| **Grand total** | | **132** |
+| **Grand total** | | **156** |

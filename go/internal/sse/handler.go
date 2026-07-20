@@ -26,6 +26,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -37,6 +38,7 @@ import (
 
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
+	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/orchestrator"
@@ -78,10 +80,17 @@ type GateStore interface {
 	Release(ctx context.Context, cfg gate.Config) error
 }
 
+// EPConfigLoader resolves Entry Point and Application runtime config.
+// Implemented by epconfig.Loader.
+type EPConfigLoader interface {
+	Load(ctx context.Context, epSlug string) (*epconfig.EPConfig, error)
+}
+
 // Handler is the SSE orchestration handler.
 type Handler struct {
 	sessions      SessionStore
 	gateStore     GateStore
+	epLoader      EPConfigLoader
 	recorder      *runrecorder.Recorder
 	orch          *orchestrator.Orchestrator
 	bus           event.Bus
@@ -123,6 +132,15 @@ func (h *Handler) WithGate(g GateStore) *Handler {
 	return h
 }
 
+// WithEPConfig attaches an EP config loader that resolves entry-point and
+// application runtime configuration (session limits, rate limits, access mode,
+// block-lists) on every inbound connection. When present, a disabled or
+// inaccessible EP is rejected before SSE headers are written.
+func (h *Handler) WithEPConfig(l EPConfigLoader) *Handler {
+	h.epLoader = l
+	return h
+}
+
 // Routes returns an http.Handler that mounts the SSE orchestration routes.
 // Accepts both GET (message as ?message=) and POST (message in JSON body).
 func (h *Handler) Routes() http.Handler {
@@ -153,7 +171,46 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 3. Gate.Check ─────────────────────────────────────────────────────────
+	// ── 3. Resolve EP + App runtime configuration ─────────────────────────────
+	// Fail-closed: DB unavailable → 503, EP/App disabled → 403.
+	// Must run before SSE headers are written so we can still return HTTP errors.
+	var resolvedCfg *epconfig.EPConfig
+	if h.epLoader != nil {
+		var loadErr error
+		resolvedCfg, loadErr = h.epLoader.Load(r.Context(), epSlug)
+		if loadErr != nil {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case errors.Is(loadErr, epconfig.ErrNotFound):
+				http.Error(w, `{"error":"entry point not found"}`, http.StatusNotFound)
+			case errors.Is(loadErr, epconfig.ErrDBUnavailable):
+				h.logger.Warn("sse: epconfig db unavailable", "ep_slug", epSlug, "error", loadErr)
+				http.Error(w, `{"error":"service unavailable"}`, http.StatusServiceUnavailable)
+			default:
+				h.logger.Warn("sse: epconfig load failed", "ep_slug", epSlug, "error", loadErr)
+				http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+			}
+			return
+		}
+		th := tokenHash(rawToken)
+		if resolvedCfg.AccessMode == epconfig.AccessModePublic {
+			th = ""
+		}
+		if accessErr := epconfig.CheckAccess(resolvedCfg, th, tokenInfo.TokenID); accessErr != nil {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case errors.Is(accessErr, epconfig.ErrDisabled):
+				http.Error(w, `{"error":"entry point disabled"}`, http.StatusForbidden)
+			case errors.Is(accessErr, epconfig.ErrBlocked):
+				http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+			default:
+				http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+			}
+			return
+		}
+	}
+
+	// ── 4. Gate.Check ─────────────────────────────────────────────────────────
 	sessionID := newID()
 	var gateCfg gate.Config
 	var gateAdmitted bool
@@ -161,11 +218,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.gateStore != nil {
 		gateCfg = gate.Config{
 			EPSlug:    epSlug,
-			AppID:     "", // resolved from DB in Phase 5.4 full wiring; 0 = unlimited for now
 			TokenHash: tokenHash(rawToken),
 			SessionID: sessionID,
-			// EPMaxConcurrent=0 means unlimited until full EP config wiring.
-			// RateLimitRPM=0 means unlimited.
+		}
+		if resolvedCfg != nil {
+			gateCfg.AppID = resolvedCfg.AppID
+			gateCfg.EPMaxConcurrent = resolvedCfg.EPMaxConcurrent
+			gateCfg.AppMaxConcurrent = resolvedCfg.AppMaxConcurrent
+			gateCfg.RateLimitRPM = resolvedCfg.RateLimitRPM
+			gateCfg.QueueTimeout = resolvedCfg.QueueTimeout
 		}
 		if _, err := h.gateStore.Check(r.Context(), gateCfg); err != nil {
 			w.Header().Set("Content-Type", "application/json")
@@ -185,7 +246,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		gateAdmitted = true
 	}
 
-	// ── 4. Set SSE headers ────────────────────────────────────────────────────
+	// ── 5. Set SSE headers ────────────────────────────────────────────────────
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -194,11 +255,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	flusher, hasFlusher := w.(http.Flusher)
 
-	// ── 5. Set up run / context IDs ───────────────────────────────────────────
+	// ── 6. Set up run / context IDs ───────────────────────────────────────────
 	runID := newID()
 	contextID := newID()
 
-	// ── 6. Register session ───────────────────────────────────────────────────
+	// ── 7. Register session ───────────────────────────────────────────────────
 	sessInfo := session.SessionInfo{
 		SessionID:        sessionID,
 		InstanceID:       h.instanceID,
@@ -221,7 +282,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 7. Gate.Confirm ───────────────────────────────────────────────────────
+	// ── 8. Gate.Confirm ───────────────────────────────────────────────────────
 	if gateAdmitted {
 		if err := h.gateStore.Confirm(r.Context(), gateCfg); err != nil {
 			h.logger.Warn("sse: gate confirm failed", "session_id", sessionID, "error", err)
@@ -237,11 +298,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// ── 8. CRITICAL: Subscribe to event bus BEFORE starting the workflow ──────
+	// ── 9. CRITICAL: Subscribe to event bus BEFORE starting the workflow ──────
 	evCh, unsub := h.bus.Subscribe(r.Context(), contextID, 256)
 	defer unsub()
 
-	// ── 9. Create run record ──────────────────────────────────────────────────
+	// ── 10. Create run record ─────────────────────────────────────────────────
 	run := domain.Run{
 		ID:             runID,
 		ContextID:      contextID,
@@ -252,7 +313,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("sse: create run failed", "run_id", runID, "error", err)
 	}
 
-	// ── 10. Start orchestration in a goroutine ────────────────────────────────
+	// ── 11. Start orchestration in a goroutine ───────────────────────────────
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -267,7 +328,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// ── 11. Stream events from bus as SSE ─────────────────────────────────────
+	// ── 12. Stream events from bus as SSE ────────────────────────────────────
 	h.streamEvents(ctx, cancel, w, flusher, hasFlusher, evCh, orchDone)
 }
 

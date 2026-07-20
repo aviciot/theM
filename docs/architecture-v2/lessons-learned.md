@@ -294,3 +294,27 @@ Tests that don't exercise admission control do not pass a gate. Rather than addi
 ### The tokenHash used for rate limiting must match the hash used by auth.tokenHash (SHA-256 hex)
 
 The gate's `Config.TokenHash` field is used as the rate-limit key (`rl:them:token:{hash}:{minute}`). The auth package already stores tokens in Redis under `them:session:token:{sha256_hex}`. Using a truncated prefix or a different hash would mean the same physical token produces different rate-limit keys, breaking per-token rate limiting. Always use `sha256.Sum256([]byte(rawToken))` formatted as `%x`. Both `ws` and `sse` packages declare their own `tokenHash()` function using this formula — it duplicates 5 lines but avoids an import cycle from the handler packages into `internal/auth`.
+
+---
+
+## Phase 5.4 — EP Config Resolution (epconfig package + handler wiring)
+
+### EP + App config resolution belongs in a standalone package, not inline in each handler
+
+The temptation was to add a `loadEPConfig()` private function to each handler and duplicate the DB join, JSON parsing, and caching logic across `ws` and `sse`. Instead, all resolution lives in `internal/epconfig` with a `DBQuerier` interface that each handler takes via `WithEPConfig(l EPConfigLoader)`. The handlers share identical wiring code and call the same `epconfig.CheckAccess()` function for enabled/blocked enforcement. No duplication; one place to fix if the DB schema changes.
+
+### Security checks (enabled/blocked) must run on every request — never skip them on cache hits
+
+The 30-second TTL cache stores the full resolved `EPConfig`, including `BlockedTokenHashes` and `BlockedUserIDs`. These are security-critical: if a token is blocked 1 second after a connection was admitted and the config is cached, the block must take effect within one request cycle — not 30 seconds later. The `CheckAccess()` function is called after every `Load()` call (whether it hit the cache or the DB), so the check runs on every connection attempt regardless of cache state. This is the correct behavior: cache the expensive DB JOIN, but always run the cheap in-memory security checks.
+
+### Disabled EP must not be cached — otherwise re-enabling requires waiting for the TTL
+
+A disabled EP (`EPEnabled=false`) is explicitly excluded from the cache in `Loader.buildConfig()`. If it were cached, an operator re-enabling an EP would have to wait up to 30 seconds for the next connection to work. Since disabled EP connections are fast-rejected before doing any real work, the DB re-query cost on every attempt is negligible and is the correct trade-off. The same applies to a disabled app. Note that a *blocked* token or user ID IS cached (it's part of the runtime_config JSONB in the cached row) — block-list changes propagate via `InvalidateApp()`, not via the TTL.
+
+### Malformed JSONB in runtime_config must not crash the handler — treat as {} and log a warning
+
+If `applications.runtime_config` contains invalid JSON (e.g., from a manual DB edit, a migration bug, or a truncated write), returning an error would cause 100% of connections to that app's EPs to fail. The design decision: log a warning at WARN level, discard the malformed value, and fall back to zero/unlimited for all fields. This is a deliberate fail-open choice for *configuration limits* (not for security checks — those are always fail-closed). The logged warning will surface in any observability tool watching for WARN entries.
+
+### EP config resolution must complete before the WS upgrade and before SSE headers are written
+
+Like Gate.Check, the EP config resolution step (`h.epLoader.Load()` + `epconfig.CheckAccess()`) must run while the connection is still a plain HTTP request. Once `upgrader.Upgrade()` is called (WS) or `w.WriteHeader(200)` is called (SSE), HTTP status codes cannot be sent to the client. A disabled EP returns 403; DB unavailable returns 503. Both are expressed as JSON error responses only if they occur before the protocol switch. After that point, the connection is already established and these checks are moot — they ran to completion before the switch.
