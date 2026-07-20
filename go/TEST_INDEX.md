@@ -270,7 +270,10 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestGetNonexistentAgent` | Unknown ID → 404 |
 | `TestListRunsContextIDFilter` | `?context_id=` → correct SQL WHERE clause |
 | `TestSignalRun` | POST `.../signal` → Temporal `SignalWorkflow` called with correct args |
-| `TestUpdateEntryPoint_PublishesInvalidation` | PUT entry-point → publishes EP slug to `them:ep:config:changed` |
+| `TestUpdateEntryPoint_NoSlugChange_PublishesSlug` | PUT entry-point (no rename) → publishes slug to `them:ep:config:changed` |
+| `TestUpdateEntryPoint_SlugRename_PublishesBothSlugs` | PUT entry-point (rename) → publishes both old and new slugs |
+| `TestUpdateEntryPoint_SlugRename_OldSlugPublishedFirst` | Old slug published before new slug in rename path |
+| `TestUpdateEntryPoint_OldSlugLookupFails_OnlyNewSlugPublished` | Old slug lookup fails → only new slug published; no error |
 | `TestDeleteEntryPoint_PublishesSlug` | DELETE entry-point → fetches slug then publishes it |
 | `TestUpdateApplication_PublishesAllEPSlugs` | PUT application → publishes all EP slugs for that app |
 | `TestDeleteApplication_PublishesAllEPSlugs` | DELETE application → publishes all EP slugs for that app |
@@ -490,8 +493,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
-| **S1 total** | | **137** |
+| **S1 total** | | **140** |
 | S2-01 | integration | 4 |
 | **S2 total** | | **4** |
 | S3 live | manual | 23 |
-| **Grand total** | | **164** |
+| **Grand total** | | **167** |

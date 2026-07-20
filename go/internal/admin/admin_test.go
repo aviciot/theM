@@ -296,18 +296,72 @@ func serveApps(t *testing.T, db *fakeDB, cache admin.CacheInvalidator, method, p
 	return w
 }
 
-// AI-1: UpdateEntryPoint publishes EP slug to invalidation channel.
-func TestUpdateEntryPoint_PublishesInvalidation(t *testing.T) {
+// AI-1: UpdateEntryPoint without slug change — publishes new slug (same as old).
+func TestUpdateEntryPoint_NoSlugChange_PublishesSlug(t *testing.T) {
+	// queryRowStr = old slug returned by the pre-update SELECT
+	db := &fakeDB{queryRowStr: "my-ep"}
 	cache := &fakeCache{}
 	body, _ := json.Marshal(map[string]any{
-		"slug":    "my-ep",
+		"slug":    "my-ep", // unchanged
 		"name":    "My EP",
 		"ep_type": "websocket",
 	})
-	w := serveApps(t, &fakeDB{}, cache, http.MethodPut, "/applications/1/entry-points/2", body)
+	w := serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/2", body)
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:my-ep",
-		"should publish EP slug to invalidation channel")
+	// Both old and new slugs are published — when they're the same value it
+	// appears twice. The subscriber calls Invalidate once per message; idempotent.
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:my-ep")
+}
+
+// AI-1a: UpdateEntryPoint with slug rename — publishes BOTH old and new slugs.
+func TestUpdateEntryPoint_SlugRename_PublishesBothSlugs(t *testing.T) {
+	db := &fakeDB{queryRowStr: "old-slug"} // old slug from DB
+	cache := &fakeCache{}
+	body, _ := json.Marshal(map[string]any{
+		"slug":    "new-slug", // renamed
+		"name":    "My EP",
+		"ep_type": "websocket",
+	})
+	w := serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/2", body)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:old-slug",
+		"old slug must be evicted so stale cache entry is invalidated")
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:new-slug",
+		"new slug must be evicted in case it was previously cached under a different EP")
+}
+
+// AI-1b: UpdateEntryPoint — old slug cache entry is evicted (slug rename scenario).
+// Verifies the cache eviction side: old slug is published first, new slug second.
+func TestUpdateEntryPoint_SlugRename_OldSlugPublishedFirst(t *testing.T) {
+	db := &fakeDB{queryRowStr: "original-ep"}
+	cache := &fakeCache{}
+	body, _ := json.Marshal(map[string]any{
+		"slug":    "renamed-ep",
+		"ep_type": "websocket",
+	})
+	serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/9", body)
+
+	require.Len(t, cache.publishedMsgs, 2, "exactly two invalidation messages")
+	assert.Equal(t, "them:ep:config:changed:original-ep", cache.publishedMsgs[0],
+		"old slug published first")
+	assert.Equal(t, "them:ep:config:changed:renamed-ep", cache.publishedMsgs[1],
+		"new slug published second")
+}
+
+// AI-1c: UpdateEntryPoint — old slug lookup fails (row not found) → only new slug published.
+// Ensures handler does not error when slug pre-fetch returns nothing.
+func TestUpdateEntryPoint_OldSlugLookupFails_OnlyNewSlugPublished(t *testing.T) {
+	// queryRowStr="" and queryRowErr set → Scan returns error → oldSlug stays ""
+	db := &fakeDB{queryRowErr: errors.New("no rows")}
+	cache := &fakeCache{}
+	body, _ := json.Marshal(map[string]any{
+		"slug":    "only-new-slug",
+		"ep_type": "websocket",
+	})
+	w := serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/3", body)
+	require.Equal(t, http.StatusOK, w.Code)
+	// Empty old slug is skipped by invalidateEP guard; only new slug published.
+	assert.Equal(t, []string{"them:ep:config:changed:only-new-slug"}, cache.publishedMsgs)
 }
 
 // AI-2: DeleteEntryPoint fetches slug then publishes it.

@@ -329,7 +329,11 @@ Rather than a new subscriber infrastructure, `epconfig.Loader.Subscribe(ctx, sub
 
 The epconfig cache is keyed by EP slug (the URL-safe human-readable identifier). Admin routes receive numeric IDs from the URL. The invalidation path therefore requires one extra DB lookup for the slug before disabling an entry point. This is intentional: the slug is stable across renames via the UPDATE endpoint (where the new slug is in the request body and published directly), and the lookup cost is negligible for a rare admin mutation. Using the numeric ID would require mapping ID→slug at the subscriber, which would require DB access on every pod — wrong direction.
 
-### EP slug rename: only the new slug is invalidated; old slug expires via TTL
+### EP slug rename: BOTH old and new slug must be invalidated
+
+When `PUT /entry-points/{id}` renames a slug, the old slug still has a live cache entry under the old key. Publishing only the new slug leaves connections using the old slug continuing to receive a stale cached EPConfig — potentially bypassing a disabled state or seeing old limits — until the 30-second TTL expires. The fix: fetch the current slug via `QueryRow` before executing the UPDATE, then publish the old slug first and the new slug second. When the slug is unchanged both publishes carry the same value; the subscriber calls `Invalidate` twice on the same key, which is idempotent. If the pre-fetch fails (DB error, row not found) the old slug is empty and the `invalidateEP` guard skips it — only the new slug is published, which is the safe degraded path.
+
+### (Superseded) EP slug rename: only the new slug is invalidated; old slug expires via TTL
 
 When `PUT /entry-points/{ep_id}` renames a slug from "old-ep" to "new-ep", the invalidation publishes "new-ep" (the new value from the request body). The old slug "old-ep" is not explicitly evicted — it expires via the 30-second TTL. This is acceptable because:
 1. The old slug no longer routes any new connections (the DB row now has the new slug).

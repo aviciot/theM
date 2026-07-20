@@ -311,6 +311,13 @@ func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Re
 		SET slug=$3, name=$4, ep_type=$5, orchestrator_name=$6, enabled=$7, updated_at=now()
 		WHERE id=$1 AND application_id=$2`
 
+	// Fetch old slug before the update so we can invalidate it too.
+	// A slug rename leaves a stale cache entry under the old key without this.
+	var oldSlug string
+	oldSlugRow := h.db.QueryRow(r.Context(),
+		`SELECT slug FROM them.entry_points WHERE id=$1 AND application_id=$2`, epID, appID)
+	_ = oldSlugRow.Scan(&oldSlug) // non-fatal if lookup fails
+
 	if err := h.db.Exec(r.Context(), q,
 		epID, appID, input.Slug, input.Name, input.EPType, input.OrchestratorName, enabled,
 	); err != nil {
@@ -318,8 +325,9 @@ func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Invalidate by the new slug (from input); the old slug (if renamed) will
-	// expire naturally via the 30s TTL.
+	// Invalidate both old slug (may differ) and new slug (from request).
+	// When slug is unchanged both calls publish the same value — harmless.
+	h.invalidateEP(r, oldSlug)
 	h.invalidateEP(r, input.Slug)
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "updated": true})
 }
