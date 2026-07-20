@@ -101,6 +101,7 @@ func scanInto(dest, src any) error {
 type fakeDB struct {
 	queryRows    *fakeRows // returned by Query
 	queryRowErr  error     // error returned by QueryRow's Scan
+	queryRowStr  string    // string value scanned by QueryRow (e.g. slug lookup)
 	execErr      error     // returned by Exec
 	execRetID    int64     // id returned by ExecReturning
 	execRetErr   error     // error returned by ExecReturning's Scan
@@ -116,7 +117,24 @@ func (f *fakeDB) Query(_ context.Context, sql string, _ ...any) (admin.RowScanne
 }
 
 func (f *fakeDB) QueryRow(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
+	if f.queryRowStr != "" {
+		return &stringRow{val: f.queryRowStr}
+	}
 	return &fakeRow{err: f.queryRowErr}
+}
+
+// stringRow scans a single string value (used for slug lookups).
+type stringRow struct{ val string }
+
+func (r *stringRow) Scan(dest ...any) error {
+	if len(dest) == 0 {
+		return nil
+	}
+	if d, ok := dest[0].(*string); ok {
+		*d = r.val
+		return nil
+	}
+	return fmt.Errorf("stringRow: cannot scan into %T", dest[0])
 }
 
 func (f *fakeDB) Exec(_ context.Context, _ string, _ ...any) error {
@@ -146,11 +164,17 @@ func (r *idRow) Scan(dest ...any) error {
 
 // fakeCache satisfies admin.CacheInvalidator.
 type fakeCache struct {
-	deletedKeys []string
+	deletedKeys    []string
+	publishedMsgs  []string // channel:message pairs stored as "channel:message"
 }
 
 func (c *fakeCache) Del(_ context.Context, key string) error {
 	c.deletedKeys = append(c.deletedKeys, key)
+	return nil
+}
+
+func (c *fakeCache) Publish(_ context.Context, channel, message string) error {
+	c.publishedMsgs = append(c.publishedMsgs, channel+":"+message)
 	return nil
 }
 
@@ -249,6 +273,103 @@ func TestListRunsContextIDFilter(t *testing.T) {
 	require.Len(t, db.querySQLLog, 1)
 	assert.True(t, strings.Contains(db.querySQLLog[0], "context_id"),
 		"SQL should filter by context_id")
+}
+
+// ── EP config cache invalidation tests ───────────────────────────────────────
+
+// helper: mount ApplicationsHandler on a chi router and return the recorder.
+func serveApps(t *testing.T, db *fakeDB, cache admin.CacheInvalidator, method, path string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	h := admin.NewApplicationsHandler(db, cache)
+	r := chi.NewRouter()
+	h.Routes(r)
+	var bodyReader *bytes.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	} else {
+		bodyReader = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, path, bodyReader)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// AI-1: UpdateEntryPoint publishes EP slug to invalidation channel.
+func TestUpdateEntryPoint_PublishesInvalidation(t *testing.T) {
+	cache := &fakeCache{}
+	body, _ := json.Marshal(map[string]any{
+		"slug":    "my-ep",
+		"name":    "My EP",
+		"ep_type": "websocket",
+	})
+	w := serveApps(t, &fakeDB{}, cache, http.MethodPut, "/applications/1/entry-points/2", body)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:my-ep",
+		"should publish EP slug to invalidation channel")
+}
+
+// AI-2: DeleteEntryPoint fetches slug then publishes it.
+func TestDeleteEntryPoint_PublishesSlug(t *testing.T) {
+	db := &fakeDB{queryRowStr: "slug-to-delete"}
+	cache := &fakeCache{}
+	w := serveApps(t, db, cache, http.MethodDelete, "/applications/1/entry-points/5", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:slug-to-delete",
+		"should publish fetched slug to invalidation channel")
+}
+
+// AI-3: UpdateApplication publishes all EP slugs for that app.
+func TestUpdateApplication_PublishesAllEPSlugs(t *testing.T) {
+	slugRows := newFakeRows([][]any{
+		{"ep-one"},
+		{"ep-two"},
+	})
+	db := &fakeDB{queryRows: slugRows}
+	cache := &fakeCache{}
+	body, _ := json.Marshal(map[string]any{"name": "MyApp", "slug": "my-app"})
+	w := serveApps(t, db, cache, http.MethodPut, "/applications/10", body)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:ep-one")
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:ep-two")
+}
+
+// AI-4: DeleteApplication (disable) publishes all EP slugs for that app.
+func TestDeleteApplication_PublishesAllEPSlugs(t *testing.T) {
+	slugRows := newFakeRows([][]any{
+		{"ep-alpha"},
+	})
+	db := &fakeDB{queryRows: slugRows}
+	cache := &fakeCache{}
+	w := serveApps(t, db, cache, http.MethodDelete, "/applications/7", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:ep-alpha")
+}
+
+// AI-5: No cache → no panic (cache is nil).
+func TestUpdateEntryPoint_NilCache_NoPanic(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"slug":    "safe-ep",
+		"ep_type": "websocket",
+	})
+	assert.NotPanics(t, func() {
+		serveApps(t, &fakeDB{}, nil /* nil cache */, http.MethodPut, "/applications/1/entry-points/3", body)
+	})
+}
+
+// AI-6: CreateEntryPoint does NOT publish (no cached entry to evict for new EP).
+func TestCreateEntryPoint_DoesNotPublish(t *testing.T) {
+	cache := &fakeCache{}
+	db := &fakeDB{execRetID: 99}
+	body, _ := json.Marshal(map[string]any{
+		"slug":    "brand-new-ep",
+		"ep_type": "websocket",
+	})
+	w := serveApps(t, db, cache, http.MethodPost, "/applications/1/entry-points", body)
+	require.Equal(t, http.StatusCreated, w.Code)
+	assert.Empty(t, cache.publishedMsgs,
+		"no invalidation needed for a freshly created EP")
 }
 
 // 5. Signal run — calls Temporal client.

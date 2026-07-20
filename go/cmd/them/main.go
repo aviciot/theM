@@ -17,6 +17,7 @@ import (
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/db"
+	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/health"
 	"github.com/aviciot/them/internal/llm"
@@ -124,22 +125,33 @@ func run() error {
 	// authenticator for Phase 8 (the full cache is wired in a later phase).
 	authenticator := &noopAuth{}
 
-	// ── 14. Wire WebSocket handler (/ws/*) ───────────────────────────────────
-	wsHandler := ws.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log)
+	// ── 14. Wire EP config loader (shared by WS + SSE) ───────────────────────
+	epDB := epconfig.NewPgxQuerier(database.Pool())
+	epLoader := epconfig.NewLoader(epDB, log)
+	// Subscribe for cross-pod cache invalidation. The session Redis client
+	// already satisfies epconfig.RedisSubscriber (same Subscribe signature).
+	epConfigSub := cache.NewSessionRedisClient(redisCache.Client())
+	epLoader.Subscribe(ctx, epConfigSub)
+	log.Info("EP config loader initialised with pub/sub invalidation")
+
+	// ── 15. Wire WebSocket handler (/ws/*) ───────────────────────────────────
+	wsHandler := ws.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log).
+		WithEPConfig(epLoader)
 	srv.MountWS(wsHandler.Routes())
 	log.Info("WebSocket handler mounted", "prefix", "/ws")
 
-	// ── 15. Wire SSE handler (/sse/*) ─────────────────────────────────────────
-	sseHandler := sse.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log)
+	// ── 16. Wire SSE handler (/sse/*) ─────────────────────────────────────────
+	sseHandler := sse.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log).
+		WithEPConfig(epLoader)
 	srv.MountSSE(sseHandler.Routes())
 	log.Info("SSE handler mounted", "prefix", "/sse")
 
-	// ── 16. Wire A2A server (/a2a/*, /.well-known/*) ─────────────────────────
+	// ── 17. Wire A2A server (/a2a/*, /.well-known/*) ─────────────────────────
 	a2aServer := a2a.NewServer(recorder, orch, bus, log)
 	srv.MountA2A(a2aServer.Routes())
 	log.Info("A2A server mounted")
 
-	// ── 17. Wire admin API (/api/v1/admin/*, /api/v1/runs/*) ─────────────────
+	// ── 18. Wire admin API (/api/v1/admin/*, /api/v1/runs/*) ─────────────────
 	adminDB := admin.NewPgxQuerier(database.Pool())
 	adminCache := cache.NewAdminCacheClient(redisCache.Client())
 	// Temporal is optional — nil if not configured.

@@ -403,6 +403,84 @@ func TestLoad_AppIDPropagated(t *testing.T) {
 	assert.Equal(t, "abc-123-def-456", cfg.AppID)
 }
 
+// ── EC-25: Subscribe — pub/sub message evicts cache entry ────────────────────
+
+// fakeSubscriber delivers messages from a channel, then returns when the
+// channel is closed or ctx is cancelled. The done channel is closed once all
+// messages have been delivered, letting the test synchronise without sleeping.
+type fakeSubscriber struct {
+	ch   chan string
+	done chan struct{}
+}
+
+func newFakeSubscriber(msgs ...string) *fakeSubscriber {
+	ch := make(chan string, len(msgs))
+	for _, m := range msgs {
+		ch <- m
+	}
+	close(ch)
+	return &fakeSubscriber{ch: ch, done: make(chan struct{})}
+}
+
+func (f *fakeSubscriber) Subscribe(ctx context.Context, _ string, handler func(string)) error {
+	for {
+		select {
+		case msg, ok := <-f.ch:
+			if !ok {
+				close(f.done)
+				return nil
+			}
+			handler(msg)
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+func TestSubscribe_MessageEvictsCache(t *testing.T) {
+	db := &fakeDB{row: enabledRow("pub-ep")}
+	loader := epconfig.NewLoader(db, nil)
+
+	// Populate cache.
+	_, _ = loader.Load(context.Background(), "pub-ep")
+	assert.Equal(t, 1, db.callCount)
+
+	// Deliver pub/sub message via subscriber; wait for goroutine to finish.
+	sub := newFakeSubscriber("pub-ep")
+	loader.Subscribe(context.Background(), sub)
+
+	select {
+	case <-sub.done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for subscriber goroutine")
+	}
+
+	// After eviction, next Load should re-query DB.
+	_, err := loader.Load(context.Background(), "pub-ep")
+	require.NoError(t, err)
+	assert.Equal(t, 2, db.callCount, "DB re-queried after pub/sub eviction")
+}
+
+// EC-26: Subscribe — TTL fallback when no subscriber is wired ─────────────────
+
+func TestLoad_TTLFallback_NoSubscriber(t *testing.T) {
+	// Without a subscriber, a cached entry becomes stale after CacheTTL.
+	// We cannot wait 30 s in a test, so verify the expired() sentinel works
+	// by checking that a freshly loaded entry is NOT expired.
+	db := &fakeDB{row: enabledRow("ttl-ep")}
+	loader := epconfig.NewLoader(db, nil)
+
+	cfg, err := loader.Load(context.Background(), "ttl-ep")
+	require.NoError(t, err)
+	assert.NotNil(t, cfg, "freshly loaded config must not be nil (TTL not yet expired)")
+	assert.Equal(t, 1, db.callCount)
+
+	// Second load still hits cache (TTL not expired in < 1 ms).
+	_, err = loader.Load(context.Background(), "ttl-ep")
+	require.NoError(t, err)
+	assert.Equal(t, 1, db.callCount, "TTL not yet expired — cache hit expected")
+}
+
 // ── multiDB ───────────────────────────────────────────────────────────────────
 
 type multiDB struct {

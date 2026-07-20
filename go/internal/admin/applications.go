@@ -9,6 +9,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// epConfigChannel is the Redis pub/sub channel for cross-pod EP config cache invalidation.
+const epConfigChannel = "them:ep:config:changed"
+
 // ── Application types ─────────────────────────────────────────────────────────
 
 // Application is the JSON representation of a them.applications row.
@@ -101,6 +104,37 @@ func (h *ApplicationsHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, apps)
 }
 
+// invalidateEP evicts one EP slug from the in-process cache on this pod and
+// publishes to epConfigChannel so all other pods do the same.
+func (h *ApplicationsHandler) invalidateEP(r *http.Request, epSlug string) {
+	if h.cache == nil || epSlug == "" {
+		return
+	}
+	_ = h.cache.Publish(r.Context(), epConfigChannel, epSlug)
+}
+
+// invalidateAppEPs fetches all EP slugs for the given application ID and
+// publishes a per-slug invalidation message for each. Called when an application-
+// level change (update, delete) may affect all of its entry points.
+func (h *ApplicationsHandler) invalidateAppEPs(r *http.Request, appID int64) {
+	if h.cache == nil {
+		return
+	}
+	const q = `SELECT slug FROM them.entry_points WHERE application_id = $1`
+	rows, err := h.db.Query(r.Context(), q, appID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			break
+		}
+		_ = h.cache.Publish(r.Context(), epConfigChannel, slug)
+	}
+}
+
 // Create handles POST /api/v1/admin/applications.
 func (h *ApplicationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var input ApplicationInput
@@ -187,6 +221,7 @@ func (h *ApplicationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.invalidateAppEPs(r, id)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
 
@@ -204,6 +239,7 @@ func (h *ApplicationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.invalidateAppEPs(r, id)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
 }
 
@@ -282,6 +318,9 @@ func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Invalidate by the new slug (from input); the old slug (if renamed) will
+	// expire naturally via the 30s TTL.
+	h.invalidateEP(r, input.Slug)
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "updated": true})
 }
 
@@ -298,12 +337,19 @@ func (h *ApplicationsHandler) DeleteEntryPoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Fetch slug before disabling so we can publish the invalidation.
+	var epSlug string
+	slugRow := h.db.QueryRow(r.Context(),
+		`SELECT slug FROM them.entry_points WHERE id=$1 AND application_id=$2`, epID, appID)
+	_ = slugRow.Scan(&epSlug) // non-fatal if slug lookup fails
+
 	const q = `UPDATE them.entry_points SET enabled=false, updated_at=now() WHERE id=$1 AND application_id=$2`
 	if err := h.db.Exec(r.Context(), q, epID, appID); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete entry point: "+err.Error())
 		return
 	}
 
+	h.invalidateEP(r, epSlug)
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "deleted": true})
 }
 

@@ -39,6 +39,9 @@ type SingleRowScanner interface {
 // CacheInvalidator invalidates Redis caches on mutations.
 type CacheInvalidator interface {
 	Del(ctx context.Context, key string) error
+	// Publish broadcasts an invalidation message to a Redis pub/sub channel.
+	// Used to propagate EP config cache evictions across pods.
+	Publish(ctx context.Context, channel, message string) error
 }
 
 // TemporalSignaler sends HITL signals to Temporal workflows.

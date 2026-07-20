@@ -24,9 +24,15 @@
 //
 // EPConfig rows are cached in-process for CacheTTL (30 s). Only enabled configs
 // are cached: a disabled EP is never stored, so every request re-queries until
-// it is re-enabled. Cache entries are evicted when a Redis message arrives on
-// them:ep:config:{slug}:changed. With no Redis subscriber wired, the TTL alone
-// guarantees a 30-second propagation window for limit changes.
+// it is re-enabled.
+//
+// # Cross-pod cache invalidation
+//
+// When the admin API mutates an EP or application it publishes the EP slug on
+// the Redis channel EPConfigChannel ("them:ep:config:changed"). Call
+// Loader.Subscribe(ctx, subscriber) at startup to have every pod's in-process
+// cache evicted immediately on receiving the message. Without a subscriber the
+// TTL (30 s) is the stale-data safety net.
 package epconfig
 
 import (
@@ -45,6 +51,11 @@ import (
 
 // CacheTTL is the maximum age of a cached EPConfig before it is re-fetched.
 const CacheTTL = 30 * time.Second
+
+// EPConfigChannel is the Redis pub/sub channel on which the admin API publishes
+// EP slug strings whenever an entry point or its parent application is mutated.
+// Every pod subscribes on startup; receiving a slug evicts that slug's cache entry.
+const EPConfigChannel = "them:ep:config:changed"
 
 // AccessModePublic means no bearer token is required.
 const AccessModePublic = "public"
@@ -267,6 +278,34 @@ func (l *Loader) InvalidateApp(appID string) {
 		}
 	}
 	l.mu.Unlock()
+}
+
+// RedisSubscriber can subscribe to a Redis pub/sub channel and deliver messages
+// to a callback function. Implemented by cache adapters (e.g., the session
+// adapter already provides this pattern).
+type RedisSubscriber interface {
+	// Subscribe blocks until ctx is cancelled, invoking handler for each message
+	// received on channel. Returns nil if ctx was cancelled; any other error
+	// indicates a connection failure.
+	Subscribe(ctx context.Context, channel string, handler func(payload string)) error
+}
+
+// Subscribe starts a background goroutine that listens on EPConfigChannel.
+// Each received message payload is treated as an EP slug to evict from the
+// in-process cache on this pod. The goroutine exits when ctx is cancelled.
+//
+// Call Subscribe once at startup after creating the Loader. It is optional:
+// without it the 30-second TTL alone bounds staleness.
+func (l *Loader) Subscribe(ctx context.Context, sub RedisSubscriber) {
+	go func() {
+		err := sub.Subscribe(ctx, EPConfigChannel, func(slug string) {
+			l.Invalidate(slug)
+			l.logger.Debug("epconfig: cache evicted via pub/sub", "ep_slug", slug)
+		})
+		if err != nil && ctx.Err() == nil {
+			l.logger.Warn("epconfig: pub/sub subscriber exited with error", "error", err)
+		}
+	}()
 }
 
 func (l *Loader) buildConfig(row *EPConfigRow) *EPConfig {

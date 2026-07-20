@@ -261,7 +261,7 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ### S1-15 · Admin API — `internal/admin/admin_test.go`
 
-**Purpose:** CRUD correctness, cache invalidation, Temporal signal wiring.
+**Purpose:** CRUD correctness, cache invalidation, EP config cross-pod invalidation, Temporal signal wiring.
 
 | Test | What it proves |
 |---|---|
@@ -270,6 +270,12 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestGetNonexistentAgent` | Unknown ID → 404 |
 | `TestListRunsContextIDFilter` | `?context_id=` → correct SQL WHERE clause |
 | `TestSignalRun` | POST `.../signal` → Temporal `SignalWorkflow` called with correct args |
+| `TestUpdateEntryPoint_PublishesInvalidation` | PUT entry-point → publishes EP slug to `them:ep:config:changed` |
+| `TestDeleteEntryPoint_PublishesSlug` | DELETE entry-point → fetches slug then publishes it |
+| `TestUpdateApplication_PublishesAllEPSlugs` | PUT application → publishes all EP slugs for that app |
+| `TestDeleteApplication_PublishesAllEPSlugs` | DELETE application → publishes all EP slugs for that app |
+| `TestUpdateEntryPoint_NilCache_NoPanic` | nil cache → no panic (cache is optional) |
+| `TestCreateEntryPoint_DoesNotPublish` | POST entry-point → no invalidation for new EP (nothing to evict) |
 
 **Trigger:** any change to `internal/admin/agents.go`, `orchestrators.go`, `applications.go`, `runs.go`
 
@@ -318,7 +324,7 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ### S1-18 · EP config loader — `internal/epconfig/epconfig_test.go`
 
-**Purpose:** Entry point and application runtime configuration resolution from DB — precedence rules, fail-closed policy, in-process TTL cache, cache invalidation. The single typed model shared by both WS and SSE handlers.
+**Purpose:** Entry point and application runtime configuration resolution from DB — precedence rules, fail-closed policy, in-process TTL cache, cache invalidation, cross-pod pub/sub eviction. The single typed model shared by both WS and SSE handlers.
 
 | Test | What it proves |
 |---|---|
@@ -346,6 +352,8 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestInvalidateApp_EvictsAppEntries` | `InvalidateApp(appID)` → only EPs for that app evicted |
 | `TestLoad_MissingAccessPolicyDefaultsToToken` | NULL `access_policy` → defaults to `"token"` auth |
 | `TestLoad_AppIDPropagated` | `AppID` from DB propagated correctly to `EPConfig.AppID` |
+| `TestSubscribe_MessageEvictsCache` | Pub/sub message with EP slug → cache evicted; next Load re-queries DB |
+| `TestLoad_TTLFallback_NoSubscriber` | Without subscriber, fresh entry is cached (TTL not yet expired) |
 
 **Trigger:** any change to `internal/epconfig/epconfig.go` or `internal/epconfig/pgx.go`
 
@@ -481,9 +489,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-15 | admin | 5 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
-| S1-18 | epconfig | 24 |
-| **S1 total** | | **129** |
+| S1-18 | epconfig | 26 |
+| **S1 total** | | **137** |
 | S2-01 | integration | 4 |
 | **S2 total** | | **4** |
 | S3 live | manual | 23 |
-| **Grand total** | | **156** |
+| **Grand total** | | **164** |

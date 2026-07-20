@@ -315,6 +315,31 @@ A disabled EP (`EPEnabled=false`) is explicitly excluded from the cache in `Load
 
 If `applications.runtime_config` contains invalid JSON (e.g., from a manual DB edit, a migration bug, or a truncated write), returning an error would cause 100% of connections to that app's EPs to fail. The design decision: log a warning at WARN level, discard the malformed value, and fall back to zero/unlimited for all fields. This is a deliberate fail-open choice for *configuration limits* (not for security checks — those are always fail-closed). The logged warning will surface in any observability tool watching for WARN entries.
 
+### Admin mutations must invalidate EP config cache — the held CacheInvalidator was never called
+
+`ApplicationsHandler` was constructed with a `CacheInvalidator` that it accepted but never used. This meant every EP and app mutation went unnoticed by the epconfig loader's in-process cache. The fix: extend `CacheInvalidator` with a `Publish(channel, message)` method and call it from every mutation that changes data the epconfig loader caches. For EP mutations the slug (from the request body or a pre-fetch) is published. For app-level mutations all EP slugs for that app are looked up and published individually. The key naming convention is `them:ep:config:changed` (matches the channel the loader subscribes to).
+
+The lesson: when you pass an interface to a handler "for cache invalidation", search for all mutation endpoints in that handler and verify every one calls it. An unused interface field is a silent correctness bug.
+
+### Cross-pod epconfig cache invalidation uses the same Redis pub/sub pattern as token revocation
+
+Rather than a new subscriber infrastructure, `epconfig.Loader.Subscribe(ctx, sub)` takes any `RedisSubscriber` — the same interface signature as `cache.SessionRedisClient.Subscribe`. This means the same Redis client used for session management can be passed directly as the invalidation subscriber, with no new client or connection needed. The pattern is consistent with token revocation (`them:token:revoked`) and agent registry invalidation (`them:agents:invalidate`).
+
+### Cross-pod invalidation key is the EP slug, not the numeric ID or UUID
+
+The epconfig cache is keyed by EP slug (the URL-safe human-readable identifier). Admin routes receive numeric IDs from the URL. The invalidation path therefore requires one extra DB lookup for the slug before disabling an entry point. This is intentional: the slug is stable across renames via the UPDATE endpoint (where the new slug is in the request body and published directly), and the lookup cost is negligible for a rare admin mutation. Using the numeric ID would require mapping ID→slug at the subscriber, which would require DB access on every pod — wrong direction.
+
+### EP slug rename: only the new slug is invalidated; old slug expires via TTL
+
+When `PUT /entry-points/{ep_id}` renames a slug from "old-ep" to "new-ep", the invalidation publishes "new-ep" (the new value from the request body). The old slug "old-ep" is not explicitly evicted — it expires via the 30-second TTL. This is acceptable because:
+1. The old slug no longer routes any new connections (the DB row now has the new slug).
+2. Any cached entry for "old-ep" would return `ErrNotFound` on the next cache miss anyway.
+3. Adding a pre-fetch to get the old slug would be an additional DB query for a very rare rename operation.
+
+### TTL is the multi-pod stale-data safety net; pub/sub is the fast path
+
+The 30-second TTL bounds worst-case staleness without any pub/sub. Pub/sub reduces that window to near-zero. If a pod's subscriber connection drops (Redis restart, pod restart), it loses pub/sub delivery and falls back to TTL expiry — no correctness issue, just up-to-30s of stale cache. This is the same pattern used by token revocation: TTL is always the bound, pub/sub is the accelerant.
+
 ### EP config resolution must complete before the WS upgrade and before SSE headers are written
 
 Like Gate.Check, the EP config resolution step (`h.epLoader.Load()` + `epconfig.CheckAccess()`) must run while the connection is still a plain HTTP request. Once `upgrader.Upgrade()` is called (WS) or `w.WriteHeader(200)` is called (SSE), HTTP status codes cannot be sent to the client. A disabled EP returns 403; DB unavailable returns 503. Both are expressed as JSON error responses only if they occur before the protocol switch. After that point, the connection is already established and these checks are moot — they ran to completion before the switch.
