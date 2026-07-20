@@ -1,6 +1,12 @@
-// Package runstream subscribes to the Redis pub/sub channel
-// `them:dash:run:{runID}:tokens` and forwards each message as an event.Event
-// on a channel.
+// Package runstream subscribes to the Redis pub/sub channels for run events
+// and forwards each message as an event.Event on a channel.
+//
+// Two channel patterns are used in the two-phase handshake:
+//
+//   - them:dash:run:{contextID}:ctx   — context channel; Python publishes the
+//     "ready" event here so Go can learn the Python-generated run_id.
+//   - them:dash:run:{runID}:tokens    — token stream; all subsequent events
+//     (token, done, error, etc.) are published here using the Python run_id.
 //
 // IMPORTANT: Redis Pub/Sub provides at-most-once delivery. Events published
 // before Subscribe is called, or during a brief network reconnect, are lost
@@ -31,7 +37,47 @@ type Subscriber interface {
 // a network reconnect gap, are lost and will not be replayed.
 func Stream(ctx context.Context, sub Subscriber, runID string) (<-chan event.Event, error) {
 	channel := "them:dash:run:" + runID + ":tokens"
+	return subscribe(ctx, sub, channel, "run_id", runID)
+}
 
+// StreamContext subscribes to them:dash:run:{contextID}:ctx and forwards each
+// JSON message payload as an event.Event on the returned channel.
+//
+// This is the first leg of the two-phase channel handshake: Go subscribes to
+// the context channel before starting the Temporal workflow, waits for the
+// "ready" event (which carries the Python-generated run_id), then subscribes
+// to the tokens channel for subsequent events.
+//
+// At-most-once delivery: events published before StreamContext is called are lost.
+func StreamContext(ctx context.Context, sub Subscriber, contextID string) (<-chan event.Event, error) {
+	channel := "them:dash:run:" + contextID + ":ctx"
+	return subscribe(ctx, sub, channel, "context_id", contextID)
+}
+
+// RunIDFromReady extracts the run_id field from a "ready" event payload.
+// Returns ("", false) if the event type is not "ready" or run_id is absent/empty.
+func RunIDFromReady(ev event.Event) (string, bool) {
+	if ev.Type != "ready" {
+		return "", false
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(ev.Payload, &m); err != nil {
+		return "", false
+	}
+	raw, ok := m["run_id"]
+	if !ok {
+		return "", false
+	}
+	var runID string
+	if err := json.Unmarshal(raw, &runID); err != nil || runID == "" {
+		return "", false
+	}
+	return runID, true
+}
+
+// subscribe is the shared implementation for Stream and StreamContext.
+// logKey/logVal are used only for warn-level log messages.
+func subscribe(ctx context.Context, sub Subscriber, channel, logKey, logVal string) (<-chan event.Event, error) {
 	msgCh, err := sub.Subscribe(ctx, channel)
 	if err != nil {
 		return nil, err
@@ -52,7 +98,7 @@ func Stream(ctx context.Context, sub Subscriber, runID string) (<-chan event.Eve
 				ev, parseErr := parseMessage(msg)
 				if parseErr != nil {
 					slog.Warn("runstream: skipping message — parse error",
-						"run_id", runID,
+						logKey, logVal,
 						"error", parseErr,
 					)
 					continue

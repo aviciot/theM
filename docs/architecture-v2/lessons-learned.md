@@ -507,3 +507,51 @@ These four lifecycles are independent and must be managed by their respective ow
 Go handler owns client session TTL refresh — NOT Temporal. The WS/SSE connection keepalive and session.End on disconnect are Go concerns. A Temporal workflow may outlive the client session (e.g., if HITL is pending). The Go handler cancels the workflow context on client disconnect, which requests cancellation, but the workflow can complete or time out independently.
 
 Do not add session TTL refresh inside Temporal activities or signals — they do not own the session lifecycle.
+
+---
+
+## Phase 10 integration tests — Two-Phase Channel Handshake Bug Fix
+
+### Go and Python generate different run IDs — Go subscribes to the wrong Redis channel without the two-phase handshake
+
+Phase 10's first `runstream.Stream()` call subscribed to `them:dash:run:{runID}:tokens` where `runID` is the Go-generated 32-char hex ID used as the Temporal workflow ID. But Python's `init_run` activity generates its own run ID via `workflow.uuid4()` *inside* the workflow (not before it starts). Python publishes all events — including `ready` — to `them:dash:run:{python-uuid}:tokens` and the `ready` event to `them:dash:run:{context_id}:ctx`. The Go handler subscribed to a channel that was never written to: zero events received.
+
+The fix is a two-phase handshake:
+
+1. **Phase 1**: Before calling `ExecuteWorkflow`, subscribe to `them:dash:run:{contextID}:ctx` (the context channel). Pass `contextID` as `PythonOrchestrationInput.ContextID` so Python publishes to this exact key.
+2. **Start the workflow** via `ExecuteWorkflow`.
+3. **Wait for the `ready` event** on the context channel. Extract `run_id` from the payload via `runstream.RunIDFromReady(ev)`. This is the Python-generated UUID.
+4. **Phase 3**: Subscribe to `them:dash:run:{pythonRunID}:tokens`. All subsequent token/done/error events arrive on this channel.
+
+Key functions:
+- `runstream.StreamContext(ctx, sub, contextID)` — subscribes to `:ctx` channel
+- `runstream.RunIDFromReady(ev)` — extracts run_id from a `ready` event
+
+The unit tests for the Temporal path (`TestTemporalPathUsedWhenEnabled`, `TestSSETemporalPathUsedWhenEnabled`) were updated to use `fakeRunStreamSubTwoPhase` which returns the right pre-loaded channel based on whether the subscribed key ends in `:ctx` or `:tokens`.
+
+**The lesson**: when two systems generate IDs independently (Go `newID()` vs Python `workflow.uuid4()`), they cannot share a channel keyed on those IDs. A shared, known ID (the `contextID` passed in the input) is required as the rendezvous point.
+
+### Integration test infrastructure: expose non-standard host ports to avoid conflicts with local services
+
+The `theM_gateway/docker-compose.yml` binds no host ports — all services are internal to `them-network`. Integration tests running on the host machine need host port bindings. Rather than using standard ports (5432, 6379, 7233) which may conflict with local development services, use non-standard ports:
+
+- Postgres: `15432:5432`
+- Redis: `16379:6379`
+- Temporal: `17233:7233`
+
+These are set in `docker-compose.integration.yml` (overlay file, not the primary compose). Pass `TEST_POSTGRES_DSN`, `TEST_REDIS_ADDR`, and `TEMPORAL_HOST_PORT` env vars to the Go test binary. The overlay pattern (`-f docker-compose.yml -f docker-compose.integration.yml`) keeps the production compose unchanged and adds port bindings only for integration testing.
+
+### Integration test seeding: use max_iterations=0 to avoid LLM calls
+
+Seeding an orchestrator with `max_iterations=0` means the Python workflow enters the agentic loop, finds `iteration (0) < max_iterations (0)` is false, skips to the `else` branch setting `run_status = "stopped"`, and calls `finalize_run` — all without any LLM call. This makes integration tests:
+- Fast (no HTTP to api.anthropic.com)
+- Hermetic (no dependency on API key validity or network access)
+- Reliable (no 429 rate-limit or 401 auth failures)
+
+The `init_run` activity still runs and publishes the `ready` event, which is exactly what the Go handler and integration tests need to verify. Use `max_iterations=0` for any integration test that only needs to verify the channel handshake, input wire format, or workflow lifecycle.
+
+### Use unique orchestrator/agent names per test run (UnixNano suffix) to avoid inter-test interference
+
+Multiple integration tests running concurrently or in sequence against the same Postgres will find each other's seeded data if they use fixed names. Use `fmt.Sprintf("integration-test-orch-%d", time.Now().UnixNano())` for each `setupHybridInfra` call. Each test gets its own isolated orchestrator and agent rows. The cleanup function deletes them by UUID (exact match), so there is no cross-test contamination even if a test panics before cleanup.
+
+The deferred cleanup runs even on test failure (via `defer cleanup()` immediately after `setupHybridInfra`). Never use `t.Cleanup` for infrastructure teardown in integration tests — it runs after all subtests, not after the parent returns, which can leave rows in the DB if a subtest crashes the test binary.
