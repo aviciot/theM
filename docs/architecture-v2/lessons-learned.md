@@ -347,3 +347,13 @@ The 30-second TTL bounds worst-case staleness without any pub/sub. Pub/sub reduc
 ### EP config resolution must complete before the WS upgrade and before SSE headers are written
 
 Like Gate.Check, the EP config resolution step (`h.epLoader.Load()` + `epconfig.CheckAccess()`) must run while the connection is still a plain HTTP request. Once `upgrader.Upgrade()` is called (WS) or `w.WriteHeader(200)` is called (SSE), HTTP status codes cannot be sent to the client. A disabled EP returns 403; DB unavailable returns 503. Both are expressed as JSON error responses only if they occur before the protocol switch. After that point, the connection is already established and these checks are moot — they ran to completion before the switch.
+
+### Auth enforcement must happen AFTER EP config resolution, not before — public EPs need no token
+
+The original handler flow authenticated the bearer token at step 1 (before EP config resolution). For public EPs (`AccessMode == "public"`), this meant every unauthenticated request was rejected with 401 before the handler ever checked whether the EP required a token.
+
+The fix: rename `authenticate()` → `tryAuthenticate()`, which always succeeds (returning `ok=false` when no valid token is found). The EP config is resolved first; then auth is enforced only if `AccessMode == "token"`. For public EPs, `ok=false` is acceptable and no 401 is sent.
+
+The fallback when no `epLoader` is wired (test or pre-wiring state): mandatory auth enforced directly after `tryAuthenticate`, preserving the original behavior for any caller that has not yet wired `WithEPConfig`.
+
+The zero value for `tokenInfo` (nil) is safe: `tokenInfo.TokenID = 0` for anonymous public EP sessions. `CheckAccess` skips block-list checks when both `tokenHash` and `userID` are zero/empty. `session.SessionInfo.UserID = 0` is the convention for anonymous sessions.

@@ -158,12 +158,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	appSlug := chi.URLParam(r, "app_slug")
 	epSlug := chi.URLParam(r, "entry_point_slug")
 
-	// ── 1. Authenticate ───────────────────────────────────────────────────────
-	tokenInfo, rawToken, ok := h.authenticate(r)
-	if !ok {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-		return
-	}
+	// ── 1. Attempt token extraction (non-enforcing at this point) ────────────
+	// Whether auth is required depends on the EP's access_policy. We resolve
+	// the EP config first, then enforce auth if mode == "token".
+	tokenInfo, rawToken, authed := h.tryAuthenticate(r)
 
 	// ── 2. Resolve EP + App runtime configuration ─────────────────────────────
 	// Fail-closed: DB unavailable → 503, EP/App disabled → 403.
@@ -184,22 +182,44 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+
+		isPublic := resolvedCfg.AccessMode == epconfig.AccessModePublic
+
+		// Enforce authentication for token-mode EPs.
+		if !isPublic && !authed {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
 		// Enforce enabled + block-list checks. tokenHash is "" for public EPs.
 		th := tokenHash(rawToken)
-		if resolvedCfg.AccessMode == epconfig.AccessModePublic {
+		if isPublic {
 			th = ""
 		}
-		if accessErr := epconfig.CheckAccess(resolvedCfg, th, tokenInfo.TokenID); accessErr != nil {
+		var userID int64
+		if tokenInfo != nil {
+			userID = tokenInfo.TokenID
+		}
+		if accessErr := epconfig.CheckAccess(resolvedCfg, th, userID); accessErr != nil {
 			switch {
 			case errors.Is(accessErr, epconfig.ErrDisabled):
 				http.Error(w, `{"error":"entry point disabled"}`, http.StatusForbidden)
-			case errors.Is(accessErr, epconfig.ErrBlocked):
-				http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 			default:
 				http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
 			}
 			return
 		}
+	} else {
+		// No EP config loader wired — fall back to mandatory token auth.
+		if !authed {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+	}
+
+	// Ensure tokenInfo is non-nil for the rest of the handler.
+	if tokenInfo == nil {
+		tokenInfo = &auth.TokenInfo{}
 	}
 
 	// ── 3. Gate.Check ─────────────────────────────────────────────────────────
@@ -327,9 +347,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.streamEvents(ctx, cancel, conn, evCh, orchDone)
 }
 
-// authenticate extracts and validates the bearer token from the request.
-// Returns (tokenInfo, rawToken, ok).
-func (h *Handler) authenticate(r *http.Request) (*auth.TokenInfo, string, bool) {
+// tryAuthenticate extracts and validates the bearer token from the request.
+// Returns (tokenInfo, rawToken, ok). ok=false means no valid token was found;
+// the caller decides whether to reject the request based on the EP's access mode.
+func (h *Handler) tryAuthenticate(r *http.Request) (*auth.TokenInfo, string, bool) {
 	var rawToken string
 
 	if hdr := r.Header.Get("Authorization"); strings.HasPrefix(hdr, "Bearer ") {

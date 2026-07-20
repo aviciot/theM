@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/aviciot/them/internal/auth"
+	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/llm"
@@ -291,3 +292,58 @@ func (s *failingSSESessionStore) Register(_ context.Context, _ session.SessionIn
 }
 
 func (s *failingSSESessionStore) End(_ context.Context, _, _, _ string) error { return nil }
+
+// ── EP config fake ─────────────────────────────────────────────────────────────
+
+type fakeSSEEPLoader struct {
+	cfg *epconfig.EPConfig
+	err error
+}
+
+func (f *fakeSSEEPLoader) Load(_ context.Context, _ string) (*epconfig.EPConfig, error) {
+	return f.cfg, f.err
+}
+
+// 7. Unauthenticated request to a public EP succeeds (receives SSE stream).
+func TestSSEPublicEPNoTokenAllowed(t *testing.T) {
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
+	mockEvents := []llm.StreamEvent{
+		{Type: "text_delta", Delta: "hi"},
+		{Type: "stop", StopReason: "end_turn"},
+	}
+	h := newTestSSEHandler(mockEvents, authn)
+	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModePublic,
+	}})
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	// No token supplied.
+	resp, err := http.Get(srv.URL + "/orchestrate/app/public-ep?message=hello")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
+}
+
+// 8. Unauthenticated request to a token-mode EP returns 401.
+func TestSSETokenEPNoTokenRejected(t *testing.T) {
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
+	h := newTestSSEHandler(nil, authn)
+	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModeToken,
+	}})
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/orchestrate/app/token-ep?message=hello")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}

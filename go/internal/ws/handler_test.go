@@ -16,6 +16,7 @@ import (
 
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
+	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/llm"
@@ -314,6 +315,62 @@ func (s *failingSessionStore) Register(_ context.Context, _ session.SessionInfo)
 }
 
 func (s *failingSessionStore) End(_ context.Context, _, _, _ string) error { return nil }
+
+// ── EP config fake ─────────────────────────────────────────────────────────────
+
+type fakeEPLoader struct {
+	cfg *epconfig.EPConfig
+	err error
+}
+
+func (f *fakeEPLoader) Load(_ context.Context, _ string) (*epconfig.EPConfig, error) {
+	return f.cfg, f.err
+}
+
+// 8. Unauthenticated request to a public EP succeeds (upgrades to WS).
+func TestPublicEPNoTokenAllowed(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "valid-token", info: &auth.TokenInfo{TokenID: 1}}
+	mockEvents := []llm.StreamEvent{
+		{Type: "text_delta", Delta: "hi"},
+		{Type: "stop", StopReason: "end_turn"},
+	}
+	h, _ := newTestHandler(t, mockEvents, authn, sessions)
+	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModePublic,
+	}})
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	// No token supplied.
+	conn, resp, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "")
+	require.NoError(t, err, "unauthenticated request to public EP should upgrade")
+	defer conn.Close()
+	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+}
+
+// 9. Unauthenticated request to a token-mode EP returns 401.
+func TestTokenEPNoTokenRejected(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "valid-token", info: &auth.TokenInfo{TokenID: 1}}
+	h, _ := newTestHandler(t, nil, authn, sessions)
+	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModeToken,
+	}})
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/token-ep", "")
+	require.Error(t, err, "unauthenticated request to token-mode EP should be rejected")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
 
 // Ensure domain import is used.
 var _ = domain.Message{}
