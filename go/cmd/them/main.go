@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os"
 
+	temporalclient "go.temporal.io/sdk/client"
+
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/auth"
@@ -28,6 +30,7 @@ import (
 	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/sse"
 	"github.com/aviciot/them/internal/telemetry"
+	"github.com/aviciot/them/internal/temporal"
 	"github.com/aviciot/them/internal/ws"
 )
 
@@ -131,6 +134,21 @@ func run() error {
 
 	authenticator := tokenCache
 
+	// ── 13b. Conditionally wire Temporal client (gated on TEMPORAL_ENABLED) ──
+	var temporalCli temporalclient.Client
+	if cfg.TemporalEnabled {
+		tc, tcErr := temporal.Connect(cfg.TemporalHostPort, log)
+		if tcErr != nil {
+			log.Error("failed to connect to Temporal", slog.String("error", tcErr.Error()))
+			return fmt.Errorf("startup: temporal: %w", tcErr)
+		}
+		temporalCli = tc
+		defer temporalCli.Close()
+		log.Info("Temporal client connected", "host_port", cfg.TemporalHostPort)
+	} else {
+		log.Info("Temporal disabled — using Go-inline orchestration path")
+	}
+
 	// ── 14. Wire EP config loader (shared by WS + SSE) ───────────────────────
 	epDB := epconfig.NewPgxQuerier(database.Pool())
 	epLoader := epconfig.NewLoader(epDB, log)
@@ -141,14 +159,17 @@ func run() error {
 	log.Info("EP config loader initialised with pub/sub invalidation")
 
 	// ── 15. Wire WebSocket handler (/ws/*) ───────────────────────────────────
+	rsRedis := cache.NewRunStreamRedisClient(redisCache.Client())
 	wsHandler := ws.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log).
-		WithEPConfig(epLoader)
+		WithEPConfig(epLoader).
+		WithTemporal(temporalCli, rsRedis, cfg.TemporalEnabled)
 	srv.MountWS(wsHandler.Routes())
 	log.Info("WebSocket handler mounted", "prefix", "/ws")
 
 	// ── 16. Wire SSE handler (/sse/*) ─────────────────────────────────────────
 	sseHandler := sse.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log).
-		WithEPConfig(epLoader)
+		WithEPConfig(epLoader).
+		WithTemporal(temporalCli, rsRedis, cfg.TemporalEnabled)
 	srv.MountSSE(sseHandler.Routes())
 	log.Info("SSE handler mounted", "prefix", "/sse")
 
@@ -160,8 +181,12 @@ func run() error {
 	// ── 18. Wire admin API (/api/v1/admin/*, /api/v1/runs/*) ─────────────────
 	adminDB := admin.NewPgxQuerier(database.Pool())
 	adminCache := cache.NewAdminCacheClient(redisCache.Client())
-	// Temporal is optional — nil if not configured.
-	adminRouter := admin.BuildRouter(adminDB, adminCache, nil /* temporal */, jwtMiddleware, log)
+	// Temporal signaler is optional — nil if Temporal is not enabled.
+	var temporalSignaler admin.TemporalSignaler
+	if temporalCli != nil {
+		temporalSignaler = temporal.NewSignaler(temporalCli)
+	}
+	adminRouter := admin.BuildRouter(adminDB, adminCache, temporalSignaler, jwtMiddleware, log)
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
 

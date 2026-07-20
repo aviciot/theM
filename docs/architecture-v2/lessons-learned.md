@@ -436,3 +436,74 @@ The test asserting `g.checkCalls == 0` is the explicit proof that the gate is no
 ### The 501 check uses `resolvedCfg.EPType` not an inline string constant — keep it in sync with `validEPTypes`
 
 `validEPTypes` in `admin/applications.go` is the authoritative list of accepted EP types. The voice rejection guard in both handlers checks `resolvedCfg.EPType == "voice"`. When a new EP type is added (e.g., `"webrtc"`), add a corresponding guard in the handler before implementing the feature. The admin validation at creation time (422 on invalid type) prevents unknown types from reaching production, but the handler guard is defence-in-depth for any type that is valid but not yet implemented.
+
+---
+
+## Phase 10 — Temporal Execution Path (coexistence with Go-inline fallback)
+
+### Go WorkflowInput and Python OrchestrationInput are incompatible — use a separate struct for the Python wire format
+
+`internal/temporal/workflow.go` defines `WorkflowInput` for the *future Go worker*. The Python worker (`app/temporal/workflows.py`) expects a completely different dataclass (`OrchestrationInput` in `app/temporal/shared.py`) with snake_case JSON field names. The Temporal SDK serializes Go structs to JSON using struct tags; if Go sends `RunID`, Python receives `"RunID"` (exported field name with Go capitalization), not `"run_id"`. This causes a silent deserialization failure — the Python workflow starts with zero-value fields and no error.
+
+The fix: add `PythonOrchestrationInput` in `internal/temporal/python_input.go` with explicit `json:"snake_case"` tags matching the Python dataclass exactly. Keep `WorkflowInput` for the future Go worker path. Never combine the two — they target different workers on the same task queue but require different wire formats.
+
+When adding a new field to `PythonOrchestrationInput`, verify the Python dataclass in `app/temporal/shared.py` has the matching field with the same JSON key. A field mismatch is silent — the Python workflow starts with the default value, not an error.
+
+### The inline path must be kept permanently as a fallback — not removed after Temporal works
+
+The `TEMPORAL_ENABLED=false` inline path is not a deprecated migration step; it is a permanent operational escape hatch. A Temporal cluster outage, a Python worker crash, or a misconfiguration should not prevent the gateway from serving traffic. Removing the inline path would make Temporal a hard dependency.
+
+The removal preconditions that must ALL be satisfied before considering inline path removal:
+1. Real integration tests (Go → Temporal → Python → Redis → Go) pass in CI
+2. Staging soak testing succeeds for ≥1 week
+3. Rollback from Temporal to inline is exercised (set TEMPORAL_ENABLED=false with traffic)
+4. Behavioral parity is confirmed (same token events, done events, error handling)
+
+Until all four are met, treat the inline path as production-critical.
+
+### Subscribe to the Redis run-event channel BEFORE starting the Temporal workflow
+
+`runstream.Stream(ctx, sub, runID)` subscribes to `them:dash:run:{runID}:tokens`. The Python worker publishes a `ready` event to this channel from inside `init_run` activity — which fires early in the workflow. If the Go handler subscribes after `ExecuteWorkflow`, the `ready` event (and possibly the first few token events) is lost.
+
+The ordering rule is: `runstream.Stream()` → `ExecuteWorkflow()`. This mirrors the existing invariant for the inline path: `bus.Subscribe()` → `orch.Run()`. Both are subscribe-before-start guarantees.
+
+### Redis Pub/Sub for run streaming is at-most-once — missed events are lost
+
+`them:dash:run:{runID}:tokens` is a Redis pub/sub channel. Redis pub/sub has no persistence: messages published before a subscriber connects, or during a network reconnect gap, are permanently lost. For Phase 10 this is explicitly acceptable: a client that connects after the Python worker has already published some tokens will miss those tokens. Replay is deferred to a later phase.
+
+The explicit limitation is documented in:
+- `internal/runstream/stream.go` package doc comment
+- `internal/runstream/stream.go` `Stream()` function doc comment
+
+Tests must verify that the subscription machinery works correctly (messages forwarded, context cancel closes the channel), not that missed messages are recovered. Do not add replay logic without a corresponding architectural decision for storage backend and delivery semantics.
+
+### Use a narrow interface (`TemporalClientExecutor`) for handler Temporal dependency — not the full client.Client
+
+`go.temporal.io/sdk/client.Client` has 15+ methods. The WS and SSE handlers only need `ExecuteWorkflow`. Injecting the full client into the handler makes it impossible to write unit tests without a live Temporal server (or a full mock library).
+
+The fix: define `TemporalClientExecutor` interface in `internal/ws` and `internal/sse` with only the `ExecuteWorkflow` method. Tests inject a `stubTemporalClient` that counts calls and returns a pre-configured `stubWorkflowRun`. The admin `Signaler` (which needs `SignalWorkflow`) takes the full `client.Client` — that is fine because it is wired in `main.go` with a nil-check.
+
+Rule: any interface defined for test isolation should expose the minimum surface area needed. Adding methods "for future use" widens the interface and forces all test fakes to implement unused stubs.
+
+### Temporal client connection failure is fatal at startup when TEMPORAL_ENABLED=true
+
+When `TEMPORAL_ENABLED=true`, the gateway is declaring it will route all traffic through Temporal. A failed `temporal.Connect()` call means the gateway cannot serve any traffic safely. The correct behavior is to return the error from `run()` → `os.Exit(1)`.
+
+Do not swallow the error and continue with the inline path — that creates a silent operational surprise where `TEMPORAL_ENABLED=true` behaves identically to `TEMPORAL_ENABLED=false` when the Temporal cluster is unreachable. The operator would believe Temporal is active when it is not.
+
+If you want graceful Temporal degradation, use `TEMPORAL_ENABLED=false` explicitly. The feature flag is the escape hatch; a startup failure is not.
+
+### Lifecycle separation: client connection ≠ Redis session ≠ Temporal workflow ≠ run
+
+These four lifecycles are independent and must be managed by their respective owners:
+
+| Lifecycle | Owner | Ends when |
+|---|---|---|
+| Client connection | Go WS/SSE handler | Client disconnects or ctx.Done |
+| Redis session | Go handler (via session.End on defer) | Handler returns |
+| Temporal workflow | Temporal cluster | Workflow function returns or is cancelled |
+| Run record (DB) | Run recorder (CreateRun/UpdateRun) | Finalize activity sets status |
+
+Go handler owns client session TTL refresh — NOT Temporal. The WS/SSE connection keepalive and session.End on disconnect are Go concerns. A Temporal workflow may outlive the client session (e.g., if HITL is pending). The Go handler cancels the workflow context on client disconnect, which requests cancellation, but the workflow can complete or time out independently.
+
+Do not add session TTL refresh inside Temporal activities or signals — they do not own the session lifecycle.

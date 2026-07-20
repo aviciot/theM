@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
@@ -501,6 +502,106 @@ func TestVoiceEPPublicReturns501(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "public voice EP must return 501")
 	assert.Equal(t, 0, len(sessions.registered), "session must not be registered for voice EP")
+}
+
+// ── Temporal path fakes ────────────────────────────────────────────────────────
+
+// fakeWorkflowRun blocks Get until the context is cancelled, simulating a
+// long-running workflow that ends when the handler's context is cancelled.
+// This ensures all stream events are delivered before orchDone fires.
+type fakeWorkflowRun struct {
+	id string
+}
+
+func (f *fakeWorkflowRun) GetID() string    { return f.id }
+func (f *fakeWorkflowRun) GetRunID() string { return f.id }
+func (f *fakeWorkflowRun) Get(ctx context.Context, _ interface{}) error {
+	<-ctx.Done()
+	return nil
+}
+func (f *fakeWorkflowRun) GetWithOptions(ctx context.Context, _ interface{}, _ temporalclient.WorkflowRunGetOptions) error {
+	<-ctx.Done()
+	return nil
+}
+
+// fakeTemporalClient records ExecuteWorkflow calls.
+type fakeTemporalClient struct {
+	called bool
+	runID  string
+}
+
+func (f *fakeTemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, _ ...interface{}) (temporalclient.WorkflowRun, error) {
+	f.called = true
+	f.runID = opts.ID
+	return &fakeWorkflowRun{id: opts.ID}, nil
+}
+
+// fakeRunStreamSub returns a channel pre-loaded with a "done" event then closes.
+type fakeRunStreamSub struct {
+	messages []string
+}
+
+func (f *fakeRunStreamSub) Subscribe(_ context.Context, _ string) (<-chan string, error) {
+	ch := make(chan string, len(f.messages)+1)
+	for _, m := range f.messages {
+		ch <- m
+	}
+	close(ch)
+	return ch, nil
+}
+
+// 15. Temporal path: when temporalEnabled=true, ExecuteWorkflow is called and
+// orch.Run is NOT called. The client receives the done event from the run stream.
+func TestTemporalPathUsedWhenEnabled(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
+
+	// Build handler with a mock orchestrator that has no mock events.
+	// If orch.Run were called, it would complete without emitting a "done" event
+	// on the bus — the test would time out rather than succeed.
+	h, _ := newTestHandler(t, nil, authn, sessions)
+
+	tc := &fakeTemporalClient{}
+	rsSub := &fakeRunStreamSub{
+		messages: []string{
+			`{"type":"token","content":"hello from temporal"}`,
+			`{"type":"done","run_id":"test-run"}`,
+		},
+	}
+	h.WithTemporal(tc, rsSub, true)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Send user message.
+	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hi"})
+	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
+
+	// Collect events until "done" or timeout.
+	var receivedTypes []string
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		_, data, readErr := conn.ReadMessage()
+		if readErr != nil {
+			break
+		}
+		var sm map[string]any
+		if json.Unmarshal(data, &sm) == nil {
+			if t, ok := sm["type"].(string); ok {
+				receivedTypes = append(receivedTypes, t)
+				if t == "done" {
+					break
+				}
+			}
+		}
+	}
+
+	assert.True(t, tc.called, "ExecuteWorkflow must be called when temporalEnabled=true")
+	assert.Contains(t, receivedTypes, "done", "client must receive done event from run stream")
 }
 
 // Ensure domain import is used.

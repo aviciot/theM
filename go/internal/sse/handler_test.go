@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/epconfig"
@@ -505,4 +506,89 @@ func mustGet(url string) *http.Request {
 		panic(err)
 	}
 	return req
+}
+
+// ── SSE Temporal path fakes ────────────────────────────────────────────────────
+
+// fakeSSEWorkflowRun blocks Get until the context is cancelled, simulating a
+// long-running workflow that ends when the handler's context is cancelled.
+// This ensures all run-stream events are delivered before orchDone fires.
+type fakeSSEWorkflowRun struct {
+	id string
+}
+
+func (f *fakeSSEWorkflowRun) GetID() string    { return f.id }
+func (f *fakeSSEWorkflowRun) GetRunID() string { return f.id }
+func (f *fakeSSEWorkflowRun) Get(ctx context.Context, _ interface{}) error {
+	<-ctx.Done()
+	return nil
+}
+func (f *fakeSSEWorkflowRun) GetWithOptions(ctx context.Context, _ interface{}, _ temporalclient.WorkflowRunGetOptions) error {
+	<-ctx.Done()
+	return nil
+}
+
+// fakeSSETemporalClient records ExecuteWorkflow calls.
+type fakeSSETemporalClient struct {
+	called bool
+}
+
+func (f *fakeSSETemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, _ ...interface{}) (temporalclient.WorkflowRun, error) {
+	f.called = true
+	return &fakeSSEWorkflowRun{id: opts.ID}, nil
+}
+
+// fakeSSERunStreamSub returns a channel pre-loaded with messages then closes.
+type fakeSSERunStreamSub struct {
+	messages []string
+}
+
+func (f *fakeSSERunStreamSub) Subscribe(_ context.Context, _ string) (<-chan string, error) {
+	ch := make(chan string, len(f.messages)+1)
+	for _, m := range f.messages {
+		ch <- m
+	}
+	close(ch)
+	return ch, nil
+}
+
+// 14. Temporal path: when temporalEnabled=true, ExecuteWorkflow is called and
+// orch.Run is NOT called. The client receives the done event from the run stream.
+func TestSSETemporalPathUsedWhenEnabled(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
+
+	// Build handler with no mock events — if orch.Run were called,
+	// the SSE stream would close without a "done" event.
+	h := newTestSSEHandler(nil, authn)
+
+	tc := &fakeSSETemporalClient{}
+	rsSub := &fakeSSERunStreamSub{
+		messages: []string{
+			`{"type":"token","content":"from temporal"}`,
+			`{"type":"done","run_id":"sse-run"}`,
+		},
+	}
+	h.WithTemporal(tc, rsSub, true)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep1?message=hello")
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := collectSSE(t, resp, 3*time.Second)
+
+	assert.True(t, tc.called, "ExecuteWorkflow must be called when temporalEnabled=true")
+
+	var types []string
+	for _, ev := range events {
+		if t2, ok := ev["type"].(string); ok {
+			types = append(types, t2)
+		}
+	}
+	assert.Contains(t, types, "done", "client must receive done event from run stream")
 }

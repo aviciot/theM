@@ -230,6 +230,7 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestAuthenticatedRequestToPublicEP` | Authenticated request to public EP succeeds (public EPs accept both) |
 | `TestVoiceEPReturns501` | Token-mode voice EP returns 501; gate and session are never called |
 | `TestVoiceEPPublicReturns501` | Public voice EP also returns 501 before gate or session are called |
+| `TestTemporalPathUsedWhenEnabled` | `temporalEnabled=true` → `ExecuteWorkflow` called; `orch.Run` NOT called; client receives done event from Redis run stream |
 
 **Trigger:** any change to `internal/ws/handler.go`
 
@@ -254,6 +255,7 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestSSEAuthenticatedRequestToPublicEP` | Authenticated request to public EP succeeds |
 | `TestSSEVoiceEPReturns501` | Token-mode voice EP returns 501; gate and session are never called |
 | `TestSSEVoiceEPPublicReturns501` | Public voice EP also returns 501 before gate or session are called |
+| `TestSSETemporalPathUsedWhenEnabled` | `temporalEnabled=true` → `ExecuteWorkflow` called; `orch.Run` NOT called; client receives done event from Redis run stream |
 
 **Trigger:** any change to `internal/sse/handler.go`
 
@@ -354,6 +356,32 @@ The behavioural contract of `auth.RedisClient` is exercised in S1-05 via `mockRe
 | `TestAuthRedisClient_ImplementsInterface` | `*AuthRedisClient` satisfies `auth.RedisClient` at compile time |
 
 **Trigger:** any change to `internal/cache/auth_adapter.go`
+
+---
+
+### S1-20 · RunStream Redis adapter — `internal/cache/runstream_adapter_test.go`
+
+**Purpose:** Compile-time interface satisfaction check — `*RunStreamRedisClient` implements `runstream.Subscriber`.
+
+| Test | What it proves |
+|---|---|
+| `TestRunStreamRedisClient_ImplementsInterface` | `*RunStreamRedisClient` satisfies `runstream.Subscriber` at compile time |
+
+**Trigger:** any change to `internal/cache/runstream_adapter.go`
+
+---
+
+### S1-21 · Run stream — `internal/runstream/stream_test.go`
+
+**Purpose:** Redis pub/sub stream adapter — message forwarding and context cancellation.
+At-most-once delivery limitation is explicit and intentional (documented in source).
+
+| Test | What it proves |
+|---|---|
+| `TestStream_ForwardsMessages` | Fake subscriber with 2 pre-loaded messages → 2 events forwarded with correct Type; channel closes when source closes |
+| `TestStream_ContextCancel` | Context cancelled immediately → output channel closes promptly without blocking |
+
+**Trigger:** any change to `internal/runstream/stream.go`
 
 ---
 
@@ -480,6 +508,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/epconfig/epconfig.go` | S1-18 |
 | `internal/epconfig/pgx.go` | S1-18 |
 | `internal/cache/auth_adapter.go` | S1-19 |
+| `internal/cache/runstream_adapter.go` | S1-20 |
+| `internal/runstream/stream.go` | S1-21 |
 | `cmd/them/main.go` | S1 (full suite) |
 | `go.mod` or `go.sum` | S1 (full suite) |
 | `Dockerfile.go` | S1 + rebuild + S2 |
@@ -519,16 +549,18 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-09 | runrecorder | 6 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
-| S1-12 | ws | 14 |
-| S1-13 | sse | 13 |
+| S1-12 | ws | 15 |
+| S1-13 | sse | 14 |
 | S1-14 | a2a | 3 |
 | S1-15 | admin | 19 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
 | S1-19 | cache | 1 |
-| **S1 total** | | **160** |
+| S1-20 | cache (runstream adapter) | 1 |
+| S1-21 | runstream | 2 |
+| **S1 total** | | **165** |
 | S2-01 | integration | 4 |
 | **S2 total** | | **4** |
 | S3 live | manual | 23 |
-| **Grand total** | | **187** |
+| **Grand total** | | **192** |

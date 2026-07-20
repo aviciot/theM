@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
@@ -43,7 +44,9 @@ import (
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
+	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/session"
+	"github.com/aviciot/them/internal/temporal"
 )
 
 // newID generates a random 16-byte hex string suitable for session/run IDs.
@@ -86,17 +89,27 @@ type EPConfigLoader interface {
 	Load(ctx context.Context, epSlug string) (*epconfig.EPConfig, error)
 }
 
+// TemporalClientExecutor starts a Temporal workflow execution.
+// Using an interface (rather than the full client.Client) allows tests to inject
+// a fake without depending on a live Temporal server.
+type TemporalClientExecutor interface {
+	ExecuteWorkflow(ctx context.Context, options temporalclient.StartWorkflowOptions, workflow interface{}, args ...interface{}) (temporalclient.WorkflowRun, error)
+}
+
 // Handler is the SSE orchestration handler.
 type Handler struct {
-	sessions      SessionStore
-	gateStore     GateStore
-	epLoader      EPConfigLoader
-	recorder      *runrecorder.Recorder
-	orch          *orchestrator.Orchestrator
-	bus           event.Bus
-	authenticator Authenticator
-	instanceID    string
-	logger        *slog.Logger
+	sessions        SessionStore
+	gateStore       GateStore
+	epLoader        EPConfigLoader
+	recorder        *runrecorder.Recorder
+	orch            *orchestrator.Orchestrator
+	bus             event.Bus
+	authenticator   Authenticator
+	instanceID      string
+	logger          *slog.Logger
+	temporalClient  TemporalClientExecutor
+	runStreamSub    runstream.Subscriber
+	temporalEnabled bool
 }
 
 // NewHandler creates a Handler. gateStore may be nil (gate check is skipped),
@@ -138,6 +151,18 @@ func (h *Handler) WithGate(g GateStore) *Handler {
 // inaccessible EP is rejected before SSE headers are written.
 func (h *Handler) WithEPConfig(l EPConfigLoader) *Handler {
 	h.epLoader = l
+	return h
+}
+
+// WithTemporal attaches a Temporal client and run-stream subscriber. When
+// temporalEnabled is true, incoming connections use the Temporal execution
+// path instead of the Go-inline orchestrator.
+// When WithTemporal is not called (e.g. in tests), temporalEnabled defaults to
+// false and all connections use the inline path.
+func (h *Handler) WithTemporal(tc TemporalClientExecutor, sub runstream.Subscriber, enabled bool) *Handler {
+	h.temporalClient = tc
+	h.runStreamSub = sub
+	h.temporalEnabled = enabled
 	return h
 }
 
@@ -354,23 +379,91 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("sse: create run failed", "run_id", runID, "error", err)
 	}
 
-	// ── 11. Start orchestration in a goroutine ───────────────────────────────
+	// ── 11. Start orchestration ───────────────────────────────────────────────
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
 	userMsg := domain.TextMessage(domain.RoleUser, userText)
 
 	orchDone := make(chan struct{})
-	go func() {
-		defer close(orchDone)
-		_, runErr := h.orch.Run(ctx, runID, contextID, userMsg, nil)
-		if runErr != nil {
-			h.logger.Warn("sse: orchestrator error", "run_id", runID, "error", runErr)
-		}
-	}()
 
-	// ── 12. Stream events from bus as SSE ────────────────────────────────────
-	h.streamEvents(ctx, cancel, w, flusher, hasFlusher, evCh, orchDone)
+	if h.temporalEnabled && h.temporalClient != nil {
+		// ── 11a. Temporal path ────────────────────────────────────────────────
+		// Subscribe to the Redis run-event channel BEFORE starting the workflow.
+		// This is the at-most-once Pub/Sub stream; events published before
+		// subscribe is called are lost (intentional for Phase 10).
+		rsEvCh, rsErr := runstream.Stream(ctx, h.runStreamSub, runID)
+		if rsErr != nil {
+			h.logger.Warn("sse: runstream subscribe failed — falling back to inline",
+				"run_id", runID, "error", rsErr)
+			// Fallback to Go-inline orchestration.
+			go func() {
+				defer close(orchDone)
+				_, runErr := h.orch.Run(ctx, runID, contextID, userMsg, nil)
+				if runErr != nil {
+					h.logger.Warn("sse: orchestrator error", "run_id", runID, "error", runErr)
+				}
+			}()
+			h.streamEvents(ctx, cancel, w, flusher, hasFlusher, evCh, orchDone)
+			return
+		}
+
+		// Build the minimal token payload from the resolved token.
+		tokenPayload := map[string]any{"user_id": tokenInfo.TokenID}
+
+		input := temporal.PythonOrchestrationInput{
+			OrchestratorName: appSlug,
+			UserMessage:      userText,
+			UserID:           tokenInfo.TokenID,
+			TokenPayload:     tokenPayload,
+			SessionID:        sessionID,
+			ContextID:        contextID,
+			EntryPointSlug:   epSlug,
+			HistoryWindow:    20,
+		}
+
+		wfOpts := temporalclient.StartWorkflowOptions{
+			ID:        runID,
+			TaskQueue: temporal.TaskQueue,
+		}
+
+		wfRun, wfErr := h.temporalClient.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
+		if wfErr != nil {
+			h.logger.Warn("sse: start temporal workflow failed", "run_id", runID, "error", wfErr)
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"failed to start workflow\"}\n\n")
+			if hasFlusher {
+				flusher.Flush()
+			}
+			return
+		}
+		h.logger.Info("sse: temporal workflow started",
+			"run_id", runID,
+			"workflow_id", wfRun.GetID(),
+		)
+
+		// Wait for workflow completion in background (drives orchDone).
+		go func() {
+			defer close(orchDone)
+			if err := wfRun.Get(ctx, nil); err != nil {
+				h.logger.Warn("sse: temporal workflow error", "run_id", runID, "error", err)
+			}
+		}()
+
+		// ── 12a. Stream Redis run events as SSE ───────────────────────────────
+		h.streamEvents(ctx, cancel, w, flusher, hasFlusher, rsEvCh, orchDone)
+	} else {
+		// ── 11b. Go-inline path (permanent fallback) ──────────────────────────
+		go func() {
+			defer close(orchDone)
+			_, runErr := h.orch.Run(ctx, runID, contextID, userMsg, nil)
+			if runErr != nil {
+				h.logger.Warn("sse: orchestrator error", "run_id", runID, "error", runErr)
+			}
+		}()
+
+		// ── 12b. Stream in-process bus events as SSE ─────────────────────────
+		h.streamEvents(ctx, cancel, w, flusher, hasFlusher, evCh, orchDone)
+	}
 }
 
 // streamEvents forwards bus events to the SSE response until orchestration
