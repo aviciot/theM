@@ -340,6 +340,19 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ---
 
+### S1-19 · Auth Redis adapter — `internal/cache/auth_adapter_test.go`
+
+**Purpose:** Compile-time interface satisfaction check — `*AuthRedisClient` implements `auth.RedisClient`.
+The behavioural contract of `auth.RedisClient` is exercised in S1-05 via `mockRedis`.
+
+| Test | What it proves |
+|---|---|
+| `TestAuthRedisClient_ImplementsInterface` | `*AuthRedisClient` satisfies `auth.RedisClient` at compile time |
+
+**Trigger:** any change to `internal/cache/auth_adapter.go`
+
+---
+
 ### S1-18 · EP config loader — `internal/epconfig/epconfig_test.go`
 
 **Purpose:** Entry point and application runtime configuration resolution from DB — precedence rules, fail-closed policy, in-process TTL cache, cache invalidation, cross-pod pub/sub eviction. The single typed model shared by both WS and SSE handlers.
@@ -462,6 +475,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/gate/gate.go` | S1-17 |
 | `internal/epconfig/epconfig.go` | S1-18 |
 | `internal/epconfig/pgx.go` | S1-18 |
+| `internal/cache/auth_adapter.go` | S1-19 |
 | `cmd/them/main.go` | S1 (full suite) |
 | `go.mod` or `go.sum` | S1 (full suite) |
 | `Dockerfile.go` | S1 + rebuild + S2 |
@@ -508,8 +522,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
-| **S1 total** | | **155** |
+| S1-19 | cache | 1 |
+| **S1 total** | | **156** |
 | S2-01 | integration | 4 |
 | **S2 total** | | **4** |
 | S3 live | manual | 23 |
-| **Grand total** | | **182** |
+| **Grand total** | | **183** |

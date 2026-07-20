@@ -382,3 +382,38 @@ The zero value for `tokenInfo` (nil) is safe: `tokenInfo.TokenID = 0` for anonym
 The fix: maintain `validEPTypes = {"websocket", "sse", "voice"}` in `applications.go` and validate in `CreateEntryPoint` (required) and `UpdateEntryPoint` (only if non-empty, to allow partial updates). Return 422 Unprocessable Entity — not 400 Bad Request — because the JSON is well-formed; the semantic value is the problem.
 
 Rule: the allowed set must stay in sync with the Python platform's `_VALID_EP_TYPES` list. When a new EP type is added to the Python platform, update `validEPTypes` in `applications.go` in the same sprint. The schema CHECK constraint (MIG-002) is the long-term DB-level enforcement; the application-layer check is defence-in-depth.
+
+---
+
+## Auth wiring — replacing noopAuth with real auth.Cache
+
+### noopAuth accepted any non-empty token and returned TokenID=1 — it must never reach production
+
+`noopAuth{}` was the placeholder authenticator from Phase 8. It returned `&auth.TokenInfo{TokenID: 1}` for any non-empty token string and no error. This meant:
+1. Any token string (including invalid, revoked, or expired tokens) was accepted.
+2. All requests were attributed to `TokenID=1` — a single synthetic identity that does not correspond to any real `them.access_tokens` row.
+3. Rate limiting was effectively per-application only (token bucket always pointed to the same hash for `TokenID=1`).
+
+The fix: replace `noopAuth{}` with `auth.NewCache(auth.NewPgxQuerier(pool), cache.NewAuthRedisClient(client), log)`. The real cache queries `them.access_tokens WHERE token_hash=$1 AND enabled=true AND (expires_at IS NULL OR expires_at > now())` — correctly enforcing disabled and expired tokens.
+
+`noopAuth` is completely removed from `main.go`. If you ever see it re-appear (e.g., a conditional branch or build tag), treat it as a production security regression.
+
+### `them.access_tokens.id` is UUID but TokenRow.ID is int64 — use user_id as the Go identity
+
+The `them.access_tokens` table uses a UUID primary key (`id UUID`). The Go `auth.TokenRow.ID` is `int64`. Rather than a lossy UUID→int64 conversion, `PgxQuerier.QueryToken` maps `user_id INTEGER` (the token owner's user ID) to `TokenRow.ID`. `TokenRow.ApplicationID` is not populated (left as 0) because `them.access_tokens` has no `application_id` column — tokens are scoped to orchestrators, not applications.
+
+This means `TokenInfo.TokenID` in the Go binary contains the user's `user_id` (from `auth_service.users`), not the `them.access_tokens.id` UUID. This is intentional: the user identity is the relevant field for rate limiting (`rl:them:token:{sha256}`) and audit trails.
+
+### auth.Cache.Subscribe must be started in a goroutine before the HTTP server begins serving
+
+`auth.Cache.Subscribe(ctx)` blocks until ctx is cancelled. It listens on `them:token:revoked` and evicts L1 cache entries on receipt. It must be started BEFORE the HTTP handlers are serving traffic, so that revocations from other pods take effect immediately. In `main.go`, `go tokenCache.Subscribe(ctx)` is called at step 13, before the WebSocket and SSE handlers are mounted at steps 15–16.
+
+If `Subscribe` is not started, token revocation still works on the revoking pod (L1 and L2 are deleted at revocation time). Other pods are unaffected by cross-pod revocation messages until their L1 TTL expires (5 minutes). Always start `Subscribe`.
+
+### go test -race ./... requires GCC on Windows — use Linux CI for race detection
+
+The Go race detector requires CGO (`CGO_ENABLED=1`), which requires a C compiler. On this Windows development machine, GCC is not in PATH. `go test -race ./...` fails with "C compiler gcc not found." 
+
+The workaround: run `go test -race ./...` in the Docker-based Linux CI environment (Dockerfile.go), not on the Windows host. The unit tests (`go test ./...`) without the race detector run cleanly on Windows. Do not skip the race detector run entirely — add it to the CI pipeline (GitHub Actions / Docker) where GCC is available.
+
+Do not add `CGO_ENABLED=0` to CLAUDE.md or `go.env` as a permanent override — that silences the requirement rather than satisfying it.

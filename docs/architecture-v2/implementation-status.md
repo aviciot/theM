@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-20
 
-All 8 phases complete + Phase 9 (gate package) + Phase 5.4 full EP config wiring (WS + SSE handlers + epconfig resolver). `go build ./...` and `go test ./...` pass.
+All 8 phases complete + Phase 9 (gate package) + Phase 5.4 full EP config wiring (WS + SSE handlers + epconfig resolver) + real bearer token auth wiring (noopAuth replaced). `go build ./...` and `go test ./...` pass.
 Integration tests pass under `go test -tags=integration ./...`.
 
 ---
@@ -14,10 +14,10 @@ Integration tests pass under `go test -tags=integration ./...`.
 | config | `internal/config` | Env loading, startup validation, JWT PEM, ANTHROPIC_API_KEY | 9 | Centralised config — no scattered os.Getenv |
 | telemetry | `internal/telemetry` | slog JSON logger with instance ID | 0 (no logic to test) | Structured logging from day 1 |
 | db | `internal/db` | pgxpool wrapper, Ping, Pool accessor | 0 (integration only) | Connection pooling, graceful close |
-| cache | `internal/cache` | rueidis wrapper + session/admin/ratelimit adapters | 0 (integration only) | Redis abstraction, adapter isolation |
+| cache | `internal/cache` | rueidis wrapper + session/admin/ratelimit/auth adapters | 1 | Redis abstraction, adapter isolation |
 | health | `internal/health` | /health/live + /health/ready with DB+Redis probes | 5 | Kubernetes-compatible health endpoints |
 | server | `internal/server` | chi router, middleware, graceful shutdown, event bus, mount methods | 4 | Single router — no scattered http.HandleFunc |
-| auth | `internal/auth` | RS256 JWT validation, bearer token two-level cache, Redis pub/sub revocation | 14 | Local JWT validation (no auth service round-trip on hot path) |
+| auth | `internal/auth` | RS256 JWT validation, bearer token two-level cache (L1+L2+pub/sub revocation), PgxQuerier for them.access_tokens | 14 | Local JWT validation (no auth service round-trip on hot path); bearer token wired to real DB in production |
 | session | `internal/session` | Atomic Lua scripts, shadow TTL keys, ghost pruning, pod heartbeat | 6 | Fixes ghost session accumulation (Critical finding #1) |
 | event | `internal/event` | In-process fan-out topic event bus, wildcard subscriber | 6 | Fixes race condition: subscribe-before-publish |
 | domain | `internal/domain` | Canonical Message/Run types, role + status enums | 3 | Provider format never leaks into DB (High finding #7) |
@@ -34,8 +34,8 @@ Integration tests pass under `go test -tags=integration ./...`.
 | ratelimit | `internal/ratelimit` | Redis INCR rate limiting, per-token + per-app, 1-minute windows | 3 | Redis-backed rate limiting (replica-safe) |
 | gate | `internal/gate` | Runtime admission gate — SOLE owner of Set membership. Reservation TTL pattern: Check (SADD + short shadow TTL 10s) → Register (Hash) → Confirm (extend to 90s). Rollback on Register failure. Queue: BLPop signal channel, re-compete on wake. | 16 | Eliminates duplicate-SADD failure window; reservation TTL bounds ghost window to ≤10s even on crash; queue wake-up is a compete not a guarantee |
 
-**Total packages with tests: 20**
-**Total test count: 155 unit + 4 integration = 159 automated**
+**Total packages with tests: 21**
+**Total test count: 156 unit + 4 integration = 160 automated**
 
 ---
 
@@ -98,6 +98,6 @@ From the original architecture review:
 
 ```
 go build ./...     PASS
-go test ./...      PASS (22 packages, 155 unit tests)
+go test ./...      PASS (22 packages, 156 unit tests)
 go test -tags=integration ./...   PASS (4 integration tests)
 ```

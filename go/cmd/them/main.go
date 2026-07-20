@@ -1,4 +1,4 @@
-// Command them is the Phase 8 entrypoint for the THEM v2 Go platform.
+// Command them is the THEM v2 Go platform entrypoint.
 // It wires configuration, database, Redis, telemetry, health checks, the
 // in-process event bus, the orchestration layer, WebSocket, SSE, A2A, admin
 // API, and rate limiting together, then blocks until a shutdown signal.
@@ -120,10 +120,16 @@ func run() error {
 	authMW := server.AuthMiddlewares{}
 	srv := server.NewWithBus(addr, healthHandler, authMW, bus, log, database, redisCache)
 
-	// ── 13. Wire noopAuth for bearer tokens ──────────────────────────────────
-	// The bearer token cache requires a DB-backed TokenQuerier; use a no-op
-	// authenticator for Phase 8 (the full cache is wired in a later phase).
-	authenticator := &noopAuth{}
+	// ── 13. Wire bearer token cache (L1 in-process → L2 Redis → PostgreSQL) ──
+	tokenDB := auth.NewPgxQuerier(database.Pool())
+	tokenRedis := cache.NewAuthRedisClient(redisCache.Client())
+	tokenCache := auth.NewCache(tokenDB, tokenRedis, log)
+	// Start cross-pod revocation listener. Blocks until ctx is cancelled; the
+	// context is derived from the process lifetime so it stops on SIGTERM.
+	go tokenCache.Subscribe(ctx)
+	log.Info("bearer token cache initialised (L1+L2+pub/sub revocation)")
+
+	authenticator := tokenCache
 
 	// ── 14. Wire EP config loader (shared by WS + SSE) ───────────────────────
 	epDB := epconfig.NewPgxQuerier(database.Pool())
@@ -162,16 +168,4 @@ func run() error {
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)
 
 	return srv.ListenAndServe()
-}
-
-// noopAuth is a placeholder authenticator that accepts any non-empty token.
-// Replace with a full auth.Cache instance when the bearer token infrastructure
-// is fully wired (requires a DB-backed TokenQuerier).
-type noopAuth struct{}
-
-func (n *noopAuth) Validate(_ context.Context, token string) (*auth.TokenInfo, error) {
-	if token == "" {
-		return nil, fmt.Errorf("empty token")
-	}
-	return &auth.TokenInfo{TokenID: 1}, nil
 }
