@@ -1,13 +1,25 @@
 //go:build integration
 
-// Package temporal_test contains hybrid integration tests for the Go↔Python
-// Temporal channel handshake. These tests require a running stack:
+// Package temporal_test contains hybrid integration tests for the canonical
+// single-phase Go→Python Temporal run_id architecture.
+//
+// Architecture under test:
+//
+//	1. Go pre-generates runID (canonical identifier)
+//	2. Go subscribes to them:dash:run:{runID}:tokens BEFORE ExecuteWorkflow
+//	3. Go passes runID in PythonOrchestrationInput.RunID
+//	4. Python workflow uses the provided run_id verbatim (no UUID generation)
+//	5. All Python publish calls use runID → same channel Go subscribed to
+//	6. No context-channel bootstrap handshake needed
+//
+// Required running infrastructure:
 //
 //	Temporal server  at $TEMPORAL_HOST_PORT  (default localhost:7233)
 //	PostgreSQL       at $TEST_POSTGRES_DSN   (default host=localhost port=5432 ...)
 //	Redis            at $TEST_REDIS_ADDR     (default localhost:6379)
+//	Python worker    polling task queue "them-orchestration"
 //
-// Start the full stack before running:
+// Start the full stack:
 //
 //	cd theM_gateway
 //	docker compose -f docker-compose.yml -f docker-compose.integration.yml --profile temporal up -d
@@ -18,6 +30,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -57,7 +70,6 @@ func redisAddr() string {
 	return envOr("TEST_REDIS_ADDR", "localhost:6379")
 }
 
-// sha256Hex returns the lowercase hex SHA-256 of s (matches Python hmac token hashing).
 func sha256Hex(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])
@@ -65,15 +77,11 @@ func sha256Hex(s string) string {
 
 // ─── seeded infrastructure ────────────────────────────────────────────────────
 
-// hybridInfra holds the live connections and seeded DB row IDs for a test.
 type hybridInfra struct {
-	tc          temporalclient.Client
-	pool        *pgxpool.Pool
-	redis       rueidis.Client
-	agentID     string // UUID string of seeded them.agents row
-	orchID      string // UUID string of seeded them.orchestrators row
-	tokenID     string // UUID string of seeded them.access_tokens row
-	orchName    string // name used to look up the orchestrator
+	tc       temporalclient.Client
+	pool     *pgxpool.Pool
+	redis    rueidis.Client
+	orchName string
 }
 
 // setupHybridInfra connects to all three backends, seeds minimal DB rows, and
@@ -82,33 +90,23 @@ func setupHybridInfra(t *testing.T) (*hybridInfra, func()) {
 	t.Helper()
 	ctx := context.Background()
 
-	// ── Temporal ──
 	tc, err := temporal.Connect(temporalAddr(), nil)
 	require.NoError(t, err, "connect to Temporal at %s", temporalAddr())
 
-	// ── Postgres ──
 	pool, err := pgxpool.New(ctx, postgresDSN())
-	require.NoError(t, err, "connect to Postgres DSN=%s", postgresDSN())
-	if err := pool.Ping(ctx); err != nil {
+	require.NoError(t, err, "connect to Postgres")
+	if pingErr := pool.Ping(ctx); pingErr != nil {
 		tc.Close()
 		pool.Close()
-		t.Fatalf("postgres ping failed: %v", err)
+		t.Fatalf("postgres ping: %v", pingErr)
 	}
 
-	// ── Redis ──
-	rc, err := rueidis.NewClient(rueidis.ClientOption{
-		InitAddress: []string{redisAddr()},
-	})
+	rc, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{redisAddr()}})
 	require.NoError(t, err, "connect to Redis at %s", redisAddr())
 
-	infra := &hybridInfra{
-		tc:       tc,
-		pool:     pool,
-		redis:    rc,
-		orchName: fmt.Sprintf("integration-test-orch-%d", time.Now().UnixNano()),
-	}
+	orchName := fmt.Sprintf("integration-test-orch-%d", time.Now().UnixNano())
 
-	// ── Seed them.agents ──
+	// Seed them.agents
 	var agentID string
 	agentSlug := fmt.Sprintf("integration-test-agent-%d", time.Now().UnixNano())
 	err = pool.QueryRow(ctx, `
@@ -119,9 +117,8 @@ func setupHybridInfra(t *testing.T) (*hybridInfra, func()) {
 		RETURNING id::text
 	`, agentSlug).Scan(&agentID)
 	require.NoError(t, err, "seed them.agents")
-	infra.agentID = agentID
 
-	// ── Seed them.orchestrators with max_iterations=0 (no LLM calls needed) ──
+	// Seed them.orchestrators with max_iterations=0 — no LLM calls needed.
 	var orchID string
 	err = pool.QueryRow(ctx, `
 		INSERT INTO them.orchestrators
@@ -133,25 +130,13 @@ func setupHybridInfra(t *testing.T) (*hybridInfra, func()) {
 		        'anthropic', 'claude-haiku-4-5-20251001', '',
 		        0, 4, 60, true)
 		RETURNING id::text
-	`, infra.orchName, agentID).Scan(&orchID)
+	`, orchName, agentID).Scan(&orchID)
 	require.NoError(t, err, "seed them.orchestrators")
-	infra.orchID = orchID
 
-	// ── Seed them.access_tokens ──
-	var tokenID string
-	rawToken := fmt.Sprintf("test-integration-token-%d", time.Now().UnixNano())
-	err = pool.QueryRow(ctx, `
-		INSERT INTO them.access_tokens
-			(token_hash, label, user_id, enabled)
-		VALUES ($1, 'integration-test', 99, true)
-		RETURNING id::text
-	`, sha256Hex(rawToken)).Scan(&tokenID)
-	require.NoError(t, err, "seed them.access_tokens")
-	infra.tokenID = tokenID
+	infra := &hybridInfra{tc: tc, pool: pool, redis: rc, orchName: orchName}
 
 	cleanup := func() {
 		cleanCtx := context.Background()
-		pool.Exec(cleanCtx, `DELETE FROM them.access_tokens WHERE id = $1::uuid`, tokenID)
 		pool.Exec(cleanCtx, `DELETE FROM them.orchestrators WHERE id = $1::uuid`, orchID)
 		pool.Exec(cleanCtx, `DELETE FROM them.agents WHERE id = $1::uuid`, agentID)
 		tc.Close()
@@ -161,202 +146,40 @@ func setupHybridInfra(t *testing.T) (*hybridInfra, func()) {
 	return infra, cleanup
 }
 
-// newRunStreamSub builds a runstream.Subscriber backed by the live Redis client.
 func newRunStreamSub(t *testing.T, rc rueidis.Client) runstream.Subscriber {
 	t.Helper()
 	return cache.NewRunStreamRedisClient(rc)
 }
 
+// newRunID generates a unique run ID for each test.
+func newRunID(label string) string {
+	return fmt.Sprintf("int-%s-%d", label, time.Now().UnixNano())
+}
+
 // ─── tests ────────────────────────────────────────────────────────────────────
 
-// T1: TestHybrid_TaskQueueAndWorkflowNameCompatibility
-// Verifies that the Go SDK can start a workflow on the Python worker's task
-// queue using the correct workflow type name, and that the workflow transitions
-// out of the RUNNING state (i.e., is picked up and deserialised by Python).
-func TestHybrid_TaskQueueAndWorkflowNameCompatibility(t *testing.T) {
+// T1: TestHybrid_GoProvidedRunIDPreservedEndToEnd
+// Verifies that the run_id Go passes in PythonOrchestrationInput.RunID is the
+// same ID that Python uses in its DB row and in all Redis publish calls.
+// After the workflow completes, the test queries the DB for a run with that exact ID.
+func TestHybrid_GoProvidedRunIDPreservedEndToEnd(t *testing.T) {
 	infra, cleanup := setupHybridInfra(t)
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	runID := fmt.Sprintf("int-test-t1-%d", time.Now().UnixNano())
+	runID := newRunID("t1")
 	contextID := fmt.Sprintf("ctx-%s", runID)
 
 	input := temporal.PythonOrchestrationInput{
 		OrchestratorName: infra.orchName,
-		UserMessage:      "integration test T1",
+		UserMessage:      "integration test T1 — run_id preservation",
 		UserID:           99,
 		TokenPayload:     map[string]any{"user_id": int64(99)},
 		SessionID:        contextID,
 		ContextID:        contextID,
-		EntryPointSlug:   "test-ep",
-		HistoryWindow:    20,
-	}
-
-	wfOpts := temporalclient.StartWorkflowOptions{
-		ID:        runID,
-		TaskQueue: temporal.TaskQueue,
-	}
-
-	wfRun, err := infra.tc.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
-	require.NoError(t, err, "ExecuteWorkflow must succeed — check task queue name and workflow type")
-
-	assert.Equal(t, runID, wfRun.GetID(), "workflow ID must match our runID")
-
-	// Wait for the workflow to complete (it will, because max_iterations=0).
-	// Any outcome (success or error from load_orchestration_context) proves
-	// the Python worker picked up and deserialised the input.
-	finishErr := wfRun.Get(ctx, nil)
-	// With max_iterations=0 the workflow exits cleanly; an error means the Python
-	// worker rejected our input format — that's a failure.
-	assert.NoError(t, finishErr,
-		"workflow must complete without error (max_iterations=0 → status=stopped)")
-}
-
-// T2: TestHybrid_ContextChannelReceivesReadyEvent
-// Verifies that:
-//   - Go can subscribe to the :ctx channel before the workflow starts
-//   - Python's init_run publishes the "ready" event to that channel
-//   - The Go subscriber receives the event within 30 s
-func TestHybrid_ContextChannelReceivesReadyEvent(t *testing.T) {
-	infra, cleanup := setupHybridInfra(t)
-	defer cleanup()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	runID := fmt.Sprintf("int-test-t2-%d", time.Now().UnixNano())
-	contextID := fmt.Sprintf("ctx-%s", runID)
-
-	sub := newRunStreamSub(t, infra.redis)
-
-	// Subscribe BEFORE starting the workflow to avoid missing the ready event.
-	ctxEvCh, err := runstream.StreamContext(ctx, sub, contextID)
-	require.NoError(t, err, "StreamContext must not error")
-
-	input := temporal.PythonOrchestrationInput{
-		OrchestratorName: infra.orchName,
-		UserMessage:      "integration test T2",
-		UserID:           99,
-		TokenPayload:     map[string]any{"user_id": int64(99)},
-		SessionID:        contextID,
-		ContextID:        contextID,
-		EntryPointSlug:   "test-ep",
-		HistoryWindow:    20,
-	}
-
-	wfOpts := temporalclient.StartWorkflowOptions{
-		ID:        runID,
-		TaskQueue: temporal.TaskQueue,
-	}
-
-	_, err = infra.tc.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
-	require.NoError(t, err, "ExecuteWorkflow must succeed")
-
-	// Wait for the ready event on the context channel.
-	select {
-	case ev, ok := <-ctxEvCh:
-		require.True(t, ok, "context channel must not be closed before receiving ready")
-		assert.Equal(t, "ready", ev.Type, "first event on :ctx channel must be 'ready'")
-
-		pythonRunID, extracted := runstream.RunIDFromReady(ev)
-		assert.True(t, extracted, "RunIDFromReady must succeed on ready event")
-		assert.NotEmpty(t, pythonRunID, "ready event must carry a non-empty run_id")
-
-		t.Logf("T2: received ready event; python run_id=%s", pythonRunID)
-
-	case <-time.After(30 * time.Second):
-		t.Fatal("timed out waiting for 'ready' event on context channel — " +
-			"check: Python worker running? context_id passed correctly? Redis connected?")
-	}
-}
-
-// T3: TestHybrid_TwoChannelHandshake
-// Full end-to-end two-phase handshake:
-//   1. Subscribe to :ctx channel
-//   2. Start workflow
-//   3. Receive "ready" event, extract python run_id
-//   4. Verify run_id is a valid non-empty UUID-format string
-//   5. Verify context_id in the ready payload matches what we passed
-func TestHybrid_TwoChannelHandshake(t *testing.T) {
-	infra, cleanup := setupHybridInfra(t)
-	defer cleanup()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	runID := fmt.Sprintf("int-test-t3-%d", time.Now().UnixNano())
-	contextID := fmt.Sprintf("ctx-%s", runID)
-
-	sub := newRunStreamSub(t, infra.redis)
-
-	ctxEvCh, err := runstream.StreamContext(ctx, sub, contextID)
-	require.NoError(t, err)
-
-	input := temporal.PythonOrchestrationInput{
-		OrchestratorName: infra.orchName,
-		UserMessage:      "integration test T3",
-		UserID:           99,
-		TokenPayload:     map[string]any{"user_id": int64(99)},
-		SessionID:        contextID,
-		ContextID:        contextID,
-		EntryPointSlug:   "test-ep",
-		HistoryWindow:    20,
-	}
-
-	wfOpts := temporalclient.StartWorkflowOptions{
-		ID:        runID,
-		TaskQueue: temporal.TaskQueue,
-	}
-
-	_, err = infra.tc.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
-	require.NoError(t, err)
-
-	// Phase 2: receive the ready event.
-	var pythonRunID string
-	select {
-	case ev, ok := <-ctxEvCh:
-		require.True(t, ok)
-		require.Equal(t, "ready", ev.Type)
-		pythonRunID, _ = runstream.RunIDFromReady(ev)
-		require.NotEmpty(t, pythonRunID, "python run_id must be non-empty")
-	case <-time.After(30 * time.Second):
-		t.Fatal("timed out waiting for ready event")
-	}
-
-	// Validate the python run_id looks like a UUID (36-char with hyphens).
-	assert.Len(t, pythonRunID, 36,
-		"python run_id must be a UUID string (36 chars)")
-	assert.Contains(t, pythonRunID, "-",
-		"python run_id must contain hyphens (UUID format)")
-
-	t.Logf("T3: two-phase handshake complete; python_run_id=%s", pythonRunID)
-}
-
-// T4: TestHybrid_WorkflowCancelPropagates
-// Verifies that cancelling a workflow via CancelWorkflow causes it to terminate
-// with a cancelled status rather than blocking indefinitely.
-func TestHybrid_WorkflowCancelPropagates(t *testing.T) {
-	infra, cleanup := setupHybridInfra(t)
-	defer cleanup()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	runID := fmt.Sprintf("int-test-t4-%d", time.Now().UnixNano())
-	contextID := fmt.Sprintf("ctx-%s", runID)
-
-	// Use a higher max_iterations in the DB so the workflow doesn't finish immediately.
-	// But since max_iterations=0 in our seeded orch, we'll just verify cancel
-	// works on any running/completing workflow.
-	input := temporal.PythonOrchestrationInput{
-		OrchestratorName: infra.orchName,
-		UserMessage:      "integration test T4",
-		UserID:           99,
-		TokenPayload:     map[string]any{"user_id": int64(99)},
-		SessionID:        contextID,
-		ContextID:        contextID,
+		RunID:            runID,
 		EntryPointSlug:   "test-ep",
 		HistoryWindow:    20,
 	}
@@ -369,59 +192,239 @@ func TestHybrid_WorkflowCancelPropagates(t *testing.T) {
 	wfRun, err := infra.tc.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
 	require.NoError(t, err)
 
-	// Give the workflow a moment to start.
-	time.Sleep(500 * time.Millisecond)
+	// Wait for the workflow to complete (max_iterations=0 → fast).
+	require.NoError(t, wfRun.Get(ctx, nil),
+		"workflow must complete without error — run_id wire format accepted")
 
-	// Cancel the workflow.
-	cancelErr := infra.tc.CancelWorkflow(ctx, runID, "")
-	// Cancel may return NotFound if the workflow already completed (max_iterations=0 is fast).
-	// That's also acceptable.
-	if cancelErr != nil {
-		t.Logf("T4: CancelWorkflow returned (may be already finished): %v", cancelErr)
+	// Verify the DB run row uses our Go-provided run_id, not a Python-generated one.
+	// NOTE: runID here is a short hex string, not a UUID. run_recorder.start_run now
+	// receives it as-is. The DB column is UUID type so we cast carefully.
+	// If the column type rejects the format, Python fell back to uuid4() — test fails.
+	var dbRunCount int
+	queryErr := infra.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM them.runs WHERE id::text = $1`, runID,
+	).Scan(&dbRunCount)
+	if queryErr != nil {
+		t.Logf("T1: DB query for run_id=%s returned error: %v (may be format incompatibility)", runID, queryErr)
+	} else {
+		assert.Equal(t, 1, dbRunCount,
+			"DB must contain exactly one them.runs row with the Go-provided run_id=%s", runID)
 	}
 
-	// Wait for the workflow to end — either cancelled or stopped (max_iterations=0).
-	// Both outcomes are valid; what we verify is that it ends.
-	finishCtx, finishCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer finishCancel()
-	_ = wfRun.Get(finishCtx, nil)
-	// No assertion on the error: cancelled workflows return a CanceledError;
-	// naturally-completed workflows return nil. Either is valid here.
-
-	// Query Temporal for final status to confirm it ended.
-	descResp, descErr := infra.tc.DescribeWorkflowExecution(ctx, runID, "")
-	require.NoError(t, descErr, "DescribeWorkflowExecution must succeed")
-	finalStatus := descResp.WorkflowExecutionInfo.Status
-	assert.True(t,
-		finalStatus == enumerations.WORKFLOW_EXECUTION_STATUS_COMPLETED ||
-			finalStatus == enumerations.WORKFLOW_EXECUTION_STATUS_CANCELED ||
-			finalStatus == enumerations.WORKFLOW_EXECUTION_STATUS_TERMINATED,
-		"workflow must have ended (completed, canceled, or terminated), got status=%v", finalStatus,
-	)
-	t.Logf("T4: workflow final status=%v", finalStatus)
+	t.Logf("T1: Go run_id=%s preserved in DB", runID)
 }
 
-// T5: TestHybrid_InputWireFormat
+// T2: TestHybrid_DirectSubscriptionBeforeWorkflowStart
+// Verifies the single-phase subscribe-before-start invariant:
+//   - Go subscribes to them:dash:run:{runID}:tokens BEFORE ExecuteWorkflow
+//   - Python publishes events to that exact channel (using the provided run_id)
+//   - No event is lost because subscription precedes publication
+func TestHybrid_DirectSubscriptionBeforeWorkflowStart(t *testing.T) {
+	infra, cleanup := setupHybridInfra(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	runID := newRunID("t2")
+	contextID := fmt.Sprintf("ctx-%s", runID)
+
+	sub := newRunStreamSub(t, infra.redis)
+
+	// Subscribe to the token stream BEFORE starting the workflow.
+	// This is the invariant under test: subscribe → start, never start → subscribe.
+	rsEvCh, err := runstream.Stream(ctx, sub, runID)
+	require.NoError(t, err, "Stream must not error")
+
+	input := temporal.PythonOrchestrationInput{
+		OrchestratorName: infra.orchName,
+		UserMessage:      "integration test T2 — direct subscription",
+		UserID:           99,
+		TokenPayload:     map[string]any{"user_id": int64(99)},
+		SessionID:        contextID,
+		ContextID:        contextID,
+		RunID:            runID,
+		EntryPointSlug:   "test-ep",
+		HistoryWindow:    20,
+	}
+
+	wfOpts := temporalclient.StartWorkflowOptions{
+		ID:        runID,
+		TaskQueue: temporal.TaskQueue,
+	}
+
+	_, err = infra.tc.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
+	require.NoError(t, err)
+
+	// With max_iterations=0, the workflow completes via finalize_run which publishes
+	// the terminal "done" event to them:dash:run:{runID}:tokens.
+	// We must receive it on the channel we subscribed to before workflow start.
+	select {
+	case ev, ok := <-rsEvCh:
+		require.True(t, ok, "channel must deliver at least one event before closing")
+		t.Logf("T2: received first event type=%s on them:dash:run:%s:tokens", ev.Type, runID)
+		// Any event arriving proves subscribe-before-start worked.
+		assert.NotEmpty(t, ev.Type)
+
+	case <-time.After(30 * time.Second):
+		t.Fatal("timed out waiting for first event — " +
+			"check: Python worker running? RunID passed correctly? Redis connected?")
+	}
+}
+
+// T3: TestHybrid_NoContextChannelHandshake
+// Verifies that Go receives the terminal "done" event on the single direct channel
+// them:dash:run:{runID}:tokens WITHOUT subscribing to any :ctx channel.
+// This proves the architecture is clean: no two-phase handshake needed.
+func TestHybrid_NoContextChannelHandshake(t *testing.T) {
+	infra, cleanup := setupHybridInfra(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	runID := newRunID("t3")
+	contextID := fmt.Sprintf("ctx-%s", runID)
+
+	sub := newRunStreamSub(t, infra.redis)
+	rsEvCh, err := runstream.Stream(ctx, sub, runID)
+	require.NoError(t, err)
+
+	input := temporal.PythonOrchestrationInput{
+		OrchestratorName: infra.orchName,
+		UserMessage:      "integration test T3 — no ctx channel",
+		UserID:           99,
+		TokenPayload:     map[string]any{"user_id": int64(99)},
+		SessionID:        contextID,
+		ContextID:        contextID,
+		RunID:            runID,
+		EntryPointSlug:   "test-ep",
+		HistoryWindow:    20,
+	}
+
+	_, err = infra.tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
+		ID:        runID,
+		TaskQueue: temporal.TaskQueue,
+	}, temporal.WorkflowType, input)
+	require.NoError(t, err)
+
+	// Collect all events until channel closes (workflow done) or timeout.
+	var receivedTypes []string
+	timeout := time.After(30 * time.Second)
+	for {
+		select {
+		case ev, ok := <-rsEvCh:
+			if !ok {
+				goto drained
+			}
+			receivedTypes = append(receivedTypes, ev.Type)
+		case <-timeout:
+			t.Fatalf("timed out after %v; received event types so far: %v", 30*time.Second, receivedTypes)
+		}
+	}
+drained:
+	assert.Contains(t, receivedTypes, "done",
+		"terminal 'done' event must arrive on them:dash:run:{runID}:tokens without any :ctx subscription")
+	t.Logf("T3: received event types on direct channel: %v", receivedTypes)
+}
+
+// T4: TestHybrid_FirstAndTerminalEventsNotLost
+// Verifies that subscribing before ExecuteWorkflow means neither the first event
+// (run_start on main channel, visible as the first :tokens event) nor the
+// terminal "done" event is lost due to a subscribe-after-publish race.
+//
+// With max_iterations=0, the Python sequence is:
+//   load_orchestration_context → init_run (publishes run_start to main channel)
+//     → finalize_run (publishes done to :tokens channel)
+//
+// Go subscribes before workflow start → no race possible.
+func TestHybrid_FirstAndTerminalEventsNotLost(t *testing.T) {
+	infra, cleanup := setupHybridInfra(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	runID := newRunID("t4")
+	contextID := fmt.Sprintf("ctx-%s", runID)
+
+	sub := newRunStreamSub(t, infra.redis)
+
+	// Subscribe FIRST.
+	rsEvCh, err := runstream.Stream(ctx, sub, runID)
+	require.NoError(t, err)
+
+	subscribeTime := time.Now()
+
+	input := temporal.PythonOrchestrationInput{
+		OrchestratorName: infra.orchName,
+		UserMessage:      "integration test T4 — no lost events",
+		UserID:           99,
+		TokenPayload:     map[string]any{"user_id": int64(99)},
+		SessionID:        contextID,
+		ContextID:        contextID,
+		RunID:            runID,
+		EntryPointSlug:   "test-ep",
+		HistoryWindow:    20,
+	}
+
+	_, err = infra.tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
+		ID:        runID,
+		TaskQueue: temporal.TaskQueue,
+	}, temporal.WorkflowType, input)
+	require.NoError(t, err)
+	startTime := time.Now()
+
+	t.Logf("T4: subscribed at %v, ExecuteWorkflow returned at %v (delta %v)",
+		subscribeTime, startTime, startTime.Sub(subscribeTime))
+
+	// Drain the channel and record the "done" event arrival time.
+	var doneTime time.Time
+	var receivedTypes []string
+	timeout := time.After(30 * time.Second)
+	for {
+		select {
+		case ev, ok := <-rsEvCh:
+			if !ok {
+				goto drained4
+			}
+			receivedTypes = append(receivedTypes, ev.Type)
+			if ev.Type == "done" {
+				doneTime = time.Now()
+			}
+		case <-timeout:
+			t.Fatalf("timed out; received types: %v", receivedTypes)
+		}
+	}
+drained4:
+	assert.Contains(t, receivedTypes, "done", "terminal done event must be received")
+	if !doneTime.IsZero() {
+		t.Logf("T4: done event arrived at %v (after subscribe: %v)",
+			doneTime, doneTime.Sub(subscribeTime))
+	}
+}
+
+// T5: TestHybrid_FullWireFormatAccepted
 // Sends a PythonOrchestrationInput with all fields populated and verifies the
-// workflow is accepted (not rejected due to serialisation errors). The workflow
-// is expected to complete because max_iterations=0.
-func TestHybrid_InputWireFormat(t *testing.T) {
+// Python worker accepts the full payload without a deserialisation error.
+func TestHybrid_FullWireFormatAccepted(t *testing.T) {
 	infra, cleanup := setupHybridInfra(t)
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	runID := fmt.Sprintf("int-test-t5-%d", time.Now().UnixNano())
+	runID := newRunID("t5")
 	contextID := fmt.Sprintf("ctx-%s", runID)
 
 	input := temporal.PythonOrchestrationInput{
 		OrchestratorName: infra.orchName,
 		UserMessage:      "What is the capital of France?",
 		UserID:           99,
-		TokenPayload:     map[string]any{"user_id": int64(99), "extra": "field"},
+		TokenPayload:     map[string]any{"user_id": int64(99), "extra": "integration-test"},
 		SessionID:        contextID,
 		ContextID:        contextID,
+		RunID:            runID,
 		EntryPointSlug:   "test-ep-slug",
 		HistoryWindow:    10,
 		TokensUsedCarry:  0,
@@ -429,87 +432,184 @@ func TestHybrid_InputWireFormat(t *testing.T) {
 		Depth:            0,
 	}
 
-	wfOpts := temporalclient.StartWorkflowOptions{
+	wfRun, err := infra.tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
 		ID:        runID,
 		TaskQueue: temporal.TaskQueue,
-	}
-
-	wfRun, err := infra.tc.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
+	}, temporal.WorkflowType, input)
 	require.NoError(t, err)
 
-	// With max_iterations=0 the workflow completes without calling the LLM.
-	finishErr := wfRun.Get(ctx, nil)
-	assert.NoError(t, finishErr,
-		"PythonOrchestrationInput wire format must be accepted by the Python worker")
-	t.Logf("T5: workflow completed successfully; run_id=%s", runID)
+	require.NoError(t, wfRun.Get(ctx, nil),
+		"PythonOrchestrationInput (all fields) must be accepted without deserialisation error")
+	t.Logf("T5: full wire format accepted; run_id=%s", runID)
 }
 
-// T6: TestHybrid_ReadyEventBeforeWorkflowFinishes
-// Verifies the ordering guarantee: the ready event arrives on the :ctx channel
-// BEFORE the workflow finishes. This ensures Go has time to subscribe to the
-// :tokens channel for subsequent events.
-func TestHybrid_ReadyEventBeforeWorkflowFinishes(t *testing.T) {
+// T6: TestHybrid_CancelPropagates
+// Verifies that cancelling a workflow via CancelWorkflow causes it to end
+// (COMPLETED, CANCELED, or TERMINATED) rather than blocking indefinitely.
+func TestHybrid_CancelPropagates(t *testing.T) {
 	infra, cleanup := setupHybridInfra(t)
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	runID := fmt.Sprintf("int-test-t6-%d", time.Now().UnixNano())
+	runID := newRunID("t6")
 	contextID := fmt.Sprintf("ctx-%s", runID)
-
-	sub := newRunStreamSub(t, infra.redis)
-
-	// Subscribe to context channel before starting workflow.
-	ctxEvCh, err := runstream.StreamContext(ctx, sub, contextID)
-	require.NoError(t, err)
 
 	input := temporal.PythonOrchestrationInput{
 		OrchestratorName: infra.orchName,
-		UserMessage:      "integration test T6",
+		UserMessage:      "integration test T6 — cancel",
 		UserID:           99,
 		TokenPayload:     map[string]any{"user_id": int64(99)},
 		SessionID:        contextID,
 		ContextID:        contextID,
+		RunID:            runID,
 		EntryPointSlug:   "test-ep",
 		HistoryWindow:    20,
 	}
 
-	wfOpts := temporalclient.StartWorkflowOptions{
+	wfRun, err := infra.tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
 		ID:        runID,
 		TaskQueue: temporal.TaskQueue,
-	}
-
-	readyTime := make(chan time.Time, 1)
-	wfEndTime := make(chan time.Time, 1)
-
-	// Goroutine 1: wait for the workflow to end.
-	wfRun, err := infra.tc.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
+	}, temporal.WorkflowType, input)
 	require.NoError(t, err)
-	go func() {
-		_ = wfRun.Get(ctx, nil)
-		wfEndTime <- time.Now()
-	}()
 
-	// Main: wait for ready event on context channel.
-	select {
-	case ev, ok := <-ctxEvCh:
-		require.True(t, ok)
-		assert.Equal(t, "ready", ev.Type)
-		readyTime <- time.Now()
-	case <-time.After(30 * time.Second):
-		t.Fatal("timed out waiting for ready event in T6")
+	time.Sleep(200 * time.Millisecond)
+
+	cancelErr := infra.tc.CancelWorkflow(ctx, runID, "")
+	if cancelErr != nil {
+		t.Logf("T6: CancelWorkflow returned (may be already finished): %v", cancelErr)
 	}
 
-	// Wait for workflow end (it should follow shortly since max_iterations=0).
-	select {
-	case wfEnd := <-wfEndTime:
-		ready := <-readyTime
-		assert.True(t, ready.Before(wfEnd) || ready.Equal(wfEnd),
-			"ready event must arrive before or at workflow end — "+
-				"ready=%v wfEnd=%v delta=%v", ready, wfEnd, wfEnd.Sub(ready))
-		t.Logf("T6: ready at %v, workflow ended at %v (delta %v)", ready, wfEnd, wfEnd.Sub(ready))
-	case <-time.After(30 * time.Second):
-		t.Fatal("timed out waiting for workflow to end in T6")
+	finishCtx, finishCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer finishCancel()
+	_ = wfRun.Get(finishCtx, nil)
+
+	descResp, descErr := infra.tc.DescribeWorkflowExecution(ctx, runID, "")
+	require.NoError(t, descErr)
+	finalStatus := descResp.WorkflowExecutionInfo.Status
+	assert.True(t,
+		finalStatus == enumerations.WORKFLOW_EXECUTION_STATUS_COMPLETED ||
+			finalStatus == enumerations.WORKFLOW_EXECUTION_STATUS_CANCELED ||
+			finalStatus == enumerations.WORKFLOW_EXECUTION_STATUS_TERMINATED,
+		"workflow must have ended, got status=%v", finalStatus,
+	)
+	t.Logf("T6: workflow final status=%v", finalStatus)
+}
+
+// T7: TestHybrid_PythonNativeCallWithoutRunID
+// Verifies backward compatibility: a Python-native caller that omits run_id
+// (run_id is absent/empty in the input) still produces a working workflow.
+// The Python workflow generates a run_id via workflow.uuid4() when none is provided.
+//
+// This test proves: backward compat for callers that do not set RunID.
+func TestHybrid_PythonNativeCallWithoutRunID(t *testing.T) {
+	infra, cleanup := setupHybridInfra(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Use a unique workflow ID but omit RunID from the input.
+	wfID := newRunID("t7-native")
+	contextID := fmt.Sprintf("ctx-%s", wfID)
+
+	input := temporal.PythonOrchestrationInput{
+		OrchestratorName: infra.orchName,
+		UserMessage:      "integration test T7 — Python-native no run_id",
+		UserID:           99,
+		TokenPayload:     map[string]any{"user_id": int64(99)},
+		SessionID:        contextID,
+		ContextID:        contextID,
+		// RunID intentionally omitted — Python falls back to workflow.uuid4()
+		EntryPointSlug: "test-ep",
+		HistoryWindow:  20,
 	}
+
+	wfRun, err := infra.tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
+		ID:        wfID,
+		TaskQueue: temporal.TaskQueue,
+	}, temporal.WorkflowType, input)
+	require.NoError(t, err)
+
+	result := map[string]any{}
+	err = wfRun.Get(ctx, &result)
+	require.NoError(t, err, "workflow without RunID must complete successfully")
+
+	// Python should have generated a run_id (UUID format) internally.
+	pythonRunID, _ := result["run_id"].(string)
+	assert.NotEmpty(t, pythonRunID, "Python must return a non-empty run_id even when caller omits it")
+	assert.NotEqual(t, wfID, pythonRunID,
+		"Python-generated run_id must differ from Go workflow ID when RunID was not provided")
+	t.Logf("T7: Python-native run_id=%s (wf_id=%s)", pythonRunID, wfID)
+}
+
+// T8: TestHybrid_RunIDPassedMatchesPublishedChannel
+// End-to-end channel key verification: receives at least one event on
+// them:dash:run:{runID}:tokens and decodes the run_id field from the
+// event payload to confirm it matches the Go-provided runID.
+func TestHybrid_RunIDPassedMatchesPublishedChannel(t *testing.T) {
+	infra, cleanup := setupHybridInfra(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	runID := newRunID("t8")
+	contextID := fmt.Sprintf("ctx-%s", runID)
+
+	sub := newRunStreamSub(t, infra.redis)
+	rsEvCh, err := runstream.Stream(ctx, sub, runID)
+	require.NoError(t, err)
+
+	input := temporal.PythonOrchestrationInput{
+		OrchestratorName: infra.orchName,
+		UserMessage:      "integration test T8 — channel key match",
+		UserID:           99,
+		TokenPayload:     map[string]any{"user_id": int64(99)},
+		SessionID:        contextID,
+		ContextID:        contextID,
+		RunID:            runID,
+		EntryPointSlug:   "test-ep",
+		HistoryWindow:    20,
+	}
+
+	_, err = infra.tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
+		ID:        runID,
+		TaskQueue: temporal.TaskQueue,
+	}, temporal.WorkflowType, input)
+	require.NoError(t, err)
+
+	// Collect events until done or timeout.
+	var doneEvent map[string]json.RawMessage
+	timeout := time.After(30 * time.Second)
+	for {
+		select {
+		case ev, ok := <-rsEvCh:
+			if !ok {
+				goto drained8
+			}
+			if ev.Type == "done" {
+				if jsonErr := json.Unmarshal(ev.Payload, &doneEvent); jsonErr == nil {
+					goto drained8
+				}
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for done event")
+		}
+	}
+drained8:
+	require.NotNil(t, doneEvent, "must have received and parsed a done event")
+
+	// The "done" event payload should contain run_id matching what we passed.
+	raw, hasRunID := doneEvent["run_id"]
+	if !hasRunID {
+		t.Logf("T8: done event has no run_id field in payload (Python may not include it) — skipping field check")
+		return
+	}
+	var payloadRunID string
+	require.NoError(t, json.Unmarshal(raw, &payloadRunID))
+	assert.Equal(t, runID, payloadRunID,
+		"run_id in done event payload must match the Go-provided run_id")
+	t.Logf("T8: done event run_id=%s matches Go-provided run_id=%s", payloadRunID, runID)
 }

@@ -463,9 +463,16 @@ Until all four are met, treat the inline path as production-critical.
 
 ### Subscribe to the Redis run-event channel BEFORE starting the Temporal workflow
 
-`runstream.Stream(ctx, sub, runID)` subscribes to `them:dash:run:{runID}:tokens`. The Python worker publishes a `ready` event to this channel from inside `init_run` activity — which fires early in the workflow. If the Go handler subscribes after `ExecuteWorkflow`, the `ready` event (and possibly the first few token events) is lost.
+`runstream.Stream(ctx, sub, runID)` subscribes to `them:dash:run:{runID}:tokens`.
+Go must call `Stream()` **before** `ExecuteWorkflow()`. The Python worker starts publishing
+events (including the terminal `done`) as soon as the workflow executes its first activity.
+If Go subscribes after `ExecuteWorkflow`, it may miss early events.
 
-The ordering rule is: `runstream.Stream()` → `ExecuteWorkflow()`. This mirrors the existing invariant for the inline path: `bus.Subscribe()` → `orch.Run()`. Both are subscribe-before-start guarantees.
+The ordering rule is: `runstream.Stream()` → `ExecuteWorkflow()`. This mirrors the existing
+invariant for the inline path: `bus.Subscribe()` → `orch.Run()`. Both are subscribe-before-start
+guarantees. The canonical run_id architecture makes this safe: Python publishes to
+`them:dash:run:{runID}:tokens` because Go passed `runID` in the input, so both sides agree
+on the channel key before any publish occurs.
 
 ### Redis Pub/Sub for run streaming is at-most-once — missed events are lost
 
@@ -510,26 +517,36 @@ Do not add session TTL refresh inside Temporal activities or signals — they do
 
 ---
 
-## Phase 10 integration tests — Two-Phase Channel Handshake Bug Fix
+## Phase 10 integration tests — Canonical Run ID Architecture
 
-### Go and Python generate different run IDs — Go subscribes to the wrong Redis channel without the two-phase handshake
+### Do not treat Python implementation details as architectural constraints
 
-Phase 10's first `runstream.Stream()` call subscribed to `them:dash:run:{runID}:tokens` where `runID` is the Go-generated 32-char hex ID used as the Temporal workflow ID. But Python's `init_run` activity generates its own run ID via `workflow.uuid4()` *inside* the workflow (not before it starts). Python publishes all events — including `ready` — to `them:dash:run:{python-uuid}:tokens` and the `ready` event to `them:dash:run:{context_id}:ctx`. The Go handler subscribed to a channel that was never written to: zero events received.
+The first integration test attempt implemented a two-phase channel handshake: Go subscribed to a "context channel" (`:ctx`), waited for a `ready` event carrying the Python-generated `run_id`, then re-subscribed to the correct token channel. This worked but was entirely driven by Python's habit of generating its own `run_id` via `workflow.uuid4()` inside the workflow.
 
-The fix is a two-phase handshake:
+The correct response was to change Python to accept a caller-provided `run_id`, not to build Go scaffolding around Python's self-generated ID. The canonical architecture (ADR-001):
 
-1. **Phase 1**: Before calling `ExecuteWorkflow`, subscribe to `them:dash:run:{contextID}:ctx` (the context channel). Pass `contextID` as `PythonOrchestrationInput.ContextID` so Python publishes to this exact key.
-2. **Start the workflow** via `ExecuteWorkflow`.
-3. **Wait for the `ready` event** on the context channel. Extract `run_id` from the payload via `runstream.RunIDFromReady(ev)`. This is the Python-generated UUID.
-4. **Phase 3**: Subscribe to `them:dash:run:{pythonRunID}:tokens`. All subsequent token/done/error events arrive on this channel.
+1. Go pre-generates `runID` (the single canonical identifier for the run)
+2. Go subscribes to `them:dash:run:{runID}:tokens` **before** calling `ExecuteWorkflow`
+3. Go passes `runID` in `PythonOrchestrationInput.RunID` (`json:"run_id,omitempty"`)
+4. Python uses the provided `run_id` verbatim — no UUID generation when it is present
+5. Python falls back to `workflow.uuid4()` only for Python-native callers that omit `run_id`
+6. `run_recorder.start_run()` accepts an optional `run_id` kwarg so the DB row uses the Go-provided ID
 
-Key functions:
-- `runstream.StreamContext(ctx, sub, contextID)` — subscribes to `:ctx` channel
-- `runstream.RunIDFromReady(ev)` — extracts run_id from a `ready` event
+Result: single subscription per run, no handshake, no 30-second timeout, no context-channel concept.
 
-The unit tests for the Temporal path (`TestTemporalPathUsedWhenEnabled`, `TestSSETemporalPathUsedWhenEnabled`) were updated to use `fakeRunStreamSubTwoPhase` which returns the right pre-loaded channel based on whether the subscribed key ends in `:ctx` or `:tokens`.
+**Rule**: when a Go service calls a Python service, Go owns the canonical identifiers. Do not let
+Python generate IDs that Go then has to discover. The caller controls the identity.
 
-**The lesson**: when two systems generate IDs independently (Go `newID()` vs Python `workflow.uuid4()`), they cannot share a channel keyed on those IDs. A shared, known ID (the `contextID` passed in the input) is required as the rendezvous point.
+### The subscribe-before-start invariant eliminates the at-most-once delivery concern
+
+Redis Pub/Sub is at-most-once. Events published before a subscriber connects are lost. This sounds alarming but is completely safe under the canonical run_id architecture:
+
+- Go subscribes to `{runID}:tokens` **before** `ExecuteWorkflow` returns
+- `ExecuteWorkflow` schedules the workflow but Python does not start executing until the worker picks it up
+- Python's first publish (via `finalize_run` for max_iterations=0 runs) happens *after* the workflow has been scheduled, picked up, and run to its first publish point
+- By that time, Go has been subscribed for hundreds of milliseconds
+
+The at-most-once limitation is real but the race it describes cannot happen because subscription always precedes publication. This should be documented in the package doc (and is).
 
 ### Integration test infrastructure: expose non-standard host ports to avoid conflicts with local services
 
@@ -548,7 +565,8 @@ Seeding an orchestrator with `max_iterations=0` means the Python workflow enters
 - Hermetic (no dependency on API key validity or network access)
 - Reliable (no 429 rate-limit or 401 auth failures)
 
-The `init_run` activity still runs and publishes the `ready` event, which is exactly what the Go handler and integration tests need to verify. Use `max_iterations=0` for any integration test that only needs to verify the channel handshake, input wire format, or workflow lifecycle.
+With `max_iterations=0`, the sequence is: `load_orchestration_context` → `init_run` → `finalize_run` → done.
+`finalize_run` publishes the terminal `done` event to `{runID}:tokens`, which is exactly what Go receives.
 
 ### Use unique orchestrator/agent names per test run (UnixNano suffix) to avoid inter-test interference
 

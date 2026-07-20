@@ -539,7 +539,9 @@ func (f *fakeSSETemporalClient) ExecuteWorkflow(_ context.Context, opts temporal
 }
 
 // fakeSSERunStreamSub returns a channel pre-loaded with messages then closes.
-// Used for simple single-channel tests where channel key is not inspected.
+// The handler subscribes once (to them:dash:run:{runID}:tokens); the channel
+// key is not inspected here because Go passes runID to Python, so Python
+// publishes to the same channel Go subscribed to.
 type fakeSSERunStreamSub struct {
 	messages []string
 }
@@ -553,35 +555,9 @@ func (f *fakeSSERunStreamSub) Subscribe(_ context.Context, _ string) (<-chan str
 	return ch, nil
 }
 
-// fakeSSERunStreamSubTwoPhase tracks which channel is subscribed to and returns
-// pre-loaded channels for the context channel (:ctx) and tokens channel (:tokens).
-// This supports the two-phase channel handshake introduced in the bug fix:
-//  1. Handler subscribes to ":ctx" → receives ready event with python run_id
-//  2. Handler subscribes to ":tokens" for python_run_id → receives stream events
-type fakeSSERunStreamSubTwoPhase struct {
-	ctxMessages   []string
-	tokenMessages []string
-}
-
-func (f *fakeSSERunStreamSubTwoPhase) Subscribe(_ context.Context, channel string) (<-chan string, error) {
-	var msgs []string
-	if len(channel) >= 4 && channel[len(channel)-4:] == ":ctx" {
-		msgs = f.ctxMessages
-	} else {
-		msgs = f.tokenMessages
-	}
-	ch := make(chan string, len(msgs)+1)
-	for _, m := range msgs {
-		ch <- m
-	}
-	close(ch)
-	return ch, nil
-}
-
 // 14. Temporal path: when temporalEnabled=true, ExecuteWorkflow is called and
-// orch.Run is NOT called. The client receives the done event from the run stream.
-// Uses the two-phase channel handshake: context channel delivers "ready" with
-// python_run_id, then the tokens channel delivers subsequent events.
+// orch.Run is NOT called. The client receives events directly from the Redis
+// run stream. Go passes runID to Python so both sides use the same channel key.
 func TestSSETemporalPathUsedWhenEnabled(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
 
@@ -590,15 +566,10 @@ func TestSSETemporalPathUsedWhenEnabled(t *testing.T) {
 	h := newTestSSEHandler(nil, authn)
 
 	tc := &fakeSSETemporalClient{}
-	rsSub := &fakeSSERunStreamSubTwoPhase{
-		// Phase 1: context channel returns the ready event so handler can extract python run_id.
-		ctxMessages: []string{
-			`{"type":"ready","run_id":"python-run-id-456","context_id":"ctx-xyz"}`,
-		},
-		// Phase 2: tokens channel returns the actual stream events.
-		tokenMessages: []string{
+	rsSub := &fakeSSERunStreamSub{
+		messages: []string{
 			`{"type":"token","content":"from temporal"}`,
-			`{"type":"done","run_id":"python-run-id-456"}`,
+			`{"type":"done","run_id":"test-run-id"}`,
 		},
 	}
 	h.WithTemporal(tc, rsSub, true)

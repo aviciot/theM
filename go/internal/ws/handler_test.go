@@ -537,7 +537,9 @@ func (f *fakeTemporalClient) ExecuteWorkflow(_ context.Context, opts temporalcli
 }
 
 // fakeRunStreamSub returns a channel pre-loaded with messages then closes.
-// Used for simple single-channel tests where channel key is not inspected.
+// The handler subscribes once (to them:dash:run:{runID}:tokens); the channel
+// key is not inspected here because Go passes runID to Python, so Python
+// publishes to the same channel Go subscribed to.
 type fakeRunStreamSub struct {
 	messages []string
 }
@@ -551,37 +553,9 @@ func (f *fakeRunStreamSub) Subscribe(_ context.Context, _ string) (<-chan string
 	return ch, nil
 }
 
-// fakeRunStreamSubTwoPhase tracks which channel is subscribed to and returns
-// pre-loaded channels for the context channel (:ctx) and tokens channel (:tokens).
-// This supports the two-phase channel handshake introduced in the bug fix:
-//  1. Handler subscribes to ":ctx" → receives ready event with python run_id
-//  2. Handler subscribes to ":tokens" for python_run_id → receives stream events
-type fakeRunStreamSubTwoPhase struct {
-	// ctxMessages are returned when the subscribed channel ends with ":ctx"
-	ctxMessages []string
-	// tokenMessages are returned for the tokens channel (any other subscription)
-	tokenMessages []string
-}
-
-func (f *fakeRunStreamSubTwoPhase) Subscribe(_ context.Context, channel string) (<-chan string, error) {
-	var msgs []string
-	if len(channel) >= 4 && channel[len(channel)-4:] == ":ctx" {
-		msgs = f.ctxMessages
-	} else {
-		msgs = f.tokenMessages
-	}
-	ch := make(chan string, len(msgs)+1)
-	for _, m := range msgs {
-		ch <- m
-	}
-	close(ch)
-	return ch, nil
-}
-
 // 15. Temporal path: when temporalEnabled=true, ExecuteWorkflow is called and
-// orch.Run is NOT called. The client receives the done event from the run stream.
-// Uses the two-phase channel handshake: context channel delivers "ready" with
-// python_run_id, then the tokens channel delivers subsequent events.
+// orch.Run is NOT called. The client receives events directly from the Redis
+// run stream. Go passes runID to Python so both sides use the same channel key.
 func TestTemporalPathUsedWhenEnabled(t *testing.T) {
 	sessions := &fakeSessionStore{}
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
@@ -592,15 +566,10 @@ func TestTemporalPathUsedWhenEnabled(t *testing.T) {
 	h, _ := newTestHandler(t, nil, authn, sessions)
 
 	tc := &fakeTemporalClient{}
-	rsSub := &fakeRunStreamSubTwoPhase{
-		// Phase 1: context channel returns the ready event so handler can extract python run_id.
-		ctxMessages: []string{
-			`{"type":"ready","run_id":"python-run-id-123","context_id":"ctx-abc"}`,
-		},
-		// Phase 2: tokens channel returns the actual stream events.
-		tokenMessages: []string{
+	rsSub := &fakeRunStreamSub{
+		messages: []string{
 			`{"type":"token","content":"hello from temporal"}`,
-			`{"type":"done","run_id":"python-run-id-123"}`,
+			`{"type":"done","run_id":"test-run-id"}`,
 		},
 	}
 	h.WithTemporal(tc, rsSub, true)

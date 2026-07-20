@@ -388,16 +388,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	orchDone := make(chan struct{})
 
 	if h.temporalEnabled && h.temporalClient != nil {
-		// ── 11a. Temporal path — two-phase channel handshake ─────────────────
+		// ── 11a. Temporal path ────────────────────────────────────────────────
 		//
-		// Phase 1: subscribe to the context channel BEFORE starting the workflow.
-		// Python's init_run activity publishes a "ready" event here that carries
-		// the Python-generated run_id (workflow.uuid4() inside the Python workflow).
-		// We must subscribe first to avoid missing this event.
-		ctxEvCh, ctxErr := runstream.StreamContext(ctx, h.runStreamSub, contextID)
-		if ctxErr != nil {
-			h.logger.Warn("sse: runstream context-channel subscribe failed — falling back to inline",
-				"run_id", runID, "context_id", contextID, "error", ctxErr)
+		// Subscribe to the token stream BEFORE starting the workflow so no event
+		// is missed. Go passes runID as PythonOrchestrationInput.RunID; Python
+		// uses it verbatim for all publish calls on them:dash:run:{runID}:tokens.
+		rsEvCh, rsErr := runstream.Stream(ctx, h.runStreamSub, runID)
+		if rsErr != nil {
+			h.logger.Warn("sse: runstream subscribe failed — falling back to inline",
+				"run_id", runID, "error", rsErr)
 			go func() {
 				defer close(orchDone)
 				_, runErr := h.orch.Run(ctx, runID, contextID, userMsg, nil)
@@ -409,7 +408,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Build the minimal token payload from the resolved token.
 		tokenPayload := map[string]any{"user_id": tokenInfo.TokenID}
 
 		input := temporal.PythonOrchestrationInput{
@@ -419,6 +417,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			TokenPayload:     tokenPayload,
 			SessionID:        sessionID,
 			ContextID:        contextID,
+			RunID:            runID,
 			EntryPointSlug:   epSlug,
 			HistoryWindow:    20,
 		}
@@ -437,10 +436,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		h.logger.Info("sse: temporal workflow started",
-			"run_id", runID,
-			"workflow_id", wfRun.GetID(),
-		)
+		h.logger.Info("sse: temporal workflow started", "run_id", runID, "workflow_id", wfRun.GetID())
 
 		// Wait for workflow completion in background (drives orchDone).
 		go func() {
@@ -449,46 +445,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.logger.Warn("sse: temporal workflow error", "run_id", runID, "error", err)
 			}
 		}()
-
-		// Phase 2: wait for the "ready" event which carries the Python run_id.
-		var pythonRunID string
-		select {
-		case ev, ok := <-ctxEvCh:
-			if ok && ev.Type == "ready" {
-				pythonRunID, _ = runstream.RunIDFromReady(ev)
-			}
-		case <-time.After(30 * time.Second):
-			h.logger.Warn("sse: timed out waiting for ready event", "run_id", runID)
-		case <-ctx.Done():
-			_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"cancelled before workflow started\"}\n\n")
-			if hasFlusher {
-				flusher.Flush()
-			}
-			return
-		}
-
-		// Phase 3: subscribe to the token stream using the Python run_id.
-		var rsEvCh <-chan event.Event
-		if pythonRunID != "" {
-			ch, rsErr := runstream.Stream(ctx, h.runStreamSub, pythonRunID)
-			if rsErr != nil {
-				h.logger.Warn("sse: runstream tokens-channel subscribe failed — falling back to inline",
-					"run_id", runID, "python_run_id", pythonRunID, "error", rsErr)
-				go func() {
-					defer close(orchDone)
-					_, runErr := h.orch.Run(ctx, runID, contextID, userMsg, nil)
-					if runErr != nil {
-						h.logger.Warn("sse: orchestrator error", "run_id", runID, "error", runErr)
-					}
-				}()
-				h.streamEvents(ctx, cancel, w, flusher, hasFlusher, evCh, orchDone)
-				return
-			}
-			rsEvCh = ch
-		} else {
-			// No ready event — stream nothing; orchDone closes when wfRun.Get returns.
-			rsEvCh = make(chan event.Event)
-		}
 
 		// ── 12a. Stream Redis run events as SSE ───────────────────────────────
 		h.streamEvents(ctx, cancel, w, flusher, hasFlusher, rsEvCh, orchDone)

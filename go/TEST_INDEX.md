@@ -373,18 +373,15 @@ The behavioural contract of `auth.RedisClient` is exercised in S1-05 via `mockRe
 
 ### S1-21 · Run stream — `internal/runstream/stream_test.go`
 
-**Purpose:** Redis pub/sub stream adapter — message forwarding, context cancellation, two-phase channel handshake, and run_id extraction.
-At-most-once delivery limitation is explicit and intentional (documented in source).
+**Purpose:** Redis pub/sub stream adapter — message forwarding and context cancellation.
+Go pre-generates runID and subscribes to `them:dash:run:{runID}:tokens` before workflow start.
+Python uses the provided runID verbatim, so both sides agree on the channel key without any handshake.
+At-most-once delivery is acceptable because subscription always precedes publication.
 
 | Test | What it proves |
 |---|---|
 | `TestStream_ForwardsMessages` | Fake subscriber with 2 pre-loaded messages → 2 events forwarded with correct Type; channel closes when source closes |
 | `TestStream_ContextCancel` | Context cancelled immediately → output channel closes promptly without blocking |
-| `TestStreamContext_ForwardsMessages` | `StreamContext` subscribes to `:ctx` channel; forwards ready + done events identically to `Stream` |
-| `TestRunIDFromReady/ready_event_with_run_id` | `RunIDFromReady` extracts run_id from ready event payload |
-| `TestRunIDFromReady/non-ready_event_returns_false` | Non-ready event type → returns ("", false) |
-| `TestRunIDFromReady/ready_event_without_run_id` | Ready event missing run_id field → returns ("", false) |
-| `TestRunIDFromReady/empty_payload_returns_false` | Ready event with no run_id value → returns ("", false) |
 
 **Trigger:** any change to `internal/runstream/stream.go`
 
@@ -454,10 +451,11 @@ go test -tags=integration -v ./...
 
 ### S2-02 · Hybrid Temporal integration — `internal/temporal/hybrid_integration_test.go`
 
-**Purpose:** End-to-end Go↔Python Temporal handshake with real Temporal server, Redis, and PostgreSQL.
-Verifies the two-phase channel handshake fix: Go subscribes to `:ctx` channel first, receives the Python-generated
-run_id from the `ready` event, then switches to the `:tokens` channel. Seeds minimal DB rows (orchestrator with
-`max_iterations=0`, one agent, one access token) — no LLM calls needed.
+**Purpose:** End-to-end Go↔Python Temporal single-phase architecture with real Temporal server, Redis, and PostgreSQL.
+Verifies the canonical design: Go pre-generates runID, subscribes to `them:dash:run:{runID}:tokens` before
+`ExecuteWorkflow`, passes runID in `PythonOrchestrationInput.RunID`, and Python uses that exact ID for all
+publish calls. No context-channel bootstrap handshake. Seeds minimal DB rows (orchestrator with
+`max_iterations=0`, one agent) — no LLM calls needed.
 
 **Required infrastructure:**
 - Temporal server at `$TEMPORAL_HOST_PORT` (default: `localhost:7233`)
@@ -467,12 +465,14 @@ run_id from the `ready` event, then switches to the `:tokens` channel. Seeds min
 
 | Test | What it proves |
 |---|---|
-| `TestHybrid_TaskQueueAndWorkflowNameCompatibility` | Task queue `"them-orchestration"` and workflow type `"OrchestrationWorkflow"` are accepted by the Python worker; input is deserialised without error |
-| `TestHybrid_ContextChannelReceivesReadyEvent` | Go subscribes to `:ctx` BEFORE `ExecuteWorkflow`; Python's `init_run` publishes `ready` event; Go receives it within 30s |
-| `TestHybrid_TwoChannelHandshake` | Full two-phase handshake: subscribe `:ctx` → start workflow → receive `ready` → extract python run_id (36-char UUID format) |
-| `TestHybrid_WorkflowCancelPropagates` | `CancelWorkflow` terminates the workflow; final status is COMPLETED, CANCELED, or TERMINATED — not stuck |
-| `TestHybrid_InputWireFormat` | All `PythonOrchestrationInput` fields serialise correctly; Python worker accepts the full payload |
-| `TestHybrid_ReadyEventBeforeWorkflowFinishes` | `ready` event arrives on `:ctx` channel BEFORE `wfRun.Get()` returns — ordering guarantee confirmed |
+| `TestHybrid_GoProvidedRunIDPreservedEndToEnd` | runID passed in `PythonOrchestrationInput.RunID` appears in the `them.runs` DB row — Python did not generate a different UUID |
+| `TestHybrid_DirectSubscriptionBeforeWorkflowStart` | Subscribe to `:tokens` before `ExecuteWorkflow` → receive at least one event; invariant holds |
+| `TestHybrid_NoContextChannelHandshake` | Terminal `done` event received on direct `{runID}:tokens` channel with NO `:ctx` subscription — single-phase architecture is complete |
+| `TestHybrid_FirstAndTerminalEventsNotLost` | `done` event received; timestamps prove subscribe happened before workflow start → no race |
+| `TestHybrid_FullWireFormatAccepted` | All `PythonOrchestrationInput` fields (including `RunID`) serialise correctly; Python accepts without error |
+| `TestHybrid_CancelPropagates` | `CancelWorkflow` causes workflow to end (COMPLETED/CANCELED/TERMINATED) — not stuck |
+| `TestHybrid_PythonNativeCallWithoutRunID` | Input without `RunID` → Python falls back to `workflow.uuid4()` and returns a different run_id — backward compat confirmed |
+| `TestHybrid_RunIDPassedMatchesPublishedChannel` | `done` event payload `run_id` field matches the Go-provided runID — Python used our ID, not a self-generated one |
 
 **Start infrastructure (one command):**
 ```bash
