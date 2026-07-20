@@ -2,9 +2,11 @@
 
 Last updated: 2026-07-20
 
-All 8 phases complete + Phase 9 (gate package) + Phase 5.4 full EP config wiring + Phase 10 Temporal execution path (canonical run_id, ADR-001) + live-stack validation + Phase 11a (runstream reconnect with backoff). `go build ./...` and `go test ./...` pass. Race detector clean on all packages.
+All 8 phases complete + Phase 9 (gate package) + Phase 5.4 full EP config wiring + Phase 10 Temporal execution path (canonical run_id, ADR-001) + live-stack validation + Phase 11a (runstream reconnect with backoff) + Phase 11b (run reconciler). `go build ./...` and `go test ./...` pass. Race detector clean on all packages.
 
 **Phase 11a (runstream reconnect):** `internal/runstream/stream.go` now holds the output channel open across transient Redis disconnects. Reconnects use bounded exponential backoff (100ms→3200ms, max 6 attempts). Terminal events (`done`/`error`) close the output immediately without waiting for the source channel. Exhausted reconnects emit a single synthetic error event. Four Prometheus counters: `them_runstream_{disconnects,reconnect_attempts,reconnect_success,reconnect_failure}_total`. Integration tests pass under `go test -tags=integration ./...`.
+
+**Phase 11b (run reconciler):** `internal/reconciler/` sweeps `them.runs` for rows stuck in `status='running'` and reconciles them against Temporal's authoritative state via `DescribeWorkflowExecution`. PostgreSQL advisory lock prevents duplicate sweeps across pods. Dry-run mode is on by default — set `DryRun=false` in `main.go` to enable writes. Safe NotFound policy: no DB write on 404; warns and increments metric instead. Status mapping: COMPLETED→completed, FAILED→failed, CANCELED→canceled, TERMINATED→stopped, TIMED_OUT→failed (ADR-002). Six Prometheus counters: `them_reconciler_{scanned,unchanged,updated,notfound,errors,dryrun}_total`. 14 unit tests pass.
 
 ---
 
@@ -27,6 +29,7 @@ All 8 phases complete + Phase 9 (gate package) + Phase 5.4 full EP config wiring
 | orchestrator | `internal/orchestrator` | Agentic loop, DB-level history LIMIT, context cancellation | 0 (tested via ws/sse) | DB-level LIMIT on history (Medium finding #3) |
 | temporal | `internal/temporal` | Temporal workflow/activity, HITL signal channel, Signaler adapter, PythonOrchestrationInput (wire-format struct for Python worker) | 0 (integration) | Durable execution, HITL, pod-crash resilience |
 | runstream | `internal/runstream` | Redis pub/sub subscriber for `them:dash:run:{runID}:tokens`. Reconnects on transient drops with bounded exponential backoff (100ms→3200ms, max 6 attempts). Terminal events close output immediately. Exhaustion emits one synthetic error event. Four Prometheus counters. At-most-once delivery — no replay during reconnect gap. | 10 | Phase 11a: output channel survives Redis hiccups without tearing down client connection. |
+| reconciler | `internal/reconciler` | Sweeps `them.runs` for stuck `running` rows and reconciles against Temporal via `DescribeWorkflowExecution`. PostgreSQL advisory lock for single-pod sweep coordination. Dry-run mode on by default. Safe NotFound policy (no DB write). Status mapping per ADR-002. Six Prometheus counters. | 15 | Phase 11b: reconciles runs that completed in Temporal but remain `running` in DB after connection loss. |
 | agentregistry | `internal/agentregistry` | A2A JSON-RPC 2.0 invocation, two-level cache, pub/sub invalidation | 5 | Agent config cache with cross-replica invalidation |
 | epconfig | `internal/epconfig` | EP + App runtime config resolver — DB JOIN, 30s TTL cache, CheckAccess (fail-closed), Subscribe for cross-pod Redis pub/sub invalidation, shared by WS + SSE | 26 | Single typed config model; no duplication between handlers |
 | ws | `internal/ws` | WebSocket handler, lazy auth (EP config checked first), public EP support, anonymous session identity (UserID=0, TokenHash="" to gate), Gate contract (Check→Register→Confirm/Rollback/Release), bus subscription before workflow, voice EP rejection (501), Temporal execution path (TEMPORAL_ENABLED=true) with single-phase subscribe-before-start (subscribe `:tokens` → start workflow), Go-inline fallback. `newID()` uses `github.com/google/uuid` — UUID v4 format required for Python Temporal worker | 15 | Subscribe-before-start bootstrap pattern + Gate contract enforcement + real EP limits + public EP access + anonymous session safety + voice EP guard + Temporal coexistence + UUID ID format |
@@ -36,8 +39,8 @@ All 8 phases complete + Phase 9 (gate package) + Phase 5.4 full EP config wiring
 | ratelimit | `internal/ratelimit` | Redis INCR rate limiting, per-token + per-app, 1-minute windows | 3 | Redis-backed rate limiting (replica-safe) |
 | gate | `internal/gate` | Runtime admission gate — SOLE owner of Set membership. Reservation TTL pattern: Check (SADD + short shadow TTL 10s) → Register (Hash) → Confirm (extend to 90s). Rollback on Register failure. Queue: BLPop signal channel, re-compete on wake. | 16 | Eliminates duplicate-SADD failure window; reservation TTL bounds ghost window to ≤10s even on crash; queue wake-up is a compete not a guarantee |
 
-**Total packages with tests: 23**
-**Total test count: 165 unit + 12 integration = 177 automated**
+**Total packages with tests: 24**
+**Total test count: 188 unit + 12 integration = 200 automated**
 
 ---
 
@@ -100,7 +103,7 @@ From the original architecture review:
 
 ```
 go build ./...     PASS
-go test ./...      PASS (23 packages, 165 unit tests)
+go test ./...      PASS (24 packages, 188 unit tests)
 go test -tags=integration ./...   PASS (4 stack integration + 8 hybrid Temporal integration = 12 integration tests)
 go test -race ./...                NOTE: requires Linux/GCC — run in CI only
 ```

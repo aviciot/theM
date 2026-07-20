@@ -402,6 +402,44 @@ At-most-once delivery: events missed during a reconnect gap are lost, not replay
 
 ---
 
+### S1-22 · Run reconciler — `internal/reconciler/reconciler_test.go`
+
+**Purpose:** Temporal-backed run reconciliation. Sweeps `them.runs` for rows stuck in
+`status='running'` and reconciles against Temporal's authoritative `DescribeWorkflowExecution`
+response. PostgreSQL advisory lock prevents duplicate concurrent sweeps. Dry-run mode emits
+no DB writes. Safe NotFound policy: no DB update on 404 (protects Python-native runs and
+history-expired rows). Status mapping per ADR-002.
+
+| Test | What it proves |
+|---|---|
+| `TestReconciler_FreshRunSkipped` | Rows excluded by StaleAfter produce no Temporal call and no DB update |
+| `TestReconciler_TemporalRunningLeaveUnchanged` | RUNNING workflow → no DB update |
+| `TestReconciler_CompletedUpdatesStatus` | COMPLETED → `completed` |
+| `TestReconciler_FailedUpdatesStatus` | FAILED → `failed` |
+| `TestReconciler_CanceledUpdatesStatus` | CANCELED → `canceled` (single-L canonical spelling) |
+| `TestReconciler_TerminatedMapsToStopped` | TERMINATED → `stopped` (ADR-002: operator stop, not failure) |
+| `TestReconciler_TimedOutMapsToFailed` | TIMED_OUT → `failed` (ADR-002: no timed_out in schema) |
+| `TestReconciler_NotFoundNoDestructiveUpdate` | NotFound from Temporal → no DB write |
+| `TestReconciler_TemporalUnavailableNoDBUpdate` | Temporal transient error → no DB write |
+| `TestReconciler_AdvisoryLockPreventsDoubleSweep` | Second reconciler instance skips sweep when lock is held |
+| `TestReconciler_IdempotentUpdate` | Repeated reconciliation of same run writes same payload (DB idempotency via WHERE status='running') |
+| `TestReconciler_DryRunNoWrites` | DryRun=true → no Exec calls, no DB updates |
+| `TestReconciler_ContinuedAsNewNoUpdate` | CONTINUED_AS_NEW → no DB update (new execution is active) |
+| `TestMapTemporalStatus` | All 8 Temporal status enum values map to expected DB statuses |
+| `TestIsNotFound` | gRPC codes.NotFound detected; Unavailable and generic errors rejected |
+
+**Prometheus counters exposed:**
+- `them_reconciler_scanned_total`
+- `them_reconciler_unchanged_total`
+- `them_reconciler_updated_total`
+- `them_reconciler_notfound_total`
+- `them_reconciler_errors_total`
+- `them_reconciler_dryrun_total`
+
+**Trigger:** any change to `internal/reconciler/reconciler.go`
+
+---
+
 ### S1-18 · EP config loader — `internal/epconfig/epconfig_test.go`
 
 **Purpose:** Entry point and application runtime configuration resolution from DB — precedence rules, fail-closed policy, in-process TTL cache, cache invalidation, cross-pod pub/sub eviction. The single typed model shared by both WS and SSE handlers.
@@ -599,6 +637,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/cache/auth_adapter.go` | S1-19 |
 | `internal/cache/runstream_adapter.go` | S1-20 |
 | `internal/runstream/stream.go` | S1-21 |
+| `internal/reconciler/reconciler.go` | S1-22 |
 | `cmd/them/main.go` | S1 (full suite) |
 | `go.mod` or `go.sum` | S1 (full suite) |
 | `Dockerfile.go` | S1 + rebuild + S2 |
@@ -648,9 +687,10 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-19 | cache | 1 |
 | S1-20 | cache (runstream adapter) | 1 |
 | S1-21 | runstream | 10 |
-| **S1 total** | | **173** |
+| S1-22 | reconciler | 15 |
+| **S1 total** | | **188** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | **S2 total** | | **12** |
 | S3 live | manual | 23 |
-| **Grand total** | | **208** |
+| **Grand total** | | **223** |

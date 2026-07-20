@@ -25,6 +25,7 @@ import (
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/ratelimit"
+	"github.com/aviciot/them/internal/reconciler"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/server"
 	"github.com/aviciot/them/internal/session"
@@ -147,6 +148,14 @@ func run() error {
 		log.Info("Temporal client connected", "host_port", cfg.TemporalHostPort)
 	} else {
 		log.Info("Temporal disabled — using Go-inline orchestration path")
+	}
+
+	// ── 13c. Start run reconciler (Temporal path only, dry-run by default) ───
+	if cfg.TemporalEnabled && temporalCli != nil {
+		recDB := reconciler.NewPgxQuerier(database.Pool())
+		recCfg := reconciler.Config{DryRun: true} // safe default; set DryRun=false to enable writes
+		go reconciler.Run(ctx, recCfg, recDB, temporalCli, log)
+		log.Info("run reconciler started", "dry_run", recCfg.DryRun)
 	}
 
 	// ── 14. Wire EP config loader (shared by WS + SSE) ───────────────────────
