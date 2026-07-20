@@ -1,4 +1,4 @@
-﻿// Package sse implements the Server-Sent Events entry point for orchestration.
+// Package sse implements the Server-Sent Events entry point for orchestration.
 //
 // Route: GET /sse/orchestrate/{app_slug}/{entry_point_slug}
 //
@@ -12,11 +12,18 @@
 //	data: {"type":"tool_call","name":"...","input":{}}\n\n
 //	data: {"type":"done","run_id":"..."}\n\n
 //	data: {"type":"error","message":"..."}\n\n
+//
+// Gate contract (internal/gate):
+//
+//	Gate.Check() → session.Register() → Gate.Confirm()
+//	On Register failure: Gate.Rollback()
+//	On session end: session.End() + Gate.Release()
 package sse
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -31,6 +38,7 @@ import (
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/event"
+	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/session"
@@ -41,6 +49,13 @@ func newID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// tokenHash returns the lowercase hex SHA-256 of rawToken, matching the hash
+// stored in them.access_tokens by the Python platform (same as auth.tokenHash).
+func tokenHash(rawToken string) string {
+	h := sha256.Sum256([]byte(rawToken))
+	return fmt.Sprintf("%x", h)
 }
 
 // Authenticator validates bearer tokens.
@@ -54,9 +69,19 @@ type SessionStore interface {
 	End(ctx context.Context, sessionID, epSlug, appID string) error
 }
 
+// GateStore performs admission control for incoming sessions.
+// Implemented by gate.Gate.
+type GateStore interface {
+	Check(ctx context.Context, cfg gate.Config) (gate.Result, error)
+	Confirm(ctx context.Context, cfg gate.Config) error
+	Rollback(ctx context.Context, cfg gate.Config) error
+	Release(ctx context.Context, cfg gate.Config) error
+}
+
 // Handler is the SSE orchestration handler.
 type Handler struct {
 	sessions      SessionStore
+	gateStore     GateStore
 	recorder      *runrecorder.Recorder
 	orch          *orchestrator.Orchestrator
 	bus           event.Bus
@@ -65,7 +90,8 @@ type Handler struct {
 	logger        *slog.Logger
 }
 
-// NewHandler creates a Handler.
+// NewHandler creates a Handler. gateStore may be nil (gate check is skipped),
+// which is useful in tests that do not exercise admission control.
 func NewHandler(
 	sessions SessionStore,
 	recorder *runrecorder.Recorder,
@@ -89,6 +115,14 @@ func NewHandler(
 	}
 }
 
+// WithGate attaches an admission gate to the handler. Must be called before
+// the handler starts serving requests. When a gate is present every inbound
+// SSE connection goes through Gate.Check → session.Register → Gate.Confirm.
+func (h *Handler) WithGate(g GateStore) *Handler {
+	h.gateStore = g
+	return h
+}
+
 // Routes returns an http.Handler that mounts the SSE orchestration routes.
 // Accepts both GET (message as ?message=) and POST (message in JSON body).
 func (h *Handler) Routes() http.Handler {
@@ -104,7 +138,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	epSlug := chi.URLParam(r, "entry_point_slug")
 
 	// ── 1. Authenticate ───────────────────────────────────────────────────────
-	tokenInfo, ok := h.authenticate(r)
+	tokenInfo, rawToken, ok := h.authenticate(r)
 	if !ok {
 		w.Header().Set("Content-Type", "application/json")
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
@@ -119,7 +153,39 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 3. Set SSE headers ────────────────────────────────────────────────────
+	// ── 3. Gate.Check ─────────────────────────────────────────────────────────
+	sessionID := newID()
+	var gateCfg gate.Config
+	var gateAdmitted bool
+
+	if h.gateStore != nil {
+		gateCfg = gate.Config{
+			EPSlug:    epSlug,
+			AppID:     "", // resolved from DB in Phase 5.4 full wiring; 0 = unlimited for now
+			TokenHash: tokenHash(rawToken),
+			SessionID: sessionID,
+			// EPMaxConcurrent=0 means unlimited until full EP config wiring.
+			// RateLimitRPM=0 means unlimited.
+		}
+		if _, err := h.gateStore.Check(r.Context(), gateCfg); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			switch err {
+			case gate.ErrCapExceeded:
+				http.Error(w, `{"error":"session cap exceeded"}`, http.StatusServiceUnavailable)
+			case gate.ErrRateLimited:
+				http.Error(w, `{"error":"rate limited"}`, http.StatusTooManyRequests)
+			case gate.ErrQueueFull:
+				http.Error(w, `{"error":"queue full"}`, http.StatusServiceUnavailable)
+			default:
+				h.logger.Warn("sse: gate check failed", "error", err)
+				http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+			}
+			return
+		}
+		gateAdmitted = true
+	}
+
+	// ── 4. Set SSE headers ────────────────────────────────────────────────────
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -128,12 +194,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	flusher, hasFlusher := w.(http.Flusher)
 
-	// ── 4. Set up session / run IDs ───────────────────────────────────────────
-	sessionID := newID()
+	// ── 5. Set up run / context IDs ───────────────────────────────────────────
 	runID := newID()
 	contextID := newID()
 
-	// ── 5. Register session ───────────────────────────────────────────────────
+	// ── 6. Register session ───────────────────────────────────────────────────
 	sessInfo := session.SessionInfo{
 		SessionID:        sessionID,
 		InstanceID:       h.instanceID,
@@ -145,17 +210,38 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.sessions.Register(r.Context(), sessInfo); err != nil {
 		h.logger.Warn("sse: register session failed", "session_id", sessionID, "error", err)
+		if gateAdmitted {
+			_ = h.gateStore.Rollback(context.Background(), gateCfg)
+		}
+		// SSE headers already sent; write an error event.
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"session registration failed\"}\n\n")
+		if hasFlusher {
+			flusher.Flush()
+		}
+		return
 	}
+
+	// ── 7. Gate.Confirm ───────────────────────────────────────────────────────
+	if gateAdmitted {
+		if err := h.gateStore.Confirm(r.Context(), gateCfg); err != nil {
+			h.logger.Warn("sse: gate confirm failed", "session_id", sessionID, "error", err)
+			// Non-fatal: session hash is registered; shadow TTL (10s) provides safety net.
+		}
+	}
+
 	defer func() {
 		ctx := context.Background()
 		_ = h.sessions.End(ctx, sessionID, epSlug, "")
+		if gateAdmitted {
+			_ = h.gateStore.Release(ctx, gateCfg)
+		}
 	}()
 
-	// ── 6. CRITICAL: Subscribe to event bus BEFORE starting the workflow ──────
+	// ── 8. CRITICAL: Subscribe to event bus BEFORE starting the workflow ──────
 	evCh, unsub := h.bus.Subscribe(r.Context(), contextID, 256)
 	defer unsub()
 
-	// ── 7. Create run record ──────────────────────────────────────────────────
+	// ── 9. Create run record ──────────────────────────────────────────────────
 	run := domain.Run{
 		ID:             runID,
 		ContextID:      contextID,
@@ -166,7 +252,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("sse: create run failed", "run_id", runID, "error", err)
 	}
 
-	// ── 8. Start orchestration in a goroutine ─────────────────────────────────
+	// ── 10. Start orchestration in a goroutine ────────────────────────────────
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -181,7 +267,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// ── 9. Stream events from bus as SSE ──────────────────────────────────────
+	// ── 11. Stream events from bus as SSE ─────────────────────────────────────
 	h.streamEvents(ctx, cancel, w, flusher, hasFlusher, evCh, orchDone)
 }
 
@@ -301,7 +387,8 @@ func (h *Handler) formatSSE(ev event.Event) (string, error) {
 
 // authenticate extracts and validates the bearer token.
 // Checks Authorization header first, then ?token= query param.
-func (h *Handler) authenticate(r *http.Request) (*auth.TokenInfo, bool) {
+// Returns (tokenInfo, rawToken, ok).
+func (h *Handler) authenticate(r *http.Request) (*auth.TokenInfo, string, bool) {
 	var rawToken string
 
 	if hdr := r.Header.Get("Authorization"); strings.HasPrefix(hdr, "Bearer ") {
@@ -311,14 +398,14 @@ func (h *Handler) authenticate(r *http.Request) (*auth.TokenInfo, bool) {
 	}
 
 	if rawToken == "" {
-		return nil, false
+		return nil, "", false
 	}
 
 	info, err := h.authenticator.Validate(r.Context(), rawToken)
 	if err != nil {
-		return nil, false
+		return nil, "", false
 	}
-	return info, true
+	return info, rawToken, true
 }
 
 // extractMessage reads the user message from ?message= query param (GET) or

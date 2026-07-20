@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-20
 
-All 8 phases complete + Phase 9 (gate package). `go build ./...` and `go test ./...` pass.
+All 8 phases complete + Phase 9 (gate package) + Phase 5.4 gate wiring (WS + SSE handlers). `go build ./...` and `go test ./...` pass.
 Integration tests pass under `go test -tags=integration ./...`.
 
 ---
@@ -26,15 +26,15 @@ Integration tests pass under `go test -tags=integration ./...`.
 | orchestrator | `internal/orchestrator` | Agentic loop, DB-level history LIMIT, context cancellation | 0 (tested via ws/sse) | DB-level LIMIT on history (Medium finding #3) |
 | temporal | `internal/temporal` | Temporal workflow/activity, HITL signal channel, Signaler adapter | 0 (integration) | Durable execution, HITL, pod-crash resilience |
 | agentregistry | `internal/agentregistry` | A2A JSON-RPC 2.0 invocation, two-level cache, pub/sub invalidation | 5 | Agent config cache with cross-replica invalidation |
-| ws | `internal/ws` | WebSocket handler, auth, session, bus subscription before workflow | 4 | Subscribe-before-start bootstrap pattern |
-| sse | `internal/sse` | SSE handler (GET+POST), same subscribe-before-start pattern as WS | 3 | SSE as a first-class entry point |
+| ws | `internal/ws` | WebSocket handler, auth, Gate contract (Check→Register→Confirm/Rollback/Release), bus subscription before workflow | 7 | Subscribe-before-start bootstrap pattern + Gate contract enforcement |
+| sse | `internal/sse` | SSE handler (GET+POST), same Gate contract + subscribe-before-start pattern as WS | 6 | SSE as a first-class entry point + Gate contract enforcement |
 | a2a | `internal/a2a` | JSON-RPC 2.0 A2A server, /.well-known/agent.json agent card | 3 | Orchestrator-as-agent pattern |
 | admin | `internal/admin` | REST CRUD for agents/orchestrators/applications/entry-points/runs, HITL signal, JWT+super_admin middleware | 5 | Admin API with proper auth, cache invalidation |
 | ratelimit | `internal/ratelimit` | Redis INCR rate limiting, per-token + per-app, 1-minute windows | 3 | Redis-backed rate limiting (replica-safe) |
 | gate | `internal/gate` | Runtime admission gate — SOLE owner of Set membership. Reservation TTL pattern: Check (SADD + short shadow TTL 10s) → Register (Hash) → Confirm (extend to 90s). Rollback on Register failure. Queue: BLPop signal channel, re-compete on wake. | 16 | Eliminates duplicate-SADD failure window; reservation TTL bounds ghost window to ≤10s even on crash; queue wake-up is a compete not a guarantee |
 
 **Total packages with tests: 19**
-**Total test count: 91 unit + 4 integration = 95 automated**
+**Total test count: 105 unit + 4 integration = 109 automated**
 
 ---
 
@@ -97,6 +97,6 @@ From the original architecture review:
 
 ```
 go build ./...     PASS
-go test ./...      PASS (19 packages, 99 unit tests)
+go test ./...      PASS (19 packages, 105 unit tests)
 go test -tags=integration ./...   PASS (4 integration tests)
 ```

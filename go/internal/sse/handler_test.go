@@ -16,6 +16,7 @@ import (
 
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/event"
+	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
@@ -167,3 +168,126 @@ func TestSSEDoneClosesStream(t *testing.T) {
 	}
 	assert.True(t, hasDone, "expected done event to close stream")
 }
+
+// 4. Gate cap exceeded returns 503 before SSE stream is opened.
+func TestSSEGateCapExceeded(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	h := newTestSSEHandler(nil, authn)
+	h.WithGate(&fakeSSEGate{checkErr: gate.ErrCapExceeded})
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/orchestrate/app/ep?message=hi", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+}
+
+// 5. Gate admitted → Confirm called; Release called on stream end.
+func TestSSEGateAdmittedAndReleased(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	g := &fakeSSEGate{}
+	mockEvents := []llm.StreamEvent{
+		{Type: "text_delta", Delta: "hi"},
+		{Type: "stop", StopReason: "end_turn"},
+	}
+	h := newTestSSEHandler(mockEvents, authn)
+	h.WithGate(g)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/orchestrate/app/ep?message=hi", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+
+	_ = collectSSE(t, resp, 3*time.Second)
+	resp.Body.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	assert.Equal(t, 1, g.checkCalls)
+	assert.Equal(t, 1, g.confirmCalls)
+	assert.GreaterOrEqual(t, g.releaseCalls, 1)
+	assert.Equal(t, 0, g.rollbackCalls)
+}
+
+// 6. Gate rollback called when session.Register fails.
+func TestSSEGateRollbackOnRegisterFailure(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	g := &fakeSSEGate{}
+	bus := event.New()
+	mock := llm.NewMockProvider(nil)
+	cfg := orchestrator.Config{MaxIterations: 5}
+	recorder := runrecorder.New(&fakeDBQuerier{})
+	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
+	h := ssehandler.NewHandler(&failingSSESessionStore{}, recorder, orch, bus, authn, "test", nil)
+	h.WithGate(g)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/orchestrate/app/ep?message=hi", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	// The handler sends an SSE error event (headers already written).
+	events := collectSSE(t, resp, 2*time.Second)
+	hasError := false
+	for _, ev := range events {
+		if ev["type"] == "error" {
+			hasError = true
+		}
+	}
+	assert.True(t, hasError, "expected SSE error event on Register failure")
+	time.Sleep(200 * time.Millisecond)
+	assert.Equal(t, 1, g.rollbackCalls, "Gate.Rollback must be called when Register fails")
+	assert.Equal(t, 0, g.confirmCalls)
+}
+
+// ── Gate fake ──────────────────────────────────────────────────────────────────
+
+type fakeSSEGate struct {
+	checkErr      error
+	checkCalls    int
+	confirmCalls  int
+	rollbackCalls int
+	releaseCalls  int
+}
+
+func (g *fakeSSEGate) Check(_ context.Context, _ gate.Config) (gate.Result, error) {
+	g.checkCalls++
+	return gate.Result{Status: gate.StatusAdmitted}, g.checkErr
+}
+
+func (g *fakeSSEGate) Confirm(_ context.Context, _ gate.Config) error {
+	g.confirmCalls++
+	return nil
+}
+
+func (g *fakeSSEGate) Rollback(_ context.Context, _ gate.Config) error {
+	g.rollbackCalls++
+	return nil
+}
+
+func (g *fakeSSEGate) Release(_ context.Context, _ gate.Config) error {
+	g.releaseCalls++
+	return nil
+}
+
+// failingSSESessionStore always returns an error from Register.
+type failingSSESessionStore struct{}
+
+func (s *failingSSESessionStore) Register(_ context.Context, _ session.SessionInfo) error {
+	return errors.New("redis: connection refused")
+}
+
+func (s *failingSSESessionStore) End(_ context.Context, _, _, _ string) error { return nil }

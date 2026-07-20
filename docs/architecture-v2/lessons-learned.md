@@ -1,6 +1,6 @@
 # Go Rewrite — Lessons Learned
 
-Last updated: 2026-07-19
+Last updated: 2026-07-20
 
 ---
 
@@ -270,3 +270,27 @@ An earlier design pushed the session ID into the queue key and then `BLPop`-ed a
 The correct design: the queue key is a pure signal channel. Waiters only consume (`BLPop`). Only `Gate.Release()` produces (`LPush("1")`). No session IDs are pushed. No `LRem` is needed. One `Release` call wakes exactly one waiter.
 
 In chi, `r.Mount("/", handler)` matches ALL paths not already matched. The A2A server mounts at `/` (to handle both `/a2a/{slug}` and `/.well-known/agent.json`). This mount must come after `/ws`, `/sse`, `/health`, and `/metrics` are registered. If it is mounted first, it absorbs all traffic. The server's `MountA2A` method appends to the router, so callers must call `MountWS/MountSSE` before `MountA2A`.
+
+---
+
+## Phase 5.4 — Entry Point Gate Wiring (WS + SSE handlers)
+
+### Gate contract must be enforced at the connection boundary, not inside the session package
+
+The WS and SSE handlers already called `session.Register()` and `session.End()` directly. Adding gate enforcement required wiring at the handler level in the correct order: `Gate.Check()` before `session.Register()`, `Gate.Confirm()` after `session.Register()` succeeds, and `Gate.Rollback()` when `session.Register()` fails. This cannot be done inside `session.Register()` because the session package does not own Set membership — Gate does. The handler is the only layer with visibility into both packages simultaneously.
+
+If you find yourself tempted to add gate logic inside `session.Register()`, that is a sign the ownership boundary is being violated. Keep Gate in the handler.
+
+### Gate.Check happens before the WS upgrade; Gate.Rollback happens after the upgrade but before events stream
+
+For WebSocket connections, Gate.Check runs before `upgrader.Upgrade()` — if the gate rejects, a proper HTTP 503 is returned before the protocol is upgraded. If the upgrade succeeds but `session.Register()` then fails, `Gate.Rollback()` must still be called (from a `context.Background()`, since the request context is now driving the WS connection). The defer order matters: `session.End()` is the last cleanup, `Gate.Release()` is the last gate operation — both are in the same `defer func()`.
+
+For SSE connections the same order applies, but since SSE headers are written before `session.Register()` is called, a `Register` failure results in an SSE error event being sent to the client, not an HTTP error status code. The gate Rollback still happens correctly via `context.Background()`.
+
+### Use `WithGate(g)` fluent method for optional gate wiring — never a nil gate field
+
+Tests that don't exercise admission control do not pass a gate. Rather than adding gate nil-checks throughout `ServeHTTP`, the `WithGate(g GateStore)` method sets the field and returns `*Handler`, keeping `NewHandler` signature clean. The nil-check in `ServeHTTP` is the single guard point. This pattern (optional dependency via fluent setter) is cleaner than adding the gate to `NewHandler`'s parameter list, which would force every test and caller to construct a fake gate.
+
+### The tokenHash used for rate limiting must match the hash used by auth.tokenHash (SHA-256 hex)
+
+The gate's `Config.TokenHash` field is used as the rate-limit key (`rl:them:token:{hash}:{minute}`). The auth package already stores tokens in Redis under `them:session:token:{sha256_hex}`. Using a truncated prefix or a different hash would mean the same physical token produces different rate-limit keys, breaking per-token rate limiting. Always use `sha256.Sum256([]byte(rawToken))` formatted as `%x`. Both `ws` and `sse` packages declare their own `tokenHash()` function using this formula — it duplicates 5 lines but avoids an import cycle from the handler packages into `internal/auth`.

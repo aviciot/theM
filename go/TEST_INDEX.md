@@ -212,7 +212,7 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ### S1-12 · WebSocket handler — `internal/ws/handler_test.go`
 
-**Purpose:** WS connection lifecycle — auth, session, orchestration, disconnect.
+**Purpose:** WS connection lifecycle — auth, session, orchestration, disconnect, and Gate contract enforcement.
 
 | Test | What it proves |
 |---|---|
@@ -220,6 +220,9 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestAuthenticatedUpgrade` | Valid token → 101 Switching Protocols |
 | `TestMessageAndDone` | User message → token events → `{"type":"done"}` received |
 | `TestDisconnectEndsSession` | Client close → `session.Store.End` called |
+| `TestGateCapExceeded` | Gate returns `ErrCapExceeded` → 503 before WS upgrade; session never registered |
+| `TestGateAdmittedAndReleased` | Gate admitted → Check→Confirm called; Release called on session end |
+| `TestGateRollbackOnRegisterFailure` | `session.Register` fails → Gate.Rollback called; Confirm never called |
 
 **Trigger:** any change to `internal/ws/handler.go`
 
@@ -227,13 +230,16 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ### S1-13 · SSE handler — `internal/sse/handler_test.go`
 
-**Purpose:** Server-Sent Events endpoint.
+**Purpose:** Server-Sent Events endpoint and Gate contract enforcement.
 
 | Test | What it proves |
 |---|---|
 | `TestSSEUnauthenticated` | No token → 401 |
 | `TestSSETokenEvents` | Valid auth + message → token events in SSE format |
 | `TestSSEDoneClosesStream` | Done event → stream closed |
+| `TestSSEGateCapExceeded` | Gate returns `ErrCapExceeded` → 503 before SSE headers sent |
+| `TestSSEGateAdmittedAndReleased` | Gate admitted → Check→Confirm called; Release called on stream end |
+| `TestSSEGateRollbackOnRegisterFailure` | `session.Register` fails → Gate.Rollback called; error SSE event emitted |
 
 **Trigger:** any change to `internal/sse/handler.go`
 
@@ -432,14 +438,14 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-09 | runrecorder | 6 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
-| S1-12 | ws | 4 |
-| S1-13 | sse | 3 |
+| S1-12 | ws | 7 |
+| S1-13 | sse | 6 |
 | S1-14 | a2a | 3 |
 | S1-15 | admin | 5 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
-| **S1 total** | | **99** |
+| **S1 total** | | **105** |
 | S2-01 | integration | 4 |
 | **S2 total** | | **4** |
 | S3 live | manual | 23 |
-| **Grand total** | | **126** |
+| **Grand total** | | **132** |

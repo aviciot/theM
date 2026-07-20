@@ -10,10 +10,17 @@
 //	                  {"type":"tool_result","name":"...","output":{}}
 //	                  {"type":"done","run_id":"..."}
 //	                  {"type":"error","message":"..."}
+//
+// Gate contract (internal/gate):
+//
+//	Gate.Check() → session.Register() → Gate.Confirm()
+//	On Register failure: Gate.Rollback()
+//	On session end: session.End() + Gate.Release()
 package ws
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -27,6 +34,7 @@ import (
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/event"
+	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/session"
@@ -66,9 +74,19 @@ type SessionStore interface {
 	End(ctx context.Context, sessionID, epSlug, appID string) error
 }
 
+// GateStore performs admission control for incoming sessions.
+// Implemented by gate.Gate.
+type GateStore interface {
+	Check(ctx context.Context, cfg gate.Config) (gate.Result, error)
+	Confirm(ctx context.Context, cfg gate.Config) error
+	Rollback(ctx context.Context, cfg gate.Config) error
+	Release(ctx context.Context, cfg gate.Config) error
+}
+
 // Handler is the WebSocket orchestration handler.
 type Handler struct {
 	sessions      SessionStore
+	gateStore     GateStore
 	recorder      *runrecorder.Recorder
 	orch          *orchestrator.Orchestrator
 	bus           event.Bus
@@ -77,7 +95,8 @@ type Handler struct {
 	logger        *slog.Logger
 }
 
-// NewHandler creates a Handler.
+// NewHandler creates a Handler. gateStore may be nil (gate check is skipped),
+// which is useful in tests that do not exercise admission control.
 func NewHandler(
 	sessions SessionStore,
 	recorder *runrecorder.Recorder,
@@ -101,6 +120,14 @@ func NewHandler(
 	}
 }
 
+// WithGate attaches an admission gate to the handler. Must be called before
+// the handler starts serving requests. When a gate is present every inbound
+// WebSocket connection goes through Gate.Check → session.Register → Gate.Confirm.
+func (h *Handler) WithGate(g GateStore) *Handler {
+	h.gateStore = g
+	return h
+}
+
 // Routes returns an http.Handler that mounts the WS orchestration route.
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
@@ -114,26 +141,59 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	epSlug := chi.URLParam(r, "entry_point_slug")
 
 	// ── 1. Authenticate ───────────────────────────────────────────────────────
-	tokenInfo, ok := h.authenticate(r)
+	tokenInfo, rawToken, ok := h.authenticate(r)
 	if !ok {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
 
-	// ── 2. Upgrade to WebSocket ───────────────────────────────────────────────
+	// ── 2. Gate.Check ─────────────────────────────────────────────────────────
+	sessionID := newID()
+	var gateCfg gate.Config
+	var gateAdmitted bool
+
+	if h.gateStore != nil {
+		gateCfg = gate.Config{
+			EPSlug:    epSlug,
+			AppID:     "", // resolved from DB in Phase 5.4 full wiring; 0 = unlimited for now
+			TokenHash: tokenHash(rawToken),
+			SessionID: sessionID,
+			// EPMaxConcurrent=0 means unlimited until full EP config wiring.
+			// RateLimitRPM=0 means unlimited.
+		}
+		if _, err := h.gateStore.Check(r.Context(), gateCfg); err != nil {
+			switch err {
+			case gate.ErrCapExceeded:
+				http.Error(w, `{"error":"session cap exceeded"}`, http.StatusServiceUnavailable)
+			case gate.ErrRateLimited:
+				http.Error(w, `{"error":"rate limited"}`, http.StatusTooManyRequests)
+			case gate.ErrQueueFull:
+				http.Error(w, `{"error":"queue full"}`, http.StatusServiceUnavailable)
+			default:
+				h.logger.Warn("ws: gate check failed", "error", err)
+				http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+			}
+			return
+		}
+		gateAdmitted = true
+	}
+
+	// ── 3. Upgrade to WebSocket ───────────────────────────────────────────────
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		h.logger.Warn("ws: upgrade failed", "error", err)
+		if gateAdmitted {
+			_ = h.gateStore.Rollback(context.Background(), gateCfg)
+		}
 		return
 	}
 	defer conn.Close()
 
-	// ── 3. Set up session / run IDs ───────────────────────────────────────────
-	sessionID := newID()
+	// ── 4. Set up run / context IDs ───────────────────────────────────────────
 	runID := newID()
 	contextID := newID()
 
-	// ── 4. Register session in Redis ──────────────────────────────────────────
+	// ── 5. Register session in Redis ──────────────────────────────────────────
 	sessInfo := session.SessionInfo{
 		SessionID:        sessionID,
 		InstanceID:       h.instanceID,
@@ -145,18 +205,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.sessions.Register(r.Context(), sessInfo); err != nil {
 		h.logger.Warn("ws: register session failed", "session_id", sessionID, "error", err)
+		if gateAdmitted {
+			_ = h.gateStore.Rollback(context.Background(), gateCfg)
+		}
+		h.writeError(conn, "session registration failed")
+		return
 	}
+
+	// ── 6. Gate.Confirm ───────────────────────────────────────────────────────
+	if gateAdmitted {
+		if err := h.gateStore.Confirm(r.Context(), gateCfg); err != nil {
+			h.logger.Warn("ws: gate confirm failed", "session_id", sessionID, "error", err)
+			// Non-fatal: session hash is registered; shadow TTL (10s) provides safety net.
+		}
+	}
+
 	defer func() {
 		ctx := context.Background()
 		_ = h.sessions.End(ctx, sessionID, epSlug, "")
+		if gateAdmitted {
+			_ = h.gateStore.Release(ctx, gateCfg)
+		}
 	}()
 
-	// ── 5. CRITICAL: Subscribe to event bus BEFORE starting the workflow ──────
+	// ── 7. CRITICAL: Subscribe to event bus BEFORE starting the workflow ──────
 	// (from 09-domain-events.md §3 — the ready bootstrap handshake)
 	evCh, unsub := h.bus.Subscribe(r.Context(), contextID, 256)
 	defer unsub()
 
-	// ── 6. Create run record in DB ────────────────────────────────────────────
+	// ── 8. Create run record in DB ────────────────────────────────────────────
 	run := domain.Run{
 		ID:             runID,
 		ContextID:      contextID,
@@ -167,14 +244,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("ws: create run failed", "run_id", runID, "error", err)
 	}
 
-	// ── 7. Wait for first client message ─────────────────────────────────────
+	// ── 9. Wait for first client message ─────────────────────────────────────
 	userMsg, err := h.readClientMessage(conn)
 	if err != nil {
 		h.writeError(conn, "failed to read message: "+err.Error())
 		return
 	}
 
-	// ── 8. Start orchestration in a goroutine ─────────────────────────────────
+	// ── 10. Start orchestration in a goroutine ────────────────────────────────
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -187,12 +264,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// ── 9. Stream events from bus → client; handle disconnect ─────────────────
+	// ── 11. Stream events from bus → client; handle disconnect ────────────────
 	h.streamEvents(ctx, cancel, conn, evCh, orchDone)
 }
 
 // authenticate extracts and validates the bearer token from the request.
-func (h *Handler) authenticate(r *http.Request) (*auth.TokenInfo, bool) {
+// Returns (tokenInfo, rawToken, ok).
+func (h *Handler) authenticate(r *http.Request) (*auth.TokenInfo, string, bool) {
 	var rawToken string
 
 	if hdr := r.Header.Get("Authorization"); strings.HasPrefix(hdr, "Bearer ") {
@@ -202,14 +280,14 @@ func (h *Handler) authenticate(r *http.Request) (*auth.TokenInfo, bool) {
 	}
 
 	if rawToken == "" {
-		return nil, false
+		return nil, "", false
 	}
 
 	info, err := h.authenticator.Validate(r.Context(), rawToken)
 	if err != nil {
-		return nil, false
+		return nil, "", false
 	}
-	return info, true
+	return info, rawToken, true
 }
 
 // readClientMessage reads the first message from the WebSocket client.
@@ -334,4 +412,11 @@ func (h *Handler) writeEvent(conn *websocket.Conn, ev event.Event) error {
 func (h *Handler) writeError(conn *websocket.Conn, msg string) {
 	data, _ := json.Marshal(serverMsg{Type: "error", Message: msg})
 	_ = conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// tokenHash returns the lowercase hex SHA-256 of rawToken, matching the hash
+// stored in them.access_tokens by the Python platform (same as auth.tokenHash).
+func tokenHash(rawToken string) string {
+	h := sha256.Sum256([]byte(rawToken))
+	return fmt.Sprintf("%x", h)
 }
