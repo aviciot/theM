@@ -207,6 +207,18 @@ Using `time.Now().Unix() / 60` as the bucket means each request participates in 
 
 `server.Server` owns an `*http.Server` internally. `httptest.NewServer` accepts an `http.Handler`, not a `*server.Server`. Adding a `Handler() http.Handler` method to `server.Server` returns the chi router, allowing integration tests to wrap it in `httptest.NewServer` without touching the production `ListenAndServe` path. This avoids port conflicts and signal handling in tests.
 
+### Architecture docs must be updated in the same commit as the implementation
+
+Five architecture documents contained stale descriptions that contradicted the Phase 9 gate implementation. The discrepancies were:
+
+- `08-state-machines.md`: Session state machine was missing the `reserved` state entirely. Showed 3-second polling in the queue sub-state. Showed `session_register()` doing SADD (Gate owns that, not SessionManager).
+- `11-component-diagram.md`: Data Flow §5 said "local RS256 verification" for bearer token validation. Bearer tokens use L1 `sync.Map` → L2 Redis → PostgreSQL — RS256 applies only to JWTs.
+- `04-target-architecture.md`: `REGISTER_SESSION` Lua script included SADD for EP/App Sets. Gate owns Set membership; SessionManager's Lua writes the Hash only. Queue section described pushing session IDs into the queue key and BLPop-ing a separate slot key (both wrong).
+- `10-sequence-diagrams.md`: Shadow key shown as `EX 90` at Gate.Check time (should be `EX 10`, the ReservationTTL). Gate.Confirm step was missing. Gate.Release was missing after session.End.
+- `07-bounded-contexts.md`: Session Lifecycle Context listed both Sets as owned by session_manager. The aggregate root said "all mutations through session_manager."
+
+**Rule:** When a package is implemented or redesigned, update every architecture doc that describes that package's behavior in the same commit. The five files above all describe session admission — they should have been corrected in the Phase 9 commit, not discovered in a follow-up review.
+
 ### Mount ordering matters for chi: most-specific routes must be mounted first
 
 ---
