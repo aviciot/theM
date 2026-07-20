@@ -228,6 +228,8 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestAnonymousSessionGateTokenHashEmpty` | Anonymous session passes `TokenHash=""` to gate (not sha256("")), so rlKey() returns "" and per-token rate limiting is skipped — anonymous users do NOT share a single rate-limit bucket |
 | `TestAnonymousSessionUserIDIsZero` | Anonymous session stores `UserID=0` in SessionInfo — no valid identity is invented |
 | `TestAuthenticatedRequestToPublicEP` | Authenticated request to public EP succeeds (public EPs accept both) |
+| `TestVoiceEPReturns501` | Token-mode voice EP returns 501; gate and session are never called |
+| `TestVoiceEPPublicReturns501` | Public voice EP also returns 501 before gate or session are called |
 
 **Trigger:** any change to `internal/ws/handler.go`
 
@@ -250,6 +252,8 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestSSEAnonymousSessionGateTokenHashEmpty` | Anonymous session passes `TokenHash=""` to gate — no shared per-token rate-limit bucket |
 | `TestSSEAnonymousSessionUserIDIsZero` | Anonymous session stores `UserID=0` in SessionInfo |
 | `TestSSEAuthenticatedRequestToPublicEP` | Authenticated request to public EP succeeds |
+| `TestSSEVoiceEPReturns501` | Token-mode voice EP returns 501; gate and session are never called |
+| `TestSSEVoiceEPPublicReturns501` | Public voice EP also returns 501 before gate or session are called |
 
 **Trigger:** any change to `internal/sse/handler.go`
 
@@ -515,16 +519,16 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-09 | runrecorder | 6 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
-| S1-12 | ws | 12 |
-| S1-13 | sse | 11 |
+| S1-12 | ws | 14 |
+| S1-13 | sse | 13 |
 | S1-14 | a2a | 3 |
 | S1-15 | admin | 19 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
 | S1-19 | cache | 1 |
-| **S1 total** | | **156** |
+| **S1 total** | | **160** |
 | S2-01 | integration | 4 |
 | **S2 total** | | **4** |
 | S3 live | manual | 23 |
-| **Grand total** | | **183** |
+| **Grand total** | | **187** |

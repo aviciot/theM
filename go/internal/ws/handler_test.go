@@ -456,5 +456,52 @@ func TestAuthenticatedRequestToPublicEP(t *testing.T) {
 	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
 }
 
+// 13. Voice EP with valid token returns 501 — must never enter the text orchestration path.
+func TestVoiceEPReturns501(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	g := &fakeGate{}
+	h, _ := newTestHandler(t, nil, authn, sessions)
+	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModeToken,
+		EPType:     "voice",
+	}})
+	h.WithGate(g)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/voice-ep", "tok")
+	require.Error(t, err, "voice EP must reject the WS upgrade")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "voice EP must return 501")
+	assert.Equal(t, 0, g.checkCalls, "gate must not be called for voice EP")
+	assert.Equal(t, 0, len(sessions.registered), "session must not be registered for voice EP")
+}
+
+// 14. Voice EP with public access mode also returns 501.
+func TestVoiceEPPublicReturns501(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	h, _ := newTestHandler(t, nil, authn, sessions)
+	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModePublic,
+		EPType:     "voice",
+	}})
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/voice-public", "")
+	require.Error(t, err, "public voice EP must also reject the WS upgrade")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "public voice EP must return 501")
+	assert.Equal(t, 0, len(sessions.registered), "session must not be registered for voice EP")
+}
+
 // Ensure domain import is used.
 var _ = domain.Message{}

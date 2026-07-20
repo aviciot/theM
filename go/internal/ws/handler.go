@@ -222,6 +222,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		tokenInfo = &auth.TokenInfo{}
 	}
 
+	// ── 2b. Reject voice EPs — not yet implemented ───────────────────────────
+	// Voice EPs require STT/TTS providers, audio framing, and interruption
+	// handling that are not implemented in the WS text-orchestration path.
+	// Return 501 before any session or gate state is allocated.
+	if resolvedCfg != nil && resolvedCfg.EPType == "voice" {
+		http.Error(w, `{"error":"voice entry points are not yet implemented"}`, http.StatusNotImplemented)
+		return
+	}
+
 	// ── 3. Gate.Check ─────────────────────────────────────────────────────────
 	sessionID := newID()
 	var gateCfg gate.Config

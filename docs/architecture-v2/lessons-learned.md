@@ -417,3 +417,22 @@ The Go race detector requires CGO (`CGO_ENABLED=1`), which requires a C compiler
 The workaround: run `go test -race ./...` in the Docker-based Linux CI environment (Dockerfile.go), not on the Windows host. The unit tests (`go test ./...`) without the race detector run cleanly on Windows. Do not skip the race detector run entirely — add it to the CI pipeline (GitHub Actions / Docker) where GCC is available.
 
 Do not add `CGO_ENABLED=0` to CLAUDE.md or `go.env` as a permanent override — that silences the requirement rather than satisfying it.
+
+---
+
+## Voice EP rejection guard
+
+### Voice EPs must be explicitly rejected before the text orchestration path, not silently routed through it
+
+When a voice EP (`EPConfig.EPType == "voice"`) reaches either the WS or SSE handler, the correct behavior is an immediate 501 Not Implemented — before Gate.Check, before session.Register, before the bus subscription. Silently routing a voice connection into the text-orchestration path would produce confusing partial behavior: the client would get text token events when it expects audio framing, STT/TTS events, or a WebRTC negotiation signal.
+
+The guard is injected at step 2b/3b in `ServeHTTP`, immediately after EP config resolution and access-mode enforcement. This placement means:
+- Disabled/blocked EPs are still rejected first (403 before 501)
+- Token-mode auth enforcement still happens before 501 for token-mode voice EPs
+- Gate and session are never allocated for voice requests — no reservation state to clean up
+
+The test asserting `g.checkCalls == 0` is the explicit proof that the gate is not called. This matters because a voice connection that passed Gate.Check but then got rejected would leave an unresolved slot reservation.
+
+### The 501 check uses `resolvedCfg.EPType` not an inline string constant — keep it in sync with `validEPTypes`
+
+`validEPTypes` in `admin/applications.go` is the authoritative list of accepted EP types. The voice rejection guard in both handlers checks `resolvedCfg.EPType == "voice"`. When a new EP type is added (e.g., `"webrtc"`), add a corresponding guard in the handler before implementing the feature. The admin validation at creation time (422 on invalid type) prevents unknown types from reaching production, but the handler guard is defence-in-depth for any type that is valid but not yet implemented.

@@ -446,6 +446,58 @@ func TestSSEAuthenticatedRequestToPublicEP(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
+// 12. Voice EP with valid token returns 501 — must never enter the text orchestration path.
+func TestSSEVoiceEPReturns501(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	store := &fakeSessionStore{}
+	g := &fakeSSEGate{}
+	h := newTestSSEHandlerWithStore(nil, authn, store)
+	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModeToken,
+		EPType:     "voice",
+	}})
+	h.WithGate(g)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/app/voice-ep?message=hi")
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "voice EP must return 501")
+	assert.Equal(t, 0, g.checkCalls, "gate must not be called for voice EP")
+	assert.Equal(t, int64(0), store.lastSession.UserID,
+		"session must not be registered for voice EP")
+}
+
+// 13. Voice EP with public access mode also returns 501.
+func TestSSEVoiceEPPublicReturns501(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	store := &fakeSessionStore{}
+	h := newTestSSEHandlerWithStore(nil, authn, store)
+	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModePublic,
+		EPType:     "voice",
+	}})
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/orchestrate/app/voice-public?message=hi")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "public voice EP must return 501")
+	assert.Equal(t, int64(0), store.lastSession.UserID,
+		"session must not be registered for public voice EP")
+}
+
 // mustGet returns a new GET *http.Request, panicking on error (test helper).
 func mustGet(url string) *http.Request {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
