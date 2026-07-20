@@ -1,128 +1,236 @@
 # Phase 11c Design: Durable Event Delivery via Redis Streams
 
-**Status:** Design only — not yet implemented
+**Status:** Design — revised 2026-07-21, pending implementation approval
 **Author:** aviciot
-**Date:** 2026-07-20
 
 ---
 
 ## Problem
 
-The current run event delivery uses Redis Pub/Sub (`PUBLISH` / `SUBSCRIBE`). This is
-at-most-once: a client that disconnects and reconnects misses all events published
-during the gap. For long-running LLM orchestrations this means a reconnecting browser
-sees a blank stream, forcing the user to reload. There is no replay mechanism.
+The current run event delivery uses Redis Pub/Sub (`PUBLISH` / `SUBSCRIBE`).
+This is at-most-once: a client that disconnects and reconnects misses every event
+published during the gap. The `runstream.Stream` reconnect logic re-subscribes to
+the channel but cannot recover messages already published. For long-running LLM
+orchestrations this means a reconnecting browser sees a blank or partial stream
+with no recovery path.
 
 ---
 
-## Approaches considered
+## Design decisions (corrections to first draft)
 
-### 1. Keep Redis Pub/Sub with reconnect-only (current)
+### 1. Continuous cursor — no gap at replay-to-live transition
 
-The `runstream.Stream` implementation already handles reconnect with bounded exponential
-backoff (6 attempts, 100ms base → 3200ms max). It emits a synthetic `error` event after
-exhaustion.
+The naive approach of
 
-**Pros:** Zero migration cost, already in production.
-**Cons:** At-most-once. Events missed during reconnect gap are gone. Unacceptable UX
-for runs that take 30+ seconds.
+    XRANGE key {last_id+1} +          ← replay
+    XREAD BLOCK 0 STREAMS key $       ← live from "newest"
 
-### 2. Redis Streams (XADD / XREAD)
+has a race: any entry written between the end of XRANGE and the moment XREAD
+starts listening at `$` is silently dropped.
 
-Redis Streams provide an append-only log. Each event is a stream entry with a
-monotonic ID (`{millis}-{seq}`). Readers use `XREAD COUNT n STREAMS key $` for live
-consumption, or `XRANGE key id +` for replay from a known position.
+**Correct approach:** after XRANGE replay, record the last stream entry ID
+actually processed. Transition to `XREAD BLOCK` from *that* ID, not from `$`.
 
-**Pros:**
-- Durable: entries survive client disconnects.
-- Replay: client sends `last_event_id` on reconnect; server replays from that position.
-- Ordering guaranteed by entry IDs.
-- No consumer groups needed for WS/SSE — each connection is its own reader.
+    XRANGE key {last_id+1} +          ← replay; note last returned ID L
+    XREAD BLOCK 0 STREAMS key L       ← live from L; no gap possible
 
-**Cons:**
-- Memory footprint: each stream entry has overhead (~100 bytes). A run with 1000 token
-  events = ~100KB per run. With MAXLEN 10000 per stream, worst case ~1MB per run key.
-- Python worker currently uses `PUBLISH`; must be updated or dual-published.
-- Key cleanup required: streams do not expire unless `EXPIRE` or `MAXLEN` is set.
+On a fresh connection with no prior `last_event_id`, read from `0-0` on the first
+XRANGE (gets all history up to MAXLEN), then continue from the last entry seen.
 
-### 3. Dual-publish migration
+The cursor is a single variable that starts at the client-supplied `last_event_id`
+(or `0-0`) and advances with every entry processed, whether from replay or from
+live blocking reads.
 
-During the transition, the Python worker publishes to **both** the Pub/Sub channel and
-the Stream key simultaneously. The Go gateway subscribes to both, deduplicates by
-entry ID. Once all clients have migrated to Stream-based replay, the Pub/Sub publish
-is removed.
+### 2. Explicit mode flag — no key-existence check
 
-**Pros:** Zero client downtime during migration. Backward compatible.
-**Cons:** Double the Redis writes during transition. Code complexity in both Python and Go.
+Do not use `if stream_key_exists → use Streams, else → use Pub/Sub`.
 
-### 4. Client reconnect protocol
+Before the first event is published the stream key does not yet exist. A handler
+that starts during that window would fall back to Pub/Sub for the entire run
+lifetime, defeating the migration.
 
-Client sends `run_id` and `last_event_id` on reconnect. The server performs:
-1. `XRANGE them:dash:run:{runID}:stream {last_event_id+1} +` to replay missed events.
-2. Then `XREAD BLOCK 0 STREAMS them:dash:run:{runID}:stream $` for live events.
+**Correct approach:** a single environment variable controls which transport the
+Go gateway uses:
 
-**Duplicate handling:** Replayed events have the same `id` field as originally sent.
-The client should deduplicate on `id` before rendering. A simple JS `Set<string>` of
-seen IDs is sufficient.
+    RUN_EVENTS_MODE=pubsub     ← current behaviour (default, safe)
+    RUN_EVENTS_MODE=dual       ← read from Streams, fall back to Pub/Sub if
+                                   stream key absent (needed during 11c-B before
+                                   the Python worker is fully deployed on 11c-A)
+    RUN_EVENTS_MODE=streams    ← Streams only; Pub/Sub removed
 
-### 5. Stream retention and TTL
+The mode is read once at startup (added to `internal/config`). Changing modes
+requires a restart. The default is `pubsub` so that any unset environment is
+safe.
 
-Two options:
-- **MAXLEN**: `XADD key MAXLEN ~ 10000 * ...` caps each stream at ~10000 entries.
-  For token-heavy runs this may trim early events. Safe default.
-- **EXPIRE**: `EXPIRE them:dash:run:{runID}:stream 86400` (24h). Simpler, bounded cost,
-  but a long-running run whose stream expires mid-run loses history.
+Note on `dual` mode: during 11c-B, if the Python worker has already deployed
+11c-A (atomic dual-publish), the stream key is created on the first event. The Go
+handler can wait for the key with a brief `XREAD BLOCK 2000ms STREAMS key $`
+before falling back to Pub/Sub. This limits the fallback window to ≤2 seconds on
+the first event. After that, the cursor from the stream drives the rest of the run.
 
-Recommendation: use `MAXLEN ~ 5000` (trim to 5000 entries) per stream key. This bounds
-memory while preserving the last ~5000 tokens — more than enough for any replay window.
+### 3. Atomic dual publish (Lua script)
 
-### 6. Multi-client consumption
+During Phase 11c-A, XADD and PUBLISH must be a single atomic operation. Two
+separate calls have an observable failure window: the XADD could succeed and the
+PUBLISH fail (or vice versa), leaving the two transports inconsistent for that
+event.
 
-Each WS or SSE connection is its own consumer. There is no consumer group. The
-connection reads directly with `XRANGE` (replay) then `XREAD BLOCK` (live). This is
-intentional — consumer groups add coordination overhead that is not needed here since
-each connection is independent.
+**Correct approach:** a Redis Lua script that performs both operations atomically
+in a single round-trip. Lua executes atomically on the Redis server.
+
+```lua
+-- atomicPublish(stream_key, channel, maxlen, payload)
+-- Returns the stream entry ID generated by XADD.
+local stream_key = KEYS[1]
+local channel    = KEYS[2]
+local maxlen     = tonumber(ARGV[1])
+local payload    = ARGV[2]
+
+local entry_id = redis.call('XADD', stream_key, 'MAXLEN', '~', maxlen, '*', 'data', payload)
+redis.call('PUBLISH', channel, payload)
+return entry_id
+```
+
+The returned `entry_id` is the stream cursor for this event. Python stores it for
+nothing (the event is fire-and-forget from the publisher side), but the Go
+subscriber receives it as the canonical `event_id` for each event it forwards to
+the client.
+
+**Failure semantics:**
+
+| Failure point | Observable effect | Recovery |
+|---|---|---|
+| Redis unreachable entirely | Lua script errors; NEITHER XADD nor PUBLISH executes | Temporal workflow runs on; run status is always in DB |
+| Lua script succeeds but network drops before response | XADD and PUBLISH both executed; Python gets a timeout error and may retry | Retry produces a second XADD with a new entry_id; Go subscriber deduplicates by content if needed, but since each retry is a new event it is safe to forward twice (client deduplicates by event_id) |
+| Redis OOM causing XADD rejection | Unlikely with MAXLEN trim; if it occurs XADD fails atomically so PUBLISH also does not execute | Monitor `them_runstream_xadd_errors_total` |
+
+**The Stream is the durable source of truth.** PUBLISH is a real-time delivery
+optimisation that may be removed in Phase 11c-D. No logic depends on PUBLISH
+succeeding; all replay is driven by the Stream.
+
+### 4. Redis TTL for stream lifetime — no in-process cleanup goroutines
+
+An in-process goroutine that calls DEL after 24 hours is lost if the pod
+restarts before the timer fires.
+
+**Correct approach:** use Redis `EXPIRE` at two points:
+
+1. **On stream creation** (first XADD): set a safety TTL of 48 hours.
+   This ensures the key is eventually cleaned up even if the run never receives
+   a terminal event (pod crash, orphaned run, network partition).
+
+   ```lua
+   -- after XADD, if this is the first entry
+   if redis.call('XLEN', stream_key) == 1 then
+     redis.call('EXPIRE', stream_key, 172800)  -- 48h safety TTL
+   end
+   ```
+
+   In practice this is checked every XADD. Since XLEN is O(1), the cost is
+   negligible. Alternatively, set EXPIRE once from the Go handler immediately
+   after the first event arrives.
+
+2. **On terminal event** (done/error): refresh the TTL to the final retention
+   window (24 hours), starting the clock from run completion rather than creation.
+
+   ```
+   EXPIRE them:dash:run:{runID}:stream 86400
+   ```
+
+   This is called by the Go handler when it forwards the terminal event to the
+   client, not by a background goroutine.
+
+**What happens if no terminal event is ever published:** the 48-hour safety TTL
+expires the key. The run row in the DB retains its final status (set by the
+reconciler). The stream data is gone, but since the run is already in a terminal
+DB state there is nothing to replay. Clients attempting to reconnect to a
+completed run will get an empty XRANGE and should treat that as "run is complete,
+fetch status from /api/v1/runs/{runID}".
+
+### 5. Retention sizing — MAXLEN validation
+
+MAXLEN ~5000 must be validated against real workload shapes before Phase 11c-C
+(cutover). The following test cases are required before approval of 11c-C:
+
+| Test | What to verify |
+|---|---|
+| 1000-token run (normal) | All events preserved; full replay succeeds |
+| 5000-token run (MAXLEN boundary) | All events preserved; cursor at last entry |
+| 6000-token run (over MAXLEN) | Earliest ~1000 entries trimmed; replay from `0-0` returns entries from ~1000 onward |
+| Tool-heavy run (200 tool calls, ~800 events total) | All events preserved within MAXLEN |
+| Replay after trim: `last_event_id` in trimmed range | Explicit client signal: empty XRANGE → server sends `{"type":"replay_unavailable","reason":"history_trimmed","run_id":"..."}` before resuming live |
+
+**Trim detection:** before streaming replay entries, the Go handler checks whether
+`last_event_id` predates the oldest entry in the stream:
+
+```
+XRANGE key - + COUNT 1   ← get oldest entry
+if oldest_entry_id > last_event_id → send replay_unavailable event, then resume from oldest
+```
+
+This is explicit and observable. The client can display "some history unavailable"
+rather than silently missing events.
+
+If MAXLEN ~5000 is proven insufficient for common workloads, the right response is
+to increase MAXLEN (at the cost of more Redis memory), not to add a disk-backed
+store.
+
+### 6. Server-assigned event_id — monotonic cursor, no server-side duplicates
+
+The Go handler assigns `event_id` from the stream entry ID for every event it
+forwards to the client. The stream entry ID is the cursor.
+
+**During replay (XRANGE):** entry IDs are in order; handler forwards them in
+order; no duplicates possible.
+
+**During live (XREAD BLOCK from last cursor L):** XREAD returns entries with
+IDs strictly greater than L; no duplicates possible from the server.
+
+**Replay-to-live transition:** since the cursor advances continuously (not reset
+to `$`), the transition produces no gap and no overlap. The server itself cannot
+produce duplicates.
+
+Client deduplication (`Set<string>` of seen `event_id` values) remains a safety
+layer against:
+- retried HTTP connections that replay the same stream segment twice at the
+  transport level
+- a client that receives an event but crashes before persisting `last_event_id`
+
+The server must not attempt deduplication — it would require state per-connection
+that is expensive and unnecessary.
+
+### 7. Rollout phases — explicit gates, no automatic cutover
+
+```
+Phase 11c-A  Atomic dual-publish in Python worker
+Phase 11c-B  Go stream-read/replay behind RUN_EVENTS_MODE=dual
+Phase 11c-C  Staging soak + compatibility period (explicit approval gate)
+Phase 11c-D  Remove Pub/Sub — only after metrics confirm and approval given
+```
+
+Phase 11c-D is NOT triggered by a calendar timer. It requires:
+- ≥2 weeks of Phase 11c-C in staging with RUN_EVENTS_MODE=streams
+- Soak validation showing zero replay failures, zero stream errors
+- Explicit approval (same pattern as DryRun=false activation)
 
 ---
 
-## Recommendation
+## Approach comparison
 
-**Implement Redis Streams with dual-publish, then cut over.**
+| Property | Pub/Sub only | Streams + dual-publish |
+|---|---|---|
+| Delivery guarantee | At-most-once | At-least-once with replay |
+| Reconnect recovery | None (events lost) | Full replay from last_event_id |
+| Python changes | None | Add Lua script call (11c-A) |
+| Go changes | None | New Streamer interface + mode (11c-B) |
+| Redis memory overhead | Zero | ~75KB/active run at MAXLEN 5000 |
+| Rollback | N/A | Per-phase, independent |
+| Operational complexity | Low | Moderate — TTL, mode flag, trim detection |
 
-The safest incremental path:
-
-1. **Phase 11c-A** — Python worker adds dual-publish: continues `PUBLISH` on the
-   existing channel AND adds `XADD` to the new stream key with the same payload.
-   Stream key: `them:dash:run:{runID}:stream`. Use `MAXLEN ~ 5000`.
-   No Go changes yet. Streams are being written but not read.
-
-2. **Phase 11c-B** — Go `runstream.Stream` adds stream-first read path: on new
-   connection, attempts `XREAD` from the stream key. Falls back to Pub/Sub if the
-   stream key does not exist (backward compat for Python-native runs).
-   On reconnect, accepts `last_event_id` from the WS/SSE client and replays via `XRANGE`.
-
-3. **Phase 11c-C** — Remove Pub/Sub publish from Python worker. Remove Pub/Sub
-   subscribe from Go gateway. Stream is now the sole delivery mechanism.
-
-4. **Phase 11c-D** — Add stream cleanup job: a goroutine in the reconciler (or a
-   separate cron) that runs `DEL them:dash:run:{runID}:stream` for completed runs
-   older than 24h. This is a soft cleanup — `MAXLEN` handles the memory bound during
-   the run lifetime.
-
-**Why not consumer groups?** Each WS/SSE connection reads independently and has
-different last-seen positions. Consumer group semantics (one delivery per message per
-group) do not match this pattern.
-
-**Why not Pub/Sub-only with a longer backoff?** Reconnect-only cannot recover events
-missed during a network partition or a slow GC pause on the server side. The only
-correct solution is a persistent store with replay.
-
-**Python backward compatibility:** During 11c-A and 11c-B, both delivery mechanisms
-co-exist. The Go gateway falls back gracefully when a stream key is absent. No
-coordination window, no flag day.
-
-**Rollback:** If streams cause unexpected memory pressure, remove `XADD` from Python
-and the stream-read path from Go. Both sides revert to Pub/Sub independently.
+Pub/Sub-only with longer reconnect backoff cannot recover events published during
+the gap. The only correct solution for replay is a persistent store. Redis Streams
+is the right choice because it is already in the Redis instance, requires no new
+infrastructure, and the migration is independently reversible at each phase.
 
 ---
 
@@ -132,9 +240,37 @@ and the stream-read path from Go. Both sides revert to Pub/Sub independently.
 |---|---|
 | Avg token events per run | ~500 |
 | Avg bytes per stream entry | ~150 bytes |
-| Memory per active run stream | ~75KB |
+| Memory per active run stream | ~75 KB |
 | Max concurrent runs (est.) | 100 |
-| Peak stream memory footprint | ~7.5MB |
+| Peak stream memory footprint | ~7.5 MB |
+| MAXLEN | ~5000 entries |
+| Safety TTL (no terminal event) | 48 hours |
+| Final retention TTL (after terminal) | 24 hours |
 
-With MAXLEN 5000 and 24h EXPIRE on completed runs, total Redis memory impact is well
-within the 384MB Redis container limit.
+Redis container limit: 384 MB. Stream overhead at peak: ~7.5 MB (~2% of limit).
+
+---
+
+## Stream key naming
+
+```
+them:dash:run:{runID}:stream     ← stream entries (XADD / XRANGE / XREAD)
+them:dash:run:{runID}:tokens     ← pub/sub channel (legacy; removed in 11c-D)
+```
+
+Both follow the existing `them:dash:run:` namespace documented in `docs/REDIS.md`.
+
+---
+
+## Metrics
+
+New counters to be added in Phase 11c-B:
+
+| Metric | Description |
+|---|---|
+| `them_runstream_xadd_total` | Stream entries appended |
+| `them_runstream_xadd_errors_total` | Lua script / XADD failures |
+| `them_runstream_replay_sessions_total` | Reconnect sessions that used XRANGE replay |
+| `them_runstream_replay_events_total` | Total events replayed across all sessions |
+| `them_runstream_replay_unavailable_total` | Sessions where last_event_id was trimmed |
+| `them_runstream_mode` | Gauge: 0=pubsub, 1=dual, 2=streams (for dashboards) |
