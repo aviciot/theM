@@ -620,3 +620,52 @@ Health checks run without a token. Orchestration tests require `--token`, `--app
 If the `websockets` Python package is not installed, the WS test prints the manual command and passes (SKIP).
 
 This layered structure means a failing health check produces an actionable error before attempting orchestration.
+
+---
+
+## Phase 5.4 — Live-stack validation (hybrid integration tests + smoke tests)
+
+### DB dump schema divergence: Python NOT NULL columns block Go INSERT
+
+The Python DB dump (`them.runs`) has NOT NULL constraints on columns the Go gateway doesn't populate:
+`orchestrator_name`, `user_id`, `session_id`, `goal`. Similarly `run_usage` requires `user_id`, `provider`,
+`model`; and `run_steps` requires `iteration`, `agent_slug`, `tool_call_id`, `input`.
+
+These columns are Python-owned. The fix: `ALTER TABLE ... DROP NOT NULL` on all Python-only columns —
+Go omits them, Python fills them in via `init_run_activity`. The DB constraint doesn't belong on columns
+that two different writers populate independently.
+
+### pgx prepared statement cache survives column type changes
+
+After changing `application_id` from `uuid` to `bigint`, the running Go bridge still sent the old
+encode plan. A container restart clears pgx's in-memory prepared statement cache and forces re-planning.
+Always restart the Go bridge after any column type change.
+
+### Python run_recorder.start_run silently returns a new UUID on any exception
+
+When the Go bridge pre-inserts `them.runs` with `ON CONFLICT DO NOTHING` and then Python's `init_run_activity`
+also tries to insert the same run_id, `start_run` catches the IntegrityError and returns `uuid.uuid4()`.
+The task insert then fails with FK violation because the dummy UUID is not in `them.runs`.
+
+Fix: use `INSERT ... ON CONFLICT DO NOTHING` via `pg_insert(Run).on_conflict_do_nothing()` in `start_run`,
+and return the original `run_id` on conflict instead of a new random UUID.
+
+### ensure_agent_skills sequential HTTP timeouts exceed activity schedule_to_close
+
+The `load_orchestration_context` activity calls `ensure_agent_skills` for each allowed agent.
+Each call uses `httpx.AsyncClient(timeout=10)`. With 5 agents × 10s = 50s sequential DNS failures,
+this exceeds the 30s `schedule_to_close_timeout` → activity times out before first retry.
+
+Two fixes applied together:
+1. Reduced httpx timeout to 3s (DNS failures are fast; the old 10s was for slow remote services)
+2. Changed sequential `for a in agents: await ensure_agent_skills(a, db)` to `asyncio.gather()`
+   so all 5 fetches run concurrently — worst case is now 3s, not 15s.
+
+### max_iterations=0 produces "error" terminal event, not "done"
+
+Python's `finalize_run` publishes `{"type":"error","message":"Reached max iterations (0)"}` when
+`status=="stopped"`. It only publishes `{"type":"done"}` when `status=="completed"`.
+With `max_iterations=0` the loop body never executes → status is always `"stopped"`.
+
+Impacts smoke tests and integration tests T3, T4, T8 — all updated to accept either `"done"` or
+`"error"` as valid terminal events. The Go WS/SSE handlers already forward both types to the client.

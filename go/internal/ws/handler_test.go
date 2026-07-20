@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,20 +43,47 @@ func (f *fakeAuth) Validate(_ context.Context, token string) (*auth.TokenInfo, e
 }
 
 type fakeSessionStore struct {
+	mu          sync.Mutex
 	registered  []string
 	ended       []string
 	lastSession session.SessionInfo // captures the most recently registered SessionInfo
 }
 
 func (s *fakeSessionStore) Register(_ context.Context, info session.SessionInfo) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.registered = append(s.registered, info.SessionID)
 	s.lastSession = info
 	return nil
 }
 
 func (s *fakeSessionStore) End(_ context.Context, sessionID, _, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.ended = append(s.ended, sessionID)
 	return nil
+}
+
+func (s *fakeSessionStore) getRegistered() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.registered))
+	copy(out, s.registered)
+	return out
+}
+
+func (s *fakeSessionStore) getEnded() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.ended))
+	copy(out, s.ended)
+	return out
+}
+
+func (s *fakeSessionStore) getLastSession() session.SessionInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastSession
 }
 
 type fakeDBQuerier struct{}
@@ -188,8 +216,8 @@ func TestDisconnectEndsSession(t *testing.T) {
 	// Give the server a moment to process the disconnect.
 	time.Sleep(300 * time.Millisecond)
 
-	assert.Equal(t, 1, len(sessions.registered), "session should have been registered")
-	assert.Equal(t, 1, len(sessions.ended), "session should have been ended on disconnect")
+	assert.Equal(t, 1, len(sessions.getRegistered()), "session should have been registered")
+	assert.Equal(t, 1, len(sessions.getEnded()), "session should have been ended on disconnect")
 }
 
 // 5. Gate cap exceeded returns 503 before upgrade.
@@ -206,7 +234,7 @@ func TestGateCapExceeded(t *testing.T) {
 	require.Error(t, err, "expected dial to fail when gate rejects")
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
-	assert.Equal(t, 0, len(sessions.registered), "session must not be registered when gate rejects")
+	assert.Equal(t, 0, len(sessions.getRegistered()), "session must not be registered when gate rejects")
 }
 
 // 6. Gate admitted → session registered, confirmed; on disconnect gate released.
@@ -244,12 +272,13 @@ func TestGateAdmittedAndReleased(t *testing.T) {
 	conn.Close()
 	time.Sleep(300 * time.Millisecond)
 
-	assert.Equal(t, 1, g.checkCalls, "Gate.Check must be called once")
-	assert.Equal(t, 1, g.confirmCalls, "Gate.Confirm must be called after Register")
-	assert.GreaterOrEqual(t, g.releaseCalls, 1, "Gate.Release must be called on session end")
-	assert.Equal(t, 0, g.rollbackCalls, "Gate.Rollback must not be called on success")
-	assert.Equal(t, 1, len(sessions.registered))
-	assert.Equal(t, 1, len(sessions.ended))
+	check, confirm, rollback, release, _ := g.getCounts()
+	assert.Equal(t, 1, check, "Gate.Check must be called once")
+	assert.Equal(t, 1, confirm, "Gate.Confirm must be called after Register")
+	assert.GreaterOrEqual(t, release, 1, "Gate.Release must be called on session end")
+	assert.Equal(t, 0, rollback, "Gate.Rollback must not be called on success")
+	assert.Equal(t, 1, len(sessions.getRegistered()))
+	assert.Equal(t, 1, len(sessions.getEnded()))
 }
 
 // 7. Gate rollback called when session.Register fails.
@@ -275,14 +304,16 @@ func TestGateRollbackOnRegisterFailure(t *testing.T) {
 	assert.Equal(t, "error", sm["type"])
 
 	time.Sleep(200 * time.Millisecond)
-	assert.Equal(t, 1, g.checkCalls)
-	assert.Equal(t, 1, g.rollbackCalls, "Gate.Rollback must be called when Register fails")
-	assert.Equal(t, 0, g.confirmCalls, "Gate.Confirm must NOT be called when Register fails")
+	check2, confirm2, rollback2, _, _ := g.getCounts()
+	assert.Equal(t, 1, check2)
+	assert.Equal(t, 1, rollback2, "Gate.Rollback must be called when Register fails")
+	assert.Equal(t, 0, confirm2, "Gate.Confirm must NOT be called when Register fails")
 }
 
 // ── Gate fake ──────────────────────────────────────────────────────────────────
 
 type fakeGate struct {
+	mu            sync.Mutex
 	checkErr      error
 	checkCalls    int
 	confirmCalls  int
@@ -292,24 +323,38 @@ type fakeGate struct {
 }
 
 func (g *fakeGate) Check(_ context.Context, cfg gate.Config) (gate.Result, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.checkCalls++
 	g.lastConfig = cfg
 	return gate.Result{Status: gate.StatusAdmitted}, g.checkErr
 }
 
 func (g *fakeGate) Confirm(_ context.Context, _ gate.Config) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.confirmCalls++
 	return nil
 }
 
 func (g *fakeGate) Rollback(_ context.Context, _ gate.Config) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.rollbackCalls++
 	return nil
 }
 
 func (g *fakeGate) Release(_ context.Context, _ gate.Config) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.releaseCalls++
 	return nil
+}
+
+func (g *fakeGate) getCounts() (check, confirm, rollback, release int, cfg gate.Config) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.checkCalls, g.confirmCalls, g.rollbackCalls, g.releaseCalls, g.lastConfig
 }
 
 // failingSessionStore always returns an error from Register.
@@ -403,7 +448,8 @@ func TestAnonymousSessionGateTokenHashEmpty(t *testing.T) {
 
 	// Gate must receive TokenHash="" so that rlKey() returns "" and
 	// per-token rate limiting is skipped for public/anonymous sessions.
-	assert.Equal(t, "", g.lastConfig.TokenHash,
+	_, _, _, _, lastCfg := g.getCounts()
+	assert.Equal(t, "", lastCfg.TokenHash,
 		"anonymous session must pass TokenHash='' to gate, not sha256('')")
 }
 
@@ -429,8 +475,8 @@ func TestAnonymousSessionUserIDIsZero(t *testing.T) {
 	conn.Close()
 	time.Sleep(200 * time.Millisecond)
 
-	require.Equal(t, 1, len(sessions.registered), "session must be registered")
-	assert.Equal(t, int64(0), sessions.lastSession.UserID,
+	require.Equal(t, 1, len(sessions.getRegistered()), "session must be registered")
+	assert.Equal(t, int64(0), sessions.getLastSession().UserID,
 		"anonymous session must store UserID=0, not a real user identity")
 }
 
@@ -478,8 +524,9 @@ func TestVoiceEPReturns501(t *testing.T) {
 	require.Error(t, err, "voice EP must reject the WS upgrade")
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "voice EP must return 501")
-	assert.Equal(t, 0, g.checkCalls, "gate must not be called for voice EP")
-	assert.Equal(t, 0, len(sessions.registered), "session must not be registered for voice EP")
+	check3, _, _, _, _ := g.getCounts()
+	assert.Equal(t, 0, check3, "gate must not be called for voice EP")
+	assert.Equal(t, 0, len(sessions.getRegistered()), "session must not be registered for voice EP")
 }
 
 // 14. Voice EP with public access mode also returns 501.
@@ -501,7 +548,7 @@ func TestVoiceEPPublicReturns501(t *testing.T) {
 	require.Error(t, err, "public voice EP must also reject the WS upgrade")
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "public voice EP must return 501")
-	assert.Equal(t, 0, len(sessions.registered), "session must not be registered for voice EP")
+	assert.Equal(t, 0, len(sessions.getRegistered()), "session must not be registered for voice EP")
 }
 
 // ── Temporal path fakes ────────────────────────────────────────────────────────

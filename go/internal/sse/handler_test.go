@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,14 +42,23 @@ func (f *fakeAuth) Validate(_ context.Context, token string) (*auth.TokenInfo, e
 }
 
 type fakeSessionStore struct {
+	mu          sync.Mutex
 	lastSession session.SessionInfo // captures the most recently registered SessionInfo
 }
 
 func (s *fakeSessionStore) Register(_ context.Context, info session.SessionInfo) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.lastSession = info
 	return nil
 }
 func (s *fakeSessionStore) End(_ context.Context, _, _, _ string) error { return nil }
+
+func (s *fakeSessionStore) getLastSession() session.SessionInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastSession
+}
 
 type fakeDBQuerier struct{}
 
@@ -222,9 +232,10 @@ func TestSSEGateAdmittedAndReleased(t *testing.T) {
 	resp.Body.Close()
 	time.Sleep(200 * time.Millisecond)
 
-	assert.Equal(t, 1, g.checkCalls)
-	assert.Equal(t, 1, g.confirmCalls)
-	assert.GreaterOrEqual(t, g.releaseCalls, 1)
+	check4, confirm4, _, release4, _ := g.getCounts()
+	assert.Equal(t, 1, check4)
+	assert.Equal(t, 1, confirm4)
+	assert.GreaterOrEqual(t, release4, 1)
 	assert.Equal(t, 0, g.rollbackCalls)
 }
 
@@ -260,13 +271,15 @@ func TestSSEGateRollbackOnRegisterFailure(t *testing.T) {
 	}
 	assert.True(t, hasError, "expected SSE error event on Register failure")
 	time.Sleep(200 * time.Millisecond)
-	assert.Equal(t, 1, g.rollbackCalls, "Gate.Rollback must be called when Register fails")
-	assert.Equal(t, 0, g.confirmCalls)
+	_, confirm5, rollback5, _, _ := g.getCounts()
+	assert.Equal(t, 1, rollback5, "Gate.Rollback must be called when Register fails")
+	assert.Equal(t, 0, confirm5)
 }
 
 // ── Gate fake ──────────────────────────────────────────────────────────────────
 
 type fakeSSEGate struct {
+	mu            sync.Mutex
 	checkErr      error
 	checkCalls    int
 	confirmCalls  int
@@ -276,24 +289,38 @@ type fakeSSEGate struct {
 }
 
 func (g *fakeSSEGate) Check(_ context.Context, cfg gate.Config) (gate.Result, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.checkCalls++
 	g.lastConfig = cfg
 	return gate.Result{Status: gate.StatusAdmitted}, g.checkErr
 }
 
 func (g *fakeSSEGate) Confirm(_ context.Context, _ gate.Config) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.confirmCalls++
 	return nil
 }
 
 func (g *fakeSSEGate) Rollback(_ context.Context, _ gate.Config) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.rollbackCalls++
 	return nil
 }
 
 func (g *fakeSSEGate) Release(_ context.Context, _ gate.Config) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.releaseCalls++
 	return nil
+}
+
+func (g *fakeSSEGate) getCounts() (check, confirm, rollback, release int, cfg gate.Config) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.checkCalls, g.confirmCalls, g.rollbackCalls, g.releaseCalls, g.lastConfig
 }
 
 // failingSSESessionStore always returns an error from Register.
@@ -388,7 +415,8 @@ func TestSSEAnonymousSessionGateTokenHashEmpty(t *testing.T) {
 
 	// Gate must receive TokenHash="" so rlKey() returns "" and per-token rate
 	// limiting is skipped — anonymous sessions must not share a single bucket.
-	assert.Equal(t, "", g.lastConfig.TokenHash,
+	_, _, _, _, lastCfg := g.getCounts()
+	assert.Equal(t, "", lastCfg.TokenHash,
 		"anonymous session must pass TokenHash='' to gate, not sha256('')")
 }
 
@@ -417,7 +445,7 @@ func TestSSEAnonymousSessionUserIDIsZero(t *testing.T) {
 	resp.Body.Close()
 	time.Sleep(200 * time.Millisecond)
 
-	assert.Equal(t, int64(0), store.lastSession.UserID,
+	assert.Equal(t, int64(0), store.getLastSession().UserID,
 		"anonymous session must store UserID=0, not a real user identity")
 }
 
@@ -471,8 +499,9 @@ func TestSSEVoiceEPReturns501(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "voice EP must return 501")
-	assert.Equal(t, 0, g.checkCalls, "gate must not be called for voice EP")
-	assert.Equal(t, int64(0), store.lastSession.UserID,
+	check6, _, _, _, _ := g.getCounts()
+	assert.Equal(t, 0, check6, "gate must not be called for voice EP")
+	assert.Equal(t, int64(0), store.getLastSession().UserID,
 		"session must not be registered for voice EP")
 }
 
@@ -495,7 +524,7 @@ func TestSSEVoiceEPPublicReturns501(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "public voice EP must return 501")
-	assert.Equal(t, int64(0), store.lastSession.UserID,
+	assert.Equal(t, int64(0), store.getLastSession().UserID,
 		"session must not be registered for public voice EP")
 }
 

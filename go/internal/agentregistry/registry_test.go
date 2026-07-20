@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ func (f *fakeDB) QueryAgents(_ context.Context) ([]*agentregistry.AgentConfig, e
 }
 
 type fakeCache struct {
+	mu    sync.Mutex
 	data  map[string][]byte
 	calls []string
 }
@@ -37,23 +39,39 @@ func newFakeCache() *fakeCache {
 }
 
 func (c *fakeCache) Get(_ context.Context, key string) ([]byte, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	v, ok := c.data[key]
 	return v, ok, nil
 }
 
 func (c *fakeCache) SetEX(_ context.Context, key string, value []byte, _ time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.data[key] = value
 	return nil
 }
 
 func (c *fakeCache) Del(_ context.Context, key string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	delete(c.data, key)
 	return nil
 }
 
 func (c *fakeCache) Subscribe(_ context.Context, channel string, handler func(payload string)) error {
+	c.mu.Lock()
 	c.calls = append(c.calls, "subscribe:"+channel)
+	c.mu.Unlock()
 	return nil
+}
+
+func (c *fakeCache) getCalls() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, len(c.calls))
+	copy(out, c.calls)
+	return out
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -137,13 +155,16 @@ func TestPubSubInvalidation(t *testing.T) {
 	_, err := reg.Invoke(context.Background(), "agent_x", json.RawMessage(`{}`))
 	require.NoError(t, err)
 
-	// Subscribe (subscribe is called but handler not triggered — just check it registers).
-	ctx, cancel := context.WithCancel(context.Background())
+	// Subscribe registers the channel synchronously before starting the pub/sub loop.
+	// Use a deadline context so the goroutine exits cleanly after the assertion.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	go reg.Subscribe(ctx)
-	time.Sleep(10 * time.Millisecond) // give goroutine a moment
+	<-ctx.Done()
 
-	assert.Contains(t, fc.calls[0], "them:agents:invalidate")
+	calls := fc.getCalls()
+	require.NotEmpty(t, calls, "Subscribe must have registered at least one channel")
+	assert.Contains(t, calls[0], "them:agents:invalidate")
 }
 
 // 5. Unknown agent slug returns typed error.

@@ -467,16 +467,24 @@ publish calls. No context-channel bootstrap handshake. Seeds minimal DB rows (or
 Python's `init_run_activity` calls `uuid.UUID(run_id)` — non-UUID strings raise `ValueError`.
 `newID()` and `newRunID()` use `github.com/google/uuid`.
 
+**Slug constraint:** `agents.slug` must match `^[a-z0-9_]{1,48}$` — no hyphens. Test data uses
+`integ_orch_{nanos}` / `integ_agent_{nanos%1_000_000_000}` to satisfy this constraint.
+
+**Terminal event semantics:** With `max_iterations=0`, Python workflow status is `"stopped"` and
+`finalize_run` publishes `{"type":"error","message":"Reached max iterations (0)"}`.
+`{"type":"done"}` is only published when `status=="completed"`.
+Tests T3, T4, T8 accept EITHER `"done"` OR `"error"` as the valid terminal event.
+
 | Test | What it proves |
 |---|---|
 | `TestHybrid_GoProvidedRunIDPreservedEndToEnd` | UUID runID passed in `PythonOrchestrationInput.RunID` appears in the `them.runs` DB row — Python did not generate a different UUID |
 | `TestHybrid_DirectSubscriptionBeforeWorkflowStart` | Subscribe to `:tokens` before `ExecuteWorkflow` → receive at least one event; invariant holds |
-| `TestHybrid_NoContextChannelHandshake` | Terminal `done` event received on direct `{runID}:tokens` channel with NO `:ctx` subscription — single-phase architecture is complete |
-| `TestHybrid_FirstAndTerminalEventsNotLost` | `done` event received; timestamps prove subscribe happened before workflow start → no race |
+| `TestHybrid_NoContextChannelHandshake` | Terminal event (`done` or `error`) received on direct `{runID}:tokens` channel with NO `:ctx` subscription — single-phase architecture is complete |
+| `TestHybrid_FirstAndTerminalEventsNotLost` | Terminal event received; timestamps prove subscribe happened before workflow start → no race |
 | `TestHybrid_FullWireFormatAccepted` | All `PythonOrchestrationInput` fields (including `RunID`) serialise correctly; Python accepts without error |
 | `TestHybrid_CancelPropagates` | `CancelWorkflow` causes workflow to end (COMPLETED/CANCELED/TERMINATED) — not stuck |
 | `TestHybrid_PythonNativeCallWithoutRunID` | Input without `RunID` → Python falls back to `workflow.uuid4()` and returns a different run_id — backward compat confirmed |
-| `TestHybrid_RunIDPassedMatchesPublishedChannel` | `done` event payload `run_id` field matches the Go-provided runID — Python used our ID, not a self-generated one |
+| `TestHybrid_RunIDPassedMatchesPublishedChannel` | Terminal event received on the Go-provided runID channel; `run_id` field present in `done` payload, absent in `error` payload |
 
 **Start infrastructure (one command):**
 ```bash

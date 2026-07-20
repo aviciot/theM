@@ -8,7 +8,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import update, func
+from sqlalchemy import update, func, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Run, RunStep, RunUsage
@@ -39,28 +41,30 @@ async def start_run(
     matches the DB record. When absent, the DB generates a new UUID.
     """
     try:
-        run = Run(
-            orchestrator_id=orchestrator_id,
-            orchestrator_name=orchestrator_name,
-            user_id=user_id,
-            session_id=session_id,
-            goal=goal,
-            status="running",
-            parent_run_id=parent_run_id,
-            entry_point_slug=entry_point_slug,
+        effective_id = run_id or uuid.uuid4()
+        stmt = (
+            pg_insert(Run)
+            .values(
+                id=effective_id,
+                orchestrator_id=orchestrator_id,
+                orchestrator_name=orchestrator_name,
+                user_id=user_id,
+                session_id=session_id,
+                goal=goal,
+                status="running",
+                parent_run_id=parent_run_id,
+                entry_point_slug=entry_point_slug,
+            )
+            .on_conflict_do_nothing(index_elements=["id"])
         )
-        if run_id is not None:
-            run.id = run_id
-        db.add(run)
+        await db.execute(stmt)
         await db.commit()
-        await db.refresh(run)
-        logger.info("run started", run_id=str(run.id), orchestrator=orchestrator_name)
-        return run.id
+        logger.info("run started", run_id=str(effective_id), orchestrator=orchestrator_name)
+        return effective_id
     except Exception as exc:
-        logger.error("start_run failed — orchestrator may not exist in DB", orchestrator=orchestrator_name, error=str(exc))
+        logger.error("start_run failed", orchestrator=orchestrator_name, error=str(exc))
         await db.rollback()
-        # Return a dummy UUID so the run continues (won't persist steps/usage)
-        return uuid.uuid4()
+        return run_id or uuid.uuid4()
 
 
 async def record_step(

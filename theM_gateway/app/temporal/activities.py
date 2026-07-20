@@ -99,8 +99,7 @@ async def load_orchestration_context_activity(
         if not agents:
             raise ValueError("No agents available for this orchestrator")
 
-        for a in agents:
-            await ensure_agent_skills(a, db)
+        await asyncio.gather(*[ensure_agent_skills(a, db) for a in agents])
 
         agent_configs = [agent_to_config(a) for a in agents]
         tools = build_tools_for_agents(agent_configs)
