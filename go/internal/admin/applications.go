@@ -12,6 +12,21 @@ import (
 // epConfigChannel is the Redis pub/sub channel for cross-pod EP config cache invalidation.
 const epConfigChannel = "them:ep:config:changed"
 
+// validEPTypes is the canonical set of allowed entry_point_type values.
+// Must stay in sync with the Python platform's _VALID_EP_TYPES list and
+// docs/architecture-v2/schema-migrations.md MIG-002.
+var validEPTypes = map[string]struct{}{
+	"websocket": {},
+	"sse":       {},
+	"voice":     {},
+}
+
+// isValidEPType reports whether t is an allowed entry point type.
+func isValidEPType(t string) bool {
+	_, ok := validEPTypes[t]
+	return ok
+}
+
 // ── Application types ─────────────────────────────────────────────────────────
 
 // Application is the JSON representation of a them.applications row.
@@ -260,6 +275,11 @@ func (h *ApplicationsHandler) CreateEntryPoint(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "slug and ep_type are required")
 		return
 	}
+	if !isValidEPType(input.EPType) {
+		writeError(w, http.StatusUnprocessableEntity,
+			"invalid ep_type: must be one of websocket, sse, voice")
+		return
+	}
 	enabled := true
 	if input.Enabled != nil {
 		enabled = *input.Enabled
@@ -299,6 +319,11 @@ func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Re
 	var input EntryPointInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if input.EPType != "" && !isValidEPType(input.EPType) {
+		writeError(w, http.StatusUnprocessableEntity,
+			"invalid ep_type: must be one of websocket, sse, voice")
 		return
 	}
 	enabled := true

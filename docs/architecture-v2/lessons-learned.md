@@ -374,3 +374,11 @@ The fix: rename `authenticate()` → `tryAuthenticate()`, which always succeeds 
 The fallback when no `epLoader` is wired (test or pre-wiring state): mandatory auth enforced directly after `tryAuthenticate`, preserving the original behavior for any caller that has not yet wired `WithEPConfig`.
 
 The zero value for `tokenInfo` (nil) is safe: `tokenInfo.TokenID = 0` for anonymous public EP sessions. `CheckAccess` skips block-list checks when both `tokenHash` and `userID` are zero/empty. `session.SessionInfo.UserID = 0` is the convention for anonymous sessions.
+
+### Validate ep_type at the API boundary, not the DB boundary
+
+`them.entry_points.ep_type` is a free-form TEXT column in PostgreSQL (no CHECK constraint yet — see `schema-migrations.md` MIG-002). Without validation in the Go admin API, operators or integration clients could create EPs with arbitrary type strings (`grpc`, `mqtt`, etc.) that the gateway's WS/SSE handlers cannot route, causing silent failures at runtime rather than an informative error at creation time.
+
+The fix: maintain `validEPTypes = {"websocket", "sse", "voice"}` in `applications.go` and validate in `CreateEntryPoint` (required) and `UpdateEntryPoint` (only if non-empty, to allow partial updates). Return 422 Unprocessable Entity — not 400 Bad Request — because the JSON is well-formed; the semantic value is the problem.
+
+Rule: the allowed set must stay in sync with the Python platform's `_VALID_EP_TYPES` list. When a new EP type is added to the Python platform, update `validEPTypes` in `applications.go` in the same sprint. The schema CHECK constraint (MIG-002) is the long-term DB-level enforcement; the application-layer check is defence-in-depth.

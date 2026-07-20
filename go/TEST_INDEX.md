@@ -290,6 +290,10 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestUpdateEntryPoint_NilCache_NoPanic` | nil cache → no panic (cache is optional) |
 | `TestCreateEntryPoint_DoesNotPublish` | POST entry-point → no invalidation for new EP (nothing to evict) |
 | `TestAdminRequiresSuperAdmin_AnonymousRejected` | Anonymous request (no JWT claims) to admin endpoint → 401; RequireSuperAdmin middleware is fail-closed |
+| `TestCreateEntryPoint_InvalidEPType_Returns422` | POST entry-point with `ep_type="grpc"` → 422; no cache invalidation published |
+| `TestUpdateEntryPoint_InvalidEPType_Returns422` | PUT entry-point with `ep_type="tcp"` → 422; no cache invalidation published |
+| `TestCreateEntryPoint_ValidEPTypes_Accepted` | POST entry-point with each of `websocket`, `sse`, `voice` → 201 (3 subtests) |
+| `TestUpdateEntryPoint_EmptyEPType_Allowed` | PUT entry-point with empty `ep_type` → 200 (partial update — keeps existing DB value) |
 
 **Trigger:** any change to `internal/admin/agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `middleware.go`
 
@@ -500,12 +504,12 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-12 | ws | 12 |
 | S1-13 | sse | 11 |
 | S1-14 | a2a | 3 |
-| S1-15 | admin | 15 |
+| S1-15 | admin | 19 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
-| **S1 total** | | **151** |
+| **S1 total** | | **155** |
 | S2-01 | integration | 4 |
 | **S2 total** | | **4** |
 | S3 live | manual | 23 |
-| **Grand total** | | **178** |
+| **Grand total** | | **182** |

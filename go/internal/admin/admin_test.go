@@ -446,6 +446,65 @@ func TestAdminRequiresSuperAdmin_AnonymousRejected(t *testing.T) {
 		"admin endpoints must reject requests with no JWT claims (anonymous sessions)")
 }
 
+// ── EP type validation tests ──────────────────────────────────────────────────
+
+// EPT-1: CreateEntryPoint with invalid ep_type → 422 Unprocessable Entity.
+func TestCreateEntryPoint_InvalidEPType_Returns422(t *testing.T) {
+	cache := &fakeCache{}
+	db := &fakeDB{execRetID: 1}
+	body, _ := json.Marshal(map[string]any{
+		"slug":    "bad-ep",
+		"ep_type": "grpc", // not a valid type
+	})
+	w := serveApps(t, db, cache, http.MethodPost, "/applications/1/entry-points", body)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code,
+		"invalid ep_type must return 422")
+	assert.Empty(t, cache.publishedMsgs, "no cache invalidation for rejected create")
+}
+
+// EPT-2: UpdateEntryPoint with invalid ep_type → 422 Unprocessable Entity.
+func TestUpdateEntryPoint_InvalidEPType_Returns422(t *testing.T) {
+	cache := &fakeCache{}
+	db := &fakeDB{queryRowStr: "existing-ep"}
+	body, _ := json.Marshal(map[string]any{
+		"slug":    "existing-ep",
+		"ep_type": "tcp", // not a valid type
+	})
+	w := serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/2", body)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code,
+		"invalid ep_type on update must return 422")
+	assert.Empty(t, cache.publishedMsgs, "no cache invalidation for rejected update")
+}
+
+// EPT-3: CreateEntryPoint accepts all valid ep_type values.
+func TestCreateEntryPoint_ValidEPTypes_Accepted(t *testing.T) {
+	for _, epType := range []string{"websocket", "sse", "voice"} {
+		t.Run(epType, func(t *testing.T) {
+			db := &fakeDB{execRetID: 1}
+			body, _ := json.Marshal(map[string]any{
+				"slug":    "my-ep",
+				"ep_type": epType,
+			})
+			w := serveApps(t, db, nil, http.MethodPost, "/applications/1/entry-points", body)
+			assert.Equal(t, http.StatusCreated, w.Code,
+				"valid ep_type %q must be accepted", epType)
+		})
+	}
+}
+
+// EPT-4: UpdateEntryPoint with empty ep_type is allowed (partial update — keeps existing).
+func TestUpdateEntryPoint_EmptyEPType_Allowed(t *testing.T) {
+	db := &fakeDB{queryRowStr: "my-ep"}
+	body, _ := json.Marshal(map[string]any{
+		"slug":    "my-ep",
+		"ep_type": "", // omitted / empty — not a rename, just updating other fields
+	})
+	w := serveApps(t, db, nil, http.MethodPut, "/applications/1/entry-points/2", body)
+	// Empty ep_type on update is allowed (the DB keeps the existing value).
+	assert.Equal(t, http.StatusOK, w.Code,
+		"empty ep_type on update must not be rejected")
+}
+
 // 5. Signal run — calls Temporal client.
 func TestSignalRun(t *testing.T) {
 	db := &fakeDB{}
