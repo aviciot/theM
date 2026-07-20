@@ -2,8 +2,9 @@
 
 Last updated: 2026-07-20
 
-All 8 phases complete + Phase 9 (gate package) + Phase 5.4 full EP config wiring (WS + SSE handlers + epconfig resolver) + real bearer token auth wiring (noopAuth replaced) + Phase 10 Temporal execution path (coexists with Go-inline fallback behind TEMPORAL_ENABLED feature flag) + canonical run_id architecture (ADR-001) + live-stack validation fixes (UUID ID format). `go build ./...` and `go test ./...` pass.
-Integration tests pass under `go test -tags=integration ./...`.
+All 8 phases complete + Phase 9 (gate package) + Phase 5.4 full EP config wiring + Phase 10 Temporal execution path (canonical run_id, ADR-001) + live-stack validation + Phase 11a (runstream reconnect with backoff). `go build ./...` and `go test ./...` pass. Race detector clean on all packages.
+
+**Phase 11a (runstream reconnect):** `internal/runstream/stream.go` now holds the output channel open across transient Redis disconnects. Reconnects use bounded exponential backoff (100ms→3200ms, max 6 attempts). Terminal events (`done`/`error`) close the output immediately without waiting for the source channel. Exhausted reconnects emit a single synthetic error event. Four Prometheus counters: `them_runstream_{disconnects,reconnect_attempts,reconnect_success,reconnect_failure}_total`. Integration tests pass under `go test -tags=integration ./...`.
 
 ---
 
@@ -25,7 +26,7 @@ Integration tests pass under `go test -tags=integration ./...`.
 | llm | `internal/llm` | Provider interface, AnthropicProvider, MockProvider | 6 | Provider swap without code changes |
 | orchestrator | `internal/orchestrator` | Agentic loop, DB-level history LIMIT, context cancellation | 0 (tested via ws/sse) | DB-level LIMIT on history (Medium finding #3) |
 | temporal | `internal/temporal` | Temporal workflow/activity, HITL signal channel, Signaler adapter, PythonOrchestrationInput (wire-format struct for Python worker) | 0 (integration) | Durable execution, HITL, pod-crash resilience |
-| runstream | `internal/runstream` | Redis pub/sub subscriber for `them:dash:run:{runID}:tokens`. Go pre-generates runID and subscribes before `ExecuteWorkflow`; passes runID to Python in `PythonOrchestrationInput.RunID` so Python publishes to the same channel. At-most-once delivery — no race because subscribe always precedes publish. | 2 | Single-phase architecture: no context-channel bootstrap handshake. Subscribe-before-start invariant eliminates event loss. |
+| runstream | `internal/runstream` | Redis pub/sub subscriber for `them:dash:run:{runID}:tokens`. Reconnects on transient drops with bounded exponential backoff (100ms→3200ms, max 6 attempts). Terminal events close output immediately. Exhaustion emits one synthetic error event. Four Prometheus counters. At-most-once delivery — no replay during reconnect gap. | 10 | Phase 11a: output channel survives Redis hiccups without tearing down client connection. |
 | agentregistry | `internal/agentregistry` | A2A JSON-RPC 2.0 invocation, two-level cache, pub/sub invalidation | 5 | Agent config cache with cross-replica invalidation |
 | epconfig | `internal/epconfig` | EP + App runtime config resolver — DB JOIN, 30s TTL cache, CheckAccess (fail-closed), Subscribe for cross-pod Redis pub/sub invalidation, shared by WS + SSE | 26 | Single typed config model; no duplication between handlers |
 | ws | `internal/ws` | WebSocket handler, lazy auth (EP config checked first), public EP support, anonymous session identity (UserID=0, TokenHash="" to gate), Gate contract (Check→Register→Confirm/Rollback/Release), bus subscription before workflow, voice EP rejection (501), Temporal execution path (TEMPORAL_ENABLED=true) with single-phase subscribe-before-start (subscribe `:tokens` → start workflow), Go-inline fallback. `newID()` uses `github.com/google/uuid` — UUID v4 format required for Python Temporal worker | 15 | Subscribe-before-start bootstrap pattern + Gate contract enforcement + real EP limits + public EP access + anonymous session safety + voice EP guard + Temporal coexistence + UUID ID format |

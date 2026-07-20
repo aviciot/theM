@@ -669,3 +669,50 @@ With `max_iterations=0` the loop body never executes → status is always `"stop
 
 Impacts smoke tests and integration tests T3, T4, T8 — all updated to accept either `"done"` or
 `"error"` as valid terminal events. The Go WS/SSE handlers already forward both types to the client.
+
+---
+
+## Phase 11a — Runstream reconnect with bounded exponential backoff
+
+### Put reconnect logic in Stream(), not in the adapter
+
+`RunStreamRedisClient.Subscribe` returns a `chan string` that closes when `rueidis.Receive` returns —
+either on context cancel or on any Redis network error. Two options for reconnect:
+
+1. Reconnect inside the adapter: keep feeding the same `chan string` across reconnects.
+2. Reconnect inside `Stream()`: re-call `sub.Subscribe` when the source closes without a terminal event.
+
+Option 2 is cleaner: `Stream()` already knows whether a terminal event was received; the adapter has
+no semantic knowledge of "run finished" vs. "transient drop". Option 2 also keeps the `Subscriber`
+interface thin and easy to test.
+
+### Terminal event must close the output channel immediately
+
+After forwarding a terminal `done` or `error` event, `Stream()` returns from its goroutine immediately
+rather than waiting for the source channel to close. This matters because:
+- The source channel (Redis pub/sub) may not close promptly after Python stops publishing.
+- Callers (`streamEvents` in WS/SSE handlers) start draining buffered events after `orchDone` fires.
+  If the output channel stays open, they block indefinitely.
+- Python's `finalize_run` may publish the terminal event and continue with cleanup — the Go side
+  should not depend on the publisher closing the connection.
+
+### Reconnect exhaustion policy: emit synthetic error, leave workflow running
+
+When all backoff attempts are exhausted, `Stream()` emits one `{"type":"error","message":"stream
+reconnect failed"}` event and closes the output channel. The Temporal workflow is NOT cancelled —
+it continues independently. The client receives a clean terminal signal. Final run status is always
+queryable via `GET /api/v1/runs/{runID}`. This is by design: the Go stream layer does not own the
+Temporal workflow lifecycle.
+
+### Use Prometheus counters, not log parsing, for operational visibility
+
+Four counters (`disconnects_total`, `reconnect_attempts_total`, `reconnect_success_total`,
+`reconnect_failure_total`) expose the reconnect health to Prometheus/Grafana. slog entries provide
+context per-run_id. Counter labels were kept coarse (no run_id label) to avoid high cardinality.
+
+### Exhaustion backoff test needs generous timeout
+
+`TestStream_ReconnectExhaustionEmitsOneError` exercises all 6 attempts with actual `time.After`
+delays (100+200+400+800+1600+3200ms ≈ 6.3s). The test timeout is set to 15s to avoid flakiness on
+slow CI. Do not mock time in these tests — the actual delay values are part of the contract being
+verified. If test duration becomes unacceptable, extract the delay sequence as a parameter.

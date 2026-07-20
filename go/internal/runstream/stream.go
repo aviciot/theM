@@ -9,17 +9,46 @@
 // Go subscribes before calling ExecuteWorkflow — the subscribe-before-start
 // invariant ensures no event can be missed.
 //
-// IMPORTANT: Redis Pub/Sub provides at-most-once delivery. Events published
-// before Subscribe is called, or during a brief network reconnect, are lost
-// and will NOT be replayed. This is acceptable because Go subscribes before
-// the workflow starts, so no events are published before the subscription.
-// Reconnect/replay is deferred to a later phase.
+// # Reconnect behaviour
+//
+// If the underlying Redis subscription drops mid-run (e.g. a transient network
+// hiccup), Stream keeps the output channel open and re-subscribes with bounded
+// exponential backoff (up to ReconnectMaxAttempts attempts, ReconnectBaseDelay
+// to ReconnectMaxDelay). Events published during the outage window are lost —
+// at-most-once delivery is preserved but no replay is attempted. Clients may
+// see a gap in token output; they will not lose the terminal event if Redis
+// recovers before the run completes.
+//
+// # Terminal event semantics
+//
+// Receiving a "done" or "error" event from Python is the primary end signal.
+// On receipt, Stream immediately forwards the event and closes the output
+// channel — it does not wait for the Redis source channel to close. No further
+// reconnect attempts are made after a terminal event is forwarded.
+//
+// # Reconnect exhaustion policy
+//
+// If all ReconnectMaxAttempts attempts fail, Stream emits a single synthetic
+// {"type":"error","message":"stream reconnect failed"} event and closes the
+// output channel. The Temporal workflow continues running independently in the
+// background — it is not cancelled by Stream. The caller is responsible for
+// deciding whether to cancel the workflow context. The final run status is
+// always queryable via GET /api/v1/runs/{runID} in the DB.
+//
+// # Replay
+//
+// Redis Pub/Sub is at-most-once. Replay of events missed during a reconnect
+// window is deferred to a later phase.
 package runstream
 
 import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/aviciot/them/internal/event"
 )
@@ -30,17 +59,71 @@ type Subscriber interface {
 	Subscribe(ctx context.Context, channel string) (<-chan string, error)
 }
 
+// Reconnect policy. Constants are exported so tests can reference them
+// without magic numbers; they are not caller-configurable to avoid API churn.
+const (
+	// ReconnectBaseDelay is the initial wait before the first reconnect attempt.
+	ReconnectBaseDelay = 100 * time.Millisecond
+	// ReconnectMaxDelay caps the per-attempt wait after doubling.
+	ReconnectMaxDelay = 3200 * time.Millisecond
+	// ReconnectMaxAttempts is the number of consecutive reconnect tries before
+	// Stream gives up and emits a synthetic terminal error event.
+	ReconnectMaxAttempts = 6
+)
+
+// isTerminal reports whether an event type signals end-of-run.
+// Both "done" (completed) and "error" (stopped/failed/cancelled) are terminal.
+func isTerminal(evType string) bool {
+	return evType == "done" || evType == "error"
+}
+
+// ── Prometheus counters ───────────────────────────────────────────────────────
+
+var (
+	metricDisconnects = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "them",
+		Subsystem: "runstream",
+		Name:      "disconnects_total",
+		Help:      "Number of Redis pub/sub disconnects detected mid-run by runstream.Stream.",
+	})
+	metricReconnectAttempts = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "them",
+		Subsystem: "runstream",
+		Name:      "reconnect_attempts_total",
+		Help:      "Number of Redis pub/sub reconnect attempts made by runstream.Stream.",
+	})
+	metricReconnectSuccess = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "them",
+		Subsystem: "runstream",
+		Name:      "reconnect_success_total",
+		Help:      "Number of successful Redis pub/sub reconnects by runstream.Stream.",
+	})
+	metricReconnectFailure = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "them",
+		Subsystem: "runstream",
+		Name:      "reconnect_failure_total",
+		Help:      "Number of runstream.Stream sessions that exhausted all reconnect attempts.",
+	})
+)
+
 // Stream subscribes to them:dash:run:{runID}:tokens and forwards each
 // JSON message payload as an event.Event on the returned channel.
-// The channel is closed when ctx is cancelled or the subscription ends.
-// Each message is expected to be a JSON object with at minimum a "type" field.
 //
-// Subscribe before calling ExecuteWorkflow: this function must be called before
-// the Temporal workflow is started so no events are missed. Python publishes
-// the first event (run_start) during init_run, which fires early.
+// Terminal events ("done" or "error") are forwarded immediately and the output
+// channel is closed — the caller does not need to wait for further signals.
+//
+// If the Redis subscription drops without a prior terminal event, Stream
+// re-subscribes with exponential backoff. If all attempts are exhausted, a
+// single synthetic error event is emitted before the channel is closed.
+//
+// The channel is closed without a synthetic event when ctx is cancelled.
+//
+// Subscribe-before-start invariant: call Stream before ExecuteWorkflow so no
+// event is missed.
 func Stream(ctx context.Context, sub Subscriber, runID string) (<-chan event.Event, error) {
 	channel := "them:dash:run:" + runID + ":tokens"
 
+	// Initial subscribe — fail fast if Redis is entirely unreachable.
 	msgCh, err := sub.Subscribe(ctx, channel)
 	if err != nil {
 		return nil, err
@@ -50,14 +133,54 @@ func Stream(ctx context.Context, sub Subscriber, runID string) (<-chan event.Eve
 
 	go func() {
 		defer close(out)
+
+		current := msgCh
+		consecutiveDrops := 0 // resets to 0 on any successful message
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case msg, ok := <-msgCh:
+
+			case msg, ok := <-current:
 				if !ok {
-					return
+					// Source channel closed.
+					if ctx.Err() != nil {
+						// Context was cancelled concurrently — don't reconnect.
+						return
+					}
+
+					// Transient disconnect — attempt reconnect.
+					consecutiveDrops++
+					metricDisconnects.Inc()
+					slog.Warn("runstream: Redis subscription dropped",
+						"run_id", runID,
+						"consecutive_drops", consecutiveDrops,
+					)
+
+					newCh, ok := reconnect(ctx, sub, channel, runID)
+					if !ok {
+						// Exhausted — emit synthetic terminal error and exit.
+						metricReconnectFailure.Inc()
+						slog.Error("runstream: all reconnect attempts exhausted",
+							"run_id", runID,
+							"max_attempts", ReconnectMaxAttempts,
+						)
+						synthetic := event.Event{
+							Type:    "error",
+							Payload: json.RawMessage(`{"type":"error","message":"stream reconnect failed"}`),
+						}
+						select {
+						case out <- synthetic:
+						case <-ctx.Done():
+						}
+						return
+					}
+
+					current = newCh
+					continue
 				}
+
 				ev, parseErr := parseMessage(msg)
 				if parseErr != nil {
 					slog.Warn("runstream: skipping message — parse error",
@@ -66,9 +189,22 @@ func Stream(ctx context.Context, sub Subscriber, runID string) (<-chan event.Eve
 					)
 					continue
 				}
+
+				// Any successful message delivery resets the drop counter.
+				consecutiveDrops = 0
+
+				// Forward the event.
 				select {
 				case out <- ev:
 				case <-ctx.Done():
+					return
+				}
+
+				// Terminal event: close immediately — do not wait for the Redis
+				// source channel to close on its own. The Temporal workflow
+				// continues independently; the caller may cancel the workflow
+				// context if desired. Run status is always in them.runs DB.
+				if isTerminal(ev.Type) {
 					return
 				}
 			}
@@ -76,6 +212,56 @@ func Stream(ctx context.Context, sub Subscriber, runID string) (<-chan event.Eve
 	}()
 
 	return out, nil
+}
+
+// reconnect attempts to re-subscribe to channel with exponential backoff.
+// Returns (newChannel, true) on success, or (nil, false) when ctx is
+// cancelled or ReconnectMaxAttempts consecutive attempts all fail.
+func reconnect(
+	ctx context.Context,
+	sub Subscriber,
+	channel, runID string,
+) (<-chan string, bool) {
+	delay := ReconnectBaseDelay
+
+	for attempt := 1; attempt <= ReconnectMaxAttempts; attempt++ {
+		metricReconnectAttempts.Inc()
+		slog.Info("runstream: attempting reconnect",
+			"run_id", runID,
+			"attempt", attempt,
+			"max_attempts", ReconnectMaxAttempts,
+			"backoff_ms", delay.Milliseconds(),
+		)
+
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-time.After(delay):
+		}
+
+		newCh, err := sub.Subscribe(ctx, channel)
+		if err == nil {
+			metricReconnectSuccess.Inc()
+			slog.Info("runstream: reconnected successfully",
+				"run_id", runID,
+				"attempt", attempt,
+			)
+			return newCh, true
+		}
+
+		slog.Warn("runstream: reconnect attempt failed",
+			"run_id", runID,
+			"attempt", attempt,
+			"error", err,
+		)
+
+		delay *= 2
+		if delay > ReconnectMaxDelay {
+			delay = ReconnectMaxDelay
+		}
+	}
+
+	return nil, false
 }
 
 // parseMessage deserialises a raw JSON string from Redis into an event.Event.
@@ -96,7 +282,6 @@ func parseMessage(raw string) (event.Event, error) {
 		return event.Event{}, &missingTypeError{}
 	}
 
-	// Re-serialise the full map as the payload.
 	payload, err := json.Marshal(m)
 	if err != nil {
 		return event.Event{}, err

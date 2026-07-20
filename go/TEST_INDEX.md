@@ -373,15 +373,30 @@ The behavioural contract of `auth.RedisClient` is exercised in S1-05 via `mockRe
 
 ### S1-21 · Run stream — `internal/runstream/stream_test.go`
 
-**Purpose:** Redis pub/sub stream adapter — message forwarding and context cancellation.
-Go pre-generates runID and subscribes to `them:dash:run:{runID}:tokens` before workflow start.
-Python uses the provided runID verbatim, so both sides agree on the channel key without any handshake.
-At-most-once delivery is acceptable because subscription always precedes publication.
+**Purpose:** Redis pub/sub stream with reconnect. Go pre-generates runID and subscribes to
+`them:dash:run:{runID}:tokens` before workflow start. Terminal events close the output channel
+immediately. Transient Redis disconnects trigger bounded exponential backoff reconnect (up to
+`ReconnectMaxAttempts=6`, `ReconnectBaseDelay=100ms` → `ReconnectMaxDelay=3200ms`).
+At-most-once delivery: events missed during a reconnect gap are lost, not replayed.
 
 | Test | What it proves |
 |---|---|
-| `TestStream_ForwardsMessages` | Fake subscriber with 2 pre-loaded messages → 2 events forwarded with correct Type; channel closes when source closes |
-| `TestStream_ContextCancel` | Context cancelled immediately → output channel closes promptly without blocking |
+| `TestStream_ForwardsMessages` | Messages forwarded with correct Type; channel closes on terminal event |
+| `TestStream_TerminalDoneClosesImmediately` | `"done"` event closes output channel without waiting for source to close |
+| `TestStream_TerminalErrorClosesImmediately` | `"error"` event (max_iterations=0 path) also closes immediately |
+| `TestStream_ContextCancel` | Context cancelled → output closes promptly |
+| `TestStream_ReconnectOnSourceClose` | Source closes without terminal → reconnect → resumes delivery from second subscription |
+| `TestStream_ContextCancelDuringBackoff` | ctx cancel during backoff wait → clean exit, no further attempts |
+| `TestStream_ReconnectExhaustionEmitsOneError` | All 6 attempts fail → exactly one synthetic `error` event emitted |
+| `TestStream_NoDuplicateTerminalEvent` | Second terminal in source not delivered — Stream already closed after first |
+| `TestStream_NoGoroutineLeak` | Goroutine exits cleanly after terminal event path |
+| `TestStream_TerminalAfterReconnectNoFurtherAttempts` | Terminal event after reconnect stops further reconnect attempts |
+
+**Prometheus counters exposed:**
+- `them_runstream_disconnects_total`
+- `them_runstream_reconnect_attempts_total`
+- `them_runstream_reconnect_success_total`
+- `them_runstream_reconnect_failure_total`
 
 **Trigger:** any change to `internal/runstream/stream.go`
 
@@ -632,9 +647,10 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-18 | epconfig | 26 |
 | S1-19 | cache | 1 |
 | S1-20 | cache (runstream adapter) | 1 |
-| S1-21 | runstream | 2 |
-| **S1 total** | | **165** |
+| S1-21 | runstream | 10 |
+| **S1 total** | | **173** |
 | S2-01 | integration | 4 |
-| **S2 total** | | **4** |
+| S2-02 | hybrid integration | 8 |
+| **S2 total** | | **12** |
 | S3 live | manual | 23 |
-| **Grand total** | | **192** |
+| **Grand total** | | **208** |
