@@ -27,15 +27,15 @@ Integration tests pass under `go test -tags=integration ./...`.
 | temporal | `internal/temporal` | Temporal workflow/activity, HITL signal channel, Signaler adapter | 0 (integration) | Durable execution, HITL, pod-crash resilience |
 | agentregistry | `internal/agentregistry` | A2A JSON-RPC 2.0 invocation, two-level cache, pub/sub invalidation | 5 | Agent config cache with cross-replica invalidation |
 | epconfig | `internal/epconfig` | EP + App runtime config resolver — DB JOIN, 30s TTL cache, CheckAccess (fail-closed), Subscribe for cross-pod Redis pub/sub invalidation, shared by WS + SSE | 26 | Single typed config model; no duplication between handlers |
-| ws | `internal/ws` | WebSocket handler, lazy auth (EP config checked first), public EP support, Gate contract (Check→Register→Confirm/Rollback/Release), bus subscription before workflow | 9 | Subscribe-before-start bootstrap pattern + Gate contract enforcement + real EP limits + public EP access |
-| sse | `internal/sse` | SSE handler (GET+POST), lazy auth (EP config checked first), public EP support, same Gate contract + subscribe-before-start pattern as WS | 8 | SSE as a first-class entry point + Gate contract enforcement + real EP limits + public EP access |
+| ws | `internal/ws` | WebSocket handler, lazy auth (EP config checked first), public EP support, anonymous session identity (UserID=0, TokenHash="" to gate), Gate contract (Check→Register→Confirm/Rollback/Release), bus subscription before workflow | 12 | Subscribe-before-start bootstrap pattern + Gate contract enforcement + real EP limits + public EP access + anonymous session safety |
+| sse | `internal/sse` | SSE handler (GET+POST), lazy auth (EP config checked first), public EP support, anonymous session identity, same Gate contract + subscribe-before-start pattern as WS | 11 | SSE as a first-class entry point + Gate contract enforcement + real EP limits + public EP access + anonymous session safety |
 | a2a | `internal/a2a` | JSON-RPC 2.0 A2A server, /.well-known/agent.json agent card | 3 | Orchestrator-as-agent pattern |
-| admin | `internal/admin` | REST CRUD for agents/orchestrators/applications/entry-points/runs, HITL signal, JWT+super_admin middleware; EP config invalidation on all EP/App mutations including slug renames (old+new slug both published) | 14 | Admin API with proper auth, cache invalidation; cross-pod EP config eviction; slug rename evicts both old and new cache entries |
+| admin | `internal/admin` | REST CRUD for agents/orchestrators/applications/entry-points/runs, HITL signal, JWT+super_admin middleware (fail-closed for anonymous requests); EP config invalidation on all EP/App mutations including slug renames (old+new slug both published) | 15 | Admin API with proper auth, cache invalidation; cross-pod EP config eviction; slug rename evicts both old and new cache entries; anonymous requests rejected with 401 |
 | ratelimit | `internal/ratelimit` | Redis INCR rate limiting, per-token + per-app, 1-minute windows | 3 | Redis-backed rate limiting (replica-safe) |
 | gate | `internal/gate` | Runtime admission gate — SOLE owner of Set membership. Reservation TTL pattern: Check (SADD + short shadow TTL 10s) → Register (Hash) → Confirm (extend to 90s). Rollback on Register failure. Queue: BLPop signal channel, re-compete on wake. | 16 | Eliminates duplicate-SADD failure window; reservation TTL bounds ghost window to ≤10s even on crash; queue wake-up is a compete not a guarantee |
 
 **Total packages with tests: 20**
-**Total test count: 144 unit + 4 integration = 148 automated**
+**Total test count: 151 unit + 4 integration = 155 automated**
 
 ---
 
@@ -98,6 +98,6 @@ From the original architecture review:
 
 ```
 go build ./...     PASS
-go test ./...      PASS (22 packages, 144 unit tests)
+go test ./...      PASS (22 packages, 151 unit tests)
 go test -tags=integration ./...   PASS (4 integration tests)
 ```

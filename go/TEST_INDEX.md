@@ -212,7 +212,7 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ### S1-12 · WebSocket handler — `internal/ws/handler_test.go`
 
-**Purpose:** WS connection lifecycle — auth, public EP support, session, orchestration, disconnect, and Gate contract enforcement.
+**Purpose:** WS connection lifecycle — auth, public EP support, anonymous session identity, Gate contract enforcement, session lifecycle.
 
 | Test | What it proves |
 |---|---|
@@ -223,8 +223,11 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestGateCapExceeded` | Gate returns `ErrCapExceeded` → 503 before WS upgrade; session never registered |
 | `TestGateAdmittedAndReleased` | Gate admitted → Check→Confirm called; Release called on session end |
 | `TestGateRollbackOnRegisterFailure` | `session.Register` fails → Gate.Rollback called; Confirm never called |
-| `TestPublicEPNoTokenAllowed` | No token + AccessMode=public → 101 upgrade succeeds (public EP) |
-| `TestTokenEPNoTokenRejected` | No token + AccessMode=token → 401 (EP config checked before auth enforcement) |
+| `TestPublicEPNoTokenAllowed` | No token + AccessMode=public → 101 upgrade succeeds |
+| `TestTokenEPNoTokenRejected` | No token + AccessMode=token → 401 |
+| `TestAnonymousSessionGateTokenHashEmpty` | Anonymous session passes `TokenHash=""` to gate (not sha256("")), so rlKey() returns "" and per-token rate limiting is skipped — anonymous users do NOT share a single rate-limit bucket |
+| `TestAnonymousSessionUserIDIsZero` | Anonymous session stores `UserID=0` in SessionInfo — no valid identity is invented |
+| `TestAuthenticatedRequestToPublicEP` | Authenticated request to public EP succeeds (public EPs accept both) |
 
 **Trigger:** any change to `internal/ws/handler.go`
 
@@ -232,7 +235,7 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ### S1-13 · SSE handler — `internal/sse/handler_test.go`
 
-**Purpose:** Server-Sent Events endpoint, public EP support, and Gate contract enforcement.
+**Purpose:** Server-Sent Events endpoint, public EP support, anonymous session identity, Gate contract enforcement.
 
 | Test | What it proves |
 |---|---|
@@ -243,7 +246,10 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestSSEGateAdmittedAndReleased` | Gate admitted → Check→Confirm called; Release called on stream end |
 | `TestSSEGateRollbackOnRegisterFailure` | `session.Register` fails → Gate.Rollback called; error SSE event emitted |
 | `TestSSEPublicEPNoTokenAllowed` | No token + AccessMode=public → 200 + SSE stream opened |
-| `TestSSETokenEPNoTokenRejected` | No token + AccessMode=token → 401 (EP config checked before auth enforcement) |
+| `TestSSETokenEPNoTokenRejected` | No token + AccessMode=token → 401 |
+| `TestSSEAnonymousSessionGateTokenHashEmpty` | Anonymous session passes `TokenHash=""` to gate — no shared per-token rate-limit bucket |
+| `TestSSEAnonymousSessionUserIDIsZero` | Anonymous session stores `UserID=0` in SessionInfo |
+| `TestSSEAuthenticatedRequestToPublicEP` | Authenticated request to public EP succeeds |
 
 **Trigger:** any change to `internal/sse/handler.go`
 
@@ -283,8 +289,9 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestDeleteApplication_PublishesAllEPSlugs` | DELETE application → publishes all EP slugs for that app |
 | `TestUpdateEntryPoint_NilCache_NoPanic` | nil cache → no panic (cache is optional) |
 | `TestCreateEntryPoint_DoesNotPublish` | POST entry-point → no invalidation for new EP (nothing to evict) |
+| `TestAdminRequiresSuperAdmin_AnonymousRejected` | Anonymous request (no JWT claims) to admin endpoint → 401; RequireSuperAdmin middleware is fail-closed |
 
-**Trigger:** any change to `internal/admin/agents.go`, `orchestrators.go`, `applications.go`, `runs.go`
+**Trigger:** any change to `internal/admin/agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `middleware.go`
 
 ---
 
@@ -490,15 +497,15 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-09 | runrecorder | 6 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
-| S1-12 | ws | 9 |
-| S1-13 | sse | 8 |
+| S1-12 | ws | 12 |
+| S1-13 | sse | 11 |
 | S1-14 | a2a | 3 |
-| S1-15 | admin | 5 |
+| S1-15 | admin | 15 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
-| **S1 total** | | **144** |
+| **S1 total** | | **151** |
 | S2-01 | integration | 4 |
 | **S2 total** | | **4** |
 | S3 live | manual | 23 |
-| **Grand total** | | **171** |
+| **Grand total** | | **178** |

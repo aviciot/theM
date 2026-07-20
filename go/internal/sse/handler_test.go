@@ -39,10 +39,15 @@ func (f *fakeAuth) Validate(_ context.Context, token string) (*auth.TokenInfo, e
 	return nil, errors.New("invalid token")
 }
 
-type fakeSessionStore struct{}
+type fakeSessionStore struct {
+	lastSession session.SessionInfo // captures the most recently registered SessionInfo
+}
 
-func (s *fakeSessionStore) Register(_ context.Context, _ session.SessionInfo) error { return nil }
-func (s *fakeSessionStore) End(_ context.Context, _, _, _ string) error             { return nil }
+func (s *fakeSessionStore) Register(_ context.Context, info session.SessionInfo) error {
+	s.lastSession = info
+	return nil
+}
+func (s *fakeSessionStore) End(_ context.Context, _, _, _ string) error { return nil }
 
 type fakeDBQuerier struct{}
 
@@ -51,12 +56,16 @@ func (f *fakeDBQuerier) Exec(_ context.Context, _ string, _ ...any) error { retu
 // ── Helper ────────────────────────────────────────────────────────────────────
 
 func newTestSSEHandler(mockEvents []llm.StreamEvent, authn ssehandler.Authenticator) *ssehandler.Handler {
+	return newTestSSEHandlerWithStore(mockEvents, authn, &fakeSessionStore{})
+}
+
+func newTestSSEHandlerWithStore(mockEvents []llm.StreamEvent, authn ssehandler.Authenticator, store ssehandler.SessionStore) *ssehandler.Handler {
 	bus := event.New()
 	mock := llm.NewMockProvider(mockEvents)
 	cfg := orchestrator.Config{MaxIterations: 5}
 	recorder := runrecorder.New(&fakeDBQuerier{})
 	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
-	return ssehandler.NewHandler(&fakeSessionStore{}, recorder, orch, bus, authn, "test-instance", nil)
+	return ssehandler.NewHandler(store, recorder, orch, bus, authn, "test-instance", nil)
 }
 
 // collectSSE reads SSE events from the response body until the stream closes or
@@ -262,10 +271,12 @@ type fakeSSEGate struct {
 	confirmCalls  int
 	rollbackCalls int
 	releaseCalls  int
+	lastConfig    gate.Config // records the Config passed to the most recent Check call
 }
 
-func (g *fakeSSEGate) Check(_ context.Context, _ gate.Config) (gate.Result, error) {
+func (g *fakeSSEGate) Check(_ context.Context, cfg gate.Config) (gate.Result, error) {
 	g.checkCalls++
+	g.lastConfig = cfg
 	return gate.Result{Status: gate.StatusAdmitted}, g.checkErr
 }
 
@@ -346,4 +357,100 @@ func TestSSETokenEPNoTokenRejected(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// 9. Anonymous session to public EP: gate receives TokenHash="" (no shared rate-limit bucket).
+func TestSSEAnonymousSessionGateTokenHashEmpty(t *testing.T) {
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
+	g := &fakeSSEGate{}
+	mockEvents := []llm.StreamEvent{
+		{Type: "text_delta", Delta: "hi"},
+		{Type: "stop", StopReason: "end_turn"},
+	}
+	h := newTestSSEHandler(mockEvents, authn)
+	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModePublic,
+	}})
+	h.WithGate(g)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(mustGet(srv.URL + "/orchestrate/app/public-ep?message=hi"))
+	require.NoError(t, err)
+	_ = collectSSE(t, resp, 2*time.Second)
+	resp.Body.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	// Gate must receive TokenHash="" so rlKey() returns "" and per-token rate
+	// limiting is skipped — anonymous sessions must not share a single bucket.
+	assert.Equal(t, "", g.lastConfig.TokenHash,
+		"anonymous session must pass TokenHash='' to gate, not sha256('')")
+}
+
+// 10. Anonymous session to public EP: session is registered with UserID=0 (anonymous sentinel).
+func TestSSEAnonymousSessionUserIDIsZero(t *testing.T) {
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
+	store := &fakeSessionStore{}
+	mockEvents := []llm.StreamEvent{
+		{Type: "text_delta", Delta: "hi"},
+		{Type: "stop", StopReason: "end_turn"},
+	}
+	h := newTestSSEHandlerWithStore(mockEvents, authn, store)
+	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModePublic,
+	}})
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(mustGet(srv.URL + "/orchestrate/app/public-ep?message=hi"))
+	require.NoError(t, err)
+	_ = collectSSE(t, resp, 2*time.Second)
+	resp.Body.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	assert.Equal(t, int64(0), store.lastSession.UserID,
+		"anonymous session must store UserID=0, not a real user identity")
+}
+
+// 11. Authenticated request to a public EP also succeeds.
+func TestSSEAuthenticatedRequestToPublicEP(t *testing.T) {
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 42}}
+	mockEvents := []llm.StreamEvent{
+		{Type: "text_delta", Delta: "hi"},
+		{Type: "stop", StopReason: "end_turn"},
+	}
+	h := newTestSSEHandler(mockEvents, authn)
+	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModePublic,
+	}})
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/app/public-ep?message=hi")
+	req.Header.Set("Authorization", "Bearer valid")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// mustGet returns a new GET *http.Request, panicking on error (test helper).
+func mustGet(url string) *http.Request {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		panic(err)
+	}
+	return req
 }

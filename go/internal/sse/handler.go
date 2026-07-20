@@ -237,10 +237,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var gateCfg gate.Config
 	var gateAdmitted bool
 
+	// Compute gate token hash: "" for anonymous sessions so that rlKey() in
+	// gate.go returns "" and skips per-token rate limiting for public EPs.
+	// sha256("") is NOT empty string, so we must not pass tokenHash(rawToken)
+	// when rawToken is "".
+	gateTokenHash := ""
+	if rawToken != "" {
+		gateTokenHash = tokenHash(rawToken)
+	}
+
 	if h.gateStore != nil {
 		gateCfg = gate.Config{
 			EPSlug:    epSlug,
-			TokenHash: tokenHash(rawToken),
+			TokenHash: gateTokenHash,
 			SessionID: sessionID,
 		}
 		if resolvedCfg != nil {

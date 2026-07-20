@@ -41,12 +41,14 @@ func (f *fakeAuth) Validate(_ context.Context, token string) (*auth.TokenInfo, e
 }
 
 type fakeSessionStore struct {
-	registered []string
-	ended      []string
+	registered  []string
+	ended       []string
+	lastSession session.SessionInfo // captures the most recently registered SessionInfo
 }
 
 func (s *fakeSessionStore) Register(_ context.Context, info session.SessionInfo) error {
 	s.registered = append(s.registered, info.SessionID)
+	s.lastSession = info
 	return nil
 }
 
@@ -280,15 +282,17 @@ func TestGateRollbackOnRegisterFailure(t *testing.T) {
 // ── Gate fake ──────────────────────────────────────────────────────────────────
 
 type fakeGate struct {
-	checkErr     error
-	checkCalls   int
-	confirmCalls int
+	checkErr      error
+	checkCalls    int
+	confirmCalls  int
 	rollbackCalls int
-	releaseCalls int
+	releaseCalls  int
+	lastConfig    gate.Config // records the Config passed to the most recent Check call
 }
 
-func (g *fakeGate) Check(_ context.Context, _ gate.Config) (gate.Result, error) {
+func (g *fakeGate) Check(_ context.Context, cfg gate.Config) (gate.Result, error) {
 	g.checkCalls++
+	g.lastConfig = cfg
 	return gate.Result{Status: gate.StatusAdmitted}, g.checkErr
 }
 
@@ -370,6 +374,86 @@ func TestTokenEPNoTokenRejected(t *testing.T) {
 	require.Error(t, err, "unauthenticated request to token-mode EP should be rejected")
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// 10. Anonymous session to public EP: gate receives TokenHash="" (no shared rate-limit bucket).
+func TestAnonymousSessionGateTokenHashEmpty(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
+	g := &fakeGate{}
+	mockEvents := []llm.StreamEvent{
+		{Type: "stop", StopReason: "end_turn"},
+	}
+	h, _ := newTestHandler(t, mockEvents, authn, sessions)
+	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModePublic,
+	}})
+	h.WithGate(g)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "")
+	require.NoError(t, err)
+	conn.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	// Gate must receive TokenHash="" so that rlKey() returns "" and
+	// per-token rate limiting is skipped for public/anonymous sessions.
+	assert.Equal(t, "", g.lastConfig.TokenHash,
+		"anonymous session must pass TokenHash='' to gate, not sha256('')")
+}
+
+// 11. Anonymous session to public EP: session is registered with UserID=0 (anonymous sentinel).
+func TestAnonymousSessionUserIDIsZero(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
+	mockEvents := []llm.StreamEvent{
+		{Type: "stop", StopReason: "end_turn"},
+	}
+	h, _ := newTestHandler(t, mockEvents, authn, sessions)
+	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModePublic,
+	}})
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "")
+	require.NoError(t, err)
+	conn.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	require.Equal(t, 1, len(sessions.registered), "session must be registered")
+	assert.Equal(t, int64(0), sessions.lastSession.UserID,
+		"anonymous session must store UserID=0, not a real user identity")
+}
+
+// 12. Authenticated request to a public EP also succeeds (public EPs accept both).
+func TestAuthenticatedRequestToPublicEP(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 42}}
+	mockEvents := []llm.StreamEvent{
+		{Type: "stop", StopReason: "end_turn"},
+	}
+	h, _ := newTestHandler(t, mockEvents, authn, sessions)
+	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModePublic,
+	}})
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, resp, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "valid")
+	require.NoError(t, err, "authenticated request to public EP must succeed")
+	defer conn.Close()
+	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
 }
 
 // Ensure domain import is used.

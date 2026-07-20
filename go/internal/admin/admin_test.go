@@ -426,6 +426,26 @@ func TestCreateEntryPoint_DoesNotPublish(t *testing.T) {
 		"no invalidation needed for a freshly created EP")
 }
 
+// AZ-1: Anonymous request to admin endpoint returns 401 — RequireSuperAdmin middleware
+// rejects requests with no JWT claims in context (e.g., public EP anonymous sessions).
+func TestAdminRequiresSuperAdmin_AnonymousRejected(t *testing.T) {
+	db := &fakeDB{queryRows: newFakeRows(nil)}
+	h := admin.NewAgentsHandler(db, nil)
+
+	r := chi.NewRouter()
+	// Wire RequireSuperAdmin the same way main.go does.
+	r.Use(admin.RequireSuperAdmin(nil))
+	h.Routes(r)
+
+	// No Authorization header, no JWT claims in context — anonymous request.
+	req := httptest.NewRequest(http.MethodGet, "/agents", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code,
+		"admin endpoints must reject requests with no JWT claims (anonymous sessions)")
+}
+
 // 5. Signal run — calls Temporal client.
 func TestSignalRun(t *testing.T) {
 	db := &fakeDB{}

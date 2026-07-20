@@ -348,6 +348,23 @@ The 30-second TTL bounds worst-case staleness without any pub/sub. Pub/sub reduc
 
 Like Gate.Check, the EP config resolution step (`h.epLoader.Load()` + `epconfig.CheckAccess()`) must run while the connection is still a plain HTTP request. Once `upgrader.Upgrade()` is called (WS) or `w.WriteHeader(200)` is called (SSE), HTTP status codes cannot be sent to the client. A disabled EP returns 403; DB unavailable returns 503. Both are expressed as JSON error responses only if they occur before the protocol switch. After that point, the connection is already established and these checks are moot — they ran to completion before the switch.
 
+### Anonymous sessions: TokenHash must be "" not sha256("") when passed to the gate
+
+When an anonymous request reaches a public EP, `rawToken` is `""`. The handler's `tokenHash("")` function returns the SHA-256 of the empty string (`e3b0c44...`), which is a 64-character hex string — NOT the empty string. The `rlKey()` function in `gate.go` guards token-level rate limiting with `if c.TokenHash == ""` — but `sha256("") != ""`, so the guard does not fire and all anonymous sessions share one rate-limit bucket keyed on `sha256("")`.
+
+The fix: compute `gateTokenHash` separately from the CheckAccess `th` variable. If `rawToken == ""`, pass `gateTokenHash = ""` to `gate.Config.TokenHash`. This ensures `rlKey()` returns `""`, rate limiting is skipped for public/anonymous sessions, and anonymous users cannot DoS each other by exhausting a single shared token bucket.
+
+Rule: **never pass `tokenHash("")` anywhere a guard checks `== ""`**. The SHA-256 of the empty string is a valid-looking hash, not a sentinel for "no token."
+
+### Anonymous session identity: UserID=0, block-list checks skipped, admin middleware fail-closed
+
+Anonymous sessions (public EP, no bearer token) use the following conventions:
+
+- `tokenInfo = &auth.TokenInfo{}` → `TokenID = 0` — stored as `user_id="0"` in the Redis session Hash. This is the anonymous sentinel; `0` is never a valid persisted access token ID (the DB uses auto-increment starting at 1).
+- `epconfig.CheckAccess` skips both `BlockedTokenHashes` and `BlockedUserIDs` checks when `tokenHash == ""` and `userID == 0`. This is intentional — block-lists are per-token/per-user, not per-anonymous-session.
+- `admin.RequireSuperAdmin` middleware rejects any request with no JWT claims in context with 401. Anonymous sessions cannot reach any admin endpoint; the middleware does not check `user_id=0` — it requires a fully validated JWT claim set.
+- `them.runs` table stores no `user_id` column. Anonymous runs are indistinguishable from authenticated runs in DB audit trails. This is a known auditability gap; a schema migration adding `user_id BIGINT NULL` would address it (deferred, requires coordination with the Python platform).
+
 ### Auth enforcement must happen AFTER EP config resolution, not before — public EPs need no token
 
 The original handler flow authenticated the bearer token at step 1 (before EP config resolution). For public EPs (`AccessMode == "public"`), this meant every unauthenticated request was rejected with 401 before the handler ever checked whether the EP required a token.
