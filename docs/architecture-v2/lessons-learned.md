@@ -209,4 +209,32 @@ Using `time.Now().Unix() / 60` as the bucket means each request participates in 
 
 ### Mount ordering matters for chi: most-specific routes must be mounted first
 
+---
+
+## Phase 9 — Runtime Admission Gate
+
+### Gate owns Set membership; SessionManager owns Hash — never both
+
+The Python bridge had both `runtime_manager` and `session_manager` calling `SADD` on the same Redis Set. This created a failure window: one component's SADD could succeed while the other's failed, leaving the Set in an inconsistent state. The Go rewrite assigns exclusive ownership: Gate is the sole writer to Set membership (`SADD` on admit, `SREM` on rollback/end); SessionManager only writes the Hash. If you ever need to add a second writer to a Set, it is a sign the ownership boundary is wrong — fix the design, not the code.
+
+### Use a reservation TTL, not a permanent write, for the failure window between admission and Hash creation
+
+After `Gate.Check()` writes `SADD` + shadow key, the process must still call `session.Register()` to create the Hash. A crash in this window leaves a Set member with no Hash (ghost). The fix is to write the shadow key with a short `ReservationTTL` (10s) instead of the full session TTL (90s). If the process dies, the ghost auto-expires in ≤10s and is pruned on the next admission. On a normal `Register` success, `Gate.Confirm()` extends the shadow to the full TTL. This bounds the ghost window without requiring a distributed transaction.
+
+The caller contract is: `Gate.Check()` → `session.Register()` → `Gate.Confirm()`. On `Register` failure: `Gate.Rollback()` (immediate SREM + DEL shadow + Release). Never call `Confirm` before `Register` succeeds.
+
+### Queue wake-up is a re-compete, not guaranteed admission
+
+When `Gate.Release()` signals the queue (`LPush("1")`), a waiting session wakes from `BLPop` and re-runs the full admission Lua script. If a concurrent session grabbed the slot before the waiter completes the re-check, the waiter receives `ErrCapExceeded`. The waiter must **not** re-enter the queue on a failed re-compete — use `admit(recheck=true)` which returns `ErrCapExceeded` immediately. Allowing re-queue on a failed re-compete causes infinite retry loops and hides capacity problems.
+
+### Queue key is a pure signal channel — never push session IDs into it
+
+An earlier design pushed the session ID into the queue key and then `BLPop`-ed a separate slot key. This created four bugs simultaneously:
+1. The session's own `LPush` to the queue key was immediately consumed by its own `BLPop` (instant wake, skipping the actual wait).
+2. `Del(queueKey)` on timeout wiped all other waiting sessions.
+3. LPush key and BLPop key were different — no signal was ever sent.
+4. The `BLPop` consumer called `Gate.Check()` recursively, which could re-enter the queue.
+
+The correct design: the queue key is a pure signal channel. Waiters only consume (`BLPop`). Only `Gate.Release()` produces (`LPush("1")`). No session IDs are pushed. No `LRem` is needed. One `Release` call wakes exactly one waiter.
+
 In chi, `r.Mount("/", handler)` matches ALL paths not already matched. The A2A server mounts at `/` (to handle both `/a2a/{slug}` and `/.well-known/agent.json`). This mount must come after `/ws`, `/sse`, `/health`, and `/metrics` are registered. If it is mounted first, it absorbs all traffic. The server's `MountA2A` method appends to the router, so callers must call `MountWS/MountSSE` before `MountA2A`.
