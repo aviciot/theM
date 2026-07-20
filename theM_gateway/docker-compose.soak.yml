@@ -1,0 +1,80 @@
+version: "3.9"
+# docker-compose.soak.yml — Staging soak overlay for Phase 11b reconciler validation.
+#
+# Adds a second Go gateway instance (them-go-bridge-2) to validate that the
+# PostgreSQL advisory lock prevents duplicate concurrent reconciler sweeps.
+#
+# Usage (always layered on top of base + local + integration):
+#
+#   cd theM_gateway
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.local.yml \
+#     -f docker-compose.integration.yml \
+#     -f docker-compose.soak.yml \
+#     --profile temporal up -d --build
+#
+# Teardown:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.local.yml \
+#     -f docker-compose.integration.yml \
+#     -f docker-compose.soak.yml \
+#     --profile temporal down
+#
+# Ports:
+#   Go bridge 1 (them-go-bridge)   → host:8002  (from docker-compose.integration.yml)
+#   Go bridge 2 (them-go-bridge-2) → host:8003  (added here)
+
+services:
+  # Second Go gateway — same config, different instance ID and host port.
+  # The reconciler in both bridges will compete for pg_try_advisory_lock(987654321).
+  # Only one should log "sweep started"; the other should log "advisory lock held".
+  them-go-bridge-2:
+    build:
+      context: ..
+      dockerfile: Dockerfile.go
+    container_name: them-go-bridge-2
+    profiles: [temporal]
+    ports:
+      - "8003:8002"
+    environment:
+      THE_M_INSTANCE_ID: "go-bridge-2"
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8002"
+      APP_ENV: "integration"
+      LOG_LEVEL: "DEBUG"
+      LOG_FORMAT: "text"
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-integration-test-secret-key-do-not-use-in-prod}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_HOST_PORT: "temporal-frontend:7233"
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_healthy
+      temporal-frontend:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8002/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
