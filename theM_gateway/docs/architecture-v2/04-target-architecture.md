@@ -559,7 +559,7 @@ No HTTP call on the hot path. The `auth.Init()` step loads the RS256 public key(
 
 Three-layer lookup (same as Python, but typed):
 
-**L1**: In-process `sync.Map[string, cachedBearer]` where `cachedBearer` holds `BearerPayload` + `expiresAt time.Time`. Entries expire passively (checked on read). Capacity-bounded: if L1 > 10,000 entries, evict 10% LRU. This bounds memory usage on pods handling many unique tokens.
+**L1**: In-process `sync.Map[string, cachedBearer]` where `cachedBearer` holds `BearerPayload` + `expiresAt time.Time`. TTL is **60 seconds** (configurable via `AUTH_BEARER_L1_TTL_SECONDS`; set to 0 to disable L1 entirely for strict revocation). Entries expire passively (checked on read). Capacity-bounded: if L1 > 10,000 entries, evict 10% LRU. This bounds memory usage on pods handling many unique tokens. The 60s TTL is the hard upper bound for stale-token acceptance when a pod misses a revocation pub/sub message.
 
 **L2**: Redis `them:token:{sha256(rawToken)}` (string, JSON-encoded `BearerPayload`, TTL 300s).
 
@@ -611,9 +611,15 @@ ContextID         uuid.UUID
 SessionID         uuid.UUID
 TokenPayload      json.RawMessage
 HistoryWindow     int
-RunID             uuid.UUID (pre-allocated by edge layer, returned in "ready" event)
-EventChannel      string    (Redis pub/sub channel name: them:run:{context_id}:events)
+RunID             uuid.UUID  — pre-allocated by the edge layer before StartWorkflow is called.
+                               The edge subscribes to them:dash:run:{RunID}:tokens BEFORE calling
+                               StartWorkflow, eliminating the context-channel/channel-switch race.
+                               init_run_activity uses this RunID for INSERT INTO them.runs.
 ```
+
+> **No EventChannel field.** The token channel name is derived deterministically from RunID:
+> `them:dash:run:{RunID}:tokens`. There is no context channel. The worker publishes the `ready`
+> event to this channel; the edge is already subscribed when the event arrives.
 
 ### Activity Definitions
 
@@ -1259,15 +1265,24 @@ defer func() {
 ---
 
 **ADR-008**
-**Title**: Token Revocation via Redis Pub/Sub Broadcast
+**Title**: Token Revocation via Redis Pub/Sub with L1 TTL Fallback
 **Status**: Accepted
 **Context**: The Python bearer token cache (L1 in-process dict, TTL 300s) means a revoked token continues to be accepted for up to 5 minutes on any pod that has it in L1. For a multi-pod deployment, this is a security window. JWT tokens have the same issue: a revoked JWT's `jti` may not be in every pod's local revocation set for up to 5 minutes.
-**Decision**: Add a `them:token:revoked` pub/sub channel. When a token is revoked (admin DELETE or token expiry enforcement), the revoking pod publishes the token hash. All pods' `event.Bus` dispatcher delivers this to the `auth.revokedListener`, which immediately deletes the L1 cache entry. For JWTs, a Redis key `them:jwt:revoked:{jti}` (TTL = token remaining lifetime) is also written, checked on every JWT validation after local RS256 verification.
+**Decision**: Add a `them:token:revoked` pub/sub channel. When a token is revoked: (1) delete L2 key `them:token:{hash}` from Redis, (2) publish token hash to `them:token:revoked`. All pods' `event.Bus` dispatcher delivers this to `auth.revokedListener`, which deletes the L1 entry immediately. For JWTs, a Redis key `them:jwt:revoked:{jti}` (TTL = token remaining lifetime) is also written, checked on every JWT validation after local RS256 verification. Bearer token L1 TTL is set to **60 seconds** (not 300s) to bound the stale window for pods that miss the pub/sub event.
+
+**Actual revocation guarantee** (Redis Pub/Sub is at-most-once):
+- Fast path (pub/sub delivered): ~1ms
+- Slow path (pod missed pub/sub — restart or transient disconnect): ≤60s (L1 TTL)
+- Strict mode (`AUTH_BEARER_L1_TTL_SECONDS=0`): L1 disabled; every validation hits L2 Redis (~0.5ms, zero stale window)
+
+**What L2 deletion does NOT protect:** An L1 hit returns without consulting L2. Deleting the L2 key at revocation time prevents new cache populations but does not evict existing L1 entries. Only the pub/sub eviction or L1 TTL expiry clears a stale L1 entry.
+
 **Consequences**:
-- Positive: Revocation propagates across all pods in sub-second (pub/sub latency), closing the 5-minute window.
-- Positive: The Redis key provides durable revocation that survives pod restarts.
-- Negative: Every JWT validation now includes a Redis lookup for the revocation key (after the free local crypto check). This is one Redis GET per JWT validation "” acceptable overhead (~0.5ms) for the security benefit.
-- Negative: If Redis is briefly unavailable, the revocation check is skipped (fail-open). Mitigation: for high-security deployments, the JWT revocation check can be made fail-closed (reject all JWTs when Redis is unreachable), configurable via `AUTH_JWT_STRICT_REVOCATION=true`.
+- Positive: Common-case revocation propagates in ~1ms (pub/sub).
+- Positive: L1 TTL of 60s bounds the worst-case stale window for pods that miss the pub/sub event (down from 300s).
+- Positive: Strict mode (`AUTH_BEARER_L1_TTL_SECONDS=0`) provides zero stale window at the cost of one Redis GET per request.
+- Negative: Pub/Sub is at-most-once. A pod that restarts after revocation and before its L1 expires may serve the revoked token for up to 60s. This is documented and accepted for non-strict deployments.
+- Negative: Every JWT validation includes a Redis GET for the revocation key (~0.5ms). Fail-open if Redis is unreachable (configurable to fail-closed via `AUTH_JWT_STRICT_REVOCATION=true`).
 
 ---
 

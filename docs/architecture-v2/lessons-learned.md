@@ -207,6 +207,26 @@ Using `time.Now().Unix() / 60` as the bucket means each request participates in 
 
 `server.Server` owns an `*http.Server` internally. `httptest.NewServer` accepts an `http.Handler`, not a `*server.Server`. Adding a `Handler() http.Handler` method to `server.Server` returns the chi router, allowing integration tests to wrap it in `httptest.NewServer` without touching the production `ListenAndServe` path. This avoids port conflicts and signal handling in tests.
 
+### Pre-allocate run_id at the edge to eliminate the ready-bootstrap channel-switch race
+
+The original design subscribed to a context channel (`them:dash:run:{context_id}:ctx`), waited for a `ready` event carrying the worker-allocated `run_id`, then unsubscribed and re-subscribed to `them:dash:run:{run_id}:tokens`. Between UNSUBSCRIBE and SUBSCRIBE, the worker may have already started `plan_turn_activity` and published the first token events. Redis Pub/Sub has no message buffering — events published during the gap are silently lost.
+
+The fix: the edge pre-allocates `run_id = uuid.New()` before calling `StartWorkflow`, subscribes to `them:dash:run:{run_id}:tokens` immediately, and passes `run_id` in `WorkflowInput`. `init_run_activity` uses the provided `run_id` for `INSERT INTO them.runs`. The context channel is removed entirely. There is no channel switch, no gap, no lost events.
+
+Rule: if a pub/sub subscription must cover events that start immediately after a workflow/goroutine launch, subscribe BEFORE launching. If the subscription depends on a value the worker will compute (like run_id), pre-compute it at the caller instead.
+
+### Redis Pub/Sub is at-most-once — never claim sub-second revocation as a guarantee
+
+ADR-008 originally claimed token revocation propagates in "<1s". This is true only for pods that are connected and receive the message. A pod that restarts after a revocation or briefly disconnects from Redis will miss the pub/sub message entirely and continue serving the revoked token from L1 cache for up to the L1 TTL.
+
+The real guarantee is: **pub/sub + L1 TTL fallback**. The actual worst-case window is the L1 TTL, not sub-second. The design response:
+- Set L1 TTL to 60s (not 300s) to bound the worst-case window.
+- Document the distinction: pub/sub delivers in ~1ms when it works; the L1 TTL (60s) is the hard upper bound.
+- Do NOT claim that L2 deletion protects L1. An L1 hit returns without consulting L2. Deleting L2 at revocation time prevents new cache populations but does not evict existing L1 entries.
+- For strict zero-stale-window requirements: set `AUTH_BEARER_L1_TTL_SECONDS=0` to disable L1.
+
+This pattern applies to all at-most-once invalidation flows: agent registry, orchestrator cache, any in-process cache invalidated via Redis pub/sub. The pub/sub path is the fast common case; the TTL is the correctness fallback.
+
 ### Architecture docs must be updated in the same commit as the implementation
 
 Five architecture documents contained stale descriptions that contradicted the Phase 9 gate implementation. The discrepancies were:

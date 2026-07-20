@@ -8,6 +8,8 @@
 
 ## 1. WebSocket Request Lifecycle (Primary Path)
 
+**Channel design note:** The edge pre-allocates `run_id` (UUID) before calling `StartWorkflow` and subscribes to `them:dash:run:{run_id}:tokens` immediately. `run_id` is passed as part of `WorkflowInput` so the worker publishes directly to that channel. There is no context channel and no channel-switch — this eliminates the ready-bootstrap race entirely (see §7 for the race that this replaces).
+
 ```mermaid
 sequenceDiagram
     participant C as Client
@@ -53,23 +55,21 @@ sequenceDiagram
     Gate->>Redis: SET them:app:{app_id}:shadow:{session_id} 1 EX 90
     Note over Gate: If Register() had failed, Gate.Rollback() would SREM + DEL shadow + Release instead
 
-    Note over GA,Redis: Subscribe BEFORE StartWorkflow (ready race fix)
-    GA->>Redis: SUBSCRIBE them:dash:run:{context_id}:ctx
+    GA->>GA: run_id = uuid.New() (pre-allocated by edge — no context channel needed)
+    Note over GA,Redis: Subscribe to run token channel BEFORE StartWorkflow — no channel-switch race
+    GA->>Redis: SUBSCRIBE them:dash:run:{run_id}:tokens
 
-    GA->>TC: StartWorkflow(OrchestrationWorkflow, OrchestrationInput)
+    GA->>TC: StartWorkflow(OrchestrationWorkflow, WorkflowInput{run_id, context_id, ...})
     TC-->>GA: workflowHandle, workflow_id
 
     TW->>TW: Pick up workflow task
     TW->>TW: execute load_orchestration_context_activity
     TW->>TW: Load orch config + agents from DB/Redis
-    TW->>TW: execute init_run_activity
-    TW->>TW: INSERT them.runs, them.tasks
-    TW->>Redis: PUBLISH them:dash:run:{context_id}:ctx {type:"ready", run_id, task_id}
-    TW->>Redis: PUBLISH them:dash:run:{run_id}:tokens {type:"ready", ...}
+    TW->>TW: execute init_run_activity (uses run_id from WorkflowInput)
+    TW->>TW: INSERT them.runs with pre-allocated run_id, INSERT them.tasks
+    TW->>Redis: PUBLISH them:dash:run:{run_id}:tokens {type:"ready", run_id, task_id}
 
-    Redis-->>GA: Message on context channel: {type:"ready", run_id}
-    GA->>Redis: UNSUBSCRIBE them:dash:run:{context_id}:ctx
-    GA->>Redis: SUBSCRIBE them:dash:run:{run_id}:tokens
+    Redis-->>GA: ready event (already subscribed — no events lost)
 
     Note over TW,LLM: plan_turn_activity — LLM streaming
     TW->>LLM: POST /messages (stream=true)
@@ -240,44 +240,60 @@ sequenceDiagram
 
 ## 4. Token Revocation Broadcast (Multi-Pod)
 
+**Actual guarantee:** Redis Pub/Sub is at-most-once. A pod that misses the revocation message (restart, transient Redis disconnect) will continue accepting the token from its L1 cache until the L1 entry expires. The L2 key is deleted at revocation time, but L1 is not backed by L2 on reads — an L1 hit returns without consulting L2. The real worst-case window is the **L1 TTL** (60s), not sub-second.
+
+**Design decision:** L1 TTL is set to 60s (not 300s). The pub/sub path provides fast-path eviction in the common case. The 60s TTL is the hard upper bound for pods that miss the event. For use cases that require stronger guarantees, set `AUTH_BEARER_L1_TTL_SECONDS=0` to disable L1 caching entirely — all validation falls through to L2 Redis (one Redis GET per request, ~0.5ms, no L1 stale window).
+
 ```mermaid
 sequenceDiagram
     participant Admin as AdminClient
     participant PodA_HTTP as Pod_A HTTP
     participant PodA_DB as Pod_A DB Layer
-    participant PodA_L1 as Pod_A L1 Cache (in-process)
+    participant PodA_L1 as Pod_A L1 Cache (in-process, TTL 60s)
     participant Redis as Redis (shared)
-    participant PodB_L1 as Pod_B L1 Cache (in-process)
+    participant PodB_L1 as Pod_B L1 Cache (in-process, TTL 60s)
     participant PodB_Auth as Pod_B Auth handler
 
     Admin->>PodA_HTTP: DELETE /api/v1/tokens/{id}
     PodA_HTTP->>PodA_DB: token_store.Revoke(token_hash)
-    PodA_DB->>PodA_DB: UPDATE them.access_tokens SET enabled=false\n(or expires_at = now)
+    PodA_DB->>PodA_DB: UPDATE them.access_tokens SET enabled=false
 
-    Note over PodA_DB,Redis: Multi-step revocation
-    PodA_DB->>Redis: DEL them:session:token:{token_hash} (L2 cache key)
+    Note over PodA_DB,Redis: Revocation — L2 delete + pub/sub broadcast
+    PodA_DB->>Redis: DEL them:token:{token_hash} (L2 cache key)
     PodA_DB->>Redis: PUBLISH them:token:revoked {token_hash: "<hash>"}
     PodA_DB-->>PodA_HTTP: OK
+    PodA_HTTP-->>Admin: 204 No Content
 
+    Note over Redis,PodB_L1: Fast path — pub/sub delivery (at-most-once)
     Redis-->>PodA_L1: Message on them:token:revoked channel
     PodA_L1->>PodA_L1: Delete {token_hash} from in-process map
 
-    Redis-->>PodB_L1: Same message (same channel, all subscribers)
+    Redis-->>PodB_L1: Same message (IF Pod_B is connected and subscribed)
     PodB_L1->>PodB_L1: Delete {token_hash} from in-process map
 
-    PodA_HTTP-->>Admin: 204 No Content
+    Note over PodB_L1: Slow path — if Pod_B missed the pub/sub message
+    Note over PodB_L1: L1 entry expires after 60s (L1 TTL upper bound)
 
-    Note over PodB_Auth: Next request to Pod_B with revoked token
+    Note over PodB_Auth: Next request to Pod_B with revoked token (after eviction)
     PodB_Auth->>PodB_L1: L1 lookup(token_hash)
-    PodB_L1-->>PodB_Auth: Miss (just deleted)
-    PodB_Auth->>Redis: GET them:session:token:{token_hash}
-    Redis-->>PodB_Auth: Miss (just deleted)
+    PodB_L1-->>PodB_Auth: Miss (evicted by pub/sub or expired)
+    PodB_Auth->>Redis: GET them:token:{token_hash}
+    Redis-->>PodB_Auth: Miss (L2 deleted at revocation)
     PodB_Auth->>PodB_Auth: DB lookup them.access_tokens WHERE token_hash = ...
-    PodB_Auth-->>PodB_Auth: Row found, enabled=false
-    PodB_Auth-->>PodB_Auth: 401 Unauthorized
+    PodB_Auth-->>PodB_Auth: Row found, enabled=false → 401 Unauthorized
 ```
 
-⚠️ **Correction:** The current Python implementation does NOT publish `them:token:revoked`. The L1 cache is per-replica and only expires via TTL (300s). The sequence above documents the **required Go implementation**. The Python path relies solely on L2 TTL expiry — revoked tokens may be accepted for up to 5 minutes on replicas that hold a valid L1/L2 cache entry.
+**Revocation guarantee summary:**
+
+| Scenario | Window |
+|---|---|
+| Pod receives pub/sub message | ~1ms (pub/sub latency) |
+| Pod misses pub/sub (restart / transient disconnect) | ≤60s (L1 TTL) |
+| L1 disabled (`AUTH_BEARER_L1_TTL_SECONDS=0`) | ~0.5ms per request (L2 Redis GET) |
+
+**What the L2 TTL does NOT protect:** If L1 holds an entry and L2 is already deleted, L1 does not fall through to L2 on the next read. L1 hit = return immediately. Only pub/sub eviction or L1 TTL expiry clears a stale L1 entry.
+
+⚠️ **Python note:** The current Python implementation does NOT publish `them:token:revoked`. The Python path relies solely on L1/L2 TTL expiry (300s window). The sequence above documents the Go implementation.
 
 ---
 
@@ -367,6 +383,39 @@ sequenceDiagram
 ```
 
 **Shutdown timeline notes:**
+
+---
+
+## 7. Ready Bootstrap Race — Why the Context Channel Was Removed
+
+The previous design used two Redis channels with a channel-switch between them:
+
+```
+Edge subscribes to: them:dash:run:{context_id}:ctx
+Edge calls StartWorkflow(WorkflowInput without run_id)
+Worker runs init_run_activity, allocates run_id, publishes to context channel
+Edge receives {type:"ready", run_id}
+Edge UNSUBSCRIBES context channel          ← gap opens here
+Edge SUBSCRIBES them:dash:run:{run_id}:tokens  ← gap closes here
+Worker immediately starts plan_turn_activity, publishes token events
+```
+
+**The race:** Between UNSUBSCRIBE and SUBSCRIBE, the worker may already be executing `plan_turn_activity` and publishing token events. These events are published to `them:dash:run:{run_id}:tokens` before the edge has subscribed. Redis Pub/Sub is at-most-once with no message buffering — events published during the gap are silently lost. The client never sees the first token(s) of the response.
+
+**The fix (§1 above):**
+
+```
+Edge pre-allocates run_id = uuid.New()
+Edge SUBSCRIBES them:dash:run:{run_id}:tokens  ← subscribed before workflow starts
+Edge calls StartWorkflow(WorkflowInput{run_id: run_id, ...})
+Worker runs init_run_activity using the pre-allocated run_id
+Worker publishes all events to them:dash:run:{run_id}:tokens
+Edge receives all events — no gap, no channel switch
+```
+
+The context channel (`them:dash:run:{context_id}:ctx`) is removed entirely. The worker no longer needs to publish a `ready` signal to a separate channel; the single token channel carries the `ready` event as well.
+
+**WorkflowInput change required:** `run_id uuid.UUID` must be added to `WorkflowInput` (and the Python `OrchestrationInput` dataclass during Phase 5.4 overlap). `init_run_activity` uses the provided `run_id` for the `INSERT INTO them.runs` row instead of allocating one internally.
 
 - Total shutdown budget: 30 seconds (configurable via `SHUTDOWN_TIMEOUT_SECONDS`)
 - Active sessions have 20 of those 30 seconds to complete
