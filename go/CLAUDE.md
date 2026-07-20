@@ -39,7 +39,8 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | `internal/health/` | /health/live + /health/ready | `health.go` |
 | `internal/server/` | chi router, middleware, graceful shutdown | `server.go` |
 | `internal/auth/` | Local RS256 JWT + bearer token cache + pub/sub revocation | `jwt.go`, `token_cache.go`, `middleware.go` |
-| `internal/session/` | Session lifecycle, atomic Lua, shadow TTL, ghost pruning | `session.go` |
+| `internal/gate/` | Runtime admission gate — SOLE owner of Set membership. Atomic Lua: ghost prune + cap check + rate limit + SADD + shadow TTL. Queue support via BLPOP. | `gate.go` |
+| `internal/session/` | Session lifecycle — Hash (state) only. Atomic Lua SREM+DEL shadow on End. | `session.go` |
 | `internal/event/` | In-process fan-out event bus | `bus.go` |
 | `internal/domain/` | Canonical Message/Run types, status enums | `domain.go` |
 | `internal/runrecorder/` | Run persistence to them.runs / run_steps / run_usage | `recorder.go` |
@@ -150,6 +151,7 @@ docker compose --profile go logs -f them-go-bridge
 | `internal/sse/handler.go` | `go test ./internal/sse/...` |
 | `internal/a2a/server.go` | `go test ./internal/a2a/...` |
 | `internal/admin/` (any file) | `go test ./internal/admin/...` |
+| `internal/gate/gate.go` | `go test ./internal/gate/...` |
 | `internal/ratelimit/limiter.go` | `go test ./internal/ratelimit/...` |
 | `cmd/them/main.go` | `go test ./...` (full suite) |
 | `go.mod` or `go.sum` | `go test ./...` (full suite) |
@@ -165,9 +167,11 @@ docker compose --profile go logs -f them-go-bridge
 | Decision | Choice | Where documented |
 |---|---|---|
 | Architecture | Monolith-first Go service | `03b-alternatives-considered.md` |
-| Auth | Local RS256 JWT (no HTTP call) | `internal/auth/jwt.go` |
-| Token revocation | Redis pub/sub `them:token:revoked` | `internal/auth/token_cache.go` |
-| Session model | Atomic Lua + shadow TTL keys | `internal/session/session.go` |
+| JWT auth | Local RS256 signature validation (no HTTP call) — user session tokens from auth service | `internal/auth/jwt.go` |
+| Bearer token auth | Opaque token: L1 in-process sync.Map → L2 Redis `them:token:{sha256}` → PostgreSQL `them.access_tokens` | `internal/auth/token_cache.go` |
+| Token revocation | Redis pub/sub `them:token:revoked` — cross-pod L1 eviction | `internal/auth/token_cache.go` |
+| Session model | Atomic Lua + shadow TTL keys; Hash owned by session, Set membership owned by gate | `internal/session/session.go`, `internal/gate/gate.go` |
+| Admission gate | Gate sole owner of SADD (Set membership); SessionManager owns Hash only | `internal/gate/gate.go` |
 | History loading | DB-level `LIMIT` not Python full-scan | `internal/orchestrator/orchestrator.go` |
 | LLM cancellation | `context.Context` propagated to HTTP | `internal/llm/anthropic.go` |
 | Temporal | Retained (Go SDK), HITL via Signal | `internal/temporal/workflow.go` |

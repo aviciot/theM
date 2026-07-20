@@ -283,6 +283,25 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ---
 
+### S1-17 · Runtime admission gate — `internal/gate/gate_test.go`
+
+**Purpose:** Gate is the sole owner of Set membership at admission. Single atomic Lua script: ghost prune + cap check + rate limit + SADD + shadow TTL. Covers all rejection paths and correct state after admission.
+
+| Test | What it proves |
+|---|---|
+| `TestAdmitNoLimits` | No limits → admitted; EP and app Set membership + shadow keys written |
+| `TestEPCapExceeded` | EP cap=1, second session → `ErrCapExceeded` |
+| `TestAppCapExceeded` | App cap=1, second session → `ErrCapExceeded` |
+| `TestRateLimit` | RPM=1, second request in same minute → `ErrRateLimited` |
+| `TestNoAppID` | Empty AppID → only EP Set written, no app Set writes |
+| `TestGhostPruning` | Ghost member (no shadow key) pruned; cap check counts correctly |
+| `TestQueueDisabledOnCapExceeded` | QueueTimeout=0 + cap full → `ErrCapExceeded` immediately |
+| `TestQueueTimeout` | QueueTimeout>0, BLPOP times out → `ErrQueueFull` |
+
+**Trigger:** any change to `internal/gate/gate.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -365,6 +384,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/a2a/server.go` | S1-14 |
 | `internal/admin/` (any file) | S1-15 |
 | `internal/ratelimit/limiter.go` | S1-16 |
+| `internal/gate/gate.go` | S1-17 |
 | `cmd/them/main.go` | S1 (full suite) |
 | `go.mod` or `go.sum` | S1 (full suite) |
 | `Dockerfile.go` | S1 + rebuild + S2 |
@@ -409,8 +429,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-14 | a2a | 3 |
 | S1-15 | admin | 5 |
 | S1-16 | ratelimit | 3 |
-| **S1 total** | | **83** |
+| S1-17 | gate | 8 |
+| **S1 total** | | **91** |
 | S2-01 | integration | 4 |
 | **S2 total** | | **4** |
 | S3 live | manual | 23 |
-| **Grand total** | | **110** |
+| **Grand total** | | **118** |

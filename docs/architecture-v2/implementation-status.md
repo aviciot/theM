@@ -1,8 +1,8 @@
 # THEM Go Rewrite — Implementation Status
 
-Last updated: 2026-07-19
+Last updated: 2026-07-20
 
-All 8 phases complete. `go build ./...` and `go test ./...` pass.
+All 8 phases complete + Phase 9 (gate package). `go build ./...` and `go test ./...` pass.
 Integration tests pass under `go test -tags=integration ./...`.
 
 ---
@@ -31,9 +31,10 @@ Integration tests pass under `go test -tags=integration ./...`.
 | a2a | `internal/a2a` | JSON-RPC 2.0 A2A server, /.well-known/agent.json agent card | 3 | Orchestrator-as-agent pattern |
 | admin | `internal/admin` | REST CRUD for agents/orchestrators/applications/entry-points/runs, HITL signal, JWT+super_admin middleware | 5 | Admin API with proper auth, cache invalidation |
 | ratelimit | `internal/ratelimit` | Redis INCR rate limiting, per-token + per-app, 1-minute windows | 3 | Redis-backed rate limiting (replica-safe) |
+| gate | `internal/gate` | Runtime admission gate — SOLE owner of Set membership at admission. Single atomic Lua: ghost prune + cap check + rate limit + SADD + shadow TTL. Queue support (BLPOP). | 8 | Eliminates duplicate-SADD failure window (Architecture fix); sole ownership of admission-time Set membership |
 
-**Total packages with tests: 18**
-**Total test count: 100+ (across all packages)**
+**Total packages with tests: 19**
+**Total test count: 91 unit + 4 integration = 95 automated**
 
 ---
 
@@ -79,7 +80,8 @@ From the original architecture review:
 
 | Finding | Severity | Fixed in | How |
 |---|---|---|---|
-| Ghost session accumulation — Set members without TTL | Critical | Phase 4 (session) | Atomic Lua shadow-key pattern: every SADD paired with SET…EX shadow key; luaPruneAndCount prunes on every gate |
+| Ghost session accumulation — Set members without TTL | Critical | Phase 4 (session) + Phase 9 (gate) | Atomic Lua shadow-key pattern: every SADD paired with SET…EX shadow key; luaPruneAndCount runs inside gate's admission Lua on every request; SREM+DEL shadow on End |
+| Duplicate SADD failure window — both Gate and SessionManager wrote to Set | Architecture fix | Phase 9 (gate) | Gate is the sole owner of Set membership at admission. SessionManager owns Hash only. Clear ownership boundary with no failure window. |
 | Subscribe-after-publish race (events lost) | Critical | Phase 5 (ws, sse) | Subscribe to bus BEFORE starting orchestrator goroutine |
 | Provider format leaks into DB | High | Phase 5 (domain) | Canonical domain.Message type; all providers translate at the boundary |
 | Hardcoded 0 session count in pod heartbeat | High | Phase 4 (session) | atomic.LoadInt32(&activeSessions) — accurate count |
@@ -95,6 +97,6 @@ From the original architecture review:
 
 ```
 go build ./...     PASS
-go test ./...      PASS (all 18 packages with tests)
+go test ./...      PASS (19 packages, 91 unit tests)
 go test -tags=integration ./...   PASS (4 integration tests)
 ```
