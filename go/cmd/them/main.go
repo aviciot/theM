@@ -150,10 +150,12 @@ func run() error {
 		log.Info("Temporal disabled — using Go-inline orchestration path")
 	}
 
-	// ── 13c. Start run reconciler (Temporal path only, dry-run by default) ───
+	// ── 13c. Start run reconciler (Temporal path only) ───────────────────────
+	// DryRun is read from RECONCILER_DRY_RUN env var; defaults to true (safe).
+	// Set RECONCILER_DRY_RUN=false to enable actual DB writes.
 	if cfg.TemporalEnabled && temporalCli != nil {
 		recDB := reconciler.NewPgxQuerier(database.Pool())
-		recCfg := reconciler.Config{DryRun: true} // safe default; set DryRun=false to enable writes
+		recCfg := reconciler.Config{DryRun: cfg.ReconcilerDryRun}
 		go reconciler.Run(ctx, recCfg, recDB, temporalCli, log)
 		log.Info("run reconciler started", "dry_run", recCfg.DryRun)
 	}

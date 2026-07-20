@@ -59,6 +59,12 @@ type Config struct {
 	// Temporal
 	TemporalEnabled  bool
 	TemporalHostPort string
+
+	// Reconciler
+	// ReconcilerDryRun controls whether the run reconciler writes to the DB.
+	// Default is true (safe). Set RECONCILER_DRY_RUN=false to enable writes.
+	// Any invalid or missing value falls back to true.
+	ReconcilerDryRun bool
 }
 
 // DefaultSecretKey is the insecure placeholder that must never reach production.
@@ -97,6 +103,8 @@ func Load() (*Config, error) {
 
 		TemporalEnabled:  getEnvBool("TEMPORAL_ENABLED", false),
 		TemporalHostPort: getEnv("TEMPORAL_HOST_PORT", "localhost:7233"),
+
+		ReconcilerDryRun: getEnvBoolSafe("RECONCILER_DRY_RUN", true),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -167,13 +175,15 @@ func (c *Config) SafeString() string {
 			"db_pool_size=%d redis_host=%s redis_port=%d redis_db=%d "+
 			"log_level=%s log_format=%s otel_enabled=%v secret_key=*** "+
 			"jwt_middleware=%s anthropic_api_key=%s "+
-			"temporal_enabled=%v temporal_host_port=%s",
+			"temporal_enabled=%v temporal_host_port=%s "+
+			"reconciler_dry_run=%v",
 		c.AppEnv, c.AppHost, c.AppPort, c.InstanceID,
 		c.DBHost, c.DBPort, c.DBName, c.DBUser,
 		c.DBPoolSize, c.RedisHost, c.RedisPort, c.RedisDB,
 		c.LogLevel, c.LogFormat, c.OtelEnabled,
 		jwtMode, anthropicMode,
 		c.TemporalEnabled, c.TemporalHostPort,
+		c.ReconcilerDryRun,
 	)
 }
 
@@ -241,6 +251,23 @@ func getEnvBool(key string, fallback bool) bool {
 	b, err := strconv.ParseBool(v)
 	if err != nil {
 		return fallback
+	}
+	return b
+}
+
+// getEnvBoolSafe parses an environment variable as a boolean, always returning
+// fallback on parse errors or when the variable is absent. Unlike getEnvBool it
+// is named explicitly to signal the intent: invalid values must fail to the safe
+// default rather than the opposite. Used for security-sensitive feature flags
+// such as RECONCILER_DRY_RUN where false enables destructive writes.
+func getEnvBoolSafe(key string, safeDefault bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return safeDefault
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return safeDefault
 	}
 	return b
 }

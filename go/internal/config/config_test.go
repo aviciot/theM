@@ -147,3 +147,50 @@ func TestConfig_SafeString_MasksSecrets(t *testing.T) {
 	assert.Contains(t, safe, "db_password=***")
 	assert.Contains(t, safe, "secret_key=***")
 }
+
+// TestReconcilerDryRun_DefaultsToTrue verifies that when RECONCILER_DRY_RUN is
+// not set, the flag defaults to true (safe: no writes).
+func TestReconcilerDryRun_DefaultsToTrue(t *testing.T) {
+	env := validEnv()
+	setEnv(t, env)
+	os.Unsetenv("RECONCILER_DRY_RUN")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.ReconcilerDryRun, "missing RECONCILER_DRY_RUN must default to true")
+}
+
+// TestReconcilerDryRun_ExplicitTrue verifies "true" parses correctly.
+func TestReconcilerDryRun_ExplicitTrue(t *testing.T) {
+	env := validEnv()
+	env["RECONCILER_DRY_RUN"] = "true"
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.ReconcilerDryRun)
+}
+
+// TestReconcilerDryRun_ExplicitFalse verifies "false" parses correctly and
+// enables write mode.
+func TestReconcilerDryRun_ExplicitFalse(t *testing.T) {
+	env := validEnv()
+	env["RECONCILER_DRY_RUN"] = "false"
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.ReconcilerDryRun)
+}
+
+// TestReconcilerDryRun_InvalidValueFallsToTrue verifies that garbage input
+// fails safely to true rather than accidentally enabling writes.
+func TestReconcilerDryRun_InvalidValueFallsToTrue(t *testing.T) {
+	env := validEnv()
+	env["RECONCILER_DRY_RUN"] = "not-a-bool"
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.ReconcilerDryRun, "invalid RECONCILER_DRY_RUN must fail safely to true")
+}

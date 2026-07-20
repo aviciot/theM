@@ -72,6 +72,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       TEMPORAL_ENABLED: "true"
       TEMPORAL_HOST_PORT: "temporal-frontend:7233"
+      RECONCILER_DRY_RUN: "true"
     networks:
       - them-network
     depends_on:

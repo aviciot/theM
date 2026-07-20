@@ -39,6 +39,10 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestConfig_DSN` | DSN string format is correct for pgx |
 | `TestConfig_RedisAddr` | Redis address `host:port` format is correct |
 | `TestConfig_SafeString_MasksSecrets` | Secrets never appear in log output |
+| `TestReconcilerDryRun_DefaultsToTrue` | Missing `RECONCILER_DRY_RUN` → defaults to `true` (safe) |
+| `TestReconcilerDryRun_ExplicitTrue` | `RECONCILER_DRY_RUN=true` → `true` |
+| `TestReconcilerDryRun_ExplicitFalse` | `RECONCILER_DRY_RUN=false` → `false` (enables writes) |
+| `TestReconcilerDryRun_InvalidValueFallsToTrue` | `RECONCILER_DRY_RUN=not-a-bool` → `true` (fail-safe) |
 
 **Trigger:** any change to `internal/config/config.go` or `.env.example`
 
@@ -666,7 +670,7 @@ If a test is added without updating this index, the PR should not be merged.
 
 | Suite | Package | Tests |
 |---|---|---|
-| S1-01 | config | 9 |
+| S1-01 | config | 13 |
 | S1-02 | health | 5 |
 | S1-03 | server | 4 |
 | S1-04 | auth/jwt | 9 |
@@ -688,9 +692,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-20 | cache (runstream adapter) | 1 |
 | S1-21 | runstream | 10 |
 | S1-22 | reconciler | 15 |
-| **S1 total** | | **188** |
+| **S1 total** | | **192** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | **S2 total** | | **12** |
 | S3 live | manual | 23 |
-| **Grand total** | | **223** |
+| **Grand total** | | **227** |
