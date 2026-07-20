@@ -8,6 +8,7 @@ Redis, and httpx freely.
 
 import asyncio
 import json
+import pathlib
 import time
 import uuid
 from datetime import timedelta
@@ -49,6 +50,98 @@ from app.utils.logger import logger
 
 _DASH_RUN_PREFIX = "them:dash:run:"
 _DASH_RUNS_CHANNEL = "them:dash:runs"
+
+# ─── Phase 11c-A: Redis Streams atomic dual-publish ───────────────────────────
+
+# Terminal event types that trigger the final 24-hour TTL on the stream key.
+# This is the single authoritative definition in the Python codebase.
+# Must be kept in sync with phase-11c-design.md D10 and ADR-003 D10.
+TERMINAL_EVENT_TYPES: frozenset = frozenset({
+    "done",
+    "error",
+    "canceled",
+    "terminated",
+    "timed_out",
+})
+
+# Stream configuration constants
+_STREAM_MAXLEN = 5000          # approximate trim target (MAXLEN ~5000)
+_STREAM_SAFETY_TTL = 172800    # 48 hours — set on first event; prevents orphaned keys
+_STREAM_FINAL_TTL = 86400      # 24 hours — set on terminal event; retention window
+
+# Load the Lua script once at module init (re-loaded per redis_client instance at call time)
+_LUA_SCRIPT_PATH = pathlib.Path(__file__).parent / "stream_publish.lua"
+_LUA_SCRIPT_SOURCE: str = _LUA_SCRIPT_PATH.read_text(encoding="utf-8")
+
+# Cache the registered script object per redis client instance to avoid re-registering
+# on every call.  Key: id(redis_client), Value: registered script callable.
+_registered_scripts: dict = {}
+
+
+async def stream_publish(
+    redis_client,
+    run_id: str,
+    payload_dict: dict,
+    dual_publish: bool = True,
+) -> str:
+    """
+    Atomically publish one run event to the Redis Stream (and optionally to the
+    legacy Pub/Sub channel).
+
+    Uses the Lua script in stream_publish.lua, which in a single atomic operation:
+      1. XADDs the payload to them:dash:run:{run_id}:stream with MAXLEN ~5000
+      2. PUBLISHes to them:dash:run:{run_id}:tokens (if dual_publish=True)
+      3. Sets safety TTL (48h) on first event, or final TTL (24h) on terminal event
+
+    Args:
+        redis_client: async redis-py client (db_module.redis_client)
+        run_id: run UUID string
+        payload_dict: event dict (must contain 'type' key)
+        dual_publish: if True, also PUBLISH to legacy Pub/Sub channel
+
+    Returns:
+        stream entry ID string (e.g. "1721234567890-0")
+
+    Raises:
+        Exception: propagates Redis errors — never silently swallowed.
+    """
+    stream_key = f"{_DASH_RUN_PREFIX}{run_id}:stream"
+    pubsub_channel = f"{_DASH_RUN_PREFIX}{run_id}:tokens"
+    payload_json = json.dumps(payload_dict)
+    event_type = payload_dict.get("type", "")
+    is_terminal = event_type in TERMINAL_EVENT_TYPES
+
+    # Register the Lua script with this client instance (cached to avoid repeat calls)
+    client_id = id(redis_client)
+    if client_id not in _registered_scripts:
+        _registered_scripts[client_id] = redis_client.register_script(_LUA_SCRIPT_SOURCE)
+    script = _registered_scripts[client_id]
+
+    entry_id = await script(
+        keys=[stream_key, pubsub_channel],
+        args=[
+            str(_STREAM_MAXLEN),
+            str(_STREAM_SAFETY_TTL),
+            str(_STREAM_FINAL_TTL),
+            "1" if is_terminal else "0",
+            payload_json,
+            "1" if dual_publish else "0",
+        ],
+    )
+
+    # entry_id may be bytes from redis-py; decode for logging
+    if isinstance(entry_id, bytes):
+        entry_id = entry_id.decode()
+
+    logger.debug(
+        "stream_publish: event published",
+        run_id=run_id,
+        event_type=event_type,
+        is_terminal=is_terminal,
+        entry_id=entry_id,
+        dual_publish=dual_publish,
+    )
+    return entry_id
 
 
 async def _publish_dash(run_id: str, event: dict) -> None:
@@ -369,15 +462,16 @@ async def plan_turn_activity(inp: PlanTurnInput) -> PlanTurnResult:
         if event.type == "token":
             text = event.text or ""
             text_buffer += text
-            # Publish token to Redis side-channel for bridge streaming
+            # Publish token to Redis Stream (+ legacy Pub/Sub in dual mode)
             if db_module.redis_client is not None:
                 try:
-                    await db_module.redis_client.publish(
-                        f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                        json.dumps({"type": "token", "text": text}),
+                    await stream_publish(
+                        db_module.redis_client,
+                        inp.run_id,
+                        {"type": "token", "text": text},
                     )
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    logger.warning("stream_publish: token publish failed", error=str(_exc))
             # Heartbeat so Temporal knows the activity is alive
             activity.heartbeat({"phase": "token", "len": len(text_buffer)})
 
@@ -459,12 +553,13 @@ async def plan_turn_activity(inp: PlanTurnInput) -> PlanTurnResult:
     if final_answer is not None:
         if db_module.redis_client is not None:
             try:
-                await db_module.redis_client.publish(
-                    f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                    json.dumps({"type": "plan_done", "final_answer": final_answer}),
+                await stream_publish(
+                    db_module.redis_client,
+                    inp.run_id,
+                    {"type": "plan_done", "final_answer": final_answer},
                 )
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.warning("stream_publish: plan_done publish failed", error=str(_exc))
     elif tool_calls_raw:
         # Publish iteration_start with agent list to both channels so the UI can show
         # "Iteration N — calling agent_foo, agent_bar" before any agent responds
@@ -477,21 +572,23 @@ async def plan_turn_activity(inp: PlanTurnInput) -> PlanTurnResult:
         await _publish_dash(inp.run_id, iteration_start_event)
         if db_module.redis_client is not None:
             try:
-                await db_module.redis_client.publish(
-                    f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                    json.dumps(iteration_start_event),
+                await stream_publish(
+                    db_module.redis_client,
+                    inp.run_id,
+                    iteration_start_event,
                 )
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.warning("stream_publish: iteration_start publish failed", error=str(_exc))
 
         if db_module.redis_client is not None:
             try:
-                await db_module.redis_client.publish(
-                    f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                    json.dumps({"type": "tool_calls_ready", "tool_calls": tool_calls_raw}),
+                await stream_publish(
+                    db_module.redis_client,
+                    inp.run_id,
+                    {"type": "tool_calls_ready", "tool_calls": tool_calls_raw},
                 )
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.warning("stream_publish: tool_calls_ready publish failed", error=str(_exc))
 
     return PlanTurnResult(
         tool_calls=tool_calls_raw,
@@ -563,7 +660,7 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
                 inp.tool_input, inp.input_schema, inp.injected_context
             )
             # Publish tool_start to both channels:
-            # :tokens — streaming side-channel that bridge forwards to WS client
+            # :stream — durable stream that bridge forwards to WS client (Phase 11c+)
             # plain run channel — dashboard WS trace tab
             tool_start_event = {
                 "type": "tool_start",
@@ -573,12 +670,13 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
             await _publish_dash(inp.run_id, tool_start_event)
             if db_module.redis_client is not None:
                 try:
-                    await db_module.redis_client.publish(
-                        f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                        json.dumps(tool_start_event),
+                    await stream_publish(
+                        db_module.redis_client,
+                        inp.run_id,
+                        tool_start_event,
                     )
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    logger.warning("stream_publish: tool_start publish failed", error=str(_exc))
             mw_ctx = MiddlewareContext(
                 run_id=inp.run_id,
                 context_id=inp.context_id,
@@ -626,32 +724,34 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
                             status = "input-required"
                             if db_module.redis_client is not None:
                                 try:
-                                    await db_module.redis_client.publish(
-                                        f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                                        json.dumps({
+                                    await stream_publish(
+                                        db_module.redis_client,
+                                        inp.run_id,
+                                        {
                                             "type": "input_required",
                                             "agent": inp.agent_slug,
                                             "tool_call_id": inp.tool_call_id,
                                             "elapsed_ms": elapsed,
-                                        }),
+                                        },
                                     )
-                                except Exception:
-                                    pass
+                                except Exception as _exc:
+                                    logger.warning("stream_publish: input_required publish failed", error=str(_exc))
                             break
                         # Publish regular status to bridge stream
                         if db_module.redis_client is not None:
                             try:
-                                await db_module.redis_client.publish(
-                                    f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                                    json.dumps({
+                                await stream_publish(
+                                    db_module.redis_client,
+                                    inp.run_id,
+                                    {
                                         "type": "agent_status",
                                         "agent": inp.agent_slug,
                                         "state": event.state,
                                         "elapsed_ms": elapsed,
-                                    }),
+                                    },
                                 )
-                            except Exception:
-                                pass
+                            except Exception as _exc:
+                                logger.warning("stream_publish: agent_status publish failed", error=str(_exc))
 
                     elif event.type == "artifact":
                         for p in (event.artifact or {}).get("parts", []):
@@ -723,23 +823,25 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
     await _publish_dash(inp.run_id, tool_done_event)
     if db_module.redis_client is not None:
         try:
-            await db_module.redis_client.publish(
-                f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                json.dumps(tool_done_event),
+            await stream_publish(
+                db_module.redis_client,
+                inp.run_id,
+                tool_done_event,
             )
             for part in file_parts:
                 if part.get("filename") and part.get("media_type"):
-                    await db_module.redis_client.publish(
-                        f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                        json.dumps({
+                    await stream_publish(
+                        db_module.redis_client,
+                        inp.run_id,
+                        {
                             "type": "file",
                             "filename": part["filename"],
                             "media_type": part["media_type"],
                             "text": part.get("text", ""),
-                        }),
+                        },
                     )
-        except Exception:
-            pass
+        except Exception as _exc:
+            logger.warning("stream_publish: tool_done publish failed", error=str(_exc))
 
     if status == "input-required":
         return InvokeAgentResult(
@@ -882,7 +984,8 @@ async def finalize_run_activity(inp: FinalizeRunInput) -> None:
         "error": inp.error,
     })
 
-    # Publish terminal event to bridge stream so it stops listening
+    # Publish terminal event to bridge stream so it stops listening.
+    # stream_publish applies the final 24h TTL atomically via Lua when is_terminal=True.
     if db_module.redis_client is not None:
         try:
             terminal_event = (
@@ -890,12 +993,13 @@ async def finalize_run_activity(inp: FinalizeRunInput) -> None:
                 if inp.status == "completed"
                 else {"type": "error", "message": inp.error or "Run failed"}
             )
-            await db_module.redis_client.publish(
-                f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                json.dumps(terminal_event),
+            await stream_publish(
+                db_module.redis_client,
+                inp.run_id,
+                terminal_event,
             )
-        except Exception:
-            pass
+        except Exception as _exc:
+            logger.warning("stream_publish: terminal event publish failed", error=str(_exc))
 
     logger.info("finalize_run: done", run_id=inp.run_id, status=inp.status)
 

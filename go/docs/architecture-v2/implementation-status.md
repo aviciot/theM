@@ -1,7 +1,7 @@
 # Implementation Status — Go Gateway
 
-**Last updated:** 2026-07-20
-**Phase:** 11b complete (controlled write activation validated)
+**Last updated:** 2026-07-21
+**Phase:** 11c-A complete (atomic dual-publish infrastructure in Python)
 
 ---
 
@@ -86,8 +86,27 @@ The reconciler is fully operational:
 
 ---
 
+## Phase 11c-A — Python atomic dual-publish (Python-only, no Go changes)
+
+**Status: Complete — 2026-07-21**
+
+Python-only infrastructure for Redis Streams event delivery. No Go changes.
+
+| Artifact | Description |
+|---|---|
+| `theM_gateway/db/025_events_transport.sql` | Adds `events_transport TEXT NOT NULL DEFAULT 'pubsub'` to `them.runs` |
+| `theM_gateway/app/temporal/stream_publish.lua` | Lua script: atomic XADD + PUBLISH + EXPIRE in single round-trip |
+| `theM_gateway/app/temporal/activities.py` | Replaced all `:tokens` PUBLISH calls with `stream_publish()`; added `TERMINAL_EVENT_TYPES` frozenset |
+| `theM_gateway/scripts/tests/run_tests.py` | test_36 — structural + unit tests via fakeredis |
+
+**Default behavior:** `events_transport='pubsub'` (unchanged) until Go is updated in Phase 11c-B. The Python worker now writes to both the Redis Stream (`them:dash:run:{runID}:stream`) and the legacy Pub/Sub channel (`them:dash:run:{runID}:tokens`) atomically. Go continues to read from Pub/Sub as before.
+
+---
+
 ## Pending / future work
 
-- Phase 11c: Redis Streams for durable event replay (design doc written; not yet implemented)
+- Phase 11c-B: Go stream-read/replay behind `RUN_EVENTS_MODE=dual`; `events_transport='streams'` set by Go bridge on new runs
+- Phase 11c-C: Staging soak + MAXLEN validation (requires explicit approval gate)
+- Phase 11c-D: Remove Pub/Sub (requires ≥2 weeks stable in Phase 11c-C + explicit approval)
 - Voice EP implementation (deferred, not started)
 - `go test -race ./...` requires gcc on Windows — runs clean in Linux CI

@@ -1,6 +1,6 @@
 # ADR-003: Redis Streams for Durable Run Event Delivery
 
-**Status:** Accepted (design phase)
+**Status:** Accepted — Phase 11c-A implemented 2026-07-21
 **Date:** 2026-07-21
 **Deciders:** aviciot
 
@@ -89,6 +89,65 @@ Phase D (removing Pub/Sub) is not triggered by a calendar timer. It requires:
 - ≥2 weeks of Phase C running in staging with `RUN_EVENTS_MODE=streams`
 - Soak validation showing zero replay failures, zero stream errors
 - Explicit approval following the same process as the DryRun=false activation
+
+### D7: Terminal TTL owned by Python publisher inside Lua — not by Go handler
+
+**Rationale:** The original draft had the Go handler call `EXPIRE` with the final
+24-hour TTL when it forwarded the terminal event to the client. This is incorrect.
+There are three failure scenarios where the Go handler never executes that EXPIRE:
+(a) no Go client is connected when the terminal event is published; (b) the client
+disconnects before the terminal event arrives; (c) the bridge pod restarts between
+terminal event publish and the EXPIRE call.
+
+The final 24-hour TTL must be applied by the Lua script in the Python publisher,
+atomically with the XADD, regardless of whether any Go client is connected. This
+is the only path that is guaranteed to execute when the terminal event is published.
+
+The Go handler does not call EXPIRE at all.
+
+### D8: Both TTL operations (safety + final) are inside the same Lua script as XADD
+
+**Rationale:** A process crash or network failure after a successful XADD but
+before a separate EXPIRE call leaves the stream key with no expiry — a permanent
+Redis memory leak. The EXPIRE must be atomic with the XADD.
+
+Both the safety TTL (48h, on first event) and the final TTL (24h, on terminal
+event) are applied inside the same Lua script execution as the XADD. There is no
+window between XADD and EXPIRE.
+
+### D9: Transport selection via `events_transport` column on `them.runs` — no timeout fallback
+
+**Rationale:** The original draft used a 2-second `XREAD BLOCK` timeout to check
+whether a stream key existed before deciding which transport to use. This is
+incorrect: a valid LLM orchestration may take 30+ seconds before its first token.
+The timeout would incorrectly lock the connection to Pub/Sub for the entire run.
+
+The correct approach stores `events_transport` as a column on `them.runs` (values:
+`'pubsub'` or `'streams'`). The Go handler reads this value once when the run is
+created; the column value is stable for the run's entire lifetime. This eliminates
+the race window entirely.
+
+Migration: `db/025_events_transport.sql` adds the column with default `'pubsub'`.
+The Go bridge sets `'streams'` when `RUN_EVENTS_MODE` is `dual` or `streams`
+(Phase 11c-B). Python and the DB default remain `'pubsub'` until Phase 11c-B.
+
+### D10: Centralized terminal event set — single frozenset, single authoritative source
+
+**Rationale:** The set of event types that trigger the final 24-hour TTL must be
+defined exactly once in the codebase. Duplicating the list (e.g., once in a
+comment, once in a condition, once in a test) creates divergence risk.
+
+The authoritative set is `TERMINAL_EVENT_TYPES` in `app/temporal/activities.py`:
+
+```python
+TERMINAL_EVENT_TYPES = frozenset({'done', 'error', 'canceled', 'terminated', 'timed_out'})
+```
+
+This is the only place in the Python code where terminal event types are defined.
+The Lua script receives `is_terminal` as a pre-computed flag from Python (not the
+event type string directly), so the type-to-flag mapping happens in one Python
+function (`stream_publish`) that reads from this constant. Tests explicitly cover
+all five terminal types and verify no non-terminal type is treated as terminal.
 
 ---
 
