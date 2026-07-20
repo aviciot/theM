@@ -22,9 +22,7 @@ package sse
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,6 +33,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/auth"
@@ -49,11 +48,12 @@ import (
 	"github.com/aviciot/them/internal/temporal"
 )
 
-// newID generates a random 16-byte hex string suitable for session/run IDs.
+// newID generates a UUID v4 string.
+// UUID format is required because Go passes run_id, session_id, and context_id to
+// the Python Temporal worker which converts them via uuid.UUID(); a plain hex string
+// would raise ValueError there.
 func newID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	return uuid.New().String()
 }
 
 // tokenHash returns the lowercase hex SHA-256 of rawToken, matching the hash

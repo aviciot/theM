@@ -36,6 +36,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/assert"
@@ -151,9 +152,11 @@ func newRunStreamSub(t *testing.T, rc rueidis.Client) runstream.Subscriber {
 	return cache.NewRunStreamRedisClient(rc)
 }
 
-// newRunID generates a unique run ID for each test.
-func newRunID(label string) string {
-	return fmt.Sprintf("int-%s-%d", label, time.Now().UnixNano())
+// newRunID generates a UUID v4 run ID for each test.
+// UUID format is required: Go passes this to Python which calls uuid.UUID(run_id).
+// A non-UUID string would raise ValueError in init_run_activity.
+func newRunID(_ string) string {
+	return uuid.New().String()
 }
 
 // ─── tests ────────────────────────────────────────────────────────────────────
@@ -170,7 +173,7 @@ func TestHybrid_GoProvidedRunIDPreservedEndToEnd(t *testing.T) {
 	defer cancel()
 
 	runID := newRunID("t1")
-	contextID := fmt.Sprintf("ctx-%s", runID)
+	contextID := uuid.New().String()
 
 	input := temporal.PythonOrchestrationInput{
 		OrchestratorName: infra.orchName,
@@ -197,15 +200,13 @@ func TestHybrid_GoProvidedRunIDPreservedEndToEnd(t *testing.T) {
 		"workflow must complete without error — run_id wire format accepted")
 
 	// Verify the DB run row uses our Go-provided run_id, not a Python-generated one.
-	// NOTE: runID here is a short hex string, not a UUID. run_recorder.start_run now
-	// receives it as-is. The DB column is UUID type so we cast carefully.
-	// If the column type rejects the format, Python fell back to uuid4() — test fails.
+	// runID is a UUID v4 string — the DB column is UUID type, so this matches directly.
 	var dbRunCount int
 	queryErr := infra.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM them.runs WHERE id::text = $1`, runID,
+		`SELECT COUNT(*) FROM them.runs WHERE id = $1::uuid`, runID,
 	).Scan(&dbRunCount)
 	if queryErr != nil {
-		t.Logf("T1: DB query for run_id=%s returned error: %v (may be format incompatibility)", runID, queryErr)
+		t.Logf("T1: DB query for run_id=%s returned error: %v", runID, queryErr)
 	} else {
 		assert.Equal(t, 1, dbRunCount,
 			"DB must contain exactly one them.runs row with the Go-provided run_id=%s", runID)
@@ -227,7 +228,7 @@ func TestHybrid_DirectSubscriptionBeforeWorkflowStart(t *testing.T) {
 	defer cancel()
 
 	runID := newRunID("t2")
-	contextID := fmt.Sprintf("ctx-%s", runID)
+	contextID := uuid.New().String()
 
 	sub := newRunStreamSub(t, infra.redis)
 
@@ -284,7 +285,7 @@ func TestHybrid_NoContextChannelHandshake(t *testing.T) {
 	defer cancel()
 
 	runID := newRunID("t3")
-	contextID := fmt.Sprintf("ctx-%s", runID)
+	contextID := uuid.New().String()
 
 	sub := newRunStreamSub(t, infra.redis)
 	rsEvCh, err := runstream.Stream(ctx, sub, runID)
@@ -346,7 +347,7 @@ func TestHybrid_FirstAndTerminalEventsNotLost(t *testing.T) {
 	defer cancel()
 
 	runID := newRunID("t4")
-	contextID := fmt.Sprintf("ctx-%s", runID)
+	contextID := uuid.New().String()
 
 	sub := newRunStreamSub(t, infra.redis)
 
@@ -415,7 +416,7 @@ func TestHybrid_FullWireFormatAccepted(t *testing.T) {
 	defer cancel()
 
 	runID := newRunID("t5")
-	contextID := fmt.Sprintf("ctx-%s", runID)
+	contextID := uuid.New().String()
 
 	input := temporal.PythonOrchestrationInput{
 		OrchestratorName: infra.orchName,
@@ -454,7 +455,7 @@ func TestHybrid_CancelPropagates(t *testing.T) {
 	defer cancel()
 
 	runID := newRunID("t6")
-	contextID := fmt.Sprintf("ctx-%s", runID)
+	contextID := uuid.New().String()
 
 	input := temporal.PythonOrchestrationInput{
 		OrchestratorName: infra.orchName,
@@ -512,7 +513,7 @@ func TestHybrid_PythonNativeCallWithoutRunID(t *testing.T) {
 
 	// Use a unique workflow ID but omit RunID from the input.
 	wfID := newRunID("t7-native")
-	contextID := fmt.Sprintf("ctx-%s", wfID)
+	contextID := uuid.New().String()
 
 	input := temporal.PythonOrchestrationInput{
 		OrchestratorName: infra.orchName,
@@ -556,7 +557,7 @@ func TestHybrid_RunIDPassedMatchesPublishedChannel(t *testing.T) {
 	defer cancel()
 
 	runID := newRunID("t8")
-	contextID := fmt.Sprintf("ctx-%s", runID)
+	contextID := uuid.New().String()
 
 	sub := newRunStreamSub(t, infra.redis)
 	rsEvCh, err := runstream.Stream(ctx, sub, runID)

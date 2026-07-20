@@ -31,11 +31,22 @@ echo "==> Bringing up integration compose overlay..."
 cd "${GATEWAY_DIR}"
 docker compose \
   -f docker-compose.yml \
+  -f docker-compose.local.yml \
   -f docker-compose.integration.yml \
   --profile temporal \
-  up -d
+  up -d --build them-postgres them-redis temporal-frontend them-worker
 
-echo "==> Waiting 15s for services to become healthy..."
+echo "==> Waiting for Temporal frontend to be healthy (up to 60s)..."
+for i in $(seq 1 12); do
+  if docker inspect temporal-frontend --format='{{.State.Health.Status}}' 2>/dev/null | grep -q "healthy"; then
+    echo "  Temporal frontend healthy."
+    break
+  fi
+  echo "  Waiting ($((i*5))s)..."
+  sleep 5
+done
+
+echo "==> Waiting for Python worker to connect (15s)..."
 sleep 15
 
 echo "==> Running Go integration tests in ${GO_DIR}..."

@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-20
 
-All 8 phases complete + Phase 9 (gate package) + Phase 5.4 full EP config wiring (WS + SSE handlers + epconfig resolver) + real bearer token auth wiring (noopAuth replaced) + Phase 10 Temporal execution path (coexists with Go-inline fallback behind TEMPORAL_ENABLED feature flag). `go build ./...` and `go test ./...` pass.
+All 8 phases complete + Phase 9 (gate package) + Phase 5.4 full EP config wiring (WS + SSE handlers + epconfig resolver) + real bearer token auth wiring (noopAuth replaced) + Phase 10 Temporal execution path (coexists with Go-inline fallback behind TEMPORAL_ENABLED feature flag) + canonical run_id architecture (ADR-001) + live-stack validation fixes (UUID ID format). `go build ./...` and `go test ./...` pass.
 Integration tests pass under `go test -tags=integration ./...`.
 
 ---
@@ -28,8 +28,8 @@ Integration tests pass under `go test -tags=integration ./...`.
 | runstream | `internal/runstream` | Redis pub/sub subscriber for `them:dash:run:{runID}:tokens`. Go pre-generates runID and subscribes before `ExecuteWorkflow`; passes runID to Python in `PythonOrchestrationInput.RunID` so Python publishes to the same channel. At-most-once delivery — no race because subscribe always precedes publish. | 2 | Single-phase architecture: no context-channel bootstrap handshake. Subscribe-before-start invariant eliminates event loss. |
 | agentregistry | `internal/agentregistry` | A2A JSON-RPC 2.0 invocation, two-level cache, pub/sub invalidation | 5 | Agent config cache with cross-replica invalidation |
 | epconfig | `internal/epconfig` | EP + App runtime config resolver — DB JOIN, 30s TTL cache, CheckAccess (fail-closed), Subscribe for cross-pod Redis pub/sub invalidation, shared by WS + SSE | 26 | Single typed config model; no duplication between handlers |
-| ws | `internal/ws` | WebSocket handler, lazy auth (EP config checked first), public EP support, anonymous session identity (UserID=0, TokenHash="" to gate), Gate contract (Check→Register→Confirm/Rollback/Release), bus subscription before workflow, voice EP rejection (501), Temporal execution path (TEMPORAL_ENABLED=true) with single-phase subscribe-before-start (subscribe `:tokens` → start workflow), Go-inline fallback | 15 | Subscribe-before-start bootstrap pattern + Gate contract enforcement + real EP limits + public EP access + anonymous session safety + voice EP guard + Temporal coexistence |
-| sse | `internal/sse` | SSE handler (GET+POST), lazy auth (EP config checked first), public EP support, anonymous session identity, same Gate contract + subscribe-before-start pattern as WS, voice EP rejection (501), Temporal execution path (TEMPORAL_ENABLED=true) with single-phase subscribe-before-start (subscribe `:tokens` → start workflow), Go-inline fallback | 14 | SSE as a first-class entry point + Gate contract enforcement + real EP limits + public EP access + anonymous session safety + voice EP guard + Temporal coexistence |
+| ws | `internal/ws` | WebSocket handler, lazy auth (EP config checked first), public EP support, anonymous session identity (UserID=0, TokenHash="" to gate), Gate contract (Check→Register→Confirm/Rollback/Release), bus subscription before workflow, voice EP rejection (501), Temporal execution path (TEMPORAL_ENABLED=true) with single-phase subscribe-before-start (subscribe `:tokens` → start workflow), Go-inline fallback. `newID()` uses `github.com/google/uuid` — UUID v4 format required for Python Temporal worker | 15 | Subscribe-before-start bootstrap pattern + Gate contract enforcement + real EP limits + public EP access + anonymous session safety + voice EP guard + Temporal coexistence + UUID ID format |
+| sse | `internal/sse` | SSE handler (GET+POST), lazy auth (EP config checked first), public EP support, anonymous session identity, same Gate contract + subscribe-before-start pattern as WS, voice EP rejection (501), Temporal execution path (TEMPORAL_ENABLED=true) with single-phase subscribe-before-start (subscribe `:tokens` → start workflow), Go-inline fallback. `newID()` uses `github.com/google/uuid` — UUID v4 format required for Python Temporal worker | 14 | SSE as a first-class entry point + Gate contract enforcement + real EP limits + public EP access + anonymous session safety + voice EP guard + Temporal coexistence + UUID ID format |
 | a2a | `internal/a2a` | JSON-RPC 2.0 A2A server, /.well-known/agent.json agent card | 3 | Orchestrator-as-agent pattern |
 | admin | `internal/admin` | REST CRUD for agents/orchestrators/applications/entry-points/runs, HITL signal, JWT+super_admin middleware (fail-closed for anonymous requests); EP config invalidation on all EP/App mutations including slug renames (old+new slug both published); ep_type validation (websocket/sse/voice only, 422 on invalid) | 19 | Admin API with proper auth, cache invalidation; cross-pod EP config eviction; slug rename evicts both old and new cache entries; anonymous requests rejected with 401; invalid EP type rejected at API boundary |
 | ratelimit | `internal/ratelimit` | Redis INCR rate limiting, per-token + per-app, 1-minute windows | 3 | Redis-backed rate limiting (replica-safe) |
@@ -106,6 +106,12 @@ go test -race ./...                NOTE: requires Linux/GCC — run in CI only
 
 **Hybrid Temporal integration tests** (`internal/temporal/hybrid_integration_test.go`):
 - Require live Temporal server, PostgreSQL, Redis, and Python Temporal worker
-- Start with: `cd theM_gateway && docker compose -f docker-compose.yml -f docker-compose.integration.yml --profile temporal up -d`
-- Non-standard host ports (avoid local conflicts): Postgres=15432, Redis=16379, Temporal=17233
+- Start with: `cd theM_gateway && ./scripts/run-go-integration-tests.sh`
+  (or manually: `docker compose -f docker-compose.yml -f docker-compose.local.yml -f docker-compose.integration.yml --profile temporal up -d`)
+- Non-standard host ports (avoid local conflicts): Postgres=15432, Redis=16379, Temporal=17233, Go bridge=8002
+- All IDs (runID, sessionID, contextID) are UUID v4 — required by Python's `uuid.UUID()` parser
 - Verify: canonical run_id preservation end-to-end, direct single-channel subscription, no context-channel handshake, no lost events, full wire format, cancel propagation, Python-native backward compat, channel key match
+
+**Manual smoke tests** (`scripts/smoke_test_go_gateway.py`):
+- Start full hybrid stack then run: `python3 scripts/smoke_test_go_gateway.py --token <tok> --app <slug> --ep <slug>`
+- Tests: `/health/live`, `/health/ready`, WS orchestrate, SSE orchestrate

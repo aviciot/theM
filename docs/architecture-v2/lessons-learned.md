@@ -573,3 +573,50 @@ With `max_iterations=0`, the sequence is: `load_orchestration_context` → `init
 Multiple integration tests running concurrently or in sequence against the same Postgres will find each other's seeded data if they use fixed names. Use `fmt.Sprintf("integration-test-orch-%d", time.Now().UnixNano())` for each `setupHybridInfra` call. Each test gets its own isolated orchestrator and agent rows. The cleanup function deletes them by UUID (exact match), so there is no cross-test contamination even if a test panics before cleanup.
 
 The deferred cleanup runs even on test failure (via `defer cleanup()` immediately after `setupHybridInfra`). Never use `t.Cleanup` for infrastructure teardown in integration tests — it runs after all subtests, not after the parent returns, which can leave rows in the DB if a subtest crashes the test binary.
+
+### Go ID generation must produce UUID v4 format — not arbitrary hex strings
+
+`newID()` originally generated a random 16-byte hex string (`hex.EncodeToString(rand.Read(16))`), producing strings like `"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"`. This is not UUID format.
+
+When Go passes `RunID`, `SessionID`, and `ContextID` to the Python Temporal worker, `init_run_activity` converts them with `uuid.UUID(run_id)`. Python's `uuid.UUID()` raises `ValueError` for non-UUID-format strings. This caused the entire hybrid path (`TEMPORAL_ENABLED=true`) to fail silently on every request — the Python worker's `init_run_activity` threw a `ValueError`, the workflow failed, and the Go handler logged a workflow error.
+
+The DB column `them.runs.id` is also type UUID — inserting a non-UUID string via SQLAlchemy raises `DataError`.
+
+**Fix**: use `github.com/google/uuid` in `internal/ws/id.go` and `internal/sse/handler.go`:
+```go
+import "github.com/google/uuid"
+func newID() string { return uuid.New().String() }
+```
+
+Also fix the integration test `newRunID()` helper — it generated `"int-t1-{nanos}"` which also fails Python's `uuid.UUID()`.
+
+**Rule**: any string that will be passed to Python as a UUID field (or stored in a UUID DB column) **must** be a valid UUID. Use `uuid.New().String()` everywhere. Do not use hex-encoded random bytes unless the receiver explicitly accepts hex strings.
+
+---
+
+## Live-stack validation — Hybrid Path (TEMPORAL_ENABLED=true)
+
+### Docker Compose integration overlay: add the Go gateway service alongside the Python worker
+
+The integration overlay (`docker-compose.integration.yml`) originally exposed only infrastructure ports for host-side test runners. For full live-stack smoke testing, a `them-go-bridge` service was added to the `temporal` profile. This starts the Go gateway inside the Docker network alongside the Python worker, Temporal, Redis, and Postgres.
+
+Key decisions:
+- Build context is the repo root (`..`) so `Dockerfile.go` can reference `go/`.
+- Port 8002 is exposed directly to the host (no Traefik) to simplify smoke test tooling.
+- `SECRET_KEY` uses a test-only value safe for development; never use the integration key in any other environment.
+- `LOG_FORMAT: text` and `LOG_LEVEL: DEBUG` make container logs immediately readable during validation.
+
+The service depends on `them-postgres`, `them-redis`, and `temporal-frontend` being started first (via `condition: service_healthy` / `service_started`). The Python worker (`them-worker`) is NOT a dependency — both workers poll the same Temporal task queue independently; their startup order does not matter.
+
+### The smoke test script structure: health → WS → SSE → fallback
+
+`scripts/smoke_test_go_gateway.py` tests in layers:
+1. `/health/live` — confirms the Go binary started and can serve HTTP
+2. `/health/ready` — confirms DB and Redis are reachable from the Go binary
+3. WS orchestrate — full WebSocket round-trip through the hybrid path
+4. SSE orchestrate — same through the SSE path
+
+Health checks run without a token. Orchestration tests require `--token`, `--app`, `--ep`.
+If the `websockets` Python package is not installed, the WS test prints the manual command and passes (SKIP).
+
+This layered structure means a failing health check produces an actionable error before attempting orchestration.

@@ -1,21 +1,32 @@
 version: "3.9"
-# Integration test compose overlay — exposes infrastructure ports on non-standard
-# host ports so Go tests on the host machine can connect directly.
+# Integration test compose overlay — two purposes:
 #
-# Usage:
+# 1. Infrastructure ports exposed on non-standard host ports so Go tests running
+#    on the host machine can connect directly without port conflicts.
+#
+# 2. Go gateway service (them-go-bridge) added to the temporal profile so the
+#    full Go→Temporal→Python hybrid path can be started with one command.
+#
+# Usage (automated test runner):
 #   cd theM_gateway
-#   docker compose -f docker-compose.yml -f docker-compose.integration.yml --profile temporal up -d
-#   cd ../go
-#   go test -tags=integration -v -timeout 120s ./internal/temporal/...
+#   ./scripts/run-go-integration-tests.sh
+#
+# Usage (manual smoke tests — starts full hybrid stack):
+#   cd theM_gateway
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml \
+#                  -f docker-compose.integration.yml --profile temporal up -d --build
+#   # Go gateway on host port 8002 (direct — no Traefik)
+#   # Python bridge on port 8001 (internal) / 8088 (Traefik)
 #
 # Teardown:
-#   cd theM_gateway
-#   docker compose -f docker-compose.yml -f docker-compose.integration.yml --profile temporal down
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml \
+#                  -f docker-compose.integration.yml --profile temporal down
 #
-# Non-standard ports avoid conflicts with any local Postgres/Redis/Temporal:
+# Non-standard host ports avoid conflicts with any local Postgres/Redis/Temporal:
 #   Postgres  → host:15432   (container:5432)
 #   Redis     → host:16379   (container:6379)
 #   Temporal  → host:17233   (container:7233)
+#   Go bridge → host:8002    (container:8002)
 
 services:
   them-postgres:
@@ -29,3 +40,56 @@ services:
   temporal-frontend:
     ports:
       - "17233:7233"
+
+  # ── Go Gateway (TEMPORAL_ENABLED=true) ──────────────────────────────────────
+  # Runs alongside the Python bridge in the temporal profile.
+  # Serves WS + SSE + Admin API + Health on port 8002 (direct, no Traefik).
+  # Build context is the repo root so Dockerfile.go can reach go/.
+  them-go-bridge:
+    build:
+      context: ..
+      dockerfile: Dockerfile.go
+    container_name: them-go-bridge
+    profiles: [temporal]
+    ports:
+      - "8002:8002"
+    environment:
+      THE_M_INSTANCE_ID: "go-bridge-1"
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8002"
+      APP_ENV: "integration"
+      LOG_LEVEL: "DEBUG"
+      LOG_FORMAT: "text"
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-integration-test-secret-key-do-not-use-in-prod}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_HOST_PORT: "temporal-frontend:7233"
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_healthy
+      temporal-frontend:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8002/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"

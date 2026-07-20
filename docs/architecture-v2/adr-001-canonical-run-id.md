@@ -83,10 +83,11 @@ a hex-encoded random ID (not UUID format), which the DB column (UUID type) would
 Passing it explicitly in the input gives Python the exact string and does not require the
 workflow ID to be UUID-formatted.
 
-**Pre-generate UUID on Go side:** We could change `newID()` to return a UUID. This would
-make the DB column accept the ID directly and eliminate the potential format mismatch in T1.
-Deferred — current test T1 logs a warning rather than failing hard on format mismatch, since
-the DB column type check is the guard.
+**Pre-generate UUID on Go side:** Implemented in the live-stack validation phase.
+`newID()` in `internal/ws/id.go` and `internal/sse/handler.go` now uses
+`github.com/google/uuid` to produce UUID v4 strings. This was required because Python's
+`uuid.UUID(run_id)` in `init_run_activity` raises `ValueError` on non-UUID strings, making
+the entire hybrid path fail silently. The DB column type (UUID) also requires proper format.
 
 ## Related
 

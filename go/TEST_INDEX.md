@@ -458,14 +458,18 @@ publish calls. No context-channel bootstrap handshake. Seeds minimal DB rows (or
 `max_iterations=0`, one agent) — no LLM calls needed.
 
 **Required infrastructure:**
-- Temporal server at `$TEMPORAL_HOST_PORT` (default: `localhost:7233`)
-- PostgreSQL at `$TEST_POSTGRES_DSN` (default: `host=localhost port=5432 dbname=them user=them password=them_secret sslmode=disable`)
-- Redis at `$TEST_REDIS_ADDR` (default: `localhost:6379`)
+- Temporal server at `$TEMPORAL_HOST_PORT` (default: `localhost:17233` on integration overlay)
+- PostgreSQL at `$TEST_POSTGRES_DSN` (default: `host=localhost port=15432 dbname=them user=them password=them_secret sslmode=disable`)
+- Redis at `$TEST_REDIS_ADDR` (default: `localhost:16379`)
 - Python Temporal worker running and polling `them-orchestration` task queue
+
+**ID format constraint:** All IDs (runID, sessionID, contextID) are UUID v4 strings.
+Python's `init_run_activity` calls `uuid.UUID(run_id)` — non-UUID strings raise `ValueError`.
+`newID()` and `newRunID()` use `github.com/google/uuid`.
 
 | Test | What it proves |
 |---|---|
-| `TestHybrid_GoProvidedRunIDPreservedEndToEnd` | runID passed in `PythonOrchestrationInput.RunID` appears in the `them.runs` DB row — Python did not generate a different UUID |
+| `TestHybrid_GoProvidedRunIDPreservedEndToEnd` | UUID runID passed in `PythonOrchestrationInput.RunID` appears in the `them.runs` DB row — Python did not generate a different UUID |
 | `TestHybrid_DirectSubscriptionBeforeWorkflowStart` | Subscribe to `:tokens` before `ExecuteWorkflow` → receive at least one event; invariant holds |
 | `TestHybrid_NoContextChannelHandshake` | Terminal `done` event received on direct `{runID}:tokens` channel with NO `:ctx` subscription — single-phase architecture is complete |
 | `TestHybrid_FirstAndTerminalEventsNotLost` | `done` event received; timestamps prove subscribe happened before workflow start → no race |
@@ -476,8 +480,14 @@ publish calls. No context-channel bootstrap handshake. Seeds minimal DB rows (or
 
 **Start infrastructure (one command):**
 ```bash
+cd theM_gateway && ./scripts/run-go-integration-tests.sh
+```
+
+**Manual start:**
+```bash
 cd theM_gateway
-docker compose -f docker-compose.yml -f docker-compose.integration.yml --profile temporal up -d
+docker compose -f docker-compose.yml -f docker-compose.local.yml \
+               -f docker-compose.integration.yml --profile temporal up -d
 ```
 
 **Run command:**
@@ -488,12 +498,18 @@ $env:TEMPORAL_HOST_PORT="localhost:17233"
 go test -tags=integration -v -timeout 120s ./internal/temporal/...
 ```
 
-**Or use the helper script:**
+**Manual smoke tests (full hybrid stack with Go gateway container):**
 ```bash
-cd theM_gateway && bash scripts/run-go-integration-tests.sh
+# Start full stack including them-go-bridge on port 8002
+cd theM_gateway
+docker compose -f docker-compose.yml -f docker-compose.local.yml \
+               -f docker-compose.integration.yml --profile temporal up -d --build
+
+# Run smoke tests
+python3 scripts/smoke_test_go_gateway.py --token <tok> --app <app_slug> --ep <ep_slug>
 ```
 
-**Trigger:** any change to `internal/temporal/`, `internal/runstream/`, `theM_gateway/docker-compose.integration.yml`
+**Trigger:** any change to `internal/temporal/`, `internal/runstream/`, `internal/ws/id.go`, `internal/sse/handler.go` (newID), `theM_gateway/docker-compose.integration.yml`
 
 ---
 

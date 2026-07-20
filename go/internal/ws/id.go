@@ -1,13 +1,11 @@
 ﻿package ws
 
-import (
-	"crypto/rand"
-	"encoding/hex"
-)
+import "github.com/google/uuid"
 
-// newID generates a random 16-byte hex string suitable for IDs.
+// newID generates a UUID v4 string.
+// UUID format is required because Go passes run_id, session_id, and context_id to
+// the Python Temporal worker which converts them via uuid.UUID(); a plain hex string
+// would raise ValueError there.
 func newID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	return uuid.New().String()
 }
