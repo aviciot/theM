@@ -65,7 +65,28 @@ type Config struct {
 	// Default is true (safe). Set RECONCILER_DRY_RUN=false to enable writes.
 	// Any invalid or missing value falls back to true.
 	ReconcilerDryRun bool
+
+	// RunEventsMode selects the run-event delivery transport (Phase 11c-B).
+	// Parsed from RUN_EVENTS_MODE: "dual" | "streams" | anything-else→"pubsub".
+	RunEventsMode RunEventsMode
 }
+
+// RunEventsMode selects how run events are delivered to WS/SSE clients.
+// It is set from the RUN_EVENTS_MODE environment variable (Phase 11c-B).
+type RunEventsMode string
+
+const (
+	// RunEventsModePublish is legacy Pub/Sub-only delivery (default). New runs
+	// get events_transport='pubsub' and the Go bridge reads from the Pub/Sub
+	// channel only. This is the safe default for anything but 'dual'/'streams'.
+	RunEventsModePublish RunEventsMode = "pubsub"
+	// RunEventsModeDual writes to Redis Streams AND Pub/Sub (via the Python Lua
+	// script). New runs get events_transport='streams'; legacy rows keep 'pubsub'.
+	RunEventsModeDual RunEventsMode = "dual"
+	// RunEventsModeStreams writes to Redis Streams only. New runs get
+	// events_transport='streams'; the Go bridge reads exclusively from the stream.
+	RunEventsModeStreams RunEventsMode = "streams"
+)
 
 // DefaultSecretKey is the insecure placeholder that must never reach production.
 const DefaultSecretKey = "change-this-in-production"
@@ -105,6 +126,8 @@ func Load() (*Config, error) {
 		TemporalHostPort: getEnv("TEMPORAL_HOST_PORT", "localhost:7233"),
 
 		ReconcilerDryRun: getEnvBoolSafe("RECONCILER_DRY_RUN", true),
+
+		RunEventsMode: parseRunEventsMode(os.Getenv("RUN_EVENTS_MODE")),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -176,14 +199,14 @@ func (c *Config) SafeString() string {
 			"log_level=%s log_format=%s otel_enabled=%v secret_key=*** "+
 			"jwt_middleware=%s anthropic_api_key=%s "+
 			"temporal_enabled=%v temporal_host_port=%s "+
-			"reconciler_dry_run=%v",
+			"reconciler_dry_run=%v run_events_mode=%s",
 		c.AppEnv, c.AppHost, c.AppPort, c.InstanceID,
 		c.DBHost, c.DBPort, c.DBName, c.DBUser,
 		c.DBPoolSize, c.RedisHost, c.RedisPort, c.RedisDB,
 		c.LogLevel, c.LogFormat, c.OtelEnabled,
 		jwtMode, anthropicMode,
 		c.TemporalEnabled, c.TemporalHostPort,
-		c.ReconcilerDryRun,
+		c.ReconcilerDryRun, c.RunEventsMode,
 	)
 }
 
@@ -215,6 +238,21 @@ func parseRSAPublicKey(pemBytes []byte) (*rsa.PublicKey, error) {
 		return pub, nil
 	default:
 		return nil, fmt.Errorf("unsupported PEM block type %q; expected \"PUBLIC KEY\" or \"RSA PUBLIC KEY\"", block.Type)
+	}
+}
+
+// parseRunEventsMode maps the RUN_EVENTS_MODE env value to a RunEventsMode.
+// Only "dual" and "streams" (case-insensitive) select non-default transports;
+// every other value — including "pubsub", unset, or garbage — falls back to
+// pubsub. This mirrors getEnvBoolSafe intent: default to the safe legacy path.
+func parseRunEventsMode(v string) RunEventsMode {
+	switch strings.ToLower(v) {
+	case "dual":
+		return RunEventsModeDual
+	case "streams":
+		return RunEventsModeStreams
+	default:
+		return RunEventsModePublish
 	}
 }
 

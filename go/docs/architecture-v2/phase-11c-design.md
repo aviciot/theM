@@ -243,7 +243,7 @@ that is expensive and unnecessary.
 
 ```
 Phase 11c-A  Atomic dual-publish in Python worker (COMPLETE — 2026-07-21)
-Phase 11c-B  Go stream-read/replay behind RUN_EVENTS_MODE=dual
+Phase 11c-B  Go stream-read/replay behind RUN_EVENTS_MODE=dual (COMPLETE — 2026-07-21)
 Phase 11c-C  Staging soak + compatibility period (explicit approval gate)
 Phase 11c-D  Remove Pub/Sub — only after metrics confirm and approval given
 ```

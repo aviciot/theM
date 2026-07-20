@@ -73,6 +73,9 @@ services:
       TEMPORAL_ENABLED: "true"
       TEMPORAL_HOST_PORT: "temporal-frontend:7233"
       RECONCILER_DRY_RUN: "true"
+      # Phase 11c-B: enable dual (Streams + Pub/Sub) run-event delivery in the
+      # local integration/soak env so the stream-read path is exercised.
+      RUN_EVENTS_MODE: "dual"
     networks:
       - them-network
     depends_on:

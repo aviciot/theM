@@ -194,3 +194,39 @@ func TestReconcilerDryRun_InvalidValueFallsToTrue(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, cfg.ReconcilerDryRun, "invalid RECONCILER_DRY_RUN must fail safely to true")
 }
+
+// TestRunEventsMode covers RUN_EVENTS_MODE parsing (Phase 11c-B):
+// missing → pubsub, "dual" → dual, "streams" → streams, "DUAL" (upper) → dual,
+// "invalid" → pubsub. The default is always the safe legacy Pub/Sub path.
+func TestRunEventsMode(t *testing.T) {
+	cases := []struct {
+		name string
+		set  bool
+		val  string
+		want config.RunEventsMode
+	}{
+		{"missing defaults to pubsub", false, "", config.RunEventsModePublish},
+		{"dual", true, "dual", config.RunEventsModeDual},
+		{"streams", true, "streams", config.RunEventsModeStreams},
+		{"DUAL uppercase normalises to dual", true, "DUAL", config.RunEventsModeDual},
+		{"STREAMS uppercase normalises to streams", true, "STREAMS", config.RunEventsModeStreams},
+		{"explicit pubsub", true, "pubsub", config.RunEventsModePublish},
+		{"invalid falls back to pubsub", true, "invalid", config.RunEventsModePublish},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := validEnv()
+			if tc.set {
+				env["RUN_EVENTS_MODE"] = tc.val
+			}
+			setEnv(t, env)
+			if !tc.set {
+				os.Unsetenv("RUN_EVENTS_MODE")
+			}
+
+			cfg, err := config.Load()
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.RunEventsMode)
+		})
+	}
+}

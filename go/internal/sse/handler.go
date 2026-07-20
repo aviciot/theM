@@ -37,6 +37,7 @@ import (
 	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/auth"
+	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
@@ -109,6 +110,8 @@ type Handler struct {
 	logger          *slog.Logger
 	temporalClient  TemporalClientExecutor
 	runStreamSub    runstream.Subscriber
+	dispatcher      *runstream.Dispatcher
+	runEventsMode   config.RunEventsMode
 	temporalEnabled bool
 }
 
@@ -164,6 +167,34 @@ func (h *Handler) WithTemporal(tc TemporalClientExecutor, sub runstream.Subscrib
 	h.runStreamSub = sub
 	h.temporalEnabled = enabled
 	return h
+}
+
+// WithRunEvents attaches the run-event dispatcher and the active RUN_EVENTS_MODE
+// (Phase 11c-B). The dispatcher chooses Pub/Sub or Redis Streams per run based on
+// mode and the run's events_transport value. Call after WithTemporal in main.go.
+// When not called, the handler falls back to the Pub/Sub subscriber directly.
+func (h *Handler) WithRunEvents(d *runstream.Dispatcher, mode config.RunEventsMode) *Handler {
+	h.dispatcher = d
+	h.runEventsMode = mode
+	return h
+}
+
+// eventsTransportForNewRun returns the events_transport value this handler
+// stamps on a new run row: "streams" in dual/streams mode, else "pubsub".
+func (h *Handler) eventsTransportForNewRun() string {
+	if h.runEventsMode == config.RunEventsModeDual || h.runEventsMode == config.RunEventsModeStreams {
+		return "streams"
+	}
+	return "pubsub"
+}
+
+// runEvents opens the event channel for a run, using the dispatcher when wired
+// (Phase 11c-B) or the legacy Pub/Sub Stream otherwise.
+func (h *Handler) runEvents(ctx context.Context, runID, eventsTransport, lastEventID string) (<-chan event.Event, error) {
+	if h.dispatcher != nil {
+		return h.dispatcher.Stream(ctx, runID, eventsTransport, lastEventID)
+	}
+	return runstream.Stream(ctx, h.runStreamSub, runID)
 }
 
 // Routes returns an http.Handler that mounts the SSE orchestration routes.
@@ -369,15 +400,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer unsub()
 
 	// ── 10. Create run record ─────────────────────────────────────────────────
+	// events_transport is decided by RUN_EVENTS_MODE at run-creation time and is
+	// stable for the run's lifetime (Phase 11c-B).
+	eventsTransport := h.eventsTransportForNewRun()
 	run := domain.Run{
-		ID:             runID,
-		ContextID:      contextID,
-		EntryPointSlug: epSlug,
-		Status:         domain.RunStatusRunning,
+		ID:              runID,
+		ContextID:       contextID,
+		EntryPointSlug:  epSlug,
+		Status:          domain.RunStatusRunning,
+		EventsTransport: eventsTransport,
 	}
 	if err := h.recorder.CreateRun(r.Context(), run); err != nil {
 		h.logger.Warn("sse: create run failed", "run_id", runID, "error", err)
 	}
+
+	// SSE resume cursor: the standard Last-Event-ID header set by EventSource on
+	// reconnect. "" when absent → full replay / start from beginning.
+	lastEventID := r.Header.Get("Last-Event-ID")
 
 	// ── 11. Start orchestration ───────────────────────────────────────────────
 	ctx, cancel := context.WithCancel(r.Context())
@@ -393,7 +432,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Subscribe to the token stream BEFORE starting the workflow so no event
 		// is missed. Go passes runID as PythonOrchestrationInput.RunID; Python
 		// uses it verbatim for all publish calls on them:dash:run:{runID}:tokens.
-		rsEvCh, rsErr := runstream.Stream(ctx, h.runStreamSub, runID)
+		rsEvCh, rsErr := h.runEvents(ctx, runID, eventsTransport, lastEventID)
 		if rsErr != nil {
 			h.logger.Warn("sse: runstream subscribe failed — falling back to inline",
 				"run_id", runID, "error", rsErr)

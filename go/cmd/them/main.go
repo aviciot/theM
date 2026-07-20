@@ -27,6 +27,7 @@ import (
 	"github.com/aviciot/them/internal/ratelimit"
 	"github.com/aviciot/them/internal/reconciler"
 	"github.com/aviciot/them/internal/runrecorder"
+	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/server"
 	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/sse"
@@ -85,7 +86,13 @@ func run() error {
 	log.Info("session store initialised")
 
 	// ── 7. Create run recorder ────────────────────────────────────────────────
-	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(database.Pool()))
+	// The run-events mode is injected once here so every new run row gets the
+	// correct events_transport ('pubsub' or 'streams') without threading the mode
+	// through call sites (Phase 11c-B).
+	log.Info("run events mode", "mode", cfg.RunEventsMode)
+	runstream.SetModeGauge(string(cfg.RunEventsMode))
+	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(database.Pool())).
+		WithRunEventsMode(cfg.RunEventsMode)
 
 	// ── 8. Create LLM provider ────────────────────────────────────────────────
 	var llmProvider llm.Provider
@@ -169,18 +176,27 @@ func run() error {
 	epLoader.Subscribe(ctx, epConfigSub)
 	log.Info("EP config loader initialised with pub/sub invalidation")
 
-	// ── 15. Wire WebSocket handler (/ws/*) ───────────────────────────────────
-	rsRedis := cache.NewRunStreamRedisClient(redisCache.Client())
+	// ── 15. Wire run-event dispatcher (Pub/Sub + Redis Streams) ──────────────
+	// The dispatcher is built once and shared by the WS and SSE handlers. It
+	// picks Pub/Sub or Streams per run based on RUN_EVENTS_MODE and the run's
+	// events_transport value (Phase 11c-B).
+	rsRedis := cache.NewRunStreamRedisClient(redisCache.Client())     // Pub/Sub subscriber
+	rsStreamer := cache.NewRunStreamerRedisClient(redisCache.Client()) // Streams reader
+	dispatcher := runstream.NewDispatcher(cfg.RunEventsMode, rsRedis, rsStreamer)
+
+	// ── 16. Wire WebSocket handler (/ws/*) ───────────────────────────────────
 	wsHandler := ws.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log).
 		WithEPConfig(epLoader).
-		WithTemporal(temporalCli, rsRedis, cfg.TemporalEnabled)
+		WithTemporal(temporalCli, rsRedis, cfg.TemporalEnabled).
+		WithRunEvents(dispatcher, cfg.RunEventsMode)
 	srv.MountWS(wsHandler.Routes())
 	log.Info("WebSocket handler mounted", "prefix", "/ws")
 
-	// ── 16. Wire SSE handler (/sse/*) ─────────────────────────────────────────
+	// ── 17. Wire SSE handler (/sse/*) ─────────────────────────────────────────
 	sseHandler := sse.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log).
 		WithEPConfig(epLoader).
-		WithTemporal(temporalCli, rsRedis, cfg.TemporalEnabled)
+		WithTemporal(temporalCli, rsRedis, cfg.TemporalEnabled).
+		WithRunEvents(dispatcher, cfg.RunEventsMode)
 	srv.MountSSE(sseHandler.Routes())
 	log.Info("SSE handler mounted", "prefix", "/sse")
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
 )
 
@@ -17,14 +18,27 @@ type DBQuerier interface {
 	Exec(ctx context.Context, sql string, args ...any) error
 }
 
+// eventsTransportPubSub / eventsTransportStreams are the two valid values of the
+// them.runs.events_transport column (Phase 11c). They must match the CHECK
+// constraint in db/025_events_transport.sql.
+const (
+	eventsTransportPubSub  = "pubsub"
+	eventsTransportStreams = "streams"
+)
+
 // Recorder writes run lifecycle events to the database.
 type Recorder struct {
 	db DBQuerier
+	// runEventsMode decides the events_transport value written on new runs.
+	// pubsub → "pubsub"; dual/streams → "streams". Injected at construction so
+	// the value is decided once at startup, not threaded through call sites.
+	runEventsMode config.RunEventsMode
 }
 
-// New creates a Recorder backed by the given DBQuerier.
+// New creates a Recorder backed by the given DBQuerier. The events transport
+// mode defaults to pubsub; use WithRunEventsMode to override at startup.
 func New(db DBQuerier) *Recorder {
-	return &Recorder{db: db}
+	return &Recorder{db: db, runEventsMode: config.RunEventsModePublish}
 }
 
 // NewRecorder is an alias for New for backward compatibility.
@@ -32,19 +46,44 @@ func NewRecorder(db DBQuerier) *Recorder {
 	return New(db)
 }
 
+// WithRunEventsMode sets the run-events mode used to derive the events_transport
+// column on new runs. Call once at startup in main.go. Returns the receiver for
+// chaining.
+func (r *Recorder) WithRunEventsMode(mode config.RunEventsMode) *Recorder {
+	r.runEventsMode = mode
+	return r
+}
+
+// eventsTransport returns the events_transport value to store on a new run row,
+// based on the configured mode. pubsub mode → "pubsub" (Go reads Pub/Sub);
+// dual/streams mode → "streams" (Python Lua publishes to the stream; Go reads it).
+func (r *Recorder) eventsTransport() string {
+	if r.runEventsMode == config.RunEventsModeDual || r.runEventsMode == config.RunEventsModeStreams {
+		return eventsTransportStreams
+	}
+	return eventsTransportPubSub
+}
+
 // CreateRun inserts a new run row in them.runs with status "running".
+// The events_transport column is set from the configured RunEventsMode unless
+// run.EventsTransport is explicitly provided (non-empty), in which case that
+// value is used verbatim.
 func (r *Recorder) CreateRun(ctx context.Context, run domain.Run) error {
 	const q = `
-		INSERT INTO them.runs (id, context_id, application_id, entry_point_slug, status, started_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO them.runs (id, context_id, application_id, entry_point_slug, status, started_at, events_transport)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (id) DO NOTHING`
 	startedAt := run.StartedAt
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
+	transport := run.EventsTransport
+	if transport == "" {
+		transport = r.eventsTransport()
+	}
 	err := r.db.Exec(ctx, q,
 		run.ID, run.ContextID, run.ApplicationID, run.EntryPointSlug,
-		string(domain.RunRunning), startedAt,
+		string(domain.RunRunning), startedAt, transport,
 	)
 	if err != nil {
 		return fmt.Errorf("runrecorder: create run %s: %w", run.ID, err)

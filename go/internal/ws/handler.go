@@ -34,6 +34,7 @@ import (
 	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/auth"
+	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
@@ -51,9 +52,12 @@ var upgrader = websocket.Upgrader{
 }
 
 // clientMsg is the message shape received from the WebSocket client.
+// LastEventID, when present on the first message, is the stream resume cursor
+// used by the Redis Streams transport (Phase 11c-B) to replay missed events.
 type clientMsg struct {
-	Type    string `json:"type"`
-	Content string `json:"content"`
+	Type        string `json:"type"`
+	Content     string `json:"content"`
+	LastEventID string `json:"last_event_id,omitempty"`
 }
 
 // serverMsg is the message shape sent to the WebSocket client.
@@ -114,6 +118,8 @@ type Handler struct {
 	logger          *slog.Logger
 	temporalClient  TemporalClientExecutor
 	runStreamSub    runstream.Subscriber
+	dispatcher      *runstream.Dispatcher
+	runEventsMode   config.RunEventsMode
 	temporalEnabled bool
 }
 
@@ -169,6 +175,34 @@ func (h *Handler) WithTemporal(tc TemporalClientExecutor, sub runstream.Subscrib
 	h.runStreamSub = sub
 	h.temporalEnabled = enabled
 	return h
+}
+
+// WithRunEvents attaches the run-event dispatcher and the active RUN_EVENTS_MODE
+// (Phase 11c-B). The dispatcher chooses Pub/Sub or Redis Streams per run based on
+// mode and the run's events_transport value. Call after WithTemporal in main.go.
+// When not called, the handler falls back to the Pub/Sub subscriber directly.
+func (h *Handler) WithRunEvents(d *runstream.Dispatcher, mode config.RunEventsMode) *Handler {
+	h.dispatcher = d
+	h.runEventsMode = mode
+	return h
+}
+
+// eventsTransportForNewRun returns the events_transport value this handler
+// stamps on a new run row: "streams" in dual/streams mode, else "pubsub".
+func (h *Handler) eventsTransportForNewRun() string {
+	if h.runEventsMode == config.RunEventsModeDual || h.runEventsMode == config.RunEventsModeStreams {
+		return "streams"
+	}
+	return "pubsub"
+}
+
+// runEvents opens the event channel for a run, using the dispatcher when wired
+// (Phase 11c-B) or the legacy Pub/Sub Stream otherwise.
+func (h *Handler) runEvents(ctx context.Context, runID, eventsTransport, lastEventID string) (<-chan event.Event, error) {
+	if h.dispatcher != nil {
+		return h.dispatcher.Stream(ctx, runID, eventsTransport, lastEventID)
+	}
+	return runstream.Stream(ctx, h.runStreamSub, runID)
 }
 
 // Routes returns an http.Handler that mounts the WS orchestration route.
@@ -356,18 +390,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer unsub()
 
 	// ── 9. Create run record in DB ────────────────────────────────────────────
+	// events_transport is decided by RUN_EVENTS_MODE at run-creation time and is
+	// stable for the run's lifetime (Phase 11c-B). The dispatcher reads it to
+	// pick Pub/Sub or Streams.
+	eventsTransport := h.eventsTransportForNewRun()
 	run := domain.Run{
-		ID:             runID,
-		ContextID:      contextID,
-		EntryPointSlug: epSlug,
-		Status:         domain.RunStatusRunning,
+		ID:              runID,
+		ContextID:       contextID,
+		EntryPointSlug:  epSlug,
+		Status:          domain.RunStatusRunning,
+		EventsTransport: eventsTransport,
 	}
 	if err := h.recorder.CreateRun(r.Context(), run); err != nil {
 		h.logger.Warn("ws: create run failed", "run_id", runID, "error", err)
 	}
 
 	// ── 10. Wait for first client message ────────────────────────────────────
-	userMsg, err := h.readClientMessage(conn)
+	userMsg, lastEventID, err := h.readClientMessage(conn)
 	if err != nil {
 		h.writeError(conn, "failed to read message: "+err.Error())
 		return
@@ -385,7 +424,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Subscribe to the token stream BEFORE starting the workflow so no event
 		// is missed. Go passes runID as PythonOrchestrationInput.RunID; Python
 		// uses it verbatim for all publish calls on them:dash:run:{runID}:tokens.
-		rsEvCh, rsErr := runstream.Stream(ctx, h.runStreamSub, runID)
+		rsEvCh, rsErr := h.runEvents(ctx, runID, eventsTransport, lastEventID)
 		if rsErr != nil {
 			h.logger.Warn("ws: runstream subscribe failed — falling back to inline",
 				"run_id", runID, "error", rsErr)
@@ -481,20 +520,22 @@ func (h *Handler) tryAuthenticate(r *http.Request) (*auth.TokenInfo, string, boo
 	return info, rawToken, true
 }
 
-// readClientMessage reads the first message from the WebSocket client.
-func (h *Handler) readClientMessage(conn *websocket.Conn) (domain.Message, error) {
+// readClientMessage reads the first message from the WebSocket client. It
+// returns the user message and the optional stream resume cursor
+// (last_event_id) supplied by reconnecting clients — "" when absent.
+func (h *Handler) readClientMessage(conn *websocket.Conn) (domain.Message, string, error) {
 	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	_, msgBytes, err := conn.ReadMessage()
 	if err != nil {
-		return domain.Message{}, fmt.Errorf("ws: read: %w", err)
+		return domain.Message{}, "", fmt.Errorf("ws: read: %w", err)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 
 	var cm clientMsg
 	if err := json.Unmarshal(msgBytes, &cm); err != nil {
-		return domain.Message{}, fmt.Errorf("ws: decode: %w", err)
+		return domain.Message{}, "", fmt.Errorf("ws: decode: %w", err)
 	}
-	return domain.TextMessage(domain.RoleUser, cm.Content), nil
+	return domain.TextMessage(domain.RoleUser, cm.Content), cm.LastEventID, nil
 }
 
 // streamEvents forwards bus events to the WebSocket client until orchestration

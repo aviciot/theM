@@ -1,7 +1,7 @@
 # Implementation Status — Go Gateway
 
 **Last updated:** 2026-07-21
-**Phase:** 11c-A complete (atomic dual-publish infrastructure in Python)
+**Phase:** 11c-B complete (Go stream-read/replay behind RUN_EVENTS_MODE)
 
 ---
 
@@ -10,9 +10,9 @@
 | Package | Status | Tests | Key files |
 |---|---|---|---|
 | `cmd/them` | Complete | — (no unit tests; wired in integration) | `main.go` |
-| `internal/config` | Complete | 13 (S1-01) | `config.go`, `config_test.go` |
+| `internal/config` | Complete | 14 (S1-01) | `config.go`, `config_test.go` |
 | `internal/db` | Complete | — | `db.go` |
-| `internal/cache` | Complete | 2 (S1-19, S1-20) | `cache.go`, auth/runstream adapters |
+| `internal/cache` | Complete | 2 (S1-19, S1-20) | `cache.go`, auth/runstream/runstreamer adapters |
 | `internal/telemetry` | Complete | — | `telemetry.go` |
 | `internal/health` | Complete | 5 (S1-02) | `health.go` |
 | `internal/server` | Complete | 4 (S1-03) | `server.go` |
@@ -21,7 +21,7 @@
 | `internal/session` | Complete | 7 (S1-06) | `session.go` |
 | `internal/event` | Complete | 6 (S1-07) | `bus.go` |
 | `internal/domain` | Complete | 3 (S1-08) | `domain.go` |
-| `internal/runrecorder` | Complete | 6 (S1-09) | `recorder.go` |
+| `internal/runrecorder` | Complete | 8 (S1-09) | `recorder.go` (events_transport per RUN_EVENTS_MODE) |
 | `internal/llm` | Complete | 6 (S1-10) | `provider.go`, `anthropic.go`, `mock.go` |
 | `internal/orchestrator` | Complete | — | `orchestrator.go` |
 | `internal/temporal` | Complete | 8 (S2-02) | `workflow.go`, `activities.go`, `client.go`, `signaler.go` |
@@ -32,10 +32,10 @@
 | `internal/admin` | Complete | 19 (S1-15) | `agents.go`, `orchestrators.go`, `applications.go`, `runs.go` |
 | `internal/ratelimit` | Complete | 3 (S1-16) | `limiter.go` |
 | `internal/epconfig` | Complete | 26 (S1-18) | `epconfig.go`, `pgx.go` |
-| `internal/runstream` | Complete | 10 (S1-21) | `stream.go` |
+| `internal/runstream` | Complete | 25 (S1-21, S1-23) | `stream.go`, `streamer.go`, `dispatcher.go`, `metrics.go`, `streamid.go` |
 | `internal/reconciler` | Complete | 15 (S1-22) | `reconciler.go` |
 
-**Total unit tests (S1): 192** (was 188; +4 for RECONCILER_DRY_RUN config tests)
+**Total unit tests (S1): 210** (was 192; +1 config RUN_EVENTS_MODE, +2 runrecorder events_transport, +15 runstream streamer/dispatcher)
 
 ---
 
@@ -103,10 +103,38 @@ Python-only infrastructure for Redis Streams event delivery. No Go changes.
 
 ---
 
+## Phase 11c-B — Go stream-read/replay behind RUN_EVENTS_MODE
+
+**Status: Complete — 2026-07-21**
+
+Go gateway now reads run events from Redis Streams (with XRANGE replay + live XREAD)
+behind a new `RUN_EVENTS_MODE` flag. Pub/Sub is untouched and remains the default.
+
+| Artifact | Description |
+|---|---|
+| `internal/config/config.go` | `RunEventsMode` type + `RUN_EVENTS_MODE` parsing (`dual`/`streams`/else→`pubsub`); added to `SafeString` |
+| `internal/domain/domain.go` | `Run.EventsTransport` field |
+| `internal/runrecorder/recorder.go` | `WithRunEventsMode`; `CreateRun` writes `events_transport` (`streams` in dual/streams, else `pubsub`) |
+| `internal/runstream/streamer.go` | `StreamFromRedis` — XRANGE replay → continuous-cursor XREAD live; trim detection → `replay_unavailable` |
+| `internal/runstream/dispatcher.go` | `Dispatcher` — picks Pub/Sub vs Streams from mode × `events_transport` |
+| `internal/runstream/metrics.go` | 6 Prometheus metrics + `SetModeGauge` |
+| `internal/runstream/streamid.go` | stream-ID compare / exclusive-predecessor helpers |
+| `internal/cache/runstreamer_adapter.go` | rueidis-backed `RedisStreamer` (XRange/XRangeN/XRead) |
+| `internal/ws/handler.go`, `internal/sse/handler.go` | `WithRunEvents`; stamp `events_transport` on new run; route via dispatcher; WS `last_event_id` / SSE `Last-Event-ID` resume |
+| `cmd/them/main.go` | build dispatcher once, inject into WS+SSE, `SetModeGauge`, log mode |
+| `theM_gateway/docker-compose.integration.yml`, `docker-compose.soak.yml` | `RUN_EVENTS_MODE=dual` (production compose left at default `pubsub`) |
+
+**Transport selection (mode × events_transport):**
+- `pubsub` mode → always Pub/Sub (events_transport ignored)
+- `dual`/`streams` mode → per-run `events_transport`: `streams`→Streams, `pubsub`→Pub/Sub (legacy rows never forced onto Streams)
+
+**Replay→live cursor:** cursor starts at `last_event_id` (or `0-0`), XRANGE replays from `(cursor` to `+`, then XREAD BLOCK resumes from the last replayed entry ID (never `$`) — no gap, no overlap.
+
+---
+
 ## Pending / future work
 
-- Phase 11c-B: Go stream-read/replay behind `RUN_EVENTS_MODE=dual`; `events_transport='streams'` set by Go bridge on new runs
-- Phase 11c-C: Staging soak + MAXLEN validation (requires explicit approval gate)
+- Phase 11c-C: Staging cutover to `RUN_EVENTS_MODE=streams` + MAXLEN validation (requires explicit approval gate)
 - Phase 11c-D: Remove Pub/Sub (requires ≥2 weeks stable in Phase 11c-C + explicit approval)
 - Voice EP implementation (deferred, not started)
 - `go test -race ./...` requires gcc on Windows — runs clean in Linux CI

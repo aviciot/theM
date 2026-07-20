@@ -58,6 +58,9 @@ services:
       TEMPORAL_ENABLED: "true"
       TEMPORAL_HOST_PORT: "temporal-frontend:7233"
       RECONCILER_DRY_RUN: "true"
+      # Phase 11c-B: dual mode on both soak replicas so multi-pod stream reads
+      # are validated (them-go-bridge sets this in docker-compose.integration.yml).
+      RUN_EVENTS_MODE: "dual"
     networks:
       - them-network
     depends_on:

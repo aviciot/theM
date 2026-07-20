@@ -43,6 +43,7 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestReconcilerDryRun_ExplicitTrue` | `RECONCILER_DRY_RUN=true` → `true` |
 | `TestReconcilerDryRun_ExplicitFalse` | `RECONCILER_DRY_RUN=false` → `false` (enables writes) |
 | `TestReconcilerDryRun_InvalidValueFallsToTrue` | `RECONCILER_DRY_RUN=not-a-bool` → `true` (fail-safe) |
+| `TestRunEventsMode` | `RUN_EVENTS_MODE` parsing (Phase 11c-B): missing/invalid→pubsub, dual, streams, case-insensitive |
 
 **Trigger:** any change to `internal/config/config.go` or `.env.example`
 
@@ -170,7 +171,9 @@ Run on: every commit, every PR, every pre-deploy check.
 
 | Test | What it proves |
 |---|---|
-| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with correct column order |
+| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with correct column order (incl. `events_transport`) |
+| `TestCreateRun_eventsTransportByMode` | events_transport derived from RunEventsMode: pubsub→"pubsub", dual/streams→"streams" (Phase 11c-B) |
+| `TestCreateRun_explicitTransportOverridesMode` | non-empty `run.EventsTransport` overrides the configured mode |
 | `TestUpdateRunStatus_withErrorMessage` | `UPDATE` sets `ended_at`, `status`, `error_message` |
 | `TestUpdateRunStatus_completed` | Completed run → empty error_message |
 | `TestRecordUsage_insertsCorrectly` | `INSERT INTO them.run_usage` correct args |
@@ -366,12 +369,14 @@ The behavioural contract of `auth.RedisClient` is exercised in S1-05 via `mockRe
 ### S1-20 · RunStream Redis adapter — `internal/cache/runstream_adapter_test.go`
 
 **Purpose:** Compile-time interface satisfaction check — `*RunStreamRedisClient` implements `runstream.Subscriber`.
+The Streams reader adapter `*RunStreamerRedisClient` (`internal/cache/runstreamer_adapter.go`) satisfies
+`runstream.RedisStreamer` via a compile-time assertion in that file; exercised end-to-end by S1-24 integration.
 
 | Test | What it proves |
 |---|---|
 | `TestRunStreamRedisClient_ImplementsInterface` | `*RunStreamRedisClient` satisfies `runstream.Subscriber` at compile time |
 
-**Trigger:** any change to `internal/cache/runstream_adapter.go`
+**Trigger:** any change to `internal/cache/runstream_adapter.go` or `internal/cache/runstreamer_adapter.go`
 
 ---
 
@@ -403,6 +408,54 @@ At-most-once delivery: events missed during a reconnect gap are lost, not replay
 - `them_runstream_reconnect_failure_total`
 
 **Trigger:** any change to `internal/runstream/stream.go`
+
+---
+
+### S1-23 · Run stream Streamer (Redis Streams read/replay) — `internal/runstream/streamer_test.go`, `dispatcher_test.go`
+
+**Purpose:** Phase 11c-B durable event delivery. `StreamFromRedis` replays history from a
+client-supplied `last_event_id` via XRANGE, then transitions to live XREAD BLOCK using a
+**continuous cursor** (resume from the last replayed entry ID, not `$`) so no entry is dropped
+at the replay→live boundary. `Dispatcher` picks Pub/Sub vs Streams from `RUN_EVENTS_MODE` × the
+run's `events_transport` value — never inferred from key existence or timing.
+
+**Streamer tests (`streamer_test.go`):**
+
+| Test | What it proves |
+|---|---|
+| `TestStreamFromRedis_ReplayOnly` | 5 XRANGE entries then empty → 5 events, channel closes |
+| `TestStreamFromRedis_LiveOnly` | empty XRANGE → XREAD delivers 3 events |
+| `TestStreamFromRedis_ReplayToLive` | 3 replay + 2 live = 5, in order, no duplicates |
+| `TestStreamFromRedis_ContinuousCursor` | first live XREAD resumes from last replayed entry ID, not `$` |
+| `TestStreamFromRedis_ReplayUnavailable` | trimmed `last_event_id` → synthetic `replay_unavailable` first, then resume from oldest |
+| `TestStreamFromRedis_TerminalClosesChannel` | `"done"` closes channel; entry after it not delivered |
+| `TestStreamFromRedis_AllTerminalTypes` | all 5 terminal types (done/error/canceled/terminated/timed_out) close the channel |
+| `TestStreamFromRedis_ContextCancelStops` | ctx cancel during live block → goroutine exits, channel closes |
+| `TestStreamFromRedis_MultiPodSafety` | two concurrent readers for the same run each keep their own cursor |
+
+**Dispatcher tests (`dispatcher_test.go`):**
+
+| Test | What it proves |
+|---|---|
+| `TestDispatcher_PubsubMode_AlwaysPubsub` | mode=pubsub → Pub/Sub regardless of events_transport |
+| `TestDispatcher_DualMode_StreamsRun` | mode=dual + events_transport=streams → Streams |
+| `TestDispatcher_DualMode_LegacyRun` | mode=dual + events_transport=pubsub → Pub/Sub (legacy run) |
+| `TestDispatcher_StreamsMode_StreamsRun` | mode=streams + events_transport=streams → Streams |
+| `TestDispatcher_StreamsMode_LegacyRow` | mode=streams + events_transport=pubsub → Pub/Sub (legacy row, not forced) |
+| `TestDispatcher_PubsubMode_ModeTakesPrecedence` | mode=pubsub + events_transport=streams → Pub/Sub (mode wins) |
+
+**Prometheus metrics exposed (`metrics.go`):**
+- `them_runstream_xadd_total`
+- `them_runstream_xadd_errors_total`
+- `them_runstream_replay_sessions_total`
+- `them_runstream_replay_events_total`
+- `them_runstream_replay_unavailable_total`
+- `them_runstream_mode` (gauge: 0=pubsub, 1=dual, 2=streams)
+
+**Integration (`streamer_integration_test.go`, `//go:build integration`):** writes real events to a
+Redis stream via XADD, verifies replay + live delivery + terminal close against a live Redis.
+
+**Trigger:** any change to `internal/runstream/streamer.go`, `dispatcher.go`, `metrics.go`, `streamid.go`, or `internal/cache/runstreamer_adapter.go`
 
 ---
 
@@ -632,6 +685,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/ws/handler.go` | S1-12 |
 | `internal/sse/handler.go` | S1-13 |
+| `internal/runstream/streamer.go`, `dispatcher.go`, `metrics.go`, `streamid.go` | S1-23 |
+| `internal/cache/runstreamer_adapter.go` | S1-20 + S1-23 (integration) |
 | `internal/a2a/server.go` | S1-14 |
 | `internal/admin/` (any file) | S1-15 |
 | `internal/ratelimit/limiter.go` | S1-16 |
@@ -670,7 +725,7 @@ If a test is added without updating this index, the PR should not be merged.
 
 | Suite | Package | Tests |
 |---|---|---|
-| S1-01 | config | 13 |
+| S1-01 | config | 14 |
 | S1-02 | health | 5 |
 | S1-03 | server | 4 |
 | S1-04 | auth/jwt | 9 |
@@ -678,7 +733,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-06 | session | 7 |
 | S1-07 | event | 6 |
 | S1-08 | domain | 3 |
-| S1-09 | runrecorder | 6 |
+| S1-09 | runrecorder | 8 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
 | S1-12 | ws | 15 |
@@ -690,11 +745,13 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-18 | epconfig | 26 |
 | S1-19 | cache | 1 |
 | S1-20 | cache (runstream adapter) | 1 |
-| S1-21 | runstream | 10 |
+| S1-21 | runstream (pub/sub) | 10 |
 | S1-22 | reconciler | 15 |
-| **S1 total** | | **192** |
+| S1-23 | runstream (streamer + dispatcher) | 15 |
+| **S1 total** | | **210** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
-| **S2 total** | | **12** |
+| S2-03 | runstream streamer (Redis) | 1 |
+| **S2 total** | | **13** |
 | S3 live | manual | 23 |
-| **Grand total** | | **227** |
+| **Grand total** | | **246** |

@@ -121,4 +121,10 @@ type Run struct {
 	InputTokens    int
 	OutputTokens   int
 	ErrorMessage   string
+
+	// EventsTransport is the run-event delivery transport for this run:
+	// "pubsub" (legacy/default) or "streams" (Phase 11c). It is decided when the
+	// run row is created (based on RUN_EVENTS_MODE) and is stable for the run's
+	// lifetime. The WS/SSE dispatcher reads this to pick Pub/Sub or Streams.
+	EventsTransport string
 }

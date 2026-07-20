@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,15 +64,58 @@ func TestCreateRun_callsCorrectSQL(t *testing.T) {
 	// SQL must contain INSERT INTO them.runs and ON CONFLICT DO NOTHING.
 	assert.Contains(t, call.sql, "INSERT INTO them.runs")
 	assert.Contains(t, call.sql, "ON CONFLICT (id) DO NOTHING")
+	assert.Contains(t, call.sql, "events_transport")
 
-	// Arguments: id, context_id, application_id, entry_point_slug, status, started_at
-	require.Len(t, call.args, 6)
+	// Arguments: id, context_id, application_id, entry_point_slug, status,
+	// started_at, events_transport
+	require.Len(t, call.args, 7)
 	assert.Equal(t, "run-abc", call.args[0])
 	assert.Equal(t, "ctx-1", call.args[1])
 	assert.Equal(t, int64(42), call.args[2])
 	assert.Equal(t, "ws-chat", call.args[3])
 	assert.Equal(t, "running", call.args[4])
 	assert.Equal(t, now, call.args[5])
+	// Default mode (pubsub) → events_transport "pubsub".
+	assert.Equal(t, "pubsub", call.args[6])
+}
+
+// TestCreateRun_eventsTransportByMode verifies that the events_transport column
+// value is derived from the configured RunEventsMode (Phase 11c-B):
+// pubsub → "pubsub"; dual → "streams"; streams → "streams".
+func TestCreateRun_eventsTransportByMode(t *testing.T) {
+	cases := []struct {
+		mode config.RunEventsMode
+		want string
+	}{
+		{config.RunEventsModePublish, "pubsub"},
+		{config.RunEventsModeDual, "streams"},
+		{config.RunEventsModeStreams, "streams"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			db := &mockDB{}
+			rec := New(db).WithRunEventsMode(tc.mode)
+			err := rec.CreateRun(context.Background(), domain.Run{ID: "r", StartedAt: time.Now()})
+			require.NoError(t, err)
+			require.Len(t, db.calls, 1)
+			assert.Equal(t, tc.want, db.calls[0].args[6])
+		})
+	}
+}
+
+// TestCreateRun_explicitTransportOverridesMode verifies that a non-empty
+// run.EventsTransport takes precedence over the configured mode.
+func TestCreateRun_explicitTransportOverridesMode(t *testing.T) {
+	db := &mockDB{}
+	rec := New(db).WithRunEventsMode(config.RunEventsModePublish)
+	err := rec.CreateRun(context.Background(), domain.Run{
+		ID:              "r",
+		StartedAt:       time.Now(),
+		EventsTransport: "streams",
+	})
+	require.NoError(t, err)
+	require.Len(t, db.calls, 1)
+	assert.Equal(t, "streams", db.calls[0].args[6])
 }
 
 // TestUpdateRunStatus_withErrorMessage verifies that UpdateRunStatus sends the
