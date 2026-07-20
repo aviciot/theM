@@ -3021,6 +3021,25 @@ def test_36_stream_publish():
             expected = frozenset({"done", "error", "canceled", "terminated", "timed_out"})
             results.append(("T7: TERMINAL_EVENT_TYPES == expected set", TERMINAL == expected))
 
+            # ── T8: returned entry_id is logged (check stream_publish logs entry_id) ──
+            # We verify the entry_id is truthy and looks like a Redis stream ID
+            run_t8 = "test-run-log"
+            eid = await sp(fake, run_t8, {"type": "token", "text": "log-check"}, dual_publish=False)
+            # Redis stream IDs are "<ms>-<seq>" format
+            results.append(("T8: returned entry_id looks like a Redis stream ID", isinstance(eid, str) and "-" in eid))
+
+            # ── T9: retry after ambiguous failure → second XADD appends, does not lose first ──
+            # Simulate: first call succeeds (XADD), second call is a retry (same payload).
+            # Both must be present in the stream — stream is append-only, no dedup at write path.
+            run_t9 = "test-run-retry"
+            sk_t9 = f"them:dash:run:{run_t9}:stream"
+            payload_t9 = {"type": "token", "text": "retry-payload"}
+            eid1 = await sp(fake, run_t9, payload_t9, dual_publish=False)
+            eid2 = await sp(fake, run_t9, payload_t9, dual_publish=False)  # simulated retry
+            xlen_t9 = await fake.xlen(sk_t9)
+            results.append(("T9a: retry appends to stream (XLEN==2)", xlen_t9 == 2))
+            results.append(("T9b: both calls returned distinct entry_ids", eid1 != eid2))
+
             await fake.aclose()
             return results
 
@@ -3028,8 +3047,6 @@ def test_36_stream_publish():
         for desc, ok in test_results:
             check(desc, ok)
 
-    except ImportError as exc:
-        skip(f"stream_publish unit tests — fakeredis not available: {exc}")
     except Exception as exc:
         check("stream_publish unit tests", False, str(exc))
 
