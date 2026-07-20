@@ -413,50 +413,49 @@ them:sess:control:{session_id}   Pub/Sub channel (no stored key)
 
 ### Atomic Session Entry (Lua script: `REGISTER_SESSION`)
 
-The Lua script executes atomically across all Redis operations for a single `Register()` call, eliminating the TTL-mismatch bug (Python writes a Hash with TTL but the Set has no TTL, leaving ghost entries).
+`session.Store.Register()` writes the Hash only. **It does NOT touch Set membership.** Set membership is written exclusively by `Gate.Check()` before `Register()` is ever called (see Gate/Session Ownership below).
 
 ```lua
--- KEYS: [1]=sess_key, [2]=ep_key (or ""), [3]=app_key (or ""), [4]=pod_count_key
+-- KEYS: [1]=sess_key, [2]=pod_count_key
 -- ARGV: [1]=session_id, [2]=sess_ttl, [3]=pod_count_ttl, [4...]=field-value pairs for HSET
 
 -- 1. Write the session hash with TTL
 redis.call('HSET', KEYS[1], unpack(ARGV, 4))
 redis.call('EXPIRE', KEYS[1], ARGV[2])
 
--- 2. Add to EP index set (only if ep_slug provided)
-if KEYS[2] ~= "" then
-  redis.call('SADD', KEYS[2], ARGV[1])
-end
-
--- 3. Add to App index set (only if app_id provided)
-if KEYS[3] ~= "" then
-  redis.call('SADD', KEYS[3], ARGV[1])
-end
-
--- 4. Increment pod session counter atomically
-redis.call('INCR', KEYS[4])
-redis.call('EXPIRE', KEYS[4], ARGV[3])
+-- 2. Increment pod session counter atomically
+redis.call('INCR', KEYS[2])
+redis.call('EXPIRE', KEYS[2], ARGV[3])
 
 return 1
 ```
 
 ### Atomic Session Exit (Lua script: `END_SESSION`)
 
+`session.Store.End()` deletes the Hash and removes from the Set index. The SREM is here because cleanup must be symmetric with whoever did the SADD (Gate). Gate.Release() is called separately by the edge handler to wake any queued waiters.
+
 ```lua
--- KEYS: [1]=sess_key, [2]=ep_key (or ""), [3]=app_key (or ""), [4]=pod_count_key
+-- KEYS: [1]=sess_key, [2]=ep_set (or ""), [3]=app_set (or ""), [4]=pod_count_key,
+--       [5]=ep_shadow (or ""), [6]=app_shadow (or "")
 -- ARGV: [1]=session_id
 
 -- 1. Remove the session hash
 redis.call('DEL', KEYS[1])
 
--- 2. Remove from EP index
+-- 2. Remove from EP index and delete EP shadow
 if KEYS[2] ~= "" then
   redis.call('SREM', KEYS[2], ARGV[1])
 end
+if KEYS[5] ~= "" then
+  redis.call('DEL', KEYS[5])
+end
 
--- 3. Remove from App index
+-- 3. Remove from App index and delete App shadow
 if KEYS[3] ~= "" then
   redis.call('SREM', KEYS[3], ARGV[1])
+end
+if KEYS[6] ~= "" then
+  redis.call('DEL', KEYS[6])
 end
 
 -- 4. Decrement pod counter, floor at 0
@@ -468,14 +467,50 @@ end
 return 1
 ```
 
-### Session Capacity Enforcement
+### Gate/Session Ownership and Caller Contract
 
-The `gate.Gate` (separate from session store) checks capacity before `session.Store.Register()` is called. The gate uses the `_LUA_GATE` script (ported from Python `runtime_manager.py`), which:
-1. Checks SCARD of `them:ep:{ep_slug}:sessions` against `ep_max_concurrent`
-2. If at capacity and `queue_timeout > 0`: pushes session_id to a wait list, blocks with `BLPOP` until a slot opens or timeout expires
-3. Returns `ok`, `queued`, or `full`
+**Ownership boundary:**
+- `Gate` (`internal/gate`) is the **sole owner** of Set membership at admission time: SADD on Check, SREM on Rollback/End (via luaAdmit and rollbackScript Lua).
+- `SessionManager` (`internal/session`) owns the Hash (`them:sess:{id}`) and the shadow TTL extension (Confirm). It also does SREM on End (symmetric with Gate's SADD) and DELs the shadow key.
 
-The gate runs BEFORE `Register()` so no session hash is written for rejected connections.
+**Three-step caller contract** (enforced in `internal/ws/handler.go` and `internal/sse/handler.go`):
+
+```go
+// Step 1: Gate.Check() — atomic Lua: ghost prune → cap check → rate limit INCR
+//         → SADD EP set + app set → SET shadow EX ReservationTTL (10s)
+res, err := gate.Check(ctx, cfg)
+if err != nil { /* reject */ return }
+
+// Step 2: session.Register() — writes Hash only, no Set writes
+err = session.Register(ctx, info)
+if err != nil {
+    gate.Rollback(ctx, cfg)   // SREM + DEL shadow + LPush "1"
+    return
+}
+
+// Step 3: Gate.Confirm() — extends shadow from 10s to ShadowTTL (90s)
+gate.Confirm(ctx, cfg)
+
+defer func() {
+    session.End(ctx, ...)    // DEL Hash + SREM + DEL shadow
+    gate.Release(ctx, cfg)   // LPush "1" — wakes one queued waiter
+}()
+```
+
+**Reservation TTL:** If the process crashes between Check and Confirm, the shadow key expires in ≤10s. The next admission attempt prunes the ghost automatically via `luaAdmit`. No manual intervention required.
+
+### Session Capacity Enforcement and Queue Protocol
+
+`Gate.Check()` runs the `luaAdmit` Lua script before any Hash is written:
+1. Prunes ghost sessions (Set members whose shadow key has expired)
+2. Checks `SCARD them:ep:{slug}:sessions` against `ep_max_concurrent`
+3. Checks `SCARD them:app:{app_id}:sessions` against `app_max_concurrent`
+4. Checks rate limit via INCR `rl:them:token:{hash}:{minute}`
+5. On all checks pass: SADD both Sets + SET shadow keys EX `ReservationTTL` (10s)
+
+If at EP capacity and `QueueTimeout > 0`: `Gate.Check()` blocks on `BLPop(them:ep:gate:queue:{slug}, QueueTimeout)`. On wake-up, `luaAdmit` runs again from scratch — **this is a compete, not a guaranteed slot.** If a concurrent session took the slot first, `ErrCapExceeded` is returned immediately with no re-queue.
+
+`Gate.Release()` calls `LPush(them:ep:gate:queue:{slug}, "1")` to wake exactly one waiter. It is called on session end and on Rollback. The queue key is a pure signal channel — no session IDs are ever pushed.
 
 ### Pod Heartbeat with Real Session Count
 

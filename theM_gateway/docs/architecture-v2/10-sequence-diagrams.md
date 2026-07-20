@@ -30,20 +30,28 @@ sequenceDiagram
     Auth-->>GA: TokenInfo {user_id, token_id}
     GA->>GA: Receive first WS message {content, context_id}
 
-    Note over GA,Gate: Runtime Gate — single atomic Lua script, one round-trip
+    Note over GA,Gate: Gate.Check() — single atomic Lua script, one round-trip
     Note over Gate: Gate is the SOLE owner of Set membership (them:ep:*:sessions, them:app:*:sessions)
-    GA->>Gate: runtime_gate(ep_slug, app_id, user_id, session_id, token_hash, runtime_config, ep_max_concurrent, rate_limit_rpm)
+    GA->>Gate: Gate.Check(ep_slug, app_id, user_id, session_id, token_hash, ep_max_concurrent, rate_limit_rpm)
+    Gate->>Redis: Lua (atomic): prune ghosts (SREM members with no shadow key)
     Gate->>Redis: Lua (atomic): SCARD them:ep:{slug}:sessions (cap check)
-    Gate->>Redis: Lua (atomic): INCR rl:them:{user_id} (rate limit)
+    Gate->>Redis: Lua (atomic): INCR rl:them:token:{hash}:{minute} (rate limit)
     Gate->>Redis: Lua (atomic): SADD them:ep:{slug}:sessions {session_id}
     Gate->>Redis: Lua (atomic): SADD them:app:{app_id}:sessions {session_id}
-    Gate->>Redis: Lua (atomic): SET them:ep:{slug}:sess:{session_id}:shadow 1 EX 90 (shadow TTL key)
-    Redis-->>Gate: OK
-    Gate-->>GA: Admitted
+    Gate->>Redis: Lua (atomic): SET them:ep:{slug}:shadow:{session_id} 1 EX 10 (ReservationTTL — short)
+    Gate->>Redis: Lua (atomic): SET them:app:{app_id}:shadow:{session_id} 1 EX 10
+    Redis-->>Gate: Admitted
+    Gate-->>GA: Result{Status: Admitted}
 
-    GA->>SessMgr: session_register(session_id, instance_id, user_id, orch_name, context_id, ep_slug, app_id)
-    Note over SessMgr: SessionManager owns the Hash (state) ONLY — never writes to Set index keys
+    GA->>SessMgr: session.Register(session_id, instance_id, user_id, orch_name, context_id, ep_slug, app_id)
+    Note over SessMgr: SessionManager owns the Hash ONLY — never writes to Set index keys
     SessMgr->>Redis: HSET them:sess:{session_id} {...}, EXPIRE 90s
+    SessMgr-->>GA: OK
+
+    GA->>Gate: Gate.Confirm(session_id, ep_slug, app_id)
+    Gate->>Redis: SET them:ep:{slug}:shadow:{session_id} 1 EX 90 (extend ReservationTTL → ShadowTTL)
+    Gate->>Redis: SET them:app:{app_id}:shadow:{session_id} 1 EX 90
+    Note over Gate: If Register() had failed, Gate.Rollback() would SREM + DEL shadow + Release instead
 
     Note over GA,Redis: Subscribe BEFORE StartWorkflow (ready race fix)
     GA->>Redis: SUBSCRIBE them:dash:run:{context_id}:ctx
@@ -93,10 +101,12 @@ sequenceDiagram
     Redis-->>GA: done event
     GA->>C: WS send {type:"done", run_id, iterations}
 
-    GA->>SessMgr: session_end(session_id, ep_slug, app_id)
-    SessMgr->>Redis: DEL them:sess:{session_id}
-    SessMgr->>Redis: Lua (atomic): SREM them:ep:{slug}:sessions, DEL shadow key
-    SessMgr->>Redis: Lua (atomic): SREM them:app:{app_id}:sessions, DEL shadow key
+    GA->>SessMgr: session.End(session_id, ep_slug, app_id)
+    SessMgr->>Redis: Lua (atomic): DEL them:sess:{session_id}
+    SessMgr->>Redis: Lua (atomic): SREM them:ep:{slug}:sessions {session_id}, DEL them:ep:{slug}:shadow:{session_id}
+    SessMgr->>Redis: Lua (atomic): SREM them:app:{app_id}:sessions {session_id}, DEL them:app:{app_id}:shadow:{session_id}
+    GA->>Gate: Gate.Release(ep_slug, app_id)
+    Gate->>Redis: LPush them:ep:gate:queue:{slug} "1" (wakes one queued waiter)
     GA->>C: WebSocket close (normal)
 ```
 
@@ -155,7 +165,8 @@ sequenceDiagram
     end
 
     Note over GA: finally block always runs
-    GA->>GA: session_end(session_id, ep_slug, app_id)
+    GA->>GA: session.End(session_id, ep_slug, app_id)
+    GA->>GA: gate.Release(ep_slug, app_id)
 ```
 
 **In Go**, the three goroutines map directly to a `select{}` over three channels:
@@ -168,7 +179,13 @@ case <-controlSignal:   // admin disconnect
 }
 ```
 
-The `finally block` maps to a `defer session_end()` registered immediately after `session_register()`.
+The `finally block` maps to a `defer` registered immediately after `Gate.Confirm()`:
+```go
+defer func() {
+    session.End(ctx, sessionID, epSlug, appID)
+    gate.Release(ctx, cfg)
+}()
+```
 
 ---
 
