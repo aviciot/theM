@@ -39,7 +39,7 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | `internal/health/` | /health/live + /health/ready | `health.go` |
 | `internal/server/` | chi router, middleware, graceful shutdown | `server.go` |
 | `internal/auth/` | Local RS256 JWT + bearer token cache + pub/sub revocation | `jwt.go`, `token_cache.go`, `middleware.go` |
-| `internal/gate/` | Runtime admission gate — SOLE owner of Set membership. Atomic Lua: ghost prune + cap check + rate limit + SADD + shadow TTL. Queue support via BLPOP. | `gate.go` |
+| `internal/gate/` | Runtime admission gate. Check (SADD + ReservationTTL 10s) → Register (Hash in session) → Confirm (extend to 90s). Rollback on Register failure. Queue via BLPop signal channel; wake is a re-compete not a guarantee. | `gate.go` |
 | `internal/session/` | Session lifecycle — Hash (state) only. Atomic Lua SREM+DEL shadow on End. | `session.go` |
 | `internal/event/` | In-process fan-out event bus | `bus.go` |
 | `internal/domain/` | Canonical Message/Run types, status enums | `domain.go` |
@@ -171,7 +171,7 @@ docker compose --profile go logs -f them-go-bridge
 | Bearer token auth | Opaque token: L1 in-process sync.Map → L2 Redis `them:token:{sha256}` → PostgreSQL `them.access_tokens` | `internal/auth/token_cache.go` |
 | Token revocation | Redis pub/sub `them:token:revoked` — cross-pod L1 eviction | `internal/auth/token_cache.go` |
 | Session model | Atomic Lua + shadow TTL keys; Hash owned by session, Set membership owned by gate | `internal/session/session.go`, `internal/gate/gate.go` |
-| Admission gate | Gate sole owner of SADD (Set membership); SessionManager owns Hash only | `internal/gate/gate.go` |
+| Admission gate | Reservation pattern: Check (10s TTL) → Register → Confirm (90s TTL). Rollback on failure. Queue wake = re-compete. | `internal/gate/gate.go` |
 | History loading | DB-level `LIMIT` not Python full-scan | `internal/orchestrator/orchestrator.go` |
 | LLM cancellation | `context.Context` propagated to HTTP | `internal/llm/anthropic.go` |
 | Temporal | Retained (Go SDK), HITL via Signal | `internal/temporal/workflow.go` |

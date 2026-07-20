@@ -1134,19 +1134,39 @@ SQL migration files are kept in `migrations/` (existing directory, already used 
 ---
 
 **ADR-003**
-**Title**: Atomic Lua Scripts for Session Register/End — Gate Owns Admission, SessionManager Owns Hash
+**Title**: Reservation Pattern for Gate/Session Atomicity — Gate Owns Admission, SessionManager Owns Hash
 **Status**: Accepted
-**Context**: The Python session_manager has a TTL mismatch bug: `them:sess:{id}` Hash is written with `EXPIRE 90s`, but the index Sets (`them:ep:{slug}:sessions`, `them:app:{id}:sessions`) have no TTL. When a pod crashes before calling `End()`, the session hash expires but the Set members persist indefinitely, causing ghost sessions that inflate session counts and block capacity enforcement. The heartbeat also always writes `session_count = 0` because it doesn't read from any counter. A secondary bug: both the Python `runtime_manager` (gate) and `session_manager` performed SADD into the same Sets, creating a failure window — if the HSET failed after the gate's SADD, the session was in the Set with no Hash (ghost from birth).
-**Decision**: Clear ownership split:
-1. **Gate** (`internal/gate`) is the sole owner of Set membership at admission time. A single atomic Lua script performs: SCARD cap check → INCR rate limit → SADD membership Sets → SET shadow TTL companion keys — all in one Redis round-trip. The session is only admitted if all checks pass. No partial state is possible.
-2. **SessionManager** (`internal/session`) owns ONLY the Hash (`them:sess:{id}`, EXPIRE 90s). It does NOT perform SADD. On End, SessionManager atomically removes the session from the Sets (SREM + DEL shadow key, Lua) to keep cleanup symmetric.
-3. **Shadow TTL keys** (`them:ep:{slug}:shadow:{sid}`, `them:app:{id}:shadow:{sid}`) carry the same TTL as the Hash. Ghost pruning scans the Set and removes members whose shadow key has expired; this check runs inside the Gate's cap-check Lua so it is free on every admission.
+**Context**: The Python session_manager has two concurrency bugs: (1) TTL mismatch — Hash expires but Set members persist, creating ghost sessions. (2) Dual-write — both `runtime_manager` (gate) and `session_manager` called SADD into the same Sets. If Hash creation failed after gate's SADD, the session was in the Set with no Hash — ghost from birth, with no bounded cleanup window.
+**Decision**: Three-step transaction boundary with a reservation TTL:
+1. **`Gate.Check()`** runs a single atomic Lua script: ghost prune (SREM expired shadows) → EP cap check → app cap check → rate limit INCR → SADD membership Sets → SET shadow keys with `ReservationTTL` (10s). Gate is the sole owner of Set membership. The short TTL bounds the ghost window if the caller never reaches step 2.
+2. **`session.Store.Register()`** writes the Hash (HSET, EXPIRE 90s). Owned entirely by SessionManager. Does NOT touch Sets.
+3. **`Gate.Confirm()`** refreshes shadow keys from `ReservationTTL` (10s) to `ShadowTTL` (90s). Must be called after Register succeeds. If the process crashes between Check and Confirm, the shadow expires in ≤10s and the ghost is pruned automatically on the next admission attempt (no explicit cleanup required).
+
+If `Register()` fails, callers MUST call **`Gate.Rollback()`** which atomically SREMs the Set entry, DELs the shadow, and calls `Release()` to wake any queued waiters immediately.
+
+**Queue protocol**: When the EP cap is full and `QueueTimeout > 0`, `Gate.Check()` blocks on `BLPop(them:ep:gate:queue:{slug})`. `Gate.Release()` calls `LPush("1")` to wake exactly one waiter. On wake-up, the waiter re-runs the full `luaAdmit` script from scratch — this is a compete, not a guarantee. If the slot was taken by a concurrent waiter, `ErrCapExceeded` is returned immediately (no re-queue). `Gate.Rollback()` and `Gate.Release()` are also called on session end so queued sessions are not starved.
+
+**Caller contract** (enforced in `internal/ws/handler.go` and `internal/sse/handler.go`):
+```
+ok, err := gate.Check(ctx, cfg)   // short reservation written
+if err != nil { reject; return }
+err = session.Register(ctx, info) // Hash written
+if err != nil { gate.Rollback(ctx, cfg); return }
+gate.Confirm(ctx, cfg)            // shadow extended to full TTL
+defer func() {
+    session.End(ctx, ...)
+    gate.Release(ctx, cfg)        // wake next queued session
+}()
+```
 **Consequences**:
-- Positive: No failure window between admission and Hash creation. Gate owns admission atomically; if Hash write fails, Gate already recorded the session as admitted — but this is acceptable because the session will appear as a ghost and be pruned within the next cap-check cycle (≤ one admission).
+- Positive: Failure window is bounded to `ReservationTTL` (10s) even on process crash — no manual intervention required.
+- Positive: Rollback is explicit and immediate when Register fails — no waiting for TTL.
+- Positive: Ghost sessions caused by process crash cannot persist longer than 10s before being pruned on the next admission attempt.
+- Positive: Queue wake-up re-competes rather than assuming a guaranteed slot — correct under concurrent waiters.
 - Positive: Pod heartbeat reports real session count from the atomic counter.
-- Positive: Ghost session detection is explicit (reaper/prune-on-admit) rather than silently corrupting counts.
-- Positive: Eliminates the duplicate-SADD race from the Python design.
-- Negative: Lua scripts are opaque to Redis monitoring tools. Scripts are stored in the codebase with SHA-based loading; NOSCRIPT errors on Redis flush require re-loading scripts.
+- Positive: Eliminates duplicate-SADD and dual-owner race from the Python design.
+- Negative: Callers must follow the Check → Register → Confirm contract. A missed Confirm means sessions expire after 10s (acting as a circuit breaker, but may cause unexpected session drops). Mitigated by the deferred Rollback pattern.
+- Negative: Lua scripts are opaque to Redis monitoring tools; NOSCRIPT errors on Redis flush require script reload.
 
 ---
 

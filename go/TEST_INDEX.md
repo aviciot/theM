@@ -285,11 +285,11 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ### S1-17 · Runtime admission gate — `internal/gate/gate_test.go`
 
-**Purpose:** Gate is the sole owner of Set membership at admission. Single atomic Lua script: ghost prune + cap check + rate limit + SADD + shadow TTL. Covers all rejection paths and correct state after admission.
+**Purpose:** Reservation TTL pattern (Check → Register → Confirm contract), atomic Lua admission, queue protocol (BLPop signal channel, re-compete on wake), Rollback for immediate slot recovery on Register failure. Covers all admission/rejection/queue/cancellation paths and the ghost auto-cleanup guarantee.
 
 | Test | What it proves |
 |---|---|
-| `TestAdmitNoLimits` | No limits → admitted; EP and app Set membership + shadow keys written |
+| `TestAdmitNoLimits` | No limits → admitted; EP + app Set membership + shadow keys written |
 | `TestEPCapExceeded` | EP cap=1, second session → `ErrCapExceeded` |
 | `TestAppCapExceeded` | App cap=1, second session → `ErrCapExceeded` |
 | `TestRateLimit` | RPM=1, second request in same minute → `ErrRateLimited` |
@@ -297,6 +297,14 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestGhostPruning` | Ghost member (no shadow key) pruned; cap check counts correctly |
 | `TestQueueDisabledOnCapExceeded` | QueueTimeout=0 + cap full → `ErrCapExceeded` immediately |
 | `TestQueueTimeout` | QueueTimeout>0, BLPOP times out → `ErrQueueFull` |
+| `TestConfirmExtendsShadow` | Confirm refreshes shadow keys from ReservationTTL (10s) to full ShadowTTL (90s) |
+| `TestRollbackRemovesAdmission` | Rollback SREMs Set entry + DELs shadow; slot freed immediately for next session |
+| `TestReservationExpiryAutoCleanup` | Shadow expires (simulates crash between Check and Confirm) → ghost pruned on next admission |
+| `TestQueueWakeUpIsACompete` | Queued session wakes but slot taken by concurrent session → `ErrCapExceeded`, not re-queued |
+| `TestMultipleWaitersCompete` | Two waiters, two signals, one slot → exactly one admitted, one `ErrCapExceeded` |
+| `TestCancellationWhileQueued` | Context cancelled while waiting in queue → error returned without deadlock |
+| `TestReleaseNoWaiters` | Release with no waiters → no panic, no error (idempotent) |
+| `TestRollbackWakesQueuedSession` | Rollback on Register failure → Release called → queued session wakes and wins the slot |
 
 **Trigger:** any change to `internal/gate/gate.go`
 
@@ -429,9 +437,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-14 | a2a | 3 |
 | S1-15 | admin | 5 |
 | S1-16 | ratelimit | 3 |
-| S1-17 | gate | 8 |
-| **S1 total** | | **91** |
+| S1-17 | gate | 16 |
+| **S1 total** | | **99** |
 | S2-01 | integration | 4 |
 | **S2 total** | | **4** |
 | S3 live | manual | 23 |
-| **Grand total** | | **118** |
+| **Grand total** | | **126** |

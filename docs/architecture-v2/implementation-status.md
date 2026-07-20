@@ -31,7 +31,7 @@ Integration tests pass under `go test -tags=integration ./...`.
 | a2a | `internal/a2a` | JSON-RPC 2.0 A2A server, /.well-known/agent.json agent card | 3 | Orchestrator-as-agent pattern |
 | admin | `internal/admin` | REST CRUD for agents/orchestrators/applications/entry-points/runs, HITL signal, JWT+super_admin middleware | 5 | Admin API with proper auth, cache invalidation |
 | ratelimit | `internal/ratelimit` | Redis INCR rate limiting, per-token + per-app, 1-minute windows | 3 | Redis-backed rate limiting (replica-safe) |
-| gate | `internal/gate` | Runtime admission gate — SOLE owner of Set membership at admission. Single atomic Lua: ghost prune + cap check + rate limit + SADD + shadow TTL. Queue support (BLPOP). | 8 | Eliminates duplicate-SADD failure window (Architecture fix); sole ownership of admission-time Set membership |
+| gate | `internal/gate` | Runtime admission gate — SOLE owner of Set membership. Reservation TTL pattern: Check (SADD + short shadow TTL 10s) → Register (Hash) → Confirm (extend to 90s). Rollback on Register failure. Queue: BLPop signal channel, re-compete on wake. | 16 | Eliminates duplicate-SADD failure window; reservation TTL bounds ghost window to ≤10s even on crash; queue wake-up is a compete not a guarantee |
 
 **Total packages with tests: 19**
 **Total test count: 91 unit + 4 integration = 95 automated**
@@ -97,6 +97,6 @@ From the original architecture review:
 
 ```
 go build ./...     PASS
-go test ./...      PASS (19 packages, 91 unit tests)
+go test ./...      PASS (19 packages, 99 unit tests)
 go test -tags=integration ./...   PASS (4 integration tests)
 ```
