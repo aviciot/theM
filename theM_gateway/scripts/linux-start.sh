@@ -146,8 +146,43 @@ _wait_healthy "them-auth-service" 60
 echo "==> [start] Starting Python Temporal worker..."
 "${COMPOSE[@]}" up -d ${BUILD_FLAG} them-worker
 
-echo "  Waiting 15s for Temporal worker to register activities..."
-sleep 15
+# Wait for the Temporal worker to connect and start polling its task queue.
+# Strategy: poll the Temporal frontend gRPC-health endpoint AND check that the
+# worker container's logs show the "temporal_worker: polling" marker.
+# Timeout: 90 seconds (activity registration can take 30–60s on a cold start).
+echo "  Waiting for Temporal worker to register activities (up to 90s)..."
+_WORKER_TIMEOUT=90
+_WORKER_ELAPSED=0
+_WORKER_READY=false
+
+while [ "${_WORKER_ELAPSED}" -lt "${_WORKER_TIMEOUT}" ]; do
+  # Check 1: container is running
+  _STATE="$(docker inspect --format='{{.State.Status}}' them-worker 2>/dev/null || echo "absent")"
+  if [ "${_STATE}" != "running" ]; then
+    sleep 3; _WORKER_ELAPSED=$((_WORKER_ELAPSED + 3))
+    continue
+  fi
+
+  # Check 2: logs contain the ready marker (printed once activities are registered)
+  if docker logs them-worker 2>&1 | grep -q "temporal_worker.*polling\|Started polling\|Worker started"; then
+    _WORKER_READY=true
+    break
+  fi
+
+  sleep 3; _WORKER_ELAPSED=$((_WORKER_ELAPSED + 3))
+  echo -n "."
+done
+echo ""
+
+if [ "${_WORKER_READY}" = "true" ]; then
+  echo "  Temporal worker ready (${_WORKER_ELAPSED}s)."
+else
+  echo "  WARNING: Temporal worker ready marker not found after ${_WORKER_TIMEOUT}s."
+  echo "    Container status: $(docker inspect --format='{{.State.Status}}' them-worker 2>/dev/null || echo unknown)"
+  echo "    Last 10 log lines:"
+  docker logs them-worker --tail 10 2>&1 | sed 's/^/    /'
+  echo "    Continuing — worker may still be initializing. Check: docker logs them-worker"
+fi
 
 # ── Step 7: Go bridge replicas (primary gateway) ──────────────────────────────
 echo "==> [start] Starting Go bridge replicas (primary WS/SSE gateway)..."

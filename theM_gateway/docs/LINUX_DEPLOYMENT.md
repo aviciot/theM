@@ -24,7 +24,7 @@ The Go gateway is the primary runtime on Linux. It owns all client-facing connec
 
 Python components that still run alongside Go (because they are not yet rewritten):
 
-| Service | Role | Replaceable? |
+| Service | Role | When replaceable |
 |---|---|---|
 | `them-worker` | Temporal activity worker — LLM calls, tool routing, run recording | When Go activity rewrites land |
 | `them-auth-service` | JWT issuing and user management | When Go auth service is complete |
@@ -47,9 +47,9 @@ That is the single command for both first-time installs and subsequent restarts.
 2. Validates compose config
 3. Starts Postgres + Redis, waits for health
 4. Starts Temporal
-5. Initializes DB schema if fresh; no-op if already initialized
+5. Bootstraps DB schema if fresh; no-op if already initialized (via `linux-db-init.sh`)
 6. Starts auth-service
-7. Starts Python worker (Temporal activities)
+7. Starts Python worker (Temporal activities); waits for readiness marker
 8. Starts **both Go bridge replicas** (primary gateway)
 9. Starts Traefik
 10. Starts Python bridge (admin API) + frontend
@@ -57,31 +57,98 @@ That is the single command for both first-time installs and subsequent restarts.
 
 ---
 
-## Compose file stacking
+## Database schema management
 
-### Linux (deployment)
-```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.linux.yml \       # ← Linux overlay: Go-first routes, named volumes
-  -f docker-compose.integration.yml \ # ← Go bridge + host-port exposure
-  -f docker-compose.soak.yml \        # ← Second Go bridge replica
-  -f docker-compose.traefik.yml \     # ← WS/SSE/go-health Traefik labels
-  --profile temporal up -d
+### Schema snapshot vs. migration replay
+
+The-M uses a **snapshot-based fresh install** combined with **versioned upgrade migrations**:
+
+| Scenario | Tool | File |
+|---|---|---|
+| Fresh install | `linux-db-init.sh` | `db/schema_current.sql` |
+| Upgrade existing | `linux-db-upgrade.sh` | `db/NNN_name.sql` |
+| Recovery / debug replay | `linux-db-legacy-replay.sh` | all `db/*.sql` |
+
+Fresh installations **never replay the migration history** (001–025). They apply the current schema snapshot directly in a single pass.
+
+### `db/schema_current.sql` — the canonical snapshot
+
+This file:
+- Creates both schemas (`them`, `auth_service`)
+- Creates `them.schema_migrations` for tracking
+- Creates all tables at their current final shape (no ALTER chains)
+- Creates all indexes and constraints
+- Seeds minimal required system data (LLM providers, middleware defs, config defaults)
+- Records versions 001–025 as applied in `schema_migrations`
+- Does **not** insert demo agents, orchestrators, or user accounts
+
+When a new migration file is added (e.g., `db/026_name.sql`), **also update `schema_current.sql`** to incorporate that change. The snapshot and migrations must stay in sync.
+
+### Migration tracking: `them.schema_migrations`
+
+```sql
+CREATE TABLE them.schema_migrations (
+    version     TEXT        PRIMARY KEY,
+    description TEXT        NOT NULL DEFAULT '',
+    applied_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    checksum    TEXT
+);
 ```
 
-### Windows (development)
+Every migration records itself here after successful application. The table is created by `schema_current.sql` and pre-populated with versions 001–025.
+
+### Detection logic in `linux-db-init.sh`
+
+| State | Outcome |
+|---|---|
+| `schema_migrations` table absent | Fresh DB — apply `schema_current.sql` |
+| `schema_migrations` present, rows > 0 | Initialized — no-op, exit 0 |
+| `schema_migrations` present, rows = 0 | Partial/failed init — **error** (use `--force-fresh` only after investigation) |
+
+### Advisory lock
+
+Both `linux-db-init.sh` and `linux-db-upgrade.sh` acquire `pg_try_advisory_lock(987654321)` before touching the schema. If another process holds the lock, the script exits with a diagnostic message rather than running concurrently.
+
+### Fresh install (no data needed)
+
 ```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.local.yml \       # ← local.yml instead of linux.yml
-  -f docker-compose.integration.yml \
-  -f docker-compose.soak.yml \
-  -f docker-compose.traefik.yml \
-  --profile temporal up -d
+# linux-start.sh calls linux-db-init.sh automatically.
+# No demo data, no user accounts — just the schema.
+./scripts/linux-start.sh --build
 ```
 
-Only `docker-compose.linux.yml` vs `docker-compose.local.yml` differs.
+### Fresh install with dev user accounts (dev/staging only)
+
+```bash
+./scripts/linux-db-init.sh --seed-users
+# or via linux-start.sh after it calls init:
+docker exec -i them-postgres psql -U them -d them < db/seed_users.sql
+```
+
+**Never use `--seed-users` on production.** User accounts are managed through the auth-service API.
+
+### Upgrade existing deployment
+
+```bash
+# Apply specific new migration file(s)
+./scripts/linux-db-upgrade.sh db/026_new_feature.sql
+
+# Apply a range
+./scripts/linux-db-upgrade.sh db/026_one.sql db/027_two.sql
+```
+
+`linux-db-upgrade.sh` checks `schema_migrations` before applying each file — already-applied versions are skipped safely. Each file must be idempotent.
+
+### Seed data policy
+
+| Data type | Location | When to apply |
+|---|---|---|
+| Required system records | `schema_current.sql` (Section 3) | Always — applied with schema |
+| Built-in middleware defs | `schema_current.sql` | Always |
+| LLM provider stubs | `schema_current.sql` | Always (no API key — operators set those) |
+| Dev user accounts (admin, avi) | `db/seed_users.sql` | Dev/staging only, `--seed-users` |
+| Demo agents + orchestrators | `db/seed_demo.sql` | Optional, `--seed-demo` |
+| Test A2A agents | `db/002_seed.sql` | Legacy path; use `seed_demo.sql` instead |
 
 ---
 
@@ -97,8 +164,8 @@ chmod +x scripts/linux-*.sh generate-env.sh
 
 # 3. Generate secrets from a master passphrase
 cp secrets.local.example secrets.local
-#   Edit secrets.local: replace THE_M_MASTER_SECRET with a strong random value
-#      openssl rand -hex 32
+#   Replace THE_M_MASTER_SECRET with a strong random value:
+#     openssl rand -hex 32
 nano secrets.local
 ./generate-env.sh
 
@@ -112,37 +179,61 @@ echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
 ./scripts/linux-health.sh
 ```
 
-DB schema is initialized automatically at step 5. No separate migration command is needed on a fresh install.
+DB schema is initialized automatically at step 5 via `schema_current.sql`. No separate migration command is required.
 
 ---
 
-## Database schema management
+## Traefik routing — explicit verification
 
-### Fresh install
-`linux-start.sh` calls `scripts/linux-db-init.sh` internally. That script:
-- Checks whether `them.runs` exists
-- If absent: applies `db/001_schema.sql` + `auth_service/SCHEMA.sql` + `db/002_seed.sql` + all `db/[0-9][0-9][0-9]_*.sql` in order
-- If present: no-op (prints "schema already initialized")
+Route ownership on Linux (priorities prevent ambiguity):
 
-No historical replay is required. The numbered SQL files are idempotent — they can be applied to a fresh DB or an existing DB safely.
+| Priority | Router | Rule | Service | Verified |
+|---|---|---|---|---|
+| 150 | `them-temporal-ui` | `PathPrefix(/temporal)` | Temporal UI (port 8080) | ✓ |
+| 120 | `them-go-health` | `PathPrefix(/go-health)` | Go bridge + `replacePathRegex` | ✓ |
+| 110 | `them-go-ws` | `PathPrefix(/ws)` | Go bridge (both replicas) | ✓ |
+| 110 | `them-go-sse` | `PathPrefix(/sse)` | Go bridge (both replicas) | ✓ |
+| 100 | `them-api` | `PathPrefix(/api/v1)` | Python bridge (port 8001) | ✓ |
+| 100 | `them-apps` | `PathPrefix(/apps)` | Python bridge | ✓ |
+| 100 | `them-a2a` | `PathPrefix(/a2a)` | Python bridge | ✓ |
+| 90 | `them-health` | `PathPrefix(/health)` | Python bridge | ✓ |
+| 10 | `them-ui` | `PathPrefix(/)` | Frontend (port 3200) | ✓ |
 
-### Existing deployment (upgrade)
-When new migrations are added to `db/`:
+**No `/ws+/sse` combined matcher exists.** The two routes are separate routers at the same priority (110), each matching a distinct prefix. The Python bridge in `docker-compose.linux.yml` has no Traefik labels for `/ws` or `/sse` — those paths are exclusively registered by `docker-compose.traefik.yml` pointing to `them-go-svc`.
+
+Go health rewrite: `^/go-health(.*)` → `/health$1` (via `replacePathRegex` middleware). Verified live: `/go-health/live` → `{"status":"ok"}`, `/go-health/ready` → `{"redis":"ok"}`.
+
+---
+
+## Compose file stacking
+
+### Linux (deployment)
 ```bash
-# Apply only the new file(s)
-./scripts/linux-db-upgrade.sh db/026_new_feature.sql
-
-# Or apply a range
-./scripts/linux-db-upgrade.sh $(ls db/026_*.sql db/027_*.sql | sort)
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.linux.yml \          # Go-first: named volumes, no WS/SSE on Python bridge
+  -f docker-compose.integration.yml \    # Go bridge definition + host-port exposure
+  -f docker-compose.soak.yml \           # Second Go bridge replica
+  -f docker-compose.traefik.yml \        # WS/SSE/go-health Traefik labels
+  --profile temporal up -d
 ```
 
-`linux-db-upgrade.sh` does not replay all migrations — it applies only what you specify. Each file must be idempotent.
+### Windows (development)
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.local.yml \          # local.yml instead of linux.yml
+  -f docker-compose.integration.yml \
+  -f docker-compose.soak.yml \
+  -f docker-compose.traefik.yml \
+  --profile temporal up -d
+```
+
+Only `docker-compose.linux.yml` vs `docker-compose.local.yml` differs.
 
 ---
 
 ## Pre-deployment validation checklist
-
-Run before every deployment to Linux staging or production.
 
 ### 1 — Compose config
 ```bash
@@ -154,32 +245,22 @@ docker compose \
 echo "Compose config: OK"
 ```
 
-### 2 — Go unit tests (on build host or CI)
+### 2 — Go unit tests
 ```bash
 cd go
-go test ./...                 # must pass — zero failures
-go test -race ./...           # requires gcc (apt-get install gcc on Ubuntu)
+go test ./...
+go test -race ./...   # requires gcc (apt-get install gcc on Ubuntu)
 ```
 
-### 3 — Clean stack startup
+### 3 — Clean-install validation (full automated test)
 ```bash
 cd theM_gateway
-./scripts/linux-stop.sh --remove-orphans
-./scripts/linux-start.sh --build
-./scripts/linux-health.sh    # exits 0 = all checks passed
+./scripts/linux-validate-clean-install.sh
+# Runs 7 phases: infrastructure → schema → partial-init detection →
+# full stack → Traefik routing → restart → data integrity
 ```
 
-### 4 — DB schema verification
-```bash
-# Confirm events_transport column (Phase 11c)
-docker exec them-postgres psql -U them -d them \
-  -c "\d them.runs" | grep events_transport
-
-# Confirm all tables present
-docker exec them-postgres psql -U them -d them -c "\dt them.*"
-```
-
-### 5 — Go integration tests against live stack
+### 4 — Go integration tests
 ```bash
 cd go
 REDIS_ADDR=localhost:16379 \
@@ -188,80 +269,48 @@ REDIS_ADDR=localhost:16379 \
   ./internal/runstream/...
 ```
 
-### 6 — Traefik route ownership verification
+### 5 — Manual route ownership spot-check
 ```bash
 HOST_IP=$(hostname -I | awk '{print $1}')
 
-# Go bridge owns /ws and /sse (expect 401/400 from Go, not Python)
+# Go owns /ws (expect 401 from Go JWT gate)
 curl -sf -o /dev/null -w "%{http_code}\n" \
   -H "Connection: Upgrade" -H "Upgrade: websocket" \
   "http://${HOST_IP}:8088/ws/orchestrate/app/ep"
-# Expected: 401 (Go requires auth) — NOT 404 or 426 from Python
+# Expected: 401
 
-# Go health via Traefik (path-rewritten: /go-health/* → /health/*)
+# Go health via Traefik path-rewrite
 curl -sf "http://${HOST_IP}:8088/go-health/live" | grep '"status":"ok"'
 curl -sf "http://${HOST_IP}:8088/go-health/ready" | grep '"redis":"ok"'
 
-# Python bridge still owns /api/v1
+# Python bridge owns /api/v1
 curl -sf -o /dev/null -w "%{http_code}\n" \
   "http://${HOST_IP}:8088/api/v1/admin/agents"
-# Expected: 401 (JWT required)
+# Expected: 401
 ```
 
-### 7 — Prometheus metrics
+### 6 — Prometheus metrics
 ```bash
-# Both Go bridges must report them_runstream_mode
 curl -sf http://localhost:8002/metrics | grep "them_runstream_mode"
 curl -sf http://localhost:8003/metrics | grep "them_runstream_mode"
 # Expected: them_runstream_mode 1 (dual) or 0 (pubsub)
 ```
 
-### 8 — Multi-replica restart
-```bash
-# Stop one bridge, verify the other serves Traefik health check
-docker stop --timeout=10 them-go-bridge-2
-curl -sf http://localhost:8088/go-health/live | grep '"status":"ok"'
-
-# Restart and verify both healthy
-docker start them-go-bridge-2
-sleep 8
-docker inspect them-go-bridge-2 --format='{{.State.Health.Status}}'
-# Expected: healthy
-```
-
-### 9 — Graceful shutdown verification
-```bash
-docker stop --timeout=15 them-go-bridge
-EXIT=$(docker inspect them-go-bridge --format='{{.State.ExitCode}}')
-echo "Exit code: ${EXIT}  (expected: 0)"
-docker start them-go-bridge
-```
-
-### 10 — MAXLEN / replay scenarios
-```bash
-cd go
-REDIS_ADDR=localhost:16379 \
-  go test -tags=integration -timeout 300s \
-  -run "TestMAXLEN" -v ./internal/runstream/...
-```
-
 ---
 
-## Route priority map (Traefik)
+## Scripts reference
 
-| Priority | Router | Path | Service |
-|---|---|---|---|
-| 150 | `them-temporal-ui` | `/temporal` | Temporal UI |
-| 120 | `them-go-health` | `/go-health` | Go bridge (path-rewritten) |
-| 110 | `them-go-ws` | `/ws` | Go bridge (both replicas) |
-| 110 | `them-go-sse` | `/sse` | Go bridge (both replicas) |
-| 100 | `them-api` | `/api/v1` | Python bridge |
-| 100 | `them-apps` | `/apps` | Python bridge |
-| 100 | `them-a2a` | `/a2a` | Python bridge |
-| 90 | `them-health` | `/health` | Python bridge |
-| 10 | `them-ui` | `/` | Frontend |
-
-Go owns all client-facing routes (WS, SSE, health). Python bridge never sees WebSocket upgrades.
+| Script | Purpose | When to run |
+|---|---|---|
+| `linux-start.sh` | Start full stack (validates env, inits DB, starts all services) | Every deploy / restart |
+| `linux-stop.sh` | Graceful shutdown | Before maintenance or redeploy |
+| `linux-db-init.sh` | Bootstrap fresh DB from `schema_current.sql` (no-op if initialized) | Called by `linux-start.sh` automatically |
+| `linux-db-upgrade.sh` | Apply specific new migration files to existing deployment | When new `db/NNN_*.sql` files land |
+| `linux-validate-clean-install.sh` | 7-phase clean-install automated test | Before every production deploy |
+| `linux-health.sh` | Verify all containers + HTTP endpoints healthy | After start; in CI |
+| `linux-logs.sh` | Collect logs per service | Debugging; incident response |
+| `linux-rollback.sh` | Roll back Go bridge to a previous image tag | After a bad Go deploy |
+| `linux-db-legacy-replay.sh` | Full sequential migration replay (NOT normal startup) | Recovery/debug only |
 
 ---
 
@@ -275,22 +324,10 @@ Go owns all client-facing routes (WS, SSE, health). Python bridge never sees Web
 | Data persistence | `./data/` bind mounts | Named Docker volumes |
 | Traefik dashboard | `127.0.0.1:8089` | `0.0.0.0:8089` (all interfaces) |
 | Secret generation | `.\generate-env.ps1` | `./generate-env.sh` |
-| DB schema init | Manual `scripts/init_db.sh` | `linux-start.sh` → `linux-db-init.sh` (auto) |
-| Python test runner | `python3.12` (explicit) | Auto-detected (3.10+) |
-
----
-
-## Scripts reference
-
-| Script | Purpose | When to run |
-|---|---|---|
-| `linux-start.sh` | Start full stack (validates env, inits DB, starts all services) | Every deploy / restart |
-| `linux-stop.sh` | Graceful shutdown (SIGTERM, configurable timeout) | Before maintenance or redeploy |
-| `linux-db-init.sh` | Initialize fresh DB schema (called by start; no-op if exists) | Called automatically |
-| `linux-db-upgrade.sh` | Apply specific new migration files to existing deployment | When new `db/*.sql` land |
-| `linux-health.sh` | Verify all containers + HTTP endpoints healthy | After start; in CI |
-| `linux-logs.sh` | Collect logs per service, optionally archive | Debugging; incident response |
-| `linux-rollback.sh` | Roll back Go bridge to a previous image tag | After a bad Go deploy |
+| DB schema init | Manual `scripts/init_db.sh` | `linux-start.sh` → `linux-db-init.sh` → `schema_current.sql` |
+| User seeding | Included in legacy `002_seed.sql` | `db/seed_users.sql` (opt-in, dev only) |
+| Demo agents | `002_seed.sql` applied by default | `db/seed_demo.sql` (opt-in) |
+| Temporal worker wait | N/A | Readiness marker poll (not fixed sleep) |
 
 ---
 
@@ -311,12 +348,26 @@ Python bridge, worker, and database are not rolled back this way — use a DB ba
 
 ---
 
+## Schema maintenance workflow
+
+When a new migration is developed:
+
+1. Write `db/026_new_feature.sql` — idempotent, transactional, records itself via `linux-db-upgrade.sh`
+2. **Also update `db/schema_current.sql`** — add the new column/table/index to Section 2, and add a row to the `INSERT INTO them.schema_migrations` list in Section 4
+3. Test fresh install: `./scripts/linux-validate-clean-install.sh`
+4. Test upgrade: `./scripts/linux-db-upgrade.sh db/026_new_feature.sql` against a running stack
+
+Both paths must work independently. A developer on Windows applies `026_new_feature.sql` directly. A fresh Linux deployment applies `schema_current.sql` which already includes it.
+
+---
+
 ## Known considerations
 
 | Item | Status |
 |---|---|
 | Containers run as root (except `them-auth-service`) | Acceptable for private network; add `user:` for hardened envs |
 | Race detector requires gcc | `apt-get install -y gcc` on test runner or CI image |
-| `auth_service/docker-compose.yml` references legacy `omni` DB | Orphaned file — do not use standalone |
 | Traefik dashboard on `0.0.0.0:8089` | Restrict with firewall to trusted IPs |
-| `RUN_EVENTS_MODE` defaults to `pubsub` in `.env.linux.example` | Change to `dual` for staging validation; `streams` requires Phase 11c-D approval |
+| `RUN_EVENTS_MODE` defaults to `pubsub` | Change to `dual` for staging validation; `streams` requires Phase 11c-D approval |
+| `auth_service/docker-compose.yml` references legacy `omni` DB | Orphaned file — do not use standalone |
+| `linux-db-legacy-replay.sh` | For recovery/debug only — NOT part of normal startup |
