@@ -1,0 +1,137 @@
+version: "3.9"
+# docker-compose.linux.yml — Linux deployment overlay
+#
+# Replaces docker-compose.local.yml on a Linux host (Docker Engine, not Desktop).
+#
+# Key differences from docker-compose.local.yml:
+#   - proxy-network created as a local bridge (same as local.yml)
+#   - Bridge source bind mounts (.:/app) replaced with image-only copies
+#     (no live-reload on Linux deployment — code is baked into the image)
+#   - data/ bind-mount directories created by linux-start.sh with correct ownership
+#   - Router rules match PathPrefix only (no Host constraint) — same as local.yml
+#   - Traefik dashboard accessible on all interfaces (0.0.0.0) for server access;
+#     protect with a firewall rule or SSH tunnel in production
+#
+# Usage:
+#   cd theM_gateway
+#   ./scripts/linux-start.sh
+#
+# Or manually:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.linux.yml \
+#     -f docker-compose.integration.yml \
+#     -f docker-compose.soak.yml \
+#     -f docker-compose.traefik.yml \
+#     --profile temporal \
+#     up -d --build
+
+networks:
+  proxy-network:
+    name: them-proxy
+    driver: bridge
+    external: false
+
+services:
+
+  # ── Traefik dashboard: bind to all interfaces on Linux so it is reachable
+  #    from the host network. Restrict access at the firewall level.
+  them-traefik:
+    ports:
+      - "8088:8088"
+      - "8089:8089"  # dashboard on all interfaces (was 127.0.0.1:8089 in base)
+    networks:
+      - proxy-network
+      - them-network
+
+  # ── Python bridge: no source bind mount — code is baked into the image.
+  #    On Linux deployment, the .:/app volume is removed; the Dockerfile COPY
+  #    provides the application code. Logs go to json-file driver only.
+  them-bridge:
+    volumes:
+      - them-logs:/app/logs
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-api.rule=PathPrefix(`/api/v1`)"
+      - "traefik.http.routers.them-api.entrypoints=web"
+      - "traefik.http.routers.them-api.priority=100"
+      - "traefik.http.routers.them-api.service=them-bridge-svc"
+      - "traefik.http.routers.them-ws.rule=PathPrefix(`/ws`)"
+      - "traefik.http.routers.them-ws.entrypoints=web"
+      - "traefik.http.routers.them-ws.priority=100"
+      - "traefik.http.routers.them-ws.service=them-bridge-svc"
+      - "traefik.http.routers.them-health.rule=PathPrefix(`/health`)"
+      - "traefik.http.routers.them-health.entrypoints=web"
+      - "traefik.http.routers.them-health.priority=90"
+      - "traefik.http.routers.them-bridge-health.service=them-bridge-svc"
+      - "traefik.http.routers.them-apps.rule=PathPrefix(`/apps`)"
+      - "traefik.http.routers.them-apps.entrypoints=web"
+      - "traefik.http.routers.them-apps.priority=100"
+      - "traefik.http.routers.them-apps.service=them-bridge-svc"
+      - "traefik.http.routers.them-a2a.rule=PathPrefix(`/a2a`)"
+      - "traefik.http.routers.them-a2a.entrypoints=web"
+      - "traefik.http.routers.them-a2a.priority=100"
+      - "traefik.http.routers.them-a2a.service=them-bridge-svc"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.server.port=8001"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.timeout=3s"
+
+  # ── Python worker: no source bind mount on Linux deployment.
+  them-worker:
+    volumes:
+      - them-logs:/app/logs
+
+  # ── Frontend: no source bind mount on Linux deployment.
+  them-frontend:
+    volumes: []
+    environment:
+      NODE_ENV: production
+      THE_M_API_URL: "http://them-bridge:8001"
+      THE_M_AUTH_URL: "http://them-auth-service:8701"
+      NEXT_PUBLIC_BRIDGE_WS_URL: ""
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-ui.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.them-ui.entrypoints=web"
+      - "traefik.http.routers.them-ui.priority=10"
+      - "traefik.http.routers.them-ui.service=them-ui-svc"
+      - "traefik.http.services.them-ui-svc.loadbalancer.server.port=3200"
+
+  # ── Temporal UI: PathPrefix-only routing (no Host constraint).
+  temporal-ui:
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-temporal-ui.rule=PathPrefix(`/temporal`)"
+      - "traefik.http.routers.them-temporal-ui.entrypoints=web"
+      - "traefik.http.routers.them-temporal-ui.priority=150"
+      - "traefik.http.routers.them-temporal-ui.service=them-temporal-ui-svc"
+      - "traefik.http.services.them-temporal-ui-svc.loadbalancer.server.port=8080"
+
+  # ── Named volumes for Postgres and Redis data on Linux.
+  #    Using named volumes instead of bind mounts avoids UID/GID ownership issues
+  #    (Docker manages volume ownership; no pre-create step required).
+  them-postgres:
+    volumes:
+      - them-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+
+  them-redis:
+    volumes:
+      - them-redis-data:/data
+      - ./redis/config/redis.conf:/etc/redis/redis.conf:ro
+
+# ── Named volumes (Docker manages ownership — no manual chown required)
+volumes:
+  them-postgres-data:
+    name: them-postgres-data
+  them-redis-data:
+    name: them-redis-data
+  them-logs:
+    name: them-logs
