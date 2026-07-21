@@ -2,337 +2,321 @@
 # the-M — Multi-Agent Orchestration Platform
 
 **Last updated:** 2026-07-21  
-**Applies to:** Docker Engine >= 24 + docker compose v2 on Linux (Ubuntu 22.04/24.04)  
-**Windows development:** unchanged — use `docker-compose.local.yml` as before
+**Applies to:** Docker Engine >= 24, docker compose v2, Linux (Ubuntu 22.04/24.04)  
+**Windows development:** unchanged — use `docker-compose.local.yml` as documented in CLAUDE.md
 
 ---
 
-## Architecture: Windows vs Linux
+## Design: Go-first runtime
 
-| Aspect | Windows development | Linux deployment |
+The Go gateway is the primary runtime on Linux. It owns all client-facing connections:
+
+| Route | Owner | Why |
 |---|---|---|
-| Docker engine | Docker Desktop (WSL2 backend) | Docker Engine (native) |
-| Compose overlay | `docker-compose.local.yml` | `docker-compose.linux.yml` |
-| Python bridge source | Bind-mounted `.:/app` (live reload) | Baked into image at build time |
-| Data persistence | `./data/` bind mounts | Named Docker volumes |
-| Traefik dashboard | `127.0.0.1:8089` (loopback only) | `0.0.0.0:8089` (all interfaces) |
-| Secret generation | `.\generate-env.ps1` (PowerShell) | `./generate-env.sh` (bash) |
-| Test runner | `python3.12` (explicit) | Auto-detected (3.10+) |
+| `/ws/*` | **Go bridge** (both replicas, round-robin) | WS upgrade, session gate, run streaming |
+| `/sse/*` | **Go bridge** (both replicas, round-robin) | SSE stream, Redis Streams replay |
+| `/go-health/*` | **Go bridge** (path-rewritten by Traefik) | Liveness + readiness |
+| `/api/v1/*` | Python bridge | Admin API — not yet rewritten in Go |
+| `/health/*` | Python bridge | Python-side liveness |
+| `/apps/*`, `/a2a/*` | Python bridge | App management, A2A server |
+| `/temporal/*` | Temporal UI | Workflow dashboard |
+| `/` | Frontend | Next.js dashboard |
+
+Python components that still run alongside Go (because they are not yet rewritten):
+
+| Service | Role | Replaceable? |
+|---|---|---|
+| `them-worker` | Temporal activity worker — LLM calls, tool routing, run recording | When Go activity rewrites land |
+| `them-auth-service` | JWT issuing and user management | When Go auth service is complete |
+| `them-bridge` | Admin API `/api/v1/*`, app/EP management | When Go admin API is complete |
+| `them-frontend` | Next.js dashboard | When Go-rendered UI is built |
+
+Redis Pub/Sub is kept active alongside Redis Streams (`RUN_EVENTS_MODE=dual` in integration/soak; `pubsub` in production). Phase 11c-D (remove Pub/Sub) requires explicit approval.
 
 ---
 
-## Compose file stacking
+## Startup command
 
-### Windows (development)
-```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.local.yml \
-  -f docker-compose.integration.yml \
-  -f docker-compose.soak.yml \
-  -f docker-compose.traefik.yml \
-  --profile temporal up -d
-```
-
-### Linux (deployment)
-```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.linux.yml \
-  -f docker-compose.integration.yml \
-  -f docker-compose.soak.yml \
-  -f docker-compose.traefik.yml \
-  --profile temporal up -d
-```
-
-The only difference is `docker-compose.linux.yml` replaces `docker-compose.local.yml`.
-
-### Shortcut (use the script)
 ```bash
 cd theM_gateway
 ./scripts/linux-start.sh [--build]
 ```
 
+That is the single command for both first-time installs and subsequent restarts. It:
+1. Validates `.env` (required secrets set, no placeholders)
+2. Validates compose config
+3. Starts Postgres + Redis, waits for health
+4. Starts Temporal
+5. Initializes DB schema if fresh; no-op if already initialized
+6. Starts auth-service
+7. Starts Python worker (Temporal activities)
+8. Starts **both Go bridge replicas** (primary gateway)
+9. Starts Traefik
+10. Starts Python bridge (admin API) + frontend
+11. Prints endpoint summary
+
 ---
 
-## First-time setup on a Linux server
+## Compose file stacking
+
+### Linux (deployment)
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.linux.yml \       # ← Linux overlay: Go-first routes, named volumes
+  -f docker-compose.integration.yml \ # ← Go bridge + host-port exposure
+  -f docker-compose.soak.yml \        # ← Second Go bridge replica
+  -f docker-compose.traefik.yml \     # ← WS/SSE/go-health Traefik labels
+  --profile temporal up -d
+```
+
+### Windows (development)
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.local.yml \       # ← local.yml instead of linux.yml
+  -f docker-compose.integration.yml \
+  -f docker-compose.soak.yml \
+  -f docker-compose.traefik.yml \
+  --profile temporal up -d
+```
+
+Only `docker-compose.linux.yml` vs `docker-compose.local.yml` differs.
+
+---
+
+## First-time setup
 
 ```bash
-# 1. Clone the repo
+# 1. Clone and enter the gateway directory
 git clone <repo-url> theM
 cd theM/theM_gateway
 
-# 2. Make scripts executable
-chmod +x scripts/linux-start.sh scripts/linux-stop.sh scripts/linux-migrate.sh
-chmod +x scripts/linux-health.sh scripts/linux-logs.sh scripts/linux-rollback.sh
-chmod +x generate-env.sh
+# 2. Make deployment scripts executable
+chmod +x scripts/linux-*.sh generate-env.sh
 
-# 3. Generate secrets
+# 3. Generate secrets from a master passphrase
 cp secrets.local.example secrets.local
-# Edit secrets.local — replace THE_M_MASTER_SECRET with a strong random value:
-#   openssl rand -hex 32
+#   Edit secrets.local: replace THE_M_MASTER_SECRET with a strong random value
+#      openssl rand -hex 32
 nano secrets.local
 ./generate-env.sh
-# Then edit .env to add ANTHROPIC_API_KEY
 
-# 4. Start infrastructure only (Postgres + Redis)
-docker compose -f docker-compose.yml -f docker-compose.linux.yml \
-  up -d them-postgres them-redis
+# 4. Add ANTHROPIC_API_KEY (not derived — must be set manually)
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
 
-# 5. Apply DB migrations
-./scripts/linux-migrate.sh
-
-# 6. Start full stack
+# 5. Start the stack (detects fresh DB and bootstraps schema automatically)
 ./scripts/linux-start.sh --build
 
-# 7. Verify health
+# 6. Verify
 ./scripts/linux-health.sh
 ```
+
+DB schema is initialized automatically at step 5. No separate migration command is needed on a fresh install.
+
+---
+
+## Database schema management
+
+### Fresh install
+`linux-start.sh` calls `scripts/linux-db-init.sh` internally. That script:
+- Checks whether `them.runs` exists
+- If absent: applies `db/001_schema.sql` + `auth_service/SCHEMA.sql` + `db/002_seed.sql` + all `db/[0-9][0-9][0-9]_*.sql` in order
+- If present: no-op (prints "schema already initialized")
+
+No historical replay is required. The numbered SQL files are idempotent — they can be applied to a fresh DB or an existing DB safely.
+
+### Existing deployment (upgrade)
+When new migrations are added to `db/`:
+```bash
+# Apply only the new file(s)
+./scripts/linux-db-upgrade.sh db/026_new_feature.sql
+
+# Or apply a range
+./scripts/linux-db-upgrade.sh $(ls db/026_*.sql db/027_*.sql | sort)
+```
+
+`linux-db-upgrade.sh` does not replay all migrations — it applies only what you specify. Each file must be idempotent.
 
 ---
 
 ## Pre-deployment validation checklist
 
-Run this checklist before every deployment to Linux staging or production.
+Run before every deployment to Linux staging or production.
 
-### Phase 1 — Compose config validation
+### 1 — Compose config
 ```bash
-cd theM_gateway
-
-# Validate compose config resolves without errors
 docker compose \
   -f docker-compose.yml -f docker-compose.linux.yml \
   -f docker-compose.integration.yml -f docker-compose.soak.yml \
-  -f docker-compose.traefik.yml --profile temporal config --quiet
-
+  -f docker-compose.traefik.yml --profile temporal \
+  config --quiet
 echo "Compose config: OK"
 ```
 
-### Phase 2 — Clean stack startup
-```bash
-# Stop any running stack
-./scripts/linux-stop.sh --remove-orphans
-
-# Build all images from scratch
-./scripts/linux-start.sh --build
-
-# Verify all containers healthy
-./scripts/linux-health.sh
-```
-
-### Phase 3 — DB migrations
-```bash
-./scripts/linux-migrate.sh
-
-# Verify schema
-docker exec them-postgres psql -U them -d them \
-  -c "\dt them.*" | head -20
-
-# Verify events_transport column (Phase 11c)
-docker exec them-postgres psql -U them -d them \
-  -c "\d them.runs" | grep events_transport
-```
-
-### Phase 4 — Go unit tests (run on build host or CI)
+### 2 — Go unit tests (on build host or CI)
 ```bash
 cd go
-export PATH="$HOME/go-sdk/go/bin:$PATH"
-
-# Full unit suite — must pass before any deployment
-go test ./...
-echo "Unit tests: OK"
-
-# Race detector — required before staging merge
-# (Needs gcc: apt-get install -y gcc on Ubuntu)
-go test -race ./...
-echo "Race detector: OK"
+go test ./...                 # must pass — zero failures
+go test -race ./...           # requires gcc (apt-get install gcc on Ubuntu)
 ```
 
-### Phase 5 — Integration tests (run against the live Linux stack)
+### 3 — Clean stack startup
 ```bash
 cd theM_gateway
-REDIS_ADDR=localhost:16379 \
-  go test -tags=integration -v -timeout 180s \
-  ./internal/runstream/...
+./scripts/linux-stop.sh --remove-orphans
+./scripts/linux-start.sh --build
+./scripts/linux-health.sh    # exits 0 = all checks passed
+```
 
-# Run MAXLEN scenarios (180s timeout — scenarios 2+3 write 5k/6k events)
+### 4 — DB schema verification
+```bash
+# Confirm events_transport column (Phase 11c)
+docker exec them-postgres psql -U them -d them \
+  -c "\d them.runs" | grep events_transport
+
+# Confirm all tables present
+docker exec them-postgres psql -U them -d them -c "\dt them.*"
+```
+
+### 5 — Go integration tests against live stack
+```bash
+cd go
 REDIS_ADDR=localhost:16379 \
-  go test -tags=integration -v -timeout 300s \
+  go test -tags=integration -timeout 300s \
   -run "TestMAXLEN|TestIntegration_WS|TestIntegration_Cross" \
   ./internal/runstream/...
 ```
 
-### Phase 6 — Traefik routing
+### 6 — Traefik route ownership verification
 ```bash
 HOST_IP=$(hostname -I | awk '{print $1}')
 
-# Go health via Traefik (replacePathRegex: /go-health/* → /health/*)
-curl -sf "http://${HOST_IP}:8088/go-health/live" | grep '"status":"ok"'
-curl -sf "http://${HOST_IP}:8088/go-health/ready" | grep '"status":"ok"'
-
-# Prometheus metrics (both bridges)
-curl -sf "http://localhost:8002/metrics" | grep "them_runstream_mode"
-curl -sf "http://localhost:8003/metrics" | grep "them_runstream_mode"
-
-echo "Traefik routing: OK"
-```
-
-### Phase 7 — WS and SSE reconnect via Traefik
-```bash
-# WebSocket upgrade path reaches Go bridge (not Python bridge)
-# Expect 401 (no auth) from Go bridge, not 404 (wrong service)
-STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+# Go bridge owns /ws and /sse (expect 401/400 from Go, not Python)
+curl -sf -o /dev/null -w "%{http_code}\n" \
   -H "Connection: Upgrade" -H "Upgrade: websocket" \
-  "http://${HOST_IP}:8088/ws/orchestrate/app/ep" 2>/dev/null || true)
-echo "WS route status: ${STATUS}  (expect 401 or 400 from Go bridge)"
+  "http://${HOST_IP}:8088/ws/orchestrate/app/ep"
+# Expected: 401 (Go requires auth) — NOT 404 or 426 from Python
 
-# SSE path (expect 400 or 401 from Go bridge)
-STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
-  "http://${HOST_IP}:8088/sse/orchestrate/app/ep" 2>/dev/null || true)
-echo "SSE route status: ${STATUS}  (expect 400 or 401 from Go bridge)"
+# Go health via Traefik (path-rewritten: /go-health/* → /health/*)
+curl -sf "http://${HOST_IP}:8088/go-health/live" | grep '"status":"ok"'
+curl -sf "http://${HOST_IP}:8088/go-health/ready" | grep '"redis":"ok"'
+
+# Python bridge still owns /api/v1
+curl -sf -o /dev/null -w "%{http_code}\n" \
+  "http://${HOST_IP}:8088/api/v1/admin/agents"
+# Expected: 401 (JWT required)
 ```
 
-### Phase 8 — Multi-replica restart
+### 7 — Prometheus metrics
 ```bash
-# Stop bridge-2, verify bridge-1 still serves
+# Both Go bridges must report them_runstream_mode
+curl -sf http://localhost:8002/metrics | grep "them_runstream_mode"
+curl -sf http://localhost:8003/metrics | grep "them_runstream_mode"
+# Expected: them_runstream_mode 1 (dual) or 0 (pubsub)
+```
+
+### 8 — Multi-replica restart
+```bash
+# Stop one bridge, verify the other serves Traefik health check
 docker stop --timeout=10 them-go-bridge-2
-curl -sf http://localhost:8002/health/live | grep '"status":"ok"'
 curl -sf http://localhost:8088/go-health/live | grep '"status":"ok"'
 
-# Restart bridge-2
+# Restart and verify both healthy
 docker start them-go-bridge-2
 sleep 8
 docker inspect them-go-bridge-2 --format='{{.State.Health.Status}}'
 # Expected: healthy
-
-echo "Multi-replica restart: OK"
 ```
 
-### Phase 9 — Redis recovery
+### 9 — Graceful shutdown verification
 ```bash
-# Stop Redis and verify bridges detect unhealthy state
-docker stop them-redis
-sleep 5
-curl -sf http://localhost:8002/health/ready && echo "WARN: ready should be 503" || echo "Ready correctly degraded"
-
-# Restart Redis
-docker start them-redis
-sleep 10
-docker inspect them-redis --format='{{.State.Health.Status}}'
-curl -sf http://localhost:8002/health/ready | grep '"redis":"ok"'
-
-echo "Redis recovery: OK"
+docker stop --timeout=15 them-go-bridge
+EXIT=$(docker inspect them-go-bridge --format='{{.State.ExitCode}}')
+echo "Exit code: ${EXIT}  (expected: 0)"
+docker start them-go-bridge
 ```
 
-### Phase 10 — Graceful shutdown
+### 10 — MAXLEN / replay scenarios
 ```bash
-# SIGTERM → exit 0 (not SIGKILL exit 137)
-docker stop --timeout=15 them-go-bridge-2
-EXIT_CODE=$(docker inspect them-go-bridge-2 --format='{{.State.ExitCode}}')
-echo "Bridge-2 exit code: ${EXIT_CODE}  (expect 0)"
-[ "${EXIT_CODE}" = "0" ] || echo "WARN: non-zero exit code"
-docker start them-go-bridge-2
-```
-
-### Phase 11 — Soak and load test
-```bash
-# Full soak via Traefik: verify both bridges receive traffic
-# Prerequisite: registered app/EP + valid token (see CLAUDE.md)
-#
-# Manual validation:
-#   1. Start N WebSocket clients via ws://HOST:8088/ws/orchestrate/APP/EP
-#   2. Watch docker stats to confirm CPU/memory within limits
-#   3. Watch logs: docker compose logs -f them-go-bridge them-go-bridge-2
-#   4. Verify Traefik round-robins: each bridge should show ~50% of requests
-#
-# Automated: run python3 go/scripts/soak_runner.py (if soak runner is implemented)
-echo "Soak: manual validation required (see LINUX_DEPLOYMENT.md §Phase 11)"
-```
-
-### Phase 12 — Metrics and monitoring
-```bash
-# Verify all runstream metrics present
-curl -sf http://localhost:8002/metrics | grep -E "them_runstream_mode|them_runstream_replay_sessions"
-
-# Expected: them_runstream_mode 1  (dual mode)
-# After a real run: them_runstream_replay_sessions_total > 0
-
-# Reconciler metrics (should show non-zero scanned after ~30s)
-sleep 35
-curl -sf http://localhost:8002/metrics | grep them_reconciler_scanned
+cd go
+REDIS_ADDR=localhost:16379 \
+  go test -tags=integration -timeout 300s \
+  -run "TestMAXLEN" -v ./internal/runstream/...
 ```
 
 ---
 
-## Key differences from Windows development
+## Route priority map (Traefik)
 
-### 1. No source bind mount on Linux
-On Linux, `docker-compose.linux.yml` removes the `.:/app` volume from `them-bridge` and `them-worker`. The application code is baked into the image at `docker build` time. This means:
+| Priority | Router | Path | Service |
+|---|---|---|---|
+| 150 | `them-temporal-ui` | `/temporal` | Temporal UI |
+| 120 | `them-go-health` | `/go-health` | Go bridge (path-rewritten) |
+| 110 | `them-go-ws` | `/ws` | Go bridge (both replicas) |
+| 110 | `them-go-sse` | `/sse` | Go bridge (both replicas) |
+| 100 | `them-api` | `/api/v1` | Python bridge |
+| 100 | `them-apps` | `/apps` | Python bridge |
+| 100 | `them-a2a` | `/a2a` | Python bridge |
+| 90 | `them-health` | `/health` | Python bridge |
+| 10 | `them-ui` | `/` | Frontend |
 
-- **Code changes require a rebuild**: `./scripts/linux-start.sh --build`
-- **No hot-reload**: restart the service after any code change
-- **File ownership**: no longer an issue (image COPY sets correct ownership)
+Go owns all client-facing routes (WS, SSE, health). Python bridge never sees WebSocket upgrades.
 
-### 2. Named volumes instead of bind mounts for data
-`docker-compose.linux.yml` replaces `./data/them-postgres/pgdata` and `./data/them-redis` bind mounts with Docker named volumes (`them-postgres-data`, `them-redis-data`). Benefits:
+---
 
-- Docker manages volume ownership — no manual `chown` needed
-- Volumes survive `docker compose down` (but not `docker compose down --volumes`)
-- Volume location: `/var/lib/docker/volumes/them-postgres-data/`
+## Key differences: Windows vs Linux
 
-### 3. Traefik dashboard accessible on all interfaces
-`docker-compose.linux.yml` changes the Traefik dashboard port from `127.0.0.1:8089:8089` to `8089:8089` (all interfaces). On a remote Linux server, the dashboard would otherwise be inaccessible. **Protect with a firewall rule** to restrict access to trusted IPs only:
-```bash
-# Allow only from trusted subnet
-iptables -I INPUT -p tcp --dport 8089 -s 10.0.0.0/8 -j ACCEPT
-iptables -I INPUT -p tcp --dport 8089 -j DROP
-```
+| Aspect | Windows dev | Linux deployment |
+|---|---|---|
+| Compose overlay | `docker-compose.local.yml` | `docker-compose.linux.yml` |
+| Python bridge WS/SSE routes | Registered (lower priority, Go wins) | **Not registered** — Go owns exclusively |
+| Source bind mounts | `.:/app` for live reload | Removed — code baked into image |
+| Data persistence | `./data/` bind mounts | Named Docker volumes |
+| Traefik dashboard | `127.0.0.1:8089` | `0.0.0.0:8089` (all interfaces) |
+| Secret generation | `.\generate-env.ps1` | `./generate-env.sh` |
+| DB schema init | Manual `scripts/init_db.sh` | `linux-start.sh` → `linux-db-init.sh` (auto) |
+| Python test runner | `python3.12` (explicit) | Auto-detected (3.10+) |
 
-### 4. `python3` version resolution
-On Windows dev machines, `python3` may be 3.6 (breaks imports). On Linux, `python3` is typically 3.10+. All shell test scripts now auto-detect the best available Python (3.12 > 3.11 > 3.10 > python3, requiring >= 3.10).
+---
 
-### 5. Secret generation
-```bash
-# Linux: use bash script
-./generate-env.sh
+## Scripts reference
 
-# Windows: use PowerShell
-.\generate-env.ps1
-```
-Both produce an identical `.env` using the same HMAC-SHA256 derivation.
+| Script | Purpose | When to run |
+|---|---|---|
+| `linux-start.sh` | Start full stack (validates env, inits DB, starts all services) | Every deploy / restart |
+| `linux-stop.sh` | Graceful shutdown (SIGTERM, configurable timeout) | Before maintenance or redeploy |
+| `linux-db-init.sh` | Initialize fresh DB schema (called by start; no-op if exists) | Called automatically |
+| `linux-db-upgrade.sh` | Apply specific new migration files to existing deployment | When new `db/*.sql` land |
+| `linux-health.sh` | Verify all containers + HTTP endpoints healthy | After start; in CI |
+| `linux-logs.sh` | Collect logs per service, optionally archive | Debugging; incident response |
+| `linux-rollback.sh` | Roll back Go bridge to a previous image tag | After a bad Go deploy |
 
 ---
 
 ## Rollback
 
-To roll back only the Go binary (stateless — safe to roll back independently):
 ```bash
+# List available Go bridge images
 ./scripts/linux-rollback.sh --list
-./scripts/linux-rollback.sh --tag <image-tag>
+
+# Roll back to a specific tag
+./scripts/linux-rollback.sh --tag them_gateway-them-go-bridge:20260721-abc1234
+
+# Verify
 ./scripts/linux-health.sh
 ```
 
-To roll back the Python bridge or database schema: restore from a DB backup (outside scope of this runbook — use your backup/restore procedure).
+Python bridge, worker, and database are not rolled back this way — use a DB backup restore for schema rollbacks (outside scope of this runbook).
 
 ---
 
-## Log collection
-```bash
-# Last 200 lines from Go bridges
-./scripts/linux-logs.sh --tail 200 them-go-bridge them-go-bridge-2
+## Known considerations
 
-# Last hour, all services, saved to archive
-./scripts/linux-logs.sh --since 1h --save /tmp/them-logs-$(date +%Y%m%d-%H%M%S)
-```
-
----
-
-## Known Linux-only considerations
-
-| Item | Status | Action |
-|---|---|---|
-| Containers run as root (except `them-auth-service`) | Acceptable for private network | Add `user:` directive to hardened envs |
-| `vision_agent` PORT env var hardcoded in CMD | Fixed — uses `ENV PORT=9100` default | Override via compose `environment:` if needed |
-| Race detector requires gcc | `apt-get install -y gcc` on test runner | Add to CI image |
-| `auth_service/docker-compose.yml` references legacy `omni` DB | Orphaned file — do not use standalone | Only use main `docker-compose.yml` |
-| `auth_service/.env.example` has wrong DB URL | Doc drift only | Use main `.env.linux.example` |
+| Item | Status |
+|---|---|
+| Containers run as root (except `them-auth-service`) | Acceptable for private network; add `user:` for hardened envs |
+| Race detector requires gcc | `apt-get install -y gcc` on test runner or CI image |
+| `auth_service/docker-compose.yml` references legacy `omni` DB | Orphaned file — do not use standalone |
+| Traefik dashboard on `0.0.0.0:8089` | Restrict with firewall to trusted IPs |
+| `RUN_EVENTS_MODE` defaults to `pubsub` in `.env.linux.example` | Change to `dual` for staging validation; `streams` requires Phase 11c-D approval |

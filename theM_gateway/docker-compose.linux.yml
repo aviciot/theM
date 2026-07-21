@@ -1,30 +1,30 @@
 version: "3.9"
-# docker-compose.linux.yml — Linux deployment overlay
+# docker-compose.linux.yml — Linux deployment overlay (Go-first)
 #
-# Replaces docker-compose.local.yml on a Linux host (Docker Engine, not Desktop).
+# Swap local.yml for this file on a Linux host. Everything else is identical.
+# Use with: ./scripts/linux-start.sh
+#
+# Go gateway owns WS + SSE + session gate + run streaming.
+# Python bridge serves admin API (/api/v1/) only on Linux.
+# Python worker runs Temporal activities (orchestration, LLM calls).
 #
 # Key differences from docker-compose.local.yml:
-#   - proxy-network created as a local bridge (same as local.yml)
-#   - Bridge source bind mounts (.:/app) replaced with image-only copies
-#     (no live-reload on Linux deployment — code is baked into the image)
-#   - data/ bind-mount directories created by linux-start.sh with correct ownership
-#   - Router rules match PathPrefix only (no Host constraint) — same as local.yml
-#   - Traefik dashboard accessible on all interfaces (0.0.0.0) for server access;
-#     protect with a firewall rule or SSH tunnel in production
+#   - proxy-network created locally (not external)
+#   - Python bridge WS/SSE Traefik routes removed — Go bridges own those paths
+#   - Source bind mounts (.:/app) removed — code baked into image at build time
+#   - Data stored in named Docker volumes (no UID/GID ownership issues)
+#   - Traefik dashboard on 0.0.0.0:8089 (not 127.0.0.1 — reachable on server)
 #
-# Usage:
-#   cd theM_gateway
-#   ./scripts/linux-start.sh
-#
-# Or manually:
-#   docker compose \
-#     -f docker-compose.yml \
-#     -f docker-compose.linux.yml \
-#     -f docker-compose.integration.yml \
-#     -f docker-compose.soak.yml \
-#     -f docker-compose.traefik.yml \
-#     --profile temporal \
-#     up -d --build
+# Route ownership on Linux:
+#   /ws/*          → them-go-svc (Go bridges, priority 110, via docker-compose.traefik.yml)
+#   /sse/*         → them-go-svc (Go bridges, priority 110, via docker-compose.traefik.yml)
+#   /go-health/*   → them-go-svc (Go bridges, priority 120, with path rewrite)
+#   /api/v1/*      → them-bridge-svc (Python bridge, priority 100)
+#   /health/*      → them-bridge-svc (Python bridge, priority 90)
+#   /apps/*        → them-bridge-svc (Python bridge, priority 100)
+#   /a2a/*         → them-bridge-svc (Python bridge, priority 100)
+#   /temporal/*    → temporal-ui (priority 150)
+#   /              → them-frontend (priority 10)
 
 networks:
   proxy-network:
@@ -34,19 +34,31 @@ networks:
 
 services:
 
-  # ── Traefik dashboard: bind to all interfaces on Linux so it is reachable
-  #    from the host network. Restrict access at the firewall level.
+  # ── Traefik: dashboard on all interfaces for remote server access ─────────────
   them-traefik:
     ports:
       - "8088:8088"
-      - "8089:8089"  # dashboard on all interfaces (was 127.0.0.1:8089 in base)
+      - "8089:8089"
     networks:
       - proxy-network
       - them-network
 
-  # ── Python bridge: no source bind mount — code is baked into the image.
-  #    On Linux deployment, the .:/app volume is removed; the Dockerfile COPY
-  #    provides the application code. Logs go to json-file driver only.
+  # ── Postgres: named volume instead of ./data/ bind mount ─────────────────────
+  them-postgres:
+    volumes:
+      - them-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+
+  # ── Redis: named volume ───────────────────────────────────────────────────────
+  them-redis:
+    volumes:
+      - them-redis-data:/data
+      - ./redis/config/redis.conf:/etc/redis/redis.conf:ro
+
+  # ── Python bridge: admin API only on Linux ────────────────────────────────────
+  # WS and SSE routes are NOT registered here — Go bridges own them at priority 110.
+  # Python bridge serves /api/v1/*, /health/*, /apps/*, /a2a/* only.
+  # Source bind mount (.:/app) removed — code is baked into the image.
   them-bridge:
     volumes:
       - them-logs:/app/logs
@@ -54,37 +66,41 @@ services:
       - "traefik.enable=true"
       - "traefik-instance=them"
       - "traefik.docker.network=them-network"
+      # Admin API
       - "traefik.http.routers.them-api.rule=PathPrefix(`/api/v1`)"
       - "traefik.http.routers.them-api.entrypoints=web"
       - "traefik.http.routers.them-api.priority=100"
       - "traefik.http.routers.them-api.service=them-bridge-svc"
-      - "traefik.http.routers.them-ws.rule=PathPrefix(`/ws`)"
-      - "traefik.http.routers.them-ws.entrypoints=web"
-      - "traefik.http.routers.them-ws.priority=100"
-      - "traefik.http.routers.them-ws.service=them-bridge-svc"
+      # Health (Python bridge's own liveness — Go exposes /go-health via Traefik overlay)
       - "traefik.http.routers.them-health.rule=PathPrefix(`/health`)"
       - "traefik.http.routers.them-health.entrypoints=web"
       - "traefik.http.routers.them-health.priority=90"
-      - "traefik.http.routers.them-bridge-health.service=them-bridge-svc"
+      - "traefik.http.routers.them-health.service=them-bridge-svc"
+      # App management API
       - "traefik.http.routers.them-apps.rule=PathPrefix(`/apps`)"
       - "traefik.http.routers.them-apps.entrypoints=web"
       - "traefik.http.routers.them-apps.priority=100"
       - "traefik.http.routers.them-apps.service=them-bridge-svc"
+      # A2A server-side routes
       - "traefik.http.routers.them-a2a.rule=PathPrefix(`/a2a`)"
       - "traefik.http.routers.them-a2a.entrypoints=web"
       - "traefik.http.routers.them-a2a.priority=100"
       - "traefik.http.routers.them-a2a.service=them-bridge-svc"
+      # Load balancer definition (Python bridge on 8001)
       - "traefik.http.services.them-bridge-svc.loadbalancer.server.port=8001"
       - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.path=/health/live"
       - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.interval=10s"
       - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.timeout=3s"
+      # NOTE: /ws and /sse routes intentionally absent — owned by Go bridges (priority 110)
+      #       via docker-compose.traefik.yml. Go's higher priority wins; Python never sees WS/SSE.
 
-  # ── Python worker: no source bind mount on Linux deployment.
+  # ── Python worker: source bind mount removed ───────────────────────────────────
+  # Runs Temporal activity implementations. Required until Go activity rewrites land.
   them-worker:
     volumes:
       - them-logs:/app/logs
 
-  # ── Frontend: no source bind mount on Linux deployment.
+  # ── Frontend: production build, no source bind mount ──────────────────────────
   them-frontend:
     volumes: []
     environment:
@@ -102,7 +118,7 @@ services:
       - "traefik.http.routers.them-ui.service=them-ui-svc"
       - "traefik.http.services.them-ui-svc.loadbalancer.server.port=3200"
 
-  # ── Temporal UI: PathPrefix-only routing (no Host constraint).
+  # ── Temporal UI: PathPrefix-only routing ──────────────────────────────────────
   temporal-ui:
     labels:
       - "traefik.enable=true"
@@ -114,20 +130,7 @@ services:
       - "traefik.http.routers.them-temporal-ui.service=them-temporal-ui-svc"
       - "traefik.http.services.them-temporal-ui-svc.loadbalancer.server.port=8080"
 
-  # ── Named volumes for Postgres and Redis data on Linux.
-  #    Using named volumes instead of bind mounts avoids UID/GID ownership issues
-  #    (Docker manages volume ownership; no pre-create step required).
-  them-postgres:
-    volumes:
-      - them-postgres-data:/var/lib/postgresql/data
-      - ./postgres/init:/docker-entrypoint-initdb.d
-
-  them-redis:
-    volumes:
-      - them-redis-data:/data
-      - ./redis/config/redis.conf:/etc/redis/redis.conf:ro
-
-# ── Named volumes (Docker manages ownership — no manual chown required)
+# ── Named volumes (Docker manages ownership — no manual chown required) ────────
 volumes:
   them-postgres-data:
     name: them-postgres-data
