@@ -1,0 +1,83 @@
+version: "3.9"
+# docker-compose.traefik.yml — Traefik overlay for Go bridge WS/SSE routing.
+#
+# Adds Traefik routing labels to both Go bridge instances so that /ws/* and
+# /sse/* traffic is load-balanced (round-robin, no sticky sessions) across
+# them-go-bridge (port 8002) and them-go-bridge-2 (port 8002).
+#
+# Direct bridge ports (8002/8003) remain available for diagnostics.
+#
+# Usage (layer on top of integration + soak):
+#   cd theM_gateway
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.local.yml \
+#     -f docker-compose.integration.yml \
+#     -f docker-compose.soak.yml \
+#     -f docker-compose.traefik.yml \
+#     --profile temporal up -d --build
+#
+# After stack is up:
+#   WS via Traefik:  ws://localhost:8088/ws/orchestrate/{app}/{ep}
+#   SSE via Traefik: http://localhost:8088/sse/orchestrate/{app}/{ep}
+#   Direct bridge 1: http://localhost:8002/health/ready
+#   Direct bridge 2: http://localhost:8003/health/ready
+#   Traefik dashboard: http://localhost:8089
+
+services:
+  # Traefik is defined in the base compose (docker-compose.yml) but not started
+  # when running with --profile temporal alone. This overlay starts it.
+  them-traefik:
+    networks:
+      - proxy-network
+      - them-network
+
+  # ── Go bridge 1 — Traefik labels for WS + SSE routing ────────────────────────
+  them-go-bridge:
+    networks:
+      - them-network
+      - proxy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      # WS router — PathPrefix /ws, points at the shared Go-bridge service
+      - "traefik.http.routers.them-go-ws.rule=PathPrefix(`/ws`)"
+      - "traefik.http.routers.them-go-ws.entrypoints=web"
+      - "traefik.http.routers.them-go-ws.priority=110"
+      - "traefik.http.routers.them-go-ws.service=them-go-svc"
+      # SSE router — PathPrefix /sse, points at the shared Go-bridge service
+      - "traefik.http.routers.them-go-sse.rule=PathPrefix(`/sse`)"
+      - "traefik.http.routers.them-go-sse.entrypoints=web"
+      - "traefik.http.routers.them-go-sse.priority=110"
+      - "traefik.http.routers.them-go-sse.service=them-go-svc"
+      # Go bridge health — /go-health/live → /health/live on the bridge.
+      # replacePathRegex rewrites the external path so the bridge chi router matches.
+      - "traefik.http.routers.them-go-health.rule=PathPrefix(`/go-health`)"
+      - "traefik.http.routers.them-go-health.entrypoints=web"
+      - "traefik.http.routers.them-go-health.priority=120"
+      - "traefik.http.routers.them-go-health.service=them-go-svc"
+      - "traefik.http.routers.them-go-health.middlewares=them-go-rewrite"
+      - "traefik.http.middlewares.them-go-rewrite.replacepathregex.regex=^/go-health(.*)"
+      - "traefik.http.middlewares.them-go-rewrite.replacepathregex.replacement=/health$$1"
+      # Shared load-balanced service — Traefik discovers both instances via Docker
+      # and round-robins between them (no sticky sessions).
+      - "traefik.http.services.them-go-svc.loadbalancer.server.port=8002"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.timeout=3s"
+
+  # ── Go bridge 2 — joins the same them-go-svc load-balanced pool ───────────────
+  them-go-bridge-2:
+    networks:
+      - them-network
+      - proxy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      # Both bridge instances share the same service name — Traefik aggregates them.
+      - "traefik.http.services.them-go-svc.loadbalancer.server.port=8002"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.timeout=3s"

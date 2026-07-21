@@ -633,6 +633,32 @@ python3 scripts/smoke_test_go_gateway.py --token <tok> --app <app_slug> --ep <ep
 
 ---
 
+### S2-03 · runstream MAXLEN + reconnect + cross-replica — `internal/runstream/maxlen_integration_test.go`
+
+**Purpose:** Phase 11c-C live soak validation. MAXLEN boundary correctness, WS cursor resume
+(no duplicate delivery), and cross-replica replay guarantee. Requires `$REDIS_ADDR` pointing to
+the shared Redis. Build tag: `//go:build integration`.
+
+**Run command:**
+```powershell
+$env:REDIS_ADDR = "localhost:16379"
+go test -tags=integration -v -timeout 300s -run "TestMAXLEN|TestIntegration_WS_ReconnectResume|TestIntegration_CrossReplicaReplay" ./internal/runstream/...
+```
+
+| Test | What it proves |
+|---|---|
+| `TestMAXLEN_Scenario1_NormalRun` | 1,000 events replayed, done event closes channel |
+| `TestMAXLEN_Scenario2_AtBoundary` | 5,000 events (at MAXLEN boundary) — ≥4,900 token events + 1 done received |
+| `TestMAXLEN_Scenario3_OverMAXLEN` | 6,000 events with MAXLEN ~5,000 trim — ≥4,900 tokens received (oldest ~1,000 trimmed), done terminates |
+| `TestMAXLEN_Scenario4_ToolHeavyMixed` | 200 tool_call + 200 tool_result + 400 token = 800 interleaved events, all counts exact |
+| `TestMAXLEN_Scenario5_ReplayUnavailable` | 6,000 events + MAXLEN trim; cursor "1-0" (before oldest) → `replay_unavailable` emitted first, then tokens resume from oldest, done closes channel |
+| `TestIntegration_WS_ReconnectResume` | LastEventID = event-3 cursor → only events 4 and 5 delivered (no duplicates of 1-3) |
+| `TestIntegration_CrossReplicaReplay` | Events written via client-1 (replica-1 path) are fully replayed by client-2 (replica-2 path) from shared Redis |
+
+**Trigger:** any change to `internal/runstream/streamer.go`, `streamid.go`, or `internal/cache/runstreamer_adapter.go`
+
+---
+
 ## Suite 3 — Live deploy verification (`DEPLOY_AND_TEST.md`)
 
 Manual checklist of 23 tests against a running Docker stack.
@@ -753,7 +779,8 @@ If a test is added without updating this index, the PR should not be merged.
 | **S1 total** | | **212** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
-| S2-03 | runstream streamer (Redis) | 1 |
-| **S2 total** | | **13** |
+| S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
+| S2-03 (MAXLEN) | runstream MAXLEN + reconnect + cross-replica | 7 |
+| **S2 total** | | **20** |
 | S3 live | manual | 23 |
-| **Grand total** | | **248** |
+| **Grand total** | | **255** |

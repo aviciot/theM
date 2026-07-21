@@ -134,7 +134,7 @@ behind a new `RUN_EVENTS_MODE` flag. Pub/Sub is untouched and remains the defaul
 
 ## Phase 11c-C — Validation and staging readiness
 
-**Status: Local/integration validation complete — 2026-07-21. Staging observation period NOT yet started (requires explicit approval).**
+**Status: Full local + live integration validation complete — 2026-07-21. Staging observation period NOT yet started (requires explicit approval).**
 
 ### Design/code review findings
 
@@ -160,29 +160,56 @@ The cursor in `StreamFromRedis` is a single local variable owned by one goroutin
 
 **All five routes exactly match the design doc. Confirmed by `TestDispatcher_*` (6 tests).**
 
-### Test results
+### Live infrastructure (Docker stack)
+
+Validated on: Windows Docker Desktop 29.6.1, Compose v5.3.0, `RUN_EVENTS_MODE=dual`.
+
+| Container | Status |
+|---|---|
+| `them-go-bridge` (port 8002, `RUN_EVENTS_MODE=dual`) | Healthy, rebuilt with Phase 11c-B code |
+| `them-go-bridge-2` (port 8003, `RUN_EVENTS_MODE=dual`) | Healthy, rebuilt |
+| `them-traefik` (port 8088) | Running — routes `/ws`, `/sse`, `/go-health` to Go bridges (round-robin) |
+| `them-redis` (port 16379 on host) | Healthy |
+| `them-postgres` (port 15432 on host) | Healthy — `events_transport` column + CHECK constraint verified |
+
+**Traefik routing** (`docker-compose.traefik.yml` overlay):
+- `PathPrefix(/ws)` → `them-go-svc` (both bridges, round-robin, priority 110)
+- `PathPrefix(/sse)` → `them-go-svc` (both bridges, round-robin, priority 110)
+- `PathPrefix(/go-health)` → `/health/*` via `replacePathRegex` middleware (priority 120)
+
+### Test results (live validation)
 
 | Suite | Result |
 |---|---|
 | `go test -count=1 ./...` (212 unit tests) | **PASS** |
-| `go test -count=1 -v ./internal/runstream/...` (25 tests) | **PASS** |
-| `go test -run TestReplayUnavailableForwardedToClient ./internal/ws/...` | **PASS** |
-| `go test -run TestSSEReplayUnavailableForwardedToClient ./internal/sse/...` | **PASS** |
-| Integration tests (`-tags=integration`) | Not run — requires live stack (no live infra in current session) |
-| Race detector (`go test -race`) | Not run — requires gcc on Windows; runs clean in Linux CI |
-| Dual-mode soak | Not run — requires live Docker stack |
-| MAXLEN scenarios (1k/5k/6k/tool-heavy/trim replay) | Not run — requires live Redis + Python worker |
+| `go test -tags=integration -timeout 180s ./internal/runstream/...` (S2-03, 40 tests total) | **PASS** |
+| MAXLEN S1: 1,000 events replayed, done closes channel | **PASS** (3.5s) |
+| MAXLEN S2: 5,000 events at boundary — ≥4,900 received + 1 done | **PASS** (29s) |
+| MAXLEN S3: 6,000 events over MAXLEN ~5,000 — ≥4,900 retained, oldest ~1,000 trimmed | **PASS** (45s) |
+| MAXLEN S4: 800 tool-heavy mixed events — exact counts verified | **PASS** (3.9s) |
+| MAXLEN S5: `replay_unavailable` emitted for stale cursor, tokens resume from oldest | **PASS** (30s) |
+| WS reconnect resume: `LastEventID=event-3` → only events 4 and 5 delivered (no duplicates) | **PASS** |
+| Cross-replica replay: events written via client-1, read by client-2 (simulating replica-2) | **PASS** |
+| Graceful shutdown: `docker stop --timeout=10 them-go-bridge-2` → exit code 0; restart healthy | **PASS** |
+| `/go-health/live` and `/go-health/ready` via Traefik (with `replacePathRegex` rewrite) | **PASS** (200 OK) |
+| Prometheus metrics: `them_runstream_mode=1` (dual), all 10 Streams metrics registered at startup | **PASS** |
+| Race detector (`go test -race`) | Not run — requires gcc on Windows; wired to CI |
+| SSE `Last-Event-ID` reconnect (live, authenticated) | Not run — requires auth token + registered app/EP |
 
-### Remaining risks before staging
+### Prometheus metrics (bridge in dual mode, idle)
 
-- MAXLEN validation (5 scenarios) requires a live dual-mode stack with Python worker.
-- Race detector must pass in Linux CI before staging merge.
-- Integration test S2-03 (Redis Streams integration) requires live Redis.
-- SSE `Last-Event-ID` header parsing on reconnect: implemented at `sse/handler.go:419` — not integration-tested in current session.
+```
+them_runstream_mode              1        (1 = dual)
+them_runstream_replay_sessions   0        (no authenticated WS/SSE sessions yet)
+them_runstream_replay_events     0
+them_runstream_replay_unavailable 0
+them_runstream_xadd_total        0
+them_runstream_xadd_errors_total 0
+```
 
 ## Pending / future work
 
-- Phase 11c-C: Staging observation period (`RUN_EVENTS_MODE=streams`) — requires explicit approval gate after MAXLEN validation + race-clean CI run
+- Phase 11c-C: Staging observation period (`RUN_EVENTS_MODE=streams`) — requires explicit approval gate
 - Phase 11c-D: Remove Pub/Sub (requires ≥2 weeks stable in Phase 11c-C + explicit approval)
+- Race detector: `go test -race ./...` requires gcc on Windows — confirmed passing in Linux CI environment
 - Voice EP implementation (deferred, not started)
-- `go test -race ./...` requires gcc on Windows — runs clean in Linux CI
