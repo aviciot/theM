@@ -9,26 +9,40 @@
 
 ## Design: Go-first runtime
 
-The Go gateway is the primary runtime on Linux. It owns all client-facing connections:
+The Go gateway is the primary runtime on Linux. Route ownership reflects what is **currently implemented and mounted**, not the target architecture.
 
-| Route | Owner | Why |
-|---|---|---|
-| `/ws/*` | **Go bridge** (both replicas, round-robin) | WS upgrade, session gate, run streaming |
-| `/sse/*` | **Go bridge** (both replicas, round-robin) | SSE stream, Redis Streams replay |
-| `/go-health/*` | **Go bridge** (path-rewritten by Traefik) | Liveness + readiness |
-| `/api/v1/*` | Python bridge | Admin API — not yet rewritten in Go |
-| `/health/*` | Python bridge | Python-side liveness |
-| `/apps/*`, `/a2a/*` | Python bridge | App management, A2A server |
-| `/temporal/*` | Temporal UI | Workflow dashboard |
-| `/` | Frontend | Next.js dashboard |
+> **Current state (as of 2026-07-21):** Go WS/SSE handlers are not yet implemented. Python bridge owns all active WS/SSE traffic. The premature `them-go-ws` and `them-go-sse` Traefik routers were removed from `docker-compose.traefik.yml` because they shadowed Python's working router and returned 404 for all Playground connections. Go bridge currently owns health/metrics endpoints only.
 
-Python components that still run alongside Go (because they are not yet rewritten):
+| Route | Current Owner | Target Owner | Notes |
+|---|---|---|---|
+| `/ws/*` | **Python bridge** | Go bridge | Go WS handler not yet implemented; `them-go-ws` router removed |
+| `/sse/*` | **Python bridge** | Go bridge | Go SSE handler not yet implemented; `them-go-sse` router removed |
+| `/go-health/*` | **Go bridge** (path-rewritten by Traefik) | Go bridge | ✅ Implemented — liveness + readiness |
+| `/metrics` | **Go bridge** (direct port 8002/8003) | Go bridge | ✅ Implemented — Prometheus metrics |
+| `/api/v1/*` | Python bridge | Go bridge | Admin API — not yet rewritten in Go |
+| `/health/*` | Python bridge | Python bridge | Python-side liveness |
+| `/apps/*`, `/a2a/*` | Python bridge | Python bridge | App management, A2A server |
+| `/temporal/*` | Temporal UI | Temporal UI | Workflow dashboard |
+| `/` | Frontend | Frontend | Next.js dashboard |
+
+**Go runtime components implemented (Phase 11c):**
+- `internal/runstream/` — Redis Streams XADD/XRANGE/XREAD replay + live cursor (behind `RUN_EVENTS_MODE`)
+- `internal/runrecorder/` — stamps `events_transport` on new run rows
+- `internal/cache/` — rueidis-backed RedisStreamer adapter
+- `/health/live`, `/health/ready`, `/metrics` endpoints on both bridge replicas
+
+**Go runtime components not yet implemented:**
+- WS upgrade handler (`internal/ws/handler.go` exists in target arch but has no active Traefik route)
+- SSE stream handler (`internal/sse/handler.go` exists in target arch but has no active Traefik route)
+- Go Temporal worker (all orchestration still runs in Python `them-worker`)
+
+Python components that still run alongside Go:
 
 | Service | Role | When replaceable |
 |---|---|---|
+| `them-bridge` | **All WS/SSE client connections**, Admin API `/api/v1/*`, app/EP management | When Go WS/SSE handlers are implemented |
 | `them-worker` | Temporal activity worker — LLM calls, tool routing, run recording | When Go activity rewrites land |
 | `them-auth-service` | JWT issuing and user management | When Go auth service is complete |
-| `them-bridge` | Admin API `/api/v1/*`, app/EP management | When Go admin API is complete |
 | `them-frontend` | Next.js dashboard | When Go-rendered UI is built |
 
 Redis Pub/Sub is kept active alongside Redis Streams (`RUN_EVENTS_MODE=dual` in integration/soak; `pubsub` in production). Phase 11c-D (remove Pub/Sub) requires explicit approval.
@@ -191,19 +205,18 @@ DB schema is initialized automatically at step 5 via `schema_current.sql`. No se
 
 Route ownership on Linux (priorities prevent ambiguity):
 
-| Priority | Router | Rule | Service | Verified |
+| Priority | Router | Rule | Service | Status |
 |---|---|---|---|---|
-| 150 | `them-temporal-ui` | `PathPrefix(/temporal)` | Temporal UI (port 8080) | ✓ |
-| 120 | `them-go-health` | `PathPrefix(/go-health)` | Go bridge + `replacePathRegex` | ✓ |
-| 110 | `them-go-ws` | `PathPrefix(/ws)` | Go bridge (both replicas) | ✓ |
-| 110 | `them-go-sse` | `PathPrefix(/sse)` | Go bridge (both replicas) | ✓ |
-| 100 | `them-api` | `PathPrefix(/api/v1)` | Python bridge (port 8001) | ✓ |
-| 100 | `them-apps` | `PathPrefix(/apps)` | Python bridge | ✓ |
-| 100 | `them-a2a` | `PathPrefix(/a2a)` | Python bridge | ✓ |
-| 90 | `them-health` | `PathPrefix(/health)` | Python bridge | ✓ |
-| 10 | `them-ui` | `PathPrefix(/)` | Frontend (port 3200) | ✓ |
+| 150 | `them-temporal-ui` | `PathPrefix(/temporal)` | Temporal UI (port 8080) | ✓ Active |
+| 120 | `them-go-health` | `PathPrefix(/go-health)` | Go bridge + `replacePathRegex` | ✓ Active |
+| 100 | `them-ws` | `PathPrefix(/ws)` | Python bridge (port 8001) | ✓ Active — Go router removed |
+| 100 | `them-api` | `PathPrefix(/api/v1)` | Python bridge (port 8001) | ✓ Active |
+| 100 | `them-apps` | `PathPrefix(/apps)` | Python bridge | ✓ Active |
+| 100 | `them-a2a` | `PathPrefix(/a2a)` | Python bridge | ✓ Active |
+| 90 | `them-health` | `PathPrefix(/health)` | Python bridge | ✓ Active |
+| 10 | `them-ui` | `PathPrefix(/)` | Frontend (port 3200) | ✓ Active |
 
-**No `/ws+/sse` combined matcher exists.** The two routes are separate routers at the same priority (110), each matching a distinct prefix. The Python bridge in `docker-compose.linux.yml` has no Traefik labels for `/ws` or `/sse` — those paths are exclusively registered by `docker-compose.traefik.yml` pointing to `them-go-svc`.
+**Removed routers (were premature):** `them-go-ws` (priority 110, `/ws` → Go bridge) and `them-go-sse` (priority 110, `/sse` → Go bridge) were present in an earlier version of `docker-compose.traefik.yml`. They were removed on 2026-07-21 because Go has no WS/SSE handlers — the routers matched the prefix, sent connections to Go, and returned 404. Python's `them-ws` router (priority 100) is now the sole handler for `/ws`. SSE has no dedicated router and falls through to the Python bridge via the base compose definition.
 
 Go health rewrite: `^/go-health(.*)` → `/health$1` (via `replacePathRegex` middleware). Verified live: `/go-health/live` → `{"status":"ok"}`, `/go-health/ready` → `{"redis":"ok"}`.
 
@@ -215,10 +228,10 @@ Go health rewrite: `^/go-health(.*)` → `/health$1` (via `replacePathRegex` mid
 ```bash
 docker compose \
   -f docker-compose.yml \
-  -f docker-compose.linux.yml \          # Go-first: named volumes, no WS/SSE on Python bridge
+  -f docker-compose.linux.yml \          # Go-first: named volumes
   -f docker-compose.integration.yml \    # Go bridge definition + host-port exposure
   -f docker-compose.soak.yml \           # Second Go bridge replica
-  -f docker-compose.traefik.yml \        # WS/SSE/go-health Traefik labels
+  -f docker-compose.traefik.yml \        # go-health Traefik labels (WS/SSE routers removed — Python owns those)
   --profile temporal up -d
 ```
 
@@ -277,11 +290,12 @@ REDIS_ADDR=localhost:16379 \
 ```bash
 HOST_IP=$(hostname -I | awk '{print $1}')
 
-# Go owns /ws (expect 401 from Go JWT gate)
+# Python bridge owns /ws (expect 403 or WS handshake response from Python bridge)
+# Note: Go WS routers were removed — Python's them-ws router (priority 100) handles /ws
 curl -sf -o /dev/null -w "%{http_code}\n" \
   -H "Connection: Upgrade" -H "Upgrade: websocket" \
-  "http://${HOST_IP}:8088/ws/orchestrate/app/ep"
-# Expected: 401
+  "http://${HOST_IP}:8088/ws/orchestrate/default"
+# Expected: 403 (Python bridge JWT gate) — NOT 404 (which would indicate Go routing)
 
 # Go health via Traefik path-rewrite
 curl -sf "http://${HOST_IP}:8088/go-health/live" | grep '"status":"ok"'
@@ -324,7 +338,7 @@ curl -sf http://localhost:8003/metrics | grep "them_runstream_mode"
 | Aspect | Windows dev | Linux deployment |
 |---|---|---|
 | Compose overlay | `docker-compose.local.yml` | `docker-compose.linux.yml` |
-| Python bridge WS/SSE routes | Registered (lower priority, Go wins) | **Not registered** — Go owns exclusively |
+| Python bridge WS/SSE routes | Registered (only active WS/SSE handler) | Not registered — Go will own when handlers are built |
 | Source bind mounts | `.:/app` for live reload | Removed — code baked into image |
 | Data persistence | `./data/` bind mounts | Named Docker volumes |
 | Traefik dashboard | `127.0.0.1:8089` | `0.0.0.0:8089` (all interfaces) |

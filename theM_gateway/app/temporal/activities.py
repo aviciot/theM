@@ -422,6 +422,21 @@ async def init_run_activity(
         "context_id": context_id,
     })
 
+    # Publish ready event to context channel so bridge_client.stream_run_events()
+    # can extract run_id and subscribe to the run-specific token channel.
+    if db_module.redis_client is not None:
+        try:
+            ctx_channel = f"{_DASH_RUN_PREFIX}{context_id}:ctx"
+            ready_event = json.dumps({
+                "type": "ready",
+                "run_id": actual_run_id_str,
+                "task_id": root_task_id_str,
+                "context_id": context_id,
+            })
+            await db_module.redis_client.publish(ctx_channel, ready_event)
+        except Exception as exc:
+            logger.warning("init_run: context channel ready publish failed", error=str(exc))
+
     logger.info("init_run: run created", run_id=actual_run_id_str, root_task_id=root_task_id_str)
     return {"run_id": actual_run_id_str, "root_task_id": root_task_id_str}
 

@@ -372,10 +372,12 @@ Go-first Linux deployment validated end-to-end. All infrastructure tests pass.
 | `http://<host>:8088/go-health/live` | Go bridge liveness (via Traefik path-rewrite) |
 | `http://<host>:8088/temporal/` | Temporal UI |
 | `http://<host>:8089/` | Traefik dashboard |
-| `ws://<host>:8088/ws/orchestrate/{app}/{ep}` | WebSocket (Go bridge) |
-| `http://<host>:8088/sse/orchestrate/{app}/{ep}` | SSE (Go bridge) |
+| `ws://<host>:8088/ws/orchestrate/{name}` | WebSocket — **Python bridge** (Go WS handler not yet implemented) |
+| `http://<host>:8088/sse/orchestrate/{app}/{ep}` | SSE — **Python bridge** (Go SSE handler not yet implemented) |
 
 On Windows dev: replace `<host>` with `localhost`.
+
+> **Phase 11c implemented Redis Streams/runstream infrastructure** (`internal/runstream/`, `internal/runrecorder/`, dispatcher, metrics). It did not implement Go WS/SSE handlers or move WS/SSE traffic to Go. Python bridge remains the active owner of all `/ws/*` and `/sse/*` traffic. See `docs/STATUS.md` for current Playground validation state and blockers.
 
 ### What is NOT done yet (requires explicit approval)
 

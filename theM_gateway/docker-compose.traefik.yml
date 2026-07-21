@@ -1,9 +1,9 @@
 version: "3.9"
-# docker-compose.traefik.yml — Traefik overlay for Go bridge WS/SSE routing.
+# docker-compose.traefik.yml — Traefik overlay for Go bridge health routing.
 #
-# Adds Traefik routing labels to both Go bridge instances so that /ws/* and
-# /sse/* traffic is load-balanced (round-robin, no sticky sessions) across
-# them-go-bridge (port 8002) and them-go-bridge-2 (port 8002).
+# Adds Traefik routing labels to both Go bridge instances for /go-health/*.
+# WS (/ws) and SSE (/sse) remain routed to the Python bridge (them-ws router,
+# priority 100) until Go WS/SSE handlers are implemented.
 #
 # Direct bridge ports (8002/8003) remain available for diagnostics.
 #
@@ -18,8 +18,9 @@ version: "3.9"
 #     --profile temporal up -d --build
 #
 # After stack is up:
-#   WS via Traefik:  ws://localhost:8088/ws/orchestrate/{app}/{ep}
-#   SSE via Traefik: http://localhost:8088/sse/orchestrate/{app}/{ep}
+#   WS via Traefik:  ws://localhost:8088/ws/orchestrate/{app}/{ep}  (→ Python bridge)
+#   SSE via Traefik: http://localhost:8088/sse/orchestrate/{app}/{ep}  (→ Python bridge)
+#   Go health:       http://localhost:8088/go-health/live  (→ Go bridge)
 #   Direct bridge 1: http://localhost:8002/health/ready
 #   Direct bridge 2: http://localhost:8003/health/ready
 #   Traefik dashboard: http://localhost:8089
@@ -41,16 +42,8 @@ services:
       - "traefik.enable=true"
       - "traefik-instance=them"
       - "traefik.docker.network=them-network"
-      # WS router — PathPrefix /ws, points at the shared Go-bridge service
-      - "traefik.http.routers.them-go-ws.rule=PathPrefix(`/ws`)"
-      - "traefik.http.routers.them-go-ws.entrypoints=web"
-      - "traefik.http.routers.them-go-ws.priority=110"
-      - "traefik.http.routers.them-go-ws.service=them-go-svc"
-      # SSE router — PathPrefix /sse, points at the shared Go-bridge service
-      - "traefik.http.routers.them-go-sse.rule=PathPrefix(`/sse`)"
-      - "traefik.http.routers.them-go-sse.entrypoints=web"
-      - "traefik.http.routers.them-go-sse.priority=110"
-      - "traefik.http.routers.them-go-sse.service=them-go-svc"
+      # WS and SSE routers removed — Go bridges have no WS/SSE handlers yet.
+      # Python them-ws router (priority 100) handles /ws until Go WS handlers are built.
       # Go bridge health — /go-health/live → /health/live on the bridge.
       # replacePathRegex rewrites the external path so the bridge chi router matches.
       - "traefik.http.routers.them-go-health.rule=PathPrefix(`/go-health`)"
