@@ -655,5 +655,54 @@ func TestTemporalPathUsedWhenEnabled(t *testing.T) {
 	assert.Contains(t, receivedTypes, "done", "client must receive done event from run stream")
 }
 
+// 16. replay_unavailable event from Redis Streams is forwarded to the WS client
+// (Phase 11c-B). The event is emitted when last_event_id was trimmed by MAXLEN;
+// it must not be silently dropped by the handler's writeEvent switch.
+func TestReplayUnavailableForwardedToClient(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
+	h, _ := newTestHandler(t, nil, authn, sessions)
+
+	tc := &fakeTemporalClient{}
+	rsSub := &fakeRunStreamSub{
+		messages: []string{
+			`{"type":"replay_unavailable","reason":"history_trimmed","run_id":"r1"}`,
+			`{"type":"done","run_id":"r1"}`,
+		},
+	}
+	h.WithTemporal(tc, rsSub, true)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hi"})
+	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
+
+	var receivedTypes []string
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		_, data, readErr := conn.ReadMessage()
+		if readErr != nil {
+			break
+		}
+		var sm map[string]any
+		if json.Unmarshal(data, &sm) == nil {
+			if evType, ok := sm["type"].(string); ok {
+				receivedTypes = append(receivedTypes, evType)
+				if evType == "done" {
+					break
+				}
+			}
+		}
+	}
+
+	assert.Contains(t, receivedTypes, "replay_unavailable", "replay_unavailable must be forwarded to WS client")
+	assert.Contains(t, receivedTypes, "done", "done must arrive after replay_unavailable")
+}
+
 // Ensure domain import is used.
 var _ = domain.Message{}

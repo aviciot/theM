@@ -73,8 +73,9 @@ An in-process goroutine scheduling DEL after 24 hours is lost on pod restart. Re
 
 - **Safety TTL (48h)**: set on first XADD; prevents orphaned keys if no terminal
   event is ever published.
-- **Final TTL (24h)**: set when the Go handler forwards the terminal event;
-  starts the 24-hour retention clock from run completion.
+- **Final TTL (24h)**: set by the Python Lua publisher when `is_terminal` is true
+  (see D7); starts the 24-hour retention clock from run completion. The Go handler
+  does not call EXPIRE.
 
 ### D5: `replay_unavailable` event on trim detection
 

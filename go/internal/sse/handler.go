@@ -605,6 +605,18 @@ func (h *Handler) formatSSE(ev event.Event) (string, error) {
 			_ = json.Unmarshal(raw, &message)
 		}
 		msg = map[string]any{"type": "error", "message": message}
+	case "replay_unavailable":
+		// Emitted by StreamFromRedis when last_event_id was trimmed by MAXLEN.
+		// Forward so the client can display a notice (Phase 11c-B).
+		var reason string
+		if raw, ok := payload["reason"]; ok {
+			_ = json.Unmarshal(raw, &reason)
+		}
+		var runID string
+		if raw, ok := payload["run_id"]; ok {
+			_ = json.Unmarshal(raw, &runID)
+		}
+		msg = map[string]any{"type": "replay_unavailable", "reason": reason, "run_id": runID}
 	default:
 		return "", fmt.Errorf("sse: unknown event type %q", ev.Type)
 	}

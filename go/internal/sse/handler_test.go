@@ -584,6 +584,44 @@ func (f *fakeSSERunStreamSub) Subscribe(_ context.Context, _ string) (<-chan str
 	return ch, nil
 }
 
+// 15. replay_unavailable event from Redis Streams is forwarded as SSE to the client
+// (Phase 11c-B). The event is emitted when last_event_id was trimmed by MAXLEN;
+// it must not be silently dropped by formatSSE.
+func TestSSEReplayUnavailableForwardedToClient(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
+	h := newTestSSEHandler(nil, authn)
+
+	tc := &fakeSSETemporalClient{}
+	rsSub := &fakeSSERunStreamSub{
+		messages: []string{
+			`{"type":"replay_unavailable","reason":"history_trimmed","run_id":"r1"}`,
+			`{"type":"done","run_id":"r1"}`,
+		},
+	}
+	h.WithTemporal(tc, rsSub, true)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep1?message=hello")
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := collectSSE(t, resp, 3*time.Second)
+
+	var types []string
+	for _, ev := range events {
+		if evType, ok := ev["type"].(string); ok {
+			types = append(types, evType)
+		}
+	}
+	assert.Contains(t, types, "replay_unavailable", "replay_unavailable must be forwarded as SSE")
+	assert.Contains(t, types, "done", "done must follow replay_unavailable")
+}
+
 // 14. Temporal path: when temporalEnabled=true, ExecuteWorkflow is called and
 // orch.Run is NOT called. The client receives events directly from the Redis
 // run stream. Go passes runID to Python so both sides use the same channel key.

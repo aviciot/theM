@@ -238,6 +238,7 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestVoiceEPReturns501` | Token-mode voice EP returns 501; gate and session are never called |
 | `TestVoiceEPPublicReturns501` | Public voice EP also returns 501 before gate or session are called |
 | `TestTemporalPathUsedWhenEnabled` | `temporalEnabled=true` → `ExecuteWorkflow` called; `orch.Run` NOT called; client receives done event from Redis run stream |
+| `TestReplayUnavailableForwardedToClient` | `replay_unavailable` event emitted by StreamFromRedis is forwarded to WS client (not silently dropped) — Phase 11c-C fix |
 
 **Trigger:** any change to `internal/ws/handler.go`
 
@@ -263,6 +264,7 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestSSEVoiceEPReturns501` | Token-mode voice EP returns 501; gate and session are never called |
 | `TestSSEVoiceEPPublicReturns501` | Public voice EP also returns 501 before gate or session are called |
 | `TestSSETemporalPathUsedWhenEnabled` | `temporalEnabled=true` → `ExecuteWorkflow` called; `orch.Run` NOT called; client receives done event from Redis run stream |
+| `TestSSEReplayUnavailableForwardedToClient` | `replay_unavailable` event emitted by StreamFromRedis is forwarded as SSE (not silently dropped) — Phase 11c-C fix |
 
 **Trigger:** any change to `internal/sse/handler.go`
 
@@ -736,8 +738,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-09 | runrecorder | 8 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
-| S1-12 | ws | 15 |
-| S1-13 | sse | 14 |
+| S1-12 | ws | 16 |
+| S1-13 | sse | 15 |
 | S1-14 | a2a | 3 |
 | S1-15 | admin | 19 |
 | S1-16 | ratelimit | 3 |
@@ -748,10 +750,10 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-21 | runstream (pub/sub) | 10 |
 | S1-22 | reconciler | 15 |
 | S1-23 | runstream (streamer + dispatcher) | 15 |
-| **S1 total** | | **210** |
+| **S1 total** | | **212** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 | runstream streamer (Redis) | 1 |
 | **S2 total** | | **13** |
 | S3 live | manual | 23 |
-| **Grand total** | | **246** |
+| **Grand total** | | **248** |

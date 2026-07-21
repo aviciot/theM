@@ -630,6 +630,14 @@ func (h *Handler) writeEvent(conn *websocket.Conn, ev event.Event) error {
 			_ = json.Unmarshal(raw, &message)
 		}
 		msg = serverMsg{Type: "error", Message: message}
+	case "replay_unavailable":
+		// Emitted by StreamFromRedis when last_event_id was trimmed by MAXLEN.
+		// Forward the raw payload so the client can display a notice (Phase 11c-B).
+		var message string
+		if raw, ok := payload["reason"]; ok {
+			_ = json.Unmarshal(raw, &message)
+		}
+		msg = serverMsg{Type: "replay_unavailable", Message: message}
 	default:
 		return nil
 	}

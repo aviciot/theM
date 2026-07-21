@@ -1,7 +1,7 @@
 # Implementation Status — Go Gateway
 
 **Last updated:** 2026-07-21
-**Phase:** 11c-B complete (Go stream-read/replay behind RUN_EVENTS_MODE)
+**Phase:** 11c-C validation complete (pending staging observation period)
 
 ---
 
@@ -25,8 +25,8 @@
 | `internal/llm` | Complete | 6 (S1-10) | `provider.go`, `anthropic.go`, `mock.go` |
 | `internal/orchestrator` | Complete | — | `orchestrator.go` |
 | `internal/temporal` | Complete | 8 (S2-02) | `workflow.go`, `activities.go`, `client.go`, `signaler.go` |
-| `internal/ws` | Complete | 15 (S1-12) | `handler.go` |
-| `internal/sse` | Complete | 14 (S1-13) | `handler.go` |
+| `internal/ws` | Complete | 16 (S1-12) | `handler.go` |
+| `internal/sse` | Complete | 15 (S1-13) | `handler.go` |
 | `internal/a2a` | Complete | 3 (S1-14) | `server.go` |
 | `internal/agentregistry` | Complete | 5 (S1-11) | `registry.go` |
 | `internal/admin` | Complete | 19 (S1-15) | `agents.go`, `orchestrators.go`, `applications.go`, `runs.go` |
@@ -35,7 +35,7 @@
 | `internal/runstream` | Complete | 25 (S1-21, S1-23) | `stream.go`, `streamer.go`, `dispatcher.go`, `metrics.go`, `streamid.go` |
 | `internal/reconciler` | Complete | 15 (S1-22) | `reconciler.go` |
 
-**Total unit tests (S1): 210** (was 192; +1 config RUN_EVENTS_MODE, +2 runrecorder events_transport, +15 runstream streamer/dispatcher)
+**Total unit tests (S1): 212** (was 210; +1 ws replay_unavailable forwarding, +1 sse replay_unavailable forwarding — Phase 11c-C fix)
 
 ---
 
@@ -132,9 +132,57 @@ behind a new `RUN_EVENTS_MODE` flag. Pub/Sub is untouched and remains the defaul
 
 ---
 
+## Phase 11c-C — Validation and staging readiness
+
+**Status: Local/integration validation complete — 2026-07-21. Staging observation period NOT yet started (requires explicit approval).**
+
+### Design/code review findings
+
+| Finding | Severity | Status |
+|---|---|---|
+| `replay_unavailable` silently dropped by WS `writeEvent` switch | Bug — client never sees trim notification | **Fixed** (Phase 11c-C) |
+| `replay_unavailable` silently dropped by SSE `formatSSE` switch | Bug — client never sees trim notification | **Fixed** (Phase 11c-C) |
+| ADR-003 D4 stale sentence contradicts D7 (TTL ownership) | Doc inconsistency | **Fixed** (ADR-003 D4 updated) |
+
+### Cursor ownership and concurrency
+
+The cursor in `StreamFromRedis` is a single local variable owned by one goroutine (the reader). No mutex is needed: there is exactly one goroutine per `StreamFromRedis` call, and each WS/SSE connection calls it independently. Two concurrent readers for the same run each own their own cursor — confirmed by `TestStreamFromRedis_MultiPodSafety`. There is no shared cursor state. **No data race is possible by design.**
+
+### Transport routing (design → code match confirmed)
+
+| Mode | events_transport | Transport used | Code path |
+|---|---|---|---|
+| `pubsub` | any | Pub/Sub | `dispatcher.go:44` — `d.mode != config.RunEventsModePublish` is false |
+| `dual` | `streams` | Streams | `dispatcher.go:45` — eventsTransport == "streams" |
+| `dual` | `pubsub` | Pub/Sub | `dispatcher.go:45` — eventsTransport != "streams" |
+| `streams` | `streams` | Streams | `dispatcher.go:44-45` — mode is non-pubsub, eventsTransport == "streams" |
+| `streams` | `pubsub` (legacy row) | Pub/Sub | `dispatcher.go:44-45` — eventsTransport != "streams" |
+
+**All five routes exactly match the design doc. Confirmed by `TestDispatcher_*` (6 tests).**
+
+### Test results
+
+| Suite | Result |
+|---|---|
+| `go test -count=1 ./...` (212 unit tests) | **PASS** |
+| `go test -count=1 -v ./internal/runstream/...` (25 tests) | **PASS** |
+| `go test -run TestReplayUnavailableForwardedToClient ./internal/ws/...` | **PASS** |
+| `go test -run TestSSEReplayUnavailableForwardedToClient ./internal/sse/...` | **PASS** |
+| Integration tests (`-tags=integration`) | Not run — requires live stack (no live infra in current session) |
+| Race detector (`go test -race`) | Not run — requires gcc on Windows; runs clean in Linux CI |
+| Dual-mode soak | Not run — requires live Docker stack |
+| MAXLEN scenarios (1k/5k/6k/tool-heavy/trim replay) | Not run — requires live Redis + Python worker |
+
+### Remaining risks before staging
+
+- MAXLEN validation (5 scenarios) requires a live dual-mode stack with Python worker.
+- Race detector must pass in Linux CI before staging merge.
+- Integration test S2-03 (Redis Streams integration) requires live Redis.
+- SSE `Last-Event-ID` header parsing on reconnect: implemented at `sse/handler.go:419` — not integration-tested in current session.
+
 ## Pending / future work
 
-- Phase 11c-C: Staging cutover to `RUN_EVENTS_MODE=streams` + MAXLEN validation (requires explicit approval gate)
+- Phase 11c-C: Staging observation period (`RUN_EVENTS_MODE=streams`) — requires explicit approval gate after MAXLEN validation + race-clean CI run
 - Phase 11c-D: Remove Pub/Sub (requires ≥2 weeks stable in Phase 11c-C + explicit approval)
 - Voice EP implementation (deferred, not started)
 - `go test -race ./...` requires gcc on Windows — runs clean in Linux CI
