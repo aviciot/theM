@@ -1,0 +1,5125 @@
+'use client';
+import { useEffect, useState, useCallback, useRef, DragEvent } from 'react';
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+const dagre: any = require('dagre');
+import Sidebar from '@/components/Sidebar';
+import ChromaGrid from '@/components/ChromaGrid';
+import AuthGuard from '@/components/AuthGuard';
+import { themApi, type Application, type Agent, type EntryPoint, type MiddlewareDef, type AppOrchestratorOut, type SessionInfo, type MonitoringConfig } from '@/lib/api';
+import {
+  ReactFlow,
+  ReactFlowProvider,
+  Background,
+  BackgroundVariant,
+  Controls,
+  MiniMap,
+  addEdge,
+  useNodesState,
+  useEdgesState,
+  type Node,
+  type Edge,
+  type Connection,
+  type NodeTypes,
+  Handle,
+  Position,
+  useReactFlow,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+
+// ── Design tokens ────────────────────────────────────────────────────────────
+const C = {
+  bg: 'var(--tm-bg)',
+  surface: 'var(--tm-panel)',
+  surfaceContainer: 'var(--tm-canvas-container)',
+  surfaceLow: 'var(--tm-canvas-inset)',
+  cyan: '#00f0ff',
+  cyanBg: 'rgba(0,240,255,0.05)',
+  cyanBorder: 'rgba(0,240,255,0.4)',
+  cyanGlow: '0 0 15px rgba(0,240,255,0.15)',
+  purple: '#d0bcff',
+  purpleBg: 'rgba(87,27,193,0.1)',
+  purpleBorder: '#d0bcff',
+  purpleGlow: '0 0 15px rgba(208,188,255,0.15)',
+  green: '#4ade80',
+  greenBg: 'rgba(74,222,128,0.05)',
+  greenBorder: 'rgba(74,222,128,0.3)',
+  amber: '#f59e0b',
+  amberBg: 'rgba(245,158,11,0.05)',
+  amberBorder: 'rgba(245,158,11,0.3)',
+  amberGlow: '0 0 15px rgba(245,158,11,0.15)',
+  text: 'var(--tm-card-text)',
+  textMuted: 'var(--tm-card-text-muted)',
+  outline: 'var(--tm-canvas-border)',
+  outlineVariant: 'var(--tm-canvas-border)',
+  error: '#ffb4ab',
+  errorBg: 'rgba(255,180,171,0.1)',
+  glass: 'var(--tm-panel)',
+  glassBorder: 'var(--tm-canvas-glass-border)',
+};
+
+const glass = {
+  background: C.glass,
+  backdropFilter: 'blur(12px)',
+  WebkitBackdropFilter: 'blur(12px)',
+  border: `1px solid ${C.glassBorder}`,
+};
+
+const deleteNodeRef = { current: (_id: string) => {} };
+
+// ── Types ────────────────────────────────────────────────────────────────────
+const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const;
+type EntryPointType = typeof ENTRY_POINT_TYPES[number];
+
+interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; appName?: string; convTokenLimit?: string; maxConcurrentSessions?: string; queueTimeout?: string; queueMessage?: string; _epId?: string; [key: string]: unknown; }
+interface OrchestratorData {
+  orchestratorId: string;          // template global orch id (for library seeding)
+  name: string;
+  displayName: string;
+  model: string | null;            // alias of llmModel — kept for compat
+  maxParallelTools: number;
+  // app_orchestrators fields:
+  appOrchestratorId: string | null;  // app_orchestrators.id; null = unsaved new instance
+  systemPrompt: string | null;
+  allowedAgentIds: string[];
+  llmProvider: string | null;
+  llmModel: string | null;
+  llmApiKey: string | null;
+  maxIterations: number;
+  historyWindow: number;
+  delegatable: boolean;
+  kind: string;
+  budgetTokens: number | null;
+  transcriptionProvider: string | null;
+  transcriptionModel: string | null;
+  transcriptionApiKey: string | null;
+  ttsProvider: string | null;
+  ttsVoice: string | null;
+  ttsApiKey: string | null;
+  [key: string]: unknown;
+}
+interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; tags?: string[]; icon?: string | null; [key: string]: unknown; }
+interface MiddlewareData { defId: string; slug: string; kind: 'guard' | 'cache'; displayName: string; description: string; config: Record<string, unknown>; configOverride: Record<string, unknown>; nodeId: string; [key: string]: unknown; }
+
+type ProposalStatus = 'pending' | 'applying' | 'applied' | 'failed' | 'stale';
+const PROPOSAL_ALLOWED_FIELDS = new Set([
+  'system_prompt', 'description', 'display_name',
+  'max_iterations', 'history_window', 'max_parallel_tools',
+]);
+interface Proposal {
+  id: string; type: string;
+  targetType: 'orchestrator' | 'agent';
+  targetId: string; targetName: string; field: string;
+  current: string | number; suggested: string | number; reason: string;
+  status: ProposalStatus; error?: string;
+}
+interface AdvisorMessage { role: 'user' | 'assistant'; text: string; streaming?: boolean; proposals?: Proposal[]; }
+
+function parseAdvisorBuffer(buf: string): { text: string; proposals: Proposal[] } {
+  const OPEN = '```them-proposal';
+  const CLOSE = '```';
+  const proposals: Proposal[] = [];
+  let text = buf;
+  let searchFrom = 0;
+  while (true) {
+    const openIdx = text.indexOf(OPEN, searchFrom);
+    if (openIdx === -1) break;
+    const afterOpen = text.indexOf('\n', openIdx);
+    if (afterOpen === -1) break; // opening fence not yet fully received
+    const closeIdx = text.indexOf('\n' + CLOSE, afterOpen);
+    if (closeIdx === -1) {
+      // Block not closed yet — hide everything from opening fence onward
+      text = text.slice(0, openIdx).trimEnd() + (text.slice(0, openIdx).trim() ? '\n\n_Preparing suggestion…_' : '');
+      break;
+    }
+    const jsonStr = text.slice(afterOpen + 1, closeIdx).trim();
+    const blockEnd = closeIdx + 1 + CLOSE.length;
+    try {
+      const obj = JSON.parse(jsonStr);
+      if (obj.id && obj.targetId && obj.targetType && PROPOSAL_ALLOWED_FIELDS.has(obj.field)) {
+        proposals.push({
+          id: String(obj.id), type: String(obj.type ?? ''),
+          targetType: obj.targetType, targetId: String(obj.targetId),
+          targetName: String(obj.targetName ?? obj.targetId), field: String(obj.field),
+          current: obj.current ?? '', suggested: obj.suggested ?? '',
+          reason: String(obj.reason ?? ''), status: 'pending',
+        });
+      }
+    } catch { /* malformed — silently drop */ }
+    // Remove the fenced block from display text
+    text = text.slice(0, openIdx).trimEnd() + text.slice(blockEnd);
+    // Don't advance searchFrom — new text may have shifted
+  }
+  return { text, proposals };
+}
+
+function mergeProposals(existing: Proposal[] | undefined, incoming: Proposal[]): Proposal[] {
+  if (!existing || existing.length === 0) return incoming;
+  const statusMap = new Map(existing.map(p => [p.id, p.status]));
+  const errorMap = new Map(existing.map(p => [p.id, p.error]));
+  return incoming.map(p => ({
+    ...p,
+    status: statusMap.get(p.id) ?? p.status,
+    error: errorMap.get(p.id),
+  }));
+}
+
+function getBridgeWs(): string {
+  if (process.env.NEXT_PUBLIC_BRIDGE_WS_URL) return process.env.NEXT_PUBLIC_BRIDGE_WS_URL;
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}`;
+}
+
+// ── Change 1: CSS animations + font inheritance ───────────────────────────────
+const CANVAS_STYLES = `
+  /* Force all text bright — builder lives on a dark bg, globals.css light-mode vars bleed in */
+  .builder-root, .builder-root * {
+    color: inherit;
+  }
+  .builder-root input,
+  .builder-root select,
+  .builder-root textarea {
+    color: var(--tm-card-text) !important;
+    background-color: var(--tm-canvas-inset) !important;
+    -webkit-text-fill-color: var(--tm-card-text) !important;
+  }
+  .builder-root input::placeholder,
+  .builder-root textarea::placeholder {
+    color: var(--tm-card-text-muted) !important;
+    -webkit-text-fill-color: var(--tm-card-text-muted) !important;
+  }
+  .builder-root input[style*="color: #f59e0b"],
+  .builder-root input[style*="color:#f59e0b"] {
+    color: #f59e0b !important;
+    -webkit-text-fill-color: #f59e0b !important;
+  }
+  /* Slug input on entry-point node */
+  .ep-slug-set {
+    color: var(--tm-card-text) !important;
+    -webkit-text-fill-color: var(--tm-card-text) !important;
+  }
+  .ep-slug-missing {
+    color: #f59e0b !important;
+    -webkit-text-fill-color: #f59e0b !important;
+  }
+  .ep-slug-missing::placeholder {
+    color: rgba(245,158,11,0.5) !important;
+    -webkit-text-fill-color: rgba(245,158,11,0.5) !important;
+  }
+  @keyframes handlePulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(0,240,255,0.4); }
+    50% { box-shadow: 0 0 0 5px rgba(0,240,255,0); }
+  }
+  @keyframes nodeShake {
+    0%, 100% { transform: translateX(0); }
+    15% { transform: translateX(-6px); }
+    30% { transform: translateX(6px); }
+    45% { transform: translateX(-4px); }
+    60% { transform: translateX(4px); }
+    75% { transform: translateX(-2px); }
+    90% { transform: translateX(2px); }
+  }
+  .node-error-ring {
+    outline: 2px solid rgba(248,113,113,0.85) !important;
+    outline-offset: 3px;
+    border-radius: 50% !important;
+    box-shadow: 0 0 14px rgba(248,113,113,0.45) !important;
+  }
+  .node-shake {
+    animation: nodeShake 0.6s ease-in-out;
+  }
+  .react-flow__node.selected .react-flow__handle {
+    animation: handlePulse 1.2s ease-in-out infinite;
+  }
+  .react-flow__node.selected {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  .react-flow__node *:not(.material-symbols-outlined):not(.material-icons) {
+    font-family: inherit;
+    box-sizing: border-box;
+  }
+  .react-flow__node .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
+    box-sizing: border-box;
+  }
+  .react-flow__edge:hover .react-flow__edge-path {
+    stroke-width: 3;
+    filter: drop-shadow(0 0 4px rgba(248,113,113,0.6));
+    cursor: pointer;
+  }
+  .react-flow__edge-path {
+    cursor: pointer;
+  }
+  /* Tooltip */
+  .nl-tooltip {
+    position: relative;
+  }
+  .nl-tooltip .nl-tip {
+    display: none;
+    position: absolute;
+    left: calc(100% + 10px);
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--tm-card-chrome);
+    border: 1px solid rgba(0,240,255,0.22);
+    border-radius: 8px;
+    padding: 8px 11px;
+    width: 220px;
+    z-index: 999;
+    pointer-events: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  .nl-tooltip:hover .nl-tip {
+    display: block;
+  }
+  /* Section subscroll */
+  .nl-section-list {
+    max-height: 430px; /* ~10 items × 43px */
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0,240,255,0.2) transparent;
+  }
+  .nl-section-list::-webkit-scrollbar { width: 4px; }
+  .nl-section-list::-webkit-scrollbar-track { background: transparent; }
+  .nl-section-list::-webkit-scrollbar-thumb { background: rgba(0,240,255,0.2); border-radius: 4px; }
+  .nl-section-list::-webkit-scrollbar-thumb:hover { background: rgba(0,240,255,0.4); }
+  /* Resize handle */
+  .nl-resize-handle {
+    width: 4px;
+    flex-shrink: 0;
+    cursor: col-resize;
+    background: transparent;
+    transition: background 150ms ease;
+    position: relative;
+    z-index: 10;
+  }
+  .nl-resize-handle:hover,
+  .nl-resize-handle.dragging {
+    background: rgba(0,240,255,0.35);
+  }
+`;
+
+// ── Node Components ──────────────────────────────────────────────────────────
+// Tiny the-M logo badge for internal nodes — sits in top-left corner
+function InternalMBadge() {
+  return (
+    <div title="Internal the-M system component" style={{
+      position: 'absolute', top: 6, left: 8,
+      display: 'flex', alignItems: 'center', gap: 4,
+      pointerEvents: 'none',
+    }}>
+      <svg width="14" height="11" viewBox="0 0 1407 1118" style={{ opacity: 0.55, flexShrink: 0 }}>
+        <polygon points="88,77 184,146 244,191 281,217 336,259 355,272 358,272 367,267 372,266 379,262 391,258 433,239 440,237 473,222 513,206 520,202 546,192 555,187 558,187 446,102 433,91 421,83 403,68 397,65 392,60 331,15 318,4 274,19 264,21 246,28 239,29 217,37 214,37 211,39 201,41 189,46 186,46 154,57 151,57 148,59 141,60 138,62 104,73 101,73 98,75" fill="#a0f0d0"/>
+        <polygon points="1323,77 1313,75 1292,67 1289,67 1239,50 1236,50 1233,48 1230,48 1189,34 1176,31 1094,4 1085,12 1074,19 1053,36 959,106 855,187 876,196 881,197 973,237 980,239 1034,263 1048,268 1055,272 1059,272 1139,213 1146,209 1177,185 1188,178 1208,162 1284,107" fill="#a0f0d0"/>
+        <polygon points="70,97 70,334 71,335 72,350 76,365 104,429 108,435 180,486 184,490 245,534 345,609 339,293 305,269 281,250 252,230 182,177 179,176 153,156 150,155" fill="#a0f0d0"/>
+        <polygon points="1342,97 1252,162 1248,166 1152,236 1148,240 1126,255 1122,259 1112,265 1103,273 1074,293 1073,296 1073,317 1072,318 1072,355 1071,356 1071,415 1070,416 1070,461 1069,462 1069,526 1068,527 1067,609 1306,433 1325,392 1336,365 1341,343 1341,331 1342,330" fill="#a0f0d0"/>
+        <polygon points="682,361 576,210 381,292 532,410 577,395 580,395 586,392 595,390 613,384 616,382 622,381 664,367 667,365" fill="#a0f0d0"/>
+        <polygon points="732,361 803,384 806,386 809,386 831,394 834,394 860,404 863,404 881,410 1033,291 837,210 764,315 760,319 759,322 740,348" fill="#a0f0d0"/>
+        <polygon points="367,314 367,373 368,374 368,430 369,431 371,567 380,574 383,575 388,580 396,585 505,669 508,611 509,610 509,595 510,594 512,540 513,539 513,524 514,523 514,504 515,503 515,490 516,489 517,454 518,453 518,434 519,433 504,421 501,420 490,410 468,394 427,361 423,359 395,336 392,335" fill="#a0f0d0"/>
+        <polygon points="1046,314 894,433 895,456 896,457 896,475 897,476 897,494 898,495 898,513 899,514 901,561 902,562 902,579 903,580 903,594 904,595 906,650 907,651 907,666 908,669 934,648 971,621 1041,567" fill="#a0f0d0"/>
+        <polygon points="549,424 693,539 693,534 694,533 693,532 693,377 676,382 664,387 660,387 657,389 654,389 635,396 632,396" fill="#a0f0d0"/>
+        <polygon points="864,424 815,407 812,407 791,400 779,395 776,395 721,377 721,539 732,529 736,527 752,513" fill="#a0f0d0"/>
+        <polygon points="535,446 532,511 531,512 531,531 530,532 530,546 529,547 529,567 528,568 527,600 526,601 526,616 525,617 525,634 524,635 524,650 523,651 523,662 522,663 522,682 543,697 628,763 640,771 645,776 649,778 692,812 693,809 693,799 692,798 692,793 693,792 693,572 685,567 679,561 675,559 649,537 611,508 605,502 602,501" fill="#a0f0d0"/>
+        <polygon points="878,446 721,572 721,594 720,595 720,775 721,776 720,780 721,781 721,812 752,787 756,785 816,738 892,681 891,669 890,668 890,650 889,649 889,633 888,632 888,619 887,618 885,567 884,566 884,554 883,553 883,532 882,531 882,513 881,512" fill="#a0f0d0"/>
+        <polygon points="100,461 95,488 89,506 87,509 86,515 77,534 75,541 55,582 38,613 16,647 13,656 13,662 16,670 26,679 42,685 62,690 67,693 74,700 76,705 76,720 68,743 68,749 70,755 75,763 87,770 97,772 125,772 126,771 130,772 128,775 112,781 89,784 83,791 81,797 81,805 83,811 89,818 100,824 105,829 109,836 111,843 111,860 105,889 105,910 108,922 115,933 121,939 173,974 286,1057 326,1088 345,1105 345,641" fill="#a0f0d0"/>
+        <polygon points="1312,462 1273,489 1230,522 1227,523 1143,586 1067,641 1067,1106 1080,1093 1135,1050 1138,1049 1172,1023 1235,978 1239,974 1249,968 1253,964 1256,963 1270,952 1292,938 1301,928 1305,920 1307,912 1308,897 1307,896 1307,888 1301,858 1302,839 1307,829 1312,824 1323,818 1328,813 1331,806 1331,796 1330,792 1324,784 1311,783 1297,780 1286,776 1282,773 1284,771 1287,772 1316,772 1328,769 1335,765 1340,760 1344,750 1344,742 1336,717 1336,706 1339,699 1344,694 1353,689 1371,685 1386,679 1394,673 1399,663 1399,655 1397,649 1372,610 1339,546 1321,500 1321,497 1316,484" fill="#a0f0d0"/>
+      </svg>
+      <span style={{ fontSize: 8, fontWeight: 700, color: '#a0f0d0', letterSpacing: 0.8, textTransform: 'uppercase', opacity: 0.7 }}>internal</span>
+    </div>
+  );
+}
+
+// EntryPointNode — icon-only, transparent, name below
+function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
+  const slugMissing = !data.slug;
+  const hasError = data._error || data._shake;
+  const isVoice = data.epType === 'voice';
+  const accent = hasError ? '#f87171' : slugMissing ? '#f59e0b' : isVoice ? C.amber : C.cyan;
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
+  const msIcon = EP_MS_ICON[data.epType] ?? 'bolt';
+  return (
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
+      title={data._errorMsg || undefined}>
+      {selected && (
+        <button
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          style={{
+            position: 'absolute', top: -8, right: -8,
+            width: 18, height: 18, borderRadius: '50%',
+            background: '#f87171', border: '2px solid #051424',
+            color: '#fff', fontSize: 10, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            lineHeight: 1, padding: 0, zIndex: 10,
+          }}
+          title="Delete node (or press Delete key)"
+        >✕</button>
+      )}
+      <div
+        className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
+        style={{
+          width: 56, height: 56, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: selected ? `rgba(0,240,255,0.10)` : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
+          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
+          boxShadow: selected ? `0 0 14px rgba(0,240,255,0.35), inset 0 0 8px rgba(0,240,255,0.08)` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
+          transition: 'all 0.18s ease',
+        }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{msIcon}</span>
+      </div>
+      <div style={{ marginTop: 6, textAlign: 'center' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, transition: 'color 0.18s' }}>
+          {data.label || (data.epType === 'sse' ? 'SSE' : data.epType === 'voice' ? 'Voice' : data.epType === 'webrtc' ? 'WebRTC' : data.epType === 'a2a' ? 'A2A' : 'WebSocket')}
+        </div>
+        {data.slug ? (
+          <div style={{ fontSize: 10, color: C.cyan, fontFamily: 'JetBrains Mono, monospace', opacity: 0.8, marginTop: 1 }}>{data.slug}</div>
+        ) : (
+          <div style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600, marginTop: 1 }}>⚠ slug required</div>
+        )}
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: C.cyan, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+    </div>
+  );
+}
+
+const INTERNAL_ORCHESTRATOR_NAMES = new Set(['workflow_advisor']);
+
+// OrchestratorNode — icon-only, transparent, name below
+function OrchestratorNode({ id, data, selected }: { id: string; data: OrchestratorData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
+  const isInternal = INTERNAL_ORCHESTRATOR_NAMES.has(data.name);
+  const hasError = data._error || data._shake;
+  const accent = hasError ? '#f87171' : isInternal ? '#a0f0d0' : C.purple;
+  const selGlow = isInternal ? 'rgba(160,240,208,0.35)' : 'rgba(208,188,255,0.35)';
+  const selBg   = isInternal ? 'rgba(160,240,208,0.10)' : 'rgba(208,188,255,0.10)';
+  return (
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
+      title={data._errorMsg || undefined}>
+      {selected && (
+        <button
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          style={{
+            position: 'absolute', top: -8, right: -8,
+            width: 18, height: 18, borderRadius: '50%',
+            background: '#f87171', border: '2px solid #051424',
+            color: '#fff', fontSize: 10, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            lineHeight: 1, padding: 0, zIndex: 10,
+          }}
+          title="Delete node (or press Delete key)"
+        >✕</button>
+      )}
+      <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <div
+        className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
+        style={{
+          width: 56, height: 56, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: selected ? selBg : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
+          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
+          boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
+          transition: 'all 0.18s ease',
+        }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>hub</span>
+      </div>
+      <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 120 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.18s' }}>
+          {data.displayName}
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+    </div>
+  );
+}
+
+// AgentNode — icon-only, transparent, name below; uses actual agent icon field first
+function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
+  const isInternal = data.tags?.includes('internal') ?? false;
+  const hasError = data._error || data._shake;
+  const accent = hasError ? '#f87171' : isInternal ? '#a0f0d0' : C.green;
+  const selGlow = isInternal ? 'rgba(160,240,208,0.35)' : 'rgba(74,222,128,0.35)';
+  const selBg   = isInternal ? 'rgba(160,240,208,0.10)' : 'rgba(74,222,128,0.10)';
+  const icon = data.icon || agentIconForLibrary({ slug: data.name, icon: data.icon } as any);
+  return (
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
+      title={data._errorMsg || undefined}>
+      {selected && (
+        <button
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          style={{
+            position: 'absolute', top: -8, right: -8,
+            width: 18, height: 18, borderRadius: '50%',
+            background: '#f87171', border: '2px solid #051424',
+            color: '#fff', fontSize: 10, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            lineHeight: 1, padding: 0, zIndex: 10,
+          }}
+          title="Delete node (or press Delete key)"
+        >✕</button>
+      )}
+      <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <div
+        className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
+        style={{
+          width: 56, height: 56, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: selected ? selBg : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
+          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
+          boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
+          transition: 'all 0.18s ease',
+        }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{icon}</span>
+      </div>
+      <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 110 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.18s' }}>
+          {data.displayName}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// MiddlewareNode — amber-colored, shield for guard / bolt for cache
+function MiddlewareNode({ id, data, selected }: { id: string; data: MiddlewareData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
+  const hasError = data._error || data._shake;
+  const accent = hasError ? '#f87171' : C.amber;
+  const selGlow = 'rgba(245,158,11,0.35)';
+  const selBg   = 'rgba(245,158,11,0.10)';
+  const icon = data.kind === 'guard' ? 'shield' : 'bolt';
+  return (
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
+      title={data._errorMsg || undefined}>
+      {selected && (
+        <button
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          style={{
+            position: 'absolute', top: -8, right: -8,
+            width: 18, height: 18, borderRadius: '50%',
+            background: '#f87171', border: '2px solid #051424',
+            color: '#fff', fontSize: 10, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            lineHeight: 1, padding: 0, zIndex: 10,
+          }}
+          title="Delete node (or press Delete key)"
+        >✕</button>
+      )}
+      <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <div
+        className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
+        style={{
+          width: 56, height: 56, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: selected ? selBg : data._scanning ? 'rgba(245,158,11,0.08)' : 'transparent',
+          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
+          boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? C.amberGlow : 'none',
+          transition: 'all 0.18s ease',
+        }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{icon}</span>
+      </div>
+      <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 110 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.18s' }}>
+          {data.displayName}
+        </div>
+        <div style={{ fontSize: 9, color: accent, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, opacity: 0.8 }}>
+          {data.kind}
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+    </div>
+  );
+}
+
+const NODE_TYPES: NodeTypes = {
+  entryPoint: EntryPointNode as any,
+  orchestrator: OrchestratorNode as any,
+  agent: AgentNode as any,
+  middleware: MiddlewareNode as any,
+};
+
+// ── Custom animated edge ──────────────────────────────────────────────────────
+const EDGE_STYLE = {
+  stroke: C.cyan,
+  strokeWidth: 1.5,
+  strokeDasharray: '5,3',
+};
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function makeId() { return `node_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`; }
+
+// ── Dagre auto-layout ─────────────────────────────────────────────────────────
+const NODE_WIDTH  = 240;
+const NODE_HEIGHT = 80;
+
+function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
+
+  nodes.forEach(n => g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
+  edges.forEach(e => g.setEdge(e.source, e.target));
+
+  dagre.layout(g);
+
+  return nodes.map(n => {
+    const pos = g.node(n.id);
+    return { ...n, position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 } };
+  });
+}
+
+function buildNodesFromApp(
+  app: Application,
+  agents: Agent[],
+): { nodes: Node[]; edges: Edge[] } {
+  // Canvas layout is a ref-keyed position map: {"ep:<slug>": {x,y}, "orch:<ao_id>": {x,y}, ...}
+  // Reconstruct logical graph from typed tables, then apply saved positions (if any).
+  const layout = app.canvas?.layout ?? {};
+
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+
+  // Build a lookup from app_orchestrator id → AppOrchestratorOut
+  const aoById = new Map<string, AppOrchestratorOut>();
+  (app.app_orchestrators ?? []).forEach(ao => aoById.set(ao.id, ao));
+  // Also pick up inline app_orchestrator objects from entry_points
+  app.entry_points.forEach(ep => {
+    if (ep.app_orchestrator) aoById.set(ep.app_orchestrator.id, ep.app_orchestrator);
+  });
+
+  // Track which app_orchestrator node ids have already been emitted
+  const emittedOrchIds = new Set<string>();
+  // Track which agent node ids have been emitted (agent_{agentId}_{aoId})
+  const emittedAgentNodeIds = new Set<string>();
+
+  // Helper: get saved position or null (dagre will fill in missing ones).
+  // Checks plain node-id key first (new format), then legacy prefixed key.
+  const pos = (nodeId: string, legacyKey?: string) =>
+    layout[nodeId] ?? (legacyKey ? layout[legacyKey] : null) ?? null;
+
+  // One EP node per entry-point row
+  app.entry_points.forEach((ep, idx) => {
+    const epId = `ep_${ep.slug}`;
+    nodes.push({
+      id: epId, type: 'entryPoint',
+      position: pos(epId, `ep:${ep.slug}`) ?? { x: 150 + idx * 240, y: 60 },
+      data: {
+        label: app.name,
+        epType: (ep.entry_point_type as EntryPointType) ?? 'websocket',
+        accessMode: ((ep.access_policy as any)?.mode ?? 'token') as 'token' | 'public',
+        slug: ep.slug,
+        appName: app.name,
+        convTokenLimit: ep.conversation_token_limit != null ? String(ep.conversation_token_limit) : '',
+        maxConcurrentSessions: ep.max_concurrent_sessions != null ? String(ep.max_concurrent_sessions) : '',
+        queueTimeout: ep.queue_timeout_seconds != null ? String(ep.queue_timeout_seconds) : '',
+        queueMessage: ep.queue_message ?? '',
+        _epId: ep.id,
+      } satisfies EntryPointData,
+    });
+
+    const aoId = ep.app_orchestrator_id ?? ep.app_orchestrator?.id;
+    if (aoId) {
+      const orchNodeId = `orch_${aoId}`;
+      edges.push({ id: `e_ep_orch_${ep.slug}`, source: epId, target: orchNodeId, animated: true, style: EDGE_STYLE });
+
+      if (!emittedOrchIds.has(aoId)) {
+        emittedOrchIds.add(aoId);
+        const ao = aoById.get(aoId);
+        if (ao) {
+          nodes.push({
+            id: orchNodeId, type: 'orchestrator',
+            position: pos(orchNodeId, `orch:${aoId}`) ?? (ao.node_id ? pos(ao.node_id, `orch:${ao.node_id}`) : null) ?? { x: 250, y: 220 },
+            data: {
+              appOrchestratorId: ao.id,
+              orchestratorId: ao.id,
+              name: ao.name,
+              displayName: ao.display_name || ao.name,
+              model: ao.llm_model,
+              maxParallelTools: ao.max_parallel_tools,
+              systemPrompt: ao.system_prompt,
+              allowedAgentIds: ao.allowed_agent_ids,
+              llmProvider: ao.llm_provider,
+              llmModel: ao.llm_model,
+              maxIterations: ao.max_iterations,
+              historyWindow: ao.history_window ?? 20,
+              delegatable: ao.delegatable,
+              kind: ao.kind,
+              budgetTokens: ao.budget_tokens,
+              transcriptionProvider: ao.transcription_provider ?? null,
+              transcriptionModel: ao.transcription_model ?? null,
+              transcriptionApiKey: null,
+              ttsProvider: ao.tts_provider ?? null,
+              ttsVoice: ao.tts_voice ?? null,
+              ttsApiKey: null,
+            } as OrchestratorData,
+          });
+
+          // Emit agent nodes + orch→agent edges
+          const allowedAgents = agents.filter(a => ao.allowed_agent_ids.includes(a.id));
+          const spread = Math.max(allowedAgents.length * 180, 400);
+          const startX = 300 - spread / 2 + 90;
+          allowedAgents.forEach((agent, i) => {
+            const agentNodeId = `agent_${agent.id}`;
+            if (!emittedAgentNodeIds.has(agentNodeId)) {
+              emittedAgentNodeIds.add(agentNodeId);
+              nodes.push({
+                id: agentNodeId, type: 'agent',
+                position: pos(agentNodeId, `agent:${agent.id}`) ?? { x: startX + i * 190, y: 420 },
+                data: {
+                  agentId: agent.id,
+                  name: agent.slug,
+                  displayName: agent.display_name,
+                  description: agent.description,
+                  transport: agent.transport,
+                  endpointUrl: agent.endpoint_url,
+                  tags: agent.tags ?? [],
+                  icon: agent.icon || agentIconForLibrary(agent),
+                } satisfies AgentData,
+              });
+            }
+            edges.push({ id: `e_orch_agent_${aoId}_${agent.id}`, source: orchNodeId, target: agentNodeId, animated: true, style: EDGE_STYLE });
+          });
+        }
+      }
+    }
+  });
+
+  // Only apply dagre auto-layout if we have NO saved positions (new app or import without canvas)
+  const hasLayout = Object.keys(layout).length > 0;
+  if (!hasLayout) {
+    const laid = applyDagreLayout(nodes, edges);
+    return { nodes: laid, edges };
+  }
+  return { nodes, edges };
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function agentIconForLibrary(a: Agent): string {
+  return a.icon || 'smart_toy';
+}
+
+const EP_META: Record<string, { emoji: string; title: string; desc: string; color?: string }> = {
+  websocket: { emoji: '⚡', title: 'WebSocket', desc: 'Full-duplex, persistent connection. Client and server can send messages at any time. Best for chat, real-time collaboration, and interactive agents.' },
+  sse:       { emoji: '📡', title: 'Server-Sent Events', desc: 'One-way server→client stream over HTTP. Lightweight, works through proxies. Best for dashboards, notifications, and read-only agent output.' },
+  webrtc:    { emoji: '🎙️', title: 'WebRTC Voice', desc: 'Real-time voice via LiveKit WebRTC. Low-latency bidirectional audio with automatic voice activity detection. Best for voice assistants and spoken-word agents.', color: '#a78bfa' },
+  a2a:       { emoji: '🤖', title: 'A2A External', desc: 'Expose this orchestrator as an A2A agent for external callers. The A2A skill id is the entry point slug. Best for machine-to-machine orchestration.', color: '#f59e0b' },
+  voice:     { emoji: '🎤', title: 'Voice (STT/TTS)', desc: 'Speech-to-speech over HTTP. Browser sends audio → STT → orchestrator → TTS → audio reply. Requires STT + TTS config on the connected orchestrator.', color: '#f59e0b' },
+};
+
+function trunc(s: string | null | undefined, n = 120) {
+  if (!s) return '—';
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+// ── Node Library panel ────────────────────────────────────────────────────────
+function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
+  agents: Agent[];
+  middlewareDefs: MiddlewareDef[];
+  width: number;
+  onWidthChange: (w: number) => void;
+}) {
+  const [openEP, setOpenEP] = useState(true);
+  const [openOrch, setOpenOrch] = useState(true);
+  const [openAgents, setOpenAgents] = useState(true);
+  const [openMW, setOpenMW] = useState(true);
+  const dragging = useRef(false);
+  const startX = useRef(0);
+  const startW = useRef(0);
+
+  function onResizeMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    dragging.current = true;
+    startX.current = e.clientX;
+    startW.current = width;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(ev: MouseEvent) {
+      if (!dragging.current) return;
+      const delta = ev.clientX - startX.current;
+      const next = Math.min(480, Math.max(200, startW.current + delta));
+      onWidthChange(next);
+    }
+    function onUp() {
+      dragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function dragItem(e: DragEvent, nodeType: string, nodeData: object) {
+    e.dataTransfer.setData('nodeType', nodeType);
+    e.dataTransfer.setData('nodeData', JSON.stringify(nodeData));
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  const itemStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
+    borderRadius: 8, cursor: 'grab', userSelect: 'none',
+    border: `1px solid transparent`, transition: 'all 0.15s', marginBottom: 4,
+  };
+
+  function SectionHeader({ label, open, onToggle }: { label: string; open: boolean; onToggle: () => void }) {
+    return (
+      <button onClick={onToggle} style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        width: '100%', padding: '6px 0', background: 'none', border: 'none', cursor: 'pointer',
+        fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1.5, textTransform: 'uppercase',
+        marginBottom: open ? 8 : 0,
+      }}>
+        {label}
+        <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, transition: 'transform 0.15s', transform: open ? 'rotate(180deg)' : 'none' }}>expand_more</span>
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', height: '100%', flexShrink: 0 }}>
+      {/* Panel body */}
+      <div style={{
+        width, height: '100%', overflowY: 'auto',
+        ...glass, borderRight: 'none', padding: '16px 14px',
+        display: 'flex', flexDirection: 'column', gap: 20,
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', paddingBottom: 8, borderBottom: `1px solid ${C.outlineVariant}` }}>
+          Node Library
+        </div>
+
+        {/* Entry Points */}
+        <div>
+          <SectionHeader label="Entry Points" open={openEP} onToggle={() => setOpenEP(v => !v)} />
+          {openEP && (
+            <div className="nl-section-list">
+              {(['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const).map(ep => {
+                const meta = EP_META[ep];
+                const isAmber = ep === 'a2a' || ep === 'voice';
+                return (
+                  <div key={ep} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
+                    <div
+                      draggable
+                      onDragStart={e => dragItem(e, 'entryPoint', { epType: ep, label: meta.title, accessMode: 'token', slug: '' })}
+                      style={{ ...itemStyle, background: isAmber ? C.amberBg : C.cyanBg, borderColor: isAmber ? C.amberBorder : C.cyanBorder, marginBottom: 0 }}
+                      onMouseEnter={e => (e.currentTarget.style.background = isAmber ? 'rgba(245,158,11,0.1)' : 'rgba(0,240,255,0.1)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = isAmber ? C.amberBg : C.cyanBg)}
+                    >
+                      <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>{meta.emoji}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{meta.title}</div>
+                        <div style={{ fontSize: 10, color: C.textMuted }}>Entry point</div>
+                      </div>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', opacity: 0.5 }}>drag_indicator</span>
+                    </div>
+                    <div className="nl-tip">
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.cyan, marginBottom: 4 }}>{meta.title}</div>
+                      <div style={{ fontSize: 11, color: 'var(--tm-card-text-hint)', lineHeight: 1.5 }}>{meta.desc}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Orchestrators */}
+        <div>
+          <SectionHeader label="Orchestrators" open={openOrch} onToggle={() => setOpenOrch(v => !v)} />
+          {openOrch && (
+            <div className="nl-section-list">
+              <div className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
+                <div
+                  draggable
+                  onDragStart={e => dragItem(e, 'orchestrator', {
+                    orchestratorId: null, appOrchestratorId: null,
+                    name: '', displayName: '',
+                    systemPrompt: '', allowedAgentIds: [],
+                    llmProvider: '', llmModel: '', llmApiKey: '',
+                    maxIterations: null, historyWindow: null,
+                    maxParallelTools: null,
+                    delegatable: false, kind: 'standard', budgetTokens: null,
+                    transcriptionProvider: null, transcriptionModel: null, transcriptionApiKey: null,
+                    ttsProvider: null, ttsVoice: null, ttsApiKey: null,
+                  })}
+                  style={{ ...itemStyle, background: C.purpleBg, borderColor: 'rgba(208,188,255,0.2)', marginBottom: 0 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(87,27,193,0.2)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = C.purpleBg)}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.purple, flexShrink: 0 }}>hub</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Orchestrator</div>
+                    <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>claude-sonnet-4-6</div>
+                  </div>
+                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }}>drag_indicator</span>
+                </div>
+                <div className="nl-tip">
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.purple, marginBottom: 4 }}>Orchestrator</div>
+                  <div style={{ fontSize: 11, color: 'var(--tm-card-text-hint)', lineHeight: 1.5 }}>Drop onto canvas to create a new orchestrator instance. Configure model, system prompt, and agents in the inspector.</div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Agents */}
+        <div>
+          <SectionHeader label="Agents" open={openAgents} onToggle={() => setOpenAgents(v => !v)} />
+          {openAgents && (
+            <div className="nl-section-list">
+              {agents.filter(a => a.enabled && !a.tags?.includes('internal')).map(a => {
+                const icon = a.icon || agentIconForLibrary(a);
+                return (
+                  <div key={a.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
+                    <div
+                      draggable
+                      onDragStart={e => dragItem(e, 'agent', { agentId: a.id, name: a.slug, displayName: a.display_name, description: a.description, transport: a.transport, endpointUrl: a.endpoint_url, icon: a.icon || agentIconForLibrary(a) })}
+                      style={{ ...itemStyle, background: C.greenBg, borderColor: C.greenBorder, marginBottom: 0 }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(74,222,128,0.1)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = C.greenBg)}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.green, flexShrink: 0 }}>{icon}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.display_name}</div>
+                        <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.transport}</div>
+                      </div>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }}>drag_indicator</span>
+                    </div>
+                    <div className="nl-tip">
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.green, marginBottom: 4 }}>{a.display_name}</div>
+                      <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>{a.transport} · {a.slug}</div>
+                      <div style={{ fontSize: 11, color: 'var(--tm-card-text-hint)', lineHeight: 1.5 }}>{trunc(a.description)}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Middleware */}
+        {middlewareDefs.length > 0 && (
+          <div>
+            <SectionHeader label="Middleware" open={openMW} onToggle={() => setOpenMW(v => !v)} />
+            {openMW && (
+              <div className="nl-section-list">
+                {middlewareDefs.filter(m => m.enabled).map(m => {
+                  const icon = m.kind === 'guard' ? 'shield' : 'bolt';
+                  return (
+                    <div key={m.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
+                      <div
+                        draggable
+                        onDragStart={e => dragItem(e, 'middleware', {
+                          defId: m.id, slug: m.slug, kind: m.kind,
+                          displayName: m.display_name, description: m.description,
+                          config: m.config, configOverride: {}, nodeId: '',
+                        } satisfies MiddlewareData)}
+                        style={{ ...itemStyle, background: C.amberBg, borderColor: C.amberBorder, marginBottom: 0 }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(245,158,11,0.1)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = C.amberBg)}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.amber, flexShrink: 0 }}>{icon}</span>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.display_name}</div>
+                          <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.kind}</div>
+                        </div>
+                        <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }}>drag_indicator</span>
+                      </div>
+                      <div className="nl-tip">
+                        <div style={{ fontSize: 11, fontWeight: 700, color: C.amber, marginBottom: 4 }}>{m.display_name}</div>
+                        <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>{m.kind} · {m.slug}</div>
+                        <div style={{ fontSize: 11, color: 'var(--tm-card-text-hint)', lineHeight: 1.5 }}>{trunc(m.description)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Resize handle */}
+      <div
+        className="nl-resize-handle"
+        onMouseDown={onResizeMouseDown}
+        style={{ borderRight: `1px solid ${C.glassBorder}` }}
+      />
+    </div>
+  );
+}
+
+// ── Properties Panel ──────────────────────────────────────────────────────────
+function PropertiesPanel({
+  selectedNode,
+  onUpdateNode,
+  slugLocked,
+  onSlugManualEdit,
+  appName,
+  onAppNameChange,
+  convTokenLimit,
+  onConvTokenLimitChange,
+  chain,
+  app,
+  epCount,
+  nodes,
+  edges,
+}: {
+  selectedNode: Node | null;
+  onUpdateNode: (id: string, data: Record<string, unknown>) => void;
+  slugLocked: boolean;
+  onSlugManualEdit: () => void;
+  appName: string;
+  onAppNameChange: (name: string) => void;
+  convTokenLimit: string;
+  onConvTokenLimitChange: (val: string) => void;
+  chain: ChainStatus;
+  app: Application | null;
+  epCount: number;
+  nodes: Node[];
+  edges: Edge[];
+}) {
+  const [propTab, setPropTab] = useState<'properties' | 'configuration'>('properties');
+  const [orchTestState, setOrchTestState] = useState<{ loading?: boolean; ok?: boolean; latency?: number; error?: string }>({});
+  const [sttTestState,  setSttTestState]  = useState<{ loading?: boolean; ok?: boolean; latency?: number; error?: string }>({});
+  const [ttsTestState,  setTtsTestState]  = useState<{ loading?: boolean; ok?: boolean; latency?: number; error?: string }>({});
+
+  async function testOrchLlm(d: OrchestratorData) {
+    if (!d.llmProvider || !d.llmModel || !d.appOrchestratorId || !app) return;
+    setOrchTestState({ loading: true });
+    try {
+      const res = await themApi.testAppOrchLlm(app.id, d.appOrchestratorId, { provider: d.llmProvider, model: d.llmModel, api_key: d.llmApiKey || undefined });
+      setOrchTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
+    } catch (e: any) {
+      setOrchTestState({ loading: false, ok: false, error: e.message });
+    }
+  }
+
+  async function testStt(d: OrchestratorData) {
+    if (!d.transcriptionProvider || !d.transcriptionModel || !d.appOrchestratorId || !app) return;
+    setSttTestState({ loading: true });
+    try {
+      const res = await themApi.testAppOrchVoice(app.id, d.appOrchestratorId, { provider: d.transcriptionProvider, model: d.transcriptionModel });
+      setSttTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
+    } catch (e: any) {
+      setSttTestState({ loading: false, ok: false, error: e.message });
+    }
+  }
+
+  async function testTts(d: OrchestratorData) {
+    if (!d.ttsProvider || !d.ttsVoice || !d.appOrchestratorId || !app) return;
+    setTtsTestState({ loading: true });
+    try {
+      const res = await themApi.testAppOrchTts(app.id, d.appOrchestratorId, { provider: d.ttsProvider, voice: d.ttsVoice });
+      setTtsTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
+    } catch (e: any) {
+      setTtsTestState({ loading: false, ok: false, error: e.message });
+    }
+  }
+
+  function TabBtn({ id, label }: { id: 'properties' | 'configuration'; label: string }) {
+    const active = propTab === id;
+    return (
+      <button onClick={() => setPropTab(id)} style={{
+        padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+        background: active ? 'rgba(0,240,255,0.15)' : 'transparent',
+        color: active ? C.cyan : C.textMuted,
+        transition: 'all 0.15s',
+      }}>{label}</button>
+    );
+  }
+
+  const labelStyle: React.CSSProperties = { fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' };
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '7px 10px', borderRadius: 6,
+    border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
+    color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
+  };
+  const readOnlyStyle: React.CSSProperties = { ...inputStyle, color: 'var(--tm-card-text-hint)', background: 'rgba(10,18,32,0.6)', cursor: 'default' };
+  const fieldWrap: React.CSSProperties = { marginBottom: 14 };
+
+  return (
+    <div style={{
+      width: 320, flexShrink: 0, height: '100%', overflowY: 'auto',
+      ...glass, borderLeft: `1px solid ${C.glassBorder}`, padding: '16px 14px',
+      display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', paddingBottom: 8, borderBottom: `1px solid ${C.outlineVariant}`, marginBottom: 16 }}>
+        {selectedNode ? 'Node Properties' : 'Application'}
+      </div>
+
+      {!selectedNode ? (
+        /* ── App-level properties (shown when canvas background is clicked) ── */
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {/* App header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 10, marginBottom: 16, background: 'rgba(0,209,255,0.06)', border: '1px solid rgba(0,209,255,0.18)' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 22, color: C.cyan }}>deployed_code</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {appName || 'Untitled Application'}
+              </div>
+              <div style={{ fontSize: 10, color: C.textMuted }}>
+                {app ? `ID: ${app.id.slice(0, 8)}…` : 'Not yet saved'}
+              </div>
+            </div>
+          </div>
+
+          {/* App name — always visible */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>Application Name</label>
+            <input
+              style={{
+                width: '100%', padding: '7px 10px', borderRadius: 6,
+                border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
+                color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
+              }}
+              value={appName}
+              onChange={e => onAppNameChange(e.target.value)}
+              placeholder="My Application"
+            />
+          </div>
+
+          {epCount <= 1 ? (
+            <>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>
+                  Conversation Token Limit
+                  <span style={{ marginLeft: 6, fontSize: 10, color: '#64748b' }}>per session · blank = unlimited</span>
+                </label>
+                <input
+                  type="number" min={1}
+                  style={{
+                    width: '100%', padding: '7px 10px', borderRadius: 6,
+                    border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
+                    color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
+                  }}
+                  value={convTokenLimit}
+                  onChange={e => onConvTokenLimitChange(e.target.value)}
+                  placeholder="e.g. 50000"
+                />
+              </div>
+            </>
+          ) : (
+            <div style={{ marginBottom: 14, padding: '8px 10px', borderRadius: 6, background: 'rgba(0,240,255,0.05)', border: '1px solid rgba(0,240,255,0.15)', fontSize: 11, color: C.textMuted, lineHeight: 1.5 }}>
+              Multiple entry points — select each entry point node to edit its name and token limit individually.
+            </div>
+          )}
+
+          {/* Chain status */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 6, display: 'block' }}>Canvas Status</label>
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: 8,
+              padding: '8px 10px', borderRadius: 8,
+              background: chain.ready ? 'rgba(74,222,128,0.06)' : 'rgba(255,180,171,0.06)',
+              border: `1px solid ${chain.ready ? 'rgba(74,222,128,0.2)' : 'rgba(255,180,171,0.2)'}`,
+            }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%', flexShrink: 0, marginTop: 4,
+                background: chain.color, boxShadow: chain.ready ? `0 0 6px ${chain.color}` : 'none',
+                display: 'inline-block',
+              }} />
+              <span style={{ fontSize: 12, color: chain.color, lineHeight: 1.5 }}>{chain.label}</span>
+            </div>
+          </div>
+
+          {/* Stats */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 6, display: 'block' }}>Canvas Info</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              {[
+                { label: 'Entry Points', value: String(chain.epNode ? 1 : 0) },
+                { label: 'Orchestrator', value: chain.orchNode ? (chain.orchNode.data as OrchestratorData).displayName : '—' },
+                { label: 'Agents', value: String(chain.agentCount) },
+                { label: 'Status', value: app?.enabled ? 'Deployed' : 'Draft' },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ padding: '7px 10px', borderRadius: 7, background: C.surfaceLow, border: `1px solid ${C.outlineVariant}` }}>
+                  <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 2 }}>{label}</div>
+                  <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {app && (
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>Created</label>
+              <div style={{ fontSize: 12, color: C.textMuted }}>
+                {new Date(app.created_at).toLocaleString()}
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginTop: 8, padding: '8px 0', borderTop: `1px solid ${C.outlineVariant}`, fontSize: 11, color: C.textMuted, lineHeight: 1.6 }}>
+            Click any node to edit its properties.
+          </div>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 4, marginBottom: 18 }}>
+            <TabBtn id="properties" label="Properties" />
+            <TabBtn id="configuration" label="Configuration" />
+          </div>
+
+          {/* EntryPoint properties */}
+          {selectedNode.type === 'entryPoint' && propTab === 'properties' && (() => {
+            const d = selectedNode.data as EntryPointData;
+            return (
+              <div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Display Name</label>
+                  <input style={inputStyle} value={d.appName ?? d.label} onChange={e => onUpdateNode(selectedNode.id, { appName: e.target.value, label: e.target.value })} placeholder="e.g. Customer Support" />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Token Limit <span style={{ fontSize: 10, color: '#64748b' }}>per session · blank = unlimited</span></label>
+                  <input type="number" min={1} style={inputStyle} value={d.convTokenLimit ?? ''} onChange={e => onUpdateNode(selectedNode.id, { convTokenLimit: e.target.value })} placeholder="e.g. 50000" />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Max Concurrent Sessions <span style={{ fontSize: 10, color: '#64748b' }}>blank = unlimited</span></label>
+                  <input type="number" min={1} style={inputStyle} value={d.maxConcurrentSessions ?? ''} onChange={e => onUpdateNode(selectedNode.id, { maxConcurrentSessions: e.target.value })} placeholder="e.g. 10" />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Queue Timeout (seconds) <span style={{ fontSize: 10, color: '#64748b' }}>blank = reject immediately</span></label>
+                  <input type="number" min={1} style={inputStyle} value={d.queueTimeout ?? ''} onChange={e => onUpdateNode(selectedNode.id, { queueTimeout: e.target.value })} placeholder="e.g. 60" />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Queue Message <span style={{ fontSize: 10, color: '#64748b' }}>shown while waiting</span></label>
+                  <input style={inputStyle} value={d.queueMessage ?? ''} onChange={e => onUpdateNode(selectedNode.id, { queueMessage: e.target.value })} placeholder="All agents are busy, please wait..." />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Type</label>
+                  <select style={{ ...inputStyle }} value={d.epType} onChange={e => onUpdateNode(selectedNode.id, { epType: e.target.value as EntryPointType })}>
+                    <option value="websocket">WebSocket</option>
+                    <option value="sse">SSE</option>
+                    <option value="webrtc">WebRTC Voice</option>
+                    <option value="voice">Voice (STT/TTS)</option>
+                  </select>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Access Policy</label>
+                  <select style={{ ...inputStyle }} value={d.accessMode} onChange={e => onUpdateNode(selectedNode.id, { accessMode: e.target.value as 'token' | 'public' })}>
+                    <option value="token">Token required</option>
+                    <option value="public">Public (no auth)</option>
+                  </select>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    Slug
+                    {!slugLocked && <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: 'rgba(0,240,255,0.1)', color: C.cyan, border: '1px solid rgba(0,240,255,0.3)', fontWeight: 600 }}>auto</span>}
+                  </label>
+                  <input style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace' }} value={d.slug} onChange={e => { onSlugManualEdit(); onUpdateNode(selectedNode.id, { slug: e.target.value }); }} placeholder="my-app-slug" />
+                  {d.slug && (
+                    <div style={{
+                      fontSize: 11, color: C.textMuted, marginTop: 6, padding: '5px 8px',
+                      background: C.surfaceLow, borderRadius: 5, fontFamily: 'JetBrains Mono, monospace',
+                      wordBreak: 'break-all', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
+                    }}>
+                      <span style={{ flex: 1 }}>
+                        {d.epType === 'websocket' ? `ws://<host>:8088/apps/${d.slug}/ws`
+                          : d.epType === 'webrtc' ? `http://<host>:8088/apps/${d.slug}/voice`
+                          : d.epType === 'voice' ? `http://<host>:8088/apps/${d.slug}/voice/transcribe · /voice/tts`
+                          : `http://<host>:8088/apps/${d.slug}/sse`}
+                      </span>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(
+                          d.epType === 'websocket'
+                            ? `ws://localhost:8088/apps/${d.slug}/ws`
+                            : d.epType === 'webrtc'
+                            ? `http://localhost:8088/apps/${d.slug}/voice`
+                            : d.epType === 'voice'
+                            ? `http://localhost:8088/apps/${d.slug}/voice/transcribe`
+                            : `http://localhost:8088/apps/${d.slug}/sse`
+                        )}
+                        title="Copy endpoint URL"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.cyan, flexShrink: 0, padding: 0 }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>content_copy</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {/* Test EP button */}
+                {(() => {
+                  const orchEdge = edges.find((e: Edge) => e.source === selectedNode.id);
+                  const orchNode = orchEdge ? nodes.find((nd: Node) => nd.id === orchEdge.target && nd.type === 'orchestrator') : undefined;
+                  const orchName = orchNode ? (orchNode.data as OrchestratorData).name : '';
+                  const isSaved = !!(app?.entry_points?.find((ep: { slug: string }) => ep.slug === d.slug));
+                  const testUrl = d.epType === 'voice' || d.epType === 'webrtc'
+                    ? `/apps/${d.slug}/voice`
+                    : orchName ? `/admin/playground?orchestrator=${encodeURIComponent(orchName)}` : '/admin/playground';
+                  return (
+                    <div style={{ marginTop: 12 }}>
+                      <button
+                        disabled={!isSaved}
+                        onClick={() => { if (isSaved) window.open(testUrl, '_blank', 'noopener'); }}
+                        title={isSaved ? 'Open test interface' : 'Save the application first to enable testing'}
+                        style={{
+                          width: '100%', padding: '8px 0', borderRadius: 8, border: `1px solid ${isSaved ? C.green : C.outlineVariant}`,
+                          background: 'transparent', color: isSaved ? C.green : C.textMuted,
+                          cursor: isSaved ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 600,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                          opacity: isSaved ? 1 : 0.5,
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+                          {d.epType === 'voice' ? 'mic' : d.epType === 'webrtc' ? 'videocam' : 'play_arrow'}
+                        </span>
+                        Test Entry Point
+                      </button>
+                      {!isSaved && (
+                        <div style={{ fontSize: 10, color: C.textMuted, textAlign: 'center', marginTop: 4 }}>
+                          Save the application first to enable testing
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            );
+          })()}
+
+          {/* Orchestrator properties */}
+          {selectedNode.type === 'orchestrator' && propTab === 'properties' && (() => {
+            const d = selectedNode.data as OrchestratorData;
+            const connectedAgentCount = edges.filter(e => e.source === selectedNode.id && nodes.find(n => n.id === e.target && n.type === 'agent')).length;
+            const ORCH_PROVIDERS: Record<string, string[]> = {
+              anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+              openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o3-mini'],
+              groq:      ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+              gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro'],
+            };
+            const CUSTOM = '__custom__';
+            const currentProvider = d.llmProvider || '';
+            const knownModels = ORCH_PROVIDERS[currentProvider] ?? [];
+            const isCustomModel = !!d.llmModel && knownModels.length > 0 && !knownModels.includes(d.llmModel);
+            const selectVal = isCustomModel ? CUSTOM : (d.llmModel ?? '');
+            const connectedEpTypes = new Set<string>(
+              edges
+                .filter(e => e.target === selectedNode.id)
+                .map(e => nodes.find(n => n.id === e.source && n.type === 'entryPoint'))
+                .filter((n): n is Node => !!n)
+                .map(n => (n.data as EntryPointData).epType as string)
+            );
+            const hasVoice = connectedEpTypes.has('voice');
+            const hasWebrtc = connectedEpTypes.has('webrtc');
+            const hasLlmEp = hasVoice || connectedEpTypes.has('websocket') || connectedEpTypes.has('sse');
+            const noEp = connectedEpTypes.size === 0;
+            return (
+              <div>
+                {/* Header tile */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 16, background: C.purpleBg, border: '1px solid rgba(208,188,255,0.2)' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 22, color: C.purple }}>hub</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.displayName || <span style={{ opacity: 0.4 }}>Unnamed</span>}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{d.name || '—'}</div>
+                  </div>
+                </div>
+
+                {/* Display Name */}
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Display Name</label>
+                  <input style={inputStyle} value={d.displayName} onChange={e => onUpdateNode(selectedNode.id, { displayName: e.target.value })} placeholder="Display name" />
+                </div>
+
+                {/* No EP placeholder */}
+                {noEp && (
+                  <div style={{ padding: '12px', borderRadius: 8, background: C.surfaceLow, border: `1px solid ${C.outlineVariant}`, color: C.textMuted, fontSize: 12, textAlign: 'center', marginTop: 8 }}>
+                    Connect an entry point to start configuring
+                  </div>
+                )}
+
+                {/* LLM section — shown when at least one non-webrtc EP is connected, or webrtc */}
+                {(hasLlmEp || hasWebrtc) && (
+                  <>
+                    {/* LLM Provider */}
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>LLM Provider</label>
+                      <select
+                        style={{ ...inputStyle, cursor: 'pointer' }}
+                        value={currentProvider}
+                        onChange={e => {
+                          const p = e.target.value;
+                          const firstModel = ORCH_PROVIDERS[p]?.[0] ?? '';
+                          onUpdateNode(selectedNode.id, { llmProvider: p || null, llmModel: firstModel || null, model: firstModel || null });
+                        }}
+                      >
+                        <option value="">— inherit default —</option>
+                        {Object.keys(ORCH_PROVIDERS).map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </div>
+
+                    {/* LLM Model */}
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>LLM Model</label>
+                      {knownModels.length > 0 ? (
+                        <>
+                          <select
+                            style={{ ...inputStyle, cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                            value={selectVal}
+                            onChange={e => {
+                              const v = e.target.value;
+                              if (v !== CUSTOM) onUpdateNode(selectedNode.id, { llmModel: v, model: v });
+                              else onUpdateNode(selectedNode.id, { llmModel: '', model: '' });
+                            }}
+                          >
+                            {knownModels.map(m => <option key={m} value={m}>{m}</option>)}
+                            <option value={CUSTOM}>Custom…</option>
+                          </select>
+                          {(selectVal === CUSTOM || isCustomModel) && (
+                            <input
+                              style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11, marginTop: 6 }}
+                              value={d.llmModel ?? ''}
+                              onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })}
+                              placeholder="Enter model ID"
+                              autoFocus
+                            />
+                          )}
+                        </>
+                      ) : (
+                        <input
+                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                          value={d.llmModel ?? ''}
+                          onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })}
+                          placeholder="e.g. claude-sonnet-4-6"
+                        />
+                      )}
+                    </div>
+
+                    {/* API Key */}
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>API Key</label>
+                      <input
+                        type="password"
+                        style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                        value={d.llmApiKey ?? ''}
+                        onChange={e => onUpdateNode(selectedNode.id, { llmApiKey: e.target.value })}
+                        placeholder={d.appOrchestratorId ? '••••••••  (leave blank to keep existing)' : 'Enter API key'}
+                      />
+                    </div>
+
+                    {/* System Prompt */}
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>System Prompt</label>
+                      <textarea
+                        style={{ ...inputStyle, resize: 'vertical', minHeight: 80, fontFamily: 'inherit', fontSize: 12 }}
+                        value={d.systemPrompt ?? ''}
+                        onChange={e => onUpdateNode(selectedNode.id, { systemPrompt: e.target.value })}
+                        placeholder="You are a helpful assistant…"
+                      />
+                    </div>
+
+                    {/* Numeric row 1: Max Iterations + History Window */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Max Iterations</label>
+                        <input type="number" min={1} max={100} style={inputStyle} value={d.maxIterations ?? ''} onChange={e => onUpdateNode(selectedNode.id, { maxIterations: parseInt(e.target.value, 10) || 10 })} placeholder="10" />
+                      </div>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>History Window</label>
+                        <input type="number" min={0} max={200} style={inputStyle} value={d.historyWindow ?? ''} onChange={e => onUpdateNode(selectedNode.id, { historyWindow: parseInt(e.target.value, 10) || 20 })} placeholder="20" />
+                      </div>
+                    </div>
+
+                    {/* Numeric row 2: Max Parallel Tools + Budget Tokens */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Parallel Tools</label>
+                        <input type="number" min={1} max={20} style={inputStyle} value={d.maxParallelTools ?? ''} onChange={e => onUpdateNode(selectedNode.id, { maxParallelTools: parseInt(e.target.value, 10) || 4 })} placeholder="4" />
+                      </div>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Budget Tokens</label>
+                        <input type="number" min={0} style={inputStyle} value={d.budgetTokens ?? ''} onChange={e => { const v = e.target.value; onUpdateNode(selectedNode.id, { budgetTokens: v === '' ? null : parseInt(v, 10) }); }} placeholder="unlimited" />
+                      </div>
+                    </div>
+
+                    {/* Kind + Delegatable row */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Kind</label>
+                        <select style={{ ...inputStyle, cursor: 'pointer' }} value={d.kind || 'standard'} onChange={e => onUpdateNode(selectedNode.id, { kind: e.target.value })}>
+                          <option value="standard">standard</option>
+                          <option value="supervisor">supervisor</option>
+                          <option value="delegator">delegator</option>
+                        </select>
+                      </div>
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Delegatable</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow, cursor: 'pointer' }} onClick={() => onUpdateNode(selectedNode.id, { delegatable: !d.delegatable })}>
+                          <div style={{ width: 32, height: 18, borderRadius: 9, background: d.delegatable ? C.purple : 'rgba(255,255,255,0.12)', transition: 'background 200ms', position: 'relative', flexShrink: 0 }}>
+                            <div style={{ position: 'absolute', top: 2, left: d.delegatable ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left 200ms', boxShadow: '0 1px 3px rgba(0,0,0,0.4)' }} />
+                          </div>
+                          <span style={{ fontSize: 12, color: d.delegatable ? C.purple : C.textMuted }}>{d.delegatable ? 'Yes' : 'No'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Test LLM connection */}
+                    {d.llmProvider && d.llmModel && (
+                      <div style={{ marginTop: 4, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => testOrchLlm(d)}
+                          disabled={orchTestState.loading || !d.appOrchestratorId}
+                          title={!d.appOrchestratorId ? 'Save the application first to enable testing' : undefined}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            padding: '7px 14px', borderRadius: 8,
+                            border: `1px solid ${C.purpleBorder}`,
+                            background: 'rgba(208,188,255,0.07)',
+                            color: (!d.appOrchestratorId || orchTestState.loading) ? C.textMuted : C.purple,
+                            cursor: (!d.appOrchestratorId || orchTestState.loading) ? 'not-allowed' : 'pointer',
+                            fontSize: 12, fontWeight: 600, opacity: !d.appOrchestratorId ? 0.5 : 1,
+                            transition: 'all 150ms',
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>bolt</span>
+                          {orchTestState.loading ? 'Testing…' : 'Test connection'}
+                        </button>
+                        {!orchTestState.loading && orchTestState.ok !== undefined && (
+                          orchTestState.ok
+                            ? <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({orchTestState.latency}ms)</span>
+                            : <span style={{ fontSize: 12, color: '#f87171' }}>✗ {orchTestState.error ?? 'Failed'}</span>
+                        )}
+                        {!d.appOrchestratorId && (
+                          <span style={{ fontSize: 11, color: C.textMuted }}>
+                            Save the application first to enable testing
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Connected Agents read-only */}
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Connected Agents</label>
+                      <div style={{ fontSize: 12, color: C.textMuted, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
+                        {connectedAgentCount} agent{connectedAgentCount !== 1 ? 's' : ''} — connect via canvas
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* STT section — voice EP only */}
+                {hasVoice && (
+                  <div style={{ marginTop: 16, borderTop: `1px solid ${C.outlineVariant}`, paddingTop: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 15, color: C.amber }}>mic</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Speech-to-Text</span>
+                      <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 9999, background: C.amberBg, border: `1px solid ${C.amberBorder}`, color: C.amber, fontWeight: 600 }}>Required</span>
+                    </div>
+
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Provider</label>
+                      <select style={{ ...inputStyle, cursor: 'pointer' }}
+                        value={d.transcriptionProvider || ''}
+                        onChange={e => {
+                          const p = e.target.value;
+                          const model = p === 'openai' ? 'whisper-1' : p === 'groq' ? 'whisper-large-v3' : '';
+                          onUpdateNode(selectedNode.id, { transcriptionProvider: p || null, transcriptionModel: model || null });
+                        }}
+                      >
+                        <option value="">— select provider —</option>
+                        <option value="openai">OpenAI Whisper</option>
+                        <option value="groq">Groq whisper-large-v3</option>
+                      </select>
+                    </div>
+
+                    {d.transcriptionProvider && (
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Model</label>
+                        <input style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                          value={d.transcriptionModel ?? ''}
+                          onChange={e => onUpdateNode(selectedNode.id, { transcriptionModel: e.target.value })}
+                          placeholder="e.g. whisper-1"
+                        />
+                      </div>
+                    )}
+
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>API Key</label>
+                      <input type="password"
+                        style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                        value={d.transcriptionApiKey ?? ''}
+                        onChange={e => onUpdateNode(selectedNode.id, { transcriptionApiKey: e.target.value })}
+                        placeholder={d.appOrchestratorId ? '••••••••  (leave blank to keep existing)' : 'Enter API key'}
+                      />
+                    </div>
+
+                    {d.transcriptionProvider && d.transcriptionModel && (
+                      <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => testStt(d)}
+                          disabled={sttTestState.loading || !d.appOrchestratorId}
+                          title={!d.appOrchestratorId ? 'Save the application first to enable testing' : undefined}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            padding: '7px 14px', borderRadius: 8,
+                            border: `1px solid ${C.amberBorder}`,
+                            background: 'rgba(251,191,36,0.07)',
+                            color: (!d.appOrchestratorId || sttTestState.loading) ? C.textMuted : C.amber,
+                            cursor: (!d.appOrchestratorId || sttTestState.loading) ? 'not-allowed' : 'pointer',
+                            fontSize: 12, fontWeight: 600, opacity: !d.appOrchestratorId ? 0.5 : 1,
+                            transition: 'all 150ms',
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>mic</span>
+                          {sttTestState.loading ? 'Testing…' : 'Test STT'}
+                        </button>
+                        {!sttTestState.loading && sttTestState.ok !== undefined && (
+                          sttTestState.ok
+                            ? <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({sttTestState.latency}ms)</span>
+                            : <span style={{ fontSize: 12, color: '#f87171' }}>✗ {sttTestState.error ?? 'Failed'}</span>
+                        )}
+                        {!d.appOrchestratorId && (
+                          <span style={{ fontSize: 11, color: C.textMuted }}>Save first to enable testing</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* TTS section — voice EP only */}
+                {hasVoice && (
+                  <div style={{ marginTop: 16, borderTop: `1px solid ${C.outlineVariant}`, paddingTop: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 15, color: C.amber }}>volume_up</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: C.amber, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Text-to-Speech</span>
+                      <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 9999, background: C.amberBg, border: `1px solid ${C.amberBorder}`, color: C.amber, fontWeight: 600 }}>Required</span>
+                    </div>
+
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Provider</label>
+                      <select style={{ ...inputStyle, cursor: 'pointer' }}
+                        value={d.ttsProvider || ''}
+                        onChange={e => onUpdateNode(selectedNode.id, { ttsProvider: e.target.value || null, ttsVoice: null })}
+                      >
+                        <option value="">— select provider —</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="elevenlabs">ElevenLabs</option>
+                      </select>
+                    </div>
+
+                    {d.ttsProvider === 'openai' && (
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Voice</label>
+                        <select style={{ ...inputStyle, cursor: 'pointer' }}
+                          value={d.ttsVoice || ''}
+                          onChange={e => onUpdateNode(selectedNode.id, { ttsVoice: e.target.value || null })}
+                        >
+                          <option value="">— select voice —</option>
+                          {['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'].map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      </div>
+                    )}
+                    {d.ttsProvider === 'elevenlabs' && (
+                      <div style={fieldWrap}>
+                        <label style={labelStyle}>Voice ID</label>
+                        <input style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                          value={d.ttsVoice ?? ''}
+                          onChange={e => onUpdateNode(selectedNode.id, { ttsVoice: e.target.value || null })}
+                          placeholder="ElevenLabs voice ID"
+                        />
+                      </div>
+                    )}
+
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>API Key</label>
+                      <input type="password"
+                        style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
+                        value={d.ttsApiKey ?? ''}
+                        onChange={e => onUpdateNode(selectedNode.id, { ttsApiKey: e.target.value })}
+                        placeholder={d.appOrchestratorId ? '••••••••  (leave blank to keep existing)' : 'Enter API key'}
+                      />
+                    </div>
+
+                    {d.ttsProvider && d.ttsVoice && (
+                      <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => testTts(d)}
+                          disabled={ttsTestState.loading || !d.appOrchestratorId}
+                          title={!d.appOrchestratorId ? 'Save the application first to enable testing' : undefined}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            padding: '7px 14px', borderRadius: 8,
+                            border: `1px solid ${C.amberBorder}`,
+                            background: 'rgba(251,191,36,0.07)',
+                            color: (!d.appOrchestratorId || ttsTestState.loading) ? C.textMuted : C.amber,
+                            cursor: (!d.appOrchestratorId || ttsTestState.loading) ? 'not-allowed' : 'pointer',
+                            fontSize: 12, fontWeight: 600, opacity: !d.appOrchestratorId ? 0.5 : 1,
+                            transition: 'all 150ms',
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>volume_up</span>
+                          {ttsTestState.loading ? 'Testing…' : 'Test TTS'}
+                        </button>
+                        {!ttsTestState.loading && ttsTestState.ok !== undefined && (
+                          ttsTestState.ok
+                            ? <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({ttsTestState.latency}ms)</span>
+                            : <span style={{ fontSize: 12, color: '#f87171' }}>✗ {ttsTestState.error ?? 'Failed'}</span>
+                        )}
+                        {!d.appOrchestratorId && (
+                          <span style={{ fontSize: 11, color: C.textMuted }}>Save first to enable testing</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Realtime section — webrtc EP only */}
+                {hasWebrtc && (
+                  <div style={{ marginTop: 16, borderTop: `1px solid ${C.outlineVariant}`, paddingTop: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 15, color: C.cyan }}>sensors</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: C.cyan, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Realtime Voice</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: C.textMuted, padding: '10px 12px', borderRadius: 8, background: C.surfaceLow, border: `1px solid ${C.outlineVariant}` }}>
+                      WebRTC entry points require a realtime-capable model (e.g. gpt-4o-realtime-preview). Configure the LLM model above accordingly.
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Agent properties */}
+          {selectedNode.type === 'agent' && propTab === 'properties' && (() => {
+            const d = selectedNode.data as AgentData;
+            const icon = d.icon || agentIconForLibrary({ slug: d.name, icon: d.icon } as any);
+            return (
+              <div>
+                {/* Header tile */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 16, background: C.greenBg, border: `1px solid ${C.greenBorder}` }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 22, color: C.green }}>{icon}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.displayName}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{d.name}</div>
+                  </div>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Description</label>
+                  <div style={{ fontSize: 12, color: 'var(--tm-card-text-hint)', lineHeight: 1.55, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
+                    {d.description || <span style={{ opacity: 0.4 }}>No description</span>}
+                  </div>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Transport</label>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: C.greenBg, color: C.green, border: `1px solid ${C.greenBorder}` }}>
+                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: C.green, boxShadow: `0 0 5px ${C.green}` }} />
+                    {d.transport}
+                  </span>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Endpoint</label>
+                  <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', wordBreak: 'break-all', padding: '6px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
+                    {d.endpointUrl}
+                  </div>
+                </div>
+                <a href="/admin/agents" style={{ fontSize: 12, color: C.green, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, marginTop: 8, opacity: 0.8 }}
+                  onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                  onMouseLeave={e => (e.currentTarget.style.opacity = '0.8')}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 14 }}>open_in_new</span>
+                  Configure in Agents
+                </a>
+              </div>
+            );
+          })()}
+
+          {/* Middleware properties */}
+          {selectedNode.type === 'middleware' && propTab === 'properties' && (() => {
+            const mwNode = selectedNode;
+            const d = mwNode.data as MiddlewareData;
+            const icon = d.kind === 'guard' ? 'shield' : 'bolt';
+            const kindBadge = (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: C.amberBg, color: C.amber, border: `1px solid ${C.amberBorder}` }}>
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: C.amber, boxShadow: `0 0 5px ${C.amber}` }} />
+                {d.kind}
+              </span>
+            );
+            const co = (d.configOverride ?? {}) as Record<string, unknown>;
+            function setOverride(patch: Record<string, unknown>) {
+              onUpdateNode(mwNode.id, { configOverride: { ...co, ...patch } });
+            }
+            return (
+              <div>
+                {/* Header tile */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 16, background: C.amberBg, border: `1px solid ${C.amberBorder}` }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 22, color: C.amber }}>{icon}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.displayName}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{d.slug}</div>
+                  </div>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Kind</label>
+                  {kindBadge}
+                </div>
+                {d.description && (
+                  <div style={fieldWrap}>
+                    <label style={labelStyle}>Description</label>
+                    <div style={{ fontSize: 12, color: 'var(--tm-card-text-hint)', lineHeight: 1.55, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
+                      {d.description}
+                    </div>
+                  </div>
+                )}
+                <div style={{ marginTop: 8, marginBottom: 8, paddingTop: 8, borderTop: `1px solid ${C.outlineVariant}`, fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase' }}>
+                  Config Override
+                </div>
+                {d.kind === 'guard' && (
+                  <>
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Mode</label>
+                      <select
+                        style={{ ...inputStyle }}
+                        value={(co.mode as string) ?? ''}
+                        onChange={e => setOverride({ mode: e.target.value || undefined })}
+                      >
+                        <option value="">— default —</option>
+                        <option value="block">block</option>
+                        <option value="redact">redact</option>
+                      </select>
+                    </div>
+                    <div style={{ ...fieldWrap, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <label style={{ ...labelStyle, marginBottom: 0 }}>Detection</label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={co.pii_detection !== false}
+                          onChange={e => setOverride({ pii_detection: e.target.checked })}
+                          style={{ accentColor: C.amber }}
+                        />
+                        PII detection
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={co.injection_detection !== false}
+                          onChange={e => setOverride({ injection_detection: e.target.checked })}
+                          style={{ accentColor: C.amber }}
+                        />
+                        Injection detection
+                      </label>
+                    </div>
+                  </>
+                )}
+                {d.kind === 'cache' && (
+                  <>
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>TTL (seconds)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        style={inputStyle}
+                        value={(co.ttl_seconds as number | undefined) ?? ''}
+                        placeholder="e.g. 300"
+                        onChange={e => setOverride({ ttl_seconds: e.target.value ? parseInt(e.target.value, 10) : undefined })}
+                      />
+                    </div>
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Scope</label>
+                      <select
+                        style={{ ...inputStyle }}
+                        value={(co.scope as string) ?? ''}
+                        onChange={e => setOverride({ scope: e.target.value || undefined })}
+                      >
+                        <option value="">— default —</option>
+                        <option value="global">global</option>
+                        <option value="app">app</option>
+                        <option value="session">session</option>
+                        <option value="user">user</option>
+                      </select>
+                    </div>
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Max result chars</label>
+                      <input
+                        type="number"
+                        min={1}
+                        style={inputStyle}
+                        value={(co.max_result_chars as number | undefined) ?? ''}
+                        placeholder="e.g. 8000"
+                        onChange={e => setOverride({ max_result_chars: e.target.value ? parseInt(e.target.value, 10) : undefined })}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {propTab === 'configuration' && (
+            <div style={{ color: C.textMuted, fontSize: 13, padding: 10 }}>
+              Configuration options for this node type are managed at the resource level.<br /><br />
+              <span style={{ fontSize: 11, opacity: 0.7 }}>Use the Properties tab or navigate to the resource admin page.</span>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Canvas Logo ───────────────────────────────────────────────────────────────
+// Extensible state-driven logo. Add new states by adding one entry to LOGO_STATES
+// and (optionally) a @keyframes block in LOGO_KEYFRAMES.
+export type LogoState = 'idle' | 'dirty' | 'error' | 'success' | 'thinking' | 'warning';
+
+interface LogoStateDef {
+  opacity: number;
+  filter: string;
+  animation: string;
+}
+
+const LOGO_STATES: Record<LogoState, LogoStateDef> = {
+  idle:     { opacity: 0.015, filter: 'none',   animation: 'none' },
+  dirty:    { opacity: 0.015, filter: 'none',   animation: 'none' },
+  warning:  { opacity: 0.45, filter: 'drop-shadow(0 0 18px rgba(255,120,120,0.4))',    animation: 'logo-warn-flash 1.2s ease-in-out 1 forwards' },
+  error:    { opacity: 0.35, filter: 'drop-shadow(0 0 18px rgba(255,107,138,0.4))',   animation: 'logo-shake 0.5s ease-in-out' },
+  success:  { opacity: 1.0,  filter: 'drop-shadow(0 0 40px rgba(74,222,128,0.9))',    animation: 'logo-burst 1.8s ease-out forwards' },
+  thinking: { opacity: 1.0,  filter: 'none',                                           animation: 'none' },
+};
+
+const LOGO_KEYFRAMES = `
+@keyframes logo-breathe {
+  0%   { opacity: 0.012; }
+  50%  { opacity: 0.028; }
+  100% { opacity: 0.012; }
+}
+@keyframes logo-breathe-v3 {
+  0%   { opacity: 0.007; }
+  50%  { opacity: 0.015; }
+  100% { opacity: 0.007; }
+}
+@keyframes logo-sway {
+  0%, 100% { transform: rotate3d(0,1,0,0deg); }
+  25%       { transform: rotate3d(0,1,0,6deg); }
+  75%       { transform: rotate3d(0,1,0,-6deg); }
+}
+@keyframes logo-shake {
+  0%,100% { transform: translateX(0); }
+  15%     { transform: translateX(-10px) rotate(-2deg); }
+  30%     { transform: translateX(10px)  rotate(2deg); }
+  45%     { transform: translateX(-8px)  rotate(-1deg); }
+  60%     { transform: translateX(8px)   rotate(1deg); }
+  75%     { transform: translateX(-4px); }
+  90%     { transform: translateX(4px); }
+}
+@keyframes logo-burst {
+  0%   { opacity: 0.13; filter: drop-shadow(0 0 18px rgba(0,240,255,0.18)); }
+  15%  { opacity: 1;    filter: drop-shadow(0 0 80px rgba(74,222,128,1)) drop-shadow(0 0 40px rgba(255,255,255,0.8)); }
+  100% { opacity: 0.13; filter: drop-shadow(0 0 18px rgba(0,240,255,0.18)); }
+}
+@keyframes logo-explode {
+  0%   { transform: translate(0,0) scale(1) rotate(0deg);                                              opacity: 1; }
+  20%  { transform: translate(calc(var(--ex)*60px), calc(var(--ey)*60px)) scale(1.15) rotate(var(--rot)); opacity: 1; }
+  55%  { transform: translate(calc(var(--ex)*140px), calc(var(--ey)*140px)) scale(0.7) rotate(calc(var(--rot)*2)); opacity: 0.6; }
+  80%  { transform: translate(calc(var(--ex)*180px), calc(var(--ey)*180px)) scale(0.3) rotate(calc(var(--rot)*3)); opacity: 0.0; }
+  81%  { transform: translate(0,0) scale(0) rotate(0deg);                                              opacity: 0; }
+  100% { transform: translate(0,0) scale(1) rotate(0deg);                                              opacity: 1; }
+}
+@keyframes logo-flip {
+  0%   { transform: perspective(600px) rotateY(0deg); }
+  100% { transform: perspective(600px) rotateY(360deg); }
+}
+@keyframes logo-polygon-flicker {
+  0%,100% { opacity: 0.08; fill: #4ab8a0; }
+  50%     { opacity: 0.55; fill: #00b8c8; filter: drop-shadow(0 0 6px rgba(0,180,200,0.6)); }
+}
+@keyframes logo-warn-flash {
+  0%   { opacity: 0.18; filter: drop-shadow(0 0 12px rgba(255,120,120,0.15)); }
+  40%  { opacity: 0.48; filter: drop-shadow(0 0 22px rgba(255,120,120,0.5)); }
+  100% { opacity: 0.18; filter: drop-shadow(0 0 12px rgba(255,120,120,0.15)); }
+}
+`;
+
+// 14 polygons from the_m_smiling_14_polygons.svg — explode vectors computed from centroid vs center (703,559)
+// 14 polygons from the_m_smiling_14_polygons.svg — center ~(703,559), explode vectors from centroid
+const LOGO_PATHS: Array<{ id: string; points: string; ex: number; ey: number }> = [
+  { id: 'part-01', ex: -0.5, ey: -1.0, points: "88,77 184,146 244,191 281,217 336,259 355,272 358,272 367,267 372,266 379,262 391,258 433,239 440,237 473,222 513,206 520,202 546,192 555,187 558,187 446,102 433,91 421,83 403,68 397,65 392,60 331,15 318,4 274,19 264,21 246,28 239,29 217,37 214,37 211,39 201,41 189,46 186,46 154,57 151,57 148,59 141,60 138,62 104,73 101,73 98,75" },
+  { id: 'part-02', ex:  0.5, ey: -1.0, points: "1323,77 1313,75 1292,67 1289,67 1239,50 1236,50 1233,48 1230,48 1189,34 1176,31 1094,4 1085,12 1074,19 1053,36 959,106 855,187 876,196 881,197 973,237 980,239 1034,263 1048,268 1055,272 1059,272 1139,213 1146,209 1177,185 1188,178 1208,162 1284,107" },
+  { id: 'part-03', ex: -1.2, ey:  0.1, points: "70,97 70,334 71,335 72,350 76,365 104,429 108,435 180,486 184,490 245,534 345,609 339,293 305,269 281,250 252,230 182,177 179,176 153,156 150,155" },
+  { id: 'part-04', ex:  1.2, ey:  0.1, points: "1342,97 1252,162 1248,166 1152,236 1148,240 1126,255 1122,259 1112,265 1103,273 1074,293 1073,296 1073,317 1072,318 1072,355 1071,356 1071,415 1070,416 1070,461 1069,462 1069,526 1068,527 1067,609 1306,433 1325,392 1336,365 1341,343 1341,331 1342,330" },
+  { id: 'part-05', ex: -0.4, ey: -0.6, points: "682,361 576,210 381,292 532,410 577,395 580,395 586,392 595,390 613,384 616,382 622,381 664,367 667,365" },
+  { id: 'part-06', ex:  0.4, ey: -0.6, points: "732,361 803,384 806,386 809,386 831,394 834,394 860,404 863,404 881,410 1033,291 837,210 764,315 760,319 759,322 740,348" },
+  { id: 'part-07', ex: -0.8, ey:  0.0, points: "367,314 367,373 368,374 368,430 369,431 371,567 380,574 383,575 388,580 396,585 505,669 508,611 509,610 509,595 510,594 512,540 513,539 513,524 514,523 514,504 515,503 515,490 516,489 517,454 518,453 518,434 519,433 504,421 501,420 490,410 468,394 427,361 423,359 395,336 392,335" },
+  { id: 'part-08', ex:  0.8, ey:  0.0, points: "1046,314 894,433 895,456 896,457 896,475 897,476 897,494 898,495 898,513 899,514 901,561 902,562 902,579 903,580 903,594 904,595 906,650 907,651 907,666 908,669 934,648 971,621 1041,567" },
+  { id: 'part-09', ex: -0.3, ey: -0.3, points: "549,424 693,539 693,534 694,533 693,532 693,377 676,382 664,387 660,387 657,389 654,389 635,396 632,396" },
+  { id: 'part-10', ex:  0.3, ey: -0.3, points: "864,424 815,407 812,407 791,400 779,395 776,395 721,377 721,539 732,529 736,527 752,513" },
+  { id: 'part-11', ex: -0.4, ey:  0.5, points: "535,446 532,511 531,512 531,531 530,532 530,546 529,547 529,567 528,568 527,600 526,601 526,616 525,617 525,634 524,635 524,650 523,651 523,662 522,663 522,682 543,697 628,763 640,771 645,776 649,778 692,812 693,809 693,799 692,798 692,793 693,792 693,572 685,567 679,561 675,559 649,537 611,508 605,502 602,501" },
+  { id: 'part-12', ex:  0.4, ey:  0.5, points: "878,446 721,572 721,594 720,595 720,775 721,776 720,780 721,781 721,812 752,787 756,785 816,738 892,681 891,669 890,668 890,650 889,649 889,633 888,632 888,619 887,618 885,567 884,566 884,554 883,553 883,532 882,531 882,513 881,512" },
+  { id: 'part-13', ex: -1.3, ey:  0.8, points: "100,461 95,488 89,506 87,509 86,515 77,534 75,541 55,582 38,613 16,647 13,656 13,662 16,670 26,679 42,685 62,690 67,693 74,700 76,705 76,720 68,743 68,749 70,755 75,763 87,770 97,772 125,772 126,771 130,772 128,775 112,781 89,784 83,791 81,797 81,805 83,811 89,818 100,824 105,829 109,836 111,843 111,860 105,889 105,910 108,922 115,933 121,939 173,974 286,1057 326,1088 345,1105 345,641" },
+  { id: 'part-14', ex:  1.3, ey:  0.8, points: "1312,462 1273,489 1230,522 1227,523 1143,586 1067,641 1067,1106 1080,1093 1135,1050 1138,1049 1172,1023 1235,978 1239,974 1249,968 1253,964 1256,963 1270,952 1292,938 1301,928 1305,920 1307,912 1308,897 1307,896 1307,888 1301,858 1302,839 1307,829 1312,824 1323,818 1328,813 1331,806 1331,796 1330,792 1324,784 1311,783 1297,780 1286,776 1282,773 1284,771 1287,772 1316,772 1328,769 1335,765 1340,760 1344,750 1344,742 1336,717 1336,706 1339,699 1344,694 1353,689 1371,685 1386,679 1394,673 1399,663 1399,655 1397,649 1372,610 1339,546 1321,500 1321,497 1316,484" },
+];
+
+const LOGO_COLOR = '#a0f0d0';
+
+// Stable per-polygon random delays for the thinking flicker — generated once at module load
+const THINK_DELAYS = LOGO_PATHS.map((_, i) => {
+  // cheap deterministic pseudo-random from index
+  const r = ((i * 2654435761) >>> 0) / 0xffffffff;
+  return +(r * 2.4).toFixed(2); // 0–2.4s spread
+});
+const THINK_DURATIONS = LOGO_PATHS.map((_, i) => {
+  const r = (((i + 7) * 2246822519) >>> 0) / 0xffffffff;
+  return +(0.9 + r * 1.4).toFixed(2); // 0.9–2.3s per polygon
+});
+
+function CanvasLogo({ state }: { state: LogoState }) {
+  const def = LOGO_STATES[state];
+  const key = (state === 'idle' || state === 'dirty') ? 'calm' : state;
+  const isExplode = state === 'success';
+  const isThinking = state === 'thinking';
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 0 }}>
+      <style>{LOGO_KEYFRAMES}</style>
+      <svg
+        key={key}
+        xmlns="http://www.w3.org/2000/svg"
+        width={720} height={572}
+        viewBox="0 0 1407 1118"
+        overflow="visible"
+        style={{ opacity: def.opacity, animation: def.animation, filter: def.filter, overflow: 'visible' }}
+      >
+        {LOGO_PATHS.map(({ id, points, ex, ey }, i) => (
+          <polygon
+            key={id}
+            points={points}
+            style={isExplode ? {
+              // @ts-ignore
+              '--ex': ex,
+              '--ey': ey,
+              '--rot': `${(ex + ey) * 45}deg`,
+              fill: LOGO_COLOR,
+              animation: 'logo-explode 1.8s cubic-bezier(0.25,0.46,0.45,0.94) forwards',
+              animationDelay: `${i * 0.06}s`,
+              transformOrigin: 'center',
+              transformBox: 'fill-box',
+            } as React.CSSProperties : isThinking ? {
+              animation: `logo-polygon-flicker ${THINK_DURATIONS[i]}s ease-in-out ${THINK_DELAYS[i]}s infinite`,
+            } as React.CSSProperties : { fill: state === 'warning' ? '#ff8080' : LOGO_COLOR }}
+          />
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+// ── Advisor panel ─────────────────────────────────────────────────────────────
+const FIELD_LABEL: Record<string, string> = {
+  system_prompt: 'System prompt', description: 'Description',
+  display_name: 'Display name', max_iterations: 'Max iterations',
+  history_window: 'History window', max_parallel_tools: 'Max parallel tools',
+};
+const FIELD_ICON: Record<string, string> = {
+  system_prompt: 'edit_note', description: 'description', display_name: 'label',
+  max_iterations: 'repeat', history_window: 'history', max_parallel_tools: 'fork_right',
+};
+
+function ProposalCard({ proposal, msgIndex, onApply }: {
+  proposal: Proposal; msgIndex: number; onApply: (msgIndex: number, p: Proposal) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const st = proposal.status;
+  const isText = typeof proposal.suggested === 'string' && (proposal.suggested as string).length > 60;
+
+  const btnBg = st === 'applied' ? 'rgba(16,185,129,0.2)'
+    : st === 'failed' ? 'rgba(239,68,68,0.2)'
+    : st === 'stale' ? 'rgba(251,191,36,0.15)'
+    : 'rgba(0,240,255,0.12)';
+  const btnColor = st === 'applied' ? '#34d399'
+    : st === 'failed' ? '#f87171'
+    : st === 'stale' ? '#fbbf24'
+    : C.cyan;
+  const btnLabel = st === 'applying' ? '…' : st === 'applied' ? 'Applied ✓' : st === 'failed' ? 'Retry' : st === 'stale' ? 'Apply anyway' : 'Apply';
+
+  return (
+    <div style={{
+      marginTop: 8, borderRadius: 8, border: `1px solid rgba(0,240,255,0.18)`,
+      background: 'rgba(0,240,255,0.04)', overflow: 'hidden',
+    }}>
+      {/* Card header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px' }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.cyan, flexShrink: 0 }}>
+          {FIELD_ICON[proposal.field] ?? 'tune'}
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: C.cyan, flex: 1 }}>
+          {FIELD_LABEL[proposal.field] ?? proposal.field}
+          <span style={{ fontWeight: 400, color: C.textMuted }}> · {proposal.targetName}</span>
+        </span>
+        <button
+          onClick={() => setExpanded(e => !e)}
+          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: C.textMuted, padding: 0, lineHeight: 1 }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{expanded ? 'expand_less' : 'expand_more'}</span>
+        </button>
+      </div>
+
+      {/* Reason */}
+      <div style={{ padding: '0 10px 7px', fontSize: 11, color: 'var(--tm-card-text-subtle)', lineHeight: 1.5 }}>{proposal.reason}</div>
+
+      {/* Diff preview (expandable) */}
+      {expanded && (
+        <div style={{ borderTop: `1px solid rgba(0,240,255,0.1)`, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 2 }}>Current</div>
+            <div style={{
+              fontSize: 11, color: 'var(--tm-card-text-subtle)', background: 'rgba(255,255,255,0.03)', borderRadius: 4,
+              padding: '5px 7px', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              maxHeight: isText ? 80 : 'none', overflowY: isText ? 'auto' : 'visible',
+            }}>{String(proposal.current) || '(empty)'}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: '#34d399', marginBottom: 2 }}>Suggested</div>
+            <div style={{
+              fontSize: 11, color: '#d1fae5', background: 'rgba(16,185,129,0.06)', borderRadius: 4,
+              padding: '5px 7px', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              maxHeight: isText ? 120 : 'none', overflowY: isText ? 'auto' : 'visible',
+            }}>{String(proposal.suggested)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Apply button */}
+      <div style={{ padding: '6px 10px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          disabled={st === 'applying' || st === 'applied'}
+          onClick={() => onApply(msgIndex, proposal)}
+          style={{
+            padding: '5px 12px', borderRadius: 6, border: `1px solid ${btnColor}`,
+            background: btnBg, color: btnColor, fontSize: 11, fontWeight: 700,
+            cursor: st === 'applying' || st === 'applied' ? 'not-allowed' : 'pointer',
+            opacity: st === 'applying' ? 0.7 : 1,
+          }}
+        >{btnLabel}</button>
+        {proposal.error && <span style={{ fontSize: 10, color: '#f87171', flex: 1 }}>{proposal.error}</span>}
+        {st === 'stale' && !proposal.error && (
+          <span style={{ fontSize: 10, color: '#fbbf24' }}>Canvas changed since analysis</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AdvisorPanel({
+  messages, busy, input, scanning,
+  onInputChange, onSend, onClose, onRescan,
+  onApplyProposal, onApplyAll,
+}: {
+  messages: AdvisorMessage[];
+  busy: boolean;
+  input: string;
+  scanning: boolean;
+  onInputChange: (v: string) => void;
+  onSend: (text: string) => void;
+  onClose: () => void;
+  onRescan: () => void;
+  onApplyProposal: (msgIndex: number, p: Proposal) => void;
+  onApplyAll: (msgIndex: number) => void;
+}) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  return (
+    <div style={{
+      width: 380, flexShrink: 0, height: '100%', display: 'flex', flexDirection: 'column',
+      background: 'var(--tm-card-chrome)', borderLeft: `1px solid rgba(0,240,255,0.15)`,
+      boxShadow: '-4px 0 24px rgba(0,0,0,0.4)',
+    }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '11px 14px',
+        borderBottom: `1px solid ${C.glassBorder}`, flexShrink: 0,
+      }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 17, color: C.cyan }}>assistant</span>
+        <span style={{ fontWeight: 700, fontSize: 13, color: C.text, flex: 1 }}>AI Workflow Advisor</span>
+        {scanning && (
+          <span style={{ fontSize: 11, color: C.cyan, fontStyle: 'italic' }}>Scanning…</span>
+        )}
+        <button
+          onClick={onRescan}
+          title="Re-analyze workflow"
+          disabled={busy || scanning}
+          style={{ width: 26, height: 26, borderRadius: 5, border: 'none', background: 'transparent',
+            color: busy || scanning ? C.outlineVariant : C.textMuted, cursor: busy || scanning ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onMouseEnter={e => { if (!busy && !scanning) e.currentTarget.style.color = C.cyan; }}
+          onMouseLeave={e => { e.currentTarget.style.color = C.textMuted; }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>refresh</span>
+        </button>
+        <button
+          onClick={onClose}
+          style={{ width: 26, height: 26, borderRadius: 5, border: 'none', background: 'transparent',
+            color: C.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onMouseEnter={e => (e.currentTarget.style.color = C.text)}
+          onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>close</span>
+        </button>
+      </div>
+
+      {/* Messages */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {messages.length === 0 && !busy && !scanning && (
+          <div style={{ fontSize: 13, color: C.textMuted, fontStyle: 'italic', textAlign: 'center', marginTop: 40 }}>
+            Scanning your workflow…
+          </div>
+        )}
+        {messages.map((m, i) => {
+          const pendingCount = (m.proposals ?? []).filter(p => p.status === 'pending' || p.status === 'stale').length;
+          return (
+            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+              {m.role === 'assistant' && (
+                <span style={{ fontSize: 10, color: C.textMuted, marginBottom: 3, paddingLeft: 2 }}>AI Advisor</span>
+              )}
+              <div style={{
+                maxWidth: '96%', padding: '9px 12px',
+                borderRadius: m.role === 'user' ? '12px 12px 2px 12px' : '2px 12px 12px 12px',
+                background: m.role === 'user' ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${m.role === 'user' ? 'rgba(0,240,255,0.2)' : C.outlineVariant}`,
+                fontSize: 13, color: m.role === 'user' ? C.text : 'var(--tm-card-text-hint)',
+                lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              }}>
+                {m.text}
+                {m.streaming && <span style={{ opacity: 0.6, marginLeft: 2 }}>▋</span>}
+              </div>
+              {/* Proposal cards */}
+              {(m.proposals ?? []).length > 0 && (
+                <div style={{ width: '96%', display: 'flex', flexDirection: 'column', gap: 0 }}>
+                  {m.proposals!.map(p => (
+                    <ProposalCard key={`${i}-${p.id}`} proposal={p} msgIndex={i} onApply={onApplyProposal} />
+                  ))}
+                  {pendingCount >= 2 && (
+                    <button
+                      onClick={() => onApplyAll(i)}
+                      style={{
+                        marginTop: 8, padding: '6px 0', borderRadius: 7,
+                        border: `1px solid rgba(0,240,255,0.3)`,
+                        background: 'rgba(0,240,255,0.08)', color: C.cyan,
+                        fontSize: 11, fontWeight: 700, cursor: 'pointer', width: '100%',
+                      }}
+                    >Apply all ({pendingCount})</button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {busy && messages[messages.length - 1]?.role !== 'assistant' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 2 }}>
+            <span style={{ fontSize: 11, color: C.cyan, fontStyle: 'italic' }}>Thinking…</span>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      <div style={{ padding: '10px 14px', borderTop: `1px solid ${C.glassBorder}`, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+          <textarea
+            value={input}
+            onChange={e => onInputChange(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!busy && !scanning && input.trim()) { onSend(input.trim()); onInputChange(''); }
+              }
+            }}
+            placeholder="Ask a follow-up question…"
+            disabled={busy || scanning}
+            rows={2}
+            style={{
+              flex: 1, background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.outlineVariant}`,
+              borderRadius: 8, color: 'var(--tm-card-text)', fontSize: 13, padding: '7px 10px',
+              resize: 'none', outline: 'none', fontFamily: 'inherit',
+              opacity: (busy || scanning) ? 0.5 : 1,
+            }}
+          />
+          <button
+            onClick={() => { if (!busy && !scanning && input.trim()) { onSend(input.trim()); onInputChange(''); } }}
+            disabled={busy || scanning || !input.trim()}
+            style={{
+              padding: '8px 12px', borderRadius: 8, border: 'none', flexShrink: 0,
+              background: (!busy && !scanning && input.trim()) ? C.cyan : C.outlineVariant,
+              color: (!busy && !scanning && input.trim()) ? '#00363a' : C.textMuted,
+              cursor: (!busy && !scanning && input.trim()) ? 'pointer' : 'not-allowed',
+              fontWeight: 700, fontSize: 12,
+            }}
+          >
+            Send
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 5, paddingLeft: 2 }}>
+          Shift+Enter for newline · Enter to send
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Canvas inner (needs ReactFlow context) ────────────────────────────────────
+function CanvasInner({
+  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, logoState, advisorOpen, onAdvisorOpen,
+}: {
+  nodes: Node[];
+  edges: Edge[];
+  onNodesChange: any;
+  onEdgesChange: any;
+  onConnect: (c: Connection) => void;
+  onDrop: (e: DragEvent<HTMLDivElement>) => void;
+  onDragOver: (e: DragEvent<HTMLDivElement>) => void;
+  selectedNode: Node | null;
+  setSelectedNode: (n: Node | null) => void;
+  onUpdateNode: (id: string, data: Record<string, unknown>) => void;
+  onDeleteEdge: (edgeId: string) => void;
+  onAutoLayout: () => void;
+  logoState: LogoState;
+  advisorOpen: boolean;
+  onAdvisorOpen: () => void;
+}) {
+  const { fitView, zoomIn, zoomOut, getZoom, setViewport, getViewport } = useReactFlow();
+  const [zoom, setZoom] = useState(100);
+  const visualEdges = styledEdges(edges, nodes);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setZoom(Math.round(getZoom() * 100));
+    }, 250);
+    return () => clearInterval(id);
+  }, [getZoom]);
+
+  function handleSliderChange(v: number) {
+    setZoom(v);
+    const vp = getViewport();
+    setViewport({ ...vp, zoom: v / 100 });
+  }
+
+  const iconBtn: React.CSSProperties = {
+    width: 30, height: 30, borderRadius: 6, border: 'none', cursor: 'pointer',
+    background: 'transparent', color: C.textMuted, display: 'flex', alignItems: 'center',
+    justifyContent: 'center', transition: 'all 0.15s', flexShrink: 0,
+  };
+
+  return (
+    <div style={{ flex: 1, position: 'relative', height: '100%' }}>
+      <style>{CANVAS_STYLES}</style>
+      {/* Canvas toolbar */}
+      <div style={{
+        position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)',
+        zIndex: 10, display: 'flex', alignItems: 'center', gap: 4,
+        ...glass, borderRadius: 10, padding: '5px 10px',
+      }}>
+        <button
+          onClick={() => { zoomOut(); }}
+          title="Zoom out"
+          style={iconBtn}
+          onMouseEnter={e => (e.currentTarget.style.color = C.text)}
+          onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+        <input
+          type="range" min={10} max={200} step={10} value={zoom}
+          onChange={e => handleSliderChange(Number(e.target.value))}
+          title="Zoom level"
+          style={{ width: 72, accentColor: C.cyan, cursor: 'pointer', margin: '0 2px' }}
+        />
+        <span style={{ fontSize: 11, color: C.textMuted, minWidth: 36, textAlign: 'center', fontFamily: 'JetBrains Mono, monospace' }}>
+          {zoom}%
+        </span>
+        <button
+          onClick={() => { zoomIn(); }}
+          title="Zoom in"
+          style={iconBtn}
+          onMouseEnter={e => (e.currentTarget.style.color = C.text)}
+          onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+        <div style={{ width: 1, height: 18, background: C.outlineVariant, margin: '0 4px' }} />
+        <button
+          onClick={() => fitView({ padding: 0.15 })}
+          title="Fit to screen"
+          style={iconBtn}
+          onMouseEnter={e => (e.currentTarget.style.color = C.cyan)}
+          onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 3 21 3 21 9"/>
+            <polyline points="9 21 3 21 3 15"/>
+            <line x1="21" y1="3" x2="14" y2="10"/>
+            <line x1="3" y1="21" x2="10" y2="14"/>
+          </svg>
+        </button>
+        <div style={{ width: 1, height: 18, background: C.outlineVariant, margin: '0 4px' }} />
+        <button
+          onClick={() => { onAutoLayout(); setTimeout(() => fitView({ padding: 0.2 }), 50); }}
+          title="Auto-arrange nodes"
+          style={iconBtn}
+          onMouseEnter={e => (e.currentTarget.style.color = C.purple)}
+          onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="3" width="6" height="6" rx="1"/>
+            <rect x="9" y="3" width="6" height="6" rx="1"/>
+            <rect x="16" y="3" width="6" height="6" rx="1"/>
+            <line x1="5" y1="9" x2="5" y2="21"/>
+            <line x1="12" y1="9" x2="12" y2="21"/>
+            <line x1="19" y1="9" x2="19" y2="21"/>
+          </svg>
+        </button>
+        <div style={{ width: 1, height: 18, background: C.outlineVariant, margin: '0 4px' }} />
+        <button
+          onClick={onAdvisorOpen}
+          title="AI Workflow Advisor"
+          style={{
+            ...iconBtn,
+            width: 'auto', height: 30, padding: '0 10px', gap: 5,
+            display: 'flex', alignItems: 'center', borderRadius: 6,
+            border: advisorOpen ? `1px solid rgba(0,240,255,0.35)` : '1px solid transparent',
+            background: advisorOpen ? 'rgba(0,240,255,0.08)' : 'transparent',
+            color: advisorOpen ? C.cyan : C.textMuted,
+          }}
+          onMouseEnter={e => { if (!advisorOpen) { e.currentTarget.style.color = C.cyan; e.currentTarget.style.border = `1px solid rgba(0,240,255,0.2)`; } }}
+          onMouseLeave={e => { if (!advisorOpen) { e.currentTarget.style.color = C.textMuted; e.currentTarget.style.border = '1px solid transparent'; } }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>assistant</span>
+          <span style={{ fontSize: 11, fontWeight: 600 }}>AI Advisor</span>
+        </button>
+      </div>
+
+      <ReactFlow
+        nodes={nodes}
+        edges={visualEdges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onDrop={onDrop}
+        onDragOver={onDragOver}
+        nodeTypes={NODE_TYPES}
+        onNodeClick={(_evt: React.MouseEvent, node: Node) => setSelectedNode(node)}
+        onPaneClick={() => setSelectedNode(null)}
+        onEdgeDoubleClick={(_evt: React.MouseEvent, edge: Edge) => onDeleteEdge(edge.id)}
+        fitView
+        fitViewOptions={{ padding: 0.15 }}
+        style={{ background: C.bg }}
+        defaultEdgeOptions={{ animated: true, style: EDGE_STYLE }}
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background variant={BackgroundVariant.Dots} color="rgba(132,148,149,0.15)" gap={22} size={1} />
+        <CanvasLogo state={logoState} />
+        <MiniMap
+          style={{ background: C.surfaceLow, border: `1px solid ${C.outlineVariant}`, borderRadius: 8 }}
+          nodeColor={(n: Node) => n.type === 'entryPoint' ? C.cyan : n.type === 'orchestrator' ? C.purple : n.type === 'middleware' ? C.amber : C.green}
+          maskColor="rgba(5,20,36,0.7)"
+        />
+      </ReactFlow>
+    </div>
+  );
+}
+
+const toolBtnStyle: React.CSSProperties = {
+  padding: '4px 8px', borderRadius: 6, border: 'none', cursor: 'pointer',
+  background: 'transparent', color: C.textMuted, display: 'flex', alignItems: 'center',
+  transition: 'all 0.1s',
+};
+
+// ── Connection rule system ────────────────────────────────────────────────────
+// To add a new node type: add one entry here. The validator needs no changes.
+interface NodePortDef {
+  accepts: string[];       // signal types this node can receive
+  emits: string[];         // signal types this node produces
+  maxOutgoing?: number;    // undefined = unlimited
+  maxIncoming?: number;    // undefined = unlimited
+}
+
+const NODE_PORTS: Record<string, NodePortDef> = {
+  entryPoint:   { accepts: [],                           emits: ['request'] },  // multiple allowed, unique by slug
+  orchestrator: { accepts: ['request', 'signal'],         emits: ['task', 'signal'] },
+  agent:        { accepts: ['task', 'mw_task'],           emits: ['result'] },
+  middleware:   { accepts: ['task', 'mw_task'],           emits: ['mw_task'] },
+  // future: router, condition, webhook, llm, transform …
+};
+
+function validateConnection(
+  sourceType: string,
+  targetType: string,
+  sourceId: string,
+  targetId: string,
+  edges: Edge[],
+): string | null {
+  const src = NODE_PORTS[sourceType];
+  const tgt = NODE_PORTS[targetType];
+  if (!src || !tgt) return `Unknown node type`;
+
+  const compatible = src.emits.some(sig => tgt.accepts.includes(sig));
+  if (!compatible) return `Cannot connect ${sourceType} → ${targetType}`;
+
+  // Prevent duplicate edge before cardinality check
+  if (edges.some(e => e.source === sourceId && e.target === targetId)) {
+    return `These nodes are already connected`;
+  }
+
+  if (src.maxOutgoing !== undefined) {
+    const out = edges.filter(e => e.source === sourceId).length;
+    if (out >= src.maxOutgoing) return `Entry point already has an orchestrator — remove it first`;
+  }
+
+  if (tgt.maxIncoming !== undefined) {
+    const inc = edges.filter(e => e.target === targetId).length;
+    if (inc >= tgt.maxIncoming) return `This node already has the maximum number of incoming connections`;
+  }
+
+  return null;
+}
+
+interface ChainStatus {
+  ready: boolean;
+  label: string;
+  color: string;
+  epNode?: Node;
+  orchNode?: Node;
+  agentCount: number;
+}
+
+// ── Canvas rule engine ────────────────────────────────────────────────────────
+type RuleSeverity = 'block' | 'warn';
+interface CanvasRule {
+  id: string;
+  severity: RuleSeverity;
+  message: (ctx: { nodes: Node[]; edges: Edge[] }) => string | null; // null = rule passes
+  // Returns the IDs of nodes that violate this rule (for red-ring highlighting)
+  errorNodeIds?: (ctx: { nodes: Node[]; edges: Edge[] }) => string[];
+}
+
+const CANVAS_RULES: CanvasRule[] = [
+  {
+    id: 'AT_LEAST_ONE_EP',
+    severity: 'block',
+    message: ({ nodes }) => nodes.filter(n => n.type === 'entryPoint').length === 0
+      ? 'Drop an Entry Point to start' : null,
+  },
+  {
+    id: 'EP_SLUG_NONEMPTY',
+    severity: 'block',
+    message: ({ nodes }) => {
+      const bad = nodes.filter(n => n.type === 'entryPoint' && !(n.data as EntryPointData).slug);
+      return bad.length > 0 ? 'Every entry point needs a slug' : null;
+    },
+    errorNodeIds: ({ nodes }) =>
+      nodes.filter(n => n.type === 'entryPoint' && !(n.data as EntryPointData).slug).map(n => n.id),
+  },
+  {
+    id: 'EP_SLUG_UNIQUE',
+    severity: 'block',
+    message: ({ nodes }) => {
+      const slugs = nodes.filter(n => n.type === 'entryPoint').map(n => (n.data as EntryPointData).slug ?? '').filter(s => s !== '');
+      return new Set(slugs).size !== slugs.length ? 'Duplicate entry point slug — each slug must be unique' : null;
+    },
+    errorNodeIds: ({ nodes }) => {
+      const seen = new Set<string>(); const dupes = new Set<string>();
+      nodes.filter(n => n.type === 'entryPoint').forEach(n => {
+        const s = (n.data as EntryPointData).slug ?? '';
+        if (s) { if (seen.has(s)) dupes.add(s); else seen.add(s); }
+      });
+      return nodes.filter(n => n.type === 'entryPoint' && dupes.has((n.data as EntryPointData).slug ?? '')).map(n => n.id);
+    },
+  },
+  {
+    id: 'EP_SLUG_FORMAT',
+    severity: 'block',
+    message: ({ nodes }) => {
+      const bad = nodes.filter(n => n.type === 'entryPoint' && !(n.data as EntryPointData).slug?.match(/^[a-z0-9_-]{1,64}$/));
+      return bad.length > 0 ? `Slug "${(bad[0].data as EntryPointData).slug}": lowercase letters, numbers, _ or - only` : null;
+    },
+    errorNodeIds: ({ nodes }) =>
+      nodes.filter(n => n.type === 'entryPoint' && !(n.data as EntryPointData).slug?.match(/^[a-z0-9_-]{1,64}$/)).map(n => n.id),
+  },
+  {
+    id: 'EP_HAS_ORCH',
+    severity: 'block',
+    message: ({ nodes, edges }) => {
+      const epNodes = nodes.filter(n => n.type === 'entryPoint');
+      const unconnected = epNodes.filter(ep => !edges.some(e => e.source === ep.id && nodes.find(n => n.id === e.target && n.type === 'orchestrator')));
+      return unconnected.length > 0 ? 'Every entry point must connect to an orchestrator' : null;
+    },
+    errorNodeIds: ({ nodes, edges }) =>
+      nodes.filter(n => n.type === 'entryPoint' && !edges.some(e => e.source === n.id && nodes.find(m => m.id === e.target && m.type === 'orchestrator'))).map(n => n.id),
+  },
+  {
+    id: 'ORCH_HAS_AGENT',
+    severity: 'warn',
+    message: ({ nodes, edges }) => {
+      const orchNodes = nodes.filter(n => n.type === 'orchestrator');
+      const empty = orchNodes.filter(o => !edges.some(e => e.source === o.id && nodes.find(n => n.id === e.target && n.type === 'agent')));
+      return empty.length > 0 ? `${empty.length} orchestrator${empty.length > 1 ? 's have' : ' has'} no agents` : null;
+    },
+    errorNodeIds: ({ nodes, edges }) =>
+      nodes.filter(n => n.type === 'orchestrator' && !edges.some(e => e.source === n.id && nodes.find(m => m.id === e.target && m.type === 'agent'))).map(n => n.id),
+  },
+  {
+    id: 'VOICE_EP_NEEDS_STT_TTS',
+    severity: 'warn',
+    message: ({ nodes, edges }) => {
+      const voiceEps = nodes.filter(n => n.type === 'entryPoint' && (n.data as EntryPointData).epType === 'voice');
+      for (const ep of voiceEps) {
+        const orchEdge = edges.find(e => e.source === ep.id);
+        if (!orchEdge) continue;
+        const orch = nodes.find(n => n.id === orchEdge.target && n.type === 'orchestrator');
+        if (!orch) continue;
+        const d = orch.data as OrchestratorData;
+        if (!d.transcriptionProvider || !d.ttsProvider) {
+          return `Voice entry point requires STT and TTS providers configured on its orchestrator`;
+        }
+      }
+      return null;
+    },
+    errorNodeIds: ({ nodes, edges }) => {
+      const bad: string[] = [];
+      const voiceEps = nodes.filter(n => n.type === 'entryPoint' && (n.data as EntryPointData).epType === 'voice');
+      for (const ep of voiceEps) {
+        const orchEdge = edges.find(e => e.source === ep.id);
+        if (!orchEdge) continue;
+        const orch = nodes.find(n => n.id === orchEdge.target && n.type === 'orchestrator');
+        if (!orch) continue;
+        const d = orch.data as OrchestratorData;
+        if (!d.transcriptionProvider || !d.ttsProvider) bad.push(ep.id, orch.id);
+      }
+      return bad;
+    },
+  },
+];
+
+// Returns a map of nodeId → error message for all currently violated rules
+function getErrorNodeMap(nodes: Node[], edges: Edge[]): Map<string, string> {
+  const ctx = { nodes, edges };
+  const result = new Map<string, string>();
+  for (const rule of CANVAS_RULES) {
+    const msg = rule.message(ctx);
+    if (msg && rule.errorNodeIds) {
+      const ids = rule.errorNodeIds(ctx);
+      for (const id of ids) {
+        if (!result.has(id)) result.set(id, msg); // first rule wins for tooltip
+      }
+    }
+  }
+  return result;
+}
+
+function runRules(nodes: Node[], edges: Edge[], mode: 'save' | 'deploy'): { ok: boolean; message: string | null; warnings: string[] } {
+  const ctx = { nodes, edges };
+  for (const rule of CANVAS_RULES) {
+    if (rule.severity === 'block') {
+      const msg = rule.message(ctx);
+      if (msg) return { ok: false, message: msg, warnings: [] };
+    }
+  }
+  const warnings: string[] = [];
+  for (const rule of CANVAS_RULES) {
+    if (rule.severity === 'warn') {
+      const msg = rule.message(ctx);
+      if (msg) {
+        if (mode === 'deploy') return { ok: false, message: msg, warnings: [] };
+        warnings.push(msg);
+      }
+    }
+  }
+  return { ok: true, message: null, warnings };
+}
+
+// ── Chain analysis ────────────────────────────────────────────────────────────
+function analyzeChain(nodes: Node[], edges: Edge[]): ChainStatus {
+  const result = runRules(nodes, edges, 'save');
+  if (!result.ok) return { ready: false, label: result.message!, color: C.error, agentCount: 0 };
+
+  const epNodes = nodes.filter(n => n.type === 'entryPoint');
+  const orchNodes = nodes.filter(n => n.type === 'orchestrator');
+  const agentCount = nodes.filter(n => n.type === 'agent').length;
+  const epNode = epNodes[0];
+  const orchEdge = edges.find(e => e.source === epNode.id);
+  const orchNode = orchEdge ? nodes.find(n => n.id === orchEdge.target) : undefined;
+
+  const warnLabel = result.warnings.length > 0 ? ` · ${result.warnings[0]}` : '';
+  return {
+    ready: true,
+    label: `Ready · ${epNodes.length} EP · ${orchNodes.length} Orch · ${agentCount} agent${agentCount !== 1 ? 's' : ''}${warnLabel}`,
+    color: result.warnings.length > 0 ? C.amber : C.green,
+    epNode,
+    orchNode,
+    agentCount,
+  };
+}
+
+// ── Compute styled edges based on chain validity ──────────────────────────────
+function styledEdges(edges: Edge[], nodes: Node[]): Edge[] {
+  // Compute set of all edges that are part of a valid EP→Orch→(MW→)*Agent chain
+  const chainEdgeIds = new Set<string>();
+  const epNodes = nodes.filter(n => n.type === 'entryPoint');
+  for (const epNode of epNodes) {
+    const orchEdge = edges.find(e => e.source === epNode.id && nodes.some(n => n.id === e.target && n.type === 'orchestrator'));
+    if (!orchEdge) continue;
+    chainEdgeIds.add(orchEdge.id);
+    const orchNode = nodes.find(n => n.id === orchEdge.target)!;
+    for (const downEdge of edges.filter(e => e.source === orchNode.id)) {
+      chainEdgeIds.add(downEdge.id);
+    }
+  }
+  return edges.map(e => ({
+    ...e,
+    animated: chainEdgeIds.has(e.id),
+    style: chainEdgeIds.has(e.id)
+      ? { stroke: C.cyan, strokeWidth: 2 }
+      : { stroke: C.error, strokeWidth: 1.5, strokeDasharray: '5 4' },
+  }));
+}
+
+function toSlug(s: string) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+}
+
+// ── Entry Point Picker modal ──────────────────────────────────────────────────
+interface EpPickerEntry { epNode: Node; orchName: string; slug: string; label: string; epType: string; }
+
+function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPickerEntry[]; onSelect: (e: EpPickerEntry) => void; onClose: () => void; }) {
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(5,20,36,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div style={{ ...glass, borderRadius: 16, padding: '28px 32px', minWidth: 360, maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Choose Entry Point to Test</div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 20 }}>close</span>
+          </button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {entries.map(entry => (
+            <button key={entry.slug} onClick={() => onSelect(entry)} style={{
+              padding: '12px 16px', borderRadius: 10, border: `1px solid ${C.outlineVariant}`,
+              background: C.surfaceLow, color: C.text, cursor: 'pointer', textAlign: 'left',
+              display: 'flex', alignItems: 'center', gap: 12, transition: 'border-color 0.15s, background 0.15s',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = C.cyan; e.currentTarget.style.background = 'rgba(0,240,255,0.05)'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.outlineVariant; e.currentTarget.style.background = C.surfaceLow; }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 22, color: C.cyan, flexShrink: 0 }}>{EP_MS_ICON[entry.epType] ?? 'bolt'}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{entry.label || entry.slug}</div>
+                <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', marginTop: 2 }}>{entry.slug}</div>
+                {entry.orchName && <div style={{ fontSize: 11, color: C.purple, marginTop: 2 }}>{entry.orchName}</div>}
+              </div>
+              <span className="material-symbols-outlined" style={{ fontSize: 16, color: C.textMuted, marginLeft: 'auto', flexShrink: 0 }}>arrow_forward</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Builder view ──────────────────────────────────────────────────────────────
+function BuilderView({
+  app,
+  agents,
+  onBack,
+  onSaved,
+  onAgentsChange,
+}: {
+  app: Application | null;
+  agents: Agent[];
+  onBack: () => void;
+  onSaved: () => void;
+  onAgentsChange: (update: (prev: Agent[]) => Agent[]) => void;
+}) {
+  const initial = app
+    ? buildNodesFromApp(app, agents)
+    : {
+        nodes: [],
+        edges: [],
+      };
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [currentApp, setCurrentApp] = useState<Application | null>(app);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [libWidth, setLibWidth] = useState(280);
+  const [middlewareDefs, setMiddlewareDefs] = useState<MiddlewareDef[]>([]);
+  const [appName, setAppName] = useState(app?.name ?? '');
+  const [convTokenLimit, setConvTokenLimit] = useState<string>(
+    app?.entry_points?.[0]?.conversation_token_limit != null ? String(app.entry_points[0].conversation_token_limit) : ''
+  );
+  const [slugLocked, setSlugLocked] = useState(!!(app?.entry_points?.[0]?.slug));
+  const [isDirty, setIsDirty] = useState(false);
+  const [testPickerOpen, setTestPickerOpen] = useState(false);
+  const [logoState, setLogoState] = useState<LogoState>('idle');
+  const logoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rfWrapper = useRef<HTMLDivElement>(null);
+
+  // ── Advisor state ────────────────────────────────────────────────────────────
+  const [advisorOpen, setAdvisorOpen] = useState(false);
+  const [advisorMessages, setAdvisorMessages] = useState<AdvisorMessage[]>([]);
+  const [advisorBusy, setAdvisorBusy] = useState(false);
+  const [advisorInput, setAdvisorInput] = useState('');
+  const [advisorContextId, setAdvisorContextId] = useState<string | null>(null);
+  const [advisorScanning, setAdvisorScanning] = useState(false);
+  const advisorWsRef = useRef<WebSocket | null>(null);
+  const advisorBufRef = useRef('');
+  const advisorScanningRef = useRef(false);
+
+  function triggerLogo(state: LogoState, duration = 2000) {
+    if (logoTimerRef.current) clearTimeout(logoTimerRef.current);
+    setLogoState(state);
+    logoTimerRef.current = setTimeout(() => setLogoState('idle'), duration);
+  }
+  const nodesRef = useRef<Node[]>(initial.nodes);
+  const edgesRef = useRef<Edge[]>(initial.edges);
+  const { screenToFlowPosition, getViewport } = useReactFlow();
+
+  const epNode = nodes.find((n: Node) => n.type === 'entryPoint');
+
+  deleteNodeRef.current = (id: string) => {
+    // Deleting an EP node just removes it from the canvas; the diff is applied on next Save.
+    setNodes((nds: Node[]) => nds.filter(n => n.id !== id));
+    setEdges((eds: Edge[]) => eds.filter(e => e.source !== id && e.target !== id));
+    setSelectedNode((prev: Node | null) => prev?.id === id ? null : prev);
+  };
+
+  // Fetch middleware defs on mount
+  useEffect(() => {
+    themApi.listMiddlewareDefs().then(setMiddlewareDefs).catch(() => {/* non-critical */});
+  }, []);
+
+  // Keep refs in sync so onConnect can read current state synchronously
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+  useEffect(() => { edgesRef.current = edges; }, [edges]);
+
+  // Dirty tracking — set on any change after mount
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    if (!mountedRef.current) { mountedRef.current = true; return; }
+    setIsDirty(true);
+    // Only switch to dirty state if not mid-animation
+    setLogoState(prev => (prev === 'idle' || prev === 'dirty') ? 'dirty' : prev);
+  }, [nodes, edges, appName]);
+
+  // Return logo to idle when canvas becomes clean
+  useEffect(() => {
+    if (!isDirty) setLogoState(prev => prev === 'dirty' ? 'idle' : prev);
+  }, [isDirty]);
+
+  // Warn before leaving when dirty
+  useEffect(() => {
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (!isDirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [isDirty]);
+
+  // Reactive validation: inject _error/_errorMsg on problem nodes whenever the
+  // canvas structure changes. We derive a stable key from fields that affect rules
+  // (slugs, node types, edges) so we don't re-run on every minor data change.
+  const validationKey = JSON.stringify([
+    edges.map(e => `${e.source}->${e.target}`).sort(),
+    nodes.map(n => `${n.id}:${n.type}:${(n.data as Record<string, unknown>).slug ?? ''}`).sort(),
+  ]);
+  useEffect(() => {
+    const errorMap = getErrorNodeMap(nodesRef.current, edgesRef.current);
+    setNodes(nds => nds.map(n => {
+      const msg = errorMap.get(n.id);
+      const hasError = msg !== undefined;
+      if (hasError === Boolean(n.data._error) && (n.data._errorMsg ?? '') === (msg ?? '')) return n;
+      return { ...n, data: { ...n.data, _error: hasError || undefined, _errorMsg: msg ?? undefined } };
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [validationKey]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNode) {
+        const tag = (document.activeElement as HTMLElement)?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        setNodes((nds: Node[]) => nds.filter(n => n.id !== selectedNode.id));
+        setEdges((eds: Edge[]) => eds.filter(e => e.source !== selectedNode.id && e.target !== selectedNode.id));
+        setSelectedNode(null);
+      }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [selectedNode, setNodes, setEdges]);
+
+  function showToast(msg: string, ok: boolean) {
+    setToast({ msg, ok });
+    setTimeout(() => setToast(null), 3000);
+  }
+
+  // ── Advisor functions ────────────────────────────────────────────────────────
+
+  function serializeWorkflow(): object {
+    const nds = nodesRef.current;
+    const eds = edgesRef.current;
+
+    // Build agent id→slug lookup so orchestrators can name their assigned agents
+    const agentIdToSlug: Record<string, string> = {};
+    for (const a of agents) agentIdToSlug[a.id] = a.slug || a.id;
+
+    return {
+      nodes: nds.map(n => {
+        if (n.type === 'entryPoint') {
+          const d = n.data as EntryPointData;
+          return { type: 'entry_point', id: n.id, epType: d.epType, accessMode: d.accessMode, slug: d.slug, convTokenLimit: d.convTokenLimit, maxConcurrentSessions: d.maxConcurrentSessions, queueTimeout: d.queueTimeout, queueMessage: d.queueMessage };
+        }
+        if (n.type === 'orchestrator') {
+          const d = n.data as OrchestratorData;
+          const rawPrompt = d.systemPrompt ?? '';
+          const assignedAgentIds = (d.allowedAgentIds ?? []) as string[];
+          return {
+            type: 'orchestrator',
+            id: n.id,
+            orchestratorId: d.appOrchestratorId ?? null,
+            name: d.name,
+            displayName: d.displayName,
+            model: d.model,
+            maxParallelTools: d.maxParallelTools,
+            maxIterations: d.maxIterations ?? 10,
+            historyWindow: d.historyWindow ?? null,
+            memoryEnabled: d.memoryEnabled ?? false,
+            systemPrompt: rawPrompt.slice(0, 800) + (rawPrompt.length > 800 ? '…[truncated]' : ''),
+            assignedAgents: assignedAgentIds.map(aid => ({
+              id: aid,
+              slug: agentIdToSlug[aid] ?? aid,
+            })),
+          };
+        }
+        if (n.type === 'agent') {
+          const d = n.data as AgentData;
+          const full = agents.find(a => a.id === d.agentId);
+          return {
+            type: 'agent',
+            id: n.id,
+            agentId: full?.id,
+            slug: d.name,
+            displayName: d.displayName,
+            description: d.description,
+            transport: d.transport,
+            hasAuthToken: full?.auth_token_set ?? false,
+            scanResult: full?.last_scan_result
+              ? { score: full.last_scan_result.score, risk: full.last_scan_result.risk, summary: full.last_scan_result.summary }
+              : null,
+          };
+        }
+        return { type: n.type, id: n.id };
+      }),
+      edges: eds.map(e => ({ source: e.source, target: e.target })),
+    };
+  }
+
+  async function advisorSend(text: string | null, isInitial = false) {
+    if (advisorBusy) return;
+    setAdvisorBusy(true);
+    advisorBufRef.current = '';
+    triggerLogo('thinking', 120000); // hold until done
+
+    const content = isInitial
+      ? `Analyze this workflow:\n\n${JSON.stringify(serializeWorkflow(), null, 2)}`
+      : (text ?? '').trim();
+
+    if (!isInitial && !content) { setAdvisorBusy(false); return; }
+
+    setAdvisorMessages(prev => [
+      ...prev,
+      { role: 'user', text: isInitial ? '🔍 Analyzing your workflow…' : content },
+    ]);
+
+    let token: string;
+    try {
+      const r = await fetch('/api/auth/token');
+      if (!r.ok) throw new Error('auth');
+      ({ token } = await r.json());
+    } catch {
+      setAdvisorMessages(prev => [...prev, { role: 'assistant', text: 'Could not connect — please refresh and try again.' }]);
+      setAdvisorBusy(false);
+      return;
+    }
+
+    const ws = new WebSocket(`${getBridgeWs()}/ws/orchestrate/workflow_advisor?token=${encodeURIComponent(token)}`);
+    advisorWsRef.current = ws;
+
+    ws.onopen = () => {
+      const payload: Record<string, string> = { type: 'message', content };
+      if (advisorContextId) payload.context_id = advisorContextId;
+      ws.send(JSON.stringify(payload));
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data as string);
+        if (msg.type === 'ready') {
+          if (msg.context_id) setAdvisorContextId(msg.context_id as string);
+          setAdvisorMessages(prev => [...prev, { role: 'assistant', text: '', streaming: true }]);
+        } else if (msg.type === 'token') {
+          advisorBufRef.current += (msg.text ?? '') as string;
+          const { text: parsed, proposals } = parseAdvisorBuffer(advisorBufRef.current);
+          setAdvisorMessages(prev => {
+            const last = prev[prev.length - 1];
+            const merged = mergeProposals(last?.proposals, proposals);
+            const next: AdvisorMessage = { role: 'assistant', text: parsed, streaming: true, proposals: merged };
+            if (last?.role === 'assistant') return [...prev.slice(0, -1), next];
+            return [...prev, next];
+          });
+        } else if (msg.type === 'done') {
+          const { text: parsed, proposals } = parseAdvisorBuffer(advisorBufRef.current);
+          setAdvisorMessages(prev => {
+            const last = prev[prev.length - 1];
+            if (last?.role === 'assistant') {
+              const merged = mergeProposals(last.proposals, proposals);
+              return [...prev.slice(0, -1), { ...last, text: parsed, proposals: merged, streaming: false }];
+            }
+            return prev;
+          });
+          setAdvisorBusy(false);
+          triggerLogo('idle', 1);
+          ws.close();
+        } else if (msg.type === 'error') {
+          setAdvisorMessages(prev => [...prev, { role: 'assistant', text: `⚠️ ${msg.message ?? 'Something went wrong.'}` }]);
+          setAdvisorBusy(false);
+          triggerLogo('idle', 1);
+          ws.close();
+        }
+      } catch { /* ignore parse errors */ }
+    };
+
+    ws.onerror = () => { setAdvisorBusy(false); triggerLogo('idle', 1); };
+    ws.onclose = () => { setAdvisorBusy(false); };
+  }
+
+  async function handleAdvisorOpen() {
+    if (advisorScanningRef.current) return;
+
+    // If already open, just re-focus (no re-scan)
+    if (advisorOpen) { setAdvisorOpen(false); triggerLogo('idle', 1); return; }
+
+    advisorScanningRef.current = true;
+    setAdvisorScanning(true);
+    setAdvisorOpen(true);
+
+    // Scan animation — nodes light up sequentially
+    const nodeIds = nodesRef.current.map(n => n.id);
+    if (nodeIds.length > 0) {
+      const delay = Math.min(200, Math.floor(1200 / nodeIds.length));
+      for (let i = 0; i < nodeIds.length; i++) {
+        setNodes(nds => nds.map(n => ({
+          ...n,
+          data: { ...n.data, _scanning: n.id === nodeIds[i] },
+        })));
+        await new Promise(r => setTimeout(r, delay));
+      }
+      // Clear scan highlight
+      setNodes(nds => nds.map(n => ({ ...n, data: { ...n.data, _scanning: false } })));
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    advisorScanningRef.current = false;
+    setAdvisorScanning(false);
+
+    // Only send initial analysis if fresh session
+    if (advisorMessages.length === 0) {
+      await advisorSend(null, true);
+    }
+  }
+
+  function handleAdvisorRescan() {
+    setAdvisorMessages([]);
+    setAdvisorContextId(null);
+    advisorBufRef.current = '';
+    handleAdvisorOpen();
+  }
+
+  function setProposalStatus(msgIndex: number, proposalId: string, status: ProposalStatus, error?: string) {
+    setAdvisorMessages(prev => prev.map((m, i) => {
+      if (i !== msgIndex || !m.proposals) return m;
+      return {
+        ...m,
+        proposals: m.proposals.map(p =>
+          p.id === proposalId ? { ...p, status, error } : p
+        ),
+      };
+    }));
+  }
+
+  function reflectProposalOnCanvas(proposal: Proposal, updated?: Agent) {
+    if (proposal.targetType === 'agent' && updated) {
+      onAgentsChange(prev => prev.map(a => a.id === proposal.targetId ? updated : a));
+    }
+    // Update canvas node data for fields that live there
+    const nodeId = nodesRef.current.find(n => {
+      const d = n.data as Record<string, unknown>;
+      return d.appOrchestratorId === proposal.targetId || d.orchestratorId === proposal.targetId || d.agentId === proposal.targetId;
+    })?.id;
+    if (!nodeId) return;
+    if (proposal.field === 'display_name') updateNodeData(nodeId, { displayName: proposal.suggested });
+    if (proposal.field === 'description') updateNodeData(nodeId, { description: proposal.suggested });
+    if (proposal.field === 'max_parallel_tools') updateNodeData(nodeId, { maxParallelTools: proposal.suggested });
+    if (proposal.field === 'system_prompt') updateNodeData(nodeId, { systemPrompt: proposal.suggested });
+  }
+
+  async function applyProposal(msgIndex: number, proposal: Proposal) {
+    if (proposal.status === 'applying' || proposal.status === 'applied') return;
+    setProposalStatus(msgIndex, proposal.id, 'applying');
+    try {
+      const body: Record<string, unknown> = { [proposal.field]: proposal.suggested };
+      if (proposal.targetType === 'orchestrator') {
+        // Orchestrators are now app-scoped — reflect change on canvas only (save will persist)
+        reflectProposalOnCanvas(proposal);
+      } else {
+        const updated = await themApi.updateAgent(proposal.targetId, body);
+        reflectProposalOnCanvas(proposal, updated);
+      }
+      setProposalStatus(msgIndex, proposal.id, 'applied');
+      showToast(`Applied: ${FIELD_LABEL[proposal.field] ?? proposal.field} on ${proposal.targetName}`, true);
+    } catch (e) {
+      setProposalStatus(msgIndex, proposal.id, 'failed', String(e));
+      showToast(`Failed to apply ${FIELD_LABEL[proposal.field] ?? proposal.field}`, false);
+    }
+  }
+
+  async function applyAll(msgIndex: number) {
+    const msg = advisorMessages[msgIndex];
+    if (!msg?.proposals) return;
+    const pending = msg.proposals.filter(p => p.status === 'pending' || p.status === 'stale' || p.status === 'failed');
+    for (const p of pending) {
+      await applyProposal(msgIndex, p);
+    }
+  }
+
+  const onConnect = useCallback((c: Connection) => {
+    const nds = nodesRef.current;
+    const eds = edgesRef.current;
+    const srcNode = nds.find(n => n.id === c.source);
+    const tgtNode = nds.find(n => n.id === c.target);
+    if (!srcNode || !tgtNode) return;
+    const err = validateConnection(srcNode.type!, tgtNode.type!, c.source!, c.target!, eds);
+    if (err) { showToast(err, false); triggerLogo('warning', 1800); return; }
+    setEdges(eds => addEdge({ ...c, animated: true, style: { stroke: C.cyan, strokeWidth: 2 } }, eds));
+  }, [setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function onDragOver(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }
+
+  function onDrop(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const nodeType = e.dataTransfer.getData('nodeType');
+    const rawData = e.dataTransfer.getData('nodeData');
+    if (!nodeType || !rawData) return;
+    let nodeData: Record<string, unknown>;
+    try { nodeData = JSON.parse(rawData) as Record<string, unknown>; } catch { return; }
+
+    if (nodeType === 'entryPoint') {
+      nodeData = { ...nodeData, slug: '' };
+    }
+
+    const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    const orchId = makeId();
+    const newNode: Node = { id: orchId, type: nodeType, position, data: nodeData };
+
+    if (nodeType === 'orchestrator') {
+      const preAssigned = (nodeData.allowedAgentIds as string[] | undefined) ?? [];
+      const connectedAgents = preAssigned.length > 0 ? agents.filter(a => preAssigned.includes(a.id)) : [];
+
+      if (connectedAgents.length > 0) {
+        const spread = Math.max(connectedAgents.length * 140, 300);
+        const startX = position.x - spread / 2 + 70;
+        const agentNodes: Node[] = connectedAgents.map((agent, i) => ({
+          id: makeId(),
+          type: 'agent',
+          position: { x: startX + i * 140, y: position.y + 160 },
+          data: {
+            agentId: agent.id,
+            name: agent.slug,
+            displayName: agent.display_name,
+            description: agent.description,
+            transport: agent.transport,
+            endpointUrl: agent.endpoint_url,
+            tags: agent.tags ?? [],
+            icon: agent.icon || agentIconForLibrary(agent),
+          } satisfies AgentData,
+        }));
+        const agentEdges: Edge[] = agentNodes.map((an, i) => ({
+          id: `e_${orchId}_agent_${i}`,
+          source: orchId,
+          target: an.id,
+          animated: true,
+          style: EDGE_STYLE,
+        }));
+        setNodes(nds => [...nds, newNode, ...agentNodes]);
+        setEdges(eds => [...eds, ...agentEdges]);
+        return;
+      }
+    }
+
+    setNodes((nds: Node[]) => [...nds, newNode]);
+  }
+
+  function deleteEdge(edgeId: string) {
+    setEdges(eds => eds.filter(e => e.id !== edgeId));
+  }
+
+  function autoLayout() {
+    setNodes(nds => applyDagreLayout(nds, edgesRef.current));
+  }
+
+  function updateNodeData(id: string, partialData: Record<string, unknown>) {
+    setNodes((nds: Node[]) => nds.map((n: Node) => n.id === id ? { ...n, data: { ...n.data, ...partialData } } : n));
+    setSelectedNode((prev: Node | null) => prev && prev.id === id ? { ...prev, data: { ...prev.data, ...partialData } } : prev);
+  }
+
+  async function handleSave(deploy = false) {
+    const validation = runRules(nodes, edges, deploy ? 'deploy' : 'save');
+    if (!validation.ok) {
+      showToast(validation.message!, false);
+      triggerLogo('error', 1800);
+      // Shake problem nodes and show per-node error tooltip
+      const errorMap = getErrorNodeMap(nodes, edges);
+      if (errorMap.size > 0) {
+        setNodes(nds => nds.map(n => {
+          const msg = errorMap.get(n.id);
+          if (!msg) return n;
+          return { ...n, data: { ...n.data, _error: true, _shake: true, _errorMsg: msg } };
+        }));
+        setTimeout(() => {
+          setNodes(nds => nds.map(n => n.data._shake ? { ...n, data: { ...n.data, _shake: undefined } } : n));
+        }, 650);
+      }
+      return;
+    }
+
+    // Collect EP nodes — need at least one connected to an orch for name resolution
+    const epNodes = nodes.filter((n: Node) => n.type === 'entryPoint');
+    if (epNodes.length === 0) { showToast('Drop an Entry Point to start', false); return; }
+    const firstSlug = (epNodes[0].data as EntryPointData).slug || '';
+    const resolvedName = appName.trim() || firstSlug;
+
+    setSaving(true);
+    setLogoState('thinking');
+    try {
+      // Build canvas layout keyed by node id (simple, stable)
+      const canvasLayout: Record<string, { x: number; y: number }> = {};
+      nodes.forEach((n: Node) => { canvasLayout[n.id] = { x: n.position.x, y: n.position.y }; });
+
+      // Send the graph exactly as React Flow has it — backend compiler handles everything
+      const graphNodes = nodes.map((n: Node) => ({ id: n.id, type: n.type!, data: n.data as Record<string, unknown> }));
+      const graphEdges = edges.map((e: Edge) => ({ id: e.id, source: e.source, target: e.target }));
+
+      const body: Record<string, unknown> = {
+        name: resolvedName,
+        enabled: deploy ? true : (currentApp?.enabled ?? false),
+        graph: { nodes: graphNodes, edges: graphEdges },
+        canvas: { layout: canvasLayout, viewport: getViewport() },
+      };
+
+      let saved: Application;
+      if (currentApp?.id) {
+        saved = await themApi.updateApplication(currentApp.id, body);
+      } else {
+        saved = await themApi.createApplication(body);
+      }
+      setCurrentApp(saved);
+      // Rehydrate canvas from the saved application so AO ids are correct.
+      {
+        const rebuilt = buildNodesFromApp(saved, agents);
+        setNodes(rebuilt.nodes);
+        setEdges(rebuilt.edges);
+      }
+
+      setIsDirty(false);
+      triggerLogo('success', deploy ? 2500 : 1800);
+      showToast(deploy ? '🚀 Application deployed!' : 'Saved successfully', true);
+      onSaved();
+    } catch (err: any) {
+      triggerLogo('error', 1800);
+      showToast(err?.message ?? 'Save failed', false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleTest() {
+    const anyEnabled = currentApp?.enabled || currentApp?.entry_points?.some(ep => ep.enabled);
+    if (!anyEnabled) { showToast('Deploy the application first', false); return; }
+    const epNodes = nodes.filter((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug);
+    if (epNodes.length === 0) { showToast('No entry points configured', false); return; }
+    const buildEntry = (n: Node): EpPickerEntry => {
+      const d = n.data as EntryPointData;
+      const orchEdge = edges.find((e: Edge) => e.source === n.id);
+      const orchNode = orchEdge ? nodes.find((nd: Node) => nd.id === orchEdge.target && nd.type === 'orchestrator') : undefined;
+      return { epNode: n, orchName: orchNode ? (orchNode.data as OrchestratorData).name : '', slug: d.slug, label: d.label, epType: d.epType };
+    };
+    if (epNodes.length === 1) {
+      const entry = buildEntry(epNodes[0]);
+      const url = entry.orchName ? `/admin/playground?orchestrator=${encodeURIComponent(entry.orchName)}` : '/admin/playground';
+      window.open(url, '_blank', 'noopener');
+    } else {
+      setTestPickerOpen(true);
+    }
+  }
+
+  const chain = analyzeChain(nodes, edges);
+  const epPickerEntries: EpPickerEntry[] = nodes
+    .filter((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug)
+    .map((n: Node) => {
+      const d = n.data as EntryPointData;
+      const orchEdge = edges.find((e: Edge) => e.source === n.id);
+      const orchNode = orchEdge ? nodes.find((nd: Node) => nd.id === orchEdge.target && nd.type === 'orchestrator') : undefined;
+      return { epNode: n, orchName: orchNode ? (orchNode.data as OrchestratorData).name : '', slug: d.slug, label: d.label, epType: d.epType };
+    });
+
+  return (
+    <div className="builder-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
+      {/* Top bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 16, padding: '0 24px', height: 56, flexShrink: 0,
+        ...glass, borderBottom: `1px solid ${C.glassBorder}`, zIndex: 20,
+      }}>
+        <button
+          onClick={() => {
+            if (isDirty && !confirm('You have unsaved changes. Leave anyway?')) return;
+            onBack();
+          }}
+          style={{ ...toolBtnStyle, padding: '6px 10px', color: C.textMuted }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
+        </button>
+        <div style={{ width: 1, height: 20, background: C.outlineVariant }} />
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <input
+              className="nodrag"
+              value={appName}
+              onChange={e => {
+                setAppName(e.target.value);
+                if (!slugLocked && epNode) {
+                  updateNodeData(epNode.id, { slug: toSlug(e.target.value) });
+                }
+              }}
+              placeholder="Application name…"
+              style={{
+                background: 'transparent', border: 'none', outline: 'none',
+                fontSize: 15, fontWeight: 700, color: 'var(--tm-card-text)',
+                fontFamily: 'Geist, sans-serif', width: '100%', padding: 0,
+              }}
+            />
+            {epNode && (
+              <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
+                {(epNode.data as EntryPointData).slug || (app?.entry_points?.[0]?.slug ?? '')}
+              </div>
+            )}
+          </div>
+          {isDirty && (
+            <div title="Unsaved changes" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 6, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)' }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f59e0b', boxShadow: '0 0 6px #f59e0b', display: 'inline-block' }} />
+              <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>Unsaved</span>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => handleSave(false)}
+            disabled={saving}
+            style={{
+              padding: '7px 18px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`,
+              background: 'transparent', color: C.text, cursor: 'pointer', fontSize: 13, fontWeight: 600,
+              opacity: saving ? 0.6 : 1,
+            }}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            onClick={handleTest}
+            disabled={saving}
+            title={!currentApp?.enabled && !currentApp?.entry_points?.some(ep => ep.enabled) ? 'Deploy first to test' : 'Open in playground'}
+            style={{
+              padding: '7px 18px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`,
+              background: 'transparent', color: (currentApp?.enabled || currentApp?.entry_points?.some(ep => ep.enabled)) ? C.green : C.textMuted,
+              cursor: saving ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600,
+              opacity: saving ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 6,
+              transition: 'all 0.2s',
+            }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>play_arrow</span>
+            Test
+          </button>
+          <button
+            onClick={() => handleSave(true)}
+            disabled={saving || !chain.ready}
+            style={{
+              padding: '7px 18px', borderRadius: 8, border: 'none',
+              background: chain.ready ? C.cyan : C.outlineVariant,
+              color: chain.ready ? '#00363a' : C.textMuted,
+              cursor: saving || !chain.ready ? 'not-allowed' : 'pointer',
+              fontSize: 13, fontWeight: 700,
+              opacity: saving ? 0.6 : 1,
+              boxShadow: chain.ready ? `0 0 12px rgba(0,240,255,0.25)` : 'none',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            Deploy
+          </button>
+        </div>
+      </div>
+
+      {/* Builder area */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }} ref={rfWrapper}>
+        <NodeLibrary agents={agents} middlewareDefs={middlewareDefs} width={libWidth} onWidthChange={setLibWidth} />
+
+        {/* Canvas */}
+        <div style={{ flex: 1, position: 'relative', height: 'calc(100vh - 56px)' }}>
+          <CanvasInner
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+            selectedNode={selectedNode}
+            setSelectedNode={setSelectedNode}
+            onUpdateNode={updateNodeData}
+            onDeleteEdge={deleteEdge}
+            onAutoLayout={autoLayout}
+            logoState={logoState}
+            advisorOpen={advisorOpen}
+            onAdvisorOpen={handleAdvisorOpen}
+          />
+        </div>
+
+        {advisorOpen && (
+          <AdvisorPanel
+            messages={advisorMessages}
+            busy={advisorBusy}
+            input={advisorInput}
+            scanning={advisorScanning}
+            onInputChange={setAdvisorInput}
+            onSend={text => advisorSend(text)}
+            onClose={() => { setAdvisorOpen(false); triggerLogo('idle', 1); }}
+            onRescan={handleAdvisorRescan}
+            onApplyProposal={applyProposal}
+            onApplyAll={applyAll}
+          />
+        )}
+
+        <PropertiesPanel
+          selectedNode={selectedNode}
+          onUpdateNode={updateNodeData}
+          slugLocked={slugLocked}
+          onSlugManualEdit={() => setSlugLocked(true)}
+          appName={appName}
+          onAppNameChange={name => {
+            setAppName(name);
+            if (!slugLocked && epNode) updateNodeData(epNode.id, { slug: toSlug(name) });
+          }}
+          convTokenLimit={convTokenLimit}
+          onConvTokenLimitChange={val => {
+            setConvTokenLimit(val);
+            if (epNode) updateNodeData(epNode.id, { convTokenLimit: val });
+            setIsDirty(true);
+          }}
+          chain={chain}
+          app={currentApp}
+          epCount={nodes.filter((n: Node) => n.type === 'entryPoint').length}
+          nodes={nodes}
+          edges={edges}
+        />
+      </div>
+
+      {/* Status bar */}
+      <div style={{
+        height: 28, display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px',
+        ...glass, borderTop: `1px solid ${C.glassBorder}`, fontSize: 11, color: C.textMuted, flexShrink: 0,
+      }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
+            background: chain.color,
+            boxShadow: chain.ready ? `0 0 6px ${chain.color}` : 'none',
+          }} />
+          <span style={{ color: chain.color, fontWeight: 600 }}>{chain.label}</span>
+        </span>
+        <span style={{ color: C.outlineVariant }}>·</span>
+        <span>Nodes: {nodes.length}</span>
+        <span style={{ color: C.outlineVariant }}>·</span>
+        <span>Edges: {edges.length}</span>
+      </div>
+
+      {/* Entry Point Picker */}
+      {testPickerOpen && (
+        <EpPickerModal
+          entries={epPickerEntries}
+          onSelect={entry => {
+            setTestPickerOpen(false);
+            const url = entry.orchName ? `/admin/playground?orchestrator=${encodeURIComponent(entry.orchName)}` : '/admin/playground';
+            window.open(url, '_blank', 'noopener');
+          }}
+          onClose={() => setTestPickerOpen(false)}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 40, left: '50%', transform: 'translateX(-50%)',
+          padding: '10px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600, zIndex: 9999,
+          background: toast.ok ? 'rgba(74,222,128,0.15)' : C.errorBg,
+          border: `1px solid ${toast.ok ? C.greenBorder : 'rgba(255,180,171,0.3)'}`,
+          color: toast.ok ? C.green : C.error,
+          boxShadow: `0 4px 20px rgba(0,0,0,0.4)`,
+          backdropFilter: 'blur(8px)',
+        }}>
+          {toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── List view ─────────────────────────────────────────────────────────────────
+const APP_CARD_STYLES = `
+.app-glass-card {
+  background:
+    linear-gradient(160deg, rgba(255,255,255,0.032) 0%, rgba(255,255,255,0.006) 40%, rgba(0,0,0,0.06) 100%),
+    var(--tm-card);
+  border: 1px solid var(--tm-card-border);
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 8px 32px rgba(0,0,0,0.4),
+    0 2px 8px rgba(0,0,0,0.25),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+  transition: border-color 240ms ease, box-shadow 240ms ease;
+}
+.app-glass-card:hover {
+  border-color: rgba(0,209,255,0.28);
+  box-shadow:
+    0 8px 32px rgba(0,0,0,0.5),
+    0 2px 8px rgba(0,0,0,0.28),
+    0 0 0 1px rgba(0,209,255,0.1),
+    0 0 32px rgba(0,209,255,0.08),
+    inset 0 1px 0 rgba(255,255,255,0.055);
+}
+.app-glass-card:active {
+  box-shadow:
+    0 4px 16px rgba(0,0,0,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.03);
+  border-color: rgba(0,209,255,0.4);
+  transition: border-color 80ms ease, box-shadow 80ms ease;
+}
+.app-card-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 9px 4px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: border-color 180ms ease, background 180ms ease,
+              box-shadow 180ms ease, transform 180ms ease;
+  white-space: nowrap;
+}
+.app-card-btn--open {
+  background: #00d1ff;
+  color: #021520;
+  border: none;
+  box-shadow: 0 0 14px rgba(0,209,255,0.38);
+}
+.app-card-btn--open:hover {
+  background: #22dcff;
+  box-shadow: 0 0 22px rgba(0,209,255,0.55);
+}
+.app-card-btn--open:active {
+  background: #00b8e0;
+  box-shadow: 0 0 10px rgba(0,209,255,0.3);
+}
+.app-card-btn--urls {
+  background: var(--tm-btn-2-bg);
+  color: var(--tm-card-text-subtle);
+  border: 1px solid var(--tm-btn-2-border);
+}
+.app-card-btn--urls:hover {
+  border-color: rgba(129,140,248,0.45);
+  color: #818cf8;
+  background: rgba(99,102,241,0.1);
+}
+.app-card-btn--toggle-on {
+  background: var(--tm-btn-2-bg);
+  color: #f87171;
+  border: 1px solid rgba(248,113,113,0.2);
+}
+.app-card-btn--toggle-on:hover {
+  border-color: rgba(248,113,113,0.5);
+  background: rgba(248,113,113,0.08);
+}
+.app-card-btn--toggle-off {
+  background: var(--tm-btn-2-bg);
+  color: #34d399;
+  border: 1px solid rgba(52,211,153,0.2);
+}
+.app-card-btn--toggle-off:hover {
+  border-color: rgba(52,211,153,0.5);
+  background: rgba(52,211,153,0.08);
+}
+.app-deploy-card:hover {
+  border-color: rgba(99,102,241,0.7) !important;
+  background: rgba(99,102,241,0.04) !important;
+}
+`;
+
+// EP metadata
+const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2' };
+const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC', a2a: 'A2A' };
+
+function epIconColor(type: string): { color: string; glow: string; border: string } {
+  if (type === 'websocket') return { color: '#00d1ff', glow: 'rgba(0,209,255,0.25)', border: 'rgba(0,209,255,0.45)' };
+  if (type === 'sse')       return { color: '#a78bfa', glow: 'rgba(167,139,250,0.22)', border: 'rgba(167,139,250,0.42)' };
+  if (type === 'webrtc')    return { color: '#a78bfa', glow: 'rgba(167,139,250,0.22)', border: 'rgba(167,139,250,0.42)' };
+  if (type === 'a2a')       return { color: '#f59e0b', glow: 'rgba(245,158,11,0.22)', border: 'rgba(245,158,11,0.42)' };
+  return { color: '#94a3b8', glow: 'rgba(148,163,184,0.15)', border: 'rgba(148,163,184,0.3)' };
+}
+
+// ── AppCard sub-component ─────────────────────────────────────────────────────
+function AppCard({
+  app,
+  liveness,
+  sessionCount,
+  selected,
+  onToggleSelect,
+  onEdit,
+  onSessions,
+  onRuntime,
+  onToggle,
+  onDelete,
+  onUrls,
+}: {
+  app: Application;
+  liveness: { reachable: boolean; latency_ms: number | null } | null;
+  sessionCount: number;
+  selected?: boolean;
+  onToggleSelect?: (id: string, checked: boolean) => void;
+  onEdit: (a: Application) => void;
+  onSessions: (a: Application) => void;
+  onRuntime: (a: Application) => void;
+  onToggle: (a: Application) => void;
+  onDelete: (a: Application) => void;
+  onUrls: (a: Application) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handler(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as unknown as globalThis.Node)) setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  const firstEp = app.entry_points?.[0];
+  const ep = epIconColor(firstEp?.entry_point_type ?? 'websocket');
+  const accessMode = (firstEp?.access_policy as any)?.mode ?? 'token';
+
+  // Liveness derived from multiplexed WS push (no per-card polling)
+  const reachable = app.enabled ? (liveness?.reachable ?? null) : false;
+  const latencyMs = liveness?.latency_ms ?? null;
+
+  const statusColor = !app.enabled ? C.error : reachable === null ? C.textMuted : reachable ? C.green : '#f59e0b';
+  const statusLabel = !app.enabled ? 'disabled' : reachable === null ? 'checking…' : reachable ? 'live' : 'unreachable';
+  const statusBg    = !app.enabled ? 'rgba(255,180,171,0.1)' : reachable === null ? 'rgba(255,255,255,0.04)' : reachable ? 'rgba(74,222,128,0.08)' : 'rgba(245,158,11,0.08)';
+  const statusBorder = !app.enabled ? 'rgba(255,180,171,0.3)' : reachable === null ? 'rgba(255,255,255,0.1)' : reachable ? C.greenBorder : 'rgba(245,158,11,0.4)';
+
+  const chromaAccent = !app.enabled ? '#64748b' : reachable === false ? '#f59e0b' : '#6366f1';
+  const chromaGrad = `linear-gradient(145deg, ${chromaAccent}1a 0%, ${chromaAccent}08 40%, #07090f 100%)`;
+
+  return (
+    <div
+      className="app-glass-card chroma-card"
+      style={{
+        borderRadius: 16, overflow: 'visible', display: 'flex', flexDirection: 'column', position: 'relative',
+        outline: selected ? '2px solid #00d1ff' : undefined,
+        '--card-border': chromaAccent,
+        '--card-gradient': chromaGrad,
+      } as React.CSSProperties}
+    >
+      {/* Bulk-select checkbox */}
+      {onToggleSelect && (
+        <input
+          type="checkbox"
+          checked={!!selected}
+          onChange={(e) => { e.stopPropagation(); onToggleSelect(app.id, e.target.checked); }}
+          title="Select for bulk delete"
+          style={{ position: 'absolute', top: 10, left: 10, width: 16, height: 16, accentColor: '#00d1ff', cursor: 'pointer', zIndex: 10 }}
+        />
+      )}
+      {/* Top section */}
+      <div style={{ padding: '20px 20px 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+        {/* Icon + name + menu row */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+          {/* Icon tile */}
+          <div style={{
+            width: 52, height: 52, borderRadius: 12, flexShrink: 0,
+            background: `radial-gradient(circle at 30% 30%, ${ep.glow}, transparent 70%)`,
+            border: `1px solid ${ep.border}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            position: 'relative',
+          }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 24, color: ep.color }}>
+              {EP_ICON[firstEp?.entry_point_type ?? ''] ?? 'extension'}
+            </span>
+            {app.entry_points.length > 1 && (
+              <span style={{
+                position: 'absolute', top: -6, right: -6,
+                minWidth: 18, height: 18, borderRadius: 9,
+                background: '#00d1ff', color: '#021520',
+                fontSize: 10, fontWeight: 700,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                padding: '0 4px',
+              }}>{app.entry_points.length}</span>
+            )}
+          </div>
+
+          {/* Name + slugs + type badge */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: C.text, fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: 3 }}>
+              {app.name}
+            </div>
+            <div style={{ marginBottom: 5 }}>
+              {app.entry_points.map(epRow => (
+                <div key={epRow.id} style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 11, color: epIconColor(epRow.entry_point_type).color, flexShrink: 0 }}>{EP_ICON[epRow.entry_point_type] ?? 'bolt'}</span>
+                  {epRow.slug}
+                </div>
+              ))}
+            </div>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '2px 7px', borderRadius: 20, fontSize: 10, fontWeight: 700,
+              background: 'var(--tm-filter-bg)', color: ep.color,
+              border: `1px solid ${ep.border}`,
+            }}>
+              {EP_LABEL[firstEp?.entry_point_type ?? ''] ?? firstEp?.entry_point_type ?? '—'}
+            </span>
+          </div>
+
+          {/* Three-dot menu */}
+          <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+            <button
+              onClick={() => setMenuOpen(v => !v)}
+              style={{ width: 30, height: 30, borderRadius: 7, cursor: 'pointer', background: 'var(--tm-btn-2-bg)', border: '1px solid var(--tm-btn-2-border)', color: 'var(--tm-card-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 150ms ease' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
+              </svg>
+            </button>
+            {menuOpen && (
+              <div style={{
+                position: 'absolute', top: 34, right: 0, zIndex: 50, minWidth: 130,
+                background: 'var(--tm-menu-bg)', border: '1px solid var(--tm-menu-border)',
+                borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.35)', overflow: 'hidden',
+              }}>
+                <button
+                  onClick={() => { setMenuOpen(false); onDelete(app); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: C.error, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,180,171,0.08)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                  Delete
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Live status bar */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '8px 12px', borderRadius: 10,
+          background: statusBg, border: `1px solid ${statusBorder}`,
+        }}>
+          {app.enabled && (
+            <span style={{
+              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+              background: statusColor,
+              boxShadow: reachable ? `0 0 7px ${statusColor}` : 'none',
+            }} />
+          )}
+          <span style={{ fontSize: 12, fontWeight: 700, color: statusColor }}>{statusLabel}</span>
+          {reachable && latencyMs != null && (
+            <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 'auto' }}>{latencyMs}ms</span>
+          )}
+        </div>
+
+        {/* Info tiles: orchestrator + access */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, paddingBottom: 16 }}>
+          <div style={{ padding: '8px 12px', borderRadius: 10, background: 'var(--tm-filter-bg)', border: '1px solid var(--tm-divider)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#a78bfa', flexShrink: 0 }}>hub</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Orchestrator</div>
+              <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {app.app_orchestrators?.[0]?.display_name ?? app.app_orchestrators?.[0]?.name ?? <span style={{ color: C.textMuted, fontStyle: 'italic' }}>none</span>}
+              </div>
+            </div>
+          </div>
+          <div style={{ padding: '8px 12px', borderRadius: 10, background: 'var(--tm-filter-bg)', border: '1px solid var(--tm-divider)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, color: accessMode === 'public' ? C.green : '#f59e0b', flexShrink: 0 }}>
+              {accessMode === 'public' ? 'lock_open' : 'lock'}
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Access</div>
+              <div style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>{accessMode === 'public' ? 'Public' : 'Token'}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      {(() => {
+        const webrtcEp = app.entry_points.find(e => e.entry_point_type === 'webrtc');
+        const hasRuntime = app.runtime_config && Object.values(app.runtime_config).some(v => v !== null && !(Array.isArray(v) && v.length === 0));
+        return (
+          <div style={{
+            borderTop: '1px solid var(--tm-divider)', padding: '10px 14px', display: 'grid',
+            gridTemplateColumns: webrtcEp ? '2fr 1fr 1fr 1fr 1fr' : '2fr 1fr 1fr 1fr',
+            gap: 8,
+          }}>
+            {/* Sessions button */}
+            <button
+              className="app-card-btn"
+              onClick={() => onSessions(app)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                background: sessionCount > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)',
+                color: sessionCount > 0 ? '#00f0ff' : C.textMuted,
+                border: `1px solid ${sessionCount > 0 ? 'rgba(0,240,255,0.35)' : 'rgba(255,255,255,0.1)'}`,
+                position: 'relative',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,240,255,0.12)'; e.currentTarget.style.color = '#00f0ff'; }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = sessionCount > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)';
+                e.currentTarget.style.color = sessionCount > 0 ? '#00f0ff' : C.textMuted;
+              }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>person</span>
+              Sessions
+              {sessionCount > 0 && (
+                <span style={{
+                  background: '#00f0ff', color: '#000',
+                  fontSize: 10, fontWeight: 800,
+                  borderRadius: 8, padding: '0px 5px',
+                  lineHeight: '16px', minWidth: 16, textAlign: 'center',
+                }}>{sessionCount}</span>
+              )}
+            </button>
+            {/* Open builder — primary, full-width feel */}
+            <button className="app-card-btn app-card-btn--open" onClick={() => onEdit(app)}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>open_in_new</span>
+              Open Builder
+            </button>
+            {/* Runtime button */}
+            <button
+              className="app-card-btn"
+              onClick={() => onRuntime(app)}
+              title="Runtime policy"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                background: hasRuntime ? 'rgba(251,146,60,0.1)' : 'rgba(255,255,255,0.03)',
+                color: hasRuntime ? '#fb923c' : C.textMuted,
+                border: `1px solid ${hasRuntime ? 'rgba(251,146,60,0.4)' : 'rgba(255,255,255,0.1)'}`,
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(251,146,60,0.15)'; e.currentTarget.style.color = '#fb923c'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = hasRuntime ? 'rgba(251,146,60,0.1)' : 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = hasRuntime ? '#fb923c' : C.textMuted; }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>tune</span>
+              Runtime
+            </button>
+            {webrtcEp && (
+              <button
+                className="app-card-btn"
+                onClick={() => window.open(`/apps/${webrtcEp.slug}/voice`, '_blank', 'noopener')}
+                title="Open voice room"
+                style={{
+                  background: 'rgba(167,139,250,0.1)',
+                  color: '#a78bfa',
+                  border: '1px solid rgba(167,139,250,0.3)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.2)'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.5)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.1)'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.3)'; }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>mic</span>
+                Voice
+              </button>
+            )}
+            <button className="app-card-btn app-card-btn--urls" onClick={() => onUrls(app)}>
+              URLs
+            </button>
+            {app.enabled ? (
+              <button className="app-card-btn app-card-btn--toggle-on" onClick={() => onToggle(app)}>Disable</button>
+            ) : (
+              <button className="app-card-btn app-card-btn--toggle-off" onClick={() => onToggle(app)}>Enable</button>
+            )}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+type AppLiveness = { reachable: boolean; latency_ms: number | null };
+
+function useDashAppStatuses(token: string | null): Record<string, AppLiveness> {
+  const [statuses, setStatuses] = useState<Record<string, AppLiveness>>({});
+
+  useEffect(() => {
+    if (!token) return;
+    const wsUrl = `${window.location.origin.replace(/^http/, 'ws').replace(/^https/, 'wss')}/ws/dashboard?token=${token}`;
+    let ws: WebSocket;
+    let dead = false;
+
+    function connect() {
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'subscribe', channels: ['apps'] }));
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.channel === 'apps' && msg.event?.type === 'app_status') {
+            setStatuses(prev => ({ ...prev, ...msg.event.statuses }));
+          }
+        } catch {}
+      };
+      ws.onclose = () => {
+        if (!dead) setTimeout(connect, 4000);
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    connect();
+    return () => {
+      dead = true;
+      ws?.close();
+    };
+  }, [token]);
+
+  return statuses;
+}
+
+// ── Sessions live hook ────────────────────────────────────────────────────────
+function useDashSessions(token: string | null, appId: string | null): {
+  sessions: SessionInfo[];
+  connected: boolean;
+} {
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    if (!token || !appId) return;
+    const wsBase = window.location.origin.replace(/^http/, 'ws').replace(/^https/, 'wss');
+    const wsUrl = `${wsBase}/ws/dashboard?token=${token}`;
+    let ws: WebSocket;
+    let dead = false;
+
+    function connect() {
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'subscribe', channels: [`sessions:${appId}`] }));
+        setConnected(true);
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          const ch = `sessions:${appId}`;
+          if (msg.channel !== ch) return;
+          const evt = msg.event;
+          if (evt?.type === 'session_snapshot') {
+            setSessions(evt.sessions ?? []);
+          } else if (evt?.type === 'session_start' && evt.session_info) {
+            setSessions(prev => {
+              if (prev.find(s => s.session_id === evt.session_id)) return prev;
+              return [...prev, evt.session_info as SessionInfo];
+            });
+          } else if (evt?.type === 'session_end') {
+            setSessions(prev => prev.filter(s => s.session_id !== evt.session_id));
+          } else if (evt?.type === 'session_update' && evt.session_id) {
+            setSessions(prev => prev.map(s =>
+              s.session_id === evt.session_id
+                ? { ...s, ...evt.session_info }
+                : s
+            ));
+          }
+        } catch {}
+      };
+      ws.onclose = () => {
+        setConnected(false);
+        if (!dead) setTimeout(connect, 4000);
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    connect();
+    return () => {
+      dead = true;
+      ws?.close();
+    };
+  }, [token, appId]);
+
+  return { sessions, connected };
+}
+
+// ── RuntimeView ───────────────────────────────────────────────────────────────
+function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) {
+  const emptyRuntime = { max_concurrent_sessions: null, rate_limit_rpm: null, blocked_tokens: [], blocked_user_ids: [], session_timeout_minutes: null };
+  const [cfg, setCfg] = useState<import('@/lib/api').AppRuntimeConfig>(app.runtime_config ?? emptyRuntime);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Tag input helpers
+  const [tokensInput, setTokensInput] = useState((app.runtime_config?.blocked_tokens ?? []).join('\n'));
+  const [usersInput, setUsersInput] = useState((app.runtime_config?.blocked_user_ids ?? []).join(', '));
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    try {
+      const parsedUsers = usersInput.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n));
+      const parsedTokens = tokensInput.split(/\n/).map(s => s.trim()).filter(Boolean);
+      const payload = { ...cfg, blocked_tokens: parsedTokens, blocked_user_ids: parsedUsers };
+      await themApi.putAppRuntime(app.id, payload);
+      setCfg(payload);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const fieldStyle: React.CSSProperties = {
+    width: '100%', padding: '10px 12px', borderRadius: 8,
+    border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)',
+    color: C.text, fontSize: 14, outline: 'none', boxSizing: 'border-box',
+  };
+  const labelStyle: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: C.textMuted, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6, display: 'block' };
+  const sectionStyle: React.CSSProperties = { ...glass, borderRadius: 12, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 };
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '40px 40px 60px', background: C.bg }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 32 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
+          Applications
+        </button>
+        <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 18 }}>/</span>
+        <span style={{ fontSize: 14, color: C.text, fontWeight: 600 }}>{app.name}</span>
+        <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 18 }}>/</span>
+        <span style={{ fontSize: 14, color: '#fb923c', fontWeight: 700 }}>Runtime Policy</span>
+      </div>
+
+      <div style={{ maxWidth: 640 }}>
+        {/* Session Limits */}
+        <div style={sectionStyle}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Session Limits</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div>
+              <label style={labelStyle}>Max Concurrent Sessions</label>
+              <input type="number" min={1} placeholder="Unlimited"
+                value={cfg.max_concurrent_sessions ?? ''} style={fieldStyle}
+                onChange={e => setCfg(c => ({ ...c, max_concurrent_sessions: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>App-wide soft cap. Empty = unlimited.</div>
+            </div>
+            <div>
+              <label style={labelStyle}>Session Timeout (minutes)</label>
+              <input type="number" min={1} placeholder="No timeout"
+                value={cfg.session_timeout_minutes ?? ''} style={fieldStyle}
+                onChange={e => setCfg(c => ({ ...c, session_timeout_minutes: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Advisory. Empty = no timeout.</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Rate Limiting */}
+        <div style={sectionStyle}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Rate Limiting</div>
+          <div>
+            <label style={labelStyle}>App Rate Limit (requests per minute)</label>
+            <input type="number" min={1} placeholder="Unlimited"
+              value={cfg.rate_limit_rpm ?? ''} style={fieldStyle}
+              onChange={e => setCfg(c => ({ ...c, rate_limit_rpm: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Applied across all entry points of this app. Separate from per-orchestrator rate limits.</div>
+          </div>
+        </div>
+
+        {/* Access Control */}
+        <div style={sectionStyle}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Access Control</div>
+          <div>
+            <label style={labelStyle}>Blocked User IDs (comma-separated)</label>
+            <input type="text" placeholder="e.g. 42, 107, 889"
+              value={usersInput} style={fieldStyle}
+              onChange={e => setUsersInput(e.target.value)} />
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Connections from these user IDs are rejected before any processing.</div>
+          </div>
+          <div>
+            <label style={labelStyle}>Blocked Token Hashes (one per line)</label>
+            <textarea placeholder="sha256 hash of each blocked access token"
+              value={tokensInput} rows={4}
+              style={{ ...fieldStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
+              onChange={e => setTokensInput(e.target.value)} />
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Paste the SHA-256 hash of the token (not the raw token). One hash per line.</div>
+          </div>
+        </div>
+
+        {/* Save */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            style={{
+              padding: '11px 28px', borderRadius: 8, border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
+              background: '#fb923c', color: '#000', fontSize: 14, fontWeight: 700,
+              opacity: saving ? 0.6 : 1,
+            }}
+          >
+            {saving ? 'Saving…' : 'Save Runtime Config'}
+          </button>
+          {saved && <span style={{ fontSize: 13, color: C.green }}>Saved</span>}
+          {error && <span style={{ fontSize: 13, color: C.error }}>{error}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── SessionsView ──────────────────────────────────────────────────────────────
+const SESSIONS_STYLES = `
+@keyframes sess-pulse {
+  0%,100% { opacity:1; transform:scale(1); }
+  50%      { opacity:0.7; transform:scale(1.08); }
+}
+@keyframes edge-dash-cyan {
+  to { stroke-dashoffset: -24; }
+}
+@keyframes edge-dash-purple {
+  to { stroke-dashoffset: -20; }
+}
+@keyframes edge-glow-cyan {
+  0%,100% { filter: drop-shadow(0 0 3px rgba(0,240,255,0.55)) drop-shadow(0 0 7px rgba(0,240,255,0.28)); }
+  50%     { filter: drop-shadow(0 0 7px rgba(0,240,255,1.0)) drop-shadow(0 0 16px rgba(0,240,255,0.55)); }
+}
+@keyframes edge-glow-purple {
+  0%,100% { filter: drop-shadow(0 0 3px rgba(208,188,255,0.5)) drop-shadow(0 0 7px rgba(208,188,255,0.25)); }
+  50%     { filter: drop-shadow(0 0 7px rgba(208,188,255,0.95)) drop-shadow(0 0 16px rgba(208,188,255,0.5)); }
+}
+.react-flow__edge.active-ep-orch path.react-flow__edge-path {
+  stroke-dasharray: 8 4;
+  animation: edge-dash-cyan 0.5s linear infinite, edge-glow-cyan 1.8s ease-in-out infinite;
+}
+.react-flow__edge.active-orch-agent path.react-flow__edge-path {
+  stroke-dasharray: 6 4;
+  animation: edge-dash-purple 0.65s linear infinite, edge-glow-purple 1.8s ease-in-out infinite;
+}
+.sess-badge {
+  position:absolute; top:-8px; right:-8px;
+  min-width:20px; height:20px; border-radius:10px;
+  background:rgba(0,240,255,0.15); border:1.5px solid rgba(0,240,255,0.55);
+  color:#00f0ff; font-size:10px; font-weight:700;
+  display:flex; align-items:center; justify-content:center; padding:0 4px;
+  font-family:Inter,sans-serif; pointer-events:none; z-index:20;
+  box-shadow:0 0 8px rgba(0,240,255,0.3);
+}
+.sess-badge.active { animation:sess-pulse 1.8s ease-in-out infinite; }
+.sess-row {
+  display:flex; align-items:flex-start; gap:10px;
+  padding:10px 14px; border-radius:10px; cursor:pointer;
+  border:1px solid transparent; transition:all 0.15s ease;
+}
+.sess-row:hover { background:rgba(0,240,255,0.04); border-color:rgba(0,240,255,0.18); }
+.sess-row.selected { background:rgba(0,240,255,0.07); border-color:rgba(0,240,255,0.35); }
+`;
+
+// Read-only canvas node wrappers — same visuals as builder, but with session count badge
+function EPNodeRO({ data }: { data: { label?: string; slug?: string; epType?: string; _sessCount?: number; _heatStyle?: React.CSSProperties } }) {
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
+  const msIcon = EP_MS_ICON[data.epType ?? 'websocket'] ?? 'bolt';
+  const count = data._sessCount ?? 0;
+  const accent = C.cyan;
+  const badgeTitle = `${count} sessions`;
+  const baseStyle: React.CSSProperties = {
+    width: 56, height: 56, borderRadius: '50%',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    border: `2px solid ${count > 0 ? accent : 'rgba(0,240,255,0.25)'}`,
+    transition: 'all 0.3s ease',
+  };
+  return (
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
+      {count > 0 && <div className={`sess-badge${count > 0 ? ' active' : ''}`} title={badgeTitle}>{count}</div>}
+      <div style={{ ...baseStyle, ...(count > 0 && data._heatStyle ? data._heatStyle : {}) }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent }}>{msIcon}</span>
+      </div>
+      <div style={{ marginTop: 6, textAlign: 'center' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.text, lineHeight: 1.3 }}>
+          {data.label || 'EP'}
+        </div>
+        {data.slug && <div style={{ fontSize: 10, color: C.cyan, fontFamily: 'JetBrains Mono, monospace', opacity: 0.8, marginTop: 1 }}>{data.slug}</div>}
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: C.cyan, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+    </div>
+  );
+}
+
+function OrchNodeRO({ data }: { data: { displayName?: string; _sessCount?: number; _heatStyle?: React.CSSProperties } }) {
+  const count = data._sessCount ?? 0;
+  const accent = C.purple;
+  const baseStyle: React.CSSProperties = {
+    width: 56, height: 56, borderRadius: '50%',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    border: `2px solid ${count > 0 ? accent : 'rgba(208,188,255,0.25)'}`,
+    transition: 'all 0.3s ease',
+  };
+  return (
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
+      {count > 0 && <div className={`sess-badge${count > 0 ? ' active' : ''}`} style={{ background: 'rgba(208,188,255,0.15)', border: '1.5px solid rgba(208,188,255,0.55)', color: C.purple, boxShadow: '0 0 8px rgba(208,188,255,0.3)' }}>{count}</div>}
+      <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <div style={{ ...baseStyle, ...(count > 0 && data._heatStyle ? data._heatStyle : {}) }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent }}>hub</span>
+      </div>
+      <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 120 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {data.displayName}
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+    </div>
+  );
+}
+
+function AgentNodeRO({ data }: { data: { displayName?: string; icon?: string; tags?: string[] } }) {
+  const isInternal = data.tags?.includes('internal') ?? false;
+  const accent = isInternal ? '#a0f0d0' : C.green;
+  const icon = data.icon || 'smart_toy';
+  return (
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
+      <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <div style={{
+        width: 56, height: 56, borderRadius: '50%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'transparent', border: `2px solid rgba(74,222,128,0.25)`,
+        transition: 'all 0.3s ease',
+      }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent }}>{icon}</span>
+      </div>
+      <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 110 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {data.displayName}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const RO_NODE_TYPES: NodeTypes = {
+  entryPoint: EPNodeRO as any,
+  orchestrator: OrchNodeRO as any,
+  agent: AgentNodeRO as any,
+};
+
+function elapsed(iso: string): string {
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+  return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+}
+
+const MON_DEFAULTS: MonitoringConfig = {
+  heatmap_low: 1, heatmap_medium: 10, heatmap_high: 50,
+  edge_thin: 1, edge_medium: 10, edge_thick: 50,
+  panel_max_sessions: 50, stats_window_seconds: 300,
+};
+
+function heatmapStyle(count: number, cfg: MonitoringConfig, type: 'ep' | 'orch'): React.CSSProperties {
+  if (count <= 0) return {};
+  const accent = type === 'ep' ? C.cyan : C.purple;
+  const lowColor  = type === 'ep' ? 'rgba(0,240,255,0.10)'     : 'rgba(208,188,255,0.10)';
+  const midColor  = type === 'ep' ? 'rgba(0,240,255,0.20)'     : 'rgba(208,188,255,0.20)';
+  const highColor = type === 'ep' ? 'rgba(0,240,255,0.35)'     : 'rgba(208,188,255,0.35)';
+  const lowGlow   = type === 'ep' ? '0 0 10px rgba(0,240,255,0.25)'     : '0 0 10px rgba(208,188,255,0.25)';
+  const midGlow   = type === 'ep' ? '0 0 18px rgba(0,240,255,0.5)'      : '0 0 18px rgba(208,188,255,0.5)';
+  const highGlow  = type === 'ep' ? '0 0 28px rgba(0,240,255,0.85)'     : '0 0 28px rgba(208,188,255,0.85)';
+  const borderW   = count >= cfg.heatmap_high ? 3 : count >= cfg.heatmap_medium ? 2.5 : 2;
+  const bg    = count >= cfg.heatmap_high ? highColor : count >= cfg.heatmap_medium ? midColor : lowColor;
+  const glow  = count >= cfg.heatmap_high ? highGlow  : count >= cfg.heatmap_medium ? midGlow  : lowGlow;
+  return { background: bg, border: `${borderW}px solid ${accent}`, boxShadow: glow };
+}
+
+function edgeStrokeWidth(count: number, cfg: MonitoringConfig): number {
+  if (count >= cfg.edge_thick)  return 5;
+  if (count >= cfg.edge_medium) return 3;
+  if (count >= cfg.edge_thin)   return 1.5;
+  return 1;
+}
+
+function SessionsView({
+  app: initialApp,
+  agents,
+  onBack,
+  token,
+}: {
+  app: Application;
+  agents: Agent[];
+  onBack: () => void;
+  token: string | null;
+}) {
+  const [app, setApp] = useState(initialApp);
+  const { sessions, connected } = useDashSessions(token, app.id);
+  const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
+  const [tick, setTick] = useState(0);
+  const [monCfg, setMonCfg] = useState<MonitoringConfig>(MON_DEFAULTS);
+
+  // Optimistic terminate: sessions hidden pending WS confirmation of session_end
+  // hiddenSessions doubles as "terminating" — once hidden the row is gone from the list
+  const [hiddenSessions, setHiddenSessions] = useState<Set<string>>(new Set());
+
+  // When session_end arrives via WS, useDashSessions removes it from sessions[];
+  // no further action needed — the hidden entry is simply never un-hidden for dead sessions.
+
+  async function handleTerminate(sid: string) {
+    setHiddenSessions(h => new Set(h).add(sid));
+    try {
+      await themApi.disconnectSession(sid);
+    } catch {
+      // Signal failed — un-hide so user can retry
+      setHiddenSessions(h => { const n = new Set(h); n.delete(sid); return n; });
+    }
+  }
+
+  // Load monitoring config once
+  useEffect(() => {
+    themApi.getMonitoringConfig().then(setMonCfg).catch(() => {});
+  }, []);
+
+  // Re-render elapsed times every 5s
+  useEffect(() => {
+    const iv = setInterval(() => setTick(t => t + 1), 5000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Build read-only nodes/edges from app, with session counts overlaid
+  const epCountBySlug = new Map<string, number>();
+  const visibleSessions = sessions.filter(s => !hiddenSessions.has(s.session_id));
+  visibleSessions.forEach(s => {
+    if (s.ep_slug) epCountBySlug.set(s.ep_slug, (epCountBySlug.get(s.ep_slug) ?? 0) + 1);
+  });
+
+  const { nodes: baseNodes, edges: baseEdges } = buildNodesFromApp(app, agents);
+
+  // Build active node id sets for edge coloring
+  const activeEpNodeIds = new Set<string>();
+  const activeOrchNodeIds = new Set<string>();
+
+  const nodes = baseNodes.map(n => {
+    if (n.type === 'entryPoint' && n.data?.slug) {
+      const slug = n.data.slug as string;
+      const count = epCountBySlug.get(slug) ?? 0;
+      if (count > 0) activeEpNodeIds.add(n.id);
+      return { ...n, data: { ...n.data, _sessCount: count, _heatStyle: heatmapStyle(count, monCfg, 'ep') } };
+    }
+    if (n.type === 'orchestrator') {
+      const orchName = (n.data as any)?.name ?? '';
+      const orchCount = visibleSessions.filter(s => s.orchestrator_name === orchName).length;
+      if (orchCount > 0) activeOrchNodeIds.add(n.id);
+      return { ...n, data: { ...n.data, _sessCount: orchCount, _heatStyle: heatmapStyle(orchCount, monCfg, 'orch') } };
+    }
+    return n;
+  });
+
+  // Which agent slugs are actively being called right now (across all sessions, parallel-safe)
+  const activeAgentSlugs = new Set(
+    visibleSessions.flatMap(s => s.active_agents ?? [])
+  );
+
+  // Count sessions flowing through each edge path for thickness scaling
+  const epOrchSessionCount = sessions.length; // total sessions = load on ep→orch path
+
+  // Style edges: EP→orch always active when sessions exist; orch→agent only when that agent is being called
+  const edges = baseEdges.map(e => {
+    const isEpOrch    = activeEpNodeIds.has(e.source) && activeOrchNodeIds.has(e.target);
+    const targetSlug  = (baseNodes.find(n => n.id === e.target)?.data as any)?.name ?? '';
+    const isOrchAgent = activeOrchNodeIds.has(e.source) && activeAgentSlugs.has(targetSlug);
+
+    if (isEpOrch) {
+      const sw = edgeStrokeWidth(epOrchSessionCount, monCfg);
+      return {
+        ...e,
+        animated: false,
+        className: 'active-ep-orch',
+        style: { stroke: '#00f0ff', strokeWidth: sw },
+      };
+    }
+    if (isOrchAgent) {
+      const orchCount = visibleSessions.filter(s => s.active_agents?.includes(targetSlug)).length;
+      const sw = edgeStrokeWidth(orchCount, monCfg);
+      return {
+        ...e,
+        animated: false,
+        className: 'active-orch-agent',
+        style: { stroke: C.purple, strokeWidth: sw },
+      };
+    }
+    return {
+      ...e,
+      animated: false,
+      style: { stroke: 'rgba(148,163,184,0.18)', strokeWidth: 1, strokeDasharray: '4,4' },
+    };
+  });
+
+  // Cap session list for UI performance
+  const displaySessions = visibleSessions.slice(0, monCfg.panel_max_sessions);
+  void tick; // used indirectly by elapsed() rerender
+
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
+      <style>{CANVAS_STYLES}{SESSIONS_STYLES}</style>
+
+      {/* Top bar */}
+      <div style={{
+        height: 56, flexShrink: 0,
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '0 20px',
+        background: C.surfaceContainer,
+        borderBottom: `1px solid ${C.outline}`,
+        backdropFilter: 'blur(12px)',
+      }}>
+        <button
+          onClick={onBack}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '7px 14px', borderRadius: 8,
+            border: `1px solid ${C.outline}`, background: 'transparent',
+            color: C.textMuted, fontSize: 13, fontWeight: 500, cursor: 'pointer',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = C.text; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = C.textMuted; }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>arrow_back</span>
+          Back
+        </button>
+
+        <div style={{ width: 1, height: 24, background: C.outline, flexShrink: 0 }} />
+
+        <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.cyan }}>hub</span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{app.name}</span>
+        <span style={{ fontSize: 12, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>/{app.slug}</span>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Live indicator */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '5px 12px', borderRadius: 20,
+          background: connected ? 'rgba(74,222,128,0.08)' : 'rgba(255,255,255,0.04)',
+          border: `1px solid ${connected ? C.greenBorder : 'rgba(255,255,255,0.1)'}`,
+        }}>
+          <div style={{
+            width: 7, height: 7, borderRadius: '50%',
+            background: connected ? C.green : C.textMuted,
+            boxShadow: connected ? '0 0 6px rgba(74,222,128,0.8)' : 'none',
+            animation: connected ? 'sess-pulse 2s ease-in-out infinite' : 'none',
+          }} />
+          <span style={{ fontSize: 12, color: connected ? C.green : C.textMuted, fontWeight: 600 }}>
+            {connected ? 'Live' : 'Connecting…'}
+          </span>
+        </div>
+
+        {/* Session count pill */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '5px 14px', borderRadius: 20,
+          background: visibleSessions.length > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)',
+          border: `1px solid ${visibleSessions.length > 0 ? C.cyanBorder : 'rgba(255,255,255,0.08)'}`,
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 14, color: visibleSessions.length > 0 ? C.cyan : C.textMuted }}>person</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: visibleSessions.length > 0 ? C.cyan : C.textMuted }}>
+            {visibleSessions.length} active
+          </span>
+        </div>
+      </div>
+
+      {/* Main body: canvas + right panel */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+
+        {/* Canvas — read-only, no drag, no editor */}
+        <div style={{ flex: 1, position: 'relative' }}>
+          <ReactFlowProvider>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={RO_NODE_TYPES}
+              fitView
+              fitViewOptions={{ padding: 0.25 }}
+              nodesDraggable={false}
+              nodesConnectable={false}
+              elementsSelectable={false}
+              panOnDrag={true}
+              zoomOnScroll={true}
+              style={{ background: C.surfaceLow }}
+            >
+              <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="rgba(148,163,184,0.12)" />
+              <Controls showInteractive={false} style={{ background: C.surface, border: `1px solid ${C.outline}` }} />
+            </ReactFlow>
+          </ReactFlowProvider>
+
+          {/* Empty state overlay */}
+          {visibleSessions.length === 0 && connected && (
+            <div style={{
+              position: 'absolute', top: '50%', left: '50%',
+              transform: 'translate(-50%, -50%)',
+              pointerEvents: 'none',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+            }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 40, color: 'rgba(148,163,184,0.25)' }}>person_off</span>
+              <span style={{ fontSize: 13, color: 'rgba(148,163,184,0.4)', fontWeight: 500 }}>No active sessions</span>
+            </div>
+          )}
+        </div>
+
+        {/* Right panel — session list + detail */}
+        <div style={{
+          width: 340, flexShrink: 0,
+          background: C.surfaceContainer,
+          borderLeft: `1px solid ${C.outline}`,
+          display: 'flex', flexDirection: 'column',
+          overflow: 'hidden',
+        }}>
+          {/* Panel header */}
+          <div style={{
+            padding: '14px 16px 10px',
+            borderBottom: `1px solid ${C.outline}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text, letterSpacing: 0.2 }}>Active Sessions</span>
+            <span style={{
+              fontSize: 11, fontWeight: 700, color: C.textMuted,
+              background: 'rgba(255,255,255,0.05)', borderRadius: 10,
+              padding: '2px 8px', border: `1px solid ${C.outline}`,
+            }}>{visibleSessions.length}</span>
+          </div>
+
+          {/* Session list */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px 0' }}>
+            {visibleSessions.length === 0 && connected && (
+              <div style={{ padding: '32px 16px', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>
+                Waiting for sessions…
+              </div>
+            )}
+            {!connected && (
+              <div style={{ padding: '32px 16px', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>
+                Connecting…
+              </div>
+            )}
+            {visibleSessions.length > monCfg.panel_max_sessions && (
+              <div style={{ margin: '4px 8px 6px', padding: '6px 10px', borderRadius: 8, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.22)', fontSize: 11, color: '#f59e0b' }}>
+                Showing {monCfg.panel_max_sessions} of {visibleSessions.length} sessions
+              </div>
+            )}
+            {displaySessions.map(s => {
+              const isSelected = selectedSession?.session_id === s.session_id;
+              const epType = app.entry_points?.find(ep => ep.slug === s.ep_slug)?.entry_point_type ?? 'websocket';
+              const epIcon = EP_MS_ICON[epType] ?? 'bolt';
+              const epColor = epType === 'sse' ? '#a78bfa' : C.cyan;
+              return (
+                <div
+                  key={s.session_id}
+                  className={`sess-row${isSelected ? ' selected' : ''}`}
+                  onClick={() => setSelectedSession(isSelected ? null : s)}
+                >
+                  {/* EP type icon */}
+                  <div style={{
+                    width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: `${epColor}18`, border: `1.5px solid ${epColor}44`,
+                  }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 16, color: epColor }}>{epIcon}</span>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {s.ep_slug ?? 'direct'}
+                      </span>
+                      <span style={{
+                        fontSize: 10, color: C.textMuted, flexShrink: 0,
+                        background: 'rgba(255,255,255,0.05)', borderRadius: 4, padding: '1px 5px',
+                        border: `1px solid ${C.outline}`,
+                      }}>{epType}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: C.textMuted }}>
+                        user {s.user_id}
+                      </span>
+                      <span suppressHydrationWarning style={{ fontSize: 11, color: 'rgba(74,222,128,0.7)', fontFamily: 'JetBrains Mono, monospace' }}>
+                        {elapsed(s.started_at)}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <button
+                      title="Terminate session"
+                      onClick={e => { e.stopPropagation(); handleTerminate(s.session_id); }}
+                      style={{
+                        width: 26, height: 26, borderRadius: 6, border: '1px solid rgba(239,68,68,0.35)',
+                        background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'all 0.15s',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.12)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 13, color: '#ef4444' }}>power_settings_new</span>
+                    </button>
+                    <span className="material-symbols-outlined" style={{
+                      fontSize: 14, color: isSelected ? C.cyan : C.textMuted,
+                      transition: 'color 0.15s',
+                      transform: isSelected ? 'rotate(90deg)' : 'rotate(0)',
+                    }}>chevron_right</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Session detail drawer */}
+          {selectedSession && (() => {
+            const s = selectedSession;
+            const epType = app.entry_points?.find(ep => ep.slug === s.ep_slug)?.entry_point_type ?? 'websocket';
+            return (
+              <div style={{
+                borderTop: `1px solid ${C.outline}`,
+                padding: '14px 16px',
+                background: 'rgba(0,240,255,0.03)',
+                flexShrink: 0,
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.cyan, marginBottom: 10, letterSpacing: 0.3 }}>
+                  SESSION DETAIL
+                </div>
+                {[
+                  ['Session ID', s.session_id.slice(0, 16) + '…'],
+                  ['Entry Point', s.ep_slug ?? '—'],
+                  ['EP Type', epType],
+                  ['Orchestrator', s.orchestrator_name],
+                  ['User ID', String(s.user_id)],
+                  ['Context ID', s.context_id.slice(0, 16) + '…'],
+                  ['Started', new Date(s.started_at).toLocaleTimeString()],
+                  ['Elapsed', elapsed(s.started_at)],
+                  ['Pod', s.instance_id.slice(0, 12) + '…'],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, gap: 8 }}>
+                    <span style={{ fontSize: 11, color: C.textMuted, flexShrink: 0 }}>{label}</span>
+                    <span suppressHydrationWarning style={{
+                      fontSize: 11, color: C.text, fontFamily: label === 'Session ID' || label === 'Context ID' || label === 'Pod' ? 'JetBrains Mono, monospace' : 'inherit',
+                      textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }} title={value}>{value}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                  <button
+                    onClick={() => { handleTerminate(s.session_id); setSelectedSession(null); }}
+                    style={{
+                      flex: 1, padding: '6px 0', borderRadius: 6,
+                      border: '1px solid rgba(239,68,68,0.45)', background: 'rgba(239,68,68,0.06)',
+                      color: '#ef4444', fontSize: 12, cursor: 'pointer',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.14)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.06)'; }}
+                  >
+                    Terminate
+                  </button>
+                  <button
+                    onClick={() => setSelectedSession(null)}
+                    style={{
+                      flex: 1, padding: '6px 0', borderRadius: 6,
+                      border: `1px solid ${C.outline}`, background: 'transparent',
+                      color: C.textMuted, fontSize: 12, cursor: 'pointer',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ListView({
+  list, loading, onNew, onEdit, onSessions, onRuntime, onToggle, onDelete,
+  selectedApps, onToggleSelect, onSelectAll, onBulkDelete, bulkDeleting,
+}: {
+  list: Application[];
+  loading: boolean;
+  onNew: () => void;
+  onEdit: (app: Application) => void;
+  onSessions: (app: Application) => void;
+  onRuntime: (app: Application) => void;
+  onToggle: (app: Application) => void;
+  onDelete: (app: Application) => void;
+  selectedApps: Set<string>;
+  onToggleSelect: (id: string, checked: boolean) => void;
+  onSelectAll: (checked: boolean) => void;
+  onBulkDelete: () => void;
+  bulkDeleting: boolean;
+}) {
+  const [urlModalApp, setUrlModalApp] = useState<Application | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Read JWT for WS auth — same cookie the rest of the app uses
+  const [token, setToken] = useState<string | null>(null);
+  useEffect(() => {
+    fetch('/api/auth/token').then(r => r.ok ? r.json() : null).then(d => {
+      if (d?.token) setToken(d.token);
+    }).catch(() => {});
+  }, []);
+
+  const appStatuses = useDashAppStatuses(token);
+
+  // Track session counts per app via individual session WS subscriptions
+  // We subscribe to each app's sessions channel and count
+  const [sessionCounts, setSessionCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!token || list.length === 0) return;
+    const wsBase = window.location.origin.replace(/^http/, 'ws').replace(/^https/, 'wss');
+    const wsUrl = `${wsBase}/ws/dashboard?token=${token}`;
+    let ws: WebSocket;
+    let dead = false;
+
+    function connect() {
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        const channels = list.map(a => `sessions:${a.id}`);
+        ws.send(JSON.stringify({ type: 'subscribe', channels }));
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (!msg.channel?.startsWith('sessions:')) return;
+          const appId = msg.channel.slice('sessions:'.length);
+          const evt = msg.event;
+          if (evt?.type === 'session_snapshot') {
+            setSessionCounts(prev => ({ ...prev, [appId]: (evt.sessions ?? []).length }));
+          } else if (evt?.type === 'session_start') {
+            setSessionCounts(prev => ({ ...prev, [appId]: (prev[appId] ?? 0) + 1 }));
+          } else if (evt?.type === 'session_end') {
+            setSessionCounts(prev => ({ ...prev, [appId]: Math.max(0, (prev[appId] ?? 1) - 1) }));
+          }
+        } catch {}
+      };
+      ws.onclose = () => { if (!dead) setTimeout(connect, 4000); };
+      ws.onerror = () => ws.close();
+    }
+    connect();
+    return () => { dead = true; ws?.close(); };
+  }, [token, list]);
+
+  function copy(val: string, id: string) {
+    navigator.clipboard?.writeText(val).catch(() => {});
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 1800);
+  }
+
+  return (
+    <div style={{ marginLeft: 260, flex: 1, background: C.bg, minHeight: '100vh' }}>
+      <style>{APP_CARD_STYLES}</style>
+
+      {/* Page header */}
+      <div style={{ padding: '40px 32px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <h2 style={{ fontSize: 40, fontWeight: 800, color: C.text, margin: '0 0 6px 0', letterSpacing: '-0.03em', lineHeight: 1.1 }}>
+            Applications
+          </h2>
+          <p style={{ fontSize: 14, color: C.textMuted, margin: 0 }}>
+            Compose orchestrators and entry points into deployable agentic applications.
+          </p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {list.length > 0 && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13, color: C.textMuted }}>
+              <input
+                type="checkbox"
+                checked={selectedApps.size > 0 && selectedApps.size === list.length}
+                ref={el => { if (el) el.indeterminate = selectedApps.size > 0 && selectedApps.size < list.length; }}
+                onChange={e => onSelectAll(e.target.checked)}
+                style={{ accentColor: '#00d1ff' }}
+              />
+              All
+            </label>
+          )}
+          {selectedApps.size > 0 && (
+            <button
+              onClick={onBulkDelete}
+              disabled={bulkDeleting}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '10px 18px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.4)',
+                background: 'rgba(248,113,113,0.08)', color: '#f87171',
+                fontSize: 13, fontWeight: 600, cursor: bulkDeleting ? 'not-allowed' : 'pointer',
+                opacity: bulkDeleting ? 0.6 : 1, transition: 'opacity 0.15s',
+              }}
+            >
+              {bulkDeleting ? 'Deleting…' : `Delete selected (${selectedApps.size})`}
+            </button>
+          )}
+          <button
+            onClick={onNew}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '12px 24px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              background: '#00d1ff', color: '#000', fontSize: 14, fontWeight: 700,
+              boxShadow: '0 0 20px rgba(0,209,255,0.4)',
+            }}
+          >
+            <span style={{ fontSize: 18, lineHeight: 1 }}>+</span>
+            New Application
+          </button>
+        </div>
+      </div>
+
+      {/* Card grid */}
+      <ChromaGrid radius={420} damping={0.09} fadeOutMs={800} style={{ padding: '0 32px 48px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }}>
+        {loading && (
+          <div style={{ gridColumn: '1 / -1', padding: 80, textAlign: 'center', color: C.textMuted, fontSize: 14 }}>
+            Loading…
+          </div>
+        )}
+
+        {!loading && list.length === 0 && (
+          <div
+            className="app-deploy-card"
+            onClick={onNew}
+            style={{
+              borderRadius: 16, border: '2px dashed rgba(99,102,241,0.35)',
+              background: 'rgba(99,102,241,0.02)',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: 14, cursor: 'pointer', minHeight: 220, transition: 'border-color 200ms ease, background 200ms ease',
+            }}
+          >
+            <div style={{ width: 52, height: 52, borderRadius: 14, border: '2px dashed rgba(99,102,241,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span className="material-icons" style={{ fontSize: 26, color: '#818cf8' }}>add</span>
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#818cf8' }}>New Application</div>
+          </div>
+        )}
+
+        {!loading && list.map((app) => {
+          // Aggregate liveness across all EPs: live if ANY is reachable, best latency wins.
+          const epStatuses = (app.entry_points ?? [])
+            .map(ep => appStatuses[ep.slug])
+            .filter(Boolean) as AppLiveness[];
+          const anyReachable = epStatuses.some(s => s.reachable);
+          const allChecked = epStatuses.length > 0;
+          const bestLatency = epStatuses
+            .filter(s => s.reachable && s.latency_ms != null)
+            .reduce((min, s) => (s.latency_ms! < min ? s.latency_ms! : min), Infinity);
+          const aggLiveness: AppLiveness | null = allChecked
+            ? { reachable: anyReachable, latency_ms: isFinite(bestLatency) ? bestLatency : null }
+            : null;
+          return (
+          <AppCard
+            key={app.id}
+            app={app}
+            liveness={aggLiveness}
+            sessionCount={sessionCounts[app.id] ?? 0}
+            selected={selectedApps.has(app.id)}
+            onToggleSelect={onToggleSelect}
+            onEdit={onEdit}
+            onSessions={onSessions}
+            onRuntime={onRuntime}
+            onToggle={onToggle}
+            onDelete={onDelete}
+            onUrls={setUrlModalApp}
+          />
+          );
+        })}
+
+        {/* Deploy / New card — always last */}
+        {!loading && list.length > 0 && (
+          <div
+            className="app-deploy-card"
+            onClick={onNew}
+            style={{
+              borderRadius: 16, border: '2px dashed rgba(99,102,241,0.35)',
+              background: 'rgba(99,102,241,0.02)',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: 14, cursor: 'pointer', minHeight: 220, transition: 'border-color 200ms ease, background 200ms ease',
+            }}
+          >
+            <div style={{ width: 52, height: 52, borderRadius: 14, border: '2px dashed rgba(99,102,241,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span className="material-icons" style={{ fontSize: 26, color: '#818cf8' }}>add</span>
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#818cf8' }}>New Application</div>
+          </div>
+        )}
+      </div>
+      </ChromaGrid>
+
+      {/* URL Modal */}
+      {urlModalApp && (
+        <div
+          style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(5,20,36,0.85)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setUrlModalApp(null)}
+        >
+          <div
+            style={{ ...glass, borderRadius: 16, padding: '28px 32px', minWidth: 480, maxWidth: 600, position: 'relative' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, fontFamily: 'Geist, sans-serif' }}>
+                Entry Point URLs — {urlModalApp.name}
+              </div>
+              <button onClick={() => setUrlModalApp(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center' }}>
+                <span className="material-icons" style={{ fontSize: 20 }}>close</span>
+              </button>
+            </div>
+            {urlModalApp.entry_points.map((epRow, epIdx) => {
+              const urls: Array<{ label: string; val: string }> = [];
+              if (epRow.entry_point_type === 'websocket') urls.push({ label: 'WebSocket', val: `ws://<host>:8088/apps/${epRow.slug}/ws` });
+              if (epRow.entry_point_type === 'sse') urls.push({ label: 'SSE', val: `http://<host>:8088/apps/${epRow.slug}/sse` }, { label: 'REST', val: `http://<host>:8088/apps/${epRow.slug}` });
+              if (epRow.entry_point_type === 'webrtc') urls.push(
+                { label: 'Voice Page', val: `http://<host>:8088/apps/${epRow.slug}/voice` },
+                { label: 'Token API', val: `http://<host>:8088/apps/${epRow.slug}/webrtc/token` },
+              );
+              const epColor = epIconColor(epRow.entry_point_type);
+              return (
+                <div key={epRow.id} style={{ marginBottom: epIdx < urlModalApp.entry_points.length - 1 ? 18 : 0 }}>
+                  {urlModalApp.entry_points.length > 1 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: epColor.color }}>{EP_ICON[epRow.entry_point_type] ?? 'bolt'}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: epColor.color, fontFamily: 'JetBrains Mono, monospace' }}>{epRow.slug}</span>
+                      <span style={{ fontSize: 10, color: C.textMuted }}>· {(epRow.access_policy as any)?.mode === 'public' ? 'public' : 'token'}</span>
+                    </div>
+                  )}
+                  {urls.map(({ label, val }) => {
+                    const cid = `modal_${epRow.id}_${label}`;
+                    return (
+                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: C.textMuted, minWidth: 100, fontFamily: 'Inter, sans-serif' }}>{label}</span>
+                        <code style={{ flex: 1, fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.text, background: C.surfaceContainer, padding: '5px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val}</code>
+                        <button
+                          onClick={() => copy(val, cid)}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: 'transparent', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: copiedId === cid ? C.green : C.textMuted, transition: 'all 0.15s' }}
+                        >
+                          {copiedId === cid ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+            <div style={{ marginTop: 14, fontSize: 11, color: C.textMuted, fontFamily: 'Inter, sans-serif' }}>
+              {urlModalApp.entry_points.every(ep => (ep.access_policy as any)?.mode === 'public')
+                ? 'No auth required — public access'
+                : 'Bearer token required — use /admin/tokens to create one'}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Page root ─────────────────────────────────────────────────────────────────
+export default function ApplicationsPage() {
+  const [list, setList] = useState<Application[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<'list' | 'builder' | 'sessions' | 'runtime'>('list');
+  const [editApp, setEditApp] = useState<Application | null>(null);
+  const [sessionsApp, setSessionsApp] = useState<Application | null>(null);
+  const [runtimeApp, setRuntimeApp] = useState<Application | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  useEffect(() => {
+    fetch('/api/auth/token').then(r => r.ok ? r.json() : null).then(d => { if (d?.token) setToken(d.token); }).catch(() => {});
+  }, []);
+  const [selectedApps, setSelectedApps] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    Promise.all([themApi.applications(), themApi.agents()])
+      .then(([apps, ags]) => { setList(apps); setAgents(ags); })
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function handleToggle(app: Application) {
+    try { await themApi.updateApplication(app.id, { enabled: !app.enabled }); await load(); } catch {/* ignore */}
+  }
+
+  async function handleDelete(app: Application) {
+    if (!confirm(`Delete application "${app.name}"?`)) return;
+    try { await themApi.deleteApplication(app.id); await load(); } catch {/* ignore */}
+  }
+
+  function handleToggleSelect(id: string, checked: boolean) {
+    setSelectedApps(prev => {
+      const next = new Set(prev);
+      checked ? next.add(id) : next.delete(id);
+      return next;
+    });
+  }
+
+  function handleSelectAll(checked: boolean) {
+    setSelectedApps(checked ? new Set(list.map(a => a.id)) : new Set());
+  }
+
+  async function handleBulkDelete() {
+    if (selectedApps.size === 0) return;
+    if (!confirm(`Delete ${selectedApps.size} application${selectedApps.size !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    try {
+      await themApi.bulkDeleteApplications(Array.from(selectedApps));
+      setSelectedApps(new Set());
+      await load();
+    } catch {/* ignore */} finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  function openBuilder(app: Application | null) {
+    setEditApp(app);
+    setView('builder');
+  }
+
+  function backToList() {
+    setView('list');
+    setEditApp(null);
+    setSessionsApp(null);
+    setRuntimeApp(null);
+  }
+
+  function openSessions(app: Application) {
+    setSessionsApp(app);
+    setView('sessions');
+  }
+
+  function openRuntime(app: Application) {
+    setRuntimeApp(app);
+    setView('runtime');
+  }
+
+  async function onBuilderSaved() {
+    await load();
+    // Stay in builder — let user navigate back manually if they want
+  }
+
+  if (view === 'runtime' && runtimeApp) {
+    return (
+      <AuthGuard>
+        <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
+          <Sidebar />
+          <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+            <RuntimeView
+              app={runtimeApp}
+              onBack={backToList}
+            />
+          </div>
+        </div>
+      </AuthGuard>
+    );
+  }
+
+  if (view === 'sessions' && sessionsApp) {
+    return (
+      <AuthGuard>
+        <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
+          <Sidebar />
+          <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+            <SessionsView
+              app={sessionsApp}
+              agents={agents}
+              onBack={backToList}
+              token={token}
+            />
+          </div>
+        </div>
+      </AuthGuard>
+    );
+  }
+
+  if (view === 'builder') {
+    return (
+      <AuthGuard>
+        <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
+          <Sidebar />
+          <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+            <ReactFlowProvider>
+              <BuilderView
+                app={editApp}
+                agents={agents}
+                onBack={backToList}
+                onSaved={onBuilderSaved}
+                onAgentsChange={setAgents}
+              />
+            </ReactFlowProvider>
+          </div>
+        </div>
+      </AuthGuard>
+    );
+  }
+
+  return (
+    <AuthGuard>
+      <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
+        <Sidebar />
+        <ListView
+          list={list}
+          loading={loading}
+          onNew={() => openBuilder(null)}
+          onEdit={(app) => openBuilder(app)}
+          onSessions={openSessions}
+          onRuntime={openRuntime}
+          onToggle={handleToggle}
+          onDelete={handleDelete}
+          selectedApps={selectedApps}
+          onToggleSelect={handleToggleSelect}
+          onSelectAll={handleSelectAll}
+          onBulkDelete={handleBulkDelete}
+          bulkDeleting={bulkDeleting}
+        />
+      </div>
+    </AuthGuard>
+  );
+}
