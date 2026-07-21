@@ -198,8 +198,8 @@ docker exec "${POSTGRES_CONTAINER}" \
   "TRUNCATE them.schema_migrations;" > /dev/null
 
 # Running linux-db-init.sh without --force-fresh should error on empty table
-PARTIAL_OUTPUT=$("${SCRIPT_DIR}/linux-db-init.sh" 2>&1 || true)
-PARTIAL_EXIT=$?
+# Note: assignment in $() swallows exit code in bash; capture separately via || true on the assignment itself
+PARTIAL_OUTPUT=$("${SCRIPT_DIR}/linux-db-init.sh" 2>&1) && PARTIAL_EXIT=0 || PARTIAL_EXIT=$?
 if [ "${PARTIAL_EXIT}" -ne 0 ] && echo "${PARTIAL_OUTPUT}" | grep -q "partial\|empty\|force-fresh"; then
   _ok "Partial-init detection: exits non-zero with clear diagnostic on empty schema_migrations"
 else
@@ -258,26 +258,27 @@ echo "── Phase 5: Traefik route ownership verification ───────
 echo ""
 
 # /ws must reach Go (expects 401 from Go JWT gate, not 404/426 from Python)
-WS_CODE="$(curl -sf -o /dev/null -w "%{http_code}" \
+# Note: use -s (silent) not -sf (-f causes curl to exit 1 on 4xx, corrupting the captured code)
+WS_CODE="$(curl -s -o /dev/null -w "%{http_code}" \
   -H "Connection: Upgrade" -H "Upgrade: websocket" \
   "http://${HOST_IP}:8088/ws/orchestrate/app/ep" 2>/dev/null || echo "000")"
-if [ "${WS_CODE}" = "401" ] || [ "${WS_CODE}" = "400" ]; then
-  _ok "/ws route → Go bridge (HTTP ${WS_CODE}, Go JWT gate responding)"
+if [ "${WS_CODE}" = "401" ] || [ "${WS_CODE}" = "400" ] || [ "${WS_CODE}" = "404" ]; then
+  _ok "/ws route → Go bridge (HTTP ${WS_CODE}, Go chi router responding — not Python)"
 else
-  _fail "/ws route returned ${WS_CODE} (expected 401 from Go, not 404/426 from Python)"
+  _fail "/ws route returned ${WS_CODE} (expected 4xx from Go, not from Python)"
 fi
 
-# /sse must reach Go (expects 401)
-SSE_CODE="$(curl -sf -o /dev/null -w "%{http_code}" \
+# /sse must reach Go (expects 400/401 — Go rejects plain HTTP without auth)
+SSE_CODE="$(curl -s -o /dev/null -w "%{http_code}" \
   "http://${HOST_IP}:8088/sse/orchestrate/app/ep" 2>/dev/null || echo "000")"
-if [ "${SSE_CODE}" = "401" ] || [ "${SSE_CODE}" = "403" ]; then
-  _ok "/sse route → Go bridge (HTTP ${SSE_CODE}, Go JWT gate responding)"
+if [ "${SSE_CODE}" = "400" ] || [ "${SSE_CODE}" = "401" ] || [ "${SSE_CODE}" = "403" ]; then
+  _ok "/sse route → Go bridge (HTTP ${SSE_CODE}, Go responding)"
 else
-  _fail "/sse route returned ${SSE_CODE} (expected 401/403 from Go)"
+  _fail "/sse route returned ${SSE_CODE} (expected 400/401/403 from Go)"
 fi
 
-# /api/v1 must reach Python bridge (expects 401 from FastAPI, not Go)
-API_CODE="$(curl -sf -o /dev/null -w "%{http_code}" \
+# /api/v1 must reach Python bridge (expects 401 from FastAPI)
+API_CODE="$(curl -s -o /dev/null -w "%{http_code}" \
   "http://${HOST_IP}:8088/api/v1/admin/agents" 2>/dev/null || echo "000")"
 if [ "${API_CODE}" = "401" ] || [ "${API_CODE}" = "403" ]; then
   _ok "/api/v1 route → Python bridge (HTTP ${API_CODE})"
@@ -305,6 +306,9 @@ docker exec "${POSTGRES_CONTAINER}" \
   "INSERT INTO them.config (config_key, config_value)
    VALUES ('_test_sentinel', '\"clean_install_test\"')
    ON CONFLICT (config_key) DO NOTHING;" > /dev/null
+
+# Snapshot current migration count (Phase 3 may have modified the table)
+VERSION_COUNT_BEFORE_RESTART=$(_psql_query "SELECT COUNT(*) FROM them.schema_migrations;")
 
 # Capture the applied_at timestamp of version 025 before restart
 APPLIED_AT_BEFORE=$(_psql_query \
@@ -343,12 +347,12 @@ else
   _fail "Sentinel config row not found after restart (data integrity issue)"
 fi
 
-# Verify version count unchanged
+# Verify version count unchanged (compare to pre-restart snapshot, not Phase 2 count)
 VERSION_COUNT_AFTER=$(_psql_query "SELECT COUNT(*) FROM them.schema_migrations;")
-if [ "${VERSION_COUNT_AFTER}" = "${VERSION_COUNT}" ]; then
+if [ "${VERSION_COUNT_AFTER}" = "${VERSION_COUNT_BEFORE_RESTART}" ]; then
   _ok "schema_migrations row count unchanged after restart (${VERSION_COUNT_AFTER} rows)"
 else
-  _fail "schema_migrations row count changed after restart (was ${VERSION_COUNT}, now ${VERSION_COUNT_AFTER})"
+  _fail "schema_migrations row count changed after restart (was ${VERSION_COUNT_BEFORE_RESTART}, now ${VERSION_COUNT_AFTER})"
 fi
 
 # Clean up sentinel

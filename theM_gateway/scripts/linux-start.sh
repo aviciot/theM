@@ -223,7 +223,14 @@ _wait_healthy "them-go-bridge-2" 90
 # ── Step 8: Traefik ───────────────────────────────────────────────────────────
 # Routes: /ws → Go, /sse → Go, /go-health → Go, /api/v1 → Python bridge (started next)
 echo "==> [start] Starting Traefik..."
-"${COMPOSE[@]}" up -d them-traefik
+# Retry once after 35s if port binding fails (TIME_WAIT from a recent stop can hold the port)
+if ! "${COMPOSE[@]}" up -d them-traefik 2>&1; then
+  echo "  Traefik port binding failed (likely OS TIME_WAIT from recent stop). Waiting 35s..."
+  docker rm -f them-traefik 2>/dev/null || true
+  sleep 35
+  echo "  Retrying Traefik startup..."
+  "${COMPOSE[@]}" up -d them-traefik
+fi
 
 # ── Step 9: Python bridge (admin API only) + frontend ─────────────────────────
 # them-bridge serves /api/v1/admin/* and /health/* only on Linux.

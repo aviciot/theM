@@ -13,7 +13,7 @@ version: "3.9"
 #   - Python bridge WS/SSE Traefik routes removed — Go bridges own those paths
 #   - Source bind mounts (.:/app) removed — code baked into image at build time
 #   - Data stored in named Docker volumes (no UID/GID ownership issues)
-#   - Traefik dashboard on 0.0.0.0:8089 (not 127.0.0.1 — reachable on server)
+#   - Traefik dashboard: base binds 127.0.0.1:8089; on Linux change base to 0.0.0.0:8089 or use firewall
 #
 # Route ownership on Linux:
 #   /ws/*          → them-go-svc (Go bridges, priority 110, via docker-compose.traefik.yml)
@@ -34,11 +34,14 @@ networks:
 
 services:
 
-  # ── Traefik: dashboard on all interfaces for remote server access ─────────────
+  # ── Traefik: dashboard binding ────────────────────────────────────────────────
+  # The base docker-compose.yml binds 8088 and 127.0.0.1:8089.
+  # On a real Linux server, override 8089 here to 0.0.0.0:8089 for remote access.
+  # docker-compose merges port arrays (does not replace), so listing 8089 here
+  # in addition to the base results in a double-bind error.
+  # On Linux: change docker-compose.yml to bind 0.0.0.0:8089:8089 directly,
+  # or restrict dashboard access via firewall (ufw allow from <trusted-ip> to any port 8089).
   them-traefik:
-    ports:
-      - "8088:8088"
-      - "8089:8089"
     networks:
       - proxy-network
       - them-network

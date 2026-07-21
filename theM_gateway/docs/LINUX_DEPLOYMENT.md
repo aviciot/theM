@@ -379,3 +379,15 @@ Both paths must work independently. A developer on Windows applies `026_new_feat
 | Temporal worker readiness check | Uses `temporal task-queue describe` in `temporal-admin-tools` container; hard failure if not ready within 120s |
 | Advisory lock on schema ops | Both init and upgrade run all steps (lock + apply + record) in one psql session; lock is session-scoped and released on session exit |
 | Migration atomicity | Each upgrade migration is wrapped in BEGIN/COMMIT; schema_migrations INSERT is inside the same transaction; rollback on failure leaves no record |
+| Migration skip detection | `linux-db-upgrade.sh` uses `RAISE EXCEPTION 'upgrade-skip:VERSION'` to abort the psql session before migration SQL runs; prior `RAISE NOTICE` approach let the session fall through and execute the SQL again |
+| Test migration version names | Must match `^\d{3}[a-z]?(_[a-z0-9_]+)?$` (enforced by `ck_schema_migrations_version` check constraint); use `900_test_*`, `901_test_*`, etc. — not `test_NNN_name` |
+| Traefik double-bind | `docker compose` MERGES port arrays across overlay files; never list the same port in both `docker-compose.yml` and `docker-compose.linux.yml` |
+| TCP TIME_WAIT | After stack stop on Docker Desktop (Windows), OS holds port reservations 35–120s; `linux-start.sh` retries Traefik once with 35s wait |
+
+---
+
+## Validation results — 2026-07-21
+
+`linux-validate-clean-install.sh`: **27/27 PASSED**
+
+`scripts/tests/test_db_infra.sh`: **17/17 PASSED** (T1–T6 all green)

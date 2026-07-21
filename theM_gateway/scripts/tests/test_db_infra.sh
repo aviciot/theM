@@ -146,7 +146,8 @@ else
 fi
 
 # Confirm linux-start.sh has 'exit 1' in the worker readiness failure path
-if grep -A5 "Temporal worker not ready after" "${START_SCRIPT}" | grep -q "exit 1"; then
+# The diagnostic block spans up to 20 lines — use -A20 to cover the full block
+if grep -A20 "Temporal worker not ready after" "${START_SCRIPT}" | grep -q "exit 1"; then
   _ok "T1: Worker failure path has 'exit 1' — startup is blocked on worker readiness"
 else
   _fail "T1: Worker failure path does not have 'exit 1' in linux-start.sh"
@@ -169,8 +170,8 @@ PID1=$!
 "${GATEWAY_DIR}/scripts/linux-db-init.sh" > /tmp/db_init_proc2.log 2>&1 &
 PID2=$!
 
-wait "${PID1}"; EXIT1=$?
-wait "${PID2}"; EXIT2=$?
+wait "${PID1}" && EXIT1=0 || EXIT1=$?
+wait "${PID2}" && EXIT2=0 || EXIT2=$?
 
 # Exactly one should succeed (exit 0), one should fail or detect already-initialized
 BOTH_SUCCEEDED=$([ "${EXIT1}" -eq 0 ] && [ "${EXIT2}" -eq 0 ] && echo true || echo false)
@@ -178,8 +179,8 @@ BOTH_FAILED=$([ "${EXIT1}" -ne 0 ] && [ "${EXIT2}" -ne 0 ] && echo true || echo 
 
 if [ "${BOTH_SUCCEEDED}" = "true" ]; then
   # Both succeeded is OK only if the second one detected already-initialized
-  P1_INITIALIZED=$(grep -c "already initialized\|already-initialized\|Schema bootstrap complete" /tmp/db_init_proc1.log || echo 0)
-  P2_INITIALIZED=$(grep -c "already initialized\|already-initialized\|Schema bootstrap complete" /tmp/db_init_proc2.log || echo 0)
+  P1_INITIALIZED=$(grep -c "already initialized\|already-initialized\|Schema bootstrap complete" /tmp/db_init_proc1.log 2>/dev/null) || P1_INITIALIZED=0
+  P2_INITIALIZED=$(grep -c "already initialized\|already-initialized\|Schema bootstrap complete" /tmp/db_init_proc2.log 2>/dev/null) || P2_INITIALIZED=0
   if [ "$((P1_INITIALIZED + P2_INITIALIZED))" -ge 2 ]; then
     _ok "T2: Both processes exited 0; one bootstrapped, other detected already-initialized"
   else
@@ -206,17 +207,17 @@ echo ""
 echo "── T3: Concurrent upgrade — same migration applied exactly once ──────────"
 echo ""
 
-# Create a test migration file
-TEST_MIGRATION_FILE="/tmp/test_999_concurrent_upgrade.sql"
+# Create a test migration file (no BEGIN/COMMIT — upgrade script wraps in its own transaction)
+# Version name must match the schema_migrations check constraint: ^\d{3}[a-z]?(_[a-z0-9_]+)?$
+TEST_MIGRATION_FILE="/tmp/900_test_concurrent.sql"
 cat > "${TEST_MIGRATION_FILE}" <<'MIGRATION_EOF'
 -- Test migration: concurrent upgrade test
-BEGIN;
+-- Note: no BEGIN/COMMIT here — linux-db-upgrade.sh wraps in its own transaction
 CREATE TABLE IF NOT EXISTS them._test_concurrent_marker (
     id SERIAL PRIMARY KEY,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 INSERT INTO them._test_concurrent_marker DEFAULT VALUES;
-COMMIT;
 MIGRATION_EOF
 
 # Run two upgrade attempts concurrently
@@ -227,8 +228,8 @@ UPID1=$!
   > /tmp/upgrade_proc2.log 2>&1 &
 UPID2=$!
 
-wait "${UPID1}"; UEXIT1=$?
-wait "${UPID2}"; UEXIT2=$?
+wait "${UPID1}" && UEXIT1=0 || UEXIT1=$?
+wait "${UPID2}" && UEXIT2=0 || UEXIT2=$?
 
 # The marker table should have exactly ONE row (not two) — applied once
 MARKER_COUNT=$(_psql_prod \
@@ -241,7 +242,7 @@ else
 fi
 
 # schema_migrations must have exactly one row for this version
-VERSION_KEY="test_999_concurrent_upgrade"
+VERSION_KEY="900_test_concurrent"
 SM_COUNT=$(_psql_prod \
   "SELECT COUNT(*) FROM them.schema_migrations WHERE version='${VERSION_KEY}';" || echo 0)
 if [ "${SM_COUNT}" = "1" ]; then
@@ -255,8 +256,9 @@ if [ "${UEXIT1}" -eq 0 ] && [ "${UEXIT2}" -eq 0 ]; then
   _ok "T3: Both concurrent upgrade processes exited 0 (one applied, one skipped safely)"
 else
   # One may have hit the advisory lock and failed — still acceptable
-  SKIP1=$(grep -c "Skipping\|skip\|already recorded" /tmp/upgrade_proc1.log || echo 0)
-  SKIP2=$(grep -c "Skipping\|skip\|already recorded" /tmp/upgrade_proc2.log || echo 0)
+  # grep -c exits 1 when no match (but still prints "0") — capture cleanly without double-echo
+  SKIP1=$(grep -c "Skipping\|skip\|already recorded" /tmp/upgrade_proc1.log 2>/dev/null) || SKIP1=0
+  SKIP2=$(grep -c "Skipping\|skip\|already recorded" /tmp/upgrade_proc2.log 2>/dev/null) || SKIP2=0
   if [ "$((SKIP1 + SKIP2))" -ge 1 ]; then
     _ok "T3: One process skipped; migration not applied twice (exit codes: ${UEXIT1}, ${UEXIT2})"
   else
@@ -266,6 +268,7 @@ fi
 
 # Cleanup
 _psql_prod "DROP TABLE IF EXISTS them._test_concurrent_marker;" > /dev/null 2>&1 || true
+_psql_prod "DELETE FROM them.schema_migrations WHERE version='900_test_concurrent';" > /dev/null 2>&1 || true
 rm -f "${TEST_MIGRATION_FILE}"
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -273,20 +276,18 @@ echo ""
 echo "── T4: Failed migration leaves no schema_migrations record ──────────────"
 echo ""
 
-FAIL_MIGRATION_FILE="/tmp/test_998_fail_migration.sql"
+# Version name must match the schema_migrations check constraint: ^\d{3}[a-z]?(_[a-z0-9_]+)?$
+FAIL_MIGRATION_FILE="/tmp/901_test_fail.sql"
 cat > "${FAIL_MIGRATION_FILE}" <<'FAIL_MIGRATION_EOF'
--- Test migration: intentional failure
-BEGIN;
+-- Test migration: intentional failure (no BEGIN/COMMIT — upgrade script owns the transaction)
 CREATE TABLE IF NOT EXISTS them._test_fail_marker (id SERIAL PRIMARY KEY);
 INSERT INTO them._test_fail_marker DEFAULT VALUES;
 -- Force a SQL error to trigger rollback
-SELECT 1/0;  -- division by zero
-COMMIT;
+SELECT 1/0;
 FAIL_MIGRATION_EOF
 
-# Run the failing migration
-FAIL_OUTPUT=$("${GATEWAY_DIR}/scripts/linux-db-upgrade.sh" "${FAIL_MIGRATION_FILE}" 2>&1 || true)
-FAIL_EXIT=$?
+# Run the failing migration — capture output and exit code without || true swallowing exit
+FAIL_OUTPUT=$("${GATEWAY_DIR}/scripts/linux-db-upgrade.sh" "${FAIL_MIGRATION_FILE}" 2>&1) && FAIL_EXIT=0 || FAIL_EXIT=$?
 
 if [ "${FAIL_EXIT}" -ne 0 ]; then
   _ok "T4: Failed migration exits non-zero (exit ${FAIL_EXIT})"
@@ -295,7 +296,7 @@ else
 fi
 
 # schema_migrations must NOT have a record for the failed version
-FAIL_VERSION="test_998_fail_migration"
+FAIL_VERSION="901_test_fail"
 SM_FAIL=$(_psql_prod \
   "SELECT COUNT(*) FROM them.schema_migrations WHERE version='${FAIL_VERSION}';" || echo 0)
 if [ "${SM_FAIL}" = "0" ]; then
@@ -321,21 +322,20 @@ echo ""
 echo "── T5: Rerunning a successful migration skips it safely ─────────────────"
 echo ""
 
-IDEMPOTENT_MIGRATION_FILE="/tmp/test_997_idempotent.sql"
+# Version name must match the schema_migrations check constraint: ^\d{3}[a-z]?(_[a-z0-9_]+)?$
+IDEMPOTENT_MIGRATION_FILE="/tmp/902_test_idempotent.sql"
 cat > "${IDEMPOTENT_MIGRATION_FILE}" <<'IDEMPOTENT_EOF'
 -- Test migration: idempotent marker
-BEGIN;
+-- Note: no BEGIN/COMMIT here — linux-db-upgrade.sh wraps in its own transaction
 CREATE TABLE IF NOT EXISTS them._test_idempotent_marker (
     id SERIAL PRIMARY KEY,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 INSERT INTO them._test_idempotent_marker DEFAULT VALUES;
-COMMIT;
 IDEMPOTENT_EOF
 
 # First run — should apply
-OUT1=$("${GATEWAY_DIR}/scripts/linux-db-upgrade.sh" "${IDEMPOTENT_MIGRATION_FILE}" 2>&1)
-EXIT1=$?
+OUT1=$("${GATEWAY_DIR}/scripts/linux-db-upgrade.sh" "${IDEMPOTENT_MIGRATION_FILE}" 2>&1) && EXIT1=0 || EXIT1=$?
 
 if [ "${EXIT1}" -eq 0 ]; then
   _ok "T5: First migration run succeeded (exit 0)"
@@ -344,8 +344,7 @@ else
 fi
 
 # Second run — should skip
-OUT2=$("${GATEWAY_DIR}/scripts/linux-db-upgrade.sh" "${IDEMPOTENT_MIGRATION_FILE}" 2>&1)
-EXIT2=$?
+OUT2=$("${GATEWAY_DIR}/scripts/linux-db-upgrade.sh" "${IDEMPOTENT_MIGRATION_FILE}" 2>&1) && EXIT2=0 || EXIT2=$?
 
 if [ "${EXIT2}" -eq 0 ] && echo "${OUT2}" | grep -q "Skipping\|skip\|already recorded"; then
   _ok "T5: Second run skipped safely (already recorded in schema_migrations)"

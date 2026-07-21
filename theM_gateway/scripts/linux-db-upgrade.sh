@@ -104,12 +104,14 @@ END;
 \$\$;
 
 -- Skip if already applied (check inside the locked session)
+-- RAISE EXCEPTION aborts the session immediately so the migration SQL never runs.
+-- The caller detects 'upgrade-skip:' in the error output and treats it as a successful skip.
 DO \$\$
 DECLARE v INTEGER;
 BEGIN
   SELECT COUNT(*) INTO v FROM them.schema_migrations WHERE version = '${VERSION}';
   IF v > 0 THEN
-    RAISE NOTICE 'upgrade-skip:${VERSION}';
+    RAISE EXCEPTION 'upgrade-skip:${VERSION}';
   END IF;
 END;
 \$\$;
@@ -129,14 +131,16 @@ DO \$\$ BEGIN RAISE NOTICE 'upgrade-success:${VERSION}'; END; \$\$;
 POSTAMBLE_EOF
 )"
 
-  # Stream preamble + migration file + postamble into one psql session
+  # Stream preamble + migration file + postamble into one psql session.
+  # Use && / || to capture exit code without triggering set -e on non-zero exit.
+  # RAISE EXCEPTION (used for skip detection) exits psql with a non-zero code;
+  # we need to inspect the output before deciding whether it's a skip or an error.
   SESSION_OUTPUT=$(
     { printf '%s\n' "${PREAMBLE}"; cat "${f}"; printf '\n%s\n' "${POSTAMBLE}"; } \
     | docker exec -i "${POSTGRES_CONTAINER}" \
         psql -U "${THE_M_DB_USER}" -d "${THE_M_DB_NAME}" \
         -v ON_ERROR_STOP=1 2>&1
-  )
-  SESSION_EXIT=$?
+  ) && SESSION_EXIT=0 || SESSION_EXIT=$?
 
   # Check for skip signal (already applied)
   if echo "${SESSION_OUTPUT}" | grep -q "upgrade-skip:${VERSION}"; then
