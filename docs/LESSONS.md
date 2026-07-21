@@ -615,3 +615,42 @@ Pub/Sub is faster than a Hash read. If you publish first, a reconnecting client 
 **Fix:** Always check `task.result()` after checking task membership in `done`: `if control_t in done and control_t.result() == "admin_terminate":`. The control listener explicitly returns `"admin_terminate"` only when a real signal was received; exceptions swallowed by `except: pass` leave it returning `None`.
 
 **Watch for:** Any pattern using `asyncio.wait` with tasks that have multiple exit paths — always check both `in done` AND the actual return value or exception.
+
+---
+
+## 2026-07-21 — schema_current.sql must be audited against models.py on every fresh Linux install
+
+**Symptom:** Fresh Linux install from `schema_current.sql` caused 500 errors on GET /admin/tokens, DELETE /admin/agents, all runs endpoints. Errors: `column access_tokens.label does not exist`, `column run_steps.error does not exist`.
+
+**Root cause:** `schema_current.sql` was created as a snapshot of the Windows dev DB dump — but the dump was from an old restore point that predated several column additions (label, enabled on access_tokens; error, latency_ms, ended_at on run_steps; error, iterations, ended_at on runs). Those columns existed in 001_schema.sql but were absent from the dump snapshot.
+
+**Fix:** Before committing a new `schema_current.sql`, diff every table DDL against `app/models.py`:
+1. Every `Mapped[...]` column in the model must appear in the corresponding `CREATE TABLE` in schema_current.sql
+2. No column in models.py should be missing from the SQL
+Added `label TEXT NOT NULL DEFAULT 'default'`, `enabled BOOLEAN NOT NULL DEFAULT true` to `access_tokens`; `error TEXT`, `latency_ms INTEGER`, `ended_at TIMESTAMPTZ` to `run_steps`; `error TEXT`, `iterations INTEGER NOT NULL DEFAULT 0`, `ended_at TIMESTAMPTZ` to `runs`.
+
+**Watch for:** Any time `schema_current.sql` is regenerated from a live DB dump — always validate it against models.py before committing. Prefer generating from `001_schema.sql` + applied migrations rather than from a dump.
+
+---
+
+## 2026-07-21 — Docker BuildKit cannot follow symlinks outside the build context
+
+**Symptom:** `them-bridge` and `them-worker` Docker builds failed with `too many links` / `failed to read dockerfile`. theM_gateway/ contains symlinks to ../traefik, ../auth_service, etc.
+
+**Root cause:** Docker BuildKit resolves the build context at the directory level and does NOT follow symlinks that point outside the build context root. A symlink `theM_gateway/traefik -> ../traefik` resolves to `/opt/docker/them/traefik` which is outside the `/opt/docker/them/theM_gateway/` build context.
+
+**Fix:** Replace symlinks with actual copies: `cp -r ../traefik ./traefik`, `cp -r ../auth_service ./auth_service`. Use rsync for directories that need partial overrides: `rsync -av --ignore-existing ../app/ ./app/`.
+
+**Watch for:** Never use symlinks inside the Docker build context that point outside it. This is a hard limitation of BuildKit — no flag overrides it.
+
+---
+
+## 2026-07-21 — Test suite uses user_id=99 which doesn't exist in fresh DB
+
+**Symptom:** test_11 (WS orchestrate) failed: `[FAIL] Can create bearer token for WS auth` with `ForeignKeyViolationError` on `access_tokens.user_id`.
+
+**Root cause:** Test 11 creates a bearer token with `user_id: 99`. On the Windows dev DB, user 99 happened to exist. On a fresh Linux install from seed_users.sql (only admin=1 and avi=2), user 99 does not exist. The FK `access_tokens_user_id_fkey` → `auth_service.users(id)` rejects the insert.
+
+**Fix:** Changed test 11 to use `user_id: 1` (admin). General principle: tests that hardcode user IDs must use IDs guaranteed to exist in a fresh seeded DB (1 = admin, 2 = avi).
+
+**Watch for:** Any test that hardcodes a `user_id` other than 1 or 2 — may fail on fresh installs.

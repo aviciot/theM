@@ -131,82 +131,64 @@
 - **Debate stack ANTHROPIC_API_KEY**: debate agents read `ANTHROPIC_API_KEY` from `.env`. Must be set and non-empty or debate runs will fail on agent invocation.
 - **Token scope for app orchestrators**: `them.access_tokens.orchestrator_id` is still FK to `them.orchestrators.id`. Scoped tokens cannot target `app_orchestrators` entries by UUID — unscoped tokens (orchestrator_id=NULL) are the correct approach for app-EP auth until this FK is migrated.
 
-## Playground E2E Validation — IN PROGRESS (started 2026-07-21)
+## Linux Deployment — COMPLETE (2026-07-21)
 
-Scope: validate 15 Playground flows end-to-end before the Runs API migration to Go.
+### Deployment summary
 
-### Current Traefik routing state (factual)
+Go-first Linux deployment completed from fresh clone (`theM_gateway/` overlay on main `them/` repo).
 
-| Path | Router | Backend | Notes |
-|---|---|---|---|
-| `/ws/*` | `them-ws@docker` (priority 100) | Python bridge | ✅ Correct — premature Go router removed |
-| `/apps/*` | `them-apps@docker` (priority 100) | Python bridge | ✅ Was never blocked |
-| `/go-health/*` | `them-go-health@docker` (priority 120) | Go bridge | ✅ Working |
-| `/api/v1/*` | `them-api@docker` (priority 100) | Python bridge | ✅ Working |
+**Stack status:** All core containers healthy. Temporal worker polling. 985 tests passed, 0 failed, 6 skipped.
 
-Go WS/SSE handlers are **not implemented**. Python bridge owns all active WS/SSE traffic. See `docs/LINUX_DEPLOYMENT.md` for full route table.
+### Schema fixes applied to schema_current.sql
 
-### Fixes applied (uncommitted — in working tree on main branch)
+`schema_current.sql` was missing several columns that the Python models expected. Fixed during Linux deployment:
+
+| Table | Missing columns | Fix |
+|---|---|---|
+| `them.access_tokens` | `label TEXT NOT NULL DEFAULT 'default'`, `enabled BOOLEAN NOT NULL DEFAULT true` | Added to table DDL in schema_current.sql |
+| `them.run_steps` | `error TEXT`, `latency_ms INTEGER`, `ended_at TIMESTAMPTZ` | Added to table DDL in schema_current.sql |
+| `them.runs` | `error TEXT`, `iterations INTEGER NOT NULL DEFAULT 0`, `ended_at TIMESTAMPTZ` | Added to table DDL in schema_current.sql |
+
+### Test suite fixes
 
 | File | Change |
 |---|---|
-| `docker-compose.traefik.yml` | Removed `them-go-ws` (priority 110) and `them-go-sse` (priority 110) Traefik router labels. These shadowed Python's `them-ws` router and returned 404 for all Playground WS. |
-| `app/temporal/activities.py` | Added `ready` event publish to `them:dash:run:{context_id}:ctx` pubsub channel inside `init_run_activity`. `bridge_client.stream_run_events()` waits for this event to learn `run_id` — nobody was publishing it; all sessions timed out silently after 15s. |
+| `scripts/tests/run_tests.py` line 678 | Changed `user_id: 99` → `user_id: 1` (user 99 doesn't exist in fresh DB; FK constraint catches it) |
+| `scripts/tests/run_tests.py` test_36 | Changed `ModuleNotFoundError` to produce `[SKIP]` instead of `[FAIL]` when `temporalio` missing on host |
 
-### Windows live-DB-only changes (not in any migration file — pending decision)
+### Missing files synced into theM_gateway/
 
-Root cause: tables were restored from `db/them_full_dump.sql.gz` (old dump that predated several schema columns).
-
-**ADD COLUMN fixes** (columns exist in `001_schema.sql` but were absent from the dump-restored tables):
-```sql
-ALTER TABLE them.tasks ADD COLUMN IF NOT EXISTS error TEXT;
-ALTER TABLE them.runs ADD COLUMN IF NOT EXISTS error TEXT;
-ALTER TABLE them.runs ADD COLUMN IF NOT EXISTS iterations INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE them.runs ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
-ALTER TABLE them.run_steps ADD COLUMN IF NOT EXISTS error TEXT;
-ALTER TABLE them.run_steps ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
-ALTER TABLE them.access_tokens ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT 'default';
-ALTER TABLE them.access_tokens ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
+theM_gateway/ is a sparse overlay — contains only modified files. Full app/ and agents/ were synced from parent repo:
+```
+rsync -av --ignore-existing /opt/docker/them/app/ /opt/docker/them/theM_gateway/app/
+rsync -av --ignore-existing /opt/docker/them/frontend/ /opt/docker/them/theM_gateway/frontend/
+cp -r /opt/docker/them/agents/{a2a_echo,a2a_slow,a2a_stream,docu_writer,security_scanner} agents/
+cp /opt/docker/them/db/{002_seed,003_phase8,004_phase9,014_app_orchestrators,017_canvas_layout,022_runtime_limits,023_app_runtime,024_ep_queue,007_docu_stack,009_security_scan,018_graph_compiler}.sql db/
+cp /opt/docker/them/.dockerignore .dockerignore
 ```
 
-**FK constraints dropped** (pending decision — not yet committed as a permanent migration):
+### Current Traefik routing state
 
-| Constraint | Table | Reason dropped | Possible permanent solutions |
+| Path | Router | Backend | Notes |
 |---|---|---|---|
-| `runs_orchestrator_id_fkey` | `them.runs` | App-based runs use `app_orchestrators.id` as `orchestrator_id`; this FK pointed to `them.orchestrators` (different table, different UUIDs — Phase 14 design conflict) | (a) Add FK to `app_orchestrators` instead; (b) drop FK permanently; (c) keep `orchestrator_id` as informational only |
-| `tasks_orchestrator_id_fkey` | `them.tasks` | Same reason as above | Same options |
-| `runs_user_id_fkey` | `them.runs` | Public entry points produce `user_id=0` (anonymous); user 0 does not exist in `auth_service.users` | (a) Insert a sentinel user 0 in auth_service; (b) drop FK permanently; (c) use NULL for anonymous runs |
-| `tasks_user_id_fkey` | `them.tasks` | Same reason as above | Same options |
+| `/ws/*` | `them-ws@docker` (priority 100) | Python bridge | ✅ Python owns WS |
+| `/apps/*` | `them-apps@docker` (priority 100) | Python bridge | ✅ Working |
+| `/go-health/*` | `them-go-health@docker` (priority 120) | Go bridge | ✅ Working |
+| `/api/v1/*` | `them-api@docker` (priority 100) | Python bridge | ✅ Working |
 
-**Rollback SQL** (restores constraints if the drops turn out to be wrong):
-```sql
--- Restore orchestrator FKs (only if them.orchestrators has the referenced UUIDs)
-ALTER TABLE them.runs ADD CONSTRAINT runs_orchestrator_id_fkey
-  FOREIGN KEY (orchestrator_id) REFERENCES them.orchestrators(id) ON DELETE SET NULL;
-ALTER TABLE them.tasks ADD CONSTRAINT tasks_orchestrator_id_fkey
-  FOREIGN KEY (orchestrator_id) REFERENCES them.orchestrators(id) ON DELETE SET NULL;
+Go WS/SSE handlers are **not implemented**. Python bridge owns all active WS/SSE traffic.
 
--- Restore user FKs (only if auth_service.users has all referenced user_ids)
-ALTER TABLE them.runs ADD CONSTRAINT runs_user_id_fkey
-  FOREIGN KEY (user_id) REFERENCES auth_service.users(id) ON DELETE SET NULL;
-ALTER TABLE them.tasks ADD CONSTRAINT tasks_user_id_fkey
-  FOREIGN KEY (user_id) REFERENCES auth_service.users(id) ON DELETE SET NULL;
-```
+### FK constraints status
 
-### Current blockers
+The four FK constraints dropped on Windows dev DB (`runs_orchestrator_id_fkey`, `tasks_orchestrator_id_fkey`, `runs_user_id_fkey`, `tasks_user_id_fkey`) are **not present in schema_current.sql** — fresh Linux install never had them. No action needed.
 
-| Blocker | Details |
+### Open items
+
+| Item | Details |
 |---|---|
-| **Anthropic API workspace limit** | All LLM calls return HTTP 400. Resets 2026-08-01 00:00 UTC. |
-| **Container rebuild pending (Linux)** | `activities.py` ready-event fix written but not deployed. Worker still runs old code. Rebuild on Linux only. |
-| **FK decision pending** | Four FK constraints dropped from live Windows DB. Decision needed: permanent removal vs. alternative design. |
-
-### Next steps (Linux session)
-
-1. Pull main (has `docker-compose.traefik.yml` fix + `activities.py` fix committed)
-2. Run `./scripts/linux-start.sh --build` (fresh schema from `schema_current.sql` — no dump, no FK problem)
-3. Once API limit resets (2026-08-01) or alternate key provided: run Playground validation matrix
-4. Produce validation report
+| **Anthropic API workspace limit** | All LLM calls return HTTP 400. Resets 2026-08-01 00:00 UTC. Functional validation pending. |
+| **Phase 11c-D (Pub/Sub removal)** | NOT started — Pub/Sub still active alongside Redis Streams. Do not start until approved. |
+| **Playground E2E validation** | Blocked on Anthropic API until 2026-08-01. Use echo-agent or mock LLM provider for WS chain validation before that. |
 
 ## Ops Runbook — Applying db/014_app_orchestrators.sql
 

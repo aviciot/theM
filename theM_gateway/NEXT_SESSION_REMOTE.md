@@ -1,17 +1,17 @@
 # Linux Session Handoff
 # the-M — Next steps for remote/Linux environment
-# Created: 2026-07-21
+# Last updated: 2026-07-21 (post-deployment session)
 
 ---
 
-## Current branch and commit
+## Current deployment status
 
-```
-Branch: main
-Repo:   theM_gateway/  (within the theM monorepo)
-```
-
-After this commit, the branch tip will contain all changes listed below. Pull before doing anything.
+Linux stack is **fully running and validated**:
+- Full compose stack up (temporal profile)
+- DB initialized from schema_current.sql (29 versions)
+- Dev users seeded (admin/admin123, avi/avi123)
+- 985 tests passed, 0 failed, 6 skipped (as of 2026-07-21)
+- All 55 sanity checks passing
 
 ```bash
 cd theM_gateway
@@ -147,39 +147,29 @@ Secret generation: `./generate-env.sh` (Linux) — requires `secrets.local` with
 
 ---
 
-## First commands for the Linux session
+## First commands for next session
 
 ```bash
-# 1. Pull latest (includes both code fixes)
+# 1. Pull any remote changes
 cd theM_gateway
 git pull origin main
-git log --oneline -3
 
-# 2. Verify the two changed files are present
-git show HEAD -- docker-compose.traefik.yml | head -30
-git show HEAD -- app/temporal/activities.py | grep -A 12 "ctx_channel"
+# 2. Run sanity tests (stack is already running)
+python3.12 scripts/tests/run_tests.py 01 02 03 04 15
+# Expected: 55 passed
 
-# 3. Start the stack with a fresh build
-#    linux-start.sh calls linux-db-init.sh automatically.
-#    Fresh DB from schema_current.sql — no dump, no stale columns, no FK problems.
-./scripts/linux-start.sh --build
+# 3. Run full suite
+ADMIN_JWT=$(docker exec them-bridge python3 -c "
+import urllib.request, json
+body = json.dumps({'username':'admin','password':'admin123'}).encode()
+req = urllib.request.Request('http://them-auth-service:8701/api/v1/auth/login', data=body, headers={'Content-Type':'application/json'}, method='POST')
+with urllib.request.urlopen(req, timeout=10) as r:
+    print(json.loads(r.read())['access_token'])
+")
+ADMIN_JWT=$ADMIN_JWT python3.12 scripts/tests/run_tests.py
+# Expected: 985 passed, 0 failed, 6 skipped
 
-# 4. Verify health
-./scripts/linux-health.sh
-
-# 5. Verify Traefik routing (Go router must NOT appear for /ws)
-curl -s http://localhost:8089/api/http/routers | python3 -c "
-import sys, json
-routers = json.load(sys.stdin)
-for r in routers:
-    name = r.get('name','')
-    rule = r.get('rule','')
-    if 'ws' in name.lower() or 'sse' in name.lower():
-        print(f'{name}: {rule}')
-"
-# Expected: only them-ws@docker for /ws — them-go-ws must NOT appear
-
-# 6. Wait for API limit reset (2026-08-01) or provide alternate ANTHROPIC_API_KEY
+# 4. Wait for API limit reset (2026-08-01) or provide alternate ANTHROPIC_API_KEY
 # Then run Playground validation:
 # http://localhost:8088/admin/playground
 ```

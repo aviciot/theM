@@ -405,3 +405,13 @@ Both paths must work independently. A developer on Windows applies `026_new_feat
 `linux-validate-clean-install.sh`: **27/27 PASSED**
 
 `scripts/tests/test_db_infra.sh`: **17/17 PASSED** (T1–T6 all green)
+
+`scripts/tests/run_tests.py` (full suite): **985 passed, 0 failed, 6 skipped** — 2026-07-21 first clean run after Linux deploy
+
+### Deployment-specific notes (2026-07-21 session)
+
+theM_gateway/ is a sparse overlay — only modified files are committed. On fresh Linux install:
+- `app/`, `agents/`, `frontend/`, `db/` legacy migration files, `.dockerignore` must be synced from parent repo (done via rsync + cp)
+- `schema_current.sql` was missing `label`/`enabled` on `access_tokens` and `error`/`iterations`/`latency_ms`/`ended_at` columns — fixed in-file and applied via ALTER TABLE
+- Dev users (`admin/admin123`, `avi/avi123`) seeded via `db/seed_users.sql` after schema init — not done automatically by `linux-start.sh`
+- Test 11 `user_id: 99` changed to `user_id: 1` (fresh DB has no user 99)

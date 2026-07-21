@@ -270,8 +270,10 @@ CREATE TABLE IF NOT EXISTS them.orchestrators (
 CREATE TABLE IF NOT EXISTS them.access_tokens (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     token_hash      TEXT        NOT NULL UNIQUE,
+    label           TEXT        NOT NULL DEFAULT 'default',
     user_id         INTEGER     REFERENCES auth_service.users(id) ON DELETE SET NULL,
     orchestrator_id UUID        REFERENCES them.orchestrators(id) ON DELETE CASCADE,
+    enabled         BOOLEAN     NOT NULL DEFAULT true,
     expires_at      TIMESTAMPTZ,
     last_used_at    TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -379,6 +381,8 @@ CREATE TABLE IF NOT EXISTS them.runs (
     status              TEXT        NOT NULL DEFAULT 'running'
                                     CHECK (status IN ('running','completed','failed','canceled','cancelled','stopped')),
     final_output        TEXT,
+    error               TEXT,
+    iterations          INTEGER     NOT NULL DEFAULT 0,
     total_tokens_in     INTEGER     NOT NULL DEFAULT 0,
     total_tokens_out    INTEGER     NOT NULL DEFAULT 0,
     total_cost_usd      NUMERIC(12,8) NOT NULL DEFAULT 0,
@@ -387,6 +391,7 @@ CREATE TABLE IF NOT EXISTS them.runs (
     events_transport    TEXT        NOT NULL DEFAULT 'pubsub'
                                     CHECK (events_transport IN ('pubsub','streams')),
     started_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ended_at            TIMESTAMPTZ,
     completed_at        TIMESTAMPTZ
 );
 
@@ -410,7 +415,10 @@ CREATE TABLE IF NOT EXISTS them.run_steps (
     output      TEXT,
     status      TEXT        NOT NULL DEFAULT 'pending'
                             CHECK (status IN ('pending','running','completed','failed','timeout')),
+    error       TEXT,
+    latency_ms  INTEGER,
     started_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ended_at    TIMESTAMPTZ,
     completed_at TIMESTAMPTZ
 );
 
