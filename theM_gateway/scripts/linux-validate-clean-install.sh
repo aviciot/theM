@@ -198,24 +198,28 @@ docker exec "${POSTGRES_CONTAINER}" \
   "TRUNCATE them.schema_migrations;" > /dev/null
 
 # Running linux-db-init.sh without --force-fresh should error on empty table
-if "${SCRIPT_DIR}/linux-db-init.sh" 2>&1 | grep -q "partial\|empty\|force-fresh"; then
-  _ok "Partial-init detection: error raised on empty schema_migrations (as expected)"
+PARTIAL_OUTPUT=$("${SCRIPT_DIR}/linux-db-init.sh" 2>&1 || true)
+PARTIAL_EXIT=$?
+if [ "${PARTIAL_EXIT}" -ne 0 ] && echo "${PARTIAL_OUTPUT}" | grep -q "partial\|empty\|force-fresh"; then
+  _ok "Partial-init detection: exits non-zero with clear diagnostic on empty schema_migrations"
 else
-  _fail "Partial-init detection: did not raise expected error on empty schema_migrations"
+  _fail "Partial-init detection: expected non-zero exit + diagnostic (got exit=${PARTIAL_EXIT})"
 fi
 
-# Restore migrations table by re-applying the seed section
+# Restore migrations table
 docker exec "${POSTGRES_CONTAINER}" \
   psql -U "${THE_M_DB_USER}" -d "${THE_M_DB_NAME}" -c \
   "INSERT INTO them.schema_migrations (version, description)
    VALUES ('025_events_transport', 'restored for test') ON CONFLICT DO NOTHING;" > /dev/null
 
-# Now running linux-db-init.sh should be a no-op
+# Now running linux-db-init.sh should be a no-op (exit 0, "already initialized" message)
 INIT_OUTPUT="$("${SCRIPT_DIR}/linux-db-init.sh" 2>&1)"
-if echo "${INIT_OUTPUT}" | grep -q "already initialized\|no-op\|already present"; then
-  _ok "Re-run of linux-db-init.sh with populated schema_migrations is a no-op"
+INIT_RERUN_EXIT=$?
+if [ "${INIT_RERUN_EXIT}" -eq 0 ] && \
+   echo "${INIT_OUTPUT}" | grep -q "already initialized\|already-initialized"; then
+  _ok "Re-run of linux-db-init.sh with populated schema_migrations is a no-op (exit 0)"
 else
-  _fail "Re-run of linux-db-init.sh did not short-circuit as expected"
+  _fail "Re-run of linux-db-init.sh did not short-circuit correctly (exit=${INIT_RERUN_EXIT})"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -105,9 +105,13 @@ Every migration records itself here after successful application. The table is c
 | `schema_migrations` present, rows > 0 | Initialized — no-op, exit 0 |
 | `schema_migrations` present, rows = 0 | Partial/failed init — **error** (use `--force-fresh` only after investigation) |
 
-### Advisory lock
+### Advisory lock — single-session guarantee
 
-Both `linux-db-init.sh` and `linux-db-upgrade.sh` acquire `pg_try_advisory_lock(987654321)` before touching the schema. If another process holds the lock, the script exits with a diagnostic message rather than running concurrently.
+Both `linux-db-init.sh` and `linux-db-upgrade.sh` acquire `pg_try_advisory_lock(987654321)` before touching the schema.
+
+**Critical implementation detail:** PostgreSQL advisory locks are session-scoped. Acquiring the lock in one `psql` call and applying the schema in another connection releases the lock the moment the first session ends. Both scripts therefore run the entire operation — acquire lock, validate state, apply SQL, record in `schema_migrations` — within a **single persistent `psql` session** using a streamed heredoc. The lock is held until the session exits (on success or failure).
+
+If another process holds the lock, the script exits immediately with a diagnostic message.
 
 ### Fresh install (no data needed)
 
@@ -307,6 +311,7 @@ curl -sf http://localhost:8003/metrics | grep "them_runstream_mode"
 | `linux-db-init.sh` | Bootstrap fresh DB from `schema_current.sql` (no-op if initialized) | Called by `linux-start.sh` automatically |
 | `linux-db-upgrade.sh` | Apply specific new migration files to existing deployment | When new `db/NNN_*.sql` files land |
 | `linux-validate-clean-install.sh` | 7-phase clean-install automated test | Before every production deploy |
+| `scripts/tests/test_db_infra.sh` | DB bootstrap + migration infra unit tests (T1–T6) | After changing linux-db-init.sh or linux-db-upgrade.sh |
 | `linux-health.sh` | Verify all containers + HTTP endpoints healthy | After start; in CI |
 | `linux-logs.sh` | Collect logs per service | Debugging; incident response |
 | `linux-rollback.sh` | Roll back Go bridge to a previous image tag | After a bad Go deploy |
@@ -327,7 +332,7 @@ curl -sf http://localhost:8003/metrics | grep "them_runstream_mode"
 | DB schema init | Manual `scripts/init_db.sh` | `linux-start.sh` → `linux-db-init.sh` → `schema_current.sql` |
 | User seeding | Included in legacy `002_seed.sql` | `db/seed_users.sql` (opt-in, dev only) |
 | Demo agents | `002_seed.sql` applied by default | `db/seed_demo.sql` (opt-in) |
-| Temporal worker wait | N/A | Readiness marker poll (not fixed sleep) |
+| Temporal worker wait | N/A | Temporal CLI task-queue poll — hard failure if not ready |
 
 ---
 
@@ -371,3 +376,6 @@ Both paths must work independently. A developer on Windows applies `026_new_feat
 | `RUN_EVENTS_MODE` defaults to `pubsub` | Change to `dual` for staging validation; `streams` requires Phase 11c-D approval |
 | `auth_service/docker-compose.yml` references legacy `omni` DB | Orphaned file — do not use standalone |
 | `linux-db-legacy-replay.sh` | For recovery/debug only — NOT part of normal startup |
+| Temporal worker readiness check | Uses `temporal task-queue describe` in `temporal-admin-tools` container; hard failure if not ready within 120s |
+| Advisory lock on schema ops | Both init and upgrade run all steps (lock + apply + record) in one psql session; lock is session-scoped and released on session exit |
+| Migration atomicity | Each upgrade migration is wrapped in BEGIN/COMMIT; schema_migrations INSERT is inside the same transaction; rollback on failure leaves no record |

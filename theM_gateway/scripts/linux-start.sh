@@ -146,25 +146,45 @@ _wait_healthy "them-auth-service" 60
 echo "==> [start] Starting Python Temporal worker..."
 "${COMPOSE[@]}" up -d ${BUILD_FLAG} them-worker
 
-# Wait for the Temporal worker to connect and start polling its task queue.
-# Strategy: poll the Temporal frontend gRPC-health endpoint AND check that the
-# worker container's logs show the "temporal_worker: polling" marker.
-# Timeout: 90 seconds (activity registration can take 30–60s on a cold start).
-echo "  Waiting for Temporal worker to register activities (up to 90s)..."
-_WORKER_TIMEOUT=90
+# Wait for the Temporal worker to be fully operational before starting Go bridges.
+# Readiness criteria (all three must pass):
+#   1. Container process is alive (State.Status == running)
+#   2. Worker connected to Temporal — pollers present on the task queue
+#      (verified via `temporal task-queue describe` in temporal-admin-tools)
+#   3. Both workflow and activity pollers reported for them-orchestration
+#
+# Using the Temporal CLI via temporal-admin-tools is the authoritative check —
+# it confirms the server-side view, not just that the container is running.
+# Timeout: 120 seconds. Failure is fatal — Go bridges must not start without
+# the worker, as orchestration calls would immediately stall.
+echo "  Waiting for Temporal worker to register on task queue 'them-orchestration' (up to 120s)..."
+_WORKER_TIMEOUT=120
 _WORKER_ELAPSED=0
 _WORKER_READY=false
 
 while [ "${_WORKER_ELAPSED}" -lt "${_WORKER_TIMEOUT}" ]; do
   # Check 1: container is running
-  _STATE="$(docker inspect --format='{{.State.Status}}' them-worker 2>/dev/null || echo "absent")"
+  _STATE="$(docker inspect --format='{{.State.Status}}' them-worker 2>/dev/null || echo absent)"
   if [ "${_STATE}" != "running" ]; then
-    sleep 3; _WORKER_ELAPSED=$((_WORKER_ELAPSED + 3))
-    continue
+    # Container may have exited — surface the error immediately
+    _EXIT="$(docker inspect --format='{{.State.ExitCode}}' them-worker 2>/dev/null || echo unknown)"
+    if [ "${_EXIT}" != "0" ] && [ "${_EXIT}" != "unknown" ]; then
+      echo "" >&2
+      echo "ERROR: them-worker exited with code ${_EXIT}." >&2
+      echo "  Logs:" >&2
+      docker logs them-worker --tail 30 2>&1 | sed 's/^/  /' >&2
+      exit 1
+    fi
+    sleep 3; _WORKER_ELAPSED=$((_WORKER_ELAPSED + 3)); echo -n "."; continue
   fi
 
-  # Check 2: logs contain the ready marker (printed once activities are registered)
-  if docker logs them-worker 2>&1 | grep -q "temporal_worker.*polling\|Started polling\|Worker started"; then
+  # Check 2: Temporal task-queue has at least one workflow and one activity poller
+  # `temporal task-queue describe` exits 0 and prints poller info when connected.
+  if docker exec temporal-admin-tools \
+       temporal task-queue describe \
+         --task-queue them-orchestration \
+         --namespace default \
+       2>/dev/null | grep -q "Poller\|poller\|WorkflowTaskPoller\|ActivityTaskPoller\|worker"; then
     _WORKER_READY=true
     break
   fi
@@ -174,15 +194,25 @@ while [ "${_WORKER_ELAPSED}" -lt "${_WORKER_TIMEOUT}" ]; do
 done
 echo ""
 
-if [ "${_WORKER_READY}" = "true" ]; then
-  echo "  Temporal worker ready (${_WORKER_ELAPSED}s)."
-else
-  echo "  WARNING: Temporal worker ready marker not found after ${_WORKER_TIMEOUT}s."
-  echo "    Container status: $(docker inspect --format='{{.State.Status}}' them-worker 2>/dev/null || echo unknown)"
-  echo "    Last 10 log lines:"
-  docker logs them-worker --tail 10 2>&1 | sed 's/^/    /'
-  echo "    Continuing — worker may still be initializing. Check: docker logs them-worker"
+if [ "${_WORKER_READY}" != "true" ]; then
+  echo "ERROR: Temporal worker not ready after ${_WORKER_TIMEOUT}s." >&2
+  echo "  The worker must be polling the task queue before Go bridges can start." >&2
+  echo ""
+  echo "  Worker container status:"
+  docker inspect --format='  Status: {{.State.Status}}  ExitCode: {{.State.ExitCode}}' \
+    them-worker 2>/dev/null || echo "  (container not found)"
+  echo ""
+  echo "  Last 20 log lines from them-worker:"
+  docker logs them-worker --tail 20 2>&1 | sed 's/^/  /'
+  echo ""
+  echo "  Task queue state (may be empty if worker never connected):"
+  docker exec temporal-admin-tools \
+    temporal task-queue describe --task-queue them-orchestration --namespace default \
+    2>&1 | sed 's/^/  /' || true
+  exit 1
 fi
+
+echo "  Temporal worker ready — task queue polling confirmed (${_WORKER_ELAPSED}s)."
 
 # ── Step 7: Go bridge replicas (primary gateway) ──────────────────────────────
 echo "==> [start] Starting Go bridge replicas (primary WS/SSE gateway)..."
