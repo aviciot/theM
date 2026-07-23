@@ -85,7 +85,7 @@ WITH agent_ids AS (
 INSERT INTO them.orchestrators (
     name, display_name, system_prompt,
     allowed_agent_ids, llm_provider, llm_model,
-    max_iterations, max_parallel_tools, rate_limit_rpm, enabled
+    max_iterations, max_parallel_tools, rate_limit_rpm, daily_budget_usd, enabled
 )
 SELECT
     'default',
@@ -94,7 +94,7 @@ SELECT
     agent_ids.ids,
     'anthropic',
     'claude-sonnet-4-6',
-    10, 4, 30, true
+    10, 4, 30, 0, true
 FROM agent_ids
 ON CONFLICT (name) DO UPDATE SET
     display_name       = EXCLUDED.display_name,
@@ -105,4 +105,5 @@ ON CONFLICT (name) DO UPDATE SET
     max_iterations     = EXCLUDED.max_iterations,
     max_parallel_tools = EXCLUDED.max_parallel_tools,
     rate_limit_rpm     = EXCLUDED.rate_limit_rpm,
+    daily_budget_usd   = EXCLUDED.daily_budget_usd,
     enabled            = EXCLUDED.enabled;

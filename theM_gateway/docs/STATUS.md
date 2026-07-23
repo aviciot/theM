@@ -186,9 +186,10 @@ The four FK constraints dropped on Windows dev DB (`runs_orchestrator_id_fkey`, 
 
 | Item | Details |
 |---|---|
-| **Anthropic API workspace limit** | All LLM calls return HTTP 400. Resets 2026-08-01 00:00 UTC. Functional validation pending. |
 | **Phase 11c-D (Pub/Sub removal)** | NOT started — Pub/Sub still active alongside Redis Streams. Do not start until approved. |
-| **Playground E2E validation** | Blocked on Anthropic API until 2026-08-01. Use echo-agent or mock LLM provider for WS chain validation before that. |
+| **Playground E2E validation** | ✓ PASSED 2026-07-23. Full chain confirmed: login → WS → ready → Anthropic call → token stream → done. run status=completed, task state=completed, tokens_used=662. |
+| **auth-service user_type bug** | ✓ FIXED 2026-07-23. `routes/users.py` referenced `u.user_type`/`u.source` columns not in schema — caused 500 on `GET /users/{id}`, making `_is_user_active` always fail-open. Removed from all queries. |
+| **seed daily_budget_usd NULL** | ✓ FIXED 2026-07-23. `002_seed.sql` orchestrator INSERT was missing `daily_budget_usd`, leaving it NULL (model default=0 not applied by PG on explicit column list). Added explicit `daily_budget_usd = 0` to INSERT and ON CONFLICT UPDATE. |
 
 ## Ops Runbook — Applying db/014_app_orchestrators.sql
 

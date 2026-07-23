@@ -74,10 +74,7 @@ async def list_users(
                 params.append(active)
                 param_count += 1
 
-            if user_type:
-                where_clauses.append(f"u.user_type = ${param_count}")
-                params.append(user_type)
-                param_count += 1
+            # user_type filter ignored — column not in schema
 
             where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
             
@@ -92,7 +89,7 @@ async def list_users(
             
             rows = await conn.fetch(f"""
                 SELECT u.id, u.username, u.name, u.email, u.active, u.rate_limit_override,
-                       u.last_login_at, u.created_at, u.updated_at, u.user_type, u.source,
+                       u.last_login_at, u.created_at, u.updated_at,
                        r.id as role_id, r.name as role_name,
                        r.mcp_access, r.tool_restrictions
                 FROM auth_service.users u
@@ -125,7 +122,7 @@ async def get_user(user_id: int):
         async with pool.acquire() as conn:
             row = await conn.fetchrow("""
                 SELECT u.id, u.username, u.name, u.email, u.active, u.rate_limit_override,
-                       u.last_login_at, u.created_at, u.updated_at, u.user_type, u.source,
+                       u.last_login_at, u.created_at, u.updated_at,
                        r.id as role_id, r.name as role_name, r.mcp_access
                 FROM auth_service.users u
                 JOIN auth_service.roles r ON u.role_id = r.id
@@ -326,10 +323,10 @@ async def create_user(user_data: UserCreate):
 
             # Create user
             user_id = await conn.fetchval("""
-                INSERT INTO auth_service.users (username, email, name, password_hash, role_id, active, user_type, source, created_at)
-                VALUES ($1, $2, $3, $4, (SELECT id FROM auth_service.roles WHERE name = $5), $6, $7, $8, CURRENT_TIMESTAMP)
+                INSERT INTO auth_service.users (username, email, name, password_hash, role_id, active, created_at)
+                VALUES ($1, $2, $3, $4, (SELECT id FROM auth_service.roles WHERE name = $5), $6, CURRENT_TIMESTAMP)
                 RETURNING id
-            """, user_data.username, user_data.email, user_data.name, password_hash, user_data.role, user_data.active, user_data.user_type, user_data.source)
+            """, user_data.username, user_data.email, user_data.name, password_hash, user_data.role, user_data.active)
 
             logger.info(f"Created user: {user_data.username} (ID: {user_id})")
 
