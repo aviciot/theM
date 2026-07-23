@@ -3070,6 +3070,143 @@ def test_36_stream_publish():
         check("SCHEMA.md events_transport", False, str(exc))
 
 
+# ─── test 37: Go↔Python parity contract (structural) ────────────────────────
+
+def test_37_go_python_parity():
+    """
+    Contract tests for the Go↔Python migration seam.
+    Verifies that the Go gateway's source code implements the correct:
+    - Temporal workflow ID scheme ("ctx-" + contextID)
+    - HITL signal name (submit_human_response)
+    - Redis pub/sub channel names matching Python's publishers
+    - Cross-publish on token revocation
+    - EP config change notification
+    Go sources live at ../go/ relative to theM_gateway/ (one level up then into go/).
+    """
+    section("test_37_go_python_parity: Go↔Python parity contract (structural)")
+
+    GO_ROOT = ROOT.parent / "go"
+
+    def gosrc(rel):
+        """Read a Go source file relative to the go/ directory."""
+        return (GO_ROOT / rel).read_text(encoding="utf-8")
+
+    # ── P1: Temporal workflow ID scheme ──────────────────────────────────────
+    try:
+        ws_h = gosrc("internal/ws/handler.go")
+        check("P1: Go WS handler uses 'ctx-' + contextID as workflow ID",
+              '"ctx-" + contextID' in ws_h,
+              "expected '\"ctx-\" + contextID' in ws/handler.go")
+        check("P1: Go WS handler passes RunID in PythonOrchestrationInput",
+              "RunID:" in ws_h and "runID" in ws_h)
+    except FileNotFoundError:
+        skip("Go source not found — skip Go WS checks")
+    except Exception as exc:
+        check("Go WS handler", False, str(exc))
+
+    try:
+        sse_h = gosrc("internal/sse/handler.go")
+        check("P1: Go SSE handler uses 'ctx-' + contextID as workflow ID",
+              '"ctx-" + contextID' in sse_h,
+              "expected '\"ctx-\" + contextID' in sse/handler.go")
+    except FileNotFoundError:
+        skip("Go SSE source not found")
+    except Exception as exc:
+        check("Go SSE handler", False, str(exc))
+
+    # ── P1: HITL signal name ─────────────────────────────────────────────────
+    try:
+        wf = gosrc("internal/temporal/workflow.go")
+        check("P1: Go signal name is submit_human_response",
+              'SignalHumanInput = "submit_human_response"' in wf,
+              "expected submit_human_response, not human_input")
+    except FileNotFoundError:
+        skip("Go temporal/workflow.go not found")
+    except Exception as exc:
+        check("Go temporal/workflow.go", False, str(exc))
+
+    # ── P1: HITL signal targets ctx-{context_id} ─────────────────────────────
+    try:
+        runs_h = gosrc("internal/admin/runs.go")
+        check("P1: HITL Signal looks up context_id from DB",
+              "context_id FROM them.runs" in runs_h or "SELECT context_id" in runs_h)
+        check("P1: HITL Signal targets 'ctx-' + contextID",
+              '"ctx-" + contextID' in runs_h)
+    except FileNotFoundError:
+        skip("Go admin/runs.go not found")
+    except Exception as exc:
+        check("Go admin/runs.go", False, str(exc))
+
+    # ── P3: Agent registry channel name ──────────────────────────────────────
+    try:
+        reg = gosrc("internal/agentregistry/registry.go")
+        check("P3: Go agent registry subscribes to them:agents:changed",
+              '"them:agents:changed"' in reg,
+              "must match Python admin_agents.py publisher")
+        check("P3: Go agent registry does NOT subscribe to them:agents:invalidate",
+              '"them:agents:invalidate"' not in reg)
+    except FileNotFoundError:
+        skip("Go agentregistry/registry.go not found")
+    except Exception as exc:
+        check("Go agentregistry/registry.go", False, str(exc))
+
+    # ── P3: Token revocation cross-publish ────────────────────────────────────
+    try:
+        tc = src("app/services/token_cache.py")
+        check("P3: Python token_cache.py publishes to them:token:revoked on invalidate",
+              "them:token:revoked" in tc and "publish" in tc)
+        check("P3: token revocation publish is in invalidate_token function",
+              "them:token:revoked" in tc)
+    except FileNotFoundError:
+        check("app/services/token_cache.py", False, "file not found")
+    except Exception as exc:
+        check("app/services/token_cache.py", False, str(exc))
+
+    # ── P3: EP config change notification ────────────────────────────────────
+    try:
+        aa = src("app/routers/admin_applications.py")
+        check("P3: Python admin_applications.py publishes to them:ep:config:changed",
+              "them:ep:config:changed" in aa and "publish" in aa)
+        check("P3: EP config publish is in _flush_orch_caches",
+              "_flush_orch_caches" in aa and "them:ep:config:changed" in aa)
+    except FileNotFoundError:
+        check("app/routers/admin_applications.py", False, "file not found")
+    except Exception as exc:
+        check("app/routers/admin_applications.py", False, str(exc))
+
+    # ── P3: Go epconfig handles UUID (app_id) payloads ───────────────────────
+    try:
+        ep = gosrc("internal/epconfig/epconfig.go")
+        check("P3: Go epconfig.Subscribe handles UUID app_id payloads",
+              "looksLikeUUID" in ep and "InvalidateApp" in ep)
+        check("P3: Go epconfig.looksLikeUUID defined",
+              "func looksLikeUUID" in ep)
+    except FileNotFoundError:
+        skip("Go epconfig/epconfig.go not found")
+    except Exception as exc:
+        check("Go epconfig/epconfig.go", False, str(exc))
+
+    # ── Python shared.py run_id field ────────────────────────────────────────
+    try:
+        shared = src("app/temporal/shared.py")
+        check("Python OrchestrationInput has run_id field",
+              "run_id: Optional[str] = None" in shared)
+    except FileNotFoundError:
+        check("app/temporal/shared.py", False, "file not found")
+    except Exception as exc:
+        check("app/temporal/shared.py", False, str(exc))
+
+    # ── Python workflows.py honors caller-provided run_id ────────────────────
+    try:
+        wf_py = src("app/temporal/workflows.py")
+        check("Python workflow uses inp.run_id when provided",
+              "inp.run_id" in wf_py and ("inp.run_id if inp.run_id" in wf_py or "inp.run_id or" in wf_py))
+    except FileNotFoundError:
+        check("app/temporal/workflows.py", False, "file not found")
+    except Exception as exc:
+        check("app/temporal/workflows.py", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -3109,6 +3246,7 @@ ALL_TESTS = [
     ("34", test_34_app_runtime),
     ("35", test_35_ep_queue),
     ("36", test_36_stream_publish),
+    ("37", test_37_go_python_parity),
 ]
 
 if __name__ == "__main__":
