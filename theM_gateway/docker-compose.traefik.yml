@@ -1,9 +1,15 @@
 version: "3.9"
-# docker-compose.traefik.yml — Traefik overlay for Go bridge health routing.
+# docker-compose.traefik.yml — Traefik overlay for Go bridge routing (Wave 1).
 #
-# Adds Traefik routing labels to both Go bridge instances for /go-health/*.
-# WS (/ws) and SSE (/sse) remain routed to the Python bridge (them-ws router,
-# priority 100) until Go WS/SSE handlers are implemented.
+# Wave 1 — routes that Go now owns (higher priority than Python):
+#   /health/live, /health/ready  — priority 130 (Python owns bare /health at 90)
+#   GET /api/v1/admin/agents*    — priority 110 (Python owns all /api/v1 at 100)
+#   GET /api/v1/admin/orchestrators*
+#   GET /api/v1/admin/applications*
+#   GET /api/v1/runs*
+#
+# Python remains authoritative for all writes (POST/PUT/DELETE) and WS/SSE.
+# Legacy /go-health/* path kept for backward compat with existing scripts.
 #
 # Direct bridge ports (8002/8003) remain available for diagnostics.
 #
@@ -18,12 +24,14 @@ version: "3.9"
 #     --profile temporal up -d --build
 #
 # After stack is up:
-#   WS via Traefik:  ws://localhost:8088/ws/orchestrate/{app}/{ep}  (→ Python bridge)
-#   SSE via Traefik: http://localhost:8088/sse/orchestrate/{app}/{ep}  (→ Python bridge)
-#   Go health:       http://localhost:8088/go-health/live  (→ Go bridge)
-#   Direct bridge 1: http://localhost:8002/health/ready
-#   Direct bridge 2: http://localhost:8003/health/ready
-#   Traefik dashboard: http://localhost:8089
+#   WS via Traefik:         ws://localhost:8088/ws/orchestrate/{app}/{ep}  (→ Python)
+#   SSE via Traefik:        http://localhost:8088/sse/orchestrate/{app}/{ep}  (→ Python)
+#   Go health (canonical):  http://localhost:8088/health/live  (→ Go)
+#   Go health (legacy):     http://localhost:8088/go-health/live  (→ Go)
+#   Go admin reads:         http://localhost:8088/api/v1/admin/agents  (→ Go)
+#   Direct bridge 1:        http://localhost:8002/health/ready
+#   Direct bridge 2:        http://localhost:8003/health/ready
+#   Traefik dashboard:      http://localhost:8089
 
 services:
   # Traefik is defined in the base compose (docker-compose.yml) but not started
@@ -33,7 +41,7 @@ services:
       - proxy-network
       - them-network
 
-  # ── Go bridge 1 — Traefik labels for WS + SSE routing ────────────────────────
+  # ── Go bridge 1 — Wave 1 Traefik labels ──────────────────────────────────────
   them-go-bridge:
     networks:
       - them-network
@@ -42,10 +50,26 @@ services:
       - "traefik.enable=true"
       - "traefik-instance=them"
       - "traefik.docker.network=them-network"
-      # WS and SSE routers removed — Go bridges have no WS/SSE handlers yet.
-      # Python them-ws router (priority 100) handles /ws until Go WS handlers are built.
-      # Go bridge health — /go-health/live → /health/live on the bridge.
-      # replacePathRegex rewrites the external path so the bridge chi router matches.
+      # ── Shared load-balanced service (both Go bridge instances) ────────────────
+      - "traefik.http.services.them-go-svc.loadbalancer.server.port=8002"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.timeout=3s"
+      # ── Wave 1a: canonical /health/live + /health/ready (priority 130) ─────────
+      # Python bridge owns bare /health at priority 90.
+      # Go takes the two sub-paths where it has live handlers.
+      - "traefik.http.routers.them-go-health-sub.rule=PathPrefix(`/health/live`) || PathPrefix(`/health/ready`)"
+      - "traefik.http.routers.them-go-health-sub.entrypoints=web"
+      - "traefik.http.routers.them-go-health-sub.priority=130"
+      - "traefik.http.routers.them-go-health-sub.service=them-go-svc"
+      # ── Wave 1b: GET-only admin reads (priority 110) ────────────────────────────
+      # Python owns all /api/v1 at priority 100; Go wins for these GET-only paths.
+      # All write methods (POST/PUT/DELETE) still fall through to Python at 100.
+      - "traefik.http.routers.them-go-admin-reads.rule=(PathPrefix(`/api/v1/admin/agents`) || PathPrefix(`/api/v1/admin/orchestrators`) || PathPrefix(`/api/v1/admin/applications`) || PathPrefix(`/api/v1/runs`)) && Method(`GET`)"
+      - "traefik.http.routers.them-go-admin-reads.entrypoints=web"
+      - "traefik.http.routers.them-go-admin-reads.priority=110"
+      - "traefik.http.routers.them-go-admin-reads.service=them-go-svc"
+      # ── Legacy /go-health/* path (backward compat with scripts) ────────────────
       - "traefik.http.routers.them-go-health.rule=PathPrefix(`/go-health`)"
       - "traefik.http.routers.them-go-health.entrypoints=web"
       - "traefik.http.routers.them-go-health.priority=120"
@@ -53,12 +77,6 @@ services:
       - "traefik.http.routers.them-go-health.middlewares=them-go-rewrite"
       - "traefik.http.middlewares.them-go-rewrite.replacepathregex.regex=^/go-health(.*)"
       - "traefik.http.middlewares.them-go-rewrite.replacepathregex.replacement=/health$$1"
-      # Shared load-balanced service — Traefik discovers both instances via Docker
-      # and round-robins between them (no sticky sessions).
-      - "traefik.http.services.them-go-svc.loadbalancer.server.port=8002"
-      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.path=/health/live"
-      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.interval=10s"
-      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.timeout=3s"
 
   # ── Go bridge 2 — joins the same them-go-svc load-balanced pool ───────────────
   them-go-bridge-2:

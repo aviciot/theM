@@ -865,8 +865,10 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ── Go Bridge — Phase 1 Foundation (profile: go) ─────────────────────────────
+  # ── Go Bridge — Wave 1 traffic (profile: go) ─────────────────────────────────
   # Enable with: docker compose --profile go up -d them-go-bridge
+  # Wave 1: Go serves /health (priority 130) and GET-only admin+runs reads (priority 110).
+  # Python still serves all writes and WS/SSE. Routes added incrementally per wave.
   them-go-bridge:
     build:
       context: .
@@ -887,13 +889,37 @@ services:
       - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
       - THE_M_INSTANCE_ID=go-bridge-1
       - LOG_FORMAT=json
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TEMPORAL_ENABLED=true
+      - TEMPORAL_HOST_PORT=temporal-frontend:7233
+      - RUN_EVENTS_MODE=${RUN_EVENTS_MODE:-pubsub}
+      - JWT_PUBLIC_KEY_PEM=${JWT_PUBLIC_KEY_PEM:-}
     networks:
       - them-network
     depends_on:
       - them-postgres
       - them-redis
     labels:
-      - "traefik.enable=false"
+      - "traefik.enable=true"
+      - "traefik.docker.network=them-network"
+      # ── Go service definition ───────────────────────────────────────────────
+      - "traefik.http.services.them-go-bridge-svc.loadbalancer.server.port=8002"
+      - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.timeout=3s"
+      # ── Wave 1: /health/live and /health/ready (priority 130 beats Python's 90)
+      # Go health handlers live at /health/live and /health/ready only.
+      # Do NOT claim bare /health — Python serves that; we don't want a 404 from Go.
+      - "traefik.http.routers.them-go-health-sub.rule=PathPrefix(`/health/live`) || PathPrefix(`/health/ready`)"
+      - "traefik.http.routers.them-go-health-sub.entrypoints=web"
+      - "traefik.http.routers.them-go-health-sub.priority=130"
+      - "traefik.http.routers.them-go-health-sub.service=them-go-bridge-svc"
+      # ── Wave 1: GET-only admin reads (priority 110 beats Python's 100) ─────
+      # Go serves read-only admin endpoints; Python still handles all writes.
+      - "traefik.http.routers.them-go-admin-reads.rule=(PathPrefix(`/api/v1/admin/agents`) || PathPrefix(`/api/v1/admin/orchestrators`) || PathPrefix(`/api/v1/admin/applications`) || PathPrefix(`/api/v1/runs`)) && Method(`GET`)"
+      - "traefik.http.routers.them-go-admin-reads.entrypoints=web"
+      - "traefik.http.routers.them-go-admin-reads.priority=110"
+      - "traefik.http.routers.them-go-admin-reads.service=them-go-bridge-svc"
     profiles:
       - go
     restart: unless-stopped
