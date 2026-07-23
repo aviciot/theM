@@ -148,13 +148,27 @@ func (h *RunsHandler) Signal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Look up context_id so we can target the correct Temporal workflow.
+	// Python registers OrchestrationWorkflow with ID "ctx-{context_id}".
+	var contextID string
+	row := h.db.QueryRow(r.Context(), `SELECT context_id FROM them.runs WHERE id = $1`, runID)
+	if err := row.Scan(&contextID); err != nil {
+		if IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "run not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
+		}
+		return
+	}
+	workflowID := "ctx-" + contextID
+
 	payload, err := json.Marshal(input.Payload)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid payload")
 		return
 	}
 
-	if err := h.temporal.SignalRun(r.Context(), runID, payload); err != nil {
+	if err := h.temporal.SignalRun(r.Context(), workflowID, payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "signal error: "+err.Error())
 		return
 	}

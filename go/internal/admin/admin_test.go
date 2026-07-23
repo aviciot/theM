@@ -505,9 +505,10 @@ func TestUpdateEntryPoint_EmptyEPType_Allowed(t *testing.T) {
 		"empty ep_type on update must not be rejected")
 }
 
-// 5. Signal run — calls Temporal client.
+// 5. Signal run — calls Temporal client with "ctx-{context_id}" workflow ID.
 func TestSignalRun(t *testing.T) {
-	db := &fakeDB{}
+	// queryRowStr is returned by fakeDB.QueryRow — simulates context_id lookup.
+	db := &fakeDB{queryRowStr: "ctx-xyz-123"}
 	temporal := &fakeTemporal{}
 	h := admin.NewRunsHandler(db, temporal)
 
@@ -523,6 +524,8 @@ func TestSignalRun(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, temporal.signaled, "run-abc",
-		"Temporal should have been signaled for run-abc")
+	// Signal must target "ctx-{context_id}" — the Temporal workflow ID scheme
+	// used by Python's OrchestrationWorkflow.
+	assert.Contains(t, temporal.signaled, "ctx-ctx-xyz-123",
+		"Temporal must be signaled with 'ctx-{context_id}' workflow ID, not run_id")
 }

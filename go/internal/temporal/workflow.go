@@ -22,7 +22,8 @@ const (
 	WorkflowType = "OrchestrationWorkflow"
 
 	// SignalHumanInput is the signal name for HITL human responses.
-	SignalHumanInput = "human_input"
+	// Must match the Python workflow's signal name exactly.
+	SignalHumanInput = "submit_human_response"
 
 	activityStartToClose = 10 * time.Minute
 	heartbeatInterval    = 5 * time.Second

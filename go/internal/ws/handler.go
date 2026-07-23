@@ -454,7 +454,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		wfOpts := temporalclient.StartWorkflowOptions{
-			ID:        runID,
+			// Python OrchestrationWorkflow registers itself as "ctx-{contextID}".
+			// Go must use the same scheme so HITL signals reach the correct workflow.
+			ID:        "ctx-" + contextID,
 			TaskQueue: temporal.TaskQueue,
 		}
 
