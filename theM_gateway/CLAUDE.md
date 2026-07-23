@@ -282,6 +282,13 @@ If you see `got ''` on live tests (01–04, 12, 15), you're using the wrong Pyth
 | `app/temporal/activities.py`, `app/temporal/workflows.py`, `app/temporal/serde.py` | Full suite + `scripts/test_temporal_workflow.py` (inside them-worker) + **restart them-worker** |
 | `app/temporal/stream_publish.lua`, `app/temporal/activities.py` (`stream_publish`/`TERMINAL_EVENT_TYPES`), `db/025_events_transport.sql` | 36 (stream publish unit tests) + full suite |
 | `go/internal/ws/handler.go`, `go/internal/sse/handler.go`, `go/internal/temporal/workflow.go`, `go/internal/admin/runs.go`, `go/internal/agentregistry/registry.go`, `go/internal/epconfig/epconfig.go`, `app/services/token_cache.py` (invalidate_token), `app/routers/admin_applications.py` (_flush_orch_caches), `app/temporal/shared.py` (run_id), `app/temporal/workflows.py` (run_id) | 37 (Go↔Python parity contract) |
+| `go/internal/admin/agents.go`, `go/internal/admin/orchestrators.go`, `go/internal/admin/applications.go`, `go/internal/admin/runs.go`, `go/internal/admin/router.go` | 37 + `go test ./internal/admin/...` (Go admin CRUD + PATCH aliases) |
+| `go/internal/agentregistry/pgx_querier.go`, `go/internal/agentregistry/registry.go` | `go test ./internal/agentregistry/...` (agent registry DB reader) |
+| `go/internal/cache/gate_adapter.go` | `go test ./internal/cache/...` (gate Redis client) |
+| `go/internal/gate/gate.go` | `go test ./internal/gate/...` (admission gate) |
+| `go/cmd/them/main.go` | Full Go test suite + rebuild + restart Go bridges |
+| `go/internal/server/server.go` | `go test ./internal/server/...` + rebuild |
+| `docker-compose.traefik.yml`, `docker-compose.yml` Go bridge labels | 20 + verify routes in Traefik dashboard (http://localhost:8089) |
 | `app/temporal/bridge_client.py`, `app/routers/ws_orchestrator.py` (Temporal path) | 10 11 + `scripts/test_temporal_workflow.py` + **restart them-worker** |
 | `app/routers/runs.py` (signal endpoint) | 12 + `scripts/test_temporal_phase5.py` |
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.local.yml` | 20 (Traefik routing + multi-replica) |

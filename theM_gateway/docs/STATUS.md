@@ -167,16 +167,32 @@ cp /opt/docker/them/db/{002_seed,003_phase8,004_phase9,014_app_orchestrators,017
 cp /opt/docker/them/.dockerignore .dockerignore
 ```
 
-### Current Traefik routing state
+### Current Traefik routing state (Wave 4 complete 2026-07-23)
 
-| Path | Router | Backend | Notes |
+| Path | Router (priority) | Backend | Notes |
 |---|---|---|---|
-| `/ws/*` | `them-ws@docker` (priority 100) | Python bridge | ✅ Python owns WS |
-| `/apps/*` | `them-apps@docker` (priority 100) | Python bridge | ✅ Working |
-| `/go-health/*` | `them-go-health@docker` (priority 120) | Go bridge | ✅ Working |
-| `/api/v1/*` | `them-api@docker` (priority 100) | Python bridge | ✅ Working |
-
-Go WS/SSE handlers are **not implemented**. Python bridge owns all active WS/SSE traffic.
+| `/health/live`, `/health/ready` | `them-go-health-sub@docker` (130) | **Go bridge** | Wave 1 |
+| `/go-health/*` | `them-go-health@docker` (120) | **Go bridge** | Legacy alias |
+| `GET /apps/{slug}/ws` | `them-go-apps-ws@docker` (120) | **Go bridge** | Wave 4 |
+| `GET/POST /apps/{slug}/sse` | `them-go-apps-sse@docker` (120) | **Go bridge** | Wave 4 |
+| `GET /ws/orchestrate/{a}/{ep}` (2-seg) | `them-go-ws-two-seg@docker` (120) | **Go bridge** | Wave 4 |
+| `GET/POST /sse/orchestrate/{a}/{ep}` (2-seg) | `them-go-sse-two-seg@docker` (120) | **Go bridge** | Wave 4 |
+| `POST /api/v1/admin/agents` | `them-go-agents-create@docker` (115) | **Go bridge** | Wave 2 |
+| `PUT/PATCH/DELETE /api/v1/admin/agents/{id}` | `them-go-agents-update@docker` (115) | **Go bridge** | Wave 2 |
+| `POST /api/v1/admin/orchestrators` | `them-go-orchs-create@docker` (115) | **Go bridge** | Wave 2 |
+| `PUT/PATCH/DELETE /api/v1/admin/orchestrators/{name}` | `them-go-orchs-update@docker` (115) | **Go bridge** | Wave 2 |
+| `POST /api/v1/admin/applications` | `them-go-apps-create@docker` (115) | **Go bridge** | Wave 2 |
+| `PUT/PATCH/DELETE /api/v1/admin/applications/{id}` | `them-go-apps-update@docker` (115) | **Go bridge** | Wave 2 |
+| `POST/PUT/PATCH/DELETE /admin/applications/{id}/entry-points{/ep_id}` | `them-go-eps-writes@docker` (115) | **Go bridge** | Wave 2 |
+| `POST /api/v1/runs/{run_id}/signal` | `them-go-runs-signal@docker` (115) | **Go bridge** | Wave 2 |
+| `GET /api/v1/admin/agents*` | `them-go-admin-reads@docker` (110) | **Go bridge** | Wave 1 |
+| `GET /api/v1/admin/orchestrators*` | `them-go-admin-reads@docker` (110) | **Go bridge** | Wave 1 |
+| `GET /api/v1/admin/applications*` | `them-go-admin-reads@docker` (110) | **Go bridge** | Wave 1 |
+| `GET /api/v1/runs*` | `them-go-admin-reads@docker` (110) | **Go bridge** | Wave 1 |
+| `/ws/*` (1-seg, playground) | `them-ws@docker` (100) | Python bridge | Legacy orchestrator path |
+| `/apps/*` (REST endpoints) | `them-apps@docker` (100) | Python bridge | Python still owns REST |
+| `/api/v1/*` (other) | `them-api@docker` (100) | Python bridge | Writes Python doesn't cover |
+| `/health` (bare) | `them-health@docker` (90) | Python bridge | Python health endpoint |
 
 ### FK constraints status
 
