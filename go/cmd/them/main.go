@@ -13,14 +13,18 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 
+	"time"
+
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
+	"github.com/aviciot/them/internal/agentregistry"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
+	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/health"
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/orchestrator"
@@ -113,7 +117,19 @@ func run() error {
 	// ── 10. Create rate limiter ───────────────────────────────────────────────
 	rlRedis := cache.NewRateLimitClient(redisCache.Client())
 	limiter := ratelimit.New(rlRedis)
-	_ = limiter // rate limiter available for wiring into handlers
+	_ = limiter // rate limiter available for future per-handler wiring
+
+	// ── 10b. Create admission gate ────────────────────────────────────────────
+	gateRedis := cache.NewGateRedisClient(redisCache.Client())
+	admissionGate := gate.New(gateRedis)
+	log.Info("admission gate initialised")
+
+	// ── 10c. Create agent registry ────────────────────────────────────────────
+	agentDB := agentregistry.NewPgxQuerier(database.Pool())
+	agentCacheRedis := cache.NewAuthRedisClient(redisCache.Client())
+	agentReg := agentregistry.New(agentDB, agentCacheRedis, log)
+	go agentReg.Subscribe(ctx)
+	log.Info("agent registry initialised with pub/sub cache invalidation")
 
 	// ── 11. Build auth middleware ─────────────────────────────────────────────
 	var jwtMiddleware func(http.Handler) http.Handler
@@ -186,6 +202,7 @@ func run() error {
 
 	// ── 16. Wire WebSocket handler (/ws/*) ───────────────────────────────────
 	wsHandler := ws.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log).
+		WithGate(admissionGate).
 		WithEPConfig(epLoader).
 		WithTemporal(temporalCli, rsRedis, cfg.TemporalEnabled).
 		WithRunEvents(dispatcher, cfg.RunEventsMode)
@@ -194,11 +211,32 @@ func run() error {
 
 	// ── 17. Wire SSE handler (/sse/*) ─────────────────────────────────────────
 	sseHandler := sse.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log).
+		WithGate(admissionGate).
 		WithEPConfig(epLoader).
 		WithTemporal(temporalCli, rsRedis, cfg.TemporalEnabled).
 		WithRunEvents(dispatcher, cfg.RunEventsMode)
 	srv.MountSSE(sseHandler.Routes())
 	log.Info("SSE handler mounted", "prefix", "/sse")
+
+	// ── 17b. Start pod heartbeat loop ─────────────────────────────────────────
+	// Writes them:pod:{instance_id} every 15 s so the session reconciler knows
+	// this replica is alive. Session TTL is 90 s so 15 s gives 6 misses before
+	// a pod is considered dead — wide enough to survive transient Redis blips.
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := sessionStore.WriteHeartbeat(ctx); err != nil {
+					log.Warn("pod heartbeat failed", "error", err)
+				}
+			}
+		}
+	}()
+	log.Info("pod heartbeat loop started", "interval", "15s")
 
 	// ── 17. Wire A2A server (/a2a/*, /.well-known/*) ─────────────────────────
 	a2aServer := a2a.NewServer(recorder, orch, bus, log)
