@@ -55,6 +55,7 @@ func (h *AgentsHandler) Routes(r chi.Router) {
 	r.Post("/agents", h.Create)
 	r.Get("/agents/{id}", h.Get)
 	r.Put("/agents/{id}", h.Update)
+	r.Patch("/agents/{id}", h.Update) // Python frontend sends PATCH; accept both
 	r.Delete("/agents/{id}", h.Delete)
 }
 

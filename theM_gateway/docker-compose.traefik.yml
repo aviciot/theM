@@ -69,6 +69,54 @@ services:
       - "traefik.http.routers.them-go-admin-reads.entrypoints=web"
       - "traefik.http.routers.them-go-admin-reads.priority=110"
       - "traefik.http.routers.them-go-admin-reads.service=them-go-svc"
+      # ── Wave 2a: agents writes (POST create + PUT/PATCH/DELETE update/delete) ──
+      # POST /api/v1/admin/agents        → Go create
+      # PUT/PATCH/DELETE /api/v1/admin/agents/{id} → Go update/delete
+      # NOT routed: POST /agents/{id}/test, /discover, /security-scan (stay in Python)
+      - "traefik.http.routers.them-go-agents-create.rule=Path(`/api/v1/admin/agents`) && Method(`POST`)"
+      - "traefik.http.routers.them-go-agents-create.entrypoints=web"
+      - "traefik.http.routers.them-go-agents-create.priority=115"
+      - "traefik.http.routers.them-go-agents-create.service=them-go-svc"
+      - "traefik.http.routers.them-go-agents-update.rule=PathRegexp(`^/api/v1/admin/agents/[0-9]+$$`) && (Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-agents-update.entrypoints=web"
+      - "traefik.http.routers.them-go-agents-update.priority=115"
+      - "traefik.http.routers.them-go-agents-update.service=them-go-svc"
+      # ── Wave 2b: orchestrators writes ──────────────────────────────────────────
+      # POST /api/v1/admin/orchestrators          → Go create
+      # PUT/PATCH/DELETE /api/v1/admin/orchestrators/{name} → Go update/delete
+      # NOT routed: POST /orchestrators/{name}/test-llm etc (stay in Python)
+      - "traefik.http.routers.them-go-orchs-create.rule=Path(`/api/v1/admin/orchestrators`) && Method(`POST`)"
+      - "traefik.http.routers.them-go-orchs-create.entrypoints=web"
+      - "traefik.http.routers.them-go-orchs-create.priority=115"
+      - "traefik.http.routers.them-go-orchs-create.service=them-go-svc"
+      - "traefik.http.routers.them-go-orchs-update.rule=PathRegexp(`^/api/v1/admin/orchestrators/[^/]+$$`) && (Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-orchs-update.entrypoints=web"
+      - "traefik.http.routers.them-go-orchs-update.priority=115"
+      - "traefik.http.routers.them-go-orchs-update.service=them-go-svc"
+      # ── Wave 2c: applications writes ───────────────────────────────────────────
+      # POST /api/v1/admin/applications      → Go create
+      # PUT/PATCH/DELETE /api/v1/admin/applications/{id}  → Go update/delete
+      # NOT routed: /import /export /restore /bulk-delete /runtime /middleware-wirings
+      #             /applications/{id}/orchestrators/* (stay in Python)
+      - "traefik.http.routers.them-go-apps-create.rule=Path(`/api/v1/admin/applications`) && Method(`POST`)"
+      - "traefik.http.routers.them-go-apps-create.entrypoints=web"
+      - "traefik.http.routers.them-go-apps-create.priority=115"
+      - "traefik.http.routers.them-go-apps-create.service=them-go-svc"
+      - "traefik.http.routers.them-go-apps-update.rule=PathRegexp(`^/api/v1/admin/applications/[0-9]+$$`) && (Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-apps-update.entrypoints=web"
+      - "traefik.http.routers.them-go-apps-update.priority=115"
+      - "traefik.http.routers.them-go-apps-update.service=them-go-svc"
+      # POST/PUT/PATCH/DELETE /api/v1/admin/applications/{id}/entry-points{/ep_id}
+      - "traefik.http.routers.them-go-eps-writes.rule=PathRegexp(`^/api/v1/admin/applications/[0-9]+/entry-points(/[0-9]+)?$$`) && (Method(`POST`) || Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-eps-writes.entrypoints=web"
+      - "traefik.http.routers.them-go-eps-writes.priority=115"
+      - "traefik.http.routers.them-go-eps-writes.service=them-go-svc"
+      # ── Wave 2d: runs signal ────────────────────────────────────────────────────
+      # POST /api/v1/runs/{run_id}/signal → Go HITL signal relay
+      - "traefik.http.routers.them-go-runs-signal.rule=PathRegexp(`^/api/v1/runs/[^/]+/signal$$`) && Method(`POST`)"
+      - "traefik.http.routers.them-go-runs-signal.entrypoints=web"
+      - "traefik.http.routers.them-go-runs-signal.priority=115"
+      - "traefik.http.routers.them-go-runs-signal.service=them-go-svc"
       # ── Legacy /go-health/* path (backward compat with scripts) ────────────────
       - "traefik.http.routers.them-go-health.rule=PathPrefix(`/go-health`)"
       - "traefik.http.routers.them-go-health.entrypoints=web"

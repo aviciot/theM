@@ -86,10 +86,12 @@ func (h *ApplicationsHandler) Routes(r chi.Router) {
 	r.Post("/applications", h.Create)
 	r.Get("/applications/{id}", h.Get)
 	r.Put("/applications/{id}", h.Update)
+	r.Patch("/applications/{id}", h.Update) // Python frontend sends PATCH; accept both
 	r.Delete("/applications/{id}", h.Delete)
 
 	r.Post("/applications/{id}/entry-points", h.CreateEntryPoint)
 	r.Put("/applications/{id}/entry-points/{ep_id}", h.UpdateEntryPoint)
+	r.Patch("/applications/{id}/entry-points/{ep_id}", h.UpdateEntryPoint) // Python sends PATCH
 	r.Delete("/applications/{id}/entry-points/{ep_id}", h.DeleteEntryPoint)
 }
 

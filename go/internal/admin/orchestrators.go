@@ -58,6 +58,7 @@ func (h *OrchestratorsHandler) Routes(r chi.Router) {
 	r.Post("/orchestrators", h.Create)
 	r.Get("/orchestrators/{name}", h.Get)
 	r.Put("/orchestrators/{name}", h.Update)
+	r.Patch("/orchestrators/{name}", h.Update) // Python frontend sends PATCH; accept both
 	r.Delete("/orchestrators/{name}", h.Delete)
 }
 

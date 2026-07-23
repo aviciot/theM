@@ -505,6 +505,63 @@ func TestUpdateEntryPoint_EmptyEPType_Allowed(t *testing.T) {
 		"empty ep_type on update must not be rejected")
 }
 
+// PATCH aliases — Python frontend sends PATCH for updates; Go must accept both PUT and PATCH.
+
+// TestPatchAgentAliasesUpdate verifies PATCH /agents/{id} routes to the same Update handler as PUT.
+func TestPatchAgentAliasesUpdate(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewAgentsHandler(db, nil)
+	r := chi.NewRouter()
+	h.Routes(r)
+	body, _ := json.Marshal(map[string]any{
+		"slug": "my-agent", "name": "My Agent", "adapter_type": "ws_mock",
+		"max_concurrency": 1, "enabled": true,
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/agents/1", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	// 404 from fakeDB is expected (no real row); 405 would mean PATCH is not routed.
+	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code, "PATCH /agents/{id} must be routed (not 405)")
+}
+
+// TestPatchOrchestratorAliasesUpdate verifies PATCH /orchestrators/{name} routes to Update.
+func TestPatchOrchestratorAliasesUpdate(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewOrchestratorsHandler(db, nil)
+	r := chi.NewRouter()
+	h.Routes(r)
+	body, _ := json.Marshal(map[string]any{
+		"name": "default", "llm_provider": "anthropic", "model": "claude-haiku-4-5-20251001",
+		"max_iterations": 5, "max_tokens": 4096, "temperature": 0.7, "history_window": 10,
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/orchestrators/default", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code, "PATCH /orchestrators/{name} must be routed (not 405)")
+}
+
+// TestPatchApplicationAliasesUpdate verifies PATCH /applications/{id} routes to Update.
+func TestPatchApplicationAliasesUpdate(t *testing.T) {
+	db := &fakeDB{}
+	cache := &fakeCache{}
+	body, _ := json.Marshal(map[string]any{"name": "My App", "slug": "my-app"})
+	w := serveApps(t, db, cache, http.MethodPatch, "/applications/1", body)
+	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code, "PATCH /applications/{id} must be routed (not 405)")
+}
+
+// TestPatchEntryPointAliasesUpdate verifies PATCH /applications/{id}/entry-points/{ep_id} routes to UpdateEntryPoint.
+func TestPatchEntryPointAliasesUpdate(t *testing.T) {
+	db := &fakeDB{queryRowStr: "my-ep"}
+	cache := &fakeCache{}
+	body, _ := json.Marshal(map[string]any{
+		"slug": "my-ep", "name": "My EP", "ep_type": "websocket",
+	})
+	w := serveApps(t, db, cache, http.MethodPatch, "/applications/1/entry-points/2", body)
+	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code, "PATCH /applications/{id}/entry-points/{ep_id} must be routed (not 405)")
+}
+
 // 5. Signal run — calls Temporal client with "ctx-{context_id}" workflow ID.
 func TestSignalRun(t *testing.T) {
 	// queryRowStr is returned by fakeDB.QueryRow — simulates context_id lookup.
