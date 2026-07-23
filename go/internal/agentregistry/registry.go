@@ -16,7 +16,7 @@ import (
 const (
 	redisCacheKey     = "them:agents:registry"
 	redisCacheTTL     = 600 * time.Second
-	invalidateChannel = "them:agents:invalidate"
+	invalidateChannel = "them:agents:changed" // matches Python admin_agents.py publisher
 	httpInvokeTimeout = 60 * time.Second
 )
 

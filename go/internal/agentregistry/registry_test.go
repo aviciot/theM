@@ -164,7 +164,7 @@ func TestPubSubInvalidation(t *testing.T) {
 
 	calls := fc.getCalls()
 	require.NotEmpty(t, calls, "Subscribe must have registered at least one channel")
-	assert.Contains(t, calls[0], "them:agents:invalidate")
+	assert.Contains(t, calls[0], "them:agents:changed") // must match Python admin_agents.py publisher
 }
 
 // 5. Unknown agent slug returns typed error.

@@ -116,7 +116,11 @@ async def _is_user_active(user_id: int) -> bool:
     try:
         from app.services.auth_client import get_user
         user = await get_user(user_id)
-        active = bool(user and user.get("active", False))
+        if user is None:
+            # Auth-service returned non-200 (404, 500, wrong URL, etc.) — fail open
+            logger.warning("token_cache: get_user returned None — failing open", user_id=user_id)
+            return True
+        active = bool(user.get("active", False))
     except Exception as exc:
         logger.warning("token_cache: auth_client.get_user failed — failing open", error=str(exc))
         return True  # fail open: don't block if auth-service is down
@@ -184,6 +188,12 @@ async def invalidate_token(token_hash: str) -> None:
     """Remove token from both caches. Call after DB delete/disable."""
     _l1_delete(token_hash)
     await _l2_delete(token_hash)
+    # Publish cross-pod eviction so Go replicas drop their L1 entry immediately.
+    try:
+        if db_module.redis_client is not None:
+            await db_module.redis_client.publish("them:token:revoked", token_hash)
+    except Exception as exc:
+        logger.warning("token_cache: revocation publish failed", error=str(exc))
 
 
 async def invalidate_user_active(user_id: int) -> None:

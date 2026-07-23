@@ -291,21 +291,49 @@ type RedisSubscriber interface {
 }
 
 // Subscribe starts a background goroutine that listens on EPConfigChannel.
-// Each received message payload is treated as an EP slug to evict from the
-// in-process cache on this pod. The goroutine exits when ctx is cancelled.
+// Message payloads are either:
+//   - An EP slug string → evict that single entry from the cache.
+//   - A UUID string (app_id, 36 chars with hyphens) → evict all cached entries
+//     belonging to that application (published by Python admin when app config changes).
 //
 // Call Subscribe once at startup after creating the Loader. It is optional:
 // without it the 30-second TTL alone bounds staleness.
 func (l *Loader) Subscribe(ctx context.Context, sub RedisSubscriber) {
 	go func() {
-		err := sub.Subscribe(ctx, EPConfigChannel, func(slug string) {
-			l.Invalidate(slug)
-			l.logger.Debug("epconfig: cache evicted via pub/sub", "ep_slug", slug)
+		err := sub.Subscribe(ctx, EPConfigChannel, func(payload string) {
+			if looksLikeUUID(payload) {
+				l.InvalidateApp(payload)
+				l.logger.Debug("epconfig: app cache evicted via pub/sub", "app_id", payload)
+			} else {
+				l.Invalidate(payload)
+				l.logger.Debug("epconfig: ep cache evicted via pub/sub", "ep_slug", payload)
+			}
 		})
 		if err != nil && ctx.Err() == nil {
 			l.logger.Warn("epconfig: pub/sub subscriber exited with error", "error", err)
 		}
 	}()
+}
+
+// looksLikeUUID returns true if s has the standard UUID hyphenated format (8-4-4-4-12).
+// Used to distinguish app_id payloads from EP slug payloads on the config channel.
+func looksLikeUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (l *Loader) buildConfig(row *EPConfigRow) *EPConfig {

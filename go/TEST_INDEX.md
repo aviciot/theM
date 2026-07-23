@@ -210,7 +210,7 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestInvokeMock` | Mock adapter returns immediately without HTTP |
 | `TestInvokeA2A` | A2A adapter sends correct JSON-RPC 2.0 request, extracts result |
 | `TestCacheMissThenPopulate` | Cache miss → DB load → Redis populated |
-| `TestPubSubInvalidation` | Pub/sub message on `them:agents:invalidate` → in-process cache cleared |
+| `TestPubSubInvalidation` | Pub/sub message on `them:agents:changed` → in-process cache cleared |
 | `TestUnknownSlug` | Unknown agent slug → `ErrUnknownAgent` (typed sentinel) |
 
 **Trigger:** any change to `internal/agentregistry/registry.go`

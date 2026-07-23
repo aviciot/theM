@@ -947,6 +947,7 @@ async def _flush_orch_caches(app_id: uuid.UUID, orch_names: list[str]) -> None:
 
     Busts them:app:{app_id}:orch:{name} + them:orch:loc:{name} for each name.
     Also busts the agent registry because delegatable changes affect tool lists.
+    Also publishes them:ep:config:changed so Go replicas evict their epconfig cache.
     """
     redis = db_module.redis_client
     if redis is None or not orch_names:
@@ -961,6 +962,12 @@ async def _flush_orch_caches(app_id: uuid.UUID, orch_names: list[str]) -> None:
         logger.info("orch cache flushed", app_id=str(app_id), names=orch_names)
     except Exception as exc:
         logger.warning("orch cache flush failed", names=orch_names, error=str(exc))
+    # Notify Go replicas to evict their epconfig (entry_point) cache.
+    try:
+        if db_module.redis_client is not None:
+            await db_module.redis_client.publish("them:ep:config:changed", str(app_id))
+    except Exception as exc:
+        logger.warning("ep config change publish failed", app_id=str(app_id), error=str(exc))
 
 
 @router.put("/{app_id}/middleware-wirings", status_code=status.HTTP_204_NO_CONTENT)
