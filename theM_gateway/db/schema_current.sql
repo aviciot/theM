@@ -472,6 +472,7 @@ CREATE TABLE IF NOT EXISTS them.tasks (
     deadline        TIMESTAMPTZ,
     max_depth       INTEGER     NOT NULL DEFAULT 5,
     tokens_used     INTEGER,
+    error           TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
