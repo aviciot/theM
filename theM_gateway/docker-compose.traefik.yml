@@ -117,6 +117,30 @@ services:
       - "traefik.http.routers.them-go-runs-signal.entrypoints=web"
       - "traefik.http.routers.them-go-runs-signal.priority=115"
       - "traefik.http.routers.them-go-runs-signal.service=them-go-svc"
+      # ── Wave 4a: /apps/{slug}/ws → Go WS handler ───────────────────────────
+      # Python also handles /apps/{slug}/ws but Go is now authoritative.
+      # Exact regex excludes /apps/{slug}/tasks, /voice, etc. (still Python).
+      - "traefik.http.routers.them-go-apps-ws.rule=PathRegexp(`^/apps/[^/]+/ws$$`) && Method(`GET`)"
+      - "traefik.http.routers.them-go-apps-ws.entrypoints=web"
+      - "traefik.http.routers.them-go-apps-ws.priority=120"
+      - "traefik.http.routers.them-go-apps-ws.service=them-go-svc"
+      # ── Wave 4b: /apps/{slug}/sse → Go SSE handler ─────────────────────────
+      - "traefik.http.routers.them-go-apps-sse.rule=PathRegexp(`^/apps/[^/]+/sse$$`) && (Method(`GET`) || Method(`POST`))"
+      - "traefik.http.routers.them-go-apps-sse.entrypoints=web"
+      - "traefik.http.routers.them-go-apps-sse.priority=120"
+      - "traefik.http.routers.them-go-apps-sse.service=them-go-svc"
+      # ── Wave 4c: /ws/orchestrate/{app}/{ep} (two-segment) → Go ─────────────
+      # One-segment /ws/orchestrate/{name} (playground/legacy) stays in Python.
+      - "traefik.http.routers.them-go-ws-two-seg.rule=PathRegexp(`^/ws/orchestrate/[^/]+/[^/]+$$`) && Method(`GET`)"
+      - "traefik.http.routers.them-go-ws-two-seg.entrypoints=web"
+      - "traefik.http.routers.them-go-ws-two-seg.priority=120"
+      - "traefik.http.routers.them-go-ws-two-seg.service=them-go-svc"
+      # ── Wave 4d: /sse/orchestrate/{app}/{ep} (two-segment) → Go ────────────
+      # One-segment /sse/orchestrate/{name} stays in Python (if any).
+      - "traefik.http.routers.them-go-sse-two-seg.rule=PathRegexp(`^/sse/orchestrate/[^/]+/[^/]+$$`) && (Method(`GET`) || Method(`POST`))"
+      - "traefik.http.routers.them-go-sse-two-seg.entrypoints=web"
+      - "traefik.http.routers.them-go-sse-two-seg.priority=120"
+      - "traefik.http.routers.them-go-sse-two-seg.service=them-go-svc"
       # ── Legacy /go-health/* path (backward compat with scripts) ────────────────
       - "traefik.http.routers.them-go-health.rule=PathPrefix(`/go-health`)"
       - "traefik.http.routers.them-go-health.entrypoints=web"

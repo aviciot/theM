@@ -199,10 +199,34 @@ func (h *Handler) runEvents(ctx context.Context, runID, eventsTransport, lastEve
 
 // Routes returns an http.Handler that mounts the SSE orchestration routes.
 // Accepts both GET (message as ?message=) and POST (message in JSON body).
+// Also registers /apps/{slug}/sse as an alias for the app entry-point path.
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/orchestrate/{app_slug}/{entry_point_slug}", h.ServeHTTP)
 	r.Post("/orchestrate/{app_slug}/{entry_point_slug}", h.ServeHTTP)
+	return r
+}
+
+// AppsSSERoute returns an http.Handler for /{slug}/sse (relative path).
+// Mount at /apps so the full external path is /apps/{slug}/sse.
+// It remaps the {slug} chi param to {entry_point_slug} so the shared
+// ServeHTTP can call chi.URLParam(r, "entry_point_slug") uniformly.
+func (h *Handler) AppsSSERoute() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/{slug}/sse", func(w http.ResponseWriter, r *http.Request) {
+		slug := chi.URLParam(r, "slug")
+		rctx := chi.RouteContext(r.Context())
+		rctx.URLParams.Add("app_slug", slug)
+		rctx.URLParams.Add("entry_point_slug", slug)
+		h.ServeHTTP(w, r)
+	})
+	r.Post("/{slug}/sse", func(w http.ResponseWriter, r *http.Request) {
+		slug := chi.URLParam(r, "slug")
+		rctx := chi.RouteContext(r.Context())
+		rctx.URLParams.Add("app_slug", slug)
+		rctx.URLParams.Add("entry_point_slug", slug)
+		h.ServeHTTP(w, r)
+	})
 	return r
 }
 

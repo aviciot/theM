@@ -15,6 +15,8 @@ import (
 
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/agentregistry"
@@ -238,6 +240,12 @@ func run() error {
 	}()
 	log.Info("pod heartbeat loop started", "interval", "15s")
 
+	// ── 17c. Mount /apps/{slug}/ws and /apps/{slug}/sse aliases ─────────────
+	// These are the app entry-point URLs used by the frontend.
+	// MountApps("/apps") strips the prefix, so sub-routes are /{slug}/ws etc.
+	srv.MountApps(buildAppsHandler(wsHandler, sseHandler))
+	log.Info("apps WS+SSE aliases mounted", "prefix", "/apps")
+
 	// ── 17. Wire A2A server (/a2a/*, /.well-known/*) ─────────────────────────
 	a2aServer := a2a.NewServer(recorder, orch, bus, log)
 	srv.MountA2A(a2aServer.Routes())
@@ -258,4 +266,36 @@ func run() error {
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)
 
 	return srv.ListenAndServe()
+}
+
+// buildAppsHandler creates a chi router for /apps/{slug}/ws and /apps/{slug}/sse.
+// It is mounted at /apps by MountApps, so routes here are relative (/{slug}/ws).
+// Each handler remaps {slug} → {entry_point_slug} for the shared ServeHTTP.
+func buildAppsHandler(wsH *ws.Handler, sseH *sse.Handler) http.Handler {
+	r := chi.NewRouter()
+
+	r.Get("/{slug}/ws", func(w http.ResponseWriter, req *http.Request) {
+		slug := chi.URLParam(req, "slug")
+		rctx := chi.RouteContext(req.Context())
+		rctx.URLParams.Add("app_slug", slug)
+		rctx.URLParams.Add("entry_point_slug", slug)
+		wsH.ServeHTTP(w, req)
+	})
+
+	r.Get("/{slug}/sse", func(w http.ResponseWriter, req *http.Request) {
+		slug := chi.URLParam(req, "slug")
+		rctx := chi.RouteContext(req.Context())
+		rctx.URLParams.Add("app_slug", slug)
+		rctx.URLParams.Add("entry_point_slug", slug)
+		sseH.ServeHTTP(w, req)
+	})
+	r.Post("/{slug}/sse", func(w http.ResponseWriter, req *http.Request) {
+		slug := chi.URLParam(req, "slug")
+		rctx := chi.RouteContext(req.Context())
+		rctx.URLParams.Add("app_slug", slug)
+		rctx.URLParams.Add("entry_point_slug", slug)
+		sseH.ServeHTTP(w, req)
+	})
+
+	return r
 }

@@ -162,6 +162,13 @@ func (s *Server) MountAdmin(adminHandler http.Handler) {
 	s.router.Mount("/api/v1", adminHandler)
 }
 
+// MountApps mounts an /apps handler at the router root.
+// The handler should register /apps/{slug}/ws and /apps/{slug}/sse routes.
+// Call before ListenAndServe.
+func (s *Server) MountApps(h http.Handler) {
+	s.router.Mount("/apps", h)
+}
+
 // Handler returns the underlying chi router as an http.Handler. Intended for
 // use in integration tests that need to wrap the router in an httptest.Server
 // without calling ListenAndServe.

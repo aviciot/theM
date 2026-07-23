@@ -206,9 +206,27 @@ func (h *Handler) runEvents(ctx context.Context, runID, eventsTransport, lastEve
 }
 
 // Routes returns an http.Handler that mounts the WS orchestration route.
+// Also registers /apps/{slug}/ws as an alias for the app entry-point path,
+// mapping the {slug} param to {entry_point_slug} so ServeHTTP can use it.
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/orchestrate/{app_slug}/{entry_point_slug}", h.ServeHTTP)
+	return r
+}
+
+// AppsWSRoute returns an http.Handler for /{slug}/ws (relative path).
+// Mount at /apps so the full external path is /apps/{slug}/ws.
+// It remaps the {slug} chi param to {entry_point_slug} so the shared
+// ServeHTTP can call chi.URLParam(r, "entry_point_slug") uniformly.
+func (h *Handler) AppsWSRoute() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/{slug}/ws", func(w http.ResponseWriter, r *http.Request) {
+		slug := chi.URLParam(r, "slug")
+		rctx := chi.RouteContext(r.Context())
+		rctx.URLParams.Add("app_slug", slug)
+		rctx.URLParams.Add("entry_point_slug", slug)
+		h.ServeHTTP(w, r)
+	})
 	return r
 }
 
