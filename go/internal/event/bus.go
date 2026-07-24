@@ -101,33 +101,40 @@ func (b *InMemoryBus) Subscribe(_ context.Context, topic string, bufSize int) (<
 
 // Publish sends event to every subscriber of event.Topic and all wildcard ("*") subscribers.
 // Non-blocking per subscriber; drops if the channel buffer is full.
+//
+// All sends are performed while holding b.mu so that a concurrent unsub cannot
+// close a channel between the moment we read its pointer and the moment we send
+// to it (which would cause a send-on-closed-channel panic detected as a data
+// race by the Go race detector). The sends are non-blocking (select/default),
+// so holding the lock during them does not risk deadlock.
 func (b *InMemoryBus) Publish(_ context.Context, ev Event) {
 	if ev.Timestamp.IsZero() {
 		ev.Timestamp = time.Now()
 	}
 
 	b.mu.Lock()
-	// Collect target channels: topic subscribers + wildcard subscribers.
-	var targets []chan Event
+	defer b.mu.Unlock()
+
+	// Send to topic subscribers.
 	for _, entry := range b.subscribers[ev.Topic] {
 		if !entry.closed {
-			targets = append(targets, entry.ch)
-		}
-	}
-	if ev.Topic != "*" {
-		for _, entry := range b.subscribers["*"] {
-			if !entry.closed {
-				targets = append(targets, entry.ch)
+			select {
+			case entry.ch <- ev:
+			default:
+				// drop — slow consumer
 			}
 		}
 	}
-	b.mu.Unlock()
-
-	for _, ch := range targets {
-		select {
-		case ch <- ev:
-		default:
-			// drop — slow consumer
+	// Send to wildcard subscribers.
+	if ev.Topic != "*" {
+		for _, entry := range b.subscribers["*"] {
+			if !entry.closed {
+				select {
+				case entry.ch <- ev:
+				default:
+					// drop — slow consumer
+				}
+			}
 		}
 	}
 }
