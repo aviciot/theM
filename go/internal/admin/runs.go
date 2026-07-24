@@ -2,24 +2,24 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/admin/service"
 )
 
 // RunsHandler handles /api/v1/runs routes.
 type RunsHandler struct {
-	db       DBQuerier
-	temporal TemporalSignaler
-	dal      *dal.DB
+	svc *service.RunService
 }
 
 // NewRunsHandler creates a RunsHandler.
 func NewRunsHandler(db DBQuerier, temporal TemporalSignaler) *RunsHandler {
-	return &RunsHandler{db: db, temporal: temporal, dal: dal.NewDB(db)}
+	return &RunsHandler{svc: service.NewRunService(dal.NewDB(db), temporal)}
 }
 
 // Routes mounts the runs API endpoints.
@@ -40,7 +40,7 @@ func (h *RunsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	runs, err := h.dal.ListRuns(r.Context(), contextID, limit)
+	runs, err := h.svc.List(r.Context(), contextID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
 		return
@@ -56,7 +56,7 @@ func (h *RunsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.dal.GetRun(r.Context(), runID)
+	run, err := h.svc.Get(r.Context(), runID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "run not found")
 		return
@@ -65,7 +65,6 @@ func (h *RunsHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Signal handles POST /api/v1/runs/{run_id}/signal (HITL).
-// Forwards the human response payload to the Temporal workflow.
 func (h *RunsHandler) Signal(w http.ResponseWriter, r *http.Request) {
 	runID := chi.URLParam(r, "run_id")
 	if runID == "" {
@@ -79,31 +78,14 @@ func (h *RunsHandler) Signal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.temporal == nil {
-		writeError(w, http.StatusServiceUnavailable, "temporal not configured")
-		return
-	}
-
-	// context_id lives on them.tasks (not them.runs).
-	// Python's OrchestrationWorkflow registers as "ctx-{context_id}".
-	contextID, err := h.dal.GetRunContextID(r.Context(), runID)
-	if err != nil {
-		if IsNotFound(err) {
-			writeError(w, http.StatusNotFound, "run not found or no root task")
-		} else {
-			writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
+	if err := h.svc.Signal(r.Context(), runID, input.Payload); err != nil {
+		if writeServiceError(w, err) {
+			return
 		}
-		return
-	}
-	workflowID := "ctx-" + contextID
-
-	payload, err := json.Marshal(input.Payload)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid payload")
-		return
-	}
-
-	if err := h.temporal.SignalRun(r.Context(), workflowID, payload); err != nil {
+		if errors.Is(err, service.ErrNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "signal error: "+err.Error())
 		return
 	}
