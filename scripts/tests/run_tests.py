@@ -675,7 +675,7 @@ def test_11_ws_orchestrate():
           s in ("403","404","400","426"), f"got {s}")
 
     d = http_json(C, "/api/v1/admin/tokens", P, method="POST",
-                  body='{"label":"ws-test-token","user_id":99}', headers=auth)
+                  body='{"label":"ws-test-token","user_id":1}', headers=auth)
     token_id = d.get("id", "")
     check("Can create bearer token for WS auth", bool(token_id), str(d))
 
