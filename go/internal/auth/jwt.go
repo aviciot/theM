@@ -1,11 +1,19 @@
-// Package auth implements local RS256 JWT validation and bearer token
-// validation with a two-level cache (in-process L1 + Redis L2) backed by
-// PostgreSQL. Token revocation is broadcast via Redis pub/sub so all pods
-// invalidate their L1 within <1 s.
+// Package auth implements JWT validation and bearer token validation with a
+// two-level cache (in-process L1 + Redis L2) backed by PostgreSQL.
+//
+// Two JWT algorithms are supported:
+//   - HS256: HMAC-SHA256 signed by the platform SECRET_KEY. Used by the
+//     auth service (them-auth-service). Claims use sub/username/role fields.
+//   - RS256: RSA PKCS1v15 signed by a local key pair. Used in tests and
+//     optional admin deployments. Claims use user_id/user_name/roles fields.
+//
+// Token revocation is broadcast via Redis pub/sub so all pods invalidate their
+// L1 cache within <1 s.
 package auth
 
 import (
 	"crypto"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -15,6 +23,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,21 +40,32 @@ var (
 	ErrTokenSignature = errors.New("auth: token signature invalid")
 )
 
-// Claims holds the fields extracted from a validated JWT. Field names match
-// the Python auth_service JSON payload so existing tokens work without
-// re-issuing.
+// Claims holds the fields extracted from a validated JWT.
+// It normalises both the HS256 auth-service token format (sub/username/role)
+// and the RS256 test token format (user_id/user_name/roles) into one struct.
 type Claims struct {
 	UserID    int64    `json:"user_id"`
-	Username  string   `json:"user_name"` // matches Python auth_service field name
+	Username  string   `json:"user_name"` // RS256 field name
 	Email     string   `json:"email"`
 	Roles     []string `json:"roles"`
 	SessionID string   `json:"session_id,omitempty"`
 
-	// Standard JWT fields (kept as int64 Unix timestamps for compatibility
-	// with the Python auth_service issuer).
+	// Standard JWT fields (int64 Unix timestamps).
 	ExpiresAt int64  `json:"exp"`
 	IssuedAt  int64  `json:"iat"`
 	Issuer    string `json:"iss,omitempty"`
+}
+
+// hs256RawClaims is the raw shape of an HS256 token from the auth service.
+// Field names differ from Claims: sub (string user_id), username, role (string).
+type hs256RawClaims struct {
+	Sub      string `json:"sub"`
+	Username string `json:"username"`
+	Name     string `json:"name"`
+	Role     string `json:"role"`
+	Email    string `json:"email"`
+	Exp      int64  `json:"exp"`
+	Iat      int64  `json:"iat"`
 }
 
 // jwtHeader is used only to confirm the algorithm before verifying.
@@ -109,6 +129,72 @@ func ValidateJWT(tokenString string, pubKey *rsa.PublicKey) (*Claims, error) {
 	}
 
 	return &claims, nil
+}
+
+// ValidateHS256JWT parses and verifies a compact-serialised HS256 JWT signed
+// with the given secret (raw bytes of the hex SECRET_KEY string).
+// It normalises auth-service claim fields (sub/username/role) into Claims.
+func ValidateHS256JWT(tokenString string, secret []byte) (*Claims, error) {
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("%w: expected 3 segments, got %d", ErrTokenMalformed, len(parts))
+	}
+
+	// ── Verify header ─────────────────────────────────────────────────────────
+	headerBytes, err := base64urlDecode(parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("%w: header base64: %w", ErrTokenMalformed, err)
+	}
+	var header jwtHeader
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return nil, fmt.Errorf("%w: header JSON: %w", ErrTokenMalformed, err)
+	}
+	if !strings.EqualFold(header.Alg, "HS256") {
+		return nil, fmt.Errorf("%w: unsupported algorithm %q (expected HS256)", ErrTokenMalformed, header.Alg)
+	}
+
+	// ── Verify HMAC-SHA256 signature ──────────────────────────────────────────
+	sigBytes, err := base64urlDecode(parts[2])
+	if err != nil {
+		return nil, fmt.Errorf("%w: signature base64: %w", ErrTokenMalformed, err)
+	}
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(parts[0] + "." + parts[1]))
+	expected := mac.Sum(nil)
+	if !hmac.Equal(sigBytes, expected) {
+		return nil, ErrTokenSignature
+	}
+
+	// ── Decode payload ────────────────────────────────────────────────────────
+	payloadBytes, err := base64urlDecode(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("%w: payload base64: %w", ErrTokenMalformed, err)
+	}
+	var raw hs256RawClaims
+	if err := json.Unmarshal(payloadBytes, &raw); err != nil {
+		return nil, fmt.Errorf("%w: payload JSON: %w", ErrTokenMalformed, err)
+	}
+
+	// ── Check expiry ──────────────────────────────────────────────────────────
+	if raw.Exp > 0 && time.Now().Unix() > raw.Exp {
+		return nil, ErrTokenExpired
+	}
+
+	// ── Normalise into Claims ─────────────────────────────────────────────────
+	// sub is the string user_id in the auth service token.
+	userID, _ := strconv.ParseInt(raw.Sub, 10, 64)
+	roles := []string{}
+	if raw.Role != "" {
+		roles = []string{raw.Role}
+	}
+	return &Claims{
+		UserID:    userID,
+		Username:  raw.Username,
+		Email:     raw.Email,
+		Roles:     roles,
+		ExpiresAt: raw.Exp,
+		IssuedAt:  raw.Iat,
+	}, nil
 }
 
 // ParseRSAPublicKey decodes a PEM-encoded RSA public key in PKIX

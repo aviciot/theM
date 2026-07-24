@@ -41,8 +41,12 @@ type Config struct {
 	RedisPassword string
 	RedisDB       int
 
-	// Security — never log this value
+	// Security — never log these values
 	SecretKey string
+	// JWTSecret is the HMAC secret used by the auth service to sign HS256 tokens.
+	// Read from JWT_SECRET env var (same name as the auth service uses).
+	// Takes priority over SecretKey for JWT validation.
+	JWTSecret string
 
 	// JWT (RS256 local validation)
 	// JWT_PUBLIC_KEY_PEM is a PEM-encoded RSA public key. When set, JWT
@@ -117,6 +121,7 @@ func Load() (*Config, error) {
 		RedisDB:       getEnvInt("REDIS_DB", 0),
 
 		SecretKey: getEnv("SECRET_KEY", ""),
+		JWTSecret: getEnv("JWT_SECRET", ""),
 
 		JWTPublicKeyPEM: getEnv("JWT_PUBLIC_KEY_PEM", ""),
 
@@ -186,7 +191,11 @@ func (c *Config) RedisAddr() string {
 func (c *Config) SafeString() string {
 	jwtMode := "disabled"
 	if c.JWTPublicKey != nil {
-		jwtMode = "enabled"
+		jwtMode = "enabled (RS256)"
+	} else if c.JWTSecret != "" {
+		jwtMode = "enabled (HS256/JWT_SECRET)"
+	} else if c.SecretKey != "" {
+		jwtMode = "enabled (HS256/SECRET_KEY)"
 	}
 	anthropicMode := "not-set"
 	if c.AnthropicAPIKey != "" {

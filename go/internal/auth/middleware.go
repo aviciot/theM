@@ -107,6 +107,35 @@ func JWTMiddleware(pubKey *rsa.PublicKey) func(http.Handler) http.Handler {
 	}
 }
 
+// HS256Middleware returns an http.Handler middleware that validates the
+// Authorization: Bearer <token> header as an HS256 JWT signed by secret.
+// This is the production path — the auth service issues HS256 tokens using
+// the platform SECRET_KEY.
+//
+// On success:  *Claims is stored in the request context; the next handler
+//              is called.
+// On failure:  A 401 JSON response is written and the chain is terminated.
+func HS256Middleware(secret []byte) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, ok := extractBearer(r)
+			if !ok {
+				writeUnauthorized(w, "authentication required")
+				return
+			}
+
+			claims, err := ValidateHS256JWT(raw, secret)
+			if err != nil {
+				writeUnauthorized(w, "invalid token: "+err.Error())
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), claimsKey, claims)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────

@@ -134,12 +134,22 @@ func run() error {
 	log.Info("agent registry initialised with pub/sub cache invalidation")
 
 	// ── 11. Build auth middleware ─────────────────────────────────────────────
+	// Priority: RS256 (JWT_PUBLIC_KEY_PEM) > HS256 (JWT_SECRET) > HS256 (SECRET_KEY) > disabled.
+	// Production: auth service signs with JWT_SECRET (HS256). RS256 kept for test envs.
+	// JWT_SECRET takes priority over SECRET_KEY for HS256 since it is the canonical
+	// secret used by the auth service, while SECRET_KEY is a platform-level secret.
 	var jwtMiddleware func(http.Handler) http.Handler
 	if cfg.JWTPublicKey != nil {
 		jwtMiddleware = auth.JWTMiddleware(cfg.JWTPublicKey)
-		log.Info("JWT middleware enabled")
+		log.Info("JWT middleware enabled (RS256)")
+	} else if cfg.JWTSecret != "" {
+		jwtMiddleware = auth.HS256Middleware([]byte(cfg.JWTSecret))
+		log.Info("JWT middleware enabled (HS256 via JWT_SECRET)")
+	} else if cfg.SecretKey != "" {
+		jwtMiddleware = auth.HS256Middleware([]byte(cfg.SecretKey))
+		log.Info("JWT middleware enabled (HS256 via SECRET_KEY)")
 	} else {
-		log.Info("JWT middleware disabled — JWT_PUBLIC_KEY_PEM not set")
+		log.Warn("JWT middleware disabled — neither JWT_PUBLIC_KEY_PEM nor JWT_SECRET nor SECRET_KEY is set")
 	}
 
 	// ── 12. Build health handler and HTTP server ──────────────────────────────

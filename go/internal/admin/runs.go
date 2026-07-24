@@ -11,15 +11,29 @@ import (
 // ── Run types ─────────────────────────────────────────────────────────────────
 
 // Run is the JSON representation of a them.runs row.
+// context_id is NOT a column on them.runs (it lives on them.tasks).
+// Do not add it here — the signal endpoint resolves it via tasks.
+// Field names match Python's RunOut schema so the frontend works without changes.
 type Run struct {
-	ID             string `json:"id"`
-	ContextID      string `json:"context_id"`
-	ApplicationID  int64  `json:"application_id,omitempty"`
-	EntryPointSlug string `json:"entry_point_slug,omitempty"`
-	Status         string `json:"status"`
-	StartedAt      string `json:"started_at"`
-	EndedAt        string `json:"ended_at,omitempty"`
-	ErrorMessage   string `json:"error_message,omitempty"`
+	ID               string  `json:"id"`
+	OrchestratorID   string  `json:"orchestrator_id,omitempty"`
+	OrchestratorName string  `json:"orchestrator_name,omitempty"`
+	EntryPointSlug   string  `json:"entry_point_slug,omitempty"`
+	UserID           *int64  `json:"user_id,omitempty"`
+	SessionID        string  `json:"session_id,omitempty"`
+	Goal             string  `json:"goal,omitempty"`
+	Status           string  `json:"status"`
+	FinalOutput      string  `json:"final_output,omitempty"`
+	Error            string  `json:"error,omitempty"`
+	ParentRunID      string  `json:"parent_run_id,omitempty"`
+	Iterations       int     `json:"iterations"`
+	TotalTokensIn    int     `json:"total_tokens_in"`
+	TotalTokensOut   int     `json:"total_tokens_out"`
+	TotalTokens      int     `json:"total_tokens"`
+	TotalCostUSD     string  `json:"total_cost_usd,omitempty"`
+	StartedAt        string  `json:"started_at"`
+	EndedAt          string  `json:"ended_at,omitempty"`
+	DurationMS       *int64  `json:"duration_ms,omitempty"`
 }
 
 // SignalInput is the request body for POST /api/v1/runs/{run_id}/signal.
@@ -47,6 +61,33 @@ func (h *RunsHandler) Routes(r chi.Router) {
 	r.Post("/runs/{run_id}/signal", h.Signal)
 }
 
+const runSelectCols = `
+	id::text,
+	COALESCE(orchestrator_id::text, ''), COALESCE(orchestrator_name, ''),
+	COALESCE(entry_point_slug, ''), user_id, COALESCE(session_id::text, ''),
+	COALESCE(goal, ''), status,
+	COALESCE(final_output, ''), COALESCE(error, ''), COALESCE(parent_run_id::text, ''),
+	iterations, total_tokens_in, total_tokens_out,
+	COALESCE(total_cost_usd::text, '0'),
+	started_at::text, COALESCE(ended_at::text, '')`
+
+func scanRun(row SingleRowScanner) (Run, error) {
+	var r Run
+	if err := row.Scan(
+		&r.ID, &r.OrchestratorID, &r.OrchestratorName,
+		&r.EntryPointSlug, &r.UserID, &r.SessionID,
+		&r.Goal, &r.Status,
+		&r.FinalOutput, &r.Error, &r.ParentRunID,
+		&r.Iterations, &r.TotalTokensIn, &r.TotalTokensOut,
+		&r.TotalCostUSD,
+		&r.StartedAt, &r.EndedAt,
+	); err != nil {
+		return r, err
+	}
+	r.TotalTokens = r.TotalTokensIn + r.TotalTokensOut
+	return r, nil
+}
+
 // List handles GET /api/v1/runs?context_id=&limit=50.
 func (h *RunsHandler) List(w http.ResponseWriter, r *http.Request) {
 	contextID := r.URL.Query().Get("context_id")
@@ -64,17 +105,15 @@ func (h *RunsHandler) List(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if contextID != "" {
-		const q = `
-			SELECT id, context_id, COALESCE(application_id, 0), COALESCE(entry_point_slug, ''),
-			       status, started_at::text, COALESCE(ended_at::text, ''), COALESCE(error_message, '')
-			FROM them.runs
-			WHERE context_id = $1
-			ORDER BY started_at DESC LIMIT $2`
+		// context_id lives on them.tasks, not them.runs. Resolve run IDs via tasks.
+		q := "SELECT " + runSelectCols + `
+			FROM them.runs r
+			JOIN them.tasks t ON t.run_id = r.id AND t.kind = 'root'
+			WHERE t.context_id = $1::uuid
+			ORDER BY r.started_at DESC LIMIT $2`
 		rows, err = h.db.Query(r.Context(), q, contextID, limit)
 	} else {
-		const q = `
-			SELECT id, context_id, COALESCE(application_id, 0), COALESCE(entry_point_slug, ''),
-			       status, started_at::text, COALESCE(ended_at::text, ''), COALESCE(error_message, '')
+		q := "SELECT " + runSelectCols + `
 			FROM them.runs
 			ORDER BY started_at DESC LIMIT $1`
 		rows, err = h.db.Query(r.Context(), q, limit)
@@ -88,11 +127,8 @@ func (h *RunsHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	runs := make([]Run, 0)
 	for rows.Next() {
-		var run Run
-		if err := rows.Scan(
-			&run.ID, &run.ContextID, &run.ApplicationID, &run.EntryPointSlug,
-			&run.Status, &run.StartedAt, &run.EndedAt, &run.ErrorMessage,
-		); err != nil {
+		run, err := scanRun(rows)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "scan error: "+err.Error())
 			return
 		}
@@ -110,17 +146,11 @@ func (h *RunsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const q = `
-		SELECT id, context_id, COALESCE(application_id, 0), COALESCE(entry_point_slug, ''),
-		       status, started_at::text, COALESCE(ended_at::text, ''), COALESCE(error_message, '')
-		FROM them.runs WHERE id = $1`
+	q := "SELECT " + runSelectCols + " FROM them.runs WHERE id = $1::uuid"
 
 	row := h.db.QueryRow(r.Context(), q, runID)
-	var run Run
-	if err := row.Scan(
-		&run.ID, &run.ContextID, &run.ApplicationID, &run.EntryPointSlug,
-		&run.Status, &run.StartedAt, &run.EndedAt, &run.ErrorMessage,
-	); err != nil {
+	run, err := scanRun(row)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "run not found")
 		return
 	}
@@ -148,13 +178,15 @@ func (h *RunsHandler) Signal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up context_id so we can target the correct Temporal workflow.
-	// Python registers OrchestrationWorkflow with ID "ctx-{context_id}".
+	// context_id lives on them.tasks (not them.runs).
+	// Python's OrchestrationWorkflow registers as "ctx-{context_id}".
 	var contextID string
-	row := h.db.QueryRow(r.Context(), `SELECT context_id FROM them.runs WHERE id = $1`, runID)
+	row := h.db.QueryRow(r.Context(),
+		`SELECT context_id::text FROM them.tasks WHERE run_id = $1::uuid AND kind = 'root' LIMIT 1`,
+		runID)
 	if err := row.Scan(&contextID); err != nil {
 		if IsNotFound(err) {
-			writeError(w, http.StatusNotFound, "run not found")
+			writeError(w, http.StatusNotFound, "run not found or no root task")
 		} else {
 			writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
 		}

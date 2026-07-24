@@ -37,7 +37,7 @@ type fakeRows struct {
 
 func newFakeRows(data [][]any) *fakeRows { return &fakeRows{data: data} }
 
-func (r *fakeRows) Next() bool  { return r.pos < len(r.data) }
+func (r *fakeRows) Next() bool   { return r.pos < len(r.data) }
 func (r *fakeRows) Close() error { r.closed = true; return nil }
 func (r *fakeRows) Scan(dest ...any) error {
 	if r.pos >= len(r.data) {
@@ -84,12 +84,56 @@ func scanInto(dest, src any) error {
 		default:
 			*d = fmt.Sprintf("%v", src)
 		}
+	case **string:
+		if src == nil {
+			*d = nil
+		} else {
+			s := fmt.Sprintf("%v", src)
+			*d = &s
+		}
 	case *bool:
 		switch v := src.(type) {
 		case bool:
 			*d = v
 		default:
 			return fmt.Errorf("scanInto: cannot assign %T to *bool", src)
+		}
+	case *[]string:
+		switch v := src.(type) {
+		case []string:
+			*d = v
+		case nil:
+			*d = []string{}
+		default:
+			*d = []string{}
+		}
+	case *[]byte:
+		switch v := src.(type) {
+		case []byte:
+			*d = v
+		case nil:
+			*d = nil
+		default:
+			*d = []byte(fmt.Sprintf("%v", src))
+		}
+	case *int:
+		switch v := src.(type) {
+		case int:
+			*d = v
+		case int64:
+			*d = int(v)
+		default:
+			return fmt.Errorf("scanInto: cannot assign %T to *int", src)
+		}
+	case **int:
+		if src == nil {
+			*d = nil
+		} else {
+			var n int
+			if err := scanInto(&n, src); err != nil {
+				return err
+			}
+			*d = &n
 		}
 	default:
 		return fmt.Errorf("scanInto: unsupported dest type %T", dest)
@@ -99,13 +143,13 @@ func scanInto(dest, src any) error {
 
 // fakeDB satisfies admin.DBQuerier.
 type fakeDB struct {
-	queryRows    *fakeRows // returned by Query
-	queryRowErr  error     // error returned by QueryRow's Scan
-	queryRowStr  string    // string value scanned by QueryRow (e.g. slug lookup)
-	execErr      error     // returned by Exec
-	execRetID    int64     // id returned by ExecReturning
-	execRetErr   error     // error returned by ExecReturning's Scan
-	querySQLLog  []string  // log of executed SQL
+	queryRows   *fakeRows // returned by Query
+	queryRowErr error     // error returned by QueryRow's Scan
+	queryRowStr string    // string value scanned by QueryRow (e.g. slug lookup)
+	execErr     error     // returned by Exec
+	execRetStr  string    // string id returned by ExecReturning (UUID)
+	execRetErr  error     // error returned by ExecReturning's Scan
+	querySQLLog []string  // log of executed SQL
 }
 
 func (f *fakeDB) Query(_ context.Context, sql string, _ ...any) (admin.RowScanner, error) {
@@ -123,7 +167,7 @@ func (f *fakeDB) QueryRow(_ context.Context, _ string, _ ...any) admin.SingleRow
 	return &fakeRow{err: f.queryRowErr}
 }
 
-// stringRow scans a single string value (used for slug lookups).
+// stringRow scans a single string value (used for slug/context_id lookups).
 type stringRow struct{ val string }
 
 func (r *stringRow) Scan(dest ...any) error {
@@ -145,27 +189,27 @@ func (f *fakeDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.Sing
 	if f.execRetErr != nil {
 		return &fakeRow{err: f.execRetErr}
 	}
-	return &idRow{id: f.execRetID}
+	return &stringIDRow{id: f.execRetStr}
 }
 
-// idRow scans a single int64 id.
-type idRow struct{ id int64 }
+// stringIDRow scans a single string id (UUID).
+type stringIDRow struct{ id string }
 
-func (r *idRow) Scan(dest ...any) error {
+func (r *stringIDRow) Scan(dest ...any) error {
 	if len(dest) == 0 {
 		return nil
 	}
-	if d, ok := dest[0].(*int64); ok {
+	if d, ok := dest[0].(*string); ok {
 		*d = r.id
 		return nil
 	}
-	return fmt.Errorf("idRow: cannot scan into %T", dest[0])
+	return fmt.Errorf("stringIDRow: cannot scan into %T", dest[0])
 }
 
 // fakeCache satisfies admin.CacheInvalidator.
 type fakeCache struct {
-	deletedKeys    []string
-	publishedMsgs  []string // channel:message pairs stored as "channel:message"
+	deletedKeys   []string
+	publishedMsgs []string // "channel:message" pairs
 }
 
 func (c *fakeCache) Del(_ context.Context, key string) error {
@@ -216,7 +260,7 @@ func TestListAgentsEmptyArray(t *testing.T) {
 
 // 2. Create agent — 201 with Location header.
 func TestCreateAgent(t *testing.T) {
-	db := &fakeDB{execRetID: 42}
+	db := &fakeDB{execRetStr: "uuid-42"}
 	cache := &fakeCache{}
 	h := admin.NewAgentsHandler(db, cache)
 
@@ -224,9 +268,9 @@ func TestCreateAgent(t *testing.T) {
 	h.Routes(r)
 
 	body, _ := json.Marshal(map[string]any{
-		"slug":        "test-agent",
-		"name":        "Test Agent",
-		"adapter_type": "mock",
+		"slug":         "test-agent",
+		"display_name": "Test Agent",
+		"transport":    "a2a_async",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/agents", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -234,7 +278,7 @@ func TestCreateAgent(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusCreated, w.Code)
-	assert.True(t, strings.Contains(w.Header().Get("Location"), "42"),
+	assert.True(t, strings.Contains(w.Header().Get("Location"), "uuid-42"),
 		"Location header should contain the new agent id")
 	assert.Contains(t, cache.deletedKeys, "them:agents:registry",
 		"cache should be invalidated")
@@ -248,7 +292,7 @@ func TestGetNonexistentAgent(t *testing.T) {
 	r := chi.NewRouter()
 	h.Routes(r)
 
-	req := httptest.NewRequest(http.MethodGet, "/agents/99999", nil)
+	req := httptest.NewRequest(http.MethodGet, "/agents/00000000-0000-0000-0000-000000000000", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -302,14 +346,11 @@ func TestUpdateEntryPoint_NoSlugChange_PublishesSlug(t *testing.T) {
 	db := &fakeDB{queryRowStr: "my-ep"}
 	cache := &fakeCache{}
 	body, _ := json.Marshal(map[string]any{
-		"slug":    "my-ep", // unchanged
-		"name":    "My EP",
-		"ep_type": "websocket",
+		"slug":             "my-ep", // unchanged
+		"entry_point_type": "websocket",
 	})
 	w := serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/2", body)
 	require.Equal(t, http.StatusOK, w.Code)
-	// Both old and new slugs are published — when they're the same value it
-	// appears twice. The subscriber calls Invalidate once per message; idempotent.
 	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:my-ep")
 }
 
@@ -318,9 +359,8 @@ func TestUpdateEntryPoint_SlugRename_PublishesBothSlugs(t *testing.T) {
 	db := &fakeDB{queryRowStr: "old-slug"} // old slug from DB
 	cache := &fakeCache{}
 	body, _ := json.Marshal(map[string]any{
-		"slug":    "new-slug", // renamed
-		"name":    "My EP",
-		"ep_type": "websocket",
+		"slug":             "new-slug", // renamed
+		"entry_point_type": "websocket",
 	})
 	w := serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/2", body)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -331,13 +371,12 @@ func TestUpdateEntryPoint_SlugRename_PublishesBothSlugs(t *testing.T) {
 }
 
 // AI-1b: UpdateEntryPoint — old slug cache entry is evicted (slug rename scenario).
-// Verifies the cache eviction side: old slug is published first, new slug second.
 func TestUpdateEntryPoint_SlugRename_OldSlugPublishedFirst(t *testing.T) {
 	db := &fakeDB{queryRowStr: "original-ep"}
 	cache := &fakeCache{}
 	body, _ := json.Marshal(map[string]any{
-		"slug":    "renamed-ep",
-		"ep_type": "websocket",
+		"slug":             "renamed-ep",
+		"entry_point_type": "websocket",
 	})
 	serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/9", body)
 
@@ -348,19 +387,16 @@ func TestUpdateEntryPoint_SlugRename_OldSlugPublishedFirst(t *testing.T) {
 		"new slug published second")
 }
 
-// AI-1c: UpdateEntryPoint — old slug lookup fails (row not found) → only new slug published.
-// Ensures handler does not error when slug pre-fetch returns nothing.
+// AI-1c: UpdateEntryPoint — old slug lookup fails → only new slug published.
 func TestUpdateEntryPoint_OldSlugLookupFails_OnlyNewSlugPublished(t *testing.T) {
-	// queryRowStr="" and queryRowErr set → Scan returns error → oldSlug stays ""
 	db := &fakeDB{queryRowErr: errors.New("no rows")}
 	cache := &fakeCache{}
 	body, _ := json.Marshal(map[string]any{
-		"slug":    "only-new-slug",
-		"ep_type": "websocket",
+		"slug":             "only-new-slug",
+		"entry_point_type": "websocket",
 	})
 	w := serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/3", body)
 	require.Equal(t, http.StatusOK, w.Code)
-	// Empty old slug is skipped by invalidateEP guard; only new slug published.
 	assert.Equal(t, []string{"them:ep:config:changed:only-new-slug"}, cache.publishedMsgs)
 }
 
@@ -382,7 +418,7 @@ func TestUpdateApplication_PublishesAllEPSlugs(t *testing.T) {
 	})
 	db := &fakeDB{queryRows: slugRows}
 	cache := &fakeCache{}
-	body, _ := json.Marshal(map[string]any{"name": "MyApp", "slug": "my-app"})
+	body, _ := json.Marshal(map[string]any{"name": "MyApp"})
 	w := serveApps(t, db, cache, http.MethodPut, "/applications/10", body)
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:ep-one")
@@ -404,8 +440,8 @@ func TestDeleteApplication_PublishesAllEPSlugs(t *testing.T) {
 // AI-5: No cache → no panic (cache is nil).
 func TestUpdateEntryPoint_NilCache_NoPanic(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
-		"slug":    "safe-ep",
-		"ep_type": "websocket",
+		"slug":             "safe-ep",
+		"entry_point_type": "websocket",
 	})
 	assert.NotPanics(t, func() {
 		serveApps(t, &fakeDB{}, nil /* nil cache */, http.MethodPut, "/applications/1/entry-points/3", body)
@@ -415,10 +451,10 @@ func TestUpdateEntryPoint_NilCache_NoPanic(t *testing.T) {
 // AI-6: CreateEntryPoint does NOT publish (no cached entry to evict for new EP).
 func TestCreateEntryPoint_DoesNotPublish(t *testing.T) {
 	cache := &fakeCache{}
-	db := &fakeDB{execRetID: 99}
+	db := &fakeDB{execRetStr: "uuid-99"}
 	body, _ := json.Marshal(map[string]any{
-		"slug":    "brand-new-ep",
-		"ep_type": "websocket",
+		"slug":             "brand-new-ep",
+		"entry_point_type": "websocket",
 	})
 	w := serveApps(t, db, cache, http.MethodPost, "/applications/1/entry-points", body)
 	require.Equal(t, http.StatusCreated, w.Code)
@@ -426,18 +462,15 @@ func TestCreateEntryPoint_DoesNotPublish(t *testing.T) {
 		"no invalidation needed for a freshly created EP")
 }
 
-// AZ-1: Anonymous request to admin endpoint returns 401 — RequireSuperAdmin middleware
-// rejects requests with no JWT claims in context (e.g., public EP anonymous sessions).
+// AZ-1: Anonymous request to admin endpoint returns 401.
 func TestAdminRequiresSuperAdmin_AnonymousRejected(t *testing.T) {
 	db := &fakeDB{queryRows: newFakeRows(nil)}
 	h := admin.NewAgentsHandler(db, nil)
 
 	r := chi.NewRouter()
-	// Wire RequireSuperAdmin the same way main.go does.
 	r.Use(admin.RequireSuperAdmin(nil))
 	h.Routes(r)
 
-	// No Authorization header, no JWT claims in context — anonymous request.
 	req := httptest.NewRequest(http.MethodGet, "/agents", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -448,80 +481,78 @@ func TestAdminRequiresSuperAdmin_AnonymousRejected(t *testing.T) {
 
 // ── EP type validation tests ──────────────────────────────────────────────────
 
-// EPT-1: CreateEntryPoint with invalid ep_type → 422 Unprocessable Entity.
+// EPT-1: CreateEntryPoint with invalid entry_point_type → 422.
 func TestCreateEntryPoint_InvalidEPType_Returns422(t *testing.T) {
 	cache := &fakeCache{}
-	db := &fakeDB{execRetID: 1}
+	db := &fakeDB{execRetStr: "uuid-1"}
 	body, _ := json.Marshal(map[string]any{
-		"slug":    "bad-ep",
-		"ep_type": "grpc", // not a valid type
+		"slug":             "bad-ep",
+		"entry_point_type": "grpc", // not a valid type
 	})
 	w := serveApps(t, db, cache, http.MethodPost, "/applications/1/entry-points", body)
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code,
-		"invalid ep_type must return 422")
+		"invalid entry_point_type must return 422")
 	assert.Empty(t, cache.publishedMsgs, "no cache invalidation for rejected create")
 }
 
-// EPT-2: UpdateEntryPoint with invalid ep_type → 422 Unprocessable Entity.
+// EPT-2: UpdateEntryPoint with invalid entry_point_type → 422.
 func TestUpdateEntryPoint_InvalidEPType_Returns422(t *testing.T) {
 	cache := &fakeCache{}
 	db := &fakeDB{queryRowStr: "existing-ep"}
 	body, _ := json.Marshal(map[string]any{
-		"slug":    "existing-ep",
-		"ep_type": "tcp", // not a valid type
+		"slug":             "existing-ep",
+		"entry_point_type": "tcp", // not a valid type
 	})
 	w := serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/2", body)
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code,
-		"invalid ep_type on update must return 422")
+		"invalid entry_point_type on update must return 422")
 	assert.Empty(t, cache.publishedMsgs, "no cache invalidation for rejected update")
 }
 
-// EPT-3: CreateEntryPoint accepts all valid ep_type values.
+// EPT-3: CreateEntryPoint accepts all valid entry_point_type values.
 func TestCreateEntryPoint_ValidEPTypes_Accepted(t *testing.T) {
-	for _, epType := range []string{"websocket", "sse", "voice"} {
+	for _, epType := range []string{"websocket", "sse", "voice", "webrtc", "a2a"} {
 		t.Run(epType, func(t *testing.T) {
-			db := &fakeDB{execRetID: 1}
+			db := &fakeDB{execRetStr: "uuid-new"}
 			body, _ := json.Marshal(map[string]any{
-				"slug":    "my-ep",
-				"ep_type": epType,
+				"slug":             "my-ep",
+				"entry_point_type": epType,
 			})
 			w := serveApps(t, db, nil, http.MethodPost, "/applications/1/entry-points", body)
 			assert.Equal(t, http.StatusCreated, w.Code,
-				"valid ep_type %q must be accepted", epType)
+				"valid entry_point_type %q must be accepted", epType)
 		})
 	}
 }
 
-// EPT-4: UpdateEntryPoint with empty ep_type is allowed (partial update — keeps existing).
+// EPT-4: UpdateEntryPoint with empty entry_point_type is allowed (partial update).
 func TestUpdateEntryPoint_EmptyEPType_Allowed(t *testing.T) {
 	db := &fakeDB{queryRowStr: "my-ep"}
 	body, _ := json.Marshal(map[string]any{
-		"slug":    "my-ep",
-		"ep_type": "", // omitted / empty — not a rename, just updating other fields
+		"slug":             "my-ep",
+		"entry_point_type": "", // omitted — keeps existing in DB
 	})
 	w := serveApps(t, db, nil, http.MethodPut, "/applications/1/entry-points/2", body)
-	// Empty ep_type on update is allowed (the DB keeps the existing value).
 	assert.Equal(t, http.StatusOK, w.Code,
-		"empty ep_type on update must not be rejected")
+		"empty entry_point_type on update must not be rejected")
 }
 
-// PATCH aliases — Python frontend sends PATCH for updates; Go must accept both PUT and PATCH.
+// PATCH aliases — Python frontend sends PATCH for updates.
 
-// TestPatchAgentAliasesUpdate verifies PATCH /agents/{id} routes to the same Update handler as PUT.
+// TestPatchAgentAliasesUpdate verifies PATCH /agents/{id} routes to Update.
 func TestPatchAgentAliasesUpdate(t *testing.T) {
 	db := &fakeDB{}
 	h := admin.NewAgentsHandler(db, nil)
 	r := chi.NewRouter()
 	h.Routes(r)
 	body, _ := json.Marshal(map[string]any{
-		"slug": "my-agent", "name": "My Agent", "adapter_type": "ws_mock",
+		"slug": "my-agent", "display_name": "My Agent", "transport": "a2a_async",
 		"max_concurrency": 1, "enabled": true,
 	})
-	req := httptest.NewRequest(http.MethodPatch, "/agents/1", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPatch, "/agents/uuid-1", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	// 404 from fakeDB is expected (no real row); 405 would mean PATCH is not routed.
 	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code, "PATCH /agents/{id} must be routed (not 405)")
 }
 
@@ -532,8 +563,8 @@ func TestPatchOrchestratorAliasesUpdate(t *testing.T) {
 	r := chi.NewRouter()
 	h.Routes(r)
 	body, _ := json.Marshal(map[string]any{
-		"name": "default", "llm_provider": "anthropic", "model": "claude-haiku-4-5-20251001",
-		"max_iterations": 5, "max_tokens": 4096, "temperature": 0.7, "history_window": 10,
+		"name": "default", "llm_provider": "anthropic", "llm_model": "claude-haiku-4-5-20251001",
+		"max_iterations": 5, "history_window": 10,
 	})
 	req := httptest.NewRequest(http.MethodPatch, "/orchestrators/default", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -546,8 +577,8 @@ func TestPatchOrchestratorAliasesUpdate(t *testing.T) {
 func TestPatchApplicationAliasesUpdate(t *testing.T) {
 	db := &fakeDB{}
 	cache := &fakeCache{}
-	body, _ := json.Marshal(map[string]any{"name": "My App", "slug": "my-app"})
-	w := serveApps(t, db, cache, http.MethodPatch, "/applications/1", body)
+	body, _ := json.Marshal(map[string]any{"name": "My App"})
+	w := serveApps(t, db, cache, http.MethodPatch, "/applications/uuid-1", body)
 	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code, "PATCH /applications/{id} must be routed (not 405)")
 }
 
@@ -556,15 +587,14 @@ func TestPatchEntryPointAliasesUpdate(t *testing.T) {
 	db := &fakeDB{queryRowStr: "my-ep"}
 	cache := &fakeCache{}
 	body, _ := json.Marshal(map[string]any{
-		"slug": "my-ep", "name": "My EP", "ep_type": "websocket",
+		"slug": "my-ep", "entry_point_type": "websocket",
 	})
-	w := serveApps(t, db, cache, http.MethodPatch, "/applications/1/entry-points/2", body)
+	w := serveApps(t, db, cache, http.MethodPatch, "/applications/uuid-1/entry-points/uuid-2", body)
 	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code, "PATCH /applications/{id}/entry-points/{ep_id} must be routed (not 405)")
 }
 
 // 5. Signal run — calls Temporal client with "ctx-{context_id}" workflow ID.
 func TestSignalRun(t *testing.T) {
-	// queryRowStr is returned by fakeDB.QueryRow — simulates context_id lookup.
 	db := &fakeDB{queryRowStr: "ctx-xyz-123"}
 	temporal := &fakeTemporal{}
 	h := admin.NewRunsHandler(db, temporal)
@@ -581,8 +611,6 @@ func TestSignalRun(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	// Signal must target "ctx-{context_id}" — the Temporal workflow ID scheme
-	// used by Python's OrchestrationWorkflow.
 	assert.Contains(t, temporal.signaled, "ctx-ctx-xyz-123",
 		"Temporal must be signaled with 'ctx-{context_id}' workflow ID, not run_id")
 }

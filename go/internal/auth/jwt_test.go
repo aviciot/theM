@@ -1,7 +1,11 @@
 package auth_test
 
 import (
+	"crypto/hmac"
 	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -148,4 +152,76 @@ func TestParseRSAPublicKey_WrongPEMType(t *testing.T) {
 	_, err := auth.ParseRSAPublicKey([]byte(pem))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported PEM block type")
+}
+
+// ── ValidateHS256JWT tests ────────────────────────────────────────────────────
+
+// buildHS256Token creates a signed HS256 JWT with the given payload and secret.
+func buildHS256Token(t *testing.T, claims map[string]any, secret []byte) string {
+	t.Helper()
+	header := `{"alg":"HS256","typ":"JWT"}`
+	headerEnc := base64url([]byte(header))
+	payload, err := json.Marshal(claims)
+	require.NoError(t, err)
+	payloadEnc := base64url(payload)
+	sigInput := headerEnc + "." + payloadEnc
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(sigInput))
+	sig := base64url(mac.Sum(nil))
+	return sigInput + "." + sig
+}
+
+func base64url(b []byte) string {
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func TestValidateHS256JWT_Valid(t *testing.T) {
+	secret := []byte("mysecret")
+	now := time.Now().Unix()
+	token := buildHS256Token(t, map[string]any{
+		"sub": "7", "username": "alice", "role": "super_admin",
+		"exp": now + 3600, "iat": now,
+	}, secret)
+
+	claims, err := auth.ValidateHS256JWT(token, secret)
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), claims.UserID)
+	assert.Equal(t, "alice", claims.Username)
+	assert.Equal(t, []string{"super_admin"}, claims.Roles)
+}
+
+func TestValidateHS256JWT_Expired(t *testing.T) {
+	secret := []byte("mysecret")
+	token := buildHS256Token(t, map[string]any{
+		"sub": "1", "username": "bob", "role": "user",
+		"exp": time.Now().Unix() - 1,
+	}, secret)
+	_, err := auth.ValidateHS256JWT(token, secret)
+	require.ErrorIs(t, err, auth.ErrTokenExpired)
+}
+
+func TestValidateHS256JWT_WrongSecret(t *testing.T) {
+	token := buildHS256Token(t, map[string]any{
+		"sub": "1", "username": "carol", "role": "user",
+		"exp": time.Now().Unix() + 3600,
+	}, []byte("correct-secret"))
+	_, err := auth.ValidateHS256JWT(token, []byte("wrong-secret"))
+	require.ErrorIs(t, err, auth.ErrTokenSignature)
+}
+
+func TestValidateHS256JWT_WrongAlgorithm(t *testing.T) {
+	// RS256 token presented to HS256 validator must be rejected.
+	privKey, _ := auth.GenerateRSAKeyPair()
+	token, err := auth.IssueJWT(auth.Claims{
+		UserID: 1, Username: "dave", ExpiresAt: time.Now().Unix() + 3600,
+	}, privKey)
+	require.NoError(t, err)
+	_, err = auth.ValidateHS256JWT(token, []byte("any-secret"))
+	require.ErrorIs(t, err, auth.ErrTokenMalformed)
+}
+
+func TestValidateHS256JWT_Malformed(t *testing.T) {
+	_, err := auth.ValidateHS256JWT("not.a.jwt", []byte("secret"))
+	// signature decode will fail or HMAC will mismatch
+	require.Error(t, err)
 }

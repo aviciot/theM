@@ -54,6 +54,7 @@ services:
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       SECRET_KEY: ${THE_M_SECRET_KEY:-integration-test-secret-key-do-not-use-in-prod}
+      JWT_SECRET: ${THE_M_JWT_SECRET:-change-this-jwt-secret}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       TEMPORAL_ENABLED: "true"
       TEMPORAL_HOST_PORT: "temporal-frontend:7233"

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -13,12 +12,13 @@ import (
 const epConfigChannel = "them:ep:config:changed"
 
 // validEPTypes is the canonical set of allowed entry_point_type values.
-// Must stay in sync with the Python platform's _VALID_EP_TYPES list and
-// docs/architecture-v2/schema-migrations.md MIG-002.
+// Must stay in sync with the Python platform's _VALID_EP_TYPES list.
 var validEPTypes = map[string]struct{}{
 	"websocket": {},
 	"sse":       {},
 	"voice":     {},
+	"webrtc":    {},
+	"a2a":       {},
 }
 
 // isValidEPType reports whether t is an allowed entry point type.
@@ -30,41 +30,35 @@ func isValidEPType(t string) bool {
 // ── Application types ─────────────────────────────────────────────────────────
 
 // Application is the JSON representation of a them.applications row.
+// applications has no slug or description columns in the actual schema.
 type Application struct {
-	ID          int64        `json:"id"`
+	ID          string       `json:"id"`
 	Name        string       `json:"name"`
-	Slug        string       `json:"slug"`
-	Description string       `json:"description,omitempty"`
 	Enabled     bool         `json:"enabled"`
 	EntryPoints []EntryPoint `json:"entry_points,omitempty"`
 }
 
 // EntryPoint is one access door for an application.
+// them.entry_points uses entry_point_type (not ep_type) and has no name column.
 type EntryPoint struct {
-	ID               int64  `json:"id"`
-	ApplicationID    int64  `json:"application_id"`
-	Slug             string `json:"slug"`
-	Name             string `json:"name"`
-	EPType           string `json:"ep_type"`
-	OrchestratorName string `json:"orchestrator_name"`
-	Enabled          bool   `json:"enabled"`
+	ID             string `json:"id"`
+	ApplicationID  string `json:"application_id"`
+	Slug           string `json:"slug"`
+	EntryPointType string `json:"entry_point_type"`
+	Enabled        bool   `json:"enabled"`
 }
 
 // ApplicationInput is the request body for create/update.
 type ApplicationInput struct {
-	Name        string `json:"name"`
-	Slug        string `json:"slug"`
-	Description string `json:"description,omitempty"`
-	Enabled     *bool  `json:"enabled,omitempty"`
+	Name    string `json:"name"`
+	Enabled *bool  `json:"enabled,omitempty"`
 }
 
 // EntryPointInput is the request body for entry point create/update.
 type EntryPointInput struct {
-	Slug             string `json:"slug"`
-	Name             string `json:"name"`
-	EPType           string `json:"ep_type"`
-	OrchestratorName string `json:"orchestrator_name"`
-	Enabled          *bool  `json:"enabled,omitempty"`
+	Slug           string `json:"slug"`
+	EntryPointType string `json:"entry_point_type"`
+	Enabled        *bool  `json:"enabled,omitempty"`
 }
 
 // ── Applications handler ──────────────────────────────────────────────────────
@@ -97,9 +91,7 @@ func (h *ApplicationsHandler) Routes(r chi.Router) {
 
 // List handles GET /api/v1/admin/applications.
 func (h *ApplicationsHandler) List(w http.ResponseWriter, r *http.Request) {
-	const q = `
-		SELECT id, name, slug, COALESCE(description, ''), enabled
-		FROM them.applications ORDER BY id`
+	const q = `SELECT id::text, name, enabled FROM them.applications ORDER BY created_at`
 
 	rows, err := h.db.Query(r.Context(), q)
 	if err != nil {
@@ -111,7 +103,7 @@ func (h *ApplicationsHandler) List(w http.ResponseWriter, r *http.Request) {
 	apps := make([]Application, 0)
 	for rows.Next() {
 		var a Application
-		if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.Description, &a.Enabled); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.Enabled); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan error: "+err.Error())
 			return
 		}
@@ -131,13 +123,12 @@ func (h *ApplicationsHandler) invalidateEP(r *http.Request, epSlug string) {
 }
 
 // invalidateAppEPs fetches all EP slugs for the given application ID and
-// publishes a per-slug invalidation message for each. Called when an application-
-// level change (update, delete) may affect all of its entry points.
-func (h *ApplicationsHandler) invalidateAppEPs(r *http.Request, appID int64) {
+// publishes a per-slug invalidation message for each.
+func (h *ApplicationsHandler) invalidateAppEPs(r *http.Request, appID string) {
 	if h.cache == nil {
 		return
 	}
-	const q = `SELECT slug FROM them.entry_points WHERE application_id = $1`
+	const q = `SELECT slug FROM them.entry_points WHERE application_id = $1::uuid`
 	rows, err := h.db.Query(r.Context(), q, appID)
 	if err != nil {
 		return
@@ -159,8 +150,8 @@ func (h *ApplicationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if input.Name == "" || input.Slug == "" {
-		writeError(w, http.StatusBadRequest, "name and slug are required")
+	if input.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 	enabled := true
@@ -168,52 +159,45 @@ func (h *ApplicationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		enabled = *input.Enabled
 	}
 
-	const q = `
-		INSERT INTO them.applications (name, slug, description, enabled)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id`
+	const q = `INSERT INTO them.applications (name, enabled) VALUES ($1, $2) RETURNING id::text`
 
-	row := h.db.ExecReturning(r.Context(), q,
-		input.Name, input.Slug, input.Description, enabled)
+	row := h.db.ExecReturning(r.Context(), q, input.Name, enabled)
 
-	var id int64
+	var id string
 	if err := row.Scan(&id); err != nil {
 		writeError(w, http.StatusInternalServerError, "create application: "+err.Error())
 		return
 	}
 
-	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/applications/%d", id))
+	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/applications/%s", id))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
 }
 
 // Get handles GET /api/v1/admin/applications/{id}.
 func (h *ApplicationsHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
+	id := chi.URLParam(r, "id")
+	if id == "" {
 		writeError(w, http.StatusBadRequest, "invalid application id")
 		return
 	}
 
-	const q = `
-		SELECT id, name, slug, COALESCE(description, ''), enabled
-		FROM them.applications WHERE id=$1`
+	const q = `SELECT id::text, name, enabled FROM them.applications WHERE id=$1::uuid`
 
 	row := h.db.QueryRow(r.Context(), q, id)
 	var a Application
-	if err := row.Scan(&a.ID, &a.Name, &a.Slug, &a.Description, &a.Enabled); err != nil {
+	if err := row.Scan(&a.ID, &a.Name, &a.Enabled); err != nil {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
 
-	// Load entry points.
 	a.EntryPoints = h.loadEntryPoints(r, id)
 	writeJSON(w, http.StatusOK, a)
 }
 
-// Update handles PUT /api/v1/admin/applications/{id}.
+// Update handles PUT/PATCH /api/v1/admin/applications/{id}.
 func (h *ApplicationsHandler) Update(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
+	id := chi.URLParam(r, "id")
+	if id == "" {
 		writeError(w, http.StatusBadRequest, "invalid application id")
 		return
 	}
@@ -228,12 +212,9 @@ func (h *ApplicationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		enabled = *input.Enabled
 	}
 
-	const q = `
-		UPDATE them.applications
-		SET name=$2, slug=$3, description=$4, enabled=$5, updated_at=now()
-		WHERE id=$1`
+	const q = `UPDATE them.applications SET name=$2, enabled=$3, updated_at=now() WHERE id=$1::uuid`
 
-	if err := h.db.Exec(r.Context(), q, id, input.Name, input.Slug, input.Description, enabled); err != nil {
+	if err := h.db.Exec(r.Context(), q, id, input.Name, enabled); err != nil {
 		writeError(w, http.StatusInternalServerError, "update application: "+err.Error())
 		return
 	}
@@ -244,13 +225,13 @@ func (h *ApplicationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete handles DELETE /api/v1/admin/applications/{id}.
 func (h *ApplicationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
+	id := chi.URLParam(r, "id")
+	if id == "" {
 		writeError(w, http.StatusBadRequest, "invalid application id")
 		return
 	}
 
-	const q = `UPDATE them.applications SET enabled=false, updated_at=now() WHERE id=$1`
+	const q = `UPDATE them.applications SET enabled=false, updated_at=now() WHERE id=$1::uuid`
 	if err := h.db.Exec(r.Context(), q, id); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete application: "+err.Error())
 		return
@@ -262,8 +243,8 @@ func (h *ApplicationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // CreateEntryPoint handles POST /api/v1/admin/applications/{id}/entry-points.
 func (h *ApplicationsHandler) CreateEntryPoint(w http.ResponseWriter, r *http.Request) {
-	appID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
+	appID := chi.URLParam(r, "id")
+	if appID == "" {
 		writeError(w, http.StatusBadRequest, "invalid application id")
 		return
 	}
@@ -273,13 +254,13 @@ func (h *ApplicationsHandler) CreateEntryPoint(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if input.Slug == "" || input.EPType == "" {
-		writeError(w, http.StatusBadRequest, "slug and ep_type are required")
+	if input.Slug == "" || input.EntryPointType == "" {
+		writeError(w, http.StatusBadRequest, "slug and entry_point_type are required")
 		return
 	}
-	if !isValidEPType(input.EPType) {
+	if !isValidEPType(input.EntryPointType) {
 		writeError(w, http.StatusUnprocessableEntity,
-			"invalid ep_type: must be one of websocket, sse, voice")
+			"invalid entry_point_type: must be one of websocket, sse, voice, webrtc, a2a")
 		return
 	}
 	enabled := true
@@ -288,33 +269,28 @@ func (h *ApplicationsHandler) CreateEntryPoint(w http.ResponseWriter, r *http.Re
 	}
 
 	const q = `
-		INSERT INTO them.entry_points (application_id, slug, name, ep_type, orchestrator_name, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id`
+		INSERT INTO them.entry_points (application_id, slug, entry_point_type, enabled)
+		VALUES ($1::uuid, $2, $3, $4)
+		RETURNING id::text`
 
-	row := h.db.ExecReturning(r.Context(), q,
-		appID, input.Slug, input.Name, input.EPType, input.OrchestratorName, enabled)
+	row := h.db.ExecReturning(r.Context(), q, appID, input.Slug, input.EntryPointType, enabled)
 
-	var epID int64
+	var epID string
 	if err := row.Scan(&epID); err != nil {
 		writeError(w, http.StatusInternalServerError, "create entry point: "+err.Error())
 		return
 	}
 
-	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/applications/%d/entry-points/%d", appID, epID))
+	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/applications/%s/entry-points/%s", appID, epID))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": epID})
 }
 
-// UpdateEntryPoint handles PUT /api/v1/admin/applications/{id}/entry-points/{ep_id}.
+// UpdateEntryPoint handles PUT/PATCH /api/v1/admin/applications/{id}/entry-points/{ep_id}.
 func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Request) {
-	appID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid application id")
-		return
-	}
-	epID, err := strconv.ParseInt(chi.URLParam(r, "ep_id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid entry point id")
+	appID := chi.URLParam(r, "id")
+	epID := chi.URLParam(r, "ep_id")
+	if appID == "" || epID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or entry point id")
 		return
 	}
 
@@ -323,9 +299,9 @@ func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if input.EPType != "" && !isValidEPType(input.EPType) {
+	if input.EntryPointType != "" && !isValidEPType(input.EntryPointType) {
 		writeError(w, http.StatusUnprocessableEntity,
-			"invalid ep_type: must be one of websocket, sse, voice")
+			"invalid entry_point_type: must be one of websocket, sse, voice, webrtc, a2a")
 		return
 	}
 	enabled := true
@@ -333,27 +309,22 @@ func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Re
 		enabled = *input.Enabled
 	}
 
-	const q = `
-		UPDATE them.entry_points
-		SET slug=$3, name=$4, ep_type=$5, orchestrator_name=$6, enabled=$7, updated_at=now()
-		WHERE id=$1 AND application_id=$2`
-
-	// Fetch old slug before the update so we can invalidate it too.
-	// A slug rename leaves a stale cache entry under the old key without this.
+	// Fetch old slug for cache invalidation on rename.
 	var oldSlug string
 	oldSlugRow := h.db.QueryRow(r.Context(),
-		`SELECT slug FROM them.entry_points WHERE id=$1 AND application_id=$2`, epID, appID)
-	_ = oldSlugRow.Scan(&oldSlug) // non-fatal if lookup fails
+		`SELECT slug FROM them.entry_points WHERE id=$1::uuid AND application_id=$2::uuid`, epID, appID)
+	_ = oldSlugRow.Scan(&oldSlug)
 
-	if err := h.db.Exec(r.Context(), q,
-		epID, appID, input.Slug, input.Name, input.EPType, input.OrchestratorName, enabled,
-	); err != nil {
+	const q = `
+		UPDATE them.entry_points
+		SET slug=$3, entry_point_type=$4, enabled=$5, updated_at=now()
+		WHERE id=$1::uuid AND application_id=$2::uuid`
+
+	if err := h.db.Exec(r.Context(), q, epID, appID, input.Slug, input.EntryPointType, enabled); err != nil {
 		writeError(w, http.StatusInternalServerError, "update entry point: "+err.Error())
 		return
 	}
 
-	// Invalidate both old slug (may differ) and new slug (from request).
-	// When slug is unchanged both calls publish the same value — harmless.
 	h.invalidateEP(r, oldSlug)
 	h.invalidateEP(r, input.Slug)
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "updated": true})
@@ -361,24 +332,19 @@ func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Re
 
 // DeleteEntryPoint handles DELETE /api/v1/admin/applications/{id}/entry-points/{ep_id}.
 func (h *ApplicationsHandler) DeleteEntryPoint(w http.ResponseWriter, r *http.Request) {
-	appID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid application id")
-		return
-	}
-	epID, err := strconv.ParseInt(chi.URLParam(r, "ep_id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid entry point id")
+	appID := chi.URLParam(r, "id")
+	epID := chi.URLParam(r, "ep_id")
+	if appID == "" || epID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or entry point id")
 		return
 	}
 
-	// Fetch slug before disabling so we can publish the invalidation.
 	var epSlug string
 	slugRow := h.db.QueryRow(r.Context(),
-		`SELECT slug FROM them.entry_points WHERE id=$1 AND application_id=$2`, epID, appID)
-	_ = slugRow.Scan(&epSlug) // non-fatal if slug lookup fails
+		`SELECT slug FROM them.entry_points WHERE id=$1::uuid AND application_id=$2::uuid`, epID, appID)
+	_ = slugRow.Scan(&epSlug)
 
-	const q = `UPDATE them.entry_points SET enabled=false, updated_at=now() WHERE id=$1 AND application_id=$2`
+	const q = `UPDATE them.entry_points SET enabled=false, updated_at=now() WHERE id=$1::uuid AND application_id=$2::uuid`
 	if err := h.db.Exec(r.Context(), q, epID, appID); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete entry point: "+err.Error())
 		return
@@ -389,11 +355,10 @@ func (h *ApplicationsHandler) DeleteEntryPoint(w http.ResponseWriter, r *http.Re
 }
 
 // loadEntryPoints returns the entry points for the given application ID.
-func (h *ApplicationsHandler) loadEntryPoints(r *http.Request, appID int64) []EntryPoint {
+func (h *ApplicationsHandler) loadEntryPoints(r *http.Request, appID string) []EntryPoint {
 	const q = `
-		SELECT id, application_id, slug, name, ep_type,
-		       COALESCE(orchestrator_name, ''), enabled
-		FROM them.entry_points WHERE application_id=$1 ORDER BY id`
+		SELECT id::text, application_id::text, slug, entry_point_type, enabled
+		FROM them.entry_points WHERE application_id=$1::uuid ORDER BY created_at`
 
 	rows, err := h.db.Query(r.Context(), q, appID)
 	if err != nil {
@@ -404,10 +369,7 @@ func (h *ApplicationsHandler) loadEntryPoints(r *http.Request, appID int64) []En
 	eps := make([]EntryPoint, 0)
 	for rows.Next() {
 		var ep EntryPoint
-		if err := rows.Scan(
-			&ep.ID, &ep.ApplicationID, &ep.Slug, &ep.Name,
-			&ep.EPType, &ep.OrchestratorName, &ep.Enabled,
-		); err != nil {
+		if err := rows.Scan(&ep.ID, &ep.ApplicationID, &ep.Slug, &ep.EntryPointType, &ep.Enabled); err != nil {
 			break
 		}
 		eps = append(eps, ep)
