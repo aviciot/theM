@@ -12,6 +12,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Querier is the database interface required by all dal functions.
@@ -52,6 +53,14 @@ func NewDB(q Querier) *DB {
 // importing pgx directly.
 func IsNoRows(err error) bool {
 	return errors.Is(err, pgx.ErrNoRows)
+}
+
+// IsUniqueViolation reports whether err is a PostgreSQL unique-constraint
+// violation (SQLSTATE 23505). Used by the service layer to map duplicate-key
+// errors to service.ErrUnprocessable without importing pgx/pgconn directly.
+func IsUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 // ── Agent types ───────────────────────────────────────────────────────────────
@@ -216,4 +225,43 @@ type Run struct {
 // SignalInput is the request body for POST /api/v1/runs/{run_id}/signal.
 type SignalInput struct {
 	Payload json.RawMessage `json:"payload"`
+}
+
+// ── Token types ───────────────────────────────────────────────────────────────
+
+// Token is the JSON representation of a them.access_tokens row.
+// TokenHash is never serialized to JSON — internal use only (cache invalidation).
+// Field names match Python's TokenOut schema exactly.
+type Token struct {
+	ID             string  `json:"id"`
+	Label          string  `json:"label"`
+	UserID         int64   `json:"user_id"`
+	OrchestratorID *string `json:"orchestrator_id"` // null in JSON when unset
+	Enabled        bool    `json:"enabled"`
+	ExpiresAt      *string `json:"expires_at"`   // RFC3339 or null
+	LastUsedAt     *string `json:"last_used_at"` // RFC3339 or null
+	CreatedAt      string  `json:"created_at"`
+	TokenHash      string  `json:"-"` // never exposed; used for cache invalidation
+}
+
+// TokenCreatedOut is returned by POST /admin/tokens — Token fields + one-time plaintext.
+type TokenCreatedOut struct {
+	Token
+	Plaintext string `json:"token"`
+}
+
+// TokenCreateRow is the persisted shape for CreateToken (hash computed in service).
+type TokenCreateRow struct {
+	TokenHash      string
+	Label          string
+	UserID         int64
+	OrchestratorID *string // nil → DB NULL
+	ExpiresAt      *string // ISO8601 string or nil → DB NULL
+}
+
+// TokenPatchRow carries PATCH fields; nil pointer = field absent (leave unchanged).
+type TokenPatchRow struct {
+	Label     *string
+	Enabled   *bool
+	ExpiresAt *string
 }
