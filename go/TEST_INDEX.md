@@ -558,6 +558,13 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 | `TestOrchService_Create_MissingName_Validation` | Missing name → `ErrValidation` |
 | `TestOrchService_Create_InvalidatesCache` | Successful create → `them:orchestrators:{name}` deleted from cache |
 | `TestOrchService_Delete_InvalidatesCache` | Delete → `them:orchestrators:{name}` deleted from cache |
+| `TestAppService_Create_MissingName_Validation` | Missing name → `ErrValidation` |
+| `TestAppService_CreateEntryPoint_InvalidType_Unprocessable` | `ep_type="grpc"` → `ErrUnprocessable` |
+| `TestAppService_CreateEntryPoint_ValidTypes` | All 5 valid EP types (websocket, sse, voice, webrtc, a2a) → no error |
+| `TestAppService_UpdateEntryPoint_OldSlugBeforeNew` | Rename: old slug published before new slug (critical ordering contract) |
+| `TestAppService_UpdateEntryPoint_InvalidType_Unprocessable` | `ep_type="tcp"` on update → `ErrUnprocessable` |
+| `TestAppService_DeleteEntryPoint_PublishesSlug` | Delete EP → slug published to invalidation channel |
+| `TestAppService_Update_InvalidatesAppEPs` | Update app → all EP slugs published to invalidation channel |
 | `TestRunService_Signal_BuildsWorkflowID` | `Signal` constructs `"ctx-{contextID}"` workflow ID |
 | `TestRunService_Signal_TemporalNil_Unavailable` | nil Temporal → `ErrTemporalUnavailable` |
 | `TestRunService_Signal_DBError_NotNotFound` | Non-pgx DB error → returned as-is, not mapped to ErrNotFound |
@@ -829,12 +836,12 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-22 | reconciler | 15 |
 | S1-23 | runstream (streamer + dispatcher) | 15 |
 | S1-24 | cmd/them (apps dispatcher) | 5 |
-| S1-25 | admin/service | 15 |
-| **S1 total** | | **232** |
+| S1-25 | admin/service | 22 |
+| **S1 total** | | **239** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
 | S2-03 (MAXLEN) | runstream MAXLEN + reconnect + cross-replica | 7 |
 | **S2 total** | | **20** |
 | S3 live | manual | 23 |
-| **Grand total** | | **275** |
+| **Grand total** | | **282** |

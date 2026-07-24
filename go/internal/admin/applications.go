@@ -8,37 +8,17 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/admin/service"
 )
-
-// epConfigChannel is the Redis pub/sub channel for cross-pod EP config cache invalidation.
-const epConfigChannel = "them:ep:config:changed"
-
-// validEPTypes is the canonical set of allowed entry_point_type values.
-// Must stay in sync with the Python platform's _VALID_EP_TYPES list.
-var validEPTypes = map[string]struct{}{
-	"websocket": {},
-	"sse":       {},
-	"voice":     {},
-	"webrtc":    {},
-	"a2a":       {},
-}
-
-// isValidEPType reports whether t is an allowed entry point type.
-func isValidEPType(t string) bool {
-	_, ok := validEPTypes[t]
-	return ok
-}
 
 // ApplicationsHandler handles /api/v1/admin/applications routes.
 type ApplicationsHandler struct {
-	db    DBQuerier
-	cache CacheInvalidator
-	dal   *dal.DB
+	svc *service.AppService
 }
 
 // NewApplicationsHandler creates an ApplicationsHandler.
 func NewApplicationsHandler(db DBQuerier, cache CacheInvalidator) *ApplicationsHandler {
-	return &ApplicationsHandler{db: db, cache: cache, dal: dal.NewDB(db)}
+	return &ApplicationsHandler{svc: service.NewAppService(dal.NewDB(db), cache)}
 }
 
 // Routes mounts application and entry point CRUD endpoints.
@@ -58,32 +38,12 @@ func (h *ApplicationsHandler) Routes(r chi.Router) {
 
 // List handles GET /api/v1/admin/applications.
 func (h *ApplicationsHandler) List(w http.ResponseWriter, r *http.Request) {
-	apps, err := h.dal.ListApplications(r.Context())
+	apps, err := h.svc.List(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, apps)
-}
-
-// invalidateEP evicts one EP slug from the in-process cache on this pod and
-// publishes to epConfigChannel so all other pods do the same.
-func (h *ApplicationsHandler) invalidateEP(r *http.Request, epSlug string) {
-	if h.cache == nil || epSlug == "" {
-		return
-	}
-	_ = h.cache.Publish(r.Context(), epConfigChannel, epSlug)
-}
-
-// invalidateAppEPs fetches all EP slugs for the given application ID and
-// publishes a per-slug invalidation message for each.
-func (h *ApplicationsHandler) invalidateAppEPs(r *http.Request, appID string) {
-	if h.cache == nil {
-		return
-	}
-	for _, slug := range h.dal.ListEPSlugsForApp(r.Context(), appID) {
-		_ = h.cache.Publish(r.Context(), epConfigChannel, slug)
-	}
 }
 
 // Create handles POST /api/v1/admin/applications.
@@ -93,17 +53,12 @@ func (h *ApplicationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if input.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-	enabled := true
-	if input.Enabled != nil {
-		enabled = *input.Enabled
-	}
 
-	id, err := h.dal.CreateApplication(r.Context(), input.Name, enabled)
+	id, err := h.svc.Create(r.Context(), input.Name, input.Enabled)
 	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "create application: "+err.Error())
 		return
 	}
@@ -120,13 +75,11 @@ func (h *ApplicationsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a, err := h.dal.GetApplication(r.Context(), id)
+	a, err := h.svc.Get(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
-
-	a.EntryPoints = h.dal.ListEntryPoints(r.Context(), id)
 	writeJSON(w, http.StatusOK, a)
 }
 
@@ -143,17 +96,12 @@ func (h *ApplicationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	enabled := true
-	if input.Enabled != nil {
-		enabled = *input.Enabled
-	}
 
-	if err := h.dal.UpdateApplication(r.Context(), id, input.Name, enabled); err != nil {
+	if err := h.svc.Update(r.Context(), id, input.Name, input.Enabled); err != nil {
 		writeError(w, http.StatusInternalServerError, "update application: "+err.Error())
 		return
 	}
 
-	h.invalidateAppEPs(r, id)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
 
@@ -165,12 +113,11 @@ func (h *ApplicationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.dal.DeleteApplication(r.Context(), id); err != nil {
+	if err := h.svc.Delete(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete application: "+err.Error())
 		return
 	}
 
-	h.invalidateAppEPs(r, id)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
 }
 
@@ -187,22 +134,12 @@ func (h *ApplicationsHandler) CreateEntryPoint(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if input.Slug == "" || input.EntryPointType == "" {
-		writeError(w, http.StatusBadRequest, "slug and entry_point_type are required")
-		return
-	}
-	if !isValidEPType(input.EntryPointType) {
-		writeError(w, http.StatusUnprocessableEntity,
-			"invalid entry_point_type: must be one of websocket, sse, voice, webrtc, a2a")
-		return
-	}
-	enabled := true
-	if input.Enabled != nil {
-		enabled = *input.Enabled
-	}
 
-	epID, err := h.dal.CreateEntryPoint(r.Context(), appID, input.Slug, input.EntryPointType, enabled)
+	epID, err := h.svc.CreateEntryPoint(r.Context(), appID, input.Slug, input.EntryPointType, input.Enabled)
 	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "create entry point: "+err.Error())
 		return
 	}
@@ -225,26 +162,15 @@ func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if input.EntryPointType != "" && !isValidEPType(input.EntryPointType) {
-		writeError(w, http.StatusUnprocessableEntity,
-			"invalid entry_point_type: must be one of websocket, sse, voice, webrtc, a2a")
-		return
-	}
-	enabled := true
-	if input.Enabled != nil {
-		enabled = *input.Enabled
-	}
 
-	// Fetch old slug for cache invalidation on rename.
-	oldSlug, _ := h.dal.GetEntryPointSlug(r.Context(), epID, appID)
-
-	if err := h.dal.UpdateEntryPoint(r.Context(), epID, appID, input.Slug, input.EntryPointType, enabled); err != nil {
+	if err := h.svc.UpdateEntryPoint(r.Context(), epID, appID, input.Slug, input.EntryPointType, input.Enabled); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "update entry point: "+err.Error())
 		return
 	}
 
-	h.invalidateEP(r, oldSlug)
-	h.invalidateEP(r, input.Slug)
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "updated": true})
 }
 
@@ -257,13 +183,10 @@ func (h *ApplicationsHandler) DeleteEntryPoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	epSlug, _ := h.dal.GetEntryPointSlug(r.Context(), epID, appID)
-
-	if err := h.dal.DeleteEntryPoint(r.Context(), epID, appID); err != nil {
+	if err := h.svc.DeleteEntryPoint(r.Context(), epID, appID); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete entry point: "+err.Error())
 		return
 	}
 
-	h.invalidateEP(r, epSlug)
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "deleted": true})
 }

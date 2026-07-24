@@ -246,6 +246,79 @@ func TestAgentService_NilCache_NoPanic(t *testing.T) {
 	}
 }
 
+// ── AppService tests ──────────────────────────────────────────────────────────
+
+func TestAppService_Create_MissingName_Validation(t *testing.T) {
+	svc := service.NewAppService(&fakeDal{}, nil)
+	_, err := svc.Create(context.Background(), "", nil)
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation, got %v", err)
+	}
+}
+
+func TestAppService_CreateEntryPoint_InvalidType_Unprocessable(t *testing.T) {
+	svc := service.NewAppService(&fakeDal{}, nil)
+	_, err := svc.CreateEntryPoint(context.Background(), "app-1", "my-ep", "grpc", nil)
+	if !errors.Is(err, service.ErrUnprocessable) {
+		t.Errorf("want ErrUnprocessable, got %v", err)
+	}
+}
+
+func TestAppService_CreateEntryPoint_ValidTypes(t *testing.T) {
+	for _, epType := range []string{"websocket", "sse", "voice", "webrtc", "a2a"} {
+		d := &fakeDal{createdID: "ep-1"}
+		svc := service.NewAppService(d, nil)
+		_, err := svc.CreateEntryPoint(context.Background(), "app-1", "sl", epType, nil)
+		if err != nil {
+			t.Errorf("type %q: unexpected error: %v", epType, err)
+		}
+	}
+}
+
+func TestAppService_UpdateEntryPoint_OldSlugBeforeNew(t *testing.T) {
+	c := &fakeCache{}
+	d := &fakeDal{epSlug: "old-slug"}
+	svc := service.NewAppService(d, c)
+	_ = svc.UpdateEntryPoint(context.Background(), "ep-1", "app-1", "new-slug", "sse", nil)
+	if len(c.publishOrder) < 2 {
+		t.Fatalf("want 2 publishes, got %d: %v", len(c.publishOrder), c.publishOrder)
+	}
+	if c.publishOrder[0] != "old-slug" {
+		t.Errorf("first publish must be old slug, got %q", c.publishOrder[0])
+	}
+	if c.publishOrder[1] != "new-slug" {
+		t.Errorf("second publish must be new slug, got %q", c.publishOrder[1])
+	}
+}
+
+func TestAppService_UpdateEntryPoint_InvalidType_Unprocessable(t *testing.T) {
+	svc := service.NewAppService(&fakeDal{}, nil)
+	err := svc.UpdateEntryPoint(context.Background(), "ep-1", "app-1", "sl", "tcp", nil)
+	if !errors.Is(err, service.ErrUnprocessable) {
+		t.Errorf("want ErrUnprocessable, got %v", err)
+	}
+}
+
+func TestAppService_DeleteEntryPoint_PublishesSlug(t *testing.T) {
+	c := &fakeCache{}
+	d := &fakeDal{epSlug: "my-ep"}
+	svc := service.NewAppService(d, c)
+	_ = svc.DeleteEntryPoint(context.Background(), "ep-1", "app-1")
+	if len(c.publishOrder) != 1 || c.publishOrder[0] != "my-ep" {
+		t.Errorf("want [my-ep], got %v", c.publishOrder)
+	}
+}
+
+func TestAppService_Update_InvalidatesAppEPs(t *testing.T) {
+	c := &fakeCache{}
+	d := &fakeDal{epSlugs: []string{"ep-a", "ep-b"}}
+	svc := service.NewAppService(d, c)
+	_ = svc.Update(context.Background(), "app-1", "New Name", nil)
+	if len(c.publishOrder) != 2 {
+		t.Errorf("want 2 EP publishes, got %d: %v", len(c.publishOrder), c.publishOrder)
+	}
+}
+
 // ── OrchService tests ─────────────────────────────────────────────────────────
 
 func TestOrchService_Create_Defaults(t *testing.T) {
