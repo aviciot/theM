@@ -10,12 +10,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	temporalclient "go.temporal.io/sdk/client"
 
 	"time"
-
-	"github.com/go-chi/chi/v5"
 
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
@@ -253,7 +252,15 @@ func run() error {
 	// ── 17c. Mount /apps/{slug}/ws and /apps/{slug}/sse aliases ─────────────
 	// These are the app entry-point URLs used by the frontend.
 	// MountApps("/apps") strips the prefix, so sub-routes are /{slug}/ws etc.
-	srv.MountApps(buildAppsHandler(wsHandler, sseHandler))
+	wsApps := wsHandler.AppsWSRoute()
+	sseApps := sseHandler.AppsSSERoute()
+	srv.MountApps(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/ws") {
+			wsApps.ServeHTTP(w, r)
+		} else {
+			sseApps.ServeHTTP(w, r)
+		}
+	}))
 	log.Info("apps WS+SSE aliases mounted", "prefix", "/apps")
 
 	// ── 17. Wire A2A server (/a2a/*, /.well-known/*) ─────────────────────────
@@ -278,34 +285,3 @@ func run() error {
 	return srv.ListenAndServe()
 }
 
-// buildAppsHandler creates a chi router for /apps/{slug}/ws and /apps/{slug}/sse.
-// It is mounted at /apps by MountApps, so routes here are relative (/{slug}/ws).
-// Each handler remaps {slug} → {entry_point_slug} for the shared ServeHTTP.
-func buildAppsHandler(wsH *ws.Handler, sseH *sse.Handler) http.Handler {
-	r := chi.NewRouter()
-
-	r.Get("/{slug}/ws", func(w http.ResponseWriter, req *http.Request) {
-		slug := chi.URLParam(req, "slug")
-		rctx := chi.RouteContext(req.Context())
-		rctx.URLParams.Add("app_slug", slug)
-		rctx.URLParams.Add("entry_point_slug", slug)
-		wsH.ServeHTTP(w, req)
-	})
-
-	r.Get("/{slug}/sse", func(w http.ResponseWriter, req *http.Request) {
-		slug := chi.URLParam(req, "slug")
-		rctx := chi.RouteContext(req.Context())
-		rctx.URLParams.Add("app_slug", slug)
-		rctx.URLParams.Add("entry_point_slug", slug)
-		sseH.ServeHTTP(w, req)
-	})
-	r.Post("/{slug}/sse", func(w http.ResponseWriter, req *http.Request) {
-		slug := chi.URLParam(req, "slug")
-		rctx := chi.RouteContext(req.Context())
-		rctx.URLParams.Add("app_slug", slug)
-		rctx.URLParams.Add("entry_point_slug", slug)
-		sseH.ServeHTTP(w, req)
-	})
-
-	return r
-}
