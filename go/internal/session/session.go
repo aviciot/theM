@@ -187,6 +187,27 @@ end
 return live
 `
 
+// luaPruneAndList atomically prunes ghosts (same as luaPruneAndCount) and
+// returns the live session IDs as a Redis multi-bulk reply.
+//
+// KEYS[1]  = membership Set                   (e.g. them:ep:{slug}:sessions)
+// ARGV[1]  = shadow key prefix including ":"  (e.g. them:ep:{slug}:shadow:)
+//
+// Returns: array of live session ID strings
+const luaPruneAndList = `
+local members = redis.call('SMEMBERS', KEYS[1])
+local live = {}
+for _, sid in ipairs(members) do
+    local shadow = ARGV[1] .. sid
+    if redis.call('EXISTS', shadow) == 1 then
+        table.insert(live, sid)
+    else
+        redis.call('SREM', KEYS[1], sid)
+    end
+end
+return live
+`
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Register
 // ──────────────────────────────────────────────────────────────────────────────
@@ -335,6 +356,44 @@ func (s *Store) CountAppSessions(ctx context.Context, appID string) (int, error)
 	return s.pruneAndCount(ctx, appPrefix+appID+":sessions", appPrefix+appID+":shadow:")
 }
 
+// ListEPSessions returns the IDs of all live sessions for an entry point.
+// Ghost sessions (shadow key expired) are pruned atomically before listing.
+func (s *Store) ListEPSessions(ctx context.Context, epSlug string) ([]string, error) {
+	return s.pruneAndList(ctx, epPrefix+epSlug+":sessions", epPrefix+epSlug+":shadow:")
+}
+
+// ListAppSessions returns the IDs of all live sessions for an application.
+// Ghost sessions are pruned atomically before listing.
+func (s *Store) ListAppSessions(ctx context.Context, appID string) ([]string, error) {
+	return s.pruneAndList(ctx, appPrefix+appID+":sessions", appPrefix+appID+":shadow:")
+}
+
+func (s *Store) pruneAndList(ctx context.Context, setKey, shadowPrefix string) ([]string, error) {
+	result, err := s.redis.ExecLua(ctx, luaPruneAndList,
+		[]string{setKey},
+		[]interface{}{shadowPrefix},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("session: list: %w", err)
+	}
+	// Redis multi-bulk reply comes back as []interface{} from rueidis.
+	raw, ok := result.([]interface{})
+	if !ok {
+		// Empty set returns nil or empty slice from some Redis clients.
+		return []string{}, nil
+	}
+	ids := make([]string, 0, len(raw))
+	for _, v := range raw {
+		switch sv := v.(type) {
+		case string:
+			ids = append(ids, sv)
+		case []byte:
+			ids = append(ids, string(sv))
+		}
+	}
+	return ids, nil
+}
+
 func (s *Store) pruneAndCount(ctx context.Context, setKey, shadowPrefix string) (int, error) {
 	result, err := s.redis.ExecLua(ctx, luaPruneAndCount,
 		[]string{setKey},
@@ -384,9 +443,12 @@ func (s *Store) WriteHeartbeat(ctx context.Context) error {
 // SignalDisconnect publishes a disconnect signal for the given session on the
 // them:sess:control:{session_id} pub/sub channel. The edge handler subscribed
 // to this channel will close the WebSocket/SSE connection with code 4000.
-func (s *Store) SignalDisconnect(ctx context.Context, sessionID string) error {
+// Returns (true, nil) when the publish succeeded, (false, nil) when publish
+// succeeded but had no subscribers, and (false, err) on Redis failure.
+func (s *Store) SignalDisconnect(ctx context.Context, sessionID string) (bool, error) {
 	ch := controlPrefix + sessionID
-	return s.redis.Publish(ctx, ch, "disconnect")
+	err := s.redis.Publish(ctx, ch, "disconnect")
+	return err == nil, err
 }
 
 // SubscribeControl subscribes to the disconnect control channel for a session

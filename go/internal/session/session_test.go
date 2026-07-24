@@ -152,6 +152,23 @@ func (r *mockRedis) ExecLua(_ context.Context, script string, keys []string, arg
 		delete(r.store, shadowKey)
 		return int64(1), nil
 
+	case strings.Contains(script, "'SMEMBERS'") && strings.Contains(script, "table.insert"):
+		// luaPruneAndList — returns live session IDs as []interface{}
+		setKey := keys[0]
+		shadowPrefix := args[0].(string)
+
+		members := r.sets[setKey]
+		var live []interface{}
+		for sid := range members {
+			shadowKey := shadowPrefix + sid
+			if r.exists(shadowKey) {
+				live = append(live, sid)
+			} else {
+				delete(members, sid)
+			}
+		}
+		return live, nil
+
 	case strings.Contains(script, "'SMEMBERS'") && strings.Contains(script, "shadow"):
 		// luaPruneAndCount
 		setKey := keys[0]
@@ -370,7 +387,9 @@ func TestStore_SignalDisconnect_PubSub(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	require.NoError(t, store.SignalDisconnect(context.Background(), "sess-ctl"))
+	delivered, err := store.SignalDisconnect(context.Background(), "sess-ctl")
+	require.NoError(t, err)
+	assert.True(t, delivered, "signal should be delivered")
 
 	select {
 	case <-received:
@@ -378,6 +397,56 @@ func TestStore_SignalDisconnect_PubSub(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("disconnect handler was not called within 2s")
 	}
+}
+
+// TestStore_ListEPSessions returns live member IDs and prunes ghosts.
+func TestStore_ListEPSessions(t *testing.T) {
+	rdb := newMockRedis()
+	store := session.NewStore(rdb, "pod-1", noopLogger())
+	ctx := context.Background()
+
+	// Register two sessions under ep-list-test.
+	info1 := testInfo("list-sess-1")
+	info1.EPSlug = "ep-list-test"
+	info1.AppID = ""
+	info2 := testInfo("list-sess-2")
+	info2.EPSlug = "ep-list-test"
+	info2.AppID = ""
+	require.NoError(t, store.Register(ctx, info1))
+	require.NoError(t, store.Register(ctx, info2))
+
+	ids, err := store.ListEPSessions(ctx, "ep-list-test")
+	require.NoError(t, err)
+	assert.Len(t, ids, 2)
+	assert.ElementsMatch(t, []string{"list-sess-1", "list-sess-2"}, ids)
+}
+
+// TestStore_ListAppSessions returns live member IDs for an application.
+func TestStore_ListAppSessions(t *testing.T) {
+	rdb := newMockRedis()
+	store := session.NewStore(rdb, "pod-1", noopLogger())
+	ctx := context.Background()
+
+	info := testInfo("app-sess-1")
+	info.EPSlug = ""
+	info.AppID = "app-list-test"
+	require.NoError(t, store.Register(ctx, info))
+
+	ids, err := store.ListAppSessions(ctx, "app-list-test")
+	require.NoError(t, err)
+	assert.Len(t, ids, 1)
+	assert.Equal(t, "app-sess-1", ids[0])
+}
+
+// TestStore_SignalDisconnect_ReturnsDelivered verifies the new (bool, error) signature.
+func TestStore_SignalDisconnect_ReturnsDelivered(t *testing.T) {
+	rdb := newMockRedis()
+	store := session.NewStore(rdb, "pod-1", noopLogger())
+	ctx := context.Background()
+
+	delivered, err := store.SignalDisconnect(ctx, "some-session")
+	require.NoError(t, err)
+	assert.True(t, delivered)
 }
 
 // Test 7: activeSessions counter is updated atomically by Register and End.
