@@ -121,3 +121,55 @@ This means a misconfigured deployment cannot accidentally enable writes.
 Note: `strconv.ParseBool` accepts `"1"`, `"t"`, `"T"`, `"TRUE"`, `"true"`, `"True"`,
 `"0"`, `"f"`, `"F"`, `"FALSE"`, `"false"`, `"False"` — lowercase and uppercase both
 work for valid values. Only truly invalid strings (e.g., `"yes"`, `"no"`) fall back.
+
+---
+
+## L-07: Token cache invalidation must use the hash, not the raw plaintext
+
+**Context:** Admin token endpoints (PATCH, DELETE) need to evict the token from the
+L1+L2 cache after mutation, but the admin path never holds the raw plaintext (it is
+shown once at creation and never stored).
+
+**What happened:** `auth.Cache.Revoke(ctx, rawToken)` hashes the token internally, so
+it cannot be called from the admin service which only has `token_hash`.
+
+**Fix:** `TokenService.invalidate(ctx, hash)` bypasses `Revoke` and calls the
+underlying cache primitives directly:
+- `cache.Del(ctx, "them:session:token:"+hash)` — evicts L2
+- `cache.Publish(ctx, "them:token:revoked", hash)` — triggers cross-pod L1 eviction
+
+This is byte-identical to `auth_service/routers/tokens.py:invalidate_token(token_hash)`.
+The key insight: the `them:session:token:{hash}` Redis key uses the hash, not the raw
+token, so the admin path can invalidate without ever seeing the plaintext.
+
+---
+
+## L-08: Python JSON booleans vs Go JSON booleans across bridges
+
+**Context:** Python's `json.dumps` serializes Python `True`/`False` as JSON
+`true`/`false`. Go's `encoding/json` does the same. However, older Python test scripts
+that compared raw string output (e.g., `check "enabled" "True"` in bash) fail when
+pointing at the Go bridge because Go outputs `true` (lowercase JSON) while Python's
+response body uses `true` too — but bash-comparison test scripts compare the raw string
+value returned by `python3 -c "print(d.get('enabled'))"` which prints `True` (Python
+bool repr, not JSON).
+
+**Fix:** The Python↔Go contract tests in `test_go_wave5_contracts.py` parse JSON
+responses and compare Python objects, never raw strings. This avoids the
+True/true/1 comparison trap. When writing any new cross-bridge test, always use
+`json.loads()` and compare Python types.
+
+---
+
+## L-09: pgx.ErrNoRows must be used in tests that check IsNoRows sentinel
+
+**Context:** `dal.IsNoRows(err)` calls `errors.Is(err, pgx.ErrNoRows)`.
+
+**What happened:** A test using `fakeDB{execRetErr: errors.New("no rows")}` triggered
+`ExecReturning → Scan → return err` but the returned error was a plain `errors.New`,
+not `pgx.ErrNoRows`. The service's `IsNoRows` check returned false, the 500 path was
+taken instead of the 404 path, and the test failed.
+
+**Fix:** Always use `pgx.ErrNoRows` (import `"github.com/jackc/pgx/v5"`) when writing
+test doubles that simulate "no rows" conditions for the admin DAL. A generic error
+string is not equivalent — pgx uses `errors.Is` identity, not string matching.
