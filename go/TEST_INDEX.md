@@ -220,6 +220,7 @@ Run on: every commit, every PR, every pre-deploy check.
 ### S1-12 · WebSocket handler — `internal/ws/handler_test.go`
 
 **Purpose:** WS connection lifecycle — auth, public EP support, anonymous session identity, Gate contract enforcement, session lifecycle.
+Shared interfaces (Authenticator, SessionStore, GateStore, EPConfigLoader, TemporalClientExecutor) and TokenHash now live in `internal/transport/`; this test exercises them via the ws handler.
 
 | Test | What it proves |
 |---|---|
@@ -247,6 +248,7 @@ Run on: every commit, every PR, every pre-deploy check.
 ### S1-13 · SSE handler — `internal/sse/handler_test.go`
 
 **Purpose:** Server-Sent Events endpoint, public EP support, anonymous session identity, Gate contract enforcement.
+Shared interfaces and TokenHash now live in `internal/transport/`; this test exercises them via the sse handler.
 
 | Test | What it proves |
 |---|---|
@@ -719,6 +721,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/a2a/server.go` | S1-14 |
 | `internal/admin/` (any file) | S1-15 |
 | `internal/admin/dal/` (any file) | S1-15 |
+| `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/ratelimit/limiter.go` | S1-16 |
 | `internal/gate/gate.go` | S1-17 |
 | `internal/epconfig/epconfig.go` | S1-18 |

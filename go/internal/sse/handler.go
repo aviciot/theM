@@ -22,7 +22,6 @@ package sse
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +46,7 @@ import (
 	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/transport"
 )
 
 // newID generates a UUID v4 string.
@@ -57,45 +57,30 @@ func newID() string {
 	return uuid.New().String()
 }
 
-// tokenHash returns the lowercase hex SHA-256 of rawToken, matching the hash
-// stored in them.access_tokens by the Python platform (same as auth.tokenHash).
-func tokenHash(rawToken string) string {
-	h := sha256.Sum256([]byte(rawToken))
-	return fmt.Sprintf("%x", h)
-}
+// tokenHash is a package-local alias for transport.TokenHash for backward
+// compatibility with the sse package's internal call sites.
+var tokenHash = transport.TokenHash
 
 // Authenticator validates bearer tokens.
-type Authenticator interface {
-	Validate(ctx context.Context, token string) (*auth.TokenInfo, error)
-}
+// Sourced from internal/transport.
+type Authenticator = transport.Authenticator
 
 // SessionStore manages session lifecycle.
-type SessionStore interface {
-	Register(ctx context.Context, info session.SessionInfo) error
-	End(ctx context.Context, sessionID, epSlug, appID string) error
-}
+// Sourced from internal/transport.
+type SessionStore = transport.SessionStore
 
 // GateStore performs admission control for incoming sessions.
-// Implemented by gate.Gate.
-type GateStore interface {
-	Check(ctx context.Context, cfg gate.Config) (gate.Result, error)
-	Confirm(ctx context.Context, cfg gate.Config) error
-	Rollback(ctx context.Context, cfg gate.Config) error
-	Release(ctx context.Context, cfg gate.Config) error
-}
+// Implemented by gate.Gate. Sourced from internal/transport.
+type GateStore = transport.GateStore
 
 // EPConfigLoader resolves Entry Point and Application runtime config.
-// Implemented by epconfig.Loader.
-type EPConfigLoader interface {
-	Load(ctx context.Context, epSlug string) (*epconfig.EPConfig, error)
-}
+// Implemented by epconfig.Loader. Sourced from internal/transport.
+type EPConfigLoader = transport.EPConfigLoader
 
 // TemporalClientExecutor starts a Temporal workflow execution.
 // Using an interface (rather than the full client.Client) allows tests to inject
-// a fake without depending on a live Temporal server.
-type TemporalClientExecutor interface {
-	ExecuteWorkflow(ctx context.Context, options temporalclient.StartWorkflowOptions, workflow interface{}, args ...interface{}) (temporalclient.WorkflowRun, error)
-}
+// a fake without depending on a live Temporal server. Sourced from internal/transport.
+type TemporalClientExecutor = transport.TemporalClientExecutor
 
 // Handler is the SSE orchestration handler.
 type Handler struct {
