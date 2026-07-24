@@ -1,6 +1,9 @@
 // Package admin provides REST API handlers for administrative operations:
 // managing agents, orchestrators, applications, entry points, and runs.
 // All admin endpoints require JWT authentication with the super_admin role.
+//
+// SQL query strings and row-scan logic live in the dal sub-package.
+// Handler files are thin HTTP translators that call dal functions.
 package admin
 
 import (
@@ -9,32 +12,36 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/auth"
 )
 
+// ── Type aliases — re-export dal types so existing callers and tests compile
+// unchanged after the SQL moved to the dal sub-package. ──────────────────────
+
 // DBQuerier is the database interface required by all admin handlers.
-type DBQuerier interface {
-	// Query runs a SELECT and returns a RowScanner.
-	Query(ctx context.Context, sql string, args ...any) (RowScanner, error)
-	// QueryRow runs a SELECT and returns a single-row scanner.
-	QueryRow(ctx context.Context, sql string, args ...any) SingleRowScanner
-	// Exec executes a statement and discards the result.
-	Exec(ctx context.Context, sql string, args ...any) error
-	// ExecReturning executes a statement and scans the returned row.
-	ExecReturning(ctx context.Context, sql string, args ...any) SingleRowScanner
-}
+// It is satisfied by admin.PgxQuerier and by the fakeDB used in tests.
+type DBQuerier = dal.Querier
 
 // RowScanner iterates over query rows.
-type RowScanner interface {
-	Next() bool
-	Scan(dest ...any) error
-	Close() error
-}
+type RowScanner = dal.RowScanner
 
 // SingleRowScanner scans a single row.
-type SingleRowScanner interface {
-	Scan(dest ...any) error
-}
+type SingleRowScanner = dal.SingleRowScanner
+
+// Agent, AgentInput, Orchestrator, OrchestratorInput, Application,
+// EntryPoint, ApplicationInput, EntryPointInput, Run, SignalInput are defined
+// in the dal package and re-exported here for backward compatibility.
+type Agent = dal.Agent
+type AgentInput = dal.AgentInput
+type Orchestrator = dal.Orchestrator
+type OrchestratorInput = dal.OrchestratorInput
+type Application = dal.Application
+type EntryPoint = dal.EntryPoint
+type ApplicationInput = dal.ApplicationInput
+type EntryPointInput = dal.EntryPointInput
+type Run = dal.Run
+type SignalInput = dal.SignalInput
 
 // CacheInvalidator invalidates Redis caches on mutations.
 type CacheInvalidator interface {

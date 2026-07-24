@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/aviciot/them/internal/admin/dal"
 )
 
 // epConfigChannel is the Redis pub/sub channel for cross-pod EP config cache invalidation.
@@ -27,51 +29,16 @@ func isValidEPType(t string) bool {
 	return ok
 }
 
-// ── Application types ─────────────────────────────────────────────────────────
-
-// Application is the JSON representation of a them.applications row.
-// applications has no slug or description columns in the actual schema.
-type Application struct {
-	ID          string       `json:"id"`
-	Name        string       `json:"name"`
-	Enabled     bool         `json:"enabled"`
-	EntryPoints []EntryPoint `json:"entry_points,omitempty"`
-}
-
-// EntryPoint is one access door for an application.
-// them.entry_points uses entry_point_type (not ep_type) and has no name column.
-type EntryPoint struct {
-	ID             string `json:"id"`
-	ApplicationID  string `json:"application_id"`
-	Slug           string `json:"slug"`
-	EntryPointType string `json:"entry_point_type"`
-	Enabled        bool   `json:"enabled"`
-}
-
-// ApplicationInput is the request body for create/update.
-type ApplicationInput struct {
-	Name    string `json:"name"`
-	Enabled *bool  `json:"enabled,omitempty"`
-}
-
-// EntryPointInput is the request body for entry point create/update.
-type EntryPointInput struct {
-	Slug           string `json:"slug"`
-	EntryPointType string `json:"entry_point_type"`
-	Enabled        *bool  `json:"enabled,omitempty"`
-}
-
-// ── Applications handler ──────────────────────────────────────────────────────
-
 // ApplicationsHandler handles /api/v1/admin/applications routes.
 type ApplicationsHandler struct {
 	db    DBQuerier
 	cache CacheInvalidator
+	dal   *dal.DB
 }
 
 // NewApplicationsHandler creates an ApplicationsHandler.
 func NewApplicationsHandler(db DBQuerier, cache CacheInvalidator) *ApplicationsHandler {
-	return &ApplicationsHandler{db: db, cache: cache}
+	return &ApplicationsHandler{db: db, cache: cache, dal: dal.NewDB(db)}
 }
 
 // Routes mounts application and entry point CRUD endpoints.
@@ -91,25 +58,11 @@ func (h *ApplicationsHandler) Routes(r chi.Router) {
 
 // List handles GET /api/v1/admin/applications.
 func (h *ApplicationsHandler) List(w http.ResponseWriter, r *http.Request) {
-	const q = `SELECT id::text, name, enabled FROM them.applications ORDER BY created_at`
-
-	rows, err := h.db.Query(r.Context(), q)
+	apps, err := h.dal.ListApplications(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
 		return
 	}
-	defer rows.Close()
-
-	apps := make([]Application, 0)
-	for rows.Next() {
-		var a Application
-		if err := rows.Scan(&a.ID, &a.Name, &a.Enabled); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan error: "+err.Error())
-			return
-		}
-		apps = append(apps, a)
-	}
-
 	writeJSON(w, http.StatusOK, apps)
 }
 
@@ -128,17 +81,7 @@ func (h *ApplicationsHandler) invalidateAppEPs(r *http.Request, appID string) {
 	if h.cache == nil {
 		return
 	}
-	const q = `SELECT slug FROM them.entry_points WHERE application_id = $1::uuid`
-	rows, err := h.db.Query(r.Context(), q, appID)
-	if err != nil {
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var slug string
-		if err := rows.Scan(&slug); err != nil {
-			break
-		}
+	for _, slug := range h.dal.ListEPSlugsForApp(r.Context(), appID) {
 		_ = h.cache.Publish(r.Context(), epConfigChannel, slug)
 	}
 }
@@ -159,12 +102,8 @@ func (h *ApplicationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		enabled = *input.Enabled
 	}
 
-	const q = `INSERT INTO them.applications (name, enabled) VALUES ($1, $2) RETURNING id::text`
-
-	row := h.db.ExecReturning(r.Context(), q, input.Name, enabled)
-
-	var id string
-	if err := row.Scan(&id); err != nil {
+	id, err := h.dal.CreateApplication(r.Context(), input.Name, enabled)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "create application: "+err.Error())
 		return
 	}
@@ -181,16 +120,13 @@ func (h *ApplicationsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const q = `SELECT id::text, name, enabled FROM them.applications WHERE id=$1::uuid`
-
-	row := h.db.QueryRow(r.Context(), q, id)
-	var a Application
-	if err := row.Scan(&a.ID, &a.Name, &a.Enabled); err != nil {
+	a, err := h.dal.GetApplication(r.Context(), id)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
 
-	a.EntryPoints = h.loadEntryPoints(r, id)
+	a.EntryPoints = h.dal.ListEntryPoints(r.Context(), id)
 	writeJSON(w, http.StatusOK, a)
 }
 
@@ -212,9 +148,7 @@ func (h *ApplicationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		enabled = *input.Enabled
 	}
 
-	const q = `UPDATE them.applications SET name=$2, enabled=$3, updated_at=now() WHERE id=$1::uuid`
-
-	if err := h.db.Exec(r.Context(), q, id, input.Name, enabled); err != nil {
+	if err := h.dal.UpdateApplication(r.Context(), id, input.Name, enabled); err != nil {
 		writeError(w, http.StatusInternalServerError, "update application: "+err.Error())
 		return
 	}
@@ -231,8 +165,7 @@ func (h *ApplicationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const q = `UPDATE them.applications SET enabled=false, updated_at=now() WHERE id=$1::uuid`
-	if err := h.db.Exec(r.Context(), q, id); err != nil {
+	if err := h.dal.DeleteApplication(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete application: "+err.Error())
 		return
 	}
@@ -268,15 +201,8 @@ func (h *ApplicationsHandler) CreateEntryPoint(w http.ResponseWriter, r *http.Re
 		enabled = *input.Enabled
 	}
 
-	const q = `
-		INSERT INTO them.entry_points (application_id, slug, entry_point_type, enabled)
-		VALUES ($1::uuid, $2, $3, $4)
-		RETURNING id::text`
-
-	row := h.db.ExecReturning(r.Context(), q, appID, input.Slug, input.EntryPointType, enabled)
-
-	var epID string
-	if err := row.Scan(&epID); err != nil {
+	epID, err := h.dal.CreateEntryPoint(r.Context(), appID, input.Slug, input.EntryPointType, enabled)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "create entry point: "+err.Error())
 		return
 	}
@@ -310,17 +236,9 @@ func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Re
 	}
 
 	// Fetch old slug for cache invalidation on rename.
-	var oldSlug string
-	oldSlugRow := h.db.QueryRow(r.Context(),
-		`SELECT slug FROM them.entry_points WHERE id=$1::uuid AND application_id=$2::uuid`, epID, appID)
-	_ = oldSlugRow.Scan(&oldSlug)
+	oldSlug, _ := h.dal.GetEntryPointSlug(r.Context(), epID, appID)
 
-	const q = `
-		UPDATE them.entry_points
-		SET slug=$3, entry_point_type=$4, enabled=$5, updated_at=now()
-		WHERE id=$1::uuid AND application_id=$2::uuid`
-
-	if err := h.db.Exec(r.Context(), q, epID, appID, input.Slug, input.EntryPointType, enabled); err != nil {
+	if err := h.dal.UpdateEntryPoint(r.Context(), epID, appID, input.Slug, input.EntryPointType, enabled); err != nil {
 		writeError(w, http.StatusInternalServerError, "update entry point: "+err.Error())
 		return
 	}
@@ -339,40 +257,13 @@ func (h *ApplicationsHandler) DeleteEntryPoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var epSlug string
-	slugRow := h.db.QueryRow(r.Context(),
-		`SELECT slug FROM them.entry_points WHERE id=$1::uuid AND application_id=$2::uuid`, epID, appID)
-	_ = slugRow.Scan(&epSlug)
+	epSlug, _ := h.dal.GetEntryPointSlug(r.Context(), epID, appID)
 
-	const q = `UPDATE them.entry_points SET enabled=false, updated_at=now() WHERE id=$1::uuid AND application_id=$2::uuid`
-	if err := h.db.Exec(r.Context(), q, epID, appID); err != nil {
+	if err := h.dal.DeleteEntryPoint(r.Context(), epID, appID); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete entry point: "+err.Error())
 		return
 	}
 
 	h.invalidateEP(r, epSlug)
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "deleted": true})
-}
-
-// loadEntryPoints returns the entry points for the given application ID.
-func (h *ApplicationsHandler) loadEntryPoints(r *http.Request, appID string) []EntryPoint {
-	const q = `
-		SELECT id::text, application_id::text, slug, entry_point_type, enabled
-		FROM them.entry_points WHERE application_id=$1::uuid ORDER BY created_at`
-
-	rows, err := h.db.Query(r.Context(), q, appID)
-	if err != nil {
-		return make([]EntryPoint, 0)
-	}
-	defer rows.Close()
-
-	eps := make([]EntryPoint, 0)
-	for rows.Next() {
-		var ep EntryPoint
-		if err := rows.Scan(&ep.ID, &ep.ApplicationID, &ep.Slug, &ep.EntryPointType, &ep.Enabled); err != nil {
-			break
-		}
-		eps = append(eps, ep)
-	}
-	return eps
 }

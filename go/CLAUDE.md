@@ -51,7 +51,8 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | `internal/sse/` | Server-Sent Events handler | `handler.go` |
 | `internal/a2a/` | JSON-RPC 2.0 A2A server + agent card | `server.go` |
 | `internal/agentregistry/` | A2A invocation, two-level Redis cache | `registry.go` |
-| `internal/admin/` | CRUD API for agents/orchestrators/apps/runs | `agents.go`, `orchestrators.go`, `applications.go`, `runs.go` |
+| `internal/admin/` | CRUD API for agents/orchestrators/apps/runs — thin HTTP handlers | `agents.go`, `orchestrators.go`, `applications.go`, `runs.go` |
+| `internal/admin/dal/` | Admin Data Access Layer — all SQL query strings + row-scan helpers; handlers call these | `dal.go`, `agents.go`, `orchestrators.go`, `applications.go`, `runs.go` |
 | `internal/ratelimit/` | Redis INCR rate limiter per-token + per-app | `limiter.go` |
 
 ---
@@ -151,6 +152,7 @@ docker compose --profile go logs -f them-go-bridge
 | `internal/sse/handler.go` | `go test ./internal/sse/...` |
 | `internal/a2a/server.go` | `go test ./internal/a2a/...` |
 | `internal/admin/` (any file) | `go test ./internal/admin/...` |
+| `internal/admin/dal/` (any file) | `go test ./internal/admin/...` |
 | `internal/gate/gate.go` | `go test ./internal/gate/...` |
 | `internal/ratelimit/limiter.go` | `go test ./internal/ratelimit/...` |
 | `cmd/them/main.go` | `go test ./...` (full suite) |

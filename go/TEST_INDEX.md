@@ -287,6 +287,7 @@ Run on: every commit, every PR, every pre-deploy check.
 ### S1-15 · Admin API — `internal/admin/admin_test.go`
 
 **Purpose:** CRUD correctness, cache invalidation, EP config cross-pod invalidation, Temporal signal wiring.
+SQL query strings and scan helpers now live in `internal/admin/dal/`; the handler layer is tested here via fakeDB satisfying `dal.Querier`.
 
 | Test | What it proves |
 |---|---|
@@ -310,7 +311,7 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestCreateEntryPoint_ValidEPTypes_Accepted` | POST entry-point with each of `websocket`, `sse`, `voice` → 201 (3 subtests) |
 | `TestUpdateEntryPoint_EmptyEPType_Allowed` | PUT entry-point with empty `ep_type` → 200 (partial update — keeps existing DB value) |
 
-**Trigger:** any change to `internal/admin/agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `middleware.go`
+**Trigger:** any change to `internal/admin/` (any file) OR `internal/admin/dal/` (any file)
 
 ---
 
@@ -717,6 +718,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/cache/runstreamer_adapter.go` | S1-20 + S1-23 (integration) |
 | `internal/a2a/server.go` | S1-14 |
 | `internal/admin/` (any file) | S1-15 |
+| `internal/admin/dal/` (any file) | S1-15 |
 | `internal/ratelimit/limiter.go` | S1-16 |
 | `internal/gate/gate.go` | S1-17 |
 | `internal/epconfig/epconfig.go` | S1-18 |
