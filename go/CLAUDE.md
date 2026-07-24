@@ -182,3 +182,74 @@ docker compose --profile go logs -f them-go-bridge
 | Message format | Canonical domain types in DB | `internal/domain/domain.go` |
 | Tenant boundary | Application is the tenant | `06-domain-model.md` |
 | Bus subscribe timing | Subscribe BEFORE StartWorkflow | `internal/ws/handler.go` line ~154 |
+
+
+## Session Context and Handover Rule — Mandatory
+
+Do not continue working when the session context becomes too large or unreliable.
+
+Continuously watch for these warning signs:
+
+- difficulty recalling earlier decisions
+- repeating investigations already completed
+- conflicting statements about the current architecture
+- uncertainty about Git state, deployed state, routes, schema, or completed work
+- broad changes outside the approved task scope
+- repeatedly re-reading many files to reconstruct context
+- forgetting constraints from CLAUDE.md or the current task
+- long implementation sessions containing several commits or multiple distinct phases
+
+Before context quality degrades, stop implementation and prepare a handover.
+
+Trigger a handover at the latest when any of these occurs:
+
+- the current focused task is complete
+- 5–8 meaningful commits were created
+- the session crossed into a different subsystem
+- a new migration wave is about to begin
+- a major refactor or architecture decision is next
+- you are no longer fully confident that you can summarize the current state accurately
+
+Handover procedure:
+
+1. Stop making code changes.
+2. Complete and test the current focused step only.
+3. Commit all safe changes.
+4. Push when credentials are available.
+5. Confirm the working tree state.
+6. Create or update:
+
+   docs/architecture-v2/NEXT_SESSION_HANDOVER.md
+
+The handover must contain:
+
+- current objective
+- branch and exact HEAD
+- commits created in this session
+- push status
+- working tree and untracked files
+- work completed
+- deployed/live state
+- tests executed and exact totals
+- architecture decisions made
+- temporary compatibility code
+- known bugs and blockers
+- files most relevant to the next task
+- hard constraints that must remain in force
+- exact next single focused task
+- exact commands for starting and validating the next session
+
+For long content, write the details into the Markdown handover file.
+
+Return only:
+
+- handover file path
+- final HEAD
+- push status
+- Git status
+- reason a new session is recommended
+- exact command to start the next session
+- exact first prompt for the next session
+
+Do not begin the next task in the current session.
+Explicitly recommend closing this Claude session and starting a new one.

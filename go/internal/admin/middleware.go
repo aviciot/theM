@@ -52,6 +52,17 @@ type CacheInvalidator = service.Cache
 // Alias for service.Temporal — defined in the service package where it is consumed.
 type TemporalSignaler = service.Temporal
 
+// SessionReader is the admin service's view of the session store.
+// Alias for service.SessionReader — keeps router.go and main.go free of a direct
+// service import and consistent with the CacheInvalidator / TemporalSignaler pattern.
+type SessionReader = service.SessionReader
+
+// Token types re-exported for handler use.
+type Token = dal.Token
+type TokenCreatedOut = dal.TokenCreatedOut
+type TokenCreateRow = dal.TokenCreateRow
+type TokenPatchRow = dal.TokenPatchRow
+
 // RequireSuperAdmin returns a middleware that requires a valid JWT with the
 // super_admin role. Relies on auth.ClaimsFromCtx (set by JWTMiddleware).
 func RequireSuperAdmin(logger *slog.Logger) func(http.Handler) http.Handler {

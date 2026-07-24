@@ -129,6 +129,9 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestStore_WriteHeartbeat_ReportsRealCount` | Heartbeat uses `atomic.LoadInt32` — not hardcoded 0 |
 | `TestStore_SignalDisconnect_PubSub` | Disconnect signal published to correct Redis channel |
 | `TestStore_ActiveSessionsCounter_Atomic` | Concurrent register/end → counter is race-safe |
+| `TestStore_ListEPSessions` | `ListEPSessions` calls luaPruneAndList and returns live session IDs |
+| `TestStore_ListAppSessions` | `ListAppSessions` calls luaPruneAndList with app set key |
+| `TestStore_SignalDisconnect_ReturnsDelivered` | `SignalDisconnect` returns `(true, nil)` on success |
 
 **Trigger:** any change to `internal/session/session.go`
 
@@ -288,7 +291,7 @@ Shared interfaces and TokenHash now live in `internal/transport/`; this test exe
 
 ### S1-15 · Admin API — `internal/admin/admin_test.go`
 
-**Purpose:** CRUD correctness, cache invalidation, EP config cross-pod invalidation, Temporal signal wiring.
+**Purpose:** CRUD correctness, cache invalidation, EP config cross-pod invalidation, Temporal signal wiring, token CRUD handler contract, session admin handler contract (Wave 5).
 SQL query strings and scan helpers now live in `internal/admin/dal/`; the handler layer is tested here via fakeDB satisfying `dal.Querier`.
 
 | Test | What it proves |
@@ -312,6 +315,21 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 | `TestUpdateEntryPoint_InvalidEPType_Returns422` | PUT entry-point with `ep_type="tcp"` → 422; no cache invalidation published |
 | `TestCreateEntryPoint_ValidEPTypes_Accepted` | POST entry-point with each of `websocket`, `sse`, `voice` → 201 (3 subtests) |
 | `TestUpdateEntryPoint_EmptyEPType_Allowed` | PUT entry-point with empty `ep_type` → 200 (partial update — keeps existing DB value) |
+| `TestPatchAgentAliasesUpdate` | PATCH /agents/{id} is routed (not 405) |
+| `TestPatchOrchestratorAliasesUpdate` | PATCH /orchestrators/{name} is routed (not 405) |
+| `TestPatchApplicationAliasesUpdate` | PATCH /applications/{id} is routed (not 405) |
+| `TestPatchEntryPointAliasesUpdate` | PATCH /applications/{id}/entry-points/{ep_id} is routed (not 405) |
+| `TestListTokens_EmptyArray` | GET /tokens → `[]` not null |
+| `TestListTokens_InvalidUserID_400` | GET /tokens?user_id=bad → 400 |
+| `TestGetToken_NotFound` | GET /tokens/{id} with DB error → 404 |
+| `TestCreateToken_MissingLabel_400` | POST /tokens without label → 400 |
+| `TestDeleteToken_NotFound` | DELETE /tokens/{id} with pgx.ErrNoRows → 404 |
+| `TestListSessions_NeitherParam_400` | GET /sessions (no query params) → 400 |
+| `TestListSessions_BothParams_400` | GET /sessions?app_id=a&ep_slug=b → 400 |
+| `TestListSessions_ByAppID_ReturnsEmpty` | GET /sessions?app_id=x → `{"sessions":[],"count":0}` |
+| `TestListSessions_ByEPSlug_ReturnsEmpty` | GET /sessions?ep_slug=x → `{"sessions":[],"count":0}` |
+| `TestDisconnectSession_NotFound` | POST /sessions/{id}/disconnect, Get returns error → 404 |
+| `TestDisconnectSession_Success` | POST /sessions/{id}/disconnect, live session → 200 `{"signal_delivered":true}` |
 
 **Trigger:** any change to `internal/admin/` (any file) OR `internal/admin/dal/` (any file)
 
@@ -553,7 +571,18 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 | `TestAgentService_Create_EnabledFalse_Respected` | `enabled=false` passed in → DAL called with `enabled=false` (not default-overridden) |
 | `TestAgentService_Update_ReappliesMaxConcurrencyDefault` | `MaxConcurrency=0` on update → defaults to 5 |
 | `TestAgentService_Create_InvalidatesRegistry` | Successful create → `them:agents:registry` deleted from cache |
-| `TestTokenService_Smoke` | `TokenService` struct and `TokenGenerator` interface compile (Wave 5 placeholder) |
+| `TestTokenService_Create_GeneratesHashAndReturnsPlaintext` | Create generates crypto/rand token, stores hash, returns plaintext in Plaintext field |
+| `TestTokenService_Create_OrchMissing_NotFound` | orchID set but not in DB → `ErrNotFound` |
+| `TestTokenService_Create_NoOrch_SkipsExistsCheck` | nil orchID → OrchestratorExists never called |
+| `TestTokenService_Update_InvalidatesByHash` | Update success → cache Del + Publish called with correct hash |
+| `TestTokenService_Update_Missing_NotFound` | Update with pgx.ErrNoRows → `ErrNotFound` |
+| `TestTokenService_Delete_InvalidatesByHash` | Delete success → cache Del + Publish called with correct hash |
+| `TestTokenService_NilCache_NoPanic` | nil cache on Create/Update/Delete → no panic |
+| `TestTokenService_List_ForwardsUserFilter` | List forwards optional userID to DAL |
+| `TestSessionAdmin_ListByApp_SkipsNotFound` | Ghost session IDs (Get returns error) silently dropped |
+| `TestSessionAdmin_List_ReturnsEmptySliceNotNil` | Empty session set → non-nil `[]` |
+| `TestSessionAdmin_Disconnect_NotFound` | Get returns error → `ErrNotFound` |
+| `TestSessionAdmin_Disconnect_Delivered` | Get succeeds + SignalDisconnect → `(true, nil)` |
 | `TestAgentService_NilCache_NoPanic` | nil cache → no panic (cache is optional) |
 | `TestOrchService_Create_Defaults` | Missing MaxIterations/HistoryWindow → defaults applied (10, 20); enabled defaults to true |
 | `TestOrchService_Create_MissingName_Validation` | Missing name → `ErrValidation` |
@@ -818,7 +847,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-03 | server | 4 |
 | S1-04 | auth/jwt | 9 |
 | S1-05 | auth/token_cache | 5 |
-| S1-06 | session | 7 |
+| S1-06 | session | 10 |
 | S1-07 | event | 6 |
 | S1-08 | domain | 3 |
 | S1-09 | runrecorder | 8 |
@@ -827,7 +856,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-12 | ws | 16 |
 | S1-13 | sse | 15 |
 | S1-14 | a2a | 3 |
-| S1-15 | admin | 19 |
+| S1-15 | admin | 34 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
@@ -837,12 +866,12 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-22 | reconciler | 15 |
 | S1-23 | runstream (streamer + dispatcher) | 15 |
 | S1-24 | cmd/them (apps dispatcher) | 5 |
-| S1-25 | admin/service | 23 |
-| **S1 total** | | **240** |
+| S1-25 | admin/service | 34 |
+| **S1 total** | | **265** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
 | S2-03 (MAXLEN) | runstream MAXLEN + reconnect + cross-replica | 7 |
 | **S2 total** | | **20** |
 | S3 live | manual | 23 |
-| **Grand total** | | **283** |
+| **Grand total** | | **308** |

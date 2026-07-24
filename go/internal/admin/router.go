@@ -5,12 +5,17 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/aviciot/them/internal/admin/service"
 )
 
 // BuildRouter returns an http.Handler with all admin and runs routes mounted.
 //
 // jwtMiddleware is the JWT validation middleware (from auth.JWTMiddleware).
 // Pass nil to disable JWT protection (development only).
+//
+// sessionReader is the session store for admin session listing/disconnect.
+// Pass nil to disable session admin routes (development only).
 //
 // Routes:
 //
@@ -23,6 +28,13 @@ import (
 //	... (full CRUD)
 //	GET    /admin/applications
 //	... (full CRUD + entry points)
+//	GET    /admin/tokens
+//	POST   /admin/tokens
+//	GET    /admin/tokens/{token_id}
+//	PATCH  /admin/tokens/{token_id}
+//	DELETE /admin/tokens/{token_id}
+//	GET    /admin/sessions
+//	POST   /admin/sessions/{session_id}/disconnect
 //	GET    /runs
 //	GET    /runs/{run_id}
 //	POST   /runs/{run_id}/signal
@@ -30,6 +42,7 @@ func BuildRouter(
 	db DBQuerier,
 	cache CacheInvalidator,
 	temporal TemporalSignaler,
+	sessionReader service.SessionReader,
 	jwtMiddleware func(http.Handler) http.Handler,
 	logger *slog.Logger,
 ) http.Handler {
@@ -39,6 +52,7 @@ func BuildRouter(
 	orchs := NewOrchestratorsHandler(db, cache)
 	apps := NewApplicationsHandler(db, cache)
 	runs := NewRunsHandler(db, temporal)
+	tokens := NewTokensHandler(db, cache)
 
 	// Admin routes — protected by JWT + super_admin role check.
 	r.Group(func(admin chi.Router) {
@@ -52,6 +66,10 @@ func BuildRouter(
 			agents.Routes(a)
 			orchs.Routes(a)
 			apps.Routes(a)
+			tokens.Routes(a)
+			if sessionReader != nil {
+				NewSessionsHandler(sessionReader).Routes(a)
+			}
 		})
 	})
 

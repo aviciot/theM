@@ -12,10 +12,12 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/aviciot/them/internal/admin"
+	"github.com/aviciot/them/internal/session"
 )
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
@@ -591,6 +593,207 @@ func TestPatchEntryPointAliasesUpdate(t *testing.T) {
 	})
 	w := serveApps(t, db, cache, http.MethodPatch, "/applications/uuid-1/entry-points/uuid-2", body)
 	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code, "PATCH /applications/{id}/entry-points/{ep_id} must be routed (not 405)")
+}
+
+// ── fakeSessionReader for session handler tests ───────────────────────────────
+
+type fakeSessionReader struct {
+	epSessions []string
+	appSessions []string
+	info       *session.SessionInfo
+	getErr     error
+	sigErr     error
+	sigDelivered bool
+}
+
+func (f *fakeSessionReader) ListEPSessions(_ context.Context, _ string) ([]string, error) {
+	return f.epSessions, nil
+}
+func (f *fakeSessionReader) ListAppSessions(_ context.Context, _ string) ([]string, error) {
+	return f.appSessions, nil
+}
+func (f *fakeSessionReader) Get(_ context.Context, _ string) (*session.SessionInfo, error) {
+	return f.info, f.getErr
+}
+func (f *fakeSessionReader) SignalDisconnect(_ context.Context, _ string) (bool, error) {
+	return f.sigDelivered, f.sigErr
+}
+
+// ── TokensHandler tests ───────────────────────────────────────────────────────
+
+// TK-1: List tokens — empty slice returned, not null.
+func TestListTokens_EmptyArray(t *testing.T) {
+	db := &fakeDB{queryRows: newFakeRows(nil)}
+	h := admin.NewTokensHandler(db, nil)
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/tokens", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var tokens []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tokens))
+	assert.NotNil(t, tokens)
+	assert.Empty(t, tokens)
+}
+
+// TK-2: List tokens with invalid user_id → 400.
+func TestListTokens_InvalidUserID_400(t *testing.T) {
+	db := &fakeDB{queryRows: newFakeRows(nil)}
+	h := admin.NewTokensHandler(db, nil)
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/tokens?user_id=not-a-number", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TK-3: Get nonexistent token → 404.
+func TestGetToken_NotFound(t *testing.T) {
+	db := &fakeDB{queryRowErr: errors.New("no rows")}
+	h := admin.NewTokensHandler(db, nil)
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/tokens/some-id", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TK-4: Create token with missing label → 400.
+func TestCreateToken_MissingLabel_400(t *testing.T) {
+	db := &fakeDB{}
+	h := admin.NewTokensHandler(db, nil)
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	body, _ := json.Marshal(map[string]any{"user_id": 1})
+	req := httptest.NewRequest(http.MethodPost, "/tokens", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TK-5: Delete token that does not exist → 404.
+func TestDeleteToken_NotFound(t *testing.T) {
+	// ExecReturning must return pgx.ErrNoRows so IsNoRows detects it.
+	db := &fakeDB{execRetErr: pgx.ErrNoRows}
+	h := admin.NewTokensHandler(db, nil)
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	req := httptest.NewRequest(http.MethodDelete, "/tokens/missing-id", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ── SessionsHandler tests ─────────────────────────────────────────────────────
+
+// SS-1: List sessions without app_id or ep_slug → 400.
+func TestListSessions_NeitherParam_400(t *testing.T) {
+	h := admin.NewSessionsHandler(&fakeSessionReader{})
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// SS-2: List sessions with both app_id and ep_slug → 400.
+func TestListSessions_BothParams_400(t *testing.T) {
+	h := admin.NewSessionsHandler(&fakeSessionReader{})
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/sessions?app_id=a&ep_slug=b", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// SS-3: List sessions by app_id — returns {"sessions":[],"count":0}.
+func TestListSessions_ByAppID_ReturnsEmpty(t *testing.T) {
+	sr := &fakeSessionReader{appSessions: []string{}}
+	h := admin.NewSessionsHandler(sr)
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/sessions?app_id=app-1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, float64(0), body["count"])
+	assert.NotNil(t, body["sessions"])
+}
+
+// SS-4: List sessions by ep_slug — returns {"sessions":[],"count":0}.
+func TestListSessions_ByEPSlug_ReturnsEmpty(t *testing.T) {
+	sr := &fakeSessionReader{epSessions: []string{}}
+	h := admin.NewSessionsHandler(sr)
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/sessions?ep_slug=my-ep", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, float64(0), body["count"])
+}
+
+// SS-5: Disconnect nonexistent session → 404.
+func TestDisconnectSession_NotFound(t *testing.T) {
+	sr := &fakeSessionReader{getErr: errors.New("not found")}
+	h := admin.NewSessionsHandler(sr)
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/sessions/sess-missing/disconnect", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// SS-6: Disconnect live session — returns 200 with signal_delivered.
+func TestDisconnectSession_Success(t *testing.T) {
+	sr := &fakeSessionReader{
+		info:         &session.SessionInfo{SessionID: "sess-live"},
+		sigDelivered: true,
+	}
+	h := admin.NewSessionsHandler(sr)
+	r := chi.NewRouter()
+	h.Routes(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/sessions/sess-live/disconnect", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, "sess-live", body["session_id"])
+	assert.Equal(t, true, body["signal_delivered"])
 }
 
 // 5. Signal run — calls Temporal client with "ctx-{context_id}" workflow ID.
