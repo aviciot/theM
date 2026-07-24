@@ -160,6 +160,16 @@ func (t *fakeTemporal) SignalRun(_ context.Context, wfID string, _ []byte) error
 	return nil
 }
 
+// ── TokenService smoke test ───────────────────────────────────────────────────
+
+// TestTokenService_Smoke ensures TokenService compiles and can be instantiated.
+// Full CRUD will be added in Wave 5 alongside the TokenGenerator wiring.
+func TestTokenService_Smoke(t *testing.T) {
+	var _ service.TokenGenerator = nil // interface exists at compile time
+	svc := service.TokenService{}
+	_ = svc // no methods yet — Wave 5
+}
+
 // ── AgentService tests ────────────────────────────────────────────────────────
 
 func TestAgentService_Create_Defaults(t *testing.T) {
