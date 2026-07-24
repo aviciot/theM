@@ -246,6 +246,66 @@ func TestAgentService_NilCache_NoPanic(t *testing.T) {
 	}
 }
 
+// ── OrchService tests ─────────────────────────────────────────────────────────
+
+func TestOrchService_Create_Defaults(t *testing.T) {
+	d := &fakeDal{createdID: "orch-1"}
+	svc := service.NewOrchService(d, nil)
+	in := dal.OrchestratorInput{Name: "my-orch"}
+	_, err := svc.Create(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := d.createOrchCalls[0]
+	if got.MaxIterations != 10 {
+		t.Errorf("MaxIterations: want 10, got %d", got.MaxIterations)
+	}
+	if got.HistoryWindow != 20 {
+		t.Errorf("HistoryWindow: want 20, got %d", got.HistoryWindow)
+	}
+	if !d.createOrchEnabledCalls[0] {
+		t.Error("enabled: want true (default)")
+	}
+}
+
+func TestOrchService_Create_MissingName_Validation(t *testing.T) {
+	svc := service.NewOrchService(&fakeDal{}, nil)
+	_, err := svc.Create(context.Background(), dal.OrchestratorInput{})
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation, got %v", err)
+	}
+}
+
+func TestOrchService_Create_InvalidatesCache(t *testing.T) {
+	c := &fakeCache{}
+	svc := service.NewOrchService(&fakeDal{createdID: "orch-2"}, c)
+	_, _ = svc.Create(context.Background(), dal.OrchestratorInput{Name: "my-orch"})
+	found := false
+	for _, k := range c.deletedKeys {
+		if k == "them:orchestrators:my-orch" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("them:orchestrators:my-orch not deleted, got %v", c.deletedKeys)
+	}
+}
+
+func TestOrchService_Delete_InvalidatesCache(t *testing.T) {
+	c := &fakeCache{}
+	svc := service.NewOrchService(&fakeDal{}, c)
+	_ = svc.Delete(context.Background(), "target-orch")
+	found := false
+	for _, k := range c.deletedKeys {
+		if k == "them:orchestrators:target-orch" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("them:orchestrators:target-orch not deleted, got %v", c.deletedKeys)
+	}
+}
+
 // ── RunService tests ───────────────────────────────────────────────────────────
 
 func TestRunService_Signal_BuildsWorkflowID(t *testing.T) {

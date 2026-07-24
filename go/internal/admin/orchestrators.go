@@ -8,18 +8,17 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/admin/service"
 )
 
 // OrchestratorsHandler handles /api/v1/admin/orchestrators routes.
 type OrchestratorsHandler struct {
-	db    DBQuerier
-	cache CacheInvalidator
-	dal   *dal.DB
+	svc *service.OrchService
 }
 
 // NewOrchestratorsHandler creates an OrchestratorsHandler.
 func NewOrchestratorsHandler(db DBQuerier, cache CacheInvalidator) *OrchestratorsHandler {
-	return &OrchestratorsHandler{db: db, cache: cache, dal: dal.NewDB(db)}
+	return &OrchestratorsHandler{svc: service.NewOrchService(dal.NewDB(db), cache)}
 }
 
 // Routes mounts the orchestrator CRUD endpoints.
@@ -34,7 +33,7 @@ func (h *OrchestratorsHandler) Routes(r chi.Router) {
 
 // List handles GET /api/v1/admin/orchestrators.
 func (h *OrchestratorsHandler) List(w http.ResponseWriter, r *http.Request) {
-	orchs, err := h.dal.ListOrchestrators(r.Context())
+	orchs, err := h.svc.List(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
 		return
@@ -49,28 +48,15 @@ func (h *OrchestratorsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if input.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-	enabled := true
-	if input.Enabled != nil {
-		enabled = *input.Enabled
-	}
-	if input.MaxIterations <= 0 {
-		input.MaxIterations = 10
-	}
-	if input.HistoryWindow <= 0 {
-		input.HistoryWindow = 20
-	}
 
-	id, err := h.dal.CreateOrchestrator(r.Context(), input, enabled)
+	id, err := h.svc.Create(r.Context(), input)
 	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "create orchestrator: "+err.Error())
 		return
 	}
-
-	h.invalidateCache(r, input.Name)
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/orchestrators/%s", input.Name))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": input.Name})
@@ -80,7 +66,7 @@ func (h *OrchestratorsHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *OrchestratorsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	o, err := h.dal.GetOrchestrator(r.Context(), name)
+	o, err := h.svc.Get(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "orchestrator not found")
 		return
@@ -97,17 +83,11 @@ func (h *OrchestratorsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	enabled := true
-	if input.Enabled != nil {
-		enabled = *input.Enabled
-	}
 
-	if err := h.dal.UpdateOrchestrator(r.Context(), name, input, enabled); err != nil {
+	if err := h.svc.Update(r.Context(), name, input); err != nil {
 		writeError(w, http.StatusInternalServerError, "update orchestrator: "+err.Error())
 		return
 	}
-
-	h.invalidateCache(r, name)
 
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "updated": true})
 }
@@ -116,19 +96,10 @@ func (h *OrchestratorsHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *OrchestratorsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	if err := h.dal.DeleteOrchestrator(r.Context(), name); err != nil {
+	if err := h.svc.Delete(r.Context(), name); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete orchestrator: "+err.Error())
 		return
 	}
 
-	h.invalidateCache(r, name)
-
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "deleted": true})
-}
-
-func (h *OrchestratorsHandler) invalidateCache(r *http.Request, name string) {
-	if h.cache == nil {
-		return
-	}
-	_ = h.cache.Del(r.Context(), fmt.Sprintf("them:orchestrators:%s", name))
 }

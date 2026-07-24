@@ -554,6 +554,10 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 | `TestAgentService_Update_ReappliesMaxConcurrencyDefault` | `MaxConcurrency=0` on update → defaults to 5 |
 | `TestAgentService_Create_InvalidatesRegistry` | Successful create → `them:agents:registry` deleted from cache |
 | `TestAgentService_NilCache_NoPanic` | nil cache → no panic (cache is optional) |
+| `TestOrchService_Create_Defaults` | Missing MaxIterations/HistoryWindow → defaults applied (10, 20); enabled defaults to true |
+| `TestOrchService_Create_MissingName_Validation` | Missing name → `ErrValidation` |
+| `TestOrchService_Create_InvalidatesCache` | Successful create → `them:orchestrators:{name}` deleted from cache |
+| `TestOrchService_Delete_InvalidatesCache` | Delete → `them:orchestrators:{name}` deleted from cache |
 | `TestRunService_Signal_BuildsWorkflowID` | `Signal` constructs `"ctx-{contextID}"` workflow ID |
 | `TestRunService_Signal_TemporalNil_Unavailable` | nil Temporal → `ErrTemporalUnavailable` |
 | `TestRunService_Signal_DBError_NotNotFound` | Non-pgx DB error → returned as-is, not mapped to ErrNotFound |
@@ -825,12 +829,12 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-22 | reconciler | 15 |
 | S1-23 | runstream (streamer + dispatcher) | 15 |
 | S1-24 | cmd/them (apps dispatcher) | 5 |
-| S1-25 | admin/service | 11 |
-| **S1 total** | | **228** |
+| S1-25 | admin/service | 15 |
+| **S1 total** | | **232** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
 | S2-03 (MAXLEN) | runstream MAXLEN + reconnect + cross-replica | 7 |
 | **S2 total** | | **20** |
 | S3 live | manual | 23 |
-| **Grand total** | | **271** |
+| **Grand total** | | **275** |
