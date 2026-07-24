@@ -539,6 +539,24 @@ history-expired rows). Status mapping per ADR-002.
 
 ---
 
+### S1-24 · Apps dispatcher — `cmd/them/dispatcher_test.go`
+
+**Purpose:** Verify that `appsDispatcher` routes `/ws` paths to the WS handler, `/sse` paths to
+the SSE handler, and returns 404 for everything else — without leaking unknown paths to either
+sub-handler. Method enforcement (405) is delegated to the chi sub-handler, not the dispatcher.
+
+| Test | What it proves |
+|---|---|
+| `TestAppsDispatcher_WSPath` | `GET /{slug}/ws` → WS handler called; SSE handler not called |
+| `TestAppsDispatcher_SSEPath_GET` | `GET /{slug}/sse` → SSE handler called; WS handler not called |
+| `TestAppsDispatcher_SSEPath_POST` | `POST /{slug}/sse` → SSE handler called; WS handler not called |
+| `TestAppsDispatcher_UnknownPath_Returns404` | Unknown paths (`/grpc`, `/`, etc.) → 404; neither handler called |
+| `TestAppsDispatcher_UnsupportedMethod_WS` | `POST /{slug}/ws` forwarded to WS handler (returns 405 from chi); SSE not called |
+
+**Trigger:** any change to `cmd/them/main.go` (`appsDispatcher` function)
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -730,7 +748,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/cache/runstream_adapter.go` | S1-20 |
 | `internal/runstream/stream.go` | S1-21 |
 | `internal/reconciler/reconciler.go` | S1-22 |
-| `cmd/them/main.go` | S1 (full suite) |
+| `cmd/them/main.go` | S1-24 + S1 (full suite) |
 | `go.mod` or `go.sum` | S1 (full suite) |
 | `Dockerfile.go` | S1 + rebuild + S2 |
 | `docker-compose.yml` | S2 + S3 T-01..T-05 |
@@ -781,11 +799,12 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-21 | runstream (pub/sub) | 10 |
 | S1-22 | reconciler | 15 |
 | S1-23 | runstream (streamer + dispatcher) | 15 |
-| **S1 total** | | **212** |
+| S1-24 | cmd/them (apps dispatcher) | 5 |
+| **S1 total** | | **217** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
 | S2-03 (MAXLEN) | runstream MAXLEN + reconnect + cross-replica | 7 |
 | **S2 total** | | **20** |
 | S3 live | manual | 23 |
-| **Grand total** | | **255** |
+| **Grand total** | | **260** |

@@ -252,15 +252,7 @@ func run() error {
 	// ── 17c. Mount /apps/{slug}/ws and /apps/{slug}/sse aliases ─────────────
 	// These are the app entry-point URLs used by the frontend.
 	// MountApps("/apps") strips the prefix, so sub-routes are /{slug}/ws etc.
-	wsApps := wsHandler.AppsWSRoute()
-	sseApps := sseHandler.AppsSSERoute()
-	srv.MountApps(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/ws") {
-			wsApps.ServeHTTP(w, r)
-		} else {
-			sseApps.ServeHTTP(w, r)
-		}
-	}))
+	srv.MountApps(appsDispatcher(wsHandler.AppsWSRoute(), sseHandler.AppsSSERoute()))
 	log.Info("apps WS+SSE aliases mounted", "prefix", "/apps")
 
 	// ── 17. Wire A2A server (/a2a/*, /.well-known/*) ─────────────────────────
@@ -285,3 +277,18 @@ func run() error {
 	return srv.ListenAndServe()
 }
 
+// appsDispatcher routes /apps/{slug}/ws to wsApps, /apps/{slug}/sse to sseApps,
+// and returns 404 for anything else. Each sub-handler owns its own chi router and
+// URL param remapping; this function only decides which one receives the request.
+func appsDispatcher(wsApps, sseApps http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/ws"):
+			wsApps.ServeHTTP(w, r)
+		case strings.HasSuffix(r.URL.Path, "/sse"):
+			sseApps.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
