@@ -48,6 +48,14 @@ type Dal interface {
 	ListRuns(ctx context.Context, contextID string, limit int) ([]dal.Run, error)
 	GetRun(ctx context.Context, runID string) (dal.Run, error)
 	GetRunContextID(ctx context.Context, runID string) (string, error)
+
+	// Tokens
+	ListTokens(ctx context.Context, userID *int64) ([]dal.Token, error)
+	GetToken(ctx context.Context, id string) (dal.Token, error)
+	OrchestratorExists(ctx context.Context, orchID string) (bool, error)
+	CreateToken(ctx context.Context, in dal.TokenCreateRow) (dal.Token, error)
+	UpdateToken(ctx context.Context, id string, patch dal.TokenPatchRow) (hash string, out dal.Token, err error)
+	DeleteToken(ctx context.Context, id string) (hash string, err error)
 }
 
 // Cache invalidates Redis caches on mutations.

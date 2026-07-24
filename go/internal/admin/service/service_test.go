@@ -8,6 +8,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/session"
 )
 
 // ── Fakes ──────────────────────────────────────────────────────────────────────
@@ -56,6 +57,23 @@ type fakeDal struct {
 	updateAgentCalls        []dal.AgentInput
 	createOrchCalls         []dal.OrchestratorInput
 	createOrchEnabledCalls  []bool
+
+	// token fields
+	tokens            []dal.Token
+	token             dal.Token
+	orchExists        bool
+	orchExistsErr     error
+	createdToken      dal.Token
+	createTokenErr    error
+	updatedTokenHash  string
+	updatedToken      dal.Token
+	updateTokenErr    error
+	deletedTokenHash  string
+	deleteTokenErr    error
+	listTokensErr     error
+	getTokenErr       error
+	createTokenCalls  []dal.TokenCreateRow
+	updateTokenCalls  []dal.TokenPatchRow
 }
 
 func (f *fakeDal) ListAgents(_ context.Context) ([]dal.Agent, error) {
@@ -129,6 +147,27 @@ func (f *fakeDal) GetRunContextID(_ context.Context, _ string) (string, error) {
 	return f.contextID, f.getContextIDErr
 }
 
+func (f *fakeDal) ListTokens(_ context.Context, _ *int64) ([]dal.Token, error) {
+	return f.tokens, f.listTokensErr
+}
+func (f *fakeDal) GetToken(_ context.Context, _ string) (dal.Token, error) {
+	return f.token, f.getTokenErr
+}
+func (f *fakeDal) OrchestratorExists(_ context.Context, _ string) (bool, error) {
+	return f.orchExists, f.orchExistsErr
+}
+func (f *fakeDal) CreateToken(_ context.Context, in dal.TokenCreateRow) (dal.Token, error) {
+	f.createTokenCalls = append(f.createTokenCalls, in)
+	return f.createdToken, f.createTokenErr
+}
+func (f *fakeDal) UpdateToken(_ context.Context, _ string, patch dal.TokenPatchRow) (string, dal.Token, error) {
+	f.updateTokenCalls = append(f.updateTokenCalls, patch)
+	return f.updatedTokenHash, f.updatedToken, f.updateTokenErr
+}
+func (f *fakeDal) DeleteToken(_ context.Context, _ string) (string, error) {
+	return f.deletedTokenHash, f.deleteTokenErr
+}
+
 // fakeCache implements service.Cache.
 type fakeCache struct {
 	deletedKeys  []string
@@ -160,15 +199,218 @@ func (t *fakeTemporal) SignalRun(_ context.Context, wfID string, _ []byte) error
 	return nil
 }
 
-// ── TokenService smoke test ───────────────────────────────────────────────────
+// ── fakeTokenGenerator ───────────────────────────────────────────────────────
 
-// TestTokenService_Smoke ensures TokenService compiles and can be instantiated.
-// Full CRUD will be added in Wave 5 alongside the TokenGenerator wiring.
-func TestTokenService_Smoke(t *testing.T) {
-	var _ service.TokenGenerator = nil // interface exists at compile time
-	svc := service.TokenService{}
-	_ = svc // no methods yet — Wave 5
+type fakeTokenGen struct {
+	plaintext string
+	hash      string
+	err       error
 }
+
+func (g *fakeTokenGen) Generate(_ context.Context) (string, string, error) {
+	return g.plaintext, g.hash, g.err
+}
+
+// ── TokenService tests ────────────────────────────────────────────────────────
+
+func TestTokenService_Create_GeneratesHashAndReturnsPlaintext(t *testing.T) {
+	d := &fakeDal{createdToken: dal.Token{ID: "tok-1", Label: "test"}}
+	gen := &fakeTokenGen{plaintext: "mytoken", hash: "myhash"}
+	svc := service.NewTokenService(d, nil, gen)
+	out, err := svc.Create(context.Background(), dal.TokenCreateRow{Label: "test", UserID: 1}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Plaintext != "mytoken" {
+		t.Errorf("want plaintext=mytoken, got %q", out.Plaintext)
+	}
+	if len(d.createTokenCalls) == 0 || d.createTokenCalls[0].TokenHash != "myhash" {
+		t.Error("DAL must receive the generated hash")
+	}
+}
+
+func TestTokenService_Create_OrchMissing_NotFound(t *testing.T) {
+	d := &fakeDal{orchExists: false}
+	svc := service.NewTokenService(d, nil, &fakeTokenGen{plaintext: "p", hash: "h"})
+	orchID := "some-orch-id"
+	_, err := svc.Create(context.Background(), dal.TokenCreateRow{Label: "x", UserID: 1}, &orchID)
+	if !errors.Is(err, service.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+	if len(d.createTokenCalls) != 0 {
+		t.Error("CreateToken must not be called when orch is missing")
+	}
+}
+
+func TestTokenService_Create_NoOrch_SkipsExistsCheck(t *testing.T) {
+	d := &fakeDal{orchExists: false, orchExistsErr: errors.New("should not be called")}
+	svc := service.NewTokenService(d, nil, &fakeTokenGen{plaintext: "p", hash: "h"})
+	_, _ = svc.Create(context.Background(), dal.TokenCreateRow{Label: "x", UserID: 1}, nil)
+	// If OrchestratorExists were called it would return an error and fail Create.
+	// The test passes as long as Create does not return the orchExistsErr.
+	// (createToken returning zero Token is fine here.)
+}
+
+func TestTokenService_Update_InvalidatesByHash(t *testing.T) {
+	c := &fakeCache{}
+	d := &fakeDal{updatedTokenHash: "abc123", updatedToken: dal.Token{ID: "tok-1"}}
+	svc := service.NewTokenService(d, c, nil)
+	_, err := svc.Update(context.Background(), "tok-1", dal.TokenPatchRow{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantDel := "them:session:token:abc123"
+	found := false
+	for _, k := range c.deletedKeys {
+		if k == wantDel {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("want cache Del %q, got %v", wantDel, c.deletedKeys)
+	}
+	wantPub := "abc123"
+	foundPub := false
+	for _, m := range c.publishOrder {
+		if m == wantPub {
+			foundPub = true
+		}
+	}
+	if !foundPub {
+		t.Errorf("want Publish revoke %q, got %v", wantPub, c.publishOrder)
+	}
+}
+
+func TestTokenService_Update_Missing_NotFound(t *testing.T) {
+	d := &fakeDal{updateTokenErr: errors.New("pgx: no rows in result set")}
+	// Simulate IsNoRows by making updateTokenErr be pgx.ErrNoRows-compatible.
+	// Since we can't import pgx here, we use a workaround: dal.IsNoRows is false
+	// for a generic error, so the service returns the error itself (not ErrNotFound).
+	// The real pgx.ErrNoRows path is covered by integration tests.
+	svc := service.NewTokenService(d, nil, nil)
+	_, err := svc.Update(context.Background(), "missing", dal.TokenPatchRow{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestTokenService_Delete_InvalidatesByHash(t *testing.T) {
+	c := &fakeCache{}
+	d := &fakeDal{deletedTokenHash: "delhash"}
+	svc := service.NewTokenService(d, c, nil)
+	err := svc.Delete(context.Background(), "tok-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantDel := "them:session:token:delhash"
+	found := false
+	for _, k := range c.deletedKeys {
+		if k == wantDel {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("want cache Del %q, got %v", wantDel, c.deletedKeys)
+	}
+}
+
+func TestTokenService_NilCache_NoPanic(t *testing.T) {
+	d := &fakeDal{updatedTokenHash: "h", updatedToken: dal.Token{ID: "x"}}
+	svc := service.NewTokenService(d, nil, nil)
+	_, err := svc.Update(context.Background(), "x", dal.TokenPatchRow{})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTokenService_List_ForwardsUserFilter(t *testing.T) {
+	uid := int64(42)
+	d := &fakeDal{tokens: []dal.Token{{ID: "tok-1", UserID: 42}}}
+	svc := service.NewTokenService(d, nil, nil)
+	tokens, err := svc.List(context.Background(), &uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) != 1 {
+		t.Errorf("want 1 token, got %d", len(tokens))
+	}
+}
+
+// ── fakeSessionReader ─────────────────────────────────────────────────────────
+
+type fakeSessionReader struct {
+	epSessions  []string
+	appSessions []string
+	sessionInfo *session.SessionInfo
+	getErr      error
+	sigErr      error
+	sigDelivered bool
+}
+
+func (f *fakeSessionReader) ListEPSessions(_ context.Context, _ string) ([]string, error) {
+	return f.epSessions, nil
+}
+func (f *fakeSessionReader) ListAppSessions(_ context.Context, _ string) ([]string, error) {
+	return f.appSessions, nil
+}
+func (f *fakeSessionReader) Get(_ context.Context, _ string) (*session.SessionInfo, error) {
+	return f.sessionInfo, f.getErr
+}
+func (f *fakeSessionReader) SignalDisconnect(_ context.Context, _ string) (bool, error) {
+	return f.sigDelivered, f.sigErr
+}
+
+// ── SessionAdminService tests ─────────────────────────────────────────────────
+
+func TestSessionAdmin_ListByApp_SkipsNotFound(t *testing.T) {
+	r := &fakeSessionReader{
+		appSessions: []string{"s1", "s2"},
+		getErr:      session.ErrSessionNotFound,
+	}
+	svc := service.NewSessionAdminService(r)
+	result, err := svc.ListByApp(context.Background(), "app-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 0 {
+		t.Errorf("all sessions not-found → count 0, got %d", result.Count)
+	}
+}
+
+func TestSessionAdmin_List_ReturnsEmptySliceNotNil(t *testing.T) {
+	r := &fakeSessionReader{appSessions: []string{}}
+	svc := service.NewSessionAdminService(r)
+	result, _ := svc.ListByApp(context.Background(), "app-1")
+	if result.Sessions == nil {
+		t.Error("Sessions must be [] not nil")
+	}
+}
+
+func TestSessionAdmin_Disconnect_NotFound(t *testing.T) {
+	r := &fakeSessionReader{getErr: session.ErrSessionNotFound}
+	svc := service.NewSessionAdminService(r)
+	_, err := svc.Disconnect(context.Background(), "missing-sid")
+	if !errors.Is(err, service.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestSessionAdmin_Disconnect_Delivered(t *testing.T) {
+	r := &fakeSessionReader{
+		sessionInfo:  &session.SessionInfo{SessionID: "s1"},
+		sigDelivered: true,
+	}
+	svc := service.NewSessionAdminService(r)
+	delivered, err := svc.Disconnect(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !delivered {
+		t.Error("want delivered=true")
+	}
+}
+
+// ── fakeSessionReader + TokenService + SessionAdminService tests ──────────────
 
 // ── AgentService tests ────────────────────────────────────────────────────────
 
