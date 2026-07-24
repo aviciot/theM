@@ -160,6 +160,92 @@ func (t *fakeTemporal) SignalRun(_ context.Context, wfID string, _ []byte) error
 	return nil
 }
 
+// ── AgentService tests ────────────────────────────────────────────────────────
+
+func TestAgentService_Create_Defaults(t *testing.T) {
+	d := &fakeDal{createdID: "id-1"}
+	svc := service.NewAgentService(d, nil)
+	in := dal.AgentInput{Slug: "my-agent", DisplayName: "My Agent"}
+	_, err := svc.Create(context.Background(), in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := d.createAgentCalls[0]
+	if got.Transport != "a2a_async" {
+		t.Errorf("Transport: want a2a_async, got %q", got.Transport)
+	}
+	if got.MaxConcurrency != 5 {
+		t.Errorf("MaxConcurrency: want 5, got %d", got.MaxConcurrency)
+	}
+	if got.MaxRetries != 2 {
+		t.Errorf("MaxRetries: want 2, got %d", got.MaxRetries)
+	}
+	if got.TimeoutSeconds != 30 {
+		t.Errorf("TimeoutSeconds: want 30, got %d", got.TimeoutSeconds)
+	}
+	if !d.createAgentEnabledCalls[0] {
+		t.Error("enabled: want true (default)")
+	}
+}
+
+func TestAgentService_Create_MissingSlug_Validation(t *testing.T) {
+	svc := service.NewAgentService(&fakeDal{}, nil)
+	_, err := svc.Create(context.Background(), dal.AgentInput{DisplayName: "D"})
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation, got %v", err)
+	}
+}
+
+func TestAgentService_Create_MissingDisplayName_Validation(t *testing.T) {
+	svc := service.NewAgentService(&fakeDal{}, nil)
+	_, err := svc.Create(context.Background(), dal.AgentInput{Slug: "s"})
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation, got %v", err)
+	}
+}
+
+func TestAgentService_Create_EnabledFalse_Respected(t *testing.T) {
+	d := &fakeDal{createdID: "id-2"}
+	svc := service.NewAgentService(d, nil)
+	f := false
+	_, _ = svc.Create(context.Background(), dal.AgentInput{Slug: "s", DisplayName: "D", Enabled: &f})
+	if len(d.createAgentEnabledCalls) == 0 || d.createAgentEnabledCalls[0] {
+		t.Error("enabled=false must be passed to DAL")
+	}
+}
+
+func TestAgentService_Update_ReappliesMaxConcurrencyDefault(t *testing.T) {
+	d := &fakeDal{}
+	svc := service.NewAgentService(d, nil)
+	_ = svc.Update(context.Background(), "id-1", dal.AgentInput{MaxConcurrency: 0})
+	if len(d.updateAgentCalls) == 0 || d.updateAgentCalls[0].MaxConcurrency != 5 {
+		t.Error("MaxConcurrency must default to 5 on update")
+	}
+}
+
+func TestAgentService_Create_InvalidatesRegistry(t *testing.T) {
+	c := &fakeCache{}
+	svc := service.NewAgentService(&fakeDal{createdID: "id-3"}, c)
+	_, _ = svc.Create(context.Background(), dal.AgentInput{Slug: "s", DisplayName: "D"})
+	found := false
+	for _, k := range c.deletedKeys {
+		if k == "them:agents:registry" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("them:agents:registry not deleted, got %v", c.deletedKeys)
+	}
+}
+
+func TestAgentService_NilCache_NoPanic(t *testing.T) {
+	svc := service.NewAgentService(&fakeDal{createdID: "id-4"}, nil)
+	_, err := svc.Create(context.Background(), dal.AgentInput{Slug: "s", DisplayName: "D"})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // ── RunService tests ───────────────────────────────────────────────────────────
 
 func TestRunService_Signal_BuildsWorkflowID(t *testing.T) {

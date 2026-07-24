@@ -539,6 +539,30 @@ history-expired rows). Status mapping per ADR-002.
 
 ---
 
+### S1-25 · Admin service layer — `internal/admin/service/service_test.go`
+
+**Purpose:** Unit tests for the admin service layer. Covers business logic in isolation using fakes
+for all dependencies (Dal, Cache, Temporal). Verifies default application, validation, cache
+invalidation, and error mapping — without any real DB, Redis, or Temporal.
+
+| Test | What it proves |
+|---|---|
+| `TestAgentService_Create_Defaults` | Missing transport/MaxConcurrency/MaxRetries/TimeoutSeconds → defaults applied (a2a_async, 5, 2, 30) |
+| `TestAgentService_Create_MissingSlug_Validation` | Missing slug → `ErrValidation` |
+| `TestAgentService_Create_MissingDisplayName_Validation` | Missing display_name → `ErrValidation` |
+| `TestAgentService_Create_EnabledFalse_Respected` | `enabled=false` passed in → DAL called with `enabled=false` (not default-overridden) |
+| `TestAgentService_Update_ReappliesMaxConcurrencyDefault` | `MaxConcurrency=0` on update → defaults to 5 |
+| `TestAgentService_Create_InvalidatesRegistry` | Successful create → `them:agents:registry` deleted from cache |
+| `TestAgentService_NilCache_NoPanic` | nil cache → no panic (cache is optional) |
+| `TestRunService_Signal_BuildsWorkflowID` | `Signal` constructs `"ctx-{contextID}"` workflow ID |
+| `TestRunService_Signal_TemporalNil_Unavailable` | nil Temporal → `ErrTemporalUnavailable` |
+| `TestRunService_Signal_DBError_NotNotFound` | Non-pgx DB error → returned as-is, not mapped to ErrNotFound |
+| `TestRunService_List_ForwardsParams` | `List` forwards contextID and limit to DAL |
+
+**Trigger:** any change to `internal/admin/service/` (any file) OR `internal/admin/dal/` (any file)
+
+---
+
 ### S1-24 · Apps dispatcher — `cmd/them/dispatcher_test.go`
 
 **Purpose:** Verify that `appsDispatcher` routes `/ws` paths to the WS handler, `/sse` paths to
@@ -737,8 +761,9 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/runstream/streamer.go`, `dispatcher.go`, `metrics.go`, `streamid.go` | S1-23 |
 | `internal/cache/runstreamer_adapter.go` | S1-20 + S1-23 (integration) |
 | `internal/a2a/server.go` | S1-14 |
-| `internal/admin/` (any file) | S1-15 |
-| `internal/admin/dal/` (any file) | S1-15 |
+| `internal/admin/` (any file) | S1-15 + S1-25 |
+| `internal/admin/dal/` (any file) | S1-15 + S1-25 |
+| `internal/admin/service/` (any file) | S1-25 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/ratelimit/limiter.go` | S1-16 |
 | `internal/gate/gate.go` | S1-17 |
@@ -800,11 +825,12 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-22 | reconciler | 15 |
 | S1-23 | runstream (streamer + dispatcher) | 15 |
 | S1-24 | cmd/them (apps dispatcher) | 5 |
-| **S1 total** | | **217** |
+| S1-25 | admin/service | 11 |
+| **S1 total** | | **228** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
 | S2-03 (MAXLEN) | runstream MAXLEN + reconnect + cross-replica | 7 |
 | **S2 total** | | **20** |
 | S3 live | manual | 23 |
-| **Grand total** | | **260** |
+| **Grand total** | | **271** |

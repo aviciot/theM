@@ -8,18 +8,17 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/admin/service"
 )
 
 // AgentsHandler handles /api/v1/admin/agents routes.
 type AgentsHandler struct {
-	db    DBQuerier
-	cache CacheInvalidator
-	dal   *dal.DB
+	svc *service.AgentService
 }
 
 // NewAgentsHandler creates an AgentsHandler.
 func NewAgentsHandler(db DBQuerier, cache CacheInvalidator) *AgentsHandler {
-	return &AgentsHandler{db: db, cache: cache, dal: dal.NewDB(db)}
+	return &AgentsHandler{svc: service.NewAgentService(dal.NewDB(db), cache)}
 }
 
 // Routes mounts the agent CRUD endpoints.
@@ -34,7 +33,7 @@ func (h *AgentsHandler) Routes(r chi.Router) {
 
 // List handles GET /api/v1/admin/agents.
 func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
-	agents, err := h.dal.ListAgents(r.Context())
+	agents, err := h.svc.List(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
 		return
@@ -49,34 +48,15 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if input.Slug == "" || input.DisplayName == "" {
-		writeError(w, http.StatusBadRequest, "slug and display_name are required")
-		return
-	}
-	if input.Transport == "" {
-		input.Transport = "a2a_async"
-	}
-	enabled := true
-	if input.Enabled != nil {
-		enabled = *input.Enabled
-	}
-	if input.MaxConcurrency <= 0 {
-		input.MaxConcurrency = 5
-	}
-	if input.MaxRetries <= 0 {
-		input.MaxRetries = 2
-	}
-	if input.TimeoutSeconds <= 0 {
-		input.TimeoutSeconds = 30
-	}
 
-	id, err := h.dal.CreateAgent(r.Context(), input, enabled)
+	id, err := h.svc.Create(r.Context(), input)
 	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "create agent: "+err.Error())
 		return
 	}
-
-	h.invalidateCache(r)
 
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/agents/%s", id))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
@@ -90,7 +70,7 @@ func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a, err := h.dal.GetAgent(r.Context(), id)
+	a, err := h.svc.Get(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
@@ -111,20 +91,11 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if input.MaxConcurrency <= 0 {
-		input.MaxConcurrency = 5
-	}
-	enabled := true
-	if input.Enabled != nil {
-		enabled = *input.Enabled
-	}
 
-	if err := h.dal.UpdateAgent(r.Context(), id, input, enabled); err != nil {
+	if err := h.svc.Update(r.Context(), id, input); err != nil {
 		writeError(w, http.StatusInternalServerError, "update agent: "+err.Error())
 		return
 	}
-
-	h.invalidateCache(r)
 
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
@@ -137,18 +108,10 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.dal.DeleteAgent(r.Context(), id); err != nil {
+	if err := h.svc.Delete(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete agent: "+err.Error())
 		return
 	}
 
-	h.invalidateCache(r)
-
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
-}
-
-func (h *AgentsHandler) invalidateCache(r *http.Request) {
-	if h.cache != nil {
-		_ = h.cache.Del(r.Context(), "them:agents:registry")
-	}
 }
