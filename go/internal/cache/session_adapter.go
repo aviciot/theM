@@ -95,7 +95,7 @@ func (s *SessionRedisClient) ExecLua(ctx context.Context, script string, keys []
 	if err := res.Error(); err != nil {
 		return nil, err
 	}
-	return res.AsInt64()
+	return res.ToAny()
 }
 
 // Publish sends payload on channel.

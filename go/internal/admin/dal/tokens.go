@@ -16,9 +16,9 @@ const tokenSelectCols = `
 	user_id,
 	COALESCE(orchestrator_id::text, ''),
 	enabled,
-	COALESCE(expires_at AT TIME ZONE 'UTC' AT TIME ZONE 'UTC', NULL)::text,
-	COALESCE(last_used_at AT TIME ZONE 'UTC' AT TIME ZONE 'UTC', NULL)::text,
-	created_at AT TIME ZONE 'UTC' AT TIME ZONE 'UTC'::text,
+	COALESCE((expires_at AT TIME ZONE 'UTC')::text, ''),
+	COALESCE((last_used_at AT TIME ZONE 'UTC')::text, ''),
+	(created_at AT TIME ZONE 'UTC')::text,
 	token_hash`
 
 // scanToken scans one token row. Empty strings from COALESCE become nil *string.
@@ -65,16 +65,23 @@ func parseTS(s string) string {
 		return s
 	}
 	// PG outputs "2006-01-02 15:04:05+00" — try several formats.
-	for _, layout := range []string{
-		"2006-01-02T15:04:05Z07:00",       // already RFC3339
-		"2006-01-02 15:04:05.999999999Z07", // PG with microseconds + tz offset
-		"2006-01-02 15:04:05Z07",           // PG without microseconds + tz offset
-		"2006-01-02 15:04:05.999999999Z",   // PG UTC with microseconds
-		"2006-01-02 15:04:05Z",             // PG UTC shorthand
-		"2006-01-02 15:04:05+00",           // PG explicit +00
-		"2006-01-02 15:04:05.999999999+00", // PG microseconds explicit +00
+	// AT TIME ZONE 'UTC' on timestamptz returns timestamp (no tz suffix), so
+	// those layouts must be tried with time.UTC as the assumed location.
+	utc := time.UTC
+	type entry struct {
+		layout string
+		loc    *time.Location
+	}
+	for _, e := range []entry{
+		{"2006-01-02T15:04:05Z07:00", utc},                      // already RFC3339
+		{"2006-01-02 15:04:05.999999999Z07:00", utc},            // PG with microseconds + tz
+		{"2006-01-02 15:04:05Z07:00", utc},                      // PG without micros + tz
+		{"2006-01-02 15:04:05.999999999+00", utc},               // PG micros +00
+		{"2006-01-02 15:04:05+00", utc},                         // PG explicit +00
+		{"2006-01-02 15:04:05.999999999", utc},                  // AT TIME ZONE 'UTC' — no tz suffix
+		{"2006-01-02 15:04:05", utc},                            // AT TIME ZONE 'UTC' — no micros
 	} {
-		if t, err := time.Parse(layout, s); err == nil {
+		if t, err := time.ParseInLocation(e.layout, s, e.loc); err == nil {
 			return t.UTC().Format(time.RFC3339)
 		}
 	}
