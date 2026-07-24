@@ -7,12 +7,13 @@
 package admin
 
 import (
-	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/admin/service"
 	"github.com/aviciot/them/internal/auth"
 )
 
@@ -44,17 +45,12 @@ type Run = dal.Run
 type SignalInput = dal.SignalInput
 
 // CacheInvalidator invalidates Redis caches on mutations.
-type CacheInvalidator interface {
-	Del(ctx context.Context, key string) error
-	// Publish broadcasts an invalidation message to a Redis pub/sub channel.
-	// Used to propagate EP config cache evictions across pods.
-	Publish(ctx context.Context, channel, message string) error
-}
+// Alias for service.Cache — defined in the service package where it is consumed.
+type CacheInvalidator = service.Cache
 
 // TemporalSignaler sends HITL signals to Temporal workflows.
-type TemporalSignaler interface {
-	SignalRun(ctx context.Context, runID string, payload []byte) error
-}
+// Alias for service.Temporal — defined in the service package where it is consumed.
+type TemporalSignaler = service.Temporal
 
 // RequireSuperAdmin returns a middleware that requires a valid JWT with the
 // super_admin role. Relies on auth.ClaimsFromCtx (set by JWTMiddleware).
@@ -101,4 +97,23 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // writeError writes a JSON error response.
 func writeError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// writeServiceError maps a typed service error to the appropriate HTTP status code.
+// For untyped errors handlers write their own prefix-prefixed 500 inline, so this
+// helper covers only the typed sentinel cases.
+func writeServiceError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, service.ErrValidation):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, service.ErrUnprocessable):
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, service.ErrNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, service.ErrTemporalUnavailable):
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+	default:
+		return false
+	}
+	return true
 }

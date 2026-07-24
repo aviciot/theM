@@ -9,6 +9,9 @@ package dal
 import (
 	"context"
 	"encoding/json"
+	"errors"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Querier is the database interface required by all dal functions.
@@ -42,6 +45,13 @@ type DB struct {
 // NewDB wraps a Querier for use by dal query functions.
 func NewDB(q Querier) *DB {
 	return &DB{q: q}
+}
+
+// IsNoRows reports whether err represents a "no rows" result from PostgreSQL.
+// Used by the service layer to map DAL errors to service.ErrNotFound without
+// importing pgx directly.
+func IsNoRows(err error) bool {
+	return errors.Is(err, pgx.ErrNoRows)
 }
 
 // ── Agent types ───────────────────────────────────────────────────────────────
