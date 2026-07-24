@@ -1,5 +1,5 @@
 version: "3.9"
-# docker-compose.traefik.yml — Traefik overlay for Go bridge routing (Wave 1).
+# docker-compose.traefik.yml — Traefik overlay for Go bridge routing.
 #
 # Wave 1 — routes that Go now owns (higher priority than Python):
 #   /health/live, /health/ready  — priority 130 (Python owns bare /health at 90)
@@ -8,7 +8,15 @@ version: "3.9"
 #   GET /api/v1/admin/applications*
 #   GET /api/v1/runs*
 #
-# Python remains authoritative for all writes (POST/PUT/DELETE) and WS/SSE.
+# Wave 2 — admin writes: POST/PUT/PATCH/DELETE for agents/orchestrators/apps/EPs/runs-signal
+# Wave 4 — /apps/{slug}/ws, /apps/{slug}/sse, /ws/orchestrate/{app}/{ep}, /sse/orchestrate/{app}/{ep}
+# Wave 5 (this commit) — /api/v1/admin/tokens (full CRUD) + /api/v1/admin/sessions
+#   /api/v1/admin/tokens            GET/POST/GET/PATCH/DELETE at priority 120
+#   /api/v1/admin/sessions          GET (list by app_id/ep_slug) at priority 120
+#   /api/v1/admin/sessions/{id}/disconnect  POST at priority 120
+#
+# Python remains authoritative for all WS/SSE and unlisted routes.
+# ROLLBACK: remove the Wave 5 two router blocks (them-go-tokens, them-go-sessions).
 # Legacy /go-health/* path kept for backward compat with existing scripts.
 #
 # Direct bridge ports (8002/8003) remain available for diagnostics.
@@ -141,6 +149,20 @@ services:
       - "traefik.http.routers.them-go-sse-two-seg.entrypoints=web"
       - "traefik.http.routers.them-go-sse-two-seg.priority=120"
       - "traefik.http.routers.them-go-sse-two-seg.service=them-go-svc"
+      # ── Wave 5: /api/v1/admin/tokens — full CRUD (all methods) ─────────────────
+      # Python owns /api/v1 at priority 100; Go claims all token routes at 120.
+      # Python is the rollback path: remove these two router blocks to revert.
+      - "traefik.http.routers.them-go-tokens.rule=PathPrefix(`/api/v1/admin/tokens`)"
+      - "traefik.http.routers.them-go-tokens.entrypoints=web"
+      - "traefik.http.routers.them-go-tokens.priority=120"
+      - "traefik.http.routers.them-go-tokens.service=them-go-svc"
+      # ── Wave 5: /api/v1/admin/sessions — list + disconnect ──────────────────────
+      # GET  /api/v1/admin/sessions               → Go
+      # POST /api/v1/admin/sessions/{id}/disconnect → Go
+      - "traefik.http.routers.them-go-sessions.rule=PathPrefix(`/api/v1/admin/sessions`)"
+      - "traefik.http.routers.them-go-sessions.entrypoints=web"
+      - "traefik.http.routers.them-go-sessions.priority=120"
+      - "traefik.http.routers.them-go-sessions.service=them-go-svc"
       # ── Legacy /go-health/* path (backward compat with scripts) ────────────────
       - "traefik.http.routers.them-go-health.rule=PathPrefix(`/go-health`)"
       - "traefik.http.routers.them-go-health.entrypoints=web"
