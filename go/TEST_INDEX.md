@@ -627,6 +627,36 @@ sub-handler. Method enforcement (405) is delegated to the chi sub-handler, not t
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
 Build tag: `//go:build integration` — skipped by default with `go test ./...`.
 
+### S2-04 · Token + Session API integration — `internal/admin/tokens_sessions_integration_test.go`
+
+**Purpose:** Verify token CRUD + timestamp normalization against live Postgres. Sessions handler
+integration is limited to the parameter-validation path (live sessions require a running WS
+connection and are covered by S3 T-11..T-15).
+
+| Test | What it proves |
+|---|---|
+| `TestIntegration_CreateToken_201` | POST /tokens → 201, Location header, plaintext in body |
+| `TestIntegration_GetToken_200` | POST then GET by ID → row found, plaintext absent in GET |
+| `TestIntegration_ListTokens_ContainsCreated` | Created token appears in GET /tokens |
+| `TestIntegration_PatchToken_200` | PATCH label+enabled → 200 with updated values |
+| `TestIntegration_DeleteToken_204_Then_404` | DELETE → 204; repeat DELETE → 404 |
+| `TestIntegration_GetToken_NotFound` | GET /tokens/{zero-uuid} → 404 |
+| `TestIntegration_CreateToken_BadOrchestratorID_404` | POST with non-existent orchestrator_id → 404 |
+| `TestIntegration_ListTokens_UserIDFilter` | ?user_id filter only returns tokens for that user |
+| `TestIntegration_TokenPlaintext_OnlyInCreateResponse` | PATCH response does not include plaintext |
+| `TestIntegration_TokenTimestamp_IsRFC3339` | created_at contains 'T' separator (RFC3339 not PG text) |
+| `TestIntegration_SessionsList_RequiresParams` | GET /sessions without params → 400 even against live stack |
+
+**Run command:**
+```bash
+TEST_POSTGRES_DSN="host=localhost port=15432 dbname=them user=them password=them_secret sslmode=disable" \
+go test -tags=integration -v ./internal/admin/...
+```
+
+**Trigger:** any change to `internal/admin/tokens.go`, `internal/admin/sessions.go`, `internal/admin/dal/tokens.go`
+
+---
+
 ### S2-01 · Stack integration — `integration_test.go`
 
 | Test | What it proves |
@@ -872,6 +902,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
 | S2-03 (MAXLEN) | runstream MAXLEN + reconnect + cross-replica | 7 |
-| **S2 total** | | **20** |
+| S2-04 | admin tokens + sessions integration | 11 |
+| **S2 total** | | **31** |
 | S3 live | manual | 23 |
-| **Grand total** | | **308** |
+| **Grand total** | | **319** |
