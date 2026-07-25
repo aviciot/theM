@@ -38,10 +38,10 @@ func monitoringDefaults() MonitoringConfig {
 
 func validateMonitoring(c MonitoringConfig) error {
 	if !(c.HeatmapLow < c.HeatmapMedium && c.HeatmapMedium < c.HeatmapHigh) {
-		return validation("heatmap thresholds must satisfy low < medium < high")
+		return unprocessable("heatmap thresholds must satisfy low < medium < high")
 	}
 	if !(c.EdgeThin < c.EdgeMedium && c.EdgeMedium < c.EdgeThick) {
-		return validation("edge thresholds must satisfy thin < medium < thick")
+		return unprocessable("edge thresholds must satisfy thin < medium < thick")
 	}
 	return nil
 }
