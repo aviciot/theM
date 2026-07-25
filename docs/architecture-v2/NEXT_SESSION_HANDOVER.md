@@ -7,13 +7,14 @@
 ## Git State
 
 **Branch:** `main`
-**HEAD:** `01860f4 fix(admin/service): use unprocessable (422) for monitoring threshold ordering violations`
-**origin/main:** push required after this commit (previous push landed at a1cc4f8; 01860f4 is one commit ahead)
+**HEAD:** `f4faa06 docs(handover): Wave 6 complete — handover for Wave 7 planning session`
+**origin/main:** NOT yet synchronized — local main is 8 commits ahead of origin/main (push required)
 **Working tree:** clean (only `go/them` compiled binary is untracked — do not commit)
 
 ### Wave 6 commits (newest first)
 
 ```
+f4faa06  docs(handover): Wave 6 complete — handover for Wave 7 planning session
 01860f4  fix(admin/service): use unprocessable (422) for monitoring threshold ordering violations
 a1cc4f8  docs(wave6): TEST_INDEX, implementation-status, lessons-learned, handover
 55eb923  cutover(wave6): enable Traefik routing for monitoring-config + llm-providers/routing/config
@@ -21,6 +22,8 @@ b0d1a31  feat(admin): add MonitoringConfig + LLMRouting handlers (Wave 6 Phase 3
 e78a6bd  feat(admin/service): add ConfigService for monitoring + llm_routing (Wave 6 Phase 2)
 69e2dca  feat(admin/dal): add config table GetConfig + UpsertConfig (Wave 6 Phase 1)
 ```
+
+Pre-Wave-6 base (Wave 5 cutover): `bc8c461`
 
 ---
 
@@ -52,7 +55,7 @@ All entries confirmed from `docker inspect them-go-bridge` labels.
 | `them-go-monitoring-config` | `Path(/api/v1/admin/monitoring-config)` | 120 | Go **(Wave 6)** |
 | `them-go-llm-routing-config` | `Path(/api/v1/admin/llm-providers/routing/config)` | 120 | Go **(Wave 6)** |
 
-Note: Wave 5 tokens/sessions labels live in `theM_gateway/docker-compose.traefik.yml` (separate gateway deployment). Wave 6 labels are in the local `docker-compose.yml`.
+Wave 5 tokens/sessions labels live in `theM_gateway/docker-compose.traefik.yml` (separate gateway deployment). Wave 6 labels are in the local `docker-compose.yml`.
 
 ### Python still owns (not yet migrated)
 
@@ -74,21 +77,25 @@ Note: Wave 5 tokens/sessions labels live in `theM_gateway/docker-compose.traefik
 ## Go Replicas Verification
 
 ```
-them-go-bridge   Up 5 hours (healthy)  — port 8002 (internal)
-them-go-bridge-2 not running            — was removed during JWT debug; restart with same env vars if needed
+them-go-bridge   Up (healthy)  — port 8002 (internal)
+them-go-bridge-2 not running   — removed during JWT env-var debugging; restart with THE_M_JWT_SECRET set
 ```
 
-The second replica (`them-go-bridge-2`) was removed during debugging the JWT env var bug. The compose file is correct; it just needs to be restarted with `THE_M_JWT_SECRET` set.
+The second replica (`them-go-bridge-2`) was removed during debugging the JWT env var bug. The compose file is correct; restart with:
+
+```bash
+THE_M_JWT_SECRET=<value> docker compose --profile go up -d them-go-bridge-2
+```
 
 ---
 
 ## Python Rollback Method
 
-Wave 6 Traefik labels are in `docker-compose.yml`. Rollback is:
+Wave 6 Traefik labels are in `docker-compose.yml`. Rollback procedure:
 
 1. Remove the two Wave 6 router blocks from `docker-compose.yml`:
-   - `them-go-monitoring-config` (4 lines)
-   - `them-go-llm-routing-config` (4 lines)
+   - `them-go-monitoring-config` (4 label lines)
+   - `them-go-llm-routing-config` (4 label lines)
 2. Restart Go bridge: `docker compose --profile go up --no-deps -d them-go-bridge`
 
 Python bridge (`them-bridge`) is always running and never disabled. Once the labels are removed, Traefik routes both endpoints to Python at priority 100 automatically. No code change or Python restart required.
@@ -97,7 +104,7 @@ Python bridge (`them-bridge`) is always running and never disabled. Once the lab
 
 ## JWT Environment-Variable Bug Fixed
 
-**What broke:** The Go bridge's `docker-compose.yml` environment block declared `SECRET_KEY=${SECRET_KEY:-change-this-in-production}` — using the wrong variable name. The auth service signs tokens with `JWT_SECRET=${THE_M_JWT_SECRET}`. When `JWT_SECRET` is absent from the container, the Go bridge falls back to `SECRET_KEY` for HS256 validation, which is a different key. All JWT-authenticated admin requests to the Go bridge silently failed with 401.
+**What broke:** The Go bridge's `docker-compose.yml` environment block declared `SECRET_KEY=${SECRET_KEY:-change-this-in-production}` — using the wrong variable name. The auth service signs tokens with `JWT_SECRET=${THE_M_JWT_SECRET}`. When `JWT_SECRET` was absent from the container, the Go bridge fell back to `SECRET_KEY` for HS256 validation, which is a different key. All JWT-authenticated admin requests to the Go bridge silently failed with 401.
 
 **File changed:** `docker-compose.yml` — `them-go-bridge` service environment block (commit `55eb923`).
 
@@ -111,7 +118,7 @@ Python bridge (`them-bridge`) is always running and never disabled. Once the lab
 - JWT_SECRET=${THE_M_JWT_SECRET:-}
 ```
 
-**Runtime requirement:** The Go bridge must be started with `THE_M_JWT_SECRET` set in the shell environment (the value from `them-auth-service` env: `3e40024cceb6348491f01a8145813b0400e5cc88661e2c525d8647d3a112bddc`). Without it the container falls back to `SECRET_KEY` and JWT auth fails.
+**Runtime requirement:** The Go bridge must be started with `THE_M_JWT_SECRET` set in the shell environment. Without it the container falls back to `SECRET_KEY` and JWT auth fails.
 
 **Documented in:** `docs/architecture-v2/lessons-learned.md` as L-10.
 
@@ -120,11 +127,13 @@ Python bridge (`them-bridge`) is always running and never disabled. Once the lab
 ## Test Totals
 
 ### Go unit tests (Docker build validates via `go test ./...` in builder stage)
-All pass. No new failures. 17 tests added:
+
+All pass. No new failures. 17 tests added across Wave 6:
 - `service/config_test.go`: 10 tests (defaults, merge, stored round-trip, validation, upsert)
 - `config_handler_test.go`: 7 tests (defaults, valid PUT, 422 on bad thresholds, 400 on bad JSON)
 
 ### Python suite
+
 ```
 python3.12 scripts/tests/run_tests.py 01 02 03 04 15 20
 87 passed, 1 skipped (bridge-2 replica not running — expected)
@@ -177,13 +186,13 @@ Fernet specifics (from `app/utils/crypto.py`):
 
 ## Wave 7 Implementation Status
 
-**Wave 7 has NOT started.** No Go code for LLM provider CRUD or Fernet has been written.
+**Wave 7 has NOT started.** No Go code for LLM provider CRUD or Fernet has been written. No application code was changed in this session beyond what Wave 6 required.
 
 ---
 
 ## Exact Next Task
 
-**Plan Wave 7 only. Do not write any Go code.**
+**Plan Wave 7 only using Opus. Do not write any Go code.**
 
 ---
 
@@ -198,8 +207,8 @@ Read first (in this order):
 
 Verify:
 - branch is main
-- HEAD is 01860f4 or newer
-- origin/main is synchronized
+- HEAD is f4faa06 or newer
+- origin/main is synchronized (run: git log --oneline origin/main..HEAD)
 - working tree is clean (go/them binary is OK to ignore)
 
 Run sanity checks:
