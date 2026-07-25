@@ -65,6 +65,19 @@ type fakeDal struct {
 	upsertConfigValue []byte
 	upsertConfigErr   error
 
+	// LLM provider fields
+	providers           []dal.LLMProvider
+	provider            dal.LLMProvider
+	createdProvider     dal.LLMProvider
+	updatedProvider     dal.LLMProvider
+	listProvidersErr    error
+	getProviderErr      error
+	createProviderErr   error
+	updateProviderErr   error
+	deleteProviderErr   error
+	createProviderCalls []dal.LLMProviderInput
+	updateProviderCalls []dal.LLMProviderInput
+
 	// token fields
 	tokens            []dal.Token
 	token             dal.Token
@@ -183,6 +196,25 @@ func (f *fakeDal) UpsertConfig(_ context.Context, key string, value []byte) erro
 	f.upsertConfigKey = key
 	f.upsertConfigValue = value
 	return f.upsertConfigErr
+}
+
+// LLM provider stubs.
+func (f *fakeDal) ListProviders(_ context.Context) ([]dal.LLMProvider, error) {
+	return f.providers, f.listProvidersErr
+}
+func (f *fakeDal) GetProvider(_ context.Context, _ int64) (dal.LLMProvider, error) {
+	return f.provider, f.getProviderErr
+}
+func (f *fakeDal) CreateProvider(_ context.Context, in dal.LLMProviderInput) (dal.LLMProvider, error) {
+	f.createProviderCalls = append(f.createProviderCalls, in)
+	return f.createdProvider, f.createProviderErr
+}
+func (f *fakeDal) UpdateProvider(_ context.Context, _ int64, in dal.LLMProviderInput) (dal.LLMProvider, error) {
+	f.updateProviderCalls = append(f.updateProviderCalls, in)
+	return f.updatedProvider, f.updateProviderErr
+}
+func (f *fakeDal) DeleteProvider(_ context.Context, _ int64) error {
+	return f.deleteProviderErr
 }
 
 // fakeCache implements service.Cache.
