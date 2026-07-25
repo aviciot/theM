@@ -1,27 +1,31 @@
 # THEM Go Gateway — Claude Session Guide
-# Last updated: 2026-07-19
+# Last updated: 2026-07-25
 
 ---
 
-## Read These First
+The project-wide session lifecycle, handover, Git, secrets, migration goal, model selection,
+and tenant-aware design rules in `../CLAUDE.md` are mandatory. Read that file first.
+
+---
+
+## Read These First (Go-specific)
 
 Before touching any Go code, read:
 
 | Doc | When to read |
 |---|---|
 | `TEST_INDEX.md` | Before adding or changing any test |
-| `docs/architecture-v2/README.md` | Any architectural question |
+| `docs/architecture-v2/implementation-status.md` | Package inventory, route ownership, completed waves |
 | `docs/architecture-v2/lessons-learned.md` | Before any judgment call — what burned us before |
-| `docs/architecture-v2/implementation-status.md` | Package inventory + which findings each package fixes |
-| `DEPLOY_AND_TEST.md` | Before running a live deploy verification |
+| `docs/architecture-v2/NEXT_SESSION_BRIDGE_HANDOVER.md` | Current wave state, exact route ownership table |
 
 ---
 
-## This Project
+## This Module
 
-**the-M Go Gateway** is a Go rewrite of the THEM AI orchestration platform.
+**the-M Go Gateway** is the Go rewrite of the THEM AI orchestration platform.
 Module: `github.com/aviciot/them` — source at `go/` in the repo root.
-Port: **8002** (runs alongside Python bridge on 8001).
+Port: **8002** (runs alongside Python bridge on 8001, behind shared Traefik on 8088).
 
 Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_**.
 
@@ -51,26 +55,64 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | `internal/sse/` | Server-Sent Events handler | `handler.go` |
 | `internal/a2a/` | JSON-RPC 2.0 A2A server + agent card | `server.go` |
 | `internal/agentregistry/` | A2A invocation, two-level Redis cache | `registry.go` |
-| `internal/admin/` | CRUD API for agents/orchestrators/apps/runs — thin HTTP handlers | `agents.go`, `orchestrators.go`, `applications.go`, `runs.go` |
+| `internal/admin/` | CRUD API for agents/orchestrators/apps/runs — thin HTTP handlers only | `agents.go`, `orchestrators.go`, `applications.go`, `runs.go` |
 | `internal/admin/dal/` | Admin Data Access Layer — all SQL query strings + row-scan helpers; handlers call these | `dal.go`, `agents.go`, `orchestrators.go`, `applications.go`, `runs.go` |
 | `internal/transport/` | Shared interfaces (Authenticator, SessionStore, GateStore, EPConfigLoader, TemporalClientExecutor) + TokenHash used by both ws and sse | `transport.go` |
 | `internal/ratelimit/` | Redis INCR rate limiter per-token + per-app | `limiter.go` |
 
 ---
 
-## Go binary
+## Rules — Architecture
 
-```powershell
-$env:PATH = "$env:USERPROFILE\go-sdk\go\bin;$env:PATH"
-$env:GOPATH = "$env:USERPROFILE\gopath"
-$env:GOCACHE = "$env:USERPROFILE\gocache"
-```
+- **Handler → Service → DAL** — no SQL in handlers, no business rules in handlers
+- All PostgreSQL access goes through `internal/admin/dal/` (admin) or the equivalent DAL/repository adapter for each package — never inline SQL in handlers
+- Shared WS/SSE behavior (auth, gate, session, token hash) goes in `internal/transport/`
+- No third-party JWT library — local RS256 via stdlib `crypto/rsa` only
+- No ORM — pgx/v5 direct queries only
+- No indirect dep pseudo-versions pinned in go.mod — let `go mod tidy` resolve
+- Context cancellation must propagate from WS disconnect → Temporal cancel → LLM HTTP
+- Event bus subscribe BEFORE Temporal workflow start (ready bootstrap handshake)
+- Admin routes require JWT middleware (`RequireSuperAdmin`)
+- All list endpoints return `[]` not `null` when empty
+- Secrets never appear in log output — use `cfg.SafeString()`
 
 ---
 
-## Common commands
+## Rules — Route Ownership
 
-```powershell
+- **Never claim a route is migrated based only on Traefik labels or dead code removal.**
+- A route is owned by Go only when: the handler exists in `go/internal/`, the route is registered in `cmd/them/main.go`, the Traefik label is applied in the compose file, AND a live request through Traefik reaches the Go handler (verified from logs).
+- Verify route ownership by checking Go bridge logs for actual request hits, not by inspecting labels alone.
+
+---
+
+## Rules — Tests (non-negotiable)
+
+1. **Every code change to `internal/` or `cmd/` MUST have a test** — new behavior = new test, changed behavior = updated test.
+2. **`TEST_INDEX.md` MUST be updated in the same commit** — add the test row, update the count, update the trigger map.
+3. **`go test ./...` must pass before every commit** — zero new failures.
+4. **`go test -race ./...` must pass before every PR merge** — no data races.
+5. **Never delete a test to make the suite pass** — fix the code or fix the test.
+6. **Integration tests** (build tag `integration`) require a live PostgreSQL and Redis — run them against the real stack before marking any schema-dependent code complete.
+
+---
+
+## Rules — Documentation (mandatory)
+
+| Change | Update |
+|---|---|
+| New test | `TEST_INDEX.md` (same commit) |
+| New package | `TEST_INDEX.md` + `docs/architecture-v2/implementation-status.md` |
+| New Redis key | `docs/architecture-v2/` (note the key + TTL + purpose) |
+| Bug fix or non-obvious behavior | `docs/architecture-v2/lessons-learned.md` |
+| New route | `docs/architecture-v2/implementation-status.md` route map |
+| Architectural decision | `docs/architecture-v2/` (new or updated doc) |
+
+---
+
+## Common Commands
+
+```bash
 # Run all unit tests
 go test ./...
 
@@ -98,43 +140,7 @@ docker compose --profile go logs -f them-go-bridge
 
 ---
 
-## Rules — Tests (non-negotiable)
-
-1. **Every code change to `internal/` or `cmd/` MUST have a test** — new behavior = new test, changed behavior = updated test.
-2. **`TEST_INDEX.md` MUST be updated in the same commit** — add the test row, update the count, update the trigger map.
-3. **`go test ./...` must pass before every commit** — zero new failures.
-4. **`go test -race ./...` must pass before every PR merge** — no data races.
-5. **Never delete a test to make the suite pass** — fix the code or fix the test.
-
----
-
-## Rules — Code
-
-- No third-party JWT library — local RS256 via stdlib `crypto/rsa` only
-- No ORM — pgx/v5 direct queries only
-- No indirect dep pseudo-versions pinned in go.mod — let `go mod tidy` resolve
-- Context cancellation must propagate from WS disconnect → Temporal cancel → LLM HTTP
-- Event bus subscribe BEFORE Temporal workflow start (ready bootstrap handshake)
-- Admin routes require JWT middleware (`RequireSuperAdmin`)
-- All list endpoints return `[]` not `null` when empty
-- Secrets never appear in log output — use `cfg.SafeString()`
-
----
-
-## Rules — Documentation (mandatory)
-
-| Change | Update |
-|---|---|
-| New test | `TEST_INDEX.md` (same commit) |
-| New package | `TEST_INDEX.md` + `implementation-status.md` |
-| New Redis key | `docs/architecture-v2/` (note the key + TTL + purpose) |
-| Bug fix or non-obvious behavior | `docs/architecture-v2/lessons-learned.md` |
-| New route | `implementation-status.md` route map |
-| Architectural decision | `docs/architecture-v2/` (new or updated doc) |
-
----
-
-## Trigger map — which tests to run after changing what
+## Trigger Map — which tests to run after changing what
 
 | Changed | Run |
 |---|---|
@@ -160,17 +166,17 @@ docker compose --profile go logs -f them-go-bridge
 | `cmd/them/main.go` | `go test ./...` (full suite) |
 | `go.mod` or `go.sum` | `go test ./...` (full suite) |
 | `Dockerfile.go` | rebuild image + `go test -tags=integration ./...` |
-| `docker-compose.yml` | `go test -tags=integration ./...` + T-01..T-05 from DEPLOY_AND_TEST.md |
+| `docker-compose.yml` (Go labels) | `go test -tags=integration ./...` + live smoke test per `docs/architecture-v2/NEXT_SESSION_BRIDGE_HANDOVER.md` |
 | Any `internal/` change | `go test ./...` before commit |
-| Before any production deploy | `go test -race ./...` + `go test -tags=integration ./...` + full DEPLOY_AND_TEST.md |
+| Before any production deploy | `go test -race ./...` + `go test -tags=integration ./...` + live smoke tests per handover doc |
 
 ---
 
-## Key architectural decisions (quick ref)
+## Key Architectural Decisions (quick ref)
 
 | Decision | Choice | Where documented |
 |---|---|---|
-| Architecture | Monolith-first Go service | `03b-alternatives-considered.md` |
+| Architecture | Monolith-first Go service | `docs/architecture-v2/implementation-status.md` |
 | JWT auth | Local RS256 signature validation (no HTTP call) — user session tokens from auth service | `internal/auth/jwt.go` |
 | Bearer token auth | Opaque token: L1 in-process sync.Map → L2 Redis `them:token:{sha256}` → PostgreSQL `them.access_tokens` | `internal/auth/token_cache.go` |
 | Token revocation | Redis pub/sub `them:token:revoked` — cross-pod L1 eviction | `internal/auth/token_cache.go` |
@@ -180,76 +186,22 @@ docker compose --profile go logs -f them-go-bridge
 | LLM cancellation | `context.Context` propagated to HTTP | `internal/llm/anthropic.go` |
 | Temporal | Retained (Go SDK), HITL via Signal | `internal/temporal/workflow.go` |
 | Message format | Canonical domain types in DB | `internal/domain/domain.go` |
-| Tenant boundary | Application is the tenant | `06-domain-model.md` |
+| Tenant boundary | Application is the tenant | `docs/architecture-v2/06-domain-model.md` |
 | Bus subscribe timing | Subscribe BEFORE StartWorkflow | `internal/ws/handler.go` line ~154 |
+| ExecLua return type | Use `res.ToAny()` for Lua scripts that may return non-integer results (e.g. arrays) | `docs/architecture-v2/lessons-learned.md` |
+| AT TIME ZONE parsing | PG `AT TIME ZONE 'UTC'` on timestamptz returns timestamp without tz suffix — parseTS must handle both formats | `go/internal/admin/dal/tokens.go` |
 
+---
 
-## Session Context and Handover Rule — Mandatory
+## Go Binary Path (Linux/Mac)
 
-Do not continue working when the session context becomes too large or unreliable.
+```bash
+export PATH="$HOME/go/bin:$PATH"
+```
 
-Continuously watch for these warning signs:
-
-- difficulty recalling earlier decisions
-- repeating investigations already completed
-- conflicting statements about the current architecture
-- uncertainty about Git state, deployed state, routes, schema, or completed work
-- broad changes outside the approved task scope
-- repeatedly re-reading many files to reconstruct context
-- forgetting constraints from CLAUDE.md or the current task
-- long implementation sessions containing several commits or multiple distinct phases
-
-Before context quality degrades, stop implementation and prepare a handover.
-
-Trigger a handover at the latest when any of these occurs:
-
-- the current focused task is complete
-- 5–8 meaningful commits were created
-- the session crossed into a different subsystem
-- a new migration wave is about to begin
-- a major refactor or architecture decision is next
-- you are no longer fully confident that you can summarize the current state accurately
-
-Handover procedure:
-
-1. Stop making code changes.
-2. Complete and test the current focused step only.
-3. Commit all safe changes.
-4. Push when credentials are available.
-5. Confirm the working tree state.
-6. Create or update:
-
-   docs/architecture-v2/NEXT_SESSION_HANDOVER.md
-
-The handover must contain:
-
-- current objective
-- branch and exact HEAD
-- commits created in this session
-- push status
-- working tree and untracked files
-- work completed
-- deployed/live state
-- tests executed and exact totals
-- architecture decisions made
-- temporary compatibility code
-- known bugs and blockers
-- files most relevant to the next task
-- hard constraints that must remain in force
-- exact next single focused task
-- exact commands for starting and validating the next session
-
-For long content, write the details into the Markdown handover file.
-
-Return only:
-
-- handover file path
-- final HEAD
-- push status
-- Git status
-- reason a new session is recommended
-- exact command to start the next session
-- exact first prompt for the next session
-
-Do not begin the next task in the current session.
-Explicitly recommend closing this Claude session and starting a new one.
+Windows PowerShell:
+```powershell
+$env:PATH = "$env:USERPROFILE\go-sdk\go\bin;$env:PATH"
+$env:GOPATH = "$env:USERPROFILE\gopath"
+$env:GOCACHE = "$env:USERPROFILE\gocache"
+```

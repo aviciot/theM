@@ -1,6 +1,6 @@
 # the-M — Claude Session Guide
 # multi-agent orchestration platform
-# Last updated: 2026-07-18
+# Last updated: 2026-07-25
 
 ---
 
@@ -21,6 +21,8 @@ Before touching any code, read these docs if you haven't this session:
 | `docs/LESSONS.md` | Before any judgment call — read what burned us before |
 | `scripts/tests/INDEX.md` | Before running or writing tests |
 
+For Go work, also read `go/CLAUDE.md` — it governs everything under `go/`.
+
 ---
 
 ## This Project
@@ -28,87 +30,91 @@ Before touching any code, read these docs if you haven't this session:
 **the-M** is a multi-agent orchestration platform. Fully isolated stack — own Postgres, own Redis, own Docker network.
 
 Brand rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_** (no exceptions).
+DB name and schema: **them** — never `odin`.
 
 ---
 
-## Core Mental Model (memorize this)
+## Migration Goal
 
-Each enabled `them.agents` row = **ONE LLM tool** named `agent__<slug>`.
-The agent's `description` column is the tool description the LLM uses to decide when to call it.
+**The long-term goal is a complete migration from Python to Go.**
 
-```
-User goal → WS /ws/orchestrate/{name} → load orchestrator config
-         → build tool list from allowed agents (each = NeutralTool named agent__<slug>)
-         → LLM agentic loop (≤ max_iterations)
-               LLM picks tool(s) → route via adapter → stream result back → feed to LLM → loop
-         → stream final answer to user
-```
+Migration order:
+1. Bridge (Python `app/`) → Go (`go/`) — the main API, WS, SSE, admin, run recording
+2. Auth service (`auth_service/`) → Go
+3. Temporal worker/orchestration/LLM layer → Go
+4. Remove Python entirely
 
-**Parallel calls:** when LLM returns multiple ToolCalls in one iteration, run with `asyncio.gather()`
-bounded by `orchestrator.max_parallel_tools` and per-agent `max_concurrency` semaphore.
+**One focused subsystem per task.** Do not migrate multiple subsystems in a single session.
+
+Current state: Wave 5 complete (tokens + sessions admin now served by Go). See `docs/architecture-v2/NEXT_SESSION_BRIDGE_HANDOVER.md` for exact route ownership and next steps.
 
 ---
 
-## Scalability Design (multi-replica from day 1)
+## Model Selection
 
-| State | Location | Replica-safe? |
-|---|---|---|
-| Token cache L1 | in-process dict per replica | No — each replica caches independently |
-| Token cache L2 | Redis `them:session:token:*` TTL 300s | Yes — shared |
-| Rate limiting | Redis INCR `rl:them:*` | Yes |
-| Agent config cache | Redis `them:agents:registry` + in-process | Yes — pub/sub invalidation |
-| Orchestrator config | Redis `them:orchestrators:{name}` TTL 600s | Yes — pub/sub invalidation |
-| Run state | Postgres `them.runs` | Yes |
-| WS connections | in-process per replica | By design — Traefik sticky sessions |
-| Replica heartbeat | Redis `them:bridge:{INSTANCE_ID}:heartbeat` 30s TTL | Yes |
+- **Opus** — architecture decisions, migration planning, wave scoping, complex trade-offs
+- **Sonnet** — implementation, testing, debugging, routine changes
 
 ---
 
-## Container Map
+## Long Answers
 
-| Container | Role | Port | Source dir |
-|---|---|---|---|
-| `them-traefik` | Reverse proxy — single entry point, path-based routing, sticky LB | **8088** (host), 127.0.0.1:**8089** (dashboard) | `traefik/` |
-| `them-postgres` | PG16 — DB: `them` | 5432 (internal) | bind mount `./data/them-postgres/pgdata` |
-| `them-redis` | Redis DB 0 | 6379 (internal) | bind mount `./data/them-redis` |
-| `them-auth-service` | Auth/IAM microservice | 8701 (internal) | `auth_service/` |
-| `them-bridge` | Orchestrator API + WS (replica 1) | 8001 (internal) | `app/` |
-| `them-bridge-2` | Replica 2 (`profiles: [replica]`) | 8001 (internal) | `app/` |
-| `them-frontend` | Next.js dashboard | 3200 (internal) | `frontend/` |
-| `vision-agent` | Vision/maps agent | 9100 (internal) | `agents/vision_agent/` |
-| `them-security-agent` | Security scanner A2A agent (`profiles: [security]`) | 9500 (internal) | `agents/security_scanner/` |
-| `a2a-echo` | A2A v1.0 echo test agent (`profiles: [test-agents]`) | 9200 (internal) | `agents/a2a_echo/` |
-| `a2a-slow` | A2A v1.0 slow test agent (5s delay) (`profiles: [test-agents]`) | 9201 (internal) | `agents/a2a_slow/` |
-| `a2a-stream` | A2A v1.0 streaming test agent (`profiles: [test-agents]`) | 9202 (internal) | `agents/a2a_stream/` |
+Long explanations, detailed reviews, analysis reports, and migration plans must be written to Markdown files under `docs/architecture-v2/`. Return only the file path and a one-paragraph summary in chat.
 
 ---
 
-## Key Source Locations
+## Workflow
 
-| Concern | Location |
-|---|---|
-| Orchestrator agentic loop | `app/services/task_runner.py` |
-| Agent registry → NeutralTool list | `app/services/agent_registry.py` |
-| Agent transport adapters | `app/adapters/` (base, a2a_async_adapter, factory) |
-| Orchestrator WS endpoint | `app/routers/ws_orchestrator.py` |
-| Dashboard WS (multiplexed channels) | `app/routers/ws_dashboard.py` |
-| Temporal workflow (agentic loop) | `app/temporal/workflows.py` |
-| Temporal activities (all I/O) | `app/temporal/activities.py` |
-| Temporal bridge client | `app/temporal/bridge_client.py` |
-| Temporal worker entrypoint | `app/temporal/worker.py` |
-| LLM providers | `app/services/providers/` |
-| Token cache (L1+L2) | `app/services/token_cache.py` |
-| Run recording | `app/services/run_recorder.py` |
-| DB models | `app/models.py` |
-| Config + env vars | `app/config.py` |
-| DB schema source of truth | `db/001_schema.sql` |
-| Auth schema source of truth | `auth_service/SCHEMA.sql` |
-| Frontend proxy route | `frontend/src/app/api/them/[...path]/route.ts` |
-| Frontend auth cookies | `frontend/src/app/api/auth/` |
+Every task follows this order:
+
+1. **Plan** — read relevant docs, design the change, confirm scope before writing code
+2. **Implement** — one focused subsystem; do not widen scope mid-task
+3. **Test** — run the applicable test suite; zero new failures before commit
+4. **Commit** — commit all changed files together with a clear message
+5. **Report** — return a short summary: files changed, tests passed, commit hash
 
 ---
 
-## Git Workflow
+## Session Lifecycle — Mandatory
+
+Do not wait until context quality has already degraded.
+
+**Prepare a handover when any of these triggers occur:**
+- the current focused task is complete and tested
+- a new subsystem or migration wave is about to begin
+- roughly 5–8 meaningful commits have been created in the session
+- context reliability is uncertain (re-reading the same files, conflicting statements, forgetting constraints)
+- a major architecture decision is next
+
+**Handover procedure:**
+1. Stop implementation.
+2. Finish and test the current focused task only — do not widen scope.
+3. Commit all safe changes.
+4. Push if credentials are available (`git push origin main`).
+5. Record the following in `docs/architecture-v2/NEXT_SESSION_HANDOVER.md`:
+   - current objective
+   - branch and exact HEAD (`git log --oneline -1`)
+   - commits created this session
+   - push status
+   - working tree state (`git status`)
+   - work completed
+   - deployed/live state
+   - tests executed and exact pass/fail/skip totals
+   - architecture decisions made
+   - temporary compatibility code still in place
+   - known bugs and blockers
+   - files most relevant to the next task
+   - hard constraints that must remain in force
+   - exact next single focused task
+   - exact commands and first prompt for starting the next session
+6. Recommend closing the current Claude session and opening a new one.
+7. Return the exact tmux/Claude startup commands and first prompt for the next session.
+
+**Do not begin the next subsystem in the same session.**
+
+---
+
+## Git Rules
 
 ```bash
 git add <files>
@@ -116,135 +122,80 @@ git commit -m "description"
 git push origin main
 ```
 
+- Commit only files relevant to the current task — do not use `git add .` or `git add -A`
+- Do not push unless credentials are already available
+- Do not amend previous commits — create a new commit
+- Do not skip hooks (`--no-verify`)
+
 ---
 
-## Common Commands
+## Secrets and Deployment State
 
-```powershell
-# Stack (core only)
-docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
-docker compose -f docker-compose.yml -f docker-compose.local.yml ps
-docker compose logs -f them-bridge
+- Secrets are derived via HMAC-SHA256 from `secrets.local` — re-run `./generate-env.sh` (Linux/Mac) or `.\generate-env.ps1` (Windows) to regenerate `.env`
+- Never commit `.env` or `secrets.local`
+- DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
+- All Redis on DB index 0. Key prefixes: `them:session:`, `rl:them:`, `them:agents:`, `them:orchestrators:`, `them:bridge:`, `them:dash:`
+- Never use DB name `odin` or schema `odin`
 
-# Stack with Temporal (required for orchestration — TEMPORAL_ENABLED=true in bridge)
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal up -d
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal ps
-docker logs them-worker
-# Temporal UI: http://localhost:3111
+---
 
-# Temporal test (run inside worker container)
-docker cp scripts/test_temporal_workflow.py them-worker:/tmp/test_temporal_workflow.py
-docker exec them-worker python3 /tmp/test_temporal_workflow.py
+## Tenant-Aware Design
 
-# DB init (run once after first up, or after wiping data/)
-# Copy schema files then apply:
-docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
-docker cp auth_service/SCHEMA.sql them-postgres:/tmp/them_auth_schema.sql
-docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
-docker cp db/003_phase8.sql them-postgres:/tmp/them_003_phase8.sql
-docker cp db/004_phase9.sql them-postgres:/tmp/them_004_phase9.sql
-docker cp db/005_phase10.sql them-postgres:/tmp/them_005_phase10.sql
-docker cp db/006_phase11.sql them-postgres:/tmp/them_006_phase11.sql
-docker cp db/009_security_scan.sql them-postgres:/tmp/them_009_security_scan.sql
-docker cp db/014_app_orchestrators.sql them-postgres:/tmp/them_014_app_orchestrators.sql
-docker cp db/015_phase12_drop_deprecated.sql them-postgres:/tmp/them_015_phase12.sql
-docker cp db/018_graph_compiler.sql them-postgres:/tmp/them_018_graph_compiler.sql
-docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
-docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_003_phase8.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_004_phase9.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_005_phase10.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_006_phase11.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_009_security_scan.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_014_app_orchestrators.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_015_phase12.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_018_graph_compiler.sql
+Every session, run, rate-limit, and runtime gate is scoped to an Application (the tenant boundary).
+Application ID must flow through every new feature:
+- DB queries must include `application_id` or `entry_point_id` as appropriate
+- Redis keys for per-app state must include the app ID or slug in the key
+- Rate limiting and session caps must be applied per-app, not globally
+- New routes under `/apps/{slug}/` inherit the app slug from the path
 
-# DB access
-docker exec -it them-postgres psql -U them -d them
+---
 
-# Run tests (MUST use python3.12 — system python3 is 3.6 and silently breaks all docker calls)
+## Rules — Code
+
+- **Never** query `auth_service.*` tables directly — use `app/services/auth_client.py` (HTTP to 8701) from Python, or `internal/auth/` from Go
+- **Never** use DB name `odin` or schema `odin` — everything is `them`
+- New agent transport → new file in `app/adapters/` + register in `factory.py` + doc in `docs/ADAPTERS.md`
+- **A2A work** (adapters, agents, agent cards, typed parts, orchestrator↔agent wiring) → invoke `/a2a` skill first — it loads the full SDK reference and platform gap list
+- Work under `go/` must also follow `go/CLAUDE.md`
+
+---
+
+## Rules — Documentation (mandatory)
+
+- New Redis key → `docs/REDIS.md`
+- New DB table or column → `docs/SCHEMA.md` + `db/001_schema.sql`
+- New/changed flow → `docs/ARCHITECTURE.md`
+- Bug fix or non-obvious behavior → `docs/LESSONS.md`
+- Unresolved at session end → `docs/STATUS.md`
+- Trust code over docs; always update the doc when they diverge
+
+---
+
+## Rules — Testing (mandatory, non-negotiable)
+
+- **Every code change that touches `app/` or `go/` MUST have a corresponding test** — new behavior = new test, changed behavior = updated test
+- **After every change run the full suite** — zero new failures allowed before committing
+- **`scripts/tests/INDEX.md` MUST be updated** whenever a Python test is added, changed, or its coverage expands
+- **`go/TEST_INDEX.md` MUST be updated** whenever a Go test is added, changed, or its coverage expands
+- **CLAUDE.md trigger maps MUST be kept in sync** with their respective INDEX.md files
+- Never commit with a test regression — fix the code or the test; do not skip or delete tests
+
+### Python test runner
+
+```bash
+# MUST use python3.12 — system python3 is 3.6 and silently breaks all docker calls
 python3.12 scripts/tests/run_tests.py            # full suite
-python3.12 scripts/tests/run_tests.py 01 02 03 04 15   # sanity only
-
-# Multi-turn behavioral test (runs inside bridge; auto-fetches JWT)
-docker cp scripts/test_multiturn.py them-bridge:/tmp/test_multiturn.py
-docker exec them-bridge python3 /tmp/test_multiturn.py
-
-# Secrets / .env (run before first up)
-.\generate-env.ps1    # Windows
-./generate-env.sh     # Linux/Mac
-
-# Enable replica 2
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile replica up -d them-bridge-2
-
-# Security Scanner (profile: security)
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile security up -d --build them-security-agent
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile security ps
-# Apply migration (run once after first up or after wiping DB)
-docker cp db/009_security_scan.sql them-postgres:/tmp/ && docker exec them-postgres psql -U them -d them -f /tmp/009_security_scan.sql
-# Bust agent cache after migration
-docker exec them-redis redis-cli DEL them:agents:registry
-# Rebuild after code change
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile security build them-security-agent
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile security up -d them-security-agent
-
-# A2A test agents (profile: test-agents)
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents up -d
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents ps
-
-# Enable A2A agents in DB (required before using them in orchestrator)
-docker exec them-postgres psql -U them -d them -c "UPDATE them.agents SET enabled=true WHERE slug IN ('a2a_echo','a2a_slow','a2a_stream');"
-
-# Disable A2A agents (when stopping test-agents profile)
-docker exec them-postgres psql -U them -d them -c "UPDATE them.agents SET enabled=false WHERE slug IN ('a2a_echo','a2a_slow','a2a_stream');"
-
-# Bust Redis cache after enabling/disabling agents or changing a2a_test orchestrator
-docker exec them-redis redis-cli DEL them:orchestrators:a2a_test them:agents:registry
-
-# Rebuild A2A agents after code change (no volume mount — must rebuild)
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents build a2a-echo a2a-slow a2a-stream
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents up -d a2a-echo a2a-slow a2a-stream
-
-# Test A2A adapter directly (no LLM) from inside bridge container
-docker exec them-bridge python3 -c "
-import asyncio, sys; sys.path.insert(0, '/app')
-from app.adapters.a2a_async_adapter import A2aAsyncAdapter
-async def t(slug, url, msg):
-    adapter = A2aAsyncAdapter(agent_slug=slug, endpoint_url=url, auth_token_encrypted=None, poll_interval=1.0, max_poll_seconds=30.0)
-    async for e in adapter.stream_invoke({'message': msg}, timeout=30.0): print(e)
-asyncio.run(t('a2a_echo', 'http://a2a-echo:9200', 'hello'))
-"
+python3.12 scripts/tests/run_tests.py 01 02 03 04 15   # sanity only (~15s)
 ```
 
----
+Expected clean result: N passed, 0 failed, ≤5 skipped
 
-## Rules — Testing (when to run what)
-
-See `scripts/tests/INDEX.md` for full test descriptions.
-
-**Sanity (tests 01 02 03 04 15) — run after every `docker compose up` or deploy:**
-```
-python3.12 scripts/tests/run_tests.py 01 02 03 04 15
-```
-Takes ~15s. Confirms DB, Redis, auth service, bridge, and all containers are healthy.
-
-**After touching `app/`:**
-```
-python3.12 scripts/tests/run_tests.py
-```
-Full suite, ~30s. Zero failures required before committing.
-
-**Expected clean result: N passed, 0 failed, ≤5 skipped**
 Skips are legitimate env gaps — not failures:
 - `structlog`/`fastapi` missing on host (tests 07/19 import checks) → skip, run fine in CI
 - `ADMIN_JWT` not set (test 14 e2e) → set via `ADMIN_JWT=<token> python3.12 ...`
 - `code_agent` unreachable (test 24) → external service, expected skip
-If you see `got ''` on live tests (01–04, 12, 15), you're using the wrong Python — switch to `python3.12`.
 
-**Trigger map — which tests to run after changing what:**
+### Python trigger map — which tests to run after changing what
 
 | Changed | Run tests |
 |---|---|
@@ -285,8 +236,9 @@ If you see `got ''` on live tests (01–04, 12, 15), you're using the wrong Pyth
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.local.yml` | 20 (Traefik routing + multi-replica) |
 | Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) + MT + `scripts/test_temporal_workflow.py` |
 
-**E2E test (14) — needs a JWT:**
-```
+### E2E test (14) — needs a JWT
+
+```bash
 # Get a token first:
 curl -s -X POST http://localhost:8701/auth/login -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}' | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])"
@@ -295,17 +247,9 @@ curl -s -X POST http://localhost:8701/auth/login -H "Content-Type: application/j
 ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14
 ```
 
-**Multi-entry-point integration test — verifies multi-EP app creation, parallel WS sessions, and entry_point_slug traceability in them.runs:**
-```
-# Copy and run inside bridge container (needs echo_test orchestrator with agents):
-docker cp scripts/test_multi_ep.py them-bridge:/tmp/test_multi_ep.py
-docker exec them-bridge python3 /tmp/test_multi_ep.py
-# Expected: creates app with 2 WS entry points, runs 4 parallel sessions (2 per door),
-# verifies entry_point_slug in them.runs matches the door each session used.
-```
+### Temporal worker restart — REQUIRED after editing activity/workflow files
 
-**Temporal worker restart — REQUIRED after editing activity/workflow files:**
-```
+```bash
 # Temporal activities are registered at worker startup. If you edit:
 #   app/temporal/activities.py, app/temporal/workflows.py, app/temporal/shared.py
 # the running worker still has the OLD code. Always restart after changes:
@@ -316,35 +260,94 @@ docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 
 ---
 
-## Rules — Code
+## Container Map
 
-- **Never** query `auth_service.*` tables directly — use `app/services/auth_client.py` (HTTP to 8701)
-- All Redis on **DB index 0** (we own the entire Redis instance). Key prefixes: `them:session:`, `rl:them:`, `them:agents:`, `them:orchestrators:`, `them:bridge:`, `them:dash:`
-- New agent transport → new file in `app/adapters/` + register in `factory.py` + doc in `docs/ADAPTERS.md`
-- **Never** use DB name `odin` or schema `odin` — everything is `them`
-- Naming: UI/docs = **the-M**, code identifiers = **them** / **THE_M_**
-- Use Opus for architecture/planning decisions, Sonnet for coding and QA
-- **A2A work** (adapters, agents, agent cards, typed parts, orchestrator↔agent wiring) → invoke `/a2a` skill first — it loads the full SDK reference and platform gap list
+| Container | Role | Port | Source dir |
+|---|---|---|---|
+| `them-traefik` | Reverse proxy — single entry point, path-based routing, sticky LB | **8088** (host), 127.0.0.1:**8089** (dashboard) | `traefik/` |
+| `them-postgres` | PG16 — DB: `them` | 5432 (internal) | bind mount `./data/them-postgres/pgdata` |
+| `them-redis` | Redis DB 0 | 6379 (internal) | bind mount `./data/them-redis` |
+| `them-auth-service` | Auth/IAM microservice | 8701 (internal) | `auth_service/` |
+| `them-bridge` | Python orchestrator API + WS (replica 1) | 8001 (internal) | `app/` |
+| `them-bridge-2` | Python replica 2 (`profiles: [replica]`) | 8001 (internal) | `app/` |
+| `them-go-bridge` | Go gateway (routes progressively migrated from Python) | 8002 (internal) | `go/` |
+| `them-frontend` | Next.js dashboard | 3200 (internal) | `frontend/` |
+| `vision-agent` | Vision/maps agent | 9100 (internal) | `agents/vision_agent/` |
+| `them-security-agent` | Security scanner A2A agent (`profiles: [security]`) | 9500 (internal) | `agents/security_scanner/` |
+| `a2a-echo` | A2A v1.0 echo test agent (`profiles: [test-agents]`) | 9200 (internal) | `agents/a2a_echo/` |
+| `a2a-slow` | A2A v1.0 slow test agent (5s delay) (`profiles: [test-agents]`) | 9201 (internal) | `agents/a2a_slow/` |
+| `a2a-stream` | A2A v1.0 streaming test agent (`profiles: [test-agents]`) | 9202 (internal) | `agents/a2a_stream/` |
 
 ---
 
-## Rules — Documentation (mandatory)
+## Key Source Locations
 
-- New Redis key → `docs/REDIS.md`
-- New DB table or column → `docs/SCHEMA.md` + `db/001_schema.sql`
-- New/changed flow → `docs/ARCHITECTURE.md`
-- Bug fix or non-obvious behavior → `docs/LESSONS.md`
-- Unresolved at session end → `docs/STATUS.md`
-- Trust code over docs; always update the doc when they diverge
+| Concern | Location |
+|---|---|
+| Orchestrator agentic loop (Python) | `app/services/task_runner.py` |
+| Agent registry → NeutralTool list | `app/services/agent_registry.py` |
+| Agent transport adapters | `app/adapters/` (base, a2a_async_adapter, factory) |
+| Orchestrator WS endpoint (Python) | `app/routers/ws_orchestrator.py` |
+| Dashboard WS (multiplexed channels) | `app/routers/ws_dashboard.py` |
+| Temporal workflow (agentic loop) | `app/temporal/workflows.py` |
+| Temporal activities (all I/O) | `app/temporal/activities.py` |
+| Temporal bridge client | `app/temporal/bridge_client.py` |
+| Temporal worker entrypoint | `app/temporal/worker.py` |
+| LLM providers (Python) | `app/services/providers/` |
+| Token cache (L1+L2) | `app/services/token_cache.py` |
+| Run recording (Python) | `app/services/run_recorder.py` |
+| DB models (Python) | `app/models.py` |
+| Config + env vars (Python) | `app/config.py` |
+| DB schema source of truth | `db/001_schema.sql` |
+| Auth schema source of truth | `auth_service/SCHEMA.sql` |
+| Frontend proxy route | `frontend/src/app/api/them/[...path]/route.ts` |
+| Frontend auth cookies | `frontend/src/app/api/auth/` |
+| Go source root | `go/` — see `go/CLAUDE.md` for full package map |
+| Go admin DAL | `go/internal/admin/dal/` |
+| Go WS/SSE handlers | `go/internal/ws/`, `go/internal/sse/` |
+| Go auth middleware | `go/internal/auth/` |
 
-## Rules — Tests (mandatory, non-negotiable)
+---
 
-- **Every code change that touches `app/` MUST have a corresponding test** — new behavior = new test, changed behavior = updated test
-- **After every change run the full suite** (`python3.12 scripts/tests/run_tests.py`) — zero new failures allowed before committing
-- **`scripts/tests/INDEX.md` MUST be updated** whenever a test is added, changed, or its coverage expands — description, type, trigger map
-- **`scripts/tests/run_tests.py` is the canonical runner** — standalone `.sh`/`.py` test files must mirror the same checks; if they diverge, fix both
-- **CLAUDE.md trigger map MUST be kept in sync** with `INDEX.md` — if you add/change a test, update both
-- Never commit with a test regression — if a test breaks, fix the code or the test before pushing; do not skip or delete tests to make the suite pass
+## Common Commands
+
+```bash
+# Stack (core only)
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.local.yml ps
+docker compose logs -f them-bridge
+
+# Stack with Temporal (required for orchestration — TEMPORAL_ENABLED=true in bridge)
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal up -d
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal ps
+docker logs them-worker
+# Temporal UI: http://localhost:3111
+
+# Go bridge (profile: go)
+docker compose --profile go build them-go-bridge
+docker compose --profile go up -d them-go-bridge
+docker compose --profile go logs -f them-go-bridge
+
+# DB init (run once after first up, or after wiping data/)
+docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
+docker cp auth_service/SCHEMA.sql them-postgres:/tmp/them_auth_schema.sql
+docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
+docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
+docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
+# Apply remaining migrations in order: 003 through 018 (see CLAUDE.md history or docs/STATUS.md for full list)
+
+# DB access
+docker exec -it them-postgres psql -U them -d them
+
+# Secrets / .env (run before first up)
+.\generate-env.ps1    # Windows
+./generate-env.sh     # Linux/Mac
+
+# Enable replica 2
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile replica up -d them-bridge-2
+```
 
 ---
 
@@ -358,28 +361,3 @@ Tables: `llm_providers`, `config`, `agents`, `orchestrators`, `access_tokens`, `
 
 **Credentials:** derived via HMAC-SHA256 from `secrets.local`. Re-run `.\generate-env.ps1` to regenerate `.env`.
 DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
-
----
-
-## Known State (2026-07-14)
-
-- **Stack:** fully deployed locally. All core containers healthy. Temporal stack running (`--profile temporal`).
-- **Temporal migration:** COMPLETE (all 7 phases). See `docs/architecture/PROGRESS.md`.
-- **Orchestration:** All WS runs now go through Temporal `OrchestrationWorkflow`. `TEMPORAL_ENABLED=true` in bridge env.
-- **Bridge:** Stateless — no sticky sessions. Any replica handles any connection. Temporal holds all state.
-- **HITL:** `POST /api/v1/runs/{run_id}/signal` forwards human responses to paused workflows.
-- **Users seeded:** `admin` / `admin123` (super_admin), `avi` / `avi123` (super_admin)
-- **Agents seeded:** assistant, coder, researcher (mock WS) + a2a_echo, a2a_slow, a2a_stream (A2A test agents)
-- **Orchestrators seeded:** `default` (claude-sonnet-4-6), `a2a_test` (haiku, all 3 A2A agents)
-- **A2A test agents:** running (`--profile test-agents`), all enabled in DB, ready to use via `a2a_test` orchestrator
-- **Phase 10 applied (multi-EP):** `db/010_app_entrypoints.sql` migrated. `them.applications` is now the parent; `them.entry_points` is the child (one row per WS/SSE/WebRTC door). `them.runs.entry_point_slug` tracks which door each run came through. See `docs/architecture/APP_MODEL_DECISION.md`.
-- **Multi-EP integration test:** `scripts/test_multi_ep.py` — runs inside them-bridge, creates a 2-door WS app, runs 4 parallel sessions, verifies entry_point_slug traceability. All pass.
-- **ANTHROPIC_API_KEY:** set in `.env` — bridge picks it up on restart
-- **Dev login:** pre-filled in login page when `NODE_ENV=development`
-- **`vision-agent`:** unhealthy — needs `GOOGLE_MAPS_API_KEY` and `FAL_API_KEY` in `.env`
-- **Replica 2:** compose profile `replica`, currently running (used during Phase 6 validation)
-- **Git hooks:** not wired — planned as GitHub Actions (future)
-- **Frontend URL:** http://localhost:8088
-- **Bridge API (direct, internal):** http://localhost:8001 — use http://localhost:8088 from browser
-- **Traefik dashboard:** http://localhost:8089
-- **Temporal UI:** http://10.55.125.43:8088/temporal/ — proxied through Traefik at `/temporal/` (requires `--profile temporal`)
