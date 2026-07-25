@@ -53,6 +53,8 @@ func BuildRouter(
 	apps := NewApplicationsHandler(db, cache)
 	runs := NewRunsHandler(db, temporal)
 	tokens := NewTokensHandler(db, cache)
+	monitoring := NewMonitoringConfigHandler(db)
+	llmRouting := NewLLMRoutingHandler(db)
 
 	// Admin routes — protected by JWT + super_admin role check.
 	r.Group(func(admin chi.Router) {
@@ -67,6 +69,8 @@ func BuildRouter(
 			orchs.Routes(a)
 			apps.Routes(a)
 			tokens.Routes(a)
+			monitoring.Routes(a)
+			llmRouting.Routes(a)
 			if sessionReader != nil {
 				NewSessionsHandler(sessionReader).Routes(a)
 			}
