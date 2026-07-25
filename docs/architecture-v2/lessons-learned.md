@@ -939,6 +939,71 @@ prefix). Only rows that already exist in production without the prefix benefit f
 
 ---
 
+### L-14: Python `PATCH` semantics require an "APIKeyPresent" flag, not just a nil pointer
+
+**Context:** Wave 7 Phase 2 — LLM provider PATCH (update_provider).
+
+**What happened:** Python's `LLMProviderUpdate` Pydantic model marks `api_key` as
+`Optional[str] = None`. When the field is absent from the request body, `body.api_key is None`.
+When the field is present but explicitly null, `body.api_key is None`. Python's handler only
+rotates the key when `body.api_key is not None` — but this means JSON `{"api_key": null}` is
+indistinguishable from `{}` (absent field). Both leave the existing key unchanged.
+
+In Go, `*string` for a PATCH field makes `nil = absent` and `""` (empty) vs non-empty more
+precise. However, Python has no way to pass an empty api_key that clears the key — explicit null
+and absent are both treated as "leave unchanged." Go preserves this by:
+- `APIKeyPresent: false` (field absent from JSON) → leave existing key unchanged
+- `APIKeyPresent: true, APIKey: nil` (JSON null) → clear the key (safer than Python's silent-keep)
+- `APIKeyPresent: true, APIKey: &""` (JSON empty string) → clear the key (Go stricter than Python)
+- `APIKeyPresent: true, APIKey: &"sk-..."` → rotate to new key
+
+**Rule:** For any Go PATCH handler where the distinction between "absent", "null", and "empty"
+matters for a sensitive field, use a separate boolean flag (`FieldPresent bool`) rather than
+relying solely on pointer nil-ness. The `json.Decoder` cannot distinguish null from absent
+using `*T` alone. Only a custom `json.Unmarshaler` or a separate presence flag handles it.
+
+---
+
+### L-15: Go strings are immutable — use `[]byte` intermediate to zero plaintext after masking
+
+**Context:** Wave 7 Phase 2 — `maskKey()` in LLMProviderService.
+
+**What happened:** `crypto.DecryptStored` returns a `string`. The masking code attempted
+`for i := range plain { plain[i] = 0 }` which the compiler rejects: strings in Go are
+immutable and not addressable. The solution is to call `crypto.Decrypt` (which returns `[]byte`)
+rather than `DecryptStored`, then zero the byte slice after computing the mask string.
+
+**Fix:** `maskKey()` calls `crypto.Decrypt(key, token)` and receives `[]byte`. The mask is
+computed from byte slice slices (`string(plainBytes[:4]) + "..." + ...`), then the byte slice
+is zeroed: `for i := range plainBytes { plainBytes[i] = 0 }`. The mask string copy escapes
+to heap, but the plaintext bytes are cleared. This is the correct pattern for any Go code that
+handles secret material and wants best-effort zeroing.
+
+**Note:** Go's GC may have already copied the plaintext to other memory locations before zeroing.
+Full zeroing guarantees require the `unsafe` package. The pattern used here is a best-effort
+defense-in-depth measure, not a cryptographic guarantee.
+
+---
+
+### L-16: Integration test helpers in `dal_test` package require `admin.NewPgxQuerier` not a custom wrapper
+
+**Context:** Wave 7 Phase 2 — DAL integration tests (`internal/admin/dal/llm_providers_integration_test.go`).
+
+**What happened:** The first attempt at the integration test helper implemented a custom
+`pgxQuerier` struct that returned `pgx.Rows` (which has `Close() ` with no return value).
+The `dal.RowScanner` interface requires `Close() error`. Build failed with type mismatch.
+
+**Fix:** Import `github.com/aviciot/them/internal/admin` and use `admin.NewPgxQuerier(pool)`,
+which returns a `*admin.PgxQuerier` that wraps `pgx.Rows` in a `pgxRowsWrapper` (with the
+correct `Close() error` signature). The existing adapter already solves this problem — use it.
+
+**Rule:** When writing integration tests in a package that needs a `dal.Querier`, always use
+`admin.NewPgxQuerier(pool)` rather than rolling a custom adapter. Only create a custom adapter
+if the test is in `package admin_test` and needs to exercise the handler layer, where
+`admin.DBQuerier` type compatibility is the primary concern.
+
+---
+
 ### L-10: Go bridge JWT env var naming inconsistency (pre-Wave 6 bug)
 
 **Context:** When the Go bridge was first added to `docker-compose.yml`, its environment

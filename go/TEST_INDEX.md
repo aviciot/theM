@@ -615,6 +615,32 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 | `TestGetLLMRouting_NoRow_ReturnsDefaults` | No DB row → defaults (anthropic, claude-sonnet-4-6, nil fallbacks) |
 | `TestGetLLMRouting_StoredRow_Returned` | Stored row → all fields including fallback_provider/fallback_model returned |
 | `TestPutLLMRouting_ValidInput_Upserts` | Valid LLMRoutingConfig → DAL UpsertConfig called with `config_key="llm_routing"` and correct JSON |
+| `TestLLMProviderService_MaskKey_NilEncrypted` | nil encrypted → (false, nil) — no key set |
+| `TestLLMProviderService_MaskKey_EmptyEncrypted` | empty string → (false, nil) — same as nil |
+| `TestLLMProviderService_MaskKey_ShortPlaintext` | len(plain)≤8 → (true, "****") |
+| `TestLLMProviderService_MaskKey_ExactlyEight` | exactly 8 chars → (true, "****") — boundary check |
+| `TestLLMProviderService_MaskKey_LongPlaintext` | len(plain)>8 → (true, "abcd...wxyz") |
+| `TestLLMProviderService_MaskKey_DecryptError` | HMAC mismatch → (true, "****") — no panic |
+| `TestLLMProviderService_Create_NoAPIKey` | empty APIKey → api_key_encrypted=nil in DAL call |
+| `TestLLMProviderService_Create_WithAPIKey_Encrypts` | non-empty APIKey → DAL receives "enc:"-prefixed value |
+| `TestLLMProviderService_Create_Duplicate_ReturnsConflict` | DAL unique-violation → `ErrConflict` |
+| `TestLLMProviderService_Create_MissingName_Validation` | missing name → `ErrValidation` |
+| `TestLLMProviderService_Create_MissingDisplayName_Validation` | missing display_name → `ErrValidation` |
+| `TestLLMProviderService_Create_MissingDefaultModel_Validation` | missing default_model → `ErrValidation` |
+| `TestLLMProviderService_Create_DefaultsEnabled` | nil Enabled → DAL receives enabled=true |
+| `TestLLMProviderService_Create_DefaultsPricing` | nil ModelPricing → DAL receives "{}" |
+| `TestLLMProviderService_Get_Found` | found → toOut called; api_key_encrypted not in response |
+| `TestLLMProviderService_Get_NotFound` | pgx.ErrNoRows → `ErrNotFound` |
+| `TestLLMProviderService_Update_NoKeyChange_Preserves` | APIKeyPresent=false → existing key unchanged |
+| `TestLLMProviderService_Update_NewKey_Rotates` | APIKeyPresent=true, non-empty → new "enc:" value |
+| `TestLLMProviderService_Update_ClearKey` | APIKeyPresent=true, nil/empty → api_key_encrypted=nil |
+| `TestLLMProviderService_Update_NotFound` | pgx.ErrNoRows → `ErrNotFound` |
+| `TestLLMProviderService_Delete_Success` | success → no error |
+| `TestLLMProviderService_Delete_NotFound` | pgx.ErrNoRows → `ErrNotFound` |
+| `TestLLMProviderService_List_EmptySliceNotNil` | empty list → `[]` not nil |
+| `TestLLMProviderService_List_NilPricingToEmptyMap` | nil ModelPricingRaw → model_pricing={} in output |
+| `TestLLMProviderService_Create_ErrorDoesNotLeakPlaintext` | error path: create fails; plaintext not in returned error message |
+| `TestLLMProviderService_MaskKey_NoPlaintextInOutput` | decrypted plain never appears in LLMProviderOut fields |
 
 **Trigger:** any change to `internal/admin/service/` (any file) OR `internal/admin/dal/` (any file)
 
@@ -686,6 +712,41 @@ sub-handler. Method enforcement (405) is delegated to the chi sub-handler, not t
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
 Build tag: `//go:build integration` — skipped by default with `go test ./...`.
+
+### S2-05 · LLM Provider DAL integration — `internal/admin/dal/llm_providers_integration_test.go`
+
+**Purpose:** Verify `them.llm_providers` DAL operations against live PostgreSQL.
+Proves unique-violation detection, hard delete, encrypted value round-trip, and
+`enc:` prefix invariant. Uses `cleanProviders` helper to isolate test data by prefix.
+
+Build tag: `//go:build integration`. Package: `dal_test`. Querier via `admin.NewPgxQuerier(pool)`.
+
+| Test | What it proves |
+|---|---|
+| `TestDAL_Provider_List` | Returns ≥2 entries in ascending ID order |
+| `TestDAL_Provider_Get` | Round-trips ID and api_key_encrypted value |
+| `TestDAL_Provider_Create` | ID assigned; nil key stored as NULL |
+| `TestDAL_Provider_UpdateMetadataOnly` | display_name updated; existing api_key_encrypted preserved |
+| `TestDAL_Provider_UpdateAPIKey` | api_key_encrypted replaced; new value round-trips |
+| `TestDAL_Provider_Delete` | Row deleted; subsequent GetProvider returns ErrNoRows |
+| `TestDAL_Provider_DuplicateName_UniqueViolation` | Second insert on same name → `IsUniqueViolation=true` |
+| `TestDAL_Provider_GetNotFound` | Non-existent ID → `IsNoRows=true` |
+| `TestDAL_Provider_DeleteNotFound` | Non-existent ID delete → `IsNoRows=true` |
+| `TestDAL_Provider_EncryptedValue_HasEncPrefix` | Stored value always starts with "enc:" |
+| `TestDAL_Provider_PlaintextNeverStored` | Known plaintext string absent from DB column |
+
+**Run command:**
+```bash
+docker run --rm --network them-network \
+  -v "$(pwd)":/workspace -w /workspace \
+  -e TEST_POSTGRES_DSN="host=them-postgres port=5432 dbname=them user=them password=<pw> sslmode=disable" \
+  golang:1.24-alpine \
+  go test -tags=integration -v ./internal/admin/dal/...
+```
+
+**Trigger:** any change to `internal/admin/dal/llm_providers.go`
+
+---
 
 ### S2-04 · Token + Session API integration — `internal/admin/tokens_sessions_integration_test.go`
 
@@ -893,7 +954,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/cache/runstreamer_adapter.go` | S1-20 + S1-23 (integration) |
 | `internal/a2a/server.go` | S1-14 |
 | `internal/admin/` (any file) | S1-15 + S1-25 |
-| `internal/admin/dal/` (any file) | S1-15 + S1-25 |
+| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S2-05 (integration) |
+| `internal/admin/dal/llm_providers.go` | S1-25 + S2-05 (integration) |
 | `internal/admin/service/` (any file) | S1-25 |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
@@ -957,14 +1019,15 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-22 | reconciler | 15 |
 | S1-23 | runstream (streamer + dispatcher) | 15 |
 | S1-24 | cmd/them (apps dispatcher) | 5 |
-| S1-25 | admin/service | 34 |
+| S1-25 | admin/service | 60 |
 | S1-26 | crypto (fernet) | 32 |
-| **S1 total** | | **297** |
+| **S1 total** | | **323** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
 | S2-03 (MAXLEN) | runstream MAXLEN + reconnect + cross-replica | 7 |
 | S2-04 | admin tokens + sessions integration | 11 |
-| **S2 total** | | **31** |
+| S2-05 | admin/dal llm_providers integration | 11 |
+| **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **Grand total** | | **351** |
+| **Grand total** | | **388** |

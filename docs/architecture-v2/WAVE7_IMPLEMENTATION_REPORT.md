@@ -384,3 +384,298 @@ All preconditions met:
 **Phase 2 first task:** Add `dal.LLMProvider`, `dal.LLMProviderInput`, `dal.LLMProviderPatch`
 types and 5 DAL methods to `go/internal/admin/dal/llm_providers.go`, following the established
 `agents.go` DAL pattern.
+
+---
+
+# Wave 7 Phase 2 Implementation Report — DAL + Service Layer
+# Date: 2026-07-25
+
+---
+
+## Scope
+
+Phase 2 of Wave 7: DAL (`go/internal/admin/dal/llm_providers.go`) and service layer
+(`go/internal/admin/service/llm_providers.go`) for `them.llm_providers` CRUD.
+No handlers, no routes, no Traefik changes. No live cutover.
+
+---
+
+## DAL Structure
+
+**File:** `go/internal/admin/dal/llm_providers.go`
+
+### Types
+
+```go
+type LLMProvider struct {
+    ID              int64
+    Name            string
+    DisplayName     string
+    APIKeyEncrypted *string  // nil = no key stored
+    BaseURL         *string
+    DefaultModel    string
+    ModelPricingRaw []byte   // raw JSONB bytes; nil → "{}" on read
+    Enabled         bool
+}
+
+type LLMProviderInput struct {
+    Name            string
+    DisplayName     string
+    APIKeyEncrypted *string
+    BaseURL         *string
+    DefaultModel    string
+    ModelPricingRaw []byte
+    Enabled         bool
+}
+```
+
+### Operations
+
+| Method | SQL pattern | Not-found behavior |
+|--------|------------|-------------------|
+| `ListProviders` | `SELECT ... ORDER BY id ASC` | Returns empty slice, not error |
+| `GetProvider(id)` | `SELECT ... WHERE id=$1` | Returns `pgx.ErrNoRows` |
+| `CreateProvider(in)` | `INSERT ... RETURNING *` | `IsUniqueViolation` on name clash |
+| `UpdateProvider(id, in)` | `UPDATE ... RETURNING *` | Returns `pgx.ErrNoRows` if id missing |
+| `DeleteProvider(id)` | `DELETE ... RETURNING id` | Returns `pgx.ErrNoRows` if id missing |
+
+**Key design decisions:**
+- `DeleteProvider` uses `DELETE ... RETURNING id` — no RETURNING means the row was gone.
+  `pgx.ErrNoRows` naturally results, handled by `dal.IsNoRows()`.
+- `UpdateProvider` takes a full `LLMProviderInput` — fetch-then-modify happens at the service layer
+  (not inside the DAL), keeping the DAL a pure persistence layer.
+- `ModelPricingRaw` stores raw `[]byte`; nil input is stored as `{}` by the DB default.
+  The helper `ModelPricingOrEmpty(raw []byte) map[string]any` unmarshals to `{}` when raw is nil.
+- `LLMProviderToInput(p LLMProvider) LLMProviderInput` — canonical conversion for the
+  fetch-then-modify PATCH pattern.
+
+---
+
+## Service Structure
+
+**File:** `go/internal/admin/service/llm_providers.go`
+
+### Output type
+
+```go
+type LLMProviderOut struct {
+    ID           int64
+    Name         string
+    DisplayName  string
+    APIKeySet    bool    // true when api_key_encrypted is non-nil
+    APIKeyMasked *string // null JSON when no key; "****" or "abcd...wxyz" when set
+    BaseURL      *string
+    DefaultModel string
+    ModelPricing map[string]any
+    Enabled      bool
+}
+```
+
+**Security invariant:** `api_key_encrypted` is never exposed in any JSON output.
+The plaintext key is never logged, returned, or embedded in errors.
+
+### Input types
+
+```go
+type LLMProviderCreate struct {
+    Name, DisplayName, DefaultModel string
+    APIKey       string         // plaintext; "" = no key
+    BaseURL      *string
+    ModelPricing map[string]any
+    Enabled      *bool          // nil → defaults to true
+}
+
+type LLMProviderPatch struct {
+    DisplayName  *string
+    APIKey       *string        // nil=absent, ""=clear, non-empty=rotate
+    BaseURL      **string       // double-pointer: nil=absent; non-nil=set (may point to nil to clear)
+    DefaultModel *string
+    ModelPricing map[string]any // nil=absent
+    Enabled      *bool
+    APIKeyPresent bool          `json:"-"` // handler sets this when key field appears in JSON
+}
+```
+
+### Service operations
+
+| Operation | Validates | Error mapping |
+|-----------|-----------|---------------|
+| `List(ctx)` | — | returns `([]LLMProviderOut, error)` |
+| `Get(ctx, id)` | — | `dal.IsNoRows` → `ErrNotFound` |
+| `Create(ctx, body)` | name/display_name/default_model required | `dal.IsUniqueViolation` → `ErrConflict` |
+| `Update(ctx, id, patch)` | fetch first; apply non-nil patches | `dal.IsNoRows` → `ErrNotFound` |
+| `Delete(ctx, id)` | — | `dal.IsNoRows` → `ErrNotFound` |
+
+### Masking behavior (mirrors Python `_mask_key`)
+
+```
+encrypted = nil or ""     → (api_key_set=false, api_key_masked=null)
+no "enc:" prefix          → (api_key_set=true,  api_key_masked="****")  [+ WARN log]
+decrypt error             → (api_key_set=true,  api_key_masked="****")  [+ WARN log]
+len(plain) <= 8           → (api_key_set=true,  api_key_masked="****")
+len(plain) > 8            → (api_key_set=true,  api_key_masked=plain[:4]+"..."+plain[-4:])
+```
+
+Logs contain `provider_id` and `error_category` only — never plaintext, ciphertext, or key material.
+
+### Encryption behavior
+
+- **Create:** `body.APIKey != ""` → `crypto.EncryptStored(fernetKey, body.APIKey)` → stored with "enc:" prefix.
+- **Update (rotate):** `APIKeyPresent=true`, `*APIKey != ""` → new `EncryptStored` call; old value discarded.
+- **Update (clear):** `APIKeyPresent=true`, `APIKey == nil || *APIKey == ""` → `api_key_encrypted = nil`.
+- **Update (no-op):** `APIKeyPresent=false` (field absent) → existing encrypted value preserved untouched.
+
+### Zeroing plaintext bytes
+
+`maskKey` calls `crypto.Decrypt` (returns `[]byte`) rather than `crypto.DecryptStored` (returns `string`)
+so the byte slice can be zeroed after the mask string is computed:
+```go
+for i := range plainBytes { plainBytes[i] = 0 }
+```
+This is a best-effort defense — Go's GC may have already copied bytes. Full guarantees require `unsafe`.
+
+---
+
+## Python Compatibility Findings
+
+### Confirmed compatible
+- Fernet key derivation, wire format, PKCS7 padding — verified in Phase 1.
+- `api_key_set` / `api_key_masked` JSON shape — matches Python `_mask_key` exactly.
+- Hard delete semantics (no soft delete, no archive column).
+- `model_pricing` defaults to `{}` — both Python ORM default and Go DAL default.
+- `enabled` defaults to `true` on create if omitted.
+- 409 Conflict on duplicate name — matches Python's `raise HTTPException(status_code=409)`.
+- 404 Not Found on missing ID for GET/PATCH/DELETE — matches Python's `raise HTTPException(status_code=404)`.
+
+### PATCH semantics deviation (intentional)
+
+Python's `api_key=null` and absent `api_key` are both `None` in the Pydantic model — both leave the
+existing key unchanged. Go is more precise: `APIKeyPresent=false` (absent) preserves the key;
+`APIKeyPresent=true, APIKey=nil` (explicit null) clears it. This is strictly safer than Python.
+The handler must set `APIKeyPresent=true` when the JSON body contains the `api_key` field.
+
+---
+
+## Bugs Found (and fixed)
+
+### BF-01 · Go string immutability prevents in-place zeroing
+
+**Symptom:** `cannot assign to plain[i]` compile error when using `crypto.DecryptStored` (returns `string`).
+**Fix:** Use `crypto.Decrypt` (returns `[]byte`) and manually strip the "enc:" prefix in `maskKey`.
+The byte slice can then be zeroed with `for i := range plainBytes { plainBytes[i] = 0 }`.
+
+### BF-02 · `pgx.Rows.Close()` has no return value; `dal.RowScanner.Close()` requires `error`
+
+**Symptom:** Integration test helper that passed `pgx.Rows` directly as `dal.RowScanner` failed to compile.
+**Fix:** Use `admin.NewPgxQuerier(pool)` (already wraps pgx.Rows in `pgxRowsWrapper` with `Close() error`).
+The adapter was already correct; only the test helper was wrong.
+
+---
+
+## Test Results
+
+### Service unit tests (`go test ./internal/admin/service/...`)
+
+26 tests in `go/internal/admin/service/llm_providers_test.go`:
+
+| Test group | Count |
+|---|---|
+| `maskKey` (nil, short, long, decrypt error, no plaintext in output) | 6 |
+| `Create` (no key, with key, duplicate→conflict, missing fields, defaults) | 7 |
+| `Get` (found, not found) | 2 |
+| `Update` (no key change, rotate, clear, not found) | 4 |
+| `Delete` (success, not found) | 2 |
+| `List` (empty → non-nil slice, nil pricing → empty map) | 2 |
+| Security: create error does not leak plaintext | 1 |
+| Defaults: pricing→"{}", enabled→true | 2 |
+| **Total** | **26** |
+
+All 26 pass. `fakeDal` uses authentic `pgx.ErrNoRows` and `*pgconn.PgError{Code: "23505"}`.
+
+### DAL integration tests (`go test -tags=integration ./internal/admin/dal/...`)
+
+11 tests in `go/internal/admin/dal/llm_providers_integration_test.go`:
+
+| Test | Coverage |
+|---|---|
+| `TestDAL_Provider_List` | list returns ≥2 entries in ascending ID order |
+| `TestDAL_Provider_Get` | round-trip ID and encrypted value |
+| `TestDAL_Provider_Create` | ID assigned, nil key stored as NULL |
+| `TestDAL_Provider_UpdateMetadataOnly` | display_name changes; api_key preserved |
+| `TestDAL_Provider_UpdateAPIKey` | api_key replaced; new value round-trips |
+| `TestDAL_Provider_Delete` | row gone; GetProvider returns ErrNoRows |
+| `TestDAL_Provider_DuplicateName_UniqueViolation` | IsUniqueViolation=true |
+| `TestDAL_Provider_GetNotFound` | IsNoRows=true |
+| `TestDAL_Provider_DeleteNotFound` | IsNoRows=true |
+| `TestDAL_Provider_EncryptedValue_HasEncPrefix` | stored value starts with "enc:" |
+| `TestDAL_Provider_PlaintextNeverStored` | plaintext "test-api-key-wave7-phase1" not in DB |
+| **Total** | **11** |
+
+All 11 pass against live `them-postgres`.
+
+### Full Go unit suite
+
+```
+go test ./...
+All 23 packages PASS, 0 failures, 0 regressions.
+```
+
+Admin service: S1-25 count increased from 34 → 60 (26 new provider service tests).
+
+### Race detector
+
+```
+go test -race ./internal/admin/... ./internal/crypto/...
+PASS, 0 data races.
+```
+
+### Fernet regression check
+
+```
+go test ./internal/crypto/...
+32/32 PASS — no regression from Phase 1.
+```
+
+### Python suite
+
+```
+python3.12 scripts/tests/run_tests.py 01 02 03 04 15
+55/55 PASS
+```
+
+---
+
+## Commits
+
+| Hash | Message |
+|------|---------|
+| `9df65cd` | `feat(admin/dal): Wave 7 Phase 2 — LLM provider DAL and interface` |
+| `dc391b7` | `feat(admin/service): Wave 7 Phase 2 — LLMProviderService + unit tests` |
+
+---
+
+## Phase 3 Readiness Assessment
+
+**Safe to proceed to Phase 3 (HTTP handlers + route wiring).**
+
+All preconditions met:
+- ✅ DAL: 5 operations, all tested with integration tests against live Postgres
+- ✅ Service: masking, encryption, rotation, PATCH semantics, error mapping — all unit-tested
+- ✅ No plaintext leakage in any code path — verified by explicit test
+- ✅ `ErrConflict` sentinel added to `service/errors.go`
+- ✅ `Dal` interface in `service/service.go` extended with 5 provider methods
+- ✅ `fakeDal` in `service_test.go` extended with provider stubs
+- ✅ Race detector: 0 data races
+- ✅ Full unit suite: 0 failures, 0 regressions
+- ✅ Python suite: 55/55 passed
+
+**Phase 3 first task:** Add HTTP handlers in `go/internal/admin/` for:
+- `GET /admin/llm-providers` → `service.List`
+- `POST /admin/llm-providers` → `service.Create`
+- `GET /admin/llm-providers/{id}` → `service.Get`
+- `PATCH /admin/llm-providers/{id}` → `service.Update` (with `APIKeyPresent` detection via raw JSON decode)
+- `DELETE /admin/llm-providers/{id}` → `service.Delete`
+
+Handler must set `LLMProviderPatch.APIKeyPresent = true` when `api_key` key appears in the JSON body
+(use `json.RawMessage` intermediate or a custom unmarshaler).
+Status codes: 200 list/get/patch, 201 create, 204 delete, 404 not found, 409 conflict, 422 validation.
