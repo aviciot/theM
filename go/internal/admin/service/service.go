@@ -60,6 +60,13 @@ type Dal interface {
 	// Config table (monitoring, llm_routing, …)
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
 	UpsertConfig(ctx context.Context, key string, value []byte) error
+
+	// LLM providers
+	ListProviders(ctx context.Context) ([]dal.LLMProvider, error)
+	GetProvider(ctx context.Context, id int64) (dal.LLMProvider, error)
+	CreateProvider(ctx context.Context, in dal.LLMProviderInput) (dal.LLMProvider, error)
+	UpdateProvider(ctx context.Context, id int64, in dal.LLMProviderInput) (dal.LLMProvider, error)
+	DeleteProvider(ctx context.Context, id int64) error
 }
 
 // Cache invalidates Redis caches on mutations.

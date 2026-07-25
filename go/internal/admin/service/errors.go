@@ -14,6 +14,10 @@ var (
 	// ErrNotFound signals the addressed resource does not exist → 404 Not Found.
 	ErrNotFound = errors.New("not found")
 
+	// ErrConflict signals a uniqueness violation → 409 Conflict.
+	// Used when a name or slug already exists (SQLSTATE 23505).
+	ErrConflict = errors.New("conflict")
+
 	// ErrTemporalUnavailable signals Temporal is not configured → 503.
 	ErrTemporalUnavailable = errors.New("temporal not configured")
 )
