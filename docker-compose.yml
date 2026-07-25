@@ -886,7 +886,8 @@ services:
       - REDIS_HOST=them-redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
-      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-in-production}
+      - JWT_SECRET=${THE_M_JWT_SECRET:-}
       - THE_M_INSTANCE_ID=go-bridge-1
       - LOG_FORMAT=json
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -920,6 +921,20 @@ services:
       - "traefik.http.routers.them-go-admin-reads.entrypoints=web"
       - "traefik.http.routers.them-go-admin-reads.priority=110"
       - "traefik.http.routers.them-go-admin-reads.service=them-go-bridge-svc"
+      # ── Wave 6: /api/v1/admin/monitoring-config — GET + PUT ─────────────────
+      # Python owns /api/v1 at priority 100; Go claims monitoring-config at 120.
+      # ROLLBACK: remove this router block (them-go-monitoring-config).
+      - "traefik.http.routers.them-go-monitoring-config.rule=Path(`/api/v1/admin/monitoring-config`)"
+      - "traefik.http.routers.them-go-monitoring-config.entrypoints=web"
+      - "traefik.http.routers.them-go-monitoring-config.priority=120"
+      - "traefik.http.routers.them-go-monitoring-config.service=them-go-bridge-svc"
+      # ── Wave 6: /api/v1/admin/llm-providers/routing/config — GET + PUT ──────
+      # Literal path — does not conflict with /llm-providers/{id} (Python keeps that).
+      # ROLLBACK: remove this router block (them-go-llm-routing-config).
+      - "traefik.http.routers.them-go-llm-routing-config.rule=Path(`/api/v1/admin/llm-providers/routing/config`)"
+      - "traefik.http.routers.them-go-llm-routing-config.entrypoints=web"
+      - "traefik.http.routers.them-go-llm-routing-config.priority=120"
+      - "traefik.http.routers.them-go-llm-routing-config.service=them-go-bridge-svc"
     profiles:
       - go
     restart: unless-stopped
