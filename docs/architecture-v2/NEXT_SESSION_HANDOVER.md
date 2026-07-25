@@ -1,144 +1,189 @@
 # Session Handover
 # Generated: 2026-07-25
-# Scope: Wave 6 implementation — monitoring-config + llm-providers/routing/config
+# Scope: Wave 6 complete — monitoring-config + llm-providers/routing/config
 
 ---
 
 ## Git State
 
 **Branch:** `main`
-**HEAD:** see `git log --oneline -1` (this file committed with all Wave 6 changes)
-**origin/main:** push pending — no credentials available (local SSH key not configured)
-**Working tree:** clean after this commit
+**HEAD:** `01860f4 fix(admin/service): use unprocessable (422) for monitoring threshold ordering violations`
+**origin/main:** push required after this commit (previous push landed at a1cc4f8; 01860f4 is one commit ahead)
+**Working tree:** clean (only `go/them` compiled binary is untracked — do not commit)
 
-### Session commits (newest first)
+### Wave 6 commits (newest first)
 
 ```
-(this commit)  docs(wave6): TEST_INDEX.md, implementation-status.md, lessons-learned.md, WAVE6_IMPLEMENTATION_REPORT.md
-55eb923        cutover(wave6): enable Traefik routing for monitoring-config + llm-providers/routing/config
-b0d1a31        feat(admin): add MonitoringConfig + LLMRouting handlers (Wave 6 Phase 3)
-e78a6bd        feat(admin/service): add ConfigService for monitoring + llm_routing (Wave 6 Phase 2)
-69e2dca        feat(admin/dal): add config table GetConfig + UpsertConfig (Wave 6 Phase 1)
-64729fd        docs(handover): session handover — CLAUDE.md alignment + docs consolidation complete
+01860f4  fix(admin/service): use unprocessable (422) for monitoring threshold ordering violations
+a1cc4f8  docs(wave6): TEST_INDEX, implementation-status, lessons-learned, handover
+55eb923  cutover(wave6): enable Traefik routing for monitoring-config + llm-providers/routing/config
+b0d1a31  feat(admin): add MonitoringConfig + LLMRouting handlers (Wave 6 Phase 3)
+e78a6bd  feat(admin/service): add ConfigService for monitoring + llm_routing (Wave 6 Phase 2)
+69e2dca  feat(admin/dal): add config table GetConfig + UpsertConfig (Wave 6 Phase 1)
 ```
 
 ---
 
-## Work Completed This Session
+## Wave 6 Selected Routes
 
-### Wave 6 — monitoring-config + llm-providers/routing/config
+Four Python admin operations migrated to Go:
 
-4 Python admin operations migrated to Go:
-- `GET /api/v1/admin/monitoring-config` — reads `them.config['monitoring']`, returns defaults if absent
-- `PUT /api/v1/admin/monitoring-config` — validates threshold ordering (heatmap, edge), upserts JSONB
-- `GET /api/v1/admin/llm-providers/routing/config` — reads `them.config['llm_routing']`, returns defaults if absent
-- `PUT /api/v1/admin/llm-providers/routing/config` — upserts JSONB, no Fernet
+| Route | Methods | Config key | Python file |
+|---|---|---|---|
+| `/api/v1/admin/monitoring-config` | GET, PUT | `them.config['monitoring']` | `app/routers/admin_monitoring_config.py` |
+| `/api/v1/admin/llm-providers/routing/config` | GET, PUT | `them.config['llm_routing']` | `app/routers/admin_llm_providers.py` (lines 186–204) |
 
-Architecture follows Handler → Service → DAL pattern. No SQL in handlers, no business logic in handlers.
-
-### Bug fixed
-Pre-existing JWT env var naming bug in `docker-compose.yml`: Go bridge was verifying HS256 tokens with `SECRET_KEY` (wrong), not `JWT_SECRET` (auth service signing key). Fixed by adding `JWT_SECRET=${THE_M_JWT_SECRET:-}` to Go bridge env block. Documented in `lessons-learned.md` L-10.
+No provider CRUD. No Fernet. No DB schema changes. No Redis keys. No Wave 7 started.
 
 ---
 
-## Deployed/Live State
+## Live Traefik Route Ownership
 
-| Container | State |
+All entries confirmed from `docker inspect them-go-bridge` labels.
+
+### Go-owned routes (through Traefik)
+
+| Router name | Rule | Priority | Owner |
+|---|---|---|---|
+| `them-go-health-sub` | `PathPrefix(/health/live) \|\| PathPrefix(/health/ready)` | 130 | Go |
+| `them-go-admin-reads` | `(PathPrefix(/api/v1/admin/agents\|orchestrators\|applications) \|\| PathPrefix(/api/v1/runs)) && Method(GET)` | 110 | Go |
+| `them-go-tokens` | `PathPrefix(/api/v1/admin/tokens)` | 120 | Go (Wave 5) |
+| `them-go-sessions` | `PathPrefix(/api/v1/admin/sessions)` | 120 | Go (Wave 5) |
+| `them-go-monitoring-config` | `Path(/api/v1/admin/monitoring-config)` | 120 | Go **(Wave 6)** |
+| `them-go-llm-routing-config` | `Path(/api/v1/admin/llm-providers/routing/config)` | 120 | Go **(Wave 6)** |
+
+Note: Wave 5 tokens/sessions labels live in `theM_gateway/docker-compose.traefik.yml` (separate gateway deployment). Wave 6 labels are in the local `docker-compose.yml`.
+
+### Python still owns (not yet migrated)
+
+| Route | Python file |
 |---|---|
-| `them-traefik` | Running — port 8088 (host) |
-| `them-postgres` | Healthy |
-| `them-redis` | Healthy |
-| `them-auth-service` | Healthy — port 8701 (internal) |
-| `them-bridge` (Python) | Healthy — port 8001 (internal) |
-| `them-go-bridge` | Healthy — port 8002 (internal) |
-| `them-frontend` | Running — port 3200 (internal) |
-| Temporal worker | Running — profile `temporal` |
-
-**Note:** Go bridge is running with correct JWT_SECRET. If the container is restarted with `docker compose` without `THE_M_JWT_SECRET` set in the shell environment, it will revert to `SECRET_KEY` for auth. The `.env` file is missing from this deployment — credentials must be passed as env vars or the `.env` must be regenerated with `./generate-env.sh` (requires `secrets.local`).
+| `POST/PUT/DELETE /api/v1/admin/agents*` | `admin_agents.py` (action endpoints) |
+| `POST/PUT/DELETE /api/v1/admin/orchestrators*` | `admin_orchestrators.py` |
+| `POST/PUT/DELETE /api/v1/admin/applications*` | `admin_applications.py` |
+| `/api/v1/admin/applications/{id}/import\|export\|restore\|bulk-delete\|runtime` | `admin_applications.py` |
+| `/api/v1/admin/agents/{id}/test\|discover\|security-scan` | `admin_agents.py` |
+| `/api/v1/admin/orchestrators/{name}/test-llm` | `admin_orchestrators.py` |
+| `/api/v1/admin/llm-providers` (CRUD) | `admin_llm_providers.py` — Wave 7 |
+| `/api/v1/auth/*` | auth service proxy |
+| `/ws/dashboard` | `ws_dashboard.py` |
+| `/ws/orchestrate/{name}` (one-segment) | `ws_orchestrator.py` |
 
 ---
 
-## Tests Executed
+## Go Replicas Verification
 
-### Go unit tests
-All tests pass (Docker builder stage runs `go test ./...` as part of build). Build succeeded at each phase.
+```
+them-go-bridge   Up 5 hours (healthy)  — port 8002 (internal)
+them-go-bridge-2 not running            — was removed during JWT debug; restart with same env vars if needed
+```
 
-New tests added: 17 (10 service, 7 handler)
+The second replica (`them-go-bridge-2`) was removed during debugging the JWT env var bug. The compose file is correct; it just needs to be restarted with `THE_M_JWT_SECRET` set.
 
-### Python test suite
+---
+
+## Python Rollback Method
+
+Wave 6 Traefik labels are in `docker-compose.yml`. Rollback is:
+
+1. Remove the two Wave 6 router blocks from `docker-compose.yml`:
+   - `them-go-monitoring-config` (4 lines)
+   - `them-go-llm-routing-config` (4 lines)
+2. Restart Go bridge: `docker compose --profile go up --no-deps -d them-go-bridge`
+
+Python bridge (`them-bridge`) is always running and never disabled. Once the labels are removed, Traefik routes both endpoints to Python at priority 100 automatically. No code change or Python restart required.
+
+---
+
+## JWT Environment-Variable Bug Fixed
+
+**What broke:** The Go bridge's `docker-compose.yml` environment block declared `SECRET_KEY=${SECRET_KEY:-change-this-in-production}` — using the wrong variable name. The auth service signs tokens with `JWT_SECRET=${THE_M_JWT_SECRET}`. When `JWT_SECRET` is absent from the container, the Go bridge falls back to `SECRET_KEY` for HS256 validation, which is a different key. All JWT-authenticated admin requests to the Go bridge silently failed with 401.
+
+**File changed:** `docker-compose.yml` — `them-go-bridge` service environment block (commit `55eb923`).
+
+**Exact changes:**
+```yaml
+# Before (wrong):
+- SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+
+# After (correct):
+- SECRET_KEY=${THE_M_SECRET_KEY:-change-this-in-production}
+- JWT_SECRET=${THE_M_JWT_SECRET:-}
+```
+
+**Runtime requirement:** The Go bridge must be started with `THE_M_JWT_SECRET` set in the shell environment (the value from `them-auth-service` env: `3e40024cceb6348491f01a8145813b0400e5cc88661e2c525d8647d3a112bddc`). Without it the container falls back to `SECRET_KEY` and JWT auth fails.
+
+**Documented in:** `docs/architecture-v2/lessons-learned.md` as L-10.
+
+---
+
+## Test Totals
+
+### Go unit tests (Docker build validates via `go test ./...` in builder stage)
+All pass. No new failures. 17 tests added:
+- `service/config_test.go`: 10 tests (defaults, merge, stored round-trip, validation, upsert)
+- `config_handler_test.go`: 7 tests (defaults, valid PUT, 422 on bad thresholds, 400 on bad JSON)
+
+### Python suite
 ```
 python3.12 scripts/tests/run_tests.py 01 02 03 04 15 20
 87 passed, 1 skipped (bridge-2 replica not running — expected)
+0 failed
 ```
 
-### Contract tests (live)
-All 4 operations match Python exactly. PUT writes verified to persist across Python read.
+---
+
+## Contract Test Results (live — Python vs Go, direct port comparison)
+
+| Operation | Python (8001) | Go (8002) | Match |
+|---|---|---|---|
+| GET /admin/monitoring-config (no stored row) | 200, 8 default fields | 200, 8 default fields | ✅ identical JSON |
+| GET /admin/llm-providers/routing/config (no stored row) | 200, 4 default fields | 200, 4 default fields | ✅ identical JSON |
+| PUT /admin/monitoring-config (valid) | 200, stored values returned | 200, stored values returned | ✅ identical JSON |
+| PUT /admin/monitoring-config (heatmap out of order) | 422 | 422 | ✅ status match |
+| PUT /admin/llm-providers/routing/config (with fallbacks) | 200, fallback fields returned | 200, fallback fields returned | ✅ identical JSON |
+| PUT via Traefik → GET via Python (roundtrip persistence) | — | write persisted | ✅ verified |
 
 ---
 
-## Architecture Decisions Made
+## Confirmation: No DB Schema, Redis, or Fernet Changes
 
-1. **`unprocessable` (422) for threshold ordering violations** — Python uses pydantic `model_validator` which FastAPI maps to 422. Go uses `unprocessable()` → `ErrUnprocessable` → `writeServiceError` → 422. Consistent.
-2. **Defaults merge via `json.Unmarshal` over pre-filled struct** — Idiomatic Go equivalent of Python's `merged.update(row.config_value)`. Absent JSON keys leave struct fields at defaults.
-3. **No cache invalidation for config PUT** — Python does none (direct SQLALCHEMY commit). Go does none. Not needed: the config JSONB is read fresh on every request.
-4. **`Path()` Traefik rule for exact-match** — `Path("/api/v1/admin/llm-providers/routing/config")` not `PathPrefix()`. Prevents any overlap with future `/llm-providers/{id}` if that were ever claimed at lower priority.
-
----
-
-## Temporary Compatibility Code
-
-None. Wave 6 adds no shims or backward-compat bridges — the Python fallback is always available (Python bridge still running).
+- **DB schema:** No new tables, columns, or migrations. Wave 6 only reads/writes the pre-existing `them.config` table (rows `monitoring` and `llm_routing`). No `db/*.sql` files changed.
+- **Redis:** No new key prefixes. No TTLs added. `docs/REDIS.md` not modified.
+- **Fernet:** No encryption or decryption. `app/utils/crypto.py` not touched. `api_key_encrypted` column in `them.llm_providers` not accessed.
 
 ---
 
-## Known Bugs and Blockers
+## Wave 7 Proposed Scope
 
-| Item | Details |
-|---|---|
-| Missing `.env` file | `secrets.local` not present. Go bridge must be started with explicit env vars: `THE_M_SECRET_KEY=... THE_M_DB_PASSWORD=... THE_M_JWT_SECRET=...`. Python bridge started before this session and is still running with correct env. |
-| `go-bridge-2` not running | The second Go bridge replica was removed when debugging the JWT issue. Restart with the same env vars if needed. |
-| Push pending | `git push origin main` — no credentials available in this session. |
+**LLM provider CRUD + Fernet compatibility.**
 
-All other blockers from Wave 5 handover remain unchanged.
+Routes to migrate:
+- `GET /api/v1/admin/llm-providers` — list all providers
+- `POST /api/v1/admin/llm-providers` — create provider (Fernet-encrypt `api_key`)
+- `GET /api/v1/admin/llm-providers/{id}` — get provider (mask api_key, never return plaintext)
+- `PATCH /api/v1/admin/llm-providers/{id}` — update provider (optionally rotate api_key)
+- `DELETE /api/v1/admin/llm-providers/{id}` — delete provider
 
----
+Fernet specifics (from `app/utils/crypto.py`):
+- Key: HMAC-SHA256 of `SECRET_KEY` + salt `"fernet"`, truncated to 32 bytes, base64url-encoded → Fernet key
+- Python uses `cryptography.fernet.Fernet` — AES-128-CBC + HMAC-SHA256
+- Go must decrypt Python-encrypted values for `api_key_masked` (show last 4 chars)
+- Go must encrypt new values in compatible Fernet format so Python can decrypt them
 
-## Files Most Relevant to the Next Task (Wave 7)
-
-| File | Purpose |
-|---|---|
-| `app/routers/admin_llm_providers.py` | Python source for LLM provider CRUD + Fernet usage |
-| `app/utils/crypto.py` | `encrypt_value` / `decrypt_value` — Fernet AES-128-CBC implementation |
-| `go/internal/admin/service/config.go` | Reference for service pattern used in Wave 6 |
-| `go/internal/admin/dal/config.go` | Reference for config DAL used in Wave 6 |
-| `docs/architecture-v2/WAVE6_PLAN.md` | Wave 7 deferred scope (LLM provider CRUD + Fernet) documented |
-| `db/001_schema.sql` | `them.llm_providers` table definition |
+**Use Opus to plan Wave 7. Do not implement.**
 
 ---
 
-## Hard Constraints That Must Remain in Force
+## Wave 7 Implementation Status
 
-- No SQL in handlers, no business logic in handlers (Handler → Service → DAL)
-- Python bridge must keep running — it is the rollback path for all Go routes
-- Never query `auth_service.*` tables directly — use `internal/auth/` from Go
-- Never use DB name/schema `odin` — always `them`
-- Secrets never appear in log output — use `cfg.SafeString()`
-- All list endpoints return `[]` not `null`
-- RequireSuperAdmin middleware on all admin routes
-- Integration tests required before marking any schema-dependent code complete
+**Wave 7 has NOT started.** No Go code for LLM provider CRUD or Fernet has been written.
 
 ---
 
 ## Exact Next Task
 
-**Plan Wave 7** — LLM provider CRUD + Fernet key handling.
-
-Wave 7 is a larger wave than Wave 6 because:
-1. It involves Fernet encryption — `encrypt_value`/`decrypt_value` must be re-implemented in Go (AES-128-CBC + HMAC-SHA256, compatible byte format)
-2. It has 4 CRUD operations (list, get, create, update, delete) + the routing/config ops already done
-3. The `api_key_masked` field requires decryption just to mask — Go must be able to decrypt Python-encrypted keys
-
-Use **Opus** for Wave 7 planning to properly scope the Fernet port.
+**Plan Wave 7 only. Do not write any Go code.**
 
 ---
 
@@ -153,22 +198,35 @@ Read first (in this order):
 
 Verify:
 - branch is main
-- HEAD is 55eb923 or newer
-- working tree is clean
+- HEAD is 01860f4 or newer
+- origin/main is synchronized
+- working tree is clean (go/them binary is OK to ignore)
 
-The task is to plan Wave 7 (not implement). Use Opus.
+Run sanity checks:
+  python3.12 scripts/tests/run_tests.py 01 02 03 04 15
+  docker ps --filter name=them-go-bridge --format "{{.Names}} {{.Status}}"
 
-Read:
-  app/routers/admin_llm_providers.py     (full file — CRUD + Fernet usage)
-  app/utils/crypto.py                    (encrypt_value / decrypt_value)
-  db/001_schema.sql                      (them.llm_providers table)
+Use Opus for this task.
+
+The task is to plan Wave 7 only. Do not implement any code.
+
+Read these files:
+  app/routers/admin_llm_providers.py     (full file — CRUD + Fernet usage pattern)
+  app/utils/crypto.py                    (encrypt_value / decrypt_value implementation)
+  db/001_schema.sql                      (them.llm_providers table definition)
 
 Determine:
-1. Can Fernet decryption be ported to Go without a new dependency?
-   (Fernet = AES-128-CBC + HMAC-SHA256 — stdlib only)
-2. What is the minimal Go type for LLMProvider that matches Python's LLMProviderOut?
-3. Should api_key_masked require real decryption or can it be handled a different way?
+1. Can Fernet decryption be implemented in Go using stdlib only (crypto/aes, crypto/hmac,
+   encoding/base64)? If yes, describe the key derivation and format exactly.
+2. What is the minimal Go struct for LLMProvider that matches Python's LLMProviderOut
+   (id, name, display_name, api_key_set, api_key_masked, base_url, default_model,
+   model_pricing, enabled)?
+3. Is api_key_masked safe to produce without full decryption (e.g. last-N-chars of
+   ciphertext), or must it decrypt the stored value?
+4. Identify any blockers that would prevent Wave 7 from fitting in a single session.
 
 Write the plan to: docs/architecture-v2/WAVE7_PLAN.md
-Return only the plan file path and a one-paragraph summary. Do not write any Go code.
+
+Return only the plan file path and a one-paragraph summary.
+Do not write any Go code.
 ```
