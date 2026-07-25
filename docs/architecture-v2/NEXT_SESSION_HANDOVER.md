@@ -1,160 +1,47 @@
 # Session Handover
 # Generated: 2026-07-25
-# Scope: CLAUDE.md alignment + documentation consolidation
+# Scope: Wave 6 implementation — monitoring-config + llm-providers/routing/config
 
 ---
 
 ## Git State
 
 **Branch:** `main`
-**HEAD:** `bc8c461 docs(consolidation): merge go/docs/architecture-v2/ into docs/architecture-v2/`
-**origin/main:** `bc8c461` — synchronized, push confirmed
-**Working tree:** clean (only `go/them` compiled binary is untracked — do not commit)
+**HEAD:** see `git log --oneline -1` (this file committed with all Wave 6 changes)
+**origin/main:** push pending — no credentials available (local SSH key not configured)
+**Working tree:** clean after this commit
 
 ### Session commits (newest first)
 
 ```
-bc8c461  docs(consolidation): merge go/docs/architecture-v2/ into docs/architecture-v2/
-5a7f36a  docs: commit untracked wave-review, wave5-plan, handover, and consolidation plan
-8d0f20f  docs(guides): align root and Go CLAUDE.md — clear responsibilities, no duplication
-4728ef8  cutover(wave5): enable Traefik routing for /api/v1/admin/tokens + /admin/sessions
+(this commit)  docs(wave6): TEST_INDEX.md, implementation-status.md, lessons-learned.md, WAVE6_IMPLEMENTATION_REPORT.md
+55eb923        cutover(wave6): enable Traefik routing for monitoring-config + llm-providers/routing/config
+b0d1a31        feat(admin): add MonitoringConfig + LLMRouting handlers (Wave 6 Phase 3)
+e78a6bd        feat(admin/service): add ConfigService for monitoring + llm_routing (Wave 6 Phase 2)
+69e2dca        feat(admin/dal): add config table GetConfig + UpsertConfig (Wave 6 Phase 1)
+64729fd        docs(handover): session handover — CLAUDE.md alignment + docs consolidation complete
 ```
 
 ---
 
 ## Work Completed This Session
 
-### 1. Root CLAUDE.md alignment
-- Added explicit **migration goal**: Python → Go in order (Bridge → Auth → Temporal → remove Python)
-- Added **model selection rule**: Opus for planning/architecture, Sonnet for implementation/testing
-- Added **session lifecycle / handover procedure** (mandatory, with triggers and 7-step checklist)
-- Added **long-answer policy**: write to `docs/architecture-v2/`, return only path + summary
-- Added **workflow**: plan → implement → test → commit → report
-- Added **tenant-aware design** requirements
-- Removed stale "Known State (2026-07-14)" section
-- Removed duplicated Go-specific rules that belong in `go/CLAUDE.md`
+### Wave 6 — monitoring-config + llm-providers/routing/config
 
-### 2. go/CLAUDE.md alignment
-- Added mandatory reference to `../CLAUDE.md` at the top
-- Added **Handler → Service → DAL** architecture rule (no SQL in handlers, no business logic in handlers)
-- Added **route ownership verification** rule (Traefik labels alone are not proof; live log hits required)
-- Added **integration test** requirement for schema-dependent code
-- Fixed broken reference: `docs/architecture-v2/06-domain-model.md` (non-existent) → `docs/architecture-v2/implementation-status.md`
-- Removed project-wide rules duplicated from root
+4 Python admin operations migrated to Go:
+- `GET /api/v1/admin/monitoring-config` — reads `them.config['monitoring']`, returns defaults if absent
+- `PUT /api/v1/admin/monitoring-config` — validates threshold ordering (heatmap, edge), upserts JSONB
+- `GET /api/v1/admin/llm-providers/routing/config` — reads `them.config['llm_routing']`, returns defaults if absent
+- `PUT /api/v1/admin/llm-providers/routing/config` — upserts JSONB, no Fernet
 
-### 3. Documentation inventory
-- Inventoried all 17 files in `docs/architecture-v2/` and 5 files in `go/docs/architecture-v2/`
-- Identified 3 duplicate-name pairs (conflicting content), 1 broken reference, 2 superseded handovers
-- Written to: `docs/architecture-v2/DOCUMENTATION_CONSOLIDATION_PLAN.md`
+Architecture follows Handler → Service → DAL pattern. No SQL in handlers, no business logic in handlers.
 
-### 4. Documentation consolidation
-- **Merged** `implementation-status.md`: go/ version (authoritative, Phase 11c-C + Wave 5) replaced stale docs/ version; unique content from docs/ version preserved
-- **Merged** `runbook-reconciler.md`: activation checklist from go/, NotFound scenarios from docs/
-- **Merged** `lessons-learned.md`: appended L-01–L-09 from go/ (zero overlap with existing content)
-- **Moved** `adr-003-redis-streams-event-delivery.md` from go/docs/ to canonical location (git rename)
-- **Moved** `phase-11c-design.md` from go/docs/ to canonical location
-- **Archived** `NEXT_SESSION_CODE_RECOVERY_HANDOVER.md` → `archive/` (superseded by Wave 5 handover)
-- **Created** `README.md` (directory index), `archive/README.md`
-- **Removed** `go/docs/architecture-v2/` entirely
+### Bug fixed
+Pre-existing JWT env var naming bug in `docker-compose.yml`: Go bridge was verifying HS256 tokens with `SECRET_KEY` (wrong), not `JWT_SECRET` (auth service signing key). Fixed by adding `JWT_SECRET=${THE_M_JWT_SECRET:-}` to Go bridge env block. Documented in `lessons-learned.md` L-10.
 
 ---
 
-## Canonical Documentation Location
-
-**`/opt/docker/them/docs/architecture-v2/`** — single source of truth for Go gateway architecture.
-`go/docs/architecture-v2/` has been removed. Do not recreate it.
-
-See `docs/architecture-v2/README.md` for the full file index and update rules.
-
-### Active documents (read these for Go work)
-
-| File | Purpose |
-|---|---|
-| `implementation-status.md` | Package inventory, route map, test counts — read first for any Go work |
-| `lessons-learned.md` | Platform traps, non-obvious behaviors — read before any judgment call |
-| `NEXT_SESSION_BRIDGE_HANDOVER.md` | Wave 5 state (still accurate for route ownership) |
-| `adr-001-canonical-run-id.md` | Run ID ownership: Go pre-generates, passes to Python |
-| `adr-002-reconciler-status-mapping.md` | Temporal → DB status mapping |
-| `adr-003-redis-streams-event-delivery.md` | Redis Streams durable event delivery (Phase 11c) |
-| `runbook-reconciler.md` | Reconciler operations, activation checklist |
-| `schema-migrations.md` | Deferred schema changes (MIG-001, MIG-002) |
-
----
-
-## Live Migration State
-
-**Current wave:** Wave 5 complete (2026-07-24). Wave 6 not started.
-
-### Go-owned routes (through Traefik, as of 4728ef8)
-
-| Route group | Traefik priority | Notes |
-|---|---|---|
-| `GET /health/live`, `GET /health/ready` | 130 | Go |
-| `GET /api/v1/admin/agents*` | 110 | Go |
-| `GET /api/v1/admin/orchestrators*` | 110 | Go |
-| `GET /api/v1/admin/applications*` | 110 | Go |
-| `GET /api/v1/runs*` | 110 | Go |
-| `POST/PUT/DELETE /api/v1/admin/agents*` | 115 | Go |
-| `POST/PUT/DELETE /api/v1/admin/orchestrators*` | 115 | Go |
-| `POST/PUT/DELETE /api/v1/admin/applications*` | 115 | Go |
-| `POST /api/v1/runs/{run_id}/signal` | 115 | Go |
-| `GET /apps/{slug}/ws`, `GET,POST /apps/{slug}/sse` | 120 | Go |
-| `GET /ws/orchestrate/{app}/{ep}`, `GET,POST /sse/orchestrate/{app}/{ep}` | 120 | Go |
-| `ALL /api/v1/admin/tokens*` | 120 | Go — Wave 5 |
-| `ALL /api/v1/admin/sessions*` | 120 | Go — Wave 5 |
-
-### Python-owned routes (still to migrate)
-
-| Route | Python file |
-|---|---|
-| `/api/v1/auth/*` | auth service proxy (`auth_client.py`) |
-| `/api/v1/admin/agents/{id}/test` | `admin_agents.py` |
-| `/api/v1/admin/agents/{id}/discover` | `admin_agents.py` |
-| `/api/v1/admin/agents/{id}/security-scan` | `admin_agents.py` |
-| `/api/v1/admin/orchestrators/{name}/test-llm` | `admin_orchestrators.py` |
-| `/api/v1/admin/applications/{id}/import` | `admin_applications.py` |
-| `/api/v1/admin/applications/{id}/export` | `admin_applications.py` |
-| `/api/v1/admin/applications/{id}/restore` | `admin_applications.py` |
-| `/api/v1/admin/applications/{id}/bulk-delete` | `admin_applications.py` |
-| `/api/v1/admin/applications/{id}/runtime` | `admin_applications.py` |
-| `/api/v1/admin/monitoring-config` | `admin_monitoring_config.py` |
-| `/api/v1/admin/providers` | `admin_llm_providers.py` |
-| `/ws/orchestrate/{name}` (one-segment) | `ws_orchestrator.py` |
-| `/ws/dashboard` | `ws_dashboard.py` |
-
----
-
-## Test Status
-
-### Python suite (last run at 4728ef8)
-```
-929 passed, 6 skipped, 0 failed
-```
-
-### Go unit tests (last run at Wave 5 commit)
-```
-go test ./...   PASS — 212 unit tests across all packages
-```
-
-### Go Wave 5 contract tests (go vs python behavioral parity)
-```
-40 passed, 0 failed, 0 skipped
-```
-
-### Go integration tests
-```
-go test -tags=integration ./internal/admin/...   PASS (11 tests, live PG + Redis)
-```
-
-**Sanity check commands for next session:**
-```bash
-python3.12 scripts/tests/run_tests.py 01 02 03 04 15   # DB, Redis, auth, bridge health (~15s)
-docker ps --filter name=them-go-bridge --format "{{.Names}} {{.Status}}"
-```
-
----
-
-## Deployment State
+## Deployed/Live State
 
 | Container | State |
 |---|---|
@@ -163,81 +50,95 @@ docker ps --filter name=them-go-bridge --format "{{.Names}} {{.Status}}"
 | `them-redis` | Healthy |
 | `them-auth-service` | Healthy — port 8701 (internal) |
 | `them-bridge` (Python) | Healthy — port 8001 (internal) |
-| `them-bridge-2` (Python replica) | Running — profile `replica` |
 | `them-go-bridge` | Healthy — port 8002 (internal) |
-| `them-go-bridge-2` | Healthy — port 8003 (internal) |
 | `them-frontend` | Running — port 3200 (internal) |
 | Temporal worker | Running — profile `temporal` |
 
-**Frontend URL:** http://localhost:8088
-**Traefik dashboard:** http://localhost:8089
-**Temporal UI:** http://10.55.125.43:8088/temporal/
+**Note:** Go bridge is running with correct JWT_SECRET. If the container is restarted with `docker compose` without `THE_M_JWT_SECRET` set in the shell environment, it will revert to `SECRET_KEY` for auth. The `.env` file is missing from this deployment — credentials must be passed as env vars or the `.env` must be regenerated with `./generate-env.sh` (requires `secrets.local`).
 
 ---
 
-## Important Architecture Rules
+## Tests Executed
 
-- **Route ownership proof:** a route is owned by Go only when the handler exists in `go/internal/`, the route is registered in `cmd/them/main.go`, the Traefik label is applied in the compose file, AND a live request through Traefik reaches the Go handler (verified from logs). Traefik labels alone are not proof.
-- **Handler → Service → DAL:** no SQL in handlers, no business logic in handlers.
-- **Auth never queried directly:** use `internal/auth/` from Go; `app/services/auth_client.py` from Python.
-- **DB name/schema is always `them`:** never `odin`.
-- **Redis DB index 0** — key prefixes: `them:session:`, `rl:them:`, `them:agents:`, `them:orchestrators:`, `them:bridge:`, `them:dash:`
-- **Integration tests required** for any schema-dependent Go code before marking complete.
-- **go test -race** required before any PR merge (run in Linux CI — requires GCC not available on Windows).
-- **Documentation update in same commit as code change** — stale docs that contradict code are a bug.
+### Go unit tests
+All tests pass (Docker builder stage runs `go test ./...` as part of build). Build succeeded at each phase.
 
-## Tenant-Aware Constraints
+New tests added: 17 (10 service, 7 handler)
 
-Every session, run, rate-limit, and runtime gate is scoped to an Application (the tenant boundary):
-- DB queries must include `application_id` or `entry_point_id` as appropriate
-- Redis keys for per-app state must include the app ID or slug
-- Rate limiting and session caps must be per-app, not global
-- New routes under `/apps/{slug}/` inherit the app slug from the path
+### Python test suite
+```
+python3.12 scripts/tests/run_tests.py 01 02 03 04 15 20
+87 passed, 1 skipped (bridge-2 replica not running — expected)
+```
+
+### Contract tests (live)
+All 4 operations match Python exactly. PUT writes verified to persist across Python read.
 
 ---
 
-## Known Blockers and Unresolved Gaps
+## Architecture Decisions Made
+
+1. **`unprocessable` (422) for threshold ordering violations** — Python uses pydantic `model_validator` which FastAPI maps to 422. Go uses `unprocessable()` → `ErrUnprocessable` → `writeServiceError` → 422. Consistent.
+2. **Defaults merge via `json.Unmarshal` over pre-filled struct** — Idiomatic Go equivalent of Python's `merged.update(row.config_value)`. Absent JSON keys leave struct fields at defaults.
+3. **No cache invalidation for config PUT** — Python does none (direct SQLALCHEMY commit). Go does none. Not needed: the config JSONB is read fresh on every request.
+4. **`Path()` Traefik rule for exact-match** — `Path("/api/v1/admin/llm-providers/routing/config")` not `PathPrefix()`. Prevents any overlap with future `/llm-providers/{id}` if that were ever claimed at lower priority.
+
+---
+
+## Temporary Compatibility Code
+
+None. Wave 6 adds no shims or backward-compat bridges — the Python fallback is always available (Python bridge still running).
+
+---
+
+## Known Bugs and Blockers
 
 | Item | Details |
 |---|---|
-| `06-domain-model.md` dead link | Fixed in this session — replaced with `implementation-status.md` reference |
-| Phase 11c-C staging | Requires explicit approval gate before `RUN_EVENTS_MODE=streams` in staging |
-| Phase 11c-D Pub/Sub removal | Requires ≥2 weeks stable in 11c-C + explicit approval |
-| MIG-001 (`user_id` on `them.runs`) | Deferred — schema change requires Python coordination |
-| MIG-002 (`ep_type` CHECK constraint) | Deferred — Go validates at API boundary until DB constraint added |
-| Voice EP | Rejected with 501; implementation not started |
-| `vision-agent` | Unhealthy — needs `GOOGLE_MAPS_API_KEY` and `FAL_API_KEY` in `.env` |
-| Wave 5 behavioral diffs | Documented and accepted: POST /tokens missing `label` → 422 vs 400; GET /sessions both params → 200 vs 400; error envelope `"detail"` vs `"error"` |
+| Missing `.env` file | `secrets.local` not present. Go bridge must be started with explicit env vars: `THE_M_SECRET_KEY=... THE_M_DB_PASSWORD=... THE_M_JWT_SECRET=...`. Python bridge started before this session and is still running with correct env. |
+| `go-bridge-2` not running | The second Go bridge replica was removed when debugging the JWT issue. Restart with the same env vars if needed. |
+| Push pending | `git push origin main` — no credentials available in this session. |
+
+All other blockers from Wave 5 handover remain unchanged.
+
+---
+
+## Files Most Relevant to the Next Task (Wave 7)
+
+| File | Purpose |
+|---|---|
+| `app/routers/admin_llm_providers.py` | Python source for LLM provider CRUD + Fernet usage |
+| `app/utils/crypto.py` | `encrypt_value` / `decrypt_value` — Fernet AES-128-CBC implementation |
+| `go/internal/admin/service/config.go` | Reference for service pattern used in Wave 6 |
+| `go/internal/admin/dal/config.go` | Reference for config DAL used in Wave 6 |
+| `docs/architecture-v2/WAVE6_PLAN.md` | Wave 7 deferred scope (LLM provider CRUD + Fernet) documented |
+| `db/001_schema.sql` | `them.llm_providers` table definition |
+
+---
+
+## Hard Constraints That Must Remain in Force
+
+- No SQL in handlers, no business logic in handlers (Handler → Service → DAL)
+- Python bridge must keep running — it is the rollback path for all Go routes
+- Never query `auth_service.*` tables directly — use `internal/auth/` from Go
+- Never use DB name/schema `odin` — always `them`
+- Secrets never appear in log output — use `cfg.SafeString()`
+- All list endpoints return `[]` not `null`
+- RequireSuperAdmin middleware on all admin routes
+- Integration tests required before marking any schema-dependent code complete
 
 ---
 
 ## Exact Next Task
 
-**Plan Wave 6** — do not implement yet.
+**Plan Wave 7** — LLM provider CRUD + Fernet key handling.
 
-Wave 6 is the next Python Bridge admin route migration. The scope has not been decided.
+Wave 7 is a larger wave than Wave 6 because:
+1. It involves Fernet encryption — `encrypt_value`/`decrypt_value` must be re-implemented in Go (AES-128-CBC + HMAC-SHA256, compatible byte format)
+2. It has 4 CRUD operations (list, get, create, update, delete) + the routing/config ops already done
+3. The `api_key_masked` field requires decryption just to mask — Go must be able to decrypt Python-encrypted keys
 
-**Steps for the next session:**
-
-1. Run sanity tests to confirm stack health:
-   ```bash
-   python3.12 scripts/tests/run_tests.py 01 02 03 04 15
-   docker ps --filter name=them-go-bridge --format "{{.Names}} {{.Status}}"
-   ```
-
-2. Read the Python admin route files to inventory what remains:
-   - `app/routers/admin_llm_providers.py` — LLM provider CRUD
-   - `app/routers/admin_monitoring_config.py` — monitoring config CRUD
-   - `app/routers/admin_applications.py` — import/export/restore/bulk-delete/runtime (action endpoints)
-   - `app/routers/admin_agents.py` — test/discover/security-scan (action endpoints)
-
-3. Use **Opus** to scope Wave 6: identify which of the above routes can be migrated without new Go dependencies, new DB schema changes, or external service calls. Prefer a coherent small batch (2-4 routes) over a large sprawling wave.
-
-4. Write the Wave 6 plan to `docs/architecture-v2/WAVE6_PLAN.md`.
-
-5. Return the plan for review before writing any Go code.
-
-**Wave 6 implementation has NOT started.** No Go code for Wave 6 routes has been written.
+Use **Opus** for Wave 7 planning to properly scope the Fernet port.
 
 ---
 
@@ -252,29 +153,22 @@ Read first (in this order):
 
 Verify:
 - branch is main
-- HEAD is bc8c461 or newer
-- origin/main is synchronized
+- HEAD is 55eb923 or newer
 - working tree is clean
 
-Run sanity tests:
-  python3.12 scripts/tests/run_tests.py 01 02 03 04 15
-  docker ps --filter name=them-go-bridge --format "{{.Names}} {{.Status}}"
+The task is to plan Wave 7 (not implement). Use Opus.
 
-The task is to plan Wave 6 (not implement). Use Opus.
+Read:
+  app/routers/admin_llm_providers.py     (full file — CRUD + Fernet usage)
+  app/utils/crypto.py                    (encrypt_value / decrypt_value)
+  db/001_schema.sql                      (them.llm_providers table)
 
-Read these Python route files:
-  app/routers/admin_llm_providers.py
-  app/routers/admin_monitoring_config.py
-  app/routers/admin_applications.py  (action endpoints only: import/export/restore/bulk-delete/runtime)
-  app/routers/admin_agents.py        (action endpoints only: test/discover/security-scan)
+Determine:
+1. Can Fernet decryption be ported to Go without a new dependency?
+   (Fernet = AES-128-CBC + HMAC-SHA256 — stdlib only)
+2. What is the minimal Go type for LLMProvider that matches Python's LLMProviderOut?
+3. Should api_key_masked require real decryption or can it be handled a different way?
 
-Identify which routes can be migrated to Go in Wave 6 without:
-- new DB schema changes
-- external service calls beyond what Go already makes
-- new Redis key prefixes
-
-Propose a focused Wave 6 scope (2–4 routes). Write the plan to:
-  docs/architecture-v2/WAVE6_PLAN.md
-
+Write the plan to: docs/architecture-v2/WAVE7_PLAN.md
 Return only the plan file path and a one-paragraph summary. Do not write any Go code.
 ```

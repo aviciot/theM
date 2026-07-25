@@ -330,6 +330,13 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 | `TestListSessions_ByEPSlug_ReturnsEmpty` | GET /sessions?ep_slug=x → `{"sessions":[],"count":0}` |
 | `TestDisconnectSession_NotFound` | POST /sessions/{id}/disconnect, Get returns error → 404 |
 | `TestDisconnectSession_Success` | POST /sessions/{id}/disconnect, live session → 200 `{"signal_delivered":true}` |
+| `TestGetMonitoringConfig_NoRow_ReturnsDefaults` | GET /monitoring-config, no DB row → 200 with defaults (heatmap_low=1, stats_window_seconds=300) |
+| `TestPutMonitoringConfig_Valid_Returns200` | PUT /monitoring-config with valid body → 200, returned values match input |
+| `TestPutMonitoringConfig_BadThresholds_Returns422` | PUT /monitoring-config with heatmap_low>heatmap_high → 422 |
+| `TestPutMonitoringConfig_BadJSON_Returns400` | PUT /monitoring-config with non-JSON body → 400 |
+| `TestGetLLMRouting_NoRow_ReturnsDefaults` | GET /llm-providers/routing/config, no DB row → 200 with defaults (anthropic, claude-sonnet-4-6, null fallbacks) |
+| `TestPutLLMRouting_Valid_Returns200` | PUT /llm-providers/routing/config with valid body → 200, returned values match input |
+| `TestPutLLMRouting_BadJSON_Returns400` | PUT /llm-providers/routing/config with non-JSON body → 400 |
 
 **Trigger:** any change to `internal/admin/` (any file) OR `internal/admin/dal/` (any file)
 
@@ -599,6 +606,15 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 | `TestRunService_Signal_TemporalNil_Unavailable` | nil Temporal → `ErrTemporalUnavailable` |
 | `TestRunService_Signal_DBError_NotNotFound` | Non-pgx DB error → returned as-is, not mapped to ErrNotFound |
 | `TestRunService_List_ForwardsParams` | `List` forwards contextID and limit to DAL |
+| `TestGetMonitoring_NoRow_ReturnsDefaults` | No DB row → 8 fields returned at Python-identical defaults |
+| `TestGetMonitoring_StoredRow_MergesOverDefaults` | Partial JSONB row → stored fields overwrite defaults; absent keys stay at default |
+| `TestGetMonitoring_DALError_Propagates` | DAL error → wrapped and returned |
+| `TestPutMonitoring_ValidInput_Upserts` | Valid MonitoringConfig → DAL UpsertConfig called with `config_key="monitoring"` and correct JSON |
+| `TestPutMonitoring_InvalidHeatmapOrder_ReturnsValidationError` | heatmap low>medium → ErrUnprocessable |
+| `TestPutMonitoring_InvalidEdgeOrder_ReturnsValidationError` | edge thin>medium → ErrUnprocessable |
+| `TestGetLLMRouting_NoRow_ReturnsDefaults` | No DB row → defaults (anthropic, claude-sonnet-4-6, nil fallbacks) |
+| `TestGetLLMRouting_StoredRow_Returned` | Stored row → all fields including fallback_provider/fallback_model returned |
+| `TestPutLLMRouting_ValidInput_Upserts` | Valid LLMRoutingConfig → DAL UpsertConfig called with `config_key="llm_routing"` and correct JSON |
 
 **Trigger:** any change to `internal/admin/service/` (any file) OR `internal/admin/dal/` (any file)
 

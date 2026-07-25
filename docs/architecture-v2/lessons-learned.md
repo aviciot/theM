@@ -871,3 +871,24 @@ taken instead of the 404 path, and the test failed.
 **Fix:** Always use `pgx.ErrNoRows` (import `"github.com/jackc/pgx/v5"`) when writing
 test doubles that simulate "no rows" conditions for the admin DAL. A generic error
 string is not equivalent — pgx uses `errors.Is` identity, not string matching.
+
+---
+
+### L-10: Go bridge JWT env var naming inconsistency (pre-Wave 6 bug)
+
+**Context:** When the Go bridge was first added to `docker-compose.yml`, its environment
+block was copied independently from the Python bridge and used different variable names.
+
+**What happened:** The auth service signs tokens with `JWT_SECRET=${THE_M_JWT_SECRET}`,
+but the Go bridge's compose block declared `SECRET_KEY=${SECRET_KEY:-change-this-in-production}`
+with no `JWT_SECRET` entry. When `JWT_SECRET` is not set in the container, the Go bridge
+falls back to `SECRET_KEY` for HS256 validation — a different key. All admin JWT auth
+to the Go bridge silently failed with 401 until a live contract test exposed it.
+
+**Fix (Wave 6, `docker-compose.yml` line 889):**
+- Renamed `SECRET_KEY=${SECRET_KEY:-}` → `SECRET_KEY=${THE_M_SECRET_KEY:-}` (consistent with Python bridges)
+- Added `JWT_SECRET=${THE_M_JWT_SECRET:-}` so the Go bridge validates tokens with the auth service key
+
+**Rule going forward:** Any new service added to `docker-compose.yml` must explicitly
+wire `JWT_SECRET=${THE_M_JWT_SECRET:-}` if it validates HS256 JWTs from the auth service.
+Run a live contract test that requires authentication before declaring a route migrated.

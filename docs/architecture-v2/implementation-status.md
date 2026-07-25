@@ -6,8 +6,9 @@
 
 ## Current State
 
-Wave 5 complete (2026-07-24): tokens + sessions admin routes now served by Go.
-Phase 11c-C validation complete (2026-07-21). 212 unit tests pass. Race detector clean in Linux CI.
+Wave 6 complete (2026-07-25): monitoring-config + llm-providers/routing/config now served by Go.
+Wave 5 complete (2026-07-24): tokens + sessions admin routes served by Go.
+Phase 11c-C validation complete (2026-07-21). 229 unit tests pass. Race detector clean in Linux CI.
 
 ---
 
@@ -35,9 +36,9 @@ Phase 11c-C validation complete (2026-07-21). 212 unit tests pass. Race detector
 | `internal/sse` | Complete | 15 (S1-13) | `handler.go` |
 | `internal/a2a` | Complete | 3 (S1-14) | `server.go` |
 | `internal/agentregistry` | Complete | 5 (S1-11) | `registry.go` |
-| `internal/admin` | Complete | 19 (S1-15) | `agents.go`, `orchestrators.go`, `applications.go`, `runs.go` |
-| `internal/admin/dal` | Complete | — (covered by admin tests) | `dal.go`, `agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `tokens.go` |
-| `internal/admin/service` | Complete | — (covered by admin tests) | `service.go`, `tokens.go`, `sessions.go` |
+| `internal/admin` | Complete | 40 (S1-15) | `agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `monitoring.go`, `llm_routing.go` |
+| `internal/admin/dal` | Complete | — (covered by admin tests) | `dal.go`, `agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `tokens.go`, `config.go` |
+| `internal/admin/service` | Complete | 10 (S1-25 config) | `service.go`, `tokens.go`, `sessions.go`, `config.go` |
 | `internal/transport` | Complete | — (covered by ws/sse tests) | `transport.go` |
 | `internal/ratelimit` | Complete | 3 (S1-16) | `limiter.go` |
 | `internal/epconfig` | Complete | 26 (S1-18) | `epconfig.go`, `pgx.go` |
@@ -71,11 +72,13 @@ For full Traefik priority details see `NEXT_SESSION_BRIDGE_HANDOVER.md`.
 | `POST/PUT/DELETE /api/v1/admin/applications*` | `internal/admin` | JWT super-admin | Go |
 | `ALL /api/v1/admin/tokens*` | `internal/admin` (Wave 5) | JWT super-admin | Go |
 | `ALL /api/v1/admin/sessions*` | `internal/admin` (Wave 5) | JWT super-admin | Go |
+| `GET,PUT /api/v1/admin/monitoring-config` | `internal/admin` (Wave 6) | JWT super-admin | Go |
+| `GET,PUT /api/v1/admin/llm-providers/routing/config` | `internal/admin` (Wave 6) | JWT super-admin | Go |
 | `GET /api/v1/runs*` | `internal/admin` | JWT super-admin | Go |
 | `POST /api/v1/runs/{run_id}/signal` | `internal/admin` | JWT | Go |
 | All other `/api/v1/*` | Python bridge | — | Python |
 
-**Python still owns:** `/api/v1/auth/*`, agent test/discover/security-scan, orchestrator test-llm, application import/export/restore/bulk-delete/runtime, monitoring-config, providers, dashboard WS `/ws/dashboard`, one-segment `/ws/orchestrate/{name}`.
+**Python still owns:** `/api/v1/auth/*`, agent test/discover/security-scan, orchestrator test-llm, application import/export/restore/bulk-delete/runtime, llm-providers CRUD (Wave 7), dashboard WS `/ws/dashboard`, one-segment `/ws/orchestrate/{name}`.
 
 ---
 
