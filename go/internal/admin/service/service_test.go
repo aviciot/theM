@@ -58,6 +58,13 @@ type fakeDal struct {
 	createOrchCalls         []dal.OrchestratorInput
 	createOrchEnabledCalls  []bool
 
+	// config fields
+	configRow         *dal.ConfigRow
+	configErr         error
+	upsertConfigKey   string
+	upsertConfigValue []byte
+	upsertConfigErr   error
+
 	// token fields
 	tokens            []dal.Token
 	token             dal.Token
@@ -166,6 +173,16 @@ func (f *fakeDal) UpdateToken(_ context.Context, _ string, patch dal.TokenPatchR
 }
 func (f *fakeDal) DeleteToken(_ context.Context, _ string) (string, error) {
 	return f.deletedTokenHash, f.deleteTokenErr
+}
+
+// Config stubs — populated by config service tests.
+func (f *fakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
+	return f.configRow, f.configErr
+}
+func (f *fakeDal) UpsertConfig(_ context.Context, key string, value []byte) error {
+	f.upsertConfigKey = key
+	f.upsertConfigValue = value
+	return f.upsertConfigErr
 }
 
 // fakeCache implements service.Cache.

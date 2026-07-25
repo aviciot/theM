@@ -56,6 +56,10 @@ type Dal interface {
 	CreateToken(ctx context.Context, in dal.TokenCreateRow) (dal.Token, error)
 	UpdateToken(ctx context.Context, id string, patch dal.TokenPatchRow) (hash string, out dal.Token, err error)
 	DeleteToken(ctx context.Context, id string) (hash string, err error)
+
+	// Config table (monitoring, llm_routing, …)
+	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
+	UpsertConfig(ctx context.Context, key string, value []byte) error
 }
 
 // Cache invalidates Redis caches on mutations.
