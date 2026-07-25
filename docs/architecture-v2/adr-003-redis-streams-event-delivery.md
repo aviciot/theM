@@ -69,7 +69,8 @@ Phase D.
 ### D4: Redis EXPIRE for stream lifetime — no in-process timers
 
 An in-process goroutine scheduling DEL after 24 hours is lost on pod restart. Redis
-`EXPIRE` is durable at the Redis layer. Two TTLs are applied:
+`EXPIRE` is durable at the Redis layer. Two TTLs are applied, both inside the same
+Lua script as XADD (see D8):
 
 - **Safety TTL (48h)**: set on first XADD; prevents orphaned keys if no terminal
   event is ever published.
@@ -135,8 +136,7 @@ The Go bridge sets `'streams'` when `RUN_EVENTS_MODE` is `dual` or `streams`
 ### D10: Centralized terminal event set — single frozenset, single authoritative source
 
 **Rationale:** The set of event types that trigger the final 24-hour TTL must be
-defined exactly once in the codebase. Duplicating the list (e.g., once in a
-comment, once in a condition, once in a test) creates divergence risk.
+defined exactly once in the codebase. Duplicating the list creates divergence risk.
 
 The authoritative set is `TERMINAL_EVENT_TYPES` in `app/temporal/activities.py`:
 
@@ -144,11 +144,9 @@ The authoritative set is `TERMINAL_EVENT_TYPES` in `app/temporal/activities.py`:
 TERMINAL_EVENT_TYPES = frozenset({'done', 'error', 'canceled', 'terminated', 'timed_out'})
 ```
 
-This is the only place in the Python code where terminal event types are defined.
 The Lua script receives `is_terminal` as a pre-computed flag from Python (not the
 event type string directly), so the type-to-flag mapping happens in one Python
-function (`stream_publish`) that reads from this constant. Tests explicitly cover
-all five terminal types and verify no non-terminal type is treated as terminal.
+function (`stream_publish`) that reads from this constant.
 
 ---
 
@@ -159,8 +157,8 @@ published during the gap regardless of backoff duration. The fundamental limitat
 is at-most-once semantics, not reconnect speed.
 
 **Consumer groups:** Each WS/SSE connection has its own read position and reads
-independently. Consumer group semantics (deliver each message once per group) do
-not match this pattern and add coordination overhead without benefit.
+independently. Consumer group semantics do not match this pattern and add
+coordination overhead without benefit.
 
 **External message broker (Kafka, NATS):** No new infrastructure dependency
 justified for this use case. Redis Streams provide sufficient durability and replay
@@ -170,12 +168,12 @@ semantics within the existing Redis instance.
 
 ## Rollout sequence
 
-| Phase | Scope | Gate to next phase |
+| Phase | Scope | Status |
 |---|---|---|
-| A | Python: atomic dual-publish Lua script | Go bridges unaffected; observe XADD metrics |
-| B | Go: stream-read/replay behind `RUN_EVENTS_MODE=dual` | Staging soak with dual mode |
-| C | Staging: `RUN_EVENTS_MODE=streams`; MAXLEN validation tests | ≥2 weeks stable + explicit approval |
-| D | Remove Pub/Sub from Python + Go | Post-approval only |
+| A | Python: atomic dual-publish Lua script | Complete — 2026-07-21 |
+| B | Go: stream-read/replay behind `RUN_EVENTS_MODE=dual` | Complete — 2026-07-21 |
+| C | Staging soak + compatibility period | Pending explicit approval |
+| D | Remove Pub/Sub from Python + Go | Requires ≥2 weeks stable in C + approval |
 
 ---
 
@@ -186,8 +184,7 @@ Each phase rolls back independently:
 - **Rollback A:** remove Lua script from Python worker; Pub/Sub unchanged.
 - **Rollback B:** set `RUN_EVENTS_MODE=pubsub`; restart Go bridges.
 - **Rollback C:** set `RUN_EVENTS_MODE=dual`; restart Go bridges.
-- **Rollback D:** re-add PUBLISH in Python + Subscribe in Go; streams remain
-  as backup.
+- **Rollback D:** re-add PUBLISH in Python + Subscribe in Go; streams remain as backup.
 
 No shared state makes any rollback risky.
 
@@ -195,6 +192,6 @@ No shared state makes any rollback risky.
 
 ## Related
 
-- `phase-11c-design.md` — full design with all implementation details
+- `phase-11c-design.md` — full design with all implementation details (historical)
 - `runbook-reconciler.md` — Phase 11b reconciler (preceding phase)
-- `docs/REDIS.md` — Redis key registry (stream keys to be added on implementation)
+- `docs/REDIS.md` — Redis key registry (stream keys added on implementation)

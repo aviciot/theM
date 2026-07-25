@@ -186,7 +186,7 @@ docker compose --profile go logs -f them-go-bridge
 | LLM cancellation | `context.Context` propagated to HTTP | `internal/llm/anthropic.go` |
 | Temporal | Retained (Go SDK), HITL via Signal | `internal/temporal/workflow.go` |
 | Message format | Canonical domain types in DB | `internal/domain/domain.go` |
-| Tenant boundary | Application is the tenant | `docs/architecture-v2/06-domain-model.md` |
+| Tenant boundary | Application is the tenant | `docs/architecture-v2/implementation-status.md` (Architectural Findings Fixed table) |
 | Bus subscribe timing | Subscribe BEFORE StartWorkflow | `internal/ws/handler.go` line ~154 |
 | ExecLua return type | Use `res.ToAny()` for Lua scripts that may return non-integer results (e.g. arrays) | `docs/architecture-v2/lessons-learned.md` |
 | AT TIME ZONE parsing | PG `AT TIME ZONE 'UTC'` on timestamptz returns timestamp without tz suffix — parseTS must handle both formats | `go/internal/admin/dal/tokens.go` |
