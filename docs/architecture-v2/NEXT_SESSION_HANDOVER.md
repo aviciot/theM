@@ -1,83 +1,98 @@
 # Session Handover
-# Generated: 2026-07-25
-# Scope: Wave 7 Phase 2 complete — LLM provider DAL + service layer
+# Generated: 2026-07-26
+# Scope: Tenant Foundation Gate complete — Wave 7 Phase 3 has not started
 
 ---
 
 ## Git State
 
 **Branch:** `main`
-**HEAD:** `dc391b7 feat(admin/service): Wave 7 Phase 2 — LLMProviderService + unit tests`
-**origin/main:** NOT yet synchronized — local main is 12 commits ahead of origin/main (push required when credentials available)
-**Working tree:** clean after documentation commit (only `go/them` compiled binary is untracked — do not commit)
+**HEAD:** `fb99eb2 docs(tenant): Tenant Foundation Gate — ownership decisions and Wave 7 impact`
+**origin/main:** synchronized — all 14 commits pushed (see Push Status below)
+**Working tree:** clean (only `go/them` compiled binary is untracked — do not commit)
 
-### Wave 7 commits (newest first)
+### Commits since Wave 6 base (newest first)
 
 ```
-<doc commit>  docs(wave7): Phase 2 implementation report, lessons-learned, TEST_INDEX, handover
-dc391b7       feat(admin/service): Wave 7 Phase 2 — LLMProviderService + unit tests
-9df65cd       feat(admin/dal): Wave 7 Phase 2 — LLM provider DAL and interface
-44208ee       feat(crypto): Wave 7 Phase 1 — Go Fernet compatibility package
+fb99eb2  docs(tenant): Tenant Foundation Gate — ownership decisions and Wave 7 impact
+6637887  docs(wave7): Phase 2 implementation report, lessons-learned, TEST_INDEX, handover
+dc391b7  feat(admin/service): Wave 7 Phase 2 — LLMProviderService + unit tests
+9df65cd  feat(admin/dal): Wave 7 Phase 2 — LLM provider DAL and interface
+44208ee  feat(crypto): Wave 7 Phase 1 — Go Fernet compatibility package
 ```
 
 Wave 6 base: `f4faa06`
-Wave 5 base: `bc8c461`
 
 ---
 
-## Current Objective
+## Push Status
 
-**Wave 7: LLM provider CRUD migrated from Python to Go.**
-
-- Phase 1 (Fernet crypto package): **COMPLETE** — `44208ee`
-- Phase 2 (DAL + service layer): **COMPLETE** — `9df65cd` + `dc391b7`
-- Phase 3 (HTTP handlers + route wiring): **NOT STARTED**
+**All commits pushed to origin/main.** (Updated after push — verify with `git log --oneline origin/main..HEAD`; expected: no output.)
 
 ---
 
-## What Phase 3 Must Implement
+## Wave 7 Status
 
-**File:** `go/internal/admin/llm_providers.go` (or split into `llm_providers_handlers.go`)
+| Phase | Description | Status | Commit |
+|---|---|---|---|
+| Phase 1 | Fernet crypto package (`go/internal/crypto/`) | **COMPLETE** | `44208ee` |
+| Phase 2 | LLM provider DAL + service layer | **COMPLETE** | `9df65cd` + `dc391b7` |
+| Tenant Gate | Tenant foundation decisions | **COMPLETE** | `fb99eb2` |
+| Phase 3 | HTTP handlers + Traefik cutover | **NOT STARTED** — awaiting Go-Native Engineering Gate |
 
-### Routes
+---
 
-| Method | Path | Handler calls | Status code |
-|--------|------|--------------|-------------|
-| GET | `/api/v1/admin/llm-providers` | `service.List` | 200 |
-| POST | `/api/v1/admin/llm-providers` | `service.Create` | 201 |
-| GET | `/api/v1/admin/llm-providers/{id}` | `service.Get` | 200 |
-| PATCH | `/api/v1/admin/llm-providers/{id}` | `service.Update` | 200 |
-| DELETE | `/api/v1/admin/llm-providers/{id}` | `service.Delete` | 204 |
+## Tenant Foundation Decisions Summary
 
-### Error mapping (handler → HTTP status)
+Full document: `docs/architecture-v2/TENANT_FOUNDATION_DECISIONS.md`
 
-| Service error | HTTP status |
+### Ownership confirmed
+
+| Resource | Ownership | Impact |
+|---|---|---|
+| `them.llm_providers` | **Platform-global** | No `tenant_id` column. UNIQUE(name) correct as-is. |
+| `them.config['llm_routing']` | **Platform-global** | Wave 6 Go routes correct. No changes needed. |
+| `them.config['monitoring']` | **Platform-global** | Wave 6 Go routes correct. No changes needed. |
+| `them.applications` | Tenant-owned | `tenant_id` column to be added in dedicated tenant wave. |
+| `them.agents`, `them.orchestrators` | Tenant-owned (future) | Currently platform-global; dedicated migration wave. |
+| `them.access_tokens` | Tenant-owned (future) | `tenant_id` to be added in tenant wave. |
+
+### Wave 7 Phase 2 — no tenant changes required
+
+The DAL (`go/internal/admin/dal/llm_providers.go`) and service layer
+(`go/internal/admin/service/llm_providers.go`) are correct as committed:
+- No `tenant_id` parameter — correct for platform-global resource.
+- `UNIQUE(name)` at platform scope — correct.
+- `THE_M_SECRET_KEY` encryption — correct for platform credentials.
+- **Phase 2 requires no rework.**
+
+### Wave 7 Phase 3 — tenant-safe, not yet started
+
+The 5 LLM provider CRUD handlers will operate on a platform-global table. They require no
+`tenant_id` parameter and are mounted behind `RequireSuperAdmin` (Platform Admin only).
+Phase 3 is architecturally safe to implement once the Go-Native Engineering Gate is complete.
+
+**Phase 3 must not be started before the Go-Native Engineering Gate result.**
+
+### 8 open tenant decisions (see TENANT_FOUNDATION_DECISIONS.md §9)
+
+| # | Question |
 |---|---|
-| `ErrNotFound` | 404 |
-| `ErrConflict` | 409 |
-| `ErrValidation` | 422 |
-| any other error | 500 |
+| O-01 | Agents/orchestrators: tenant-owned or platform-global templates with overrides? |
+| O-02 | `access_tokens.tenant_id`: direct column or inferred through orchestrator chain? |
+| O-03 | Billing model (per-run, per-token, per-session, subscription) → drives `run_usage` scoping. |
+| O-04 | Auth service users: per-tenant namespaces or platform-global with tenant memberships? |
+| O-05 | Redis isolation: key-prefix-per-tenant (Tier 2) or shared with DB row-level only (Tier 0)? |
+| O-06 | Tenant Portal: separate deployment or filtered view of existing admin UI? |
+| O-07 | Tier 1 dedicated Temporal workers: at first paying customer, or at N tenants? |
+| O-08 | Per-tenant LLM key override: row in `them.llm_providers` (add `tenant_id`) or separate `them.tenant_llm_providers` table? |
 
-### PATCH body — APIKeyPresent detection (CRITICAL)
-
-The `LLMProviderPatch.APIKeyPresent` bool must be set by the handler when `api_key` appears in
-the JSON body — regardless of whether its value is null or non-null.
-
-**Required approach:** Decode the PATCH body in two passes:
-1. First unmarshal into `map[string]json.RawMessage` (or equivalent) to detect presence of `api_key` key.
-2. Then unmarshal into `LLMProviderPatch` normally.
-3. Set `patch.APIKeyPresent = true` if `api_key` key was found in step 1.
-
-Without this, `{"api_key": null}` and `{}` are indistinguishable at the Go struct level (both give `nil *string`).
-
-### Route registration
-
-Register in `cmd/them/main.go` under the admin sub-router with `RequireSuperAdmin` middleware.
-After handler + test are working, add Traefik labels in `docker-compose.yml` for all 5 routes.
+These open decisions must be resolved before the tenant migration wave begins. They do not
+block Wave 7 Phase 3 or the Go-Native Engineering Gate.
 
 ---
 
-## Live Traefik Route Ownership (unchanged from Wave 6)
+## Live Traefik Route Ownership (unchanged)
 
 ### Go-owned routes
 
@@ -90,11 +105,11 @@ After handler + test are working, add Traefik labels in `docker-compose.yml` for
 | `them-go-monitoring-config` | `Path(/api/v1/admin/monitoring-config)` | 120 | Go (Wave 6) |
 | `them-go-llm-routing-config` | `Path(/api/v1/admin/llm-providers/routing/config)` | 120 | Go (Wave 6) |
 
-### Python still owns (not yet migrated)
+### Python still owns
 
 | Route | Python file |
 |---|---|
-| `/api/v1/admin/llm-providers` (CRUD — 5 routes) | `admin_llm_providers.py` — **Wave 7 Phase 3** |
+| `/api/v1/admin/llm-providers` (CRUD — 5 routes) | `admin_llm_providers.py` — Wave 7 Phase 3 (not started) |
 | `POST/PUT/DELETE /api/v1/admin/agents*` | `admin_agents.py` |
 | `POST/PUT/DELETE /api/v1/admin/orchestrators*` | `admin_orchestrators.py` |
 | `POST/PUT/DELETE /api/v1/admin/applications*` | `admin_applications.py` |
@@ -104,167 +119,101 @@ After handler + test are working, add Traefik labels in `docker-compose.yml` for
 
 ---
 
-## Files Most Relevant to Phase 3
+## Test State (end of Phase 2)
 
-| File | Why |
-|---|---|
-| `go/internal/admin/service/llm_providers.go` | Service layer — Phase 3 calls these methods |
-| `go/internal/admin/service/errors.go` | `ErrConflict`, `ErrNotFound`, `ErrValidation` — map to HTTP codes |
-| `go/internal/admin/dal/llm_providers.go` | DAL types returned through service |
-| `go/internal/admin/agents.go` | Handler pattern to follow (CRUD style) |
-| `go/internal/admin/admin_test.go` | Pattern for handler tests — `S1-15` |
-| `go/internal/admin/service/service_test.go` | `fakeDal` with provider stubs already wired |
-| `cmd/them/main.go` | Where to register routes |
-| `docker-compose.yml` | Where to add Traefik labels for cutover |
-| `app/routers/admin_llm_providers.py` | Python contract — response shape, status codes |
-
----
-
-## Services Built — Ready to Wire
-
-```go
-// In cmd/them/main.go wiring:
-llmSvc := service.NewLLMProviderService(dal, cfg.SecretKey)
 ```
-
-`service.NewLLMProviderService(d Dal, secretKey string) *LLMProviderService` — already exported,
-takes the DAL interface and derives the Fernet key internally. No additional crypto setup needed.
-
----
-
-## Test Results at End of Phase 2
-
-### Go unit suite
-```
-go test ./...
-23 packages PASS, 0 failures
-```
-
-S1-25 (admin/service): 60 tests (was 34; +26 for LLM provider service)
-
-### Race detector
-```
-go test -race ./internal/admin/... ./internal/crypto/...
-PASS, 0 data races
-```
-
-### DAL integration (live Postgres)
-```
-go test -tags=integration ./internal/admin/dal/...
-11/11 PASS
-```
-
-### Fernet regression
-```
-go test ./internal/crypto/...
-32/32 PASS
-```
-
-### Python suite
-```
-python3.12 scripts/tests/run_tests.py 01 02 03 04 15
-55/55 PASS
+go test ./...                          23 packages PASS, 0 failures
+go test -race ./internal/admin/...     PASS, 0 data races
+go test -tags=integration ./internal/admin/dal/...   11/11 PASS (live Postgres)
+go test ./internal/crypto/...          32/32 PASS
+python3.12 scripts/tests/run_tests.py 01 02 03 04 15   55/55 PASS
 ```
 
 ---
 
 ## Hard Constraints That Must Remain in Force
 
-1. **No plaintext API key may be returned, logged, embedded in errors, or persisted unencrypted.**
-2. **WARN logs may contain provider ID and error category only — never plaintext, ciphertext, or key material.**
-3. **`api_key_encrypted` DB column must never appear in any JSON response field.**
-4. **`THE_M_SECRET_KEY` is validated at startup (non-empty, non-default) — do not remove this check.**
-5. **Plaintext bytes must be zeroed immediately after masking** (`for i := range plainBytes { plainBytes[i] = 0 }`).
-6. **`APIKeyPresent` flag must be set correctly by the handler** — absence and null are distinct states.
-7. **No SQL outside DAL. No crypto inside handlers.**
-8. **All list endpoints return `[]` not `null`.**
-9. **`go test ./...` must pass before every commit.**
-10. **`TEST_INDEX.md` must be updated in the same commit as any test change.**
+1. No plaintext API key may be returned, logged, embedded in errors, or persisted unencrypted.
+2. WARN logs may contain provider ID and error category only — never plaintext, ciphertext, or key material.
+3. `api_key_encrypted` DB column must never appear in any JSON response field.
+4. `THE_M_SECRET_KEY` is validated at startup (non-empty, non-default) — do not remove.
+5. Plaintext bytes must be zeroed immediately after masking.
+6. `APIKeyPresent` flag must be set correctly by the handler — absence and null are distinct.
+7. No SQL outside DAL. No crypto inside handlers.
+8. All list endpoints return `[]` not `null`.
+9. `go test ./...` must pass before every commit.
+10. `TEST_INDEX.md` must be updated in the same commit as any test change.
+11. LLM providers are platform-global — no `tenant_id` parameter in any Wave 7 handler.
+12. Wave 7 Phase 3 handlers must be classified as Platform control-plane API in any catalogue.
 
 ---
 
 ## Exact Next Task
 
-**Phase 3:** Implement the 5 LLM provider HTTP handlers and wire routes.
+**Go-Native Engineering Gate** — before Wave 7 Phase 3 handlers are written.
 
-Steps:
-1. Create handler file `go/internal/admin/llm_providers.go` (or add to `go/internal/admin/admin.go`)
-2. Parse PATCH body with two-pass JSON decode to detect `api_key` presence
-3. Map service errors to HTTP status codes per the table above
-4. Register 5 routes in `cmd/them/main.go` under admin sub-router with `RequireSuperAdmin`
-5. Write handler tests following `internal/admin/admin_test.go` pattern, using existing `fakeDal`
-   (already has provider stubs in `service_test.go`)
-6. Add handler test entries to `go/TEST_INDEX.md` (S1-15 or new section)
-7. Run `go test ./...` and `go test -race ./internal/admin/...`
-8. Add Traefik labels in `docker-compose.yml` for all 5 routes (priority 120)
-9. Restart Go bridge and verify live requests hit Go from logs
-10. Run `python3.12 scripts/tests/run_tests.py 01 02 03 04 15` — zero failures
-11. Commit: `feat(admin): Wave 7 Phase 3 — LLM provider HTTP handlers + route wiring`
-12. Commit: `docs(wave7): Phase 3 implementation report + handover`
-13. Push if credentials available
+This gate evaluates whether Go is ready to own the LLM provider CRUD routes in production.
+It must be planned and completed as a separate task before any Phase 3 implementation begins.
+
+**Do not implement handlers. Do not add Traefik labels. Do not begin cutover.**
+
+Once the gate result is returned:
+- If approved: proceed to Wave 7 Phase 3 (handlers + Traefik cutover).
+- If conditions: complete the conditions first, then Phase 3.
+- If rejected: document the blockers; do not proceed.
 
 ---
 
-## First Prompt for Next Session
+## First Prompt for Next Session (Go-Native Engineering Gate)
 
 ```
 Read first, in this exact order:
 1. /opt/docker/them/CLAUDE.md
 2. /opt/docker/them/go/CLAUDE.md
 3. /opt/docker/them/docs/architecture-v2/NEXT_SESSION_HANDOVER.md
-4. /opt/docker/them/docs/architecture-v2/WAVE7_PLAN.md
+4. /opt/docker/them/docs/architecture-v2/TENANT_FOUNDATION_DECISIONS.md
 5. /opt/docker/them/docs/architecture-v2/WAVE7_IMPLEMENTATION_REPORT.md
-6. /opt/docker/them/go/internal/admin/service/llm_providers.go
-7. /opt/docker/them/go/internal/admin/service/errors.go
-8. /opt/docker/them/go/internal/admin/agents.go   (handler pattern to follow)
-9. /opt/docker/them/app/routers/admin_llm_providers.py   (Python contract)
 
 Verify:
 - branch is main
-- HEAD is dc391b7 or newer (documentation commit may be on top)
+- HEAD is fb99eb2 or newer
+- origin/main is synchronized
 - working tree is clean
-- go/them may remain as the only untracked compiled binary
 
-Use Sonnet for implementation and testing.
+Use Opus.
 
-Implement only Wave 7 Phase 3:
-HTTP handlers and route wiring for LLM provider CRUD.
+This is a gate task only. Do not implement handlers. Do not add Traefik labels.
+Do not begin Wave 7 Phase 3.
 
-Do not add Fernet logic to handlers — call the service layer only.
-Do not change the service or DAL — they are complete.
-Do not change Traefik until handlers are tested and passing.
+Evaluate whether the Go gateway is ready to own the LLM provider CRUD routes
+in production. Consider:
 
-Scope:
-- Handler file: go/internal/admin/llm_providers.go
-- 5 operations: List, Get, Create, Update (PATCH with APIKeyPresent detection), Delete
-- Route registration in cmd/them/main.go
-- Handler tests following admin_test.go pattern
-- Traefik labels in docker-compose.yml
-- Live cutover verification from Go bridge logs
+1. Operational readiness: health checks, startup validation, graceful shutdown,
+   structured logging, Prometheus metrics — are they present and sufficient?
 
-PATCH body MUST use two-pass JSON decode to detect api_key presence:
-  raw := map[string]json.RawMessage{}
-  json.Unmarshal(body, &raw)
-  _, apiKeyPresent := raw["api_key"]
-  // then decode into LLMProviderPatch normally
-  patch.APIKeyPresent = apiKeyPresent
+2. Error handling completeness: does the existing admin handler pattern handle
+   all failure modes correctly? Are 500 responses safe (no internal detail leaked)?
 
-Security constraints remain in full force:
-- No plaintext API key in any log, error, or response
-- WARN logs: provider ID and error_category only
-- api_key_encrypted never returned in JSON
-- Plaintext bytes zeroed after masking (already done in service layer)
+3. Security posture: are the security constraints from WAVE7_IMPLEMENTATION_REPORT.md
+   and TENANT_FOUNDATION_DECISIONS.md enforced by the existing infrastructure, or
+   do they require handler-level enforcement in Phase 3?
 
-Tests required:
-- Handler unit tests (no real DB) using fakeDal / fakeService pattern
-- go test ./... (full suite, 0 failures)
-- go test -race ./internal/admin/...
-- python3.12 scripts/tests/run_tests.py 01 02 03 04 15
+4. Observability gap: when a Phase 3 handler serves a request, will there be
+   enough signal (logs, metrics, traces) to debug a production incident?
 
-Commits required:
-1. Handlers + handler tests + route registration + TEST_INDEX.md update
-2. Traefik labels + live cutover verification
-3. Documentation updates (WAVE7_IMPLEMENTATION_REPORT Phase 3, handover)
+5. Rollback confidence: is the Traefik rollback procedure (remove label, restart
+   Go bridge) fast enough and reliable enough for a production cutover?
 
-Stop after Phase 3. Do not begin Wave 8.
+Write the gate result to:
+docs/architecture-v2/GO_NATIVE_ENGINEERING_GATE.md
+
+The document must end with:
+- gate result: APPROVED / APPROVED WITH CONDITIONS / BLOCKED
+- if conditions: list each condition with the file and change required
+- if blocked: list each blocker with severity and remediation
+- whether Wave 7 Phase 3 may proceed
+- exact first step of Phase 3 once approved
+
+Return only: document path, gate result, and whether Phase 3 may proceed.
+Stop after the gate. Do not implement anything.
 ```
