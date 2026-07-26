@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-26  
 **Branch:** main  
-**HEAD:** (update after commit)  
+**HEAD:** 88004b1 feat(runtime): Phase R-0 — Critical Runtime Gate (L-1, L-2, L-3, T-2, OD-1, OD-2, OD-7)  
 **Session model used:** claude-sonnet-4-6
 
 ---
