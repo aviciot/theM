@@ -44,6 +44,10 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestReconcilerDryRun_ExplicitFalse` | `RECONCILER_DRY_RUN=false` → `false` (enables writes) |
 | `TestReconcilerDryRun_InvalidValueFallsToTrue` | `RECONCILER_DRY_RUN=not-a-bool` → `true` (fail-safe) |
 | `TestRunEventsMode` | `RUN_EVENTS_MODE` parsing (Phase 11c-B): missing/invalid→pubsub, dual, streams, case-insensitive |
+| `TestShutdownDrain_Default` | Missing `SHUTDOWN_DRAIN_SECONDS` → 30 (default) |
+| `TestShutdownDrain_Valid` | `SHUTDOWN_DRAIN_SECONDS=60` → 60 |
+| `TestShutdownDrain_BelowMin_Clamped` | `SHUTDOWN_DRAIN_SECONDS=2` → 5 (clamped to minimum) |
+| `TestShutdownDrain_Invalid_Clamped` | `SHUTDOWN_DRAIN_SECONDS=abc` → 5 (clamped to minimum) |
 
 **Trigger:** any change to `internal/config/config.go` or `.env.example`
 
@@ -139,7 +143,7 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ### S1-07 · Event bus — `internal/event/bus_test.go`
 
-**Purpose:** In-process fan-out bus — never blocks on slow consumers.
+**Purpose:** In-process fan-out bus — never blocks on slow consumers; terminal event guarantee (R-0 L-1 / OD-1).
 
 | Test | What it proves |
 |---|---|
@@ -149,6 +153,9 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestSlowConsumer` | Full channel → event dropped, bus does not block |
 | `TestUnsubscribe` | Unsubscribe closes channel, no further events delivered |
 | `TestConcurrentPublish` | Concurrent publishes → no data race (run with `-race`) |
+| `TestBus_TerminalEventDeliveredOnFullBuffer` | "done" event delivered via termCh even when evCh is full (R-0 OD-1) |
+| `TestBus_TerminalEventDroppedIfTermChFull` | Second terminal event does not block publisher when termCh (cap 1) is full |
+| `TestBus_TerminalEventAlsoRoutedToEvCh` | Terminal event appears in both evCh and termCh when evCh has capacity |
 
 **Trigger:** any change to `internal/event/bus.go`
 
@@ -1012,13 +1019,13 @@ If a test is added without updating this index, the PR should not be merged.
 
 | Suite | Package | Tests |
 |---|---|---|
-| S1-01 | config | 14 |
+| S1-01 | config | 18 |
 | S1-02 | health | 5 |
 | S1-03 | server | 4 |
 | S1-04 | auth/jwt | 9 |
 | S1-05 | auth/token_cache | 5 |
 | S1-06 | session | 10 |
-| S1-07 | event | 6 |
+| S1-07 | event | 9 |
 | S1-08 | domain | 3 |
 | S1-09 | runrecorder | 8 |
 | S1-10 | llm | 6 |
@@ -1038,7 +1045,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-24 | cmd/them (apps dispatcher) | 5 |
 | S1-25 | admin/service | 60 |
 | S1-26 | crypto (fernet) | 32 |
-| **S1 total** | | **323** |
+| **S1 total** | | **330** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1047,4 +1054,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **Grand total** | | **388** |
+| **Grand total** | | **395** |

@@ -375,6 +375,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ContextID:        contextID,
 		StartedAt:        time.Now().UTC().Format(time.RFC3339),
 	}
+	// R-0 T-2 / OD-2: populate AppID and TenantID from resolved EP config so the
+	// five-element RuntimeIdentity is fully materialised in the Redis session Hash.
+	if resolvedCfg != nil {
+		sessInfo.AppID = resolvedCfg.AppID
+		sessInfo.TenantID = resolvedCfg.TenantID
+	}
 	if err := h.sessions.Register(r.Context(), sessInfo); err != nil {
 		h.logger.Warn("sse: register session failed", "session_id", sessionID, "error", err)
 		if gateAdmitted {
@@ -396,16 +402,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	appID := ""
+	if resolvedCfg != nil {
+		appID = resolvedCfg.AppID
+	}
 	defer func() {
 		ctx := context.Background()
-		_ = h.sessions.End(ctx, sessionID, epSlug, "")
+		_ = h.sessions.End(ctx, sessionID, epSlug, appID)
 		if gateAdmitted {
 			_ = h.gateStore.Release(ctx, gateCfg)
 		}
 	}()
 
 	// ── 9. CRITICAL: Subscribe to event bus BEFORE starting the workflow ──────
-	evCh, unsub := h.bus.Subscribe(r.Context(), contextID, 256)
+	// termCh (capacity 1) receives "done"/"error" with guaranteed delivery even
+	// when evCh (capacity 256) is full (R-0 L-1 fix).
+	evCh, termCh, unsub := h.bus.Subscribe(r.Context(), contextID, 256)
 	defer unsub()
 
 	// ── 10. Create run record ─────────────────────────────────────────────────
@@ -452,7 +464,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					h.logger.Warn("sse: orchestrator error", "run_id", runID, "error", runErr)
 				}
 			}()
-			h.streamEvents(ctx, cancel, w, flusher, hasFlusher, evCh, orchDone)
+			h.streamEvents(ctx, cancel, w, flusher, hasFlusher, evCh, termCh, orchDone)
 			return
 		}
 
@@ -497,7 +509,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		// ── 12a. Stream Redis run events as SSE ───────────────────────────────
-		h.streamEvents(ctx, cancel, w, flusher, hasFlusher, rsEvCh, orchDone)
+		// Redis run-stream events arrive on rsEvCh (not the in-process bus),
+		// so termCh is not used here — pass nil to signal no termCh available.
+		h.streamEvents(ctx, cancel, w, flusher, hasFlusher, rsEvCh, nil, orchDone)
 	} else {
 		// ── 11b. Go-inline path (permanent fallback) ──────────────────────────
 		go func() {
@@ -509,12 +523,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		// ── 12b. Stream in-process bus events as SSE ─────────────────────────
-		h.streamEvents(ctx, cancel, w, flusher, hasFlusher, evCh, orchDone)
+		h.streamEvents(ctx, cancel, w, flusher, hasFlusher, evCh, termCh, orchDone)
 	}
 }
 
 // streamEvents forwards bus events to the SSE response until orchestration
 // completes or the client disconnects.
+// termCh is the dedicated terminal-event channel (capacity 1) from the in-process
+// bus (R-0 L-1 fix). Pass nil when using the Redis run-stream path.
 func (h *Handler) streamEvents(
 	ctx context.Context,
 	cancel context.CancelFunc,
@@ -522,6 +538,7 @@ func (h *Handler) streamEvents(
 	flusher http.Flusher,
 	hasFlusher bool,
 	evCh <-chan event.Event,
+	termCh <-chan event.Event,
 	orchDone <-chan struct{},
 ) {
 	flush := func() {
@@ -555,6 +572,15 @@ func (h *Handler) streamEvents(
 			if ev.Type == "done" || ev.Type == "error" {
 				return
 			}
+		case ev, ok := <-termCh:
+			// Terminal event via dedicated channel (R-0 L-1 fix).
+			// termCh may be nil when using the Redis run-stream path; a nil channel
+			// blocks forever in a select (never selected), which is the correct behaviour.
+			if !ok {
+				return
+			}
+			_ = writeSSE(ev)
+			return
 		case <-orchDone:
 			// Drain any buffered events before returning.
 			for {
@@ -567,6 +593,12 @@ func (h *Handler) streamEvents(
 					if ev.Type == "done" || ev.Type == "error" {
 						return
 					}
+				case ev, ok := <-termCh:
+					if !ok {
+						return
+					}
+					_ = writeSSE(ev)
+					return
 				default:
 					return
 				}

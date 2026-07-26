@@ -211,7 +211,9 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req r
 	contextID := newID()
 
 	// Subscribe to event bus BEFORE starting orchestration.
-	evCh, unsub := s.bus.Subscribe(r.Context(), contextID, 256)
+	// A2A uses synchronous aggregation so termCh is discarded here; the loop
+	// below drains evCh until done/error then exits.
+	evCh, _, unsub := s.bus.Subscribe(r.Context(), contextID, 256)
 	defer unsub()
 
 	// Create run record.

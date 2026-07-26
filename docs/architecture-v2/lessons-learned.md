@@ -1064,3 +1064,15 @@ had the router missing even after a Go bridge rebuild.
 **Rule going forward:** Whenever Traefik router labels are added for a new wave, update
 both `docker-compose.yml` (dev/go profile) and `theM_gateway/docker-compose.traefik.yml`
 (production overlay) in the same commit.
+
+---
+
+## R-0 (2026-07-26): Terminal event routing
+
+**Lesson:** `isTerminal()` checks `ev.Type`, not `ev.Topic`. The orchestrator publishes with `Topic=contextID` and `Type="done"` — tests that set only `Topic="done"` without setting `Type="done"` will fail to trigger the terminal routing path. Always set both `Topic` and `Type` in test events to match the real orchestrator pattern.
+
+**Lesson:** When adding a termCh to a fan-out bus, terminal events should be sent to BOTH the main channel (best-effort) AND the termCh (guaranteed). Sending only to termCh means the normal drain loop on evCh never sees the terminal event, breaking the WS/SSE streaming path when evCh has capacity.
+
+**Lesson:** `server.NewWithBus` parameter order change is a breaking compile error in main.go — when adding a `drainSeconds time.Duration` parameter, all callers must be updated in the same commit.
+
+**Lesson:** Long-lived background goroutines (heartbeat, pub/sub subscribers, reconciler) must use a cancellable context, not `context.Background()`. The pre-drain hook pattern — `srv.WithPreDrainHook(runCancel)` — ensures these goroutines are cancelled BEFORE `httpServer.Shutdown` drains connections, preventing the 30-second drain from being wasted waiting for goroutines that would never exit on their own.

@@ -73,6 +73,11 @@ type Config struct {
 	// RunEventsMode selects the run-event delivery transport (Phase 11c-B).
 	// Parsed from RUN_EVENTS_MODE: "dual" | "streams" | anything-else→"pubsub".
 	RunEventsMode RunEventsMode
+
+	// ShutdownDrainSeconds is how long the HTTP server waits for in-flight
+	// requests to complete after receiving SIGTERM/SIGINT before force-closing.
+	// Parsed from SHUTDOWN_DRAIN_SECONDS; default 30, min 5.
+	ShutdownDrainSeconds int
 }
 
 // RunEventsMode selects how run events are delivered to WS/SSE clients.
@@ -133,6 +138,8 @@ func Load() (*Config, error) {
 		ReconcilerDryRun: getEnvBoolSafe("RECONCILER_DRY_RUN", true),
 
 		RunEventsMode: parseRunEventsMode(os.Getenv("RUN_EVENTS_MODE")),
+
+		ShutdownDrainSeconds: parseShutdownDrain(os.Getenv("SHUTDOWN_DRAIN_SECONDS")),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -208,7 +215,8 @@ func (c *Config) SafeString() string {
 			"log_level=%s log_format=%s otel_enabled=%v secret_key=*** "+
 			"jwt_middleware=%s anthropic_api_key=%s "+
 			"temporal_enabled=%v temporal_host_port=%s "+
-			"reconciler_dry_run=%v run_events_mode=%s",
+			"reconciler_dry_run=%v run_events_mode=%s "+
+			"shutdown_drain_seconds=%d",
 		c.AppEnv, c.AppHost, c.AppPort, c.InstanceID,
 		c.DBHost, c.DBPort, c.DBName, c.DBUser,
 		c.DBPoolSize, c.RedisHost, c.RedisPort, c.RedisDB,
@@ -216,6 +224,7 @@ func (c *Config) SafeString() string {
 		jwtMode, anthropicMode,
 		c.TemporalEnabled, c.TemporalHostPort,
 		c.ReconcilerDryRun, c.RunEventsMode,
+		c.ShutdownDrainSeconds,
 	)
 }
 
@@ -248,6 +257,21 @@ func parseRSAPublicKey(pemBytes []byte) (*rsa.PublicKey, error) {
 	default:
 		return nil, fmt.Errorf("unsupported PEM block type %q; expected \"PUBLIC KEY\" or \"RSA PUBLIC KEY\"", block.Type)
 	}
+}
+
+// parseShutdownDrain parses SHUTDOWN_DRAIN_SECONDS. Default is 30, minimum is 5.
+// Any value below 5 (or unparseable) is clamped to 5 to prevent instant kills.
+func parseShutdownDrain(v string) int {
+	const defaultDrain = 30
+	const minDrain = 5
+	if v == "" {
+		return defaultDrain
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < minDrain {
+		return minDrain
+	}
+	return n
 }
 
 // parseRunEventsMode maps the RUN_EVENTS_MODE env value to a RunEventsMode.

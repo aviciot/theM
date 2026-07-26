@@ -364,6 +364,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ContextID:        contextID,
 		StartedAt:        time.Now().UTC().Format(time.RFC3339),
 	}
+	// R-0 T-2 / OD-2: populate AppID and TenantID from resolved EP config so the
+	// five-element RuntimeIdentity is fully materialised in the Redis session Hash.
+	if resolvedCfg != nil {
+		sessInfo.AppID = resolvedCfg.AppID
+		sessInfo.TenantID = resolvedCfg.TenantID
+	}
 	if err := h.sessions.Register(r.Context(), sessInfo); err != nil {
 		h.logger.Warn("ws: register session failed", "session_id", sessionID, "error", err)
 		if gateAdmitted {
@@ -381,9 +387,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Capture appID for use in defer (resolvedCfg may be nil in tests without EP loader).
+	appID := ""
+	if resolvedCfg != nil {
+		appID = resolvedCfg.AppID
+	}
+
 	defer func() {
 		ctx := context.Background()
-		_ = h.sessions.End(ctx, sessionID, epSlug, "")
+		_ = h.sessions.End(ctx, sessionID, epSlug, appID)
 		if gateAdmitted {
 			_ = h.gateStore.Release(ctx, gateCfg)
 		}
@@ -391,7 +403,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// ── 8. CRITICAL: Subscribe to event bus BEFORE starting the workflow ──────
 	// (from 09-domain-events.md §3 — the ready bootstrap handshake)
-	evCh, unsub := h.bus.Subscribe(r.Context(), contextID, 256)
+	// termCh (capacity 1) receives "done"/"error" with guaranteed delivery even
+	// when evCh (capacity 256) is full (R-0 L-1 fix).
+	evCh, termCh, unsub := h.bus.Subscribe(r.Context(), contextID, 256)
 	defer unsub()
 
 	// ── 9. Create run record in DB ────────────────────────────────────────────
@@ -440,7 +454,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					h.logger.Warn("ws: orchestrator error", "run_id", runID, "error", runErr)
 				}
 			}()
-			h.streamEvents(ctx, cancel, conn, evCh, orchDone)
+			h.streamEvents(ctx, cancel, conn, evCh, termCh, orchDone)
 			return
 		}
 
@@ -482,7 +496,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		// ── 12a. Stream Redis run events to client ────────────────────────────
-		h.streamEvents(ctx, cancel, conn, rsEvCh, orchDone)
+		// Redis run-stream events arrive on rsEvCh (not the in-process bus),
+		// so termCh is not used here — pass nil to signal no termCh available.
+		h.streamEvents(ctx, cancel, conn, rsEvCh, nil, orchDone)
 	} else {
 		// ── 11b. Go-inline path (permanent fallback) ──────────────────────────
 		go func() {
@@ -494,7 +510,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		// ── 12b. Stream in-process bus events to client ───────────────────────
-		h.streamEvents(ctx, cancel, conn, evCh, orchDone)
+		h.streamEvents(ctx, cancel, conn, evCh, termCh, orchDone)
 	}
 }
 
@@ -547,7 +563,10 @@ func (h *Handler) readClientMessage(conn *websocket.Conn) (domain.Message, strin
 
 // streamEvents forwards bus events to the WebSocket client until orchestration
 // completes or the client disconnects.
-func (h *Handler) streamEvents(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, evCh <-chan event.Event, orchDone <-chan struct{}) {
+// termCh is the dedicated terminal-event channel (capacity 1) from the in-process
+// bus (R-0 L-1 fix). Pass nil when using the Redis run-stream path (termCh not needed
+// there because the stream itself guarantees terminal event delivery).
+func (h *Handler) streamEvents(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, evCh <-chan event.Event, termCh <-chan event.Event, orchDone <-chan struct{}) {
 	clientGone := make(chan struct{})
 	go func() {
 		defer close(clientGone)
@@ -571,6 +590,15 @@ func (h *Handler) streamEvents(ctx context.Context, cancel context.CancelFunc, c
 			if ev.Type == "done" || ev.Type == "error" {
 				return
 			}
+		case ev, ok := <-termCh:
+			// Terminal event via dedicated channel (R-0 L-1 fix).
+			// termCh may be nil when using the Redis run-stream path; a nil channel
+			// blocks forever in a select (never selected), which is the correct behaviour.
+			if !ok {
+				return
+			}
+			_ = h.writeEvent(conn, ev)
+			return
 		case <-orchDone:
 			// Drain any buffered events (e.g., the "done" event published just
 			// before orchDone closed) before returning.
@@ -584,6 +612,12 @@ func (h *Handler) streamEvents(ctx context.Context, cancel context.CancelFunc, c
 					if ev.Type == "done" || ev.Type == "error" {
 						return
 					}
+				case ev, ok := <-termCh:
+					if !ok {
+						return
+					}
+					_ = h.writeEvent(conn, ev)
+					return
 				default:
 					return
 				}

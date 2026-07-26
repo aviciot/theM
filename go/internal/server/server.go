@@ -23,7 +23,6 @@ import (
 )
 
 const (
-	drainTimeout      = 5 * time.Second
 	readHeaderTimeout = 5 * time.Second
 	readTimeout       = 15 * time.Second
 	writeTimeout      = 30 * time.Second
@@ -52,11 +51,17 @@ func WithAuth(jwt, bearer func(http.Handler) http.Handler) AuthMiddlewares {
 
 // Server wraps an http.Server and the chi router, and owns the shutdown logic.
 type Server struct {
-	httpServer *http.Server
-	router     *chi.Mux
-	logger     *slog.Logger
-	closers    []Closer
-	eventBus   event.Bus
+	httpServer   *http.Server
+	router       *chi.Mux
+	logger       *slog.Logger
+	closers      []Closer
+	eventBus     event.Bus
+	drainTimeout time.Duration
+	// preDrainHook is called once after the shutdown signal is received, before
+	// httpServer.Shutdown. Use it to cancel the runCtx so subscriber goroutines
+	// (token pub/sub, epconfig pub/sub, heartbeat) stop before the HTTP drain
+	// tries to flush their connections (R-0 L-3 fix).
+	preDrainHook func()
 }
 
 // buildRouter constructs and returns the chi router with all routes mounted.
@@ -104,13 +109,14 @@ func buildRouter(h *health.Handler, auth AuthMiddlewares) *chi.Mux {
 // WithAuth to construct; pass zero value to disable). closers are called in
 // order during graceful shutdown after the HTTP server stops.
 func New(addr string, healthHandler *health.Handler, auth AuthMiddlewares, logger *slog.Logger, closers ...Closer) *Server {
-	return NewWithBus(addr, healthHandler, auth, nil, logger, closers...)
+	return NewWithBus(addr, healthHandler, auth, nil, 30*time.Second, logger, closers...)
 }
 
-// NewWithBus is identical to New but also accepts an event.Bus that is stored
-// on the server and made available to route handlers in later phases. Passing
-// nil is safe — bus is simply not set.
-func NewWithBus(addr string, healthHandler *health.Handler, auth AuthMiddlewares, bus event.Bus, logger *slog.Logger, closers ...Closer) *Server {
+// NewWithBus is identical to New but also accepts an event.Bus and a
+// configurable drain timeout. drainSeconds controls how long the HTTP server
+// waits for in-flight requests during graceful shutdown; values below 5 are
+// clamped to 5. Passing nil bus is safe — bus is simply not set.
+func NewWithBus(addr string, healthHandler *health.Handler, auth AuthMiddlewares, bus event.Bus, drainSeconds time.Duration, logger *slog.Logger, closers ...Closer) *Server {
 	r := buildRouter(healthHandler, auth)
 
 	httpSrv := &http.Server{
@@ -122,13 +128,27 @@ func NewWithBus(addr string, healthHandler *health.Handler, auth AuthMiddlewares
 		IdleTimeout:       idleTimeout,
 	}
 
-	return &Server{
-		httpServer: httpSrv,
-		router:     r,
-		logger:     logger,
-		closers:    closers,
-		eventBus:   bus,
+	if drainSeconds < 5*time.Second {
+		drainSeconds = 5 * time.Second
 	}
+
+	return &Server{
+		httpServer:   httpSrv,
+		router:       r,
+		logger:       logger,
+		closers:      closers,
+		eventBus:     bus,
+		drainTimeout: drainSeconds,
+	}
+}
+
+// WithPreDrainHook registers a function to call once after the shutdown signal
+// is received, before httpServer.Shutdown begins draining. Use it to cancel the
+// run context so subscriber goroutines (token pub/sub, epconfig pub/sub,
+// heartbeat) exit cleanly before connections are force-closed (R-0 L-3).
+// Only one hook is supported; a second call replaces the first.
+func (s *Server) WithPreDrainHook(fn func()) {
+	s.preDrainHook = fn
 }
 
 // EventBus returns the event.Bus registered with this server, or nil if none
@@ -208,10 +228,16 @@ func (s *Server) ListenAndServe() error {
 		s.logger.Info("shutdown signal received", "signal", sig.String())
 	}
 
+	// Cancel subscriber goroutines before draining HTTP connections (R-0 L-3).
+	if s.preDrainHook != nil {
+		s.preDrainHook()
+	}
+
 	// Graceful drain.
-	ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), s.drainTimeout)
 	defer cancel()
 
+	s.logger.Info("server draining", "timeout", s.drainTimeout)
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		s.logger.Error("server shutdown error", "error", err)
 	}

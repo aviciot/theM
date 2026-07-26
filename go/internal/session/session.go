@@ -68,6 +68,7 @@ type SessionInfo struct {
 	OrchestratorName string `json:"orchestrator_name"`
 	EPSlug           string `json:"ep_slug,omitempty"`
 	AppID            string `json:"app_id,omitempty"`
+	TenantID         string `json:"tenant_id,omitempty"`
 	ContextID        string `json:"context_id"`
 	StartedAt        string `json:"started_at"`
 }
@@ -473,6 +474,7 @@ func sessionInfoToFields(info SessionInfo) map[string]string {
 		"orchestrator_name": info.OrchestratorName,
 		"ep_slug":           info.EPSlug,
 		"app_id":            info.AppID,
+		"tenant_id":         info.TenantID,
 		"context_id":        info.ContextID,
 		"started_at":        info.StartedAt,
 	}
@@ -490,6 +492,7 @@ func fieldsToSessionInfo(fields map[string]string) SessionInfo {
 		OrchestratorName: fields["orchestrator_name"],
 		EPSlug:           fields["ep_slug"],
 		AppID:            fields["app_id"],
+		TenantID:         fields["tenant_id"],
 		ContextID:        fields["context_id"],
 		StartedAt:        fields["started_at"],
 	}

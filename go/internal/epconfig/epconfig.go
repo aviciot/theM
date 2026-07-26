@@ -89,6 +89,7 @@ type EPConfig struct {
 	// Identity
 	EPID          string // entry_points.id (UUID string)
 	AppID         string // applications.id (UUID string)
+	TenantID      string // applications.tenant_id (UUID string); empty until Phase R-4 adds the column
 	EPSlug        string
 	AppEnabled    bool
 	EPEnabled     bool
@@ -179,6 +180,7 @@ func parseAccessPolicy(logger *slog.Logger, data []byte) string {
 type EPConfigRow struct {
 	EPID                    string // UUID string
 	AppID                   string // UUID string
+	TenantID                string // UUID string; empty until Phase R-4 adds applications.tenant_id column
 	EPSlug                  string
 	EPType                  string
 	EPEnabled               bool
@@ -353,6 +355,7 @@ func (l *Loader) buildConfig(row *EPConfigRow) *EPConfig {
 	return &EPConfig{
 		EPID:             row.EPID,
 		AppID:            row.AppID,
+		TenantID:         row.TenantID,
 		EPSlug:           row.EPSlug,
 		EPType:           row.EPType,
 		EPEnabled:        row.EPEnabled,

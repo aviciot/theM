@@ -230,3 +230,43 @@ func TestRunEventsMode(t *testing.T) {
 		})
 	}
 }
+
+// TestShutdownDrain_Default verifies SHUTDOWN_DRAIN_SECONDS defaults to 30.
+func TestShutdownDrain_Default(t *testing.T) {
+	env := validEnv()
+	setEnv(t, env)
+	os.Unsetenv("SHUTDOWN_DRAIN_SECONDS")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 30, cfg.ShutdownDrainSeconds)
+}
+
+// TestShutdownDrain_Valid verifies an explicit value above the minimum is used.
+func TestShutdownDrain_Valid(t *testing.T) {
+	env := validEnv()
+	env["SHUTDOWN_DRAIN_SECONDS"] = "60"
+	setEnv(t, env)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 60, cfg.ShutdownDrainSeconds)
+}
+
+// TestShutdownDrain_BelowMin_Clamped verifies values below 5 are clamped to 5.
+func TestShutdownDrain_BelowMin_Clamped(t *testing.T) {
+	env := validEnv()
+	env["SHUTDOWN_DRAIN_SECONDS"] = "2"
+	setEnv(t, env)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 5, cfg.ShutdownDrainSeconds)
+}
+
+// TestShutdownDrain_Invalid_Clamped verifies non-integer input is clamped to the minimum.
+func TestShutdownDrain_Invalid_Clamped(t *testing.T) {
+	env := validEnv()
+	env["SHUTDOWN_DRAIN_SECONDS"] = "abc"
+	setEnv(t, env)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 5, cfg.ShutdownDrainSeconds)
+}

@@ -63,7 +63,12 @@ func run() error {
 	log.Info("configuration loaded", "config", cfg.SafeString())
 
 	// ── 3. Connect to PostgreSQL ──────────────────────────────────────────────
+	// ctx is used only for startup I/O (DB ping, Redis ping).
+	// runCtx governs all long-lived goroutines so they are cancelled together
+	// before the HTTP drain begins (R-0 L-2 + L-3 fix).
 	ctx := context.Background()
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
 
 	database, err := db.New(ctx, cfg.DSN())
 	if err != nil {
@@ -129,7 +134,7 @@ func run() error {
 	agentDB := agentregistry.NewPgxQuerier(database.Pool())
 	agentCacheRedis := cache.NewAuthRedisClient(redisCache.Client())
 	agentReg := agentregistry.New(agentDB, agentCacheRedis, log)
-	go agentReg.Subscribe(ctx)
+	go agentReg.Subscribe(runCtx)
 	log.Info("agent registry initialised with pub/sub cache invalidation")
 
 	// ── 11. Build auth middleware ─────────────────────────────────────────────
@@ -156,15 +161,17 @@ func run() error {
 	addr := fmt.Sprintf("%s:%d", cfg.AppHost, cfg.AppPort)
 
 	authMW := server.AuthMiddlewares{}
-	srv := server.NewWithBus(addr, healthHandler, authMW, bus, log, database, redisCache)
+	drainDuration := time.Duration(cfg.ShutdownDrainSeconds) * time.Second
+	srv := server.NewWithBus(addr, healthHandler, authMW, bus, drainDuration, log, database, redisCache)
 
 	// ── 13. Wire bearer token cache (L1 in-process → L2 Redis → PostgreSQL) ──
 	tokenDB := auth.NewPgxQuerier(database.Pool())
 	tokenRedis := cache.NewAuthRedisClient(redisCache.Client())
 	tokenCache := auth.NewCache(tokenDB, tokenRedis, log)
-	// Start cross-pod revocation listener. Blocks until ctx is cancelled; the
-	// context is derived from the process lifetime so it stops on SIGTERM.
-	go tokenCache.Subscribe(ctx)
+	// Start cross-pod revocation listener. Blocks until runCtx is cancelled;
+	// runCancel is called as the pre-drain hook before HTTP connections are
+	// force-closed (R-0 L-3 fix).
+	go tokenCache.Subscribe(runCtx)
 	log.Info("bearer token cache initialised (L1+L2+pub/sub revocation)")
 
 	authenticator := tokenCache
@@ -190,7 +197,7 @@ func run() error {
 	if cfg.TemporalEnabled && temporalCli != nil {
 		recDB := reconciler.NewPgxQuerier(database.Pool())
 		recCfg := reconciler.Config{DryRun: cfg.ReconcilerDryRun}
-		go reconciler.Run(ctx, recCfg, recDB, temporalCli, log)
+		go reconciler.Run(runCtx, recCfg, recDB, temporalCli, log)
 		log.Info("run reconciler started", "dry_run", recCfg.DryRun)
 	}
 
@@ -200,7 +207,7 @@ func run() error {
 	// Subscribe for cross-pod cache invalidation. The session Redis client
 	// already satisfies epconfig.RedisSubscriber (same Subscribe signature).
 	epConfigSub := cache.NewSessionRedisClient(redisCache.Client())
-	epLoader.Subscribe(ctx, epConfigSub)
+	epLoader.Subscribe(runCtx, epConfigSub)
 	log.Info("EP config loader initialised with pub/sub invalidation")
 
 	// ── 15. Wire run-event dispatcher (Pub/Sub + Redis Streams) ──────────────
@@ -233,21 +240,28 @@ func run() error {
 	// Writes them:pod:{instance_id} every 15 s so the session reconciler knows
 	// this replica is alive. Session TTL is 90 s so 15 s gives 6 misses before
 	// a pod is considered dead — wide enough to survive transient Redis blips.
+	// Uses runCtx so the ticker stops before the HTTP drain begins (R-0 L-2 fix).
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-runCtx.Done():
 				return
 			case <-ticker.C:
-				if err := sessionStore.WriteHeartbeat(ctx); err != nil {
+				if err := sessionStore.WriteHeartbeat(runCtx); err != nil {
 					log.Warn("pod heartbeat failed", "error", err)
 				}
 			}
 		}
 	}()
 	log.Info("pod heartbeat loop started", "interval", "15s")
+
+	// Register runCancel as the pre-drain hook so all subscriber goroutines
+	// (token revocation, epconfig invalidation, agent registry, heartbeat,
+	// reconciler) are cancelled before httpServer.Shutdown drains connections
+	// (R-0 L-3 fix). runCancel is idempotent; defer above is a safety net.
+	srv.WithPreDrainHook(runCancel)
 
 	// ── 17c. Mount /apps/{slug}/ws and /apps/{slug}/sse aliases ─────────────
 	// These are the app entry-point URLs used by the frontend.
