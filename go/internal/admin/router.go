@@ -17,6 +17,9 @@ import (
 // sessionReader is the session store for admin session listing/disconnect.
 // Pass nil to disable session admin routes (development only).
 //
+// secretKey is THE_M_SECRET_KEY used by the LLM providers handler for Fernet
+// key derivation. Pass empty string in tests that do not test LLM providers.
+//
 // Routes:
 //
 //	GET    /admin/agents
@@ -35,6 +38,11 @@ import (
 //	DELETE /admin/tokens/{token_id}
 //	GET    /admin/sessions
 //	POST   /admin/sessions/{session_id}/disconnect
+//	GET    /admin/llm-providers
+//	POST   /admin/llm-providers
+//	GET    /admin/llm-providers/{id}
+//	PATCH  /admin/llm-providers/{id}
+//	DELETE /admin/llm-providers/{id}
 //	GET    /runs
 //	GET    /runs/{run_id}
 //	POST   /runs/{run_id}/signal
@@ -45,6 +53,7 @@ func BuildRouter(
 	sessionReader service.SessionReader,
 	jwtMiddleware func(http.Handler) http.Handler,
 	logger *slog.Logger,
+	secretKey string,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -55,6 +64,7 @@ func BuildRouter(
 	tokens := NewTokensHandler(db, cache)
 	monitoring := NewMonitoringConfigHandler(db)
 	llmRouting := NewLLMRoutingHandler(db)
+	llmProviders := NewLLMProvidersHandler(db, secretKey)
 
 	// Admin routes — protected by JWT + super_admin role check.
 	r.Group(func(admin chi.Router) {
@@ -71,6 +81,7 @@ func BuildRouter(
 			tokens.Routes(a)
 			monitoring.Routes(a)
 			llmRouting.Routes(a)
+			llmProviders.Routes(a)
 			if sessionReader != nil {
 				NewSessionsHandler(sessionReader).Routes(a)
 			}

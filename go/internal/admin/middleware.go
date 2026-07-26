@@ -121,6 +121,8 @@ func writeServiceError(w http.ResponseWriter, err error) bool {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, service.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, service.ErrConflict):
+		writeError(w, http.StatusConflict, "resource already exists")
 	case errors.Is(err, service.ErrTemporalUnavailable):
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 	default:

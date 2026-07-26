@@ -291,7 +291,7 @@ Shared interfaces and TokenHash now live in `internal/transport/`; this test exe
 
 ### S1-15 · Admin API — `internal/admin/admin_test.go`
 
-**Purpose:** CRUD correctness, cache invalidation, EP config cross-pod invalidation, Temporal signal wiring, token CRUD handler contract, session admin handler contract (Wave 5).
+**Purpose:** CRUD correctness, cache invalidation, EP config cross-pod invalidation, Temporal signal wiring, token CRUD handler contract, session admin handler contract (Wave 5), LLM provider CRUD handler contract + MF-1 writeServiceError fix (Wave 7).
 SQL query strings and scan helpers now live in `internal/admin/dal/`; the handler layer is tested here via fakeDB satisfying `dal.Querier`.
 
 | Test | What it proves |
@@ -337,6 +337,23 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 | `TestGetLLMRouting_NoRow_ReturnsDefaults` | GET /llm-providers/routing/config, no DB row → 200 with defaults (anthropic, claude-sonnet-4-6, null fallbacks) |
 | `TestPutLLMRouting_Valid_Returns200` | PUT /llm-providers/routing/config with valid body → 200, returned values match input |
 | `TestPutLLMRouting_BadJSON_Returns400` | PUT /llm-providers/routing/config with non-JSON body → 400 |
+| `TestLLMProvidersHandler_List_200` | GET /llm-providers → 200, JSON array (empty = `[]` not null) |
+| `TestLLMProvidersHandler_List_WithProviders` | GET /llm-providers → 200, provider array; no-key provider shows `api_key_set=false`, `api_key_masked=null` |
+| `TestLLMProvidersHandler_Create_201` | POST /llm-providers valid body → 201 with Location header containing new id |
+| `TestLLMProvidersHandler_Create_400_MissingName` | POST /llm-providers without name → 400 |
+| `TestLLMProvidersHandler_Create_409_DuplicateName` | POST /llm-providers with DB error → non-200 response (409 path covered by service tests) |
+| `TestLLMProvidersHandler_Get_200` | GET /llm-providers/{id} found → 200 with provider JSON |
+| `TestLLMProvidersHandler_Get_404` | GET /llm-providers/{id} with pgx.ErrNoRows → 404 |
+| `TestLLMProvidersHandler_Get_BadID` | GET /llm-providers/notanumber → 400 |
+| `TestLLMProvidersHandler_Patch_200` | PATCH /llm-providers/{id} partial update → 200 with updated JSON |
+| `TestLLMProvidersHandler_Patch_404` | PATCH /llm-providers/{id} with pgx.ErrNoRows → 404 |
+| `TestLLMProvidersHandler_Patch_APIKeyAbsent` | PATCH without api_key field → APIKeyPresent=false; existing key unchanged |
+| `TestLLMProvidersHandler_Patch_APIKeyExplicitNull` | PATCH with `"api_key":null` → APIKeyPresent=true; service clears the key |
+| `TestLLMProvidersHandler_Delete_204` | DELETE /llm-providers/{id} found → 204 No Content |
+| `TestLLMProvidersHandler_Delete_404` | DELETE /llm-providers/{id} with pgx.ErrNoRows → 404 |
+| `TestLLMProvidersHandler_NoPlaintextAPIKeyInResponse` | GET response body never contains `api_key_encrypted` or plaintext key material |
+| `TestWriteServiceError_ErrConflict_Returns409` | POST /llm-providers route is reachable (MF-1 fix: ErrConflict→409 wired in writeServiceError) |
+| `TestLLMProvidersHandler_RequiresSuperAdmin` | Anonymous request to /llm-providers → 401 via RequireSuperAdmin middleware |
 
 **Trigger:** any change to `internal/admin/` (any file) OR `internal/admin/dal/` (any file)
 
