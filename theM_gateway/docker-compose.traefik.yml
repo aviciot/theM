@@ -10,13 +10,16 @@ version: "3.9"
 #
 # Wave 2 — admin writes: POST/PUT/PATCH/DELETE for agents/orchestrators/apps/EPs/runs-signal
 # Wave 4 — /apps/{slug}/ws, /apps/{slug}/sse, /ws/orchestrate/{app}/{ep}, /sse/orchestrate/{app}/{ep}
-# Wave 5 (this commit) — /api/v1/admin/tokens (full CRUD) + /api/v1/admin/sessions
+# Wave 5 — /api/v1/admin/tokens (full CRUD) + /api/v1/admin/sessions
 #   /api/v1/admin/tokens            GET/POST/GET/PATCH/DELETE at priority 120
 #   /api/v1/admin/sessions          GET (list by app_id/ep_slug) at priority 120
 #   /api/v1/admin/sessions/{id}/disconnect  POST at priority 120
+# Wave 6 — /api/v1/admin/llm-providers/routing/config — GET + PUT at priority 120
+# Wave 7 — /api/v1/admin/llm-providers CRUD (excl. /routing/config) at priority 120
 #
 # Python remains authoritative for all WS/SSE and unlisted routes.
-# ROLLBACK: remove the Wave 5 two router blocks (them-go-tokens, them-go-sessions).
+# ROLLBACK Wave 7: remove router block them-go-llm-providers.
+# ROLLBACK Wave 5: remove router blocks them-go-tokens, them-go-sessions.
 # Legacy /go-health/* path kept for backward compat with existing scripts.
 #
 # Direct bridge ports (8002/8003) remain available for diagnostics.
@@ -163,6 +166,20 @@ services:
       - "traefik.http.routers.them-go-sessions.entrypoints=web"
       - "traefik.http.routers.them-go-sessions.priority=120"
       - "traefik.http.routers.them-go-sessions.service=them-go-svc"
+      # ── Wave 6: /api/v1/admin/llm-providers/routing/config — GET + PUT ────────
+      # Literal path — does not conflict with /llm-providers/{id}.
+      # ROLLBACK: remove this router block (them-go-llm-routing-config).
+      - "traefik.http.routers.them-go-llm-routing-config.rule=Path(`/api/v1/admin/llm-providers/routing/config`)"
+      - "traefik.http.routers.them-go-llm-routing-config.entrypoints=web"
+      - "traefik.http.routers.them-go-llm-routing-config.priority=120"
+      - "traefik.http.routers.them-go-llm-routing-config.service=them-go-svc"
+      # ── Wave 7: /api/v1/admin/llm-providers CRUD — GET/POST/PATCH/DELETE ──────
+      # Excludes /routing/config (already owned by them-go-llm-routing-config above).
+      # ROLLBACK: remove this router block (them-go-llm-providers).
+      - "traefik.http.routers.them-go-llm-providers.rule=PathPrefix(`/api/v1/admin/llm-providers`) && !Path(`/api/v1/admin/llm-providers/routing/config`)"
+      - "traefik.http.routers.them-go-llm-providers.entrypoints=web"
+      - "traefik.http.routers.them-go-llm-providers.priority=120"
+      - "traefik.http.routers.them-go-llm-providers.service=them-go-svc"
       # ── Legacy /go-health/* path (backward compat with scripts) ────────────────
       - "traefik.http.routers.them-go-health.rule=PathPrefix(`/go-health`)"
       - "traefik.http.routers.them-go-health.entrypoints=web"

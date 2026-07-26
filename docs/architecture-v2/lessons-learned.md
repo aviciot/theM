@@ -1022,3 +1022,45 @@ to the Go bridge silently failed with 401 until a live contract test exposed it.
 **Rule going forward:** Any new service added to `docker-compose.yml` must explicitly
 wire `JWT_SECRET=${THE_M_JWT_SECRET:-}` if it validates HS256 JWTs from the auth service.
 Run a live contract test that requires authentication before declaring a route migrated.
+
+---
+
+### L-11: Traefik discovers containers by label constraint — missing label means 0 routes
+
+**Context:** Wave 7 Traefik cutover. The production Traefik instance runs from
+`theM_gateway/` with `constraints: "Label('traefik-instance','them')"`. The Go
+bridge (`them` compose project at `/opt/docker/them/`) was never given the
+`traefik-instance=them` label in its service definition.
+
+**What happened:** Traefik's Docker provider silently ignores all containers lacking
+the constraint label. Despite the Go bridge container having all the correct
+`traefik.http.routers.*` labels, Traefik's `/api/rawdata` showed 0 Go routers —
+and all traffic continued to hit Python. No error is logged.
+
+**Fix:** Added `- "traefik-instance=them"` to the `labels:` section of `them-go-bridge`
+in `docker-compose.yml`. After `docker compose --profile go up --no-deps -d them-go-bridge`,
+Traefik immediately discovered all 5 Go routers.
+
+**Rule going forward:** Every service that needs to be Traefik-discovered must have
+`traefik-instance=them` in its labels. Verify discovery immediately after adding a
+container to the stack by querying Traefik's API (`docker exec them-traefik wget -qO-
+http://localhost:8089/api/rawdata`). Never declare a route migrated without confirming
+the router appears there.
+
+---
+
+### L-12: Traefik routing lives in two places — keep them in sync
+
+**Context:** Wave 7. The repo has two docker-compose files that define Traefik labels:
+- `/opt/docker/them/docker-compose.yml` — used when starting the Go bridge with `--profile go`
+- `/opt/docker/them/theM_gateway/docker-compose.traefik.yml` — used by the production stack
+
+**What happened:** Wave 7 router labels were added to `docker-compose.yml` but not to
+`docker-compose.traefik.yml`. Anyone using the theM_gateway production stack would have
+had the router missing even after a Go bridge rebuild.
+
+**Fix:** Both files must be updated together for every wave.
+
+**Rule going forward:** Whenever Traefik router labels are added for a new wave, update
+both `docker-compose.yml` (dev/go profile) and `theM_gateway/docker-compose.traefik.yml`
+(production overlay) in the same commit.

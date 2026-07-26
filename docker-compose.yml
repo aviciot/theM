@@ -902,6 +902,7 @@ services:
       - them-redis
     labels:
       - "traefik.enable=true"
+      - "traefik-instance=them"
       - "traefik.docker.network=them-network"
       # ── Go service definition ───────────────────────────────────────────────
       - "traefik.http.services.them-go-bridge-svc.loadbalancer.server.port=8002"
@@ -935,6 +936,14 @@ services:
       - "traefik.http.routers.them-go-llm-routing-config.entrypoints=web"
       - "traefik.http.routers.them-go-llm-routing-config.priority=120"
       - "traefik.http.routers.them-go-llm-routing-config.service=them-go-bridge-svc"
+      # ── Wave 7: /api/v1/admin/llm-providers CRUD — GET/POST/PATCH/DELETE ─────
+      # Excludes /routing/config (already owned by them-go-llm-routing-config at 120).
+      # The exclusion is belt-and-suspenders: Traefik PathPrefix+!Path beats PathPrefix alone.
+      # ROLLBACK: remove this router block (them-go-llm-providers).
+      - "traefik.http.routers.them-go-llm-providers.rule=PathPrefix(`/api/v1/admin/llm-providers`) && !Path(`/api/v1/admin/llm-providers/routing/config`)"
+      - "traefik.http.routers.them-go-llm-providers.entrypoints=web"
+      - "traefik.http.routers.them-go-llm-providers.priority=120"
+      - "traefik.http.routers.them-go-llm-providers.service=them-go-bridge-svc"
     profiles:
       - go
     restart: unless-stopped

@@ -1,11 +1,12 @@
 # Implementation Status — Go Gateway
 
-**Last updated:** 2026-07-25 (consolidated from go/docs/architecture-v2/ — authoritative as of Phase 11c-C + Wave 5)
+**Last updated:** 2026-07-26 (Wave 7 cutover complete)
 
 ---
 
 ## Current State
 
+Wave 7 complete (2026-07-26): llm-providers CRUD (GET/POST/PATCH/DELETE) now served by Go.
 Wave 6 complete (2026-07-25): monitoring-config + llm-providers/routing/config now served by Go.
 Wave 5 complete (2026-07-24): tokens + sessions admin routes served by Go.
 Phase 11c-C validation complete (2026-07-21). 229 unit tests pass. Race detector clean in Linux CI.
@@ -74,11 +75,12 @@ For full Traefik priority details see `NEXT_SESSION_BRIDGE_HANDOVER.md`.
 | `ALL /api/v1/admin/sessions*` | `internal/admin` (Wave 5) | JWT super-admin | Go |
 | `GET,PUT /api/v1/admin/monitoring-config` | `internal/admin` (Wave 6) | JWT super-admin | Go |
 | `GET,PUT /api/v1/admin/llm-providers/routing/config` | `internal/admin` (Wave 6) | JWT super-admin | Go |
+| `ALL /api/v1/admin/llm-providers*` (excl. /routing/config) | `internal/admin` (Wave 7) | JWT super-admin | Go |
 | `GET /api/v1/runs*` | `internal/admin` | JWT super-admin | Go |
 | `POST /api/v1/runs/{run_id}/signal` | `internal/admin` | JWT | Go |
 | All other `/api/v1/*` | Python bridge | — | Python |
 
-**Python still owns:** `/api/v1/auth/*`, agent test/discover/security-scan, orchestrator test-llm, application import/export/restore/bulk-delete/runtime, llm-providers CRUD (Wave 7), dashboard WS `/ws/dashboard`, one-segment `/ws/orchestrate/{name}`.
+**Python still owns:** `/api/v1/auth/*`, agent test/discover/security-scan, orchestrator test-llm, application import/export/restore/bulk-delete/runtime, dashboard WS `/ws/dashboard`, one-segment `/ws/orchestrate/{name}`.
 
 ---
 
