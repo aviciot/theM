@@ -20,8 +20,11 @@ Before touching any code, read these docs if you haven't this session:
 | `docs/STATUS.md` | Know what's broken/pending before you start |
 | `docs/LESSONS.md` | Before any judgment call — read what burned us before |
 | `scripts/tests/INDEX.md` | Before running or writing tests |
+| `docs/architecture-v2/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` | Docker, deployment, environment, or container recreation work |
 
 For Go work, also read `go/CLAUDE.md` — it governs everything under `go/`.
+
+**Before Docker, deployment, environment, or container recreation work, read `docs/architecture-v2/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md`. Never commit or print real secrets.**
 
 ---
 
