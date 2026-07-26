@@ -75,6 +75,8 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 - Admin routes require JWT middleware (`RequireSuperAdmin`)
 - All list endpoints return `[]` not `null` when empty
 - Secrets never appear in log output — use `cfg.SafeString()`
+- `writeServiceError` must handle **every** typed sentinel that any service method it covers can return — if a new sentinel is added (e.g. `ErrConflict`), update `writeServiceError` in the same commit
+- 500 responses must use static strings — never `err.Error()` from service or DAL layers
 
 ---
 
