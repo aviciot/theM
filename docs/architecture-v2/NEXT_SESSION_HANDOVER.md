@@ -1,80 +1,87 @@
-# Phase R-1 Complete — Handover
+# Phase R-2 Planning Complete — Handover
 
 **Date:** 2026-07-28
 **Branch:** main
-**HEAD:** 39d505c feat(observability): Phase R-1 — Prometheus metrics + structured logging
-**Session model:** claude-sonnet-4-6
+**HEAD:** see git log (will be updated after commit)
+**Session model:** claude-opus-4 (planning session)
 
 ---
 
 ## Current objective
 
-Phase R-1 (Observability & Metrics) is complete and committed.
-Next task: Phase R-2 — define scope with Opus before implementation.
+Phase R-2 planning is complete.
+Next task: Phase R-2A — Orchestrator Feature Parity (start in a fresh Sonnet session).
 
 ---
 
 ## Work completed this session
 
-### Phase R-1: Observability & Metrics — ALL ITEMS DONE
+### R-2 Architecture Plan
 
-| Item | Description | Files |
-|---|---|---|
-| New `internal/metrics` package | 10 Prometheus metrics registered on default registry via `init()` | `go/internal/metrics/metrics.go` |
-| Metrics tests | 12 tests covering all metrics, label isolation, cardinality enforcement | `go/internal/metrics/metrics_test.go` |
-| Event bus drop counter | `EventBusDropped.Inc()` in slow-consumer drop path (non-terminal only) | `go/internal/event/bus.go` |
-| WS handler metrics | ActiveWSConnections gauge, gate rejection/admission counters, session lifecycle counters | `go/internal/ws/handler.go` |
-| SSE handler metrics | ActiveSSEConnections gauge, gate rejection/admission counters, session lifecycle counters | `go/internal/sse/handler.go` |
-| Structured logging | `ep_slug`, `app_id`, `tenant_id`, `session_id`, `run_id` logged at session start/end and errors | `go/internal/ws/handler.go`, `go/internal/sse/handler.go` |
-| Drain observation | `metrics.ObserveDrain(drainStart)` after `httpServer.Shutdown`; imports `internal/metrics` | `go/internal/server/server.go` |
-| Startup visibility | `log.Info("shutdown drain configured", "drain_seconds", ...)` at startup | `go/cmd/them/main.go` |
-| TEST_INDEX.md | Added S1-27 (metrics, 12 tests); totals: S1=342, Grand=407 | `go/TEST_INDEX.md` |
+Full plan written to `docs/architecture-v2/R2_TEMPORAL_GO_WORKER_PLAN.md`.
 
-### Test results
-- `go test ./...`: ALL PASS, 0 failures
-- `go test -race ./...`: ALL PASS, 0 data races
-- Python sanity (01 02 03 04 15): 55 passed, 0 failed
-
-### R-0 safety verified
-Terminal events are NOT delivered twice in a harmful way. They are routed to both `evCh` (best-effort) and `termCh` (guaranteed) by design. The handler loop exits after the first terminal event it processes. The drop counter guards `if !terminal` so terminal events never increment the drop counter.
+Key decisions recorded in the plan:
+1. **Inline path identified and condemned** — `ws/handler.go` and `sse/handler.go` contain
+   an inline Go orchestrator path (`temporalEnabled=false` branch) that runs the entire
+   agentic loop outside Temporal. This violates the mandatory constraint. R-2B removes it.
+2. **R-2 split into R-2A and R-2B** — R-2A is orchestrator feature parity (7 gaps);
+   R-2B is Go worker wiring + inline path removal. R-2B is blocked on R-2A.
+3. **Atomic cutover plan** — switching from `PythonOrchestrationInput` to `WorkflowInput`
+   breaks Python-worker compatibility; must be a coordinated deploy (Go worker up →
+   bridge updated → Python worker stopped).
+4. **Documents to correct** — gate doc §1.4 and §1.7 describe the inline path as valid;
+   both must be corrected in the R-2B commit.
 
 ---
 
 ## Deployed / live state
 
-- Go bridge is NOT rebuilt/redeployed — code committed but Docker container still has pre-R-1 binary
-- To redeploy: `docker compose --profile go build them-go-bridge && docker compose --profile go up -d them-go-bridge`
-- Stack running: them-postgres, them-redis, them-auth-service, them-bridge, them-traefik (all healthy)
+- Go bridge: NOT rebuilt since R-1 — still running pre-R-1 binary
+- Temporal path: Python worker still active (used when TEMPORAL_ENABLED=true)
+- Stack: them-postgres, them-redis, them-auth-service, them-bridge, them-traefik (healthy)
+- Go bridge container: stale (does not have R-0 or R-1 code live)
 
 ---
 
 ## Working tree state
 
-After commit, all Phase R-1 files should be clean. Untracked `go/them` binary is the local compiled binary (not committed — correct).
+Clean after commit. Untracked `go/them` binary (correct — not committed).
 
 ---
 
 ## Architecture decisions made this session
 
-1. **Cardinality rule enforced by test** — `TestHighCardinalityLabelsAbsent` fails if any `them_*` metric uses `session_id`, `run_id`, `request_id`, `user_id`, or `tenant_id` as a label name. This is the automated guard.
-2. **`epTypeLabel` duplicated in ws and sse handlers** — not moved to `internal/transport` to keep each handler file self-contained. Both definitions are identical.
-3. **`Describe` not `Gather` for registration check** — `Gather()` skips vec families with no observed series; `Describe()` always returns all registered descriptors.
+1. **Inline path is eliminated in R-2B.** No LLM call, agent call, or orchestration
+   iteration may execute outside Temporal after R-2B is complete.
+2. **Phase naming clarification:**
+   - R-1 (delivered) = Prometheus metrics + structured logging (HEAD 39d505c)
+   - R-2A = Orchestrator feature parity (7 gaps from gate doc §1.5)
+   - R-2B = Go Temporal Worker wiring + inline path removal
+3. **In-process event bus remains correct after R-2.** When the Go worker runs in the
+   same binary as the bridge, the bus transports events produced inside a Temporal activity
+   to the bridge handler. This is event delivery, not an execution bypass.
+4. **Memory injection deferred.** Of the 8 orchestrator gaps, memory injection is the
+   only one deferred to R-3. All other 7 gaps are required before R-2B.
 
 ---
 
 ## Hard constraints remaining in force
 
-- Never log token values, API keys, request bodies, or any secret — per CLAUDE.md
-- Never use `session_id`, `run_id`, `request_id`, `user_id`, or `tenant_id` as Prometheus label names (enforced by test)
-- Never start R-2 through R-5 in the same session as R-1 (already observed)
+- Temporal is the single durable owner of every run — no exceptions after R-2B
+- Never log token values, API keys, request bodies, or any secret
+- Never use `session_id`, `run_id`, `request_id`, `user_id`, `tenant_id` as Prometheus label names
 - All Go changes require `go test ./...` to pass before commit
+- Workflow ID scheme `ctx-{contextID}` must be preserved — HITL signal routing depends on it
+- Task queue name `them-orchestration` is shared with Python during transition — do not change it
 
 ---
 
 ## Known bugs / risks
 
-- `tenant_id` field in session info is empty string — `EPConfig.TenantID` is populated but `applications.tenant_id` DB column doesn't exist yet. This is acceptable per R-0 OD-2 decision.
-- Go bridge Docker image is stale — rebuild needed to pick up R-0 + R-1 changes before metrics are observable via `/metrics` endpoint.
+- Go bridge Docker image is stale — rebuild needed before any live testing
+- `PythonOrchestrationInput` → `WorkflowInput` cutover is a breaking change for Python worker
+  compatibility — must be an atomic deploy, not a rolling one
+- `tenant_id` field in session info is still empty string (pre-existing, tracked in gate doc)
 
 ---
 
@@ -82,22 +89,30 @@ After commit, all Phase R-1 files should be clean. Untracked `go/them` binary is
 
 | File | Relevance |
 |---|---|
-| `go/internal/metrics/metrics.go` | All metric definitions — starting point for R-2 |
-| `go/internal/ws/handler.go` | WS handler with R-1 instrumentation — reference for R-2 patterns |
-| `go/internal/sse/handler.go` | SSE handler with R-1 instrumentation |
-| `go/internal/server/server.go` | Drain observation wired here |
-| `docs/architecture-v2/R1_IMPLEMENTATION_REPORT.md` | Full R-1 implementation summary |
+| `go/internal/orchestrator/orchestrator.go` | Starting point for R-2A — add 7 missing features |
+| `docs/architecture-v2/R2_TEMPORAL_GO_WORKER_PLAN.md` | Full R-2 plan — read before starting |
+| `docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md` §1.5 | Gap table for orchestrator features |
+| `docs/architecture-v2/CRITICAL_RUNTIME_BLOCKING_DECISIONS.md` OD-3, OD-4, OD-5 | Resolved decisions for R-2A features |
+| `go/internal/temporal/activities.go` | Activity skeleton — will be fully implemented in R-2B |
+| `go/internal/temporal/workflow.go` | Correct as-is — do not change |
+| `go/internal/ws/handler.go` lines 481–561 | Inline path to remove in R-2B |
 
 ---
 
 ## Exact next single focused task
 
-**Phase R-2: Tenant Tier Metrics** (or a different R-2 scope — TBD with Opus).
+**Phase R-2A, Task 1: Implement in-memory message accumulation + durable checkpoints (OD-3)**
 
-Before implementing R-2, start a new session with **Opus** to define scope:
-- Decide whether to add `tenant_tier` as a label (requires architecture approval per current cardinality rules)
-- OR pivot to a different R-2 priority (per-route latency histogram, LLM usage metrics, etc.)
-- Write the scope decision to `docs/architecture-v2/` before returning to Sonnet for implementation
+In `go/internal/orchestrator/orchestrator.go`:
+1. Add `HistoryLoader` and `CheckpointWriter` injection to `Orchestrator.New()`
+2. Call `HistoryLoader.LoadHistory(ctx, contextID, historyWindow)` at start of `Run()`
+   if `history` param is nil/empty
+3. After each LLM iteration: write assistant turn + tool results to `task_messages`
+   via a `CheckpointWriter` interface (new interface in `internal/orchestrator` or
+   a new package — your call, keep it simple)
+4. Write `TestOrchestrator_CheckpointRecovery` (required by OD-3)
+5. `go test ./...` — zero failures
+6. Commit `internal/orchestrator/`, `go/TEST_INDEX.md`
 
 ---
 
@@ -105,18 +120,20 @@ Before implementing R-2, start a new session with **Opus** to define scope:
 
 ```
 Read first:
-- docs/architecture-v2/NEXT_SESSION_HANDOVER.md
-- go/TEST_INDEX.md
-- docs/architecture-v2/R1_IMPLEMENTATION_REPORT.md
-- go/CLAUDE.md
+1. docs/architecture-v2/R2_TEMPORAL_GO_WORKER_PLAN.md   (the full R-2 plan)
+2. go/CLAUDE.md
+3. go/TEST_INDEX.md
+4. go/internal/orchestrator/orchestrator.go              (current state ~303 lines)
+5. docs/architecture-v2/CRITICAL_RUNTIME_BLOCKING_DECISIONS.md (OD-3, OD-4, OD-5)
 
-We are on branch main. Phase R-1 (Observability & Metrics) is complete.
+We are on branch main. Phase R-1 (Prometheus metrics) is complete (HEAD 39d505c or newer).
+Phase R-2 planning is complete — plan is in R2_TEMPORAL_GO_WORKER_PLAN.md.
 
-Next task: Define Phase R-2 scope. Review what metrics are already in place from R-1 (see R1_IMPLEMENTATION_REPORT.md) and propose the single most valuable next observability addition. Options include:
-- Tenant tier label (requires architecture approval — cardinality rule currently prohibits tenant_id)
-- Per-route latency histograms (http_request_duration_seconds by route_group)
-- LLM provider usage counters (tokens in/out, errors)
-- Other
+Start R-2A, Task 1: Implement in-memory message accumulation + durable checkpoints
+in go/internal/orchestrator/orchestrator.go.
 
-Output: a short proposal (1-2 paragraphs) with your recommendation and the key trade-off. Do not implement yet.
+See R2_TEMPORAL_GO_WORKER_PLAN.md §9.5 for the exact task description.
+
+Do not implement R-2B (worker wiring / inline path removal) yet.
+Do not change Temporal, Python worker, DB schema, Redis, Docker, or Traefik.
 ```
