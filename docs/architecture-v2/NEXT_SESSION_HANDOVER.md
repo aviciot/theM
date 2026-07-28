@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-28
 **Branch:** main
-**HEAD:** (Phase 4 fix commit — run `git log --oneline -1` to confirm)
+**HEAD:** a7fecb4 feat(r2c): Phase 4 deployment — Go Worker E2E validated, 2+2 replicas live
 **Prepared by:** Phase R-2C session
 
 ---
