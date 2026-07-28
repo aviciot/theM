@@ -742,6 +742,21 @@ Enforces cardinality rules (no high-cardinality label names). Tests gauge isolat
 
 ---
 
+### S1-29 · Temporal worker — `internal/temporal/worker_test.go`
+
+**Purpose:** Verify the Go Temporal worker wiring at the type/interface level without a live
+Temporal server. Confirms Activities satisfies OrchestratorRunner, constants are non-empty,
+and WorkflowInput serialises cleanly for Temporal's wire format.
+
+| Test | What it proves |
+|---|---|
+| `TestWorkerRegistration` | Activities satisfies OrchestratorRunner; WorkflowType/ActivityName/TaskQueue constants non-empty; TaskQueue matches Python worker name |
+| `TestWorkflowInput_Serialization` | WorkflowInput JSON round-trip: RunID, ContextID, EntryPointSlug survive marshal/unmarshal |
+
+**Trigger:** any change to `internal/temporal/activities.go`, `internal/temporal/workflow.go`, or `cmd/them/main.go` (worker registration block)
+
+---
+
 ### S1-28 · Orchestrator — `internal/orchestrator/orchestrator_test.go`
 
 **Purpose:** Agentic loop feature parity — history loading, checkpoint/crash recovery, token budget
@@ -1018,6 +1033,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/domain/domain.go` | S1-08 |
 | `internal/runrecorder/recorder.go` | S1-09 |
 | `internal/orchestrator/orchestrator.go` | S1-28 |
+| `internal/temporal/activities.go`, `internal/temporal/workflow.go` | S1-29 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/ws/handler.go` | S1-12 |
@@ -1096,7 +1112,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-26 | crypto (fernet) | 32 |
 | S1-27 | metrics | 12 |
 | S1-28 | orchestrator | 7 |
-| **S1 total** | | **349** |
+| S1-29 | temporal (worker + serialization) | 2 |
+| **S1 total** | | **351** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
