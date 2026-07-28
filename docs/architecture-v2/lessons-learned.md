@@ -215,7 +215,42 @@ The fix: the edge pre-allocates `run_id = uuid.New()` before calling `StartWorkf
 
 Rule: if a pub/sub subscription must cover events that start immediately after a workflow/goroutine launch, subscribe BEFORE launching. If the subscription depends on a value the worker will compute (like run_id), pre-compute it at the caller instead.
 
-### Redis Pub/Sub is at-most-once — never claim sub-second revocation as a guarantee
+---
+
+## Phase R-2 — Temporal-Owned Go Worker
+
+### Inline orchestration path is a durability anti-pattern
+
+The original WS/SSE handlers had a `temporalEnabled` flag and an `else` branch that ran
+`h.orch.Run()` directly in a goroutine inside the handler. This felt like a "safe fallback"
+but it violated every Temporal guarantee: no crash recovery, no retry, no HITL, no heartbeat.
+In production, the inline path silently discards runs when the process crashes mid-LLM-call.
+After R-2, the inline path is gone; any code path that bypasses Temporal returns 503 instead
+of silently degrading to an un-durable run.
+
+**Rule:** no LLM call, agent call, or orchestration iteration may execute outside the
+Temporal-managed activity. Return a clear error to the client rather than a degraded-durability
+fallback.
+
+### Same-binary worker and bridge share the in-process event bus correctly
+
+When the Go Temporal worker runs in the same binary as the bridge, the orchestrator (inside
+a Temporal activity goroutine) publishes to the in-process event bus, and the bridge handler
+(subscribed to the bus before `ExecuteWorkflow` was called) delivers events to the client.
+This is NOT a Temporal bypass — the orchestrator code runs inside a properly heartbeating
+Temporal activity. The in-process bus is the event *delivery* mechanism, not the execution
+engine. This distinction is critical: Temporal owns execution durability; the bus owns event
+delivery efficiency.
+
+### Use WaitGroup + pre-allocated result slice for parallel fan-out — no mutex needed
+
+When fan-out spawns N goroutines for N tool calls, each goroutine writes to a
+pre-allocated `results[i]` where `i` is the goroutine's fixed index. Because each goroutine
+writes to a distinct index, no mutex is needed on the slice. This is the safest pattern for
+collecting results from parallel goroutines: pre-compute the slice length, pass the index
+to each goroutine at launch, read after `WaitGroup.Wait()`.
+
+### redis Pub/Sub is at-most-once — never claim sub-second revocation as a guarantee
 
 ADR-008 originally claimed token revocation propagates in "<1s". This is true only for pods that are connected and receive the message. A pod that restarts after a revocation or briefly disconnects from Redis will miss the pub/sub message entirely and continue serving the revoked token from L1 cache for up to the L1 TTL.
 

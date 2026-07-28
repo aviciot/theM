@@ -1,11 +1,12 @@
 # Implementation Status — Go Gateway
 
-**Last updated:** 2026-07-28 (Phase R-1 Observability & Metrics complete)
+**Last updated:** 2026-07-28 (Phase R-2 Temporal-Owned Go Worker complete)
 
 ---
 
 ## Current State
 
+Phase R-2 complete (2026-07-28): Go Temporal worker registered; inline execution path removed; orchestrator feature parity achieved. 11 new tests. HEAD `029bf8c`.
 Phase R-1 complete (2026-07-28): Prometheus metrics + structured logging in WS/SSE handlers + drain observability. 12 new tests in `internal/metrics/`.
 Wave 7 complete (2026-07-26): llm-providers CRUD (GET/POST/PATCH/DELETE) now served by Go.
 Wave 6 complete (2026-07-25): monitoring-config + llm-providers/routing/config now served by Go.
@@ -32,10 +33,10 @@ Phase 11c-C validation complete (2026-07-21). 229 unit tests pass. Race detector
 | `internal/domain` | Complete | 3 (S1-08) | `domain.go` |
 | `internal/runrecorder` | Complete | 8 (S1-09) | `recorder.go` (events_transport per RUN_EVENTS_MODE) |
 | `internal/llm` | Complete | 6 (S1-10) | `provider.go`, `anthropic.go`, `mock.go` |
-| `internal/orchestrator` | Complete | — | `orchestrator.go` |
-| `internal/temporal` | Complete | 8 (S2-02) | `workflow.go`, `activities.go`, `client.go`, `signaler.go` |
-| `internal/ws` | Complete | 16 (S1-12) | `handler.go` |
-| `internal/sse` | Complete | 15 (S1-13) | `handler.go` |
+| `internal/orchestrator` | Complete (R-2A) | 7 (S1-28) | `orchestrator.go` — checkpoints, budget, parallel fan-out, A2A discovery |
+| `internal/temporal` | Complete (R-2B) | 10 (S2-02, S1-29) | `workflow.go`, `activities.go`, `client.go`, `signaler.go`, `worker_test.go` |
+| `internal/ws` | Complete (R-2B) | 17 (S1-12) | `handler.go` — inline path removed, Temporal unconditional |
+| `internal/sse` | Complete (R-2B) | 16 (S1-13) | `handler.go` — inline path removed, Temporal unconditional |
 | `internal/a2a` | Complete | 3 (S1-14) | `server.go` |
 | `internal/agentregistry` | Complete | 5 (S1-11) | `registry.go` |
 | `internal/admin` | Complete | 40 (S1-15) | `agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `monitoring.go`, `llm_routing.go` |
