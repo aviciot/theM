@@ -103,6 +103,36 @@ func newTestHandler(t *testing.T, mockEvents []llm.StreamEvent, authn wshandler.
 	recorder := runrecorder.New(&fakeDBQuerier{})
 	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
 	h := wshandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
+
+	// R-2B: Wire a default Temporal mock so tests that don't need Temporal-specific
+	// behavior still work. Tests exercise the Temporal path via the run-stream sub.
+	// The fakeRunStreamSub pre-loads the events that the mock LLM would have produced.
+	var streamMsgs []string
+	for _, ev := range mockEvents {
+		switch ev.Type {
+		case "text_delta":
+			raw, _ := json.Marshal(map[string]any{"type": "token", "content": ev.Delta})
+			streamMsgs = append(streamMsgs, string(raw))
+		case "stop":
+			raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
+			streamMsgs = append(streamMsgs, string(raw))
+		}
+	}
+	// Always ensure a "done" message is present so handlers don't hang.
+	hasDone := false
+	for _, m := range streamMsgs {
+		if strings.Contains(m, `"done"`) {
+			hasDone = true
+			break
+		}
+	}
+	if !hasDone {
+		raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
+		streamMsgs = append(streamMsgs, string(raw))
+	}
+	rsSub := &fakeRunStreamSub{messages: streamMsgs}
+	h.WithTemporal(&fakeTemporalClient{}, rsSub, true)
+
 	return h, bus
 }
 
@@ -702,6 +732,50 @@ func TestReplayUnavailableForwardedToClient(t *testing.T) {
 
 	assert.Contains(t, receivedTypes, "replay_unavailable", "replay_unavailable must be forwarded to WS client")
 	assert.Contains(t, receivedTypes, "done", "done must arrive after replay_unavailable")
+}
+
+// newTestHandlerNoTemporal creates a handler with NO Temporal client wired.
+// Used to verify the R-2B behaviour: when temporalClient is nil, the handler
+// must return an error and NOT fall back to any inline execution.
+func newTestHandlerNoTemporal(t *testing.T, authn wshandler.Authenticator, sessions wshandler.SessionStore) *wshandler.Handler {
+	t.Helper()
+	bus := event.New()
+	mock := llm.NewMockProvider(nil)
+	cfg := orchestrator.Config{MaxIterations: 1}
+	recorder := runrecorder.New(&fakeDBQuerier{})
+	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
+	// No WithTemporal call → temporalClient is nil.
+	return wshandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
+}
+
+// 17. R-2B: When no Temporal client is wired, the handler must write an error
+// event and NOT fall back to the inline orchestrator.
+func TestNoTemporalReturns503(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	h := newTestHandlerNoTemporal(t, authn, sessions)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	// Connection upgrades (gate not wired, session registers fine).
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
+	require.NoError(t, err, "WS upgrade must succeed even when Temporal is not wired")
+	defer conn.Close()
+
+	// Send a user message to trigger the Temporal path check.
+	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hi"})
+	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
+
+	// Must receive an error event (not a done event from an inline run).
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, data, readErr := conn.ReadMessage()
+	require.NoError(t, readErr, "must receive an error message from the handler")
+
+	var sm map[string]any
+	require.NoError(t, json.Unmarshal(data, &sm))
+	assert.Equal(t, "error", sm["type"],
+		"handler must send error event when Temporal client is unavailable")
 }
 
 // Ensure domain import is used.

@@ -76,7 +76,38 @@ func newTestSSEHandlerWithStore(mockEvents []llm.StreamEvent, authn ssehandler.A
 	cfg := orchestrator.Config{MaxIterations: 5}
 	recorder := runrecorder.New(&fakeDBQuerier{})
 	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
-	return ssehandler.NewHandler(store, recorder, orch, bus, authn, "test-instance", nil)
+	h := ssehandler.NewHandler(store, recorder, orch, bus, authn, "test-instance", nil)
+
+	// R-2B: Wire a default Temporal mock so tests that don't need Temporal-specific
+	// behaviour still work. The fakeSSERunStreamSub pre-loads events corresponding
+	// to what the mock LLM would have published on the in-process bus.
+	var streamMsgs []string
+	for _, ev := range mockEvents {
+		switch ev.Type {
+		case "text_delta":
+			raw, _ := json.Marshal(map[string]any{"type": "token", "content": ev.Delta})
+			streamMsgs = append(streamMsgs, string(raw))
+		case "stop":
+			raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
+			streamMsgs = append(streamMsgs, string(raw))
+		}
+	}
+	// Always ensure a "done" message is present so the SSE handler closes cleanly.
+	hasDone := false
+	for _, m := range streamMsgs {
+		if strings.Contains(m, `"done"`) {
+			hasDone = true
+			break
+		}
+	}
+	if !hasDone {
+		raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
+		streamMsgs = append(streamMsgs, string(raw))
+	}
+	rsSub := &fakeSSERunStreamSub{messages: streamMsgs}
+	h.WithTemporal(&fakeSSETemporalClient{}, rsSub, true)
+
+	return h
 }
 
 // collectSSE reads SSE events from the response body until the stream closes or
@@ -662,4 +693,48 @@ func TestSSETemporalPathUsedWhenEnabled(t *testing.T) {
 		}
 	}
 	assert.Contains(t, types, "done", "client must receive done event from run stream")
+}
+
+// newTestSSEHandlerNoTemporal creates a handler with NO Temporal client wired.
+// Used to verify the R-2B behaviour: when temporalClient is nil, the SSE handler
+// must write an error SSE event and NOT fall back to any inline execution.
+func newTestSSEHandlerNoTemporal(authn ssehandler.Authenticator) *ssehandler.Handler {
+	bus := event.New()
+	mock := llm.NewMockProvider(nil)
+	cfg := orchestrator.Config{MaxIterations: 1}
+	recorder := runrecorder.New(&fakeDBQuerier{})
+	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
+	// No WithTemporal call → temporalClient is nil.
+	return ssehandler.NewHandler(&fakeSessionStore{}, recorder, orch, bus, authn, "test-instance", nil)
+}
+
+// 16. R-2B: When no Temporal client is wired, the SSE handler must write an error
+// event as SSE data and NOT fall back to inline execution.
+func TestSSENoTemporalReturns503(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	h := newTestSSEHandlerNoTemporal(authn)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep1?message=hello")
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	// SSE headers are already sent (200 OK); error is delivered as an SSE event.
+	require.Equal(t, http.StatusOK, resp.StatusCode, "SSE headers sent before Temporal check")
+
+	events := collectSSE(t, resp, 3*time.Second)
+	hasError := false
+	for _, ev := range events {
+		if ev["type"] == "error" {
+			hasError = true
+			break
+		}
+	}
+	assert.True(t, hasError,
+		"SSE handler must emit an error event when Temporal client is unavailable")
 }

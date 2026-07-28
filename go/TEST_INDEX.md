@@ -250,6 +250,7 @@ Shared interfaces (Authenticator, SessionStore, GateStore, EPConfigLoader, Tempo
 | `TestVoiceEPPublicReturns501` | Public voice EP also returns 501 before gate or session are called |
 | `TestTemporalPathUsedWhenEnabled` | `temporalEnabled=true` → `ExecuteWorkflow` called; `orch.Run` NOT called; client receives done event from Redis run stream |
 | `TestReplayUnavailableForwardedToClient` | `replay_unavailable` event emitted by StreamFromRedis is forwarded to WS client (not silently dropped) — Phase 11c-C fix |
+| `TestNoTemporalReturns503` | R-2B: When no Temporal client is wired, handler sends error WS event (no inline fallback) |
 
 **Trigger:** any change to `internal/ws/handler.go`
 
@@ -277,6 +278,7 @@ Shared interfaces and TokenHash now live in `internal/transport/`; this test exe
 | `TestSSEVoiceEPPublicReturns501` | Public voice EP also returns 501 before gate or session are called |
 | `TestSSETemporalPathUsedWhenEnabled` | `temporalEnabled=true` → `ExecuteWorkflow` called; `orch.Run` NOT called; client receives done event from Redis run stream |
 | `TestSSEReplayUnavailableForwardedToClient` | `replay_unavailable` event emitted by StreamFromRedis is forwarded as SSE (not silently dropped) — Phase 11c-C fix |
+| `TestSSENoTemporalReturns503` | R-2B: When no Temporal client is wired, handler sends error SSE event (no inline fallback) |
 
 **Trigger:** any change to `internal/sse/handler.go`
 
@@ -1095,8 +1097,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-09 | runrecorder | 8 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
-| S1-12 | ws | 16 |
-| S1-13 | sse | 15 |
+| S1-12 | ws | 17 |
+| S1-13 | sse | 16 |
 | S1-14 | a2a | 3 |
 | S1-15 | admin | 34 |
 | S1-16 | ratelimit | 3 |
@@ -1113,7 +1115,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-27 | metrics | 12 |
 | S1-28 | orchestrator | 7 |
 | S1-29 | temporal (worker + serialization) | 2 |
-| **S1 total** | | **351** |
+| **S1 total** | | **353** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

@@ -95,20 +95,21 @@ type TemporalClientExecutor = transport.TemporalClientExecutor
 
 // Handler is the WebSocket orchestration handler.
 type Handler struct {
-	sessions        SessionStore
-	gateStore       GateStore
-	epLoader        EPConfigLoader
-	recorder        *runrecorder.Recorder
-	orch            *orchestrator.Orchestrator
-	bus             event.Bus
-	authenticator   Authenticator
-	instanceID      string
-	logger          *slog.Logger
-	temporalClient  TemporalClientExecutor
-	runStreamSub    runstream.Subscriber
-	dispatcher      *runstream.Dispatcher
-	runEventsMode   config.RunEventsMode
-	temporalEnabled bool
+	sessions       SessionStore
+	gateStore      GateStore
+	epLoader       EPConfigLoader
+	recorder       *runrecorder.Recorder
+	orch           *orchestrator.Orchestrator
+	bus            event.Bus
+	authenticator  Authenticator
+	instanceID     string
+	logger         *slog.Logger
+	temporalClient TemporalClientExecutor
+	runStreamSub   runstream.Subscriber
+	dispatcher     *runstream.Dispatcher
+	runEventsMode  config.RunEventsMode
+	// temporalEnabled was removed in R-2B: Temporal is now the unconditional
+	// execution path. When temporalClient is nil, the handler returns 503.
 }
 
 // NewHandler creates a Handler. gateStore may be nil (gate check is skipped),
@@ -153,15 +154,14 @@ func (h *Handler) WithEPConfig(l EPConfigLoader) *Handler {
 	return h
 }
 
-// WithTemporal attaches a Temporal client and run-stream subscriber. When
-// temporalEnabled is true, incoming connections use the Temporal execution
-// path instead of the Go-inline orchestrator.
-// When WithTemporal is not called (e.g. in tests), temporalEnabled defaults to
-// false and all connections use the inline path.
+// WithTemporal attaches a Temporal client and run-stream subscriber. Temporal is
+// now the unconditional execution path (R-2B). The `enabled` parameter is kept for
+// call-site compatibility but is ignored — use of Temporal is determined solely by
+// whether tc is non-nil. When tc is nil, the handler returns 503.
 func (h *Handler) WithTemporal(tc TemporalClientExecutor, sub runstream.Subscriber, enabled bool) *Handler {
 	h.temporalClient = tc
 	h.runStreamSub = sub
-	h.temporalEnabled = enabled
+	_ = enabled // ignored: Temporal is unconditional — see R-2B
 	return h
 }
 
@@ -442,11 +442,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// ── 8. CRITICAL: Subscribe to event bus BEFORE starting the workflow ──────
-	// (from 09-domain-events.md §3 — the ready bootstrap handshake)
-	// termCh (capacity 1) receives "done"/"error" with guaranteed delivery even
-	// when evCh (capacity 256) is full (R-0 L-1 fix).
-	evCh, termCh, unsub := h.bus.Subscribe(r.Context(), contextID, 256)
+	// ── 8. Subscribe to event bus (kept for future in-process events) ────────
+	// The in-process bus subscription is retained so any internal components
+	// (e.g. future direct-Go orchestration for testing) can still publish events.
+	// After R-2B, the WS handler streams from the Redis run-stream (rsEvCh),
+	// not from evCh/termCh. The subscription is a no-op for the Temporal path.
+	_, _, unsub := h.bus.Subscribe(r.Context(), contextID, 256)
 	defer unsub()
 
 	// ── 9. Create run record in DB ────────────────────────────────────────────
@@ -472,93 +473,78 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 11. Start orchestration ───────────────────────────────────────────────
+	// ── 11. Start orchestration (Temporal — unconditional after R-2B) ────────
+	// When temporalClient is nil (Temporal not configured), return 503 immediately.
+	// There is NO inline fallback — Temporal is the only execution path.
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	if h.temporalClient == nil {
+		h.logger.Warn("ws: temporal client unavailable — rejecting request", "run_id", runID)
+		h.writeError(conn, "orchestration service unavailable")
+		_ = h.recorder.UpdateStatus(r.Context(), runID, domain.RunStatusFailed)
+		return
+	}
+
+	// Subscribe to the run-stream BEFORE starting the workflow so no event
+	// is missed (critical bootstrap ordering — bus.Subscribe already done above).
+	rsEvCh, rsErr := h.runEvents(ctx, runID, eventsTransport, lastEventID)
+	if rsErr != nil {
+		h.logger.Warn("ws: runstream subscribe failed", "run_id", runID, "error", rsErr)
+		h.writeError(conn, "event stream unavailable")
+		_ = h.recorder.UpdateStatus(r.Context(), runID, domain.RunStatusFailed)
+		return
+	}
+
+	tokenPayload := map[string]any{"user_id": tokenInfo.TokenID}
+
+	input := temporal.PythonOrchestrationInput{
+		OrchestratorName: appSlug,
+		UserMessage:      textContent(userMsg),
+		UserID:           tokenInfo.TokenID,
+		TokenPayload:     tokenPayload,
+		SessionID:        sessionID,
+		ContextID:        contextID,
+		RunID:            runID,
+		EntryPointSlug:   epSlug,
+		HistoryWindow:    20,
+	}
+
+	wfOpts := temporalclient.StartWorkflowOptions{
+		// Python OrchestrationWorkflow registers itself as "ctx-{contextID}".
+		// Go must use the same scheme so HITL signals reach the correct workflow.
+		ID:        "ctx-" + contextID,
+		TaskQueue: temporal.TaskQueue,
+	}
+
+	wfRun, wfErr := h.temporalClient.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
+	if wfErr != nil {
+		h.logger.Warn("ws: start temporal workflow failed", "run_id", runID, "error", wfErr)
+		h.writeError(conn, "failed to start workflow")
+		return
+	}
+	h.logger.Info("ws: temporal workflow started",
+		"ep_slug", epSlug,
+		"app_id", appID,
+		"session_id", sessionID,
+		"run_id", runID,
+		"workflow_id", wfRun.GetID(),
+	)
+
 	orchDone := make(chan struct{})
 
-	if h.temporalEnabled && h.temporalClient != nil {
-		// ── 11a. Temporal path ────────────────────────────────────────────────
-		//
-		// Subscribe to the token stream BEFORE starting the workflow so no event
-		// is missed. Go passes runID as PythonOrchestrationInput.RunID; Python
-		// uses it verbatim for all publish calls on them:dash:run:{runID}:tokens.
-		rsEvCh, rsErr := h.runEvents(ctx, runID, eventsTransport, lastEventID)
-		if rsErr != nil {
-			h.logger.Warn("ws: runstream subscribe failed — falling back to inline",
-				"run_id", runID, "error", rsErr)
-			go func() {
-				defer close(orchDone)
-				_, runErr := h.orch.Run(ctx, runID, contextID, userMsg, nil)
-				if runErr != nil {
-					h.logger.Warn("ws: orchestrator error", "run_id", runID, "error", runErr)
-				}
-			}()
-			h.streamEvents(ctx, cancel, conn, evCh, termCh, orchDone)
-			return
+	// Wait for workflow completion in background (drives orchDone).
+	go func() {
+		defer close(orchDone)
+		if err := wfRun.Get(ctx, nil); err != nil {
+			h.logger.Warn("ws: temporal workflow error", "run_id", runID, "error", err)
 		}
+	}()
 
-		tokenPayload := map[string]any{"user_id": tokenInfo.TokenID}
-
-		input := temporal.PythonOrchestrationInput{
-			OrchestratorName: appSlug,
-			UserMessage:      textContent(userMsg),
-			UserID:           tokenInfo.TokenID,
-			TokenPayload:     tokenPayload,
-			SessionID:        sessionID,
-			ContextID:        contextID,
-			RunID:            runID,
-			EntryPointSlug:   epSlug,
-			HistoryWindow:    20,
-		}
-
-		wfOpts := temporalclient.StartWorkflowOptions{
-			// Python OrchestrationWorkflow registers itself as "ctx-{contextID}".
-			// Go must use the same scheme so HITL signals reach the correct workflow.
-			ID:        "ctx-" + contextID,
-			TaskQueue: temporal.TaskQueue,
-		}
-
-		wfRun, wfErr := h.temporalClient.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
-		if wfErr != nil {
-			h.logger.Warn("ws: start temporal workflow failed", "run_id", runID, "error", wfErr)
-			h.writeError(conn, "failed to start workflow")
-			return
-		}
-		h.logger.Info("ws: temporal workflow started",
-			"ep_slug", epSlug,
-			"app_id", appID,
-			"session_id", sessionID,
-			"run_id", runID,
-			"workflow_id", wfRun.GetID(),
-		)
-
-		// Wait for workflow completion in background (drives orchDone).
-		go func() {
-			defer close(orchDone)
-			if err := wfRun.Get(ctx, nil); err != nil {
-				h.logger.Warn("ws: temporal workflow error", "run_id", runID, "error", err)
-			}
-		}()
-
-		// ── 12a. Stream Redis run events to client ────────────────────────────
-		// Redis run-stream events arrive on rsEvCh (not the in-process bus),
-		// so termCh is not used here — pass nil to signal no termCh available.
-		h.streamEvents(ctx, cancel, conn, rsEvCh, nil, orchDone)
-	} else {
-		// ── 11b. Go-inline path (permanent fallback) ──────────────────────────
-		go func() {
-			defer close(orchDone)
-			_, runErr := h.orch.Run(ctx, runID, contextID, userMsg, nil)
-			if runErr != nil {
-				h.logger.Warn("ws: orchestrator error", "run_id", runID, "error", runErr)
-			}
-		}()
-
-		// ── 12b. Stream in-process bus events to client ───────────────────────
-		h.streamEvents(ctx, cancel, conn, evCh, termCh, orchDone)
-	}
+	// ── 12. Stream Redis run events to client ─────────────────────────────────
+	// Redis run-stream events arrive on rsEvCh (not the in-process bus),
+	// so termCh is not used here — pass nil to signal no termCh available.
+	h.streamEvents(ctx, cancel, conn, rsEvCh, nil, orchDone)
 }
 
 // textContent extracts the concatenated text from all "text" parts of a message.
