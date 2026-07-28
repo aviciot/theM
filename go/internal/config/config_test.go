@@ -270,3 +270,29 @@ func TestShutdownDrain_Invalid_Clamped(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5, cfg.ShutdownDrainSeconds)
 }
+
+// TestWorkerTaskQueue_Default verifies that when WORKER_TASK_QUEUE is not set,
+// the field defaults to "them-orchestration-go" (the Go-only queue, distinct from
+// the Python worker's "them-orchestration" queue).
+func TestWorkerTaskQueue_Default(t *testing.T) {
+	env := validEnv()
+	setEnv(t, env)
+	os.Unsetenv("WORKER_TASK_QUEUE")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "them-orchestration-go", cfg.WorkerTaskQueue,
+		"missing WORKER_TASK_QUEUE must default to them-orchestration-go")
+}
+
+// TestWorkerTaskQueue_Override verifies that WORKER_TASK_QUEUE env var is respected.
+func TestWorkerTaskQueue_Override(t *testing.T) {
+	env := validEnv()
+	env["WORKER_TASK_QUEUE"] = "custom-queue"
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "custom-queue", cfg.WorkerTaskQueue,
+		"WORKER_TASK_QUEUE env var must override the default")
+}

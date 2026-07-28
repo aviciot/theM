@@ -15,8 +15,15 @@ import (
 )
 
 const (
-	// TaskQueue is the Temporal task queue name for THEM orchestration.
+	// TaskQueue is the Temporal task queue name for the legacy Python worker.
+	// The Python Temporal worker polls this queue for PythonOrchestrationInput workflows.
+	// Kept for backward-compatibility; Go Worker uses GoTaskQueue instead.
 	TaskQueue = "them-orchestration"
+
+	// GoTaskQueue is the Temporal task queue name for the Go worker (R-2C).
+	// The Go worker polls this queue exclusively; the Bridge sends OrchestrationWorkflow
+	// executions here. Python worker continues to poll TaskQueue independently.
+	GoTaskQueue = "them-orchestration-go"
 
 	// WorkflowType is the registered workflow type name.
 	WorkflowType = "OrchestrationWorkflow"
@@ -65,7 +72,7 @@ func (e *ErrTaskInputRequired) Error() string { return "input_required: " + e.Pr
 //  3. On completion, return WorkflowResult
 func OrchestrationWorkflow(ctx workflow.Context, input WorkflowInput) (WorkflowResult, error) {
 	ao := workflow.ActivityOptions{
-		TaskQueue:           TaskQueue,
+		TaskQueue:           GoTaskQueue,
 		StartToCloseTimeout: activityStartToClose,
 		HeartbeatTimeout:    heartbeatInterval * 3,
 		RetryPolicy: &temporal.RetryPolicy{

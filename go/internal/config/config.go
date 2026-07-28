@@ -63,6 +63,10 @@ type Config struct {
 	// Temporal
 	TemporalEnabled  bool
 	TemporalHostPort string
+	// WorkerTaskQueue is the Temporal task queue name for the Go worker.
+	// Workers poll this queue; the bridge starts workflows on this queue.
+	// Default: "them-orchestration-go" (separate from Python's "them-orchestration").
+	WorkerTaskQueue string
 
 	// Reconciler
 	// ReconcilerDryRun controls whether the run reconciler writes to the DB.
@@ -134,6 +138,7 @@ func Load() (*Config, error) {
 
 		TemporalEnabled:  getEnvBool("TEMPORAL_ENABLED", false),
 		TemporalHostPort: getEnv("TEMPORAL_HOST_PORT", "localhost:7233"),
+		WorkerTaskQueue:  getEnv("WORKER_TASK_QUEUE", "them-orchestration-go"),
 
 		ReconcilerDryRun: getEnvBoolSafe("RECONCILER_DRY_RUN", true),
 
@@ -214,7 +219,7 @@ func (c *Config) SafeString() string {
 			"db_pool_size=%d redis_host=%s redis_port=%d redis_db=%d "+
 			"log_level=%s log_format=%s otel_enabled=%v secret_key=*** "+
 			"jwt_middleware=%s anthropic_api_key=%s "+
-			"temporal_enabled=%v temporal_host_port=%s "+
+			"temporal_enabled=%v temporal_host_port=%s worker_task_queue=%s "+
 			"reconciler_dry_run=%v run_events_mode=%s "+
 			"shutdown_drain_seconds=%d",
 		c.AppEnv, c.AppHost, c.AppPort, c.InstanceID,
@@ -222,7 +227,7 @@ func (c *Config) SafeString() string {
 		c.DBPoolSize, c.RedisHost, c.RedisPort, c.RedisDB,
 		c.LogLevel, c.LogFormat, c.OtelEnabled,
 		jwtMode, anthropicMode,
-		c.TemporalEnabled, c.TemporalHostPort,
+		c.TemporalEnabled, c.TemporalHostPort, c.WorkerTaskQueue,
 		c.ReconcilerDryRun, c.RunEventsMode,
 		c.ShutdownDrainSeconds,
 	)

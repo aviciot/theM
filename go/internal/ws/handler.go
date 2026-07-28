@@ -513,8 +513,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wfOpts := temporalclient.StartWorkflowOptions{
 		// Python OrchestrationWorkflow registers itself as "ctx-{contextID}".
 		// Go must use the same scheme so HITL signals reach the correct workflow.
+		// R-2C: Bridge sends workflows to GoTaskQueue ("them-orchestration-go");
+		// the dedicated Go Worker polls that queue. Python worker continues to
+		// poll TaskQueue ("them-orchestration") independently.
 		ID:        "ctx-" + contextID,
-		TaskQueue: temporal.TaskQueue,
+		TaskQueue: temporal.GoTaskQueue,
 	}
 
 	wfRun, wfErr := h.temporalClient.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)

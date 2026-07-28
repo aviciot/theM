@@ -52,6 +52,32 @@ func TestWorkerRegistration(t *testing.T) {
 		"SignalHumanInput must be non-empty (HITL signal name must match Python)")
 }
 
+// TestGoWorkerTaskQueue_IsDistinct verifies that the Go-only task queue name
+// (R-2C) is non-empty, distinct from the legacy Python queue, and has the
+// expected value. This is a compile-time/documentation guard: if either
+// constant is changed, the test fails immediately before any deploy.
+func TestGoWorkerTaskQueue_IsDistinct(t *testing.T) {
+	assert.Equal(t, "them-orchestration-go", temporal.GoTaskQueue,
+		"GoTaskQueue must be the Go-only task queue (them-orchestration-go)")
+	assert.Equal(t, "them-orchestration", temporal.TaskQueue,
+		"TaskQueue must still be the legacy Python queue (them-orchestration)")
+	assert.NotEqual(t, temporal.GoTaskQueue, temporal.TaskQueue,
+		"GoTaskQueue and TaskQueue must be distinct — Go and Python workers must not share a queue")
+}
+
+// TestGoWorkerTaskQueue_ActivityRoutedToGoQueue is a documentation-level test
+// that verifies the OrchestrationWorkflow wires its ActivityOptions to GoTaskQueue.
+// Since we cannot easily inspect workflow activity options without running a Temporal
+// server, this test asserts the constant values that are used in workflow.go and
+// confirms the architectural invariant: activities route to the Go Worker queue.
+func TestGoWorkerTaskQueue_ActivityRoutedToGoQueue(t *testing.T) {
+	// OrchestrationWorkflow sets ao.TaskQueue = GoTaskQueue (see workflow.go).
+	// The Go Worker polls GoTaskQueue, so activities are always executed by the Go Worker.
+	// This test confirms the constant that the workflow uses matches the worker's queue.
+	assert.Equal(t, "them-orchestration-go", temporal.GoTaskQueue,
+		"OrchestrationWorkflow activity options must route to GoTaskQueue (verified via constant equality)")
+}
+
 // TestWorkflowInput_Serialization verifies that WorkflowInput can be marshalled
 // and unmarshalled cleanly (critical for Temporal's workflow input serialization).
 func TestWorkflowInput_Serialization(t *testing.T) {

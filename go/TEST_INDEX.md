@@ -48,6 +48,8 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestShutdownDrain_Valid` | `SHUTDOWN_DRAIN_SECONDS=60` → 60 |
 | `TestShutdownDrain_BelowMin_Clamped` | `SHUTDOWN_DRAIN_SECONDS=2` → 5 (clamped to minimum) |
 | `TestShutdownDrain_Invalid_Clamped` | `SHUTDOWN_DRAIN_SECONDS=abc` → 5 (clamped to minimum) |
+| `TestWorkerTaskQueue_Default` | Missing `WORKER_TASK_QUEUE` → `"them-orchestration-go"` (R-2C: Go-only queue default) |
+| `TestWorkerTaskQueue_Override` | `WORKER_TASK_QUEUE=custom-queue` → `"custom-queue"` (env var override respected) |
 
 **Trigger:** any change to `internal/config/config.go` or `.env.example`
 
@@ -427,12 +429,14 @@ The behavioural contract of `auth.RedisClient` is exercised in S1-05 via `mockRe
 **Purpose:** Compile-time interface satisfaction check — `*RunStreamRedisClient` implements `runstream.Subscriber`.
 The Streams reader adapter `*RunStreamerRedisClient` (`internal/cache/runstreamer_adapter.go`) satisfies
 `runstream.RedisStreamer` via a compile-time assertion in that file; exercised end-to-end by S1-24 integration.
+The Streams writer adapter `*RunStreamerWriterRedisClient` (`internal/cache/runstreamer_writer_adapter.go`)
+satisfies `runstream.StreamPublisher` via a compile-time assertion in that file (R-2C Phase 3).
 
 | Test | What it proves |
 |---|---|
 | `TestRunStreamRedisClient_ImplementsInterface` | `*RunStreamRedisClient` satisfies `runstream.Subscriber` at compile time |
 
-**Trigger:** any change to `internal/cache/runstream_adapter.go` or `internal/cache/runstreamer_adapter.go`
+**Trigger:** any change to `internal/cache/runstream_adapter.go`, `internal/cache/runstreamer_adapter.go`, or `internal/cache/runstreamer_writer_adapter.go`
 
 ---
 
@@ -467,13 +471,15 @@ At-most-once delivery: events missed during a reconnect gap are lost, not replay
 
 ---
 
-### S1-23 · Run stream Streamer (Redis Streams read/replay) — `internal/runstream/streamer_test.go`, `dispatcher_test.go`
+### S1-23 · Run stream Streamer (Redis Streams read/replay + publisher) — `internal/runstream/streamer_test.go`, `dispatcher_test.go`, `publisher_test.go`
 
 **Purpose:** Phase 11c-B durable event delivery. `StreamFromRedis` replays history from a
 client-supplied `last_event_id` via XRANGE, then transitions to live XREAD BLOCK using a
 **continuous cursor** (resume from the last replayed entry ID, not `$`) so no entry is dropped
 at the replay→live boundary. `Dispatcher` picks Pub/Sub vs Streams from `RUN_EVENTS_MODE` × the
 run's `events_transport` value — never inferred from key existence or timing.
+`PublishEvent` (R-2C Phase 3) writes events to Redis Streams cross-process; `publisher_test.go`
+verifies key format, JSON structure, nil-safety, and round-trip compatibility with `decodeEntry`.
 
 **Streamer tests (`streamer_test.go`):**
 
@@ -508,10 +514,21 @@ run's `events_transport` value — never inferred from key existence or timing.
 - `them_runstream_replay_unavailable_total`
 - `them_runstream_mode` (gauge: 0=pubsub, 1=dual, 2=streams)
 
+**Publisher tests (`publisher_test.go` — R-2C Phase 3):**
+
+| Test | What it proves |
+|---|---|
+| `TestPublishEvent_WritesCorrectKey` | Key format is `them:dash:run:{runID}:stream` |
+| `TestPublishEvent_WritesDataField` | `"data"` field is valid JSON with `type`, `run_id`, `context_id`; payload fields preserved |
+| `TestPublishEvent_NilPublisher_NoPanic` | nil publisher → no call, no panic |
+| `TestPublishEvent_CompatibleWithDecodeEntry` | publish token+done, read back via `StreamFromRedis` — round-trip types and payload fields match |
+| `TestPublishEvent_EmptyRunID_NoWrite` | Empty RunID → XAdd still called; filtering is caller's responsibility (worker main skips) |
+| `TestPublishEvent_XAddError_DoesNotPanic` | XAdd error is tolerated — no panic |
+
 **Integration (`streamer_integration_test.go`, `//go:build integration`):** writes real events to a
 Redis stream via XADD, verifies replay + live delivery + terminal close against a live Redis.
 
-**Trigger:** any change to `internal/runstream/streamer.go`, `dispatcher.go`, `metrics.go`, `streamid.go`, or `internal/cache/runstreamer_adapter.go`
+**Trigger:** any change to `internal/runstream/streamer.go`, `publisher.go`, `dispatcher.go`, `metrics.go`, `streamid.go`, `internal/cache/runstreamer_adapter.go`, or `internal/cache/runstreamer_writer_adapter.go`
 
 ---
 
@@ -748,14 +765,17 @@ Enforces cardinality rules (no high-cardinality label names). Tests gauge isolat
 
 **Purpose:** Verify the Go Temporal worker wiring at the type/interface level without a live
 Temporal server. Confirms Activities satisfies OrchestratorRunner, constants are non-empty,
-and WorkflowInput serialises cleanly for Temporal's wire format.
+WorkflowInput serialises cleanly for Temporal's wire format, and the R-2C queue constants are
+distinct and correctly named.
 
 | Test | What it proves |
 |---|---|
 | `TestWorkerRegistration` | Activities satisfies OrchestratorRunner; WorkflowType/ActivityName/TaskQueue constants non-empty; TaskQueue matches Python worker name |
 | `TestWorkflowInput_Serialization` | WorkflowInput JSON round-trip: RunID, ContextID, EntryPointSlug survive marshal/unmarshal |
+| `TestGoWorkerTaskQueue_IsDistinct` | `GoTaskQueue == "them-orchestration-go"`, `TaskQueue == "them-orchestration"`, and the two are distinct (R-2C: separate queues for Go and Python workers) |
+| `TestGoWorkerTaskQueue_ActivityRoutedToGoQueue` | Documents that `OrchestrationWorkflow` activity options use `GoTaskQueue` — activities route to the Go Worker (R-2C invariant) |
 
-**Trigger:** any change to `internal/temporal/activities.go`, `internal/temporal/workflow.go`, or `cmd/them/main.go` (worker registration block)
+**Trigger:** any change to `internal/temporal/activities.go`, `internal/temporal/workflow.go`, or `cmd/worker/main.go`
 
 ---
 
@@ -1040,8 +1060,10 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/ws/handler.go` | S1-12 |
 | `internal/sse/handler.go` | S1-13 |
-| `internal/runstream/streamer.go`, `dispatcher.go`, `metrics.go`, `streamid.go` | S1-23 |
+| `internal/runstream/streamer.go`, `dispatcher.go`, `publisher.go`, `metrics.go`, `streamid.go` | S1-23 |
 | `internal/cache/runstreamer_adapter.go` | S1-20 + S1-23 (integration) |
+| `internal/cache/runstreamer_writer_adapter.go` | S1-20 + S1-23 |
+| `cmd/worker/main.go` | S1-29 + S1 (full suite) |
 | `internal/a2a/server.go` | S1-14 |
 | `internal/admin/` (any file) | S1-15 + S1-25 |
 | `internal/admin/dal/` (any file) | S1-15 + S1-25 + S2-05 (integration) |
@@ -1108,14 +1130,14 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-20 | cache (runstream adapter) | 1 |
 | S1-21 | runstream (pub/sub) | 10 |
 | S1-22 | reconciler | 15 |
-| S1-23 | runstream (streamer + dispatcher) | 15 |
+| S1-23 | runstream (streamer + dispatcher + publisher) | 21 |
 | S1-24 | cmd/them (apps dispatcher) | 5 |
 | S1-25 | admin/service | 60 |
 | S1-26 | crypto (fernet) | 32 |
 | S1-27 | metrics | 12 |
 | S1-28 | orchestrator | 7 |
 | S1-29 | temporal (worker + serialization) | 2 |
-| **S1 total** | | **353** |
+| **S1 total** | | **359** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1124,4 +1146,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **Grand total** | | **407** |
+| **Grand total** | | **413** |

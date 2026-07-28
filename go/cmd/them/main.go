@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	temporalclient "go.temporal.io/sdk/client"
-	temporalworker "go.temporal.io/sdk/worker"
 
 	"time"
 
@@ -200,23 +199,6 @@ func run() error {
 		recCfg := reconciler.Config{DryRun: cfg.ReconcilerDryRun}
 		go reconciler.Run(runCtx, recCfg, recDB, temporalCli, log)
 		log.Info("run reconciler started", "dry_run", recCfg.DryRun)
-	}
-
-	// ── 13d. Start Go Temporal Worker (R-2B) ────────────────────────────────
-	// The Go worker registers OrchestrationWorkflow and RunOrchestratorActivity
-	// on the shared task queue. It runs in the same process as the bridge
-	// (separate goroutine). The Python worker on the same queue handles
-	// PythonOrchestrationInput workflows; Go handles WorkflowInput (Go-native).
-	if cfg.TemporalEnabled && temporalCli != nil {
-		goWorker := temporalworker.New(temporalCli, temporal.TaskQueue, temporalworker.Options{})
-		goWorker.RegisterWorkflow(temporal.OrchestrationWorkflow)
-		acts := &temporal.Activities{Runner: orch}
-		goWorker.RegisterActivity(acts.RunOrchestratorActivity)
-		if err := goWorker.Start(); err != nil {
-			return fmt.Errorf("startup: temporal worker: %w", err)
-		}
-		defer goWorker.Stop()
-		log.Info("Go Temporal worker started", "task_queue", temporal.TaskQueue)
 	}
 
 	// ── 14. Wire EP config loader (shared by WS + SSE) ───────────────────────
