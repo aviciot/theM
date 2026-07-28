@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-28
 **Branch:** main
-**HEAD:** (see commit hash after commit below)
+**HEAD:** 39d505c feat(observability): Phase R-1 — Prometheus metrics + structured logging
 **Session model:** claude-sonnet-4-6
 
 ---
