@@ -742,6 +742,25 @@ Enforces cardinality rules (no high-cardinality label names). Tests gauge isolat
 
 ---
 
+### S1-28 · Orchestrator — `internal/orchestrator/orchestrator_test.go`
+
+**Purpose:** Agentic loop feature parity — history loading, checkpoint/crash recovery, token budget
+enforcement, parallel agent fan-out with semaphore, and nil-safety of optional interfaces.
+
+| Test | What it proves |
+|---|---|
+| `TestOrchestrator_HistoryLoaded` | Empty history → HistoryLoader called; loaded messages used in first LLM call |
+| `TestOrchestrator_CheckpointRecovery` | After LLM response, assistant message checkpointed via CheckpointWriter |
+| `TestOrchestrator_BudgetEnforcement` | tokensUsed > BudgetTokens after LLM stop → ErrBudgetExceeded returned |
+| `TestOrchestrator_ParallelFanOut` | 5 tool calls with MaxParallelTools=2 → max concurrent ≤ 2, all 5 invoked |
+| `TestOrchestrator_ParallelFanOut_Unlimited` | MaxParallelTools=0 → all tool calls invoked (no semaphore limit) |
+| `TestOrchestrator_HistoryNotLoadedWhenProvided` | Non-empty history provided → HistoryLoader NOT called |
+| `TestOrchestrator_NilOptionals` | All optional interfaces nil → no panic, run completes normally |
+
+**Trigger:** any change to `internal/orchestrator/orchestrator.go`
+
+---
+
 ### S1-24 · Apps dispatcher — `cmd/them/dispatcher_test.go`
 
 **Purpose:** Verify that `appsDispatcher` routes `/ws` paths to the WS handler, `/sse` paths to
@@ -998,6 +1017,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/event/bus.go` | S1-07 |
 | `internal/domain/domain.go` | S1-08 |
 | `internal/runrecorder/recorder.go` | S1-09 |
+| `internal/orchestrator/orchestrator.go` | S1-28 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/ws/handler.go` | S1-12 |
@@ -1075,7 +1095,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-25 | admin/service | 60 |
 | S1-26 | crypto (fernet) | 32 |
 | S1-27 | metrics | 12 |
-| **S1 total** | | **342** |
+| S1-28 | orchestrator | 7 |
+| **S1 total** | | **349** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
