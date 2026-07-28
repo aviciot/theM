@@ -41,6 +41,94 @@ services:
     ports:
       - "17233:7233"
 
+  # ── Go Worker 1 (R-2C) ──────────────────────────────────────────────────────
+  # Dedicated Go Temporal worker — polls them-orchestration-go exclusively.
+  # No HTTP/WS/SSE routes. Multiple replicas are safe (Temporal distributes tasks).
+  them-go-worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile.go-worker
+    container_name: them-go-worker
+    profiles: [temporal]
+    environment:
+      THE_M_INSTANCE_ID: "go-worker-1"
+      APP_ENV: "integration"
+      LOG_LEVEL: "DEBUG"
+      LOG_FORMAT: "text"
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-integration-test-secret-key-do-not-use-in-prod}
+      JWT_SECRET: ${THE_M_JWT_SECRET:-change-this-jwt-secret}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_HOST_PORT: "temporal-frontend:7233"
+      WORKER_TASK_QUEUE: "them-orchestration-go"
+      RUN_EVENTS_MODE: "streams"
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_healthy
+      temporal-frontend:
+        condition: service_started
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ── Go Worker 2 (R-2C) — second replica ──────────────────────────────────────
+  them-go-worker-2:
+    build:
+      context: ..
+      dockerfile: Dockerfile.go-worker
+    container_name: them-go-worker-2
+    profiles: [temporal]
+    environment:
+      THE_M_INSTANCE_ID: "go-worker-2"
+      APP_ENV: "integration"
+      LOG_LEVEL: "DEBUG"
+      LOG_FORMAT: "text"
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-integration-test-secret-key-do-not-use-in-prod}
+      JWT_SECRET: ${THE_M_JWT_SECRET:-change-this-jwt-secret}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_HOST_PORT: "temporal-frontend:7233"
+      WORKER_TASK_QUEUE: "them-orchestration-go"
+      RUN_EVENTS_MODE: "streams"
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_healthy
+      temporal-frontend:
+        condition: service_started
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
   # ── Go Gateway (TEMPORAL_ENABLED=true) ──────────────────────────────────────
   # Runs alongside the Python bridge in the temporal profile.
   # Serves WS + SSE + Admin API + Health on port 8002 (direct, no Traefik).

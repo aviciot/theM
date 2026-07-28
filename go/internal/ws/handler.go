@@ -496,18 +496,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenPayload := map[string]any{"user_id": tokenInfo.TokenID}
-
-	input := temporal.PythonOrchestrationInput{
-		OrchestratorName: appSlug,
-		UserMessage:      textContent(userMsg),
-		UserID:           tokenInfo.TokenID,
-		TokenPayload:     tokenPayload,
-		SessionID:        sessionID,
-		ContextID:        contextID,
+	// R-2C: send WorkflowInput (typed) to GoTaskQueue so the Go Worker can
+	// deserialize it correctly. PythonOrchestrationInput was for the Python
+	// worker's "them-orchestration" queue; the Go Worker expects WorkflowInput.
+	input := temporal.WorkflowInput{
 		RunID:            runID,
+		ContextID:        contextID,
 		EntryPointSlug:   epSlug,
-		HistoryWindow:    20,
+		OrchestratorName: appSlug,
+		UserMessage:      userMsg,
 	}
 
 	wfOpts := temporalclient.StartWorkflowOptions{

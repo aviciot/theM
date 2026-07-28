@@ -665,11 +665,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      # TCP connectivity check on port 7233. The temporal CLI's `workflow list`
-      # requires a healthy namespace and can fail during cold-start even when the
-      # server is listening. nc (netcat) is available in the auto-setup image and
-      # is sufficient to confirm the gRPC frontend is accepting connections.
-      test: ["CMD-SHELL", "nc -z localhost 7233 || exit 1"]
+      # temporal-frontend binds to the container's Docker bridge IP, not 127.0.0.1.
+      # Use $(hostname -i) to get the actual bound IP for the nc connectivity check.
+      test: ["CMD-SHELL", "nc -z $(hostname -i | awk '{print $1}') 7233 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5

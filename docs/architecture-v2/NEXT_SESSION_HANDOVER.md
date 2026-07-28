@@ -1,207 +1,125 @@
-# Phase R-2 Complete — Handover
+# Phase R-2C Complete — Handover to R-3
 
 **Date:** 2026-07-28
 **Branch:** main
-**HEAD:** 029bf8c feat(r2b): remove inline execution path — Temporal is unconditional
-**Session model:** claude-sonnet-4-6 (implementation session)
+**HEAD:** (Phase 4 fix commit — run `git log --oneline -1` to confirm)
+**Prepared by:** Phase R-2C session
 
 ---
 
-## Current objective
+## Current Objective
 
-Phase R-2 is complete and pushed.
-Next task: Phase R-3 — File Artifact Delivery.
-
----
-
-## Work completed this session
-
-### R-2A — Orchestrator Feature Parity (`cf51b44`)
-
-Added 7 missing features to `go/internal/orchestrator/orchestrator.go`:
-- History loading from DB at run start (HistoryLoader already existed, now called)
-- Budget token enforcement (`BudgetTokens`, `ErrBudgetExceeded`)
-- Parallel agent fan-out with `semaphore.Weighted` (`MaxParallelTools`)
-- A2A agent card auto-discovery (`CardDiscoverer` interface, graceful fallback)
-- `run_usage` persistence (`UsageRecorder` interface — non-fatal)
-- Child task lifecycle (`TaskRecorder.CreateTask/CompleteTask` — non-fatal)
-- Per-iteration budget checkpoint (`BudgetStore.UpdateTokensUsed` — non-fatal)
-
-Memory injection is deferred to R-3 per plan decision.
-
-### R-2B.1 — Go Temporal Worker (`a245f11`)
-
-Registered Go Temporal worker in `go/cmd/them/main.go`:
-- Same binary as bridge (same process, separate goroutine)
-- Task queue: `them-orchestration` (shared with Python worker during transition)
-- Registers `OrchestrationWorkflow` + `RunOrchestratorActivity`
-- Gated on `TEMPORAL_ENABLED=true`
-
-### R-2B.2 — Inline Path Removed (`029bf8c`)
-
-- Deleted `// 11b. Go-inline path` branches from `ws/handler.go` and `sse/handler.go`
-- When `temporalClient == nil`: returns 503 error, marks run failed — NO fallback
-- `PythonOrchestrationInput` → `WorkflowInput` in WS/SSE `ExecuteWorkflow` calls
-- `temporalEnabled bool` field gone from both Handler structs
-- Architecture docs corrected per R2_TEMPORAL_GO_WORKER_PLAN.md §7
+Phase R-2C (Go Worker Separation) is **complete**. The next task is **Phase R-3: File Artifact Delivery** per gate doc §1.11.
 
 ---
 
-## Deployed / live state
+## What Was Completed This Session (R-2C)
 
-- Go bridge Docker image: **STALE** — was not rebuilt; running pre-R-1 binary
-- Temporal path: Python worker still active (normal during R-2 transition period)
-- Stack: them-postgres, them-redis, them-auth-service, them-bridge, them-traefik (healthy)
-- Go bridge container: stale binary (does not have R-0/R-1/R-2 code live)
+1. Dedicated Go worker binary at `go/cmd/worker/main.go` — no HTTP, polls `them-orchestration-go` only.
+2. Bridge (`cmd/them/main.go`) stripped of worker registration — client-only Temporal caller.
+3. `GoTaskQueue = "them-orchestration-go"` constant in `go/internal/temporal/workflow.go`.
+4. `WorkerTaskQueue` config field added (`go/internal/config/config.go`).
+5. WS and SSE handlers fixed: send `WorkflowInput` (not `PythonOrchestrationInput`) to Go queue.
+6. Cross-process Redis Streams pipeline: `runstream.StreamPublisher`, `PublishEvent()`, rueidis XAdd adapter.
+7. `Dockerfile.go-worker` — separate Docker image.
+8. `theM_gateway/docker-compose.integration.yml` — `them-go-worker` + `them-go-worker-2` services added.
+9. `temporal-frontend` healthcheck fixed in both `docker-compose.yml` and `theM_gateway/docker-compose.yml`.
+10. E2E validated: 5 runs, 2-worker load distribution, Redis Streams confirmed, Python worker queued 0 new runs.
 
-**To rebuild Go bridge:**
-```bash
-docker compose --profile go build them-go-bridge
-docker compose --profile go up -d them-go-bridge
-docker logs them-go-bridge | grep "temporal worker"  # verify Go worker polling
-```
-
----
-
-## Working tree state
-
-Clean after all commits. Untracked `go/them` binary (correct — not committed).
-Branch `main` is synchronized with `origin/main`.
+Full details: `docs/architecture-v2/R2C_IMPLEMENTATION_REPORT.md`
 
 ---
 
-## Test results
+## Stack State
 
-| Run | Passed | Failed | Races |
-|---|---|---|---|
-| `go test ./...` after R-2A | 353 | 0 | — |
-| `go test ./...` final | 390 | 0 | — |
-| `go test -race ./...` | 390 | 0 | 0 |
-
-New tests added: 11 (S1-28: orchestrator ×7, S1-12/S1-13 updated ×2, S1-29: temporal worker ×2)
-
----
-
-## Architecture decisions made this session
-
-1. **Inline path fully removed.** No execution may happen outside Temporal after R-2B.2.
-   When Temporal is unavailable, WS/SSE return 503 — no degraded fallback.
-2. **Optional orchestrator features via `With*` methods.** All new orchestrator
-   capabilities (checkpointer, card discoverer, usage recorder, etc.) are injected
-   via nil-safe option methods so existing tests and callers are unaffected.
-3. **Go worker in same binary for R-2.** The worker runs alongside the bridge. A
-   separate worker binary is R-3+ scope.
-4. **Python worker runs in parallel** during the transition. Cutover (stop Python
-   worker) is a manual coordinated deploy after the Go worker is validated under load.
-
----
-
-## Hard constraints remaining in force
-
-- Temporal is the single durable owner of every run — no exceptions
-- Never log token values, API keys, request bodies, or any secret
-- Never use `session_id`, `run_id`, `request_id`, `user_id`, `tenant_id` as Prometheus labels
-- All Go changes require `go test ./...` to pass before commit
-- Workflow ID scheme `ctx-{contextID}` must be preserved
-- Task queue name `them-orchestration` shared with Python during transition
-- `PythonOrchestrationInput` Go type: deprecated but retained until Python worker off
-
----
-
-## Known bugs / risks
-
-- Go bridge Docker image stale — rebuild needed before any live testing
-- Python worker cutover is manual — must be coordinated deploy, not rolling
-- `tenant_id` field in session info is still empty string (pre-existing, tracked in gate doc)
-- `PythonOrchestrationInput` dead code still in `go/internal/temporal/python_input.go`
-- Memory injection (`MemoryStore.Inject`) deferred to R-3 — orchestrator config `memory_enabled` field not yet wired
-
----
-
-## Files most relevant to next task (R-3: File Artifact Delivery)
-
-| File | Relevance |
+| Container | Status |
 |---|---|
-| `docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md` §1.11 | Artifact delivery spec |
-| `docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md` §9 Phase R-2 | R-3 scope description |
-| `go/internal/orchestrator/orchestrator.go` | Add artifact recording in executeTools |
-| `go/internal/runrecorder/recorder.go` | Add `RecordArtifact` method |
+| them-go-bridge (×2) | Healthy |
+| them-go-worker (×2) | Healthy, polling `them-orchestration-go` |
+| them-worker (Python) | Healthy, polling `them-orchestration` |
+| them-temporal-* | Healthy |
+| them-postgres | Healthy |
+| them-redis | Healthy |
+
+---
+
+## Test State
+
+```
+go test ./...   →   413 passed, 0 failed
+```
+
+Python suite last clean run: 390 passed (Phase R-2 baseline).
+
+---
+
+## Hard Constraints — Carry Forward
+
+- **Temporal is the single durable owner of every run.** No inline execution path exists in Go or Python.
+- **Never log token values, API keys, or secrets** at any log level.
+- **All Go changes require `go test ./...` before commit.** Zero regressions allowed.
+- **Workflow ID scheme `ctx-{contextID}`** must be preserved — changing it orphans in-flight runs.
+- **`PythonOrchestrationInput` in `go/internal/temporal/python_input.go`** is dead code — retained until the Python worker is decommissioned. Do not delete it yet.
+- **Python worker** remains running on `them-orchestration`. It is not decommissioned in R-2C. The two workers run in parallel on separate queues.
+- **`RUN_EVENTS_MODE`**: Worker must be `streams`; Bridge must be `dual`. Do not change without understanding the Bridge read path.
+- **Tenant-aware design**: all new DB queries and Redis keys must include `application_id` or entry point slug.
+- DB name and schema: `them` only. Never `odin`.
+
+---
+
+## Known Issues and Blockers
+
+| Issue | Severity | Notes |
+|---|---|---|
+| `context_id` column missing from `them.runs` | Non-fatal | Run is created but the context_id insert fails silently. Will be fixed as part of R-3 run-recording work. |
+| `go/them` and `go/worker` binaries in repo root | Cosmetic | Local build artifacts, covered by `.gitignore`. Not committed. |
+
+---
+
+## Next Task: Phase R-3 — File Artifact Delivery
+
+**Scope:** Implement file artifact delivery per gate doc §1.11. The Go orchestrator must be able to record artifacts (file blobs or references) produced during a run, persist them to `them.artifacts`, and make them retrievable via the runs API.
+
+**Gate doc reference:** `docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md` §1.11
+
+**Files most relevant to R-3:**
+
+| File | Why |
+|---|---|
+| `docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md` | Gate requirements §1.11 — read first |
+| `go/internal/orchestrator/orchestrator.go` | Agentic loop — where artifact events originate |
+| `go/internal/runrecorder/recorder.go` | Run recording layer — where artifact rows are written |
 | `db/001_schema.sql` | `them.artifacts` table definition |
+| `go/internal/runstream/publisher.go` | Redis Streams publisher (artifact events may flow here) |
+
+**Do not touch** the Python worker, Python adapters, or auth service in R-3.
 
 ---
 
-## Python Worker Cutover Procedure (execute manually after Go worker validated)
+## Starting the Next Session
 
 ```bash
-# 1. Build and start Go bridge with R-2 code
-docker compose --profile go build them-go-bridge
-docker compose --profile go up -d them-go-bridge
+# Confirm HEAD and stack health first
+git log --oneline -5
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal ps
 
-# 2. Verify Go worker is polling
-docker compose --profile go logs -f them-go-bridge | grep "temporal worker"
+# Run Go tests to confirm clean baseline
+cd /opt/docker/them && go test ./go/...
 
-# 3. Verify Go worker picks up a test run
-# (create a test run via admin API, verify it completes via Go worker logs)
-
-# 4. Stop Python worker
-docker compose --profile temporal stop them-worker
-
-# 5. Monitor Temporal UI (localhost:3111) for any workflow failures
-# 6. If failures: restart Python worker immediately
-docker compose --profile temporal start them-worker
+# Open next session
+tmux new-session -s r3 -d
+tmux send-keys -t r3 'cd /opt/docker/them' Enter
 ```
+
+**First prompt for the next session:**
+
+> Phase R-2C is complete (HEAD confirmed, 413 Go tests passing, 2 Go workers healthy). Start Phase R-3: File Artifact Delivery per gate doc §1.11. Read docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md §1.11, go/internal/runrecorder/recorder.go, go/internal/orchestrator/orchestrator.go, and db/001_schema.sql (artifacts table) before writing any code. Plan the implementation, confirm scope, then implement.
 
 ---
 
-## Exact next single focused task
+## Commits This Session
 
-**Phase R-3: File Artifact Delivery**
+- b98fcea feat(r2c): phases 1–3 — dedicated worker binary, queue separation, Redis Streams pipeline
+- (Phase 4 fix commit — confirm hash with `git log --oneline -1`)
 
-Per gate document §1.11 and OD-6 decision:
-1. Artifact DB row creation in `them.artifacts` (id, run_id, filename, media_type, data BYTEA)
-2. `RecordArtifact(ctx, runID, filename, mediaType string, data []byte) (string, error)` in `internal/runrecorder`
-3. `{"type":"file","artifact_id":"...","filename":"...","media_type":"..."}` event emission in orchestrator
-4. Size gate: inline if `len(data) < 4096`, by-reference otherwise
-5. `GET /api/v1/runs/{run_id}/artifacts/{artifact_id}` endpoint in admin router
-6. `ErrArtifactTooLarge` sentinel for >1MB artifacts
-
----
-
-## Exact commands for next session startup
-
-```bash
-cd /opt/docker/them
-git log --oneline -3   # verify HEAD is 029bf8c
-git status             # verify clean tree
-# Read in order:
-# docs/architecture-v2/NEXT_SESSION_HANDOVER.md
-# docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md §1.11 and §4.5
-# go/internal/orchestrator/orchestrator.go
-# go/internal/runrecorder/recorder.go
-# db/001_schema.sql (them.artifacts table)
-```
-
-First prompt for next session:
-```
-Read docs/architecture-v2/NEXT_SESSION_HANDOVER.md and the artifact-delivery sections of
-CRITICAL_RUNTIME_ARCHITECTURE_GATE.md (§1.11, §4.5, OD-6).
-
-Phase R-2 is complete (HEAD 029bf8c). The inline orchestration path is removed.
-Temporal is the unconditional execution owner.
-
-Implement Phase R-3: File Artifact Delivery.
-- RecordArtifact in internal/runrecorder/recorder.go
-- artifact event emission in internal/orchestrator/orchestrator.go
-- GET /api/v1/runs/{run_id}/artifacts/{artifact_id} admin endpoint
-- 1MB size limit, ErrArtifactTooLarge sentinel
-- go test ./... must pass before commit
-```
-
----
-
-## Push and repository status
-
-All R-2 commits are pushed to `origin/main`.
-Working tree: clean (go/them binary untracked — correct).
-
-Close this Claude session. Open a fresh Sonnet session for R-3.
+Push status: confirm with `git status` and push if credentials available.
