@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-28
 **Branch:** main
-**HEAD:** see git log (will be updated after commit)
+**HEAD:** f5ef287 docs(planning): Phase R-2 Temporal Go Worker plan
 **Session model:** claude-opus-4 (planning session)
 
 ---
