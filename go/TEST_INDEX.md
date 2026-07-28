@@ -714,6 +714,34 @@ PKCS7 padding, and storage prefix handling.
 
 ---
 
+### S1-27 · Prometheus metrics — `internal/metrics/metrics_test.go`
+
+**Purpose:** Verify all Phase R-1 Prometheus metrics are registered and behave correctly.
+Enforces cardinality rules (no high-cardinality label names). Tests gauge isolation by `ep_type` label.
+
+| Test | What it proves |
+|---|---|
+| `TestActiveWSConnections` | WS connection gauge increments and decrements correctly |
+| `TestActiveSSEConnections` | SSE connection gauge increments and decrements correctly |
+| `TestActiveSessionsGauge` | Active session gauge per ep_type label increments/decrements |
+| `TestGateAdmissionsCounter` | Gate admission counter increments per ep_type |
+| `TestGateRejectionsCounter` | Gate rejection counter increments per (ep_type, reason) |
+| `TestEventBusDroppedCounter` | Event bus drop counter increments correctly |
+| `TestSessionsStartedCounter` | Session started counter increments per (ep_type, result) |
+| `TestSessionsEndedCounter` | Session ended counter increments per (ep_type, reason) |
+| `TestObserveDrain` | `ObserveDrain` records a histogram sample to `them_graceful_drain_duration_seconds` |
+| `TestMetricNamesRegistered` | All 10 expected metric names are registered in the default Prometheus registry |
+| `TestHighCardinalityLabelsAbsent` | No `them_*` metric uses prohibited labels (session_id, run_id, request_id, user_id, tenant_id) |
+| `TestActiveSessionsGauge_LabelIsolation` | Different ep_type labels are tracked independently (websocket ≠ sse ≠ a2a) |
+
+**Cardinality rules enforced:**
+- Permitted labels: `ep_type` (websocket|sse|a2a|voice|unknown), `result` (admitted|rejected), `reason` (cap_exceeded|rate_limited|queue_full|client_disconnect|context_cancel|admin_signal|error)
+- Prohibited labels: `session_id`, `run_id`, `request_id`, `user_id`, `tenant_id`
+
+**Trigger:** any change to `internal/metrics/metrics.go` or any handler that calls metrics functions
+
+---
+
 ### S1-24 · Apps dispatcher — `cmd/them/dispatcher_test.go`
 
 **Purpose:** Verify that `appsDispatcher` routes `/ws` paths to the WS handler, `/sse` paths to
@@ -983,6 +1011,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/service/` (any file) | S1-25 |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
+| `internal/metrics/metrics.go` | S1-27 |
 | `internal/ratelimit/limiter.go` | S1-16 |
 | `internal/gate/gate.go` | S1-17 |
 | `internal/epconfig/epconfig.go` | S1-18 |
@@ -1045,7 +1074,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-24 | cmd/them (apps dispatcher) | 5 |
 | S1-25 | admin/service | 60 |
 | S1-26 | crypto (fernet) | 32 |
-| **S1 total** | | **330** |
+| S1-27 | metrics | 12 |
+| **S1 total** | | **342** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1054,4 +1084,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **Grand total** | | **395** |
+| **Grand total** | | **407** |

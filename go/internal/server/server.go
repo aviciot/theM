@@ -20,6 +20,7 @@ import (
 
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/health"
+	"github.com/aviciot/them/internal/metrics"
 )
 
 const (
@@ -237,10 +238,12 @@ func (s *Server) ListenAndServe() error {
 	ctx, cancel := context.WithTimeout(context.Background(), s.drainTimeout)
 	defer cancel()
 
+	drainStart := time.Now()
 	s.logger.Info("server draining", "timeout", s.drainTimeout)
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		s.logger.Error("server shutdown error", "error", err)
 	}
+	metrics.ObserveDrain(drainStart)
 
 	// Release dependencies in registration order.
 	for _, c := range s.closers {

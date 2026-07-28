@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"sync"
 	"time"
+
+	"github.com/aviciot/them/internal/metrics"
 )
 
 // Event is a generic event published on the bus.
@@ -158,6 +160,9 @@ func (b *InMemoryBus) publishToEntries(entries []chanEntry, ev Event, terminal b
 		case entry.ch <- ev:
 		default:
 			// drop — slow consumer; terminal guarantee comes from termCh below
+			if !terminal {
+				metrics.EventBusDropped.Inc()
+			}
 		}
 		if terminal {
 			// Route to the dedicated termCh; silently discard if already full

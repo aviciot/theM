@@ -1076,3 +1076,15 @@ both `docker-compose.yml` (dev/go profile) and `theM_gateway/docker-compose.trae
 **Lesson:** `server.NewWithBus` parameter order change is a breaking compile error in main.go — when adding a `drainSeconds time.Duration` parameter, all callers must be updated in the same commit.
 
 **Lesson:** Long-lived background goroutines (heartbeat, pub/sub subscribers, reconciler) must use a cancellable context, not `context.Background()`. The pre-drain hook pattern — `srv.WithPreDrainHook(runCancel)` — ensures these goroutines are cancelled BEFORE `httpServer.Shutdown` drains connections, preventing the 30-second drain from being wasted waiting for goroutines that would never exit on their own.
+
+---
+
+## R-1 (2026-07-28): Prometheus metrics + structured logging
+
+**Lesson:** `prometheus.DefaultGatherer.Gather()` only returns metric families that have at least one label series observed. A `GaugeVec` or `CounterVec` with no `WithLabelValues` calls since the last `Reset()` will be absent from the Gather output even if it is registered. `TestMetricNamesRegistered` failed intermittently because `resetGauges()` was called before the test, leaving the gauge vec with no series. Fix: use `prometheus.DefaultRegisterer.(prometheus.Collector).Describe(ch)` to check registration — `Describe` always emits descriptors regardless of observation state.
+
+**Lesson:** The `EventBusDropped` counter should only fire for non-terminal events. Terminal events that fail to fit in `evCh` are still delivered via `termCh` — incrementing the drop counter for them would be misleading and would make the counter untrustworthy as a signal for "events lost to the consumer". Guard: `if !terminal { metrics.EventBusDropped.Inc() }`.
+
+**Lesson:** Structured logging fields (`ep_slug`, `app_id`, `tenant_id`, `session_id`) must be added to ALL log sites for a given handler, not just the success path. Error paths (gate rejection, register failure) are the most useful for incident diagnosis and are often omitted in the first pass.
+
+**Lesson:** The `epTypeLabel` helper must be defined in BOTH `internal/ws/handler.go` and `internal/sse/handler.go` — it is not shared via a common package because each handler file is self-contained. Keep both definitions identical.

@@ -286,6 +286,7 @@ func run() error {
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
 
+	log.Info("shutdown drain configured", "drain_seconds", cfg.ShutdownDrainSeconds)
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)
 
 	return srv.ListenAndServe()

@@ -38,6 +38,7 @@ import (
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/gate"
+	"github.com/aviciot/them/internal/metrics"
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/runstream"
@@ -222,6 +223,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	appSlug := chi.URLParam(r, "app_slug")
 	epSlug := chi.URLParam(r, "entry_point_slug")
 
+	// Track active WS connection for the lifetime of this request.
+	metrics.ActiveWSConnections.Inc()
+	defer metrics.ActiveWSConnections.Dec()
+
 	// ── 1. Attempt token extraction (non-enforcing at this point) ────────────
 	// Whether auth is required depends on the EP's access_policy. We resolve
 	// the EP config first, then enforce auth if mode == "token".
@@ -323,20 +328,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			gateCfg.QueueTimeout = resolvedCfg.QueueTimeout
 		}
 		if _, err := h.gateStore.Check(r.Context(), gateCfg); err != nil {
+			epType := epTypeLabel(resolvedCfg)
 			switch err {
 			case gate.ErrCapExceeded:
+				metrics.GateRejections.WithLabelValues(epType, "cap_exceeded").Inc()
+				metrics.SessionsStarted.WithLabelValues(epType, "rejected").Inc()
 				http.Error(w, `{"error":"session cap exceeded"}`, http.StatusServiceUnavailable)
 			case gate.ErrRateLimited:
+				metrics.GateRejections.WithLabelValues(epType, "rate_limited").Inc()
+				metrics.SessionsStarted.WithLabelValues(epType, "rejected").Inc()
 				http.Error(w, `{"error":"rate limited"}`, http.StatusTooManyRequests)
 			case gate.ErrQueueFull:
+				metrics.GateRejections.WithLabelValues(epType, "queue_full").Inc()
+				metrics.SessionsStarted.WithLabelValues(epType, "rejected").Inc()
 				http.Error(w, `{"error":"queue full"}`, http.StatusServiceUnavailable)
 			default:
-				h.logger.Warn("ws: gate check failed", "error", err)
+				h.logger.Warn("ws: gate check failed", "ep_slug", epSlug, "error", err)
 				http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 			}
 			return
 		}
 		gateAdmitted = true
+		metrics.GateAdmissions.WithLabelValues(epTypeLabel(resolvedCfg)).Inc()
 	}
 
 	// ── 4. Upgrade to WebSocket ───────────────────────────────────────────────
@@ -371,7 +384,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sessInfo.TenantID = resolvedCfg.TenantID
 	}
 	if err := h.sessions.Register(r.Context(), sessInfo); err != nil {
-		h.logger.Warn("ws: register session failed", "session_id", sessionID, "error", err)
+		h.logger.Warn("ws: register session failed",
+			"ep_slug", epSlug,
+			"app_id", sessInfo.AppID,
+			"error", err)
 		if gateAdmitted {
 			_ = h.gateStore.Rollback(context.Background(), gateCfg)
 		}
@@ -382,7 +398,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ── 7. Gate.Confirm ───────────────────────────────────────────────────────
 	if gateAdmitted {
 		if err := h.gateStore.Confirm(r.Context(), gateCfg); err != nil {
-			h.logger.Warn("ws: gate confirm failed", "session_id", sessionID, "error", err)
+			h.logger.Warn("ws: gate confirm failed",
+				"ep_slug", epSlug,
+				"app_id", sessInfo.AppID,
+				"error", err)
 			// Non-fatal: session hash is registered; shadow TTL (10s) provides safety net.
 		}
 	}
@@ -393,7 +412,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		appID = resolvedCfg.AppID
 	}
 
+	// Track active session count and record session lifecycle metrics.
+	epType := epTypeLabel(resolvedCfg)
+	metrics.ActiveSessions.WithLabelValues(epType).Inc()
+	metrics.SessionsStarted.WithLabelValues(epType, "admitted").Inc()
+
+	h.logger.Info("ws: session started",
+		"ep_slug", epSlug,
+		"app_id", appID,
+		"tenant_id", sessInfo.TenantID,
+		"session_id", sessionID,
+	)
+
 	defer func() {
+		metrics.ActiveSessions.WithLabelValues(epType).Dec()
+		metrics.SessionsEnded.WithLabelValues(epType, "client_disconnect").Inc()
+
+		h.logger.Info("ws: session ended",
+			"ep_slug", epSlug,
+			"app_id", appID,
+			"tenant_id", sessInfo.TenantID,
+			"session_id", sessionID,
+		)
+
 		ctx := context.Background()
 		_ = h.sessions.End(ctx, sessionID, epSlug, appID)
 		if gateAdmitted {
@@ -485,7 +526,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.writeError(conn, "failed to start workflow")
 			return
 		}
-		h.logger.Info("ws: temporal workflow started", "run_id", runID, "workflow_id", wfRun.GetID())
+		h.logger.Info("ws: temporal workflow started",
+			"ep_slug", epSlug,
+			"app_id", appID,
+			"session_id", sessionID,
+			"run_id", runID,
+			"workflow_id", wfRun.GetID(),
+		)
 
 		// Wait for workflow completion in background (drives orchDone).
 		go func() {
@@ -698,3 +745,18 @@ func (h *Handler) writeError(conn *websocket.Conn, msg string) {
 // tokenHash is a package-local alias for transport.TokenHash for backward
 // compatibility with the ws package's internal call sites.
 var tokenHash = transport.TokenHash
+
+// epTypeLabel returns the Prometheus ep_type label for a resolved EPConfig.
+// When cfg is nil (no EP loader wired — tests), returns "unknown".
+// Values are low-cardinality: websocket, sse, voice, a2a, unknown.
+func epTypeLabel(cfg *epconfig.EPConfig) string {
+	if cfg == nil {
+		return "unknown"
+	}
+	switch cfg.EPType {
+	case "websocket", "sse", "voice", "a2a":
+		return cfg.EPType
+	default:
+		return "unknown"
+	}
+}

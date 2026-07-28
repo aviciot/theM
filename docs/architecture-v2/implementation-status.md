@@ -1,11 +1,12 @@
 # Implementation Status — Go Gateway
 
-**Last updated:** 2026-07-26 (Wave 7 cutover complete)
+**Last updated:** 2026-07-28 (Phase R-1 Observability & Metrics complete)
 
 ---
 
 ## Current State
 
+Phase R-1 complete (2026-07-28): Prometheus metrics + structured logging in WS/SSE handlers + drain observability. 12 new tests in `internal/metrics/`.
 Wave 7 complete (2026-07-26): llm-providers CRUD (GET/POST/PATCH/DELETE) now served by Go.
 Wave 6 complete (2026-07-25): monitoring-config + llm-providers/routing/config now served by Go.
 Wave 5 complete (2026-07-24): tokens + sessions admin routes served by Go.
@@ -39,6 +40,7 @@ Phase 11c-C validation complete (2026-07-21). 229 unit tests pass. Race detector
 | `internal/agentregistry` | Complete | 5 (S1-11) | `registry.go` |
 | `internal/admin` | Complete | 40 (S1-15) | `agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `monitoring.go`, `llm_routing.go` |
 | `internal/admin/dal` | Complete | — (covered by admin tests) | `dal.go`, `agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `tokens.go`, `config.go` |
+| `internal/metrics` | Complete (Phase R-1) | 12 (S1-27) | `metrics.go` — all 10 Prometheus metrics + cardinality enforcement |
 | `internal/admin/service` | Complete | 10 (S1-25 config) | `service.go`, `tokens.go`, `sessions.go`, `config.go` |
 | `internal/transport` | Complete | — (covered by ws/sse tests) | `transport.go` |
 | `internal/ratelimit` | Complete | 3 (S1-16) | `limiter.go` |

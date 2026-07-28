@@ -1,111 +1,122 @@
-# Phase R-0 Complete — Handover to Phase R-1
+# Phase R-1 Complete — Handover
 
-**Date:** 2026-07-26  
-**Branch:** main  
-**HEAD:** 88004b1 feat(runtime): Phase R-0 — Critical Runtime Gate (L-1, L-2, L-3, T-2, OD-1, OD-2, OD-7)  
-**Session model used:** claude-sonnet-4-6
+**Date:** 2026-07-28
+**Branch:** main
+**HEAD:** (see commit hash after commit below)
+**Session model:** claude-sonnet-4-6
 
 ---
 
 ## Current objective
 
-Phase R-0 (Critical Runtime Gate) is complete and committed. Next task is Phase R-1.
+Phase R-1 (Observability & Metrics) is complete and committed.
+Next task: Phase R-2 — define scope with Opus before implementation.
 
 ---
 
 ## Work completed this session
 
-### Phase R-0: Critical Runtime Gate — ALL 5 ITEMS DONE
+### Phase R-1: Observability & Metrics — ALL ITEMS DONE
 
 | Item | Description | Files |
 |---|---|---|
-| L-1 / OD-1 | Terminal event guarantee via `termCh` (cap 1) | `go/internal/event/bus.go`, `ws/handler.go`, `sse/handler.go`, `a2a/server.go` |
-| T-2 / OD-2 | `sessInfo.AppID` + `sessInfo.TenantID` populated from EP config | `go/internal/session/session.go`, `go/internal/epconfig/epconfig.go`, `ws/handler.go`, `sse/handler.go` |
-| OD-7 | Shutdown drain 5s→30s with `SHUTDOWN_DRAIN_SECONDS` env var | `go/internal/config/config.go`, `go/internal/server/server.go` |
-| L-2 | Heartbeat goroutine uses `runCtx` not `context.Background()` | `go/cmd/them/main.go` |
-| L-3 | `runCancel` called as pre-drain hook before `httpServer.Shutdown` | `go/cmd/them/main.go`, `go/internal/server/server.go` |
-
-### Tests added
-- 3 new event bus tests (terminal event guarantee — `TestBus_TerminalEventDeliveredOnFullBuffer`, `TestBus_TerminalEventDroppedIfTermChFull`, `TestBus_TerminalEventAlsoRoutedToEvCh`)
-- 4 new config tests (drain parsing — `TestShutdownDrain_Default`, `TestShutdownDrain_Valid`, `TestShutdownDrain_BelowMin_Clamped`, `TestShutdownDrain_Invalid_Clamped`)
+| New `internal/metrics` package | 10 Prometheus metrics registered on default registry via `init()` | `go/internal/metrics/metrics.go` |
+| Metrics tests | 12 tests covering all metrics, label isolation, cardinality enforcement | `go/internal/metrics/metrics_test.go` |
+| Event bus drop counter | `EventBusDropped.Inc()` in slow-consumer drop path (non-terminal only) | `go/internal/event/bus.go` |
+| WS handler metrics | ActiveWSConnections gauge, gate rejection/admission counters, session lifecycle counters | `go/internal/ws/handler.go` |
+| SSE handler metrics | ActiveSSEConnections gauge, gate rejection/admission counters, session lifecycle counters | `go/internal/sse/handler.go` |
+| Structured logging | `ep_slug`, `app_id`, `tenant_id`, `session_id`, `run_id` logged at session start/end and errors | `go/internal/ws/handler.go`, `go/internal/sse/handler.go` |
+| Drain observation | `metrics.ObserveDrain(drainStart)` after `httpServer.Shutdown`; imports `internal/metrics` | `go/internal/server/server.go` |
+| Startup visibility | `log.Info("shutdown drain configured", "drain_seconds", ...)` at startup | `go/cmd/them/main.go` |
+| TEST_INDEX.md | Added S1-27 (metrics, 12 tests); totals: S1=342, Grand=407 | `go/TEST_INDEX.md` |
 
 ### Test results
-- `go test -race ./...`: ALL PASS, 0 failures, 0 data races
+- `go test ./...`: ALL PASS, 0 failures
+- `go test -race ./...`: ALL PASS, 0 data races
 - Python sanity (01 02 03 04 15): 55 passed, 0 failed
+
+### R-0 safety verified
+Terminal events are NOT delivered twice in a harmful way. They are routed to both `evCh` (best-effort) and `termCh` (guaranteed) by design. The handler loop exits after the first terminal event it processes. The drop counter guards `if !terminal` so terminal events never increment the drop counter.
 
 ---
 
 ## Deployed / live state
 
-- Go bridge is NOT rebuilt/redeployed this session — code changes are committed but the running Docker container still has the previous binary
+- Go bridge is NOT rebuilt/redeployed — code committed but Docker container still has pre-R-1 binary
 - To redeploy: `docker compose --profile go build them-go-bridge && docker compose --profile go up -d them-go-bridge`
-- Stack is running: them-postgres, them-redis, them-auth-service, them-bridge, them-traefik (all healthy)
+- Stack running: them-postgres, them-redis, them-auth-service, them-bridge, them-traefik (all healthy)
 
 ---
 
-## Architecture decisions made
+## Working tree state
 
-1. **Terminal events route to BOTH evCh AND termCh** (not termCh only) — ensures both the normal drain loop and the terminal guarantee path work when evCh has capacity
-2. **Pre-drain hook pattern** — `srv.WithPreDrainHook(runCancel)` cancels subscriber goroutines before HTTP drain, so the 30s window is not wasted waiting for stuck goroutines
-3. **TenantID is empty string until Phase R-4** — `EPConfig.TenantID` and `SessionInfo.TenantID` are wired but empty because `applications.tenant_id` column does not exist yet. This is explicitly acceptable per OD-2.
-4. **isTerminal checks `ev.Type` not `ev.Topic`** — orchestrator publishes `Topic=contextID, Type="done"`. Test events must set `Type="done"` to trigger the terminal path.
+After commit, all Phase R-1 files should be clean. Untracked `go/them` binary is the local compiled binary (not committed — correct).
 
 ---
 
-## Known bugs and blockers
+## Architecture decisions made this session
 
-None. All Phase R-0 acceptance criteria met.
-
----
-
-## Temporary compatibility code in place
-
-- `EPConfig.TenantID` and `SessionInfo.TenantID` are always empty string until Phase R-4 adds `applications.tenant_id` column to PostgreSQL schema.
+1. **Cardinality rule enforced by test** — `TestHighCardinalityLabelsAbsent` fails if any `them_*` metric uses `session_id`, `run_id`, `request_id`, `user_id`, or `tenant_id` as a label name. This is the automated guard.
+2. **`epTypeLabel` duplicated in ws and sse handlers** — not moved to `internal/transport` to keep each handler file self-contained. Both definitions are identical.
+3. **`Describe` not `Gather` for registration check** — `Gather()` skips vec families with no observed series; `Describe()` always returns all registered descriptors.
 
 ---
 
-## Hard constraints that must remain in force
+## Hard constraints remaining in force
 
-- `go test -race ./...` must pass before every commit
-- `go/TEST_INDEX.md` must be updated in the same commit as test changes
-- Do NOT start Phase R-2, R-3, R-4, or R-5 without completing R-1 first
-- Never use `context.Background()` for long-lived goroutines — use `runCtx`
-- Terminal events must always be delivered — never drop on a full buffer
-- Tenant is a security boundary — `AppID` must flow through all tenant-scoped operations
+- Never log token values, API keys, request bodies, or any secret — per CLAUDE.md
+- Never use `session_id`, `run_id`, `request_id`, `user_id`, or `tenant_id` as Prometheus label names (enforced by test)
+- Never start R-2 through R-5 in the same session as R-1 (already observed)
+- All Go changes require `go test ./...` to pass before commit
 
 ---
 
-## Files most relevant to Phase R-1
+## Known bugs / risks
 
-Phase R-1 is Observability & Metrics. Relevant files:
-- `go/internal/server/server.go` — Prometheus handler already mounted at `/metrics`
-- `go/cmd/them/main.go` — startup wiring
-- `go/internal/event/bus.go` — may need Prometheus counters for publish/drop rates
-- `go/internal/session/session.go` — session count metrics
-- `go/internal/gate/gate.go` — admission/rejection counters
-- `go/internal/runstream/metrics.go` — existing runstream metrics pattern to follow
+- `tenant_id` field in session info is empty string — `EPConfig.TenantID` is populated but `applications.tenant_id` DB column doesn't exist yet. This is acceptable per R-0 OD-2 decision.
+- Go bridge Docker image is stale — rebuild needed to pick up R-0 + R-1 changes before metrics are observable via `/metrics` endpoint.
 
 ---
 
-## Exact next single focused task: Phase R-1
+## Files most relevant to next task
 
-**Scope (read the full R-1 definition before starting):**
-- Structured logging improvements (request IDs, session IDs, tenant context in log fields)
-- Prometheus metric coverage for: session count, gate admission/rejection, event bus drop rate, active WS/SSE connections
-- Expose drain timeout in startup log
-- Do NOT redesign the tenant schema (that is R-4)
+| File | Relevance |
+|---|---|
+| `go/internal/metrics/metrics.go` | All metric definitions — starting point for R-2 |
+| `go/internal/ws/handler.go` | WS handler with R-1 instrumentation — reference for R-2 patterns |
+| `go/internal/sse/handler.go` | SSE handler with R-1 instrumentation |
+| `go/internal/server/server.go` | Drain observation wired here |
+| `docs/architecture-v2/R1_IMPLEMENTATION_REPORT.md` | Full R-1 implementation summary |
 
-**First commands for next session:**
-```bash
-# Verify HEAD and clean working tree
-git log --oneline -3
-git status
+---
 
-# Read the relevant docs
-cat docs/architecture-v2/NEXT_SESSION_HANDOVER.md
-cat docs/architecture-v2/implementation-status.md
-cat docs/architecture-v2/lessons-learned.md
+## Exact next single focused task
+
+**Phase R-2: Tenant Tier Metrics** (or a different R-2 scope — TBD with Opus).
+
+Before implementing R-2, start a new session with **Opus** to define scope:
+- Decide whether to add `tenant_tier` as a label (requires architecture approval per current cardinality rules)
+- OR pivot to a different R-2 priority (per-route latency histogram, LLM usage metrics, etc.)
+- Write the scope decision to `docs/architecture-v2/` before returning to Sonnet for implementation
+
+---
+
+## Exact first prompt for next session
+
 ```
+Read first:
+- docs/architecture-v2/NEXT_SESSION_HANDOVER.md
+- go/TEST_INDEX.md
+- docs/architecture-v2/R1_IMPLEMENTATION_REPORT.md
+- go/CLAUDE.md
 
-**First prompt for next session:**
-"Read NEXT_SESSION_HANDOVER.md, implementation-status.md, and lessons-learned.md. Then implement Phase R-1 (Observability & Metrics) as defined in the architecture gate docs. Do not start R-2, R-3, R-4, or R-5."
+We are on branch main. Phase R-1 (Observability & Metrics) is complete.
+
+Next task: Define Phase R-2 scope. Review what metrics are already in place from R-1 (see R1_IMPLEMENTATION_REPORT.md) and propose the single most valuable next observability addition. Options include:
+- Tenant tier label (requires architecture approval — cardinality rule currently prohibits tenant_id)
+- Per-route latency histograms (http_request_duration_seconds by route_group)
+- LLM provider usage counters (tokens in/out, errors)
+- Other
+
+Output: a short proposal (1-2 paragraphs) with your recommendation and the key trade-off. Do not implement yet.
+```

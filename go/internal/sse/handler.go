@@ -41,6 +41,7 @@ import (
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/gate"
+	"github.com/aviciot/them/internal/metrics"
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/runstream"
@@ -220,6 +221,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	appSlug := chi.URLParam(r, "app_slug")
 	epSlug := chi.URLParam(r, "entry_point_slug")
 
+	// Track active SSE connection for the lifetime of this request.
+	metrics.ActiveSSEConnections.Inc()
+	defer metrics.ActiveSSEConnections.Dec()
+
 	// ── 1. Attempt token extraction (non-enforcing at this point) ────────────
 	// Whether auth is required depends on the EP's access_policy. We resolve
 	// the EP config first, then enforce auth if mode == "token".
@@ -335,21 +340,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			gateCfg.QueueTimeout = resolvedCfg.QueueTimeout
 		}
 		if _, err := h.gateStore.Check(r.Context(), gateCfg); err != nil {
+			epType := epTypeLabel(resolvedCfg)
 			w.Header().Set("Content-Type", "application/json")
 			switch err {
 			case gate.ErrCapExceeded:
+				metrics.GateRejections.WithLabelValues(epType, "cap_exceeded").Inc()
+				metrics.SessionsStarted.WithLabelValues(epType, "rejected").Inc()
 				http.Error(w, `{"error":"session cap exceeded"}`, http.StatusServiceUnavailable)
 			case gate.ErrRateLimited:
+				metrics.GateRejections.WithLabelValues(epType, "rate_limited").Inc()
+				metrics.SessionsStarted.WithLabelValues(epType, "rejected").Inc()
 				http.Error(w, `{"error":"rate limited"}`, http.StatusTooManyRequests)
 			case gate.ErrQueueFull:
+				metrics.GateRejections.WithLabelValues(epType, "queue_full").Inc()
+				metrics.SessionsStarted.WithLabelValues(epType, "rejected").Inc()
 				http.Error(w, `{"error":"queue full"}`, http.StatusServiceUnavailable)
 			default:
-				h.logger.Warn("sse: gate check failed", "error", err)
+				h.logger.Warn("sse: gate check failed", "ep_slug", epSlug, "error", err)
 				http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 			}
 			return
 		}
 		gateAdmitted = true
+		metrics.GateAdmissions.WithLabelValues(epTypeLabel(resolvedCfg)).Inc()
 	}
 
 	// ── 5. Set SSE headers ────────────────────────────────────────────────────
@@ -382,7 +395,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sessInfo.TenantID = resolvedCfg.TenantID
 	}
 	if err := h.sessions.Register(r.Context(), sessInfo); err != nil {
-		h.logger.Warn("sse: register session failed", "session_id", sessionID, "error", err)
+		h.logger.Warn("sse: register session failed",
+			"ep_slug", epSlug,
+			"app_id", sessInfo.AppID,
+			"error", err)
 		if gateAdmitted {
 			_ = h.gateStore.Rollback(context.Background(), gateCfg)
 		}
@@ -397,7 +413,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ── 8. Gate.Confirm ───────────────────────────────────────────────────────
 	if gateAdmitted {
 		if err := h.gateStore.Confirm(r.Context(), gateCfg); err != nil {
-			h.logger.Warn("sse: gate confirm failed", "session_id", sessionID, "error", err)
+			h.logger.Warn("sse: gate confirm failed",
+				"ep_slug", epSlug,
+				"app_id", sessInfo.AppID,
+				"error", err)
 			// Non-fatal: session hash is registered; shadow TTL (10s) provides safety net.
 		}
 	}
@@ -406,7 +425,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if resolvedCfg != nil {
 		appID = resolvedCfg.AppID
 	}
+
+	// Track active session count and record session lifecycle metrics.
+	epType := epTypeLabel(resolvedCfg)
+	metrics.ActiveSessions.WithLabelValues(epType).Inc()
+	metrics.SessionsStarted.WithLabelValues(epType, "admitted").Inc()
+
+	h.logger.Info("sse: session started",
+		"ep_slug", epSlug,
+		"app_id", appID,
+		"tenant_id", sessInfo.TenantID,
+		"session_id", sessionID,
+	)
+
 	defer func() {
+		metrics.ActiveSessions.WithLabelValues(epType).Dec()
+		metrics.SessionsEnded.WithLabelValues(epType, "client_disconnect").Inc()
+
+		h.logger.Info("sse: session ended",
+			"ep_slug", epSlug,
+			"app_id", appID,
+			"tenant_id", sessInfo.TenantID,
+			"session_id", sessionID,
+		)
+
 		ctx := context.Background()
 		_ = h.sessions.End(ctx, sessionID, epSlug, appID)
 		if gateAdmitted {
@@ -697,6 +739,18 @@ func (h *Handler) tryAuthenticate(r *http.Request) (*auth.TokenInfo, string, boo
 
 // extractMessage reads the user message from ?message= query param (GET) or
 // from the request body (POST).
+func epTypeLabel(cfg *epconfig.EPConfig) string {
+	if cfg == nil {
+		return "unknown"
+	}
+	switch cfg.EPType {
+	case "websocket", "sse", "voice", "a2a":
+		return cfg.EPType
+	default:
+		return "unknown"
+	}
+}
+
 func (h *Handler) extractMessage(r *http.Request) (string, error) {
 	if msg := r.URL.Query().Get("message"); msg != "" {
 		return msg, nil
