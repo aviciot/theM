@@ -2,7 +2,8 @@
 
 **Platform:** Hetzner VPC — Linux (Ubuntu 22.04 / 24.04), Docker Engine ≥ 24, docker compose v2  
 **Last updated:** 2026-07-29  
-**Repo:** https://github.com/aviciot/theM
+**Repo:** https://github.com/aviciot/theM  
+**Target domain:** `them.avico78.com` (not yet externally exposed — see [Expose to Cloudflare](#expose-to-cloudflare-when-ready))
 
 ---
 
@@ -43,12 +44,47 @@ them-traefik  (internal path router — routes /ws, /api/v1, /, etc.)
 
 ## Hetzner VPC notes
 
-This stack is deployed on a **Hetzner Cloud VPC** (private network). A few things specific to this environment:
+This stack is deployed on a **Hetzner Cloud VPC** on the same server as the other services (`omni`, `dna`, `portal`). Key facts confirmed during initial deployment:
 
-- **Private IP:** the server has a Hetzner private network IP (e.g. `10.0.0.x`) and a public IP. The stack listens on the private IP via the VPC; public access goes through Cloudflare only.
-- **Firewall:** configure Hetzner Firewall rules to block direct inbound access to port 8088 from the public internet — only Cloudflare edge IPs (or your cloudflared tunnel outbound traffic) should reach the stack.
-- **External Traefik:** shared Traefik instance running on this same Hetzner server, on the `proxy-network` Docker network — the same setup used for your other services on this host.
-- **Cloudflare Tunnel:** recommended over direct IP exposure. The `cloudflared` daemon runs on the server, creates an outbound tunnel to Cloudflare's edge, and routes `them.yourdomain.com` inbound to `them-traefik:8088` over the VPC private interface. No inbound firewall rules needed for the application port.
+| Item | Value |
+|---|---|
+| Target domain | `them.avico78.com` |
+| Docker engine | 29.3.0 |
+| Docker compose | v5.1.1 |
+| External Traefik container | `infra-traefik` |
+| External Traefik network | `proxy-network` |
+| External Traefik config | `/home/avi/infrastructure/traefik/` |
+| Cloudflare Tunnel container | `infra-cloudflared` (already running) |
+| External Traefik entrypoint | `web` — port 80, plain HTTP (TLS at Cloudflare edge) |
+| the-M route file | `/home/avi/infrastructure/traefik/dynamic/them-routes.yml` |
+| the-M compose overlay | `theM_gateway/docker-compose.cloudflare.yml` |
+
+**Important:** The external Traefik uses **port 80 only** — no TLS config. Cloudflare Tunnel terminates TLS at the edge and forwards plain HTTP inward. All internal traffic between `infra-traefik` and `them-traefik` is plain HTTP.
+
+**Current exposure status:** the UI is **not yet exposed** to the internet. The route in `them-routes.yml` is commented out. See [Expose to Cloudflare](#expose-to-cloudflare-when-ready) when ready to go live.
+
+### What `docker-compose.cloudflare.yml` does
+
+- Overrides `proxy-network` from linux.yml's local `them-proxy` back to the **existing shared `proxy-network`** that all other services use
+- Joins `them-traefik` to `proxy-network` so `infra-traefik` can resolve it by container name
+- No Traefik labels on `them-traefik` — routing is handled via the file-based config in `them-routes.yml`
+
+### linux-start.sh modification required
+
+Edit `theM_gateway/scripts/linux-start.sh` and add `-f docker-compose.cloudflare.yml` to the `COMPOSE` array:
+
+```bash
+COMPOSE=(
+  docker compose
+  -f docker-compose.yml
+  -f docker-compose.linux.yml
+  -f docker-compose.integration.yml
+  -f docker-compose.soak.yml
+  -f docker-compose.traefik.yml
+  -f docker-compose.cloudflare.yml    # ← add this
+  --profile temporal
+)
+```
 
 ---
 
@@ -611,6 +647,78 @@ with urllib.request.urlopen(req, timeout=10) as r:
 ")
 ADMIN_JWT=$ADMIN_JWT python3.12 scripts/tests/run_tests.py
 # Expected: 985 passed, 0 failed, 6 skipped
+```
+
+---
+
+## Expose to Cloudflare when ready
+
+The UI is intentionally not exposed during initial deployment. When you are ready to go live:
+
+### Step 1 — Enable the Traefik route
+
+Edit `/home/avi/infrastructure/traefik/dynamic/them-routes.yml` and uncomment the router block:
+
+```yaml
+http:
+  routers:
+    them-external:
+      rule: "Host(`them.avico78.com`)"
+      entrypoints:
+        - web
+      service: them-traefik-svc
+      middlewares:
+        - security-headers
+
+  services:
+    them-traefik-svc:
+      loadBalancer:
+        servers:
+          - url: "http://them-traefik:8088"
+```
+
+The external Traefik watches this directory — no restart needed, the route activates within seconds.
+
+### Step 2 — Add the Cloudflare Tunnel ingress rule
+
+Find the cloudflared config (mounted into `infra-cloudflared`) and add an ingress entry for `them.avico78.com`:
+
+```bash
+# Find the config file
+docker inspect infra-cloudflared --format '{{range .Mounts}}{{.Source}} → {{.Destination}}{{"\n"}}{{end}}'
+```
+
+Add to the tunnel's `config.yml` ingress list (before the catch-all `http_status:404`):
+
+```yaml
+- hostname: them.avico78.com
+  service: http://infra-traefik:80
+  originRequest:
+    connectTimeout: 30s
+```
+
+Then restart cloudflared:
+
+```bash
+docker restart infra-cloudflared
+```
+
+### Step 3 — Add DNS record in Cloudflare
+
+In the Cloudflare dashboard for `avico78.com`:
+- **Type:** CNAME
+- **Name:** `them`
+- **Target:** your tunnel ID (`<tunnel-id>.cfargotunnel.com`) — or if routing through existing tunnel, it's already covered
+- **Proxy:** orange cloud (proxied)
+
+### Step 4 — Verify end-to-end
+
+```bash
+curl -sf https://them.avico78.com/go-health/live
+# Expected: {"status":"ok"}
+
+curl -sf -o /dev/null -w "%{http_code}\n" https://them.avico78.com/api/v1/admin/agents
+# Expected: 401 (auth gate working)
 ```
 
 ---
