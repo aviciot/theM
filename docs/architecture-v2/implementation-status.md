@@ -1,11 +1,12 @@
 # Implementation Status — Go Gateway
 
-**Last updated:** 2026-07-28 (Phase R-2 Temporal-Owned Go Worker complete)
+**Last updated:** 2026-07-29 (Phase R-3 File Artifact Delivery complete)
 
 ---
 
 ## Current State
 
+Phase R-3 complete (2026-07-29): File artifact delivery — DB schema, recorder, handler, orchestrator wiring. 22 new tests. HEAD `ac12082`.
 Phase R-2 complete (2026-07-28): Go Temporal worker registered; inline execution path removed; orchestrator feature parity achieved. 11 new tests. HEAD `029bf8c`.
 Phase R-1 complete (2026-07-28): Prometheus metrics + structured logging in WS/SSE handlers + drain observability. 12 new tests in `internal/metrics/`.
 Wave 7 complete (2026-07-26): llm-providers CRUD (GET/POST/PATCH/DELETE) now served by Go.
@@ -31,9 +32,10 @@ Phase 11c-C validation complete (2026-07-21). 229 unit tests pass. Race detector
 | `internal/session` | Complete | 7 (S1-06) | `session.go` |
 | `internal/event` | Complete | 6 (S1-07) | `bus.go` |
 | `internal/domain` | Complete | 3 (S1-08) | `domain.go` |
-| `internal/runrecorder` | Complete | 8 (S1-09) | `recorder.go` (events_transport per RUN_EVENTS_MODE) |
+| `internal/runrecorder` | Complete | 18 (S1-09) | `recorder.go` — events_transport, RecordArtifact (1MiB limit), GetArtifact, sanitizeFilename |
+| `internal/artifacts` | Complete (R-3) | 9 (S1-30) | `handler.go` — bearer-token auth, RFC 5987 Content-Disposition, safe content-type allow-list |
 | `internal/llm` | Complete | 6 (S1-10) | `provider.go`, `anthropic.go`, `mock.go` |
-| `internal/orchestrator` | Complete (R-2A) | 7 (S1-28) | `orchestrator.go` — checkpoints, budget, parallel fan-out, A2A discovery |
+| `internal/orchestrator` | Complete (R-3) | 10 (S1-28) | `orchestrator.go` — checkpoints, budget, parallel fan-out, A2A discovery, artifact recording + metadata-only event emission |
 | `internal/temporal` | Complete (R-2B) | 10 (S2-02, S1-29) | `workflow.go`, `activities.go`, `client.go`, `signaler.go`, `worker_test.go` |
 | `internal/ws` | Complete (R-2B) | 17 (S1-12) | `handler.go` — inline path removed, Temporal unconditional |
 | `internal/sse` | Complete (R-2B) | 16 (S1-13) | `handler.go` — inline path removed, Temporal unconditional |
@@ -81,6 +83,7 @@ For full Traefik priority details see `NEXT_SESSION_BRIDGE_HANDOVER.md`.
 | `ALL /api/v1/admin/llm-providers*` (excl. /routing/config) | `internal/admin` (Wave 7) | JWT super-admin | Go |
 | `GET /api/v1/runs*` | `internal/admin` | JWT super-admin | Go |
 | `POST /api/v1/runs/{run_id}/signal` | `internal/admin` | JWT | Go |
+| `GET /api/v1/runs/{run_id}/artifacts/{artifact_id}` | `internal/artifacts` (R-3) | Bearer token | Go |
 | All other `/api/v1/*` | Python bridge | — | Python |
 
 **Python still owns:** `/api/v1/auth/*`, agent test/discover/security-scan, orchestrator test-llm, application import/export/restore/bulk-delete/runtime, dashboard WS `/ws/dashboard`, one-segment `/ws/orchestrate/{name}`.

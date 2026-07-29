@@ -1,6 +1,6 @@
 # Go Rewrite — Lessons Learned
 
-Last updated: 2026-07-20
+Last updated: 2026-07-29
 
 ---
 
@@ -1123,3 +1123,19 @@ both `docker-compose.yml` (dev/go profile) and `theM_gateway/docker-compose.trae
 **Lesson:** Structured logging fields (`ep_slug`, `app_id`, `tenant_id`, `session_id`) must be added to ALL log sites for a given handler, not just the success path. Error paths (gate rejection, register failure) are the most useful for incident diagnosis and are often omitted in the first pass.
 
 **Lesson:** The `epTypeLabel` helper must be defined in BOTH `internal/ws/handler.go` and `internal/sse/handler.go` — it is not shared via a common package because each handler file is self-contained. Keep both definitions identical.
+
+---
+
+## R-3 (2026-07-29): File Artifact Delivery
+
+**Lesson:** The existing `them.artifacts` table (A2A task artifacts, JSONB parts) is structurally incompatible with file artifact storage (BYTEA data, run_id FK). Do not reuse it. Create a separate table `them.run_artifacts` with the correct schema. Name collisions between A2A artifacts and run artifacts caused confusion early in planning — the gate doc's §1.11 "artifacts" refers to run file artifacts, not A2A task part artifacts.
+
+**Lesson:** When extending a DB interface (e.g., adding `QueryRow` to `DBQuerier`), every test fake that implements that interface must be updated in the same commit. In this codebase there were fakes in: `runrecorder/recorder_test.go`, `orchestrator/orchestrator_test.go`, `ws/handler_test.go`, `sse/handler_test.go`, `a2a/server_test.go`, `integration_test.go`. Search with `grep -rn "DBQuerier\|Exec(ctx" go/` to find all sites before adding a method.
+
+**Lesson:** The artifact endpoint is data-plane (bearer token auth), not control-plane (JWT admin auth). Mounting it inside the admin router block under `RequireSuperAdmin` would break all non-admin callers. The correct pattern: create a separate package (`internal/artifacts`), mount it independently in `main.go` with its own bearer token middleware, and register the route under `/api/v1` but OUTSIDE the admin JWT block.
+
+**Lesson:** Sanitize filenames in TWO places: at write time (recorder.go `sanitizeFilename`) and at response time (handler.go `safeResponseFilename`). The two passes serve different purposes — write-time sanitization ensures the DB row is clean; response-time sanitization is a defense-in-depth guard in case a row from a different path is read. Do not skip the second pass because "the recorder already did it."
+
+**Lesson:** Content-Type allow-listing at the HTTP response boundary prevents stored XSS attacks via crafted MIME types. Even if the stored content_type is `text/html`, serving it as `text/html` with `Content-Disposition: attachment` is safer when paired with the allow-list. The allow-list should cover all `application/`, `image/`, `text/`, `audio/`, `video/`, and `font/` prefixes — not just a whitelist of exact types, which becomes unmaintainable.
+
+**Lesson:** The `"file"` event emitted to the bus must be verified in tests to NOT contain the binary data. `TestOrchestrator_ArtifactEventContainsNoPayload` does this by unmarshaling the event payload and asserting that "data", "data_base64", and "storage_path" keys are absent. This test must be run with `-race` to confirm the artifact recording goroutine does not race with event publication.
