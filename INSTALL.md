@@ -1,6 +1,6 @@
 # the-M Stack — Installation Guide
 
-**Platform:** Linux (Ubuntu 22.04 / 24.04), Docker Engine ≥ 24, docker compose v2  
+**Platform:** Hetzner VPC — Linux (Ubuntu 22.04 / 24.04), Docker Engine ≥ 24, docker compose v2  
 **Last updated:** 2026-07-29  
 **Repo:** https://github.com/aviciot/theM
 
@@ -38,6 +38,17 @@ them-traefik  (internal path router — routes /ws, /api/v1, /, etc.)
 | `temporal-frontend` | Temporal server | 7233 |
 | `temporal-ui` | Temporal Web UI | 8080 |
 | `them-frontend` | Next.js dashboard | 3200 |
+
+---
+
+## Hetzner VPC notes
+
+This stack is deployed on a **Hetzner Cloud VPC** (private network). A few things specific to this environment:
+
+- **Private IP:** the server has a Hetzner private network IP (e.g. `10.0.0.x`) and a public IP. The stack listens on the private IP via the VPC; public access goes through Cloudflare only.
+- **Firewall:** configure Hetzner Firewall rules to block direct inbound access to port 8088 from the public internet — only Cloudflare edge IPs (or your cloudflared tunnel outbound traffic) should reach the stack.
+- **External Traefik:** shared Traefik instance running on this same Hetzner server, on the `proxy-network` Docker network — the same setup used for your other services on this host.
+- **Cloudflare Tunnel:** recommended over direct IP exposure. The `cloudflared` daemon runs on the server, creates an outbound tunnel to Cloudflare's edge, and routes `them.yourdomain.com` inbound to `them-traefik:8088` over the VPC private interface. No inbound firewall rules needed for the application port.
 
 ---
 
@@ -205,24 +216,27 @@ services:
 
 ### 4-C. If using Cloudflare Tunnel instead of direct IP exposure
 
-If you use `cloudflared` tunnel (recommended for zero-port-exposure):
+**Recommended on Hetzner VPC.** The `cloudflared` daemon runs on the same Hetzner server, connects outbound to Cloudflare's edge, and forwards inbound traffic to `them-traefik:8088` over the VPC private interface. No inbound firewall rule for port 8088 is needed.
 
 ```bash
-# On your server, configure the tunnel to point to them-traefik:8088 directly
-# (if cloudflared is in the same Docker network) or to localhost:8088 (if tunneled locally).
+# On the Hetzner server, configure the tunnel to point to them-traefik:8088.
+# Use localhost:8088 — them-traefik binds 0.0.0.0:8088 on the host by default.
 
-# Example: /etc/cloudflared/config.yml
+# /etc/cloudflared/config.yml
+tunnel: <your-tunnel-id>
+credentials-file: /root/.cloudflared/<tunnel-id>.json
+
 ingress:
   - hostname: them.yourdomain.com
-    service: http://them-traefik:8088
+    service: http://localhost:8088
     originRequest:
-      # Required for WebSocket support
       connectTimeout: 30s
+      # WebSocket passthrough — required for Playground /ws connections
       noTLSVerify: false
   - service: http_status:404
 ```
 
-In this case, cloudflared talks directly to `them-traefik:8088`, TLS is terminated at Cloudflare, and no external Traefik TLS label is needed — simplify the labels:
+In this case cloudflared talks to `them-traefik` via localhost, TLS is terminated at Cloudflare's edge, and no TLS cert config is needed on the Traefik side. Simplify the external labels:
 
 ```yaml
 labels:
@@ -231,6 +245,8 @@ labels:
   - "traefik.http.routers.them-external.entrypoints=web"
   - "traefik.http.services.them-external-svc.loadbalancer.server.port=8088"
 ```
+
+> **Hetzner Firewall rule:** ensure the Hetzner Cloud Firewall blocks inbound TCP 8088 from all sources except the Hetzner private network range (e.g. `10.0.0.0/8`). The tunnel is outbound — no inbound rule needed for the application.
 
 ---
 
@@ -512,14 +528,27 @@ If using an external Traefik with TLS (instead of Cloudflare Tunnel):
 3. Configure your external Traefik to use these certs for `them.yourdomain.com`
 4. Set SSL/TLS mode to **Full (strict)** in Cloudflare
 
-### Security settings
+### Hetzner Firewall rules
 
-Recommended Cloudflare settings:
-- **SSL/TLS:** Full (strict) or use Tunnel
+Configure in Hetzner Cloud → Firewall → the firewall attached to this server:
+
+| Direction | Protocol | Port | Source | Purpose |
+|---|---|---|---|---|
+| Inbound | TCP | 22 | your management IP | SSH |
+| Inbound | TCP | 8089 | Hetzner private network (`10.0.0.0/8`) | Traefik dashboard (internal only) |
+| Inbound | ALL | ALL | Hetzner private network (`10.0.0.0/8`) | VPC inter-service traffic |
+| Outbound | ALL | ALL | anywhere | Docker pulls, Cloudflare tunnel, Anthropic API |
+
+Do **not** open port 8088 to the public internet — the Cloudflare Tunnel handles all inbound traffic.
+
+### Cloudflare security settings
+
+Recommended Cloudflare settings for this domain:
+- **SSL/TLS:** Full (strict) — or Flexible if using Tunnel without TLS on origin
 - **Minimum TLS Version:** 1.2
-- **HSTS:** enabled (after confirming HTTPS works end-to-end)
-- **Bot Fight Mode:** optional — may interfere with A2A agent traffic; disable if needed
-- **WAF:** Custom rules to allow your management IPs unrestricted, apply rate limiting to `/apps/*` and `/ws/*`
+- **HSTS:** enable after confirming HTTPS works end-to-end
+- **Bot Fight Mode:** optional — may interfere with A2A agent-to-agent traffic; disable if needed
+- **WAF:** custom rules to allow your Hetzner management IPs unrestricted; apply rate limiting to `/apps/*` and `/ws/*`
 
 ---
 
