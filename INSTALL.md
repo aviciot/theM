@@ -7,6 +7,46 @@
 
 ---
 
+## Current Hetzner deployment state
+
+> Update this section whenever migrations are applied, profiles change, or agents are added/removed.
+
+**Last updated:** 2026-07-29
+
+### Running profiles
+
+| Profile | Containers |
+|---|---|
+| core (always on) | them-postgres, them-redis, them-auth-service, them-bridge, them-go-bridge × 2, them-traefik, them-frontend |
+| `temporal` | temporal-frontend, temporal-ui, temporal-admin-tools, them-worker |
+| `test-agents` | a2a-echo, a2a-slow, a2a-stream |
+| `debate` | agent-evidence, agent-logic, agent-creative, agent-judge |
+
+Note: `linux-start-hetzner.sh` starts core + temporal automatically. `test-agents` and `debate` must be started separately after:
+```bash
+docker compose [full -f flags] --profile temporal --profile test-agents --profile debate \
+  up -d a2a-echo a2a-slow a2a-stream agent-evidence agent-logic agent-creative agent-judge
+```
+
+### DB state
+
+- **Auth users:** `admin/admin123`, `avi/avi123` (both super_admin)
+- **Agents (8, all enabled):** `a2a_echo`, `a2a_slow`, `a2a_stream`, `agent_evidence`, `agent_logic`, `agent_creative`, `agent_judge`, `vision_agent`
+- **Orchestrators:** `default` (claude-sonnet-4-6 + vision_agent), `debate_flow` (claude-haiku + 4 debate agents)
+- **LLM providers:** Anthropic enabled, OpenAI seeded but disabled
+
+### Applied migrations
+
+`schema_current.sql` (baseline) + `008_debate_stack.sql`
+
+### Known gaps
+
+- `vision_agent` enabled in DB but needs `GOOGLE_MAPS_API_KEY` + `FAL_API_KEY` in `.env` to actually work
+- UI not yet exposed externally — uncomment the router block in `/home/avi/infrastructure/traefik/dynamic/them-routes.yml` when ready (see [Expose to Cloudflare](#expose-to-cloudflare-when-ready))
+- `linux-start-hetzner.sh` does not auto-start `test-agents` / `debate` profiles — start them manually after the main script
+
+---
+
 ## Architecture overview
 
 ```
