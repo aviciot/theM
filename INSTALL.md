@@ -69,11 +69,23 @@ This stack is deployed on a **Hetzner Cloud VPC** on the same server as the othe
 - Joins `them-traefik` to `proxy-network` so `infra-traefik` can resolve it by container name
 - No Traefik labels on `them-traefik` — routing is handled via the file-based config in `them-routes.yml`
 
+### What `docker-compose.hetzner-build.yml` does
+
+This overlay is critical on Hetzner because `theM_gateway/` is a **sparse overlay** — it only contains files that differ from the main `them/` repo. The full source code (Dockerfiles, `app/`, `frontend/`, `auth_service/`, etc.) lives in the parent `them/` directory.
+
+Two problems it solves:
+
+1. **Build context** — the base `docker-compose.yml` sets `context: .` (i.e. theM_gateway/), which would fail to find the Dockerfiles. The overlay sets all build contexts to `..` (parent `them/`).
+
+2. **Runtime volume mounts** — the base file sets `- .:/app` (mounts theM_gateway/ over /app at runtime), shadowing the image's baked-in full source code with the sparse overlay. Docker Compose merges volume arrays rather than replacing them, so `docker-compose.linux.yml`'s attempt to clear these doesn't work reliably. The overlay explicitly overrides `- .:/app` → `- ..:/app` for `them-bridge`, `them-bridge-2`, `them-worker`, and `them-frontend`.
+
+3. **Config file paths** — `traefik.yml`, `postgres/init/`, and `redis/config/redis.conf` are only in the parent, not in the sparse overlay. Docker would otherwise create empty directories in theM_gateway/ for these mounts (which would fail silently). The overlay redirects all of these to `../`.
+
 ### Hetzner start script
 
 **Do not modify `linux-start.sh`** — it is the generic Linux script shared across all deployments.
 
-Instead use `linux-start-hetzner.sh`, which wraps the generic script and then re-applies `docker-compose.cloudflare.yml` to join `them-traefik` to `proxy-network`:
+Instead use `linux-start-hetzner.sh` — a **standalone** script (does NOT call `linux-start.sh`) that includes all the Hetzner-specific overlays in its own COMPOSE array:
 
 ```bash
 cd theM_gateway
@@ -84,7 +96,8 @@ The Hetzner-specific files are:
 
 | File | Purpose |
 |---|---|
-| `scripts/linux-start-hetzner.sh` | Hetzner wrapper — calls `linux-start.sh` then applies cloudflare overlay |
+| `scripts/linux-start-hetzner.sh` | Full Hetzner start script (standalone — does NOT call `linux-start.sh`) |
+| `docker-compose.hetzner-build.yml` | Build context + volume overrides pointing to parent `them/` (see above) |
 | `docker-compose.cloudflare.yml` | Joins `them-traefik` to `proxy-network` (shared with `infra-traefik`) |
 | `/home/avi/infrastructure/traefik/dynamic/them-routes.yml` | External Traefik route for `them.avico78.com` (router commented out until UI goes live) |
 
@@ -314,32 +327,62 @@ cd theM_gateway
 8. Starts Traefik
 9. Starts Python bridge (Admin API) + frontend
 
-> **Note:** `linux-start.sh` uses this compose stack internally:
+> **Note:** The full Hetzner compose stack (in `linux-start-hetzner.sh`) is:
 > ```
 > docker-compose.yml
 > docker-compose.linux.yml
 > docker-compose.integration.yml
 > docker-compose.soak.yml
 > docker-compose.traefik.yml
+> docker-compose.hetzner-build.yml   ← build context + volume overrides
+> docker-compose.cloudflare.yml      ← external proxy-network
 > --profile temporal
 > ```
 >
-> When using your cloudflare overlay, append it to the compose command. You can either modify `linux-start.sh` or run the stack manually (see step 6 below).
-
-The `linux-start-hetzner.sh` script handles this automatically — no manual compose command needed.
+> `linux-start-hetzner.sh` is standalone — it does NOT call or wrap `linux-start.sh`. It builds the full COMPOSE array itself.
 
 ---
 
 ## Step 6 — Seed development users (dev/staging only)
 
-The fresh schema install creates only system records. No user accounts are created.
+The fresh schema install creates roles but no user accounts. User creation via the auth service API requires an existing authenticated user (bootstrap chicken-and-egg), so the first user must be inserted directly via psql.
+
+Generate bcrypt hashes and insert:
 
 ```bash
-# Create default dev users: admin/admin123 and avi/avi123
-docker exec -i them-postgres psql -U them -d them < db/seed_users.sql
+# Generate hashes inside the auth-service container (which has bcrypt installed)
+docker exec them-auth-service python3 -c "
+import bcrypt
+for u, p in [('admin', 'admin123'), ('avi', 'avi123')]:
+    h = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
+    print(f'INSERT INTO auth_service.users (username, name, email, password_hash, role_id, active)')
+    print(f\"VALUES ('{u}', '{u.capitalize()}', '{u}@them.local', '{h}', 1, true)\")
+    print('ON CONFLICT (username) DO NOTHING;')
+"
+
+# Then insert the printed statements via psql:
+docker exec -it them-postgres psql -U them -d them
+# Paste the INSERT statements, then \q to exit
 ```
 
-> **Never do this in production.** Manage users through the auth service API (`POST /api/v1/auth/register` or the admin UI).
+Shortcut one-liner (assumes bcrypt available in auth container):
+
+```bash
+ADMIN_HASH=$(docker exec them-auth-service python3 -c "import bcrypt; print(bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode())")
+AVI_HASH=$(docker exec them-auth-service python3 -c "import bcrypt; print(bcrypt.hashpw(b'avi123', bcrypt.gensalt()).decode())")
+
+docker exec them-postgres psql -U them -d them -c "
+INSERT INTO auth_service.users (username, name, email, password_hash, role_id, active)
+VALUES ('admin', 'Admin', 'admin@them.local', '${ADMIN_HASH}', 1, true) ON CONFLICT (username) DO NOTHING;
+INSERT INTO auth_service.users (username, name, email, password_hash, role_id, active)
+VALUES ('avi', 'Avi', 'avi@them.local', '${AVI_HASH}', 1, true) ON CONFLICT (username) DO NOTHING;
+SELECT username, role_id, active FROM auth_service.users;
+"
+```
+
+Once an admin user exists, subsequent users can be created via the auth service API at `POST /api/v1/users`.
+
+> **Never use `admin123` in production.** The above is for local/staging only.
 
 ---
 

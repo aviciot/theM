@@ -1,0 +1,94 @@
+version: "3.9"
+# docker-compose.hetzner-build.yml
+# Hetzner-specific build context and volume overrides.
+#
+# On Hetzner the full repo is at /home/avi/them/ and theM_gateway/ is a sparse overlay.
+# Dockerfiles live in the parent (them/) not in theM_gateway/, so build contexts
+# must point to .. (parent directory) for services that use them.
+#
+# The base docker-compose.yml mounts .:app (i.e. theM_gateway/ → /app) at runtime,
+# which would shadow the image's baked-in code with the sparse overlay.
+# docker-compose.linux.yml tries to clear these but Compose MERGES volume arrays, so
+# the bind mount survives. We override it here by replacing .:/app with ..:/app so
+# the full repo (with complete app/ package) is mounted instead.
+
+services:
+  them-bridge:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/app
+      - them-logs:/app/logs
+
+  them-bridge-2:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/app
+      - them-logs:/app/logs
+
+  them-worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile.worker
+    volumes:
+      - ..:/app
+      - them-logs:/app/logs
+
+  them-go-bridge:
+    build:
+      context: ..
+      dockerfile: Dockerfile.go
+
+  them-go-bridge-2:
+    build:
+      context: ..
+      dockerfile: Dockerfile.go
+
+  them-go-worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile.go-worker
+
+  them-go-worker-2:
+    build:
+      context: ..
+      dockerfile: Dockerfile.go-worker
+
+  them-auth-service:
+    build:
+      context: ../auth_service
+      dockerfile: Dockerfile
+
+  them-frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+      - /app/.next
+
+  vision-agent:
+    build:
+      context: ../agents/vision_agent
+      dockerfile: Dockerfile
+
+  # Override Traefik config path: theM_gateway/ is sparse, parent has the real traefik.yml.
+  them-traefik:
+    volumes:
+      - ../traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # Postgres and Redis config files also live in the parent, not the sparse overlay.
+  them-postgres:
+    volumes:
+      - them-postgres-data:/var/lib/postgresql/data
+      - ../postgres/init:/docker-entrypoint-initdb.d
+
+  them-redis:
+    volumes:
+      - them-redis-data:/data
+      - ../redis/config/redis.conf:/etc/redis/redis.conf:ro
