@@ -76,6 +76,41 @@ services:
       context: ../agents/vision_agent
       dockerfile: Dockerfile
 
+  a2a-echo:
+    build:
+      context: ../agents/a2a_echo
+      dockerfile: Dockerfile
+
+  a2a-slow:
+    build:
+      context: ../agents/a2a_slow
+      dockerfile: Dockerfile
+
+  a2a-stream:
+    build:
+      context: ../agents/a2a_stream
+      dockerfile: Dockerfile
+
+  agent-evidence:
+    build:
+      context: ../agents/debate/agent_evidence
+      dockerfile: Dockerfile
+
+  agent-logic:
+    build:
+      context: ../agents/debate/agent_logic
+      dockerfile: Dockerfile
+
+  agent-creative:
+    build:
+      context: ../agents/debate/agent_creative
+      dockerfile: Dockerfile
+
+  agent-judge:
+    build:
+      context: ../agents/debate/agent_judge
+      dockerfile: Dockerfile
+
   # Override Traefik config path: theM_gateway/ is sparse, parent has the real traefik.yml.
   them-traefik:
     volumes:
