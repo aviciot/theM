@@ -54,7 +54,6 @@ COMPOSE=(
   -f docker-compose.integration.yml
   -f docker-compose.soak.yml
   -f docker-compose.traefik.yml
-  -f docker-compose.cloudflare.yml
   --profile temporal
 )
 

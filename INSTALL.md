@@ -69,22 +69,24 @@ This stack is deployed on a **Hetzner Cloud VPC** on the same server as the othe
 - Joins `them-traefik` to `proxy-network` so `infra-traefik` can resolve it by container name
 - No Traefik labels on `them-traefik` — routing is handled via the file-based config in `them-routes.yml`
 
-### linux-start.sh modification required
+### Hetzner start script
 
-Edit `theM_gateway/scripts/linux-start.sh` and add `-f docker-compose.cloudflare.yml` to the `COMPOSE` array:
+**Do not modify `linux-start.sh`** — it is the generic Linux script shared across all deployments.
+
+Instead use `linux-start-hetzner.sh`, which wraps the generic script and then re-applies `docker-compose.cloudflare.yml` to join `them-traefik` to `proxy-network`:
 
 ```bash
-COMPOSE=(
-  docker compose
-  -f docker-compose.yml
-  -f docker-compose.linux.yml
-  -f docker-compose.integration.yml
-  -f docker-compose.soak.yml
-  -f docker-compose.traefik.yml
-  -f docker-compose.cloudflare.yml    # ← add this
-  --profile temporal
-)
+cd theM_gateway
+./scripts/linux-start-hetzner.sh [--build]
 ```
+
+The Hetzner-specific files are:
+
+| File | Purpose |
+|---|---|
+| `scripts/linux-start-hetzner.sh` | Hetzner wrapper — calls `linux-start.sh` then applies cloudflare overlay |
+| `docker-compose.cloudflare.yml` | Joins `them-traefik` to `proxy-network` (shared with `infra-traefik`) |
+| `/home/avi/infrastructure/traefik/dynamic/them-routes.yml` | External Traefik route for `them.avico78.com` (router commented out until UI goes live) |
 
 ---
 
@@ -288,16 +290,16 @@ labels:
 
 ## Step 5 — Start the stack
 
-The `linux-start.sh` script orchestrates the full startup sequence:
+**On this Hetzner server**, always use `linux-start-hetzner.sh` — not the generic `linux-start.sh`. The Hetzner wrapper calls the generic script and then applies the Cloudflare overlay.
 
 ```bash
 cd theM_gateway
 
 # First-time or after a code change — rebuild images:
-./scripts/linux-start.sh --build
+./scripts/linux-start-hetzner.sh --build
 
 # Subsequent starts (no code change):
-./scripts/linux-start.sh
+./scripts/linux-start-hetzner.sh
 ```
 
 **What it does (in order):**
@@ -324,36 +326,7 @@ cd theM_gateway
 >
 > When using your cloudflare overlay, append it to the compose command. You can either modify `linux-start.sh` or run the stack manually (see step 6 below).
 
-### Using the cloudflare overlay
-
-Edit `scripts/linux-start.sh` and add `-f docker-compose.cloudflare.yml` to the `COMPOSE` array:
-
-```bash
-COMPOSE=(
-  docker compose
-  -f docker-compose.yml
-  -f docker-compose.linux.yml
-  -f docker-compose.integration.yml
-  -f docker-compose.soak.yml
-  -f docker-compose.traefik.yml
-  -f docker-compose.cloudflare.yml    # ← add this line
-  --profile temporal
-)
-```
-
-Or run manually:
-
-```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.linux.yml \
-  -f docker-compose.integration.yml \
-  -f docker-compose.soak.yml \
-  -f docker-compose.traefik.yml \
-  -f docker-compose.cloudflare.yml \
-  --profile temporal \
-  up -d --build
-```
+The `linux-start-hetzner.sh` script handles this automatically — no manual compose command needed.
 
 ---
 
