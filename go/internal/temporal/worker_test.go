@@ -8,13 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/aviciot/them/internal/domain"
+	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/temporal"
 )
 
 // fakeOrchestratorRunner implements OrchestratorRunner for testing.
 type fakeOrchestratorRunner struct{}
 
-func (f *fakeOrchestratorRunner) Run(_ context.Context, _, _ string, _ domain.Message, _ []domain.Message) (string, error) {
+func (f *fakeOrchestratorRunner) Run(_ context.Context, _, _ string, _ domain.Message, _ []domain.Message, _ ...orchestrator.RunContext) (string, error) {
 	return "done", nil
 }
 

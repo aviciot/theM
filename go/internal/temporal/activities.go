@@ -8,12 +8,14 @@ import (
 	"go.temporal.io/sdk/activity"
 
 	"github.com/aviciot/them/internal/domain"
+	"github.com/aviciot/them/internal/orchestrator"
 )
 
 // OrchestratorRunner is the interface activities use to call the orchestrator.
 // Implemented by *orchestrator.Orchestrator; tests inject a fake.
+// The variadic runCtx carries optional per-run identity (R-3 artifact delivery).
 type OrchestratorRunner interface {
-	Run(ctx context.Context, runID, contextID string, userMsg domain.Message, history []domain.Message) (string, error)
+	Run(ctx context.Context, runID, contextID string, userMsg domain.Message, history []domain.Message, runCtx ...orchestrator.RunContext) (string, error)
 }
 
 // Activities holds dependencies for Temporal activities.

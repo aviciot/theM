@@ -4,7 +4,10 @@ package runrecorder
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aviciot/them/internal/config"
@@ -16,6 +19,13 @@ import (
 type DBQuerier interface {
 	// Exec executes a statement and discards the result.
 	Exec(ctx context.Context, sql string, args ...any) error
+	// QueryRow executes a query expected to return at most one row.
+	QueryRow(ctx context.Context, sql string, args ...any) SingleRowScanner
+}
+
+// SingleRowScanner scans a single database row.
+type SingleRowScanner interface {
+	Scan(dest ...any) error
 }
 
 // eventsTransportPubSub / eventsTransportStreams are the two valid values of the
@@ -25,6 +35,12 @@ const (
 	eventsTransportPubSub  = "pubsub"
 	eventsTransportStreams = "streams"
 )
+
+// ArtifactMaxBytes is the maximum size of a file artifact in bytes (1 MiB).
+const ArtifactMaxBytes = 1 << 20 // 1 MiB
+
+// ErrArtifactTooLarge is returned when the artifact data exceeds ArtifactMaxBytes.
+var ErrArtifactTooLarge = errors.New("runrecorder: artifact exceeds 1 MiB limit")
 
 // Recorder writes run lifecycle events to the database.
 type Recorder struct {
@@ -130,4 +146,99 @@ func (r *Recorder) RecordStep(ctx context.Context, runID, stepType, content stri
 		return fmt.Errorf("runrecorder: record step for run %s: %w", runID, err)
 	}
 	return nil
+}
+
+// ArtifactInput carries the fields needed to persist a file artifact.
+type ArtifactInput struct {
+	RunID         string
+	ApplicationID string // may be empty
+	SessionID     string // may be empty
+	Filename      string
+	ContentType   string
+	Data          []byte
+}
+
+// ArtifactMeta carries the metadata and data for a retrieved artifact.
+// SECURITY: Data is raw bytes loaded from the DB. Never include in log output.
+type ArtifactMeta struct {
+	ID          string
+	RunID       string
+	Filename    string
+	ContentType string
+	Size        int64
+	Data        []byte
+}
+
+// RecordArtifact persists a file artifact to them.run_artifacts.
+// Returns ErrArtifactTooLarge if len(data) > ArtifactMaxBytes.
+// Returns the artifact UUID on success.
+// SECURITY: Data must never appear in log output.
+func (r *Recorder) RecordArtifact(ctx context.Context, in ArtifactInput) (string, error) {
+	if len(in.Data) > ArtifactMaxBytes {
+		return "", ErrArtifactTooLarge
+	}
+	ct := in.ContentType
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	filename := sanitizeFilename(in.Filename)
+	if filename == "" {
+		filename = "artifact"
+	}
+
+	// Nullable UUID fields: empty string means NULL.
+	var appID, sessionID *string
+	if in.ApplicationID != "" {
+		appID = &in.ApplicationID
+	}
+	if in.SessionID != "" {
+		sessionID = &in.SessionID
+	}
+
+	const q = `
+		INSERT INTO them.run_artifacts (run_id, application_id, session_id, filename, content_type, size, data)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id::text`
+	row := r.db.QueryRow(ctx, q, in.RunID, appID, sessionID, filename, ct, int64(len(in.Data)), in.Data)
+	var id string
+	if err := row.Scan(&id); err != nil {
+		return "", fmt.Errorf("runrecorder: record artifact for run %s: %w", in.RunID, err)
+	}
+	return id, nil
+}
+
+// GetArtifact retrieves a file artifact from them.run_artifacts.
+// The query enforces that artifact.run_id == runID so cross-run access is denied.
+// SECURITY: Returned Data must never appear in log output.
+func (r *Recorder) GetArtifact(ctx context.Context, runID, artifactID string) (ArtifactMeta, error) {
+	const q = `
+		SELECT id::text, run_id::text, filename, content_type, size, data
+		FROM them.run_artifacts
+		WHERE id = $1::uuid AND run_id = $2::uuid`
+	row := r.db.QueryRow(ctx, q, artifactID, runID)
+	var a ArtifactMeta
+	if err := row.Scan(&a.ID, &a.RunID, &a.Filename, &a.ContentType, &a.Size, &a.Data); err != nil {
+		return a, fmt.Errorf("runrecorder: get artifact %s: %w", artifactID, err)
+	}
+	return a, nil
+}
+
+// sanitizeFilename strips directory components and control characters from a
+// filename to prevent path traversal attacks and unsafe filenames.
+func sanitizeFilename(name string) string {
+	// Strip any directory components (path traversal prevention).
+	name = filepath.Base(name)
+	// Replace null bytes and control characters.
+	var sb strings.Builder
+	for _, ru := range name {
+		if ru >= 32 && ru != 127 && ru != '/' && ru != '\\' {
+			sb.WriteRune(ru)
+		}
+	}
+	result := strings.TrimSpace(sb.String())
+	// Prevent hidden files from being served directly.
+	if strings.HasPrefix(result, ".") {
+		result = "file" + result
+	}
+	return result
 }

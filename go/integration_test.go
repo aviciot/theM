@@ -58,6 +58,20 @@ func (s *mockSessionStore) End(_ context.Context, _, _, _ string) error         
 type mockDB struct{}
 
 func (d *mockDB) Exec(_ context.Context, _ string, _ ...any) error { return nil }
+func (d *mockDB) QueryRow(_ context.Context, _ string, _ ...any) runrecorder.SingleRowScanner {
+	return &mockDBRow{}
+}
+
+type mockDBRow struct{}
+
+func (r *mockDBRow) Scan(dest ...any) error {
+	if len(dest) > 0 {
+		if sp, ok := dest[0].(*string); ok {
+			*sp = "00000000-0000-0000-0000-000000000001"
+		}
+	}
+	return nil
+}
 
 // ── Test setup ────────────────────────────────────────────────────────────────
 

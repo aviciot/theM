@@ -19,6 +19,7 @@ import (
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/agentregistry"
+	"github.com/aviciot/them/internal/artifacts"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/config"
@@ -285,6 +286,14 @@ func run() error {
 	adminRouter := admin.BuildRouter(adminDB, adminCache, temporalSignaler, sessionStore, jwtMiddleware, log, cfg.SecretKey)
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
+
+	// ── 19. Wire artifact download endpoint (Phase R-3) ───────────────────────
+	// Route: GET /api/v1/runs/{run_id}/artifacts/{artifact_id}
+	// Authentication: bearer token (same as WS/SSE — NOT RequireSuperAdmin JWT).
+	// The handler verifies run_id + artifact_id in one DB query (cross-run denied).
+	artifactHandler := artifacts.New(tokenCache, recorder, log)
+	srv.MountArtifacts(artifactHandler.Routes())
+	log.Info("artifact download endpoint mounted", "prefix", "/api/v1")
 
 	log.Info("shutdown drain configured", "drain_seconds", cfg.ShutdownDrainSeconds)
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)

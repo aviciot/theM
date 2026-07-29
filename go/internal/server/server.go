@@ -183,6 +183,14 @@ func (s *Server) MountAdmin(adminHandler http.Handler) {
 	s.router.Mount("/api/v1", adminHandler)
 }
 
+// MountArtifacts mounts the artifact download handler under the /api/v1 prefix.
+// The handler uses bearer token auth (not admin JWT) so it is registered
+// separately from the admin router.
+// Call before ListenAndServe.
+func (s *Server) MountArtifacts(artifactHandler http.Handler) {
+	s.router.Mount("/api/v1", artifactHandler)
+}
+
 // MountApps mounts an /apps handler at the router root.
 // The handler should register /apps/{slug}/ws and /apps/{slug}/sse routes.
 // Call before ListenAndServe.

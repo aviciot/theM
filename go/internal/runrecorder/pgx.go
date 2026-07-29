@@ -21,3 +21,9 @@ func (q *PgxPoolQuerier) Exec(ctx context.Context, sql string, args ...any) erro
 	_, err := q.pool.Exec(ctx, sql, args...)
 	return err
 }
+
+// QueryRow executes sql on the pool and returns a single-row scanner.
+// pgxpool.Pool.QueryRow already satisfies SingleRowScanner (it returns pgx.Row).
+func (q *PgxPoolQuerier) QueryRow(ctx context.Context, sql string, args ...any) SingleRowScanner {
+	return q.pool.QueryRow(ctx, sql, args...)
+}

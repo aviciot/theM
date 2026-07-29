@@ -23,6 +23,20 @@ import (
 type noopDB struct{}
 
 func (n *noopDB) Exec(_ context.Context, _ string, _ ...any) error { return nil }
+func (n *noopDB) QueryRow(_ context.Context, _ string, _ ...any) runrecorder.SingleRowScanner {
+	return &noopRow{}
+}
+
+type noopRow struct{}
+
+func (r *noopRow) Scan(dest ...any) error {
+	if len(dest) > 0 {
+		if sp, ok := dest[0].(*string); ok {
+			*sp = "00000000-0000-0000-0000-000000000001"
+		}
+	}
+	return nil
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

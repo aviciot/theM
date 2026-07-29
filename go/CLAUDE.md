@@ -155,8 +155,11 @@ docker compose --profile go logs -f them-go-bridge
 | `internal/event/bus.go` | `go test ./internal/event/...` |
 | `internal/domain/domain.go` | `go test ./internal/domain/...` |
 | `internal/runrecorder/recorder.go` | `go test ./internal/runrecorder/...` |
+| `internal/runrecorder/pgx.go` | `go test ./internal/runrecorder/...` |
+| `internal/artifacts/handler.go` | `go test ./internal/artifacts/...` |
 | `internal/llm/` (any file) | `go test ./internal/llm/...` |
 | `internal/agentregistry/registry.go` | `go test ./internal/agentregistry/...` |
+| `internal/orchestrator/orchestrator.go` | `go test ./internal/orchestrator/...` |
 | `internal/ws/handler.go` | `go test ./internal/ws/...` |
 | `internal/sse/handler.go` | `go test ./internal/sse/...` |
 | `internal/a2a/server.go` | `go test ./internal/a2a/...` |

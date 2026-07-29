@@ -2,8 +2,11 @@ package orchestrator_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,9 +27,62 @@ import (
 type fakeDBQuerier struct{}
 
 func (f *fakeDBQuerier) Exec(_ context.Context, _ string, _ ...any) error { return nil }
+func (f *fakeDBQuerier) QueryRow(_ context.Context, _ string, _ ...any) runrecorder.SingleRowScanner {
+	return &fakeRow{}
+}
+
+type fakeRow struct{}
+
+func (f *fakeRow) Scan(dest ...any) error {
+	if len(dest) > 0 {
+		if sp, ok := dest[0].(*string); ok {
+			*sp = "00000000-0000-0000-0000-000000000001"
+		}
+	}
+	return nil
+}
 
 func newRecorder() *runrecorder.Recorder {
 	return runrecorder.New(&fakeDBQuerier{})
+}
+
+// fakeArtifactRecorder records RecordArtifact calls and can be configured to
+// return specific IDs or errors.
+type fakeArtifactRecorder struct {
+	mu    sync.Mutex
+	calls []runrecorder.ArtifactInput
+	retID string
+	err   error
+}
+
+func (f *fakeArtifactRecorder) RecordArtifact(_ context.Context, in runrecorder.ArtifactInput) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// SECURITY: never store Data in a way that would be logged — just count.
+	f.calls = append(f.calls, runrecorder.ArtifactInput{
+		RunID:         in.RunID,
+		ApplicationID: in.ApplicationID,
+		SessionID:     in.SessionID,
+		Filename:      in.Filename,
+		ContentType:   in.ContentType,
+		// Data intentionally omitted — we only track metadata.
+	})
+	if f.err != nil {
+		return "", f.err
+	}
+	id := f.retID
+	if id == "" {
+		id = "artifact-uuid-001"
+	}
+	return id, nil
+}
+
+func (f *fakeArtifactRecorder) getCalls() []runrecorder.ArtifactInput {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]runrecorder.ArtifactInput, len(f.calls))
+	copy(out, f.calls)
+	return out
 }
 
 // multiCallMockProvider returns different event sequences on each call.
@@ -373,3 +429,279 @@ func TestOrchestrator_NilOptionals(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "hi", result)
 }
+
+// ── Artifact tests ────────────────────────────────────────────────────────────
+
+// artifactToolCall builds a tool call whose result contains an artifact payload.
+func artifactToolCall(id, filename, ct string, data []byte) llm.ToolCall {
+	encoded := base64.StdEncoding.EncodeToString(data)
+	payload := map[string]any{
+		"artifact": map[string]any{
+			"filename":     filename,
+			"content_type": ct,
+			"data_base64":  encoded,
+		},
+	}
+	input, _ := json.Marshal(payload)
+	return llm.ToolCall{
+		ID:   id,
+		Name: "agent__doc-writer",
+		Input: func() map[string]any {
+			var m map[string]any
+			_ = json.Unmarshal(input, &m)
+			return m
+		}(),
+	}
+}
+
+// artifactAgentInvoker returns a tool result containing an artifact payload.
+type artifactAgentInvoker struct {
+	filename string
+	ct       string
+	data     []byte
+}
+
+func (a *artifactAgentInvoker) Invoke(_ context.Context, _ string, _ json.RawMessage) (json.RawMessage, error) {
+	encoded := base64.StdEncoding.EncodeToString(a.data)
+	payload := map[string]any{
+		"artifact": map[string]any{
+			"filename":     a.filename,
+			"content_type": a.ct,
+			"data_base64":  encoded,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	return json.RawMessage(b), nil
+}
+
+// TestOrchestrator_ArtifactEmitted verifies that when a tool returns an artifact
+// payload, RecordArtifact is called exactly once and a "file" event is published.
+func TestOrchestrator_ArtifactEmitted(t *testing.T) {
+	ar := &fakeArtifactRecorder{}
+	bus := event.New()
+
+	// Subscribe to the bus to capture events.
+	allEvents := make([]event.Event, 0)
+	var evMu sync.Mutex
+	sub, _, unsub := bus.Subscribe(context.Background(), "ctx-art", 256)
+	go func() {
+		for ev := range sub {
+			evMu.Lock()
+			allEvents = append(allEvents, ev)
+			evMu.Unlock()
+		}
+	}()
+	defer unsub()
+
+	// Agent returns an artifact payload.
+	agentInvoker := &artifactAgentInvoker{
+		filename: "report.pdf",
+		ct:       "application/pdf",
+		data:     []byte("PDF content"),
+	}
+
+	// First call: LLM requests tool use; second call: stop.
+	mock := newMultiCallMockProvider(
+		[]llm.StreamEvent{
+			{
+				Type: "tool_calls",
+				ToolCalls: []llm.ToolCall{{
+					ID:    "tc-1",
+					Name:  "agent__doc-writer",
+					Input: map[string]any{"input": "generate"},
+				}},
+				StopReason: "tool_use",
+			},
+		},
+		[]llm.StreamEvent{
+			{Type: "stop", StopReason: "end_turn"},
+		},
+	)
+
+	cfg := orchestrator.Config{
+		MaxIterations: 5,
+		AllowedAgents: []string{"doc-writer"},
+	}
+	orch := orchestrator.New(cfg, mock, agentInvoker, newRecorder(), bus, nil).
+		WithArtifactRecorder(ar)
+
+	ctx := context.Background()
+	_, err := orch.Run(ctx, "run-art", "ctx-art", domain.TextMessage(domain.RoleUser, "generate a report"), nil)
+	require.NoError(t, err)
+
+	// Give the subscriber goroutine a moment to process events.
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify RecordArtifact was called exactly once.
+	calls := ar.getCalls()
+	require.Len(t, calls, 1, "RecordArtifact must be called exactly once")
+	assert.Equal(t, "run-art", calls[0].RunID)
+	assert.Equal(t, "report.pdf", calls[0].Filename)
+	assert.Equal(t, "application/pdf", calls[0].ContentType)
+
+	// Verify a "file" event was published.
+	evMu.Lock()
+	defer evMu.Unlock()
+	fileEventCount := 0
+	for _, ev := range allEvents {
+		if ev.Type == "file" {
+			fileEventCount++
+		}
+	}
+	assert.Equal(t, 1, fileEventCount, "exactly one 'file' event must be published")
+}
+
+// TestOrchestrator_ArtifactEventContainsNoPayload verifies that the "file" event
+// payload does NOT contain the raw binary data or data_base64 field.
+func TestOrchestrator_ArtifactEventContainsNoPayload(t *testing.T) {
+	ar := &fakeArtifactRecorder{}
+	bus := event.New()
+
+	fileEvents := make([]event.Event, 0)
+	var evMu sync.Mutex
+	sub, _, unsub := bus.Subscribe(context.Background(), "ctx-nodata", 256)
+	go func() {
+		for ev := range sub {
+			if ev.Type == "file" {
+				evMu.Lock()
+				fileEvents = append(fileEvents, ev)
+				evMu.Unlock()
+			}
+		}
+	}()
+	defer unsub()
+
+	secretData := []byte("TOP SECRET BINARY CONTENT DO NOT LEAK")
+	agentInvoker := &artifactAgentInvoker{
+		filename: "secret.bin",
+		ct:       "application/octet-stream",
+		data:     secretData,
+	}
+
+	mock := newMultiCallMockProvider(
+		[]llm.StreamEvent{
+			{
+				Type: "tool_calls",
+				ToolCalls: []llm.ToolCall{{
+					ID:    "tc-2",
+					Name:  "agent__secret-agent",
+					Input: map[string]any{"input": "generate"},
+				}},
+				StopReason: "tool_use",
+			},
+		},
+		[]llm.StreamEvent{
+			{Type: "stop", StopReason: "end_turn"},
+		},
+	)
+
+	cfg := orchestrator.Config{
+		MaxIterations: 5,
+		AllowedAgents: []string{"secret-agent"},
+	}
+	orch := orchestrator.New(cfg, mock, agentInvoker, newRecorder(), bus, nil).
+		WithArtifactRecorder(ar)
+
+	ctx := context.Background()
+	_, err := orch.Run(ctx, "run-nodata", "ctx-nodata", domain.TextMessage(domain.RoleUser, "go"), nil)
+	require.NoError(t, err)
+
+	time.Sleep(50 * time.Millisecond)
+
+	evMu.Lock()
+	defer evMu.Unlock()
+	require.NotEmpty(t, fileEvents, "at least one file event must be published")
+
+	for _, ev := range fileEvents {
+		payloadStr := string(ev.Payload)
+		// The event payload must not contain the raw data or its base64 encoding.
+		assert.NotContains(t, payloadStr, "data_base64",
+			"file event must not contain data_base64 field")
+		assert.NotContains(t, payloadStr, string(secretData),
+			"file event must not contain raw binary data")
+		assert.NotContains(t, payloadStr, base64.StdEncoding.EncodeToString(secretData),
+			"file event must not contain base64-encoded data")
+		// The event must contain the download URL.
+		assert.Contains(t, payloadStr, "download_url",
+			"file event must contain download_url")
+		assert.Contains(t, payloadStr, "artifact_id",
+			"file event must contain artifact_id")
+	}
+}
+
+// TestOrchestrator_ArtifactTooLarge_ErrorEvent verifies that an oversized artifact
+// causes an "error" event to be published, not a panic.
+func TestOrchestrator_ArtifactTooLarge_ErrorEvent(t *testing.T) {
+	ar := &fakeArtifactRecorder{
+		err: runrecorder.ErrArtifactTooLarge,
+	}
+	bus := event.New()
+
+	var errorEvents []event.Event
+	var evMu sync.Mutex
+	sub, _, unsub := bus.Subscribe(context.Background(), "ctx-toolarge", 256)
+	go func() {
+		for ev := range sub {
+			if ev.Type == "error" {
+				evMu.Lock()
+				errorEvents = append(errorEvents, ev)
+				evMu.Unlock()
+			}
+		}
+	}()
+	defer unsub()
+
+	// Agent returns a small artifact but our fake recorder simulates the size error.
+	agentInvoker := &artifactAgentInvoker{
+		filename: "big.bin",
+		ct:       "application/octet-stream",
+		data:     []byte("small data but recorder says too large"),
+	}
+
+	mock := newMultiCallMockProvider(
+		[]llm.StreamEvent{
+			{
+				Type: "tool_calls",
+				ToolCalls: []llm.ToolCall{{
+					ID:    "tc-3",
+					Name:  "agent__big-agent",
+					Input: map[string]any{"input": "go"},
+				}},
+				StopReason: "tool_use",
+			},
+		},
+		[]llm.StreamEvent{
+			{Type: "stop", StopReason: "end_turn"},
+		},
+	)
+
+	cfg := orchestrator.Config{
+		MaxIterations: 5,
+		AllowedAgents: []string{"big-agent"},
+	}
+	orch := orchestrator.New(cfg, mock, agentInvoker, newRecorder(), bus, nil).
+		WithArtifactRecorder(ar)
+
+	ctx := context.Background()
+	// Must not panic — run completes normally despite the artifact error.
+	_, err := orch.Run(ctx, "run-toolarge", "ctx-toolarge",
+		domain.TextMessage(domain.RoleUser, "go"), nil)
+	require.NoError(t, err, "oversized artifact must not abort the run")
+
+	time.Sleep(50 * time.Millisecond)
+
+	evMu.Lock()
+	defer evMu.Unlock()
+	// At least one error event about the artifact must be published.
+	found := false
+	for _, ev := range errorEvents {
+		if strings.Contains(string(ev.Payload), "1 MiB") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "an error event mentioning the size limit must be published")
+}
+
+// errNotFoundSentinel is used to test ErrArtifactTooLarge sentinel propagation.
+var _ = errors.New("test sentinel")

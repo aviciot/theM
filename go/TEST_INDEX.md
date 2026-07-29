@@ -180,6 +180,8 @@ Run on: every commit, every PR, every pre-deploy check.
 ### S1-09 · Run recorder — `internal/runrecorder/recorder_test.go`
 
 **Purpose:** Run persistence SQL is correct — uses mock DB, no live Postgres needed.
+Extended in Phase R-3 to cover file artifact persistence, size limit enforcement, filename
+sanitization, and cross-run access denial.
 
 | Test | What it proves |
 |---|---|
@@ -191,8 +193,18 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestRecordUsage_insertsCorrectly` | `INSERT INTO them.run_usage` correct args |
 | `TestRecordStep_insertsCorrectly` | `INSERT INTO them.run_steps` correct args |
 | `TestDBError_propagates` | DB error is wrapped and returned, not swallowed |
+| `TestRecordArtifact_Success` | Valid artifact → INSERT issued, non-empty UUID returned |
+| `TestRecordArtifact_ExactlyOneMB` | Data at exactly 1 MiB → succeeds (boundary inclusive) |
+| `TestRecordArtifact_OverLimit` | Data at 1 MiB+1 → `ErrArtifactTooLarge`, no DB call |
+| `TestRecordArtifact_SanitizesFilename` | `../../etc/passwd` filename → only `passwd` stored |
+| `TestGetArtifact_WrongRun` | artifact_id from run A via run B URL → error (cross-run denied by query) |
+| `TestGetArtifact_WrongArtifact` | non-existent artifact_id → error |
+| `TestSanitizeFilename_PathTraversal` | directory components stripped; `../../etc/passwd` → `passwd` |
+| `TestSanitizeFilename_Safe` | normal filenames preserved unchanged |
+| `TestSanitizeFilename_HiddenFile` | `.htaccess` → `file.htaccess` (hidden file protection) |
+| `TestMetadataEvent_HasNoFilePayload` | returned artifact ID does not contain raw file data |
 
-**Trigger:** any change to `internal/runrecorder/recorder.go`
+**Trigger:** any change to `internal/runrecorder/recorder.go` or `internal/runrecorder/pgx.go`
 
 ---
 
@@ -782,7 +794,8 @@ distinct and correctly named.
 ### S1-28 · Orchestrator — `internal/orchestrator/orchestrator_test.go`
 
 **Purpose:** Agentic loop feature parity — history loading, checkpoint/crash recovery, token budget
-enforcement, parallel agent fan-out with semaphore, and nil-safety of optional interfaces.
+enforcement, parallel agent fan-out with semaphore, nil-safety of optional interfaces, and
+file artifact detection/recording (Phase R-3).
 
 | Test | What it proves |
 |---|---|
@@ -793,8 +806,34 @@ enforcement, parallel agent fan-out with semaphore, and nil-safety of optional i
 | `TestOrchestrator_ParallelFanOut_Unlimited` | MaxParallelTools=0 → all tool calls invoked (no semaphore limit) |
 | `TestOrchestrator_HistoryNotLoadedWhenProvided` | Non-empty history provided → HistoryLoader NOT called |
 | `TestOrchestrator_NilOptionals` | All optional interfaces nil → no panic, run completes normally |
+| `TestOrchestrator_ArtifactEmitted` | Tool result with artifact payload → RecordArtifact called once, "file" event published |
+| `TestOrchestrator_ArtifactEventContainsNoPayload` | "file" event payload contains no data_base64, no raw bytes, no binary — only metadata |
+| `TestOrchestrator_ArtifactTooLarge_ErrorEvent` | ErrArtifactTooLarge from recorder → "error" event published, run continues (no panic) |
 
 **Trigger:** any change to `internal/orchestrator/orchestrator.go`
+
+---
+
+### S1-30 · Artifact download handler — `internal/artifacts/handler_test.go`
+
+**Purpose:** File artifact HTTP download endpoint (Phase R-3). Verifies bearer token auth,
+cross-run access denial, correct response headers (Content-Type, Content-Length, Content-Disposition),
+and that the response body exactly matches stored artifact data.
+Route: GET /api/v1/runs/{run_id}/artifacts/{artifact_id}
+
+| Test | What it proves |
+|---|---|
+| `TestArtifactDownload_Success` | Authenticated + correct run+artifact → 200, correct headers, body matches data |
+| `TestArtifactDownload_Unauthorized` | No bearer token → 401 |
+| `TestArtifactDownload_InvalidToken` | Invalid bearer token → 401 |
+| `TestArtifactDownload_WrongRun` | Valid token + valid artifact_id but wrong run_id → 404 (cross-run denied) |
+| `TestArtifactDownload_WrongArtifact` | Valid token + run exists + non-existent artifact_id → 404 |
+| `TestArtifactDownload_CrossRun` | artifact_id from run A requested via run B URL → 404; response body contains no data from run A |
+| `TestArtifactDownload_SafeContentDisposition` | Content-Disposition header starts with "attachment" |
+| `TestArtifactDownload_CorrectHeaders` | Content-Type and Content-Length set correctly from artifact metadata |
+| `TestArtifactDownload_ResponseBodyEqualsArtifactData` | Response body exactly equals stored artifact bytes |
+
+**Trigger:** any change to `internal/artifacts/handler.go`
 
 ---
 

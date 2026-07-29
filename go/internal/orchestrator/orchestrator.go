@@ -6,6 +6,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,26 @@ import (
 
 // ErrBudgetExceeded is returned when the run exceeds the configured token budget.
 var ErrBudgetExceeded = errors.New("orchestrator: token budget exceeded")
+
+// artifactPayload is the JSON structure agents use to return a file artifact
+// inside a tool result. The data_base64 field contains base64-encoded bytes.
+// SECURITY: data_base64 must never be forwarded to the event bus or logs.
+type artifactPayload struct {
+	Artifact *artifactBody `json:"artifact,omitempty"`
+}
+
+type artifactBody struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	DataBase64  string `json:"data_base64"`
+}
+
+// RunContext carries per-run identity metadata (tenant + session) that is
+// not part of the core orchestration logic but is needed for artifact storage.
+type RunContext struct {
+	ApplicationID string
+	SessionID     string
+}
 
 // Config holds the orchestrator configuration loaded from DB.
 type Config struct {
@@ -96,6 +117,11 @@ type BudgetStore interface {
 	UpdateTokensUsed(ctx context.Context, runID string, tokensUsed int) error
 }
 
+// ArtifactRecorder persists file artifacts produced by agent tool calls.
+type ArtifactRecorder interface {
+	RecordArtifact(ctx context.Context, in runrecorder.ArtifactInput) (string, error)
+}
+
 // Orchestrator runs the agentic loop.
 type Orchestrator struct {
 	cfg      Config
@@ -112,6 +138,7 @@ type Orchestrator struct {
 	usageRecorder    UsageRecorder
 	taskRecorder     TaskRecorder
 	budgetStore      BudgetStore
+	artifactRecorder ArtifactRecorder
 }
 
 // New creates a new Orchestrator. agents may be nil (tools disabled).
@@ -165,12 +192,19 @@ func (o *Orchestrator) WithBudgetStore(bs BudgetStore) *Orchestrator {
 	return o
 }
 
+// WithArtifactRecorder attaches an artifact recorder for file artifact persistence.
+func (o *Orchestrator) WithArtifactRecorder(ar ArtifactRecorder) *Orchestrator {
+	o.artifactRecorder = ar
+	return o
+}
+
 // Run executes one full agentic loop for a user message.
 //
 // runID:     unique ID for this run (already created in DB by caller)
 // contextID: conversation thread ID (used for history lookup and event bus topic)
 // userMsg:   the user's message
 // history:   pre-loaded conversation history (loaded by caller with DB-level LIMIT)
+// runCtx:    optional per-run identity (application_id, session_id) for artifact storage
 //
 // The loop:
 //  1. Build message slice: system + history + userMsg
@@ -181,7 +215,11 @@ func (o *Orchestrator) WithBudgetStore(bs BudgetStore) *Orchestrator {
 //  6. Record run completion in DB
 //
 // Returns the final assistant text response.
-func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg domain.Message, history []domain.Message) (string, error) {
+func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg domain.Message, history []domain.Message, runCtx ...RunContext) (string, error) {
+	var rctx RunContext
+	if len(runCtx) > 0 {
+		rctx = runCtx[0]
+	}
 	maxIter := o.cfg.MaxIterations
 	if maxIter <= 0 {
 		maxIter = 10
@@ -317,7 +355,7 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 
 		// Execute tool calls and append results.
 		if len(toolCalls) > 0 && o.agents != nil {
-			toolResults := o.executeTools(ctx, contextID, runID, toolCalls)
+			toolResults := o.executeTools(ctx, contextID, runID, toolCalls, rctx)
 			toolResultMsg := buildToolResultMessage(toolResults)
 
 			// Checkpoint tool results (non-fatal).
@@ -421,10 +459,69 @@ type toolResult struct {
 	err    error
 }
 
+// emitArtifactEvent records a file artifact and publishes a "file" event to the
+// bus. The event payload contains only metadata (no binary data, no paths).
+// SECURITY: artifact data must never appear in any log line or event payload.
+func (o *Orchestrator) emitArtifactEvent(ctx context.Context, contextID, runID string, rctx RunContext, body *artifactBody) {
+	if o.artifactRecorder == nil {
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(body.DataBase64)
+	if err != nil {
+		o.logger.Warn("orchestrator: artifact base64 decode failed — skipping",
+			"run_id", runID, "filename", body.Filename, "error", err)
+		o.publishJSON(ctx, contextID, runID, "error", map[string]string{
+			"run_id":  runID,
+			"message": "artifact decode failed: " + err.Error(),
+		})
+		return
+	}
+
+	artifactID, recErr := o.artifactRecorder.RecordArtifact(ctx, runrecorder.ArtifactInput{
+		RunID:         runID,
+		ApplicationID: rctx.ApplicationID,
+		SessionID:     rctx.SessionID,
+		Filename:      body.Filename,
+		ContentType:   body.ContentType,
+		Data:          data,
+	})
+	if recErr != nil {
+		if errors.Is(recErr, runrecorder.ErrArtifactTooLarge) {
+			o.logger.Warn("orchestrator: artifact too large — skipping",
+				"run_id", runID, "filename", body.Filename)
+			o.publishJSON(ctx, contextID, runID, "error", map[string]string{
+				"run_id":  runID,
+				"message": "artifact exceeds 1 MiB limit: " + body.Filename,
+			})
+		} else {
+			o.logger.Warn("orchestrator: artifact record failed — skipping",
+				"run_id", runID, "filename", body.Filename, "error", recErr)
+		}
+		return
+	}
+
+	// Publish file event — metadata only, no binary data, no internal paths.
+	payload := map[string]any{
+		"artifact_id":   artifactID,
+		"filename":      body.Filename,
+		"content_type":  body.ContentType,
+		"size":          int64(len(data)),
+		"run_id":        runID,
+		"download_url":  "/api/v1/runs/" + runID + "/artifacts/" + artifactID,
+	}
+	if rctx.ApplicationID != "" {
+		payload["application_id"] = rctx.ApplicationID
+	}
+	if rctx.SessionID != "" {
+		payload["session_id"] = rctx.SessionID
+	}
+	o.publishJSON(ctx, contextID, runID, "file", payload)
+}
+
 // executeTools invokes all tool calls in parallel (bounded by MaxParallelTools),
 // publishes results to the bus, and manages child task lifecycle.
 // OD-4: parallel fan-out with semaphore.
-func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string, calls []llm.ToolCall) []toolResult {
+func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string, calls []llm.ToolCall, rctx RunContext) []toolResult {
 	results := make([]toolResult, len(calls))
 
 	// Build semaphore for concurrency control (0 = unlimited).
@@ -484,6 +581,16 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 					"error": err.Error(),
 				})
 			} else {
+				// Check if the tool result contains an artifact payload.
+				// If so, record it and emit a "file" event (non-fatal).
+				// SECURITY: the artifact body is consumed here; it must not be
+				// forwarded to the bus in the tool_result event.
+				var ap artifactPayload
+				if len(out) > 0 {
+					if jsonErr := json.Unmarshal(out, &ap); jsonErr == nil && ap.Artifact != nil {
+						o.emitArtifactEvent(ctx, contextID, runID, rctx, ap.Artifact)
+					}
+				}
 				o.publishJSON(ctx, contextID, runID, "tool_result", map[string]any{
 					"name":   tc.Name,
 					"output": string(out),
