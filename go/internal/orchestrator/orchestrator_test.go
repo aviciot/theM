@@ -705,3 +705,152 @@ func TestOrchestrator_ArtifactTooLarge_ErrorEvent(t *testing.T) {
 
 // errNotFoundSentinel is used to test ErrArtifactTooLarge sentinel propagation.
 var _ = errors.New("test sentinel")
+
+// ── Base64 pre-decode size guard tests ────────────────────────────────────────
+
+// TestOrchestrator_ArtifactExactBoundaryEncoded verifies that an artifact whose
+// base64-encoded input is exactly at the maximum allowed length is accepted and
+// RecordArtifact is called. This is the exact-boundary case for the encoded-input
+// guard (not the decoded-bytes guard in RecordArtifact itself).
+func TestOrchestrator_ArtifactExactBoundaryEncoded(t *testing.T) {
+	ar := &fakeArtifactRecorder{}
+	bus := event.New()
+
+	// Build exactly ArtifactMaxBytes of decoded data — its base64 encoding is
+	// exactly artifactMaxBase64Bytes chars, which must pass the pre-decode guard.
+	exactData := make([]byte, runrecorder.ArtifactMaxBytes)
+	for i := range exactData {
+		exactData[i] = 0xAB
+	}
+
+	agentInvoker := &artifactAgentInvoker{
+		filename: "exact.bin",
+		ct:       "application/octet-stream",
+		data:     exactData,
+	}
+	mock := newMultiCallMockProvider(
+		[]llm.StreamEvent{
+			{
+				Type: "tool_calls",
+				ToolCalls: []llm.ToolCall{{
+					ID:    "tc-exact",
+					Name:  "agent__doc-writer",
+					Input: map[string]any{"input": "go"},
+				}},
+				StopReason: "tool_use",
+			},
+		},
+		[]llm.StreamEvent{{Type: "stop", StopReason: "end_turn"}},
+	)
+
+	cfg := orchestrator.Config{
+		MaxIterations: 5,
+		AllowedAgents: []string{"doc-writer"},
+	}
+	orch := orchestrator.New(cfg, mock, agentInvoker, newRecorder(), bus, nil).
+		WithArtifactRecorder(ar)
+
+	_, err := orch.Run(context.Background(), "run-exact", "ctx-exact",
+		domain.TextMessage(domain.RoleUser, "go"), nil)
+	require.NoError(t, err)
+
+	time.Sleep(50 * time.Millisecond)
+
+	calls := ar.getCalls()
+	require.Len(t, calls, 1, "RecordArtifact must be called for exact-boundary input")
+	assert.Equal(t, "exact.bin", calls[0].Filename)
+}
+
+// TestOrchestrator_ArtifactOversizedEncodedInput verifies that an artifact whose
+// base64-encoded string exceeds the pre-decode guard is rejected with an error
+// event and without allocating or decoding the oversized payload.
+func TestOrchestrator_ArtifactOversizedEncodedInput(t *testing.T) {
+	ar := &fakeArtifactRecorder{}
+	bus := event.New()
+
+	var errorEvents []event.Event
+	var evMu sync.Mutex
+	sub, _, unsub := bus.Subscribe(context.Background(), "ctx-oversized", 256)
+	go func() {
+		for ev := range sub {
+			if ev.Type == "error" {
+				evMu.Lock()
+				errorEvents = append(errorEvents, ev)
+				evMu.Unlock()
+			}
+		}
+	}()
+	defer unsub()
+
+	// Build a data_base64 string that is one byte longer than the maximum allowed
+	// encoded length. We don't need valid base64 — the guard fires on length alone.
+	oversizedEncoded := strings.Repeat("A", (runrecorder.ArtifactMaxBytes+2)/3*4+1)
+
+	agentInvokerOversized := &rawBase64AgentInvoker{
+		filename:   "oversized.bin",
+		ct:         "application/octet-stream",
+		dataBase64: oversizedEncoded,
+	}
+	mock := newMultiCallMockProvider(
+		[]llm.StreamEvent{
+			{
+				Type: "tool_calls",
+				ToolCalls: []llm.ToolCall{{
+					ID:    "tc-oversized",
+					Name:  "agent__doc-writer",
+					Input: map[string]any{"input": "go"},
+				}},
+				StopReason: "tool_use",
+			},
+		},
+		[]llm.StreamEvent{{Type: "stop", StopReason: "end_turn"}},
+	)
+
+	cfg := orchestrator.Config{
+		MaxIterations: 5,
+		AllowedAgents: []string{"doc-writer"},
+	}
+	orch := orchestrator.New(cfg, mock, agentInvokerOversized, newRecorder(), bus, nil).
+		WithArtifactRecorder(ar)
+
+	_, err := orch.Run(context.Background(), "run-oversized", "ctx-oversized",
+		domain.TextMessage(domain.RoleUser, "go"), nil)
+	require.NoError(t, err, "oversized encoded input must not abort the run")
+
+	time.Sleep(50 * time.Millisecond)
+
+	// RecordArtifact must NOT have been called — the guard must fire before decode.
+	calls := ar.getCalls()
+	assert.Empty(t, calls, "RecordArtifact must not be called for oversized encoded input")
+
+	// An error event must be published.
+	evMu.Lock()
+	defer evMu.Unlock()
+	found := false
+	for _, ev := range errorEvents {
+		if strings.Contains(string(ev.Payload), "1 MiB") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "an error event mentioning the size limit must be published")
+}
+
+// rawBase64AgentInvoker is like artifactAgentInvoker but accepts a pre-built
+// base64 string so tests can inject oversized or malformed encoded input.
+type rawBase64AgentInvoker struct {
+	filename   string
+	ct         string
+	dataBase64 string
+}
+
+func (a *rawBase64AgentInvoker) Invoke(_ context.Context, _ string, _ json.RawMessage) (json.RawMessage, error) {
+	payload := map[string]any{
+		"artifact": map[string]any{
+			"filename":     a.filename,
+			"content_type": a.ct,
+			"data_base64":  a.dataBase64,
+		},
+	}
+	return json.Marshal(payload)
+}

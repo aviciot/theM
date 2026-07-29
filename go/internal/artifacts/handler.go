@@ -56,13 +56,25 @@ func New(authenticator Authenticator, store ArtifactGetter, logger *slog.Logger)
 }
 
 // Routes registers the artifact download endpoint on a chi sub-router.
-// The returned http.Handler handles GET /runs/{run_id}/artifacts/{artifact_id}.
-// Bearer token authentication is applied inline (not via admin JWT middleware).
+// Tests call this directly so paths are relative to the sub-router root:
+//
+//	GET /runs/{run_id}/artifacts/{artifact_id}
+//
+// In production use Handler() instead — it returns a flat http.Handler
+// suitable for direct route registration at a full path.
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(h.requireBearer)
 	r.Get("/runs/{run_id}/artifacts/{artifact_id}", h.Download)
 	return r
+}
+
+// Handler returns an http.Handler that applies bearer token authentication
+// and then calls Download. Unlike Routes(), it has no internal chi routing
+// so it is safe to register at a fully-qualified path on the root router via
+// server.MountArtifacts.
+func (h *Handler) Handler() http.Handler {
+	return h.requireBearer(http.HandlerFunc(h.Download))
 }
 
 // requireBearer is inline bearer token middleware so this handler does not

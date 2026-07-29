@@ -809,6 +809,8 @@ file artifact detection/recording (Phase R-3).
 | `TestOrchestrator_ArtifactEmitted` | Tool result with artifact payload → RecordArtifact called once, "file" event published |
 | `TestOrchestrator_ArtifactEventContainsNoPayload` | "file" event payload contains no data_base64, no raw bytes, no binary — only metadata |
 | `TestOrchestrator_ArtifactTooLarge_ErrorEvent` | ErrArtifactTooLarge from recorder → "error" event published, run continues (no panic) |
+| `TestOrchestrator_ArtifactExactBoundaryEncoded` | base64 string at exactly artifactMaxBase64Bytes → accepted, RecordArtifact called |
+| `TestOrchestrator_ArtifactOversizedEncodedInput` | base64 string exceeding max length → rejected before decode, error event, RecordArtifact NOT called |
 
 **Trigger:** any change to `internal/orchestrator/orchestrator.go`
 
@@ -1155,7 +1157,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-06 | session | 10 |
 | S1-07 | event | 9 |
 | S1-08 | domain | 3 |
-| S1-09 | runrecorder | 8 |
+| S1-09 | runrecorder | 18 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
 | S1-12 | ws | 17 |
@@ -1174,9 +1176,10 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-25 | admin/service | 60 |
 | S1-26 | crypto (fernet) | 32 |
 | S1-27 | metrics | 12 |
-| S1-28 | orchestrator | 7 |
+| S1-28 | orchestrator | 12 |
 | S1-29 | temporal (worker + serialization) | 2 |
-| **S1 total** | | **359** |
+| S1-30 | artifacts (download handler) | 9 |
+| **S1 total** | | **383** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1185,4 +1188,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **Grand total** | | **413** |
+| **`go test ./...` total** | | **424** |

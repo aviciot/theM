@@ -183,12 +183,14 @@ func (s *Server) MountAdmin(adminHandler http.Handler) {
 	s.router.Mount("/api/v1", adminHandler)
 }
 
-// MountArtifacts mounts the artifact download handler under the /api/v1 prefix.
-// The handler uses bearer token auth (not admin JWT) so it is registered
-// separately from the admin router.
-// Call before ListenAndServe.
+// MountArtifacts registers the artifact download handler at
+// GET /api/v1/runs/{run_id}/artifacts/{artifact_id} directly on the root
+// chi router. Using router.Get with the full path avoids Mount conflicts
+// (admin sub-router is at /api/v1; chi direct routes are matched before
+// Mount catch-alls). The handler must include its own bearer token auth.
+// Call before MountAdmin so chi registers the direct route first.
 func (s *Server) MountArtifacts(artifactHandler http.Handler) {
-	s.router.Mount("/api/v1", artifactHandler)
+	s.router.Get("/api/v1/runs/{run_id}/artifacts/{artifact_id}", artifactHandler.ServeHTTP)
 }
 
 // MountApps mounts an /apps handler at the router root.

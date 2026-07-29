@@ -25,6 +25,14 @@ import (
 // ErrBudgetExceeded is returned when the run exceeds the configured token budget.
 var ErrBudgetExceeded = errors.New("orchestrator: token budget exceeded")
 
+// artifactMaxBase64Bytes is the maximum allowed length of the data_base64 string
+// before decoding. It is the base64 encoding of ArtifactMaxBytes (1 MiB) rounded
+// up to the nearest multiple of 4. Checking this before decode prevents a large
+// allocation from an oversized input string.
+//
+// Formula: ceil(ArtifactMaxBytes / 3) * 4  == (1048576 + 2) / 3 * 4 == 1398104.
+const artifactMaxBase64Bytes = (runrecorder.ArtifactMaxBytes + 2) / 3 * 4
+
 // artifactPayload is the JSON structure agents use to return a file artifact
 // inside a tool result. The data_base64 field contains base64-encoded bytes.
 // SECURITY: data_base64 must never be forwarded to the event bus or logs.
@@ -464,6 +472,18 @@ type toolResult struct {
 // SECURITY: artifact data must never appear in any log line or event payload.
 func (o *Orchestrator) emitArtifactEvent(ctx context.Context, contextID, runID string, rctx RunContext, body *artifactBody) {
 	if o.artifactRecorder == nil {
+		return
+	}
+	// Reject encoded input that cannot possibly decode below the 1 MiB limit.
+	// This check avoids allocating a large buffer for an oversized payload.
+	if len(body.DataBase64) > artifactMaxBase64Bytes {
+		o.logger.Warn("orchestrator: artifact encoded input too large — skipping",
+			"run_id", runID, "filename", body.Filename,
+			"encoded_len", len(body.DataBase64), "max_encoded_len", artifactMaxBase64Bytes)
+		o.publishJSON(ctx, contextID, runID, "error", map[string]string{
+			"run_id":  runID,
+			"message": "artifact exceeds 1 MiB limit: " + body.Filename,
+		})
 		return
 	}
 	data, err := base64.StdEncoding.DecodeString(body.DataBase64)

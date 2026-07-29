@@ -275,7 +275,19 @@ func run() error {
 	srv.MountA2A(a2aServer.Routes())
 	log.Info("A2A server mounted")
 
-	// ── 18. Wire admin API (/api/v1/admin/*, /api/v1/runs/*) ─────────────────
+	// ── 18. Wire artifact download endpoint (Phase R-3) ─────────────────────
+	// Route: GET /api/v1/runs/{run_id}/artifacts/{artifact_id}
+	// Authentication: bearer token (same as WS/SSE — NOT RequireSuperAdmin JWT).
+	// IMPORTANT: MountArtifacts must be called BEFORE MountAdmin. The artifact
+	// route is a direct chi.Get registration at the full path; MountAdmin adds a
+	// sub-router catch-all at /api/v1. Chi resolves direct routes before Mount
+	// catch-alls, so registration order ensures the specific path wins.
+	// Use Handler() (not Routes()) so no internal chi routing re-matches the path.
+	artifactHandler := artifacts.New(tokenCache, recorder, log)
+	srv.MountArtifacts(artifactHandler.Handler())
+	log.Info("artifact download endpoint mounted", "path", "/api/v1/runs/{run_id}/artifacts/{artifact_id}")
+
+	// ── 19. Wire admin API (/api/v1/admin/*, /api/v1/runs/*) ─────────────────
 	adminDB := admin.NewPgxQuerier(database.Pool())
 	adminCache := cache.NewAdminCacheClient(redisCache.Client())
 	// Temporal signaler is optional — nil if Temporal is not enabled.
@@ -286,14 +298,6 @@ func run() error {
 	adminRouter := admin.BuildRouter(adminDB, adminCache, temporalSignaler, sessionStore, jwtMiddleware, log, cfg.SecretKey)
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
-
-	// ── 19. Wire artifact download endpoint (Phase R-3) ───────────────────────
-	// Route: GET /api/v1/runs/{run_id}/artifacts/{artifact_id}
-	// Authentication: bearer token (same as WS/SSE — NOT RequireSuperAdmin JWT).
-	// The handler verifies run_id + artifact_id in one DB query (cross-run denied).
-	artifactHandler := artifacts.New(tokenCache, recorder, log)
-	srv.MountArtifacts(artifactHandler.Routes())
-	log.Info("artifact download endpoint mounted", "prefix", "/api/v1")
 
 	log.Info("shutdown drain configured", "drain_seconds", cfg.ShutdownDrainSeconds)
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)
