@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-31
 **Branch:** main
-**HEAD:** (see git log — committed after this document is written)
+**HEAD:** `a95e859` feat(r4b): authenticated tenant identity foundation
 **Prepared by:** Phase R-4b session
 
 ---
@@ -164,9 +164,9 @@ python3.12 scripts/tests/run_tests.py 01 02 03 04 15
 
 ## Commits This Session
 
-To be added after `git commit`.
+- `a95e859` feat(r4b): authenticated tenant identity foundation
 
-Push status: **to be pushed** after commit.
+Push status: **pushed to origin/main** ✓
 
 ---
 

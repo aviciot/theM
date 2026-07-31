@@ -6,7 +6,7 @@
 
 ## Current State
 
-Phase R-4b complete (2026-07-31): Authenticated tenant identity foundation — `tenantctx` package, TenantID in `Claims`/`TokenInfo`/`TokenRow`, `pgx_querier` fetches `tenant_id`, `BearerTenantMiddleware`/`HS256TenantMiddleware`, `RuntimeIdentity` struct. 23 new tests. 447 total. HEAD pending commit.
+Phase R-4b complete (2026-07-31): Authenticated tenant identity foundation — `tenantctx` package, TenantID in `Claims`/`TokenInfo`/`TokenRow`, `pgx_querier` fetches `tenant_id`, `BearerTenantMiddleware`/`HS256TenantMiddleware`, `RuntimeIdentity` struct. 23 new tests. 447 total. HEAD `a95e859`.
 Phase R-4a complete (2026-07-31): Tenant database foundation — `them.tenants` table, `tenant_id UUID NOT NULL` on 7 tables, bootstrap tenant, constraint migration, `them.run_artifacts` with tenant_id. DB-only change; no Go/Python application code changed. HEAD `0056d95`.
 Phase R-3 complete (2026-07-29): File artifact delivery — DB schema, recorder, handler, orchestrator wiring. 22 new tests. HEAD `ac12082`.
 Phase R-2 complete (2026-07-28): Go Temporal worker registered; inline execution path removed; orchestrator feature parity achieved. 11 new tests. HEAD `029bf8c`.
