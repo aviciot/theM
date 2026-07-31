@@ -1,32 +1,36 @@
-# Phase R-3 Complete — Handover to R-4
+# Phase R-4a Complete — Handover to R-4b
 
-**Date:** 2026-07-29
+**Date:** 2026-07-31
 **Branch:** main
-**HEAD:** ac12082 feat(r3): Phase R-3 file artifact delivery — DB schema, recorder, handler, orchestrator wiring
-**Prepared by:** Phase R-3 session
+**HEAD:** (R-4a commit — see below after git push)
+**Prepared by:** Phase R-4a session
 
 ---
 
 ## Current Objective
 
-Phase R-3 (File Artifact Delivery) is **complete**. The next task is **Phase R-4: Tenant Foundation** per gate doc §9 and TENANT_FOUNDATION_DECISIONS.md.
+Phase R-4a (Tenant Database Foundation) is **complete**. The next task is **Phase R-4b:
+Go Auth Middleware Tenant Resolution** — resolving TenantID from JWT claims and bearer token
+lookup, propagating it through context into SessionInfo.
 
 ---
 
-## What Was Completed This Session (R-3)
+## What Was Completed This Session (R-4a)
 
-1. `db/025_run_artifacts.sql` — new `them.run_artifacts` table (UUID PK, BYTEA data, 1MiB hard limit enforced at Go layer)
-2. `go/internal/runrecorder/recorder.go` — `RecordArtifact` (1MiB guard, filename sanitization), `GetArtifact` (cross-run denied by SQL), `ErrArtifactTooLarge` sentinel
-3. `go/internal/runrecorder/pgx.go` — `QueryRow` added to `PgxPoolQuerier`
-4. `go/internal/orchestrator/orchestrator.go` — `ArtifactRecorder` interface, `RunContext` struct, `emitArtifactEvent` (metadata-only), artifact payload auto-detection in tool results
-5. `go/internal/artifacts/handler.go` — bearer-token-authenticated download endpoint; RFC 5987 Content-Disposition; safe content-type allow-list; no filesystem access
-6. `go/cmd/them/main.go` — artifact handler wired at `/api/v1/runs/{run_id}/artifacts/{artifact_id}` with tokenCache authenticator
-7. `go/TEST_INDEX.md` — S1-09 +10 tests, S1-28 +3 tests, new S1-30 section (9 tests)
-8. `docs/architecture-v2/R3_IMPLEMENTATION_REPORT.md` — full R-3 implementation report
-9. `docs/architecture-v2/implementation-status.md` — updated with R-3 state
-10. `docs/architecture-v2/lessons-learned.md` — R-3 lessons added
+1. `docs/architecture-v2/R4_TENANT_IMPLEMENTATION_PLAN.md` — formal plan resolving O-01..O-08
+2. `db/026_tenant_foundation.sql` — single idempotent migration (transactional):
+   - Creates `them.tenants` table
+   - Inserts bootstrap tenant (`00000000-0000-0000-0000-000000000001`, slug `default`)
+   - Adds `tenant_id UUID NOT NULL` to: agents (8 rows backfilled), orchestrators (2 rows),
+     access_tokens, applications, runs, audit_logs, app_orchestrators
+   - Drops global uniqueness constraints, replaces with tenant-scoped indexes
+   - Creates `them.run_artifacts` with `tenant_id` included from the start
+3. `db/validate_r4a.sql` — standalone validation script (all 9 checks pass)
+4. `docs/architecture-v2/R4A_IMPLEMENTATION_REPORT.md` — full implementation report
+5. `docs/architecture-v2/implementation-status.md` — updated with R-4a state
+6. `docs/architecture-v2/lessons-learned.md` — R-4a lessons appended
 
-Full details: `docs/architecture-v2/R3_IMPLEMENTATION_REPORT.md`
+Full details: `docs/architecture-v2/R4A_IMPLEMENTATION_REPORT.md`
 
 ---
 
@@ -35,13 +39,16 @@ Full details: `docs/architecture-v2/R3_IMPLEMENTATION_REPORT.md`
 | Container | Status |
 |---|---|
 | them-go-bridge (×2) | Healthy |
-| them-go-worker (×2) | Healthy, polling `them-orchestration-go` |
-| them-worker (Python) | Healthy, polling `them-orchestration` |
-| them-temporal-* | Healthy |
-| them-postgres | Healthy |
+| them-worker (Python) | Running |
+| them-postgres | Healthy — migration applied |
 | them-redis | Healthy |
 
-**Migration not yet applied to running stack:** `db/025_run_artifacts.sql` must be applied before the new binary is deployed.
+**Migration applied:** `db/026_tenant_foundation.sql` applied to live VPS DB ✓
+**Validation:** all 9 checks passed on live DB ✓
+
+Note: `db/025_run_artifacts.sql` (standalone file) was NOT applied to the live DB before R-4a;
+`them.run_artifacts` was created by `026_tenant_foundation.sql` instead, with tenant_id
+included from the start. The standalone `025` file should be marked as superseded.
 
 ---
 
@@ -49,27 +56,50 @@ Full details: `docs/architecture-v2/R3_IMPLEMENTATION_REPORT.md`
 
 ```
 go test ./...        →   422 passed, 0 failed (27 packages)
-go test -race ./...  →   422 passed, 0 data races
+Python sanity 01-04,15  →   55 passed, 0 failed
 ```
 
-Python suite last clean run: 390 passed (Phase R-2 baseline; no Python changes in R-3).
+No Go or Python application code was changed in R-4a.
+
+---
+
+## Bootstrap Tenant
+
+| Field | Value |
+|---|---|
+| ID | `00000000-0000-0000-0000-000000000001` |
+| Slug | `default` |
+| Display name | Default Development Tenant |
+
+This UUID is deterministic and immutable. Future Go/Python code that needs to resolve the
+development tenant can hardcode this UUID.
+
+---
+
+## DB Schema Changes
+
+New constraint names (for reference in DAL tests):
+- `uq_agents_tenant_slug` — `(tenant_id, slug)` on `them.agents`
+- `uq_orchestrators_tenant_name` — `(tenant_id, name)` on `them.orchestrators`
+- `uq_app_orchestrators_tenant_name` — `(tenant_id, name)` on `them.app_orchestrators`
+
+New indexes:
+- `idx_agents_tenant`, `idx_orchestrators_tenant`, `idx_access_tokens_tenant`,
+  `idx_applications_tenant`, `idx_runs_tenant`, `idx_audit_logs_tenant`,
+  `idx_app_orchestrators_tenant`, `idx_run_artifacts_tenant`
 
 ---
 
 ## Hard Constraints — Carry Forward
 
-- **Temporal is the single durable owner of every run.** No inline execution path exists in Go or Python.
+- **Bootstrap tenant UUID `00000000-0000-0000-0000-000000000001` is immutable** — never change
+- **Temporal is the single durable owner of every run.**
 - **Never log token values, API keys, or secrets** at any log level.
-- **Never log artifact binary content** — not even at debug level.
 - **All Go changes require `go test ./...` before commit.** Zero regressions allowed.
-- **Workflow ID scheme `ctx-{contextID}`** must be preserved — changing it orphans in-flight runs.
-- **`PythonOrchestrationInput` in `go/internal/temporal/python_input.go`** is dead code — retained until the Python worker is decommissioned. Do not delete it yet.
-- **Python worker** remains running on `them-orchestration`. It is not decommissioned. The two workers run in parallel on separate queues.
-- **`RUN_EVENTS_MODE`**: Worker must be `streams`; Bridge must be `dual`. Do not change without understanding the Bridge read path.
-- **Tenant-aware design**: all new DB queries and Redis keys must include `application_id` or entry point slug.
-- DB name and schema: `them` only. Never `odin`.
-- **`them.run_artifacts` vs `them.artifacts`**: The `them.run_artifacts` table (R-3) is for Go run file artifacts (BYTEA). The `them.artifacts` table (pre-existing) is for A2A task part artifacts (JSONB). These are separate concerns — do not merge them.
-- **Cross-tenant artifact isolation**: `them.run_artifacts` does not yet have a `tenant_id` column. Full cross-tenant enforcement deferred to R-4. The SQL WHERE clause (`id=$1 AND run_id=$2`) provides cross-run isolation.
+- **Workflow ID scheme `ctx-{contextID}`** must be preserved.
+- **`llm_providers`, `config`, `middleware_defs` are platform-global** — no tenant_id ever
+- **DB name and schema: `them` only.** Never `odin`.
+- **`RUN_EVENTS_MODE`**: Worker must be `streams`; Bridge must be `dual`. Do not change.
 
 ---
 
@@ -77,75 +107,90 @@ Python suite last clean run: 390 passed (Phase R-2 baseline; no Python changes i
 
 | Issue | Severity | Notes |
 |---|---|---|
-| `db/025_run_artifacts.sql` not applied to live stack | Non-fatal | Artifact endpoints return DB errors until migration is applied. Apply before deploying new binary. |
-| Cross-tenant artifact access not enforced | Known gap | Deferred to R-4 (tenant foundation). Documented in R3_IMPLEMENTATION_REPORT.md. |
-| `go/them` and `go/worker` binaries in repo root | Cosmetic | Local build artifacts, covered by `.gitignore`. Not committed. |
-| `application_id` not on `them.runs` table | Known gap | Artifact's `application_id` is caller-provided via `RunContext`. Not verified against run row. R-4 fixes this. |
+| No runtime tenant enforcement | Expected | R-4a is DB-only; R-4b through R-4e add enforcement |
+| Cross-tenant access returns 200/data (not 403) | Expected | Not enforced until R-4b/R-4c complete |
+| `db/025_run_artifacts.sql` superseded | Low | The `025` file still exists in repo but was not applied to live DB; `026` creates `run_artifacts` instead. Can be kept for documentation but should never be applied to a DB that has `026`. |
 
 ---
 
-## Next Task: Phase R-4 — Tenant Foundation
+## Next Task: Phase R-4b — Go Auth Middleware Tenant Resolution
 
-**Scope:** Add `tenant_id` columns, backfill, and propagate through all layers.
+**Scope:** Resolve TenantID from JWT claims or bearer token lookup; propagate through context.
 
-This is a **dedicated, isolated wave** as mandated by D-14 in `TENANT_FOUNDATION_DECISIONS.md`. It must not be mixed with any other migration wave.
+This is a **DB-only** foundation for app code. R-4b adds Go code changes.
 
-**Read before starting R-4:**
-- `docs/architecture-v2/TENANT_FOUNDATION_DECISIONS.md` (all decisions O-01..O-08)
-- `docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md` §2 (tenant boundary)
-- `docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md` §9 Phase R-4 scope
+**Read before starting R-4b:**
+- `docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md` §2 (tenant boundary, steps 1–2)
+- `docs/architecture-v2/TENANT_FOUNDATION_DECISIONS.md` §1.2 (tenant context resolution chain)
+- `go/internal/auth/token_cache.go` — add `TenantID` to `TokenInfo`
+- `go/internal/transport/transport.go` — add `TenantID` to `SessionInfo`
+- `go/internal/auth/middleware.go` — add tenant extraction from JWT claims
+- `go/internal/ws/handler.go` and `go/internal/sse/handler.go` — populate TenantID in sessInfo
+- `go/internal/epconfig/epconfig.go` — confirm EPConfig carries TenantID (may already be there)
 
-**R-4 scope:**
-1. Schema migration: `tenant_id UUID NOT NULL` on `applications`, `agents`, `orchestrators`, `access_tokens`, `runs`, `audit_logs`, `run_artifacts`
-2. Backfill all existing rows with `default-tenant` UUID
-3. Auth middleware: resolve `TenantID` from JWT claim or bearer token lookup
-4. DAL: all admin queries gain `tenantID` parameter and `WHERE tenant_id = $n`
-5. Session: `SessionInfo.TenantID` populated (T-1 debt)
-6. Run recorder: `CreateRun` gains `tenant_id` parameter
-7. Cross-tenant 403 enforcement
+**R-4b scope:**
+1. Add `TenantID string` to `auth.TokenInfo` struct; populate from `them.access_tokens.tenant_id`
+2. Add `TenantID string` to `transport.SessionInfo` struct
+3. In WS + SSE handlers: set `sessInfo.TenantID` from `tokenInfo.TenantID` (authenticated) or `resolvedCfg.TenantID` (public EP)
+4. Verify `EPConfig.TenantID` is populated; add if not
+5. Write tests: `TestSession_TenantIDFromToken`, `TestSession_TenantIDFromPublicEP`
+6. Run `go test ./...` — must pass
 
-**Implementation may begin:** after gate doc open decisions O-01..O-08 are resolved.
+**R-4b does NOT:**
+- Add `WHERE tenant_id = $n` to any DAL query (that is R-4c)
+- Enforce cross-tenant 403 (that is R-4c after DAL changes)
+- Change `runs.CreateRun` signature (that is R-4d)
 
-**Files most relevant to R-4:**
+**Files most relevant to R-4b:**
 
 | File | Why |
 |---|---|
-| `docs/architecture-v2/TENANT_FOUNDATION_DECISIONS.md` | All O-xx decisions and constraints |
-| `docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md` §2 | Tenant boundary design |
-| `go/internal/transport/transport.go` | `SessionInfo` struct (add TenantID) |
-| `go/internal/auth/token_cache.go` | `TokenInfo` (add TenantID from DB) |
-| `go/internal/session/session.go` | `SessionInfo` serialization (add tenant_id field) |
-| `go/internal/runrecorder/recorder.go` | `CreateRun` (add tenant_id param) |
-| `go/internal/admin/dal/` | All query files (add tenant_id WHERE clauses) |
-| `db/001_schema.sql` | Schema source of truth |
-
-**Do not touch** the Python worker, Python adapters, or auth service in R-4.
+| `go/internal/auth/token_cache.go` | Add TenantID to TokenInfo + DB query |
+| `go/internal/transport/transport.go` | Add TenantID to SessionInfo |
+| `go/internal/auth/middleware.go` | Extract TenantID from JWT claims |
+| `go/internal/ws/handler.go` | Populate sessInfo.TenantID |
+| `go/internal/sse/handler.go` | Populate sessInfo.TenantID |
+| `go/internal/epconfig/epconfig.go` | Confirm/add EPConfig.TenantID |
+| `db/026_tenant_foundation.sql` | Schema reference — tenant_id columns are NOT NULL now |
 
 ---
 
 ## Starting the Next Session
 
 ```bash
-# Confirm HEAD and stack health first
+# Confirm HEAD and migration state
 git log --oneline -5
-cd theM_gateway && docker compose -f docker-compose.yml -f docker-compose.linux.yml -f docker-compose.integration.yml -f docker-compose.traefik.yml --profile temporal ps
+docker exec them-postgres psql -U them -d them -c "SELECT id, slug FROM them.tenants;"
+docker exec them-postgres psql -U them -d them -c "SELECT version, description FROM them.schema_migrations ORDER BY applied_at DESC LIMIT 3;"
 
-# Apply R-3 migration if not done
-docker cp db/025_run_artifacts.sql them-postgres:/tmp/025_run_artifacts.sql
-docker exec them-postgres psql -U them -d them -f /tmp/025_run_artifacts.sql
+# Run Go tests to confirm clean baseline
+docker run --rm -v /home/avi/them/go:/workspace -w /workspace golang:1.24-alpine go test ./...
 
-# Run Go tests to confirm clean baseline (inside container since no local Go install)
-docker run --rm -v /opt/docker/them/go:/workspace -w /workspace golang:1.24-alpine go test ./...
+# Python sanity
+python3.12 scripts/tests/run_tests.py 01 02 03 04 15
 ```
 
 **First prompt for the next session:**
 
-> Phase R-3 is complete (HEAD ac12082, 422 Go tests passing, artifact delivery implemented). Start Phase R-4: Tenant Foundation. Read docs/architecture-v2/TENANT_FOUNDATION_DECISIONS.md and docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md §2 and §9 before writing any code. Confirm all open decisions O-01..O-08 are resolved, then plan the migration. Use Opus for planning.
+> Phase R-4a is complete (HEAD from git log, 422 Go tests passing, tenant DB foundation
+> applied to live DB). Start Phase R-4b: Go Auth Middleware Tenant Resolution. Read
+> docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md §2 and
+> TENANT_FOUNDATION_DECISIONS.md §1.2 before writing any code. Add TenantID to TokenInfo
+> and SessionInfo; populate in WS/SSE handlers. Use Sonnet.
 
 ---
 
 ## Commits This Session
 
-- `ac12082` feat(r3): Phase R-3 file artifact delivery — DB schema, recorder, handler, orchestrator wiring
+- R-4a commit (to be added after git commit/push)
 
-Push status: **pushed to origin/main** (confirmed).
+Push status: **will push after commit**
+
+---
+
+## R-4b through R-4e NOT started
+
+- R-4b (Go auth middleware tenant resolution): NOT started
+- R-4c (DAL WHERE tenant_id): NOT started
+- R-4d (session propagation): NOT started
+- R-4e (run recorder): NOT started

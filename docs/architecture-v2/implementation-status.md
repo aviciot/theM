@@ -1,11 +1,12 @@
 # Implementation Status — Go Gateway
 
-**Last updated:** 2026-07-29 (Phase R-3 File Artifact Delivery complete)
+**Last updated:** 2026-07-31 (Phase R-4a Tenant Database Foundation complete)
 
 ---
 
 ## Current State
 
+Phase R-4a complete (2026-07-31): Tenant database foundation — `them.tenants` table, `tenant_id UUID NOT NULL` on 7 tables, bootstrap tenant, constraint migration, `them.run_artifacts` with tenant_id. DB-only change; no Go/Python application code changed. HEAD `(R-4a commit)`.
 Phase R-3 complete (2026-07-29): File artifact delivery — DB schema, recorder, handler, orchestrator wiring. 22 new tests. HEAD `ac12082`.
 Phase R-2 complete (2026-07-28): Go Temporal worker registered; inline execution path removed; orchestrator feature parity achieved. 11 new tests. HEAD `029bf8c`.
 Phase R-1 complete (2026-07-28): Prometheus metrics + structured logging in WS/SSE handlers + drain observability. 12 new tests in `internal/metrics/`.

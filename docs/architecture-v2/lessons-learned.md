@@ -1139,3 +1139,21 @@ both `docker-compose.yml` (dev/go profile) and `theM_gateway/docker-compose.trae
 **Lesson:** Content-Type allow-listing at the HTTP response boundary prevents stored XSS attacks via crafted MIME types. Even if the stored content_type is `text/html`, serving it as `text/html` with `Content-Disposition: attachment` is safer when paired with the allow-list. The allow-list should cover all `application/`, `image/`, `text/`, `audio/`, `video/`, and `font/` prefixes — not just a whitelist of exact types, which becomes unmaintainable.
 
 **Lesson:** The `"file"` event emitted to the bus must be verified in tests to NOT contain the binary data. `TestOrchestrator_ArtifactEventContainsNoPayload` does this by unmarshaling the event payload and asserting that "data", "data_base64", and "storage_path" keys are absent. This test must be run with `-race` to confirm the artifact recording goroutine does not race with event publication.
+
+---
+
+## R-4a (2026-07-31): Tenant Database Foundation
+
+**Lesson:** Inspect the live DB before writing a single line of migration SQL. The VPS had `agents_slug_key` (table-level UNIQUE constraint) AND `idx_agents_slug` (explicit UNIQUE index) on the same column — two separate objects to drop. A migration that only drops one leaves a dangling unique index that prevents cross-tenant duplicate slugs. Always query `pg_indexes` for all uniqueness objects on the target table.
+
+**Lesson:** Use `ADD COLUMN IF NOT EXISTS` + UPDATE + NOT NULL as three separate steps for backfill migrations. Adding the column as NOT NULL with DEFAULT in a single `ALTER TABLE` acquires an ACCESS EXCLUSIVE lock for the entire table rewrite. The three-step approach (nullable → backfill → set NOT NULL) releases the lock between steps and is safe even on tables with millions of rows.
+
+**Lesson:** Embed validation DO blocks inside the migration transaction. `IF nulls > 0 THEN RAISE EXCEPTION` catches backfill bugs at apply time, not hours later when application code fails. The cost is a longer apply time; the benefit is a broken migration that rolls back cleanly vs. a partially-migrated DB that needs manual repair.
+
+**Lesson:** When a migration depends on another migration that was written but not yet applied to the live DB (here: `025_run_artifacts.sql`), create the table WITH the new column in the dependent migration rather than `ALTER TABLE ADD COLUMN IF NOT EXISTS` in a separate step. Both forms are idempotent via the appropriate IF NOT EXISTS / IF EXISTS guards, but creating the table once with the right schema avoids the two-step awkwardness and is cleaner for fresh DB installs.
+
+**Lesson:** Test migrations on a pg_dump copy of the live DB schema, not an independently-seeded test DB. The live DB has accumulated `ALTER TABLE ... ADD COLUMN` statements from 29 migrations; rebuilding from seed files encounters migration sequencing bugs (e.g., `slug` column added in migration 10 but referenced in migration 7). `pg_dump --schema-only` captures the current live state exactly, including all implicit defaults and constraints added by intermediate migrations.
+
+**Lesson:** A re-run (idempotency test) on the test DB before applying to live is a 30-second safety check that catches any non-idempotent step. Run it every time. The NOTICEs from IF NOT EXISTS / IF EXISTS skips on re-run confirm the guards are working.
+
+**Lesson:** `app_orchestrators.name` had a global UNIQUE constraint named `app_orchestrators_name_key` in the test DB but this constraint was absent in the live DB (it had already been dropped or never created with that exact name). Always use `DROP CONSTRAINT IF EXISTS` and `DROP INDEX IF EXISTS` in migrations, never the bare form — even if you are "certain" the constraint exists. The live DB is the source of truth, not the documented migration history.
