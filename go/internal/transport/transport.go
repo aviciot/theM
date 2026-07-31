@@ -62,3 +62,21 @@ func TokenHash(rawToken string) string {
 	h := sha256.Sum256([]byte(rawToken))
 	return fmt.Sprintf("%x", h)
 }
+
+// RuntimeIdentity holds the five-element authenticated identity for a single
+// orchestration session. All fields come from trusted authentication state; none
+// may be supplied by the client in a request header or body.
+//
+// Fields that are not yet available at identity-resolution time (e.g. RunID
+// before a run is created) must be left as empty string, not filled with a
+// placeholder or a default value.
+//
+// Tenant isolation: TenantID comes from access_tokens.tenant_id (bearer token
+// path) or jwt.Claims.TenantID (JWT path). It is NEVER inferred from AppID.
+type RuntimeIdentity struct {
+	TenantID string // UUID string; from auth token or JWT claim
+	AppID    string // UUID string; from entry point → application chain
+	UserID   int64  // from access_tokens.user_id or JWT sub claim
+	SessionID string // assigned at WS/SSE upgrade time
+	RunID    string // assigned when a Temporal workflow is started; empty before then
+}

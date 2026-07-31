@@ -1,11 +1,12 @@
 # Implementation Status — Go Gateway
 
-**Last updated:** 2026-07-31 (Phase R-4a Tenant Database Foundation complete)
+**Last updated:** 2026-07-31 (Phase R-4b Authenticated Tenant Identity Foundation complete)
 
 ---
 
 ## Current State
 
+Phase R-4b complete (2026-07-31): Authenticated tenant identity foundation — `tenantctx` package, TenantID in `Claims`/`TokenInfo`/`TokenRow`, `pgx_querier` fetches `tenant_id`, `BearerTenantMiddleware`/`HS256TenantMiddleware`, `RuntimeIdentity` struct. 23 new tests. 447 total. HEAD pending commit.
 Phase R-4a complete (2026-07-31): Tenant database foundation — `them.tenants` table, `tenant_id UUID NOT NULL` on 7 tables, bootstrap tenant, constraint migration, `them.run_artifacts` with tenant_id. DB-only change; no Go/Python application code changed. HEAD `0056d95`.
 Phase R-3 complete (2026-07-29): File artifact delivery — DB schema, recorder, handler, orchestrator wiring. 22 new tests. HEAD `ac12082`.
 Phase R-2 complete (2026-07-28): Go Temporal worker registered; inline execution path removed; orchestrator feature parity achieved. 11 new tests. HEAD `029bf8c`.
@@ -28,7 +29,8 @@ Phase 11c-C validation complete (2026-07-21). 229 unit tests pass. Race detector
 | `internal/telemetry` | Complete | — | `telemetry.go` |
 | `internal/health` | Complete | 5 (S1-02) | `health.go` |
 | `internal/server` | Complete | 4 (S1-03) | `server.go` |
-| `internal/auth` | Complete | 14 (S1-04, S1-05) | `jwt.go`, `token_cache.go`, `middleware.go` |
+| `internal/auth` | Complete (R-4b) | 37 (S1-04, S1-05, S1-31) | `jwt.go`, `token_cache.go`, `middleware.go`, `pgx_querier.go` — TenantID in Claims/TokenInfo, tenant middleware |
+| `internal/tenantctx` | Complete (R-4b) | 8 (S1-32) | `tenantctx.go` — typed context key, ErrNoTenant, ErrInvalidTenant |
 | `internal/gate` | Complete | 16 (S1-17) | `gate.go` |
 | `internal/session` | Complete | 7 (S1-06) | `session.go` |
 | `internal/event` | Complete | 6 (S1-07) | `bus.go` |
@@ -46,7 +48,7 @@ Phase 11c-C validation complete (2026-07-21). 229 unit tests pass. Race detector
 | `internal/admin/dal` | Complete | — (covered by admin tests) | `dal.go`, `agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `tokens.go`, `config.go` |
 | `internal/metrics` | Complete (Phase R-1) | 12 (S1-27) | `metrics.go` — all 10 Prometheus metrics + cardinality enforcement |
 | `internal/admin/service` | Complete | 10 (S1-25 config) | `service.go`, `tokens.go`, `sessions.go`, `config.go` |
-| `internal/transport` | Complete | — (covered by ws/sse tests) | `transport.go` |
+| `internal/transport` | Complete (R-4b) | — (covered by ws/sse tests) | `transport.go` — `RuntimeIdentity` struct added |
 | `internal/ratelimit` | Complete | 3 (S1-16) | `limiter.go` |
 | `internal/epconfig` | Complete | 26 (S1-18) | `epconfig.go`, `pgx.go` |
 | `internal/runstream` | Complete | 25 (S1-21, S1-23) | `stream.go`, `streamer.go`, `dispatcher.go`, `metrics.go`, `streamid.go` |

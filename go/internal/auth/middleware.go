@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -137,6 +139,98 @@ func HS256Middleware(secret []byte) func(http.Handler) http.Handler {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// R-4b: Tenant-aware middleware primitives
+// ──────────────────────────────────────────────────────────────────────────────
+
+// BearerTenantMiddleware returns a middleware that validates the
+// Authorization: Bearer <token> header against the provided Cache and then
+// extracts TenantID from the resulting TokenInfo.
+//
+// On valid token with non-empty TenantID:
+//   - *TokenInfo is placed in context (same as BearerMiddleware)
+//   - TenantID is placed in context via tenantctx.WithTenantID
+//   - next handler is called
+//
+// On valid token but empty TenantID:
+//   - Returns 403 Forbidden — token exists but carries no tenant identity.
+//   - This guards against pre-R-4a tokens that slipped through without a
+//     TenantID. The bootstrap tenant is NOT silently assigned.
+//
+// On missing/invalid token:
+//   - Returns 401 Unauthorized.
+//
+// TenantID is NEVER read from request headers or query parameters.
+func BearerTenantMiddleware(cache *Cache) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, ok := extractBearer(r)
+			if !ok {
+				writeUnauthorized(w, "missing or malformed Authorization header")
+				return
+			}
+
+			info, err := cache.Validate(r.Context(), raw)
+			if err != nil {
+				writeUnauthorized(w, "invalid or revoked bearer token")
+				return
+			}
+
+			if info.TenantID == "" {
+				writeForbidden(w, "token has no tenant identity")
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), tokenInfoKey, info)
+			ctx = tenantctx.WithTenantID(ctx, info.TenantID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// HS256TenantMiddleware returns a middleware that validates the
+// Authorization: Bearer <token> header as an HS256 JWT and then extracts
+// TenantID from the resulting Claims.
+//
+// On valid JWT with non-empty TenantID:
+//   - *Claims is placed in context (same as HS256Middleware)
+//   - TenantID is placed in context via tenantctx.WithTenantID
+//   - next handler is called
+//
+// On valid JWT but empty TenantID (JWT issued without tenant_id claim):
+//   - Returns 403 Forbidden. The bootstrap tenant is NOT silently assigned.
+//
+// On missing/invalid JWT:
+//   - Returns 401 Unauthorized.
+//
+// TenantID is NEVER read from request headers or query parameters.
+func HS256TenantMiddleware(secret []byte) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, ok := extractBearer(r)
+			if !ok {
+				writeUnauthorized(w, "authentication required")
+				return
+			}
+
+			claims, err := ValidateHS256JWT(raw, secret)
+			if err != nil {
+				writeUnauthorized(w, "invalid token")
+				return
+			}
+
+			if claims.TenantID == "" {
+				writeForbidden(w, "token has no tenant identity")
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), claimsKey, claims)
+			ctx = tenantctx.WithTenantID(ctx, claims.TenantID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -167,6 +261,14 @@ type errResponse struct {
 func writeUnauthorized(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
+	body, _ := json.Marshal(errResponse{Error: msg})
+	_, _ = w.Write(body)
+}
+
+// writeForbidden writes a 403 JSON response and sets Content-Type.
+func writeForbidden(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
 	body, _ := json.Marshal(errResponse{Error: msg})
 	_, _ = w.Write(body)
 }

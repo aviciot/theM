@@ -1,36 +1,49 @@
-# Phase R-4a Complete — Handover to R-4b
+# Phase R-4b Complete — Handover to R-4c
 
 **Date:** 2026-07-31
 **Branch:** main
-**HEAD:** `0056d95` feat(r4a): tenant database foundation
-**Prepared by:** Phase R-4a session
+**HEAD:** (see git log — committed after this document is written)
+**Prepared by:** Phase R-4b session
 
 ---
 
 ## Current Objective
 
-Phase R-4a (Tenant Database Foundation) is **complete**. The next task is **Phase R-4b:
-Go Auth Middleware Tenant Resolution** — resolving TenantID from JWT claims and bearer token
-lookup, propagating it through context into SessionInfo.
+Phase R-4b (Authenticated Tenant Identity Foundation) is **complete**. The next task is
+**Phase R-4c: DAL Query Tenant Filtering** — adding `WHERE tenant_id = $n` to all DAL
+queries on tenant-scoped tables, and wiring the tenant-aware middleware to admin and
+runtime routes.
 
 ---
 
-## What Was Completed This Session (R-4a)
+## What Was Completed This Session (R-4b)
 
-1. `docs/architecture-v2/R4_TENANT_IMPLEMENTATION_PLAN.md` — formal plan resolving O-01..O-08
-2. `db/026_tenant_foundation.sql` — single idempotent migration (transactional):
-   - Creates `them.tenants` table
-   - Inserts bootstrap tenant (`00000000-0000-0000-0000-000000000001`, slug `default`)
-   - Adds `tenant_id UUID NOT NULL` to: agents (8 rows backfilled), orchestrators (2 rows),
-     access_tokens, applications, runs, audit_logs, app_orchestrators
-   - Drops global uniqueness constraints, replaces with tenant-scoped indexes
-   - Creates `them.run_artifacts` with `tenant_id` included from the start
-3. `db/validate_r4a.sql` — standalone validation script (all 9 checks pass)
-4. `docs/architecture-v2/R4A_IMPLEMENTATION_REPORT.md` — full implementation report
-5. `docs/architecture-v2/implementation-status.md` — updated with R-4a state
-6. `docs/architecture-v2/lessons-learned.md` — R-4a lessons appended
+1. **`go/internal/tenantctx/`** — new typed context package with `WithTenantID`, `TenantIDFromCtx`,
+   `MustTenantIDFromCtx`, `ErrNoTenant`, `ErrInvalidTenant`. No stringly-typed key. No fallback to
+   bootstrap tenant.
 
-Full details: `docs/architecture-v2/R4A_IMPLEMENTATION_REPORT.md`
+2. **`go/internal/auth/jwt.go`** — added `TenantID` to `Claims` and `hs256RawClaims`. Both
+   `ValidateJWT` (RS256) and `ValidateHS256JWT` (HS256) now propagate `TenantID`.
+
+3. **`go/internal/auth/token_cache.go`** — added `TenantID` to `TokenInfo` and `TokenRow`.
+   `rowToTokenInfo` propagates it.
+
+4. **`go/internal/auth/pgx_querier.go`** — query now fetches `tenant_id` from `access_tokens`.
+
+5. **`go/internal/auth/middleware.go`** — added `BearerTenantMiddleware` and `HS256TenantMiddleware`
+   (both return 401 for missing/invalid auth, 403 for absent TenantID). Added `writeForbidden`.
+
+6. **`go/internal/transport/transport.go`** — added `RuntimeIdentity` struct (TenantID, AppID,
+   UserID, SessionID, RunID).
+
+7. **`go/internal/tenantctx/tenantctx_test.go`** — 8 tests (TC-01 through TC-08).
+
+8. **`go/internal/auth/tenant_middleware_test.go`** — 15 tests (TM-01 through TM-15).
+
+9. **Documentation** — R4B_IMPLEMENTATION_REPORT.md, updated implementation-status.md,
+   lessons-learned.md, TEST_INDEX.md (S1-31, S1-32, trigger map).
+
+Full details: `docs/architecture-v2/R4B_IMPLEMENTATION_REPORT.md`
 
 ---
 
@@ -40,26 +53,22 @@ Full details: `docs/architecture-v2/R4A_IMPLEMENTATION_REPORT.md`
 |---|---|
 | them-go-bridge (×2) | Healthy |
 | them-worker (Python) | Running |
-| them-postgres | Healthy — migration applied |
+| them-postgres | Healthy — R-4a migration applied |
 | them-redis | Healthy |
 
-**Migration applied:** `db/026_tenant_foundation.sql` applied to live VPS DB ✓
-**Validation:** all 9 checks passed on live DB ✓
-
-Note: `db/025_run_artifacts.sql` (standalone file) was NOT applied to the live DB before R-4a;
-`them.run_artifacts` was created by `026_tenant_foundation.sql` instead, with tenant_id
-included from the start. The standalone `025` file should be marked as superseded.
+**No DB migrations in R-4b** (DB-only changes were in R-4a).
 
 ---
 
 ## Test State
 
 ```
-go test ./...        →   422 passed, 0 failed (27 packages)
+go test ./...        →   447 passed, 0 failed (28 packages)
+go test -race ./internal/auth/... ./internal/tenantctx/...   → PASS (no data races)
 Python sanity 01-04,15  →   55 passed, 0 failed
 ```
 
-No Go or Python application code was changed in R-4a.
+New in R-4b: 23 tests across 2 new test files.
 
 ---
 
@@ -71,35 +80,19 @@ No Go or Python application code was changed in R-4a.
 | Slug | `default` |
 | Display name | Default Development Tenant |
 
-This UUID is deterministic and immutable. Future Go/Python code that needs to resolve the
-development tenant can hardcode this UUID.
-
----
-
-## DB Schema Changes
-
-New constraint names (for reference in DAL tests):
-- `uq_agents_tenant_slug` — `(tenant_id, slug)` on `them.agents`
-- `uq_orchestrators_tenant_name` — `(tenant_id, name)` on `them.orchestrators`
-- `uq_app_orchestrators_tenant_name` — `(tenant_id, name)` on `them.app_orchestrators`
-
-New indexes:
-- `idx_agents_tenant`, `idx_orchestrators_tenant`, `idx_access_tokens_tenant`,
-  `idx_applications_tenant`, `idx_runs_tenant`, `idx_audit_logs_tenant`,
-  `idx_app_orchestrators_tenant`, `idx_run_artifacts_tenant`
-
 ---
 
 ## Hard Constraints — Carry Forward
 
-- **Bootstrap tenant UUID `00000000-0000-0000-0000-000000000001` is immutable** — never change
+- **Bootstrap tenant UUID `00000000-0000-0000-0000-000000000001` is immutable.**
 - **Temporal is the single durable owner of every run.**
-- **Never log token values, API keys, or secrets** at any log level.
+- **Never log token values, API keys, or secrets.**
 - **All Go changes require `go test ./...` before commit.** Zero regressions allowed.
 - **Workflow ID scheme `ctx-{contextID}`** must be preserved.
-- **`llm_providers`, `config`, `middleware_defs` are platform-global** — no tenant_id ever
+- **`llm_providers`, `config`, `middleware_defs` are platform-global** — no tenant_id ever.
 - **DB name and schema: `them` only.** Never `odin`.
-- **`RUN_EVENTS_MODE`**: Worker must be `streams`; Bridge must be `dual`. Do not change.
+- **TenantID must never come from request headers or query parameters.**
+- **The bootstrap tenant must NOT be silently assigned when authentication is absent/invalid.**
 
 ---
 
@@ -107,61 +100,50 @@ New indexes:
 
 | Issue | Severity | Notes |
 |---|---|---|
-| No runtime tenant enforcement | Expected | R-4a is DB-only; R-4b through R-4e add enforcement |
-| Cross-tenant access returns 200/data (not 403) | Expected | Not enforced until R-4b/R-4c complete |
-| `db/025_run_artifacts.sql` superseded | Low | The `025` file still exists in repo but was not applied to live DB; `026` creates `run_artifacts` instead. Can be kept for documentation but should never be applied to a DB that has `026`. |
+| Auth service does not include `tenant_id` in JWT tokens | Medium | `HS256TenantMiddleware` returns 403 for all current JWTs — middleware NOT yet wired to any route. Unblocks when auth service is updated. |
+| No DAL tenant filtering yet | Expected | R-4b is identity foundation only; R-4c adds WHERE clauses |
+| Cross-tenant access returns 200/data (not 403) | Expected | Not enforced until R-4c complete |
 
 ---
 
-## Next Task: Phase R-4b — Go Auth Middleware Tenant Resolution
+## R-4c Scope — DAL Query Tenant Filtering
 
-**Scope:** Resolve TenantID from JWT claims or bearer token lookup; propagate through context.
+**Scope:**
+1. Add `tenantID string` parameter to all DAL functions on tenant-scoped tables
+   (`agents`, `orchestrators`, `access_tokens`, `applications`, `runs`, `audit_logs`,
+   `app_orchestrators`)
+2. Add `WHERE tenant_id = $n` clause to all affected queries
+3. Wire `BearerTenantMiddleware` or `HS256TenantMiddleware` to admin routes
+4. Wire tenant context extraction in WS/SSE handlers (from bearer token path)
+5. Update all admin handler call sites to pass TenantID from context
+6. Update tests for all changed DAL functions
 
-This is a **DB-only** foundation for app code. R-4b adds Go code changes.
+**R-4c does NOT:**
+- Change run recorder signature (R-4d)
+- Add tenant provisioning UI or APIs
+- Change session TTL or Redis key structure (Tier 2, deferred)
 
-**Read before starting R-4b:**
-- `docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md` §2 (tenant boundary, steps 1–2)
-- `docs/architecture-v2/TENANT_FOUNDATION_DECISIONS.md` §1.2 (tenant context resolution chain)
-- `go/internal/auth/token_cache.go` — add `TenantID` to `TokenInfo`
-- `go/internal/transport/transport.go` — add `TenantID` to `SessionInfo`
-- `go/internal/auth/middleware.go` — add tenant extraction from JWT claims
-- `go/internal/ws/handler.go` and `go/internal/sse/handler.go` — populate TenantID in sessInfo
-- `go/internal/epconfig/epconfig.go` — confirm EPConfig carries TenantID (may already be there)
-
-**R-4b scope:**
-1. Add `TenantID string` to `auth.TokenInfo` struct; populate from `them.access_tokens.tenant_id`
-2. Add `TenantID string` to `transport.SessionInfo` struct
-3. In WS + SSE handlers: set `sessInfo.TenantID` from `tokenInfo.TenantID` (authenticated) or `resolvedCfg.TenantID` (public EP)
-4. Verify `EPConfig.TenantID` is populated; add if not
-5. Write tests: `TestSession_TenantIDFromToken`, `TestSession_TenantIDFromPublicEP`
-6. Run `go test ./...` — must pass
-
-**R-4b does NOT:**
-- Add `WHERE tenant_id = $n` to any DAL query (that is R-4c)
-- Enforce cross-tenant 403 (that is R-4c after DAL changes)
-- Change `runs.CreateRun` signature (that is R-4d)
-
-**Files most relevant to R-4b:**
+**Files most relevant to R-4c:**
 
 | File | Why |
 |---|---|
-| `go/internal/auth/token_cache.go` | Add TenantID to TokenInfo + DB query |
-| `go/internal/transport/transport.go` | Add TenantID to SessionInfo |
-| `go/internal/auth/middleware.go` | Extract TenantID from JWT claims |
-| `go/internal/ws/handler.go` | Populate sessInfo.TenantID |
-| `go/internal/sse/handler.go` | Populate sessInfo.TenantID |
-| `go/internal/epconfig/epconfig.go` | Confirm/add EPConfig.TenantID |
-| `db/026_tenant_foundation.sql` | Schema reference — tenant_id columns are NOT NULL now |
+| `go/internal/admin/dal/agents.go` | Add tenantID param + WHERE clause |
+| `go/internal/admin/dal/orchestrators.go` | Add tenantID param + WHERE clause |
+| `go/internal/admin/dal/applications.go` | Add tenantID param + WHERE clause |
+| `go/internal/admin/dal/runs.go` | Add tenantID param + WHERE clause |
+| `go/internal/admin/dal/tokens.go` | Add tenantID param + WHERE clause |
+| `go/internal/admin/` (handler files) | Extract TenantID from context, pass to DAL |
+| `go/internal/auth/middleware.go` | `BearerTenantMiddleware`, `HS256TenantMiddleware` — wire to routes |
+| `go/internal/tenantctx/tenantctx.go` | `TenantIDFromCtx` — call from handlers |
+| `go/internal/admin/router.go` | Add tenant middleware to admin routes |
 
 ---
 
 ## Starting the Next Session
 
 ```bash
-# Confirm HEAD and migration state
+# Confirm HEAD
 git log --oneline -5
-docker exec them-postgres psql -U them -d them -c "SELECT id, slug FROM them.tenants;"
-docker exec them-postgres psql -U them -d them -c "SELECT version, description FROM them.schema_migrations ORDER BY applied_at DESC LIMIT 3;"
 
 # Run Go tests to confirm clean baseline
 docker run --rm -v /home/avi/them/go:/workspace -w /workspace golang:1.24-alpine go test ./...
@@ -172,25 +154,24 @@ python3.12 scripts/tests/run_tests.py 01 02 03 04 15
 
 **First prompt for the next session:**
 
-> Phase R-4a is complete (HEAD from git log, 422 Go tests passing, tenant DB foundation
-> applied to live DB). Start Phase R-4b: Go Auth Middleware Tenant Resolution. Read
-> docs/architecture-v2/CRITICAL_RUNTIME_ARCHITECTURE_GATE.md §2 and
-> TENANT_FOUNDATION_DECISIONS.md §1.2 before writing any code. Add TenantID to TokenInfo
-> and SessionInfo; populate in WS/SSE handlers. Use Sonnet.
+> Phase R-4b is complete (HEAD from git log, 447 Go tests passing). Start Phase R-4c: DAL
+> Query Tenant Filtering. Read docs/architecture-v2/R4B_IMPLEMENTATION_REPORT.md and
+> TENANT_FOUNDATION_DECISIONS.md §5 before writing any code. Add WHERE tenant_id = $n to
+> all DAL functions on tenant-scoped tables; wire BearerTenantMiddleware to admin routes;
+> extract TenantID from context in handlers. Use Sonnet.
 
 ---
 
 ## Commits This Session
 
-- `0056d95` feat(r4a): tenant database foundation — tenants table, tenant_id columns, bootstrap tenant
+To be added after `git commit`.
 
-Push status: **pushed to origin/main** ✓
+Push status: **to be pushed** after commit.
 
 ---
 
-## R-4b through R-4e NOT started
+## R-4c through R-4e NOT started
 
-- R-4b (Go auth middleware tenant resolution): NOT started
 - R-4c (DAL WHERE tenant_id): NOT started
 - R-4d (session propagation): NOT started
 - R-4e (run recorder): NOT started

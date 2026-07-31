@@ -1,6 +1,6 @@
 # Go Rewrite — Lessons Learned
 
-Last updated: 2026-07-29
+Last updated: 2026-07-31
 
 ---
 
@@ -1157,3 +1157,17 @@ both `docker-compose.yml` (dev/go profile) and `theM_gateway/docker-compose.trae
 **Lesson:** A re-run (idempotency test) on the test DB before applying to live is a 30-second safety check that catches any non-idempotent step. Run it every time. The NOTICEs from IF NOT EXISTS / IF EXISTS skips on re-run confirm the guards are working.
 
 **Lesson:** `app_orchestrators.name` had a global UNIQUE constraint named `app_orchestrators_name_key` in the test DB but this constraint was absent in the live DB (it had already been dropped or never created with that exact name). Always use `DROP CONSTRAINT IF EXISTS` and `DROP INDEX IF EXISTS` in migrations, never the bare form — even if you are "certain" the constraint exists. The live DB is the source of truth, not the documented migration history.
+
+---
+
+## R-4b (2026-07-31): Authenticated Tenant Identity Foundation
+
+**Lesson:** Keep the tenant-aware middleware (`BearerTenantMiddleware`, `HS256TenantMiddleware`) separate from the existing middleware (`BearerMiddleware`, `HS256Middleware`). Replacing existing middleware would break all routes that do not yet need tenant enforcement. Adding new middleware alongside lets the wiring decision be made at the route-registration level in R-4c, without touching working code.
+
+**Lesson:** Do not silently assign the bootstrap tenant when the JWT has no `tenant_id` claim. The correct behavior is to return 403 from tenant-requiring middleware. This creates pressure to update the auth service to include the claim, which is the right long-term outcome. Silently defaulting to bootstrap tenant would hide the missing claim for months and complicate future multi-tenant migration.
+
+**Lesson:** The `tenantctx` context key must be a struct type, not a string. Using a string key (`"tenant_id"`) allows any package — or any request header that happens to be mapped to a context key by middleware — to inject or overwrite the tenant identity. An unexported struct type `tenantKey{}` prevents this collision. Verified by test TC-08.
+
+**Lesson:** When R-4a adds `tenant_id NOT NULL` to `access_tokens` and backfills all existing rows, no legacy compatibility code is needed in the DB querier — the NOT NULL guarantee means every row returns a non-empty UUID. The `pgx_querier.go` comment about "pre-R-4a records" is documentation of the design decision, not a code path that is actually exercised. Remove the comment in a future cleanup.
+
+**Lesson:** Token cache JSON round-trip (L2 → L1) must include `TenantID`. The L2 entry is `json.Marshal(info)` and the L1 hit reads back `json.Unmarshal`. Since `TokenInfo.TenantID` uses `json:"tenant_id,omitempty"`, a zero-value (empty string) TenantID will be omitted and survive the round-trip as empty. This is correct behavior — an empty TenantID means the token has no tenant and should be rejected by `BearerTenantMiddleware`.

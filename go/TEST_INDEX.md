@@ -122,6 +122,54 @@ Run on: every commit, every PR, every pre-deploy check.
 
 ---
 
+### S1-31 · Tenant middleware — `internal/auth/tenant_middleware_test.go`
+
+**Purpose:** R-4b — validated tenant identity flows from auth token/JWT into context. Confirms
+no header can override TenantID; no secret appears in errors; two tenants resolve independently.
+
+| Test | What it proves |
+|---|---|
+| `TestBearerTenant_ValidToken` | TM-01: valid token with TenantID → 200, TenantID in context |
+| `TestBearerTenant_MissingToken` | TM-02: no Authorization header → 401 |
+| `TestBearerTenant_InvalidToken` | TM-03: unknown token → 401 |
+| `TestBearerTenant_TokenWithoutTenant` | TM-04: valid token, empty TenantID → 403 |
+| `TestBearerTenant_EmptyTenantID` | TM-05: empty string stored in DB → 403 |
+| `TestBearerTenant_HeaderCannotOverride` | TM-06: X-Tenant-ID header ignored; TenantID from token only |
+| `TestBearerTenant_TwoTenantsIndependent` | TM-07: alpha and bravo tokens resolve independently |
+| `TestHS256Tenant_ValidJWTWithTenant` | TM-08: HS256 JWT with tenant_id claim → 200, TenantID in context |
+| `TestHS256Tenant_JWTWithoutTenant` | TM-09: HS256 JWT without tenant_id → 403 |
+| `TestHS256Tenant_MissingToken` | TM-10: no token on HS256TenantMiddleware → 401 |
+| `TestTenantMiddleware_NoSecretInErrors` | TM-11: signing secret never appears in error responses |
+| `TestValidateJWT_TenantIDRoundTrip` | TM-12: RS256 JWT carries TenantID through sign/validate cycle |
+| `TestValidateJWT_NoTenantID` | TM-13: JWT without tenant_id → empty TenantID, not an error |
+| `TestValidateHS256JWT_TenantIDRoundTrip` | TM-14: HS256 JWT carries TenantID through validate cycle |
+| `TestTokenCache_TenantIDFlows` | TM-15: TenantID flows L1 miss → DB → L1 cache |
+
+**Trigger:** any change to `internal/auth/middleware.go`, `internal/auth/jwt.go`,
+`internal/auth/token_cache.go`, `internal/auth/pgx_querier.go`
+
+---
+
+### S1-32 · Tenant context — `internal/tenantctx/tenantctx_test.go`
+
+**Purpose:** Typed context package for tenant identity — no stringly-typed key, correct error
+types, parent-child isolation.
+
+| Test | What it proves |
+|---|---|
+| `TestTenantCtx_RoundTrip` | TC-01: WithTenantID + TenantIDFromCtx returns correct ID |
+| `TestTenantCtx_MissingTenant` | TC-02: empty context → ErrNoTenant |
+| `TestTenantCtx_EmptyStringIsInvalid` | TC-03: WithTenantID("") → ErrInvalidTenant on retrieval |
+| `TestTenantCtx_TwoTenantsIndependent` | TC-04: alpha and bravo in separate contexts — no cross-contamination |
+| `TestTenantCtx_ChildOverrideDoesNotAffectParent` | TC-05: child context override does not mutate parent |
+| `TestTenantCtx_MustPanicsOnMissing` | TC-06: MustTenantIDFromCtx panics when tenant absent |
+| `TestTenantCtx_MustReturnsValue` | TC-07: MustTenantIDFromCtx returns value when present |
+| `TestTenantCtx_StringKeyCannotOverride` | TC-08: raw string context key cannot retrieve typed tenant value |
+
+**Trigger:** any change to `internal/tenantctx/tenantctx.go`
+
+---
+
 ### S1-06 · Session — `internal/session/session_test.go`
 
 **Purpose:** Session lifecycle with atomic Lua scripts — fixes Critical finding #1 (ghost-set bug).
@@ -1089,8 +1137,11 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/config/config.go` | S1-01 |
 | `internal/health/health.go` | S1-02 |
 | `internal/server/server.go` | S1-03 |
-| `internal/auth/jwt.go` | S1-04 |
-| `internal/auth/token_cache.go` | S1-05 |
+| `internal/auth/jwt.go` | S1-04 + S1-31 |
+| `internal/auth/token_cache.go` | S1-05 + S1-31 |
+| `internal/auth/middleware.go` | S1-31 |
+| `internal/auth/pgx_querier.go` | S1-31 |
+| `internal/tenantctx/tenantctx.go` | S1-32 |
 | `internal/session/session.go` | S1-06 |
 | `internal/event/bus.go` | S1-07 |
 | `internal/domain/domain.go` | S1-08 |
@@ -1179,7 +1230,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-28 | orchestrator | 12 |
 | S1-29 | temporal (worker + serialization) | 2 |
 | S1-30 | artifacts (download handler) | 9 |
-| **S1 total** | | **383** |
+| S1-31 | auth/tenant_middleware (R-4b) | 15 |
+| S1-32 | tenantctx (R-4b) | 8 |
+| **S1 total** | | **406** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1188,4 +1241,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **424** |
+| **`go test ./...` total** | | **447** |

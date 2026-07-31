@@ -15,9 +15,15 @@ import (
 // ──────────────────────────────────────────────────────────────────────────────
 
 // TokenInfo holds the data for a validated bearer token.
+//
+// TenantID is populated from them.access_tokens.tenant_id at DB lookup time.
+// It flows from trusted DB state, not from the request. An empty TenantID
+// means the record pre-dates the R-4a migration or the DB lookup failed; the
+// token is still valid but cannot be used for tenant-scoped operations.
 type TokenInfo struct {
 	TokenID     int64    `json:"token_id"`
 	AppID       int64    `json:"app_id,omitempty"`
+	TenantID    string   `json:"tenant_id,omitempty"`
 	Permissions []string `json:"permissions"`
 	CreatedAt   int64    `json:"created_at"`
 	ExpiresAt   int64    `json:"expires_at,omitempty"` // 0 = no expiry
@@ -35,6 +41,7 @@ var ErrTokenNotFound = errors.New("auth: token not found or revoked")
 type TokenRow struct {
 	ID            int64
 	ApplicationID int64
+	TenantID      string     // UUID string; empty for pre-R-4a records (see pgx_querier.go)
 	Permissions   []string
 	CreatedAt     time.Time
 	ExpiresAt     *time.Time // nil means no expiry
@@ -239,6 +246,7 @@ func rowToTokenInfo(row *TokenRow) *TokenInfo {
 	info := &TokenInfo{
 		TokenID:     row.ID,
 		AppID:       row.ApplicationID,
+		TenantID:    row.TenantID,
 		Permissions: row.Permissions,
 		CreatedAt:   row.CreatedAt.Unix(),
 	}

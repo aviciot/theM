@@ -43,12 +43,17 @@ var (
 // Claims holds the fields extracted from a validated JWT.
 // It normalises both the HS256 auth-service token format (sub/username/role)
 // and the RS256 test token format (user_id/user_name/roles) into one struct.
+//
+// TenantID comes exclusively from the JWT payload claim "tenant_id". It is
+// never read from request headers or query parameters. An absent claim results
+// in an empty string; callers that require a tenant must reject empty values.
 type Claims struct {
 	UserID    int64    `json:"user_id"`
 	Username  string   `json:"user_name"` // RS256 field name
 	Email     string   `json:"email"`
 	Roles     []string `json:"roles"`
 	SessionID string   `json:"session_id,omitempty"`
+	TenantID  string   `json:"tenant_id,omitempty"`
 
 	// Standard JWT fields (int64 Unix timestamps).
 	ExpiresAt int64  `json:"exp"`
@@ -64,6 +69,7 @@ type hs256RawClaims struct {
 	Name     string `json:"name"`
 	Role     string `json:"role"`
 	Email    string `json:"email"`
+	TenantID string `json:"tenant_id,omitempty"`
 	Exp      int64  `json:"exp"`
 	Iat      int64  `json:"iat"`
 }
@@ -192,6 +198,7 @@ func ValidateHS256JWT(tokenString string, secret []byte) (*Claims, error) {
 		Username:  raw.Username,
 		Email:     raw.Email,
 		Roles:     roles,
+		TenantID:  raw.TenantID,
 		ExpiresAt: raw.Exp,
 		IssuedAt:  raw.Iat,
 	}, nil
