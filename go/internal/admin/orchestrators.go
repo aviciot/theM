@@ -33,7 +33,8 @@ func (h *OrchestratorsHandler) Routes(r chi.Router) {
 
 // List handles GET /api/v1/admin/orchestrators.
 func (h *OrchestratorsHandler) List(w http.ResponseWriter, r *http.Request) {
-	orchs, err := h.svc.List(r.Context())
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	orchs, err := h.svc.List(r.Context(), tenantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
 		return
@@ -49,7 +50,8 @@ func (h *OrchestratorsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := h.svc.Create(r.Context(), input)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	id, err := h.svc.Create(r.Context(), tenantID, input)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -66,7 +68,8 @@ func (h *OrchestratorsHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *OrchestratorsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	o, err := h.svc.Get(r.Context(), name)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	o, err := h.svc.Get(r.Context(), tenantID, name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "orchestrator not found")
 		return
@@ -84,7 +87,8 @@ func (h *OrchestratorsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Update(r.Context(), name, input); err != nil {
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	if err := h.svc.Update(r.Context(), tenantID, name, input); err != nil {
 		writeError(w, http.StatusInternalServerError, "update orchestrator: "+err.Error())
 		return
 	}
@@ -96,7 +100,8 @@ func (h *OrchestratorsHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *OrchestratorsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	if err := h.svc.Delete(r.Context(), name); err != nil {
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	if err := h.svc.Delete(r.Context(), tenantID, name); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete orchestrator: "+err.Error())
 		return
 	}

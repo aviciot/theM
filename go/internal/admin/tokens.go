@@ -57,7 +57,8 @@ func (h *TokensHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		userID = &n
 	}
-	tokens, err := h.svc.List(r.Context(), userID)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tokens, err := h.svc.List(r.Context(), tenantID, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
 		return
@@ -82,7 +83,8 @@ func (h *TokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 		UserID:    body.UserID,
 		ExpiresAt: body.ExpiresAt,
 	}
-	out, err := h.svc.Create(r.Context(), in, body.OrchestratorID)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	out, err := h.svc.Create(r.Context(), tenantID, in, body.OrchestratorID)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -98,7 +100,8 @@ func (h *TokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Get handles GET /api/v1/admin/tokens/{token_id}
 func (h *TokensHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "token_id")
-	t, err := h.svc.Get(r.Context(), id)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	t, err := h.svc.Get(r.Context(), tenantID, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "token not found")
 		return
@@ -121,7 +124,8 @@ func (h *TokensHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Enabled:   body.Enabled,
 		ExpiresAt: body.ExpiresAt,
 	}
-	t, err := h.svc.Update(r.Context(), id, patch)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	t, err := h.svc.Update(r.Context(), tenantID, id, patch)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -135,7 +139,8 @@ func (h *TokensHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete handles DELETE /api/v1/admin/tokens/{token_id}
 func (h *TokensHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "token_id")
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}

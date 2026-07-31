@@ -749,6 +749,44 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 
 ---
 
+### S1-33 · Tenant isolation — `internal/admin/service/tenant_isolation_test.go`
+
+**Purpose:** R-4c1 service-layer tenant isolation contracts. Each tenant-owned entity (agents,
+orchestrators, applications, runs, tokens) is tested with an `isolationFakeDal` that enforces
+per-tenant scoping in memory. Verifies four contracts per entity type:
+- TC-OWN — own record succeeds
+- TC-OTHER — other tenant cannot read/update/delete (returns not-found)
+- TC-SLUG — same slug/name allowed across tenants
+- TC-DUP — duplicate inside same tenant returns error
+
+| Test | What it proves |
+|---|---|
+| `TestAgentService_TenantIsolation_OwnRecordSucceeds` | TC-OWN: agent created and retrieved within same tenant |
+| `TestAgentService_TenantIsolation_OtherTenantCannotRead` | TC-OTHER: agent from tenant-alpha returns ErrNotFound for tenant-bravo |
+| `TestAgentService_TenantIsolation_OtherTenantCannotUpdate` | TC-OTHER: update with wrong tenant returns error |
+| `TestAgentService_TenantIsolation_OtherTenantCannotDelete` | TC-OTHER: delete with wrong tenant returns error |
+| `TestAgentService_TenantIsolation_SameSlugAcrossTenantsAllowed` | TC-SLUG: same agent slug in alpha and bravo both succeed |
+| `TestAgentService_TenantIsolation_DuplicateSlugSameTenantReturnsError` | TC-DUP: second create with same slug in same tenant returns error |
+| `TestAgentService_TenantIsolation_ListReturnsOwnTenantOnly` | List only returns agents belonging to the requesting tenant |
+| `TestOrchService_TenantIsolation_OwnRecordSucceeds` | TC-OWN: orchestrator created and retrieved within same tenant |
+| `TestOrchService_TenantIsolation_OtherTenantCannotRead` | TC-OTHER: orchestrator from alpha returns ErrNotFound for bravo |
+| `TestOrchService_TenantIsolation_SameNameAcrossTenantsAllowed` | TC-SLUG: same orchestrator name in alpha and bravo both succeed |
+| `TestOrchService_TenantIsolation_DuplicateNameSameTenantReturnsError` | TC-DUP: second create with same name in same tenant returns error |
+| `TestAppService_TenantIsolation_OwnRecordSucceeds` | TC-OWN: application created and retrieved within same tenant |
+| `TestAppService_TenantIsolation_OtherTenantCannotRead` | TC-OTHER: application from alpha returns ErrNotFound for bravo |
+| `TestAppService_TenantIsolation_SameNameAcrossTenantsAllowed` | TC-SLUG: same application name in alpha and bravo both succeed |
+| `TestRunService_TenantIsolation_OwnRecordSucceeds` | TC-OWN: run pre-seeded for alpha is readable by alpha |
+| `TestRunService_TenantIsolation_OtherTenantCannotRead` | TC-OTHER: run from alpha returns ErrNotFound for bravo |
+| `TestRunService_TenantIsolation_ListReturnsOwnTenantOnly` | List only returns runs belonging to the requesting tenant |
+| `TestTokenService_TenantIsolation_OwnRecordSucceeds` | TC-OWN: token created and retrieved within same tenant |
+| `TestTokenService_TenantIsolation_OtherTenantCannotRead` | TC-OTHER: token from alpha returns ErrNotFound for bravo |
+| `TestTokenService_TenantIsolation_OtherTenantCannotDelete` | TC-OTHER: delete with wrong tenant returns error |
+| `TestTokenService_TenantIsolation_ListReturnsOwnTenantOnly` | List only returns tokens belonging to the requesting tenant |
+
+**Trigger:** any change to `internal/admin/service/` (any file) OR `internal/admin/dal/` (any file)
+
+---
+
 ### S1-26 · Fernet crypto — `internal/crypto/fernet_test.go`
 
 **Purpose:** Prove byte-for-byte compatibility between Python's `cryptography.fernet.Fernet`
@@ -1160,7 +1198,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/` (any file) | S1-15 + S1-25 |
 | `internal/admin/dal/` (any file) | S1-15 + S1-25 + S2-05 (integration) |
 | `internal/admin/dal/llm_providers.go` | S1-25 + S2-05 (integration) |
-| `internal/admin/service/` (any file) | S1-25 |
+| `internal/admin/service/` (any file) | S1-25 + S1-33 |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |
@@ -1232,7 +1270,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-30 | artifacts (download handler) | 9 |
 | S1-31 | auth/tenant_middleware (R-4b) | 15 |
 | S1-32 | tenantctx (R-4b) | 8 |
-| **S1 total** | | **406** |
+| S1-33 | admin/service tenant isolation (R-4c1) | 21 |
+| **S1 total** | | **427** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1241,4 +1280,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **447** |
+| **`go test ./...` total** | | **468** |

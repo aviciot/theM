@@ -48,11 +48,11 @@ type rowToSingle struct{ r RowScanner }
 
 func (a *rowToSingle) Scan(dest ...any) error { return a.r.Scan(dest...) }
 
-// ListOrchestrators returns all orchestrators ordered by creation date.
-func (d *DB) ListOrchestrators(ctx context.Context) ([]Orchestrator, error) {
-	q := "SELECT " + orchSelectCols + " FROM them.orchestrators ORDER BY created_at"
+// ListOrchestrators returns all orchestrators for the given tenant, ordered by creation date.
+func (d *DB) ListOrchestrators(ctx context.Context, tenantID string) ([]Orchestrator, error) {
+	q := "SELECT " + orchSelectCols + " FROM them.orchestrators WHERE tenant_id = $1::uuid ORDER BY created_at"
 
-	rows, err := d.q.Query(ctx, q)
+	rows, err := d.q.Query(ctx, q, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -69,22 +69,24 @@ func (d *DB) ListOrchestrators(ctx context.Context) ([]Orchestrator, error) {
 	return orchs, nil
 }
 
-// GetOrchestrator returns a single orchestrator by name.
-func (d *DB) GetOrchestrator(ctx context.Context, name string) (Orchestrator, error) {
-	q := "SELECT " + orchSelectCols + " FROM them.orchestrators WHERE name = $1"
-	return scanOrch(d.q.QueryRow(ctx, q, name))
+// GetOrchestrator returns a single orchestrator by name, scoped to the tenant.
+// Returns pgx.ErrNoRows when not found or when it belongs to another tenant.
+func (d *DB) GetOrchestrator(ctx context.Context, tenantID, name string) (Orchestrator, error) {
+	q := "SELECT " + orchSelectCols + " FROM them.orchestrators WHERE name = $1 AND tenant_id = $2::uuid"
+	return scanOrch(d.q.QueryRow(ctx, q, name, tenantID))
 }
 
-// CreateOrchestrator inserts a new orchestrator row and returns the new UUID.
-func (d *DB) CreateOrchestrator(ctx context.Context, in OrchestratorInput, enabled bool) (string, error) {
+// CreateOrchestrator inserts a new orchestrator row for the given tenant and returns the new UUID.
+func (d *DB) CreateOrchestrator(ctx context.Context, tenantID string, in OrchestratorInput, enabled bool) (string, error) {
 	const q = `
 		INSERT INTO them.orchestrators
-		  (name, display_name, system_prompt, llm_provider, llm_model,
+		  (tenant_id, name, display_name, system_prompt, llm_provider, llm_model,
 		   max_iterations, history_window, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id::text`
 
 	row := d.q.ExecReturning(ctx, q,
+		tenantID,
 		in.Name, in.DisplayName, in.SystemPrompt,
 		in.LLMProvider, in.LLMModel,
 		in.MaxIterations, in.HistoryWindow, enabled,
@@ -96,24 +98,25 @@ func (d *DB) CreateOrchestrator(ctx context.Context, in OrchestratorInput, enabl
 	return id, nil
 }
 
-// UpdateOrchestrator modifies an existing orchestrator row identified by name.
-func (d *DB) UpdateOrchestrator(ctx context.Context, name string, in OrchestratorInput, enabled bool) error {
+// UpdateOrchestrator modifies an existing orchestrator row identified by name, scoped to the tenant.
+func (d *DB) UpdateOrchestrator(ctx context.Context, tenantID, name string, in OrchestratorInput, enabled bool) error {
 	const q = `
 		UPDATE them.orchestrators
-		SET display_name=$2, system_prompt=$3, llm_provider=$4, llm_model=$5,
-		    max_iterations=$6, history_window=$7, enabled=$8, updated_at=now()
-		WHERE name=$1`
+		SET display_name=$3, system_prompt=$4, llm_provider=$5, llm_model=$6,
+		    max_iterations=$7, history_window=$8, enabled=$9, updated_at=now()
+		WHERE name=$1 AND tenant_id=$2::uuid`
 
 	return d.q.Exec(ctx, q,
-		name, in.DisplayName, in.SystemPrompt,
+		name, tenantID,
+		in.DisplayName, in.SystemPrompt,
 		in.LLMProvider, in.LLMModel,
 		in.MaxIterations, in.HistoryWindow, enabled,
 	)
 }
 
-// DeleteOrchestrator soft-deletes an orchestrator by setting enabled=false.
-func (d *DB) DeleteOrchestrator(ctx context.Context, name string) error {
+// DeleteOrchestrator soft-deletes an orchestrator by setting enabled=false, scoped to the tenant.
+func (d *DB) DeleteOrchestrator(ctx context.Context, tenantID, name string) error {
 	return d.q.Exec(ctx,
-		`UPDATE them.orchestrators SET enabled=false, updated_at=now() WHERE name=$1`,
-		name)
+		`UPDATE them.orchestrators SET enabled=false, updated_at=now() WHERE name=$1 AND tenant_id=$2::uuid`,
+		name, tenantID)
 }

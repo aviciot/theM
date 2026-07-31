@@ -38,7 +38,8 @@ func (h *ApplicationsHandler) Routes(r chi.Router) {
 
 // List handles GET /api/v1/admin/applications.
 func (h *ApplicationsHandler) List(w http.ResponseWriter, r *http.Request) {
-	apps, err := h.svc.List(r.Context())
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	apps, err := h.svc.List(r.Context(), tenantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
 		return
@@ -54,7 +55,8 @@ func (h *ApplicationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := h.svc.Create(r.Context(), input.Name, input.Enabled)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	id, err := h.svc.Create(r.Context(), tenantID, input.Name, input.Enabled)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -75,7 +77,8 @@ func (h *ApplicationsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a, err := h.svc.Get(r.Context(), id)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	a, err := h.svc.Get(r.Context(), tenantID, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
@@ -97,7 +100,8 @@ func (h *ApplicationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Update(r.Context(), id, input.Name, input.Enabled); err != nil {
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	if err := h.svc.Update(r.Context(), tenantID, id, input.Name, input.Enabled); err != nil {
 		writeError(w, http.StatusInternalServerError, "update application: "+err.Error())
 		return
 	}
@@ -113,7 +117,8 @@ func (h *ApplicationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete application: "+err.Error())
 		return
 	}

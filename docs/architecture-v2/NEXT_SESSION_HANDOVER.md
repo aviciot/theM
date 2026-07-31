@@ -1,49 +1,46 @@
-# Phase R-4b Complete — Handover to R-4c
+# Phase R-4c1 Complete — Handover to R-4c2
 
 **Date:** 2026-07-31
 **Branch:** main
-**HEAD:** `a95e859` feat(r4b): authenticated tenant identity foundation
-**Prepared by:** Phase R-4b session
+**HEAD:** (commit hash — fill after commit)
+**Prepared by:** Phase R-4c1 session
 
 ---
 
 ## Current Objective
 
-Phase R-4b (Authenticated Tenant Identity Foundation) is **complete**. The next task is
-**Phase R-4c: DAL Query Tenant Filtering** — adding `WHERE tenant_id = $n` to all DAL
-queries on tenant-scoped tables, and wiring the tenant-aware middleware to admin and
-runtime routes.
+Phase R-4c1 (Tenant-Scoped DAL and Service Layers) is **complete**. The next task is
+**Phase R-4c2: Wire Tenant Middleware to Admin Routes** — connecting `BearerTenantMiddleware`
+or `HS256TenantMiddleware` to admin routes in `cmd/them/main.go` and removing the
+`tenantIDFromCtxOrBootstrap` compatibility shim.
 
 ---
 
-## What Was Completed This Session (R-4b)
+## What Was Completed This Session (R-4c1)
 
-1. **`go/internal/tenantctx/`** — new typed context package with `WithTenantID`, `TenantIDFromCtx`,
-   `MustTenantIDFromCtx`, `ErrNoTenant`, `ErrInvalidTenant`. No stringly-typed key. No fallback to
-   bootstrap tenant.
+1. **`go/internal/admin/dal/agents.go`** — All 5 methods tenant-scoped.
+2. **`go/internal/admin/dal/orchestrators.go`** — All 5 methods tenant-scoped.
+3. **`go/internal/admin/dal/applications.go`** — App CRUD (5 methods) tenant-scoped; entry point methods unchanged.
+4. **`go/internal/admin/dal/runs.go`** — `ListRuns`, `GetRun`, `GetRunContextID` tenant-scoped.
+5. **`go/internal/admin/dal/tokens.go`** — All 7 methods tenant-scoped (incl. `OrchestratorExists`).
+6. **`go/internal/admin/service/service.go`** — `Dal` interface updated; all tenant-owned entity methods now take `tenantID string`.
+7. **`go/internal/admin/service/agents.go`** — Service methods forwarding tenantID to DAL.
+8. **`go/internal/admin/service/orchestrators.go`** — Same pattern.
+9. **`go/internal/admin/service/applications.go`** — App CRUD methods take tenantID; entry point methods unchanged.
+10. **`go/internal/admin/service/runs.go`** — `List`, `Get`, `Signal` take tenantID.
+11. **`go/internal/admin/service/tokens.go`** — All CRUD methods take tenantID.
+12. **`go/internal/admin/middleware.go`** — Compatibility shim `tenantIDFromCtxOrBootstrap`; `bootstrapTenantID` constant.
+13. **`go/internal/admin/agents.go`** — Handler calls shim, passes tenantID to service.
+14. **`go/internal/admin/orchestrators.go`** — Same pattern.
+15. **`go/internal/admin/applications.go`** — Same pattern.
+16. **`go/internal/admin/runs.go`** — Same pattern.
+17. **`go/internal/admin/tokens.go`** — Same pattern.
+18. **`go/internal/admin/service/service_test.go`** — `fakeDal` updated to match new interface.
+19. **`go/internal/admin/service/tenant_isolation_test.go`** — New: 21 two-tenant isolation tests (S1-33).
+20. **`go/TEST_INDEX.md`** — Added S1-33, updated trigger map, count 447 → 468.
+21. **`docs/architecture-v2/R4C1_IMPLEMENTATION_REPORT.md`** — Created.
 
-2. **`go/internal/auth/jwt.go`** — added `TenantID` to `Claims` and `hs256RawClaims`. Both
-   `ValidateJWT` (RS256) and `ValidateHS256JWT` (HS256) now propagate `TenantID`.
-
-3. **`go/internal/auth/token_cache.go`** — added `TenantID` to `TokenInfo` and `TokenRow`.
-   `rowToTokenInfo` propagates it.
-
-4. **`go/internal/auth/pgx_querier.go`** — query now fetches `tenant_id` from `access_tokens`.
-
-5. **`go/internal/auth/middleware.go`** — added `BearerTenantMiddleware` and `HS256TenantMiddleware`
-   (both return 401 for missing/invalid auth, 403 for absent TenantID). Added `writeForbidden`.
-
-6. **`go/internal/transport/transport.go`** — added `RuntimeIdentity` struct (TenantID, AppID,
-   UserID, SessionID, RunID).
-
-7. **`go/internal/tenantctx/tenantctx_test.go`** — 8 tests (TC-01 through TC-08).
-
-8. **`go/internal/auth/tenant_middleware_test.go`** — 15 tests (TM-01 through TM-15).
-
-9. **Documentation** — R4B_IMPLEMENTATION_REPORT.md, updated implementation-status.md,
-   lessons-learned.md, TEST_INDEX.md (S1-31, S1-32, trigger map).
-
-Full details: `docs/architecture-v2/R4B_IMPLEMENTATION_REPORT.md`
+Full details: `docs/architecture-v2/R4C1_IMPLEMENTATION_REPORT.md`
 
 ---
 
@@ -56,19 +53,18 @@ Full details: `docs/architecture-v2/R4B_IMPLEMENTATION_REPORT.md`
 | them-postgres | Healthy — R-4a migration applied |
 | them-redis | Healthy |
 
-**No DB migrations in R-4b** (DB-only changes were in R-4a).
+**No DB migrations in R-4c1** (DB schema already has `tenant_id` columns from R-4a).
 
 ---
 
 ## Test State
 
 ```
-go test ./...        →   447 passed, 0 failed (28 packages)
-go test -race ./internal/auth/... ./internal/tenantctx/...   → PASS (no data races)
-Python sanity 01-04,15  →   55 passed, 0 failed
+go test ./...        →   468 passed, 0 failed (28 packages)
+go test -race ./...  →   468 passed, 0 failed, 0 data races (28 packages)
 ```
 
-New in R-4b: 23 tests across 2 new test files.
+New in R-4c1: 21 tests in `tenant_isolation_test.go` (S1-33).
 
 ---
 
@@ -93,6 +89,8 @@ New in R-4b: 23 tests across 2 new test files.
 - **DB name and schema: `them` only.** Never `odin`.
 - **TenantID must never come from request headers or query parameters.**
 - **The bootstrap tenant must NOT be silently assigned when authentication is absent/invalid.**
+- **R-4c1 compatibility shim `tenantIDFromCtxOrBootstrap` must be removed in R-4c2**, not carried forward.
+- **Entry point DAL methods have no `tenantID` param** — they are scoped through the parent app's FK. Do not add one.
 
 ---
 
@@ -100,42 +98,55 @@ New in R-4b: 23 tests across 2 new test files.
 
 | Issue | Severity | Notes |
 |---|---|---|
-| Auth service does not include `tenant_id` in JWT tokens | Medium | `HS256TenantMiddleware` returns 403 for all current JWTs — middleware NOT yet wired to any route. Unblocks when auth service is updated. |
-| No DAL tenant filtering yet | Expected | R-4b is identity foundation only; R-4c adds WHERE clauses |
-| Cross-tenant access returns 200/data (not 403) | Expected | Not enforced until R-4c complete |
+| `tenantIDFromCtxOrBootstrap` shim in place | Expected | All admin routes fall back to bootstrap tenant; fixes in R-4c2 |
+| Auth service does not include `tenant_id` in JWT tokens | Medium | `HS256TenantMiddleware` returns 403 for all current JWTs until auth service is updated |
+| Cross-tenant access on admin routes not enforced at HTTP level | Expected | DAL rejects cross-tenant queries (returns not-found), but HTTP callers all share bootstrap tenant until R-4c2 |
 
 ---
 
-## R-4c Scope — DAL Query Tenant Filtering
+## R-4c2 Scope — Wire Tenant Middleware to Admin Routes
 
-**Scope:**
-1. Add `tenantID string` parameter to all DAL functions on tenant-scoped tables
-   (`agents`, `orchestrators`, `access_tokens`, `applications`, `runs`, `audit_logs`,
-   `app_orchestrators`)
-2. Add `WHERE tenant_id = $n` clause to all affected queries
-3. Wire `BearerTenantMiddleware` or `HS256TenantMiddleware` to admin routes
-4. Wire tenant context extraction in WS/SSE handlers (from bearer token path)
-5. Update all admin handler call sites to pass TenantID from context
-6. Update tests for all changed DAL functions
+**Goal:** Remove the compatibility shim and enforce tenant identity on every admin request.
 
-**R-4c does NOT:**
-- Change run recorder signature (R-4d)
-- Add tenant provisioning UI or APIs
-- Change session TTL or Redis key structure (Tier 2, deferred)
+**Exact tasks:**
 
-**Files most relevant to R-4c:**
+1. Wire `BearerTenantMiddleware` (not `HS256TenantMiddleware`) to admin router in `cmd/them/main.go`
+   - All routes under the admin chi group must go through `BearerTenantMiddleware`
+   - `BearerTenantMiddleware` is already implemented in `go/internal/auth/middleware.go`
+   - It requires a valid bearer token with a non-empty `TenantID` in the token info
+
+2. Remove from `go/internal/admin/middleware.go`:
+   - `bootstrapTenantID` constant
+   - `tenantIDFromCtxOrBootstrap` function
+
+3. Update all 5 handler files (`agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `tokens.go`):
+   - Replace `tenantIDFromCtxOrBootstrap(r.Context())` with `tenantctx.MustTenantIDFromCtx(r.Context())`
+   - (This is safe because the middleware guarantees tenant is in context before handlers run)
+
+4. Add handler-level tests:
+   - Request with no bearer token → 401 (middleware rejects before handler)
+   - Request with bearer token missing tenant → 403 (middleware rejects)
+   - Request with valid token + tenant → handler runs, tenantID from context used
+
+5. Update TEST_INDEX.md.
+
+**Files most relevant to R-4c2:**
 
 | File | Why |
 |---|---|
-| `go/internal/admin/dal/agents.go` | Add tenantID param + WHERE clause |
-| `go/internal/admin/dal/orchestrators.go` | Add tenantID param + WHERE clause |
-| `go/internal/admin/dal/applications.go` | Add tenantID param + WHERE clause |
-| `go/internal/admin/dal/runs.go` | Add tenantID param + WHERE clause |
-| `go/internal/admin/dal/tokens.go` | Add tenantID param + WHERE clause |
-| `go/internal/admin/` (handler files) | Extract TenantID from context, pass to DAL |
-| `go/internal/auth/middleware.go` | `BearerTenantMiddleware`, `HS256TenantMiddleware` — wire to routes |
-| `go/internal/tenantctx/tenantctx.go` | `TenantIDFromCtx` — call from handlers |
-| `go/internal/admin/router.go` | Add tenant middleware to admin routes |
+| `go/cmd/them/main.go` | Wire `BearerTenantMiddleware` to admin chi group |
+| `go/internal/admin/middleware.go` | Remove shim |
+| `go/internal/admin/agents.go` | Replace shim call |
+| `go/internal/admin/orchestrators.go` | Replace shim call |
+| `go/internal/admin/applications.go` | Replace shim call |
+| `go/internal/admin/runs.go` | Replace shim call |
+| `go/internal/admin/tokens.go` | Replace shim call |
+| `go/internal/auth/middleware.go` | `BearerTenantMiddleware` — already implemented |
+| `go/internal/admin/admin_test.go` | Add middleware enforcement tests |
+
+**Important:** The `RequireSuperAdmin` middleware remains in place. Admin routes need BOTH
+`RequireSuperAdmin` (validates JWT role) AND `BearerTenantMiddleware` (extracts tenant from
+bearer token). Check the current route registration order in `cmd/them/main.go` before wiring.
 
 ---
 
@@ -154,24 +165,17 @@ python3.12 scripts/tests/run_tests.py 01 02 03 04 15
 
 **First prompt for the next session:**
 
-> Phase R-4b is complete (HEAD from git log, 447 Go tests passing). Start Phase R-4c: DAL
-> Query Tenant Filtering. Read docs/architecture-v2/R4B_IMPLEMENTATION_REPORT.md and
-> TENANT_FOUNDATION_DECISIONS.md §5 before writing any code. Add WHERE tenant_id = $n to
-> all DAL functions on tenant-scoped tables; wire BearerTenantMiddleware to admin routes;
-> extract TenantID from context in handlers. Use Sonnet.
+> Phase R-4c1 is complete (468 Go tests passing). Start Phase R-4c2: Wire tenant middleware
+> to admin routes. Read docs/architecture-v2/R4C1_IMPLEMENTATION_REPORT.md and
+> NEXT_SESSION_HANDOVER.md before writing code. Goal: remove tenantIDFromCtxOrBootstrap shim
+> and wire BearerTenantMiddleware to all admin routes in cmd/them/main.go. Add
+> handler-level tests verifying 401/403 enforcement. Use Sonnet.
 
 ---
 
-## Commits This Session
+## R-4c through R-4e Status
 
-- `a95e859` feat(r4b): authenticated tenant identity foundation
-
-Push status: **pushed to origin/main** ✓
-
----
-
-## R-4c through R-4e NOT started
-
-- R-4c (DAL WHERE tenant_id): NOT started
+- R-4c1 (DAL + service tenant scoping): **COMPLETE** ✓
+- R-4c2 (wire middleware to admin routes): NOT started
 - R-4d (session propagation): NOT started
 - R-4e (run recorder): NOT started

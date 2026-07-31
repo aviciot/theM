@@ -96,52 +96,52 @@ type fakeDal struct {
 	updateTokenCalls  []dal.TokenPatchRow
 }
 
-func (f *fakeDal) ListAgents(_ context.Context) ([]dal.Agent, error) {
+func (f *fakeDal) ListAgents(_ context.Context, _ string) ([]dal.Agent, error) {
 	return f.agents, f.listAgentsErr
 }
-func (f *fakeDal) GetAgent(_ context.Context, _ string) (dal.Agent, error) {
+func (f *fakeDal) GetAgent(_ context.Context, _, _ string) (dal.Agent, error) {
 	return f.agent, f.getAgentErr
 }
-func (f *fakeDal) CreateAgent(_ context.Context, in dal.AgentInput, enabled bool) (string, error) {
+func (f *fakeDal) CreateAgent(_ context.Context, _ string, in dal.AgentInput, enabled bool) (string, error) {
 	f.createAgentCalls = append(f.createAgentCalls, in)
 	f.createAgentEnabledCalls = append(f.createAgentEnabledCalls, enabled)
 	return f.createdID, f.createAgentErr
 }
-func (f *fakeDal) UpdateAgent(_ context.Context, _ string, in dal.AgentInput, _ bool) error {
+func (f *fakeDal) UpdateAgent(_ context.Context, _, _ string, in dal.AgentInput, _ bool) error {
 	f.updateAgentCalls = append(f.updateAgentCalls, in)
 	return f.updateAgentErr
 }
-func (f *fakeDal) DeleteAgent(_ context.Context, _ string) error { return f.deleteAgentErr }
+func (f *fakeDal) DeleteAgent(_ context.Context, _, _ string) error { return f.deleteAgentErr }
 
-func (f *fakeDal) ListOrchestrators(_ context.Context) ([]dal.Orchestrator, error) {
+func (f *fakeDal) ListOrchestrators(_ context.Context, _ string) ([]dal.Orchestrator, error) {
 	return f.orchs, f.listOrchsErr
 }
-func (f *fakeDal) GetOrchestrator(_ context.Context, _ string) (dal.Orchestrator, error) {
+func (f *fakeDal) GetOrchestrator(_ context.Context, _, _ string) (dal.Orchestrator, error) {
 	return f.orch, f.getOrchErr
 }
-func (f *fakeDal) CreateOrchestrator(_ context.Context, in dal.OrchestratorInput, enabled bool) (string, error) {
+func (f *fakeDal) CreateOrchestrator(_ context.Context, _ string, in dal.OrchestratorInput, enabled bool) (string, error) {
 	f.createOrchCalls = append(f.createOrchCalls, in)
 	f.createOrchEnabledCalls = append(f.createOrchEnabledCalls, enabled)
 	return f.createdID, f.createOrchErr
 }
-func (f *fakeDal) UpdateOrchestrator(_ context.Context, _ string, _ dal.OrchestratorInput, _ bool) error {
+func (f *fakeDal) UpdateOrchestrator(_ context.Context, _, _ string, _ dal.OrchestratorInput, _ bool) error {
 	return f.updateOrchErr
 }
-func (f *fakeDal) DeleteOrchestrator(_ context.Context, _ string) error { return f.deleteOrchErr }
+func (f *fakeDal) DeleteOrchestrator(_ context.Context, _, _ string) error { return f.deleteOrchErr }
 
-func (f *fakeDal) ListApplications(_ context.Context) ([]dal.Application, error) {
+func (f *fakeDal) ListApplications(_ context.Context, _ string) ([]dal.Application, error) {
 	return f.apps, f.listAppsErr
 }
-func (f *fakeDal) GetApplication(_ context.Context, _ string) (dal.Application, error) {
+func (f *fakeDal) GetApplication(_ context.Context, _, _ string) (dal.Application, error) {
 	return f.app, f.getAppErr
 }
-func (f *fakeDal) CreateApplication(_ context.Context, _ string, _ bool) (string, error) {
+func (f *fakeDal) CreateApplication(_ context.Context, _, _ string, _ bool) (string, error) {
 	return f.createdID, f.createAppErr
 }
-func (f *fakeDal) UpdateApplication(_ context.Context, _, _ string, _ bool) error {
+func (f *fakeDal) UpdateApplication(_ context.Context, _, _, _ string, _ bool) error {
 	return f.updateAppErr
 }
-func (f *fakeDal) DeleteApplication(_ context.Context, _ string) error { return f.deleteAppErr }
+func (f *fakeDal) DeleteApplication(_ context.Context, _, _ string) error { return f.deleteAppErr }
 func (f *fakeDal) ListEntryPoints(_ context.Context, _ string) []dal.EntryPoint {
 	return f.eps
 }
@@ -157,34 +157,34 @@ func (f *fakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string, _ bool)
 func (f *fakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error { return f.deleteEPErr }
 func (f *fakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string { return f.epSlugs }
 
-func (f *fakeDal) ListRuns(_ context.Context, _ string, _ int) ([]dal.Run, error) {
+func (f *fakeDal) ListRuns(_ context.Context, _, _ string, _ int) ([]dal.Run, error) {
 	return f.runs, f.listRunsErr
 }
-func (f *fakeDal) GetRun(_ context.Context, _ string) (dal.Run, error) {
+func (f *fakeDal) GetRun(_ context.Context, _, _ string) (dal.Run, error) {
 	return f.run, f.getRunErr
 }
-func (f *fakeDal) GetRunContextID(_ context.Context, _ string) (string, error) {
+func (f *fakeDal) GetRunContextID(_ context.Context, _, _ string) (string, error) {
 	return f.contextID, f.getContextIDErr
 }
 
-func (f *fakeDal) ListTokens(_ context.Context, _ *int64) ([]dal.Token, error) {
+func (f *fakeDal) ListTokens(_ context.Context, _ string, _ *int64) ([]dal.Token, error) {
 	return f.tokens, f.listTokensErr
 }
-func (f *fakeDal) GetToken(_ context.Context, _ string) (dal.Token, error) {
+func (f *fakeDal) GetToken(_ context.Context, _, _ string) (dal.Token, error) {
 	return f.token, f.getTokenErr
 }
-func (f *fakeDal) OrchestratorExists(_ context.Context, _ string) (bool, error) {
+func (f *fakeDal) OrchestratorExists(_ context.Context, _, _ string) (bool, error) {
 	return f.orchExists, f.orchExistsErr
 }
-func (f *fakeDal) CreateToken(_ context.Context, in dal.TokenCreateRow) (dal.Token, error) {
+func (f *fakeDal) CreateToken(_ context.Context, _ string, in dal.TokenCreateRow) (dal.Token, error) {
 	f.createTokenCalls = append(f.createTokenCalls, in)
 	return f.createdToken, f.createTokenErr
 }
-func (f *fakeDal) UpdateToken(_ context.Context, _ string, patch dal.TokenPatchRow) (string, dal.Token, error) {
+func (f *fakeDal) UpdateToken(_ context.Context, _, _ string, patch dal.TokenPatchRow) (string, dal.Token, error) {
 	f.updateTokenCalls = append(f.updateTokenCalls, patch)
 	return f.updatedTokenHash, f.updatedToken, f.updateTokenErr
 }
-func (f *fakeDal) DeleteToken(_ context.Context, _ string) (string, error) {
+func (f *fakeDal) DeleteToken(_ context.Context, _, _ string) (string, error) {
 	return f.deletedTokenHash, f.deleteTokenErr
 }
 
@@ -266,7 +266,7 @@ func TestTokenService_Create_GeneratesHashAndReturnsPlaintext(t *testing.T) {
 	d := &fakeDal{createdToken: dal.Token{ID: "tok-1", Label: "test"}}
 	gen := &fakeTokenGen{plaintext: "mytoken", hash: "myhash"}
 	svc := service.NewTokenService(d, nil, gen)
-	out, err := svc.Create(context.Background(), dal.TokenCreateRow{Label: "test", UserID: 1}, nil)
+	out, err := svc.Create(context.Background(), "t1", dal.TokenCreateRow{Label: "test", UserID: 1}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestTokenService_Create_OrchMissing_NotFound(t *testing.T) {
 	d := &fakeDal{orchExists: false}
 	svc := service.NewTokenService(d, nil, &fakeTokenGen{plaintext: "p", hash: "h"})
 	orchID := "some-orch-id"
-	_, err := svc.Create(context.Background(), dal.TokenCreateRow{Label: "x", UserID: 1}, &orchID)
+	_, err := svc.Create(context.Background(), "t1", dal.TokenCreateRow{Label: "x", UserID: 1}, &orchID)
 	if !errors.Is(err, service.ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
@@ -294,7 +294,7 @@ func TestTokenService_Create_OrchMissing_NotFound(t *testing.T) {
 func TestTokenService_Create_NoOrch_SkipsExistsCheck(t *testing.T) {
 	d := &fakeDal{orchExists: false, orchExistsErr: errors.New("should not be called")}
 	svc := service.NewTokenService(d, nil, &fakeTokenGen{plaintext: "p", hash: "h"})
-	_, _ = svc.Create(context.Background(), dal.TokenCreateRow{Label: "x", UserID: 1}, nil)
+	_, _ = svc.Create(context.Background(), "t1", dal.TokenCreateRow{Label: "x", UserID: 1}, nil)
 	// If OrchestratorExists were called it would return an error and fail Create.
 	// The test passes as long as Create does not return the orchExistsErr.
 	// (createToken returning zero Token is fine here.)
@@ -304,7 +304,7 @@ func TestTokenService_Update_InvalidatesByHash(t *testing.T) {
 	c := &fakeCache{}
 	d := &fakeDal{updatedTokenHash: "abc123", updatedToken: dal.Token{ID: "tok-1"}}
 	svc := service.NewTokenService(d, c, nil)
-	_, err := svc.Update(context.Background(), "tok-1", dal.TokenPatchRow{})
+	_, err := svc.Update(context.Background(), "t1", "tok-1", dal.TokenPatchRow{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestTokenService_Update_Missing_NotFound(t *testing.T) {
 	// for a generic error, so the service returns the error itself (not ErrNotFound).
 	// The real pgx.ErrNoRows path is covered by integration tests.
 	svc := service.NewTokenService(d, nil, nil)
-	_, err := svc.Update(context.Background(), "missing", dal.TokenPatchRow{})
+	_, err := svc.Update(context.Background(), "t1", "missing", dal.TokenPatchRow{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -347,7 +347,7 @@ func TestTokenService_Delete_InvalidatesByHash(t *testing.T) {
 	c := &fakeCache{}
 	d := &fakeDal{deletedTokenHash: "delhash"}
 	svc := service.NewTokenService(d, c, nil)
-	err := svc.Delete(context.Background(), "tok-1")
+	err := svc.Delete(context.Background(), "t1", "tok-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestTokenService_Delete_InvalidatesByHash(t *testing.T) {
 func TestTokenService_NilCache_NoPanic(t *testing.T) {
 	d := &fakeDal{updatedTokenHash: "h", updatedToken: dal.Token{ID: "x"}}
 	svc := service.NewTokenService(d, nil, nil)
-	_, err := svc.Update(context.Background(), "x", dal.TokenPatchRow{})
+	_, err := svc.Update(context.Background(), "t1", "x", dal.TokenPatchRow{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestTokenService_List_ForwardsUserFilter(t *testing.T) {
 	uid := int64(42)
 	d := &fakeDal{tokens: []dal.Token{{ID: "tok-1", UserID: 42}}}
 	svc := service.NewTokenService(d, nil, nil)
-	tokens, err := svc.List(context.Background(), &uid)
+	tokens, err := svc.List(context.Background(), "t1", &uid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +467,7 @@ func TestAgentService_Create_Defaults(t *testing.T) {
 	d := &fakeDal{createdID: "id-1"}
 	svc := service.NewAgentService(d, nil)
 	in := dal.AgentInput{Slug: "my-agent", DisplayName: "My Agent"}
-	_, err := svc.Create(context.Background(), in)
+	_, err := svc.Create(context.Background(), "t1", in)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestAgentService_Create_Defaults(t *testing.T) {
 
 func TestAgentService_Create_MissingSlug_Validation(t *testing.T) {
 	svc := service.NewAgentService(&fakeDal{}, nil)
-	_, err := svc.Create(context.Background(), dal.AgentInput{DisplayName: "D"})
+	_, err := svc.Create(context.Background(), "t1", dal.AgentInput{DisplayName: "D"})
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation, got %v", err)
 	}
@@ -499,7 +499,7 @@ func TestAgentService_Create_MissingSlug_Validation(t *testing.T) {
 
 func TestAgentService_Create_MissingDisplayName_Validation(t *testing.T) {
 	svc := service.NewAgentService(&fakeDal{}, nil)
-	_, err := svc.Create(context.Background(), dal.AgentInput{Slug: "s"})
+	_, err := svc.Create(context.Background(), "t1", dal.AgentInput{Slug: "s"})
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation, got %v", err)
 	}
@@ -509,7 +509,7 @@ func TestAgentService_Create_EnabledFalse_Respected(t *testing.T) {
 	d := &fakeDal{createdID: "id-2"}
 	svc := service.NewAgentService(d, nil)
 	f := false
-	_, _ = svc.Create(context.Background(), dal.AgentInput{Slug: "s", DisplayName: "D", Enabled: &f})
+	_, _ = svc.Create(context.Background(), "t1", dal.AgentInput{Slug: "s", DisplayName: "D", Enabled: &f})
 	if len(d.createAgentEnabledCalls) == 0 || d.createAgentEnabledCalls[0] {
 		t.Error("enabled=false must be passed to DAL")
 	}
@@ -518,7 +518,7 @@ func TestAgentService_Create_EnabledFalse_Respected(t *testing.T) {
 func TestAgentService_Update_ReappliesMaxConcurrencyDefault(t *testing.T) {
 	d := &fakeDal{}
 	svc := service.NewAgentService(d, nil)
-	_ = svc.Update(context.Background(), "id-1", dal.AgentInput{MaxConcurrency: 0})
+	_ = svc.Update(context.Background(), "t1", "id-1", dal.AgentInput{MaxConcurrency: 0})
 	if len(d.updateAgentCalls) == 0 || d.updateAgentCalls[0].MaxConcurrency != 5 {
 		t.Error("MaxConcurrency must default to 5 on update")
 	}
@@ -527,7 +527,7 @@ func TestAgentService_Update_ReappliesMaxConcurrencyDefault(t *testing.T) {
 func TestAgentService_Create_InvalidatesRegistry(t *testing.T) {
 	c := &fakeCache{}
 	svc := service.NewAgentService(&fakeDal{createdID: "id-3"}, c)
-	_, _ = svc.Create(context.Background(), dal.AgentInput{Slug: "s", DisplayName: "D"})
+	_, _ = svc.Create(context.Background(), "t1", dal.AgentInput{Slug: "s", DisplayName: "D"})
 	found := false
 	for _, k := range c.deletedKeys {
 		if k == "them:agents:registry" {
@@ -541,7 +541,7 @@ func TestAgentService_Create_InvalidatesRegistry(t *testing.T) {
 
 func TestAgentService_NilCache_NoPanic(t *testing.T) {
 	svc := service.NewAgentService(&fakeDal{createdID: "id-4"}, nil)
-	_, err := svc.Create(context.Background(), dal.AgentInput{Slug: "s", DisplayName: "D"})
+	_, err := svc.Create(context.Background(), "t1", dal.AgentInput{Slug: "s", DisplayName: "D"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +551,7 @@ func TestAgentService_NilCache_NoPanic(t *testing.T) {
 
 func TestAppService_Create_MissingName_Validation(t *testing.T) {
 	svc := service.NewAppService(&fakeDal{}, nil)
-	_, err := svc.Create(context.Background(), "", nil)
+	_, err := svc.Create(context.Background(), "t1", "", nil)
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation, got %v", err)
 	}
@@ -614,7 +614,7 @@ func TestAppService_Update_InvalidatesAppEPs(t *testing.T) {
 	c := &fakeCache{}
 	d := &fakeDal{epSlugs: []string{"ep-a", "ep-b"}}
 	svc := service.NewAppService(d, c)
-	_ = svc.Update(context.Background(), "app-1", "New Name", nil)
+	_ = svc.Update(context.Background(), "t1", "app-1", "New Name", nil)
 	if len(c.publishOrder) != 2 {
 		t.Errorf("want 2 EP publishes, got %d: %v", len(c.publishOrder), c.publishOrder)
 	}
@@ -626,7 +626,7 @@ func TestOrchService_Create_Defaults(t *testing.T) {
 	d := &fakeDal{createdID: "orch-1"}
 	svc := service.NewOrchService(d, nil)
 	in := dal.OrchestratorInput{Name: "my-orch"}
-	_, err := svc.Create(context.Background(), in)
+	_, err := svc.Create(context.Background(), "t1", in)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -644,7 +644,7 @@ func TestOrchService_Create_Defaults(t *testing.T) {
 
 func TestOrchService_Create_MissingName_Validation(t *testing.T) {
 	svc := service.NewOrchService(&fakeDal{}, nil)
-	_, err := svc.Create(context.Background(), dal.OrchestratorInput{})
+	_, err := svc.Create(context.Background(), "t1", dal.OrchestratorInput{})
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation, got %v", err)
 	}
@@ -653,7 +653,7 @@ func TestOrchService_Create_MissingName_Validation(t *testing.T) {
 func TestOrchService_Create_InvalidatesCache(t *testing.T) {
 	c := &fakeCache{}
 	svc := service.NewOrchService(&fakeDal{createdID: "orch-2"}, c)
-	_, _ = svc.Create(context.Background(), dal.OrchestratorInput{Name: "my-orch"})
+	_, _ = svc.Create(context.Background(), "t1", dal.OrchestratorInput{Name: "my-orch"})
 	found := false
 	for _, k := range c.deletedKeys {
 		if k == "them:orchestrators:my-orch" {
@@ -668,7 +668,7 @@ func TestOrchService_Create_InvalidatesCache(t *testing.T) {
 func TestOrchService_Delete_InvalidatesCache(t *testing.T) {
 	c := &fakeCache{}
 	svc := service.NewOrchService(&fakeDal{}, c)
-	_ = svc.Delete(context.Background(), "target-orch")
+	_ = svc.Delete(context.Background(), "t1", "target-orch")
 	found := false
 	for _, k := range c.deletedKeys {
 		if k == "them:orchestrators:target-orch" {
@@ -687,7 +687,7 @@ func TestRunService_Signal_BuildsWorkflowID(t *testing.T) {
 	d := &fakeDal{contextID: "abc-123"}
 	svc := service.NewRunService(d, temp)
 	payload := json.RawMessage(`{"key":"val"}`)
-	err := svc.Signal(context.Background(), "run-1", payload)
+	err := svc.Signal(context.Background(), "t1", "run-1", payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -698,7 +698,7 @@ func TestRunService_Signal_BuildsWorkflowID(t *testing.T) {
 
 func TestRunService_Signal_TemporalNil_Unavailable(t *testing.T) {
 	svc := service.NewRunService(&fakeDal{}, nil)
-	err := svc.Signal(context.Background(), "run-1", nil)
+	err := svc.Signal(context.Background(), "t1", "run-1", nil)
 	if !errors.Is(err, service.ErrTemporalUnavailable) {
 		t.Errorf("want ErrTemporalUnavailable, got %v", err)
 	}
@@ -709,7 +709,7 @@ func TestRunService_Signal_DBError_NotNotFound(t *testing.T) {
 	// (pgx.ErrNoRows path is covered by the integration suite.)
 	d := &fakeDal{getContextIDErr: errors.New("connection reset")}
 	svc := service.NewRunService(d, &fakeTemporal{})
-	err := svc.Signal(context.Background(), "run-1", nil)
+	err := svc.Signal(context.Background(), "t1", "run-1", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -721,7 +721,7 @@ func TestRunService_Signal_DBError_NotNotFound(t *testing.T) {
 func TestRunService_List_ForwardsParams(t *testing.T) {
 	d := &fakeDal{runs: []dal.Run{{ID: "r1"}}}
 	svc := service.NewRunService(d, nil)
-	runs, err := svc.List(context.Background(), "ctx-id", 10)
+	runs, err := svc.List(context.Background(), "t1", "ctx-id", 10)
 	if err != nil {
 		t.Fatal(err)
 	}

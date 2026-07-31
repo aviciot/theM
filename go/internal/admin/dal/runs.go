@@ -39,9 +39,9 @@ type runRowToSingle struct{ r RowScanner }
 
 func (a *runRowToSingle) Scan(dest ...any) error { return a.r.Scan(dest...) }
 
-// ListRuns returns the most recent runs up to limit. When contextID is
-// non-empty only runs whose root task matches that context_id are returned.
-func (d *DB) ListRuns(ctx context.Context, contextID string, limit int) ([]Run, error) {
+// ListRuns returns the most recent runs up to limit for the given tenant.
+// When contextID is non-empty only runs whose root task matches that context_id are returned.
+func (d *DB) ListRuns(ctx context.Context, tenantID, contextID string, limit int) ([]Run, error) {
 	var (
 		rows RowScanner
 		err  error
@@ -51,14 +51,15 @@ func (d *DB) ListRuns(ctx context.Context, contextID string, limit int) ([]Run, 
 		q := "SELECT " + runSelectCols + `
 			FROM them.runs r
 			JOIN them.tasks t ON t.run_id = r.id AND t.kind = 'root'
-			WHERE t.context_id = $1::uuid
-			ORDER BY r.started_at DESC LIMIT $2`
-		rows, err = d.q.Query(ctx, q, contextID, limit)
+			WHERE t.context_id = $1::uuid AND r.tenant_id = $2::uuid
+			ORDER BY r.started_at DESC LIMIT $3`
+		rows, err = d.q.Query(ctx, q, contextID, tenantID, limit)
 	} else {
 		q := "SELECT " + runSelectCols + `
 			FROM them.runs
-			ORDER BY started_at DESC LIMIT $1`
-		rows, err = d.q.Query(ctx, q, limit)
+			WHERE tenant_id = $1::uuid
+			ORDER BY started_at DESC LIMIT $2`
+		rows, err = d.q.Query(ctx, q, tenantID, limit)
 	}
 
 	if err != nil {
@@ -77,19 +78,24 @@ func (d *DB) ListRuns(ctx context.Context, contextID string, limit int) ([]Run, 
 	return runs, nil
 }
 
-// GetRun returns a single run by UUID id.
-func (d *DB) GetRun(ctx context.Context, runID string) (Run, error) {
-	q := "SELECT " + runSelectCols + " FROM them.runs WHERE id = $1::uuid"
-	return scanRun(d.q.QueryRow(ctx, q, runID))
+// GetRun returns a single run by UUID id, scoped to the tenant.
+// Returns pgx.ErrNoRows when not found or when it belongs to another tenant.
+func (d *DB) GetRun(ctx context.Context, tenantID, runID string) (Run, error) {
+	q := "SELECT " + runSelectCols + " FROM them.runs WHERE id = $1::uuid AND tenant_id = $2::uuid"
+	return scanRun(d.q.QueryRow(ctx, q, runID, tenantID))
 }
 
-// GetRunContextID returns the context_id of the root task for a given run UUID.
+// GetRunContextID returns the context_id of the root task for a given run UUID, scoped to the tenant.
 // context_id lives on them.tasks (not them.runs); it is used to build the
 // Temporal workflow ID ("ctx-{context_id}") for HITL signal routing.
-func (d *DB) GetRunContextID(ctx context.Context, runID string) (string, error) {
+func (d *DB) GetRunContextID(ctx context.Context, tenantID, runID string) (string, error) {
 	row := d.q.QueryRow(ctx,
-		`SELECT context_id::text FROM them.tasks WHERE run_id = $1::uuid AND kind = 'root' LIMIT 1`,
-		runID)
+		`SELECT t.context_id::text
+		 FROM them.tasks t
+		 JOIN them.runs r ON r.id = t.run_id
+		 WHERE t.run_id = $1::uuid AND t.kind = 'root' AND r.tenant_id = $2::uuid
+		 LIMIT 1`,
+		runID, tenantID)
 	var contextID string
 	if err := row.Scan(&contextID); err != nil {
 		return "", err

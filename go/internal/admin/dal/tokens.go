@@ -90,9 +90,9 @@ func parseTS(s string) string {
 
 // ── Token DAL methods ─────────────────────────────────────────────────────────
 
-// ListTokens returns all access tokens, optionally filtered by user_id, ordered
-// by created_at DESC. Never returns nil (empty slice on no rows).
-func (db *DB) ListTokens(ctx context.Context, userID *int64) ([]Token, error) {
+// ListTokens returns all access tokens for the given tenant, optionally filtered by user_id,
+// ordered by created_at DESC. Never returns nil (empty slice on no rows).
+func (db *DB) ListTokens(ctx context.Context, tenantID string, userID *int64) ([]Token, error) {
 	var (
 		rows RowScanner
 		err  error
@@ -100,12 +100,13 @@ func (db *DB) ListTokens(ctx context.Context, userID *int64) ([]Token, error) {
 	if userID != nil {
 		rows, err = db.q.Query(ctx, fmt.Sprintf(`
 			SELECT %s FROM them.access_tokens
-			WHERE user_id = $1
-			ORDER BY created_at DESC`, tokenSelectCols), *userID)
+			WHERE tenant_id = $1::uuid AND user_id = $2
+			ORDER BY created_at DESC`, tokenSelectCols), tenantID, *userID)
 	} else {
 		rows, err = db.q.Query(ctx, fmt.Sprintf(`
 			SELECT %s FROM them.access_tokens
-			ORDER BY created_at DESC`, tokenSelectCols))
+			WHERE tenant_id = $1::uuid
+			ORDER BY created_at DESC`, tokenSelectCols), tenantID)
 	}
 	if err != nil {
 		return []Token{}, err
@@ -126,23 +127,24 @@ func (db *DB) ListTokens(ctx context.Context, userID *int64) ([]Token, error) {
 	return out, rows.Close()
 }
 
-// GetToken returns a single token by UUID. Returns pgx.ErrNoRows when not found.
-func (db *DB) GetToken(ctx context.Context, id string) (Token, error) {
+// GetToken returns a single token by UUID, scoped to the tenant.
+// Returns pgx.ErrNoRows when not found or when it belongs to another tenant.
+func (db *DB) GetToken(ctx context.Context, tenantID, id string) (Token, error) {
 	row := db.q.QueryRow(ctx, fmt.Sprintf(`
-		SELECT %s FROM them.access_tokens WHERE id = $1::uuid`, tokenSelectCols), id)
+		SELECT %s FROM them.access_tokens WHERE id = $1::uuid AND tenant_id = $2::uuid`, tokenSelectCols), id, tenantID)
 	return scanToken(row)
 }
 
-// OrchestratorExists returns true when an orchestrator with the given UUID exists.
-func (db *DB) OrchestratorExists(ctx context.Context, orchID string) (bool, error) {
+// OrchestratorExists returns true when an orchestrator with the given UUID exists within the tenant.
+func (db *DB) OrchestratorExists(ctx context.Context, tenantID, orchID string) (bool, error) {
 	var exists bool
 	row := db.q.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM them.orchestrators WHERE id = $1::uuid)`, orchID)
+		`SELECT EXISTS(SELECT 1 FROM them.orchestrators WHERE id = $1::uuid AND tenant_id = $2::uuid)`, orchID, tenantID)
 	return exists, row.Scan(&exists)
 }
 
-// CreateToken inserts a new access token row and returns the full scanned Token.
-func (db *DB) CreateToken(ctx context.Context, in TokenCreateRow) (Token, error) {
+// CreateToken inserts a new access token row for the given tenant and returns the full scanned Token.
+func (db *DB) CreateToken(ctx context.Context, tenantID string, in TokenCreateRow) (Token, error) {
 	orchID := ""
 	if in.OrchestratorID != nil {
 		orchID = *in.OrchestratorID
@@ -153,25 +155,25 @@ func (db *DB) CreateToken(ctx context.Context, in TokenCreateRow) (Token, error)
 	}
 	row := db.q.ExecReturning(ctx, fmt.Sprintf(`
 		INSERT INTO them.access_tokens
-			(token_hash, label, user_id, orchestrator_id, expires_at, enabled)
+			(tenant_id, token_hash, label, user_id, orchestrator_id, expires_at, enabled)
 		VALUES (
-			$1,
+			$1::uuid,
 			$2,
 			$3,
-			NULLIF($4, '')::uuid,
-			NULLIF($5, '')::timestamptz,
+			$4,
+			NULLIF($5, '')::uuid,
+			NULLIF($6, '')::timestamptz,
 			true
 		)
 		RETURNING %s`, tokenSelectCols),
-		in.TokenHash, in.Label, in.UserID, orchID, expiresAt)
+		tenantID, in.TokenHash, in.Label, in.UserID, orchID, expiresAt)
 	return scanToken(row)
 }
 
-// UpdateToken applies a partial update (only non-nil patch fields are changed)
-// and returns the updated token hash (for cache invalidation) and the new row.
-// Returns ("", Token{}, pgx.ErrNoRows) when not found.
-func (db *DB) UpdateToken(ctx context.Context, id string, patch TokenPatchRow) (string, Token, error) {
-	// Build a COALESCE-style update for each nullable patch field.
+// UpdateToken applies a partial update (only non-nil patch fields are changed), scoped to the tenant.
+// Returns the updated token hash (for cache invalidation) and the new row.
+// Returns ("", Token{}, pgx.ErrNoRows) when not found or when it belongs to another tenant.
+func (db *DB) UpdateToken(ctx context.Context, tenantID, id string, patch TokenPatchRow) (string, Token, error) {
 	// expires_at uses a CASE expression because we need to distinguish
 	// "not provided" (nil) from "set to null" (explicit null string).
 	expiresProvided := patch.ExpiresAt != nil
@@ -181,12 +183,12 @@ func (db *DB) UpdateToken(ctx context.Context, id string, patch TokenPatchRow) (
 	}
 	row := db.q.ExecReturning(ctx, fmt.Sprintf(`
 		UPDATE them.access_tokens SET
-			label      = COALESCE($2, label),
-			enabled    = COALESCE($3, enabled),
-			expires_at = CASE WHEN $4 THEN NULLIF($5, '')::timestamptz ELSE expires_at END
-		WHERE id = $1::uuid
+			label      = COALESCE($3, label),
+			enabled    = COALESCE($4, enabled),
+			expires_at = CASE WHEN $5 THEN NULLIF($6, '')::timestamptz ELSE expires_at END
+		WHERE id = $1::uuid AND tenant_id = $2::uuid
 		RETURNING %s`, tokenSelectCols),
-		id, patch.Label, patch.Enabled, expiresProvided, expiresVal)
+		id, tenantID, patch.Label, patch.Enabled, expiresProvided, expiresVal)
 	t, err := scanToken(row)
 	if err != nil {
 		return "", Token{}, err
@@ -194,11 +196,11 @@ func (db *DB) UpdateToken(ctx context.Context, id string, patch TokenPatchRow) (
 	return t.TokenHash, t, nil
 }
 
-// DeleteToken hard-deletes a token row and returns its hash for cache invalidation.
-// Returns ("", pgx.ErrNoRows) when not found.
-func (db *DB) DeleteToken(ctx context.Context, id string) (string, error) {
+// DeleteToken hard-deletes a token row scoped to the tenant and returns its hash for cache invalidation.
+// Returns ("", pgx.ErrNoRows) when not found or when it belongs to another tenant.
+func (db *DB) DeleteToken(ctx context.Context, tenantID, id string) (string, error) {
 	var hash string
 	row := db.q.ExecReturning(ctx,
-		`DELETE FROM them.access_tokens WHERE id = $1::uuid RETURNING token_hash`, id)
+		`DELETE FROM them.access_tokens WHERE id = $1::uuid AND tenant_id = $2::uuid RETURNING token_hash`, id, tenantID)
 	return hash, row.Scan(&hash)
 }

@@ -40,7 +40,8 @@ func (h *RunsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	runs, err := h.svc.List(r.Context(), contextID, limit)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	runs, err := h.svc.List(r.Context(), tenantID, contextID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
 		return
@@ -56,7 +57,8 @@ func (h *RunsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.svc.Get(r.Context(), runID)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	run, err := h.svc.Get(r.Context(), tenantID, runID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "run not found")
 		return
@@ -78,7 +80,8 @@ func (h *RunsHandler) Signal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Signal(r.Context(), runID, input.Payload); err != nil {
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	if err := h.svc.Signal(r.Context(), tenantID, runID, input.Payload); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}

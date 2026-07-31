@@ -18,23 +18,23 @@ func NewAgentService(d Dal, c Cache) *AgentService {
 	return &AgentService{dal: d, cache: c}
 }
 
-// List returns all agents.
-func (s *AgentService) List(ctx context.Context) ([]dal.Agent, error) {
-	return s.dal.ListAgents(ctx)
+// List returns all agents for the given tenant.
+func (s *AgentService) List(ctx context.Context, tenantID string) ([]dal.Agent, error) {
+	return s.dal.ListAgents(ctx, tenantID)
 }
 
-// Get returns a single agent. Any DAL error maps to ErrNotFound to preserve the
-// current API contract (handler today returns 404 on any error from GetAgent).
-func (s *AgentService) Get(ctx context.Context, id string) (dal.Agent, error) {
-	a, err := s.dal.GetAgent(ctx, id)
+// Get returns a single agent scoped to the tenant. Any DAL error maps to ErrNotFound to preserve
+// the current API contract (handler today returns 404 on any error from GetAgent).
+func (s *AgentService) Get(ctx context.Context, tenantID, id string) (dal.Agent, error) {
+	a, err := s.dal.GetAgent(ctx, tenantID, id)
 	if err != nil {
 		return dal.Agent{}, ErrNotFound
 	}
 	return a, nil
 }
 
-// Create validates the input, applies defaults, persists, and invalidates cache.
-func (s *AgentService) Create(ctx context.Context, in dal.AgentInput) (string, error) {
+// Create validates the input, applies defaults, persists under the tenant, and invalidates cache.
+func (s *AgentService) Create(ctx context.Context, tenantID string, in dal.AgentInput) (string, error) {
 	if in.Slug == "" || in.DisplayName == "" {
 		return "", validation("slug and display_name are required")
 	}
@@ -52,7 +52,7 @@ func (s *AgentService) Create(ctx context.Context, in dal.AgentInput) (string, e
 	}
 	enabled := enabledOrDefault(in.Enabled)
 
-	id, err := s.dal.CreateAgent(ctx, in, enabled)
+	id, err := s.dal.CreateAgent(ctx, tenantID, in, enabled)
 	if err != nil {
 		return "", err
 	}
@@ -60,22 +60,22 @@ func (s *AgentService) Create(ctx context.Context, in dal.AgentInput) (string, e
 	return id, nil
 }
 
-// Update applies defaults and persists changes, then invalidates cache.
-func (s *AgentService) Update(ctx context.Context, id string, in dal.AgentInput) error {
+// Update applies defaults and persists changes scoped to the tenant, then invalidates cache.
+func (s *AgentService) Update(ctx context.Context, tenantID, id string, in dal.AgentInput) error {
 	if in.MaxConcurrency <= 0 {
 		in.MaxConcurrency = 5
 	}
 	enabled := enabledOrDefault(in.Enabled)
-	if err := s.dal.UpdateAgent(ctx, id, in, enabled); err != nil {
+	if err := s.dal.UpdateAgent(ctx, tenantID, id, in, enabled); err != nil {
 		return err
 	}
 	s.invalidate(ctx)
 	return nil
 }
 
-// Delete removes an agent (soft-delete via DAL SQL) and invalidates cache.
-func (s *AgentService) Delete(ctx context.Context, id string) error {
-	if err := s.dal.DeleteAgent(ctx, id); err != nil {
+// Delete removes an agent scoped to the tenant (soft-delete via DAL SQL) and invalidates cache.
+func (s *AgentService) Delete(ctx context.Context, tenantID, id string) error {
+	if err := s.dal.DeleteAgent(ctx, tenantID, id); err != nil {
 		return err
 	}
 	s.invalidate(ctx)

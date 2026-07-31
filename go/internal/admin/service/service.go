@@ -17,26 +17,26 @@ import (
 // The concrete *dal.DB satisfies this interface structurally; the service
 // package never imports pgx and never sees SQL.
 type Dal interface {
-	// Agents
-	ListAgents(ctx context.Context) ([]dal.Agent, error)
-	GetAgent(ctx context.Context, id string) (dal.Agent, error)
-	CreateAgent(ctx context.Context, in dal.AgentInput, enabled bool) (string, error)
-	UpdateAgent(ctx context.Context, id string, in dal.AgentInput, enabled bool) error
-	DeleteAgent(ctx context.Context, id string) error
+	// Agents — tenant-scoped
+	ListAgents(ctx context.Context, tenantID string) ([]dal.Agent, error)
+	GetAgent(ctx context.Context, tenantID, id string) (dal.Agent, error)
+	CreateAgent(ctx context.Context, tenantID string, in dal.AgentInput, enabled bool) (string, error)
+	UpdateAgent(ctx context.Context, tenantID, id string, in dal.AgentInput, enabled bool) error
+	DeleteAgent(ctx context.Context, tenantID, id string) error
 
-	// Orchestrators
-	ListOrchestrators(ctx context.Context) ([]dal.Orchestrator, error)
-	GetOrchestrator(ctx context.Context, name string) (dal.Orchestrator, error)
-	CreateOrchestrator(ctx context.Context, in dal.OrchestratorInput, enabled bool) (string, error)
-	UpdateOrchestrator(ctx context.Context, name string, in dal.OrchestratorInput, enabled bool) error
-	DeleteOrchestrator(ctx context.Context, name string) error
+	// Orchestrators — tenant-scoped
+	ListOrchestrators(ctx context.Context, tenantID string) ([]dal.Orchestrator, error)
+	GetOrchestrator(ctx context.Context, tenantID, name string) (dal.Orchestrator, error)
+	CreateOrchestrator(ctx context.Context, tenantID string, in dal.OrchestratorInput, enabled bool) (string, error)
+	UpdateOrchestrator(ctx context.Context, tenantID, name string, in dal.OrchestratorInput, enabled bool) error
+	DeleteOrchestrator(ctx context.Context, tenantID, name string) error
 
-	// Applications + entry points
-	ListApplications(ctx context.Context) ([]dal.Application, error)
-	GetApplication(ctx context.Context, id string) (dal.Application, error)
-	CreateApplication(ctx context.Context, name string, enabled bool) (string, error)
-	UpdateApplication(ctx context.Context, id, name string, enabled bool) error
-	DeleteApplication(ctx context.Context, id string) error
+	// Applications + entry points — tenant-scoped (apps); entry points scoped through app
+	ListApplications(ctx context.Context, tenantID string) ([]dal.Application, error)
+	GetApplication(ctx context.Context, tenantID, id string) (dal.Application, error)
+	CreateApplication(ctx context.Context, tenantID, name string, enabled bool) (string, error)
+	UpdateApplication(ctx context.Context, tenantID, id, name string, enabled bool) error
+	DeleteApplication(ctx context.Context, tenantID, id string) error
 	ListEntryPoints(ctx context.Context, appID string) []dal.EntryPoint
 	CreateEntryPoint(ctx context.Context, appID, slug, epType string, enabled bool) (string, error)
 	GetEntryPointSlug(ctx context.Context, epID, appID string) (string, error)
@@ -44,24 +44,24 @@ type Dal interface {
 	DeleteEntryPoint(ctx context.Context, epID, appID string) error
 	ListEPSlugsForApp(ctx context.Context, appID string) []string
 
-	// Runs
-	ListRuns(ctx context.Context, contextID string, limit int) ([]dal.Run, error)
-	GetRun(ctx context.Context, runID string) (dal.Run, error)
-	GetRunContextID(ctx context.Context, runID string) (string, error)
+	// Runs — tenant-scoped
+	ListRuns(ctx context.Context, tenantID, contextID string, limit int) ([]dal.Run, error)
+	GetRun(ctx context.Context, tenantID, runID string) (dal.Run, error)
+	GetRunContextID(ctx context.Context, tenantID, runID string) (string, error)
 
-	// Tokens
-	ListTokens(ctx context.Context, userID *int64) ([]dal.Token, error)
-	GetToken(ctx context.Context, id string) (dal.Token, error)
-	OrchestratorExists(ctx context.Context, orchID string) (bool, error)
-	CreateToken(ctx context.Context, in dal.TokenCreateRow) (dal.Token, error)
-	UpdateToken(ctx context.Context, id string, patch dal.TokenPatchRow) (hash string, out dal.Token, err error)
-	DeleteToken(ctx context.Context, id string) (hash string, err error)
+	// Tokens — tenant-scoped
+	ListTokens(ctx context.Context, tenantID string, userID *int64) ([]dal.Token, error)
+	GetToken(ctx context.Context, tenantID, id string) (dal.Token, error)
+	OrchestratorExists(ctx context.Context, tenantID, orchID string) (bool, error)
+	CreateToken(ctx context.Context, tenantID string, in dal.TokenCreateRow) (dal.Token, error)
+	UpdateToken(ctx context.Context, tenantID, id string, patch dal.TokenPatchRow) (hash string, out dal.Token, err error)
+	DeleteToken(ctx context.Context, tenantID, id string) (hash string, err error)
 
-	// Config table (monitoring, llm_routing, …)
+	// Config table (monitoring, llm_routing, …) — platform-global, no tenant
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
 	UpsertConfig(ctx context.Context, key string, value []byte) error
 
-	// LLM providers
+	// LLM providers — platform-global, no tenant
 	ListProviders(ctx context.Context) ([]dal.LLMProvider, error)
 	GetProvider(ctx context.Context, id int64) (dal.LLMProvider, error)
 	CreateProvider(ctx context.Context, in dal.LLMProviderInput) (dal.LLMProvider, error)

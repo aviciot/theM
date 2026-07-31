@@ -64,9 +64,9 @@ func (a *singleToRow) Next() bool          { return true }
 func (a *singleToRow) Close() error         { return nil }
 func (a *singleToRow) Scan(dest ...any) error { return a.s.Scan(dest...) }
 
-// ListAgents returns all agents ordered by creation date.
-func (d *DB) ListAgents(ctx context.Context) ([]Agent, error) {
-	rows, err := d.q.Query(ctx, agentSelectCols+" ORDER BY created_at")
+// ListAgents returns all agents for the given tenant, ordered by creation date.
+func (d *DB) ListAgents(ctx context.Context, tenantID string) ([]Agent, error) {
+	rows, err := d.q.Query(ctx, agentSelectCols+" WHERE tenant_id = $1::uuid ORDER BY created_at", tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -83,23 +83,25 @@ func (d *DB) ListAgents(ctx context.Context) ([]Agent, error) {
 	return agents, nil
 }
 
-// GetAgent returns a single agent by UUID id. Returns an error if not found.
-func (d *DB) GetAgent(ctx context.Context, id string) (Agent, error) {
-	row := d.q.QueryRow(ctx, agentSelectCols+" WHERE id = $1::uuid", id)
+// GetAgent returns a single agent by UUID id, scoped to the tenant.
+// Returns pgx.ErrNoRows when the agent does not exist or belongs to another tenant.
+func (d *DB) GetAgent(ctx context.Context, tenantID, id string) (Agent, error) {
+	row := d.q.QueryRow(ctx, agentSelectCols+" WHERE id = $1::uuid AND tenant_id = $2::uuid", id, tenantID)
 	return scanAgent(&singleToRow{s: row})
 }
 
-// CreateAgent inserts a new agent row and returns the new UUID.
-func (d *DB) CreateAgent(ctx context.Context, in AgentInput, enabled bool) (string, error) {
+// CreateAgent inserts a new agent row for the given tenant and returns the new UUID.
+func (d *DB) CreateAgent(ctx context.Context, tenantID string, in AgentInput, enabled bool) (string, error) {
 	const q = `
 		INSERT INTO them.agents
-		  (slug, display_name, description, transport, endpoint_url,
+		  (tenant_id, slug, display_name, description, transport, endpoint_url,
 		   max_concurrency, max_retries, timeout_seconds, enabled,
 		   supports_streaming, supports_push, icon, category)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id::text`
 
 	row := d.q.ExecReturning(ctx, q,
+		tenantID,
 		in.Slug, in.DisplayName, in.Description, in.Transport,
 		in.EndpointURL, in.MaxConcurrency, in.MaxRetries,
 		in.TimeoutSeconds, enabled,
@@ -113,19 +115,21 @@ func (d *DB) CreateAgent(ctx context.Context, in AgentInput, enabled bool) (stri
 	return id, nil
 }
 
-// UpdateAgent modifies an existing agent row identified by UUID id.
-func (d *DB) UpdateAgent(ctx context.Context, id string, in AgentInput, enabled bool) error {
+// UpdateAgent modifies an existing agent row identified by UUID id, scoped to the tenant.
+// A row belonging to another tenant is silently treated as not found (0 rows affected).
+func (d *DB) UpdateAgent(ctx context.Context, tenantID, id string, in AgentInput, enabled bool) error {
 	const q = `
 		UPDATE them.agents
-		SET display_name=$2, description=$3, transport=$4,
-		    endpoint_url=NULLIF($5, ''), max_concurrency=$6, max_retries=$7,
-		    timeout_seconds=$8, enabled=$9,
-		    supports_streaming=$10, supports_push=$11,
-		    icon=$12, category=$13, updated_at=now()
-		WHERE id=$1::uuid`
+		SET display_name=$3, description=$4, transport=$5,
+		    endpoint_url=NULLIF($6, ''), max_concurrency=$7, max_retries=$8,
+		    timeout_seconds=$9, enabled=$10,
+		    supports_streaming=$11, supports_push=$12,
+		    icon=$13, category=$14, updated_at=now()
+		WHERE id=$1::uuid AND tenant_id=$2::uuid`
 
 	return d.q.Exec(ctx, q,
-		id, in.DisplayName, in.Description, in.Transport,
+		id, tenantID,
+		in.DisplayName, in.Description, in.Transport,
 		in.EndpointURL, in.MaxConcurrency, in.MaxRetries,
 		in.TimeoutSeconds, enabled,
 		in.SupportsStreaming, in.SupportsPush,
@@ -133,9 +137,9 @@ func (d *DB) UpdateAgent(ctx context.Context, id string, in AgentInput, enabled 
 	)
 }
 
-// DeleteAgent soft-deletes an agent by setting enabled=false.
-func (d *DB) DeleteAgent(ctx context.Context, id string) error {
+// DeleteAgent soft-deletes an agent by setting enabled=false, scoped to the tenant.
+func (d *DB) DeleteAgent(ctx context.Context, tenantID, id string) error {
 	return d.q.Exec(ctx,
-		`UPDATE them.agents SET enabled=false, updated_at=now() WHERE id=$1::uuid`,
-		id)
+		`UPDATE them.agents SET enabled=false, updated_at=now() WHERE id=$1::uuid AND tenant_id=$2::uuid`,
+		id, tenantID)
 }

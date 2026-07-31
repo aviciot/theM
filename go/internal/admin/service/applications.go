@@ -38,15 +38,15 @@ func NewAppService(d Dal, c Cache) *AppService {
 	return &AppService{dal: d, cache: c}
 }
 
-// List returns all applications.
-func (s *AppService) List(ctx context.Context) ([]dal.Application, error) {
-	return s.dal.ListApplications(ctx)
+// List returns all applications for the given tenant.
+func (s *AppService) List(ctx context.Context, tenantID string) ([]dal.Application, error) {
+	return s.dal.ListApplications(ctx, tenantID)
 }
 
-// Get returns a single application with its entry points. Any DAL error maps
+// Get returns a single application with its entry points, scoped to the tenant. Any DAL error maps
 // to ErrNotFound to preserve the current API contract.
-func (s *AppService) Get(ctx context.Context, id string) (dal.Application, error) {
-	a, err := s.dal.GetApplication(ctx, id)
+func (s *AppService) Get(ctx context.Context, tenantID, id string) (dal.Application, error) {
+	a, err := s.dal.GetApplication(ctx, tenantID, id)
 	if err != nil {
 		return dal.Application{}, ErrNotFound
 	}
@@ -54,33 +54,34 @@ func (s *AppService) Get(ctx context.Context, id string) (dal.Application, error
 	return a, nil
 }
 
-// Create validates the input, persists, and returns the new ID.
-func (s *AppService) Create(ctx context.Context, name string, enabled *bool) (string, error) {
+// Create validates the input, persists under the tenant, and returns the new ID.
+func (s *AppService) Create(ctx context.Context, tenantID, name string, enabled *bool) (string, error) {
 	if name == "" {
 		return "", validation("name is required")
 	}
-	return s.dal.CreateApplication(ctx, name, enabledOrDefault(enabled))
+	return s.dal.CreateApplication(ctx, tenantID, name, enabledOrDefault(enabled))
 }
 
-// Update persists changes and invalidates all EP slugs for the application.
-func (s *AppService) Update(ctx context.Context, id, name string, enabled *bool) error {
-	if err := s.dal.UpdateApplication(ctx, id, name, enabledOrDefault(enabled)); err != nil {
+// Update persists changes scoped to the tenant and invalidates all EP slugs for the application.
+func (s *AppService) Update(ctx context.Context, tenantID, id, name string, enabled *bool) error {
+	if err := s.dal.UpdateApplication(ctx, tenantID, id, name, enabledOrDefault(enabled)); err != nil {
 		return err
 	}
 	s.invalidateAppEPs(ctx, id)
 	return nil
 }
 
-// Delete removes an application and invalidates all its EP slugs.
-func (s *AppService) Delete(ctx context.Context, id string) error {
+// Delete removes an application scoped to the tenant and invalidates all its EP slugs.
+func (s *AppService) Delete(ctx context.Context, tenantID, id string) error {
 	s.invalidateAppEPs(ctx, id)
-	if err := s.dal.DeleteApplication(ctx, id); err != nil {
+	if err := s.dal.DeleteApplication(ctx, tenantID, id); err != nil {
 		return err
 	}
 	return nil
 }
 
 // CreateEntryPoint validates the EP type, persists, and returns the new EP ID.
+// Entry points are scoped through their parent application; no additional tenant param needed here.
 // No cache invalidation on create (nothing to evict for a new EP).
 func (s *AppService) CreateEntryPoint(ctx context.Context, appID, slug, epType string, enabled *bool) (string, error) {
 	if slug == "" || epType == "" {

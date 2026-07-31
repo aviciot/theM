@@ -48,27 +48,27 @@ func NewTokenService(d Dal, c Cache, g TokenGenerator) *TokenService {
 	return &TokenService{dal: d, cache: c, gen: g}
 }
 
-// List returns all tokens, optionally filtered by userID. Always returns []
+// List returns all tokens for the given tenant, optionally filtered by userID. Always returns []
 // (never nil), ordered by created_at DESC.
-func (s *TokenService) List(ctx context.Context, userID *int64) ([]dal.Token, error) {
-	return s.dal.ListTokens(ctx, userID)
+func (s *TokenService) List(ctx context.Context, tenantID string, userID *int64) ([]dal.Token, error) {
+	return s.dal.ListTokens(ctx, tenantID, userID)
 }
 
-// Get returns a single token. Any DAL error maps to ErrNotFound (matches Python's
-// _get_or_404 pattern used by all resource getters).
-func (s *TokenService) Get(ctx context.Context, id string) (dal.Token, error) {
-	t, err := s.dal.GetToken(ctx, id)
+// Get returns a single token scoped to the tenant. Any DAL error maps to ErrNotFound (matches
+// Python's _get_or_404 pattern used by all resource getters).
+func (s *TokenService) Get(ctx context.Context, tenantID, id string) (dal.Token, error) {
+	t, err := s.dal.GetToken(ctx, tenantID, id)
 	if err != nil {
 		return dal.Token{}, ErrNotFound
 	}
 	return t, nil
 }
 
-// Create generates a new token, validates orchestrator existence if orchID is set,
+// Create generates a new token, validates orchestrator existence if orchID is set (within tenant),
 // and returns a TokenCreatedOut with the one-time plaintext included.
-func (s *TokenService) Create(ctx context.Context, in dal.TokenCreateRow, orchID *string) (dal.TokenCreatedOut, error) {
+func (s *TokenService) Create(ctx context.Context, tenantID string, in dal.TokenCreateRow, orchID *string) (dal.TokenCreatedOut, error) {
 	if orchID != nil && *orchID != "" {
-		exists, err := s.dal.OrchestratorExists(ctx, *orchID)
+		exists, err := s.dal.OrchestratorExists(ctx, tenantID, *orchID)
 		if err != nil {
 			return dal.TokenCreatedOut{}, fmt.Errorf("check orchestrator: %w", err)
 		}
@@ -87,7 +87,7 @@ func (s *TokenService) Create(ctx context.Context, in dal.TokenCreateRow, orchID
 	}
 	in.TokenHash = hash
 
-	row, err := s.dal.CreateToken(ctx, in)
+	row, err := s.dal.CreateToken(ctx, tenantID, in)
 	if err != nil {
 		if dal.IsUniqueViolation(err) {
 			return dal.TokenCreatedOut{}, unprocessable("token already exists (hash collision — retry)")
@@ -98,10 +98,10 @@ func (s *TokenService) Create(ctx context.Context, in dal.TokenCreateRow, orchID
 	return dal.TokenCreatedOut{Token: row, Plaintext: plaintext}, nil
 }
 
-// Update applies a partial patch to a token, then invalidates the cache.
-// Returns ErrNotFound when the token does not exist.
-func (s *TokenService) Update(ctx context.Context, id string, patch dal.TokenPatchRow) (dal.Token, error) {
-	hash, out, err := s.dal.UpdateToken(ctx, id, patch)
+// Update applies a partial patch to a token scoped to the tenant, then invalidates the cache.
+// Returns ErrNotFound when the token does not exist or belongs to another tenant.
+func (s *TokenService) Update(ctx context.Context, tenantID, id string, patch dal.TokenPatchRow) (dal.Token, error) {
+	hash, out, err := s.dal.UpdateToken(ctx, tenantID, id, patch)
 	if err != nil {
 		if dal.IsNoRows(err) {
 			return dal.Token{}, ErrNotFound
@@ -112,10 +112,10 @@ func (s *TokenService) Update(ctx context.Context, id string, patch dal.TokenPat
 	return out, nil
 }
 
-// Delete hard-deletes a token and invalidates the cache.
-// Returns ErrNotFound when the token does not exist.
-func (s *TokenService) Delete(ctx context.Context, id string) error {
-	hash, err := s.dal.DeleteToken(ctx, id)
+// Delete hard-deletes a token scoped to the tenant and invalidates the cache.
+// Returns ErrNotFound when the token does not exist or belongs to another tenant.
+func (s *TokenService) Delete(ctx context.Context, tenantID, id string) error {
+	hash, err := s.dal.DeleteToken(ctx, tenantID, id)
 	if err != nil {
 		if dal.IsNoRows(err) {
 			return ErrNotFound

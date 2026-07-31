@@ -4,11 +4,11 @@ import (
 	"context"
 )
 
-// ListApplications returns all applications ordered by creation date.
-func (d *DB) ListApplications(ctx context.Context) ([]Application, error) {
-	const q = `SELECT id::text, name, enabled FROM them.applications ORDER BY created_at`
+// ListApplications returns all applications for the given tenant, ordered by creation date.
+func (d *DB) ListApplications(ctx context.Context, tenantID string) ([]Application, error) {
+	const q = `SELECT id::text, name, enabled FROM them.applications WHERE tenant_id = $1::uuid ORDER BY created_at`
 
-	rows, err := d.q.Query(ctx, q)
+	rows, err := d.q.Query(ctx, q, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -25,40 +25,41 @@ func (d *DB) ListApplications(ctx context.Context) ([]Application, error) {
 	return apps, nil
 }
 
-// GetApplication returns a single application by UUID id.
-func (d *DB) GetApplication(ctx context.Context, id string) (Application, error) {
-	const q = `SELECT id::text, name, enabled FROM them.applications WHERE id=$1::uuid`
+// GetApplication returns a single application by UUID id, scoped to the tenant.
+// Returns pgx.ErrNoRows when not found or when it belongs to another tenant.
+func (d *DB) GetApplication(ctx context.Context, tenantID, id string) (Application, error) {
+	const q = `SELECT id::text, name, enabled FROM them.applications WHERE id=$1::uuid AND tenant_id=$2::uuid`
 
 	var a Application
-	row := d.q.QueryRow(ctx, q, id)
+	row := d.q.QueryRow(ctx, q, id, tenantID)
 	if err := row.Scan(&a.ID, &a.Name, &a.Enabled); err != nil {
 		return a, err
 	}
 	return a, nil
 }
 
-// CreateApplication inserts a new application row and returns the new UUID.
-func (d *DB) CreateApplication(ctx context.Context, name string, enabled bool) (string, error) {
-	const q = `INSERT INTO them.applications (name, enabled) VALUES ($1, $2) RETURNING id::text`
+// CreateApplication inserts a new application row for the given tenant and returns the new UUID.
+func (d *DB) CreateApplication(ctx context.Context, tenantID, name string, enabled bool) (string, error) {
+	const q = `INSERT INTO them.applications (tenant_id, name, enabled) VALUES ($1::uuid, $2, $3) RETURNING id::text`
 
 	var id string
-	row := d.q.ExecReturning(ctx, q, name, enabled)
+	row := d.q.ExecReturning(ctx, q, tenantID, name, enabled)
 	if err := row.Scan(&id); err != nil {
 		return "", err
 	}
 	return id, nil
 }
 
-// UpdateApplication modifies an existing application row identified by UUID id.
-func (d *DB) UpdateApplication(ctx context.Context, id, name string, enabled bool) error {
-	const q = `UPDATE them.applications SET name=$2, enabled=$3, updated_at=now() WHERE id=$1::uuid`
-	return d.q.Exec(ctx, q, id, name, enabled)
+// UpdateApplication modifies an existing application row, scoped to the tenant.
+func (d *DB) UpdateApplication(ctx context.Context, tenantID, id, name string, enabled bool) error {
+	const q = `UPDATE them.applications SET name=$3, enabled=$4, updated_at=now() WHERE id=$1::uuid AND tenant_id=$2::uuid`
+	return d.q.Exec(ctx, q, id, tenantID, name, enabled)
 }
 
-// DeleteApplication soft-deletes an application by setting enabled=false.
-func (d *DB) DeleteApplication(ctx context.Context, id string) error {
-	const q = `UPDATE them.applications SET enabled=false, updated_at=now() WHERE id=$1::uuid`
-	return d.q.Exec(ctx, q, id)
+// DeleteApplication soft-deletes an application by setting enabled=false, scoped to the tenant.
+func (d *DB) DeleteApplication(ctx context.Context, tenantID, id string) error {
+	const q = `UPDATE them.applications SET enabled=false, updated_at=now() WHERE id=$1::uuid AND tenant_id=$2::uuid`
+	return d.q.Exec(ctx, q, id, tenantID)
 }
 
 // ListEntryPoints returns all entry points for a given application UUID.

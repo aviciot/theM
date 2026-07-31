@@ -33,7 +33,8 @@ func (h *AgentsHandler) Routes(r chi.Router) {
 
 // List handles GET /api/v1/admin/agents.
 func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
-	agents, err := h.svc.List(r.Context())
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	agents, err := h.svc.List(r.Context(), tenantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
 		return
@@ -49,7 +50,8 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := h.svc.Create(r.Context(), input)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	id, err := h.svc.Create(r.Context(), tenantID, input)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -70,7 +72,8 @@ func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a, err := h.svc.Get(r.Context(), id)
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	a, err := h.svc.Get(r.Context(), tenantID, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
@@ -92,7 +95,8 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Update(r.Context(), id, input); err != nil {
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	if err := h.svc.Update(r.Context(), tenantID, id, input); err != nil {
 		writeError(w, http.StatusInternalServerError, "update agent: "+err.Error())
 		return
 	}
@@ -108,7 +112,8 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete agent: "+err.Error())
 		return
 	}
