@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-31
 **Branch:** main
-**HEAD:** (commit hash — fill after commit)
+**HEAD:** `09c5665` feat(r4c1): tenant-scoped DAL and service layers
 **Prepared by:** Phase R-4c1 session
 
 ---
