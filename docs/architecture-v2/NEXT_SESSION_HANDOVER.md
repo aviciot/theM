@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-31
 **Branch:** main
-**HEAD:** (R-4a commit — see below after git push)
+**HEAD:** `0056d95` feat(r4a): tenant database foundation
 **Prepared by:** Phase R-4a session
 
 ---
@@ -182,9 +182,9 @@ python3.12 scripts/tests/run_tests.py 01 02 03 04 15
 
 ## Commits This Session
 
-- R-4a commit (to be added after git commit/push)
+- `0056d95` feat(r4a): tenant database foundation — tenants table, tenant_id columns, bootstrap tenant
 
-Push status: **will push after commit**
+Push status: **pushed to origin/main** ✓
 
 ---
 
