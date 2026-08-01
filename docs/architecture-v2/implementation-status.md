@@ -7,7 +7,7 @@
 ## Current State
 
 Compose consolidation complete (2026-08-01): Production Compose deployment migrated from `theM_gateway/` to canonical root `/home/avi/them`. All 15 services running. Go Workers now Compose-managed under `project=them_gateway`. See `COMPOSE_CONSOLIDATION_EXECUTION_REPORT.md`.
-Phase R-4c2 complete (2026-08-01): BearerTenantMiddleware wired to tenant-scoped admin routes; bootstrapTenantID shim removed. 480 total Go tests. HEAD TBD (uncommitted).
+Phase R-4c2 complete (2026-08-01): BearerTenantMiddleware wired to tenant-scoped admin routes; bootstrapTenantID shim removed. 480 total Go tests. HEAD `3efb097`.
 Phase R-4c1 complete (2026-07-31): Tenant-scoped DAL and service layers. 468 total Go tests. HEAD `09c5665`.
 Phase R-4b complete (2026-07-31): Authenticated tenant identity foundation — `tenantctx` package, TenantID in `Claims`/`TokenInfo`/`TokenRow`, `pgx_querier` fetches `tenant_id`, `BearerTenantMiddleware`/`HS256TenantMiddleware`, `RuntimeIdentity` struct. 23 new tests. 447 total. HEAD `a95e859`.
 Phase R-4a complete (2026-07-31): Tenant database foundation — `them.tenants` table, `tenant_id UUID NOT NULL` on 7 tables, bootstrap tenant, constraint migration, `them.run_artifacts` with tenant_id. DB-only change; no Go/Python application code changed. HEAD `0056d95`.

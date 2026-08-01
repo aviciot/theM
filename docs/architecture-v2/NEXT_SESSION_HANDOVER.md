@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-01
 **Branch:** main
-**HEAD:** cf1fd5c (pre-R-4c2 commit; R-4c2 changes are uncommitted at handover time)
+**HEAD:** `3efb097` feat(tenant): R-4c2 — wire BearerTenantMiddleware to admin routes, remove bootstrap shim
 **Prepared by:** R-4c2 implementation session
 
 ---
@@ -82,13 +82,11 @@ R-4c2 is **complete**. The next task is **Phase R-4d**.
 
 ## Working Tree State
 
-R-4c2 changes are uncommitted (the session summary was produced before a final commit+push).
-The changes have been verified in the live container via force-rebuild with `--no-cache`.
+R-4c2 committed at `3efb097` and pushed to `origin/main`. Working tree is clean.
 
-**Before starting R-4d, the next session must:**
-1. `git status` — verify the R-4c2 files listed above are the only modified files
-2. Commit them: `git add <files> && git commit -m "feat(tenant): R-4c2 — wire BearerTenantMiddleware to admin routes, remove bootstrap shim"`
-3. Push: `git push origin main`
+```
+git status → nothing to commit, working tree clean
+```
 
 ---
 
