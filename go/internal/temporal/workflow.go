@@ -38,11 +38,16 @@ const (
 
 // WorkflowInput is the input to OrchestrationWorkflow.
 type WorkflowInput struct {
-	RunID          string
-	ContextID      string
-	ApplicationID  int64
-	EntryPointSlug string
-	UserMessage    domain.Message
+	RunID     string
+	ContextID string
+	// TenantID is the UUID of the owning tenant (R-4d). Never sourced from
+	// client request data — always from epconfig.EPConfig.TenantID.
+	TenantID string
+	// ApplicationID is the UUID string of the owning application (R-4d).
+	// Type is string UUID to match the PostgreSQL column and EPConfig.AppID.
+	ApplicationID    string
+	EntryPointSlug   string
+	UserMessage      domain.Message
 	// History is pre-loaded by the caller (DB-level LIMIT applied).
 	History []domain.Message
 	// OrchestratorName identifies which orchestrator config to load.

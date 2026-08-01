@@ -233,7 +233,7 @@ sanitization, and cross-run access denial.
 
 | Test | What it proves |
 |---|---|
-| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with correct column order (incl. `events_transport`) |
+| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with correct column order (incl. `tenant_id`, `events_transport`); 6-arg signature (R-4d) |
 | `TestCreateRun_eventsTransportByMode` | events_transport derived from RunEventsMode: pubsub→"pubsub", dual/streams→"streams" (Phase 11c-B) |
 | `TestCreateRun_explicitTransportOverridesMode` | non-empty `run.EventsTransport` overrides the configured mode |
 | `TestUpdateRunStatus_withErrorMessage` | `UPDATE` sets `ended_at`, `status`, `error_message` |
@@ -251,6 +251,9 @@ sanitization, and cross-run access denial.
 | `TestSanitizeFilename_Safe` | normal filenames preserved unchanged |
 | `TestSanitizeFilename_HiddenFile` | `.htaccess` → `file.htaccess` (hidden file protection) |
 | `TestMetadataEvent_HasNoFilePayload` | returned artifact ID does not contain raw file data |
+| `TestCreateRun_writesTenantID` | R-4d: non-nil tenant_id *string is passed when TenantID set; written to arg[1] |
+| `TestCreateRun_nullTenantWhenEmpty` | R-4d: empty TenantID → nil *string (SQL NULL), no UUID CHECK violation |
+| `TestCreateRun_twoTenantsProduceDistinctRows` | R-4d: two different tenant UUIDs → two distinct tenant_id arg values |
 
 **Trigger:** any change to `internal/runrecorder/recorder.go` or `internal/runrecorder/pgx.go`
 
@@ -313,6 +316,8 @@ Shared interfaces (Authenticator, SessionStore, GateStore, EPConfigLoader, Tempo
 | `TestTemporalPathUsedWhenEnabled` | `temporalEnabled=true` → `ExecuteWorkflow` called; `orch.Run` NOT called; client receives done event from Redis run stream |
 | `TestReplayUnavailableForwardedToClient` | `replay_unavailable` event emitted by StreamFromRedis is forwarded to WS client (not silently dropped) — Phase 11c-C fix |
 | `TestNoTemporalReturns503` | R-2B: When no Temporal client is wired, handler sends error WS event (no inline fallback) |
+| `TestWS_RunStoresTenantID` | R-4d: WS run INSERT carries TenantID from EPConfig (arg[1] is *string UUID); WorkflowInput.TenantID and ApplicationID set from EPConfig |
+| `TestWS_ClientTenantHeaderIgnored` | R-4d: X-Tenant-ID request header cannot override server-resolved TenantID from EPConfig |
 
 **Trigger:** any change to `internal/ws/handler.go`
 
@@ -341,6 +346,8 @@ Shared interfaces and TokenHash now live in `internal/transport/`; this test exe
 | `TestSSETemporalPathUsedWhenEnabled` | `temporalEnabled=true` → `ExecuteWorkflow` called; `orch.Run` NOT called; client receives done event from Redis run stream |
 | `TestSSEReplayUnavailableForwardedToClient` | `replay_unavailable` event emitted by StreamFromRedis is forwarded as SSE (not silently dropped) — Phase 11c-C fix |
 | `TestSSENoTemporalReturns503` | R-2B: When no Temporal client is wired, handler sends error SSE event (no inline fallback) |
+| `TestSSE_RunStoresTenantID` | R-4d: SSE run INSERT carries TenantID from EPConfig (arg[1] is *string UUID); WorkflowInput.TenantID and ApplicationID set from EPConfig |
+| `TestSSE_ClientTenantHeaderIgnored` | R-4d: X-Tenant-ID request header cannot override server-resolved TenantID from EPConfig |
 
 **Trigger:** any change to `internal/sse/handler.go`
 
@@ -899,6 +906,12 @@ distinct and correctly named.
 | `TestWorkflowInput_Serialization` | WorkflowInput JSON round-trip: RunID, ContextID, EntryPointSlug survive marshal/unmarshal |
 | `TestGoWorkerTaskQueue_IsDistinct` | `GoTaskQueue == "them-orchestration-go"`, `TaskQueue == "them-orchestration"`, and the two are distinct (R-2C: separate queues for Go and Python workers) |
 | `TestGoWorkerTaskQueue_ActivityRoutedToGoQueue` | Documents that `OrchestrationWorkflow` activity options use `GoTaskQueue` — activities route to the Go Worker (R-2C invariant) |
+| `TestWorkflowInput_TenantIDAndApplicationIDPresent` | R-4d: WorkflowInput has TenantID+ApplicationID string fields; both survive JSON round-trip |
+| `TestWorkflowInput_ApplicationID_IsString` | R-4d: ApplicationID serialises as JSON string (UUID), not a number |
+| `TestRunOrchestratorActivity_RejectsEmptyTenantID` | R-4d: empty TenantID → non-retryable ApplicationError at activity boundary |
+| `TestRunOrchestratorActivity_RejectsEmptyApplicationID` | R-4d: empty ApplicationID → non-retryable ApplicationError at activity boundary |
+| `TestRunOrchestratorActivity_RejectsEmptyRunID` | R-4d: empty RunID → non-retryable ApplicationError at activity boundary |
+| `TestRunOrchestratorActivity_PropagatesTenantToRunner` | R-4d: all required fields present → activity runs to completion (tenant passes through) |
 
 **Trigger:** any change to `internal/temporal/activities.go`, `internal/temporal/workflow.go`, or `cmd/worker/main.go`
 
@@ -1271,11 +1284,11 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-06 | session | 10 |
 | S1-07 | event | 9 |
 | S1-08 | domain | 3 |
-| S1-09 | runrecorder | 18 |
+| S1-09 | runrecorder | 21 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
-| S1-12 | ws | 17 |
-| S1-13 | sse | 16 |
+| S1-12 | ws | 19 |
+| S1-13 | sse | 18 |
 | S1-14 | a2a | 3 |
 | S1-15 | admin | 46 |
 | S1-16 | ratelimit | 3 |
@@ -1291,13 +1304,13 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-26 | crypto (fernet) | 32 |
 | S1-27 | metrics | 12 |
 | S1-28 | orchestrator | 12 |
-| S1-29 | temporal (worker + serialization) | 2 |
+| S1-29 | temporal (worker + serialization + R-4d) | 10 |
 | S1-30 | artifacts (download handler) | 9 |
 | S1-31 | auth/tenant_middleware (R-4b) | 15 |
 | S1-32 | tenantctx (R-4b) | 8 |
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
-| **S1 total** | | **439** |
+| **S1 total** | | **452** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

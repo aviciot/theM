@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/activity"
+	temporalerr "go.temporal.io/sdk/temporal"
 
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/orchestrator"
@@ -26,10 +27,39 @@ type Activities struct {
 // RunOrchestratorActivity calls the orchestrator agentic loop.
 // It heartbeats every 5 s so Temporal can detect pod crashes.
 //
+// R-4d: validates that TenantID, ApplicationID, and RunID are non-empty at the
+// execution boundary. Returns a non-retryable ApplicationError if any is missing
+// so the workflow fails fast with a clear message instead of producing an
+// untenanted run.
+//
 // If the orchestrator returns ErrTaskInputRequired, the activity returns a
 // Temporal ApplicationError with Type="TaskInputRequired" so the workflow
 // can pause and wait for a human Signal.
 func (a *Activities) RunOrchestratorActivity(ctx context.Context, input WorkflowInput) (WorkflowResult, error) {
+	// Execution boundary validation (R-4d). Fail with a non-retryable error so
+	// the workflow surfaces the misconfiguration immediately.
+	if input.TenantID == "" {
+		return WorkflowResult{Status: domain.RunStatusFailed},
+			temporalerr.NewNonRetryableApplicationError(
+				"RunOrchestratorActivity: TenantID must not be empty",
+				"InvalidInput", nil,
+			)
+	}
+	if input.ApplicationID == "" {
+		return WorkflowResult{Status: domain.RunStatusFailed},
+			temporalerr.NewNonRetryableApplicationError(
+				"RunOrchestratorActivity: ApplicationID must not be empty",
+				"InvalidInput", nil,
+			)
+	}
+	if input.RunID == "" {
+		return WorkflowResult{Status: domain.RunStatusFailed},
+			temporalerr.NewNonRetryableApplicationError(
+				"RunOrchestratorActivity: RunID must not be empty",
+				"InvalidInput", nil,
+			)
+	}
+
 	// Heartbeat goroutine — keeps the activity alive across long LLM calls.
 	go func() {
 		ticker := time.NewTicker(heartbeatInterval)

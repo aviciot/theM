@@ -25,6 +25,7 @@ import (
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/session"
 	ssehandler "github.com/aviciot/them/internal/sse"
+	"github.com/aviciot/them/internal/temporal"
 )
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
@@ -751,4 +752,161 @@ func TestSSENoTemporalReturns503(t *testing.T) {
 	}
 	assert.True(t, hasError,
 		"SSE handler must emit an error event when Temporal client is unavailable")
+}
+
+// ── R-4d: Tenant propagation tests ───────────────────────────────────────────
+
+// captureSSETemporalClient records ExecuteWorkflow calls including WorkflowInput args.
+type captureSSETemporalClient struct {
+	called    bool
+	inputArgs []interface{}
+}
+
+func (c *captureSSETemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
+	c.called = true
+	c.inputArgs = args
+	return &fakeSSEWorkflowRun{id: opts.ID}, nil
+}
+
+// captureSSEDBQuerier records Exec calls for SQL inspection.
+type captureSSEDBQuerier struct {
+	execCalls []struct {
+		sql  string
+		args []any
+	}
+}
+
+func (c *captureSSEDBQuerier) Exec(_ context.Context, sql string, args ...any) error {
+	c.execCalls = append(c.execCalls, struct {
+		sql  string
+		args []any
+	}{sql: sql, args: args})
+	return nil
+}
+
+func (c *captureSSEDBQuerier) QueryRow(_ context.Context, _ string, _ ...any) runrecorder.SingleRowScanner {
+	return &fakeRow{}
+}
+
+// 17. R-4d: SSE-created run stores TenantID and ApplicationID from EPConfig, not
+// from client-supplied headers or request data.
+func TestSSE_RunStoresTenantID(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	sessions := &fakeSessionStore{}
+
+	bus := event.New()
+	mock := llm.NewMockProvider(nil)
+	cfg := orchestrator.Config{MaxIterations: 1}
+	captureDB := &captureSSEDBQuerier{}
+	recorder := runrecorder.New(captureDB)
+	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
+	h := ssehandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
+
+	tenantID := "aaaabbbb-0000-0000-0000-000000000001"
+	appID := "ccccdddd-0000-0000-0000-000000000002"
+	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "sse",
+		AccessMode: epconfig.AccessModeToken,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   tenantID,
+		AppID:      appID,
+	}})
+
+	tc := &captureSSETemporalClient{}
+	rsSub := &fakeSSERunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
+	h.WithTemporal(tc, rsSub, true)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep1?message=hello")
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	collectSSE(t, resp, 3*time.Second)
+
+	// Find the CreateRun INSERT call and verify tenant_id was passed.
+	var createRunArgs []any
+	for i := range captureDB.execCalls {
+		if strings.Contains(captureDB.execCalls[i].sql, "INSERT INTO them.runs") {
+			createRunArgs = captureDB.execCalls[i].args
+			break
+		}
+	}
+	require.NotNil(t, createRunArgs, "CreateRun INSERT must have been executed")
+
+	// arg[1] is tenant_id in the 6-arg signature.
+	// Args: id($1), tenant_id($2), entry_point_slug($3), status($4), started_at($5), events_transport($6).
+	tp, ok := createRunArgs[1].(*string)
+	require.True(t, ok, "tenant_id arg must be *string")
+	assert.Equal(t, tenantID, *tp, "SSE run must carry TenantID from EPConfig")
+
+	// Verify WorkflowInput received TenantID.
+	require.True(t, tc.called, "ExecuteWorkflow must be called")
+	require.Len(t, tc.inputArgs, 1, "ExecuteWorkflow must receive exactly one WorkflowInput arg")
+
+	wfInput, ok := tc.inputArgs[0].(temporal.WorkflowInput)
+	require.True(t, ok, "WorkflowInput arg must be temporal.WorkflowInput")
+	assert.Equal(t, tenantID, wfInput.TenantID, "WorkflowInput.TenantID must match EPConfig.TenantID")
+	assert.Equal(t, appID, wfInput.ApplicationID, "WorkflowInput.ApplicationID must match EPConfig.AppID")
+}
+
+// 18. R-4d: A client-supplied X-Tenant-ID header must NOT override resolvedCfg.TenantID.
+// Tenant identity must only come from the server-resolved EPConfig.
+func TestSSE_ClientTenantHeaderIgnored(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	sessions := &fakeSessionStore{}
+
+	bus := event.New()
+	mock := llm.NewMockProvider(nil)
+	cfg := orchestrator.Config{MaxIterations: 1}
+	captureDB := &captureSSEDBQuerier{}
+	recorder := runrecorder.New(captureDB)
+	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
+	h := ssehandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
+
+	serverTenantID := "eeeeffff-0000-0000-0000-000000000001"
+	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "sse",
+		AccessMode: epconfig.AccessModeToken,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   serverTenantID,
+		AppID:      "11112222-0000-0000-0000-000000000002",
+	}})
+
+	tc := &captureSSETemporalClient{}
+	rsSub := &fakeSSERunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
+	h.WithTemporal(tc, rsSub, true)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep1?message=hello")
+	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("X-Tenant-ID", "attacker-00000000-0000-0000-ffff-000000000000")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	collectSSE(t, resp, 3*time.Second)
+
+	// arg[1] is tenant_id in the 6-arg signature.
+	for i := range captureDB.execCalls {
+		if strings.Contains(captureDB.execCalls[i].sql, "INSERT INTO them.runs") {
+			tp, ok := captureDB.execCalls[i].args[1].(*string)
+			require.True(t, ok)
+			assert.Equal(t, serverTenantID, *tp,
+				"tenant_id must be server-resolved (from EPConfig), not client-supplied header")
+			return
+		}
+	}
+	t.Fatal("CreateRun INSERT not found")
 }

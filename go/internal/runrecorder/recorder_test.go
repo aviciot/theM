@@ -3,6 +3,7 @@ package runrecorder
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -78,16 +79,20 @@ func (m *mockDB) QueryRow(_ context.Context, sql string, args ...any) SingleRowS
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 // TestCreateRun_callsCorrectSQL verifies that CreateRun issues the expected
-// INSERT with the correct argument ordering.
+// INSERT with the correct argument ordering (R-4d: includes tenant_id).
+// Note: context_id and application_id are not persisted to them.runs (those
+// columns don't exist); they are held in domain.Run for in-memory routing.
 func TestCreateRun_callsCorrectSQL(t *testing.T) {
 	db := &mockDB{}
 	rec := New(db)
 
+	tenantID := "00000000-0000-0000-0000-000000000001"
 	now := time.Now().UTC().Truncate(time.Second)
 	run := domain.Run{
 		ID:             "run-abc",
 		ContextID:      "ctx-1",
-		ApplicationID:  42,
+		TenantID:       tenantID,
+		ApplicationID:  "00000000-0000-0000-0000-000000000002",
 		EntryPointSlug: "ws-chat",
 		Status:         domain.RunRunning,
 		StartedAt:      now,
@@ -102,19 +107,24 @@ func TestCreateRun_callsCorrectSQL(t *testing.T) {
 	// SQL must contain INSERT INTO them.runs and ON CONFLICT DO NOTHING.
 	assert.Contains(t, call.sql, "INSERT INTO them.runs")
 	assert.Contains(t, call.sql, "ON CONFLICT (id) DO NOTHING")
+	assert.Contains(t, call.sql, "tenant_id")
 	assert.Contains(t, call.sql, "events_transport")
 
-	// Arguments: id, context_id, application_id, entry_point_slug, status,
-	// started_at, events_transport
-	require.Len(t, call.args, 7)
+	// Arguments: id, tenant_id, entry_point_slug, status, started_at, events_transport (6 args).
+	// context_id and application_id are NOT in the DB — them.runs has no such columns.
+	require.Len(t, call.args, 6)
 	assert.Equal(t, "run-abc", call.args[0])
-	assert.Equal(t, "ctx-1", call.args[1])
-	assert.Equal(t, int64(42), call.args[2])
-	assert.Equal(t, "ws-chat", call.args[3])
-	assert.Equal(t, "running", call.args[4])
-	assert.Equal(t, now, call.args[5])
+	// tenant_id is passed as *string pointer (nullable UUID).
+	if tp, ok := call.args[1].(*string); ok {
+		assert.Equal(t, tenantID, *tp)
+	} else {
+		t.Errorf("arg[1] (tenant_id): expected *string, got %T", call.args[1])
+	}
+	assert.Equal(t, "ws-chat", call.args[2])
+	assert.Equal(t, "running", call.args[3])
+	assert.Equal(t, now, call.args[4])
 	// Default mode (pubsub) → events_transport "pubsub".
-	assert.Equal(t, "pubsub", call.args[6])
+	assert.Equal(t, "pubsub", call.args[5])
 }
 
 // TestCreateRun_eventsTransportByMode verifies that the events_transport column
@@ -136,7 +146,8 @@ func TestCreateRun_eventsTransportByMode(t *testing.T) {
 			err := rec.CreateRun(context.Background(), domain.Run{ID: "r", StartedAt: time.Now()})
 			require.NoError(t, err)
 			require.Len(t, db.calls, 1)
-			assert.Equal(t, tc.want, db.calls[0].args[6])
+			// events_transport is arg[5]: id, tenant_id, entry_point_slug, status, started_at, events_transport.
+			assert.Equal(t, tc.want, db.calls[0].args[5])
 		})
 	}
 }
@@ -153,7 +164,8 @@ func TestCreateRun_explicitTransportOverridesMode(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, db.calls, 1)
-	assert.Equal(t, "streams", db.calls[0].args[6])
+	// events_transport is arg[5]: id, tenant_id, entry_point_slug, status, started_at, events_transport.
+	assert.Equal(t, "streams", db.calls[0].args[5])
 }
 
 // TestUpdateRunStatus_withErrorMessage verifies that UpdateRunStatus sends the
@@ -472,4 +484,88 @@ func TestMetadataEvent_HasNoFilePayload(t *testing.T) {
 	// The returned ID should look like a UUID (non-empty, reasonable length).
 	assert.NotEmpty(t, id)
 	assert.Less(t, len(id), 64, "ID should be a UUID, not file data")
+}
+
+// ── R-4d: Tenant propagation tests ───────────────────────────────────────────
+
+// TestCreateRun_writesTenantID verifies that CreateRun writes non-nil tenant_id
+// when TenantID is supplied on domain.Run (R-4d requirement).
+// Note: ApplicationID is tracked in domain.Run for routing but is NOT written
+// to them.runs (that table has no application_id column).
+func TestCreateRun_writesTenantID(t *testing.T) {
+	db := &mockDB{}
+	rec := New(db)
+
+	tenantID := "aaaaaaaa-0000-0000-0000-000000000001"
+	err := rec.CreateRun(context.Background(), domain.Run{
+		ID:            "run-tenant",
+		ContextID:     "ctx-tenant",
+		TenantID:      tenantID,
+		ApplicationID: "bbbbbbbb-0000-0000-0000-000000000002",
+		StartedAt:     time.Now(),
+	})
+	require.NoError(t, err)
+	require.Len(t, db.calls, 1)
+	call := db.calls[0]
+
+	// tenant_id must appear in the SQL.
+	assert.Contains(t, call.sql, "tenant_id")
+
+	// arg[1] is tenant_id — must be a non-nil *string with the correct value.
+	// Args: id($1), tenant_id($2), entry_point_slug($3), status($4), started_at($5), events_transport($6).
+	tp, ok := call.args[1].(*string)
+	require.True(t, ok, "arg[1] (tenant_id) must be *string, got %T", call.args[1])
+	assert.Equal(t, tenantID, *tp)
+}
+
+// TestCreateRun_nullTenantWhenEmpty verifies that an empty TenantID produces a
+// nil *string (→ SQL NULL) rather than an empty string, preventing CHECK
+// constraint violations on the UUID column.
+func TestCreateRun_nullTenantWhenEmpty(t *testing.T) {
+	db := &mockDB{}
+	rec := New(db)
+
+	err := rec.CreateRun(context.Background(), domain.Run{
+		ID:        "run-no-tenant",
+		ContextID: "ctx-no-tenant",
+		// TenantID deliberately empty — legacy / test path.
+		StartedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	require.Len(t, db.calls, 1)
+
+	// arg[1] (tenant_id) must be nil when TenantID is empty.
+	// Args: id($1), tenant_id($2), entry_point_slug($3), status($4), started_at($5), events_transport($6).
+	assert.Nil(t, db.calls[0].args[1], "tenant_id must be nil (SQL NULL) when TenantID is empty")
+}
+
+// TestCreateRun_twoTenantsProduceDistinctRows verifies that two runs with
+// different tenant UUIDs result in distinct tenant_id parameter values — proving
+// that run rows are tenant-isolated at the recorder level.
+func TestCreateRun_twoTenantsProduceDistinctRows(t *testing.T) {
+	db := &mockDB{}
+	rec := New(db)
+
+	tenant1 := "11111111-0000-0000-0000-000000000001"
+	tenant2 := "22222222-0000-0000-0000-000000000001"
+
+	for i, tid := range []string{tenant1, tenant2} {
+		err := rec.CreateRun(context.Background(), domain.Run{
+			ID:        fmt.Sprintf("run-%d", i),
+			ContextID: fmt.Sprintf("ctx-%d", i),
+			TenantID:  tid,
+			StartedAt: time.Now(),
+		})
+		require.NoError(t, err)
+	}
+	require.Len(t, db.calls, 2)
+
+	// arg[1] is tenant_id in the new 6-arg signature.
+	tp1, ok1 := db.calls[0].args[1].(*string)
+	tp2, ok2 := db.calls[1].args[1].(*string)
+	require.True(t, ok1)
+	require.True(t, ok2)
+	assert.NotEqual(t, *tp1, *tp2, "two tenants must produce distinct tenant_id parameter values")
+	assert.Equal(t, tenant1, *tp1)
+	assert.Equal(t, tenant2, *tp2)
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/session"
+	"github.com/aviciot/them/internal/temporal"
 	wshandler "github.com/aviciot/them/internal/ws"
 )
 
@@ -790,6 +791,195 @@ func TestNoTemporalReturns503(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &sm))
 	assert.Equal(t, "error", sm["type"],
 		"handler must send error event when Temporal client is unavailable")
+}
+
+// ── R-4d: Tenant propagation tests ───────────────────────────────────────────
+
+// captureTemporalClient is a fakeTemporalClient variant that also records the
+// WorkflowInput args so R-4d tests can inspect TenantID and ApplicationID.
+type captureTemporalClient struct {
+	called     bool
+	inputArgs  []interface{}
+}
+
+func (c *captureTemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, wfType interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
+	c.called = true
+	c.inputArgs = args
+	return &fakeWorkflowRun{id: opts.ID}, nil
+}
+
+// capturingDBQuerier records all Exec calls so tests can inspect SQL args.
+type capturingDBQuerier struct {
+	execCalls []struct {
+		sql  string
+		args []any
+	}
+}
+
+func (c *capturingDBQuerier) Exec(_ context.Context, sql string, args ...any) error {
+	c.execCalls = append(c.execCalls, struct {
+		sql  string
+		args []any
+	}{sql: sql, args: args})
+	return nil
+}
+
+func (c *capturingDBQuerier) QueryRow(_ context.Context, _ string, _ ...any) runrecorder.SingleRowScanner {
+	return &fakeRow{}
+}
+
+// 18. R-4d: WS-created run stores TenantID and ApplicationID from EPConfig, not
+// from client-supplied headers or request data.
+func TestWS_RunStoresTenantID(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+
+	bus := event.New()
+	mock := llm.NewMockProvider(nil)
+	cfg := orchestrator.Config{MaxIterations: 1}
+	captureDB := &capturingDBQuerier{}
+	recorder := runrecorder.New(captureDB)
+	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
+	h := wshandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
+
+	tenantID := "cccccccc-0000-0000-0000-000000000001"
+	appID := "dddddddd-0000-0000-0000-000000000002"
+	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "websocket",
+		AccessMode: epconfig.AccessModeToken,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   tenantID,
+		AppID:      appID,
+	}})
+
+	tc := &captureTemporalClient{}
+	rsSub := &fakeRunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
+	h.WithTemporal(tc, rsSub, true)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hello"})
+	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
+
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		var sm map[string]any
+		if json.Unmarshal(data, &sm) == nil && sm["type"] == "done" {
+			break
+		}
+	}
+
+	// Find the CreateRun INSERT call and verify tenant_id was passed.
+	var createRunCall *struct {
+		sql  string
+		args []any
+	}
+	for i := range captureDB.execCalls {
+		if strings.Contains(captureDB.execCalls[i].sql, "INSERT INTO them.runs") {
+			createRunCall = &captureDB.execCalls[i]
+			break
+		}
+	}
+	require.NotNil(t, createRunCall, "CreateRun INSERT must have been executed")
+	require.Contains(t, createRunCall.sql, "tenant_id", "SQL must include tenant_id column")
+
+	// arg[1] is tenant_id — must be the *string pointer with correct value.
+	// Args: id($1), tenant_id($2), entry_point_slug($3), status($4), started_at($5), events_transport($6).
+	tp, ok := createRunCall.args[1].(*string)
+	require.True(t, ok, "tenant_id arg must be *string")
+	assert.Equal(t, tenantID, *tp, "WS run must carry TenantID from EPConfig")
+
+	// Verify WorkflowInput received TenantID.
+	require.True(t, tc.called, "ExecuteWorkflow must be called")
+	require.Len(t, tc.inputArgs, 1, "ExecuteWorkflow must receive exactly one WorkflowInput arg")
+
+	// The input is passed as temporal.WorkflowInput.
+	wfInput, ok := tc.inputArgs[0].(temporal.WorkflowInput)
+	require.True(t, ok, "WorkflowInput arg must be temporal.WorkflowInput")
+	assert.Equal(t, tenantID, wfInput.TenantID, "WorkflowInput.TenantID must match EPConfig.TenantID")
+	assert.Equal(t, appID, wfInput.ApplicationID, "WorkflowInput.ApplicationID must match EPConfig.AppID")
+}
+
+// 19. R-4d: A client-supplied X-Tenant-ID header must NOT override resolvedCfg.TenantID.
+// Tenant identity must only come from the server-resolved EPConfig.
+func TestWS_ClientTenantHeaderIgnored(t *testing.T) {
+	sessions := &fakeSessionStore{}
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+
+	bus := event.New()
+	mock := llm.NewMockProvider(nil)
+	cfg := orchestrator.Config{MaxIterations: 1}
+	captureDB := &capturingDBQuerier{}
+	recorder := runrecorder.New(captureDB)
+	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
+	h := wshandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
+
+	serverTenantID := "eeeeeeee-0000-0000-0000-000000000001"
+	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "websocket",
+		AccessMode: epconfig.AccessModeToken,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   serverTenantID,
+		AppID:      "ffffffff-0000-0000-0000-000000000002",
+	}})
+
+	tc := &captureTemporalClient{}
+	rsSub := &fakeRunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
+	h.WithTemporal(tc, rsSub, true)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	// Dial with a client-injected X-Tenant-ID header — must be ignored by handler.
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/orchestrate/myapp/ep1"
+	headers := http.Header{
+		"Authorization": []string{"Bearer tok"},
+		"X-Tenant-ID":   []string{"attacker-00000000-0000-0000-0000-ffff"},
+	}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hi"})
+	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
+
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		var sm map[string]any
+		if json.Unmarshal(data, &sm) == nil && sm["type"] == "done" {
+			break
+		}
+	}
+
+	// Verify tenant_id in run is the server-resolved value, not the client-supplied one.
+	// arg[1] is tenant_id in the 6-arg signature.
+	for i := range captureDB.execCalls {
+		if strings.Contains(captureDB.execCalls[i].sql, "INSERT INTO them.runs") {
+			tp, ok := captureDB.execCalls[i].args[1].(*string)
+			require.True(t, ok)
+			assert.Equal(t, serverTenantID, *tp,
+				"tenant_id must be server-resolved (from EPConfig), not client-supplied header")
+			return
+		}
+	}
+	t.Fatal("CreateRun INSERT not found")
 }
 
 // Ensure domain import is used.

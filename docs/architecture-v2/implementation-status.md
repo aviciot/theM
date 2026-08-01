@@ -6,6 +6,7 @@
 
 ## Current State
 
+Phase R-4d complete (2026-08-01): Runtime tenant propagation — TenantID from EPConfig written to them.runs.tenant_id and WorkflowInput; activity boundary validation (non-retryable errors for empty TenantID/ApplicationID/RunID). 13 new tests. 452 total Go tests. HEAD pending commit.
 Compose consolidation complete (2026-08-01): Production Compose deployment migrated from `theM_gateway/` to canonical root `/home/avi/them`. All 15 services running. Go Workers now Compose-managed under `project=them_gateway`. See `COMPOSE_CONSOLIDATION_EXECUTION_REPORT.md`.
 Phase R-4c2 complete (2026-08-01): BearerTenantMiddleware wired to tenant-scoped admin routes; bootstrapTenantID shim removed. 480 total Go tests. HEAD `3efb097`.
 Phase R-4c1 complete (2026-07-31): Tenant-scoped DAL and service layers. 468 total Go tests. HEAD `09c5665`.
@@ -38,13 +39,13 @@ Phase 11c-C validation complete (2026-07-21). 229 unit tests pass. Race detector
 | `internal/session` | Complete | 7 (S1-06) | `session.go` |
 | `internal/event` | Complete | 6 (S1-07) | `bus.go` |
 | `internal/domain` | Complete | 3 (S1-08) | `domain.go` |
-| `internal/runrecorder` | Complete | 18 (S1-09) | `recorder.go` — events_transport, RecordArtifact (1MiB limit), GetArtifact, sanitizeFilename |
+| `internal/runrecorder` | Complete (R-4d) | 21 (S1-09) | `recorder.go` — events_transport, RecordArtifact (1MiB limit), GetArtifact, sanitizeFilename, tenant_id propagation |
 | `internal/artifacts` | Complete (R-3) | 9 (S1-30) | `handler.go` — bearer-token auth, RFC 5987 Content-Disposition, safe content-type allow-list |
 | `internal/llm` | Complete | 6 (S1-10) | `provider.go`, `anthropic.go`, `mock.go` |
 | `internal/orchestrator` | Complete (R-3) | 10 (S1-28) | `orchestrator.go` — checkpoints, budget, parallel fan-out, A2A discovery, artifact recording + metadata-only event emission |
-| `internal/temporal` | Complete (R-2B) | 10 (S2-02, S1-29) | `workflow.go`, `activities.go`, `client.go`, `signaler.go`, `worker_test.go` |
-| `internal/ws` | Complete (R-2B) | 17 (S1-12) | `handler.go` — inline path removed, Temporal unconditional |
-| `internal/sse` | Complete (R-2B) | 16 (S1-13) | `handler.go` — inline path removed, Temporal unconditional |
+| `internal/temporal` | Complete (R-4d) | 10 (S2-02, S1-29) | `workflow.go`, `activities.go`, `client.go`, `signaler.go`, `worker_test.go` — TenantID+ApplicationID in WorkflowInput, activity boundary validation |
+| `internal/ws` | Complete (R-4d) | 19 (S1-12) | `handler.go` — inline path removed, Temporal unconditional, tenant propagation from EPConfig |
+| `internal/sse` | Complete (R-4d) | 18 (S1-13) | `handler.go` — inline path removed, Temporal unconditional, tenant propagation from EPConfig |
 | `internal/a2a` | Complete | 3 (S1-14) | `server.go` |
 | `internal/agentregistry` | Complete | 5 (S1-11) | `registry.go` |
 | `internal/admin` | Complete | 40 (S1-15) | `agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `monitoring.go`, `llm_routing.go` |

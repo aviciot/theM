@@ -84,10 +84,14 @@ func (r *Recorder) eventsTransport() string {
 // The events_transport column is set from the configured RunEventsMode unless
 // run.EventsTransport is explicitly provided (non-empty), in which case that
 // value is used verbatim.
+// TenantID is written from run.TenantID (R-4d); it must come from epconfig, never
+// from client-supplied data.
+// Note: them.runs does not have context_id or application_id columns — those are
+// tracked in domain.Run for in-memory routing but are not persisted to this table.
 func (r *Recorder) CreateRun(ctx context.Context, run domain.Run) error {
 	const q = `
-		INSERT INTO them.runs (id, context_id, application_id, entry_point_slug, status, started_at, events_transport)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO them.runs (id, tenant_id, entry_point_slug, status, started_at, events_transport)
+		VALUES ($1, $2::uuid, $3, $4, $5, $6)
 		ON CONFLICT (id) DO NOTHING`
 	startedAt := run.StartedAt
 	if startedAt.IsZero() {
@@ -97,8 +101,16 @@ func (r *Recorder) CreateRun(ctx context.Context, run domain.Run) error {
 	if transport == "" {
 		transport = r.eventsTransport()
 	}
+
+	// Nullable UUID parameter: empty string → NULL (no tenant scoping for
+	// legacy or test runs that predate R-4d).
+	var tenantID *string
+	if run.TenantID != "" {
+		tenantID = &run.TenantID
+	}
+
 	err := r.db.Exec(ctx, q,
-		run.ID, run.ContextID, run.ApplicationID, run.EntryPointSlug,
+		run.ID, tenantID, run.EntryPointSlug,
 		string(domain.RunRunning), startedAt, transport,
 	)
 	if err != nil {

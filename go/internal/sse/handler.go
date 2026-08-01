@@ -465,6 +465,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ── 10. Create run record ─────────────────────────────────────────────────
 	// events_transport is decided by RUN_EVENTS_MODE at run-creation time and is
 	// stable for the run's lifetime (Phase 11c-B).
+	// TenantID and ApplicationID come from resolvedCfg (R-4d); never from the client.
 	eventsTransport := h.eventsTransportForNewRun()
 	run := domain.Run{
 		ID:              runID,
@@ -472,6 +473,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		EntryPointSlug:  epSlug,
 		Status:          domain.RunStatusRunning,
 		EventsTransport: eventsTransport,
+	}
+	if resolvedCfg != nil {
+		run.TenantID = resolvedCfg.TenantID
+		run.ApplicationID = resolvedCfg.AppID
 	}
 	if err := h.recorder.CreateRun(r.Context(), run); err != nil {
 		h.logger.Warn("sse: create run failed", "run_id", runID, "error", err)
@@ -513,12 +518,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// R-2C: send WorkflowInput (typed) to GoTaskQueue so the Go Worker can
 	// deserialize it correctly. PythonOrchestrationInput was for the Python
 	// worker's "them-orchestration" queue; the Go Worker expects WorkflowInput.
+	// R-4d: TenantID and ApplicationID propagated from resolvedCfg — never from
+	// client request data.
 	input := temporal.WorkflowInput{
 		RunID:            runID,
 		ContextID:        contextID,
 		EntryPointSlug:   epSlug,
 		OrchestratorName: appSlug,
 		UserMessage:      domain.TextMessage(domain.RoleUser, userText),
+	}
+	if resolvedCfg != nil {
+		input.TenantID = resolvedCfg.TenantID
+		input.ApplicationID = resolvedCfg.AppID
 	}
 
 	wfOpts := temporalclient.StartWorkflowOptions{

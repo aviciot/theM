@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/orchestrator"
@@ -101,4 +102,105 @@ func TestWorkflowInput_Serialization(t *testing.T) {
 	assert.Equal(t, input.RunID, decoded.RunID, "RunID must survive JSON round-trip")
 	assert.Equal(t, input.ContextID, decoded.ContextID, "ContextID must survive JSON round-trip")
 	assert.Equal(t, input.EntryPointSlug, decoded.EntryPointSlug, "EntryPointSlug must survive JSON round-trip")
+}
+
+// ── R-4d: Tenant propagation tests ───────────────────────────────────────────
+
+// TestWorkflowInput_TenantIDAndApplicationIDPresent verifies that WorkflowInput
+// has TenantID and ApplicationID string fields (R-4d), and that they survive
+// a JSON round-trip (Temporal serializes inputs as JSON).
+func TestWorkflowInput_TenantIDAndApplicationIDPresent(t *testing.T) {
+	tenantID := "aaaa0000-0000-0000-0000-000000000001"
+	appID := "bbbb0000-0000-0000-0000-000000000002"
+
+	input := temporal.WorkflowInput{
+		RunID:         "run-r4d-1",
+		ContextID:     "ctx-r4d-1",
+		TenantID:      tenantID,
+		ApplicationID: appID,
+	}
+
+	data, err := json.Marshal(input)
+	require.NoError(t, err)
+
+	var decoded temporal.WorkflowInput
+	require.NoError(t, json.Unmarshal(data, &decoded))
+
+	assert.Equal(t, tenantID, decoded.TenantID, "TenantID must survive JSON round-trip")
+	assert.Equal(t, appID, decoded.ApplicationID, "ApplicationID must survive JSON round-trip")
+}
+
+// TestWorkflowInput_ApplicationID_IsString verifies that ApplicationID is a
+// string (UUID) type, not int64, matching the PostgreSQL UUID column type.
+func TestWorkflowInput_ApplicationID_IsString(t *testing.T) {
+	input := temporal.WorkflowInput{ApplicationID: "00000000-0000-0000-0000-000000000099"}
+	// Marshal and confirm the JSON field is a string, not a number.
+	data, err := json.Marshal(input)
+	require.NoError(t, err)
+	// The JSON must contain the UUID as a string value (quoted), not a number.
+	assert.Contains(t, string(data), `"00000000-0000-0000-0000-000000000099"`,
+		"ApplicationID must be serialized as a JSON string (UUID), not a number")
+}
+
+// TestRunOrchestratorActivity_RejectsEmptyTenantID verifies that the activity
+// returns a non-retryable error when TenantID is missing (R-4d boundary check).
+func TestRunOrchestratorActivity_RejectsEmptyTenantID(t *testing.T) {
+	acts := &temporal.Activities{Runner: &fakeOrchestratorRunner{}}
+	ctx := context.Background()
+
+	_, err := acts.RunOrchestratorActivity(ctx, temporal.WorkflowInput{
+		RunID:         "run-1",
+		ApplicationID: "00000000-0000-0000-0000-000000000001",
+		// TenantID deliberately empty.
+	})
+	require.Error(t, err, "empty TenantID must be rejected")
+	assert.Contains(t, err.Error(), "TenantID")
+}
+
+// TestRunOrchestratorActivity_RejectsEmptyApplicationID verifies that the
+// activity returns a non-retryable error when ApplicationID is missing.
+func TestRunOrchestratorActivity_RejectsEmptyApplicationID(t *testing.T) {
+	acts := &temporal.Activities{Runner: &fakeOrchestratorRunner{}}
+	ctx := context.Background()
+
+	_, err := acts.RunOrchestratorActivity(ctx, temporal.WorkflowInput{
+		RunID:    "run-1",
+		TenantID: "00000000-0000-0000-0000-000000000001",
+		// ApplicationID deliberately empty.
+	})
+	require.Error(t, err, "empty ApplicationID must be rejected")
+	assert.Contains(t, err.Error(), "ApplicationID")
+}
+
+// TestRunOrchestratorActivity_RejectsEmptyRunID verifies that the activity
+// returns a non-retryable error when RunID is missing.
+func TestRunOrchestratorActivity_RejectsEmptyRunID(t *testing.T) {
+	acts := &temporal.Activities{Runner: &fakeOrchestratorRunner{}}
+	ctx := context.Background()
+
+	_, err := acts.RunOrchestratorActivity(ctx, temporal.WorkflowInput{
+		TenantID:      "00000000-0000-0000-0000-000000000001",
+		ApplicationID: "00000000-0000-0000-0000-000000000002",
+		// RunID deliberately empty.
+	})
+	require.Error(t, err, "empty RunID must be rejected")
+	assert.Contains(t, err.Error(), "RunID")
+}
+
+// TestRunOrchestratorActivity_PropagatesTenantToRunner verifies that when all
+// required fields are present, the activity runs to completion and returns a
+// successful result — proving TenantID and ApplicationID pass through correctly.
+func TestRunOrchestratorActivity_PropagatesTenantToRunner(t *testing.T) {
+	acts := &temporal.Activities{Runner: &fakeOrchestratorRunner{}}
+	ctx := context.Background()
+
+	result, err := acts.RunOrchestratorActivity(ctx, temporal.WorkflowInput{
+		RunID:         "run-with-tenant",
+		ContextID:     "ctx-with-tenant",
+		TenantID:      "aaaa0000-0000-0000-0000-000000000001",
+		ApplicationID: "bbbb0000-0000-0000-0000-000000000002",
+		UserMessage:   domain.TextMessage(domain.RoleUser, "hello"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "done", result.FinalText)
 }

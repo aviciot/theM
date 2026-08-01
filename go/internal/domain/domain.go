@@ -113,7 +113,12 @@ func (m Message) Text() string {
 type Run struct {
 	ID             string
 	ContextID      string
-	ApplicationID  int64
+	// TenantID is the UUID of the tenant that owns this run (R-4d). Set from
+	// epconfig.EPConfig.TenantID at run-creation time; never from client input.
+	TenantID      string
+	// ApplicationID is the UUID string of the application that owns this run.
+	// Stored as a string to match the PostgreSQL UUID type and EPConfig.AppID.
+	ApplicationID  string
 	EntryPointSlug string
 	Status         RunStatus
 	StartedAt      time.Time
