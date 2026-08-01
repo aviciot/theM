@@ -1,0 +1,22 @@
+version: "3.9"
+# docker-compose.cloudflare.yml
+# Hetzner VPC — connects them-traefik to the existing proxy-network (infra-traefik).
+#
+# infra-traefik routes them.avico78.com → them-traefik:8088 via a file-based
+# dynamic config: /home/avi/infrastructure/traefik/dynamic/them-routes.yml
+#
+# Cloudflare Tunnel (infra-cloudflared) routes them.avico78.com → infra-traefik:80.
+# TLS is terminated at Cloudflare — all internal traffic is plain HTTP.
+
+networks:
+  # Override linux.yml which creates a LOCAL them-proxy network.
+  # Use the existing proxy-network that infra-traefik and all other services share.
+  proxy-network:
+    name: proxy-network
+    external: true
+
+services:
+  them-traefik:
+    networks:
+      - proxy-network
+      - them-network
