@@ -1,12 +1,12 @@
 # Execution Lifecycle Unification — Implementation Report
-# Status: PARTIAL (A2A + SSE complete; WS deferred — see §6)
+# Status: COMPLETE (A2A + SSE + WS all migrated)
 # Date: 2026-08-01
 
 ---
 
 ## 1. Summary
 
-This report covers two sessions of Execution Lifecycle Unification:
+This report covers three sessions of Execution Lifecycle Unification:
 
 **Phase 1 (session 1):**
 1. Created `internal/execution/` — the shared admission-and-run-start package
@@ -18,7 +18,14 @@ This report covers two sessions of Execution Lifecycle Unification:
 5. SSE headers moved to AFTER `Lifecycle.Admit` — pre-Admit errors are clean HTTP responses
 6. Added `EventsTransport` to `ExecutionHandle`; `eventsTransportFromMode` in lifecycle.go
 
-WS migration is deferred to the next session (see §6). All existing tests pass; 4 new SSE tests added (22 total, up from 18).
+**Phase 3 (session 3):**
+7. Migrated `internal/ws/handler.go` to use `Lifecycle.Admit/Start/Release`
+8. `Lifecycle.Admit` now runs BEFORE `upgrader.Upgrade` — all pre-Admit errors are clean HTTP
+9. On upgrade failure: `lc.Release` with bounded 5-second timeout cleans up gate/session/run
+10. Fixed bounded cleanup timeout and logged cleanup failures in `lifecycle.go`
+11. All three protocols (WS, SSE, A2A) now use the shared execution lifecycle
+
+All existing tests pass; 2 new WS tests added (21 total, up from 19).
 
 ---
 
@@ -28,14 +35,16 @@ WS migration is deferred to the next session (see §6). All existing tests pass;
 |---|---|
 | `go/internal/execution/errors.go` | New + updated: `AdmitError` (8 kinds incl. `AdmitErrNotImplemented`), `StartError` |
 | `go/internal/execution/request.go` | New + updated: `ExecutionHandle` gained `EventsTransport string` |
-| `go/internal/execution/lifecycle.go` | New + updated: voice EP check (step 3), `eventsTransportFromMode`, nil-safe logger |
+| `go/internal/execution/lifecycle.go` | New + updated: voice EP check, `eventsTransportFromMode`, nil-safe logger, bounded Release timeout (5s), logged cleanup failures |
 | `go/internal/execution/lifecycle_test.go` | New: 14 unit tests for Lifecycle methods |
+| `go/internal/ws/handler.go` | Migrated: uses `*execution.Lifecycle`; Admit before upgrade; bounded cleanup on upgrade failure |
+| `go/internal/ws/handler_test.go` | Rewritten: 21 tests via `execution.NewLifecycleWithRecorder` fakes (wsBuilder pattern) |
 | `go/internal/sse/handler.go` | Migrated: uses `*execution.Lifecycle`; SSE headers after Admit; wire-format only |
 | `go/internal/sse/handler_test.go` | Rewritten: 22 tests via `execution.NewLifecycleWithRecorder` fakes |
 | `go/internal/a2a/server.go` | Migrated: `Server` now holds `*execution.Lifecycle` instead of individual deps |
 | `go/internal/a2a/server_test.go` | Updated: 27 tests using `*execution.Lifecycle` with fakes |
-| `go/cmd/them/main.go` | Updated: `execLifecycle` moved to section 16 (before WS+SSE); SSE uses it |
-| `go/TEST_INDEX.md` | Updated: S1-13 (18→22), S1-14 (27), S1-35 (14); totals 490→494, 518→522 |
+| `go/cmd/them/main.go` | Updated: WS now uses `execLifecycle`; LLM provider and orchestrator removed (no longer needed) |
+| `go/TEST_INDEX.md` | Updated: S1-12 (19→21), S1-13 (22), totals 494→496, 522→524 |
 | `docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md` | This document |
 
 ---
@@ -141,25 +150,37 @@ Python sanity 01-04,15  → 55 passed, 0 failed
 New tests: 4 (sse, net new: EventsTransport, LifecycleCallSequence, MissingMessage, IDsAreUUIDv4).
 Total: 522 (up from 518).
 
+### Phase 3 (WS migration)
+```
+go build ./...          → 0 errors
+go vet ./...            → 0 new warnings (pre-existing llm/provider_test.go warning unchanged)
+go test ./...           → 29 packages, 0 failed
+go test -race ./...     → 29 packages, 0 data races
+Python sanity 01-04,15  → 55 passed, 0 failed
+```
+New tests: 2 (ws, net new: IDsAreUUIDv4, AdmitBeforeUpgrade_EPNotFound). Total: 524 (up from 522).
+
 ---
 
-## 6. WS Migration — Deferred
+## 6. WS Migration — Complete
 
-SSE is fully migrated. WS is the remaining handler.
+All three protocol handlers are now migrated.
 
-| Handler | Status | Constraint |
+| Handler | Status | Key behavior |
 |---|---|---|
-| A2A | ✅ Phase 1 | N/A — no protocol handshake between gate and session |
-| SSE | ✅ Phase 2 | Headers moved to after `Lifecycle.Admit`; pre-Admit errors = clean HTTP |
-| WS | ⏳ Phase 3 | `upgrader.Upgrade()` happens between `gate.Check` and `session.Register` |
+| A2A | ✅ Phase 1 | No protocol handshake between gate and session — clean migration |
+| SSE | ✅ Phase 2 | SSE headers after `Lifecycle.Admit`; pre-Admit errors = clean HTTP |
+| WS | ✅ Phase 3 | `Lifecycle.Admit` before `upgrader.Upgrade`; upgrade failure → bounded lc.Release |
 
-The WS constraint: after `upgrader.Upgrade()` succeeds, errors must be WS close frames — not HTTP status codes. Migrating WS to `Lifecycle.Admit` requires either:
-1. **Reordering**: do WS upgrade AFTER `session.Register` (risky — upgrade can fail, releasing a registered session)
-2. **Split Admit**: `AdmitPre` (gate.Check only) → WS upgrade → `AdmitPost` (session + recorder)
+**WS ordering decision (Option A — Full reorder):**
+`Lifecycle.Admit` (auth→EP→voice→access→gate→session→CreateRun) runs before `upgrader.Upgrade`.
+The gorilla upgrader writes its own HTTP error if upgrade fails, so the handler only needs to call
+`lc.Release` (bounded 5s timeout) to clean up gate/session/run state.
 
-Option 2 is safer: the gate reservation TTL (10s) provides a safety net if upgrade fails between Check and Post.
-
-**Recommendation**: Migrate WS in the next session using split Admit or a full reorder analysis.
+**Behavioral changes vs. old WS handler:**
+- Gate cap exceeded: was 503, now 429 (matching SSE and A2A via Lifecycle HTTP mapping)
+- Register failure: was WS error frame after upgrade, now HTTP 500 before upgrade (cleaner)
+- Cleanup: was `context.Background()` with no timeout; now bounded 5-second timeout
 
 ---
 
@@ -167,8 +188,8 @@ Option 2 is safer: the gate reservation TTL (10s) provides a safety net if upgra
 
 | Gap | Severity | Notes |
 |---|---|---|
-| WS handler still uses duplicated pipeline | Low | Correct behavior; no regression. Migrate next session. |
 | No live A2A entry point in DB | Low | Unit tests verify correctness. Live E2E requires creating a2a-type EP via admin API. |
+| `internal/llm/provider_test.go` vet warning | Low | Pre-existing; unrelated to lifecycle migration. Context leak warning on line 49. |
 
 ---
 
@@ -176,8 +197,14 @@ Option 2 is safer: the gate reservation TTL (10s) provides a safety net if upgra
 
 1. **`RunCreator` interface in `execution` package**: `Lifecycle.recorder` is typed as the interface, not `*runrecorder.Recorder`. This enables test fakes without a DB. Production uses `NewLifecycle` which takes the concrete recorder; tests use `NewLifecycleWithRecorder`.
 
-2. **`bus.Subscribe` not in `Admit`**: The caller must subscribe between `Admit` and `Start`. This preserves the bootstrap ordering invariant (events emitted immediately after `ExecuteWorkflow` starts are not missed). If `Subscribe` were inside `Admit`, the window between `Admit` return and `Start` call would still exist.
+2. **`bus.Subscribe` not in `Admit`**: The caller must subscribe between `Admit` and `Start`. This preserves the bootstrap ordering invariant (events emitted immediately after `ExecuteWorkflow` starts are not missed).
 
-3. **A2A `extractToken` replaces `tryAuthenticate`**: The new method returns `(*auth.TokenInfo, string)` instead of a three-value tuple. The `Lifecycle.Admit` receives both, and determines enforcement based on EPConfig.AccessMode. This is cleaner than the old pattern where the handler enforced auth before calling Lifecycle.
+3. **WS: Full reorder (Option A) chosen**: `Lifecycle.Admit` runs before `upgrader.Upgrade`. The gorilla upgrader writes its own HTTP error on failure, so no HTTP error needs to be written manually. On failure: `lc.Release` cleans up gate/session/run state with a bounded 5-second timeout. This is simpler than split Admit and avoids adding `AdmitPre/AdmitPost` API surface.
 
-4. **WS/SSE not migrated this session**: The upgrade-in-the-middle constraint makes these migrations non-trivial. Correctness > aesthetics — the existing handlers are correct, and forcing a migration that restructures the upgrade ordering would risk introducing bugs.
+4. **Bounded cleanup in Release**: `Release` now derives a fresh `context.WithTimeout(context.Background(), 5s)` internally. All callers may safely pass `context.Background()` — the timeout is always applied. This prevents cleanup from hanging indefinitely if Redis is slow.
+
+5. **Logged cleanup failures**: `session.End` and `gate.Release` failures in `Release` are now logged as `Warn` instead of silently discarded (`_ =`). This surfaces Redis availability issues in prod without changing the cleanup semantics.
+
+6. **Gate cap-exceeded HTTP status change**: Old WS handler returned 503 for `gate.ErrCapExceeded`. New path via Lifecycle returns 429 (consistent with SSE, A2A, and the HTTP semantics of "too many requests"). Tests updated accordingly.
+
+7. **Orchestrator removed from main.go**: The in-process `orchestrator.Orchestrator` was only wired to the WS handler (as a non-Temporal fallback). Now that WS uses Lifecycle exclusively, the orchestrator and LLM provider construction were removed from `cmd/them/main.go`. This reduces startup dependencies.

@@ -294,32 +294,36 @@ sanitization, and cross-run access denial.
 
 ### S1-12 · WebSocket handler — `internal/ws/handler_test.go`
 
-**Purpose:** WS connection lifecycle — auth, public EP support, anonymous session identity, Gate contract enforcement, session lifecycle.
-Shared interfaces (Authenticator, SessionStore, GateStore, EPConfigLoader, TemporalClientExecutor) and TokenHash now live in `internal/transport/`; this test exercises them via the ws handler.
+**Purpose:** WS handler migrated to `execution.Lifecycle` (R-5 Phase 3). Tests verify the full
+Admit→Upgrade→Subscribe→Start→stream pipeline via fakes injected into `execution.NewLifecycleWithRecorder`.
+Lifecycle.Admit runs BEFORE `upgrader.Upgrade`, so all pre-Admit errors return clean HTTP responses.
+On upgrade failure, lc.Release cleans up gate/session state with a bounded 5-second timeout.
 
 | Test | What it proves |
 |---|---|
-| `TestUnauthenticated` | No token + no epLoader → 401 before upgrade (fallback mandatory auth) |
-| `TestAuthenticatedUpgrade` | Valid token → 101 Switching Protocols |
-| `TestMessageAndDone` | User message → token events → `{"type":"done"}` received |
-| `TestDisconnectEndsSession` | Client close → `session.Store.End` called |
-| `TestGateCapExceeded` | Gate returns `ErrCapExceeded` → 503 before WS upgrade; session never registered |
-| `TestGateAdmittedAndReleased` | Gate admitted → Check→Confirm called; Release called on session end |
-| `TestGateRollbackOnRegisterFailure` | `session.Register` fails → Gate.Rollback called; Confirm never called |
-| `TestPublicEPNoTokenAllowed` | No token + AccessMode=public → 101 upgrade succeeds |
-| `TestTokenEPNoTokenRejected` | No token + AccessMode=token → 401 |
-| `TestAnonymousSessionGateTokenHashEmpty` | Anonymous session passes `TokenHash=""` to gate (not sha256("")), so rlKey() returns "" and per-token rate limiting is skipped — anonymous users do NOT share a single rate-limit bucket |
-| `TestAnonymousSessionUserIDIsZero` | Anonymous session stores `UserID=0` in SessionInfo — no valid identity is invented |
-| `TestAuthenticatedRequestToPublicEP` | Authenticated request to public EP succeeds (public EPs accept both) |
-| `TestVoiceEPReturns501` | Token-mode voice EP returns 501; gate and session are never called |
-| `TestVoiceEPPublicReturns501` | Public voice EP also returns 501 before gate or session are called |
-| `TestTemporalPathUsedWhenEnabled` | `temporalEnabled=true` → `ExecuteWorkflow` called; `orch.Run` NOT called; client receives done event from Redis run stream |
-| `TestReplayUnavailableForwardedToClient` | `replay_unavailable` event emitted by StreamFromRedis is forwarded to WS client (not silently dropped) — Phase 11c-C fix |
-| `TestNoTemporalReturns503` | R-2B: When no Temporal client is wired, handler sends error WS event (no inline fallback) |
-| `TestWS_RunStoresTenantID` | R-4d: WS run INSERT carries TenantID from EPConfig (arg[1] is *string UUID); WorkflowInput.TenantID and ApplicationID set from EPConfig |
-| `TestWS_ClientTenantHeaderIgnored` | R-4d: X-Tenant-ID request header cannot override server-resolved TenantID from EPConfig |
+| `TestWS_Unauthenticated` | No token + token-mode EP → 401 before upgrade (Lifecycle.Admit returns Unauthorized) |
+| `TestWS_AuthenticatedUpgrade` | Valid token → 101 Switching Protocols |
+| `TestWS_MessageAndDone` | User message → token events → `{"type":"done"}` received |
+| `TestWS_DisconnectEndsSession` | Client close → `session.Store.End` called via lc.Release |
+| `TestWS_GateCapExceeded` | Gate returns `ErrCapExceeded` → 429 before WS upgrade; session never registered |
+| `TestWS_GateAdmittedAndReleased` | Gate admitted → Check→Confirm called; Release called on session end |
+| `TestWS_GateRollbackOnRegisterFailure` | `session.Register` fails inside Lifecycle.Admit (pre-upgrade) → HTTP 500; Gate.Rollback called |
+| `TestWS_PublicEPNoTokenAllowed` | No token + AccessMode=public → 101 upgrade succeeds |
+| `TestWS_TokenEPNoTokenRejected` | No token + AccessMode=token → 401 |
+| `TestWS_AnonymousSessionGateTokenHashEmpty` | Anonymous session passes `TokenHash=""` to gate — no shared per-token rate-limit bucket |
+| `TestWS_AnonymousSessionUserIDIsZero` | Anonymous session stores `UserID=0` in SessionInfo |
+| `TestWS_AuthenticatedRequestToPublicEP` | Authenticated request to public EP succeeds |
+| `TestWS_VoiceEPReturns501` | Voice EP → 501 via AdmitErrNotImplemented (pre-upgrade); gate and session never called |
+| `TestWS_VoiceEPPublicReturns501` | Public voice EP → 501 before gate or session |
+| `TestWS_TemporalPathUsedWhenEnabled` | `ExecuteWorkflow` called via Lifecycle.Start; client receives done event from run stream |
+| `TestWS_ReplayUnavailableForwardedToClient` | `replay_unavailable` event forwarded to WS client (Phase 11c-C fix) |
+| `TestWS_NoTemporalReturnsErrorEvent` | Temporal nil → Lifecycle.Start returns StartError → WS error event sent after upgrade |
+| `TestWS_RunStoresTenantID` | R-5: CreateRun receives TenantID/ApplicationID from EPConfig; WorkflowInput identity fields overwritten by Lifecycle.Start |
+| `TestWS_ClientTenantHeaderIgnored` | R-5: X-Tenant-ID header cannot override server-resolved TenantID from EPConfig |
+| `TestWS_IDsAreUUIDv4` | All run/session/context IDs are UUID v4 (Python worker requires uuid.UUID() parsing) |
+| `TestWS_AdmitBeforeUpgrade_EPNotFound` | EP not found → 404 HTTP response (not WS error frame) — confirms Admit runs before upgrade |
 
-**Trigger:** any change to `internal/ws/handler.go`
+**Trigger:** any change to `internal/ws/handler.go` or `internal/execution/lifecycle.go`
 
 ---
 
@@ -1344,7 +1348,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-09 | runrecorder | 21 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
-| S1-12 | ws | 19 |
+| S1-12 | ws | 21 |
 | S1-13 | sse | 22 |
 | S1-14 | a2a | 27 |
 | S1-15 | admin | 46 |
@@ -1368,7 +1372,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 14 |
-| **S1 total** | | **494** |
+| **S1 total** | | **496** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1377,4 +1381,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **522** |
+| **`go test ./...` total** | | **524** |

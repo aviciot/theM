@@ -20,12 +20,12 @@ import (
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
+	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/gate"
-	"github.com/aviciot/them/internal/llm"
-	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/transport"
 	wshandler "github.com/aviciot/them/internal/ws"
 )
 
@@ -44,15 +44,19 @@ func (f *fakeAuth) Validate(_ context.Context, token string) (*auth.TokenInfo, e
 }
 
 type fakeSessionStore struct {
-	mu          sync.Mutex
-	registered  []string
-	ended       []string
-	lastSession session.SessionInfo // captures the most recently registered SessionInfo
+	mu           sync.Mutex
+	registered   []string
+	ended        []string
+	lastSession  session.SessionInfo
+	failRegister bool
 }
 
 func (s *fakeSessionStore) Register(_ context.Context, info session.SessionInfo) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failRegister {
+		return errors.New("redis: connection refused")
+	}
 	s.registered = append(s.registered, info.SessionID)
 	s.lastSession = info
 	return nil
@@ -105,258 +109,6 @@ func (f *fakeRow) Scan(dest ...any) error {
 	return nil
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-func newTestHandler(t *testing.T, mockEvents []llm.StreamEvent, authn wshandler.Authenticator, sessions wshandler.SessionStore) (*wshandler.Handler, *event.InMemoryBus) {
-	t.Helper()
-	bus := event.New()
-	mock := llm.NewMockProvider(mockEvents)
-	cfg := orchestrator.Config{
-		MaxIterations: 5,
-		SystemPrompt:  "test",
-	}
-	recorder := runrecorder.New(&fakeDBQuerier{})
-	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
-	h := wshandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
-
-	// R-2B: Wire a default Temporal mock so tests that don't need Temporal-specific
-	// behavior still work. Tests exercise the Temporal path via the run-stream sub.
-	// The fakeRunStreamSub pre-loads the events that the mock LLM would have produced.
-	var streamMsgs []string
-	for _, ev := range mockEvents {
-		switch ev.Type {
-		case "text_delta":
-			raw, _ := json.Marshal(map[string]any{"type": "token", "content": ev.Delta})
-			streamMsgs = append(streamMsgs, string(raw))
-		case "stop":
-			raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
-			streamMsgs = append(streamMsgs, string(raw))
-		}
-	}
-	// Always ensure a "done" message is present so handlers don't hang.
-	hasDone := false
-	for _, m := range streamMsgs {
-		if strings.Contains(m, `"done"`) {
-			hasDone = true
-			break
-		}
-	}
-	if !hasDone {
-		raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
-		streamMsgs = append(streamMsgs, string(raw))
-	}
-	rsSub := &fakeRunStreamSub{messages: streamMsgs}
-	h.WithTemporal(&fakeTemporalClient{}, rsSub, true)
-
-	return h, bus
-}
-
-func dialWS(t *testing.T, server *httptest.Server, path, token string) (*websocket.Conn, *http.Response, error) {
-	t.Helper()
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + path
-	headers := http.Header{}
-	if token != "" {
-		headers.Set("Authorization", "Bearer "+token)
-	}
-	dialer := websocket.Dialer{HandshakeTimeout: 3 * time.Second}
-	return dialer.Dial(wsURL, headers)
-}
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-// 1. Unauthenticated connection returns 401.
-func TestUnauthenticated(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "valid-token", info: &auth.TokenInfo{TokenID: 1}}
-	h, _ := newTestHandler(t, nil, authn, sessions)
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "")
-	if err == nil {
-		t.Fatal("expected dial to fail for unauthenticated request")
-	}
-	require.NotNil(t, resp)
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-}
-
-// 2. Valid bearer token + valid app/entry_point — connection upgrades.
-func TestAuthenticatedUpgrade(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "valid-token", info: &auth.TokenInfo{TokenID: 42}}
-	mockEvents := []llm.StreamEvent{
-		{Type: "text_delta", Delta: "hello"},
-		{Type: "stop", StopReason: "end_turn"},
-	}
-	h, _ := newTestHandler(t, mockEvents, authn, sessions)
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	conn, resp, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "valid-token")
-	require.NoError(t, err, "expected upgrade to succeed with valid token")
-	defer conn.Close()
-	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
-}
-
-// 3. Message sent → run created → done event received.
-func TestMessageAndDone(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	mockEvents := []llm.StreamEvent{
-		{Type: "text_delta", Delta: "world"},
-		{Type: "stop", StopReason: "end_turn"},
-	}
-	h, _ := newTestHandler(t, mockEvents, authn, sessions)
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	conn, _, err := dialWS(t, srv, "/orchestrate/app/ep", "tok")
-	require.NoError(t, err)
-	defer conn.Close()
-
-	// Send user message.
-	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hi"})
-	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
-
-	// Collect server messages until "done" or timeout.
-	done := false
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	for !done {
-		_, data, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-		var sm map[string]any
-		require.NoError(t, json.Unmarshal(data, &sm))
-		if sm["type"] == "done" {
-			done = true
-		}
-	}
-	assert.True(t, done, "expected done event from orchestrator")
-}
-
-// 4. Client disconnect → session ended.
-func TestDisconnectEndsSession(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	mockEvents := []llm.StreamEvent{
-		{Type: "stop", StopReason: "end_turn"},
-	}
-	h, _ := newTestHandler(t, mockEvents, authn, sessions)
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	conn, _, err := dialWS(t, srv, "/orchestrate/app/ep2", "tok")
-	require.NoError(t, err)
-
-	// Send a message then immediately close.
-	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "bye"})
-	_ = conn.WriteMessage(websocket.TextMessage, msg)
-	conn.Close()
-
-	// Give the server a moment to process the disconnect.
-	time.Sleep(300 * time.Millisecond)
-
-	assert.Equal(t, 1, len(sessions.getRegistered()), "session should have been registered")
-	assert.Equal(t, 1, len(sessions.getEnded()), "session should have been ended on disconnect")
-}
-
-// 5. Gate cap exceeded returns 503 before upgrade.
-func TestGateCapExceeded(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	h, _ := newTestHandler(t, nil, authn, sessions)
-	h.WithGate(&fakeGate{checkErr: gate.ErrCapExceeded})
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	_, resp, err := dialWS(t, srv, "/orchestrate/app/ep", "tok")
-	require.Error(t, err, "expected dial to fail when gate rejects")
-	require.NotNil(t, resp)
-	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
-	assert.Equal(t, 0, len(sessions.getRegistered()), "session must not be registered when gate rejects")
-}
-
-// 6. Gate admitted → session registered, confirmed; on disconnect gate released.
-func TestGateAdmittedAndReleased(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	g := &fakeGate{}
-	mockEvents := []llm.StreamEvent{
-		{Type: "stop", StopReason: "end_turn"},
-	}
-	h, _ := newTestHandler(t, mockEvents, authn, sessions)
-	h.WithGate(g)
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	conn, _, err := dialWS(t, srv, "/orchestrate/app/ep", "tok")
-	require.NoError(t, err)
-
-	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hi"})
-	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
-
-	// Wait for done.
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	for {
-		_, data, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-		var sm map[string]any
-		if json.Unmarshal(data, &sm) == nil && sm["type"] == "done" {
-			break
-		}
-	}
-	conn.Close()
-	time.Sleep(300 * time.Millisecond)
-
-	check, confirm, rollback, release, _ := g.getCounts()
-	assert.Equal(t, 1, check, "Gate.Check must be called once")
-	assert.Equal(t, 1, confirm, "Gate.Confirm must be called after Register")
-	assert.GreaterOrEqual(t, release, 1, "Gate.Release must be called on session end")
-	assert.Equal(t, 0, rollback, "Gate.Rollback must not be called on success")
-	assert.Equal(t, 1, len(sessions.getRegistered()))
-	assert.Equal(t, 1, len(sessions.getEnded()))
-}
-
-// 7. Gate rollback called when session.Register fails.
-func TestGateRollbackOnRegisterFailure(t *testing.T) {
-	sessions := &failingSessionStore{}
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	g := &fakeGate{}
-	h, _ := newTestHandler(t, nil, authn, sessions)
-	h.WithGate(g)
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	conn, _, err := dialWS(t, srv, "/orchestrate/app/ep", "tok")
-	require.NoError(t, err, "WS upgrades before register failure is detected")
-	defer conn.Close()
-
-	// Handler writes an error event and returns.
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-	_, data, _ := conn.ReadMessage()
-	var sm map[string]any
-	_ = json.Unmarshal(data, &sm)
-	assert.Equal(t, "error", sm["type"])
-
-	time.Sleep(200 * time.Millisecond)
-	check2, confirm2, rollback2, _, _ := g.getCounts()
-	assert.Equal(t, 1, check2)
-	assert.Equal(t, 1, rollback2, "Gate.Rollback must be called when Register fails")
-	assert.Equal(t, 0, confirm2, "Gate.Confirm must NOT be called when Register fails")
-}
-
-// ── Gate fake ──────────────────────────────────────────────────────────────────
-
 type fakeGate struct {
 	mu            sync.Mutex
 	checkErr      error
@@ -364,7 +116,7 @@ type fakeGate struct {
 	confirmCalls  int
 	rollbackCalls int
 	releaseCalls  int
-	lastConfig    gate.Config // records the Config passed to the most recent Check call
+	lastConfig    gate.Config
 }
 
 func (g *fakeGate) Check(_ context.Context, cfg gate.Config) (gate.Result, error) {
@@ -402,17 +154,6 @@ func (g *fakeGate) getCounts() (check, confirm, rollback, release int, cfg gate.
 	return g.checkCalls, g.confirmCalls, g.rollbackCalls, g.releaseCalls, g.lastConfig
 }
 
-// failingSessionStore always returns an error from Register.
-type failingSessionStore struct{}
-
-func (s *failingSessionStore) Register(_ context.Context, _ session.SessionInfo) error {
-	return errors.New("redis: connection refused")
-}
-
-func (s *failingSessionStore) End(_ context.Context, _, _, _ string) error { return nil }
-
-// ── EP config fake ─────────────────────────────────────────────────────────────
-
 type fakeEPLoader struct {
 	cfg *epconfig.EPConfig
 	err error
@@ -422,188 +163,35 @@ func (f *fakeEPLoader) Load(_ context.Context, _ string) (*epconfig.EPConfig, er
 	return f.cfg, f.err
 }
 
-// 8. Unauthenticated request to a public EP succeeds (upgrades to WS).
-func TestPublicEPNoTokenAllowed(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "valid-token", info: &auth.TokenInfo{TokenID: 1}}
-	mockEvents := []llm.StreamEvent{
-		{Type: "text_delta", Delta: "hi"},
-		{Type: "stop", StopReason: "end_turn"},
+type fakeRunCreator struct{}
+
+func (f *fakeRunCreator) CreateRun(_ context.Context, _ domain.Run) error { return nil }
+
+// captureRunCreator records CreateRun calls so tests can inspect domain.Run fields.
+type captureRunCreator struct {
+	mu   sync.Mutex
+	runs []domain.Run
+}
+
+func (c *captureRunCreator) CreateRun(_ context.Context, run domain.Run) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.runs = append(c.runs, run)
+	return nil
+}
+
+func (c *captureRunCreator) last() (domain.Run, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.runs) == 0 {
+		return domain.Run{}, false
 	}
-	h, _ := newTestHandler(t, mockEvents, authn, sessions)
-	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModePublic,
-	}})
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	// No token supplied.
-	conn, resp, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "")
-	require.NoError(t, err, "unauthenticated request to public EP should upgrade")
-	defer conn.Close()
-	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+	return c.runs[len(c.runs)-1], true
 }
 
-// 9. Unauthenticated request to a token-mode EP returns 401.
-func TestTokenEPNoTokenRejected(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "valid-token", info: &auth.TokenInfo{TokenID: 1}}
-	h, _ := newTestHandler(t, nil, authn, sessions)
-	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModeToken,
-	}})
+// ── Temporal fakes ────────────────────────────────────────────────────────────
 
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/token-ep", "")
-	require.Error(t, err, "unauthenticated request to token-mode EP should be rejected")
-	require.NotNil(t, resp)
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-}
-
-// 10. Anonymous session to public EP: gate receives TokenHash="" (no shared rate-limit bucket).
-func TestAnonymousSessionGateTokenHashEmpty(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
-	g := &fakeGate{}
-	mockEvents := []llm.StreamEvent{
-		{Type: "stop", StopReason: "end_turn"},
-	}
-	h, _ := newTestHandler(t, mockEvents, authn, sessions)
-	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModePublic,
-	}})
-	h.WithGate(g)
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "")
-	require.NoError(t, err)
-	conn.Close()
-	time.Sleep(200 * time.Millisecond)
-
-	// Gate must receive TokenHash="" so that rlKey() returns "" and
-	// per-token rate limiting is skipped for public/anonymous sessions.
-	_, _, _, _, lastCfg := g.getCounts()
-	assert.Equal(t, "", lastCfg.TokenHash,
-		"anonymous session must pass TokenHash='' to gate, not sha256('')")
-}
-
-// 11. Anonymous session to public EP: session is registered with UserID=0 (anonymous sentinel).
-func TestAnonymousSessionUserIDIsZero(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
-	mockEvents := []llm.StreamEvent{
-		{Type: "stop", StopReason: "end_turn"},
-	}
-	h, _ := newTestHandler(t, mockEvents, authn, sessions)
-	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModePublic,
-	}})
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "")
-	require.NoError(t, err)
-	conn.Close()
-	time.Sleep(200 * time.Millisecond)
-
-	require.Equal(t, 1, len(sessions.getRegistered()), "session must be registered")
-	assert.Equal(t, int64(0), sessions.getLastSession().UserID,
-		"anonymous session must store UserID=0, not a real user identity")
-}
-
-// 12. Authenticated request to a public EP also succeeds (public EPs accept both).
-func TestAuthenticatedRequestToPublicEP(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 42}}
-	mockEvents := []llm.StreamEvent{
-		{Type: "stop", StopReason: "end_turn"},
-	}
-	h, _ := newTestHandler(t, mockEvents, authn, sessions)
-	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModePublic,
-	}})
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	conn, resp, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "valid")
-	require.NoError(t, err, "authenticated request to public EP must succeed")
-	defer conn.Close()
-	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
-}
-
-// 13. Voice EP with valid token returns 501 — must never enter the text orchestration path.
-func TestVoiceEPReturns501(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	g := &fakeGate{}
-	h, _ := newTestHandler(t, nil, authn, sessions)
-	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModeToken,
-		EPType:     "voice",
-	}})
-	h.WithGate(g)
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/voice-ep", "tok")
-	require.Error(t, err, "voice EP must reject the WS upgrade")
-	require.NotNil(t, resp)
-	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "voice EP must return 501")
-	check3, _, _, _, _ := g.getCounts()
-	assert.Equal(t, 0, check3, "gate must not be called for voice EP")
-	assert.Equal(t, 0, len(sessions.getRegistered()), "session must not be registered for voice EP")
-}
-
-// 14. Voice EP with public access mode also returns 501.
-func TestVoiceEPPublicReturns501(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	h, _ := newTestHandler(t, nil, authn, sessions)
-	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModePublic,
-		EPType:     "voice",
-	}})
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/voice-public", "")
-	require.Error(t, err, "public voice EP must also reject the WS upgrade")
-	require.NotNil(t, resp)
-	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "public voice EP must return 501")
-	assert.Equal(t, 0, len(sessions.getRegistered()), "session must not be registered for voice EP")
-}
-
-// ── Temporal path fakes ────────────────────────────────────────────────────────
-
-// fakeWorkflowRun blocks Get until the context is cancelled, simulating a
-// long-running workflow that ends when the handler's context is cancelled.
-// This ensures all stream events are delivered before orchDone fires.
-type fakeWorkflowRun struct {
-	id string
-}
+type fakeWorkflowRun struct{ id string }
 
 func (f *fakeWorkflowRun) GetID() string    { return f.id }
 func (f *fakeWorkflowRun) GetRunID() string { return f.id }
@@ -616,22 +204,21 @@ func (f *fakeWorkflowRun) GetWithOptions(ctx context.Context, _ interface{}, _ t
 	return nil
 }
 
-// fakeTemporalClient records ExecuteWorkflow calls.
 type fakeTemporalClient struct {
-	called bool
-	runID  string
+	mu        sync.Mutex
+	called    bool
+	inputArgs []interface{}
 }
 
-func (f *fakeTemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, _ ...interface{}) (temporalclient.WorkflowRun, error) {
+func (f *fakeTemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.called = true
-	f.runID = opts.ID
+	f.inputArgs = args
 	return &fakeWorkflowRun{id: opts.ID}, nil
 }
 
 // fakeRunStreamSub returns a channel pre-loaded with messages then closes.
-// The handler subscribes once (to them:dash:run:{runID}:tokens); the channel
-// key is not inspected here because Go passes runID to Python, so Python
-// publishes to the same channel Go subscribed to.
 type fakeRunStreamSub struct {
 	messages []string
 }
@@ -645,144 +232,545 @@ func (f *fakeRunStreamSub) Subscribe(_ context.Context, _ string) (<-chan string
 	return ch, nil
 }
 
-// 15. Temporal path: when temporalEnabled=true, ExecuteWorkflow is called and
-// orch.Run is NOT called. The client receives events directly from the Redis
-// run stream. Go passes runID to Python so both sides use the same channel key.
-func TestTemporalPathUsedWhenEnabled(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
+// ── Builder ───────────────────────────────────────────────────────────────────
 
-	// Build handler with a mock orchestrator that has no mock events.
-	// If orch.Run were called, it would complete without emitting a "done" event
-	// on the bus — the test would time out rather than succeed.
-	h, _ := newTestHandler(t, nil, authn, sessions)
-
-	tc := &fakeTemporalClient{}
-	rsSub := &fakeRunStreamSub{
-		messages: []string{
-			`{"type":"token","content":"hello from temporal"}`,
-			`{"type":"done","run_id":"test-run-id"}`,
-		},
-	}
-	h.WithTemporal(tc, rsSub, true)
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
-	require.NoError(t, err)
-	defer conn.Close()
-
-	// Send user message.
-	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hi"})
-	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
-
-	// Collect events until "done" or timeout.
-	var receivedTypes []string
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	for {
-		_, data, readErr := conn.ReadMessage()
-		if readErr != nil {
-			break
-		}
-		var sm map[string]any
-		if json.Unmarshal(data, &sm) == nil {
-			if t, ok := sm["type"].(string); ok {
-				receivedTypes = append(receivedTypes, t)
-				if t == "done" {
-					break
-				}
-			}
-		}
-	}
-
-	assert.True(t, tc.called, "ExecuteWorkflow must be called when temporalEnabled=true")
-	assert.Contains(t, receivedTypes, "done", "client must receive done event from run stream")
+// wsBuilder assembles a WS Handler with injectable fakes via Lifecycle.
+type wsBuilder struct {
+	authn      transport.Authenticator
+	epLoader   transport.EPConfigLoader
+	gate       transport.GateStore
+	sessions   transport.SessionStore
+	recorder   execution.RunCreator
+	temporal   transport.TemporalClientExecutor
+	streamMsgs []string
 }
 
-// 16. replay_unavailable event from Redis Streams is forwarded to the WS client
-// (Phase 11c-B). The event is emitted when last_event_id was trimmed by MAXLEN;
-// it must not be silently dropped by the handler's writeEvent switch.
-func TestReplayUnavailableForwardedToClient(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
-	h, _ := newTestHandler(t, nil, authn, sessions)
-
-	tc := &fakeTemporalClient{}
-	rsSub := &fakeRunStreamSub{
-		messages: []string{
-			`{"type":"replay_unavailable","reason":"history_trimmed","run_id":"r1"}`,
-			`{"type":"done","run_id":"r1"}`,
-		},
+func (b *wsBuilder) defaultEP() *epconfig.EPConfig {
+	return &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "websocket",
+		AccessMode: epconfig.AccessModeToken,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
 	}
-	h.WithTemporal(tc, rsSub, true)
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
-	require.NoError(t, err)
-	defer conn.Close()
-
-	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hi"})
-	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
-
-	var receivedTypes []string
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	for {
-		_, data, readErr := conn.ReadMessage()
-		if readErr != nil {
-			break
-		}
-		var sm map[string]any
-		if json.Unmarshal(data, &sm) == nil {
-			if evType, ok := sm["type"].(string); ok {
-				receivedTypes = append(receivedTypes, evType)
-				if evType == "done" {
-					break
-				}
-			}
-		}
-	}
-
-	assert.Contains(t, receivedTypes, "replay_unavailable", "replay_unavailable must be forwarded to WS client")
-	assert.Contains(t, receivedTypes, "done", "done must arrive after replay_unavailable")
 }
 
-// newTestHandlerNoTemporal creates a handler with NO Temporal client wired.
-// Used to verify the R-2B behaviour: when temporalClient is nil, the handler
-// must return an error and NOT fall back to any inline execution.
-func newTestHandlerNoTemporal(t *testing.T, authn wshandler.Authenticator, sessions wshandler.SessionStore) *wshandler.Handler {
-	t.Helper()
+func (b *wsBuilder) build() (*wshandler.Handler, *fakeRunStreamSub) {
+	ep := b.epLoader
+	if ep == nil {
+		ep = &fakeEPLoader{cfg: b.defaultEP()}
+	}
+	sess := b.sessions
+	if sess == nil {
+		sess = &fakeSessionStore{}
+	}
+	rec := b.recorder
+	if rec == nil {
+		rec = &fakeRunCreator{}
+	}
+	tc := b.temporal
+	if tc == nil {
+		tc = &fakeTemporalClient{}
+	}
+
+	lc := execution.NewLifecycleWithRecorder(b.authn, ep, b.gate, sess, rec, tc, nil)
+
+	msgs := b.streamMsgs
+	if len(msgs) == 0 {
+		raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
+		msgs = []string{string(raw)}
+	}
+	rsSub := &fakeRunStreamSub{messages: msgs}
+
 	bus := event.New()
-	mock := llm.NewMockProvider(nil)
-	cfg := orchestrator.Config{MaxIterations: 1}
-	recorder := runrecorder.New(&fakeDBQuerier{})
-	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
-	// No WithTemporal call → temporalClient is nil.
-	return wshandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
+	h := wshandler.NewHandler(lc, bus, b.authn, "test-instance", nil)
+	h.WithTemporal(tc, rsSub, true)
+	return h, rsSub
 }
 
-// 17. R-2B: When no Temporal client is wired, the handler must write an error
-// event and NOT fall back to the inline orchestrator.
-func TestNoTemporalReturns503(t *testing.T) {
-	sessions := &fakeSessionStore{}
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	h := newTestHandlerNoTemporal(t, authn, sessions)
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+func dialWS(t *testing.T, server *httptest.Server, path, token string) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + path
+	headers := http.Header{}
+	if token != "" {
+		headers.Set("Authorization", "Bearer "+token)
+	}
+	dialer := websocket.Dialer{HandshakeTimeout: 3 * time.Second}
+	return dialer.Dial(wsURL, headers)
+}
+
+// readUntilDone reads WS messages until a "done" or "error" type message or timeout/error.
+func readUntilDone(t *testing.T, conn *websocket.Conn, timeout time.Duration) []map[string]any {
+	t.Helper()
+	conn.SetReadDeadline(time.Now().Add(timeout))
+	var msgs []map[string]any
+	for {
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		var m map[string]any
+		if json.Unmarshal(data, &m) == nil {
+			msgs = append(msgs, m)
+			if m["type"] == "done" || m["type"] == "error" {
+				break
+			}
+		}
+	}
+	return msgs
+}
+
+func sendMessage(t *testing.T, conn *websocket.Conn, content string) {
+	t.Helper()
+	msg, _ := json.Marshal(map[string]string{"type": "message", "content": content})
+	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+// 1. Unauthenticated request to token-mode EP → 401 (before upgrade).
+func TestWS_Unauthenticated(t *testing.T) {
+	authn := &fakeAuth{token: "valid-token", info: &auth.TokenInfo{TokenID: 1}}
+	b := &wsBuilder{authn: authn}
+	h, _ := b.build()
 
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
-	// Connection upgrades (gate not wired, session registers fine).
+	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "")
+	require.Error(t, err, "unauthenticated request must fail")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// 2. Valid bearer token + valid EP → connection upgrades (101).
+func TestWS_AuthenticatedUpgrade(t *testing.T) {
+	authn := &fakeAuth{token: "valid-token", info: &auth.TokenInfo{TokenID: 42}}
+	b := &wsBuilder{authn: authn}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, resp, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "valid-token")
+	require.NoError(t, err, "expected upgrade to succeed")
+	defer conn.Close()
+	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+}
+
+// 3. Message sent → "done" event received.
+func TestWS_MessageAndDone(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	streamMsgs := []string{
+		`{"type":"token","content":"hello"}`,
+		`{"type":"done","run_id":"r1"}`,
+	}
+	b := &wsBuilder{authn: authn, streamMsgs: streamMsgs}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/app/ep1", "tok")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	sendMessage(t, conn, "hi")
+	msgs := readUntilDone(t, conn, 5*time.Second)
+
+	types := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		if s, ok := m["type"].(string); ok {
+			types = append(types, s)
+		}
+	}
+	assert.Contains(t, types, "done", "expected done event")
+}
+
+// 4. Client disconnect → session.End called.
+func TestWS_DisconnectEndsSession(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	sess := &fakeSessionStore{}
+	b := &wsBuilder{authn: authn, sessions: sess}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/app/ep2", "tok")
+	require.NoError(t, err)
+
+	sendMessage(t, conn, "bye")
+	conn.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	assert.Equal(t, 1, len(sess.getRegistered()), "session must have been registered")
+	assert.Equal(t, 1, len(sess.getEnded()), "session must have been ended on disconnect")
+}
+
+// 5. Gate cap exceeded → 429 before upgrade (Lifecycle.Admit returns CapExceeded).
+// Note: Lifecycle maps cap-exceeded to 429 (Too Many Requests), consistent with SSE and A2A.
+func TestWS_GateCapExceeded(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	g := &fakeGate{checkErr: gate.ErrCapExceeded}
+	sess := &fakeSessionStore{}
+	b := &wsBuilder{authn: authn, gate: g, sessions: sess}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	_, resp, err := dialWS(t, srv, "/orchestrate/app/ep1", "tok")
+	require.Error(t, err, "dial must fail when gate rejects")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	assert.Equal(t, 0, len(sess.getRegistered()), "session must not be registered when gate rejects")
+}
+
+// 6. Gate admitted → session registered + confirmed; on disconnect gate released.
+func TestWS_GateAdmittedAndReleased(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	g := &fakeGate{}
+	sess := &fakeSessionStore{}
+	b := &wsBuilder{authn: authn, gate: g, sessions: sess}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/app/ep1", "tok")
+	require.NoError(t, err)
+
+	sendMessage(t, conn, "hi")
+	readUntilDone(t, conn, 5*time.Second)
+	conn.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	check, confirm, rollback, release, _ := g.getCounts()
+	assert.Equal(t, 1, check, "Gate.Check must be called once")
+	assert.Equal(t, 1, confirm, "Gate.Confirm must be called after Register")
+	assert.GreaterOrEqual(t, release, 1, "Gate.Release must be called on session end")
+	assert.Equal(t, 0, rollback, "Gate.Rollback must not be called on success")
+	assert.Equal(t, 1, len(sess.getRegistered()))
+	assert.Equal(t, 1, len(sess.getEnded()))
+}
+
+// 7. Gate rollback called when session.Register fails.
+// After migration: Register failure is inside Lifecycle.Admit (pre-upgrade).
+// The client sees HTTP 500 — no WS upgrade occurs.
+func TestWS_GateRollbackOnRegisterFailure(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	g := &fakeGate{}
+	sess := &fakeSessionStore{failRegister: true}
+	b := &wsBuilder{authn: authn, gate: g, sessions: sess}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	_, resp, err := dialWS(t, srv, "/orchestrate/app/ep1", "tok")
+	require.Error(t, err, "connection must not upgrade when Register fails")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+
+	time.Sleep(200 * time.Millisecond)
+	check, confirm, rollback, _, _ := g.getCounts()
+	assert.Equal(t, 1, check)
+	assert.Equal(t, 1, rollback, "Gate.Rollback must be called when Register fails")
+	assert.Equal(t, 0, confirm, "Gate.Confirm must NOT be called when Register fails")
+}
+
+// 8. Unauthenticated request to public EP succeeds.
+func TestWS_PublicEPNoTokenAllowed(t *testing.T) {
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "websocket",
+		AccessMode: epconfig.AccessModePublic,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+	}}
+	b := &wsBuilder{authn: authn, epLoader: ep}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, resp, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "")
+	require.NoError(t, err, "unauthenticated request to public EP must upgrade")
+	defer conn.Close()
+	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+}
+
+// 9. Unauthenticated request to token-mode EP → 401.
+func TestWS_TokenEPNoTokenRejected(t *testing.T) {
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "websocket",
+		AccessMode: epconfig.AccessModeToken,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+	}}
+	b := &wsBuilder{authn: authn, epLoader: ep}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/token-ep", "")
+	require.Error(t, err, "unauthenticated request to token-mode EP must be rejected")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// 10. Anonymous public EP session: gate receives TokenHash="" (no per-token rate limit).
+func TestWS_AnonymousSessionGateTokenHashEmpty(t *testing.T) {
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
+	g := &fakeGate{}
+	sess := &fakeSessionStore{}
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "websocket",
+		AccessMode: epconfig.AccessModePublic,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+	}}
+	b := &wsBuilder{authn: authn, gate: g, sessions: sess, epLoader: ep}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "")
+	require.NoError(t, err)
+	conn.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	_, _, _, _, lastCfg := g.getCounts()
+	assert.Equal(t, "", lastCfg.TokenHash,
+		"anonymous session must pass TokenHash='' to gate (not sha256(''))")
+}
+
+// 11. Anonymous public EP session: session registered with UserID=0.
+func TestWS_AnonymousSessionUserIDIsZero(t *testing.T) {
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
+	sess := &fakeSessionStore{}
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "websocket",
+		AccessMode: epconfig.AccessModePublic,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+	}}
+	b := &wsBuilder{authn: authn, sessions: sess, epLoader: ep}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "")
+	require.NoError(t, err)
+	conn.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	require.Equal(t, 1, len(sess.getRegistered()), "session must be registered")
+	assert.Equal(t, int64(0), sess.getLastSession().UserID,
+		"anonymous session must store UserID=0")
+}
+
+// 12. Authenticated request to public EP also succeeds.
+func TestWS_AuthenticatedRequestToPublicEP(t *testing.T) {
+	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 42}}
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "websocket",
+		AccessMode: epconfig.AccessModePublic,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+	}}
+	b := &wsBuilder{authn: authn, epLoader: ep}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, resp, err := dialWS(t, srv, "/orchestrate/myapp/public-ep", "valid")
+	require.NoError(t, err, "authenticated request to public EP must succeed")
+	defer conn.Close()
+	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+}
+
+// 13. Voice EP with valid token → 501 before upgrade.
+func TestWS_VoiceEPReturns501(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	g := &fakeGate{}
+	sess := &fakeSessionStore{}
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "voice",
+		AccessMode: epconfig.AccessModeToken,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+	}}
+	b := &wsBuilder{authn: authn, gate: g, sessions: sess, epLoader: ep}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/voice-ep", "tok")
+	require.Error(t, err, "voice EP must reject the WS upgrade")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode)
+	check, _, _, _, _ := g.getCounts()
+	assert.Equal(t, 0, check, "gate must not be called for voice EP")
+	assert.Equal(t, 0, len(sess.getRegistered()))
+}
+
+// 14. Voice EP with public access mode also returns 501.
+func TestWS_VoiceEPPublicReturns501(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	sess := &fakeSessionStore{}
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "voice",
+		AccessMode: epconfig.AccessModePublic,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+	}}
+	b := &wsBuilder{authn: authn, sessions: sess, epLoader: ep}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/voice-public", "")
+	require.Error(t, err, "public voice EP must also reject the WS upgrade")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode)
+	assert.Equal(t, 0, len(sess.getRegistered()))
+}
+
+// 15. Temporal path: ExecuteWorkflow is called; client receives done from run stream.
+func TestWS_TemporalPathUsedWhenEnabled(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
+	tc := &fakeTemporalClient{}
+	streamMsgs := []string{
+		`{"type":"token","content":"hello from temporal"}`,
+		`{"type":"done","run_id":"test-run-id"}`,
+	}
+	b := &wsBuilder{authn: authn, temporal: tc, streamMsgs: streamMsgs}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	sendMessage(t, conn, "hi")
+	msgs := readUntilDone(t, conn, 5*time.Second)
+
+	types := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		if s, ok := m["type"].(string); ok {
+			types = append(types, s)
+		}
+	}
+	tc.mu.Lock()
+	called := tc.called
+	tc.mu.Unlock()
+	assert.True(t, called, "ExecuteWorkflow must be called when temporal is wired")
+	assert.Contains(t, types, "done", "client must receive done event from run stream")
+}
+
+// 16. replay_unavailable event is forwarded to the WS client (Phase 11c-B).
+func TestWS_ReplayUnavailableForwardedToClient(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
+	streamMsgs := []string{
+		`{"type":"replay_unavailable","reason":"history_trimmed","run_id":"r1"}`,
+		`{"type":"done","run_id":"r1"}`,
+	}
+	b := &wsBuilder{authn: authn, streamMsgs: streamMsgs}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	sendMessage(t, conn, "hi")
+	msgs := readUntilDone(t, conn, 5*time.Second)
+
+	types := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		if s, ok := m["type"].(string); ok {
+			types = append(types, s)
+		}
+	}
+	assert.Contains(t, types, "replay_unavailable", "replay_unavailable must be forwarded")
+	assert.Contains(t, types, "done")
+}
+
+// 17. When Temporal is nil: upgrade succeeds (Admit does not check temporal),
+// but Lifecycle.Start returns error → WS error event sent to client.
+func TestWS_NoTemporalReturnsErrorEvent(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	// nil temporal → Lifecycle.Start returns StartError.
+	lc := execution.NewLifecycleWithRecorder(
+		authn,
+		&fakeEPLoader{cfg: &epconfig.EPConfig{
+			EPSlug:     "ep1",
+			EPType:     "websocket",
+			AccessMode: epconfig.AccessModeToken,
+			EPEnabled:  true,
+			AppEnabled: true,
+			TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+			AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		}},
+		nil,
+		&fakeSessionStore{},
+		&fakeRunCreator{},
+		nil, // temporal nil → Start will fail
+		nil,
+	)
+
+	rsSub := &fakeRunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
+	bus := event.New()
+	h := wshandler.NewHandler(lc, bus, authn, "test-instance", nil)
+	h.WithTemporal(nil, rsSub, true)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
 	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
 	require.NoError(t, err, "WS upgrade must succeed even when Temporal is not wired")
 	defer conn.Close()
 
-	// Send a user message to trigger the Temporal path check.
-	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hi"})
-	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
+	sendMessage(t, conn, "hi")
 
-	// Must receive an error event (not a done event from an inline run).
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	_, data, readErr := conn.ReadMessage()
 	require.NoError(t, readErr, "must receive an error message from the handler")
@@ -795,56 +783,15 @@ func TestNoTemporalReturns503(t *testing.T) {
 
 // ── R-4d: Tenant propagation tests ───────────────────────────────────────────
 
-// captureTemporalClient is a fakeTemporalClient variant that also records the
-// WorkflowInput args so R-4d tests can inspect TenantID and ApplicationID.
-type captureTemporalClient struct {
-	called     bool
-	inputArgs  []interface{}
-}
-
-func (c *captureTemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, wfType interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
-	c.called = true
-	c.inputArgs = args
-	return &fakeWorkflowRun{id: opts.ID}, nil
-}
-
-// capturingDBQuerier records all Exec calls so tests can inspect SQL args.
-type capturingDBQuerier struct {
-	execCalls []struct {
-		sql  string
-		args []any
-	}
-}
-
-func (c *capturingDBQuerier) Exec(_ context.Context, sql string, args ...any) error {
-	c.execCalls = append(c.execCalls, struct {
-		sql  string
-		args []any
-	}{sql: sql, args: args})
-	return nil
-}
-
-func (c *capturingDBQuerier) QueryRow(_ context.Context, _ string, _ ...any) runrecorder.SingleRowScanner {
-	return &fakeRow{}
-}
-
-// 18. R-4d: WS-created run stores TenantID and ApplicationID from EPConfig, not
-// from client-supplied headers or request data.
+// 18. WS-created run stores TenantID and ApplicationID from EPConfig — not from client.
 func TestWS_RunStoresTenantID(t *testing.T) {
-	sessions := &fakeSessionStore{}
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-
-	bus := event.New()
-	mock := llm.NewMockProvider(nil)
-	cfg := orchestrator.Config{MaxIterations: 1}
-	captureDB := &capturingDBQuerier{}
-	recorder := runrecorder.New(captureDB)
-	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
-	h := wshandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
+	tc := &fakeTemporalClient{}
+	capRec := &captureRunCreator{}
 
 	tenantID := "cccccccc-0000-0000-0000-000000000001"
 	appID := "dddddddd-0000-0000-0000-000000000002"
-	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
 		EPSlug:     "ep1",
 		EPType:     "websocket",
 		AccessMode: epconfig.AccessModeToken,
@@ -852,11 +799,9 @@ func TestWS_RunStoresTenantID(t *testing.T) {
 		AppEnabled: true,
 		TenantID:   tenantID,
 		AppID:      appID,
-	}})
-
-	tc := &captureTemporalClient{}
-	rsSub := &fakeRunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
-	h.WithTemporal(tc, rsSub, true)
+	}}
+	b := &wsBuilder{authn: authn, temporal: tc, recorder: capRec, epLoader: ep}
+	h, _ := b.build()
 
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
@@ -865,9 +810,7 @@ func TestWS_RunStoresTenantID(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hello"})
-	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
-
+	sendMessage(t, conn, "hello")
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	for {
 		_, data, err := conn.ReadMessage()
@@ -880,51 +823,30 @@ func TestWS_RunStoresTenantID(t *testing.T) {
 		}
 	}
 
-	// Find the CreateRun INSERT call and verify tenant_id was passed.
-	var createRunCall *struct {
-		sql  string
-		args []any
-	}
-	for i := range captureDB.execCalls {
-		if strings.Contains(captureDB.execCalls[i].sql, "INSERT INTO them.runs") {
-			createRunCall = &captureDB.execCalls[i]
-			break
-		}
-	}
-	require.NotNil(t, createRunCall, "CreateRun INSERT must have been executed")
-	require.Contains(t, createRunCall.sql, "tenant_id", "SQL must include tenant_id column")
+	run, ok := capRec.last()
+	require.True(t, ok, "CreateRun must have been called")
+	assert.Equal(t, tenantID, run.TenantID, "run must carry TenantID from EPConfig")
+	assert.Equal(t, appID, run.ApplicationID, "run must carry ApplicationID from EPConfig")
 
-	// arg[1] is tenant_id — plain string UUID (NOT NULL column, no *string nullable).
-	// Args: id($1), tenant_id($2), entry_point_slug($3), status($4), started_at($5), events_transport($6).
-	assert.Equal(t, tenantID, createRunCall.args[1], "WS run must carry TenantID from EPConfig")
-
-	// Verify WorkflowInput received TenantID.
+	tc.mu.Lock()
+	args := tc.inputArgs
+	tc.mu.Unlock()
 	require.True(t, tc.called, "ExecuteWorkflow must be called")
-	require.Len(t, tc.inputArgs, 1, "ExecuteWorkflow must receive exactly one WorkflowInput arg")
-
-	// The input is passed as temporal.WorkflowInput.
-	wfInput, ok := tc.inputArgs[0].(temporal.WorkflowInput)
+	require.Len(t, args, 1)
+	wfInput, ok := args[0].(temporal.WorkflowInput)
 	require.True(t, ok, "WorkflowInput arg must be temporal.WorkflowInput")
-	assert.Equal(t, tenantID, wfInput.TenantID, "WorkflowInput.TenantID must match EPConfig.TenantID")
-	assert.Equal(t, appID, wfInput.ApplicationID, "WorkflowInput.ApplicationID must match EPConfig.AppID")
+	assert.Equal(t, tenantID, wfInput.TenantID, "WorkflowInput.TenantID must match EPConfig")
+	assert.Equal(t, appID, wfInput.ApplicationID, "WorkflowInput.ApplicationID must match EPConfig")
 }
 
-// 19. R-4d: A client-supplied X-Tenant-ID header must NOT override resolvedCfg.TenantID.
-// Tenant identity must only come from the server-resolved EPConfig.
+// 19. Client-supplied X-Tenant-ID header must NOT override EPConfig.TenantID.
 func TestWS_ClientTenantHeaderIgnored(t *testing.T) {
-	sessions := &fakeSessionStore{}
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-
-	bus := event.New()
-	mock := llm.NewMockProvider(nil)
-	cfg := orchestrator.Config{MaxIterations: 1}
-	captureDB := &capturingDBQuerier{}
-	recorder := runrecorder.New(captureDB)
-	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
-	h := wshandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
+	tc := &fakeTemporalClient{}
+	capRec := &captureRunCreator{}
 
 	serverTenantID := "eeeeeeee-0000-0000-0000-000000000001"
-	h.WithEPConfig(&fakeEPLoader{cfg: &epconfig.EPConfig{
+	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
 		EPSlug:     "ep1",
 		EPType:     "websocket",
 		AccessMode: epconfig.AccessModeToken,
@@ -932,16 +854,13 @@ func TestWS_ClientTenantHeaderIgnored(t *testing.T) {
 		AppEnabled: true,
 		TenantID:   serverTenantID,
 		AppID:      "ffffffff-0000-0000-0000-000000000002",
-	}})
-
-	tc := &captureTemporalClient{}
-	rsSub := &fakeRunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
-	h.WithTemporal(tc, rsSub, true)
+	}}
+	b := &wsBuilder{authn: authn, temporal: tc, recorder: capRec, epLoader: ep}
+	h, _ := b.build()
 
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
-	// Dial with a client-injected X-Tenant-ID header — must be ignored by handler.
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/orchestrate/myapp/ep1"
 	headers := http.Header{
 		"Authorization": []string{"Bearer tok"},
@@ -951,9 +870,7 @@ func TestWS_ClientTenantHeaderIgnored(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	msg, _ := json.Marshal(map[string]string{"type": "message", "content": "hi"})
-	require.NoError(t, conn.WriteMessage(websocket.TextMessage, msg))
-
+	sendMessage(t, conn, "hi")
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	for {
 		_, data, err := conn.ReadMessage()
@@ -966,16 +883,60 @@ func TestWS_ClientTenantHeaderIgnored(t *testing.T) {
 		}
 	}
 
-	// Verify tenant_id in run is the server-resolved value, not the client-supplied one.
-	// arg[1] is tenant_id — plain string UUID (NOT NULL column, no *string nullable).
-	for i := range captureDB.execCalls {
-		if strings.Contains(captureDB.execCalls[i].sql, "INSERT INTO them.runs") {
-			assert.Equal(t, serverTenantID, captureDB.execCalls[i].args[1],
-				"tenant_id must be server-resolved (from EPConfig), not client-supplied header")
-			return
+	run, ok := capRec.last()
+	require.True(t, ok, "CreateRun must have been called")
+	assert.Equal(t, serverTenantID, run.TenantID,
+		"tenant_id must be server-resolved (from EPConfig), not client-supplied header")
+}
+
+// 20. IDs generated by Lifecycle.Admit are UUID v4 (required by Python Temporal worker).
+func TestWS_IDsAreUUIDv4(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	capRec := &captureRunCreator{}
+	b := &wsBuilder{authn: authn, recorder: capRec}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	sendMessage(t, conn, "hi")
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		var sm map[string]any
+		if json.Unmarshal(data, &sm) == nil && (sm["type"] == "done" || sm["type"] == "error") {
+			break
 		}
 	}
-	t.Fatal("CreateRun INSERT not found")
+
+	run, ok := capRec.last()
+	require.True(t, ok, "CreateRun must have been called")
+	assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
+		run.ID, "RunID must be UUID v4")
+}
+
+// 21. Lifecycle.Admit runs before upgrade: EP not found → 404 HTTP (not a WS error frame).
+func TestWS_AdmitBeforeUpgrade_EPNotFound(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	ep := &fakeEPLoader{err: epconfig.ErrNotFound}
+	b := &wsBuilder{authn: authn, epLoader: ep}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/unknown-ep", "tok")
+	require.Error(t, err, "must fail when EP not found")
+	require.NotNil(t, resp)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode,
+		"EP not found must return 404 HTTP (not WS error event)")
 }
 
 // Ensure domain import is used.

@@ -10,12 +10,6 @@
 //	                  {"type":"tool_result","name":"...","output":{}}
 //	                  {"type":"done","run_id":"..."}
 //	                  {"type":"error","message":"..."}
-//
-// Gate contract (internal/gate):
-//
-//	Gate.Check() → session.Register() → Gate.Confirm()
-//	On Register failure: Gate.Rollback()
-//	On session end: session.End() + Gate.Release()
 package ws
 
 import (
@@ -30,19 +24,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
-	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
-	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
-	"github.com/aviciot/them/internal/gate"
+	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/metrics"
-	"github.com/aviciot/them/internal/orchestrator"
-	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/runstream"
-	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/temporal"
 	"github.com/aviciot/them/internal/transport"
 )
@@ -81,43 +70,42 @@ type Authenticator = transport.Authenticator
 type SessionStore = transport.SessionStore
 
 // GateStore performs admission control for incoming sessions.
-// Implemented by gate.Gate. Sourced from internal/transport.
+// Sourced from internal/transport.
 type GateStore = transport.GateStore
 
 // EPConfigLoader resolves Entry Point and Application runtime config.
-// Implemented by epconfig.Loader. Sourced from internal/transport.
+// Sourced from internal/transport.
 type EPConfigLoader = transport.EPConfigLoader
 
 // TemporalClientExecutor starts a Temporal workflow execution.
-// Using an interface (rather than the full client.Client) allows tests to inject
-// a fake without depending on a live Temporal server. Sourced from internal/transport.
+// Sourced from internal/transport.
 type TemporalClientExecutor = transport.TemporalClientExecutor
 
 // Handler is the WebSocket orchestration handler.
+//
+// After migration to execution.Lifecycle the handler retains only:
+//   - WebSocket upgrade (gorilla/websocket)
+//   - Frame parsing/writing (readClientMessage, streamEvents, writeEvent, writeError)
+//   - WS-specific error mapping (writeError sends a WS text frame, not HTTP)
+//   - Metrics (ActiveWSConnections, ActiveSessions, SessionsStarted)
+//
+// Auth, EPConfig, gate, session, CreateRun, and ExecuteWorkflow identity
+// enforcement all live in execution.Lifecycle.Admit/Start/Release.
 type Handler struct {
-	sessions       SessionStore
-	gateStore      GateStore
-	epLoader       EPConfigLoader
-	recorder       *runrecorder.Recorder
-	orch           *orchestrator.Orchestrator
-	bus            event.Bus
-	authenticator  Authenticator
-	instanceID     string
-	logger         *slog.Logger
-	temporalClient TemporalClientExecutor
-	runStreamSub   runstream.Subscriber
-	dispatcher     *runstream.Dispatcher
-	runEventsMode  config.RunEventsMode
-	// temporalEnabled was removed in R-2B: Temporal is now the unconditional
-	// execution path. When temporalClient is nil, the handler returns 503.
+	lc            *execution.Lifecycle
+	bus           event.Bus
+	authenticator Authenticator
+	instanceID    string
+	logger        *slog.Logger
+	runStreamSub  runstream.Subscriber
+	dispatcher    *runstream.Dispatcher
+	runEventsMode config.RunEventsMode
 }
 
-// NewHandler creates a Handler. gateStore may be nil (gate check is skipped),
-// which is useful in tests that do not exercise admission control.
+// NewHandler creates a Handler. All admission/session/gate logic is delegated
+// to lc. The handler retains only upgrade, frame I/O and metrics.
 func NewHandler(
-	sessions SessionStore,
-	recorder *runrecorder.Recorder,
-	orch *orchestrator.Orchestrator,
+	lc *execution.Lifecycle,
 	bus event.Bus,
 	authenticator Authenticator,
 	instanceID string,
@@ -127,9 +115,7 @@ func NewHandler(
 		logger = slog.Default()
 	}
 	return &Handler{
-		sessions:      sessions,
-		recorder:      recorder,
-		orch:          orch,
+		lc:            lc,
 		bus:           bus,
 		authenticator: authenticator,
 		instanceID:    instanceID,
@@ -137,55 +123,25 @@ func NewHandler(
 	}
 }
 
-// WithGate attaches an admission gate to the handler. Must be called before
-// the handler starts serving requests. When a gate is present every inbound
-// WebSocket connection goes through Gate.Check → session.Register → Gate.Confirm.
-func (h *Handler) WithGate(g GateStore) *Handler {
-	h.gateStore = g
-	return h
-}
-
-// WithEPConfig attaches an EP config loader that resolves entry-point and
-// application runtime configuration (session limits, rate limits, access mode,
-// block-lists) on every inbound connection. When present, a disabled or
-// inaccessible EP is rejected before the WS upgrade.
-func (h *Handler) WithEPConfig(l EPConfigLoader) *Handler {
-	h.epLoader = l
-	return h
-}
-
-// WithTemporal attaches a Temporal client and run-stream subscriber. Temporal is
-// now the unconditional execution path (R-2B). The `enabled` parameter is kept for
-// call-site compatibility but is ignored — use of Temporal is determined solely by
-// whether tc is non-nil. When tc is nil, the handler returns 503.
-func (h *Handler) WithTemporal(tc TemporalClientExecutor, sub runstream.Subscriber, enabled bool) *Handler {
-	h.temporalClient = tc
+// WithTemporal attaches a run-stream subscriber. The Temporal client itself is
+// held by the shared execution.Lifecycle; this method stores only the subscriber
+// used for run-event streaming. The `enabled` parameter is kept for call-site
+// compatibility but is ignored — Temporal use is determined by the lifecycle.
+func (h *Handler) WithTemporal(_ TemporalClientExecutor, sub runstream.Subscriber, _ bool) *Handler {
 	h.runStreamSub = sub
-	_ = enabled // ignored: Temporal is unconditional — see R-2B
 	return h
 }
 
 // WithRunEvents attaches the run-event dispatcher and the active RUN_EVENTS_MODE
-// (Phase 11c-B). The dispatcher chooses Pub/Sub or Redis Streams per run based on
-// mode and the run's events_transport value. Call after WithTemporal in main.go.
-// When not called, the handler falls back to the Pub/Sub subscriber directly.
+// (Phase 11c-B). When not called, the handler falls back to the Pub/Sub subscriber.
 func (h *Handler) WithRunEvents(d *runstream.Dispatcher, mode config.RunEventsMode) *Handler {
 	h.dispatcher = d
 	h.runEventsMode = mode
 	return h
 }
 
-// eventsTransportForNewRun returns the events_transport value this handler
-// stamps on a new run row: "streams" in dual/streams mode, else "pubsub".
-func (h *Handler) eventsTransportForNewRun() string {
-	if h.runEventsMode == config.RunEventsModeDual || h.runEventsMode == config.RunEventsModeStreams {
-		return "streams"
-	}
-	return "pubsub"
-}
-
 // runEvents opens the event channel for a run, using the dispatcher when wired
-// (Phase 11c-B) or the legacy Pub/Sub Stream otherwise.
+// (Phase 11c-B) or the legacy Pub/Sub path otherwise.
 func (h *Handler) runEvents(ctx context.Context, runID, eventsTransport, lastEventID string) (<-chan event.Event, error) {
 	if h.dispatcher != nil {
 		return h.dispatcher.Stream(ctx, runID, eventsTransport, lastEventID)
@@ -194,8 +150,6 @@ func (h *Handler) runEvents(ctx context.Context, runID, eventsTransport, lastEve
 }
 
 // Routes returns an http.Handler that mounts the WS orchestration route.
-// Also registers /apps/{slug}/ws as an alias for the app entry-point path,
-// mapping the {slug} param to {entry_point_slug} so ServeHTTP can use it.
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/orchestrate/{app_slug}/{entry_point_slug}", h.ServeHTTP)
@@ -218,210 +172,78 @@ func (h *Handler) AppsWSRoute() http.Handler {
 	return r
 }
 
-// ServeHTTP upgrades the connection and drives the orchestration session.
+// ServeHTTP runs the full admission pipeline via Lifecycle.Admit BEFORE upgrading
+// to WebSocket. This means all pre-Admit errors (auth, EPConfig, gate, session)
+// are returned as clean HTTP responses. After Admit succeeds the connection is
+// upgraded; if the upgrade fails, Release cleans up gate/session state with a
+// bounded 5-second timeout.
+//
+// After a successful upgrade:
+//  1. bus.Subscribe (bootstrap ordering — before Start to avoid missed events)
+//  2. readClientMessage (first user message, 30s deadline)
+//  3. Lifecycle.Start → ExecuteWorkflow
+//  4. streamEvents → forward run events to client until done or disconnect
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	appSlug := chi.URLParam(r, "app_slug")
 	epSlug := chi.URLParam(r, "entry_point_slug")
 
-	// Track active WS connection for the lifetime of this request.
 	metrics.ActiveWSConnections.Inc()
 	defer metrics.ActiveWSConnections.Dec()
 
-	// ── 1. Attempt token extraction (non-enforcing at this point) ────────────
-	// Whether auth is required depends on the EP's access_policy. We resolve
-	// the EP config first, then enforce auth if mode == "token".
-	tokenInfo, rawToken, authed := h.tryAuthenticate(r)
+	// ── 1. Extract token (non-enforcing — Lifecycle.Admit enforces per EP policy) ─
+	rawToken, tokenInfo := h.extractToken(r)
 
-	// ── 2. Resolve EP + App runtime configuration ─────────────────────────────
-	// Fail-closed: DB unavailable → 503, EP/App disabled → 403.
-	var resolvedCfg *epconfig.EPConfig
-	if h.epLoader != nil {
-		var loadErr error
-		resolvedCfg, loadErr = h.epLoader.Load(r.Context(), epSlug)
-		if loadErr != nil {
-			switch {
-			case errors.Is(loadErr, epconfig.ErrNotFound):
-				http.Error(w, `{"error":"entry point not found"}`, http.StatusNotFound)
-			case errors.Is(loadErr, epconfig.ErrDBUnavailable):
-				h.logger.Warn("ws: epconfig db unavailable", "ep_slug", epSlug, "error", loadErr)
-				http.Error(w, `{"error":"service unavailable"}`, http.StatusServiceUnavailable)
-			default:
-				h.logger.Warn("ws: epconfig load failed", "ep_slug", epSlug, "error", loadErr)
-				http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
-			}
-			return
-		}
-
-		isPublic := resolvedCfg.AccessMode == epconfig.AccessModePublic
-
-		// Enforce authentication for token-mode EPs.
-		if !isPublic && !authed {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-			return
-		}
-
-		// Enforce enabled + block-list checks. tokenHash is "" for public EPs.
-		th := tokenHash(rawToken)
-		if isPublic {
-			th = ""
-		}
-		var userID int64
-		if tokenInfo != nil {
-			userID = tokenInfo.TokenID
-		}
-		if accessErr := epconfig.CheckAccess(resolvedCfg, th, userID); accessErr != nil {
-			switch {
-			case errors.Is(accessErr, epconfig.ErrDisabled):
-				http.Error(w, `{"error":"entry point disabled"}`, http.StatusForbidden)
-			default:
-				http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
-			}
-			return
-		}
-	} else {
-		// No EP config loader wired — fall back to mandatory token auth.
-		if !authed {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-			return
-		}
+	// ── 2. Lifecycle.Admit — full pipeline before upgrade ────────────────────
+	// All pre-upgrade errors are clean HTTP responses (not WS close frames).
+	// The voice EP check (→ 501) is inside Lifecycle, so no separate check needed.
+	admitReq := execution.ExecutionRequest{
+		EPSlug:        epSlug,
+		RawToken:      rawToken,
+		TokenInfo:     tokenInfo,
+		RunEventsMode: h.runEventsMode,
+		InstanceID:    h.instanceID,
 	}
-
-	// Ensure tokenInfo is non-nil for the rest of the handler.
-	if tokenInfo == nil {
-		tokenInfo = &auth.TokenInfo{}
-	}
-
-	// ── 2b. Reject voice EPs — not yet implemented ───────────────────────────
-	// Voice EPs require STT/TTS providers, audio framing, and interruption
-	// handling that are not implemented in the WS text-orchestration path.
-	// Return 501 before any session or gate state is allocated.
-	if resolvedCfg != nil && resolvedCfg.EPType == "voice" {
-		http.Error(w, `{"error":"voice entry points are not yet implemented"}`, http.StatusNotImplemented)
+	handle, admitErr := h.lc.Admit(r.Context(), admitReq)
+	if admitErr != nil {
+		var ae *execution.AdmitError
+		if errors.As(admitErr, &ae) {
+			if ae.Kind == execution.AdmitErrNotImplemented {
+				http.Error(w, `{"error":"voice entry points are not yet implemented"}`, ae.HTTPStatus)
+			} else {
+				http.Error(w, `{"error":"`+ae.Error()+`"}`, ae.HTTPStatus)
+			}
+		} else {
+			http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		}
 		return
 	}
 
-	// ── 3. Gate.Check ─────────────────────────────────────────────────────────
-	sessionID := newID()
-	var gateCfg gate.Config
-	var gateAdmitted bool
+	epType := epTypeLabel(handle)
+	metrics.GateAdmissions.WithLabelValues(epType).Inc()
+	metrics.ActiveSessions.WithLabelValues(epType).Inc()
+	metrics.SessionsStarted.WithLabelValues(epType, "admitted").Inc()
 
-	// Compute gate token hash: "" for anonymous sessions so that rlKey() in
-	// gate.go returns "" and skips per-token rate limiting for public EPs.
-	// sha256("") is NOT empty string, so we must not pass tokenHash(rawToken)
-	// when rawToken is "".
-	gateTokenHash := ""
-	if rawToken != "" {
-		gateTokenHash = tokenHash(rawToken)
-	}
-
-	if h.gateStore != nil {
-		gateCfg = gate.Config{
-			EPSlug:    epSlug,
-			TokenHash: gateTokenHash,
-			SessionID: sessionID,
-		}
-		if resolvedCfg != nil {
-			gateCfg.AppID = resolvedCfg.AppID
-			gateCfg.EPMaxConcurrent = resolvedCfg.EPMaxConcurrent
-			gateCfg.AppMaxConcurrent = resolvedCfg.AppMaxConcurrent
-			gateCfg.RateLimitRPM = resolvedCfg.RateLimitRPM
-			gateCfg.QueueTimeout = resolvedCfg.QueueTimeout
-		}
-		if _, err := h.gateStore.Check(r.Context(), gateCfg); err != nil {
-			epType := epTypeLabel(resolvedCfg)
-			switch err {
-			case gate.ErrCapExceeded:
-				metrics.GateRejections.WithLabelValues(epType, "cap_exceeded").Inc()
-				metrics.SessionsStarted.WithLabelValues(epType, "rejected").Inc()
-				http.Error(w, `{"error":"session cap exceeded"}`, http.StatusServiceUnavailable)
-			case gate.ErrRateLimited:
-				metrics.GateRejections.WithLabelValues(epType, "rate_limited").Inc()
-				metrics.SessionsStarted.WithLabelValues(epType, "rejected").Inc()
-				http.Error(w, `{"error":"rate limited"}`, http.StatusTooManyRequests)
-			case gate.ErrQueueFull:
-				metrics.GateRejections.WithLabelValues(epType, "queue_full").Inc()
-				metrics.SessionsStarted.WithLabelValues(epType, "rejected").Inc()
-				http.Error(w, `{"error":"queue full"}`, http.StatusServiceUnavailable)
-			default:
-				h.logger.Warn("ws: gate check failed", "ep_slug", epSlug, "error", err)
-				http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
-			}
-			return
-		}
-		gateAdmitted = true
-		metrics.GateAdmissions.WithLabelValues(epTypeLabel(resolvedCfg)).Inc()
-	}
-
-	// ── 4. Upgrade to WebSocket ───────────────────────────────────────────────
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		h.logger.Warn("ws: upgrade failed", "error", err)
-		if gateAdmitted {
-			_ = h.gateStore.Rollback(context.Background(), gateCfg)
-		}
+	// ── 3. Upgrade to WebSocket ───────────────────────────────────────────────
+	// Admit has run the full pipeline (gate check + session.Register + CreateRun).
+	// upgrader.Upgrade writes its own HTTP error on failure; we only need to
+	// Release to clean up gate/session/run state.
+	conn, upgradeErr := upgrader.Upgrade(w, r, nil)
+	if upgradeErr != nil {
+		h.logger.Warn("ws: upgrade failed", "ep_slug", epSlug, "error", upgradeErr)
+		// Release with context.Background() — the bounded 5s timeout is applied
+		// inside Release itself; the request context is already cancelled here.
+		h.lc.Release(context.Background(), handle)
+		metrics.ActiveSessions.WithLabelValues(epType).Dec()
+		metrics.SessionsEnded.WithLabelValues(epType, "upgrade_failed").Inc()
 		return
 	}
 	defer conn.Close()
 
-	// ── 5. Set up run / context IDs ───────────────────────────────────────────
-	runID := newID()
-	contextID := newID()
-
-	// ── 6. Register session in Redis ──────────────────────────────────────────
-	sessInfo := session.SessionInfo{
-		SessionID:        sessionID,
-		InstanceID:       h.instanceID,
-		UserID:           tokenInfo.TokenID,
-		OrchestratorName: appSlug,
-		EPSlug:           epSlug,
-		ContextID:        contextID,
-		StartedAt:        time.Now().UTC().Format(time.RFC3339),
-	}
-	// R-0 T-2 / OD-2: populate AppID and TenantID from resolved EP config so the
-	// five-element RuntimeIdentity is fully materialised in the Redis session Hash.
-	if resolvedCfg != nil {
-		sessInfo.AppID = resolvedCfg.AppID
-		sessInfo.TenantID = resolvedCfg.TenantID
-	}
-	if err := h.sessions.Register(r.Context(), sessInfo); err != nil {
-		h.logger.Warn("ws: register session failed",
-			"ep_slug", epSlug,
-			"app_id", sessInfo.AppID,
-			"error", err)
-		if gateAdmitted {
-			_ = h.gateStore.Rollback(context.Background(), gateCfg)
-		}
-		h.writeError(conn, "session registration failed")
-		return
-	}
-
-	// ── 7. Gate.Confirm ───────────────────────────────────────────────────────
-	if gateAdmitted {
-		if err := h.gateStore.Confirm(r.Context(), gateCfg); err != nil {
-			h.logger.Warn("ws: gate confirm failed",
-				"ep_slug", epSlug,
-				"app_id", sessInfo.AppID,
-				"error", err)
-			// Non-fatal: session hash is registered; shadow TTL (10s) provides safety net.
-		}
-	}
-
-	// Capture appID for use in defer (resolvedCfg may be nil in tests without EP loader).
-	appID := ""
-	if resolvedCfg != nil {
-		appID = resolvedCfg.AppID
-	}
-
-	// Track active session count and record session lifecycle metrics.
-	epType := epTypeLabel(resolvedCfg)
-	metrics.ActiveSessions.WithLabelValues(epType).Inc()
-	metrics.SessionsStarted.WithLabelValues(epType, "admitted").Inc()
-
 	h.logger.Info("ws: session started",
 		"ep_slug", epSlug,
-		"app_id", appID,
-		"tenant_id", sessInfo.TenantID,
-		"session_id", sessionID,
+		"app_id", handle.EPConfig.AppID,
+		"tenant_id", handle.EPConfig.TenantID,
+		"session_id", handle.SessionID,
+		"run_id", handle.RunID,
 	)
 
 	defer func() {
@@ -430,161 +252,91 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		h.logger.Info("ws: session ended",
 			"ep_slug", epSlug,
-			"app_id", appID,
-			"tenant_id", sessInfo.TenantID,
-			"session_id", sessionID,
+			"app_id", handle.EPConfig.AppID,
+			"tenant_id", handle.EPConfig.TenantID,
+			"session_id", handle.SessionID,
 		)
-
-		ctx := context.Background()
-		_ = h.sessions.End(ctx, sessionID, epSlug, appID)
-		if gateAdmitted {
-			_ = h.gateStore.Release(ctx, gateCfg)
-		}
+		// Release: bounded 5s timeout applied inside lifecycle.Release.
+		h.lc.Release(context.Background(), handle)
 	}()
 
-	// ── 8. Subscribe to event bus (kept for future in-process events) ────────
-	// The in-process bus subscription is retained so any internal components
-	// (e.g. future direct-Go orchestration for testing) can still publish events.
-	// After R-2B, the WS handler streams from the Redis run-stream (rsEvCh),
-	// not from evCh/termCh. The subscription is a no-op for the Temporal path.
-	_, _, unsub := h.bus.Subscribe(r.Context(), contextID, 256)
+	// ── 4. Subscribe to event bus (bootstrap ordering — before Start) ────────
+	// The in-process bus subscription is retained for any internal components
+	// that publish directly (e.g. future Go-inline orchestration). For the
+	// Temporal path it is a no-op; events arrive via the Redis run-stream.
+	_, _, unsub := h.bus.Subscribe(r.Context(), handle.ContextID, 256)
 	defer unsub()
 
-	// ── 9. Create run record in DB ────────────────────────────────────────────
-	// events_transport is decided by RUN_EVENTS_MODE at run-creation time and is
-	// stable for the run's lifetime (Phase 11c-B). The dispatcher reads it to
-	// pick Pub/Sub or Streams.
-	// TenantID and ApplicationID come from resolvedCfg (R-4d); never from the client.
-	eventsTransport := h.eventsTransportForNewRun()
-	run := domain.Run{
-		ID:              runID,
-		ContextID:       contextID,
-		EntryPointSlug:  epSlug,
-		Status:          domain.RunStatusRunning,
-		EventsTransport: eventsTransport,
-	}
-	if resolvedCfg != nil {
-		run.TenantID = resolvedCfg.TenantID
-		run.ApplicationID = resolvedCfg.AppID
-	}
-	if err := h.recorder.CreateRun(r.Context(), run); err != nil {
-		h.logger.Warn("ws: create run failed", "run_id", runID, "error", err)
-	}
-
-	// ── 10. Wait for first client message ────────────────────────────────────
-	userMsg, lastEventID, err := h.readClientMessage(conn)
-	if err != nil {
-		h.writeError(conn, "failed to read message: "+err.Error())
+	// ── 5. Wait for first client message ─────────────────────────────────────
+	userMsg, lastEventID, msgErr := h.readClientMessage(conn)
+	if msgErr != nil {
+		h.writeError(conn, "failed to read message")
 		return
 	}
 
-	// ── 11. Start orchestration (Temporal — unconditional after R-2B) ────────
-	// When temporalClient is nil (Temporal not configured), return 503 immediately.
-	// There is NO inline fallback — Temporal is the only execution path.
+	// ── 6. Subscribe to run-stream BEFORE Lifecycle.Start ─────────────────────
+	// This ensures no event emitted by the workflow immediately after start is
+	// missed (bootstrap ordering invariant — same pattern as SSE and A2A).
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	if h.temporalClient == nil {
-		h.logger.Warn("ws: temporal client unavailable — rejecting request", "run_id", runID)
-		h.writeError(conn, "orchestration service unavailable")
-		_ = h.recorder.UpdateStatus(r.Context(), runID, domain.RunStatusFailed)
-		return
-	}
-
-	// Subscribe to the run-stream BEFORE starting the workflow so no event
-	// is missed (critical bootstrap ordering — bus.Subscribe already done above).
-	rsEvCh, rsErr := h.runEvents(ctx, runID, eventsTransport, lastEventID)
+	rsEvCh, rsErr := h.runEvents(ctx, handle.RunID, handle.EventsTransport, lastEventID)
 	if rsErr != nil {
-		h.logger.Warn("ws: runstream subscribe failed", "run_id", runID, "error", rsErr)
+		h.logger.Warn("ws: runstream subscribe failed", "run_id", handle.RunID, "error", rsErr)
 		h.writeError(conn, "event stream unavailable")
-		_ = h.recorder.UpdateStatus(r.Context(), runID, domain.RunStatusFailed)
 		return
 	}
 
-	// R-2C: send WorkflowInput (typed) to GoTaskQueue so the Go Worker can
-	// deserialize it correctly. PythonOrchestrationInput was for the Python
-	// worker's "them-orchestration" queue; the Go Worker expects WorkflowInput.
-	// R-4d: TenantID and ApplicationID propagated from resolvedCfg — never from
-	// client request data.
+	// ── 7. Lifecycle.Start → ExecuteWorkflow ─────────────────────────────────
+	// Identity fields (RunID, ContextID, TenantID, ApplicationID, EPSlug) are
+	// overwritten inside Start from the handle — never from client-supplied data.
 	input := temporal.WorkflowInput{
-		RunID:            runID,
-		ContextID:        contextID,
-		EntryPointSlug:   epSlug,
-		OrchestratorName: appSlug,
+		OrchestratorName: chi.URLParam(r, "app_slug"),
 		UserMessage:      userMsg,
 	}
-	if resolvedCfg != nil {
-		input.TenantID = resolvedCfg.TenantID
-		input.ApplicationID = resolvedCfg.AppID
-	}
-
-	wfOpts := temporalclient.StartWorkflowOptions{
-		// Python OrchestrationWorkflow registers itself as "ctx-{contextID}".
-		// Go must use the same scheme so HITL signals reach the correct workflow.
-		// R-2C: Bridge sends workflows to GoTaskQueue ("them-orchestration-go");
-		// the dedicated Go Worker polls that queue. Python worker continues to
-		// poll TaskQueue ("them-orchestration") independently.
-		ID:        "ctx-" + contextID,
-		TaskQueue: temporal.GoTaskQueue,
-	}
-
-	wfRun, wfErr := h.temporalClient.ExecuteWorkflow(ctx, wfOpts, temporal.WorkflowType, input)
-	if wfErr != nil {
-		h.logger.Warn("ws: start temporal workflow failed", "run_id", runID, "error", wfErr)
+	wfRun, startErr := h.lc.Start(ctx, handle, input)
+	if startErr != nil {
+		h.logger.Warn("ws: start lifecycle failed", "run_id", handle.RunID)
 		h.writeError(conn, "failed to start workflow")
 		return
 	}
 	h.logger.Info("ws: temporal workflow started",
 		"ep_slug", epSlug,
-		"app_id", appID,
-		"session_id", sessionID,
-		"run_id", runID,
+		"session_id", handle.SessionID,
+		"run_id", handle.RunID,
 		"workflow_id", wfRun.GetID(),
 	)
 
 	orchDone := make(chan struct{})
-
-	// Wait for workflow completion in background (drives orchDone).
 	go func() {
 		defer close(orchDone)
 		if err := wfRun.Get(ctx, nil); err != nil {
-			h.logger.Warn("ws: temporal workflow error", "run_id", runID, "error", err)
+			h.logger.Warn("ws: temporal workflow error", "run_id", handle.RunID, "error", err)
 		}
 	}()
 
-	// ── 12. Stream Redis run events to client ─────────────────────────────────
-	// Redis run-stream events arrive on rsEvCh (not the in-process bus),
-	// so termCh is not used here — pass nil to signal no termCh available.
+	// ── 8. Stream run events to client ───────────────────────────────────────
 	h.streamEvents(ctx, cancel, conn, rsEvCh, nil, orchDone)
 }
 
-// textContent extracts the concatenated text from all "text" parts of a message.
-// Bridges domain.Message to the string expected by PythonOrchestrationInput.UserMessage.
-func textContent(msg domain.Message) string {
-	return msg.Text()
-}
-
-// tryAuthenticate extracts and validates the bearer token from the request.
-// Returns (tokenInfo, rawToken, ok). ok=false means no valid token was found;
-// the caller decides whether to reject the request based on the EP's access mode.
-func (h *Handler) tryAuthenticate(r *http.Request) (*auth.TokenInfo, string, bool) {
+// extractToken extracts the bearer token from Authorization header or ?token query param.
+// Returns (rawToken, tokenInfo). tokenInfo is nil when no valid token is found; the
+// Lifecycle enforces token requirements per EP access policy, not the handler.
+func (h *Handler) extractToken(r *http.Request) (string, *auth.TokenInfo) {
 	var rawToken string
-
 	if hdr := r.Header.Get("Authorization"); strings.HasPrefix(hdr, "Bearer ") {
 		rawToken = strings.TrimPrefix(hdr, "Bearer ")
 	} else if t := r.URL.Query().Get("token"); t != "" {
 		rawToken = t
 	}
-
 	if rawToken == "" {
-		return nil, "", false
+		return "", nil
 	}
-
 	info, err := h.authenticator.Validate(r.Context(), rawToken)
 	if err != nil {
-		return nil, "", false
+		return rawToken, nil // token present but invalid — Lifecycle enforces per EP policy
 	}
-	return info, rawToken, true
+	return rawToken, info
 }
 
 // readClientMessage reads the first message from the WebSocket client. It
@@ -739,20 +491,15 @@ func (h *Handler) writeError(conn *websocket.Conn, msg string) {
 	_ = conn.WriteMessage(websocket.TextMessage, data)
 }
 
-// tokenHash is a package-local alias for transport.TokenHash for backward
-// compatibility with the ws package's internal call sites.
-var tokenHash = transport.TokenHash
-
-// epTypeLabel returns the Prometheus ep_type label for a resolved EPConfig.
-// When cfg is nil (no EP loader wired — tests), returns "unknown".
-// Values are low-cardinality: websocket, sse, voice, a2a, unknown.
-func epTypeLabel(cfg *epconfig.EPConfig) string {
-	if cfg == nil {
+// epTypeLabel returns the Prometheus ep_type label from an ExecutionHandle.
+// The EP type comes from the EPConfig resolved by Lifecycle.Admit.
+func epTypeLabel(h *execution.ExecutionHandle) string {
+	if h == nil || h.EPConfig == nil {
 		return "unknown"
 	}
-	switch cfg.EPType {
+	switch h.EPConfig.EPType {
 	case "websocket", "sse", "voice", "a2a":
-		return cfg.EPType
+		return h.EPConfig.EPType
 	default:
 		return "unknown"
 	}

@@ -29,8 +29,6 @@ import (
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/health"
-	"github.com/aviciot/them/internal/llm"
-	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/ratelimit"
 	"github.com/aviciot/them/internal/reconciler"
 	"github.com/aviciot/them/internal/runrecorder"
@@ -105,22 +103,6 @@ func run() error {
 	runstream.SetModeGauge(string(cfg.RunEventsMode))
 	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(database.Pool())).
 		WithRunEventsMode(cfg.RunEventsMode)
-
-	// ── 8. Create LLM provider ────────────────────────────────────────────────
-	var llmProvider llm.Provider
-	if cfg.AnthropicAPIKey != "" {
-		llmProvider = llm.NewAnthropicProvider(cfg.AnthropicAPIKey, "", 0)
-		log.Info("LLM: Anthropic provider configured")
-	} else {
-		llmProvider = &llm.MockProvider{}
-		log.Warn("LLM: no ANTHROPIC_API_KEY set — using mock provider")
-	}
-
-	// ── 9. Create orchestrator ────────────────────────────────────────────────
-	orchCfg := orchestrator.Config{
-		MaxIterations: 10,
-	}
-	orch := orchestrator.New(orchCfg, llmProvider, nil, recorder, bus, log)
 
 	// ── 10. Create rate limiter ───────────────────────────────────────────────
 	rlRedis := cache.NewRateLimitClient(redisCache.Client())
@@ -235,9 +217,9 @@ func run() error {
 	)
 
 	// ── 16b. Wire WebSocket handler (/ws/*) ──────────────────────────────────
-	wsHandler := ws.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log).
-		WithGate(admissionGate).
-		WithEPConfig(epLoader).
+	// Auth, EPConfig, gate, session, CreateRun, and temporal start are now owned by
+	// execLifecycle. The WS handler retains only upgrade, frame I/O, and metrics.
+	wsHandler := ws.NewHandler(execLifecycle, bus, authenticator, cfg.InstanceID, log).
 		WithTemporal(temporalCli, rsRedis, cfg.TemporalEnabled).
 		WithRunEvents(dispatcher, cfg.RunEventsMode)
 	srv.MountWS(wsHandler.Routes())

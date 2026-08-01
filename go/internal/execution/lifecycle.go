@@ -316,23 +316,40 @@ func (lc *Lifecycle) Start(ctx context.Context, h *ExecutionHandle, input tempor
 // Release ends the session and releases the gate reservation. It must be called
 // exactly once, always in a defer in the protocol handler.
 //
-// IMPORTANT: Pass context.Background() — the request context may already be
-// cancelled when Release fires, and cleanup must still complete.
+// IMPORTANT: Always call with context.Background() — the request context is
+// cancelled before Release fires, and cleanup must still complete. A 5-second
+// bounded timeout prevents cleanup from hanging indefinitely.
 //
-// Release(ctx, nil) is a no-op — safe to use even if Admit returned an error.
+// Release(ctx, nil) is a no-op — safe to call even when Admit returned an error.
 func (lc *Lifecycle) Release(ctx context.Context, h *ExecutionHandle) {
 	if h == nil {
 		return
 	}
+	// Bounded timeout: the caller's ctx may already be cancelled (request done),
+	// so we derive a fresh 5-second deadline from a Background context.
+	cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cleanCancel()
+
 	appID := ""
+	epSlug := ""
 	if h.EPConfig != nil {
 		appID = h.EPConfig.AppID
+		epSlug = h.EPConfig.EPSlug
 	}
 	if lc.sessions != nil && h.EPConfig != nil {
-		_ = lc.sessions.End(ctx, h.SessionID, h.EPConfig.EPSlug, appID)
+		if err := lc.sessions.End(cleanCtx, h.SessionID, epSlug, appID); err != nil {
+			lc.logger.Warn("execution: session.End failed during release",
+				"session_id", h.SessionID,
+				"ep_slug", epSlug,
+				"error", err)
+		}
 	}
 	if h.gateAdmitted && lc.gate != nil {
-		_ = lc.gate.Release(ctx, h.gateCfg)
+		if err := lc.gate.Release(cleanCtx, h.gateCfg); err != nil {
+			lc.logger.Warn("execution: gate.Release failed during release",
+				"ep_slug", epSlug,
+				"error", err)
+		}
 	}
 }
 
