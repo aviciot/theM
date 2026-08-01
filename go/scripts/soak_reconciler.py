@@ -7,9 +7,9 @@ multiple sweep cycles. Intended output is pasted back to the engineer as the
 basis for the DryRun=false approval decision.
 
 Prerequisites:
-  Full hybrid stack running with TEMPORAL_ENABLED=true and DryRun=true:
+  Full hybrid stack running with TEMPORAL_ENABLED=true and DryRun=true
+  (run from repo root):
 
-    cd theM_gateway
     docker compose -f docker-compose.yml -f docker-compose.local.yml \\
                    -f docker-compose.integration.yml --profile temporal up -d --build
 
@@ -411,8 +411,7 @@ def main() -> int:
 
     # ── Pre-soak snapshot ─────────────────────────────────────────────────────
     if not collect_health(gateway):
-        print("\nFATAL: Go bridge not healthy. Start the hybrid stack first.")
-        print("  cd theM_gateway")
+        print("\nFATAL: Go bridge not healthy. Start the hybrid stack first (from repo root).")
         print("  docker compose -f docker-compose.yml -f docker-compose.local.yml \\")
         print("                 -f docker-compose.integration.yml --profile temporal up -d --build")
         return 1

@@ -15,8 +15,8 @@
 # the advisory lock — only one sweeps at a time, the other logs "advisory lock held".
 #
 # Usage:
-#   cd theM_gateway
-#   bash ../go/scripts/soak_start.sh
+#   bash go/scripts/soak_start.sh          (from repo root)
+#   bash scripts/soak_start.sh             (from go/)
 #
 # Prerequisites:
 #   - Docker + docker compose v2 installed
@@ -26,11 +26,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GATEWAY_DIR="$(cd "${SCRIPT_DIR}/../../theM_gateway" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 echo "==> [soak_start] Starting hybrid stack with two Go bridge replicas..."
-echo "    Gateway dir: ${GATEWAY_DIR}"
-cd "${GATEWAY_DIR}"
+echo "    Repo root: ${REPO_ROOT}"
+cd "${REPO_ROOT}"
 
 docker compose \
   -f docker-compose.yml \
@@ -73,10 +73,10 @@ sleep 20
 echo ""
 echo "==> [soak_start] Stack status:"
 docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.local.yml \
-  -f docker-compose.integration.yml \
-  -f docker-compose.soak.yml \
+  -f "${REPO_ROOT}/docker-compose.yml" \
+  -f "${REPO_ROOT}/docker-compose.local.yml" \
+  -f "${REPO_ROOT}/docker-compose.integration.yml" \
+  -f "${REPO_ROOT}/docker-compose.soak.yml" \
   --profile temporal \
   ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
 

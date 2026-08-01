@@ -20,6 +20,8 @@ livekit-api>=0.7.1
 pytest==8.3.4
 anyio[trio]==4.7.0
 pytest-asyncio==0.21.2
+fakeredis[aioredis]>=2.26
+lupa>=2.0  # required for fakeredis Lua scripting (register_script/EVALSHA) in test 36
 groq>=0.4.0
 
 # Temporal durable execution runtime

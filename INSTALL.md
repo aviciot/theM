@@ -97,7 +97,7 @@ This stack is deployed on a **Hetzner Cloud VPC** on the same server as the othe
 | Cloudflare Tunnel container | `infra-cloudflared` (already running) |
 | External Traefik entrypoint | `web` — port 80, plain HTTP (TLS at Cloudflare edge) |
 | the-M route file | `/home/avi/infrastructure/traefik/dynamic/them-routes.yml` |
-| the-M compose overlay | `theM_gateway/docker-compose.cloudflare.yml` |
+| the-M compose overlay | `docker-compose.cloudflare.yml` (repo root) |
 
 **Important:** The external Traefik uses **port 80 only** — no TLS config. Cloudflare Tunnel terminates TLS at the edge and forwards plain HTTP inward. All internal traffic between `infra-traefik` and `them-traefik` is plain HTTP.
 
@@ -111,15 +111,17 @@ This stack is deployed on a **Hetzner Cloud VPC** on the same server as the othe
 
 ### What `docker-compose.hetzner-build.yml` does
 
-This overlay is critical on Hetzner because `theM_gateway/` is a **sparse overlay** — it only contains files that differ from the main `them/` repo. The full source code (Dockerfiles, `app/`, `frontend/`, `auth_service/`, etc.) lives in the parent `them/` directory.
+This overlay is required on Hetzner because the repo is cloned directly to a path where
+all Dockerfiles and source trees are co-located — compose is run from **the repo root**, not
+a sparse subdirectory.
 
-Two problems it solves:
+What it overrides for Hetzner:
 
-1. **Build context** — the base `docker-compose.yml` sets `context: .` (i.e. theM_gateway/), which would fail to find the Dockerfiles. The overlay sets all build contexts to `..` (parent `them/`).
+1. **Build contexts** — sets all build contexts to `..` relative to any outer directory wrapping the repo, ensuring Dockerfiles are resolved correctly regardless of clone path.
 
-2. **Runtime volume mounts** — the base file sets `- .:/app` (mounts theM_gateway/ over /app at runtime), shadowing the image's baked-in full source code with the sparse overlay. Docker Compose merges volume arrays rather than replacing them, so `docker-compose.linux.yml`'s attempt to clear these doesn't work reliably. The overlay explicitly overrides `- .:/app` → `- ..:/app` for `them-bridge`, `them-bridge-2`, `them-worker`, and `them-frontend`.
+2. **Runtime volume mounts** — overrides `- .:/app` to `- ..:/app` for `them-bridge`, `them-bridge-2`, `them-worker`, and `them-frontend`, so the full source tree is mounted into the running container at development time.
 
-3. **Config file paths** — `traefik.yml`, `postgres/init/`, and `redis/config/redis.conf` are only in the parent, not in the sparse overlay. Docker would otherwise create empty directories in theM_gateway/ for these mounts (which would fail silently). The overlay redirects all of these to `../`.
+3. **Config file paths** — redirects `traefik.yml`, `postgres/init/`, and `redis/config/redis.conf` mounts to `../` to ensure correct resolution on Hetzner.
 
 ### Hetzner start script
 
@@ -128,7 +130,6 @@ Two problems it solves:
 Instead use `linux-start-hetzner.sh` — a **standalone** script (does NOT call `linux-start.sh`) that includes all the Hetzner-specific overlays in its own COMPOSE array:
 
 ```bash
-cd theM_gateway
 ./scripts/linux-start-hetzner.sh [--build]
 ```
 
@@ -163,17 +164,17 @@ Ensure your external Traefik is already running and connected to a Docker networ
 
 ---
 
-## Step 1 — Clone and enter the gateway directory
+## Step 1 — Clone the repository
 
 ```bash
 git clone https://github.com/aviciot/theM theM
-cd theM/theM_gateway
+cd theM
 
 # Make scripts executable (one-time setup)
 chmod +x scripts/linux-*.sh generate-env.sh
 ```
 
-> **Note:** All `docker compose` commands and scripts must be run from inside `theM_gateway/`.
+> **Note:** All `docker compose` commands and scripts must be run from the **repository root** (`theM/`).
 
 ---
 
@@ -264,7 +265,7 @@ docker inspect <your-traefik-container> --format '{{json .NetworkSettings.Networ
 
 ### 4-B. Create a Cloudflare overlay compose file
 
-Create `docker-compose.cloudflare.yml` in `theM_gateway/`:
+Create `docker-compose.cloudflare.yml` in the **repository root**:
 
 ```yaml
 # docker-compose.cloudflare.yml
@@ -346,7 +347,7 @@ labels:
 **On this Hetzner server**, always use `linux-start-hetzner.sh` — not the generic `linux-start.sh`. The Hetzner wrapper calls the generic script and then applies the Cloudflare overlay.
 
 ```bash
-cd theM_gateway
+# Run from repository root (theM/)
 
 # First-time or after a code change — rebuild images:
 ./scripts/linux-start-hetzner.sh --build
@@ -858,28 +859,29 @@ The external Traefik cannot reach `them-traefik:8088`. Check:
 ## File layout reference
 
 ```
-theM/
-├── theM_gateway/           ← all deployment commands run from here
-│   ├── docker-compose.yml           base stack definition
-│   ├── docker-compose.linux.yml     Linux overlay (named volumes, no bind mounts)
-│   ├── docker-compose.integration.yml  Go bridges + Go workers + exposed infra ports
-│   ├── docker-compose.soak.yml      Go bridge replica 2
-│   ├── docker-compose.traefik.yml   Traefik labels for Go bridge route ownership
-│   ├── docker-compose.cloudflare.yml   ← YOU CREATE THIS (step 4-B)
-│   ├── .env                         secrets (git-ignored, generated)
-│   ├── secrets.local                master passphrase (git-ignored, never commit)
-│   ├── generate-env.sh              derives .env from secrets.local
-│   ├── scripts/
-│   │   ├── linux-start.sh           full stack startup script
-│   │   ├── linux-stop.sh            graceful shutdown
-│   │   ├── linux-health.sh          health verification
-│   │   ├── linux-db-init.sh         DB schema bootstrap (no-op if initialised)
-│   │   ├── linux-db-upgrade.sh      apply migration files
-│   │   ├── linux-validate-clean-install.sh  7-phase automated validation
-│   │   └── linux-rollback.sh        roll back Go bridge image
-│   ├── db/
-│   │   └── schema_current.sql       canonical schema snapshot for fresh installs
-│   └── traefik/
-│       └── traefik.yml              internal Traefik static config (port 8088/8089)
+theM/                                ← all deployment commands run from here (repo root)
+├── docker-compose.yml               base stack definition
+├── docker-compose.linux.yml         Linux overlay (named volumes, no bind mounts)
+├── docker-compose.integration.yml   Go bridges + Go workers + exposed infra ports
+├── docker-compose.soak.yml          Go bridge replica 2
+├── docker-compose.traefik.yml       Traefik labels for Go bridge route ownership
+├── docker-compose.hetzner-build.yml build context + volume overrides for Hetzner
+├── docker-compose.cloudflare.yml    ← YOU CREATE THIS (step 4-B)
+├── .env                             secrets (git-ignored, generated)
+├── secrets.local                    master passphrase (git-ignored, never commit)
+├── generate-env.sh                  derives .env from secrets.local
+├── scripts/
+│   ├── linux-start.sh               full stack startup script
+│   ├── linux-start-hetzner.sh       Hetzner-specific start (includes hetzner-build + cloudflare)
+│   ├── linux-stop.sh                graceful shutdown
+│   ├── linux-health.sh              health verification
+│   ├── linux-db-init.sh             DB schema bootstrap (no-op if initialised)
+│   ├── linux-db-upgrade.sh          apply migration files
+│   ├── linux-validate-clean-install.sh  7-phase automated validation
+│   └── linux-rollback.sh            roll back Go bridge image
+├── db/
+│   └── schema_current.sql           canonical schema snapshot for fresh installs
+├── traefik/
+│   └── traefik.yml                  internal Traefik static config (port 8088/8089)
 └── INSTALL.md                       ← this file
 ```

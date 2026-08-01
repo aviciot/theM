@@ -5,16 +5,16 @@
 # Safe to re-run — all scripts use CREATE IF NOT EXISTS / ALTER ... IF NOT EXISTS.
 #
 # Usage:
-#   cd theM_gateway
-#   bash ../go/scripts/soak_setup_db.sh
+#   bash go/scripts/soak_setup_db.sh          (from repo root)
+#   bash scripts/soak_setup_db.sh             (from go/)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GATEWAY_DIR="$(cd "${SCRIPT_DIR}/../../theM_gateway" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 echo "==> [soak_setup_db] Applying DB schema and migrations..."
-cd "${GATEWAY_DIR}"
+cd "${REPO_ROOT}"
 
 # run_sql pipes a file directly into psql via stdin (docker exec -i).
 # This avoids the docker cp + psql -f approach which mangles /tmp paths on

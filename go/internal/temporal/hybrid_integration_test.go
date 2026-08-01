@@ -19,11 +19,10 @@
 //	Redis            at $TEST_REDIS_ADDR     (default localhost:6379)
 //	Python worker    polling task queue "them-orchestration"
 //
-// Start the full stack:
+// Start the full stack (from repo root):
 //
-//	cd theM_gateway
 //	docker compose -f docker-compose.yml -f docker-compose.integration.yml --profile temporal up -d
-//	cd ../go && go test -tags=integration -v -timeout 120s ./internal/temporal/...
+//	go test -tags=integration -v -timeout 120s ./go/internal/temporal/...
 package temporal_test
 
 import (

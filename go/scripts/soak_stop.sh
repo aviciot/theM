@@ -5,8 +5,8 @@
 # Data volumes are preserved by default — add --volumes to wipe everything.
 #
 # Usage:
-#   cd theM_gateway
-#   bash ../go/scripts/soak_stop.sh [--volumes] [--clean-db]
+#   bash go/scripts/soak_stop.sh [--volumes] [--clean-db]   (from repo root)
+#   bash scripts/soak_stop.sh [--volumes] [--clean-db]      (from go/)
 #
 #   --volumes   Also remove Docker named volumes (wipes all DB data)
 #   --clean-db  Remove soak-seeded rows from DB without wiping volumes
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GATEWAY_DIR="$(cd "${SCRIPT_DIR}/../../theM_gateway" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 REMOVE_VOLUMES=0
 CLEAN_DB=0
@@ -26,7 +26,7 @@ for arg in "$@"; do
 done
 
 echo "==> [soak_stop] Stopping soak stack..."
-cd "${GATEWAY_DIR}"
+cd "${REPO_ROOT}"
 
 COMPOSE_FLAGS=(
   -f docker-compose.yml

@@ -2,15 +2,13 @@ version: "3.9"
 # docker-compose.hetzner-build.yml
 # Hetzner-specific build context and volume overrides.
 #
-# On Hetzner the full repo is at /home/avi/them/ and theM_gateway/ is a sparse overlay.
-# Dockerfiles live in the parent (them/) not in theM_gateway/, so build contexts
-# must point to .. (parent directory) for services that use them.
+# On Hetzner the repo is cloned under a parent directory (e.g. /home/avi/them/).
+# Build contexts point to .. (parent) so Dockerfiles are found correctly when
+# compose is run from inside a repo subdirectory on the server.
 #
-# The base docker-compose.yml mounts .:app (i.e. theM_gateway/ → /app) at runtime,
-# which would shadow the image's baked-in code with the sparse overlay.
-# docker-compose.linux.yml tries to clear these but Compose MERGES volume arrays, so
-# the bind mount survives. We override it here by replacing .:/app with ..:/app so
-# the full repo (with complete app/ package) is mounted instead.
+# Runtime volume mounts override .:/app → ..:/app so the full source tree is
+# mounted into containers at development time instead of only the immediate
+# compose directory.
 
 services:
   them-bridge:
@@ -111,7 +109,7 @@ services:
       context: ../agents/debate/agent_judge
       dockerfile: Dockerfile
 
-  # Override Traefik config path: theM_gateway/ is sparse, parent has the real traefik.yml.
+  # Override Traefik config path to parent directory on Hetzner.
   them-traefik:
     volumes:
       - ../traefik/traefik.yml:/etc/traefik/traefik.yml:ro
