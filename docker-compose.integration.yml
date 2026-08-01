@@ -8,19 +8,17 @@ version: "3.9"
 #    full Go→Temporal→Python hybrid path can be started with one command.
 #
 # Usage (automated test runner):
-#   cd theM_gateway
-#   ./scripts/run-go-integration-tests.sh
+#   ./scripts/deploy.sh up
 #
 # Usage (manual smoke tests — starts full hybrid stack):
-#   cd theM_gateway
-#   docker compose -f docker-compose.yml -f docker-compose.local.yml \
-#                  -f docker-compose.integration.yml --profile temporal up -d --build
+#   ./scripts/deploy.sh up
 #   # Go gateway on host port 8002 (direct — no Traefik)
 #   # Python bridge on port 8001 (internal) / 8088 (Traefik)
 #
-# Teardown:
-#   docker compose -f docker-compose.yml -f docker-compose.local.yml \
-#                  -f docker-compose.integration.yml --profile temporal down
+# Teardown (never use --volumes):
+#   docker compose --project-name them_gateway --project-directory <repo-root> \
+#     -f docker-compose.yml -f docker-compose.linux.yml \
+#     -f docker-compose.integration.yml --profile temporal down
 #
 # Non-standard host ports avoid conflicts with any local Postgres/Redis/Temporal:
 #   Postgres  → host:15432   (container:5432)

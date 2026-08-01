@@ -25,14 +25,7 @@ version: "3.9"
 # Direct bridge ports (8002/8003) remain available for diagnostics.
 #
 # Usage (layer on top of integration + soak):
-#   cd theM_gateway
-#   docker compose \
-#     -f docker-compose.yml \
-#     -f docker-compose.local.yml \
-#     -f docker-compose.integration.yml \
-#     -f docker-compose.soak.yml \
-#     -f docker-compose.traefik.yml \
-#     --profile temporal up -d --build
+#   ./scripts/deploy.sh up
 #
 # After stack is up:
 #   WS via Traefik:         ws://localhost:8088/ws/orchestrate/{app}/{ep}  (→ Python)

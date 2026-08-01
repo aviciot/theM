@@ -1,7 +1,7 @@
 # Local / Test Environment Runbook
 
 **the-M — multi-agent orchestration platform**  
-**Last updated:** 2026-08-01 (Compose consolidation Stages C–H complete)  
+**Last updated:** 2026-08-01 (path-independent deployment tooling complete)  
 **Mandatory reading:** before any Docker, deployment, environment, or container recreation work.
 
 ---
@@ -10,21 +10,31 @@
 
 ### Canonical repository root
 
-The canonical directory for all code, Compose files, and deployments is:
+The canonical Git repository root contains all code, Compose files, and the deploy script. It is typically cloned to `/home/avi/them` on the production VPS but the tooling does not hardcode this path.
 
-```
-/home/avi/them
+The `theM_gateway/` subdirectory is a retired deployment artifact — do not use it for new deployments. See `theM_gateway/RETIRED.md`.
+
+### Deploy script (path-independent)
+
+**All production deployments use `scripts/deploy.sh`.** It derives the repository root from its own file location and works from any caller directory.
+
+```bash
+# From any directory:
+/path/to/repo/scripts/deploy.sh config    # render config (dry run)
+/path/to/repo/scripts/deploy.sh build     # build images
+/path/to/repo/scripts/deploy.sh up        # start or adopt stack (--no-recreate)
+/path/to/repo/scripts/deploy.sh status    # container health overview
+/path/to/repo/scripts/deploy.sh logs [service]
+/path/to/repo/scripts/deploy.sh restart <service>
 ```
 
-All commands in this runbook run from this directory unless explicitly noted. The `theM_gateway/` subdirectory at `/home/avi/them/theM_gateway/` is a historical deployment artifact — do not use it for new deployments.
+The script uses `--project-directory` to anchor all relative bind-mount paths and build contexts to the repository root, regardless of caller CWD.
 
 ### Compose project name: `them_gateway`
 
-The running stack uses project name `them_gateway` for all containers. Pass `--project-name them_gateway` (or set `COMPOSE_PROJECT_NAME=them_gateway` in `.env`) to ensure all `docker compose` commands target the correct project.
+The running stack uses project name `them_gateway` for all containers. The deploy script passes `--project-name them_gateway` automatically.
 
 ### Compose files — production stack
-
-All commands run from `/home/avi/them`.
 
 | File | Purpose |
 |---|---|
@@ -36,31 +46,37 @@ All commands run from `/home/avi/them`.
 | `docker-compose.cloudflare.yml` | Cloudflare ingress overlay: overrides `proxy-network` to `external: true` (name: `proxy-network`) for Cloudflare Tunnel → infra-traefik path |
 | `docker-compose.local.yml` | Local dev overlay: creates `proxy-network` locally (not external), dev-mode labels, no Host constraints — **not used in production** |
 
-**Production launch command** (run from `/home/avi/them`):
+**Production launch (via deploy script):**
 
 ```bash
-cd /home/avi/them
+scripts/deploy.sh up
+```
+
+**Manual equivalent** (if running the compose command directly):
+
+```bash
+REPO=/path/to/repo   # substitute actual path
 docker compose \
   --project-name them_gateway \
-  -f docker-compose.yml \
-  -f docker-compose.linux.yml \
-  -f docker-compose.integration.yml \
-  -f docker-compose.soak.yml \
-  -f docker-compose.traefik.yml \
-  -f docker-compose.cloudflare.yml \
+  --project-directory "$REPO" \
+  -f "$REPO/docker-compose.yml" \
+  -f "$REPO/docker-compose.linux.yml" \
+  -f "$REPO/docker-compose.integration.yml" \
+  -f "$REPO/docker-compose.soak.yml" \
+  -f "$REPO/docker-compose.traefik.yml" \
+  -f "$REPO/docker-compose.cloudflare.yml" \
   --profile temporal up -d
 ```
 
-> **Status:** Compose consolidation complete (2026-08-01). The above command is the canonical production launch command. `theM_gateway/` is retired — see `theM_gateway/RETIRED.md`.
-
-**Local dev start command** (run from `/home/avi/them`):
+**Local dev start command:**
 
 ```bash
-cd /home/avi/them
+REPO=/path/to/repo
 docker compose \
   --project-name them_gateway \
-  -f docker-compose.yml \
-  -f docker-compose.local.yml \
+  --project-directory "$REPO" \
+  -f "$REPO/docker-compose.yml" \
+  -f "$REPO/docker-compose.local.yml" \
   up -d
 ```
 
@@ -90,18 +106,14 @@ Direct Go bridge access (bypasses Traefik): `http://localhost:8002`.
 
 ## 3. Compose Commands
 
-All commands run from `/home/avi/them` (the repository root).
-
-The full production `-f` chain for all commands is:
-```bash
-# Define once, reuse in commands below
-COMPOSE_PROD="-f docker-compose.yml -f docker-compose.linux.yml -f docker-compose.integration.yml -f docker-compose.soak.yml -f docker-compose.traefik.yml -f docker-compose.cloudflare.yml"
-```
+Use `scripts/deploy.sh` for all production operations — it is path-independent and works from any directory.
 
 ### Inspect the running stack
 
 ```bash
-# Show all them-related containers and health
+scripts/deploy.sh status
+
+# Or with docker directly:
 docker ps --filter "name=them" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
 # Which compose files started a container
@@ -112,47 +124,24 @@ docker inspect them-go-bridge --format '{{index .Config.Labels "com.docker.compo
 docker inspect them-go-bridge --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1 | sort
 ```
 
-### Go bridge — build, restart, recreate, stop
+### Go bridge — build, restart
 
 ```bash
-cd /home/avi/them
+# Rebuild image only (no containers touched)
+scripts/deploy.sh build
 
-# Rebuild image only
-docker compose --project-name them_gateway \
-  -f docker-compose.yml -f docker-compose.linux.yml -f docker-compose.integration.yml \
-  -f docker-compose.soak.yml -f docker-compose.traefik.yml -f docker-compose.cloudflare.yml \
-  --profile temporal build them-go-bridge
-
-# Recreate container (picks up new image and updated docker-compose.yml labels)
-docker compose --project-name them_gateway \
-  -f docker-compose.yml -f docker-compose.linux.yml -f docker-compose.integration.yml \
-  -f docker-compose.soak.yml -f docker-compose.traefik.yml -f docker-compose.cloudflare.yml \
-  --profile temporal up --no-deps -d them-go-bridge
+# Restart a single service (no rebuild)
+scripts/deploy.sh restart them-go-bridge
 
 # Tail logs
-docker logs -f them-go-bridge
-
-# Follow last 50 lines
-docker logs them-go-bridge --tail 50
+scripts/deploy.sh logs them-go-bridge
 ```
 
 ### Python bridge — restart
 
 ```bash
-cd /home/avi/them
-
-# Restart bridge (no rebuild)
-docker compose --project-name them_gateway \
-  -f docker-compose.yml \
-  -f docker-compose.linux.yml \
-  -f docker-compose.integration.yml \
-  -f docker-compose.soak.yml \
-  -f docker-compose.traefik.yml \
-  -f docker-compose.cloudflare.yml \
-  --profile temporal restart them-bridge
-
-# Tail logs
-docker logs -f them-bridge
+scripts/deploy.sh restart them-bridge
+scripts/deploy.sh logs them-bridge
 ```
 
 ### Verify Traefik routing
@@ -262,23 +251,21 @@ The `.env` file uses `THE_M_*` prefixed names. Compose maps them to the un-prefi
 
 ### Source of truth for local secrets
 
+Both files live at the repository root (wherever the repo is cloned):
+
 | File | Location | Purpose | Committed? |
 |---|---|---|---|
-| `secrets.local` | `/home/avi/them/secrets.local` | Single master passphrase; all other secrets are derived from it | **Never** |
-| `.env` | `/home/avi/them/.env` | Generated by `generate-env.sh`; consumed by Compose | **Never** |
-| `.env.example` | `/home/avi/them/.env.example` | Variable names with fake placeholders; safe to commit | Yes |
-| `secrets.local.example` | `/home/avi/them/secrets.local.example` | Shows expected format; no real values | Yes |
+| `secrets.local` | `<repo-root>/secrets.local` | Single master passphrase; all other secrets are derived from it | **Never** |
+| `.env` | `<repo-root>/.env` | Generated by `generate-env.sh`; consumed by Compose via `scripts/deploy.sh` | **Never** |
+| `.env.example` | `<repo-root>/.env.example` | Variable names with fake placeholders; safe to commit | Yes |
+| `secrets.local.example` | `<repo-root>/secrets.local.example` | Shows expected format; no real values | Yes |
 
 ### Verify files are gitignored
 
 ```bash
-cd /home/avi/them
-
-# These must return nothing (not tracked by git)
-git ls-files .env secrets.local
-
-# Or use git check-ignore to confirm coverage
-git check-ignore -v .env secrets.local
+# From the repository root:
+git ls-files .env secrets.local        # must return nothing (not tracked)
+git check-ignore -v .env secrets.local # confirm .gitignore coverage
 ```
 
 Expected `.gitignore` entries:
@@ -292,17 +279,18 @@ secrets.local
 ### Creating secrets safely from scratch
 
 ```bash
-cd /home/avi/them
+# From the repository root:
+REPO="$(git rev-parse --show-toplevel)"
 
 # Step 1 — create secrets.local from the example
-cp secrets.local.example secrets.local
+cp "$REPO/secrets.local.example" "$REPO/secrets.local"
 
 # Step 2 — set a real random master passphrase (never reuse one from documentation)
 PASSPHRASE=$(openssl rand -hex 32)
-sed -i "s/replace-this-with-a-strong-random-passphrase/$PASSPHRASE/" secrets.local
+sed -i "s/replace-this-with-a-strong-random-passphrase/$PASSPHRASE/" "$REPO/secrets.local"
 
 # Step 3 — derive all secrets and write .env
-./generate-env.sh
+"$REPO/generate-env.sh"
 
 # Step 4 — add your ANTHROPIC_API_KEY to .env manually if needed
 # Do NOT add it to secrets.local or CLAUDE.md or any committed file
@@ -433,13 +421,13 @@ done
 ### .env is missing
 
 ```bash
-cd /home/avi/them
-./generate-env.sh    # requires secrets.local to exist first
+REPO="$(git rev-parse --show-toplevel)"
+"$REPO/generate-env.sh"    # requires secrets.local to exist first
 
 # If secrets.local is also missing:
-cp secrets.local.example secrets.local
+cp "$REPO/secrets.local.example" "$REPO/secrets.local"
 # Edit secrets.local — set a real passphrase, then:
-./generate-env.sh
+"$REPO/generate-env.sh"
 ```
 
 **Warning:** If the previous `.env` was generated from a different `secrets.local`, all derived secrets will be different. Any Fernet-encrypted values in the database (e.g. `api_key_encrypted` in `them.llm_providers`) will become unreadable. Recovery requires either restoring the original `secrets.local` or re-entering all API keys via the admin UI.
@@ -452,15 +440,12 @@ Cause: The container was started without `.env`, so `${THE_M_SECRET_KEY:-change-
 
 Fix:
 ```bash
-cd /home/avi/them
+REPO="$(git rev-parse --show-toplevel)"
 # Verify .env exists (do not print contents)
-git check-ignore -v .env && echo ".env is gitignored (safe)"
+git check-ignore -v "$REPO/.env" && echo ".env is gitignored (safe)"
 
-# Recreate with correct env
-docker compose --project-name them_gateway \
-  -f docker-compose.yml -f docker-compose.linux.yml -f docker-compose.integration.yml \
-  -f docker-compose.soak.yml -f docker-compose.traefik.yml -f docker-compose.cloudflare.yml \
-  --profile temporal up --no-deps -d them-go-bridge
+# Recreate with correct env using the deploy script
+"$REPO/scripts/deploy.sh" restart them-go-bridge
 docker logs them-go-bridge 2>&1 | head -5
 ```
 
@@ -480,7 +465,7 @@ docker inspect them-go-bridge --format '{{range .Config.Env}}{{println .}}{{end}
 docker exec them-postgres psql -U them -d them -c "SELECT 1;"
 ```
 
-Fix: Ensure `THE_M_DB_USER` and `THE_M_DB_PASSWORD` in `.env` match the values used when the DB was initialized. If the DB was re-created, re-run `./generate-env.sh` from the same `secrets.local`, or re-set the DB user password:
+Fix: Ensure `THE_M_DB_USER` and `THE_M_DB_PASSWORD` in `.env` match the values used when the DB was initialized. If the DB was re-created, re-run `generate-env.sh` from the same `secrets.local`, or re-set the DB user password:
 ```bash
 docker exec them-postgres psql -U postgres -c "ALTER USER them PASSWORD 'your-new-password';"
 # Then update .env accordingly
@@ -513,7 +498,7 @@ Common causes and fixes:
 | Log message | Cause | Fix |
 |---|---|---|
 | `SECRET_KEY is required but was not set` | `.env` missing or `THE_M_SECRET_KEY` not set | Recreate `.env` with `generate-env.sh`, restart |
-| `SECRET_KEY must not use the default value` | Container started without `.env` | Ensure `.env` exists in `/home/avi/them/`, restart |
+| `SECRET_KEY must not use the default value` | Container started without `.env` | Ensure `.env` exists at repo root, run `scripts/deploy.sh restart <svc>` |
 | `DATABASE_PASSWORD is required` | `THE_M_DB_PASSWORD` not in `.env` | Add to `.env`, restart |
 | `DATABASE_HOST is required` | `DATABASE_HOST` env var empty | Verify compose `DATABASE_HOST=them-postgres` passes through |
 | `failed to connect to postgres` | DB not up or wrong credentials | Check `docker ps | grep them-postgres`, verify credentials |
@@ -529,10 +514,10 @@ Common causes and fixes:
 | Variable names (Python runtime) | `app/config.py` — `Settings` class |
 | Variable names (auth service) | `auth_service/config/settings.py` |
 | Compose variable names (`.env` → container) | `docker-compose.yml`, `docker-compose.integration.yml` `environment:` blocks |
-| Local test values (never committed) | `/home/avi/them/.env` (generated by `generate-env.sh`) |
+| Local test values (never committed) | `<repo-root>/.env` (generated by `generate-env.sh`) |
 | Secret derivation logic | `generate-env.sh` / `generate-env.ps1` |
 | Variable name template (safe to commit) | `.env.example` |
 | Master passphrase template | `secrets.local.example` |
 | This runbook | `docs/architecture-v2/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` |
 
-**Future Claude sessions:** Read this file before any Docker, deployment, environment, or container recreation work. Read `go/internal/config/config.go` to verify Go variable names before touching compose environment blocks.
+**Future Claude sessions:** Read this file before any Docker, deployment, environment, or container recreation work. Read `go/internal/config/config.go` to verify Go variable names before touching compose environment blocks. Use `scripts/deploy.sh` for all Compose operations — it is path-independent and safe.

@@ -4,22 +4,14 @@ version: "3.9"
 # Adds a second Go gateway instance (them-go-bridge-2) to validate that the
 # PostgreSQL advisory lock prevents duplicate concurrent reconciler sweeps.
 #
-# Usage (always layered on top of base + local + integration):
+# Usage (always layered on top of base + linux + integration):
 #
-#   cd theM_gateway
-#   docker compose \
-#     -f docker-compose.yml \
-#     -f docker-compose.local.yml \
-#     -f docker-compose.integration.yml \
-#     -f docker-compose.soak.yml \
-#     --profile temporal up -d --build
+#   ./scripts/deploy.sh up
 #
-# Teardown:
-#   docker compose \
-#     -f docker-compose.yml \
-#     -f docker-compose.local.yml \
-#     -f docker-compose.integration.yml \
-#     -f docker-compose.soak.yml \
+# Teardown (never use --volumes):
+#   docker compose --project-name them_gateway --project-directory <repo-root> \
+#     -f docker-compose.yml -f docker-compose.linux.yml \
+#     -f docker-compose.integration.yml -f docker-compose.soak.yml \
 #     --profile temporal down
 #
 # Ports:
