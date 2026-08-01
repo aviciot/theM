@@ -1,18 +1,35 @@
-# Phase R-4c1 Complete — Handover to R-4c2
+# Compose Consolidation Complete — Handover to R-4c2
 
-**Date:** 2026-07-31
+**Date:** 2026-08-01
 **Branch:** main
-**HEAD:** `09c5665` feat(r4c1): tenant-scoped DAL and service layers
-**Prepared by:** Phase R-4c1 session
+**HEAD:** `aa09490` docs(stage-b): root environment preparation — fix fallback, update runbook
+**Prepared by:** Compose consolidation session (Stages C–H)
+
+---
+
+## Deployment State
+
+**Compose consolidation complete.** Production Compose deployment is now managed from `/home/avi/them` (canonical root). `theM_gateway/` is retired. See `COMPOSE_CONSOLIDATION_EXECUTION_REPORT.md`.
+
+| Fact | Value |
+|---|---|
+| Active project | `them_gateway` |
+| Compose working dir | `/home/avi/them` |
+| Production command | see `LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` §1 |
+| All 15 services | Running |
+| Go Workers | Compose-managed, polling `them-orchestration-go` |
+| 3 infra containers (`postgres`, `redis`, `temporal-frontend`) | Still show `working_dir=theM_gateway` — acceptable, update at next planned maintenance |
 
 ---
 
 ## Current Objective
 
-Phase R-4c1 (Tenant-Scoped DAL and Service Layers) is **complete**. The next task is
+Compose consolidation (Stages C–H) is **complete**. The next task is
 **Phase R-4c2: Wire Tenant Middleware to Admin Routes** — connecting `BearerTenantMiddleware`
 or `HS256TenantMiddleware` to admin routes in `cmd/them/main.go` and removing the
 `tenantIDFromCtxOrBootstrap` compatibility shim.
+
+**NOTE:** The last code commit was R-4c1 at HEAD `09c5665`. Commits since then (`8586427`, `c909c55`, `aa09490`) are deployment/documentation commits. The Go test baseline is still R-4c1 state: 468 passing tests.
 
 ---
 
@@ -48,10 +65,14 @@ Full details: `docs/architecture-v2/R4C1_IMPLEMENTATION_REPORT.md`
 
 | Container | Status |
 |---|---|
-| them-go-bridge (×2) | Healthy |
-| them-worker (Python) | Running |
+| them-go-bridge (×2) | Healthy — Compose-managed from `/home/avi/them` |
+| them-go-worker (×2) | Running — Compose-managed, polling `them-orchestration-go` |
+| them-worker (Python) | Running — polling `them-orchestration` |
 | them-postgres | Healthy — R-4a migration applied |
 | them-redis | Healthy |
+| them-auth-service | Healthy |
+| them-frontend | Healthy |
+| Temporal services | Running |
 
 **No DB migrations in R-4c1** (DB schema already has `tenant_id` columns from R-4a).
 

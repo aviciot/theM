@@ -1,7 +1,7 @@
 # Local / Test Environment Runbook
 
 **the-M — multi-agent orchestration platform**  
-**Last updated:** 2026-08-01  
+**Last updated:** 2026-08-01 (Compose consolidation Stages C–H complete)  
 **Mandatory reading:** before any Docker, deployment, environment, or container recreation work.
 
 ---
@@ -51,7 +51,7 @@ docker compose \
   --profile temporal up -d
 ```
 
-> **Note:** Until Stage F of `COMPOSE_LAYOUT_CONSOLIDATION_PLAN.md` is executed, the running stack was launched from `/home/avi/them/theM_gateway/`. After Stage F, the above command from the root becomes the single source of truth.
+> **Status:** Compose consolidation complete (2026-08-01). The above command is the canonical production launch command. `theM_gateway/` is retired — see `theM_gateway/RETIRED.md`.
 
 **Local dev start command** (run from `/home/avi/them`):
 
