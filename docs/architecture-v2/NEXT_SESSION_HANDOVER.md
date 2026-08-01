@@ -130,19 +130,45 @@ None introduced in R-4d.
 
 ## Exact Next Single Focused Task
 
-**R-4e: Tenant Propagation into A2A**
+**R-4e: A2A Execution Path Alignment (auth + gate + session + Temporal)**
 
-Propagate TenantID and ApplicationID from the request context into the A2A execution path.
-Specifically:
-- `a2a/server.go`: resolve tenant identity from the bearer token/JWT at the A2A handler level
-- `agentregistry/registry.go`: pass tenant context through to A2A invocations
-- Validate TenantID is non-empty before dispatching (consistent with R-4d boundary check)
-- Focused tests for A2A tenant propagation
+The current A2A handler (`go/internal/a2a/server.go`) bypasses authentication, EP config
+resolution, tenant identity, admission gate, session registration, and Temporal. It calls
+the orchestrator directly in-process. R-4e replaces the direct `orch.Run` call with the
+same execution pipeline used by WS and SSE.
+
+See `docs/architecture-v2/R4E_A2A_ARCHITECTURE_REVIEW.md` for the full design.
+Read that document before writing any code.
+
+**Corrected scope (not just "pass TenantID through"):**
+
+1. `go/internal/a2a/server.go`:
+   - Add deps: `auth.Cache`, `epconfig.Loader`, `gate.Gate`, `session.Store`, `temporal.Client`
+   - Remove dep: `*orchestrator.Orchestrator` (no longer used for inbound)
+   - `handleMessageSend`: auth → EP config (from `app_slug`) → CheckAccess → gate.Check →
+     session.Register → gate.Confirm → recorder.CreateRun → bus.Subscribe → ExecuteWorkflow →
+     block → session.End + gate.Release → rpcResult
+   - TenantID and AppID come from EPConfig only — never from request payload or headers
+
+2. **Verify `OrchestratorName` on `EPConfig` before starting.** Check `go/internal/ws/handler.go`
+   to see how `OrchestratorName` is set in `WorkflowInput`. If it is not on `EPConfig`,
+   add it to `EPConfigRow`/`EPConfig` and update `epconfig/pgx.go` first.
+
+3. `go/cmd/them/main.go`: update A2A Server wiring.
+
+4. Fix wire format bug: current `{"kind": "text", "text": "..."}` → spec-correct `{"text": "..."}`.
+
+5. `agentregistry/registry.go`: **NO changes needed.** It is outbound A2A only.
+
+6. Write all tests from `R4E_A2A_ARCHITECTURE_REVIEW.md §15` in `go/internal/a2a/server_test.go`.
+
+7. Update `go/TEST_INDEX.md` in the same commit.
 
 Before starting R-4e, read:
+- `docs/architecture-v2/R4E_A2A_ARCHITECTURE_REVIEW.md` (architecture review — authoritative)
 - `docs/A2A_REFERENCE.md`
 - `go/internal/a2a/server.go`
-- `go/internal/agentregistry/registry.go`
+- `go/internal/ws/handler.go` (reference for OrchestratorName resolution)
 - This handover doc
 
 ---
@@ -156,9 +182,10 @@ git status
 docker ps --format "{{.Names}}\t{{.Status}}" | grep -E "go-bridge|go-worker"
 
 # Read before touching A2A
+cat docs/architecture-v2/R4E_A2A_ARCHITECTURE_REVIEW.md
 cat docs/A2A_REFERENCE.md
 cat go/internal/a2a/server.go
-cat go/internal/agentregistry/registry.go
+cat go/internal/ws/handler.go   # reference: how OrchestratorName is set in WorkflowInput
 
 # Run sanity before any change
 python3.12 scripts/tests/run_tests.py 01 02 03 04 15
@@ -166,7 +193,9 @@ python3.12 scripts/tests/run_tests.py 01 02 03 04 15
 
 **First prompt for next session:**
 > Continue the THEM Python-to-Go migration at `/home/avi/them`. R-4d is complete (runtime
-> tenant propagation for WS+SSE). Next task is R-4e: tenant propagation into the A2A execution
-> path. Read `docs/architecture-v2/NEXT_SESSION_HANDOVER.md`, `go/CLAUDE.md`,
-> `docs/A2A_REFERENCE.md`, `go/internal/a2a/server.go`, and
-> `go/internal/agentregistry/registry.go` before writing any code. Confirm scope before implementing.
+> tenant propagation for WS+SSE). Next task is R-4e: align the A2A execution path with
+> WS/SSE (auth, EP config, gate, session, Temporal dispatch). Architecture review is
+> complete — read `docs/architecture-v2/R4E_A2A_ARCHITECTURE_REVIEW.md` and
+> `docs/architecture-v2/NEXT_SESSION_HANDOVER.md` before writing any code. Do NOT start
+> with `agentregistry` — that package requires no changes for R-4e. Verify scope for
+> OrchestratorName before implementing.
