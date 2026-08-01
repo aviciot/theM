@@ -66,3 +66,81 @@ services:
 
       - "traefik.http.routers.them-ui.service=them-ui-svc"
       - "traefik.http.services.them-ui-svc.loadbalancer.server.port=3200"
+
+  # ── Go Temporal Worker — replica 1 (profile: go-worker) ─────────────────────
+  # Polls them-orchestration-go exclusively. Does not expose any HTTP ports.
+  # No depends_on: all infra (postgres, redis, temporal-frontend) is already
+  # running when this profile is activated. The worker reconnects internally.
+  # Enable with: docker compose ... --profile go-worker up -d
+  them-go-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.go.worker
+    container_name: them-go-worker
+    profiles: [go-worker]
+    environment:
+      - THE_M_INSTANCE_ID=go-worker-1
+      - APP_ENV=production
+      - DATABASE_HOST=them-postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=them
+      - DATABASE_USER=${THE_M_DB_USER:-them}
+      - DATABASE_PASSWORD=${THE_M_DB_PASSWORD:-them_secret}
+      - REDIS_HOST=them-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
+      - REDIS_DB=0
+      - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-secret-key}
+      - JWT_SECRET=${THE_M_JWT_SECRET:-}
+      - LOG_FORMAT=json
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TEMPORAL_ENABLED=true
+      - TEMPORAL_HOST_PORT=temporal-frontend:7233
+      - WORKER_TASK_QUEUE=them-orchestration-go
+      - RUN_EVENTS_MODE=${RUN_EVENTS_MODE:-streams}
+    networks:
+      - them-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
+
+  # ── Go Temporal Worker — replica 2 (profile: go-worker) ─────────────────────
+  them-go-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.go.worker
+    container_name: them-go-worker-2
+    profiles: [go-worker]
+    environment:
+      - THE_M_INSTANCE_ID=go-worker-2
+      - APP_ENV=production
+      - DATABASE_HOST=them-postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=them
+      - DATABASE_USER=${THE_M_DB_USER:-them}
+      - DATABASE_PASSWORD=${THE_M_DB_PASSWORD:-them_secret}
+      - REDIS_HOST=them-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
+      - REDIS_DB=0
+      - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-secret-key}
+      - JWT_SECRET=${THE_M_JWT_SECRET:-}
+      - LOG_FORMAT=json
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TEMPORAL_ENABLED=true
+      - TEMPORAL_HOST_PORT=temporal-frontend:7233
+      - WORKER_TASK_QUEUE=them-orchestration-go
+      - RUN_EVENTS_MODE=${RUN_EVENTS_MODE:-streams}
+    networks:
+      - them-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
