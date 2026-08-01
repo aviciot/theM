@@ -1,177 +1,157 @@
-# R-4e Complete — Handover to Execution Lifecycle Unification
+# Execution Lifecycle Unification — Partial — Handover
 
 **Date:** 2026-08-01
 **Branch:** main
-**Phase completed:** R-4e — A2A Inbound Execution Path Alignment
+**Phase:** Execution Lifecycle Unification (Phase 1 complete; Phase 2 pending)
 
 ---
 
 ## Current Objective
 
-R-4e is complete. All three inbound paths — WS, SSE, and A2A — now use the same
-execution pipeline: EPConfig resolution → auth → access control → gate → session →
-Temporal dispatch. TenantID and ApplicationID propagate from server-side EPConfig on
-all paths.
-
-The next session should implement **Execution Lifecycle Unification**: extracting the
-shared handler pipeline into a common helper to eliminate the ~200-line duplication
-between `ws/handler.go`, `sse/handler.go`, and `a2a/server.go`.
+`internal/execution/` package is created and tested. A2A is migrated. WS and SSE handlers
+still use the old duplicated pipeline and must be migrated next.
 
 ---
 
 ## Branch and HEAD
 
 Branch: `main`
-HEAD after this session: `git log --oneline -1` after commit.
+HEAD: run `git log --oneline -1` after commit.
 
 ---
 
 ## Commits Created This Session
 
-1. `feat(a2a): R-4e — align inbound A2A with tenant-aware Temporal execution path`
+1. `feat(execution): R-5 — shared execution lifecycle + A2A migration (WS/SSE pending)`
 
 ---
 
 ## Work Completed
 
-### R-4a through R-4d (complete — prior sessions)
-See `docs/architecture-v2/R4D_IMPLEMENTATION_REPORT.md`.
+### `internal/execution/` (new package)
 
-### R-4e (complete — this session)
+- `errors.go`: `AdmitError`, `AdmitErrorKind` (7 kinds), `StartError`
+- `request.go`: `ExecutionRequest`, `ExecutionHandle`, `ExecutionResult`
+- `lifecycle.go`: `Lifecycle.Admit/Start/Release`, `RunCreator`, `NewLifecycle`, `NewLifecycleWithRecorder`
+- `lifecycle_test.go`: 14 unit tests — all pass, 0 races
 
-**`go/internal/epconfig/pgx.go`:**
-- Added `COALESCE(a.tenant_id::text, '')` to `epConfigQuery`
-- Updated `Scan` call to read `TenantID` into `EPConfigRow.TenantID`
-- Fix: EPConfig was previously returning empty TenantID for all EPs even though
-  the column existed in the DB since R-4a. This silently affected WS and SSE too.
+### `internal/a2a/server.go` (migrated)
 
-**`go/internal/a2a/server.go`:**
-- Complete rewrite. Removed `*orchestrator.Orchestrator` dependency.
-- Added: `Authenticator`, `EPConfigLoader`, `GateStore`, `SessionStore`,
-  `TemporalClientExecutor`, `instanceID` to `Server` struct.
-- `NewServer` signature updated accordingly.
-- `handleMessageSend` now runs the full execution pipeline:
-  auth → EPConfig → access → gate → session → Temporal → result mapping
-- Fixed wire format: `rpcPart{Kind,Text}` → `rpcTextPart{Text}` (A2A spec)
-- Added `taskId` to `rpcResult`
-- `writeHTTPError` helper for HTTP-level failures with JSON-RPC body
-- `tryAuthenticate` mirrors WS/SSE implementation
+- `Server` now holds `*execution.Lifecycle` instead of individual gate/session/epLoader/recorder/temporal deps
+- `handleMessageSend` calls `lc.Admit → bus.Subscribe → lc.Start → wfRun.Get → lc.Release`
+- `extractToken` replaces `tryAuthenticate` (cleaner 2-value return)
+- `mapAdmitError` maps `*execution.AdmitError` to A2A HTTP+JSON-RPC responses
+- 27 tests — all pass, 0 races
 
-**`go/cmd/them/main.go`:**
-- A2A Server wiring updated to pass full dependency set.
+### `go/cmd/them/main.go`
 
-**`go/internal/a2a/server_test.go`:**
-- Complete rewrite: 25 tests covering all R-4e requirements from the architecture
-  review (§15). Removed old 3-test suite; replaced with full coverage.
+- Added `execution.NewLifecycle(...)` → `execLifecycle`
+- `a2a.NewServer(execLifecycle, bus, authenticator, instanceID, log)` — new 5-arg signature
 
-**`go/TEST_INDEX.md`:**
-- S1-14 expanded from 3 to 25 tests; S1 total 452→474; overall 480→502.
+### `go/TEST_INDEX.md`
+
+- S1-14 (a2a): 25 → 27 tests; updated purpose description
+- S1-35 (execution lifecycle): new, 14 tests
+- S1 total: 474 → 490; `go test ./...` total: 502 → 518
 
 ---
 
 ## Deployed / Live State
 
-- Go bridge: healthy (`{"status":"ok","checks":{"postgres":"ok","redis":"ok"}}`)
+- Go bridge: healthy (confirmed before session)
 - Go workers (2x): polling `them-orchestration-go`
-- A2A unknown slug → HTTP 404 ✓ (no entry points in DB; live A2A test requires one)
-- Agent card endpoint → correct JSON ✓
+- A2A: unit tests pass; no live A2A EP in DB (live E2E not possible without one)
 - WS/SSE: unchanged, healthy
 
 ---
 
 ## Tests Executed
 
-- `go test ./...`: **29 packages, 0 failed**
-- `go test -race ./...`: **29 packages, 0 data races**
-- Python sanity 01 02 03 04 15: **55 passed, 0 failed**
-- Docker image build: **success** (tests run inside build)
+```
+go build ./...          → 0 errors
+go vet ./...            → 0 new warnings (pre-existing llm/provider_test.go cancel warning is not new)
+go test ./...           → 33 packages, 0 failed
+go test -race ./...     → 33 packages, 0 data races
+Python sanity 01-04,15  → 55 passed, 0 failed
+```
 
 ---
 
 ## Architecture Decisions Made
 
-1. **OrchestratorName = appSlug**: WS uses `appSlug` directly as `OrchestratorName`
-   in `WorkflowInput`. A2A follows the same convention. EPConfig does not carry an
-   `OrchestratorName` field — `app_slug` is the identifier.
+1. **`RunCreator` interface**: Lifecycle uses interface (not concrete `*runrecorder.Recorder`) internally. `NewLifecycle` takes the concrete type for production; `NewLifecycleWithRecorder` takes the interface for tests.
 
-2. **epConfigQuery TenantID fix**: Previously missing from SELECT, so `TenantID` was
-   always empty string even after R-4a. Fixed in this session. WS and SSE also
-   benefit from this correction.
+2. **`bus.Subscribe` NOT in Lifecycle**: Caller subscribes between `Admit` and `Start`. This preserves the bootstrap ordering invariant without leaking the bus into the Lifecycle API.
 
-3. **HTTP + JSON-RPC error response**: `writeHTTPError` writes both the HTTP status
-   code (for client-side routing) and a JSON-RPC error body (for A2A protocol
-   compliance). This is the correct pattern for A2A pre-workflow failures.
+3. **WS/SSE not migrated this session**: Both handlers have a protocol handshake step (WS upgrade or SSE headers) that occurs between `gate.Check` and `session.Register`. Migrating to `Lifecycle.Admit` requires reordering these steps. This is safe for SSE (HTTP errors before headers are cleaner) but needs care for WS. Deferred to avoid risk.
 
-4. **Wire format**: `{"kind":"text","text":"..."}` → `{"text":"..."}` per A2A spec.
-   No known production callers, so not a breaking change.
+4. **A2A `extractToken` pattern**: Returns `(*auth.TokenInfo, string)`. The Lifecycle receives both and enforces based on EPConfig.AccessMode. Token present but invalid = `tokenInfo nil`, allowing Lifecycle to decide per EP policy.
 
 ---
 
 ## Temporary Compatibility Code Still in Place
 
-None introduced in R-4e.
+- WS and SSE handlers still use the old individual-dep injection pattern (no `*execution.Lifecycle`). This is correct behavior, not a regression. It will be replaced in the next session.
+- `newID()` in `sse/handler.go` (UUID v4 via `uuid.New().String()`) — correct, no change needed.
 
 ---
 
 ## Known Bugs and Blockers
 
-- No `them.entry_points` rows with `entry_point_type = 'a2a'` exist in the DB.
-  Live A2A end-to-end test requires creating one via admin API. All correctness
-  verified by unit tests.
-- Go bridge containers were manually recreated in this session (not via Compose).
-  The Compose definition should be used for next startup to restore proper labeling.
+- No `them.entry_points` rows of type `a2a` in DB — live A2A E2E not possible without one.
+- WS handler pipeline duplication: ~200 lines identical to what Lifecycle now does. Non-critical (correct behavior), but must be migrated.
+- SSE handler pipeline duplication: same issue.
 
 ---
 
 ## Files Most Relevant to the Next Task
 
-- `go/internal/ws/handler.go` — source of truth for the pipeline; unification target
-- `go/internal/sse/handler.go` — duplicate pipeline; unification target
-- `go/internal/a2a/server.go` — R-4e implementation; unification target
-- `go/internal/transport/transport.go` — shared interfaces; home for shared types
-- `docs/architecture-v2/R4E_A2A_ARCHITECTURE_REVIEW.md` — §16 exclusions relevant
-  to what unification should NOT bundle
+- `go/internal/execution/lifecycle.go` — the shared pipeline; read before migrating handlers
+- `go/internal/sse/handler.go` — next migration target (SSE reorder is cleaner than WS)
+- `go/internal/ws/handler.go` — after SSE; needs upgrade-ordering analysis
+- `docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md` — §6 (why WS/SSE deferred, migration options)
+- `docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_DESIGN.md` — §7 (what stays in each handler)
 
 ---
 
 ## Hard Constraints That Must Remain in Force
 
-1. **TenantID is NEVER accepted from request headers, query params, or body** — only
-   from server-resolved EPConfig or auth token cache lookup.
+1. **TenantID is NEVER accepted from request headers, query params, or body** — `Lifecycle.Start` overwrites identity fields from the handle (EPConfig).
 2. **Never use DB name `odin` or schema `odin`** — everything is `them`.
 3. **Never query `auth_service.*` tables directly** — use `internal/auth/` from Go.
-4. **500 responses must use static strings** — never `err.Error()` from service/DAL.
-5. **Secrets never appear in log output** — use `cfg.SafeString()`.
-6. **Every code change MUST have a test** — zero new failures before commit.
-7. **Do NOT start the Execution Lifecycle Unification in the same session as R-4e.**
+4. **500 responses must use static strings** — `AdmitError.Error()` and `StartError.Error()` both return static strings.
+5. **Every code change MUST have a test** — zero new failures before commit.
+6. **bus.Subscribe MUST happen between Admit and Start** — do not move it into Lifecycle.
 
 ---
 
 ## Exact Next Single Focused Task
 
-**Execution Lifecycle Unification (post-R-4e)**
+**WS/SSE Migration to Execution Lifecycle**
 
-WS, SSE, and A2A share ~200 lines of identical pipeline logic:
-```
-tryAuthenticate → epLoader.Load → access check → gate.Check →
-session.Register → gate.Confirm → recorder.CreateRun →
-bus.Subscribe → ExecuteWorkflow → block → cleanup
-```
+Migrate `internal/sse/handler.go` first (simpler — reorder SSE headers to after session.Register):
 
-The unification should:
-1. Extract this into an `ExecutionPipeline` struct (or a free function) in
-   `internal/transport/` or a new `internal/execution/` package.
-2. Update WS, SSE, and A2A handlers to call the shared code.
-3. Keep handler-specific concerns (WS upgrade, SSE stream, A2A JSON-RPC framing)
-   in each handler.
+**SSE migration steps:**
+1. Add `lc *execution.Lifecycle` to `Handler` struct
+2. Update `NewHandler` to accept `*execution.Lifecycle` (or add `WithLifecycle` builder method)
+3. Replace steps 1-9 in `ServeHTTP` with `lc.Admit(ctx, req)` → handle
+4. Move `w.Header().Set(...)` + `w.WriteHeader(200)` AFTER `lc.Admit` succeeds (before bus.Subscribe)
+5. Replace `bus.Subscribe` + `recorder.CreateRun` + `ExecuteWorkflow` with `lc.Start(ctx, h, input)` → wfRun
+6. Replace `defer session.End + gate.Release` with `defer lc.Release(context.Background(), h)`
+7. Update `NewHandler` in `cmd/them/main.go` to pass `execLifecycle`
+8. Update `sse_handler_test.go` to inject a `*execution.Lifecycle` with fakes
+9. Run `go test ./internal/sse/... ./...` — zero regressions
+10. Run `go test -race ./...`
+
+**WS migration** (after SSE, separate commit):
+- Analyze whether WS upgrade can safely move after session.Register
+- If yes: same migration pattern as SSE
+- If no: consider `AdmitPre` / `AdmitPost` split, or keep WS with old pattern and document
 
 **Before starting:**
-- Read `R4E_A2A_ARCHITECTURE_REVIEW.md` §16 (exclusions: do NOT bundle async A2A,
-  HITL, streaming, or other features into this refactor)
-- Read `R4E_IMPLEMENTATION_REPORT.md` §9 (next phase description)
-- Read `ws/handler.go`, `sse/handler.go`, `a2a/server.go` side-by-side to identify
-  the exact duplication boundary
-- Plan the refactor before writing code; confirm scope with a brief architecture note
+- Read `EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md` §6 — WS/SSE migration options
+- Read `EXECUTION_LIFECYCLE_UNIFICATION_DESIGN.md` §7 — what stays in each handler
+- Read `sse/handler.go` ServeHTTP body to confirm the header-ordering change is safe
 
 ---
 
@@ -183,23 +163,14 @@ git log --oneline -3
 git status
 docker ps --format "{{.Names}}\t{{.Status}}" | grep -E "go-bridge|go-worker"
 
-# Read before touching execution pipeline
-cat docs/architecture-v2/R4E_IMPLEMENTATION_REPORT.md
-cat go/internal/ws/handler.go
-cat go/internal/sse/handler.go
-cat go/internal/a2a/server.go
-
-# Run sanity before any change
+# Sanity before touching anything
 python3.12 scripts/tests/run_tests.py 01 02 03 04 15
+
+# Read before coding
+cat docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md
+cat go/internal/execution/lifecycle.go
+cat go/internal/sse/handler.go
 ```
 
 **First prompt for next session:**
-> Continue the THEM Python-to-Go migration at `/home/avi/them`. R-4e is complete
-> (A2A inbound path aligned with WS/SSE — auth, EPConfig, gate, session, Temporal).
-> The next task is Execution Lifecycle Unification: extract the shared execution
-> pipeline (auth → EPConfig → gate → session → Temporal) into a common helper shared
-> by WS, SSE, and A2A, eliminating ~200 lines of duplication. Read
-> `docs/architecture-v2/R4E_IMPLEMENTATION_REPORT.md` and
-> `docs/architecture-v2/NEXT_SESSION_HANDOVER.md` before writing any code. Plan
-> the refactor with an architecture note before implementing. Do NOT bundle async
-> A2A, HITL, streaming, or other features into this refactor.
+> Continue the THEM Python-to-Go migration at `/home/avi/them`. Phase 1 of Execution Lifecycle Unification is complete: `internal/execution/` package built and tested, A2A handler migrated. The next task is migrating `internal/sse/handler.go` to use `execution.Lifecycle`, then `internal/ws/handler.go`. Read `docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md` §6 before writing any code. SSE migration requires reordering SSE headers to after `session.Register` (so errors before headers = clean HTTP errors). Do not touch WS until SSE is complete and tested.

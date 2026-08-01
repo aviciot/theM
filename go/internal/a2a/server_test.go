@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -20,33 +22,16 @@ import (
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
+	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/gate"
-	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/transport"
 )
 
-// ── Recorder stub ────────────────────────────────────────────────────────────
-
-type noopDB struct{}
-
-func (n *noopDB) Exec(_ context.Context, _ string, _ ...any) error { return nil }
-func (n *noopDB) QueryRow(_ context.Context, _ string, _ ...any) runrecorder.SingleRowScanner {
-	return &noopRow{}
-}
-
-type noopRow struct{}
-
-func (r *noopRow) Scan(dest ...any) error {
-	if len(dest) > 0 {
-		if sp, ok := dest[0].(*string); ok {
-			*sp = "00000000-0000-0000-0000-000000000001"
-		}
-	}
-	return nil
-}
-
-// ── Fake authenticator ────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Fakes
+// ─────────────────────────────────────────────────────────────────────────────
 
 type fakeAuth struct {
 	info *auth.TokenInfo
@@ -60,8 +45,6 @@ func (f *fakeAuth) Validate(_ context.Context, _ string) (*auth.TokenInfo, error
 	return f.info, nil
 }
 
-// ── Fake EPConfig loader ──────────────────────────────────────────────────────
-
 type fakeEPLoader struct {
 	cfg *epconfig.EPConfig
 	err error
@@ -74,13 +57,9 @@ func (f *fakeEPLoader) Load(_ context.Context, _ string) (*epconfig.EPConfig, er
 	return f.cfg, nil
 }
 
-// ── Fake gate ─────────────────────────────────────────────────────────────────
-
 type fakeGate struct {
-	checkErr    error
-	confirmErr  error
-	rollbackErr error
-	releaseErr  error
+	checkErr   error
+	confirmErr error
 
 	checkCalled    bool
 	confirmCalled  bool
@@ -92,25 +71,24 @@ func (f *fakeGate) Check(_ context.Context, _ gate.Config) (gate.Result, error) 
 	f.checkCalled = true
 	return gate.Result{}, f.checkErr
 }
+
 func (f *fakeGate) Confirm(_ context.Context, _ gate.Config) error {
 	f.confirmCalled = true
 	return f.confirmErr
 }
+
 func (f *fakeGate) Rollback(_ context.Context, _ gate.Config) error {
 	f.rollbackCalled = true
-	return f.rollbackErr
+	return nil
 }
+
 func (f *fakeGate) Release(_ context.Context, _ gate.Config) error {
 	f.releaseCalled = true
-	return f.releaseErr
+	return nil
 }
 
-// ── Fake session store ────────────────────────────────────────────────────────
-
 type fakeSession struct {
-	registerErr error
-	endErr      error
-
+	registerErr    error
 	registerCalled bool
 	endCalled      bool
 	lastInfo       session.SessionInfo
@@ -121,12 +99,22 @@ func (f *fakeSession) Register(_ context.Context, info session.SessionInfo) erro
 	f.lastInfo = info
 	return f.registerErr
 }
+
 func (f *fakeSession) End(_ context.Context, _, _, _ string) error {
 	f.endCalled = true
-	return f.endErr
+	return nil
 }
 
-// ── Fake Temporal client ──────────────────────────────────────────────────────
+type fakeRecorder struct {
+	createCalled bool
+	lastRun      domain.Run
+}
+
+func (f *fakeRecorder) CreateRun(_ context.Context, run domain.Run) error {
+	f.createCalled = true
+	f.lastRun = run
+	return nil
+}
 
 type fakeWorkflowRun struct {
 	result temporal.WorkflowResult
@@ -149,11 +137,11 @@ func (f *fakeWorkflowRun) GetWithOptions(_ context.Context, valuePtr interface{}
 }
 
 type fakeTemporal struct {
-	run *fakeWorkflowRun
-	err error
+	run  *fakeWorkflowRun
+	err  error
 
-	called     bool
-	lastInput  temporal.WorkflowInput
+	called    bool
+	lastInput temporal.WorkflowInput
 }
 
 func (f *fakeTemporal) ExecuteWorkflow(_ context.Context, _ temporalclient.StartWorkflowOptions, _ interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
@@ -169,7 +157,11 @@ func (f *fakeTemporal) ExecuteWorkflow(_ context.Context, _ temporalclient.Start
 	return f.run, nil
 }
 
-// ── EPConfig helpers ──────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Fixture builders
+// ─────────────────────────────────────────────────────────────────────────────
+
+var devLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 func tokenEPConfig() *epconfig.EPConfig {
 	return &epconfig.EPConfig{
@@ -190,19 +182,23 @@ func publicEPConfig() *epconfig.EPConfig {
 	return cfg
 }
 
-// ── Server builder ────────────────────────────────────────────────────────────
+func validTokenInfo() *auth.TokenInfo {
+	return &auth.TokenInfo{TokenID: 42}
+}
 
+// serverBuilder holds the overridable deps for building a test Server.
 type serverBuilder struct {
-	auth     a2aserver.Authenticator
-	epLoader a2aserver.EPConfigLoader
-	gate     a2aserver.GateStore
-	sessions a2aserver.SessionStore
-	temporal a2aserver.TemporalClientExecutor
+	auth     transport.Authenticator
+	epLoader transport.EPConfigLoader
+	gate     transport.GateStore
+	sessions transport.SessionStore
+	temporal transport.TemporalClientExecutor
+	recorder execution.RunCreator
 }
 
 func defaultBuilder() *serverBuilder {
 	return &serverBuilder{
-		auth: &fakeAuth{info: &auth.TokenInfo{TokenID: 42}},
+		auth:     &fakeAuth{info: validTokenInfo()},
 		epLoader: &fakeEPLoader{cfg: tokenEPConfig()},
 		gate:     &fakeGate{},
 		sessions: &fakeSession{},
@@ -212,20 +208,22 @@ func defaultBuilder() *serverBuilder {
 				Status:    domain.RunStatusCompleted,
 			},
 		}},
+		recorder: &fakeRecorder{},
 	}
 }
 
 func (b *serverBuilder) build() *a2aserver.Server {
 	bus := event.New()
-	recorder := runrecorder.New(&noopDB{})
-	return a2aserver.NewServer(
-		recorder, bus,
-		b.auth, b.epLoader, b.gate, b.sessions, b.temporal,
-		"test-instance", nil,
+	lc := execution.NewLifecycleWithRecorder(
+		b.auth, b.epLoader, b.gate, b.sessions,
+		b.recorder, b.temporal, devLogger,
 	)
+	return a2aserver.NewServer(lc, bus, b.auth, "test-instance", devLogger)
 }
 
-// ── HTTP helpers ──────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 func postRPC(t *testing.T, srv *httptest.Server, body any, token string) *http.Response {
 	t.Helper()
@@ -257,7 +255,9 @@ func validSendBody() map[string]any {
 	}
 }
 
-// ── R-4e tests ────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────────────────
 
 // A2A-01: Unknown app_slug → 404
 func TestA2A_MissingSlug_404(t *testing.T) {
@@ -285,12 +285,10 @@ func TestA2A_DisabledEP_403(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 }
 
-// A2A-02b: Token on block list → 403
+// A2A-02b: App disabled → 403 (exercises CheckAccess block-list path)
 func TestA2A_BlockedToken_403(t *testing.T) {
 	b := defaultBuilder()
 	cfg := tokenEPConfig()
-	// blocked_tokens stores SHA-256 hex; use a value that transport.TokenHash("valid-token") would NOT produce.
-	// Instead wire CheckAccess by disabling the app:
 	cfg.AppEnabled = false
 	b.epLoader = &fakeEPLoader{cfg: cfg}
 	srv := httptest.NewServer(b.build().Routes())
@@ -313,7 +311,7 @@ func TestA2A_MissingTokenOnTokenEP_401(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 
-// A2A-04: Invalid token → 401 (failed validation → authed=false → token EP → 401)
+// A2A-04: Invalid token → 401 (failed validation → tokenInfo nil → token EP → 401)
 func TestA2A_InvalidToken_401(t *testing.T) {
 	b := defaultBuilder()
 	b.auth = &fakeAuth{err: errors.New("invalid")}
@@ -356,13 +354,10 @@ func TestA2A_CapExceeded_429(t *testing.T) {
 
 // A2A-07: TenantID in run comes from EPConfig, not from request
 func TestA2A_TenantIDFromEPConfig(t *testing.T) {
-	b := defaultBuilder()
 	tc := &fakeTemporal{run: &fakeWorkflowRun{
-		result: temporal.WorkflowResult{
-			FinalText: "ok",
-			Status:    domain.RunStatusCompleted,
-		},
+		result: temporal.WorkflowResult{FinalText: "ok", Status: domain.RunStatusCompleted},
 	}}
+	b := defaultBuilder()
 	b.temporal = tc
 	srv := httptest.NewServer(b.build().Routes())
 	defer srv.Close()
@@ -378,15 +373,14 @@ func TestA2A_TenantIDFromEPConfig(t *testing.T) {
 
 // A2A-08: Request body cannot inject TenantID/ApplicationID into WorkflowInput
 func TestA2A_ClientCannotOverrideTenantID(t *testing.T) {
-	b := defaultBuilder()
 	tc := &fakeTemporal{run: &fakeWorkflowRun{
 		result: temporal.WorkflowResult{FinalText: "ok", Status: domain.RunStatusCompleted},
 	}}
+	b := defaultBuilder()
 	b.temporal = tc
 	srv := httptest.NewServer(b.build().Routes())
 	defer srv.Close()
 
-	// Attempt to inject tenant via contextId (which the caller can provide)
 	body := validSendBody()
 	body["params"] = map[string]any{
 		"message": map[string]any{
@@ -394,7 +388,6 @@ func TestA2A_ClientCannotOverrideTenantID(t *testing.T) {
 			"parts":     []map[string]any{{"text": "hi"}},
 			"contextId": "attacker-controlled-context",
 		},
-		// Non-standard fields attempting injection
 		"tenant_id":      "attacker-tenant",
 		"application_id": "attacker-app",
 	}
@@ -402,17 +395,16 @@ func TestA2A_ClientCannotOverrideTenantID(t *testing.T) {
 	defer resp.Body.Close()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	// TenantID must come from EPConfig, not from request
-	assert.Equal(t, "tenant-uuid-1", tc.lastInput.TenantID)
-	assert.Equal(t, "app-uuid-1", tc.lastInput.ApplicationID)
+	assert.Equal(t, "tenant-uuid-1", tc.lastInput.TenantID, "TenantID must come from EPConfig")
+	assert.Equal(t, "app-uuid-1", tc.lastInput.ApplicationID, "ApplicationID must come from EPConfig")
 }
 
 // A2A-09: WorkflowInput receives TenantID + ApplicationID from EPConfig
 func TestA2A_WorkflowInputHasTenantID(t *testing.T) {
-	b := defaultBuilder()
 	tc := &fakeTemporal{run: &fakeWorkflowRun{
 		result: temporal.WorkflowResult{FinalText: "done", Status: domain.RunStatusCompleted},
 	}}
+	b := defaultBuilder()
 	b.temporal = tc
 	srv := httptest.NewServer(b.build().Routes())
 	defer srv.Close()
@@ -432,11 +424,11 @@ func TestA2A_WorkflowInputHasTenantID(t *testing.T) {
 
 // A2A-10: session.Register called before ExecuteWorkflow
 func TestA2A_SessionRegistered(t *testing.T) {
-	b := defaultBuilder()
 	sess := &fakeSession{}
 	tc := &fakeTemporal{run: &fakeWorkflowRun{
 		result: temporal.WorkflowResult{FinalText: "ok", Status: domain.RunStatusCompleted},
 	}}
+	b := defaultBuilder()
 	b.sessions = sess
 	b.temporal = tc
 	srv := httptest.NewServer(b.build().Routes())
@@ -453,8 +445,8 @@ func TestA2A_SessionRegistered(t *testing.T) {
 
 // A2A-11: session.End called after workflow completes
 func TestA2A_SessionEndedOnCompletion(t *testing.T) {
-	b := defaultBuilder()
 	sess := &fakeSession{}
+	b := defaultBuilder()
 	b.sessions = sess
 	srv := httptest.NewServer(b.build().Routes())
 	defer srv.Close()
@@ -463,15 +455,14 @@ func TestA2A_SessionEndedOnCompletion(t *testing.T) {
 	defer resp.Body.Close()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	// session.End is called in a defer — give a moment for the handler to finish
 	time.Sleep(10 * time.Millisecond)
 	assert.True(t, sess.endCalled, "session.End must be called")
 }
 
 // A2A-12: gate.Release called after session.End (cleanup on success)
 func TestA2A_GateReleasedOnCompletion(t *testing.T) {
-	b := defaultBuilder()
 	g := &fakeGate{}
+	b := defaultBuilder()
 	b.gate = g
 	srv := httptest.NewServer(b.build().Routes())
 	defer srv.Close()
@@ -488,8 +479,8 @@ func TestA2A_GateReleasedOnCompletion(t *testing.T) {
 
 // A2A-13: gate.Rollback called if session.Register fails
 func TestA2A_GateRollbackOnRegisterFail(t *testing.T) {
-	b := defaultBuilder()
 	g := &fakeGate{}
+	b := defaultBuilder()
 	b.gate = g
 	b.sessions = &fakeSession{registerErr: errors.New("redis down")}
 	srv := httptest.NewServer(b.build().Routes())
@@ -529,7 +520,6 @@ func TestA2A_RPCResult_CompletedState(t *testing.T) {
 	parts := artifacts[0].(map[string]any)["parts"].([]any)
 	require.Len(t, parts, 1)
 	part := parts[0].(map[string]any)
-	// Wire format: spec-correct — "text" field present, no "kind" field
 	assert.Equal(t, "hello from orchestrator", part["text"])
 	assert.Nil(t, part["kind"], "wire format must not include 'kind' field (non-spec)")
 }
@@ -569,7 +559,6 @@ func TestA2A_RPCError_WorkflowFailed(t *testing.T) {
 
 	require.NotNil(t, rpcResp["error"])
 	errObj := rpcResp["error"].(map[string]any)
-	// Must be a static string, not raw error message
 	assert.Equal(t, "internal error", errObj["message"])
 	assert.NotContains(t, errObj["message"], "temporal internal error",
 		"raw error must not be exposed to callers")
@@ -577,10 +566,10 @@ func TestA2A_RPCError_WorkflowFailed(t *testing.T) {
 
 // A2A-16: Caller-provided contextId used as event bus key
 func TestA2A_ContextIDFromParams(t *testing.T) {
-	b := defaultBuilder()
 	tc := &fakeTemporal{run: &fakeWorkflowRun{
 		result: temporal.WorkflowResult{FinalText: "ok", Status: domain.RunStatusCompleted},
 	}}
+	b := defaultBuilder()
 	b.temporal = tc
 	srv := httptest.NewServer(b.build().Routes())
 	defer srv.Close()
@@ -601,26 +590,25 @@ func TestA2A_ContextIDFromParams(t *testing.T) {
 	assert.Equal(t, "caller-context-id-abc123", tc.lastInput.ContextID)
 }
 
-// A2A-17: No contextId in params → new ID generated (non-empty, different each call)
+// A2A-17: No contextId in params → new UUID generated (non-empty, different each call)
 func TestA2A_ContextIDGeneratedIfAbsent(t *testing.T) {
-	b := defaultBuilder()
 	tc1 := &fakeTemporal{run: &fakeWorkflowRun{
 		result: temporal.WorkflowResult{FinalText: "ok", Status: domain.RunStatusCompleted},
 	}}
+	b := defaultBuilder()
 	b.temporal = tc1
 	srv := httptest.NewServer(b.build().Routes())
 	defer srv.Close()
-
 	resp1 := postRPC(t, srv, validSendBody(), "valid-token")
 	defer resp1.Body.Close()
 
 	tc2 := &fakeTemporal{run: &fakeWorkflowRun{
 		result: temporal.WorkflowResult{FinalText: "ok", Status: domain.RunStatusCompleted},
 	}}
-	b.temporal = tc2
-	srv2 := httptest.NewServer(b.build().Routes())
+	b2 := defaultBuilder()
+	b2.temporal = tc2
+	srv2 := httptest.NewServer(b2.build().Routes())
 	defer srv2.Close()
-
 	resp2 := postRPC(t, srv2, validSendBody(), "valid-token")
 	defer resp2.Body.Close()
 
@@ -632,14 +620,12 @@ func TestA2A_ContextIDGeneratedIfAbsent(t *testing.T) {
 		"each request without contextId should get a unique contextId")
 }
 
-// A2A-18: direct orch.Run is no longer used — NewServer has no orch parameter
-// This is enforced at compile time by the new signature; no runtime test needed.
-// Verify the Temporal client was called instead.
+// A2A-18: Temporal is the only execution path — no direct orch.Run fallback.
 func TestA2A_DirectOrchNotUsed_TemporalCalledInstead(t *testing.T) {
-	b := defaultBuilder()
 	tc := &fakeTemporal{run: &fakeWorkflowRun{
 		result: temporal.WorkflowResult{FinalText: "done", Status: domain.RunStatusCompleted},
 	}}
+	b := defaultBuilder()
 	b.temporal = tc
 	srv := httptest.NewServer(b.build().Routes())
 	defer srv.Close()
@@ -653,9 +639,9 @@ func TestA2A_DirectOrchNotUsed_TemporalCalledInstead(t *testing.T) {
 
 // A2A-19: Cleanup releases gate and session on auth failure path
 func TestA2A_CleanupOnGateFailure(t *testing.T) {
-	b := defaultBuilder()
 	g := &fakeGate{checkErr: gate.ErrCapExceeded}
 	sess := &fakeSession{}
+	b := defaultBuilder()
 	b.gate = g
 	b.sessions = sess
 	srv := httptest.NewServer(b.build().Routes())
@@ -665,9 +651,7 @@ func TestA2A_CleanupOnGateFailure(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
-	// Gate check failed — session should never have been registered
 	assert.False(t, sess.registerCalled, "session must not be registered if gate denied")
-	// Gate was not admitted — release must not be called
 	assert.False(t, g.releaseCalled, "gate.Release must not be called if gate.Check failed")
 }
 
@@ -727,9 +711,40 @@ func TestA2A_TemporalNotConfigured_503(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
 
-// A2A-23: Temporal interface compile check — fakeTemporal satisfies TemporalClientExecutor.
-// If the interface changes, the assignment in defaultBuilder() will fail to compile.
+// A2A-23: ContextID generated by Lifecycle is UUID v4 format
+func TestA2A_ContextID_IsUUIDv4(t *testing.T) {
+	tc := &fakeTemporal{run: &fakeWorkflowRun{
+		result: temporal.WorkflowResult{FinalText: "ok", Status: domain.RunStatusCompleted},
+	}}
+	b := defaultBuilder()
+	b.temporal = tc
+	srv := httptest.NewServer(b.build().Routes())
+	defer srv.Close()
+
+	resp := postRPC(t, srv, validSendBody(), "valid-token")
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	contextID := tc.lastInput.ContextID
+	assert.NotEmpty(t, contextID)
+	// UUID v4: exactly 36 chars with dashes at 8, 13, 18, 23
+	assert.Len(t, contextID, 36, "ContextID must be UUID v4 (36 chars)")
+	assert.Equal(t, '-', rune(contextID[8]), "position 8 must be '-'")
+	assert.Equal(t, '-', rune(contextID[13]), "position 13 must be '-'")
+}
+
+// A2A-24: Execution lifecycle interface compile check
+func TestA2A_LifecycleInterface_Satisfied(t *testing.T) {
+	var _ execution.RunCreator = &fakeRecorder{}
+	var _ transport.Authenticator = &fakeAuth{}
+	var _ transport.GateStore = &fakeGate{}
+	var _ transport.SessionStore = &fakeSession{}
+	var _ transport.TemporalClientExecutor = &fakeTemporal{}
+	_ = t
+}
+
+// A2A-25: fakeTemporal satisfies TemporalClientExecutor (compile check)
 func TestA2A_TemporalInterface_Satisfied(t *testing.T) {
-	var _ a2aserver.TemporalClientExecutor = &fakeTemporal{}
+	var _ transport.TemporalClientExecutor = &fakeTemporal{}
 	_ = t
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
+	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/agentregistry"
 	"github.com/aviciot/them/internal/artifacts"
 	"github.com/aviciot/them/internal/auth"
@@ -271,16 +272,23 @@ func run() error {
 	log.Info("apps WS+SSE aliases mounted", "prefix", "/apps")
 
 	// ── 17. Wire A2A server (/a2a/*, /.well-known/*) ─────────────────────────
-	// R-4e: A2A now runs the full execution pipeline (auth → EPConfig → gate →
-	// session → run → Temporal). The direct orchestrator dependency is removed.
-	a2aServer := a2a.NewServer(
-		recorder,
-		bus,
+	// Execution lifecycle shared by WS, SSE, and A2A (unification refactor).
+	// Admit: auth → EPConfig → access → gate → session → CreateRun.
+	// Start: ExecuteWorkflow on GoTaskQueue.
+	// Release: session.End + gate.Release (always, in defer).
+	execLifecycle := execution.NewLifecycle(
 		authenticator,
 		epLoader,
 		admissionGate,
 		sessionStore,
+		recorder,
 		temporalCli,
+		log,
+	)
+	a2aServer := a2a.NewServer(
+		execLifecycle,
+		bus,
+		authenticator,
 		cfg.InstanceID,
 		log,
 	)
