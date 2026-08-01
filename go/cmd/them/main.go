@@ -271,7 +271,19 @@ func run() error {
 	log.Info("apps WS+SSE aliases mounted", "prefix", "/apps")
 
 	// ── 17. Wire A2A server (/a2a/*, /.well-known/*) ─────────────────────────
-	a2aServer := a2a.NewServer(recorder, orch, bus, log)
+	// R-4e: A2A now runs the full execution pipeline (auth → EPConfig → gate →
+	// session → run → Temporal). The direct orchestrator dependency is removed.
+	a2aServer := a2a.NewServer(
+		recorder,
+		bus,
+		authenticator,
+		epLoader,
+		admissionGate,
+		sessionStore,
+		temporalCli,
+		cfg.InstanceID,
+		log,
+	)
 	srv.MountA2A(a2aServer.Routes())
 	log.Info("A2A server mounted")
 

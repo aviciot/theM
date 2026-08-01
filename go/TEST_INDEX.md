@@ -355,15 +355,37 @@ Shared interfaces and TokenHash now live in `internal/transport/`; this test exe
 
 ### S1-14 · A2A server — `internal/a2a/server_test.go`
 
-**Purpose:** JSON-RPC 2.0 protocol compliance.
+**Purpose:** R-4e full execution pipeline: auth, EPConfig resolution, access control, gate, session, Temporal dispatch, result mapping, wire format compliance.
 
 | Test | What it proves |
 |---|---|
-| `TestA2AMessageSend` | `message/send` → correct JSON-RPC result with `state: completed` |
-| `TestA2AUnknownMethod` | Unknown method → error code `-32601` |
-| `TestA2AMalformedJSON` | Unparseable body → error code `-32700` |
+| `TestA2A_MissingSlug_404` | Unknown `app_slug` → ErrNotFound → HTTP 404 |
+| `TestA2A_DisabledEP_403` | Disabled EP → CheckAccess ErrDisabled → HTTP 403 |
+| `TestA2A_BlockedToken_403` | Blocked application (app disabled) → HTTP 403 |
+| `TestA2A_MissingTokenOnTokenEP_401` | Token-mode EP + no bearer → HTTP 401 |
+| `TestA2A_InvalidToken_401` | Invalid/expired token + token-mode EP → HTTP 401 |
+| `TestA2A_PublicEP_NoToken_OK` | Public EP + no bearer → succeeds (HTTP 200) |
+| `TestA2A_CapExceeded_429` | Gate ErrCapExceeded → HTTP 429 |
+| `TestA2A_TenantIDFromEPConfig` | TenantID in WorkflowInput comes from EPConfig, not request |
+| `TestA2A_ClientCannotOverrideTenantID` | Request body injection attempt does not alter TenantID/AppID |
+| `TestA2A_WorkflowInputHasTenantID` | WorkflowInput has correct TenantID, ApplicationID, RunID, ContextID, EntryPointSlug |
+| `TestA2A_SessionRegistered` | session.Register called before ExecuteWorkflow; TenantID + AppID stored |
+| `TestA2A_SessionEndedOnCompletion` | session.End called after workflow completes |
+| `TestA2A_GateReleasedOnCompletion` | gate.Check, gate.Confirm, gate.Release all called on success |
+| `TestA2A_GateRollbackOnRegisterFail` | gate.Rollback called if session.Register fails |
+| `TestA2A_RPCResult_CompletedState` | Successful workflow → `state: completed` + text artifact (no `"kind"` field) |
+| `TestA2A_RPCResult_HasTaskID` | Result includes non-empty `taskId` |
+| `TestA2A_RPCError_WorkflowFailed` | Temporal error → sanitized `"internal error"`, not raw err.Error() |
+| `TestA2A_ContextIDFromParams` | Caller-provided `contextId` used as ContextID in WorkflowInput |
+| `TestA2A_ContextIDGeneratedIfAbsent` | Missing `contextId` → unique ID generated per request |
+| `TestA2A_DirectOrchNotUsed_TemporalCalledInstead` | Temporal ExecuteWorkflow called (direct orch.Run gone) |
+| `TestA2A_CleanupOnGateFailure` | Gate denial → session not registered, gate.Release not called |
+| `TestA2AUnknownMethod` | Unknown method → JSON-RPC error code `-32601` |
+| `TestA2AMalformedJSON` | Unparseable body → JSON-RPC error code `-32700` |
+| `TestA2A_TemporalNotConfigured_503` | Nil Temporal client → HTTP 503 |
+| `TestA2A_TemporalInterface_Satisfied` | Compile-time: fakeTemporal satisfies TemporalClientExecutor |
 
-**Trigger:** any change to `internal/a2a/server.go`
+**Trigger:** any change to `internal/a2a/server.go` or `internal/epconfig/pgx.go`
 
 ---
 
@@ -1289,7 +1311,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-11 | agentregistry | 5 |
 | S1-12 | ws | 19 |
 | S1-13 | sse | 18 |
-| S1-14 | a2a | 3 |
+| S1-14 | a2a | 25 |
 | S1-15 | admin | 46 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
@@ -1310,7 +1332,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-32 | tenantctx (R-4b) | 8 |
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
-| **S1 total** | | **452** |
+| **S1 total** | | **474** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1319,4 +1341,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **480** |
+| **`go test ./...` total** | | **502** |

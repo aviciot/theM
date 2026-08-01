@@ -1,175 +1,177 @@
-# R-4d Complete — Handover to R-4e
+# R-4e Complete — Handover to Execution Lifecycle Unification
 
 **Date:** 2026-08-01
 **Branch:** main
-**Phase completed:** R-4d — Runtime Tenant Propagation (WS + SSE Temporal paths)
+**Phase completed:** R-4e — A2A Inbound Execution Path Alignment
 
 ---
 
 ## Current Objective
 
-R-4d is complete. The next session should implement **R-4e: Tenant Propagation into A2A**.
+R-4e is complete. All three inbound paths — WS, SSE, and A2A — now use the same
+execution pipeline: EPConfig resolution → auth → access control → gate → session →
+Temporal dispatch. TenantID and ApplicationID propagate from server-side EPConfig on
+all paths.
 
-A2A invocations (`/a2a`, `internal/a2a/server.go`, `internal/agentregistry/registry.go`)
-do not yet carry tenant identity. R-4e is the remaining gap in the tenant propagation chain.
+The next session should implement **Execution Lifecycle Unification**: extracting the
+shared handler pipeline into a common helper to eliminate the ~200-line duplication
+between `ws/handler.go`, `sse/handler.go`, and `a2a/server.go`.
 
 ---
 
 ## Branch and HEAD
 
 Branch: `main`
-HEAD after this session's commit: see `git log --oneline -1` (R-4d commit in progress).
+HEAD after this session: `git log --oneline -1` after commit.
 
 ---
 
 ## Commits Created This Session
 
-1. Architecture review doc: `0038c05 docs(arch): R-4d execution architecture review and corrected scope`
-2. R-4d implementation: feat(tenant): R-4d — runtime tenant propagation for WS + SSE Temporal paths (pending)
+1. `feat(a2a): R-4e — align inbound A2A with tenant-aware Temporal execution path`
 
 ---
 
 ## Work Completed
 
-### R-4a (complete)
-DB foundation: `them.tenants` table, `tenant_id UUID NOT NULL` on 7 tables, bootstrap
-tenant `00000000-0000-0000-0000-000000000001`, `them.run_artifacts` with tenant_id.
-Migration: `db/026_tenant_foundation.sql`. No application code changed.
+### R-4a through R-4d (complete — prior sessions)
+See `docs/architecture-v2/R4D_IMPLEMENTATION_REPORT.md`.
 
-### R-4b (complete)
-Authenticated tenant identity: `tenantctx` package, TenantID in `Claims`/`TokenInfo`/`TokenRow`,
-`BearerTenantMiddleware`, `HS256TenantMiddleware`, `RuntimeIdentity` struct.
+### R-4e (complete — this session)
 
-### R-4c1 (complete)
-Tenant-scoped DAL and service layers for admin APIs.
+**`go/internal/epconfig/pgx.go`:**
+- Added `COALESCE(a.tenant_id::text, '')` to `epConfigQuery`
+- Updated `Scan` call to read `TenantID` into `EPConfigRow.TenantID`
+- Fix: EPConfig was previously returning empty TenantID for all EPs even though
+  the column existed in the DB since R-4a. This silently affected WS and SSE too.
 
-### R-4c2 (complete)
-`BearerTenantMiddleware` wired to all tenant-scoped admin routes; bootstrap shim removed.
+**`go/internal/a2a/server.go`:**
+- Complete rewrite. Removed `*orchestrator.Orchestrator` dependency.
+- Added: `Authenticator`, `EPConfigLoader`, `GateStore`, `SessionStore`,
+  `TemporalClientExecutor`, `instanceID` to `Server` struct.
+- `NewServer` signature updated accordingly.
+- `handleMessageSend` now runs the full execution pipeline:
+  auth → EPConfig → access → gate → session → Temporal → result mapping
+- Fixed wire format: `rpcPart{Kind,Text}` → `rpcTextPart{Text}` (A2A spec)
+- Added `taskId` to `rpcResult`
+- `writeHTTPError` helper for HTTP-level failures with JSON-RPC body
+- `tryAuthenticate` mirrors WS/SSE implementation
 
-### R-4d (complete — this session)
-- `domain.Run.TenantID string` and `domain.Run.ApplicationID string` (was int64) added
-- `temporal.WorkflowInput.TenantID string` and `.ApplicationID string` (was int64) added
-- `recorder.CreateRun` writes `tenant_id` to `them.runs` (6-arg INSERT matching actual schema)
-  - Schema note: `them.runs` has NO `context_id` or `application_id` columns — those are domain-only
-- WS and SSE handlers propagate `resolvedCfg.TenantID`/`.AppID` into `domain.Run` and `WorkflowInput`
-- `RunOrchestratorActivity` validates TenantID, ApplicationID, RunID non-empty (non-retryable error)
-- 13 new tests; Docker build all 29 packages pass; Python sanity 55 passed
-- See `docs/architecture-v2/R4D_IMPLEMENTATION_REPORT.md` for full details
+**`go/cmd/them/main.go`:**
+- A2A Server wiring updated to pass full dependency set.
+
+**`go/internal/a2a/server_test.go`:**
+- Complete rewrite: 25 tests covering all R-4e requirements from the architecture
+  review (§15). Removed old 3-test suite; replaced with full coverage.
+
+**`go/TEST_INDEX.md`:**
+- S1-14 expanded from 3 to 25 tests; S1 total 452→474; overall 480→502.
 
 ---
 
 ## Deployed / Live State
 
-- Both Go bridges: healthy (`{"status":"ok"}`)
-- Both Go workers: polling `them-orchestration-go`
-- Python bridge, auth service, frontend: unchanged, healthy
-- DB: `them.runs.tenant_id UUID NOT NULL` (R-4a migration applied)
+- Go bridge: healthy (`{"status":"ok","checks":{"postgres":"ok","redis":"ok"}}`)
+- Go workers (2x): polling `them-orchestration-go`
+- A2A unknown slug → HTTP 404 ✓ (no entry points in DB; live A2A test requires one)
+- Agent card endpoint → correct JSON ✓
+- WS/SSE: unchanged, healthy
 
 ---
 
 ## Tests Executed
 
-- `go test ./...` (Dockerfile.go build): **29 packages, 0 failed**
-- `go test -race ./...` (builder container with CGO_ENABLED=1 + gcc): **29 packages, 0 data races**
-- Python sanity tests 01 02 03 04 15: **55 passed, 0 failed**
+- `go test ./...`: **29 packages, 0 failed**
+- `go test -race ./...`: **29 packages, 0 data races**
+- Python sanity 01 02 03 04 15: **55 passed, 0 failed**
+- Docker image build: **success** (tests run inside build)
 
 ---
 
 ## Architecture Decisions Made
 
-1. **`context_id` and `application_id` not persisted to `them.runs`**: those columns do not
-   exist in the DB. Only `tenant_id` is new. `ApplicationID` travels through domain+WorkflowInput
-   for routing but is not written to DB. Linkage is via `entry_point_slug → entry_points.application_id`.
-2. **`tenant_id` is NOT NULL — plain string, not `*string`**: The initial R-4d implementation
-   used a nullable `*string` which would produce a NOT NULL violation at the DB. Fixed: `CreateRun`
-   now validates TenantID is non-empty and passes it as a plain `string`. Empty → `ErrMissingTenantID`.
-3. **`UpdateRunStatus` SQL corrected**: column is `error` not `error_message`; `updated_at` does not exist.
-4. **Activity boundary enforcement**: `RunOrchestratorActivity` fails non-retryably if
-   TenantID, ApplicationID, or RunID is empty.
-5. **Run-to-application linkage**: `runs.entry_point_slug` → `entry_points.slug` → `entry_points.application_id`.
-   Indexed, unambiguous. Future migration can add `application_id` to `runs` if direct filtering needed.
+1. **OrchestratorName = appSlug**: WS uses `appSlug` directly as `OrchestratorName`
+   in `WorkflowInput`. A2A follows the same convention. EPConfig does not carry an
+   `OrchestratorName` field — `app_slug` is the identifier.
+
+2. **epConfigQuery TenantID fix**: Previously missing from SELECT, so `TenantID` was
+   always empty string even after R-4a. Fixed in this session. WS and SSE also
+   benefit from this correction.
+
+3. **HTTP + JSON-RPC error response**: `writeHTTPError` writes both the HTTP status
+   code (for client-side routing) and a JSON-RPC error body (for A2A protocol
+   compliance). This is the correct pattern for A2A pre-workflow failures.
+
+4. **Wire format**: `{"kind":"text","text":"..."}` → `{"text":"..."}` per A2A spec.
+   No known production callers, so not a breaking change.
 
 ---
 
 ## Temporary Compatibility Code Still in Place
 
-None introduced in R-4d.
+None introduced in R-4e.
 
 ---
 
 ## Known Bugs and Blockers
 
-- `them-go-bridge` container was manually recreated (cosmetic: instance_id shows `go-bridge-2`
-  on both; health endpoints confirm both running — no functional impact)
-- A2A path (`/a2a`) does not yet carry tenant identity — R-4e
+- No `them.entry_points` rows with `entry_point_type = 'a2a'` exist in the DB.
+  Live A2A end-to-end test requires creating one via admin API. All correctness
+  verified by unit tests.
+- Go bridge containers were manually recreated in this session (not via Compose).
+  The Compose definition should be used for next startup to restore proper labeling.
 
 ---
 
-## Files Most Relevant to R-4e
+## Files Most Relevant to the Next Task
 
-- `go/internal/a2a/server.go` — A2A JSON-RPC handler entry point
-- `go/internal/agentregistry/registry.go` — A2A invocation + Redis cache
-- `go/internal/temporal/activities.go` — already validates TenantID; A2A bypasses this
-- `go/internal/domain/domain.go` — `Run.TenantID` and `.ApplicationID` defined
-- `docs/A2A_REFERENCE.md` — A2A SDK v1.1.0 ground truth
-- `docs/architecture-v2/R4D_IMPLEMENTATION_REPORT.md` — what R-4d did/didn't do
+- `go/internal/ws/handler.go` — source of truth for the pipeline; unification target
+- `go/internal/sse/handler.go` — duplicate pipeline; unification target
+- `go/internal/a2a/server.go` — R-4e implementation; unification target
+- `go/internal/transport/transport.go` — shared interfaces; home for shared types
+- `docs/architecture-v2/R4E_A2A_ARCHITECTURE_REVIEW.md` — §16 exclusions relevant
+  to what unification should NOT bundle
 
 ---
 
 ## Hard Constraints That Must Remain in Force
 
-1. **TenantID is NEVER accepted from request headers, query params, or body** — only from
-   server-resolved EPConfig or auth token cache lookup.
+1. **TenantID is NEVER accepted from request headers, query params, or body** — only
+   from server-resolved EPConfig or auth token cache lookup.
 2. **Never use DB name `odin` or schema `odin`** — everything is `them`.
 3. **Never query `auth_service.*` tables directly** — use `internal/auth/` from Go.
-4. **500 responses must use static strings** — never `err.Error()` from service/DAL layers.
+4. **500 responses must use static strings** — never `err.Error()` from service/DAL.
 5. **Secrets never appear in log output** — use `cfg.SafeString()`.
 6. **Every code change MUST have a test** — zero new failures before commit.
+7. **Do NOT start the Execution Lifecycle Unification in the same session as R-4e.**
 
 ---
 
 ## Exact Next Single Focused Task
 
-**R-4e: A2A Execution Path Alignment (auth + gate + session + Temporal)**
+**Execution Lifecycle Unification (post-R-4e)**
 
-The current A2A handler (`go/internal/a2a/server.go`) bypasses authentication, EP config
-resolution, tenant identity, admission gate, session registration, and Temporal. It calls
-the orchestrator directly in-process. R-4e replaces the direct `orch.Run` call with the
-same execution pipeline used by WS and SSE.
+WS, SSE, and A2A share ~200 lines of identical pipeline logic:
+```
+tryAuthenticate → epLoader.Load → access check → gate.Check →
+session.Register → gate.Confirm → recorder.CreateRun →
+bus.Subscribe → ExecuteWorkflow → block → cleanup
+```
 
-See `docs/architecture-v2/R4E_A2A_ARCHITECTURE_REVIEW.md` for the full design.
-Read that document before writing any code.
+The unification should:
+1. Extract this into an `ExecutionPipeline` struct (or a free function) in
+   `internal/transport/` or a new `internal/execution/` package.
+2. Update WS, SSE, and A2A handlers to call the shared code.
+3. Keep handler-specific concerns (WS upgrade, SSE stream, A2A JSON-RPC framing)
+   in each handler.
 
-**Corrected scope (not just "pass TenantID through"):**
-
-1. `go/internal/a2a/server.go`:
-   - Add deps: `auth.Cache`, `epconfig.Loader`, `gate.Gate`, `session.Store`, `temporal.Client`
-   - Remove dep: `*orchestrator.Orchestrator` (no longer used for inbound)
-   - `handleMessageSend`: auth → EP config (from `app_slug`) → CheckAccess → gate.Check →
-     session.Register → gate.Confirm → recorder.CreateRun → bus.Subscribe → ExecuteWorkflow →
-     block → session.End + gate.Release → rpcResult
-   - TenantID and AppID come from EPConfig only — never from request payload or headers
-
-2. **Verify `OrchestratorName` on `EPConfig` before starting.** Check `go/internal/ws/handler.go`
-   to see how `OrchestratorName` is set in `WorkflowInput`. If it is not on `EPConfig`,
-   add it to `EPConfigRow`/`EPConfig` and update `epconfig/pgx.go` first.
-
-3. `go/cmd/them/main.go`: update A2A Server wiring.
-
-4. Fix wire format bug: current `{"kind": "text", "text": "..."}` → spec-correct `{"text": "..."}`.
-
-5. `agentregistry/registry.go`: **NO changes needed.** It is outbound A2A only.
-
-6. Write all tests from `R4E_A2A_ARCHITECTURE_REVIEW.md §15` in `go/internal/a2a/server_test.go`.
-
-7. Update `go/TEST_INDEX.md` in the same commit.
-
-Before starting R-4e, read:
-- `docs/architecture-v2/R4E_A2A_ARCHITECTURE_REVIEW.md` (architecture review — authoritative)
-- `docs/A2A_REFERENCE.md`
-- `go/internal/a2a/server.go`
-- `go/internal/ws/handler.go` (reference for OrchestratorName resolution)
-- This handover doc
+**Before starting:**
+- Read `R4E_A2A_ARCHITECTURE_REVIEW.md` §16 (exclusions: do NOT bundle async A2A,
+  HITL, streaming, or other features into this refactor)
+- Read `R4E_IMPLEMENTATION_REPORT.md` §9 (next phase description)
+- Read `ws/handler.go`, `sse/handler.go`, `a2a/server.go` side-by-side to identify
+  the exact duplication boundary
+- Plan the refactor before writing code; confirm scope with a brief architecture note
 
 ---
 
@@ -181,21 +183,23 @@ git log --oneline -3
 git status
 docker ps --format "{{.Names}}\t{{.Status}}" | grep -E "go-bridge|go-worker"
 
-# Read before touching A2A
-cat docs/architecture-v2/R4E_A2A_ARCHITECTURE_REVIEW.md
-cat docs/A2A_REFERENCE.md
+# Read before touching execution pipeline
+cat docs/architecture-v2/R4E_IMPLEMENTATION_REPORT.md
+cat go/internal/ws/handler.go
+cat go/internal/sse/handler.go
 cat go/internal/a2a/server.go
-cat go/internal/ws/handler.go   # reference: how OrchestratorName is set in WorkflowInput
 
 # Run sanity before any change
 python3.12 scripts/tests/run_tests.py 01 02 03 04 15
 ```
 
 **First prompt for next session:**
-> Continue the THEM Python-to-Go migration at `/home/avi/them`. R-4d is complete (runtime
-> tenant propagation for WS+SSE). Next task is R-4e: align the A2A execution path with
-> WS/SSE (auth, EP config, gate, session, Temporal dispatch). Architecture review is
-> complete — read `docs/architecture-v2/R4E_A2A_ARCHITECTURE_REVIEW.md` and
-> `docs/architecture-v2/NEXT_SESSION_HANDOVER.md` before writing any code. Do NOT start
-> with `agentregistry` — that package requires no changes for R-4e. Verify scope for
-> OrchestratorName before implementing.
+> Continue the THEM Python-to-Go migration at `/home/avi/them`. R-4e is complete
+> (A2A inbound path aligned with WS/SSE — auth, EPConfig, gate, session, Temporal).
+> The next task is Execution Lifecycle Unification: extract the shared execution
+> pipeline (auth → EPConfig → gate → session → Temporal) into a common helper shared
+> by WS, SSE, and A2A, eliminating ~200 lines of duplication. Read
+> `docs/architecture-v2/R4E_IMPLEMENTATION_REPORT.md` and
+> `docs/architecture-v2/NEXT_SESSION_HANDOVER.md` before writing any code. Plan
+> the refactor with an architecture note before implementing. Do NOT bundle async
+> A2A, HITL, streaming, or other features into this refactor.

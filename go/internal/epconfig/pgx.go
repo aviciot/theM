@@ -22,10 +22,12 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 // epConfigQuery is the single query that joins entry_points → applications.
 // All columns used by EPConfig are selected here. NULLable columns are
 // scanned into pointer types so the caller can apply defaults.
+// R-4e: a.tenant_id added so TenantID flows into EPConfig for A2A (and WS/SSE).
 const epConfigQuery = `
 SELECT
     ep.id::text,
     a.id::text,
+    COALESCE(a.tenant_id::text, ''),
     ep.slug,
     ep.entry_point_type,
     ep.enabled,
@@ -49,6 +51,7 @@ func (q *PgxQuerier) QueryEPConfig(ctx context.Context, epSlug string) (*EPConfi
 	err := q.pool.QueryRow(ctx, epConfigQuery, epSlug).Scan(
 		&row.EPID,
 		&row.AppID,
+		&row.TenantID,
 		&row.EPSlug,
 		&row.EPType,
 		&row.EPEnabled,
