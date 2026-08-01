@@ -42,6 +42,12 @@ const ArtifactMaxBytes = 1 << 20 // 1 MiB
 // ErrArtifactTooLarge is returned when the artifact data exceeds ArtifactMaxBytes.
 var ErrArtifactTooLarge = errors.New("runrecorder: artifact exceeds 1 MiB limit")
 
+// ErrMissingTenantID is returned by CreateRun when run.TenantID is empty.
+// them.runs.tenant_id is UUID NOT NULL — a nil/empty value would fail at the
+// DB level. Callers must supply TenantID from epconfig.EPConfig, never from
+// client-supplied request data.
+var ErrMissingTenantID = errors.New("runrecorder: TenantID must not be empty")
+
 // Recorder writes run lifecycle events to the database.
 type Recorder struct {
 	db DBQuerier
@@ -84,11 +90,18 @@ func (r *Recorder) eventsTransport() string {
 // The events_transport column is set from the configured RunEventsMode unless
 // run.EventsTransport is explicitly provided (non-empty), in which case that
 // value is used verbatim.
-// TenantID is written from run.TenantID (R-4d); it must come from epconfig, never
-// from client-supplied data.
-// Note: them.runs does not have context_id or application_id columns — those are
-// tracked in domain.Run for in-memory routing but are not persisted to this table.
+//
+// TenantID is required: them.runs.tenant_id is UUID NOT NULL. An empty TenantID
+// returns ErrMissingTenantID immediately — no DB call is made. TenantID must come
+// from epconfig.EPConfig at run-creation time, never from client-supplied data.
+//
+// Note: them.runs has no context_id or application_id columns. Those fields are
+// tracked in domain.Run for in-memory routing only. Application linkage is
+// recoverable at query time via entry_point_slug → entry_points.application_id.
 func (r *Recorder) CreateRun(ctx context.Context, run domain.Run) error {
+	if run.TenantID == "" {
+		return ErrMissingTenantID
+	}
 	const q = `
 		INSERT INTO them.runs (id, tenant_id, entry_point_slug, status, started_at, events_transport)
 		VALUES ($1, $2::uuid, $3, $4, $5, $6)
@@ -102,15 +115,8 @@ func (r *Recorder) CreateRun(ctx context.Context, run domain.Run) error {
 		transport = r.eventsTransport()
 	}
 
-	// Nullable UUID parameter: empty string → NULL (no tenant scoping for
-	// legacy or test runs that predate R-4d).
-	var tenantID *string
-	if run.TenantID != "" {
-		tenantID = &run.TenantID
-	}
-
 	err := r.db.Exec(ctx, q,
-		run.ID, tenantID, run.EntryPointSlug,
+		run.ID, run.TenantID, run.EntryPointSlug,
 		string(domain.RunRunning), startedAt, transport,
 	)
 	if err != nil {
@@ -119,9 +125,10 @@ func (r *Recorder) CreateRun(ctx context.Context, run domain.Run) error {
 	return nil
 }
 
-// UpdateRunStatus sets the status and error_message for the given run.
+// UpdateRunStatus sets the status and error for the given run.
+// Note: them.runs has an "error" column (not "error_message"); "updated_at" does not exist.
 func (r *Recorder) UpdateRunStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg string) error {
-	const q = `UPDATE them.runs SET status=$2, error_message=$3, updated_at=now() WHERE id=$1`
+	const q = `UPDATE them.runs SET status=$2, error=$3 WHERE id=$1`
 	err := r.db.Exec(ctx, q, runID, string(status), errMsg)
 	if err != nil {
 		return fmt.Errorf("runrecorder: update status for run %s: %w", runID, err)

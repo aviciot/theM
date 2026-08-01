@@ -69,9 +69,9 @@ Tenant-scoped DAL and service layers for admin APIs.
 
 ## Tests Executed
 
-- Go unit tests (`go test ./...` inside Dockerfile.go): **29 packages, 0 failed**
+- `go test ./...` (Dockerfile.go build): **29 packages, 0 failed**
+- `go test -race ./...` (builder container with CGO_ENABLED=1 + gcc): **29 packages, 0 data races**
 - Python sanity tests 01 02 03 04 15: **55 passed, 0 failed**
-- `go test -race ./...`: **NOT RUN THIS SESSION** — run before next PR merge
 
 ---
 
@@ -79,11 +79,15 @@ Tenant-scoped DAL and service layers for admin APIs.
 
 1. **`context_id` and `application_id` not persisted to `them.runs`**: those columns do not
    exist in the DB. Only `tenant_id` is new. `ApplicationID` travels through domain+WorkflowInput
-   for routing but is not written to DB.
-2. **Nullable `*string` for tenant_id**: empty TenantID → nil → SQL NULL; prevents UUID CHECK
-   violations for legacy runs.
-3. **Activity boundary enforcement**: `RunOrchestratorActivity` fails non-retryably if
+   for routing but is not written to DB. Linkage is via `entry_point_slug → entry_points.application_id`.
+2. **`tenant_id` is NOT NULL — plain string, not `*string`**: The initial R-4d implementation
+   used a nullable `*string` which would produce a NOT NULL violation at the DB. Fixed: `CreateRun`
+   now validates TenantID is non-empty and passes it as a plain `string`. Empty → `ErrMissingTenantID`.
+3. **`UpdateRunStatus` SQL corrected**: column is `error` not `error_message`; `updated_at` does not exist.
+4. **Activity boundary enforcement**: `RunOrchestratorActivity` fails non-retryably if
    TenantID, ApplicationID, or RunID is empty.
+5. **Run-to-application linkage**: `runs.entry_point_slug` → `entry_points.slug` → `entry_points.application_id`.
+   Indexed, unambiguous. Future migration can add `application_id` to `runs` if direct filtering needed.
 
 ---
 
@@ -95,9 +99,8 @@ None introduced in R-4d.
 
 ## Known Bugs and Blockers
 
-- `go test -race ./...` not run — must run before next PR merge
 - `them-go-bridge` container was manually recreated (cosmetic: instance_id shows `go-bridge-2`
-  on both; health endpoints confirm both running)
+  on both; health endpoints confirm both running — no functional impact)
 - A2A path (`/a2a`) does not yet carry tenant identity — R-4e
 
 ---

@@ -233,11 +233,11 @@ sanitization, and cross-run access denial.
 
 | Test | What it proves |
 |---|---|
-| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with correct column order (incl. `tenant_id`, `events_transport`); 6-arg signature (R-4d) |
+| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with 6-arg signature (id, tenant_id, entry_point_slug, status, started_at, events_transport); tenant_id is a plain string (NOT NULL) |
 | `TestCreateRun_eventsTransportByMode` | events_transport derived from RunEventsMode: pubsub→"pubsub", dual/streams→"streams" (Phase 11c-B) |
 | `TestCreateRun_explicitTransportOverridesMode` | non-empty `run.EventsTransport` overrides the configured mode |
-| `TestUpdateRunStatus_withErrorMessage` | `UPDATE` sets `ended_at`, `status`, `error_message` |
-| `TestUpdateRunStatus_completed` | Completed run → empty error_message |
+| `TestUpdateRunStatus_withErrorMessage` | `UPDATE` sets `status` and `error` (column is "error", not "error_message") |
+| `TestUpdateRunStatus_completed` | Completed run → empty error string |
 | `TestRecordUsage_insertsCorrectly` | `INSERT INTO them.run_usage` correct args |
 | `TestRecordStep_insertsCorrectly` | `INSERT INTO them.run_steps` correct args |
 | `TestDBError_propagates` | DB error is wrapped and returned, not swallowed |
@@ -251,9 +251,9 @@ sanitization, and cross-run access denial.
 | `TestSanitizeFilename_Safe` | normal filenames preserved unchanged |
 | `TestSanitizeFilename_HiddenFile` | `.htaccess` → `file.htaccess` (hidden file protection) |
 | `TestMetadataEvent_HasNoFilePayload` | returned artifact ID does not contain raw file data |
-| `TestCreateRun_writesTenantID` | R-4d: non-nil tenant_id *string is passed when TenantID set; written to arg[1] |
-| `TestCreateRun_nullTenantWhenEmpty` | R-4d: empty TenantID → nil *string (SQL NULL), no UUID CHECK violation |
-| `TestCreateRun_twoTenantsProduceDistinctRows` | R-4d: two different tenant UUIDs → two distinct tenant_id arg values |
+| `TestCreateRun_writesTenantID` | R-4d fixup: TenantID written as plain string arg[1]; no *string nullable |
+| `TestCreateRun_emptyTenantIDReturnsError` | R-4d fixup: empty TenantID → `ErrMissingTenantID` before any DB call (NOT NULL constraint) |
+| `TestCreateRun_twoTenantsProduceDistinctRows` | R-4d: two different tenant UUIDs → two distinct plain-string arg[1] values |
 
 **Trigger:** any change to `internal/runrecorder/recorder.go` or `internal/runrecorder/pgx.go`
 

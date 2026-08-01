@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-01
 **Branch:** main
-**Status:** Complete
+**Status:** Complete (R-4d fixup applied same session)
 
 ---
 
@@ -28,9 +28,11 @@ carries correct tenant identity, never client-supplied data.
 ### 3. `go/internal/runrecorder/recorder.go`
 - `CreateRun` SQL updated: inserts only columns that exist on `them.runs`
   - Drops `context_id` and `application_id` (those columns do not exist on `them.runs`)
-  - Adds `tenant_id` — passed as `*string` (nil → SQL NULL for legacy runs without tenant context)
+  - Adds `tenant_id` — passed as a **plain string** (NOT NULL column; `ErrMissingTenantID` returned before DB call if empty)
   - Signature: `id, tenant_id, entry_point_slug, status, started_at, events_transport` (6 args)
+  - `UpdateRunStatus` fixed: uses `error` column (not `error_message`); removes `updated_at` (column does not exist)
 - `TenantID` is sourced exclusively from `domain.Run.TenantID`, which is set from `resolvedCfg`
+- `ErrMissingTenantID` sentinel exported: callers can `errors.Is()` against it
 
 ### 4. `go/internal/ws/handler.go`
 - Step 9 (Create run record): `run.TenantID` and `run.ApplicationID` populated from `resolvedCfg`
@@ -67,9 +69,9 @@ not written to the runs table.
 | `TestCreateRun_callsCorrectSQL` | Updated: verifies 6-arg INSERT, tenant_id at arg[1] |
 | `TestCreateRun_eventsTransportByMode` | Updated: events_transport now at arg[5] |
 | `TestCreateRun_explicitTransportOverridesMode` | Updated: events_transport at arg[5] |
-| `TestCreateRun_writesTenantID` | New: non-empty TenantID → non-nil *string at arg[1] |
-| `TestCreateRun_nullTenantWhenEmpty` | New: empty TenantID → nil *string (SQL NULL) |
-| `TestCreateRun_twoTenantsProduceDistinctRows` | New: two tenant UUIDs → distinct arg[1] values |
+| `TestCreateRun_writesTenantID` | New (fixup): TenantID written as plain string arg[1]; NOT NULL, no *string |
+| `TestCreateRun_emptyTenantIDReturnsError` | New (fixup): empty TenantID → `ErrMissingTenantID`, no DB call |
+| `TestCreateRun_twoTenantsProduceDistinctRows` | New: two tenant UUIDs → distinct plain-string arg[1] values |
 
 ### `go/internal/temporal/worker_test.go`
 | Test | Coverage |
@@ -102,26 +104,64 @@ not written to the runs table.
 2. **Activity boundary enforcement.** `RunOrchestratorActivity` rejects any input where
    TenantID, ApplicationID, or RunID is empty — non-retryable, so misconfigurations
    surface immediately rather than silently producing untenanted runs.
-3. **SQL NULL safety.** Empty TenantID → `nil *string` → SQL NULL, preventing UUID
-   CHECK constraint violations on the `tenant_id` column.
+3. **Recorder enforces NOT NULL pre-flight.** `CreateRun` returns `ErrMissingTenantID`
+   before any DB call if `TenantID` is empty — consistent with `them.runs.tenant_id UUID NOT NULL`.
+   The previous nullable `*string` fallback was a bug (nil → NOT NULL violation at DB).
+4. **No NULL tenant_id rows created by Go paths.** WS/SSE handlers populate TenantID from
+   EPConfig before calling `CreateRun`; the recorder refuses to proceed without it.
 
 ---
 
 ## Test Results
 
-- Docker build: **all 29 packages pass, 0 failed** (`go test ./...` inside Dockerfile.go)
+- `go test ./...` (Dockerfile.go build): **29 packages, 0 failed**
+- `go test -race ./...` (inside builder container): **29 packages, 0 data races**
 - Python sanity tests 01 02 03 04 15: **55 passed, 0 failed**
 - Go bridges: both healthy (`{"status":"ok"}`)
 - Go workers: both polling `them-orchestration-go`
 
 ---
 
-## Limitations / Out of Scope
+## Run-to-Application Linkage
 
-- **A2A path**: A2A execution (`/a2a`) does not use `WorkflowInput` — tenant propagation
-  into A2A is a separate task (R-4e).
-- **`context_id` / `application_id` not in DB**: `domain.Run.ContextID` and
-  `domain.Run.ApplicationID` are in-memory fields only. A future migration could add
-  `application_id` to `them.runs` for query-time filtering; that is not R-4d scope.
-- **No new DB migration**: R-4a already added `tenant_id` to `them.runs`. R-4d only
-  writes to the existing column.
+`them.runs` does not store `application_id` directly. The linkage is recoverable via a JOIN:
+
+```sql
+SELECT r.*, ep.application_id
+FROM them.runs r
+JOIN them.entry_points ep ON ep.slug = r.entry_point_slug
+WHERE r.tenant_id = $1;
+```
+
+`them.entry_points.slug` is UNIQUE, so the join is unambiguous. The query is indexed via
+`idx_runs_entry_point_slug` and `idx_entry_points_slug`.
+
+**Assessment:** Sufficient for audit and operational queries. The `entry_point_slug` is always
+set by the WS/SSE handler and is stable for the run's lifetime.
+
+**Future schema gap (documented, not fixed here):** If direct `application_id` filtering on `runs`
+without the join becomes a performance requirement, a migration can add `application_id UUID`
+to `them.runs`. That is not required for R-4d and would need a separate migration + backfill.
+
+---
+
+## Fixup Applied (same session as R-4d)
+
+The initial R-4d commit (`8c64d51`) had a bug: `CreateRun` passed `tenant_id` as `*string`
+(nullable), but `them.runs.tenant_id` is `UUID NOT NULL`. A nil `*string` would produce a
+`NOT NULL constraint violation` at the DB level on any codepath where `TenantID` was empty.
+
+Fixup changes (this commit):
+- Removed `*string` nullable pattern for `tenant_id`
+- Added `ErrMissingTenantID` sentinel — returned before DB call if `TenantID` is empty
+- Fixed `UpdateRunStatus`: `error_message` → `error`, removed `updated_at` (neither column exists)
+- Updated all tests: `*string` assertions → plain string; `TestCreateRun_nullTenantWhenEmpty`
+  renamed to `TestCreateRun_emptyTenantIDReturnsError` with inverted expectation
+- Race detector: `go test -race ./...` — **0 data races**
+
+---
+
+## Out of Scope
+
+- **A2A path**: tenant propagation into A2A is R-4e.
+- **No new DB migration**: R-4a already added `tenant_id` to `them.runs`. R-4d only writes to the existing column.

@@ -894,11 +894,9 @@ func TestWS_RunStoresTenantID(t *testing.T) {
 	require.NotNil(t, createRunCall, "CreateRun INSERT must have been executed")
 	require.Contains(t, createRunCall.sql, "tenant_id", "SQL must include tenant_id column")
 
-	// arg[1] is tenant_id — must be the *string pointer with correct value.
+	// arg[1] is tenant_id — plain string UUID (NOT NULL column, no *string nullable).
 	// Args: id($1), tenant_id($2), entry_point_slug($3), status($4), started_at($5), events_transport($6).
-	tp, ok := createRunCall.args[1].(*string)
-	require.True(t, ok, "tenant_id arg must be *string")
-	assert.Equal(t, tenantID, *tp, "WS run must carry TenantID from EPConfig")
+	assert.Equal(t, tenantID, createRunCall.args[1], "WS run must carry TenantID from EPConfig")
 
 	// Verify WorkflowInput received TenantID.
 	require.True(t, tc.called, "ExecuteWorkflow must be called")
@@ -969,12 +967,10 @@ func TestWS_ClientTenantHeaderIgnored(t *testing.T) {
 	}
 
 	// Verify tenant_id in run is the server-resolved value, not the client-supplied one.
-	// arg[1] is tenant_id in the 6-arg signature.
+	// arg[1] is tenant_id — plain string UUID (NOT NULL column, no *string nullable).
 	for i := range captureDB.execCalls {
 		if strings.Contains(captureDB.execCalls[i].sql, "INSERT INTO them.runs") {
-			tp, ok := captureDB.execCalls[i].args[1].(*string)
-			require.True(t, ok)
-			assert.Equal(t, serverTenantID, *tp,
+			assert.Equal(t, serverTenantID, captureDB.execCalls[i].args[1],
 				"tenant_id must be server-resolved (from EPConfig), not client-supplied header")
 			return
 		}

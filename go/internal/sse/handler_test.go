@@ -840,11 +840,9 @@ func TestSSE_RunStoresTenantID(t *testing.T) {
 	}
 	require.NotNil(t, createRunArgs, "CreateRun INSERT must have been executed")
 
-	// arg[1] is tenant_id in the 6-arg signature.
+	// arg[1] is tenant_id — plain string UUID (NOT NULL column, no *string nullable).
 	// Args: id($1), tenant_id($2), entry_point_slug($3), status($4), started_at($5), events_transport($6).
-	tp, ok := createRunArgs[1].(*string)
-	require.True(t, ok, "tenant_id arg must be *string")
-	assert.Equal(t, tenantID, *tp, "SSE run must carry TenantID from EPConfig")
+	assert.Equal(t, tenantID, createRunArgs[1], "SSE run must carry TenantID from EPConfig")
 
 	// Verify WorkflowInput received TenantID.
 	require.True(t, tc.called, "ExecuteWorkflow must be called")
@@ -898,12 +896,10 @@ func TestSSE_ClientTenantHeaderIgnored(t *testing.T) {
 
 	collectSSE(t, resp, 3*time.Second)
 
-	// arg[1] is tenant_id in the 6-arg signature.
+	// arg[1] is tenant_id — plain string UUID (NOT NULL column, no *string nullable).
 	for i := range captureDB.execCalls {
 		if strings.Contains(captureDB.execCalls[i].sql, "INSERT INTO them.runs") {
-			tp, ok := captureDB.execCalls[i].args[1].(*string)
-			require.True(t, ok)
-			assert.Equal(t, serverTenantID, *tp,
+			assert.Equal(t, serverTenantID, captureDB.execCalls[i].args[1],
 				"tenant_id must be server-resolved (from EPConfig), not client-supplied header")
 			return
 		}
