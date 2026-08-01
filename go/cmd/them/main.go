@@ -295,7 +295,7 @@ func run() error {
 	if temporalCli != nil {
 		temporalSignaler = temporal.NewSignaler(temporalCli)
 	}
-	adminRouter := admin.BuildRouter(adminDB, adminCache, temporalSignaler, sessionStore, jwtMiddleware, log, cfg.SecretKey)
+	adminRouter := admin.BuildRouter(adminDB, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey)
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
 

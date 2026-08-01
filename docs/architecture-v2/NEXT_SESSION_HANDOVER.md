@@ -1,202 +1,136 @@
-# Compose Consolidation Complete — Handover to R-4c2
+# R-4c2 Complete — Handover to R-4d
 
 **Date:** 2026-08-01
 **Branch:** main
-**HEAD:** `aa09490` docs(stage-b): root environment preparation — fix fallback, update runbook
-**Prepared by:** Compose consolidation session (Stages C–H)
+**HEAD:** cf1fd5c (pre-R-4c2 commit; R-4c2 changes are uncommitted at handover time)
+**Prepared by:** R-4c2 implementation session
 
 ---
 
 ## Deployment State
 
-**Compose consolidation complete.** Production Compose deployment is now managed from `/home/avi/them` (canonical root). `theM_gateway/` is retired. See `COMPOSE_CONSOLIDATION_EXECUTION_REPORT.md`.
-
 | Fact | Value |
 |---|---|
 | Active project | `them_gateway` |
 | Compose working dir | `/home/avi/them` |
-| Production command | see `LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` §1 |
-| All 15 services | Running |
-| Go Workers | Compose-managed, polling `them-orchestration-go` |
-| 3 infra containers (`postgres`, `redis`, `temporal-frontend`) | Still show `working_dir=theM_gateway` — acceptable, update at next planned maintenance |
+| Production command | `bash scripts/deploy.sh up` |
+| Go bridges | `them-go-bridge`, `them-go-bridge-2` — running R-4c2 binary |
+| Go workers | `them-go-worker`, `them-go-worker-2` — running, healthy |
+| All other services | Running |
 
 ---
 
 ## Current Objective
 
-Compose consolidation (Stages C–H) is **complete**. The next task is
-**Phase R-4c2: Wire Tenant Middleware to Admin Routes** — connecting `BearerTenantMiddleware`
-or `HS256TenantMiddleware` to admin routes in `cmd/them/main.go` and removing the
-`tenantIDFromCtxOrBootstrap` compatibility shim.
-
-**NOTE:** The last code commit was R-4c1 at HEAD `09c5665`. Commits since then (`8586427`, `c909c55`, `aa09490`) are deployment/documentation commits. The Go test baseline is still R-4c1 state: 468 passing tests.
+R-4c2 is **complete**. The next task is **Phase R-4d**.
 
 ---
 
-## What Was Completed This Session (R-4c1)
+## R-4c2 Work Completed
 
-1. **`go/internal/admin/dal/agents.go`** — All 5 methods tenant-scoped.
-2. **`go/internal/admin/dal/orchestrators.go`** — All 5 methods tenant-scoped.
-3. **`go/internal/admin/dal/applications.go`** — App CRUD (5 methods) tenant-scoped; entry point methods unchanged.
-4. **`go/internal/admin/dal/runs.go`** — `ListRuns`, `GetRun`, `GetRunContextID` tenant-scoped.
-5. **`go/internal/admin/dal/tokens.go`** — All 7 methods tenant-scoped (incl. `OrchestratorExists`).
-6. **`go/internal/admin/service/service.go`** — `Dal` interface updated; all tenant-owned entity methods now take `tenantID string`.
-7. **`go/internal/admin/service/agents.go`** — Service methods forwarding tenantID to DAL.
-8. **`go/internal/admin/service/orchestrators.go`** — Same pattern.
-9. **`go/internal/admin/service/applications.go`** — App CRUD methods take tenantID; entry point methods unchanged.
-10. **`go/internal/admin/service/runs.go`** — `List`, `Get`, `Signal` take tenantID.
-11. **`go/internal/admin/service/tokens.go`** — All CRUD methods take tenantID.
-12. **`go/internal/admin/middleware.go`** — Compatibility shim `tenantIDFromCtxOrBootstrap`; `bootstrapTenantID` constant.
-13. **`go/internal/admin/agents.go`** — Handler calls shim, passes tenantID to service.
-14. **`go/internal/admin/orchestrators.go`** — Same pattern.
-15. **`go/internal/admin/applications.go`** — Same pattern.
-16. **`go/internal/admin/runs.go`** — Same pattern.
-17. **`go/internal/admin/tokens.go`** — Same pattern.
-18. **`go/internal/admin/service/service_test.go`** — `fakeDal` updated to match new interface.
-19. **`go/internal/admin/service/tenant_isolation_test.go`** — New: 21 two-tenant isolation tests (S1-33).
-20. **`go/TEST_INDEX.md`** — Added S1-33, updated trigger map, count 447 → 468.
-21. **`docs/architecture-v2/R4C1_IMPLEMENTATION_REPORT.md`** — Created.
+### What was done
+1. **Route classification** in `go/internal/admin/router.go`:
+   - Tenant-scoped: agents, orchestrators, applications, tokens, runs — `BearerTenantMiddleware` applied
+   - Platform-global: llm-providers, monitoring-config, llm-routing, sessions — JWT + RequireSuperAdmin only
 
-Full details: `docs/architecture-v2/R4C1_IMPLEMENTATION_REPORT.md`
+2. **Shim removed**: `tenantIDFromCtxOrBootstrap` and `bootstrapTenantID` deleted from `middleware.go`
+
+3. **All handlers updated**: agents.go, orchestrators.go, applications.go, runs.go, tokens.go — all 23 call sites replaced with `tenantctx.MustTenantIDFromCtx(r.Context())`
+
+4. **BuildRouter signature**: added `tokenCache *auth.Cache` parameter; wired from `main.go`
+
+5. **Tests added**:
+   - `admin_test.go`: added `withTestTenant` middleware helper; applied to all tenant-handler tests
+   - `tenant_http_test.go`: 12 new HTTP-layer tests (TH-01 through TH-12) in S1-34
+
+6. **TEST_INDEX.md**: added S1-34 section; updated S1-15 count (34→46); total 468→480
+
+7. **Docs created**: `R4C2_IMPLEMENTATION_REPORT.md`
+
+### Test results
+- `go test ./...` in Docker builder: **480 passed, 0 failed** (29 packages)
+- Python sanity 01 02 03 04 15: **55 passed, 0 failed**
+- Live smoke tests: 401 on missing token, 401 on invalid token, 401 on JWT-not-in-access-tokens, 200 on platform-global with JWT
+
+### Build lesson (critical for future sessions)
+- `docker compose build` uses layer cache aggressively — always use `--no-cache` when Go source changes
+- `docker restart` reuses existing container image — use `docker compose up --force-recreate` to pick up new image
+- `strings /app/them | grep tenantIDFromCtxOrBootstrap` confirmed old shim is NOT in the binary
 
 ---
 
-## Stack State
+## Files Changed in R-4c2
 
-| Container | Status |
+| File | Change |
 |---|---|
-| them-go-bridge (×2) | Healthy — Compose-managed from `/home/avi/them` |
-| them-go-worker (×2) | Running — Compose-managed, polling `them-orchestration-go` |
-| them-worker (Python) | Running — polling `them-orchestration` |
-| them-postgres | Healthy — R-4a migration applied |
-| them-redis | Healthy |
-| them-auth-service | Healthy |
-| them-frontend | Healthy |
-| Temporal services | Running |
-
-**No DB migrations in R-4c1** (DB schema already has `tenant_id` columns from R-4a).
-
----
-
-## Test State
-
-```
-go test ./...        →   468 passed, 0 failed (28 packages)
-go test -race ./...  →   468 passed, 0 failed, 0 data races (28 packages)
-```
-
-New in R-4c1: 21 tests in `tenant_isolation_test.go` (S1-33).
+| `go/internal/admin/router.go` | Restructured route groups; added tokenCache param; BearerTenantMiddleware wired |
+| `go/internal/admin/middleware.go` | Removed bootstrapTenantID, tenantIDFromCtxOrBootstrap |
+| `go/internal/admin/agents.go` | Replaced shim calls with MustTenantIDFromCtx |
+| `go/internal/admin/orchestrators.go` | Replaced shim calls with MustTenantIDFromCtx |
+| `go/internal/admin/applications.go` | Replaced shim calls with MustTenantIDFromCtx |
+| `go/internal/admin/runs.go` | Replaced shim calls with MustTenantIDFromCtx |
+| `go/internal/admin/tokens.go` | Replaced shim calls with MustTenantIDFromCtx |
+| `go/internal/admin/admin_test.go` | Added withTestTenant helper; applied to tenant-scoped tests |
+| `go/internal/admin/tenant_http_test.go` | New file — 12 HTTP-layer tenant tests |
+| `go/cmd/them/main.go` | Added tokenCache argument to BuildRouter call |
+| `go/TEST_INDEX.md` | S1-34 added; count 468→480 |
+| `docs/architecture-v2/R4C2_IMPLEMENTATION_REPORT.md` | New report |
+| `docs/architecture-v2/implementation-status.md` | R-4c2 status added |
+| `docs/architecture-v2/NEXT_SESSION_HANDOVER.md` | This file |
 
 ---
 
-## Bootstrap Tenant
+## Working Tree State
 
-| Field | Value |
-|---|---|
-| ID | `00000000-0000-0000-0000-000000000001` |
-| Slug | `default` |
-| Display name | Default Development Tenant |
+R-4c2 changes are uncommitted (the session summary was produced before a final commit+push).
+The changes have been verified in the live container via force-rebuild with `--no-cache`.
 
----
-
-## Hard Constraints — Carry Forward
-
-- **Bootstrap tenant UUID `00000000-0000-0000-0000-000000000001` is immutable.**
-- **Temporal is the single durable owner of every run.**
-- **Never log token values, API keys, or secrets.**
-- **All Go changes require `go test ./...` before commit.** Zero regressions allowed.
-- **Workflow ID scheme `ctx-{contextID}`** must be preserved.
-- **`llm_providers`, `config`, `middleware_defs` are platform-global** — no tenant_id ever.
-- **DB name and schema: `them` only.** Never `odin`.
-- **TenantID must never come from request headers or query parameters.**
-- **The bootstrap tenant must NOT be silently assigned when authentication is absent/invalid.**
-- **R-4c1 compatibility shim `tenantIDFromCtxOrBootstrap` must be removed in R-4c2**, not carried forward.
-- **Entry point DAL methods have no `tenantID` param** — they are scoped through the parent app's FK. Do not add one.
+**Before starting R-4d, the next session must:**
+1. `git status` — verify the R-4c2 files listed above are the only modified files
+2. Commit them: `git add <files> && git commit -m "feat(tenant): R-4c2 — wire BearerTenantMiddleware to admin routes, remove bootstrap shim"`
+3. Push: `git push origin main`
 
 ---
 
-## Known Issues and Blockers
+## Known Constraints
 
-| Issue | Severity | Notes |
-|---|---|---|
-| `tenantIDFromCtxOrBootstrap` shim in place | Expected | All admin routes fall back to bootstrap tenant; fixes in R-4c2 |
-| Auth service does not include `tenant_id` in JWT tokens | Medium | `HS256TenantMiddleware` returns 403 for all current JWTs until auth service is updated |
-| Cross-tenant access on admin routes not enforced at HTTP level | Expected | DAL rejects cross-tenant queries (returns not-found), but HTTP callers all share bootstrap tenant until R-4c2 |
-
----
-
-## R-4c2 Scope — Wire Tenant Middleware to Admin Routes
-
-**Goal:** Remove the compatibility shim and enforce tenant identity on every admin request.
-
-**Exact tasks:**
-
-1. Wire `BearerTenantMiddleware` (not `HS256TenantMiddleware`) to admin router in `cmd/them/main.go`
-   - All routes under the admin chi group must go through `BearerTenantMiddleware`
-   - `BearerTenantMiddleware` is already implemented in `go/internal/auth/middleware.go`
-   - It requires a valid bearer token with a non-empty `TenantID` in the token info
-
-2. Remove from `go/internal/admin/middleware.go`:
-   - `bootstrapTenantID` constant
-   - `tenantIDFromCtxOrBootstrap` function
-
-3. Update all 5 handler files (`agents.go`, `orchestrators.go`, `applications.go`, `runs.go`, `tokens.go`):
-   - Replace `tenantIDFromCtxOrBootstrap(r.Context())` with `tenantctx.MustTenantIDFromCtx(r.Context())`
-   - (This is safe because the middleware guarantees tenant is in context before handlers run)
-
-4. Add handler-level tests:
-   - Request with no bearer token → 401 (middleware rejects before handler)
-   - Request with bearer token missing tenant → 403 (middleware rejects)
-   - Request with valid token + tenant → handler runs, tenantID from context used
-
-5. Update TEST_INDEX.md.
-
-**Files most relevant to R-4c2:**
-
-| File | Why |
-|---|---|
-| `go/cmd/them/main.go` | Wire `BearerTenantMiddleware` to admin chi group |
-| `go/internal/admin/middleware.go` | Remove shim |
-| `go/internal/admin/agents.go` | Replace shim call |
-| `go/internal/admin/orchestrators.go` | Replace shim call |
-| `go/internal/admin/applications.go` | Replace shim call |
-| `go/internal/admin/runs.go` | Replace shim call |
-| `go/internal/admin/tokens.go` | Replace shim call |
-| `go/internal/auth/middleware.go` | `BearerTenantMiddleware` — already implemented |
-| `go/internal/admin/admin_test.go` | Add middleware enforcement tests |
-
-**Important:** The `RequireSuperAdmin` middleware remains in place. Admin routes need BOTH
-`RequireSuperAdmin` (validates JWT role) AND `BearerTenantMiddleware` (extracts tenant from
-bearer token). Check the current route registration order in `cmd/them/main.go` before wiring.
+- TenantID is NEVER accepted from request headers, query params, or body — only from `auth.Cache` lookup of the bearer token
+- Bootstrap tenant UUID `00000000-0000-0000-0000-000000000001` is no longer used in any Go handler
+- Platform-global routes (llm-providers, monitoring-config, llm-routing, sessions) do NOT use BearerTenantMiddleware by design — they are multi-tenant administrative resources
+- The `/runs` group uses JWT + BearerTenantMiddleware but NOT RequireSuperAdmin — run access is tenanted but open to any authenticated identity with a valid bearer token
+- Admin routes require BOTH a valid super_admin JWT and a bearer token with tenant — they cannot share the same Authorization header in a real request without a header-swap mechanism
 
 ---
 
-## Starting the Next Session
+## Next Task: R-4d
+
+**Goal:** DAL-level cross-tenant enforcement + integration test coverage.
+
+Scope:
+1. Verify all DAL queries use `AND tenant_id = $N::uuid` in WHERE clauses (agents, orchestrators, applications, runs, tokens)
+2. Add integration tests that verify cross-tenant reads return 404 (not data from wrong tenant)
+3. Token endpoint audit: `POST /admin/tokens` must scope the created token to the requesting tenant
+4. Entry point queries: verify `entry_points` table queries include tenant scoping
+
+**Do NOT start R-4d without first committing and pushing R-4c2.**
+
+---
+
+## Startup Commands for Next Session
 
 ```bash
-# Confirm HEAD
-git log --oneline -5
+# Read first:
+cat docs/architecture-v2/NEXT_SESSION_HANDOVER.md
+cat go/CLAUDE.md
+cat CLAUDE.md
 
-# Run Go tests to confirm clean baseline
-docker run --rm -v /home/avi/them/go:/workspace -w /workspace golang:1.24-alpine go test ./...
+# Verify stack:
+bash scripts/deploy.sh status
 
-# Python sanity
-python3.12 scripts/tests/run_tests.py 01 02 03 04 15
+# Commit R-4c2 if not yet committed:
+git status
+git log --oneline -3
 ```
 
-**First prompt for the next session:**
-
-> Phase R-4c1 is complete (468 Go tests passing). Start Phase R-4c2: Wire tenant middleware
-> to admin routes. Read docs/architecture-v2/R4C1_IMPLEMENTATION_REPORT.md and
-> NEXT_SESSION_HANDOVER.md before writing code. Goal: remove tenantIDFromCtxOrBootstrap shim
-> and wire BearerTenantMiddleware to all admin routes in cmd/them/main.go. Add
-> handler-level tests verifying 401/403 enforcement. Use Sonnet.
-
----
-
-## R-4c through R-4e Status
-
-- R-4c1 (DAL + service tenant scoping): **COMPLETE** ✓
-- R-4c2 (wire middleware to admin routes): NOT started
-- R-4d (session propagation): NOT started
-- R-4e (run recorder): NOT started
+First prompt for next session:
+> The THEM repo is at `/home/avi/them`. R-4c2 is complete but may not be committed yet — check `git status` and commit if needed, then start R-4d. Read `docs/architecture-v2/NEXT_SESSION_HANDOVER.md` before writing any code.

@@ -18,6 +18,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/session"
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
@@ -238,6 +239,24 @@ func (t *fakeTemporal) SignalRun(_ context.Context, runID string, _ []byte) erro
 	return nil
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// testTenantID is the bootstrap tenant used in handler-level unit tests.
+// It is injected via withTestTenant so that MustTenantIDFromCtx does not panic.
+// Handler tests bypass middleware; middleware enforcement is tested in
+// tenant_http_test.go (R-4c2 S1-34).
+const testTenantID = "00000000-0000-0000-0000-000000000001"
+
+// withTestTenant injects testTenantID into the request context.
+// Use this on chi routers that call tenant-scoped handlers directly,
+// without going through BearerTenantMiddleware.
+func withTestTenant(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := tenantctx.WithTenantID(r.Context(), testTenantID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 // 1. List agents — returns empty array not null.
@@ -246,6 +265,7 @@ func TestListAgentsEmptyArray(t *testing.T) {
 	h := admin.NewAgentsHandler(db, nil)
 
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 
 	req := httptest.NewRequest(http.MethodGet, "/agents", nil)
@@ -267,6 +287,7 @@ func TestCreateAgent(t *testing.T) {
 	h := admin.NewAgentsHandler(db, cache)
 
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 
 	body, _ := json.Marshal(map[string]any{
@@ -292,6 +313,7 @@ func TestGetNonexistentAgent(t *testing.T) {
 	h := admin.NewAgentsHandler(db, nil)
 
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 
 	req := httptest.NewRequest(http.MethodGet, "/agents/00000000-0000-0000-0000-000000000000", nil)
@@ -307,6 +329,7 @@ func TestListRunsContextIDFilter(t *testing.T) {
 	h := admin.NewRunsHandler(db, nil)
 
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 
 	req := httptest.NewRequest(http.MethodGet, "/runs?context_id=ctx-123", nil)
@@ -324,10 +347,12 @@ func TestListRunsContextIDFilter(t *testing.T) {
 // ── EP config cache invalidation tests ───────────────────────────────────────
 
 // helper: mount ApplicationsHandler on a chi router and return the recorder.
+// withTestTenant is applied so MustTenantIDFromCtx does not panic.
 func serveApps(t *testing.T, db *fakeDB, cache admin.CacheInvalidator, method, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	h := admin.NewApplicationsHandler(db, cache)
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 	var bodyReader *bytes.Reader
 	if body != nil {
@@ -546,6 +571,7 @@ func TestPatchAgentAliasesUpdate(t *testing.T) {
 	db := &fakeDB{}
 	h := admin.NewAgentsHandler(db, nil)
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 	body, _ := json.Marshal(map[string]any{
 		"slug": "my-agent", "display_name": "My Agent", "transport": "a2a_async",
@@ -563,6 +589,7 @@ func TestPatchOrchestratorAliasesUpdate(t *testing.T) {
 	db := &fakeDB{}
 	h := admin.NewOrchestratorsHandler(db, nil)
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 	body, _ := json.Marshal(map[string]any{
 		"name": "default", "llm_provider": "anthropic", "llm_model": "claude-haiku-4-5-20251001",
@@ -626,6 +653,7 @@ func TestListTokens_EmptyArray(t *testing.T) {
 	db := &fakeDB{queryRows: newFakeRows(nil)}
 	h := admin.NewTokensHandler(db, nil)
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 
 	req := httptest.NewRequest(http.MethodGet, "/tokens", nil)
@@ -644,6 +672,7 @@ func TestListTokens_InvalidUserID_400(t *testing.T) {
 	db := &fakeDB{queryRows: newFakeRows(nil)}
 	h := admin.NewTokensHandler(db, nil)
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 
 	req := httptest.NewRequest(http.MethodGet, "/tokens?user_id=not-a-number", nil)
@@ -658,6 +687,7 @@ func TestGetToken_NotFound(t *testing.T) {
 	db := &fakeDB{queryRowErr: errors.New("no rows")}
 	h := admin.NewTokensHandler(db, nil)
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 
 	req := httptest.NewRequest(http.MethodGet, "/tokens/some-id", nil)
@@ -672,6 +702,7 @@ func TestCreateToken_MissingLabel_400(t *testing.T) {
 	db := &fakeDB{}
 	h := admin.NewTokensHandler(db, nil)
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 
 	body, _ := json.Marshal(map[string]any{"user_id": 1})
@@ -689,6 +720,7 @@ func TestDeleteToken_NotFound(t *testing.T) {
 	db := &fakeDB{execRetErr: pgx.ErrNoRows}
 	h := admin.NewTokensHandler(db, nil)
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 
 	req := httptest.NewRequest(http.MethodDelete, "/tokens/missing-id", nil)
@@ -1121,6 +1153,7 @@ func TestSignalRun(t *testing.T) {
 	h := admin.NewRunsHandler(db, temporal)
 
 	r := chi.NewRouter()
+	r.Use(withTestTenant)
 	h.Routes(r)
 
 	body, _ := json.Marshal(map[string]any{

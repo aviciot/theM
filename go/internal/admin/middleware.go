@@ -7,7 +7,6 @@
 package admin
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -16,7 +15,6 @@ import (
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
 	"github.com/aviciot/them/internal/auth"
-	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // ── Type aliases — re-export dal types so existing callers and tests compile
@@ -110,23 +108,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // writeError writes a JSON error response.
 func writeError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
-}
-
-// bootstrapTenantID is the deterministic UUID for the Default Development Tenant,
-// inserted by the R-4a migration. It is used only in the compatibility helper below.
-const bootstrapTenantID = "00000000-0000-0000-0000-000000000001"
-
-// tenantIDFromCtxOrBootstrap retrieves the TenantID from the request context.
-// When no TenantID is present (because BearerTenantMiddleware is not yet wired
-// to admin routes), it falls back to the bootstrap development tenant.
-//
-// R-4c1 COMPATIBILITY SHIM — remove once admin routes are wired to
-// BearerTenantMiddleware or HS256TenantMiddleware in R-4c2.
-func tenantIDFromCtxOrBootstrap(ctx context.Context) string {
-	if id, err := tenantctx.TenantIDFromCtx(ctx); err == nil {
-		return id
-	}
-	return bootstrapTenantID
 }
 
 // writeServiceError maps a typed service error to the appropriate HTTP status code.

@@ -10,6 +10,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // TokensHandler handles /api/v1/admin/tokens routes.
@@ -57,7 +58,7 @@ func (h *TokensHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		userID = &n
 	}
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	tokens, err := h.svc.List(r.Context(), tenantID, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
@@ -83,7 +84,7 @@ func (h *TokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 		UserID:    body.UserID,
 		ExpiresAt: body.ExpiresAt,
 	}
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	out, err := h.svc.Create(r.Context(), tenantID, in, body.OrchestratorID)
 	if err != nil {
 		if writeServiceError(w, err) {
@@ -100,7 +101,7 @@ func (h *TokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Get handles GET /api/v1/admin/tokens/{token_id}
 func (h *TokensHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "token_id")
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	t, err := h.svc.Get(r.Context(), tenantID, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "token not found")
@@ -124,7 +125,7 @@ func (h *TokensHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Enabled:   body.Enabled,
 		ExpiresAt: body.ExpiresAt,
 	}
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	t, err := h.svc.Update(r.Context(), tenantID, id, patch)
 	if err != nil {
 		if writeServiceError(w, err) {
@@ -139,7 +140,7 @@ func (h *TokensHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete handles DELETE /api/v1/admin/tokens/{token_id}
 func (h *TokensHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "token_id")
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
 		if writeServiceError(w, err) {
 			return

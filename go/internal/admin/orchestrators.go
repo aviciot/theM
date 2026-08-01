@@ -9,6 +9,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // OrchestratorsHandler handles /api/v1/admin/orchestrators routes.
@@ -33,7 +34,7 @@ func (h *OrchestratorsHandler) Routes(r chi.Router) {
 
 // List handles GET /api/v1/admin/orchestrators.
 func (h *OrchestratorsHandler) List(w http.ResponseWriter, r *http.Request) {
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	orchs, err := h.svc.List(r.Context(), tenantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
@@ -50,7 +51,7 @@ func (h *OrchestratorsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	id, err := h.svc.Create(r.Context(), tenantID, input)
 	if err != nil {
 		if writeServiceError(w, err) {
@@ -68,7 +69,7 @@ func (h *OrchestratorsHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *OrchestratorsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	o, err := h.svc.Get(r.Context(), tenantID, name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "orchestrator not found")
@@ -87,7 +88,7 @@ func (h *OrchestratorsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	if err := h.svc.Update(r.Context(), tenantID, name, input); err != nil {
 		writeError(w, http.StatusInternalServerError, "update orchestrator: "+err.Error())
 		return
@@ -100,7 +101,7 @@ func (h *OrchestratorsHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *OrchestratorsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	if err := h.svc.Delete(r.Context(), tenantID, name); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete orchestrator: "+err.Error())
 		return

@@ -1171,3 +1171,17 @@ both `docker-compose.yml` (dev/go profile) and `theM_gateway/docker-compose.trae
 **Lesson:** When R-4a adds `tenant_id NOT NULL` to `access_tokens` and backfills all existing rows, no legacy compatibility code is needed in the DB querier — the NOT NULL guarantee means every row returns a non-empty UUID. The `pgx_querier.go` comment about "pre-R-4a records" is documentation of the design decision, not a code path that is actually exercised. Remove the comment in a future cleanup.
 
 **Lesson:** Token cache JSON round-trip (L2 → L1) must include `TenantID`. The L2 entry is `json.Marshal(info)` and the L1 hit reads back `json.Unmarshal`. Since `TokenInfo.TenantID` uses `json:"tenant_id,omitempty"`, a zero-value (empty string) TenantID will be omitted and survive the round-trip as empty. This is correct behavior — an empty TenantID means the token has no tenant and should be rejected by `BearerTenantMiddleware`.
+
+---
+
+## R-4c2 (2026-08-01): Tenant Middleware Wired to Admin Routes
+
+**Lesson:** `docker compose build` uses Docker layer cache aggressively. When source files in `go/` change, Docker may reuse a cached `COPY go/ ./` layer if content hashes haven't changed (stale file metadata from bind mounts, timestamps, etc.). Always use `docker compose build --no-cache them-go-bridge them-go-bridge-2` when Go source changes between builds. Confirm the rebuild worked with `strings /app/them | grep <removed_function>` inside the running container.
+
+**Lesson:** `docker restart <container>` reuses the existing container image — it does NOT pick up a newly built image. To apply a freshly built image, use `docker compose up --force-recreate <service>`. The `scripts/deploy.sh restart` command is a wrapper for `docker restart`; it also does not apply new images. This is the correct behavior (restart = quick bounce), but you must remember to `up --force-recreate` after rebuilding.
+
+**Lesson:** Go binary `strings` output includes function symbols for all code reachable from the built package, including inlined code. If `strings /app/them | grep tenantIDFromCtxOrBootstrap` returns a result, the old function is still compiled into the binary despite being removed from source — which means the source the builder compiled was NOT the current version on disk. This is a reliable diagnostic for stale Docker image cache.
+
+**Lesson:** In chi, middleware in a sub-group (`a.Group(func(inner chi.Router) { inner.Use(...) })`) runs AFTER all middleware on the parent group. The order is: outer group middleware → inner group middleware → handler. So placing `BearerTenantMiddleware` in an inner `a.Group` inside an admin group that has `RequireSuperAdmin` means RequireSuperAdmin runs first, then BearerTenantMiddleware. This is the correct order for admin tenant-scoped routes.
+
+**Lesson:** Admin routes require BOTH a super_admin JWT (for RequireSuperAdmin) AND a bearer token from `access_tokens` (for BearerTenantMiddleware). Both are read from `Authorization: Bearer`. This creates a practical authentication design tension: a real admin user's JWT cannot simultaneously serve as a bearer token for tenant lookup. The unit test harness solves this with an `X-Admin-JWT` header trick, but production callers must understand the two-credential requirement. Document this in the API guide when writing OpenAPI specs.

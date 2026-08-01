@@ -7,18 +7,32 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/auth"
 )
 
 // BuildRouter returns an http.Handler with all admin and runs routes mounted.
 //
-// jwtMiddleware is the JWT validation middleware (from auth.JWTMiddleware).
-// Pass nil to disable JWT protection (development only).
+// Route classification:
+//
+//   - Tenant-scoped control-plane (agents, orchestrators, applications, tokens, runs):
+//     JWT + RequireSuperAdmin + BearerTenantMiddleware. TenantID comes exclusively
+//     from the bearer token; never from headers, query params, or body.
+//
+//   - Platform-global control-plane (llm-providers, monitoring-config, llm-routing, sessions):
+//     JWT + RequireSuperAdmin only. No tenant scoping — these are platform-wide resources.
+//
+//   - Runtime data-plane (ws, sse, a2a): handled outside this router; not touched here.
+//
+// jwtMiddleware is the JWT validation middleware (HS256 or RS256).
+// Pass nil to disable JWT protection (tests only).
+//
+// tokenCache is the bearer-token cache used by BearerTenantMiddleware.
+// Pass nil to skip tenant enforcement (tests that do not test tenant middleware).
 //
 // sessionReader is the session store for admin session listing/disconnect.
-// Pass nil to disable session admin routes (development only).
+// Pass nil to disable session admin routes (tests only).
 //
-// secretKey is THE_M_SECRET_KEY used by the LLM providers handler for Fernet
-// key derivation. Pass empty string in tests that do not test LLM providers.
+// secretKey is THE_M_SECRET_KEY for Fernet LLM provider key encryption.
 //
 // Routes:
 //
@@ -52,6 +66,7 @@ func BuildRouter(
 	temporal TemporalSignaler,
 	sessionReader service.SessionReader,
 	jwtMiddleware func(http.Handler) http.Handler,
+	tokenCache *auth.Cache,
 	logger *slog.Logger,
 	secretKey string,
 ) http.Handler {
@@ -66,19 +81,31 @@ func BuildRouter(
 	llmRouting := NewLLMRoutingHandler(db)
 	llmProviders := NewLLMProvidersHandler(db, secretKey)
 
-	// Admin routes — protected by JWT + super_admin role check.
-	r.Group(func(admin chi.Router) {
+	// Admin routes — all require JWT + super_admin.
+	// Within /admin, tenant-scoped resources also require BearerTenantMiddleware.
+	r.Group(func(adminGroup chi.Router) {
 		if jwtMiddleware != nil {
-			admin.Use(jwtMiddleware)
+			adminGroup.Use(jwtMiddleware)
 		}
-		admin.Use(RequireSuperAdmin(logger))
+		adminGroup.Use(RequireSuperAdmin(logger))
 
-		// Mount under /admin prefix.
-		admin.Route("/admin", func(a chi.Router) {
-			agents.Routes(a)
-			orchs.Routes(a)
-			apps.Routes(a)
-			tokens.Routes(a)
+		adminGroup.Route("/admin", func(a chi.Router) {
+			// Tenant-scoped sub-group: agents, orchestrators, applications, tokens.
+			// BearerTenantMiddleware extracts TenantID from the same bearer token
+			// that identifies the caller. TenantID is NEVER read from request data.
+			a.Group(func(tenantScoped chi.Router) {
+				if tokenCache != nil {
+					tenantScoped.Use(auth.BearerTenantMiddleware(tokenCache))
+				}
+				agents.Routes(tenantScoped)
+				orchs.Routes(tenantScoped)
+				apps.Routes(tenantScoped)
+				tokens.Routes(tenantScoped)
+			})
+
+			// Platform-global sub-group: llm-providers, monitoring-config,
+			// llm-routing, sessions. No tenant scoping — these resources are
+			// platform-wide and apply to all tenants.
 			monitoring.Routes(a)
 			llmRouting.Routes(a)
 			llmProviders.Routes(a)
@@ -88,10 +115,15 @@ func BuildRouter(
 		})
 	})
 
-	// Runs routes — JWT protected.
+	// Tenant-scoped runs routes — JWT + BearerTenantMiddleware.
+	// Runs are tenant-owned; RequireSuperAdmin is not applied here (run access
+	// uses the bearer token's tenant, not the super_admin JWT role).
 	r.Group(func(runsGroup chi.Router) {
 		if jwtMiddleware != nil {
 			runsGroup.Use(jwtMiddleware)
+		}
+		if tokenCache != nil {
+			runsGroup.Use(auth.BearerTenantMiddleware(tokenCache))
 		}
 		runs.Routes(runsGroup)
 	})

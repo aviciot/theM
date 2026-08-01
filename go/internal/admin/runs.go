@@ -10,6 +10,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // RunsHandler handles /api/v1/runs routes.
@@ -40,7 +41,7 @@ func (h *RunsHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	runs, err := h.svc.List(r.Context(), tenantID, contextID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
@@ -57,7 +58,7 @@ func (h *RunsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	run, err := h.svc.Get(r.Context(), tenantID, runID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "run not found")
@@ -80,7 +81,7 @@ func (h *RunsHandler) Signal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenantID := tenantIDFromCtxOrBootstrap(r.Context())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	if err := h.svc.Signal(r.Context(), tenantID, runID, input.Payload); err != nil {
 		if writeServiceError(w, err) {
 			return

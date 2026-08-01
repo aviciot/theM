@@ -146,7 +146,7 @@ no header can override TenantID; no secret appears in errors; two tenants resolv
 | `TestTokenCache_TenantIDFlows` | TM-15: TenantID flows L1 miss → DB → L1 cache |
 
 **Trigger:** any change to `internal/auth/middleware.go`, `internal/auth/jwt.go`,
-`internal/auth/token_cache.go`, `internal/auth/pgx_querier.go`
+`internal/auth/token_cache.go`, `internal/auth/pgx_querier.go` — also run S1-34 (`internal/admin/tenant_http_test.go`) which tests the wiring of BearerTenantMiddleware at the router level
 
 ---
 
@@ -787,6 +787,33 @@ per-tenant scoping in memory. Verifies four contracts per entity type:
 
 ---
 
+### S1-34 · Tenant HTTP enforcement — `internal/admin/tenant_http_test.go`
+
+**Purpose:** R-4c2 — live HTTP-layer proof that `BearerTenantMiddleware` is wired on tenant-scoped
+admin routes and that TenantID cannot be injected via headers or query params. Uses a real
+`auth.Cache` backed by an in-memory `thTokenQuerier` and `thRedis`. The test router is built via
+`admin.BuildRouter` with a wrapper JWT middleware so both `RequireSuperAdmin` and
+`BearerTenantMiddleware` operate concurrently.
+
+| Test | What it proves |
+|---|---|
+| `TestTenantHTTP_MissingToken_Agents_401` | TH-01: no bearer token → 401 on tenant-scoped /admin/agents |
+| `TestTenantHTTP_InvalidToken_Agents_401` | TH-02: unknown bearer token → 401 on /admin/agents |
+| `TestTenantHTTP_TokenWithoutTenant_Agents_403` | TH-03: valid token with empty TenantID → 403 on /admin/agents |
+| `TestTenantHTTP_ValidToken_Agents_200` | TH-04: valid token with TenantID → handler reached (200) on /admin/agents |
+| `TestTenantHTTP_XTenantIDHeaderIgnored` | TH-05: X-Tenant-ID header cannot override token-derived TenantID |
+| `TestTenantHTTP_QueryTenantIDIgnored` | TH-06: ?tenant_id query param cannot override token-derived TenantID |
+| `TestTenantHTTP_MissingToken_Applications_401` | TH-07: missing bearer → 401 on /admin/applications |
+| `TestTenantHTTP_MissingToken_Runs_401` | TH-08: missing bearer → 401 on /runs |
+| `TestTenantHTTP_PlatformGlobal_LLMProviders_NoTenantRequired` | TH-09: platform-global /admin/llm-providers → 200 with JWT only (no bearer) |
+| `TestTenantHTTP_ValidToken_Orchestrators_200` | TH-10: valid token → 200 on /admin/orchestrators |
+| `TestTenantHTTP_ValidToken_Tokens_200` | TH-11: valid token → 200 on /admin/tokens |
+| `TestTenantHTTP_TenantlessToken_Runs_403` | TH-12: tenantless token → 403 on /runs |
+
+**Trigger:** any change to `internal/admin/router.go`, `internal/auth/middleware.go` (BearerTenantMiddleware), or `internal/admin/` handler files
+
+---
+
 ### S1-26 · Fernet crypto — `internal/crypto/fernet_test.go`
 
 **Purpose:** Prove byte-for-byte compatibility between Python's `cryptography.fernet.Fernet`
@@ -1193,8 +1220,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/cache/runstreamer_writer_adapter.go` | S1-20 + S1-23 |
 | `cmd/worker/main.go` | S1-29 + S1 (full suite) |
 | `internal/a2a/server.go` | S1-14 |
-| `internal/admin/` (any file) | S1-15 + S1-25 |
-| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S2-05 (integration) |
+| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 |
+| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S2-05 (integration) |
 | `internal/admin/dal/llm_providers.go` | S1-25 + S2-05 (integration) |
 | `internal/admin/service/` (any file) | S1-25 + S1-33 |
 | `internal/crypto/fernet.go` | S1-26 |
@@ -1250,7 +1277,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-12 | ws | 17 |
 | S1-13 | sse | 16 |
 | S1-14 | a2a | 3 |
-| S1-15 | admin | 34 |
+| S1-15 | admin | 46 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
@@ -1269,7 +1296,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-31 | auth/tenant_middleware (R-4b) | 15 |
 | S1-32 | tenantctx (R-4b) | 8 |
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
-| **S1 total** | | **427** |
+| S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
+| **S1 total** | | **439** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1278,4 +1306,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **468** |
+| **`go test ./...` total** | | **480** |
