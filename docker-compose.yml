@@ -888,7 +888,7 @@ services:
       - REDIS_HOST=them-redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
-      - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-in-production}
+      - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-secret-key}
       - JWT_SECRET=${THE_M_JWT_SECRET:-}
       - THE_M_INSTANCE_ID=go-bridge-1
       - LOG_FORMAT=json
