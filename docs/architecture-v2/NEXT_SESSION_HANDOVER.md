@@ -1,15 +1,16 @@
-# Execution Lifecycle Unification — Partial — Handover
+# Execution Lifecycle Unification — Phase 2 Complete — Handover
 
 **Date:** 2026-08-01
 **Branch:** main
-**Phase:** Execution Lifecycle Unification (Phase 1 complete; Phase 2 pending)
+**Phase:** Execution Lifecycle Unification (Phase 2 complete; Phase 3/WS pending)
 
 ---
 
 ## Current Objective
 
-`internal/execution/` package is created and tested. A2A is migrated. WS and SSE handlers
-still use the old duplicated pipeline and must be migrated next.
+`internal/execution/` package is created and tested. A2A and SSE are migrated to use
+`Lifecycle.Admit/Start/Release`. WS handler still uses the old duplicated pipeline and must be
+migrated next.
 
 ---
 
@@ -22,46 +23,56 @@ HEAD: run `git log --oneline -1` after commit.
 
 ## Commits Created This Session
 
-1. `feat(execution): R-5 — shared execution lifecycle + A2A migration (WS/SSE pending)`
+1. `feat(sse): R-5 Phase 2 — migrate SSE handler to execution.Lifecycle`
 
 ---
 
 ## Work Completed
 
-### `internal/execution/` (new package)
+### Phase 1 — `internal/execution/` + A2A (previous session, commit d6b7a26)
 
-- `errors.go`: `AdmitError`, `AdmitErrorKind` (7 kinds), `StartError`
-- `request.go`: `ExecutionRequest`, `ExecutionHandle`, `ExecutionResult`
+- `errors.go`: `AdmitError`, `AdmitErrorKind` (7→8 kinds), `StartError`
+- `request.go`: `ExecutionRequest`, `ExecutionHandle` (with `EventsTransport`), `ExecutionResult`
 - `lifecycle.go`: `Lifecycle.Admit/Start/Release`, `RunCreator`, `NewLifecycle`, `NewLifecycleWithRecorder`
 - `lifecycle_test.go`: 14 unit tests — all pass, 0 races
+- `internal/a2a/server.go`: migrated to use `*execution.Lifecycle`
+- `internal/a2a/server_test.go`: 27 tests
 
-### `internal/a2a/server.go` (migrated)
+### Phase 2 — SSE migration (this session)
 
-- `Server` now holds `*execution.Lifecycle` instead of individual gate/session/epLoader/recorder/temporal deps
-- `handleMessageSend` calls `lc.Admit → bus.Subscribe → lc.Start → wfRun.Get → lc.Release`
-- `extractToken` replaces `tryAuthenticate` (cleaner 2-value return)
-- `mapAdmitError` maps `*execution.AdmitError` to A2A HTTP+JSON-RPC responses
-- 27 tests — all pass, 0 races
+- `internal/execution/errors.go`: Added `AdmitErrNotImplemented` (voice EP check inside Lifecycle)
+- `internal/execution/request.go`: `ExecutionHandle.EventsTransport string` added
+- `internal/execution/lifecycle.go`: Voice EP check (step 3), `eventsTransportFromMode`, nil-safe logger
+- `internal/sse/handler.go`: Complete rewrite — uses `*execution.Lifecycle`; SSE headers AFTER Admit
+- `internal/sse/handler_test.go`: Rewritten — 22 tests via `execution.NewLifecycleWithRecorder` fakes
+- `go/cmd/them/main.go`: `execLifecycle` moved to section 16 (before WS+SSE); SSE uses it
+- `go/TEST_INDEX.md`: S1-13 (18→22), totals 490→494, 518→522
 
-### `go/cmd/them/main.go`
+---
 
-- Added `execution.NewLifecycle(...)` → `execLifecycle`
-- `a2a.NewServer(execLifecycle, bus, authenticator, instanceID, log)` — new 5-arg signature
+## Key Architecture Change: SSE Headers Now After Admit
 
-### `go/TEST_INDEX.md`
+In the old SSE handler, SSE headers (200 OK + `Content-Type: text/event-stream`) were written
+AFTER `gate.Check` but BEFORE `session.Register`. This meant Register failures resulted in
+SSE error events (client already connected as SSE).
 
-- S1-14 (a2a): 25 → 27 tests; updated purpose description
-- S1-35 (execution lifecycle): new, 14 tests
-- S1 total: 474 → 490; `go test ./...` total: 502 → 518
+In the migrated handler:
+1. `lc.Admit` runs the full pipeline (auth → EPConfig → voice-check → access → gate → session → CreateRun)
+2. SSE headers are written AFTER Admit succeeds
+3. All pre-Admit errors are clean HTTP responses (not SSE events)
+4. Errors after Start (temporal nil, stream unavailable) are SSE error events
+
+This is better UX. Test 6 reflects this: `TestSSEGateRollbackOnRegisterFailure` now
+asserts `http.StatusInternalServerError` instead of an SSE error event.
 
 ---
 
 ## Deployed / Live State
 
-- Go bridge: healthy (confirmed before session)
-- Go workers (2x): polling `them-orchestration-go`
+- Go bridge: healthy
 - A2A: unit tests pass; no live A2A EP in DB (live E2E not possible without one)
-- WS/SSE: unchanged, healthy
+- SSE: migrated and tested in unit tests; live behavior unchanged
+- WS: unchanged, healthy
 
 ---
 
@@ -69,7 +80,7 @@ HEAD: run `git log --oneline -1` after commit.
 
 ```
 go build ./...          → 0 errors
-go vet ./...            → 0 new warnings (pre-existing llm/provider_test.go cancel warning is not new)
+go vet ./...            → 0 new warnings
 go test ./...           → 33 packages, 0 failed
 go test -race ./...     → 33 packages, 0 data races
 Python sanity 01-04,15  → 55 passed, 0 failed
@@ -79,37 +90,42 @@ Python sanity 01-04,15  → 55 passed, 0 failed
 
 ## Architecture Decisions Made
 
-1. **`RunCreator` interface**: Lifecycle uses interface (not concrete `*runrecorder.Recorder`) internally. `NewLifecycle` takes the concrete type for production; `NewLifecycleWithRecorder` takes the interface for tests.
+1. **Voice EP check moved into Lifecycle.Admit**: Added `AdmitErrNotImplemented` (→ 501). The SSE
+   handler maps this kind to the voice-specific message. Lifecycle is the authoritative place for
+   EP type enforcement so WS and A2A inherit this automatically.
 
-2. **`bus.Subscribe` NOT in Lifecycle**: Caller subscribes between `Admit` and `Start`. This preserves the bootstrap ordering invariant without leaking the bus into the Lifecycle API.
+2. **`EventsTransport` in `ExecutionHandle`**: The SSE handler needs the derived transport value to
+   pass to `runEvents()` (dispatcher selects pubsub vs. streams). Deriving it in Lifecycle avoids
+   threading `RunEventsMode` through to the streaming path.
 
-3. **WS/SSE not migrated this session**: Both handlers have a protocol handshake step (WS upgrade or SSE headers) that occurs between `gate.Check` and `session.Register`. Migrating to `Lifecycle.Admit` requires reordering these steps. This is safe for SSE (HTTP errors before headers are cleaner) but needs care for WS. Deferred to avoid risk.
+3. **`nil` logger guard in `newLifecycle`**: Tests pass `nil` logger; falls back to `slog.Default()`.
+   Prevents panic on Register failure log path in tests.
 
-4. **A2A `extractToken` pattern**: Returns `(*auth.TokenInfo, string)`. The Lifecycle receives both and enforces based on EPConfig.AccessMode. Token present but invalid = `tokenInfo nil`, allowing Lifecycle to decide per EP policy.
+4. **`execLifecycle` constructed before WS+SSE in main.go**: Moved from section 17 to 16 so both
+   SSE and (future) WS can share it without forward-reference errors.
 
 ---
 
 ## Temporary Compatibility Code Still in Place
 
-- WS and SSE handlers still use the old individual-dep injection pattern (no `*execution.Lifecycle`). This is correct behavior, not a regression. It will be replaced in the next session.
-- `newID()` in `sse/handler.go` (UUID v4 via `uuid.New().String()`) — correct, no change needed.
+- WS handler still uses the old individual-dep injection pattern (no `*execution.Lifecycle`).
+  This is correct behavior, not a regression. Will be replaced in the next session.
 
 ---
 
 ## Known Bugs and Blockers
 
 - No `them.entry_points` rows of type `a2a` in DB — live A2A E2E not possible without one.
-- WS handler pipeline duplication: ~200 lines identical to what Lifecycle now does. Non-critical (correct behavior), but must be migrated.
-- SSE handler pipeline duplication: same issue.
+- WS handler pipeline duplication: ~200 lines identical to what Lifecycle now does. Non-critical.
 
 ---
 
 ## Files Most Relevant to the Next Task
 
-- `go/internal/execution/lifecycle.go` — the shared pipeline; read before migrating handlers
-- `go/internal/sse/handler.go` — next migration target (SSE reorder is cleaner than WS)
-- `go/internal/ws/handler.go` — after SSE; needs upgrade-ordering analysis
-- `docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md` — §6 (why WS/SSE deferred, migration options)
+- `go/internal/execution/lifecycle.go` — the shared pipeline; understand before migrating WS
+- `go/internal/ws/handler.go` — next migration target; contains the upgrade-between-gate-session issue
+- `go/internal/ws/handler_test.go` — 19 tests to update
+- `docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md` — §6 (WS options)
 - `docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_DESIGN.md` — §7 (what stays in each handler)
 
 ---
@@ -127,31 +143,33 @@ Python sanity 01-04,15  → 55 passed, 0 failed
 
 ## Exact Next Single Focused Task
 
-**WS/SSE Migration to Execution Lifecycle**
+**WS Handler Migration to Execution Lifecycle**
 
-Migrate `internal/sse/handler.go` first (simpler — reorder SSE headers to after session.Register):
+The WS handler has `upgrader.Upgrade()` between `gate.Check` and `session.Register`. After
+upgrade succeeds, errors must be WS close frames (not HTTP). Two options:
 
-**SSE migration steps:**
-1. Add `lc *execution.Lifecycle` to `Handler` struct
-2. Update `NewHandler` to accept `*execution.Lifecycle` (or add `WithLifecycle` builder method)
-3. Replace steps 1-9 in `ServeHTTP` with `lc.Admit(ctx, req)` → handle
-4. Move `w.Header().Set(...)` + `w.WriteHeader(200)` AFTER `lc.Admit` succeeds (before bus.Subscribe)
-5. Replace `bus.Subscribe` + `recorder.CreateRun` + `ExecuteWorkflow` with `lc.Start(ctx, h, input)` → wfRun
-6. Replace `defer session.End + gate.Release` with `defer lc.Release(context.Background(), h)`
-7. Update `NewHandler` in `cmd/them/main.go` to pass `execLifecycle`
-8. Update `sse_handler_test.go` to inject a `*execution.Lifecycle` with fakes
-9. Run `go test ./internal/sse/... ./...` — zero regressions
-10. Run `go test -race ./...`
+**Option A — Full reorder**: Move upgrade AFTER `session.Register`. Gate reservation TTL (10s)
+provides safety net if upgrade fails. Simpler code, but upgrade failure after session.Register
+requires explicit cleanup.
 
-**WS migration** (after SSE, separate commit):
-- Analyze whether WS upgrade can safely move after session.Register
-- If yes: same migration pattern as SSE
-- If no: consider `AdmitPre` / `AdmitPost` split, or keep WS with old pattern and document
+**Option B — Split Admit**: Add `AdmitToGate` (runs steps 1-7: auth→EP→check→gate.Check) and
+keep `Admit` for the full pipeline. After `AdmitToGate`, do WS upgrade, then call remaining
+steps (session.Register → Confirm → CreateRun). This avoids releasing a registered session on
+upgrade failure but adds API surface.
 
-**Before starting:**
-- Read `EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md` §6 — WS/SSE migration options
-- Read `EXECUTION_LIFECYCLE_UNIFICATION_DESIGN.md` §7 — what stays in each handler
-- Read `sse/handler.go` ServeHTTP body to confirm the header-ordering change is safe
+**Recommendation**: Read `ws/handler.go` carefully. If upgrade rarely fails in practice,
+Option A is simpler. If upgrade can fail for valid reasons (bad headers, etc.), Option B is safer.
+
+**WS migration steps (after analysis):**
+1. Read `internal/ws/handler.go` fully — understand all steps and their order
+2. Choose Option A or B
+3. Update `Handler` struct to hold `*execution.Lifecycle`
+4. Rewrite `ServeHTTP` to use `lc.Admit` (or `AdmitToGate` + upgrade + rest)
+5. Keep WS-specific: upgrader, ws.Conn read/write loop, WS close frames
+6. Update `ws/handler_test.go` to use `execution.NewLifecycleWithRecorder` fakes
+7. Update `cmd/them/main.go` — WS handler already has `execLifecycle` available
+8. `go test ./internal/ws/... ./...` → zero regressions
+9. `go test -race ./...`
 
 ---
 
@@ -169,8 +187,8 @@ python3.12 scripts/tests/run_tests.py 01 02 03 04 15
 # Read before coding
 cat docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md
 cat go/internal/execution/lifecycle.go
-cat go/internal/sse/handler.go
+cat go/internal/ws/handler.go
 ```
 
 **First prompt for next session:**
-> Continue the THEM Python-to-Go migration at `/home/avi/them`. Phase 1 of Execution Lifecycle Unification is complete: `internal/execution/` package built and tested, A2A handler migrated. The next task is migrating `internal/sse/handler.go` to use `execution.Lifecycle`, then `internal/ws/handler.go`. Read `docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md` §6 before writing any code. SSE migration requires reordering SSE headers to after `session.Register` (so errors before headers = clean HTTP errors). Do not touch WS until SSE is complete and tested.
+> Continue the THEM Python-to-Go migration at `/home/avi/them`. Phases 1 and 2 of Execution Lifecycle Unification are complete: `internal/execution/` package built and tested, A2A and SSE handlers migrated. The next task is migrating `internal/ws/handler.go` to use `execution.Lifecycle`. Read `docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md` §6 before writing any code. WS has an `upgrader.Upgrade()` call between gate.Check and session.Register — analyze whether to reorder or split Admit. Start by reading `go/internal/ws/handler.go` fully, then design the migration approach before writing any code.

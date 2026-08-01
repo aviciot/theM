@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	temporalclient "go.temporal.io/sdk/client"
 
+	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/gate"
@@ -79,6 +80,9 @@ func newLifecycle(
 	temporal transport.TemporalClientExecutor,
 	logger *slog.Logger,
 ) *Lifecycle {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Lifecycle{
 		auth:     auth,
 		epLoader: epLoader,
@@ -126,7 +130,14 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		return nil, admitErr(AdmitErrDBUnavailable)
 	}
 
-	// ── 3. Access mode enforcement ────────────────────────────────────────────
+	// ── 3. Voice EP check ────────────────────────────────────────────────────
+	// Voice EPs require STT/TTS providers not available in the text orchestration
+	// path. Return 501 before any gate or session resources are allocated.
+	if resolvedCfg.EPType == "voice" {
+		return nil, admitErr(AdmitErrNotImplemented)
+	}
+
+	// ── 4. Access mode enforcement ────────────────────────────────────────────
 	// Token EP + no token presented → 401.
 	if resolvedCfg.AccessMode == epconfig.AccessModeToken && req.RawToken == "" {
 		return nil, admitErr(AdmitErrUnauthorized)
@@ -136,7 +147,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		return nil, admitErr(AdmitErrUnauthorized)
 	}
 
-	// ── 4. CheckAccess (EP/App enabled, blocked users/tokens) ─────────────────
+	// ── 5. CheckAccess (EP/App enabled, blocked users/tokens) ─────────────────
 	tokenHash := transport.TokenHash(req.RawToken)
 	userID := int64(0)
 	if tokenInfo != nil {
@@ -147,7 +158,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		return nil, admitErr(AdmitErrForbidden)
 	}
 
-	// ── 5. Generate IDs (UUID v4 — Python worker requires uuid.UUID() parsing) ─
+	// ── 6. Generate IDs (UUID v4 — Python worker requires uuid.UUID() parsing) ─
 	runID := newRunID()
 	contextID := req.ContextID
 	if contextID == "" {
@@ -155,7 +166,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	}
 	sessionID := newRunID()
 
-	// ── 6. Gate.Check ─────────────────────────────────────────────────────────
+	// ── 7. Gate.Check ─────────────────────────────────────────────────────────
 	// Compute gate token hash: "" for anonymous sessions so gate.go skips
 	// per-token rate limiting (sha256("") is not empty — must pass "" explicitly).
 	gateTokenHash := ""
@@ -191,7 +202,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		gateAdmitted = true
 	}
 
-	// ── 7. session.Register ───────────────────────────────────────────────────
+	// ── 8. session.Register ───────────────────────────────────────────────────
 	sessInfo := session.SessionInfo{
 		SessionID:        sessionID,
 		InstanceID:       req.InstanceID,
@@ -216,7 +227,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		}
 	}
 
-	// ── 8. Gate.Confirm ───────────────────────────────────────────────────────
+	// ── 9. Gate.Confirm ───────────────────────────────────────────────────────
 	if gateAdmitted {
 		if confErr := lc.gate.Confirm(ctx, gateCfg); confErr != nil {
 			// Non-fatal: session hash is registered; 10s reservation TTL is the safety net.
@@ -224,16 +235,20 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		}
 	}
 
-	// ── 9. CreateRun ─────────────────────────────────────────────────────────
+	// ── 10. CreateRun ────────────────────────────────────────────────────────
 	// TenantID and ApplicationID come exclusively from resolvedCfg (server-side DB).
 	// Never from request data — enforced by not reading those fields from req.
+	// EventsTransport is derived from RunEventsMode so the SSE/WS streaming path
+	// knows which Redis channel/stream to subscribe to after Admit returns.
+	eventsTransport := eventsTransportFromMode(req.RunEventsMode)
 	run := domain.Run{
-		ID:             runID,
-		ContextID:      contextID,
-		EntryPointSlug: req.EPSlug,
-		TenantID:       resolvedCfg.TenantID,
-		ApplicationID:  resolvedCfg.AppID,
-		Status:         domain.RunStatusRunning,
+		ID:              runID,
+		ContextID:       contextID,
+		EntryPointSlug:  req.EPSlug,
+		TenantID:        resolvedCfg.TenantID,
+		ApplicationID:   resolvedCfg.AppID,
+		Status:          domain.RunStatusRunning,
+		EventsTransport: eventsTransport,
 	}
 	if lc.recorder != nil {
 		if recErr := lc.recorder.CreateRun(ctx, run); recErr != nil {
@@ -252,12 +267,13 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	}
 
 	return &ExecutionHandle{
-		RunID:        runID,
-		ContextID:    contextID,
-		SessionID:    sessionID,
-		EPConfig:     resolvedCfg,
-		gateCfg:      gateCfg,
-		gateAdmitted: gateAdmitted,
+		RunID:           runID,
+		ContextID:       contextID,
+		SessionID:       sessionID,
+		EPConfig:        resolvedCfg,
+		EventsTransport: eventsTransport,
+		gateCfg:         gateCfg,
+		gateAdmitted:    gateAdmitted,
 	}, nil
 }
 
@@ -323,3 +339,12 @@ func (lc *Lifecycle) Release(ctx context.Context, h *ExecutionHandle) {
 // newRunID returns a new UUID v4 string. The Python Temporal worker parses run,
 // context, and session IDs via uuid.UUID() — all IDs must use this format.
 func newRunID() string { return uuid.New().String() }
+
+// eventsTransportFromMode converts a RunEventsMode to the storage/routing value.
+// "pubsub" → Pub/Sub channel; "streams"/"dual" → Redis Streams.
+func eventsTransportFromMode(mode config.RunEventsMode) string {
+	if mode == config.RunEventsModeDual || mode == config.RunEventsModeStreams {
+		return "streams"
+	}
+	return "pubsub"
+}

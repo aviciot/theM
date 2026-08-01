@@ -23,6 +23,8 @@ const (
 	AdmitErrQueueFull
 	// AdmitErrDBUnavailable — DB/Redis unavailable during EPConfig load.
 	AdmitErrDBUnavailable
+	// AdmitErrNotImplemented — EP type not supported on this transport (e.g. voice on SSE).
+	AdmitErrNotImplemented
 	// AdmitErrInternal — unexpected internal error (logged internally; static string to client).
 	AdmitErrInternal
 )
@@ -52,6 +54,8 @@ func (e *AdmitError) Error() string {
 		return "queue full"
 	case AdmitErrDBUnavailable:
 		return "service unavailable"
+	case AdmitErrNotImplemented:
+		return "not implemented"
 	default:
 		return "internal error"
 	}
@@ -75,6 +79,8 @@ func httpStatusForKind(k AdmitErrorKind) int {
 		return 429
 	case AdmitErrQueueFull, AdmitErrDBUnavailable:
 		return 503
+	case AdmitErrNotImplemented:
+		return 501
 	default:
 		return 500
 	}

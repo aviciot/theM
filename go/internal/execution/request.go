@@ -28,10 +28,11 @@ type ExecutionRequest struct {
 // The gateAdmitted/gateCfg fields are unexported — Release uses them internally;
 // callers should not access gate state directly.
 type ExecutionHandle struct {
-	RunID     string
-	ContextID string
-	SessionID string
-	EPConfig  *epconfig.EPConfig
+	RunID          string
+	ContextID      string
+	SessionID      string
+	EPConfig       *epconfig.EPConfig
+	EventsTransport string // "pubsub" or "streams" — derived from RunEventsMode at admit time
 
 	// internal gate state — used by Release only
 	gateAdmitted bool

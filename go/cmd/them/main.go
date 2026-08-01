@@ -220,7 +220,21 @@ func run() error {
 	rsStreamer := cache.NewRunStreamerRedisClient(redisCache.Client()) // Streams reader
 	dispatcher := runstream.NewDispatcher(cfg.RunEventsMode, rsRedis, rsStreamer)
 
-	// ── 16. Wire WebSocket handler (/ws/*) ───────────────────────────────────
+	// ── 16. Build shared execution lifecycle (Admit/Start/Release) ──────────
+	// Shared by SSE, A2A, and (future) WS. Owns: auth, EPConfig, gate, session,
+	// CreateRun, ExecuteWorkflow identity enforcement. Protocol handlers keep only
+	// their wire-format concerns.
+	execLifecycle := execution.NewLifecycle(
+		authenticator,
+		epLoader,
+		admissionGate,
+		sessionStore,
+		recorder,
+		temporalCli,
+		log,
+	)
+
+	// ── 16b. Wire WebSocket handler (/ws/*) ──────────────────────────────────
 	wsHandler := ws.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log).
 		WithGate(admissionGate).
 		WithEPConfig(epLoader).
@@ -230,9 +244,9 @@ func run() error {
 	log.Info("WebSocket handler mounted", "prefix", "/ws")
 
 	// ── 17. Wire SSE handler (/sse/*) ─────────────────────────────────────────
-	sseHandler := sse.NewHandler(sessionStore, recorder, orch, bus, authenticator, cfg.InstanceID, log).
-		WithGate(admissionGate).
-		WithEPConfig(epLoader).
+	// Lifecycle handles auth, EPConfig, gate, session, CreateRun.
+	// SSE handler retains: SSE headers, streaming, metrics.
+	sseHandler := sse.NewHandler(execLifecycle, recorder, bus, authenticator, cfg.InstanceID, log).
 		WithTemporal(temporalCli, rsRedis, cfg.TemporalEnabled).
 		WithRunEvents(dispatcher, cfg.RunEventsMode)
 	srv.MountSSE(sseHandler.Routes())
@@ -271,20 +285,8 @@ func run() error {
 	srv.MountApps(appsDispatcher(wsHandler.AppsWSRoute(), sseHandler.AppsSSERoute()))
 	log.Info("apps WS+SSE aliases mounted", "prefix", "/apps")
 
-	// ── 17. Wire A2A server (/a2a/*, /.well-known/*) ─────────────────────────
-	// Execution lifecycle shared by WS, SSE, and A2A (unification refactor).
-	// Admit: auth → EPConfig → access → gate → session → CreateRun.
-	// Start: ExecuteWorkflow on GoTaskQueue.
-	// Release: session.End + gate.Release (always, in defer).
-	execLifecycle := execution.NewLifecycle(
-		authenticator,
-		epLoader,
-		admissionGate,
-		sessionStore,
-		recorder,
-		temporalCli,
-		log,
-	)
+	// ── 17b. Wire A2A server (/a2a/*, /.well-known/*) ────────────────────────
+	// Uses the shared execLifecycle (constructed in section 16).
 	a2aServer := a2a.NewServer(
 		execLifecycle,
 		bus,

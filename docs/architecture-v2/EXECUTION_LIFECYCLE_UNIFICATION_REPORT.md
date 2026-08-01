@@ -1,18 +1,24 @@
 # Execution Lifecycle Unification — Implementation Report
-# Status: PARTIAL (A2A complete; WS/SSE deferred — see §6)
+# Status: PARTIAL (A2A + SSE complete; WS deferred — see §6)
 # Date: 2026-08-01
 
 ---
 
 ## 1. Summary
 
-This session implements Phase 1 of the Execution Lifecycle Unification:
+This report covers two sessions of Execution Lifecycle Unification:
 
+**Phase 1 (session 1):**
 1. Created `internal/execution/` — the shared admission-and-run-start package
 2. Migrated the A2A server to use `Lifecycle.Admit/Start/Release`
-3. WS and SSE migration is deferred to the next session (see §6)
 
-The shared package eliminates duplicate pipeline logic in A2A and provides the canonical implementation that WS and SSE will adopt. All existing tests pass; 41 new tests added.
+**Phase 2 (session 2):**
+3. Migrated `internal/sse/handler.go` to use `Lifecycle.Admit/Start/Release`
+4. Added `AdmitErrNotImplemented` (voice EP check now inside Lifecycle.Admit)
+5. SSE headers moved to AFTER `Lifecycle.Admit` — pre-Admit errors are clean HTTP responses
+6. Added `EventsTransport` to `ExecutionHandle`; `eventsTransportFromMode` in lifecycle.go
+
+WS migration is deferred to the next session (see §6). All existing tests pass; 4 new SSE tests added (22 total, up from 18).
 
 ---
 
@@ -20,14 +26,16 @@ The shared package eliminates duplicate pipeline logic in A2A and provides the c
 
 | File | Change |
 |---|---|
-| `go/internal/execution/errors.go` | New: `AdmitError`, `AdmitErrorKind` (7 kinds), `StartError` |
-| `go/internal/execution/request.go` | New: `ExecutionRequest`, `ExecutionHandle`, `ExecutionResult` |
-| `go/internal/execution/lifecycle.go` | New: `Lifecycle` struct, `Admit`, `Start`, `Release`, `RunCreator`, `NewLifecycleWithRecorder` |
+| `go/internal/execution/errors.go` | New + updated: `AdmitError` (8 kinds incl. `AdmitErrNotImplemented`), `StartError` |
+| `go/internal/execution/request.go` | New + updated: `ExecutionHandle` gained `EventsTransport string` |
+| `go/internal/execution/lifecycle.go` | New + updated: voice EP check (step 3), `eventsTransportFromMode`, nil-safe logger |
 | `go/internal/execution/lifecycle_test.go` | New: 14 unit tests for Lifecycle methods |
+| `go/internal/sse/handler.go` | Migrated: uses `*execution.Lifecycle`; SSE headers after Admit; wire-format only |
+| `go/internal/sse/handler_test.go` | Rewritten: 22 tests via `execution.NewLifecycleWithRecorder` fakes |
 | `go/internal/a2a/server.go` | Migrated: `Server` now holds `*execution.Lifecycle` instead of individual deps |
 | `go/internal/a2a/server_test.go` | Updated: 27 tests using `*execution.Lifecycle` with fakes |
-| `go/cmd/them/main.go` | Updated: constructs `*execution.Lifecycle`, wires to A2A server |
-| `go/TEST_INDEX.md` | Updated: S1-14 (A2A → 27 tests), S1-35 (new execution, 14 tests) |
+| `go/cmd/them/main.go` | Updated: `execLifecycle` moved to section 16 (before WS+SSE); SSE uses it |
+| `go/TEST_INDEX.md` | Updated: S1-13 (18→22), S1-14 (27), S1-35 (14); totals 490→494, 518→522 |
 | `docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md` | This document |
 
 ---
@@ -114,6 +122,15 @@ The `execLifecycle` is constructed once and shared. WS and SSE will receive it i
 
 ## 5. Test Results
 
+### Phase 1 (A2A migration)
+```
+go test ./...           → 33 packages, 0 failed
+go test -race ./...     → 0 data races
+Python sanity 01-04,15  → 55 passed, 0 failed
+```
+New tests: 14 (execution) + 2 (a2a, net new) = 16. Total: 518.
+
+### Phase 2 (SSE migration)
 ```
 go build ./...          → 0 errors
 go vet ./...            → 0 new warnings
@@ -121,28 +138,28 @@ go test ./...           → 33 packages, 0 failed
 go test -race ./...     → 33 packages, 0 data races
 Python sanity 01-04,15  → 55 passed, 0 failed
 ```
-
-New tests: 14 (execution) + 2 (a2a, net new) = 16 new tests.
-Total: 518 (up from 502).
+New tests: 4 (sse, net new: EventsTransport, LifecycleCallSequence, MissingMessage, IDsAreUUIDv4).
+Total: 522 (up from 518).
 
 ---
 
-## 6. WS/SSE Migration — Deferred
+## 6. WS Migration — Deferred
 
-The WS and SSE handlers have an ordering constraint that prevents direct adoption of `Lifecycle.Admit` without structural changes:
+SSE is fully migrated. WS is the remaining handler.
 
-| Handler | Constraint |
-|---|---|
-| WS | `upgrader.Upgrade()` happens between `gate.Check` and `session.Register` — after upgrade, errors must be WS close frames, not HTTP |
-| SSE | `w.WriteHeader(http.StatusOK)` + SSE headers written after `gate.Check` but before `session.Register` |
+| Handler | Status | Constraint |
+|---|---|---|
+| A2A | ✅ Phase 1 | N/A — no protocol handshake between gate and session |
+| SSE | ✅ Phase 2 | Headers moved to after `Lifecycle.Admit`; pre-Admit errors = clean HTTP |
+| WS | ⏳ Phase 3 | `upgrader.Upgrade()` happens between `gate.Check` and `session.Register` |
 
-Both handlers work correctly as-is. Migrating them to use `Lifecycle.Admit` requires either:
-1. **Reordering**: set SSE headers / do WS upgrade AFTER `session.Register` (better UX for errors; acceptable for SSE, riskier for WS)
-2. **Split Admit**: `AdmitPre` (gate.Check only) → protocol handshake → `AdmitPost` (session + recorder)
+The WS constraint: after `upgrader.Upgrade()` succeeds, errors must be WS close frames — not HTTP status codes. Migrating WS to `Lifecycle.Admit` requires either:
+1. **Reordering**: do WS upgrade AFTER `session.Register` (risky — upgrade can fail, releasing a registered session)
+2. **Split Admit**: `AdmitPre` (gate.Check only) → WS upgrade → `AdmitPost` (session + recorder)
 
-The SSE reorder is the simpler and better option for SSE (errors before headers = clean HTTP 500 instead of SSE error events). The WS case requires more care.
+Option 2 is safer: the gate reservation TTL (10s) provides a safety net if upgrade fails between Check and Post.
 
-**Recommendation**: Migrate SSE in the next session (reorder headers after session.Register). Migrate WS in the session after that. Each is a separate commit with its own test run.
+**Recommendation**: Migrate WS in the next session using split Admit or a full reorder analysis.
 
 ---
 
@@ -151,7 +168,6 @@ The SSE reorder is the simpler and better option for SSE (errors before headers 
 | Gap | Severity | Notes |
 |---|---|---|
 | WS handler still uses duplicated pipeline | Low | Correct behavior; no regression. Migrate next session. |
-| SSE handler still uses duplicated pipeline | Low | Correct behavior; no regression. Migrate same session as WS (or separately). |
 | No live A2A entry point in DB | Low | Unit tests verify correctness. Live E2E requires creating a2a-type EP via admin API. |
 
 ---

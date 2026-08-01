@@ -1,4 +1,4 @@
-﻿package sse_test
+package sse_test
 
 import (
 	"bufio"
@@ -17,15 +17,16 @@ import (
 	temporalclient "go.temporal.io/sdk/client"
 
 	"github.com/aviciot/them/internal/auth"
+	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
+	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/gate"
-	"github.com/aviciot/them/internal/llm"
-	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/session"
 	ssehandler "github.com/aviciot/them/internal/sse"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/transport"
 )
 
 // ── Fakes ─────────────────────────────────────────────────────────────────────
@@ -44,12 +45,16 @@ func (f *fakeAuth) Validate(_ context.Context, token string) (*auth.TokenInfo, e
 
 type fakeSessionStore struct {
 	mu          sync.Mutex
-	lastSession session.SessionInfo // captures the most recently registered SessionInfo
+	lastSession session.SessionInfo
+	failRegister bool
 }
 
 func (s *fakeSessionStore) Register(_ context.Context, info session.SessionInfo) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failRegister {
+		return errors.New("redis: connection refused")
+	}
 	s.lastSession = info
 	return nil
 }
@@ -59,6 +64,51 @@ func (s *fakeSessionStore) getLastSession() session.SessionInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.lastSession
+}
+
+type fakeGate struct {
+	mu            sync.Mutex
+	checkErr      error
+	checkCalls    int
+	confirmCalls  int
+	rollbackCalls int
+	releaseCalls  int
+	lastConfig    gate.Config
+}
+
+func (g *fakeGate) Check(_ context.Context, cfg gate.Config) (gate.Result, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.checkCalls++
+	g.lastConfig = cfg
+	return gate.Result{Status: gate.StatusAdmitted}, g.checkErr
+}
+
+func (g *fakeGate) Confirm(_ context.Context, _ gate.Config) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.confirmCalls++
+	return nil
+}
+
+func (g *fakeGate) Rollback(_ context.Context, _ gate.Config) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.rollbackCalls++
+	return nil
+}
+
+func (g *fakeGate) Release(_ context.Context, _ gate.Config) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.releaseCalls++
+	return nil
+}
+
+func (g *fakeGate) getCounts() (check, confirm, rollback, release int, cfg gate.Config) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.checkCalls, g.confirmCalls, g.rollbackCalls, g.releaseCalls, g.lastConfig
 }
 
 type fakeDBQuerier struct{}
@@ -79,54 +129,140 @@ func (f *fakeRow) Scan(dest ...any) error {
 	return nil
 }
 
-// ── Helper ────────────────────────────────────────────────────────────────────
-
-func newTestSSEHandler(mockEvents []llm.StreamEvent, authn ssehandler.Authenticator) *ssehandler.Handler {
-	return newTestSSEHandlerWithStore(mockEvents, authn, &fakeSessionStore{})
+type fakeEPLoader struct {
+	cfg *epconfig.EPConfig
+	err error
 }
 
-func newTestSSEHandlerWithStore(mockEvents []llm.StreamEvent, authn ssehandler.Authenticator, store ssehandler.SessionStore) *ssehandler.Handler {
-	bus := event.New()
-	mock := llm.NewMockProvider(mockEvents)
-	cfg := orchestrator.Config{MaxIterations: 5}
-	recorder := runrecorder.New(&fakeDBQuerier{})
-	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
-	h := ssehandler.NewHandler(store, recorder, orch, bus, authn, "test-instance", nil)
+func (f *fakeEPLoader) Load(_ context.Context, _ string) (*epconfig.EPConfig, error) {
+	return f.cfg, f.err
+}
 
-	// R-2B: Wire a default Temporal mock so tests that don't need Temporal-specific
-	// behaviour still work. The fakeSSERunStreamSub pre-loads events corresponding
-	// to what the mock LLM would have published on the in-process bus.
-	var streamMsgs []string
-	for _, ev := range mockEvents {
-		switch ev.Type {
-		case "text_delta":
-			raw, _ := json.Marshal(map[string]any{"type": "token", "content": ev.Delta})
-			streamMsgs = append(streamMsgs, string(raw))
-		case "stop":
-			raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
-			streamMsgs = append(streamMsgs, string(raw))
-		}
+type fakeRunCreator struct{}
+
+func (f *fakeRunCreator) CreateRun(_ context.Context, _ domain.Run) error { return nil }
+
+// captureRunCreator records CreateRun calls for SQL-level inspection.
+type captureRunCreator struct {
+	mu   sync.Mutex
+	runs []domain.Run
+}
+
+func (c *captureRunCreator) CreateRun(_ context.Context, run domain.Run) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.runs = append(c.runs, run)
+	return nil
+}
+
+func (c *captureRunCreator) last() (domain.Run, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.runs) == 0 {
+		return domain.Run{}, false
 	}
-	// Always ensure a "done" message is present so the SSE handler closes cleanly.
-	hasDone := false
-	for _, m := range streamMsgs {
-		if strings.Contains(m, `"done"`) {
-			hasDone = true
-			break
-		}
+	return c.runs[len(c.runs)-1], true
+}
+
+// ── Temporal fakes ────────────────────────────────────────────────────────────
+
+type fakeTemporalClient struct {
+	mu     sync.Mutex
+	called bool
+	input  []interface{}
+}
+
+func (f *fakeTemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.called = true
+	f.input = args
+	return &fakeWorkflowRun{id: opts.ID}, nil
+}
+
+type fakeWorkflowRun struct{ id string }
+
+func (f *fakeWorkflowRun) GetID() string    { return f.id }
+func (f *fakeWorkflowRun) GetRunID() string { return f.id }
+func (f *fakeWorkflowRun) Get(ctx context.Context, _ interface{}) error {
+	<-ctx.Done()
+	return nil
+}
+func (f *fakeWorkflowRun) GetWithOptions(ctx context.Context, _ interface{}, _ temporalclient.WorkflowRunGetOptions) error {
+	<-ctx.Done()
+	return nil
+}
+
+// fakeRunStreamSub returns a pre-loaded channel of messages then closes.
+type fakeRunStreamSub struct {
+	messages []string
+}
+
+func (f *fakeRunStreamSub) Subscribe(_ context.Context, _ string) (<-chan string, error) {
+	ch := make(chan string, len(f.messages)+1)
+	for _, m := range f.messages {
+		ch <- m
 	}
-	if !hasDone {
+	close(ch)
+	return ch, nil
+}
+
+// ── Builder ───────────────────────────────────────────────────────────────────
+
+// sseBuilder assembles an SSE Handler with injectable fakes.
+type sseBuilder struct {
+	authn    transport.Authenticator
+	epLoader transport.EPConfigLoader
+	gate     transport.GateStore
+	sessions transport.SessionStore
+	recorder execution.RunCreator
+	temporal transport.TemporalClientExecutor
+	streamMsgs []string
+}
+
+func (b *sseBuilder) defaultEP() *epconfig.EPConfig {
+	return &epconfig.EPConfig{
+		EPSlug:     "ep",
+		EPType:     "sse",
+		AccessMode: epconfig.AccessModeToken,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+	}
+}
+
+func (b *sseBuilder) build() (*ssehandler.Handler, *fakeRunStreamSub) {
+	ep := b.epLoader
+	if ep == nil {
+		ep = &fakeEPLoader{cfg: b.defaultEP()}
+	}
+	sess := b.sessions
+	if sess == nil {
+		sess = &fakeSessionStore{}
+	}
+	rec := b.recorder
+	if rec == nil {
+		rec = &fakeRunCreator{}
+	}
+	lc := execution.NewLifecycleWithRecorder(b.authn, ep, b.gate, sess, rec, b.temporal, nil)
+
+	msgs := b.streamMsgs
+	if len(msgs) == 0 {
 		raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
-		streamMsgs = append(streamMsgs, string(raw))
+		msgs = []string{string(raw)}
 	}
-	rsSub := &fakeSSERunStreamSub{messages: streamMsgs}
-	h.WithTemporal(&fakeSSETemporalClient{}, rsSub, true)
+	rsSub := &fakeRunStreamSub{messages: msgs}
 
-	return h
+	bus := event.New()
+	recorder := runrecorder.New(&fakeDBQuerier{})
+	h := ssehandler.NewHandler(lc, recorder, bus, b.authn, "test-instance", nil)
+	h.WithTemporal(b.temporal, rsSub, true)
+	return h, rsSub
 }
 
-// collectSSE reads SSE events from the response body until the stream closes or
-// deadline exceeds. Returns the parsed JSON event maps.
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 func collectSSE(t *testing.T, resp *http.Response, deadline time.Duration) []map[string]any {
 	t.Helper()
 	var events []map[string]any
@@ -152,12 +288,27 @@ func collectSSE(t *testing.T, resp *http.Response, deadline time.Duration) []map
 	return events
 }
 
+func mustGet(url string) *http.Request {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		panic(err)
+	}
+	return req
+}
+
+func defaultStreamMsgs() []string {
+	raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
+	return []string{string(raw)}
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-// 1. Unauthenticated request → 401.
+// 1. Unauthenticated request to a token-mode EP → 401.
 func TestSSEUnauthenticated(t *testing.T) {
 	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
-	h := newTestSSEHandler(nil, authn)
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{authn: authn, temporal: tc}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -170,17 +321,16 @@ func TestSSEUnauthenticated(t *testing.T) {
 // 2. Valid auth + message → receives token events as SSE.
 func TestSSETokenEvents(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	mockEvents := []llm.StreamEvent{
-		{Type: "text_delta", Delta: "hello world"},
-		{Type: "stop", StopReason: "end_turn"},
-	}
-	h := newTestSSEHandler(mockEvents, authn)
+	tc := &fakeTemporalClient{}
+	raw1, _ := json.Marshal(map[string]any{"type": "token", "content": "hello world"})
+	raw2, _ := json.Marshal(map[string]any{"type": "done", "run_id": "r"})
+	b := &sseBuilder{authn: authn, temporal: tc, streamMsgs: []string{string(raw1), string(raw2)}}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/orchestrate/app/ep?message=hi", nil)
 	req.Header.Set("Authorization", "Bearer tok")
-
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	require.NoError(t, err)
@@ -190,7 +340,6 @@ func TestSSETokenEvents(t *testing.T) {
 	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 
 	events := collectSSE(t, resp, 3*time.Second)
-
 	hasToken := false
 	for _, ev := range events {
 		if ev["type"] == "token" {
@@ -204,24 +353,22 @@ func TestSSETokenEvents(t *testing.T) {
 // 3. Done event closes the stream.
 func TestSSEDoneClosesStream(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	mockEvents := []llm.StreamEvent{
-		{Type: "text_delta", Delta: "final"},
-		{Type: "stop", StopReason: "end_turn"},
-	}
-	h := newTestSSEHandler(mockEvents, authn)
+	tc := &fakeTemporalClient{}
+	raw1, _ := json.Marshal(map[string]any{"type": "token", "content": "final"})
+	raw2, _ := json.Marshal(map[string]any{"type": "done", "run_id": "done-run"})
+	b := &sseBuilder{authn: authn, temporal: tc, streamMsgs: []string{string(raw1), string(raw2)}}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/orchestrate/app/ep?message=go", nil)
 	req.Header.Set("Authorization", "Bearer tok")
-
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-
 	events := collectSSE(t, resp, 3*time.Second)
 
 	hasDone := false
@@ -239,9 +386,10 @@ func TestSSEDoneClosesStream(t *testing.T) {
 // 4. Gate cap exceeded returns 503 before SSE stream is opened.
 func TestSSEGateCapExceeded(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	h := newTestSSEHandler(nil, authn)
-	h.WithGate(&fakeSSEGate{checkErr: gate.ErrCapExceeded})
-
+	g := &fakeGate{checkErr: gate.ErrCapExceeded}
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{authn: authn, gate: g, temporal: tc}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -251,20 +399,16 @@ func TestSSEGateCapExceeded(t *testing.T) {
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 }
 
 // 5. Gate admitted → Confirm called; Release called on stream end.
 func TestSSEGateAdmittedAndReleased(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	g := &fakeSSEGate{}
-	mockEvents := []llm.StreamEvent{
-		{Type: "text_delta", Delta: "hi"},
-		{Type: "stop", StopReason: "end_turn"},
-	}
-	h := newTestSSEHandler(mockEvents, authn)
-	h.WithGate(g)
-
+	g := &fakeGate{}
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{authn: authn, gate: g, temporal: tc, streamMsgs: defaultStreamMsgs()}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -273,30 +417,25 @@ func TestSSEGateAdmittedAndReleased(t *testing.T) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-
 	_ = collectSSE(t, resp, 3*time.Second)
 	resp.Body.Close()
 	time.Sleep(200 * time.Millisecond)
 
-	check4, confirm4, _, release4, _ := g.getCounts()
-	assert.Equal(t, 1, check4)
-	assert.Equal(t, 1, confirm4)
-	assert.GreaterOrEqual(t, release4, 1)
+	check, confirm, _, release, _ := g.getCounts()
+	assert.Equal(t, 1, check)
+	assert.Equal(t, 1, confirm)
+	assert.GreaterOrEqual(t, release, 1)
 	assert.Equal(t, 0, g.rollbackCalls)
 }
 
 // 6. Gate rollback called when session.Register fails.
 func TestSSEGateRollbackOnRegisterFailure(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	g := &fakeSSEGate{}
-	bus := event.New()
-	mock := llm.NewMockProvider(nil)
-	cfg := orchestrator.Config{MaxIterations: 5}
-	recorder := runrecorder.New(&fakeDBQuerier{})
-	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
-	h := ssehandler.NewHandler(&failingSSESessionStore{}, recorder, orch, bus, authn, "test", nil)
-	h.WithGate(g)
-
+	g := &fakeGate{}
+	sess := &fakeSessionStore{failRegister: true}
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{authn: authn, gate: g, sessions: sess, temporal: tc}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -307,106 +446,35 @@ func TestSSEGateRollbackOnRegisterFailure(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	// The handler sends an SSE error event (headers already written).
-	events := collectSSE(t, resp, 2*time.Second)
-	hasError := false
-	for _, ev := range events {
-		if ev["type"] == "error" {
-			hasError = true
-		}
-	}
-	assert.True(t, hasError, "expected SSE error event on Register failure")
+	// With SSE headers moved to AFTER Admit, a Register failure now returns a clean HTTP 500.
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 	time.Sleep(200 * time.Millisecond)
-	_, confirm5, rollback5, _, _ := g.getCounts()
-	assert.Equal(t, 1, rollback5, "Gate.Rollback must be called when Register fails")
-	assert.Equal(t, 0, confirm5)
-}
-
-// ── Gate fake ──────────────────────────────────────────────────────────────────
-
-type fakeSSEGate struct {
-	mu            sync.Mutex
-	checkErr      error
-	checkCalls    int
-	confirmCalls  int
-	rollbackCalls int
-	releaseCalls  int
-	lastConfig    gate.Config // records the Config passed to the most recent Check call
-}
-
-func (g *fakeSSEGate) Check(_ context.Context, cfg gate.Config) (gate.Result, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.checkCalls++
-	g.lastConfig = cfg
-	return gate.Result{Status: gate.StatusAdmitted}, g.checkErr
-}
-
-func (g *fakeSSEGate) Confirm(_ context.Context, _ gate.Config) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.confirmCalls++
-	return nil
-}
-
-func (g *fakeSSEGate) Rollback(_ context.Context, _ gate.Config) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.rollbackCalls++
-	return nil
-}
-
-func (g *fakeSSEGate) Release(_ context.Context, _ gate.Config) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.releaseCalls++
-	return nil
-}
-
-func (g *fakeSSEGate) getCounts() (check, confirm, rollback, release int, cfg gate.Config) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.checkCalls, g.confirmCalls, g.rollbackCalls, g.releaseCalls, g.lastConfig
-}
-
-// failingSSESessionStore always returns an error from Register.
-type failingSSESessionStore struct{}
-
-func (s *failingSSESessionStore) Register(_ context.Context, _ session.SessionInfo) error {
-	return errors.New("redis: connection refused")
-}
-
-func (s *failingSSESessionStore) End(_ context.Context, _, _, _ string) error { return nil }
-
-// ── EP config fake ─────────────────────────────────────────────────────────────
-
-type fakeSSEEPLoader struct {
-	cfg *epconfig.EPConfig
-	err error
-}
-
-func (f *fakeSSEEPLoader) Load(_ context.Context, _ string) (*epconfig.EPConfig, error) {
-	return f.cfg, f.err
+	_, _, rollback, _, _ := g.getCounts()
+	assert.Equal(t, 1, rollback, "Gate.Rollback must be called when Register fails")
 }
 
 // 7. Unauthenticated request to a public EP succeeds (receives SSE stream).
 func TestSSEPublicEPNoTokenAllowed(t *testing.T) {
 	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
-	mockEvents := []llm.StreamEvent{
-		{Type: "text_delta", Delta: "hi"},
-		{Type: "stop", StopReason: "end_turn"},
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{
+		authn:    authn,
+		temporal: tc,
+		epLoader: &fakeEPLoader{cfg: &epconfig.EPConfig{
+			EPSlug:     "public-ep",
+			EPType:     "sse",
+			EPEnabled:  true,
+			AppEnabled: true,
+			AccessMode: epconfig.AccessModePublic,
+			TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+			AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		}},
+		streamMsgs: defaultStreamMsgs(),
 	}
-	h := newTestSSEHandler(mockEvents, authn)
-	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModePublic,
-	}})
-
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
-	// No token supplied.
 	resp, err := http.Get(srv.URL + "/orchestrate/app/public-ep?message=hello")
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -417,13 +485,21 @@ func TestSSEPublicEPNoTokenAllowed(t *testing.T) {
 // 8. Unauthenticated request to a token-mode EP returns 401.
 func TestSSETokenEPNoTokenRejected(t *testing.T) {
 	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
-	h := newTestSSEHandler(nil, authn)
-	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModeToken,
-	}})
-
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{
+		authn:    authn,
+		temporal: tc,
+		epLoader: &fakeEPLoader{cfg: &epconfig.EPConfig{
+			EPSlug:     "token-ep",
+			EPType:     "sse",
+			EPEnabled:  true,
+			AppEnabled: true,
+			AccessMode: epconfig.AccessModeToken,
+			TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+			AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		}},
+	}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -436,19 +512,24 @@ func TestSSETokenEPNoTokenRejected(t *testing.T) {
 // 9. Anonymous session to public EP: gate receives TokenHash="" (no shared rate-limit bucket).
 func TestSSEAnonymousSessionGateTokenHashEmpty(t *testing.T) {
 	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
-	g := &fakeSSEGate{}
-	mockEvents := []llm.StreamEvent{
-		{Type: "text_delta", Delta: "hi"},
-		{Type: "stop", StopReason: "end_turn"},
+	g := &fakeGate{}
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{
+		authn:    authn,
+		gate:     g,
+		temporal: tc,
+		epLoader: &fakeEPLoader{cfg: &epconfig.EPConfig{
+			EPSlug:     "public-ep",
+			EPType:     "sse",
+			EPEnabled:  true,
+			AppEnabled: true,
+			AccessMode: epconfig.AccessModePublic,
+			TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+			AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		}},
+		streamMsgs: defaultStreamMsgs(),
 	}
-	h := newTestSSEHandler(mockEvents, authn)
-	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModePublic,
-	}})
-	h.WithGate(g)
-
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -459,28 +540,32 @@ func TestSSEAnonymousSessionGateTokenHashEmpty(t *testing.T) {
 	resp.Body.Close()
 	time.Sleep(200 * time.Millisecond)
 
-	// Gate must receive TokenHash="" so rlKey() returns "" and per-token rate
-	// limiting is skipped — anonymous sessions must not share a single bucket.
 	_, _, _, _, lastCfg := g.getCounts()
 	assert.Equal(t, "", lastCfg.TokenHash,
 		"anonymous session must pass TokenHash='' to gate, not sha256('')")
 }
 
-// 10. Anonymous session to public EP: session is registered with UserID=0 (anonymous sentinel).
+// 10. Anonymous session to public EP: session is registered with UserID=0.
 func TestSSEAnonymousSessionUserIDIsZero(t *testing.T) {
 	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 1}}
-	store := &fakeSessionStore{}
-	mockEvents := []llm.StreamEvent{
-		{Type: "text_delta", Delta: "hi"},
-		{Type: "stop", StopReason: "end_turn"},
+	sess := &fakeSessionStore{}
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{
+		authn:    authn,
+		sessions: sess,
+		temporal: tc,
+		epLoader: &fakeEPLoader{cfg: &epconfig.EPConfig{
+			EPSlug:     "public-ep",
+			EPType:     "sse",
+			EPEnabled:  true,
+			AppEnabled: true,
+			AccessMode: epconfig.AccessModePublic,
+			TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+			AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		}},
+		streamMsgs: defaultStreamMsgs(),
 	}
-	h := newTestSSEHandlerWithStore(mockEvents, authn, store)
-	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModePublic,
-	}})
-
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -491,24 +576,29 @@ func TestSSEAnonymousSessionUserIDIsZero(t *testing.T) {
 	resp.Body.Close()
 	time.Sleep(200 * time.Millisecond)
 
-	assert.Equal(t, int64(0), store.getLastSession().UserID,
+	assert.Equal(t, int64(0), sess.getLastSession().UserID,
 		"anonymous session must store UserID=0, not a real user identity")
 }
 
 // 11. Authenticated request to a public EP also succeeds.
 func TestSSEAuthenticatedRequestToPublicEP(t *testing.T) {
 	authn := &fakeAuth{token: "valid", info: &auth.TokenInfo{TokenID: 42}}
-	mockEvents := []llm.StreamEvent{
-		{Type: "text_delta", Delta: "hi"},
-		{Type: "stop", StopReason: "end_turn"},
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{
+		authn:    authn,
+		temporal: tc,
+		epLoader: &fakeEPLoader{cfg: &epconfig.EPConfig{
+			EPSlug:     "public-ep",
+			EPType:     "sse",
+			EPEnabled:  true,
+			AppEnabled: true,
+			AccessMode: epconfig.AccessModePublic,
+			TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+			AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		}},
+		streamMsgs: defaultStreamMsgs(),
 	}
-	h := newTestSSEHandler(mockEvents, authn)
-	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModePublic,
-	}})
-
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -524,17 +614,25 @@ func TestSSEAuthenticatedRequestToPublicEP(t *testing.T) {
 // 12. Voice EP with valid token returns 501 — must never enter the text orchestration path.
 func TestSSEVoiceEPReturns501(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	store := &fakeSessionStore{}
-	g := &fakeSSEGate{}
-	h := newTestSSEHandlerWithStore(nil, authn, store)
-	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModeToken,
-		EPType:     "voice",
-	}})
-	h.WithGate(g)
-
+	g := &fakeGate{}
+	sess := &fakeSessionStore{}
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{
+		authn:    authn,
+		gate:     g,
+		sessions: sess,
+		temporal: tc,
+		epLoader: &fakeEPLoader{cfg: &epconfig.EPConfig{
+			EPSlug:     "voice-ep",
+			EPType:     "voice",
+			EPEnabled:  true,
+			AppEnabled: true,
+			AccessMode: epconfig.AccessModeToken,
+			TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+			AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		}},
+	}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -545,24 +643,32 @@ func TestSSEVoiceEPReturns501(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "voice EP must return 501")
-	check6, _, _, _, _ := g.getCounts()
-	assert.Equal(t, 0, check6, "gate must not be called for voice EP")
-	assert.Equal(t, int64(0), store.getLastSession().UserID,
+	check, _, _, _, _ := g.getCounts()
+	assert.Equal(t, 0, check, "gate must not be called for voice EP")
+	assert.Equal(t, int64(0), sess.getLastSession().UserID,
 		"session must not be registered for voice EP")
 }
 
 // 13. Voice EP with public access mode also returns 501.
 func TestSSEVoiceEPPublicReturns501(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	store := &fakeSessionStore{}
-	h := newTestSSEHandlerWithStore(nil, authn, store)
-	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModePublic,
-		EPType:     "voice",
-	}})
-
+	sess := &fakeSessionStore{}
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{
+		authn:    authn,
+		sessions: sess,
+		temporal: tc,
+		epLoader: &fakeEPLoader{cfg: &epconfig.EPConfig{
+			EPSlug:     "voice-public",
+			EPType:     "voice",
+			EPEnabled:  true,
+			AppEnabled: true,
+			AccessMode: epconfig.AccessModePublic,
+			TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+			AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		}},
+	}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -570,86 +676,22 @@ func TestSSEVoiceEPPublicReturns501(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "public voice EP must return 501")
-	assert.Equal(t, int64(0), store.getLastSession().UserID,
+	assert.Equal(t, int64(0), sess.getLastSession().UserID,
 		"session must not be registered for public voice EP")
 }
 
-// mustGet returns a new GET *http.Request, panicking on error (test helper).
-func mustGet(url string) *http.Request {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		panic(err)
-	}
-	return req
-}
-
-// ── SSE Temporal path fakes ────────────────────────────────────────────────────
-
-// fakeSSEWorkflowRun blocks Get until the context is cancelled, simulating a
-// long-running workflow that ends when the handler's context is cancelled.
-// This ensures all run-stream events are delivered before orchDone fires.
-type fakeSSEWorkflowRun struct {
-	id string
-}
-
-func (f *fakeSSEWorkflowRun) GetID() string    { return f.id }
-func (f *fakeSSEWorkflowRun) GetRunID() string { return f.id }
-func (f *fakeSSEWorkflowRun) Get(ctx context.Context, _ interface{}) error {
-	<-ctx.Done()
-	return nil
-}
-func (f *fakeSSEWorkflowRun) GetWithOptions(ctx context.Context, _ interface{}, _ temporalclient.WorkflowRunGetOptions) error {
-	<-ctx.Done()
-	return nil
-}
-
-// fakeSSETemporalClient records ExecuteWorkflow calls.
-type fakeSSETemporalClient struct {
-	called bool
-}
-
-func (f *fakeSSETemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, _ ...interface{}) (temporalclient.WorkflowRun, error) {
-	f.called = true
-	return &fakeSSEWorkflowRun{id: opts.ID}, nil
-}
-
-// fakeSSERunStreamSub returns a channel pre-loaded with messages then closes.
-// The handler subscribes once (to them:dash:run:{runID}:tokens); the channel
-// key is not inspected here because Go passes runID to Python, so Python
-// publishes to the same channel Go subscribed to.
-type fakeSSERunStreamSub struct {
-	messages []string
-}
-
-func (f *fakeSSERunStreamSub) Subscribe(_ context.Context, _ string) (<-chan string, error) {
-	ch := make(chan string, len(f.messages)+1)
-	for _, m := range f.messages {
-		ch <- m
-	}
-	close(ch)
-	return ch, nil
-}
-
-// 15. replay_unavailable event from Redis Streams is forwarded as SSE to the client
-// (Phase 11c-B). The event is emitted when last_event_id was trimmed by MAXLEN;
-// it must not be silently dropped by formatSSE.
-func TestSSEReplayUnavailableForwardedToClient(t *testing.T) {
+// 14. Temporal path: ExecuteWorkflow is called; client receives events from run stream.
+func TestSSETemporalPathUsedWhenEnabled(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
-	h := newTestSSEHandler(nil, authn)
-
-	tc := &fakeSSETemporalClient{}
-	rsSub := &fakeSSERunStreamSub{
-		messages: []string{
-			`{"type":"replay_unavailable","reason":"history_trimmed","run_id":"r1"}`,
-			`{"type":"done","run_id":"r1"}`,
-		},
-	}
-	h.WithTemporal(tc, rsSub, true)
-
+	tc := &fakeTemporalClient{}
+	raw1, _ := json.Marshal(map[string]any{"type": "token", "content": "from temporal"})
+	raw2, _ := json.Marshal(map[string]any{"type": "done", "run_id": "test-run-id"})
+	b := &sseBuilder{authn: authn, temporal: tc, streamMsgs: []string{string(raw1), string(raw2)}}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
-	req := mustGet(srv.URL + "/orchestrate/myapp/ep1?message=hello")
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep?message=hello")
 	req.Header.Set("Authorization", "Bearer tok")
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
@@ -657,7 +699,35 @@ func TestSSEReplayUnavailableForwardedToClient(t *testing.T) {
 	defer resp.Body.Close()
 
 	events := collectSSE(t, resp, 3*time.Second)
+	assert.True(t, tc.called, "ExecuteWorkflow must be called")
+	var types []string
+	for _, ev := range events {
+		if t2, ok := ev["type"].(string); ok {
+			types = append(types, t2)
+		}
+	}
+	assert.Contains(t, types, "done", "client must receive done event from run stream")
+}
 
+// 15. replay_unavailable event is forwarded as SSE to the client.
+func TestSSEReplayUnavailableForwardedToClient(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
+	tc := &fakeTemporalClient{}
+	raw1, _ := json.Marshal(map[string]any{"type": "replay_unavailable", "reason": "history_trimmed", "run_id": "r1"})
+	raw2, _ := json.Marshal(map[string]any{"type": "done", "run_id": "r1"})
+	b := &sseBuilder{authn: authn, temporal: tc, streamMsgs: []string{string(raw1), string(raw2)}}
+	h, _ := b.build()
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep?message=hello")
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := collectSSE(t, resp, 3*time.Second)
 	var types []string
 	for _, ev := range events {
 		if evType, ok := ev["type"].(string); ok {
@@ -668,80 +738,26 @@ func TestSSEReplayUnavailableForwardedToClient(t *testing.T) {
 	assert.Contains(t, types, "done", "done must follow replay_unavailable")
 }
 
-// 14. Temporal path: when temporalEnabled=true, ExecuteWorkflow is called and
-// orch.Run is NOT called. The client receives events directly from the Redis
-// run stream. Go passes runID to Python so both sides use the same channel key.
-func TestSSETemporalPathUsedWhenEnabled(t *testing.T) {
-	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 42}}
-
-	// Build handler with no mock events — if orch.Run were called,
-	// the SSE stream would close without a "done" event.
-	h := newTestSSEHandler(nil, authn)
-
-	tc := &fakeSSETemporalClient{}
-	rsSub := &fakeSSERunStreamSub{
-		messages: []string{
-			`{"type":"token","content":"from temporal"}`,
-			`{"type":"done","run_id":"test-run-id"}`,
-		},
-	}
-	h.WithTemporal(tc, rsSub, true)
-
-	srv := httptest.NewServer(h.Routes())
-	defer srv.Close()
-
-	req := mustGet(srv.URL + "/orchestrate/myapp/ep1?message=hello")
-	req.Header.Set("Authorization", "Bearer tok")
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	events := collectSSE(t, resp, 3*time.Second)
-
-	assert.True(t, tc.called, "ExecuteWorkflow must be called when temporalEnabled=true")
-
-	var types []string
-	for _, ev := range events {
-		if t2, ok := ev["type"].(string); ok {
-			types = append(types, t2)
-		}
-	}
-	assert.Contains(t, types, "done", "client must receive done event from run stream")
-}
-
-// newTestSSEHandlerNoTemporal creates a handler with NO Temporal client wired.
-// Used to verify the R-2B behaviour: when temporalClient is nil, the SSE handler
-// must write an error SSE event and NOT fall back to any inline execution.
-func newTestSSEHandlerNoTemporal(authn ssehandler.Authenticator) *ssehandler.Handler {
-	bus := event.New()
-	mock := llm.NewMockProvider(nil)
-	cfg := orchestrator.Config{MaxIterations: 1}
-	recorder := runrecorder.New(&fakeDBQuerier{})
-	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
-	// No WithTemporal call → temporalClient is nil.
-	return ssehandler.NewHandler(&fakeSessionStore{}, recorder, orch, bus, authn, "test-instance", nil)
-}
-
-// 16. R-2B: When no Temporal client is wired, the SSE handler must write an error
-// event as SSE data and NOT fall back to inline execution.
+// 16. When Temporal is nil (Lifecycle has no temporal), Start fails; SSE error event is emitted.
+// Headers are already sent (200 OK); the error is delivered as an SSE data event.
 func TestSSENoTemporalReturns503(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	h := newTestSSEHandlerNoTemporal(authn)
-
+	// temporal = nil → Lifecycle.Start returns *StartError → handler writes SSE error event
+	b := &sseBuilder{authn: authn, temporal: nil}
+	h, rsSub := b.build()
+	// Wire the subscriber so we'd see events if Start somehow succeeded.
+	h.WithTemporal(nil, rsSub, true)
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
-	req := mustGet(srv.URL + "/orchestrate/myapp/ep1?message=hello")
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep?message=hello")
 	req.Header.Set("Authorization", "Bearer tok")
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	// SSE headers are already sent (200 OK); error is delivered as an SSE event.
-	require.Equal(t, http.StatusOK, resp.StatusCode, "SSE headers sent before Temporal check")
-
+	require.Equal(t, http.StatusOK, resp.StatusCode, "SSE headers sent before Start check")
 	events := collectSSE(t, resp, 3*time.Second)
 	hasError := false
 	for _, ev := range events {
@@ -750,74 +766,36 @@ func TestSSENoTemporalReturns503(t *testing.T) {
 			break
 		}
 	}
-	assert.True(t, hasError,
-		"SSE handler must emit an error event when Temporal client is unavailable")
+	assert.True(t, hasError, "SSE handler must emit an error event when Temporal is unavailable")
 }
 
 // ── R-4d: Tenant propagation tests ───────────────────────────────────────────
 
-// captureSSETemporalClient records ExecuteWorkflow calls including WorkflowInput args.
-type captureSSETemporalClient struct {
-	called    bool
-	inputArgs []interface{}
-}
-
-func (c *captureSSETemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
-	c.called = true
-	c.inputArgs = args
-	return &fakeSSEWorkflowRun{id: opts.ID}, nil
-}
-
-// captureSSEDBQuerier records Exec calls for SQL inspection.
-type captureSSEDBQuerier struct {
-	execCalls []struct {
-		sql  string
-		args []any
-	}
-}
-
-func (c *captureSSEDBQuerier) Exec(_ context.Context, sql string, args ...any) error {
-	c.execCalls = append(c.execCalls, struct {
-		sql  string
-		args []any
-	}{sql: sql, args: args})
-	return nil
-}
-
-func (c *captureSSEDBQuerier) QueryRow(_ context.Context, _ string, _ ...any) runrecorder.SingleRowScanner {
-	return &fakeRow{}
-}
-
-// 17. R-4d: SSE-created run stores TenantID and ApplicationID from EPConfig, not
-// from client-supplied headers or request data.
+// 17. SSE-created run carries TenantID and ApplicationID from EPConfig, not from client.
 func TestSSE_RunStoresTenantID(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	sessions := &fakeSessionStore{}
-
-	bus := event.New()
-	mock := llm.NewMockProvider(nil)
-	cfg := orchestrator.Config{MaxIterations: 1}
-	captureDB := &captureSSEDBQuerier{}
-	recorder := runrecorder.New(captureDB)
-	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
-	h := ssehandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
+	capRec := &captureRunCreator{}
+	capTC := &fakeTemporalClient{}
 
 	tenantID := "aaaabbbb-0000-0000-0000-000000000001"
 	appID := "ccccdddd-0000-0000-0000-000000000002"
-	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
-		EPSlug:     "ep1",
-		EPType:     "sse",
-		AccessMode: epconfig.AccessModeToken,
-		EPEnabled:  true,
-		AppEnabled: true,
-		TenantID:   tenantID,
-		AppID:      appID,
-	}})
 
-	tc := &captureSSETemporalClient{}
-	rsSub := &fakeSSERunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
-	h.WithTemporal(tc, rsSub, true)
-
+	b := &sseBuilder{
+		authn:    authn,
+		recorder: capRec,
+		temporal: capTC,
+		epLoader: &fakeEPLoader{cfg: &epconfig.EPConfig{
+			EPSlug:     "ep1",
+			EPType:     "sse",
+			EPEnabled:  true,
+			AppEnabled: true,
+			AccessMode: epconfig.AccessModeToken,
+			TenantID:   tenantID,
+			AppID:      appID,
+		}},
+		streamMsgs: []string{`{"type":"done","run_id":"r"}`},
+	}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -827,62 +805,44 @@ func TestSSE_RunStoresTenantID(t *testing.T) {
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-
 	collectSSE(t, resp, 3*time.Second)
 
-	// Find the CreateRun INSERT call and verify tenant_id was passed.
-	var createRunArgs []any
-	for i := range captureDB.execCalls {
-		if strings.Contains(captureDB.execCalls[i].sql, "INSERT INTO them.runs") {
-			createRunArgs = captureDB.execCalls[i].args
-			break
-		}
-	}
-	require.NotNil(t, createRunArgs, "CreateRun INSERT must have been executed")
+	run, ok := capRec.last()
+	require.True(t, ok, "CreateRun must have been called")
+	assert.Equal(t, tenantID, run.TenantID, "run must carry TenantID from EPConfig")
+	assert.Equal(t, appID, run.ApplicationID, "run must carry ApplicationID from EPConfig")
 
-	// arg[1] is tenant_id — plain string UUID (NOT NULL column, no *string nullable).
-	// Args: id($1), tenant_id($2), entry_point_slug($3), status($4), started_at($5), events_transport($6).
-	assert.Equal(t, tenantID, createRunArgs[1], "SSE run must carry TenantID from EPConfig")
-
-	// Verify WorkflowInput received TenantID.
-	require.True(t, tc.called, "ExecuteWorkflow must be called")
-	require.Len(t, tc.inputArgs, 1, "ExecuteWorkflow must receive exactly one WorkflowInput arg")
-
-	wfInput, ok := tc.inputArgs[0].(temporal.WorkflowInput)
-	require.True(t, ok, "WorkflowInput arg must be temporal.WorkflowInput")
-	assert.Equal(t, tenantID, wfInput.TenantID, "WorkflowInput.TenantID must match EPConfig.TenantID")
-	assert.Equal(t, appID, wfInput.ApplicationID, "WorkflowInput.ApplicationID must match EPConfig.AppID")
+	require.True(t, capTC.called, "ExecuteWorkflow must be called")
+	require.Len(t, capTC.input, 1)
+	wfInput, ok := capTC.input[0].(temporal.WorkflowInput)
+	require.True(t, ok)
+	assert.Equal(t, tenantID, wfInput.TenantID, "WorkflowInput.TenantID must match EPConfig")
+	assert.Equal(t, appID, wfInput.ApplicationID, "WorkflowInput.ApplicationID must match EPConfig")
 }
 
-// 18. R-4d: A client-supplied X-Tenant-ID header must NOT override resolvedCfg.TenantID.
-// Tenant identity must only come from the server-resolved EPConfig.
+// 18. A client-supplied X-Tenant-ID header must NOT override the server-resolved TenantID.
 func TestSSE_ClientTenantHeaderIgnored(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	sessions := &fakeSessionStore{}
-
-	bus := event.New()
-	mock := llm.NewMockProvider(nil)
-	cfg := orchestrator.Config{MaxIterations: 1}
-	captureDB := &captureSSEDBQuerier{}
-	recorder := runrecorder.New(captureDB)
-	orch := orchestrator.New(cfg, mock, nil, recorder, bus, nil)
-	h := ssehandler.NewHandler(sessions, recorder, orch, bus, authn, "test-instance", nil)
-
+	capRec := &captureRunCreator{}
+	capTC := &fakeTemporalClient{}
 	serverTenantID := "eeeeffff-0000-0000-0000-000000000001"
-	h.WithEPConfig(&fakeSSEEPLoader{cfg: &epconfig.EPConfig{
-		EPSlug:     "ep1",
-		EPType:     "sse",
-		AccessMode: epconfig.AccessModeToken,
-		EPEnabled:  true,
-		AppEnabled: true,
-		TenantID:   serverTenantID,
-		AppID:      "11112222-0000-0000-0000-000000000002",
-	}})
 
-	tc := &captureSSETemporalClient{}
-	rsSub := &fakeSSERunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
-	h.WithTemporal(tc, rsSub, true)
-
+	b := &sseBuilder{
+		authn:    authn,
+		recorder: capRec,
+		temporal: capTC,
+		epLoader: &fakeEPLoader{cfg: &epconfig.EPConfig{
+			EPSlug:     "ep1",
+			EPType:     "sse",
+			EPEnabled:  true,
+			AppEnabled: true,
+			AccessMode: epconfig.AccessModeToken,
+			TenantID:   serverTenantID,
+			AppID:      "11112222-0000-0000-0000-000000000002",
+		}},
+		streamMsgs: []string{`{"type":"done","run_id":"r"}`},
+	}
+	h, _ := b.build()
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -893,16 +853,139 @@ func TestSSE_ClientTenantHeaderIgnored(t *testing.T) {
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-
 	collectSSE(t, resp, 3*time.Second)
 
-	// arg[1] is tenant_id — plain string UUID (NOT NULL column, no *string nullable).
-	for i := range captureDB.execCalls {
-		if strings.Contains(captureDB.execCalls[i].sql, "INSERT INTO them.runs") {
-			assert.Equal(t, serverTenantID, captureDB.execCalls[i].args[1],
-				"tenant_id must be server-resolved (from EPConfig), not client-supplied header")
-			return
-		}
+	run, ok := capRec.last()
+	require.True(t, ok, "CreateRun must have been called")
+	assert.Equal(t, serverTenantID, run.TenantID,
+		"tenant_id must be server-resolved, not client-supplied")
+}
+
+// 19. SSE handler wires EventsTransport from RunEventsMode to the handle.
+// Lifecycle.Admit must set EventsTransport="pubsub" when RunEventsMode is default.
+func TestSSE_EventsTransportDerivedFromMode(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	capRec := &captureRunCreator{}
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{
+		authn:      authn,
+		recorder:   capRec,
+		temporal:   tc,
+		streamMsgs: defaultStreamMsgs(),
 	}
-	t.Fatal("CreateRun INSERT not found")
+	h, _ := b.build()
+	// Default RunEventsMode (not set) → "pubsub"
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep?message=hello")
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	collectSSE(t, resp, 3*time.Second)
+
+	run, ok := capRec.last()
+	require.True(t, ok)
+	// Default mode → pubsub transport on run record.
+	assert.Equal(t, "pubsub", run.EventsTransport, "run must record correct EventsTransport")
+}
+
+// 20. R-5: SSE handler satisfies the Lifecycle interface — Admit/Start/Release are called.
+func TestSSE_LifecycleCallSequence(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	g := &fakeGate{}
+	sess := &fakeSessionStore{}
+	capRec := &captureRunCreator{}
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{
+		authn:      authn,
+		gate:       g,
+		sessions:   sess,
+		recorder:   capRec,
+		temporal:   tc,
+		streamMsgs: defaultStreamMsgs(),
+	}
+	h, _ := b.build()
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep?message=hello")
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	_ = collectSSE(t, resp, 3*time.Second)
+	resp.Body.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	// Admit: gate.Check + session.Register + CreateRun
+	check, _, _, release, _ := g.getCounts()
+	assert.Equal(t, 1, check, "gate.Check must be called exactly once")
+	assert.GreaterOrEqual(t, release, 1, "gate.Release must be called on cleanup")
+
+	_, sessionOK := capRec.last()
+	assert.True(t, sessionOK, "CreateRun must be called")
+	assert.True(t, tc.called, "ExecuteWorkflow (Start) must be called")
+}
+
+// 21. Missing message → 400 before any Lifecycle call.
+func TestSSE_MissingMessage(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{authn: authn, temporal: tc}
+	h, _ := b.build()
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep") // no ?message=
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+// 22. SSE handler: all run/session/context IDs are UUID v4.
+func TestSSE_IDsAreUUIDv4(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	sess := &fakeSessionStore{}
+	capRec := &captureRunCreator{}
+	tc := &fakeTemporalClient{}
+	b := &sseBuilder{
+		authn:      authn,
+		sessions:   sess,
+		recorder:   capRec,
+		temporal:   tc,
+		streamMsgs: defaultStreamMsgs(),
+	}
+	h, _ := b.build()
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep?message=hello")
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	_ = collectSSE(t, resp, 3*time.Second)
+	resp.Body.Close()
+	time.Sleep(200 * time.Millisecond)
+
+	run, ok := capRec.last()
+	require.True(t, ok)
+
+	// UUID v4 format: 8-4-4-4-12 hex chars.
+	uuidRe := func(s string) bool {
+		parts := strings.Split(s, "-")
+		return len(parts) == 5 &&
+			len(parts[0]) == 8 && len(parts[1]) == 4 &&
+			len(parts[2]) == 4 && len(parts[3]) == 4 &&
+			len(parts[4]) == 12
+	}
+	assert.True(t, uuidRe(run.ID), "RunID must be UUID v4: %s", run.ID)
+	assert.True(t, uuidRe(run.ContextID), "ContextID must be UUID v4: %s", run.ContextID)
+	assert.True(t, uuidRe(sess.getLastSession().SessionID), "SessionID must be UUID v4")
 }

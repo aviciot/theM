@@ -325,31 +325,36 @@ Shared interfaces (Authenticator, SessionStore, GateStore, EPConfigLoader, Tempo
 
 ### S1-13 · SSE handler — `internal/sse/handler_test.go`
 
-**Purpose:** Server-Sent Events endpoint, public EP support, anonymous session identity, Gate contract enforcement.
-Shared interfaces and TokenHash now live in `internal/transport/`; this test exercises them via the sse handler.
+**Purpose:** Server-Sent Events endpoint migrated to `execution.Lifecycle` (R-5). Tests cover the
+full Admit→SSE headers→Start→stream pipeline via fakes injected into `execution.NewLifecycleWithRecorder`.
+SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors return clean HTTP codes.
 
 | Test | What it proves |
 |---|---|
-| `TestSSEUnauthenticated` | No token + no epLoader → 401 (fallback mandatory auth) |
+| `TestSSEUnauthenticated` | No token + token-mode EP → 401 before SSE headers |
 | `TestSSETokenEvents` | Valid auth + message → token events in SSE format |
-| `TestSSEDoneClosesStream` | Done event → stream closed |
-| `TestSSEGateCapExceeded` | Gate returns `ErrCapExceeded` → 503 before SSE headers sent |
+| `TestSSEDoneClosesStream` | Done event → stream closed with run_id |
+| `TestSSEGateCapExceeded` | Gate returns `ErrCapExceeded` → 429 before SSE headers |
 | `TestSSEGateAdmittedAndReleased` | Gate admitted → Check→Confirm called; Release called on stream end |
-| `TestSSEGateRollbackOnRegisterFailure` | `session.Register` fails → Gate.Rollback called; error SSE event emitted |
+| `TestSSEGateRollbackOnRegisterFailure` | `session.Register` fails → Gate.Rollback called; HTTP 500 (no SSE headers yet) |
 | `TestSSEPublicEPNoTokenAllowed` | No token + AccessMode=public → 200 + SSE stream opened |
 | `TestSSETokenEPNoTokenRejected` | No token + AccessMode=token → 401 |
 | `TestSSEAnonymousSessionGateTokenHashEmpty` | Anonymous session passes `TokenHash=""` to gate — no shared per-token rate-limit bucket |
 | `TestSSEAnonymousSessionUserIDIsZero` | Anonymous session stores `UserID=0` in SessionInfo |
 | `TestSSEAuthenticatedRequestToPublicEP` | Authenticated request to public EP succeeds |
-| `TestSSEVoiceEPReturns501` | Token-mode voice EP returns 501; gate and session are never called |
-| `TestSSEVoiceEPPublicReturns501` | Public voice EP also returns 501 before gate or session are called |
-| `TestSSETemporalPathUsedWhenEnabled` | `temporalEnabled=true` → `ExecuteWorkflow` called; `orch.Run` NOT called; client receives done event from Redis run stream |
-| `TestSSEReplayUnavailableForwardedToClient` | `replay_unavailable` event emitted by StreamFromRedis is forwarded as SSE (not silently dropped) — Phase 11c-C fix |
-| `TestSSENoTemporalReturns503` | R-2B: When no Temporal client is wired, handler sends error SSE event (no inline fallback) |
-| `TestSSE_RunStoresTenantID` | R-4d: SSE run INSERT carries TenantID from EPConfig (arg[1] is *string UUID); WorkflowInput.TenantID and ApplicationID set from EPConfig |
-| `TestSSE_ClientTenantHeaderIgnored` | R-4d: X-Tenant-ID request header cannot override server-resolved TenantID from EPConfig |
+| `TestSSEVoiceEPReturns501` | Voice EP → 501 via AdmitErrNotImplemented; gate and session never called |
+| `TestSSEVoiceEPPublicReturns501` | Public voice EP → 501 before gate or session |
+| `TestSSETemporalPathUsedWhenEnabled` | `ExecuteWorkflow` called via Lifecycle.Start; client receives done event from run stream |
+| `TestSSEReplayUnavailableForwardedToClient` | `replay_unavailable` event forwarded as SSE (Phase 11c-C fix) |
+| `TestSSENoTemporalReturns503` | Temporal nil → Lifecycle.Start returns error → SSE error event (headers already sent) |
+| `TestSSE_RunStoresTenantID` | R-5: CreateRun receives TenantID/ApplicationID from EPConfig; WorkflowInput fields overwritten by Lifecycle.Start |
+| `TestSSE_ClientTenantHeaderIgnored` | R-5: X-Tenant-ID header cannot override server-resolved TenantID |
+| `TestSSE_EventsTransportDerivedFromMode` | EventsTransport set on run from RunEventsMode (default → "pubsub") |
+| `TestSSE_LifecycleCallSequence` | gate.Check + CreateRun + ExecuteWorkflow all called; gate.Release called on cleanup |
+| `TestSSE_MissingMessage` | Missing ?message= → 400 before any Lifecycle call |
+| `TestSSE_IDsAreUUIDv4` | All run/session/context IDs are UUID v4 (Python worker requires uuid.UUID() parsing) |
 
-**Trigger:** any change to `internal/sse/handler.go`
+**Trigger:** any change to `internal/sse/handler.go` or `internal/execution/lifecycle.go`
 
 ---
 
@@ -1282,9 +1287,9 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/cache/runstreamer_writer_adapter.go` | S1-20 + S1-23 |
 | `cmd/worker/main.go` | S1-29 + S1 (full suite) |
 | `internal/a2a/server.go` | S1-14 |
-| `internal/execution/lifecycle.go` | S1-35 + S1-14 |
-| `internal/execution/errors.go` | S1-35 |
-| `internal/execution/request.go` | S1-35 |
+| `internal/execution/lifecycle.go` | S1-35 + S1-14 + S1-13 |
+| `internal/execution/errors.go` | S1-35 + S1-13 |
+| `internal/execution/request.go` | S1-35 + S1-13 |
 | `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 |
 | `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S2-05 (integration) |
 | `internal/admin/dal/llm_providers.go` | S1-25 + S2-05 (integration) |
@@ -1340,7 +1345,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
 | S1-12 | ws | 19 |
-| S1-13 | sse | 18 |
+| S1-13 | sse | 22 |
 | S1-14 | a2a | 27 |
 | S1-15 | admin | 46 |
 | S1-16 | ratelimit | 3 |
@@ -1363,7 +1368,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 14 |
-| **S1 total** | | **490** |
+| **S1 total** | | **494** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1372,4 +1377,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **518** |
+| **`go test ./...` total** | | **522** |
