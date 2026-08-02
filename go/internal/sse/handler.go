@@ -33,7 +33,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
@@ -159,8 +158,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 2. Extract bearer token (non-enforcing — Lifecycle decides per EP policy) ──
-	rawToken, tokenInfo := h.extractToken(r)
+	// ── 2. Extract raw token (Lifecycle.Admit owns all validation/enforcement) ─
+	rawToken := h.extractRawToken(r)
 
 	// ── 3. Admit (auth → EPConfig → voice-check → access → gate → session → CreateRun) ──
 	// All pre-Admit errors return clean HTTP responses. After Admit succeeds,
@@ -168,7 +167,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	admitReq := execution.ExecutionRequest{
 		EPSlug:        epSlug,
 		RawToken:      rawToken,
-		TokenInfo:     tokenInfo,
 		UserMessage:   domain.TextMessage(domain.RoleUser, userText),
 		RunEventsMode: h.runEventsMode,
 		InstanceID:    h.instanceID,
@@ -225,7 +223,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"session_id", handle.SessionID,
 		)
 
-		h.lc.Release(context.Background(), handle)
+		h.lc.Release(handle)
 	}()
 
 	// ── 6. Subscribe to event bus (kept for future in-process events) ────────
@@ -423,24 +421,13 @@ func (h *Handler) formatSSE(ev event.Event) (string, error) {
 	return "data: " + string(data) + "\n\n", nil
 }
 
-// extractToken reads the bearer token from Authorization header or ?token= param,
-// then validates it. Returns (rawToken, tokenInfo). tokenInfo is nil if no valid
-// token was found; Lifecycle.Admit decides enforcement per EP access policy.
-func (h *Handler) extractToken(r *http.Request) (string, *auth.TokenInfo) {
-	var rawToken string
+// extractRawToken reads the bearer token string from the Authorization header
+// or ?token= param. It does NOT validate — Lifecycle.Admit owns all enforcement.
+func (h *Handler) extractRawToken(r *http.Request) string {
 	if hdr := r.Header.Get("Authorization"); strings.HasPrefix(hdr, "Bearer ") {
-		rawToken = strings.TrimPrefix(hdr, "Bearer ")
-	} else if t := r.URL.Query().Get("token"); t != "" {
-		rawToken = t
+		return strings.TrimPrefix(hdr, "Bearer ")
 	}
-	if rawToken == "" || h.authenticator == nil {
-		return rawToken, nil
-	}
-	info, err := h.authenticator.Validate(r.Context(), rawToken)
-	if err != nil {
-		return rawToken, nil
-	}
-	return rawToken, info
+	return r.URL.Query().Get("token")
 }
 
 func epTypeLabel(cfg *epconfig.EPConfig) string {

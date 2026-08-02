@@ -95,12 +95,24 @@ type fakeRecorder struct {
 	createErr    error
 	createCalled bool
 	lastRun      domain.Run
+
+	updateCalled bool
+	lastUpdateID string
+	lastStatus   domain.RunStatus
+	updateErr    error
 }
 
 func (f *fakeRecorder) CreateRun(_ context.Context, run domain.Run) error {
 	f.createCalled = true
 	f.lastRun = run
 	return f.createErr
+}
+
+func (f *fakeRecorder) UpdateRunStatus(_ context.Context, runID string, status domain.RunStatus, _ string) error {
+	f.updateCalled = true
+	f.lastUpdateID = runID
+	f.lastStatus = status
+	return f.updateErr
 }
 
 type fakeTemporal struct {
@@ -197,13 +209,16 @@ func TestLifecycle_HappyPath(t *testing.T) {
 	assert.True(t, g.confirmCalled, "gate.Confirm must be called")
 	assert.True(t, s.registerCalled, "session.Register must be called")
 	assert.True(t, r.createCalled, "recorder.CreateRun must be called")
+	assert.Equal(t, domain.RunStatusAdmitted, r.lastRun.Status, "run must be created as admitted")
 
 	wfRun, startErr := lc.Start(context.Background(), h, temporal.WorkflowInput{OrchestratorName: "slug"})
 	require.NoError(t, startErr)
 	assert.NotNil(t, wfRun)
 	assert.True(t, tmp.called)
+	assert.True(t, r.updateCalled, "Start must update run to running")
+	assert.Equal(t, domain.RunStatusRunning, r.lastStatus, "Start must set status=running")
 
-	lc.Release(context.Background(), h)
+	lc.Release(h)
 	assert.True(t, s.endCalled, "session.End must be called in Release")
 	assert.True(t, g.releaseCalled, "gate.Release must be called in Release")
 }
@@ -322,7 +337,7 @@ func TestLifecycle_StartTemporalFails(t *testing.T) {
 	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
 	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
 	require.NoError(t, err)
-	defer lc.Release(context.Background(), h)
+	defer lc.Release(h)
 
 	_, startErr := lc.Start(context.Background(), h, temporal.WorkflowInput{OrchestratorName: "slug"})
 	require.Error(t, startErr)
@@ -332,7 +347,7 @@ func TestLifecycle_StartTemporalFails(t *testing.T) {
 func TestLifecycle_ReleaseNilHandle_NoOp(t *testing.T) {
 	lc := &Lifecycle{logger: devLogger}
 	// Must not panic.
-	lc.Release(context.Background(), nil)
+	lc.Release(nil)
 }
 
 func TestLifecycle_TenantIDFromEPConfig_NotFromRequest(t *testing.T) {
@@ -420,4 +435,104 @@ func TestLifecycle_AllIDsAreUUIDv4(t *testing.T) {
 	assert.True(t, isUUIDv4(h.RunID), "RunID must be UUID v4, got %q", h.RunID)
 	assert.True(t, isUUIDv4(h.ContextID), "ContextID must be UUID v4, got %q", h.ContextID)
 	assert.True(t, isUUIDv4(h.SessionID), "SessionID must be UUID v4, got %q", h.SessionID)
+}
+
+// ── Execution Core Hardening tests ────────────────────────────────────────────
+
+// Verify that a run created as "admitted" is marked "failed" by Release when
+// Start was never called (simulates WS upgrade failure, first-message error, etc.).
+func TestLifecycle_Release_MarksRunFailed_WhenStartNeverCalled(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
+	require.NoError(t, err)
+	require.True(t, r.createCalled, "CreateRun must have been called")
+	assert.Equal(t, domain.RunStatusAdmitted, r.lastRun.Status)
+
+	// Simulate upgrade/message failure — Release without Start.
+	lc.Release(h)
+
+	assert.True(t, r.updateCalled, "Release must call UpdateRunStatus when run was created but Start never ran")
+	assert.Equal(t, domain.RunStatusFailed, r.lastStatus, "Release must mark run as failed")
+}
+
+// Verify that Start transitions the run to "running" and Release does NOT
+// double-update it (startedOK = true → Release skips the failed update).
+func TestLifecycle_Release_DoesNotMarkFailed_AfterSuccessfulStart(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
+	require.NoError(t, err)
+
+	_, startErr := lc.Start(context.Background(), h, temporal.WorkflowInput{OrchestratorName: "slug"})
+	require.NoError(t, startErr)
+
+	// After Start succeeds, UpdateRunStatus was called once (admitted → running).
+	assert.True(t, r.updateCalled)
+	assert.Equal(t, domain.RunStatusRunning, r.lastStatus)
+
+	// Reset the update flag to detect if Release calls it again.
+	r.updateCalled = false
+	r.lastStatus = ""
+
+	lc.Release(h)
+
+	assert.False(t, r.updateCalled, "Release must NOT call UpdateRunStatus when Start succeeded (startedOK=true)")
+}
+
+// Verify gate.Confirm failure is fatal: session ended, gate released, run never created.
+func TestLifecycle_ConfirmFatal_SessionCleanedUp(t *testing.T) {
+	g := &fakeGate{confirmErr: errors.New("redis: confirm failed")}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, nil)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
+
+	require.Error(t, err)
+	assert.Nil(t, h)
+
+	var ae *AdmitError
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, AdmitErrInternal, ae.Kind)
+	assert.False(t, r.createCalled, "CreateRun must not be called when gate.Confirm fails")
+	assert.True(t, s.endCalled, "session.End must be called when gate.Confirm fails")
+	assert.True(t, g.releaseCalled, "gate.Release must be called when gate.Confirm fails")
+}
+
+// Verify NewLifecycle panics when a required production dependency is nil.
+// Note: NewLifecycle takes *runrecorder.Recorder and TemporalClientExecutor;
+// nil checks for those are enforced by the panic guards at construction time.
+func TestNewLifecycle_PanicsOnNilDeps(t *testing.T) {
+	ep := &fakeEPLoader{cfg: publicEP("slug")}
+	g := &fakeGate{}
+	s := &fakeSession{}
+	tc := &fakeTemporal{run: &fakeWorkflowRun{}}
+	a := &fakeAuth{info: validToken()}
+
+	assert.Panics(t, func() {
+		NewLifecycle(a, nil, g, s, nil, tc, devLogger)
+	}, "nil epLoader must panic")
+	assert.Panics(t, func() {
+		NewLifecycle(a, ep, nil, s, nil, tc, devLogger)
+	}, "nil gateStore must panic")
+	assert.Panics(t, func() {
+		NewLifecycle(a, ep, g, nil, nil, tc, devLogger)
+	}, "nil sessions must panic")
+	// recorder is *runrecorder.Recorder — nil literal satisfies the *T nil check.
+	assert.Panics(t, func() {
+		NewLifecycle(a, ep, g, s, nil, tc, devLogger)
+	}, "nil recorder must panic")
+	// temporal is an interface — nil interface value satisfies == nil.
+	assert.Panics(t, func() {
+		NewLifecycle(a, ep, g, s, nil, nil, devLogger)
+	}, "nil temporal must panic (reached only if recorder panic removed)")
 }

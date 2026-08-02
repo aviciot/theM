@@ -1,6 +1,6 @@
 # Execution Lifecycle Unification — Implementation Report
-# Status: COMPLETE (A2A + SSE + WS all migrated)
-# Date: 2026-08-01
+# Status: COMPLETE (A2A + SSE + WS all migrated; Core Hardening applied)
+# Date: 2026-08-02
 
 ---
 
@@ -25,7 +25,17 @@ This report covers three sessions of Execution Lifecycle Unification:
 10. Fixed bounded cleanup timeout and logged cleanup failures in `lifecycle.go`
 11. All three protocols (WS, SSE, A2A) now use the shared execution lifecycle
 
-All existing tests pass; 2 new WS tests added (21 total, up from 19).
+**Phase 4 — Execution Core Hardening (session 4):**
+12. Run state machine corrected: `Admit` creates run as `RunStatusAdmitted` (not `running`)
+13. `Start` transitions run `admitted → running` after `ExecuteWorkflow` succeeds
+14. `Release` marks run `failed` when `runCreated && !startedOK` (orphan-run prevention)
+15. `gate.Confirm` failure is now fatal: session.End + gate.Release called, CreateRun skipped
+16. `NewLifecycle` panics on nil `epLoader`, `gate`, `sessions`, `recorder`, or `temporal`
+17. `Release` API: `ctx context.Context` parameter removed — Release is always self-contained (5s internal timeout)
+18. All 3 handlers: `extractToken` removed; `extractRawToken` returns raw string only — Lifecycle owns all validation
+19. 7 new failure-path tests (3 WS + 4 lifecycle); 531 unit tests total, 0 data races
+
+All existing tests pass; 7 new tests added (531 total, up from 524).
 
 ---
 
@@ -44,7 +54,17 @@ All existing tests pass; 2 new WS tests added (21 total, up from 19).
 | `go/internal/a2a/server.go` | Migrated: `Server` now holds `*execution.Lifecycle` instead of individual deps |
 | `go/internal/a2a/server_test.go` | Updated: 27 tests using `*execution.Lifecycle` with fakes |
 | `go/cmd/them/main.go` | Updated: WS now uses `execLifecycle`; LLM provider and orchestrator removed (no longer needed) |
-| `go/TEST_INDEX.md` | Updated: S1-12 (19→21), S1-13 (22), totals 494→496, 522→524 |
+| `go/internal/domain/domain.go` | Added `RunStatusAdmitted` — transient state between Admit and Start |
+| `go/internal/execution/request.go` | Added `runCreated bool`, `startedOK bool` to `ExecutionHandle` |
+| `go/internal/execution/lifecycle.go` | Phase 4: `RunCreator.UpdateRunStatus` added; Admit creates as admitted; Start updates to running; Release marks failed; Confirm fatal; NewLifecycle panic on nil deps; Release ctx param removed |
+| `go/internal/execution/lifecycle_test.go` | 4 new hardening tests (Release orphan, Confirm fatal, NewLifecycle panic) |
+| `go/internal/ws/handler.go` | `extractToken` → `extractRawToken` (no Validate); Release(h) without ctx |
+| `go/internal/ws/handler_test.go` | 3 new failure-path tests; fakes updated for UpdateRunStatus |
+| `go/internal/sse/handler.go` | `extractToken` → `extractRawToken`; Release(h) without ctx |
+| `go/internal/sse/handler_test.go` | Fakes updated for UpdateRunStatus |
+| `go/internal/a2a/server.go` | `extractToken` → `extractRawToken`; Release(h) without ctx |
+| `go/internal/a2a/server_test.go` | Fakes updated for UpdateRunStatus |
+| `go/TEST_INDEX.md` | Updated: S1-12 (21→24), S1-35 (14→18), totals 496→503, 524→531 |
 | `docs/architecture-v2/EXECUTION_LIFECYCLE_UNIFICATION_REPORT.md` | This document |
 
 ---
@@ -160,6 +180,16 @@ Python sanity 01-04,15  → 55 passed, 0 failed
 ```
 New tests: 2 (ws, net new: IDsAreUUIDv4, AdmitBeforeUpgrade_EPNotFound). Total: 524 (up from 522).
 
+### Phase 4 (Execution Core Hardening)
+```
+go build ./...          → 0 errors
+go vet ./...            → 0 new warnings
+go test ./...           → 29 packages, 0 failed
+go test -race ./...     → 29 packages, 0 data races
+Python sanity 01-04,15  → 55 passed, 0 failed
+```
+New tests: 7 (3 ws failure-path + 4 lifecycle hardening). Total: 531 (up from 524).
+
 ---
 
 ## 6. WS Migration — Complete
@@ -184,12 +214,13 @@ The gorilla upgrader writes its own HTTP error if upgrade fails, so the handler 
 
 ---
 
-## 7. Known Gaps After This Session
+## 7. Known Gaps After Phase 4
 
 | Gap | Severity | Notes |
 |---|---|---|
 | No live A2A entry point in DB | Low | Unit tests verify correctness. Live E2E requires creating a2a-type EP via admin API. |
 | `internal/llm/provider_test.go` vet warning | Low | Pre-existing; unrelated to lifecycle migration. Context leak warning on line 49. |
+| `RunStatusAdmitted` not handled by Python worker | Low | Worker polls for `running` runs only. `admitted` rows are invisible to the worker; they transition to `running` via `UpdateRunStatus` in `Start` before workflow execution begins. No behavioral impact. |
 
 ---
 
@@ -208,3 +239,13 @@ The gorilla upgrader writes its own HTTP error if upgrade fails, so the handler 
 6. **Gate cap-exceeded HTTP status change**: Old WS handler returned 503 for `gate.ErrCapExceeded`. New path via Lifecycle returns 429 (consistent with SSE, A2A, and the HTTP semantics of "too many requests"). Tests updated accordingly.
 
 7. **Orchestrator removed from main.go**: The in-process `orchestrator.Orchestrator` was only wired to the WS handler (as a non-Temporal fallback). Now that WS uses Lifecycle exclusively, the orchestrator and LLM provider construction were removed from `cmd/them/main.go`. This reduces startup dependencies.
+
+8. **Run state machine: admitted → running → failed/completed** (Phase 4): Runs are now created in DB as `admitted` (not `running`). `Start` transitions to `running` only after `ExecuteWorkflow` succeeds. `Release` transitions to `failed` when `runCreated && !startedOK`. This eliminates the class of orphan/stuck runs that were previously possible when WS upgrade, first-message, run-stream subscribe, or Temporal failures left a run permanently `running`.
+
+9. **gate.Confirm is now fatal** (Phase 4): Previously a warning-only guard. Now triggers full rollback (session.End + gate.Release) and returns `AdmitErrInternal`. This ensures no session consumes gate capacity with an expired reservation.
+
+10. **Release ctx removed** (Phase 4): `Release(ctx, h)` → `Release(h)`. The `ctx` parameter was always `context.Background()` at every call site (the request context is always cancelled by the time Release fires). The 5-second bounded context is derived internally. This prevents future callers from passing a cancelled context and breaking cleanup.
+
+11. **Handler token validation ownership** (Phase 4): All 3 handlers had `extractToken` that called `authenticator.Validate` and returned `*auth.TokenInfo`. These are replaced with `extractRawToken` returning only the raw string. `Lifecycle.Admit` step 1 owns all validation (and already re-validates when `TokenInfo == nil && RawToken != ""`). This removes the duplicate validation path and the risk of handler-level enforcement diverging from Lifecycle enforcement.
+
+12. **NewLifecycle fail-fast validation** (Phase 4): `NewLifecycle` panics if `epLoader`, `gate`, `sessions`, `recorder`, or `temporal` are nil. Previously these nil deps caused obscure runtime failures under load. The panic is immediate and obvious at server startup, preventing misconfigured deployments from accepting traffic.

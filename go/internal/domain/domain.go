@@ -74,6 +74,13 @@ const (
 	RunCanceled  RunStatus = "canceled"
 	RunStopped   RunStatus = "stopped"
 
+	// RunStatusAdmitted is the transient state between Lifecycle.Admit and
+	// Lifecycle.Start. A run in this state has been reserved in the DB but the
+	// Temporal workflow has not yet been launched. If Start never succeeds (WS
+	// upgrade failure, first-message error, stream subscribe failure, or
+	// ExecuteWorkflow failure), Release transitions the run to Failed.
+	RunStatusAdmitted RunStatus = "admitted"
+
 	// Aliases used by the Phase 6 orchestration layer.
 	RunStatusPending       = RunRunning   // treat pending as running for simplicity
 	RunStatusRunning       = RunRunning

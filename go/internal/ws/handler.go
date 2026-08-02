@@ -25,7 +25,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
-	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/event"
@@ -189,8 +188,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metrics.ActiveWSConnections.Inc()
 	defer metrics.ActiveWSConnections.Dec()
 
-	// ── 1. Extract token (non-enforcing — Lifecycle.Admit enforces per EP policy) ─
-	rawToken, tokenInfo := h.extractToken(r)
+	// ── 1. Extract raw token (Lifecycle.Admit owns all validation/enforcement) ─
+	rawToken := h.extractRawToken(r)
 
 	// ── 2. Lifecycle.Admit — full pipeline before upgrade ────────────────────
 	// All pre-upgrade errors are clean HTTP responses (not WS close frames).
@@ -198,7 +197,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	admitReq := execution.ExecutionRequest{
 		EPSlug:        epSlug,
 		RawToken:      rawToken,
-		TokenInfo:     tokenInfo,
 		RunEventsMode: h.runEventsMode,
 		InstanceID:    h.instanceID,
 	}
@@ -229,9 +227,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, upgradeErr := upgrader.Upgrade(w, r, nil)
 	if upgradeErr != nil {
 		h.logger.Warn("ws: upgrade failed", "ep_slug", epSlug, "error", upgradeErr)
-		// Release with context.Background() — the bounded 5s timeout is applied
-		// inside Release itself; the request context is already cancelled here.
-		h.lc.Release(context.Background(), handle)
+		// Release derives its own bounded 5s context; gorilla has already written
+		// its own HTTP error, so we only need cleanup here.
+		h.lc.Release(handle)
 		metrics.ActiveSessions.WithLabelValues(epType).Dec()
 		metrics.SessionsEnded.WithLabelValues(epType, "upgrade_failed").Inc()
 		return
@@ -256,8 +254,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"tenant_id", handle.EPConfig.TenantID,
 			"session_id", handle.SessionID,
 		)
-		// Release: bounded 5s timeout applied inside lifecycle.Release.
-		h.lc.Release(context.Background(), handle)
+		h.lc.Release(handle)
 	}()
 
 	// ── 4. Subscribe to event bus (bootstrap ordering — before Start) ────────
@@ -319,24 +316,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.streamEvents(ctx, cancel, conn, rsEvCh, nil, orchDone)
 }
 
-// extractToken extracts the bearer token from Authorization header or ?token query param.
-// Returns (rawToken, tokenInfo). tokenInfo is nil when no valid token is found; the
-// Lifecycle enforces token requirements per EP access policy, not the handler.
-func (h *Handler) extractToken(r *http.Request) (string, *auth.TokenInfo) {
-	var rawToken string
+// extractRawToken extracts the bearer token string from the Authorization header
+// or ?token query param. It does NOT validate the token — Lifecycle.Admit owns
+// all token validation and enforcement per EP access policy.
+func (h *Handler) extractRawToken(r *http.Request) string {
 	if hdr := r.Header.Get("Authorization"); strings.HasPrefix(hdr, "Bearer ") {
-		rawToken = strings.TrimPrefix(hdr, "Bearer ")
-	} else if t := r.URL.Query().Get("token"); t != "" {
-		rawToken = t
+		return strings.TrimPrefix(hdr, "Bearer ")
 	}
-	if rawToken == "" {
-		return "", nil
-	}
-	info, err := h.authenticator.Validate(r.Context(), rawToken)
-	if err != nil {
-		return rawToken, nil // token present but invalid — Lifecycle enforces per EP policy
-	}
-	return rawToken, info
+	return r.URL.Query().Get("token")
 }
 
 // readClientMessage reads the first message from the WebSocket client. It

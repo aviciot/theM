@@ -17,7 +17,6 @@
 package a2a
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -26,7 +25,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/execution"
@@ -209,8 +207,8 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req r
 	ctx := r.Context()
 	appSlug := chi.URLParam(r, "app_slug")
 
-	// ── 1. Extract bearer token (non-enforcing — EPConfig decides requirement) ─
-	tokenInfo, rawToken := s.extractToken(r)
+	// ── 1. Extract raw token (Lifecycle.Admit owns all validation/enforcement) ─
+	rawToken := s.extractRawToken(r)
 
 	// ── 2. Parse A2A message params ───────────────────────────────────────────
 	var params messageSendParams
@@ -235,11 +233,10 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req r
 
 	// ── 3. Admit: auth → EPConfig → access → gate → session → CreateRun ──────
 	admitReq := execution.ExecutionRequest{
-		EPSlug:     appSlug,
-		RawToken:   rawToken,
-		TokenInfo:  tokenInfo,
-		ContextID:  params.Message.ContextID, // caller-supplied multi-turn ID; empty → generated
-		InstanceID: s.instanceID,
+		EPSlug:      appSlug,
+		RawToken:    rawToken,
+		ContextID:   params.Message.ContextID, // caller-supplied multi-turn ID; empty → generated
+		InstanceID:  s.instanceID,
 		UserMessage: domain.TextMessage(domain.RoleUser, userText),
 	}
 	h, err := s.lc.Admit(ctx, admitReq)
@@ -247,7 +244,7 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req r
 		s.mapAdmitError(w, req.ID, err)
 		return
 	}
-	defer s.lc.Release(context.Background(), h)
+	defer s.lc.Release(h)
 
 	s.logger.Info("a2a: session started",
 		"app_slug", appSlug,
@@ -316,26 +313,13 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req r
 	)
 }
 
-// extractToken reads the bearer token from the Authorization header or ?token= query param.
-// Returns (tokenInfo, rawToken). tokenInfo is nil if no token is present or it's invalid.
-func (s *Server) extractToken(r *http.Request) (*auth.TokenInfo, string) {
-	var rawToken string
+// extractRawToken reads the bearer token string from the Authorization header
+// or ?token= query param. It does NOT validate — Lifecycle.Admit owns enforcement.
+func (s *Server) extractRawToken(r *http.Request) string {
 	if hdr := r.Header.Get("Authorization"); strings.HasPrefix(hdr, "Bearer ") {
-		rawToken = strings.TrimPrefix(hdr, "Bearer ")
-	} else if t := r.URL.Query().Get("token"); t != "" {
-		rawToken = t
+		return strings.TrimPrefix(hdr, "Bearer ")
 	}
-	if rawToken == "" {
-		return nil, ""
-	}
-	if s.authenticator == nil {
-		return nil, rawToken
-	}
-	info, err := s.authenticator.Validate(r.Context(), rawToken)
-	if err != nil {
-		return nil, rawToken // token present but invalid — Admit will enforce per EP policy
-	}
-	return info, rawToken
+	return r.URL.Query().Get("token")
 }
 
 // mapAdmitError converts a *execution.AdmitError to an A2A HTTP+JSON-RPC response.

@@ -141,17 +141,28 @@ func (f *fakeEPLoader) Load(_ context.Context, _ string) (*epconfig.EPConfig, er
 type fakeRunCreator struct{}
 
 func (f *fakeRunCreator) CreateRun(_ context.Context, _ domain.Run) error { return nil }
+func (f *fakeRunCreator) UpdateRunStatus(_ context.Context, _ string, _ domain.RunStatus, _ string) error {
+	return nil
+}
 
-// captureRunCreator records CreateRun calls for SQL-level inspection.
+// captureRunCreator records CreateRun and UpdateRunStatus calls.
 type captureRunCreator struct {
-	mu   sync.Mutex
-	runs []domain.Run
+	mu      sync.Mutex
+	runs    []domain.Run
+	updates []domain.RunStatus
 }
 
 func (c *captureRunCreator) CreateRun(_ context.Context, run domain.Run) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.runs = append(c.runs, run)
+	return nil
+}
+
+func (c *captureRunCreator) UpdateRunStatus(_ context.Context, _ string, status domain.RunStatus, _ string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.updates = append(c.updates, status)
 	return nil
 }
 

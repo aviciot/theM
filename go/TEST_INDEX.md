@@ -298,6 +298,8 @@ sanitization, and cross-run access denial.
 Admit→Upgrade→Subscribe→Start→stream pipeline via fakes injected into `execution.NewLifecycleWithRecorder`.
 Lifecycle.Admit runs BEFORE `upgrader.Upgrade`, so all pre-Admit errors return clean HTTP responses.
 On upgrade failure, lc.Release cleans up gate/session state with a bounded 5-second timeout.
+Execution Core Hardening (R-5.1): runs created as "admitted", transition to "running" only on Start success;
+Release marks run "failed" when Start never ran (orphan-run prevention).
 
 | Test | What it proves |
 |---|---|
@@ -322,6 +324,9 @@ On upgrade failure, lc.Release cleans up gate/session state with a bounded 5-sec
 | `TestWS_ClientTenantHeaderIgnored` | R-5: X-Tenant-ID header cannot override server-resolved TenantID from EPConfig |
 | `TestWS_IDsAreUUIDv4` | All run/session/context IDs are UUID v4 (Python worker requires uuid.UUID() parsing) |
 | `TestWS_AdmitBeforeUpgrade_EPNotFound` | EP not found → 404 HTTP response (not WS error frame) — confirms Admit runs before upgrade |
+| `TestWS_UpgradeFailure_RunMarkedFailed` | R-5.1: Upgrade fails after Admit → Release marks run as failed (orphan prevention) |
+| `TestWS_FirstMessageError_RunMarkedFailed` | R-5.1: Client disconnects before first message → Release marks run as failed |
+| `TestWS_StartFailure_RunMarkedFailed` | R-5.1: Temporal Start fails → Release marks run as failed |
 
 **Trigger:** any change to `internal/ws/handler.go` or `internal/execution/lifecycle.go`
 
@@ -402,24 +407,28 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 
 ### S1-35 · Execution Lifecycle — `internal/execution/lifecycle_test.go`
 
-**Purpose:** Shared execution lifecycle pipeline — unit tests for `Lifecycle.Admit`, `Lifecycle.Start`, and `Lifecycle.Release`. Covers security (TenantID injection prevention), error kinds, gate/session cleanup ordering, and ID format requirements.
+**Purpose:** Shared execution lifecycle pipeline — unit tests for `Lifecycle.Admit`, `Lifecycle.Start`, and `Lifecycle.Release`. Covers security (TenantID injection prevention), error kinds, gate/session cleanup ordering, ID format requirements, and Execution Core Hardening (R-5.1): orphan-run prevention, fatal gate.Confirm, fail-fast production dependency validation.
 
 | Test | What it proves |
 |---|---|
-| `TestLifecycle_HappyPath` | Admit → Start → Release all succeed; gate/session/recorder called in order |
+| `TestLifecycle_HappyPath` | Admit → Start → Release all succeed; run created as "admitted", updated to "running" on Start, gate/session/recorder called in order |
 | `TestLifecycle_EPNotFound` | Unknown EPSlug → AdmitErrNotFound (404); gate never checked |
 | `TestLifecycle_TokenRequired_Absent` | Token-mode EP + no token → AdmitErrUnauthorized (401) |
 | `TestLifecycle_TokenRequired_Invalid` | Token presented but invalid → AdmitErrUnauthorized (401) |
 | `TestLifecycle_GateCapExceeded` | Gate ErrCapExceeded → AdmitErrCapExceeded (429); gate.Rollback NOT called |
 | `TestLifecycle_SessionRegisterFails_GateRolledBack` | session.Register error → AdmitErrInternal; gate.Rollback called |
 | `TestLifecycle_RecorderCreateRunFails` | recorder.CreateRun error → AdmitErrInternal; session.End + gate.Release called |
-| `TestLifecycle_StartTemporalFails` | Start with nil/erroring temporal → error; Release still cleans up |
-| `TestLifecycle_ReleaseNilHandle_NoOp` | Release(ctx, nil) is a safe no-op |
+| `TestLifecycle_StartTemporalFails` | Start with erroring temporal → error; Release still cleans up |
+| `TestLifecycle_ReleaseNilHandle_NoOp` | Release(nil) is a safe no-op |
 | `TestLifecycle_TenantIDFromEPConfig_NotFromRequest` | Caller cannot override TenantID/AppID — always from EPConfig |
 | `TestLifecycle_ContextIDProvidedByCaller_Preserved` | Caller-supplied ContextID is preserved in handle |
 | `TestLifecycle_ContextIDGeneratedWhenEmpty` | Empty ContextID → UUID v4 generated; different from RunID |
 | `TestLifecycle_PublicEP_NoToken_Admitted` | Public EP + no token → admission succeeds |
 | `TestLifecycle_AllIDsAreUUIDv4` | RunID, ContextID, SessionID are all UUID v4 format |
+| `TestLifecycle_Release_MarksRunFailed_WhenStartNeverCalled` | R-5.1: Admit creates run as "admitted"; Release without Start → UpdateRunStatus(failed) |
+| `TestLifecycle_Release_DoesNotMarkFailed_AfterSuccessfulStart` | R-5.1: Start sets startedOK=true → Release skips the failed update |
+| `TestLifecycle_ConfirmFatal_SessionCleanedUp` | R-5.1: gate.Confirm failure → session.End + gate.Release called; CreateRun skipped |
+| `TestNewLifecycle_PanicsOnNilDeps` | R-5.1: NewLifecycle panics when epLoader/gate/sessions/recorder/temporal are nil |
 
 **Trigger:** any change to `internal/execution/lifecycle.go`, `internal/execution/errors.go`, or `internal/execution/request.go`
 
@@ -1348,7 +1357,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-09 | runrecorder | 21 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
-| S1-12 | ws | 21 |
+| S1-12 | ws | 24 |
 | S1-13 | sse | 22 |
 | S1-14 | a2a | 27 |
 | S1-15 | admin | 46 |
@@ -1371,8 +1380,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-32 | tenantctx (R-4b) | 8 |
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
-| S1-35 | execution lifecycle (unification refactor) | 14 |
-| **S1 total** | | **496** |
+| S1-35 | execution lifecycle (unification refactor) | 18 |
+| **S1 total** | | **503** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1381,4 +1390,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **524** |
+| **`go test ./...` total** | | **531** |

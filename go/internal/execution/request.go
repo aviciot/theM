@@ -37,6 +37,13 @@ type ExecutionHandle struct {
 	// internal gate state — used by Release only
 	gateAdmitted bool
 	gateCfg      gate.Config
+
+	// internal run state — used by Release to prevent orphan/stuck runs.
+	// runCreated is set to true when CreateRun succeeds in Admit.
+	// startedOK is set to true when ExecuteWorkflow succeeds in Start.
+	// If runCreated && !startedOK at Release time, Release marks the run Failed.
+	runCreated bool
+	startedOK  bool
 }
 
 // ExecutionResult is the workflow outcome for callers that block synchronously (e.g. A2A).

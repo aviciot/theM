@@ -24,6 +24,10 @@ import (
 // Defined here so that tests can inject a fake without needing a live DB.
 type RunCreator interface {
 	CreateRun(ctx context.Context, run domain.Run) error
+	// UpdateRunStatus transitions a run to the given status. errMsg is the
+	// failure reason for failed runs; use "" for non-error transitions.
+	// Called by Start (admitted → running) and Release (admitted → failed).
+	UpdateRunStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg string) error
 }
 
 // Lifecycle executes the shared admission-and-run-start pipeline used by the WS,
@@ -42,9 +46,10 @@ type Lifecycle struct {
 	logger   *slog.Logger
 }
 
-// NewLifecycle constructs a Lifecycle. All dependencies are required; pass nil for
-// optional integrations only if the subsystem is known to be unavailable (e.g.
-// temporal nil → Start returns error).
+// NewLifecycle constructs a production Lifecycle. epLoader, gateStore, sessions,
+// recorder, and temporal are required and must not be nil; the function panics if
+// any of them is nil. auth may be nil only if all entry points are public-mode.
+// logger may be nil (falls back to slog.Default()).
 func NewLifecycle(
 	auth transport.Authenticator,
 	epLoader transport.EPConfigLoader,
@@ -54,6 +59,18 @@ func NewLifecycle(
 	temporal transport.TemporalClientExecutor,
 	logger *slog.Logger,
 ) *Lifecycle {
+	switch {
+	case epLoader == nil:
+		panic("execution.NewLifecycle: epLoader must not be nil")
+	case gateStore == nil:
+		panic("execution.NewLifecycle: gateStore must not be nil")
+	case sessions == nil:
+		panic("execution.NewLifecycle: sessions must not be nil")
+	case recorder == nil:
+		panic("execution.NewLifecycle: recorder must not be nil")
+	case temporal == nil:
+		panic("execution.NewLifecycle: temporal must not be nil")
+	}
 	return newLifecycle(auth, epLoader, gateStore, sessions, recorder, temporal, logger)
 }
 
@@ -228,18 +245,28 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	}
 
 	// ── 9. Gate.Confirm ───────────────────────────────────────────────────────
+	// Fatal: Confirm failure means the reservation cannot be extended to the
+	// long-lived TTL. Clean up session and gate, skip CreateRun, return error.
 	if gateAdmitted {
 		if confErr := lc.gate.Confirm(ctx, gateCfg); confErr != nil {
-			// Non-fatal: session hash is registered; 10s reservation TTL is the safety net.
-			lc.logger.Warn("execution: gate confirm failed", "ep_slug", req.EPSlug, "error", confErr)
+			lc.logger.Warn("execution: gate confirm failed — rolling back",
+				"ep_slug", req.EPSlug, "error", confErr)
+			if lc.sessions != nil {
+				_ = lc.sessions.End(context.Background(), sessionID, req.EPSlug, resolvedCfg.AppID)
+			}
+			_ = lc.gate.Release(context.Background(), gateCfg)
+			return nil, admitErr(AdmitErrInternal)
 		}
 	}
 
 	// ── 10. CreateRun ────────────────────────────────────────────────────────
+	// Status is RunStatusAdmitted — not Running. The run transitions to Running
+	// only when Lifecycle.Start successfully launches the Temporal workflow.
+	// If Start never runs (WS upgrade failure, first-message error, stream
+	// subscribe failure), Release will mark the run Failed.
+	//
 	// TenantID and ApplicationID come exclusively from resolvedCfg (server-side DB).
 	// Never from request data — enforced by not reading those fields from req.
-	// EventsTransport is derived from RunEventsMode so the SSE/WS streaming path
-	// knows which Redis channel/stream to subscribe to after Admit returns.
 	eventsTransport := eventsTransportFromMode(req.RunEventsMode)
 	run := domain.Run{
 		ID:              runID,
@@ -247,9 +274,10 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		EntryPointSlug:  req.EPSlug,
 		TenantID:        resolvedCfg.TenantID,
 		ApplicationID:   resolvedCfg.AppID,
-		Status:          domain.RunStatusRunning,
+		Status:          domain.RunStatusAdmitted,
 		EventsTransport: eventsTransport,
 	}
+	runCreated := false
 	if lc.recorder != nil {
 		if recErr := lc.recorder.CreateRun(ctx, run); recErr != nil {
 			lc.logger.Warn("execution: create run failed",
@@ -264,6 +292,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 			}
 			return nil, admitErr(AdmitErrInternal)
 		}
+		runCreated = true
 	}
 
 	return &ExecutionHandle{
@@ -274,6 +303,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		EventsTransport: eventsTransport,
 		gateCfg:         gateCfg,
 		gateAdmitted:    gateAdmitted,
+		runCreated:      runCreated,
 	}, nil
 }
 
@@ -310,23 +340,39 @@ func (lc *Lifecycle) Start(ctx context.Context, h *ExecutionHandle, input tempor
 			"error", wfErr)
 		return nil, startErr(wfErr.Error())
 	}
+
+	// Workflow launched successfully — transition run admitted → running.
+	if lc.recorder != nil && h.runCreated {
+		updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer updateCancel()
+		if updErr := lc.recorder.UpdateRunStatus(updateCtx, h.RunID, domain.RunStatusRunning, ""); updErr != nil {
+			// Non-fatal: the run is already being executed. Log and continue.
+			lc.logger.Warn("execution: update run to running failed",
+				"run_id", h.RunID, "error", updErr)
+		}
+	}
+	h.startedOK = true
 	return wfRun, nil
 }
 
 // Release ends the session and releases the gate reservation. It must be called
 // exactly once, always in a defer in the protocol handler.
 //
-// IMPORTANT: Always call with context.Background() — the request context is
-// cancelled before Release fires, and cleanup must still complete. A 5-second
-// bounded timeout prevents cleanup from hanging indefinitely.
+// Release derives its own 5-second bounded context from context.Background() —
+// callers must NOT pass a context. The request context is always cancelled before
+// Release fires, so cleanup must be self-contained.
 //
-// Release(ctx, nil) is a no-op — safe to call even when Admit returned an error.
-func (lc *Lifecycle) Release(ctx context.Context, h *ExecutionHandle) {
+// Orphan-run prevention: if Admit created a run (runCreated) but Start never
+// succeeded (startedOK is false), Release marks the run as Failed so it does not
+// remain stuck in the "admitted" state indefinitely.
+//
+// Release(nil) is a no-op — safe to call even when Admit returned an error.
+func (lc *Lifecycle) Release(h *ExecutionHandle) {
 	if h == nil {
 		return
 	}
-	// Bounded timeout: the caller's ctx may already be cancelled (request done),
-	// so we derive a fresh 5-second deadline from a Background context.
+	// Always derive a fresh bounded context — the caller's request context is
+	// cancelled before this defer fires, so we must not depend on it.
 	cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cleanCancel()
 
@@ -336,6 +382,15 @@ func (lc *Lifecycle) Release(ctx context.Context, h *ExecutionHandle) {
 		appID = h.EPConfig.AppID
 		epSlug = h.EPConfig.EPSlug
 	}
+
+	// Mark admitted run as failed when Start never completed successfully.
+	if h.runCreated && !h.startedOK && lc.recorder != nil {
+		if updErr := lc.recorder.UpdateRunStatus(cleanCtx, h.RunID, domain.RunStatusFailed, "startup failed"); updErr != nil {
+			lc.logger.Warn("execution: mark run failed during release",
+				"run_id", h.RunID, "ep_slug", epSlug, "error", updErr)
+		}
+	}
+
 	if lc.sessions != nil && h.EPConfig != nil {
 		if err := lc.sessions.End(cleanCtx, h.SessionID, epSlug, appID); err != nil {
 			lc.logger.Warn("execution: session.End failed during release",

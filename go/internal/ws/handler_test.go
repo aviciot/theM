@@ -166,17 +166,28 @@ func (f *fakeEPLoader) Load(_ context.Context, _ string) (*epconfig.EPConfig, er
 type fakeRunCreator struct{}
 
 func (f *fakeRunCreator) CreateRun(_ context.Context, _ domain.Run) error { return nil }
+func (f *fakeRunCreator) UpdateRunStatus(_ context.Context, _ string, _ domain.RunStatus, _ string) error {
+	return nil
+}
 
-// captureRunCreator records CreateRun calls so tests can inspect domain.Run fields.
+// captureRunCreator records CreateRun and UpdateRunStatus calls.
 type captureRunCreator struct {
-	mu   sync.Mutex
-	runs []domain.Run
+	mu      sync.Mutex
+	runs    []domain.Run
+	updates []domain.RunStatus
 }
 
 func (c *captureRunCreator) CreateRun(_ context.Context, run domain.Run) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.runs = append(c.runs, run)
+	return nil
+}
+
+func (c *captureRunCreator) UpdateRunStatus(_ context.Context, _ string, status domain.RunStatus, _ string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.updates = append(c.updates, status)
 	return nil
 }
 
@@ -187,6 +198,15 @@ func (c *captureRunCreator) last() (domain.Run, bool) {
 		return domain.Run{}, false
 	}
 	return c.runs[len(c.runs)-1], true
+}
+
+func (c *captureRunCreator) lastStatus() (domain.RunStatus, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.updates) == 0 {
+		return "", false
+	}
+	return c.updates[len(c.updates)-1], true
 }
 
 // ── Temporal fakes ────────────────────────────────────────────────────────────
@@ -937,6 +957,138 @@ func TestWS_AdmitBeforeUpgrade_EPNotFound(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode,
 		"EP not found must return 404 HTTP (not WS error event)")
+}
+
+// ── Execution Core Hardening — WS failure-path tests ─────────────────────────
+
+// 22. WS upgrade failure: plain HTTP GET to a public EP (no WS Upgrade header)
+// after Admit succeeds — run must be marked failed by Release, not left "admitted".
+func TestWS_UpgradeFailure_RunMarkedFailed(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	capRec := &captureRunCreator{}
+	// Public EP so Admit passes even without a WS upgrade (no token required).
+	publicEPLoader := &fakeEPLoader{cfg: &epconfig.EPConfig{
+		EPSlug:     "ep1",
+		EPType:     "websocket",
+		AccessMode: epconfig.AccessModePublic,
+		EPEnabled:  true,
+		AppEnabled: true,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+	}}
+	b := &wsBuilder{authn: authn, recorder: capRec, epLoader: publicEPLoader}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	// Plain HTTP GET without WS Upgrade header → Admit passes, upgrade fails.
+	// gorilla returns 400 Bad Request when the Upgrade header is missing.
+	resp, err := http.Get(srv.URL + "/orchestrate/myapp/ep1")
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	// Give Release goroutine time to run.
+	time.Sleep(200 * time.Millisecond)
+
+	run, ok := capRec.last()
+	require.True(t, ok, "CreateRun must have been called")
+	assert.Equal(t, domain.RunStatusAdmitted, run.Status, "run must be initially created as admitted")
+
+	finalStatus, hasUpdate := capRec.lastStatus()
+	require.True(t, hasUpdate, "UpdateRunStatus must be called after upgrade failure")
+	assert.Equal(t, domain.RunStatusFailed, finalStatus, "run must be marked failed after upgrade failure")
+}
+
+// 23. WS first-message timeout/error: connect but never send a message.
+// The handler reads with a 30s deadline — we close before sending to trigger
+// a read error; run must be marked failed.
+func TestWS_FirstMessageError_RunMarkedFailed(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	capRec := &captureRunCreator{}
+	b := &wsBuilder{authn: authn, recorder: capRec}
+	h, _ := b.build()
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
+	require.NoError(t, err)
+	// Close immediately without sending a message → readClientMessage fails.
+	conn.Close()
+
+	time.Sleep(300 * time.Millisecond)
+
+	_, ok := capRec.last()
+	require.True(t, ok, "CreateRun must have been called")
+
+	finalStatus, hasUpdate := capRec.lastStatus()
+	require.True(t, hasUpdate, "UpdateRunStatus must be called after first-message failure")
+	assert.Equal(t, domain.RunStatusFailed, finalStatus, "run must be marked failed on first-message error")
+}
+
+// 24. Temporal Start failure: run must be marked failed.
+func TestWS_StartFailure_RunMarkedFailed(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	capRec := &captureRunCreator{}
+
+	// Temporal client that fails ExecuteWorkflow.
+	failTemporal := &failingTemporalClient{}
+
+	lc := execution.NewLifecycleWithRecorder(
+		authn,
+		&fakeEPLoader{cfg: &epconfig.EPConfig{
+			EPSlug:     "ep1",
+			EPType:     "websocket",
+			AccessMode: epconfig.AccessModeToken,
+			EPEnabled:  true,
+			AppEnabled: true,
+			TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+			AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		}},
+		&fakeGate{},
+		&fakeSessionStore{},
+		capRec,
+		failTemporal,
+		nil,
+	)
+
+	rsSub := &fakeRunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
+	bus := event.New()
+	wsH := wshandler.NewHandler(lc, bus, authn, "test-instance", nil)
+	wsH.WithTemporal(failTemporal, rsSub, true)
+
+	srv := httptest.NewServer(wsH.Routes())
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, "/orchestrate/myapp/ep1", "tok")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	sendMessage(t, conn, "hi")
+
+	// Expect an error event from the handler.
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, data, readErr := conn.ReadMessage()
+	require.NoError(t, readErr)
+	var sm map[string]any
+	require.NoError(t, json.Unmarshal(data, &sm))
+	assert.Equal(t, "error", sm["type"])
+
+	conn.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	finalStatus, hasUpdate := capRec.lastStatus()
+	require.True(t, hasUpdate, "UpdateRunStatus must be called after Start failure")
+	assert.Equal(t, domain.RunStatusFailed, finalStatus, "run must be marked failed after Start failure")
+}
+
+// failingTemporalClient always returns an error from ExecuteWorkflow.
+type failingTemporalClient struct{}
+
+func (f *failingTemporalClient) ExecuteWorkflow(_ context.Context, _ temporalclient.StartWorkflowOptions, _ interface{}, _ ...interface{}) (temporalclient.WorkflowRun, error) {
+	return nil, errors.New("temporal: unavailable")
 }
 
 // Ensure domain import is used.
