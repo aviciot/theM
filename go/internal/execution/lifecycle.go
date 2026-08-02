@@ -13,6 +13,7 @@ import (
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/gate"
+	"github.com/aviciot/them/internal/metrics"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/temporal"
@@ -244,6 +245,17 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		}
 	}
 
+	// admitCleanup rolls back session + gate on Confirm/CreateRun failure.
+	// It is only reachable after session.Register succeeds.
+	admitCleanup := func() {
+		if lc.sessions != nil {
+			_ = lc.sessions.End(context.Background(), sessionID, req.EPSlug, resolvedCfg.AppID)
+		}
+		if gateAdmitted {
+			_ = lc.gate.Release(context.Background(), gateCfg)
+		}
+	}
+
 	// ── 9. Gate.Confirm ───────────────────────────────────────────────────────
 	// Fatal: Confirm failure means the reservation cannot be extended to the
 	// long-lived TTL. Clean up session and gate, skip CreateRun, return error.
@@ -251,10 +263,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		if confErr := lc.gate.Confirm(ctx, gateCfg); confErr != nil {
 			lc.logger.Warn("execution: gate confirm failed — rolling back",
 				"ep_slug", req.EPSlug, "error", confErr)
-			if lc.sessions != nil {
-				_ = lc.sessions.End(context.Background(), sessionID, req.EPSlug, resolvedCfg.AppID)
-			}
-			_ = lc.gate.Release(context.Background(), gateCfg)
+			admitCleanup()
 			return nil, admitErr(AdmitErrInternal)
 		}
 	}
@@ -284,12 +293,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 				"run_id", runID,
 				"ep_slug", req.EPSlug,
 				"error", recErr)
-			if lc.sessions != nil {
-				_ = lc.sessions.End(context.Background(), sessionID, req.EPSlug, resolvedCfg.AppID)
-			}
-			if gateAdmitted {
-				_ = lc.gate.Release(context.Background(), gateCfg)
-			}
+			admitCleanup()
 			return nil, admitErr(AdmitErrInternal)
 		}
 		runCreated = true
@@ -342,13 +346,31 @@ func (lc *Lifecycle) Start(ctx context.Context, h *ExecutionHandle, input tempor
 	}
 
 	// Workflow launched successfully — transition run admitted → running.
+	// Retry up to 3 attempts (initial + 2 retries) with 100ms backoff.
+	// If all attempts fail, increment a Prometheus counter (the run is stuck
+	// as "admitted" in the DB despite the workflow executing). The reconciler
+	// must be extended to also scan admitted rows to repair these.
 	if lc.recorder != nil && h.runCreated {
-		updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer updateCancel()
-		if updErr := lc.recorder.UpdateRunStatus(updateCtx, h.RunID, domain.RunStatusRunning, ""); updErr != nil {
-			// Non-fatal: the run is already being executed. Log and continue.
+		const maxAttempts = 3
+		const retryDelay = 100 * time.Millisecond
+		var updErr error
+		for attempt := range maxAttempts {
+			updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			updErr = lc.recorder.UpdateRunStatus(updateCtx, h.RunID, domain.RunStatusRunning, "")
+			updateCancel()
+			if updErr == nil {
+				break
+			}
 			lc.logger.Warn("execution: update run to running failed",
-				"run_id", h.RunID, "error", updErr)
+				"run_id", h.RunID, "attempt", attempt+1, "error", updErr)
+			if attempt < maxAttempts-1 {
+				time.Sleep(retryDelay)
+			}
+		}
+		if updErr != nil {
+			// All retries exhausted. Workflow IS running — do not abort. Increment
+			// metric so the operations team can detect and reconcile stuck rows.
+			metrics.RunStatusUpdateFailed.Inc()
 		}
 	}
 	h.startedOK = true

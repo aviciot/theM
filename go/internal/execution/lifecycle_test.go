@@ -508,6 +508,61 @@ func TestLifecycle_ConfirmFatal_SessionCleanedUp(t *testing.T) {
 	assert.True(t, g.releaseCalled, "gate.Release must be called when gate.Confirm fails")
 }
 
+// Verify that admitCleanup (session.End + gate.Release) is invoked by both the
+// Confirm-fail path and the CreateRun-fail path — centralized cleanup covers both.
+func TestLifecycle_AdmitCleanup_BothFailPathsCleanUp(t *testing.T) {
+	t.Run("confirm failure cleans session+gate", func(t *testing.T) {
+		g := &fakeGate{confirmErr: errors.New("ttl expired")}
+		s := &fakeSession{}
+		r := &fakeRecorder{}
+		lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, nil)
+		h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
+		require.Error(t, err)
+		assert.Nil(t, h)
+		assert.True(t, s.endCalled, "session.End must be called by admitCleanup on Confirm failure")
+		assert.True(t, g.releaseCalled, "gate.Release must be called by admitCleanup on Confirm failure")
+		assert.False(t, r.createCalled, "CreateRun must not be called after Confirm failure")
+	})
+
+	t.Run("createRun failure cleans session+gate", func(t *testing.T) {
+		g := &fakeGate{}
+		s := &fakeSession{}
+		r := &fakeRecorder{createErr: errors.New("db unavailable")}
+		lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, nil)
+		h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
+		require.Error(t, err)
+		assert.Nil(t, h)
+		assert.True(t, s.endCalled, "session.End must be called by admitCleanup on CreateRun failure")
+		assert.True(t, g.releaseCalled, "gate.Release must be called by admitCleanup on CreateRun failure")
+	})
+}
+
+// Verify Start retries UpdateRunStatus up to 3 attempts when it keeps failing.
+// After all retries are exhausted: startedOK is still set (workflow IS running),
+// Release does NOT mark the run failed again (double-update prevention).
+func TestLifecycle_Start_UpdateRunStatus_AllRetriesExhausted_StartedOKSet(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{updateErr: errors.New("db timeout")} // persistent failure
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{info: validToken()}, g, s, r, tmp)
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
+	require.NoError(t, err)
+
+	_, startErr := lc.Start(context.Background(), h, temporal.WorkflowInput{OrchestratorName: "slug"})
+	require.NoError(t, startErr, "Start must succeed even when all UpdateRunStatus retries fail")
+	assert.True(t, h.IsStartedOK(),
+		"startedOK must be true after Start so Release does not mark the run as failed")
+
+	// Release must NOT call UpdateRunStatus(failed) when startedOK=true, even
+	// though the admitted→running update itself failed.
+	r.updateCalled = false
+	lc.Release(h)
+	assert.False(t, r.updateCalled,
+		"Release must not call UpdateRunStatus when startedOK=true (workflow is executing)")
+}
+
 // Verify NewLifecycle panics when a required production dependency is nil.
 // Note: NewLifecycle takes *runrecorder.Recorder and TemporalClientExecutor;
 // nil checks for those are enforced by the panic guards at construction time.

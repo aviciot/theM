@@ -46,6 +46,11 @@ type ExecutionHandle struct {
 	startedOK  bool
 }
 
+// IsStartedOK reports whether Lifecycle.Start successfully launched the Temporal
+// workflow. Used in tests to verify that startedOK is set even when downstream
+// steps (e.g. UpdateRunStatus) fail — the workflow is running regardless.
+func (h *ExecutionHandle) IsStartedOK() bool { return h.startedOK }
+
 // ExecutionResult is the workflow outcome for callers that block synchronously (e.g. A2A).
 // Streaming handlers (WS, SSE) iterate events while calling wfRun.Get themselves.
 type ExecutionResult struct {

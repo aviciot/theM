@@ -361,6 +361,7 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestSSE_EventsTransportDerivedFromMode` | EventsTransport set on run from RunEventsMode (default → "pubsub") |
 | `TestSSE_LifecycleCallSequence` | gate.Check + CreateRun + ExecuteWorkflow all called; gate.Release called on cleanup |
 | `TestSSE_MissingMessage` | Missing ?message= → 400 before any Lifecycle call |
+| `TestSSE_RunStreamSubscribedBeforeStart` | R-5.2: runEvents subscribe called BEFORE ExecuteWorkflow (bootstrap ordering invariant) |
 | `TestSSE_IDsAreUUIDv4` | All run/session/context IDs are UUID v4 (Python worker requires uuid.UUID() parsing) |
 
 **Trigger:** any change to `internal/sse/handler.go` or `internal/execution/lifecycle.go`
@@ -429,6 +430,8 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestLifecycle_Release_DoesNotMarkFailed_AfterSuccessfulStart` | R-5.1: Start sets startedOK=true → Release skips the failed update |
 | `TestLifecycle_ConfirmFatal_SessionCleanedUp` | R-5.1: gate.Confirm failure → session.End + gate.Release called; CreateRun skipped |
 | `TestNewLifecycle_PanicsOnNilDeps` | R-5.1: NewLifecycle panics when epLoader/gate/sessions/recorder/temporal are nil |
+| `TestLifecycle_AdmitCleanup_BothFailPathsCleanUp` | R-5.2: admitCleanup covers both Confirm-fail and CreateRun-fail paths (session+gate released in both) |
+| `TestLifecycle_Start_UpdateRunStatus_AllRetriesExhausted_StartedOKSet` | R-5.2: all 3 UpdateRunStatus retries fail → startedOK=true; Release skips failed update (workflow is executing) |
 
 **Trigger:** any change to `internal/execution/lifecycle.go`, `internal/execution/errors.go`, or `internal/execution/request.go`
 
@@ -1358,7 +1361,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 5 |
 | S1-12 | ws | 24 |
-| S1-13 | sse | 22 |
+| S1-13 | sse | 23 |
 | S1-14 | a2a | 27 |
 | S1-15 | admin | 46 |
 | S1-16 | ratelimit | 3 |
@@ -1380,8 +1383,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-32 | tenantctx (R-4b) | 8 |
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
-| S1-35 | execution lifecycle (unification refactor) | 18 |
-| **S1 total** | | **503** |
+| S1-35 | execution lifecycle (unification refactor) | 21 |
+| **S1 total** | | **507** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1390,4 +1393,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **531** |
+| **`go test ./...` total** | | **547** |

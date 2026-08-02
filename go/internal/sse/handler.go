@@ -17,6 +17,7 @@
 //
 //	Admit: auth → EPConfig → voice-check → access → gate → session → CreateRun
 //	[SSE headers written AFTER Admit succeeds — all pre-Admit errors are clean HTTP responses]
+//	runEvents: subscribe to run-stream BEFORE Start (bootstrap ordering invariant)
 //	Start: ExecuteWorkflow on GoTaskQueue
 //	Release: session.End + gate.Release (always, via defer)
 package sse
@@ -234,10 +235,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	lastEventID := r.Header.Get("Last-Event-ID")
 
-	// ── 7. Start Temporal workflow ────────────────────────────────────────────
+	// ── 7. Subscribe to run-stream ───────────────────────────────────────────
+	// Subscribe BEFORE calling Start (ExecuteWorkflow) so no event emitted
+	// between workflow launch and stream open can be lost (bootstrap ordering).
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	rsEvCh, rsErr := h.runEvents(ctx, handle.RunID, handle.EventsTransport, lastEventID)
+	if rsErr != nil {
+		h.logger.Warn("sse: runstream subscribe failed", "run_id", handle.RunID, "error", rsErr)
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"event stream unavailable\"}\n\n")
+		if hasFlusher {
+			flusher.Flush()
+		}
+		return
+	}
+
+	// ── 8. Start Temporal workflow ────────────────────────────────────────────
+	// Run-stream is already subscribed — no events can be lost.
 	appSlug := chi.URLParam(r, "app_slug")
 	input := temporal.WorkflowInput{
 		OrchestratorName: appSlug,
@@ -255,19 +270,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.logger.Info("sse: temporal workflow started", "run_id", handle.RunID, "workflow_id", wfRun.GetID())
-
-	// ── 8. Subscribe to run-stream ────────────────────────────────────────────
-	// Subscribe BEFORE starting the goroutine that waits for orchDone so no
-	// event between workflow start and stream open can be lost.
-	rsEvCh, rsErr := h.runEvents(ctx, handle.RunID, handle.EventsTransport, lastEventID)
-	if rsErr != nil {
-		h.logger.Warn("sse: runstream subscribe failed", "run_id", handle.RunID, "error", rsErr)
-		_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"event stream unavailable\"}\n\n")
-		if hasFlusher {
-			flusher.Flush()
-		}
-		return
-	}
 
 	orchDone := make(chan struct{})
 	go func() {

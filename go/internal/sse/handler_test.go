@@ -959,6 +959,82 @@ func TestSSE_MissingMessage(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+// orderingRunStreamSub records whether Subscribe was called before ExecuteWorkflow.
+type orderingRunStreamSub struct {
+	mu                  sync.Mutex
+	subscribeCalled     bool
+	workflowCalledFirst bool
+}
+
+func (s *orderingRunStreamSub) Subscribe(_ context.Context, _ string) (<-chan string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.subscribeCalled = true
+	raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "r"})
+	ch := make(chan string, 1)
+	ch <- string(raw)
+	close(ch)
+	return ch, nil
+}
+
+// orderingTemporalClient records whether subscribe happened before ExecuteWorkflow.
+type orderingTemporalClient struct {
+	mu                  sync.Mutex
+	called              bool
+	subscribeCalledFirst bool
+	spy                 *orderingRunStreamSub
+}
+
+func (c *orderingTemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.called = true
+	c.spy.mu.Lock()
+	if c.spy.subscribeCalled {
+		c.subscribeCalledFirst = true
+	}
+	c.spy.mu.Unlock()
+	return &fakeWorkflowRun{id: opts.ID}, nil
+}
+
+// 23. Run-stream subscribe must happen BEFORE Lifecycle.Start (ExecuteWorkflow).
+// Ordering invariant: no event emitted between workflow start and subscribe open can be lost.
+func TestSSE_RunStreamSubscribedBeforeStart(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	spy := &orderingRunStreamSub{}
+	tc := &orderingTemporalClient{spy: spy}
+
+	ep := &epconfig.EPConfig{
+		EPSlug:     "ep",
+		EPType:     "sse",
+		EPEnabled:  true,
+		AppEnabled: true,
+		AccessMode: epconfig.AccessModePublic,
+		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+	}
+	lc := execution.NewLifecycleWithRecorder(authn, &fakeEPLoader{cfg: ep}, nil, nil, &fakeRunCreator{}, tc, nil)
+	bus := event.New()
+	recorder := runrecorder.New(&fakeDBQuerier{})
+	h := ssehandler.NewHandler(lc, recorder, bus, authn, "test-instance", nil)
+	h.WithTemporal(tc, spy, true)
+
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep?message=hello")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	_ = collectSSE(t, resp, 3*time.Second)
+
+	assert.True(t, tc.called, "ExecuteWorkflow must be called")
+	assert.True(t, spy.subscribeCalled, "run-stream subscribe must be called")
+	assert.True(t, tc.subscribeCalledFirst,
+		"run-stream subscribe must happen BEFORE ExecuteWorkflow (bootstrap ordering invariant)")
+}
+
 // 22. SSE handler: all run/session/context IDs are UUID v4.
 func TestSSE_IDsAreUUIDv4(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}

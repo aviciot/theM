@@ -92,6 +92,20 @@ var (
 	})
 )
 
+// ── Execution lifecycle metrics ────────────────────────────────────────────────
+
+var (
+	// RunStatusUpdateFailed counts cases where UpdateRunStatus (admitted→running)
+	// failed for all retry attempts after a successful ExecuteWorkflow call.
+	// A non-zero value means there are runs stuck as "admitted" in the DB even
+	// though the Temporal workflow is actually executing. The reconciler must
+	// be extended to also scan admitted rows to clean these up.
+	RunStatusUpdateFailed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "them_run_status_update_failed_total",
+		Help: "Successful ExecuteWorkflow calls where UpdateRunStatus(running) failed all retries — run stuck as admitted",
+	})
+)
+
 // ── Shutdown / drain metrics ───────────────────────────────────────────────────
 
 var (
@@ -119,6 +133,8 @@ func init() {
 		// Connections
 		ActiveWSConnections,
 		ActiveSSEConnections,
+		// Execution lifecycle
+		RunStatusUpdateFailed,
 		// Shutdown
 		GracefulDrainDuration,
 	)
