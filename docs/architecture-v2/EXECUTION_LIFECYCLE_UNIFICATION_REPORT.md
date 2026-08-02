@@ -214,7 +214,43 @@ The gorilla upgrader writes its own HTTP error if upgrade fails, so the handler 
 
 ---
 
-## 7. Known Gaps After Phase 4
+## 6b. Phase 5 — R-5.2 (session 5): SSE Subscribe Order, Centralized Cleanup, UpdateRunStatus Retry
+
+**Commit:** 42b182a
+
+### Changes
+
+| File | Change |
+|---|---|
+| `go/internal/sse/handler.go` | Steps 7 and 8 swapped: `runEvents` (subscribe) now before `lc.Start` (ExecuteWorkflow) |
+| `go/internal/execution/lifecycle.go` | `admitCleanup` closure extracted (replaces 2 inline cleanup blocks); `Start` retries `UpdateRunStatus` 3×; metric incremented on exhaustion |
+| `go/internal/execution/request.go` | `IsStartedOK()` accessor added for test verification |
+| `go/internal/metrics/metrics.go` | `RunStatusUpdateFailed` counter added (`them_run_status_update_failed_total`) |
+| `go/internal/sse/handler_test.go` | 1 new test: `TestSSE_RunStreamSubscribedBeforeStart` |
+| `go/internal/execution/lifecycle_test.go` | 2 new tests: `TestLifecycle_AdmitCleanup_BothFailPathsCleanUp`, `TestLifecycle_Start_UpdateRunStatus_AllRetriesExhausted_StartedOKSet` |
+| `go/TEST_INDEX.md` | S1-13 (22→23), S1-35 (18→21), S1-total 503→507, go test total 531→547 |
+
+### Architecture Decisions
+
+1. **SSE subscribe before Start**: Subscribe MUST happen before ExecuteWorkflow to guarantee no events are lost. WS and A2A already did this correctly; SSE had them inverted (Start at step 7, subscribe at step 8). Fixed by swapping steps.
+
+2. **admitCleanup closure**: A closure (not a method) captures `sessionID`, `req.EPSlug`, `resolvedCfg.AppID`, `gateAdmitted` from local scope. Created after session.Register succeeds. Both Confirm-fail and CreateRun-fail paths now call the same cleanup. Session.End failure is logged (not silently discarded) in both cases.
+
+3. **UpdateRunStatus retry + metric**: 3 attempts, 100ms backoff. Failure after all retries: `startedOK=true` (workflow is executing), `them_run_status_update_failed_total++`. The reconciler must eventually be extended to scan `status = 'admitted'` rows that are more than ~5 minutes old — the metric is the production signal. Release correctly skips the `UpdateRunStatus(failed)` call when `startedOK=true`, so no double-update occurs.
+
+### Test Results
+
+```
+go build ./...          → 0 errors
+go vet ./...            → 0 new warnings
+go test ./...           → 29 packages, 0 failed (547 unit tests)
+go test -race ./...     → 29 packages, 0 data races
+Python sanity 01-04,15  → 55 passed, 0 failed
+```
+
+---
+
+## 7. Known Gaps After Phase 5 (R-5.2)
 
 | Gap | Severity | Notes |
 |---|---|---|
