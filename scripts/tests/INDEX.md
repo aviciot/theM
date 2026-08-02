@@ -47,6 +47,7 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 | 34 | `run_tests.py::test_34_app_runtime` | structural | no | App-level runtime gate: migration `023_app_runtime.sql` (`runtime_config JSONB` on `them.applications`); `Application.runtime_config` ORM field; `AppRuntimeConfig` Pydantic schema; `PUT /{app_id}/runtime` endpoint; `runtime_manager.py` extended gate (`token_hash`, `app_runtime`, `ep_max_concurrent`, blocked tokens/users, app rate limit `rl:them:app:`, soft app session cap via `count_app_sessions`); `apps.py` (`app_runtime=`, `token_hash=`, `hashlib.sha256`); `ws_orchestrator.py` (`ep_max_concurrent=None`, `app_runtime=None`, `token_hash=None`); `REDIS.md` app rate limit key; `api.ts` (`AppRuntimeConfig` interface, `runtime_config` on `Application`, `getAppRuntime`, `putAppRuntime`); `page.tsx` (`RuntimeView` component, `'runtime'` view state, `openRuntime`, `runtimeApp`, Runtime button, `onRuntime` prop, blocked_tokens/blocked_user_ids form fields) |
 | 35 | `run_tests.py::test_35_ep_queue` | structural | no | EP queue config: migration `024_ep_queue.sql` (`queue_timeout_seconds`, `queue_message` on `them.entry_points`); `EntryPoint` ORM fields; `app_compiler.py` reads/writes queue fields in `compile_graph`/`export_graph`; `admin_applications.py` `EntryPointIn/Out` queue fields; `runtime_manager.py` (`RuntimeQueueFull` class, `ep_gate_try` function, `queue_timeout_seconds`/`queue_message` params in `runtime_gate`); `apps.py` (`RuntimeQueueFull` import, `ep_gate_try` import, `"waiting"` WS message, async sleep retry loop, queue params passed from EP); `api.ts` `queue_timeout_seconds`/`queue_message` on `EntryPoint`; `page.tsx` `EntryPointData` queue fields, Max Concurrent Sessions/Queue Timeout/Queue Message builder panel, `saveEpLimit`+Entry Point Limits panel removed from `SessionsView` |
 | MT | `scripts/test_multiturn.py` | e2e | yes + JWT (auto-fetched) | Multi-turn conversation history: recall across fresh WS connections, `history_window` behavioral proof (window=1 forgets old turns) |
+| RC | `scripts/tests/test_routing_fix_contracts.py` | live | Traefik only | Routing correctness after UUID regex + runs path fixes: UUID agent/app/EP writes reach Go, GET /runs and GET /runs/{id} reachable, Python-only runs sub-paths not captured by Go |
 
 **Types:**
 - **live** — makes real HTTP/Docker calls against the running stack
@@ -89,6 +90,7 @@ python scripts/tests/run_tests.py
 | `app/routers/a2a_server.py` (orch-as-agent sections), `app/models.py` (a2a_exposed/budget_tokens) | 18 |
 | `app/edges/` | 19 |
 | `docker-compose.yml` (bridge/frontend labels), `traefik/traefik.yml`, `docker-compose.local.yml` | 20 |
+| `docker-compose.traefik.yml`, `docker-compose.yml` (Go routing rules — UUID regex or path matchers) | RC |
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 |
 | `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 27 |
 | `app/temporal/loaders.py` | 28 |

@@ -1,5 +1,6 @@
 # Route Ownership Inventory — THEM Python → Go Migration
 # Generated: 2026-08-02
+# Updated: 2026-08-02 — routing fixes applied (UUID regex + runs path narrowing)
 # Scope: All externally exposed routes. Source of truth: router registrations + Traefik config.
 # Do NOT trust this document alone — verify against live logs before any cutover.
 
@@ -20,13 +21,17 @@
 
 ## Route Counts Summary
 
+**Post-routing-fix counts** (UUID regex corrected + runs path narrowed):
+
 | Category | Count |
 |---|---|
 | **Total externally exposed routes** | **73** |
-| Currently owned by Go (live via Traefik) | 40 |
-| Currently owned by Python (live via Traefik) | 33 |
-| Implemented in Go but NOT yet cut over | 0 |
+| Currently owned by Go (live via Traefik) | 27 |
+| Currently owned by Python (live via Traefik) | 46 |
+| Implemented in Go but NOT yet cut over | 2 (A2A routes — no Traefik labels) |
 | Legacy / deprecation candidates | 4 |
+
+**Note on previous discrepancy:** The original document stated "33 Python-owned" in the summary but enumerated 46 rows in the detailed list. The 33 figure was incorrect — it under-counted by omitting the voice, WebRTC, A2A, dashboard WS, legacy WS, and apps catalogue routes. The correct Python-owned count is 46. The Go count (27) reflects routes with verified Traefik labels + working handler, after the UUID regex fix restored agents/apps write ownership to Go.
 
 ---
 
@@ -61,13 +66,11 @@
 | POST | `/api/v1/admin/agents/discover` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_agents.py:370` |
 | POST | `/api/v1/admin/agents/{id}/security-scan` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_agents.py:496` |
 
-**⚠ CRITICAL INCONSISTENCY — Traefik regex bug:**
-The Wave 2a Traefik rule for agent writes uses `PathRegexp(^/api/v1/admin/agents/[0-9]+$$)`.
-Agent IDs are UUIDs (`550e8400-e29b-41d4-a716-446655440000`), not pure integers.
-`[0-9]+` will **never match a UUID**. PUT/PATCH/DELETE agent requests currently fall through to Python (p=100), not Go.
-Go handles them only if reached directly on port 8002.
-**This bug also exists for applications writes** (see Applications domain).
-Orchestrators write rule uses `[^/]+` (correct — matches names including letters).
+**✓ FIXED — Traefik UUID regex corrected:**
+`them-go-agents-update` rule updated from `[0-9]+` to `[^/]+`.
+Agent IDs are UUIDs; `[0-9]+` never matched. PUT/PATCH/DELETE agent writes now correctly route to Go (p=115).
+Fix applied in `docker-compose.traefik.yml`. Same fix applied to applications (see Applications domain).
+Orchestrators write rule was already correct (`[^/]+`).
 
 ---
 
@@ -115,11 +118,11 @@ Orchestrators write rule uses `[^/]+` (correct — matches names including lette
 | POST | `/api/v1/admin/applications/{id}/orchestrators/{ao_id}/test-voice` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_applications.py:1054` |
 | POST | `/api/v1/admin/applications/{id}/orchestrators/{ao_id}/test-tts` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_applications.py:1095` |
 
-**⚠ CRITICAL INCONSISTENCY — Traefik regex bug (same as agents):**
-`PathRegexp(^/api/v1/admin/applications/[0-9]+$$)` will **never match a UUID**.
-Application IDs are UUIDs. Entry point writes (`/entry-points(/[0-9]+)?`) also use this broken pattern.
-All write methods for applications and entry points currently fall through to Python.
-Fix: change `[0-9]+` to `[0-9a-f-]+` or `[^/]+` throughout the Wave 2c/eps-writes rules.
+**✓ FIXED — Traefik UUID regex corrected:**
+`them-go-apps-update` and `them-go-eps-writes` rules updated from `[0-9]+` to `[^/]+`.
+Application IDs and entry point IDs are UUIDs; `[0-9]+` never matched.
+PUT/PATCH/DELETE application writes and all entry-point writes now correctly route to Go (p=115).
+Fix applied in `docker-compose.traefik.yml`.
 
 **Notes on Python-only routes:**
 - `export` / `import` / `restore`: portable JSON snapshot for app cloning. Uses `app_compiler.py` (`export_graph`, `compile_graph`, `validate_graph`). These functions must be ported to Go before migration.
@@ -229,9 +232,12 @@ Fix: change `[0-9]+` to `[0-9a-f-]+` or `[^/]+` throughout the Wave 2c/eps-write
 - `/runs/context/{context_id}/artifacts`: cross-run artifact lookup. No Go equivalent.
 - `/runs/{run_id}/artifacts/{artifact_id}`: single artifact download — Go-only (mounted at direct path before admin router).
 
-**⚠ Routing gap:** The Go `GET /runs` handler is behind the Wave 1b `Method(GET)` rule which catches all `GET /api/v1/runs*`. This works. But `GET /api/v1/runs/stats`, `GET /api/v1/runs/contexts`, `GET /api/v1/runs/context/{ctx}/artifacts` are also matched by that rule and routed to Go — but Go has no handlers for them! These requests will 404 from Go.
-
-Verify: does Go return 404 for unregistered paths within the admin router, or does chi forward to Python? **Chi returns 404** — the admin sub-router handles `/api/v1` and has no passthrough. This is a live bug if those routes are actively used.
+**✓ FIXED — Runs GET rule narrowed:**
+`them-go-admin-reads` rule changed from `PathPrefix(/api/v1/runs) && Method(GET)` to:
+`(Path(/api/v1/runs) || PathRegexp(^/api/v1/runs/[^/]+$$)) && Method(GET)`.
+The end-anchored regex matches exactly one path segment after `/runs/` (covers `/{run_id}`) but NOT `/{run_id}/tasks`, `/{run_id}/artifacts`, `/stats`, `/contexts`, or `/context/{ctx}/artifacts`.
+Those Python-only routes now correctly fall through to Python (p=100).
+Fix applied in both `docker-compose.traefik.yml` and `docker-compose.yml`.
 
 ---
 
@@ -389,34 +395,25 @@ All routes currently served by Python through Traefik:
 
 ## Inconsistencies Found
 
-### 1. CRITICAL: Traefik UUID Regex Bug (Agents + Applications write rules)
+### 1. ✓ RESOLVED: Traefik UUID Regex Bug (Agents + Applications write rules)
 
 **Affected rules:** `them-go-agents-update`, `them-go-apps-update`, `them-go-eps-writes`
 
-**Problem:** All three use `[0-9]+` to match IDs. Agents, applications, and entry points all use UUIDs (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`). The regex never matches. All PUT/PATCH/DELETE requests for agents and applications currently route to Python (p=100), not Go, even though the Go handlers are fully implemented.
+**Was:** All three used `[0-9]+` to match IDs. Agents, applications, and entry points all use UUIDs. The regex never matched — all PUT/PATCH/DELETE for these resources silently fell through to Python.
 
-**Orchestrators are unaffected** — they use name slugs and the rule uses `[^/]+` (correct).
+**Fixed:** All three rules updated to `[^/]+` in `docker-compose.traefik.yml`.
+Agents PUT/PATCH/DELETE (3 routes), applications PUT/PATCH/DELETE (3 routes), and entry-point POST/PUT/PATCH/DELETE (4 routes) now correctly route to Go (p=115).
 
-**Fix:** Replace `[0-9]+` with `[0-9a-f-]+` or `[^/]+` in those three regex rules. One-line change in `docker-compose.traefik.yml` per affected rule.
+**Orchestrators were unaffected** — they use name slugs and already used `[^/]+`.
 
-**Impact:** All write traffic for agents and applications has been silently hitting Python since Wave 2. Go write handlers for these domains are untested in production. Recommend a controlled cutover with smoke tests before fixing the regex.
+### 2. ✓ RESOLVED: Go `GET /api/v1/runs*` Rule Over-Captured Python Routes
 
-### 2. IMPORTANT: Go `GET /api/v1/runs*` Rule Matches Routes Go Cannot Serve
+**Affected rule:** `them-go-admin-reads` (Wave 1b, priority 110)
 
-**Affected rule:** `them-go-admin-reads` (Wave 1b, priority 110, `Method(GET)`)
+**Was:** `PathPrefix(/api/v1/runs) && Method(GET)` captured all GET requests under `/runs`, including 5 Python-only routes that Go cannot serve — those requests were returning 404 from Go.
 
-**Problem:** The rule `PathPrefix(/api/v1/runs) && Method(GET)` catches ALL GET requests under `/runs`, including:
-- `GET /api/v1/runs/stats` — no Go handler → **404**
-- `GET /api/v1/runs/contexts` — no Go handler → **404**
-- `GET /api/v1/runs/context/{ctx}/artifacts` — no Go handler → **404**
-- `GET /api/v1/runs/{run_id}/tasks` — no Go handler → **404**
-- `GET /api/v1/runs/{run_id}/artifacts` (list) — no Go handler → **404**
-
-If these routes are actively used, they are returning 404s instead of the Python responses.
-
-**Fix options:**
-1. Add the missing Go handlers (preferred — complete the runs migration).
-2. Narrow the Traefik rule to only specific paths Go handles: `Path(/api/v1/runs) || PathRegexp(^/api/v1/runs/[^/]+$)` + exclude signal path.
+**Fixed:** Rule narrowed to `Path(/api/v1/runs) || PathRegexp(^/api/v1/runs/[^/]+$$)` — matches only the list endpoint and single-ID endpoint. Python-only sub-paths (`/stats`, `/contexts`, `/{run_id}/tasks`, `/{run_id}/artifacts`, `/context/{ctx}/artifacts`) fall through to Python.
+Fix applied in both `docker-compose.traefik.yml` and `docker-compose.yml`.
 
 ### 3. A2A Path Divergence: Python `/a2a` vs Go `/a2a/{app_slug}`
 
@@ -441,8 +438,9 @@ The base `docker-compose.yml` contains the Wave 1b, Wave 5, Wave 6, Wave 7 Go ro
 ### Context
 
 - Waves 1–7 are complete.
+- Routing fix commit applied: UUID regex corrected, runs GET rule narrowed.
 - 46 Python-owned routes remain (including 4 legacy/deprecation candidates).
-- The Traefik UUID regex bug means agents and applications writes are still effectively in Python.
+- The Traefik UUID regex bug has been fixed — agents and applications writes now truly route to Go.
 
 ### Wave Groupings by Domain Cohesion
 
@@ -480,9 +478,9 @@ PUT  /api/v1/admin/applications/{id}/runtime
 
 Completing Wave 8 also enables fixing the Traefik UUID regex bug safely: once all application routes are in Go, the full applications domain can be cut over with a single Traefik rule change.
 
-**What to also fix in Wave 8 (bugs, not features):**
-1. Fix Traefik UUID regex for agents + applications write rules.
-2. Narrow (or complete) the `GET /api/v1/runs*` Traefik rule to stop routing unimplemented paths to Go.
+**Routing bugs already fixed (pre-Wave 8):**
+1. Traefik UUID regex for agents + applications write rules — fixed.
+2. `GET /api/v1/runs*` Traefik rule narrowed to only implemented Go paths — fixed.
 
 **Excluded from Wave 8:**
 - `middleware-wirings` (requires Go middleware system — not built)

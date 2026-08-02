@@ -920,7 +920,8 @@ services:
       - "traefik.http.routers.them-go-health-sub.service=them-go-bridge-svc"
       # ── Wave 1: GET-only admin reads (priority 110 beats Python's 100) ─────
       # Go serves read-only admin endpoints; Python still handles all writes.
-      - "traefik.http.routers.them-go-admin-reads.rule=(PathPrefix(`/api/v1/admin/agents`) || PathPrefix(`/api/v1/admin/orchestrators`) || PathPrefix(`/api/v1/admin/applications`) || PathPrefix(`/api/v1/runs`)) && Method(`GET`)"
+      # Runs: exact paths only (list + get-by-id). Stats/contexts/tasks/artifacts stay Python.
+      - "traefik.http.routers.them-go-admin-reads.rule=(PathPrefix(`/api/v1/admin/agents`) || PathPrefix(`/api/v1/admin/orchestrators`) || PathPrefix(`/api/v1/admin/applications`) || Path(`/api/v1/runs`) || PathRegexp(`^/api/v1/runs/[^/]+$$`)) && Method(`GET`)"
       - "traefik.http.routers.them-go-admin-reads.entrypoints=web"
       - "traefik.http.routers.them-go-admin-reads.priority=110"
       - "traefik.http.routers.them-go-admin-reads.service=them-go-bridge-svc"
