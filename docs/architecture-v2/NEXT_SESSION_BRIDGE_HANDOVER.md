@@ -1,304 +1,205 @@
 # Next Session Bridge Handover
-# Updated: 2026-08-02
+# Updated: 2026-08-02 (post Application Execution Architecture Review)
 
 ---
 
 ## Current State
 
 **Branch:** `main`
-**HEAD:** see `git log --oneline -1` — latest commit after this session's doc push
-**Push status:** Up to date with `origin/main`
+**HEAD before this session's doc push:** `fb212ae docs(arch): Application Model Architecture Review — pre-Wave 8 design decisions`
+**HEAD after this session:** see `git log --oneline -1` (the Application Execution Architecture Review commit).
+**Push status:** pushed to `origin/main`.
 
 ---
 
 ## This Session's Work
 
-### Commits this session
-
-| SHA | Message |
-|---|---|
-| `f92081f` | docs: route ownership inventory — 73-route map with inconsistency report |
-| `28b781d` | fix(traefik): correct UUID regex and runs path scope in Go routing rules |
-| `c099619` | docs: Wave 8 application special ops review + handover update |
-| *(this session's doc commit)* | docs: Application Model Architecture Review + handover update |
-
-### What was done
-
-1. **Route ownership inventory** (`f92081f`) — Created authoritative 73-route map showing all externally exposed routes, their Python/Go impl status, live Traefik owner, and 5 major inconsistencies.
-
-2. **Routing fixes** (`28b781d`):
-   - Fixed `[0-9]+` → `[^/]+` in three Traefik rules: `them-go-agents-update`, `them-go-apps-update`, `them-go-eps-writes` (UUID IDs never matched `[0-9]+`).
-   - Narrowed `them-go-admin-reads` runs rule from `PathPrefix(/api/v1/runs)` to `Path(/api/v1/runs) || PathRegexp(^/api/v1/runs/[^/]+$$)` — stops routing Python-only sub-paths to Go.
-   - Applied same runs rule fix to both `docker-compose.traefik.yml` and `docker-compose.yml`.
-   - Added `scripts/tests/test_routing_fix_contracts.py`.
-
-3. **Wave 8 special ops review** (`c099619`) — Analyzed all 5 Application Special Operation endpoints. Decisions:
-   - `PUT /{id}/runtime` → migrate Wave 8
-   - `POST /bulk-delete` → migrate Wave 8
-   - `GET /{id}/export` → migrate Wave 8
-   - `POST /import` → defer Wave 9 (requires `compile_graph`)
-   - `PUT /{id}/restore` → defer Wave 9 (same dependency as import)
-
-4. **Application Model Architecture Review** — Answered 12 architecture questions governing how the Application model is represented, persisted, exported, imported, compiled, and versioned before Wave 8 implementation begins. Key decisions:
-   - Relational rows are source of truth; graph is derived (compile-on-save preserved)
-   - No versioning in Wave 8 or Wave 9
-   - Application Definition v1: `{schema_version:1, name, presentation, graph, canvas}`
-   - ADK compatibility: no schema change; agent UUID FK is sufficient
-   - Wave 8 scope confirmed: runtime + bulk-delete + export
-   - Wave 9 scope: compile_graph port + import + restore + Python tenant_id fix
-   - `session_timeout_minutes`: accept + persist in Go, do not enforce
-   - Deprecated `orchestrator_id` FK: treat as dead, do not populate
-   Full document: `docs/architecture-v2/APPLICATION_MODEL_ARCHITECTURE_REVIEW.md`
+Wrote `docs/architecture-v2/APPLICATION_EXECUTION_ARCHITECTURE_REVIEW.md` — the definitive
+three-layer architecture review that governs implementation for Waves 8–15. It re-opens and
+**revises** the source-of-truth decision from the prior review, confirms the Temporal execution
+model, and re-sequences the migration roadmap. No code was changed.
 
 ---
 
-## Routing Validation Result
+## Architecture Decisions Made This Review
 
-**Test:** `scripts/tests/test_routing_fix_contracts.py` run from inside `them-bridge` container via:
-```bash
-docker cp scripts/tests/test_routing_fix_contracts.py them-bridge:/tmp/test_routing_fix_contracts.py
-docker exec them-bridge bash -c "
-  TRAEFIK_BASE=http://them-traefik:8088 \
-  PYTHON_BASE=http://localhost:8001 \
-  GO_BASE=http://them-go-bridge:8002 \
-  AUTH_SERVICE=http://them-auth-service:8701 \
-  python3 /tmp/test_routing_fix_contracts.py
-"
-```
+1. **Source of truth → Option C (Hybrid).** JSON **Application Definition** is the canonical
+   *design* source of truth; the existing relational rows (`app_orchestrators`, `entry_points`,
+   `middleware_wirings`) are demoted to the **compiled runtime projection**. This overturns the
+   prior review's "relational rows are the source of truth" for the design artifact, while keeping
+   it true for the runtime. Runtime readers (epconfig, Temporal loaders, rate limiter) are
+   unchanged — the definition layer is purely additive.
 
-**Result: 11 passed, 0 failed, 2 skipped**
+2. **Drift prevention:** projection is written *only* by the compile step (write monopoly),
+   stamped with `definition_id` + `definition_hash`, and runs are pinned to the `definition_id`
+   they started under (mid-run publish can never corrupt an in-flight conversation).
 
-Skips are legitimate: the Python bridge in this environment has no applications, so
-the application/EP write routing tests skip (no test data to route against). Agent write
-test passed using an existing agent UUID.
+3. **Save vs Publish split.** Canvas edits a *draft* definition — cheap, no compile, no cache
+   flush. **Publish** validates + compiles the projection + stamps the hash + flushes caches. This
+   removes today's problem where every PATCH recompiles and flushes even for a layout nudge.
 
-**Critical environment note:** The `them-go-bridge` container running on port 8002 does
-NOT have Traefik routing labels in its container labels. The Go routing labels from
-`docker-compose.yml` (profile `go`) were never applied to the running container.
-**All traffic currently goes to Python through Traefik.** The routing fix labels are
-correctly written in `docker-compose.yml` and `docker-compose.traefik.yml` but require
-a `docker compose up` restart with the `--profile go` flag to take effect.
+4. **Execution model CONFIRMED (already correct).** One `OrchestrationWorkflow` per `context_id`;
+   leaf agent call → Temporal **Activity** (`invoke_agent_activity`); orchestrator→orchestrator
+   delegation → **Child Workflow** (`execute_child_workflow`, depth cap `_MAX_SUB_ORCH_DEPTH=3`);
+   parallel via `asyncio.gather` bounded by `Semaphore(max_parallel_tools)`; clarification via
+   `wait_condition` + `submit_human_response` signal; native `handle.cancel()`. The parallel-
+   clarify-nested-delegate example scenario is already expressible. Go has a parallel worker on the
+   `them-orchestration-go` queue.
 
-To activate Go routing, run:
-```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile go up -d them-go-bridge
-```
+5. **Versioning added NOW** (columns, not full UX). New `application_definitions` table +
+   `applications.active_definition_id` + `applications.source_definition_hash` +
+   `runs.definition_id`, with a revision-1 backfill for existing apps. Diff UI / rollback UX
+   deferred but not blocked.
 
----
+6. **Export/import/restore REPLACED** with the lossless Application Definition v1 object. Old
+   graph-reconstruction export is lossy (drops middleware→agent edges, keys) and is deprecated;
+   importer accepts both forms for one migration window.
 
-## Route Ownership Summary (post-fix)
+7. **`app_orchestrators` kept**, reframed as a compiled *binding* projection, renamed only
+   conceptually/in-docs (no physical table rename in Waves 8–11).
 
-| Category | Count |
-|---|---|
-| Total externally exposed routes | 73 |
-| Go-owned (live via Traefik, when go profile is active) | 27 |
-| Python-owned (live via Traefik) | 46 |
-| Legacy / deprecation candidates | 4 |
+8. **ADK compatibility:** an ADK agent is a catalog UUID + the `InvokeAgentResult` invoke
+   contract; internals opaque. No schema change to the definition or projection.
 
-Full inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`
+9. **Wave 8 re-scoped:** export moves OUT of Wave 8 into Wave 9 (export must serialize a
+   *definition*, which doesn't exist until Wave 9). Wave 8 = runtime + bulk-delete only.
 
----
-
-## Wave 8 Approved Scope
-
-**Three endpoints to migrate**, in this order:
-
-1. `PUT /api/v1/admin/applications/{id}/runtime` — single UPDATE + cache flush
-2. `POST /api/v1/admin/applications/bulk-delete` — bulk DELETE + cache flush (same pattern)
-3. `GET /api/v1/admin/applications/{id}/export` — port `export_graph()` (~95 lines, pure function)
-
-Review document: `docs/architecture-v2/WAVE8_APPLICATION_SPECIAL_OPS_REVIEW.md`
-
-**Deferred to Wave 9:** `POST /import` and `PUT /{id}/restore` (require `compile_graph` port).
+Full document: `docs/architecture-v2/APPLICATION_EXECUTION_ARCHITECTURE_REVIEW.md`.
 
 ---
 
-## Infrastructure Required Before Wave 8 Starts
+## Remaining Migration Overview (from this review, Section 17)
 
-### 1. New Traefik rule for application sub-route writes
+| Wave | Domain | Scope | Category |
+|---|---|---|---|
+| **8** | App runtime special-ops (pure) | `PUT /{id}/runtime`, `POST /bulk-delete` | migrate |
+| **9** | **Application Definition Layer** | `application_definitions` table + backfill; `CompileDefinition` (Go port of compile_graph); draft/publish/validate/activate; export/import/restore/clone/rollback; `runs.definition_id` | redesign-before-migrate (gates 10–14) |
+| **10** | Runs read/audit tail | stats, contexts, tasks, artifacts, bulk-delete, delete | migrate |
+| **11** | Run control (Temporal) | cancel + signal delivery | migrate |
+| **12** | Apps runtime surface (product-critical) | `/apps`, `/apps/{slug}` REST, tasks | migrate |
+| **13** | A2A server + agent card | agent-card, `/a2a`, `/a2a/push` | redesign (invoke /a2a skill) |
+| **14** | Admin agent/orch/middleware/system-agent ops | test/discover/security-scan, middleware-defs, system-agents, middleware-wirings, per-AO test-llm/voice/tts | redesign (middleware now definition-driven) |
+| **15** | Voice + legacy deprecation + Python removal | voice/webrtc; deprecate legacy `orchestrators/{name}` voice + `ws/orchestrate/{name}`; remove Python | migrate + deprecate |
 
-`PUT /{id}/runtime` and future sub-path writes are NOT covered by the existing
-`them-go-apps-update` rule (which anchors at `^/api/v1/admin/applications/[^/]+$` — single segment only).
-Add to both `docker-compose.traefik.yml` and `docker-compose.yml`:
-
-```yaml
-# Wave 8 — app sub-routes: runtime, restore, export writes
-- "traefik.http.routers.them-go-apps-subroutes.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/.+$`) && (Method(`PUT`) || Method(`POST`) || Method(`PATCH`) || Method(`DELETE`))"
-- "traefik.http.routers.them-go-apps-subroutes.entrypoints=web"
-- "traefik.http.routers.them-go-apps-subroutes.priority=115"
-- "traefik.http.routers.them-go-apps-subroutes.service=them-go-svc"
-```
-
-Note: `GET /{id}/export` is already covered by `them-go-admin-reads` (`PathPrefix(/api/v1/admin/applications) && Method(GET)`, p=110). Only writes need the new rule.
-
-### 2. Go `CacheInvalidator` extension
-
-Add `FlushApplicationOrchCaches(ctx, appID string, orchNames []string) error` to the
-`CacheInvalidator` interface in `go/internal/admin/`. This method must:
-- `DEL them:app:{app_id}:orch:{name}` for each name
-- `DEL them:orch:loc:{name}` for each name
-- `DEL them:agents:registry`
-- `PUBLISH them:ep:config:changed {app_id}`
-
-The pub/sub publish already exists for the EP config channel in `epconfig`. The new
-key pattern `them:app:{app_id}:orch:{name}` is Python's orchestrator config cache.
-Verify the exact key format from `admin_applications.py:_flush_orch_caches`.
-
-### 3. DAL additions for Wave 8
-
-In `go/internal/admin/dal/applications.go`:
-
-```
-ListAppOrchestrators(ctx, tenantID, appID string) ([]struct{Name string}, error)
-  -- SELECT name FROM them.app_orchestrators WHERE application_id = $1
-
-BulkDeleteApplications(ctx, tenantID string, ids []string) (int64, error)
-  -- DELETE FROM them.applications WHERE id = ANY($1) AND tenant_id = $2 RETURNING id
-
-UpdateRuntimeConfig(ctx, tenantID, appID string, configJSON []byte) error
-  -- UPDATE them.applications SET runtime_config = $1 WHERE id = $2 AND tenant_id = $3
-
-GetApplicationWithChildren(ctx, tenantID, appID string) (*ApplicationExportRow, error)
-  -- SELECT with JOINs for app_orchestrators, entry_points, middleware_wirings
-  -- (for export endpoint)
-```
+Blocked-by-definition-layer: import, restore, clone, rollback, export, middleware-wirings writes.
 
 ---
 
-## Known Open Issues
+## Approved Next Task — Wave 8 (re-scoped: runtime + bulk-delete ONLY)
 
-| Issue | Impact | Status |
-|---|---|---|
-| Go routing labels not active in live environment | All traffic goes to Python | Labels are in compose files; requires `docker compose --profile go up -d` restart |
-| `them-go-bridge` service has no Traefik labels at runtime | Go bridge unreachable via Traefik | Same as above |
-| `session_timeout_minutes` in AppRuntimeConfig never consumed | Dead field | Document as no-op; include in Go schema for completeness |
-| `POST /import` and `PUT /{id}/restore` still in Python | No UI impact (no frontend callers) | Deferred to Wave 9 |
-| `middleware_wirings` table has no Go DAL at all | Blocks import/restore migration | Not needed for Wave 8; required for Wave 9 |
-| Contract test skips when no applications exist in environment | Reduced coverage | Use Hetzner or a seeded test environment for full coverage |
+Two endpoints in Go:
+1. `PUT /api/v1/admin/applications/{id}/runtime` — JSONB `runtime_config` UPDATE + cache flush.
+2. `POST /api/v1/admin/applications/bulk-delete` — hard-delete + cache flush.
 
----
+**Export is NO LONGER in Wave 8** — it moves to Wave 9 as a definition-based export.
 
-## Tests Run This Session
+Steps (detail in review Section 18):
+1. Traefik: add `them-go-apps-subroutes` rule (exact rule in `APPLICATION_MODEL_ARCHITECTURE_REVIEW.md`
+   §4a) to `docker-compose.yml` and `docker-compose.traefik.yml`. Do not otherwise touch Traefik.
+2. Go cache: add `FlushApplicationOrchCaches(ctx, appID, orchNames)` —
+   `DEL them:app:{app_id}:orch:{name}`, `DEL them:orch:loc:{name}`, `DEL them:agents:registry`,
+   `PUBLISH them:ep:config:changed {app_id}`.
+3. DAL (`go/internal/admin/dal/applications.go`): `UpdateRuntimeConfig`, `ListAppOrchestratorNames`,
+   `BulkDeleteApplications` (tenant-scoped, `RETURNING id`).
+4. Handlers (`go/internal/admin/applications.go`): `PutRuntime`, `BulkDelete`. Runtime struct =
+   five fields, pointer types for nullable ints; `session_timeout_minutes` accepted+persisted,
+   not enforced. Bulk-delete: pre-fetch orch names → hard-delete → flush after delete.
+5. Wire routes in `go/internal/admin/router.go`.
+6. Go tests per handler (mock DAL, assert flush call order); update `go/TEST_INDEX.md`.
+7. `go test ./...` — zero new failures.
+8. Deploy + smoke through Traefik; run `scripts/tests/test_routing_fix_contracts.py` inside
+   `them-bridge`; app-write routing tests must PASS not skip.
+9. Commit (staged file-by-file), push, update `REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`.
 
-| Test | Result | Notes |
-|---|---|---|
-| `test_routing_fix_contracts.py` (from inside container) | 11 passed, 0 failed, 2 skipped | Skips: no applications in this environment |
-| `python3.12 scripts/tests/run_tests.py` (full Python suite) | Not run this session | No Python code changed |
-| `go test ./...` | Not run this session | No Go code changed |
-
----
-
-## Architecture Decisions Made This Session
-
-1. **Wave 8 scope = runtime + bulk-delete + export** (not all 5 special ops). Rationale: import and restore share `compile_graph` dependency which is a 340-line port including graph traversal and crypto — separate wave.
-
-2. **`export_graph` is Wave 8, not Wave 9.** It is a prerequisite for the Wave 9 round-trip test (export via Go, import via Python). Migrating it in Wave 8 proves the graph serialization format before the write paths are ported.
-
-3. **New Traefik rule `them-go-apps-subroutes` required.** The existing `them-go-apps-update` rule anchors at `[^/]+$` (no sub-paths). Any write to `/{id}/runtime`, `/{id}/restore`, `/{id}/orchestrators/{ao_id}/...` requires a new rule.
-
-4. **Test strategy: use existing data, not newly-created resources.** Agent/app write contract tests use the first existing agent/application from the Python bridge rather than creating throwaway resources, because the Python `agents` table has a NOT NULL `tenant_id` that Python's admin API doesn't expose.
+Do NOT port `compile_graph`/`export_graph` or any definition-layer code in Wave 8.
 
 ---
 
-## Temporary Compatibility Code
+## Deferred / Deprecated Areas
 
-- Python `ws_orchestrator.py` still has `app_runtime=None` for runtime gate (line 164) — this is intentional, not a bug.
-- `docker-compose.yml` and `docker-compose.traefik.yml` have Wave 2–7 Go labels — these only take effect when the go profile container is started.
+**Deferred to Wave 9 (definition layer):** export, import, restore, clone, rollback, `CompileDefinition`,
+`application_definitions` table + backfill, middleware-wirings writes, `runs.definition_id`.
+**Deferred beyond v1 (no format break needed):** static `flows[]` DSL (deterministic sequence/
+condition/loop), OR/quorum join policy engine change, revision diff UI + rollback UX, physical
+rename of `app_orchestrators`.
+**Deprecated (remove in Wave 15):** old lossy graph-export format; `POST /orchestrators/{name}/
+transcribe|tts`; `GET(WS) /ws/orchestrate/{name}`.
+**Known engine cleanups (later wave):** replace hardcoded `_MAX_SUB_ORCH_DEPTH`/`max_parallel`
+defaults with `policies.*` from the definition; fix fragile `agent__orch__` double-prefix name
+coupling with an explicit `ref_kind`/`transport` field.
 
 ---
 
-## Files Most Relevant to Wave 8
+## Files Most Relevant to the Next Task
 
 | File | Relevance |
 |---|---|
-| `docs/architecture-v2/WAVE8_APPLICATION_SPECIAL_OPS_REVIEW.md` | Wave 8 design decisions |
-| `app/routers/admin_applications.py:617-791` | Python handlers for all 5 endpoints |
-| `app/services/app_compiler.py` | `export_graph`, `compile_graph`, `validate_graph` |
-| `go/internal/admin/applications.go` | Current Go handler (missing the 5 special ops) |
-| `go/internal/admin/dal/applications.go` | Go DAL (needs new methods) |
-| `go/internal/admin/router.go` | Go admin router wiring |
-| `go/internal/admin/service/` | Go service layer (pattern reference from llm_providers.go) |
-| `go/internal/crypto/fernet.go` | Fernet encrypt/decrypt (available for Wave 9) |
-| `go/internal/epconfig/epconfig.go` | runtime_config consumer (Go side) |
-| `docker-compose.traefik.yml` | Wave 2–7 Traefik routing labels (needs Wave 8 addition) |
-| `docker-compose.yml` | Base Traefik labels (needs same Wave 8 addition) |
-
----
-
-## Exact Next Task: Wave 8 — Application Special Operations Migration
-
-### First prompt for the next session
-
-```
-Continue from main (latest commit). Read these docs first:
-  docs/architecture-v2/APPLICATION_MODEL_ARCHITECTURE_REVIEW.md  ← architecture decisions
-  docs/architecture-v2/WAVE8_APPLICATION_SPECIAL_OPS_REVIEW.md   ← per-endpoint analysis
-  docs/architecture-v2/NEXT_SESSION_BRIDGE_HANDOVER.md
-  go/CLAUDE.md
-
-Implement Wave 8 — Application Special Operations — in this order:
-
-Step 1: Add Traefik rule `them-go-apps-subroutes` for /{id}/sub-path write routes
-(exact rule is in the review doc, "Infrastructure Required" section).
-Apply to both docker-compose.traefik.yml and docker-compose.yml.
-
-Step 2: Add FlushApplicationOrchCaches to Go CacheInvalidator interface and Redis
-implementation. Key patterns from admin_applications.py:_flush_orch_caches:
-  DEL them:app:{app_id}:orch:{name} (per orchestrator name)
-  DEL them:orch:loc:{name} (per orchestrator name)
-  DEL them:agents:registry
-  PUBLISH them:ep:config:changed {app_id}
-
-Step 3: Add DAL methods in go/internal/admin/dal/applications.go:
-  ListAppOrchestrators, BulkDeleteApplications, UpdateRuntimeConfig,
-  GetApplicationWithChildren (for export)
-
-Step 4: Implement handlers in go/internal/admin/applications.go:
-  PUT /{id}/runtime
-  POST /bulk-delete
-  GET /{id}/export
-
-Step 5: Wire new routes in go/internal/admin/router.go.
-
-Step 6: Write Go tests for all three handlers. Update go/TEST_INDEX.md.
-
-Step 7: Run go test ./... (must pass, zero new failures).
-
-Step 8: Deploy and smoke-test through Traefik:
-  docker compose -f docker-compose.yml -f docker-compose.local.yml --profile go up -d them-go-bridge
-
-Step 9: Run scripts/tests/test_routing_fix_contracts.py from inside them-bridge.
-        Must see the application write tests PASS (not skip).
-
-Step 10: Commit and push. Update REMAINING_ROUTE_OWNERSHIP_INVENTORY.md with new Go ownership.
-
-Do NOT implement import or restore. Do NOT port compile_graph. Stop after step 10.
-```
-
-### Startup commands
-
-```bash
-# Session startup
-cd /home/avi/them
-git log --oneline -5
-docker compose -f docker-compose.yml -f docker-compose.local.yml ps
-
-# Bring up Go bridge with routing labels (if not running)
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile go up -d them-go-bridge
-docker compose --profile go logs -f them-go-bridge
-
-# Run Go tests before starting
-cd go && go test ./...
-```
+| `docs/architecture-v2/APPLICATION_EXECUTION_ARCHITECTURE_REVIEW.md` | This review — governs Waves 8–15 |
+| `docs/architecture-v2/APPLICATION_MODEL_ARCHITECTURE_REVIEW.md` | Prior review — Wave 8 endpoint details, Traefik rule §4a |
+| `app/routers/admin_applications.py` | Python handlers for runtime/bulk-delete (lines ~617–791) + `_flush_orch_caches` |
+| `app/services/app_compiler.py` | `compile_graph`/`export_graph`/`validate_graph` (Wave 9 port source) |
+| `go/internal/admin/applications.go` | Go app handler (add PutRuntime, BulkDelete) |
+| `go/internal/admin/dal/applications.go` | Go DAL (add the three methods) |
+| `go/internal/admin/router.go` | Route wiring |
+| `go/internal/epconfig/epconfig.go` + `pgx.go` | runtime_config reader + `them:ep:config:changed` pub/sub |
+| `go/internal/crypto/fernet.go` | Fernet (needed Wave 9, not Wave 8) |
+| `go/internal/temporal/` | Go worker/workflow (delegation parity for Python removal) |
+| `docker-compose.yml`, `docker-compose.traefik.yml` | Traefik rule additions |
 
 ---
 
 ## Hard Constraints for Next Session
 
-1. **Do not port `compile_graph` in Wave 8** — it is Wave 9 scope.
-2. **Do not implement `/import` or `/restore` in Wave 8.**
-3. **Do not use `git add .` or `git add -A`** — stage only Wave 8 files.
-4. **Run `go test ./...` before every commit** — zero new failures required.
-5. **Update `go/TEST_INDEX.md`** in the same commit as any new Go test.
-6. **Update `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`** after cutover to reflect the new Go ownership.
-7. **Secrets**: Never commit `.env` or `secrets.local`. DB name is `them`, never `odin`.
+1. Wave 8 = runtime + bulk-delete ONLY. Do NOT port `compile_graph`/`export_graph`.
+2. Do NOT build the definition layer in Wave 8 — that is Wave 9.
+3. Do NOT use `git add .`/`-A` — stage only Wave 8 files.
+4. Run `go test ./...` before every commit — zero new failures.
+5. Update `go/TEST_INDEX.md` in the same commit as any new Go test.
+6. Update `REMAINING_ROUTE_OWNERSHIP_INVENTORY.md` after cutover.
+7. Secrets: never commit `.env`/`secrets.local`. DB name `them`, never `odin`.
+8. Do NOT change Traefik beyond adding `them-go-apps-subroutes`.
+
+---
+
+## Exact First Prompt for Next Session
+
+```
+Continue from main (latest commit). Read these first:
+  docs/architecture-v2/APPLICATION_EXECUTION_ARCHITECTURE_REVIEW.md   ← governing decisions
+  docs/architecture-v2/APPLICATION_MODEL_ARCHITECTURE_REVIEW.md       ← Wave 8 endpoint detail + Traefik rule §4a
+  docs/architecture-v2/NEXT_SESSION_BRIDGE_HANDOVER.md
+  go/CLAUDE.md
+
+Implement Wave 8 — Application Runtime Special-Ops — RUNTIME + BULK-DELETE ONLY.
+Export is NOT in Wave 8 (moved to Wave 9 as a definition-based export).
+
+Step 1: Add Traefik rule `them-go-apps-subroutes` (exact rule in APPLICATION_MODEL_ARCHITECTURE_REVIEW.md
+        §4a) to docker-compose.yml and docker-compose.traefik.yml. Do not otherwise touch Traefik.
+Step 2: Add FlushApplicationOrchCaches(ctx, appID, orchNames) to the Go cache layer:
+        DEL them:app:{app_id}:orch:{name}, DEL them:orch:loc:{name}, DEL them:agents:registry,
+        PUBLISH them:ep:config:changed {app_id}.
+Step 3: DAL in go/internal/admin/dal/applications.go: UpdateRuntimeConfig, ListAppOrchestratorNames,
+        BulkDeleteApplications (tenant-scoped, RETURNING id).
+Step 4: Handlers in go/internal/admin/applications.go: PutRuntime, BulkDelete.
+        Runtime struct = 5 fields, pointer nullable ints, session_timeout_minutes accept+persist not enforce.
+        Bulk-delete: pre-fetch orch names, hard-delete, flush AFTER delete.
+Step 5: Wire routes in go/internal/admin/router.go.
+Step 6: Go tests for both handlers (mock DAL, assert flush order). Update go/TEST_INDEX.md.
+Step 7: go test ./... — zero new failures.
+Step 8: Deploy with --profile go, smoke through Traefik, run scripts/tests/test_routing_fix_contracts.py
+        inside them-bridge — app-write routing tests must PASS not skip.
+Step 9: Commit (staged file-by-file), push, update REMAINING_ROUTE_OWNERSHIP_INVENTORY.md.
+
+Do NOT implement export/import/restore or compile_graph. Stop after step 9.
+Then prepare the Wave 9 handover (Application Definition Layer).
+```
+
+### Startup commands
+
+```bash
+cd /home/avi/them
+git log --oneline -5
+docker compose -f docker-compose.yml -f docker-compose.local.yml ps
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile go up -d them-go-bridge
+cd go && go test ./...
+```
