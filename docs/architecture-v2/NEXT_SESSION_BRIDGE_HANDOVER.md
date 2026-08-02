@@ -19,7 +19,8 @@
 |---|---|
 | `f92081f` | docs: route ownership inventory — 73-route map with inconsistency report |
 | `28b781d` | fix(traefik): correct UUID regex and runs path scope in Go routing rules |
-| *(this session's doc commit)* | docs: Wave 8 application special ops review + handover update |
+| `c099619` | docs: Wave 8 application special ops review + handover update |
+| *(this session's doc commit)* | docs: Application Model Architecture Review + handover update |
 
 ### What was done
 
@@ -31,12 +32,23 @@
    - Applied same runs rule fix to both `docker-compose.traefik.yml` and `docker-compose.yml`.
    - Added `scripts/tests/test_routing_fix_contracts.py`.
 
-3. **Wave 8 review** — Analyzed all 5 Application Special Operation endpoints. Decisions:
+3. **Wave 8 special ops review** (`c099619`) — Analyzed all 5 Application Special Operation endpoints. Decisions:
    - `PUT /{id}/runtime` → migrate Wave 8
    - `POST /bulk-delete` → migrate Wave 8
    - `GET /{id}/export` → migrate Wave 8
    - `POST /import` → defer Wave 9 (requires `compile_graph`)
    - `PUT /{id}/restore` → defer Wave 9 (same dependency as import)
+
+4. **Application Model Architecture Review** — Answered 12 architecture questions governing how the Application model is represented, persisted, exported, imported, compiled, and versioned before Wave 8 implementation begins. Key decisions:
+   - Relational rows are source of truth; graph is derived (compile-on-save preserved)
+   - No versioning in Wave 8 or Wave 9
+   - Application Definition v1: `{schema_version:1, name, presentation, graph, canvas}`
+   - ADK compatibility: no schema change; agent UUID FK is sufficient
+   - Wave 8 scope confirmed: runtime + bulk-delete + export
+   - Wave 9 scope: compile_graph port + import + restore + Python tenant_id fix
+   - `session_timeout_minutes`: accept + persist in Go, do not enforce
+   - Deprecated `orchestrator_id` FK: treat as dead, do not populate
+   Full document: `docs/architecture-v2/APPLICATION_MODEL_ARCHITECTURE_REVIEW.md`
 
 ---
 
@@ -218,8 +230,9 @@ GetApplicationWithChildren(ctx, tenantID, appID string) (*ApplicationExportRow, 
 ### First prompt for the next session
 
 ```
-Continue from main (latest commit after 28b781d). Read these docs first:
-  docs/architecture-v2/WAVE8_APPLICATION_SPECIAL_OPS_REVIEW.md
+Continue from main (latest commit). Read these docs first:
+  docs/architecture-v2/APPLICATION_MODEL_ARCHITECTURE_REVIEW.md  ← architecture decisions
+  docs/architecture-v2/WAVE8_APPLICATION_SPECIAL_OPS_REVIEW.md   ← per-endpoint analysis
   docs/architecture-v2/NEXT_SESSION_BRIDGE_HANDOVER.md
   go/CLAUDE.md
 
