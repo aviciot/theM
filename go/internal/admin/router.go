@@ -27,8 +27,8 @@ import (
 // jwtMiddleware is the JWT validation middleware (HS256 or RS256).
 // Pass nil to disable JWT protection (tests only).
 //
-// tokenCache is the bearer-token cache used by BearerTenantMiddleware.
-// Pass nil to skip tenant enforcement (tests that do not test tenant middleware).
+// tokenCache is the bearer-token cache used by BearerTenantMiddleware on the
+// runs data-plane. Pass nil to skip tenant enforcement (tests only).
 //
 // sessionReader is the session store for admin session listing/disconnect.
 // Pass nil to disable session admin routes (tests only).
@@ -102,12 +102,11 @@ func BuildRouter(
 
 		adminGroup.Route("/admin", func(a chi.Router) {
 			// Tenant-scoped sub-group: agents, orchestrators, applications, tokens.
-			// BearerTenantMiddleware extracts TenantID from the same bearer token
-			// that identifies the caller. TenantID is NEVER read from request data.
+			// AdminTenantMiddleware extracts TenantID from the JWT Claims set by
+			// jwtMiddleware. Super_admin users with no tenant_id claim fall back to
+			// the bootstrap tenant — that covers all UI-authenticated admin users.
 			a.Group(func(tenantScoped chi.Router) {
-				if tokenCache != nil {
-					tenantScoped.Use(auth.BearerTenantMiddleware(tokenCache))
-				}
+				tenantScoped.Use(AdminTenantMiddleware())
 				agents.Routes(tenantScoped)
 				orchs.Routes(tenantScoped)
 				apps.Routes(tenantScoped)

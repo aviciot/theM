@@ -198,41 +198,48 @@ func thGet(srv *httptest.Server, path, bearerToken string) (*http.Response, erro
 // S1-34 tests
 // ──────────────────────────────────────────────────────────────────────────────
 
-// TH-01: no bearer token → 401 on tenant-scoped /admin/agents.
+// TH-01: valid super_admin JWT → admin/agents accessible without a bearer machine token.
+// Admin routes now use AdminTenantMiddleware which reads tenant from JWT claims
+// (falling back to the bootstrap tenant for super_admin users). No machine token required.
 func TestTenantHTTP_MissingToken_Agents_401(t *testing.T) {
 	cache, _ := newTHCache()
 	srv := httptest.NewServer(tenantAdminRouter(t, cache))
 	defer srv.Close()
 
+	// tenantAdminRouter auto-injects a super_admin JWT; no bearer token needed.
 	resp, err := thGet(srv, "/admin/agents", "")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "TH-01: missing bearer token must return 401")
+	// Admin routes grant access via JWT alone; bootstrap tenant is used.
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-01: super_admin JWT alone must reach admin/agents")
 }
 
-// TH-02: unknown/invalid bearer token → 401 on /admin/agents.
+// TH-02: a machine bearer token in Authorization does not affect admin access.
+// The JWT is injected via X-Admin-JWT; any bearer token value is irrelevant.
 func TestTenantHTTP_InvalidToken_Agents_401(t *testing.T) {
 	cache, _ := newTHCache()
 	srv := httptest.NewServer(tenantAdminRouter(t, cache))
 	defer srv.Close()
 
+	// An unrecognised bearer token in Authorization: admin JWT still authorises.
 	resp, err := thGet(srv, "/admin/agents", "unknown-token-xyz")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "TH-02: invalid bearer token must return 401")
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-02: unrecognised bearer token does not block admin JWT access")
 }
 
-// TH-03: valid token with no TenantID → 403 on /admin/agents.
+// TH-03: admin access uses bootstrap tenant regardless of any bearer token value.
 func TestTenantHTTP_TokenWithoutTenant_Agents_403(t *testing.T) {
 	cache, q := newTHCache()
-	q.addToken("tenantless-token", "") // valid but no TenantID
+	q.addToken("tenantless-token", "") // valid opaque token but no TenantID (irrelevant for admin)
 	srv := httptest.NewServer(tenantAdminRouter(t, cache))
 	defer srv.Close()
 
+	// Admin routes do not consult the bearer token for tenant; JWT + bootstrap tenant applies.
 	resp, err := thGet(srv, "/admin/agents", "tenantless-token")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "TH-03: tenantless bearer token must return 403")
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-03: admin route must succeed via JWT+bootstrap even with tenantless opaque token")
 }
 
 // TH-04: valid token with TenantID → handler reached (200) on /admin/agents.
@@ -279,7 +286,7 @@ func TestTenantHTTP_QueryTenantIDIgnored(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-06: ?tenant_id query param must not override token tenant")
 }
 
-// TH-07: missing bearer token → 401 on /admin/applications.
+// TH-07: valid super_admin JWT → admin/applications accessible without bearer machine token.
 func TestTenantHTTP_MissingToken_Applications_401(t *testing.T) {
 	cache, _ := newTHCache()
 	srv := httptest.NewServer(tenantAdminRouter(t, cache))
@@ -288,7 +295,7 @@ func TestTenantHTTP_MissingToken_Applications_401(t *testing.T) {
 	resp, err := thGet(srv, "/admin/applications", "")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "TH-07: missing token on /applications must return 401")
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-07: super_admin JWT alone must reach admin/applications")
 }
 
 // TH-08: missing bearer token → 401 on /runs.
