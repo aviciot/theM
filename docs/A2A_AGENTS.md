@@ -24,17 +24,17 @@ Source: `agents/a2a_echo/`, `agents/a2a_slow/`, `agents/a2a_stream/`
 
 ```powershell
 # Start A2A test agents (alongside the main stack)
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile test-agents up -d
 
 # Check health
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents ps
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile test-agents ps
 
 # Stop only the test agents
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents stop a2a-echo a2a-slow a2a-stream
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile test-agents stop a2a-echo a2a-slow a2a-stream
 
 # Rebuild after code change (agents have no volume mount — need rebuild)
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents build a2a-echo a2a-slow a2a-stream
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents up -d a2a-echo a2a-slow a2a-stream
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile test-agents build a2a-echo a2a-slow a2a-stream
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile test-agents up -d a2a-echo a2a-slow a2a-stream
 ```
 
 ---
@@ -102,7 +102,7 @@ Watch the **Trace** debug tab for real-time `task_created → status → artifac
 
 Calls go directly to the agent container. Useful for debugging the agent in isolation.
 
-**Note:** These calls go to the container's internal port — run them from inside the bridge container or expose ports in `docker-compose.local.yml`.
+**Note:** These calls go to the container's internal port — run them from inside the bridge container or expose ports in `docker-compose.dev.yml`.
 
 ```bash
 # From inside them-bridge container:

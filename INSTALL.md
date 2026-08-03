@@ -97,50 +97,40 @@ This stack is deployed on a **Hetzner Cloud VPC** on the same server as the othe
 | Cloudflare Tunnel container | `infra-cloudflared` (already running) |
 | External Traefik entrypoint | `web` — port 80, plain HTTP (TLS at Cloudflare edge) |
 | the-M route file | `/home/avi/infrastructure/traefik/dynamic/them-routes.yml` |
-| the-M compose overlay | `docker-compose.cloudflare.yml` (repo root) |
+| the-M compose overlay | `docker-compose.hetzner.yml` (repo root) |
 
 **Important:** The external Traefik uses **port 80 only** — no TLS config. Cloudflare Tunnel terminates TLS at the edge and forwards plain HTTP inward. All internal traffic between `infra-traefik` and `them-traefik` is plain HTTP.
 
-**Current exposure status:** the UI is **not yet exposed** to the internet. The route in `them-routes.yml` is commented out. See [Expose to Cloudflare](#expose-to-cloudflare-when-ready) when ready to go live.
+**Current exposure status:** the UI is live at `https://them.avico78.com` via Cloudflare Tunnel → infra-traefik → them-traefik.
 
-### What `docker-compose.cloudflare.yml` does
+### Compose file layout
 
-- Overrides `proxy-network` from linux.yml's local `them-proxy` back to the **existing shared `proxy-network`** that all other services use
-- Joins `them-traefik` to `proxy-network` so `infra-traefik` can resolve it by container name
-- No Traefik labels on `them-traefik` — routing is handled via the file-based config in `them-routes.yml`
-
-### What `docker-compose.hetzner-build.yml` does
-
-This overlay is required on Hetzner because the repo is cloned directly to a path where
-all Dockerfiles and source trees are co-located — compose is run from **the repo root**, not
-a sparse subdirectory.
-
-What it overrides for Hetzner:
-
-1. **Build contexts** — sets all build contexts to `..` relative to any outer directory wrapping the repo, ensuring Dockerfiles are resolved correctly regardless of clone path.
-
-2. **Runtime volume mounts** — overrides `- .:/app` to `- ..:/app` for `them-bridge`, `them-bridge-2`, `them-worker`, and `them-frontend`, so the full source tree is mounted into the running container at development time.
-
-3. **Config file paths** — redirects `traefik.yml`, `postgres/init/`, and `redis/config/redis.conf` mounts to `../` to ensure correct resolution on Hetzner.
-
-### Hetzner start script
-
-**Do not modify `linux-start.sh`** — it is the generic Linux script shared across all deployments.
-
-Instead use `linux-start-hetzner.sh` — a **standalone** script (does NOT call `linux-start.sh`) that includes all the Hetzner-specific overlays in its own COMPOSE array:
-
-```bash
-./scripts/linux-start-hetzner.sh [--build]
-```
-
-The Hetzner-specific files are:
+The stack uses **3 files** (down from 8):
 
 | File | Purpose |
 |---|---|
-| `scripts/linux-start-hetzner.sh` | Full Hetzner start script (standalone — does NOT call `linux-start.sh`) |
-| `docker-compose.hetzner-build.yml` | Build context + volume overrides pointing to parent `them/` (see above) |
-| `docker-compose.cloudflare.yml` | Joins `them-traefik` to `proxy-network` (shared with `infra-traefik`) |
-| `/home/avi/infrastructure/traefik/dynamic/them-routes.yml` | External Traefik route for `them.avico78.com` (router commented out until UI goes live) |
+| `docker-compose.yml` | Base — all services, production defaults |
+| `docker-compose.hetzner.yml` | Hetzner overlay — named volumes, shared `proxy-network`, Go bridge Traefik routing |
+| `docker-compose.dev.yml` | Local dev overlay — source bind mounts, `npm run dev`, Python owns WS/SSE |
+
+### Hetzner startup
+
+Use `scripts/deploy.sh` — path-independent, reads `.env`, always uses the correct file pair:
+
+```bash
+./scripts/deploy.sh up          # start / adopt stack (--no-recreate by default)
+./scripts/deploy.sh build       # rebuild all images without starting
+./scripts/deploy.sh status      # show container states
+./scripts/deploy.sh logs [svc]  # tail logs
+./scripts/deploy.sh restart <svc>  # restart one service
+```
+
+Or directly:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.hetzner.yml \
+  --project-name them_gateway --profile temporal up -d
+```
 
 ---
 
@@ -263,25 +253,15 @@ docker network ls | grep traefik
 docker inspect <your-traefik-container> --format '{{json .NetworkSettings.Networks}}' | jq 'keys'
 ```
 
-### 4-B. Create a Cloudflare overlay compose file
+### 4-B. Configure the external proxy network
 
-Create `docker-compose.cloudflare.yml` in the **repository root**:
+`docker-compose.hetzner.yml` already sets `proxy-network: name: proxy-network, external: true`.
+If your external Traefik network has a different name, override it in `docker-compose.hetzner.yml`:
 
 ```yaml
-# docker-compose.cloudflare.yml
-# Connects them-traefik to the external Traefik proxy network
-# and adds the labels the external Traefik needs to route the domain.
-#
-# Replace EXTERNAL_TRAEFIK_NETWORK with your actual network name (e.g. traefik-proxy).
-# Replace them.yourdomain.com with your actual domain.
-
-version: "3.9"
-
 networks:
-  # Override proxy-network to use your external Traefik's Docker network.
-  # Must match the network name your external Traefik container is on.
   proxy-network:
-    name: EXTERNAL_TRAEFIK_NETWORK   # ← change this
+    name: YOUR_ACTUAL_NETWORK_NAME   # ← change this
     external: true
 
 services:
@@ -347,40 +327,15 @@ labels:
 **On this Hetzner server**, always use `linux-start-hetzner.sh` — not the generic `linux-start.sh`. The Hetzner wrapper calls the generic script and then applies the Cloudflare overlay.
 
 ```bash
-# Run from repository root (theM/)
+# Run from repository root
 
-# First-time or after a code change — rebuild images:
-./scripts/linux-start-hetzner.sh --build
+# First-time or after a code change — rebuild images then start:
+./scripts/deploy.sh build
+./scripts/deploy.sh up
 
 # Subsequent starts (no code change):
-./scripts/linux-start-hetzner.sh
+./scripts/deploy.sh up
 ```
-
-**What it does (in order):**
-
-1. Validates `.env` — fails fast if required vars are missing
-2. Starts Postgres + Redis and waits for healthy status
-3. Starts Temporal (workflow runtime)
-4. Bootstraps the DB schema (fresh install: applies `db/schema_current.sql`; existing: no-op)
-5. Starts auth service
-6. Starts Python Temporal worker (waits until it registers on Temporal task queue)
-7. Starts both Go bridge replicas (primary WS/SSE gateway)
-8. Starts Traefik
-9. Starts Python bridge (Admin API) + frontend
-
-> **Note:** The full Hetzner compose stack (in `linux-start-hetzner.sh`) is:
-> ```
-> docker-compose.yml
-> docker-compose.linux.yml
-> docker-compose.integration.yml
-> docker-compose.soak.yml
-> docker-compose.traefik.yml
-> docker-compose.hetzner-build.yml   ← build context + volume overrides
-> docker-compose.cloudflare.yml      ← external proxy-network
-> --profile temporal
-> ```
->
-> `linux-start-hetzner.sh` is standalone — it does NOT call or wrap `linux-start.sh`. It builds the full COMPOSE array itself.
 
 ---
 
@@ -496,7 +451,12 @@ Available at `https://them.yourdomain.com/temporal/`
 ### A2A test agents
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.linux.yml \
+# Hetzner
+docker compose -f docker-compose.yml -f docker-compose.hetzner.yml \
+  --project-name them_gateway --profile test-agents up -d
+
+# Local dev
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
   --profile test-agents up -d
 
 # Enable the agents in the DB
@@ -510,8 +470,8 @@ docker exec them-redis redis-cli DEL them:agents:registry
 ### Security scanner agent
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.linux.yml \
-  --profile security up -d --build them-security-agent
+docker compose -f docker-compose.yml -f docker-compose.hetzner.yml \
+  --project-name them_gateway --profile security up -d --build them-security-agent
 
 # Apply migration (first time only)
 docker cp db/009_security_scan.sql them-postgres:/tmp/
@@ -522,8 +482,8 @@ docker exec them-redis redis-cli DEL them:agents:registry
 ### Debate agents
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.linux.yml \
-  --profile debate up -d
+docker compose -f docker-compose.yml -f docker-compose.hetzner.yml \
+  --project-name them_gateway --profile debate up -d
 ```
 
 ### Voice (LiveKit WebRTC)
@@ -531,8 +491,8 @@ docker compose -f docker-compose.yml -f docker-compose.linux.yml \
 Requires `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `OPENAI_API_KEY` in `.env`.
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.linux.yml \
-  --profile voice up -d
+docker compose -f docker-compose.yml -f docker-compose.hetzner.yml \
+  --project-name them_gateway --profile voice up -d
 ```
 
 LiveKit needs a UDP port exposed for WebRTC:
@@ -790,7 +750,7 @@ Check that both containers are on the same Docker network:
 docker network inspect EXTERNAL_TRAEFIK_NETWORK | grep -A5 them-traefik
 ```
 
-If `them-traefik` is missing, verify that `docker-compose.cloudflare.yml` was included in the compose command and that `proxy-network` resolves to the correct network name.
+If `them-traefik` is missing, verify that `docker-compose.hetzner.yml` is included in the compose command and that `proxy-network` resolves to the correct network name.
 
 ### WebSocket connections drop immediately
 
@@ -860,19 +820,14 @@ The external Traefik cannot reach `them-traefik:8088`. Check:
 
 ```
 theM/                                ← all deployment commands run from here (repo root)
-├── docker-compose.yml               base stack definition
-├── docker-compose.linux.yml         Linux overlay (named volumes, no bind mounts)
-├── docker-compose.integration.yml   Go bridges + Go workers + exposed infra ports
-├── docker-compose.soak.yml          Go bridge replica 2
-├── docker-compose.traefik.yml       Traefik labels for Go bridge route ownership
-├── docker-compose.hetzner-build.yml build context + volume overrides for Hetzner
-├── docker-compose.cloudflare.yml    ← YOU CREATE THIS (step 4-B)
+├── docker-compose.yml               base stack definition (production defaults)
+├── docker-compose.hetzner.yml       Hetzner overlay — named volumes, proxy-network, Go routing
+├── docker-compose.dev.yml           Local dev overlay — source mounts, npm run dev
 ├── .env                             secrets (git-ignored, generated)
 ├── secrets.local                    master passphrase (git-ignored, never commit)
 ├── generate-env.sh                  derives .env from secrets.local
 ├── scripts/
-│   ├── linux-start.sh               full stack startup script
-│   ├── linux-start-hetzner.sh       Hetzner-specific start (includes hetzner-build + cloudflare)
+│   ├── deploy.sh                    Hetzner start/build/status/logs/restart
 │   ├── linux-stop.sh                graceful shutdown
 │   ├── linux-health.sh              health verification
 │   ├── linux-db-init.sh             DB schema bootstrap (no-op if initialised)

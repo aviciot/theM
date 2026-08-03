@@ -217,7 +217,7 @@ Skips are legitimate env gaps — not failures:
 | `app/services/memory_service.py`, `db/003_phase8.sql` (memory columns) | 17 (context summarization memory) |
 | `app/routers/a2a_server.py` (orch-as-agent sections), `app/models.py` (a2a_exposed/budget_tokens) | 18 (orchestrator-as-agent) |
 | `app/edges/` | 19 (pluggable edge adapters) |
-| `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.local.yml` | 20 (Traefik routing + multi-replica) |
+| `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.dev.yml` | 20 (Traefik routing + multi-replica) |
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 (A2A Phase 9 hardening) |
 | `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `app/models.py` (EntryPoint), `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts` | 22 27 + `scripts/test_multi_ep.py` (inside them-bridge) |
 | `app/temporal/loaders.py` | 28 (loaders resolution) |
@@ -236,7 +236,7 @@ Skips are legitimate env gaps — not failures:
 | `app/temporal/activities.py`, `app/temporal/workflows.py`, `app/temporal/serde.py` | Full suite + `scripts/test_temporal_workflow.py` (inside them-worker) + **restart them-worker** |
 | `app/temporal/bridge_client.py`, `app/routers/ws_orchestrator.py` (Temporal path) | 10 11 + `scripts/test_temporal_workflow.py` + **restart them-worker** |
 | `app/routers/runs.py` (signal endpoint) | 12 + `scripts/test_temporal_phase5.py` |
-| `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.local.yml` | 20 (Traefik routing + multi-replica) |
+| `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.dev.yml` | 20 (Traefik routing + multi-replica) |
 | Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) + MT + `scripts/test_temporal_workflow.py` |
 
 ### E2E test (14) — needs a JWT
@@ -256,7 +256,7 @@ ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14
 # Temporal activities are registered at worker startup. If you edit:
 #   app/temporal/activities.py, app/temporal/workflows.py, app/temporal/shared.py
 # the running worker still has the OLD code. Always restart after changes:
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal restart them-worker
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal restart them-worker
 docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 # Symptom if forgotten: new params on activities silently receive None at runtime.
 ```
@@ -315,21 +315,22 @@ docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 ## Common Commands
 
 ```bash
+# ── Local dev ────────────────────────────────────────────────────────────────
 # Stack (core only)
-docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
-docker compose -f docker-compose.yml -f docker-compose.local.yml ps
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
 docker compose logs -f them-bridge
 
 # Stack with Temporal (required for orchestration — TEMPORAL_ENABLED=true in bridge)
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal up -d
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal ps
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal ps
 docker logs them-worker
-# Temporal UI: http://localhost:3111
+# Temporal UI: http://localhost:8088/temporal
 
-# Go bridge (profile: go)
-docker compose --profile go build them-go-bridge
-docker compose --profile go up -d them-go-bridge
-docker compose --profile go logs -f them-go-bridge
+# ── Hetzner (production) ──────────────────────────────────────────────────────
+./scripts/deploy.sh up          # start / adopt stack
+./scripts/deploy.sh status      # container states
+./scripts/deploy.sh logs [svc]  # tail logs
 
 # DB init (run once after first up, or after wiping data/)
 docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
@@ -349,7 +350,7 @@ docker exec -it them-postgres psql -U them -d them
 ./generate-env.sh     # Linux/Mac
 
 # Enable replica 2
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile replica up -d them-bridge-2
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile replica up -d them-bridge-2
 ```
 
 ---

@@ -196,8 +196,8 @@ If the canvas changes (or proposals are applied) since a proposal was generated,
 
 Rebuild after code change:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml build them-workflow-advisor
-docker compose -f docker-compose.yml -f docker-compose.local.yml up -d them-workflow-advisor
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build them-workflow-advisor
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d them-workflow-advisor
 ```
 
 ---

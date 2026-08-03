@@ -1204,8 +1204,7 @@ Tests T3, T4, T8 accept EITHER `"done"` OR `"error"` as the valid terminal event
 
 **Manual start:**
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml \
-               -f docker-compose.integration.yml --profile temporal up -d
+docker compose -f docker-compose.yml -f docker-compose.hetzner.yml --profile temporal up -d
 ```
 
 **Run command:**
@@ -1219,14 +1218,13 @@ go test -tags=integration -v -timeout 120s ./internal/temporal/...
 **Manual smoke tests (full hybrid stack with Go gateway container):**
 ```bash
 # Start full stack including them-go-bridge on port 8002
-docker compose -f docker-compose.yml -f docker-compose.local.yml \
-               -f docker-compose.integration.yml --profile temporal up -d --build
+docker compose -f docker-compose.yml -f docker-compose.hetzner.yml --profile temporal up -d --build
 
 # Run smoke tests (from repo root)
 python3 go/scripts/smoke_test_go_gateway.py --token <tok> --app <app_slug> --ep <ep_slug>
 ```
 
-**Trigger:** any change to `internal/temporal/`, `internal/runstream/`, `internal/ws/id.go`, `internal/sse/handler.go` (newID), `docker-compose.integration.yml`
+**Trigger:** any change to `internal/temporal/`, `internal/runstream/`, `internal/ws/id.go`, `internal/sse/handler.go` (newID), `docker-compose.hetzner.yml`
 
 ---
 

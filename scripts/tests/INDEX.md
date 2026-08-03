@@ -89,8 +89,8 @@ python scripts/tests/run_tests.py
 | `app/services/memory_service.py`, `db/003_phase8.sql` (memory columns) | 17 |
 | `app/routers/a2a_server.py` (orch-as-agent sections), `app/models.py` (a2a_exposed/budget_tokens) | 18 |
 | `app/edges/` | 19 |
-| `docker-compose.yml` (bridge/frontend labels), `traefik/traefik.yml`, `docker-compose.local.yml` | 20 |
-| `docker-compose.traefik.yml`, `docker-compose.yml` (Go routing rules — UUID regex or path matchers) | RC |
+| `docker-compose.yml` (bridge/frontend labels), `traefik/traefik.yml`, `docker-compose.dev.yml` | 20 |
+| `docker-compose.yml` (Go routing rules — UUID regex or path matchers), `docker-compose.hetzner.yml` | RC |
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 |
 | `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 27 |
 | `app/temporal/loaders.py` | 28 |

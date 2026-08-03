@@ -146,7 +146,7 @@ docker exec them-redis redis-cli KEYS 'them:orchestrators:*' | xargs -r docker e
 docker exec them-redis redis-cli DEL them:agents:registry
 
 # 3. Restart Temporal worker (activities.py changed — loaders.py queries app_orchestrators first)
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal restart them-worker
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal restart them-worker
 docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 ```
 
@@ -169,10 +169,10 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_015_phase12.sql
 # 2. Restart bridge — REQUIRED (running process still has old ORM code that
 #    queries applications.orchestrator_id; will 500 on every agents/applications
 #    request until restarted)
-docker compose -f docker-compose.yml -f docker-compose.local.yml restart them-bridge
+docker compose -f docker-compose.yml -f docker-compose.dev.yml restart them-bridge
 
 # 3. Restart Temporal worker (loaders.py + shared.py changed)
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal restart them-worker
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal restart them-worker
 docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 ```
 

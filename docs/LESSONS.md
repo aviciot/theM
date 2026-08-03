@@ -418,7 +418,7 @@ Original system prompt instructed the orchestrator to forward complete agent arg
 
 **Fix:** Always restart ALL replicas when deploying code changes:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile replica restart them-bridge them-bridge-2
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile replica restart them-bridge them-bridge-2
 ```
 
 **Watch for:** If parallel sessions behave differently (one works, one silent), check `docker logs them-bridge-2` — the affected session may be on a replica you didn't touch.

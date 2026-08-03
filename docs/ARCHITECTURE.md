@@ -43,7 +43,7 @@ Browser → :8088 (them-traefik)
 Traefik config: `traefik/traefik.yml` (static), Docker labels on services (dynamic).
 Dashboard (read-only): `http://localhost:8089` (127.0.0.1 only).
 
-**Local dev:** `docker-compose.local.yml` overrides router rules to `PathPrefix(...)` only (no `Host` constraint) so any IP/hostname works.
+**Local dev:** `docker-compose.dev.yml` overrides router rules to `PathPrefix(...)` only (no `Host` constraint) so any IP/hostname works.
 
 ## Entry Points
 

@@ -264,7 +264,7 @@ git clone https://github.com/aviciot/odin-stuck.git && cd odin-stuck
 echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
 
 # Start the full stack (Temporal required for orchestration)
-docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d
 
 # Initialize the database (first boot only — see CLAUDE.md for full migration steps)
 # ... apply db/001_schema.sql through db/008_debate_stack.sql
