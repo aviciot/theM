@@ -22,9 +22,10 @@
 | `test-agents` | a2a-echo, a2a-slow, a2a-stream |
 | `debate` | agent-evidence, agent-logic, agent-creative, agent-judge |
 
-Note: `linux-start-hetzner.sh` starts core + temporal automatically. `test-agents` and `debate` must be started separately after:
+Note: `./scripts/deploy.sh up` starts core + temporal automatically. `test-agents` and `debate` must be started separately after:
 ```bash
-docker compose [full -f flags] --profile temporal --profile test-agents --profile debate \
+docker compose -f docker-compose.yml -f docker-compose.hetzner.yml \
+  --project-name them_gateway --profile temporal --profile test-agents --profile debate \
   up -d a2a-echo a2a-slow a2a-stream agent-evidence agent-logic agent-creative agent-judge
 ```
 
@@ -43,7 +44,7 @@ docker compose [full -f flags] --profile temporal --profile test-agents --profil
 
 - `vision_agent` enabled in DB but needs `GOOGLE_MAPS_API_KEY` + `FAL_API_KEY` in `.env` to actually work
 - UI not yet exposed externally — uncomment the router block in `/home/avi/infrastructure/traefik/dynamic/them-routes.yml` when ready (see [Expose to Cloudflare](#expose-to-cloudflare-when-ready))
-- `linux-start-hetzner.sh` does not auto-start `test-agents` / `debate` profiles — start them manually after the main script
+- `deploy.sh up` does not auto-start `test-agents` / `debate` profiles — start them manually after the main stack
 
 ---
 
@@ -324,7 +325,7 @@ labels:
 
 ## Step 5 — Start the stack
 
-**On this Hetzner server**, always use `linux-start-hetzner.sh` — not the generic `linux-start.sh`. The Hetzner wrapper calls the generic script and then applies the Cloudflare overlay.
+**On this Hetzner server**, always use `scripts/deploy.sh` — it uses the correct file pair (`docker-compose.yml` + `docker-compose.hetzner.yml`) and sets `--project-name them_gateway` automatically.
 
 ```bash
 # Run from repository root
@@ -386,7 +387,7 @@ Once an admin user exists, subsequent users can be created via the auth service 
 
 ```bash
 # All containers should be healthy
-./scripts/linux-health.sh
+./scripts/deploy.sh status
 
 # Quick sanity test (DB, Redis, auth service, bridge, containers)
 python3.12 scripts/tests/run_tests.py 01 02 03 04 15
@@ -444,7 +445,7 @@ In production, create users via the auth service API.
 
 Enable optional services by adding `--profile <name>` to the compose command.
 
-### Temporal UI (always enabled via linux-start.sh)
+### Temporal UI (always enabled via deploy.sh up)
 
 Available at `https://them.yourdomain.com/temporal/`
 
@@ -507,7 +508,7 @@ Ensure UDP 7882 is open in your firewall/security group.
 ## Database management
 
 ### Fresh install
-DB schema is bootstrapped automatically by `linux-start.sh` using `db/schema_current.sql`.
+DB schema is bootstrapped automatically by `scripts/linux-db-init.sh` using `db/schema_current.sql`. Run it once after first `deploy.sh up`.
 
 ### Apply a new migration to an existing deployment
 
@@ -625,7 +626,7 @@ Recommended Cloudflare settings for this domain:
 ### View logs
 
 ```bash
-./scripts/linux-logs.sh                    # all services
+./scripts/deploy.sh logs                   # all services
 docker logs them-bridge --tail 50 -f      # Python bridge
 docker logs them-go-bridge --tail 50 -f   # Go bridge
 docker logs them-worker --tail 50 -f      # Temporal worker
@@ -634,13 +635,15 @@ docker logs them-worker --tail 50 -f      # Temporal worker
 ### Stop the stack
 
 ```bash
-./scripts/linux-stop.sh
+docker compose -f docker-compose.yml -f docker-compose.hetzner.yml \
+  --project-name them_gateway stop
 ```
 
 ### Restart after a code change
 
 ```bash
-./scripts/linux-start.sh --build
+./scripts/deploy.sh build
+./scripts/deploy.sh up
 ```
 
 ### Rollback the Go bridge
@@ -757,7 +760,7 @@ If `them-traefik` is missing, verify that `docker-compose.hetzner.yml` is includ
 - Confirm Cloudflare **WebSockets is ON** in the zone settings.
 - Confirm `THE_M_BRIDGE_WS_URL` in `.env` uses `wss://` (not `ws://`) for Cloudflare.
 - Check that `THE_M_CORS_ORIGINS` includes `https://them.yourdomain.com`.
-- Restart the stack after `.env` changes: `./scripts/linux-start.sh --build`
+- Restart the stack after `.env` changes: `./scripts/deploy.sh build && ./scripts/deploy.sh up`
 
 ### Go bridge starts but shows `SECRET_KEY is required`
 
