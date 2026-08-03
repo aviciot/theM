@@ -106,54 +106,9 @@ services:
         max-file: "3"
 
   # ============================================================
-  # the-M Auth Service — authentication & IAM (port 8701)
-  # ============================================================
-  them-auth-service:
-    build:
-      context: ./auth_service
-      dockerfile: Dockerfile
-    container_name: them-auth-service
-    expose:
-      - "8701"
-    environment:
-      HOST: "0.0.0.0"
-      PORT: "8701"
-      DATABASE_URL: "postgresql://${THE_M_DB_USER:-them}:${THE_M_DB_PASSWORD:-them_secret}@them-postgres:5432/them"
-      JWT_SECRET: ${THE_M_JWT_SECRET:-change-this-jwt-secret}
-      CORS_ORIGINS: ${THE_M_CORS_ORIGINS:-http://localhost:3111}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-    networks:
-      - them-network
-    depends_on:
-      them-postgres:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8701/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-        reservations:
-          memory: 64M
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "5"
-
-  # ============================================================
   # the-M Auth (Go) — user-facing auth service (login/me/refresh/logout)
-  # Replaces them-auth-service for the UI-facing contract. Issues HS256 JWTs
-  # signed with THE_M_JWT_SECRET (the same secret the Go bridge validates).
-  # Reads the existing auth_service schema in the them DB.
-  # ROLLBACK: point THE_M_AUTH_URL/AUTH_SERVICE_URL back at them-auth-service:8701
-  #           and start them-auth-service; this service can then be removed.
+  # Issues HS256 JWTs signed with THE_M_JWT_SECRET. Reads the auth_service
+  # schema in the them DB. Replaced Python them-auth-service (removed Aug 2026).
   # ============================================================
   them-auth-go:
     build:
@@ -297,7 +252,7 @@ services:
         condition: service_healthy
       them-redis:
         condition: service_healthy
-      them-auth-service:
+      them-auth-go:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -381,7 +336,7 @@ services:
         condition: service_healthy
       them-redis:
         condition: service_healthy
-      them-auth-service:
+      them-auth-go:
         condition: service_healthy
     restart: unless-stopped
 
@@ -837,7 +792,7 @@ services:
         condition: service_healthy
       them-redis:
         condition: service_healthy
-      them-auth-service:
+      them-auth-go:
         condition: service_healthy
     restart: unless-stopped
     logging:
