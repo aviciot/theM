@@ -262,7 +262,7 @@ func withTestTenant(next http.Handler) http.Handler {
 // 1. List agents — returns empty array not null.
 func TestListAgentsEmptyArray(t *testing.T) {
 	db := &fakeDB{queryRows: newFakeRows(nil)}
-	h := admin.NewAgentsHandler(db, nil)
+	h := admin.NewAgentsHandler(db, nil, nil, nil)
 
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
@@ -284,7 +284,7 @@ func TestListAgentsEmptyArray(t *testing.T) {
 func TestCreateAgent(t *testing.T) {
 	db := &fakeDB{execRetStr: "uuid-42"}
 	cache := &fakeCache{}
-	h := admin.NewAgentsHandler(db, cache)
+	h := admin.NewAgentsHandler(db, cache, nil, nil)
 
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
@@ -310,7 +310,7 @@ func TestCreateAgent(t *testing.T) {
 // 3. Get nonexistent agent — 404.
 func TestGetNonexistentAgent(t *testing.T) {
 	db := &fakeDB{queryRowErr: errors.New("no rows")}
-	h := admin.NewAgentsHandler(db, nil)
+	h := admin.NewAgentsHandler(db, nil, nil, nil)
 
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
@@ -492,7 +492,7 @@ func TestCreateEntryPoint_DoesNotPublish(t *testing.T) {
 // AZ-1: Anonymous request to admin endpoint returns 401.
 func TestAdminRequiresSuperAdmin_AnonymousRejected(t *testing.T) {
 	db := &fakeDB{queryRows: newFakeRows(nil)}
-	h := admin.NewAgentsHandler(db, nil)
+	h := admin.NewAgentsHandler(db, nil, nil, nil)
 
 	r := chi.NewRouter()
 	r.Use(admin.RequireSuperAdmin(nil))
@@ -569,7 +569,7 @@ func TestUpdateEntryPoint_EmptyEPType_Allowed(t *testing.T) {
 // TestPatchAgentAliasesUpdate verifies PATCH /agents/{id} routes to Update.
 func TestPatchAgentAliasesUpdate(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewAgentsHandler(db, nil)
+	h := admin.NewAgentsHandler(db, nil, nil, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)

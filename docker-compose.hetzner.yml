@@ -216,6 +216,11 @@ services:
       - "traefik.http.routers.them-go-apps-subroutes.entrypoints=web"
       - "traefik.http.routers.them-go-apps-subroutes.priority=115"
       - "traefik.http.routers.them-go-apps-subroutes.service=them-go-svc"
+      # ── Wave 8: Agent Store actions (test / discover / security-scan) ────────────
+      - "traefik.http.routers.them-go-agents-actions.rule=PathRegexp(`^/api/v1/admin/agents(/discover|/[^/]+/test|/[^/]+/security-scan)$$`) && Method(`POST`)"
+      - "traefik.http.routers.them-go-agents-actions.entrypoints=web"
+      - "traefik.http.routers.them-go-agents-actions.priority=116"
+      - "traefik.http.routers.them-go-agents-actions.service=them-go-svc"
       # ── Wave 2d: runs signal ────────────────────────────────────────────────────
       - "traefik.http.routers.them-go-runs-signal.rule=PathRegexp(`^/api/v1/runs/[^/]+/signal$$`) && Method(`POST`)"
       - "traefik.http.routers.them-go-runs-signal.entrypoints=web"

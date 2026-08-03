@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/redis/rueidis"
 
 	"github.com/aviciot/them/internal/admin/service"
 	"github.com/aviciot/them/internal/auth"
@@ -34,6 +35,11 @@ import (
 //
 // secretKey is THE_M_SECRET_KEY for Fernet LLM provider key encryption.
 //
+// redis is the rueidis client used by agent action endpoints (Discover/Test/SecurityScan).
+// Pass nil to disable background scan jobs (tests only).
+//
+// fernetKey is the 32-byte Fernet key derived from secretKey for agent token decryption.
+//
 // Routes:
 //
 //	GET    /admin/agents
@@ -41,6 +47,9 @@ import (
 //	GET    /admin/agents/{id}
 //	PUT    /admin/agents/{id}
 //	DELETE /admin/agents/{id}
+//	POST   /admin/agents/discover
+//	POST   /admin/agents/{id}/test
+//	POST   /admin/agents/{id}/security-scan
 //	GET    /admin/orchestrators
 //	... (full CRUD)
 //	GET    /admin/applications
@@ -69,10 +78,12 @@ func BuildRouter(
 	tokenCache *auth.Cache,
 	logger *slog.Logger,
 	secretKey string,
+	redis rueidis.Client,
+	fernetKey []byte,
 ) http.Handler {
 	r := chi.NewRouter()
 
-	agents := NewAgentsHandler(db, cache)
+	agents := NewAgentsHandler(db, cache, redis, fernetKey)
 	orchs := NewOrchestratorsHandler(db, cache)
 	apps := NewApplicationsHandler(db, cache)
 	runs := NewRunsHandler(db, temporal)

@@ -316,6 +316,20 @@ func (f *isolationFakeDal) BulkDeleteApplications(_ context.Context, _ string, _
 	return 0, nil
 }
 
+// Agent action stubs — platform-global, no tenant scope.
+func (f *isolationFakeDal) GetAgentBySlug(_ context.Context, _ string) (dal.Agent, error) {
+	return dal.Agent{}, nil
+}
+func (f *isolationFakeDal) UpdateAgentScanResult(_ context.Context, _ string, _ []byte) error {
+	return nil
+}
+func (f *isolationFakeDal) GetAgentByID(_ context.Context, _ string) (dal.Agent, error) {
+	return dal.Agent{}, nil
+}
+func (f *isolationFakeDal) GetAgentTokenEncrypted(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
 // ── pgxUniqueViolation stub ───────────────────────────────────────────────────
 //
 // dal.IsUniqueViolation checks for pgconn.PgError with Code "23505".

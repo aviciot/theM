@@ -218,6 +218,20 @@ func (f *fakeDal) UpsertConfig(_ context.Context, key string, value []byte) erro
 	return f.upsertConfigErr
 }
 
+// Agent action stubs (platform-global, no tenant scope).
+func (f *fakeDal) GetAgentBySlug(_ context.Context, _ string) (dal.Agent, error) {
+	return f.agent, f.getAgentErr
+}
+func (f *fakeDal) UpdateAgentScanResult(_ context.Context, _ string, _ []byte) error {
+	return nil
+}
+func (f *fakeDal) GetAgentByID(_ context.Context, _ string) (dal.Agent, error) {
+	return f.agent, f.getAgentErr
+}
+func (f *fakeDal) GetAgentTokenEncrypted(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
 // LLM provider stubs.
 func (f *fakeDal) ListProviders(_ context.Context) ([]dal.LLMProvider, error) {
 	return f.providers, f.listProvidersErr

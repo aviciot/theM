@@ -23,6 +23,11 @@ type Dal interface {
 	CreateAgent(ctx context.Context, tenantID string, in dal.AgentInput, enabled bool) (string, error)
 	UpdateAgent(ctx context.Context, tenantID, id string, in dal.AgentInput, enabled bool) error
 	DeleteAgent(ctx context.Context, tenantID, id string) error
+	// Agent actions — platform-global (no tenant scope)
+	GetAgentBySlug(ctx context.Context, slug string) (dal.Agent, error)
+	UpdateAgentScanResult(ctx context.Context, agentID string, result []byte) error
+	GetAgentByID(ctx context.Context, id string) (dal.Agent, error)
+	GetAgentTokenEncrypted(ctx context.Context, id string) (string, error)
 
 	// Orchestrators — tenant-scoped
 	ListOrchestrators(ctx context.Context, tenantID string) ([]dal.Orchestrator, error)

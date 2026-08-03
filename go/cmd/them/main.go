@@ -18,15 +18,16 @@ import (
 
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
-	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/agentregistry"
 	"github.com/aviciot/them/internal/artifacts"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/config"
+	"github.com/aviciot/them/internal/crypto"
 	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
+	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/health"
 	"github.com/aviciot/them/internal/ratelimit"
@@ -299,7 +300,9 @@ func run() error {
 	if temporalCli != nil {
 		temporalSignaler = temporal.NewSignaler(temporalCli)
 	}
-	adminRouter := admin.BuildRouter(adminDB, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey)
+	// Derive Fernet key from SECRET_KEY for agent token decryption in action endpoints.
+	adminFernetKey := crypto.DeriveKey(cfg.SecretKey)
+	adminRouter := admin.BuildRouter(adminDB, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey)
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
 

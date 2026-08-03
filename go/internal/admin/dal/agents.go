@@ -143,3 +143,45 @@ func (d *DB) DeleteAgent(ctx context.Context, tenantID, id string) error {
 		`UPDATE them.agents SET enabled=false, updated_at=now() WHERE id=$1::uuid AND tenant_id=$2::uuid`,
 		id, tenantID)
 }
+
+// GetAgentBySlug returns a single agent by slug (platform-global, not tenant-scoped).
+// Used for discovering the security_scanner agent which is a platform-level resource.
+// Returns pgx.ErrNoRows when the agent does not exist.
+func (d *DB) GetAgentBySlug(ctx context.Context, slug string) (Agent, error) {
+	row := d.q.QueryRow(ctx, agentSelectCols+" WHERE slug = $1 AND enabled = true LIMIT 1", slug)
+	return scanAgent(&singleToRow{s: row})
+}
+
+// UpdateAgentScanResult writes the last security scan result and timestamp for
+// the given agent id (platform-global, no tenant scoping needed for the scan job).
+func (d *DB) UpdateAgentScanResult(ctx context.Context, agentID string, result []byte) error {
+	const q = `UPDATE them.agents
+		SET last_scan_result=$2::jsonb, last_scan_at=now(), updated_at=now()
+		WHERE id=$1::uuid`
+	return d.q.Exec(ctx, q, agentID, string(result))
+}
+
+// GetAgentByID returns a single agent by UUID id (platform-global, not tenant-scoped).
+// Used by the Discover handler when agent_id is provided to resolve auth tokens.
+// Returns pgx.ErrNoRows when the agent does not exist.
+func (d *DB) GetAgentByID(ctx context.Context, id string) (Agent, error) {
+	row := d.q.QueryRow(ctx, agentSelectCols+" WHERE id = $1::uuid", id)
+	return scanAgent(&singleToRow{s: row})
+}
+
+// GetAgentTokenEncrypted returns the raw auth_token_encrypted value for an agent.
+// Returns ("", pgx.ErrNoRows) if the agent does not exist.
+// Returns ("", nil) if the agent exists but has no token.
+func (d *DB) GetAgentTokenEncrypted(ctx context.Context, id string) (string, error) {
+	var enc *string
+	err := d.q.QueryRow(ctx,
+		`SELECT auth_token_encrypted FROM them.agents WHERE id = $1::uuid`, id,
+	).Scan(&enc)
+	if err != nil {
+		return "", err
+	}
+	if enc == nil {
+		return "", nil
+	}
+	return *enc, nil
+}

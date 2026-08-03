@@ -543,6 +543,25 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 
 ---
 
+### S1-36 · Agent action endpoints — `internal/admin/agents_actions_test.go`
+
+**Purpose:** Wave 8 agent Store actions: discover (card fetch + slug generation), test (latency probe), security-scan (202 accepted + job_id). Uses httptest mock HTTP servers to exercise the full handler path without network calls to real agents.
+
+| Test | What it proves |
+|---|---|
+| `TestDiscover_Success` | Mock server returns valid agent card → ok=true, display_name, suggested_slug, supports_streaming, skills array |
+| `TestDiscover_ConnectionFailure` | Mock server not reachable → ok=false, detail non-empty |
+| `TestDiscover_NonJSON` | Mock server returns non-JSON 200 → ok=false, detail contains "parse card JSON" |
+| `TestTest_Success` | Mock server returns valid card with 2 skills → ok=true, latency_ms≥0, detail contains "2 skills" |
+| `TestTest_Failure` | Mock server returns 503 → ok=false, detail contains "503" |
+| `TestTest_NotFound` | DB returns pgx.ErrNoRows → 404 |
+| `TestSecurityScan_NoScanner` | Scanner agent not in DB → 503 with "Security scanner agent not registered" |
+| `TestSecurityScan_Accepted` | Target + scanner both in DB → 202 with non-empty job_id and correct agent_id |
+
+**Trigger:** any change to `internal/admin/agents.go`, `internal/admin/classify.go`, `internal/admin/scanjob.go`, or `internal/admin/dal/agents.go`
+
+---
+
 ### S1-16 · Rate limiter — `internal/ratelimit/limiter_test.go`
 
 **Purpose:** Redis INCR rate limiting per token and per application.
@@ -1428,8 +1447,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 21 |
+| S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan) | 8 |
 | S1-40 | authserver (Go auth service) | 38 |
-| **S1 total** | | **562** |
+| **S1 total** | | **570** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1438,4 +1458,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **585** |
+| **`go test ./...` total** | | **593** |
