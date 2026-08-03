@@ -231,6 +231,7 @@ export interface AppRuntimeConfig {
 export interface Application {
   id: string;
   name: string;
+  slug: string;
   presentation: Record<string, unknown>;
   enabled: boolean;
   canvas?: CanvasLayout | null;
@@ -245,6 +246,7 @@ export interface AppOrchestratorOut {
   id: string;
   application_id: string;
   name: string;
+  node_id?: string | null;
   display_name: string | null;
   system_prompt: string | null;
   llm_provider: string | null;

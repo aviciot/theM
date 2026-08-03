@@ -105,9 +105,14 @@ services:
 
   # ── Frontend: production build, no source bind mount ──────────────────────────
   them-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    command: node server.js
     volumes: []
     environment:
       NODE_ENV: production
+      PORT: "3200"
       THE_M_API_URL: "http://them-bridge:8001"
       THE_M_AUTH_URL: "http://them-auth-service:8701"
       NEXT_PUBLIC_BRIDGE_WS_URL: ""

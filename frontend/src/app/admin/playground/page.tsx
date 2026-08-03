@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
@@ -1481,7 +1481,7 @@ function TargetSelector({ orchestrators, applications, value, onChange }: Target
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export default function PlaygroundPage() {
+function PlaygroundInner() {
   const searchParams = useSearchParams();
   const initialOrch = searchParams.get('orchestrator') || '';
 
@@ -1709,5 +1709,13 @@ export default function PlaygroundPage() {
         </div>
       </div>
     </AuthGuard>
+  );
+}
+
+export default function PlaygroundPage() {
+  return (
+    <Suspense>
+      <PlaygroundInner />
+    </Suspense>
   );
 }

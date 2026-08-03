@@ -576,7 +576,7 @@ function buildNodesFromApp(
 ): { nodes: Node[]; edges: Edge[] } {
   // Canvas layout is a ref-keyed position map: {"ep:<slug>": {x,y}, "orch:<ao_id>": {x,y}, ...}
   // Reconstruct logical graph from typed tables, then apply saved positions (if any).
-  const layout = app.canvas?.layout ?? {};
+  const layout = (app.canvas?.layout ?? {}) as Record<string, { x: number; y: number }>;
 
   const nodes: Node[] = [];
   const edges: Edge[] = [];
