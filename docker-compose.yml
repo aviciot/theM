@@ -807,6 +807,8 @@ services:
       context: ./agents/vision_agent
       dockerfile: Dockerfile
     container_name: vision-agent
+    expose:
+      - "9100"
     environment:
       GOOGLE_MAPS_API_KEY: "${GOOGLE_MAPS_API_KEY:-}"
       FAL_API_KEY: "${FAL_API_KEY:-}"
@@ -816,7 +818,7 @@ services:
       - them-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9100/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9100/.well-known/agent-card.json')"]
       interval: 30s
       timeout: 5s
       retries: 3
