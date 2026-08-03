@@ -402,6 +402,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3200"
+      HOSTNAME: "0.0.0.0"
       THE_M_API_URL: "http://them-bridge:8001"
       THE_M_AUTH_URL: "http://them-auth-go:8703"
       NEXT_PUBLIC_BRIDGE_WS_URL: ""
