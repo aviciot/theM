@@ -59,17 +59,19 @@ services:
       - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.timeout=3s"
 
   # ── Frontend: dev mode with source bind mount (Turbopack HMR) ────────────────
+  # Overrides base: prod Dockerfile → dev Dockerfile, adds source mounts
   them-frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev
-    command: []
+    command: ["npm", "run", "dev"]
     volumes:
       - ./frontend:/app
       - /app/node_modules
       - /app/.next
     environment:
       NODE_ENV: development
+      PORT: "3200"
       THE_M_API_URL: "http://them-bridge:8001"
       THE_M_AUTH_URL: "http://them-auth-service:8701"
       NEXT_PUBLIC_BRIDGE_WS_URL: ""

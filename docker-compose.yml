@@ -324,16 +324,14 @@ services:
   them-frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
     container_name: them-frontend
     expose:
       - "3200"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
+    command: node server.js
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
+      PORT: "3200"
       THE_M_API_URL: "http://them-bridge:8001"
       THE_M_AUTH_URL: "http://them-auth-service:8701"
       NEXT_PUBLIC_BRIDGE_WS_URL: ""

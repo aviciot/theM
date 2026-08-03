@@ -93,28 +93,9 @@ services:
     volumes:
       - them-logs:/app/logs
 
-  # ── Frontend: production build ─────────────────────────────────────────────────
-  them-frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    command: node server.js
-    volumes: []
-    environment:
-      NODE_ENV: production
-      PORT: "3200"
-      THE_M_API_URL: "http://them-bridge:8001"
-      THE_M_AUTH_URL: "http://them-auth-service:8701"
-      NEXT_PUBLIC_BRIDGE_WS_URL: ""
-    labels:
-      - "traefik.enable=true"
-      - "traefik-instance=them"
-      - "traefik.docker.network=them-network"
-      - "traefik.http.routers.them-ui.rule=PathPrefix(`/`)"
-      - "traefik.http.routers.them-ui.entrypoints=web"
-      - "traefik.http.routers.them-ui.priority=10"
-      - "traefik.http.routers.them-ui.service=them-ui-svc"
-      - "traefik.http.services.them-ui-svc.loadbalancer.server.port=3200"
+  # ── Frontend: no overrides needed — base already has prod Dockerfile + node server.js
+  # Hetzner uses the same production config as the base.
+  them-frontend: {}
 
   # ── Temporal UI ───────────────────────────────────────────────────────────────
   temporal-frontend:
