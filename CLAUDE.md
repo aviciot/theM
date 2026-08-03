@@ -237,6 +237,7 @@ Skips are legitimate env gaps — not failures:
 | `app/temporal/bridge_client.py`, `app/routers/ws_orchestrator.py` (Temporal path) | 10 11 + `scripts/test_temporal_workflow.py` + **restart them-worker** |
 | `app/routers/runs.py` (signal endpoint) | 12 + `scripts/test_temporal_phase5.py` |
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.dev.yml` | 20 (Traefik routing + multi-replica) |
+| `go/internal/authserver/`, `go/cmd/auth-server/`, `Dockerfile.auth-go`, `docker-compose.yml` (them-auth-go / THE_M_AUTH_URL / AUTH_SERVICE_URL), `frontend/src/app/api/auth/*` | `go test ./internal/authserver/...` (in `go/`) + 15 (compose health) + live login/me/refresh/logout smoke through them-auth-go |
 | Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) + MT + `scripts/test_temporal_workflow.py` |
 
 ### E2E test (14) — needs a JWT
@@ -270,7 +271,8 @@ docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 | `them-traefik` | Reverse proxy — single entry point, path-based routing, sticky LB | **8088** (host), 127.0.0.1:**8089** (dashboard) | `traefik/` |
 | `them-postgres` | PG16 — DB: `them` | 5432 (internal) | bind mount `./data/them-postgres/pgdata` |
 | `them-redis` | Redis DB 0 | 6379 (internal) | bind mount `./data/them-redis` |
-| `them-auth-service` | Auth/IAM microservice | 8701 (internal) | `auth_service/` |
+| `them-auth-go` | Go auth service — UI-facing login/me/refresh/logout + verify/validate (replaces them-auth-service for the UI contract) | 8703 (internal) | `go/cmd/auth-server/`, `go/internal/authserver/` |
+| `them-auth-service` | Python Auth/IAM microservice — users/roles/teams/permissions admin CRUD only (UI auth moved to them-auth-go) | 8701 (internal) | `auth_service/` |
 | `them-bridge` | Python orchestrator API + WS (replica 1) | 8001 (internal) | `app/` |
 | `them-bridge-2` | Python replica 2 (`profiles: [replica]`) | 8001 (internal) | `app/` |
 | `them-go-bridge` | Go gateway (routes progressively migrated from Python) | 8002 (internal) | `go/` |

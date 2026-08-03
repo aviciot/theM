@@ -150,6 +150,34 @@ no header can override TenantID; no secret appears in errors; two tenants resolv
 
 ---
 
+### S1-40 · Auth server (Go) — `internal/authserver/*_test.go`
+
+**Purpose:** the Go replacement for the Python `them-auth-service`. Proves HS256 JWT issuance
+is byte-compatible with what the Go bridge validates, bcrypt passwords verify, the login/me/refresh/
+logout contract behaves like the Python service, and secrets never leak into config logs.
+
+| Test | What it proves |
+|---|---|
+| `TestIssueAndVerifyAccessToken` | Access token round-trips; claims (sub/username/role/type=access) correct |
+| `TestRoleExpiryOverride` | `roles.token_expiry` override honoured in `expires_in` |
+| `TestRefreshTokenType` | Refresh token carries `type=refresh` |
+| `TestVerifyRejectsWrongSecret` | Wrong HMAC secret → `ErrTokenSignature` |
+| `TestVerifyRejectsExpired` | Past `exp` → `ErrTokenExpired` |
+| `TestVerifyRejectsMalformed` | Non-3-segment / garbage → error |
+| `TestBridgeCompatibility` | **Auth-server token validates under bridge `auth.ValidateHS256JWT`** with same secret |
+| `TestHashTokenIsHexSHA256` | Token hash = lowercase hex SHA-256 (matches Python `hash_token`) |
+| `TestPasswordRoundTrip` / `TestVerifyPassword*` | bcrypt verify; empty/garbled hash → false, no panic |
+| `TestConfigValidate*` / `TestSafeStringMasksSecrets` / `TestDSN` | Env validation; secrets masked in `SafeString`; DSN format |
+| `TestLogin*` (password/email/apikey/wrong/unknown/missing/dashboard-denied) | Full login matrix incl. dashboard_access gate (403) |
+| `TestMeAndRefreshFlow` / `TestRefreshRejectsAccessToken` / `TestMeRejectsEmptyToken` | /me + /refresh semantics; access token rejected on refresh |
+| `TestLogoutRevokesToken` | Logout blacklists token; subsequent /me → `ErrTokenRevoked` |
+| `TestHTTP*` (login/me/refresh/logout/verify/validate/mirror/health) | End-to-end chi router: cookies set/cleared, `{detail}` errors, `/auth/*` Traefik mirror, forwardAuth headers, health/ready |
+
+**Trigger:** any change to `internal/authserver/` (config, jwt, password, store, pgx, service,
+handlers, router) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
+
+---
+
 ### S1-32 · Tenant context — `internal/tenantctx/tenantctx_test.go`
 
 **Purpose:** Typed context package for tenant identity — no stringly-typed key, correct error
@@ -1302,6 +1330,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/auth/token_cache.go` | S1-05 + S1-31 |
 | `internal/auth/middleware.go` | S1-31 |
 | `internal/auth/pgx_querier.go` | S1-31 |
+| `internal/authserver/` (any file) or `cmd/auth-server/main.go` | S1-40 |
 | `internal/tenantctx/tenantctx.go` | S1-32 |
 | `internal/session/session.go` | S1-06 |
 | `internal/event/bus.go` | S1-07 |
@@ -1399,7 +1428,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 21 |
-| **S1 total** | | **524** |
+| S1-40 | authserver (Go auth service) | 38 |
+| **S1 total** | | **562** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1408,4 +1438,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **547** |
+| **`go test ./...` total** | | **585** |

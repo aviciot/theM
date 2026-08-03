@@ -148,6 +148,76 @@ services:
         max-file: "5"
 
   # ============================================================
+  # the-M Auth (Go) — user-facing auth service (login/me/refresh/logout)
+  # Replaces them-auth-service for the UI-facing contract. Issues HS256 JWTs
+  # signed with THE_M_JWT_SECRET (the same secret the Go bridge validates).
+  # Reads the existing auth_service schema in the them DB.
+  # ROLLBACK: point THE_M_AUTH_URL/AUTH_SERVICE_URL back at them-auth-service:8701
+  #           and start them-auth-service; this service can then be removed.
+  # ============================================================
+  them-auth-go:
+    build:
+      context: .
+      dockerfile: Dockerfile.auth-go
+    container_name: them-auth-go
+    expose:
+      - "8703"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8703"
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: "${THE_M_DB_USER:-them}"
+      DATABASE_PASSWORD: "${THE_M_DB_PASSWORD:-them_secret}"
+      JWT_SECRET: "${THE_M_JWT_SECRET:-change-this-jwt-secret}"
+      ACCESS_TOKEN_EXPIRY: "${THE_M_ACCESS_TOKEN_EXPIRY:-3600}"
+      REFRESH_TOKEN_EXPIRY: "${THE_M_REFRESH_TOKEN_EXPIRY:-604800}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      LOG_FORMAT: "json"
+      THE_M_INSTANCE_ID: "auth-go-1"
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.services.them-auth-go-svc.loadbalancer.server.port=8703"
+      - "traefik.http.services.them-auth-go-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-auth-go-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-auth-go-svc.loadbalancer.healthcheck.timeout=3s"
+      # ── /auth/* → Go auth service (parity with the Python /auth mirror). ──
+      # The primary UI path is server-to-server via THE_M_AUTH_URL; this router
+      # preserves external /auth reachability through Traefik.
+      # ROLLBACK: remove this router block (them-auth-go-router).
+      - "traefik.http.routers.them-auth-go-router.rule=PathPrefix(`/auth`)"
+      - "traefik.http.routers.them-auth-go-router.entrypoints=web"
+      - "traefik.http.routers.them-auth-go-router.priority=120"
+      - "traefik.http.routers.them-auth-go-router.service=them-auth-go-svc"
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8703/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          memory: 32M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ============================================================
   # the-M Bridge — orchestrator API + WS (replica 1)
   # ============================================================
   them-bridge:
@@ -176,7 +246,7 @@ services:
       REDIS_DB: "0"
       REDIS_ENABLED: "true"
       REDIS_SSL: "false"
-      AUTH_SERVICE_URL: "http://them-auth-service:8701"
+      AUTH_SERVICE_URL: "http://them-auth-go:8703"
       SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
@@ -280,7 +350,7 @@ services:
       REDIS_DB: "0"
       REDIS_ENABLED: "true"
       REDIS_SSL: "false"
-      AUTH_SERVICE_URL: "http://them-auth-service:8701"
+      AUTH_SERVICE_URL: "http://them-auth-go:8703"
       SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
@@ -333,7 +403,7 @@ services:
       NODE_ENV: production
       PORT: "3200"
       THE_M_API_URL: "http://them-bridge:8001"
-      THE_M_AUTH_URL: "http://them-auth-service:8701"
+      THE_M_AUTH_URL: "http://them-auth-go:8703"
       NEXT_PUBLIC_BRIDGE_WS_URL: ""
     labels:
       - "traefik.enable=true"
@@ -349,6 +419,8 @@ services:
       - proxy-network
     depends_on:
       them-bridge:
+        condition: service_healthy
+      them-auth-go:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -747,7 +819,7 @@ services:
       REDIS_DB: "0"
       REDIS_ENABLED: "true"
       REDIS_SSL: "false"
-      AUTH_SERVICE_URL: "http://them-auth-service:8701"
+      AUTH_SERVICE_URL: "http://them-auth-go:8703"
       SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const AUTH_BASE = process.env.THE_M_AUTH_URL || 'http://them-auth-service:8701';
+const AUTH_BASE = process.env.THE_M_AUTH_URL || 'http://them-auth-go:8703';
 
 export async function GET(req: NextRequest) {
   const token = req.cookies.get('them_access_token')?.value;

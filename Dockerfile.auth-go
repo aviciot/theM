@@ -1,0 +1,30 @@
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /build
+
+# Install git — needed by go mod tidy for some indirect deps that use VCS.
+RUN apk add --no-cache git
+
+# Copy module manifest first for better layer caching.
+COPY go/go.mod ./
+RUN go mod tidy
+
+# Copy all Go source files and tidy again with full source present, then run the
+# auth-server unit + contract tests and build the binary.
+COPY go/ ./
+RUN go mod tidy && \
+    go test ./internal/authserver/... && \
+    CGO_ENABLED=0 GOOS=linux go build -o /auth-server ./cmd/auth-server/
+
+# ── Runtime image ──────────────────────────────────────────────────────────────
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates curl
+
+WORKDIR /app
+
+COPY --from=builder /auth-server ./auth-server
+
+EXPOSE 8703
+
+CMD ["./auth-server"]

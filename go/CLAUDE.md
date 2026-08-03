@@ -36,6 +36,8 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | Package | Purpose | Key files |
 |---|---|---|
 | `cmd/them/` | Binary entrypoint, full wiring | `main.go` |
+| `cmd/auth-server/` | Go auth service binary (replaces Python them-auth-service) | `main.go` |
+| `internal/authserver/` | User-facing auth: HS256 JWT issuance, bcrypt verify, login/me/refresh/logout, auth_service-schema DAL | `config.go`, `jwt.go`, `password.go`, `store.go`, `pgx.go`, `service.go`, `handlers.go`, `router.go` |
 | `internal/config/` | Env loading, startup validation | `config.go` |
 | `internal/db/` | pgxpool wrapper | `db.go` |
 | `internal/cache/` | rueidis wrapper | `cache.go` |
@@ -151,6 +153,7 @@ docker compose --profile go logs -f them-go-bridge
 | `internal/server/server.go` | `go test ./internal/server/...` |
 | `internal/auth/jwt.go` | `go test ./internal/auth/...` |
 | `internal/auth/token_cache.go` | `go test ./internal/auth/...` |
+| `internal/authserver/` (any file) or `cmd/auth-server/main.go` | `go test ./internal/authserver/...` |
 | `internal/session/session.go` | `go test ./internal/session/...` |
 | `internal/event/bus.go` | `go test ./internal/event/...` |
 | `internal/domain/domain.go` | `go test ./internal/domain/...` |
