@@ -305,6 +305,17 @@ func (f *isolationFakeDal) UpdateProvider(_ context.Context, _ int64, _ dal.LLMP
 }
 func (f *isolationFakeDal) DeleteProvider(_ context.Context, _ int64) error { return nil }
 
+// Runtime config + bulk delete stubs — no isolation-specific behavior needed.
+func (f *isolationFakeDal) UpdateRuntimeConfig(_ context.Context, _, _ string, _ []byte) error {
+	return nil
+}
+func (f *isolationFakeDal) ListAppOrchestratorNames(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+func (f *isolationFakeDal) BulkDeleteApplications(_ context.Context, _ string, _ []string) (int64, error) {
+	return 0, nil
+}
+
 // ── pgxUniqueViolation stub ───────────────────────────────────────────────────
 //
 // dal.IsUniqueViolation checks for pgconn.PgError with Code "23505".

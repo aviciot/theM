@@ -439,7 +439,7 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 
 ### S1-15 · Admin API — `internal/admin/admin_test.go`
 
-**Purpose:** CRUD correctness, cache invalidation, EP config cross-pod invalidation, Temporal signal wiring, token CRUD handler contract, session admin handler contract (Wave 5), LLM provider CRUD handler contract + MF-1 writeServiceError fix (Wave 7).
+**Purpose:** CRUD correctness, cache invalidation, EP config cross-pod invalidation, Temporal signal wiring, token CRUD handler contract, session admin handler contract (Wave 5), LLM provider CRUD handler contract + MF-1 writeServiceError fix (Wave 7), Wave 8 PutRuntime + BulkDelete handler contract.
 SQL query strings and scan helpers now live in `internal/admin/dal/`; the handler layer is tested here via fakeDB satisfying `dal.Querier`.
 
 | Test | What it proves |
@@ -502,6 +502,14 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 | `TestLLMProvidersHandler_NoPlaintextAPIKeyInResponse` | GET response body never contains `api_key_encrypted` or plaintext key material |
 | `TestWriteServiceError_ErrConflict_Returns409` | POST /llm-providers route is reachable (MF-1 fix: ErrConflict→409 wired in writeServiceError) |
 | `TestLLMProvidersHandler_RequiresSuperAdmin` | Anonymous request to /llm-providers → 401 via RequireSuperAdmin middleware |
+| `TestPutRuntime_Handler_200` | W8-H1: PUT /applications/{id}/runtime → 200 with config |
+| `TestPutRuntime_Handler_404_NotFound` | W8-H2: ExecReturning pgx.ErrNoRows → 404 |
+| `TestPutRuntime_Handler_400_BadJSON` | W8-H3: non-JSON body → 400 |
+| `TestPutRuntime_Handler_NilSlicesAsEmptyArrays` | W8-H4: nil blocked_tokens/blocked_user_ids serialize as `[]` not `null` |
+| `TestBulkDelete_Handler_200` | W8-H5: POST /applications/bulk-delete → 200 `{"deleted":N}` |
+| `TestBulkDelete_Handler_400_BadJSON` | W8-H6: non-JSON body → 400 |
+| `TestBulkDelete_Handler_400_TooManyIDs` | W8-H7: 201 IDs → 400 (service.ErrValidation) |
+| `TestBulkDelete_RouteNotMaskedByIDParam` | W8-H8: bulk-delete route registered before /{id} — empty list → 200, not 404/405 |
 
 **Trigger:** any change to `internal/admin/` (any file) OR `internal/admin/dal/` (any file)
 
@@ -821,6 +829,15 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 | `TestLLMProviderService_List_NilPricingToEmptyMap` | nil ModelPricingRaw → model_pricing={} in output |
 | `TestLLMProviderService_Create_ErrorDoesNotLeakPlaintext` | error path: create fails; plaintext not in returned error message |
 | `TestLLMProviderService_MaskKey_NoPlaintextInOutput` | decrypted plain never appears in LLMProviderOut fields |
+| `TestPutRuntime_Success` | W8-S1: PutRuntime calls UpdateRuntimeConfig and returns config |
+| `TestPutRuntime_NotFound` | W8-S2: DAL pgx.ErrNoRows → ErrNotFound |
+| `TestPutRuntime_NilSlicesNormalized` | W8-S3: nil BlockedTokens/BlockedUserIDs become `[]string{}` / `[]int{}` |
+| `TestPutRuntime_CacheFlushAfterUpdate` | W8-S4: cache Del/Publish called after successful UpdateRuntimeConfig |
+| `TestBulkDelete_Empty` | W8-S5: zero IDs → (0, nil); BulkDeleteApplications not called |
+| `TestBulkDelete_TooMany` | W8-S6: 201 IDs → ErrValidation |
+| `TestBulkDelete_TenantIsolation` | W8-S7: returns deleted count from BulkDeleteApplications |
+| `TestBulkDelete_FlushAfterDelete` | W8-S8: cache flush called AFTER delete, not before |
+| `TestBulkDelete_NoFlushOnDBError` | W8-S9: DB error → cache not flushed |
 
 **Trigger:** any change to `internal/admin/service/` (any file) OR `internal/admin/dal/` (any file)
 
@@ -1363,7 +1380,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-12 | ws | 24 |
 | S1-13 | sse | 23 |
 | S1-14 | a2a | 27 |
-| S1-15 | admin | 46 |
+| S1-15 | admin | 54 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
@@ -1373,7 +1390,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-22 | reconciler | 15 |
 | S1-23 | runstream (streamer + dispatcher + publisher) | 21 |
 | S1-24 | cmd/them (apps dispatcher) | 5 |
-| S1-25 | admin/service | 60 |
+| S1-25 | admin/service | 69 |
 | S1-26 | crypto (fernet) | 32 |
 | S1-27 | metrics | 12 |
 | S1-28 | orchestrator | 12 |
@@ -1384,7 +1401,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 21 |
-| **S1 total** | | **507** |
+| **S1 total** | | **524** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

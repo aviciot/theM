@@ -2,6 +2,8 @@ package dal
 
 import (
 	"context"
+	"fmt"
+	"strings"
 )
 
 // ListApplications returns all applications for the given tenant, ordered by creation date.
@@ -147,4 +149,71 @@ func (d *DB) ListEPSlugsForApp(ctx context.Context, appID string) []string {
 		slugs = append(slugs, slug)
 	}
 	return slugs
+}
+
+// UpdateRuntimeConfig persists a JSON runtime config blob for the application,
+// scoped to the tenant. Returns pgx.ErrNoRows if the application does not exist
+// or belongs to a different tenant.
+// Uses RETURNING id::text so that no rows updated → pgx.ErrNoRows (dal.IsNoRows detects it).
+func (d *DB) UpdateRuntimeConfig(ctx context.Context, tenantID, appID string, configJSON []byte) error {
+	const q = `UPDATE them.applications SET runtime_config=$3, updated_at=now()
+               WHERE id=$1::uuid AND tenant_id=$2::uuid RETURNING id::text`
+	var id string
+	return d.q.ExecReturning(ctx, q, appID, tenantID, configJSON).Scan(&id)
+}
+
+// ListAppOrchestratorNames returns the names of all app_orchestrators for the given application.
+// Used by cache flush before a bulk delete.
+func (d *DB) ListAppOrchestratorNames(ctx context.Context, appID string) ([]string, error) {
+	const q = `SELECT name FROM them.app_orchestrators WHERE application_id=$1::uuid`
+	rows, err := d.q.Query(ctx, q, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		names = append(names, n)
+	}
+	return names, nil
+}
+
+// BulkDeleteApplications hard-deletes applications matching the provided UUID list,
+// scoped to the tenant. Returns the number of rows actually deleted via RETURNING.
+// CASCADE on the FK to app_orchestrators, entry_points, and middleware_wirings handles child rows.
+// Runs are NOT deleted — they reference app_orchestrators, not applications.
+func (d *DB) BulkDeleteApplications(ctx context.Context, tenantID string, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	// Build parameterized query. $1=tenantID, $2..$N = app IDs as UUID casts.
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, tenantID)
+	placeholders := make([]string, len(ids))
+	for i, id := range ids {
+		args = append(args, id)
+		placeholders[i] = fmt.Sprintf("$%d::uuid", i+2)
+	}
+	q := fmt.Sprintf(
+		`DELETE FROM them.applications WHERE tenant_id=$1::uuid AND id IN (%s) RETURNING id::text`,
+		strings.Join(placeholders, ","),
+	)
+	rows, err := d.q.Query(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var count int64
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
 }

@@ -43,6 +43,10 @@ type Dal interface {
 	UpdateEntryPoint(ctx context.Context, epID, appID, slug, epType string, enabled bool) error
 	DeleteEntryPoint(ctx context.Context, epID, appID string) error
 	ListEPSlugsForApp(ctx context.Context, appID string) []string
+	// Runtime config + bulk delete
+	UpdateRuntimeConfig(ctx context.Context, tenantID, appID string, configJSON []byte) error
+	ListAppOrchestratorNames(ctx context.Context, appID string) ([]string, error)
+	BulkDeleteApplications(ctx context.Context, tenantID string, ids []string) (int64, error)
 
 	// Runs — tenant-scoped
 	ListRuns(ctx context.Context, tenantID, contextID string, limit int) ([]dal.Run, error)

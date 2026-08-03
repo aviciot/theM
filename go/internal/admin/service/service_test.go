@@ -58,6 +58,15 @@ type fakeDal struct {
 	createOrchCalls         []dal.OrchestratorInput
 	createOrchEnabledCalls  []bool
 
+	// runtime config + bulk delete fields
+	updateRuntimeConfigErr    error
+	updateRuntimeConfigCalled bool
+	orchNames                 []string
+	orchNamesErr              error
+	bulkDeletedCount          int64
+	bulkDeleteErr             error
+	bulkDeleteCalled          bool
+
 	// config fields
 	configRow         *dal.ConfigRow
 	configErr         error
@@ -156,6 +165,17 @@ func (f *fakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string, _ bool)
 }
 func (f *fakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error { return f.deleteEPErr }
 func (f *fakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string { return f.epSlugs }
+func (f *fakeDal) UpdateRuntimeConfig(_ context.Context, _, _ string, _ []byte) error {
+	f.updateRuntimeConfigCalled = true
+	return f.updateRuntimeConfigErr
+}
+func (f *fakeDal) ListAppOrchestratorNames(_ context.Context, _ string) ([]string, error) {
+	return f.orchNames, f.orchNamesErr
+}
+func (f *fakeDal) BulkDeleteApplications(_ context.Context, _ string, _ []string) (int64, error) {
+	f.bulkDeleteCalled = true
+	return f.bulkDeletedCount, f.bulkDeleteErr
+}
 
 func (f *fakeDal) ListRuns(_ context.Context, _, _ string, _ int) ([]dal.Run, error) {
 	return f.runs, f.listRunsErr

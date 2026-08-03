@@ -26,12 +26,12 @@
 | Category | Count |
 |---|---|
 | **Total externally exposed routes** | **73** |
-| Currently owned by Go (live via Traefik) | 27 |
-| Currently owned by Python (live via Traefik) | 46 |
+| Currently owned by Go (live via Traefik) | 29 |
+| Currently owned by Python (live via Traefik) | 44 |
 | Implemented in Go but NOT yet cut over | 2 (A2A routes — no Traefik labels) |
 | Legacy / deprecation candidates | 4 |
 
-**Note on previous discrepancy:** The original document stated "33 Python-owned" in the summary but enumerated 46 rows in the detailed list. The 33 figure was incorrect — it under-counted by omitting the voice, WebRTC, A2A, dashboard WS, legacy WS, and apps catalogue routes. The correct Python-owned count is 46. The Go count (27) reflects routes with verified Traefik labels + working handler, after the UUID regex fix restored agents/apps write ownership to Go.
+**Wave 8 update (2026-08-03):** Added `POST /bulk-delete` and `PUT /{id}/runtime` to Go. Go count: 27 → 29. Python count: 46 → 44. The Go count (27) pre-Wave 8 reflects routes with verified Traefik labels + working handler, after the UUID regex fix restored agents/apps write ownership to Go.
 
 ---
 
@@ -111,8 +111,8 @@ Orchestrators write rule was already correct (`[^/]+`).
 | GET | `/api/v1/admin/applications/{id}/export` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_applications.py:806` |
 | POST | `/api/v1/admin/applications/import` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_applications.py:827` |
 | PUT | `/api/v1/admin/applications/{id}/restore` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_applications.py:866` |
-| POST | `/api/v1/admin/applications/bulk-delete` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_applications.py:617` |
-| PUT | `/api/v1/admin/applications/{id}/runtime` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_applications.py:779` |
+| POST | `/api/v1/admin/applications/bulk-delete` | ✓ | ✓ | **Go** (p=115) | complete | `go/internal/admin/applications.go:37` |
+| PUT | `/api/v1/admin/applications/{id}/runtime` | ✓ | ✓ | **Go** (p=115) | complete | `go/internal/admin/applications.go:43` |
 | PUT | `/api/v1/admin/applications/{id}/middleware-wirings` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_applications.py:973` |
 | POST | `/api/v1/admin/applications/{id}/orchestrators/{ao_id}/test-llm` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_applications.py:1021` |
 | POST | `/api/v1/admin/applications/{id}/orchestrators/{ao_id}/test-voice` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_applications.py:1054` |

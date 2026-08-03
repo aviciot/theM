@@ -22,14 +22,24 @@ func NewApplicationsHandler(db DBQuerier, cache CacheInvalidator) *ApplicationsH
 	return &ApplicationsHandler{svc: service.NewAppService(dal.NewDB(db), cache)}
 }
 
+// RuntimeConfigInput mirrors Python's AppRuntimeConfig schema.
+type RuntimeConfigInput = service.AppRuntimeConfig
+
+// BulkDeleteInput is the request body for POST /bulk-delete.
+type BulkDeleteInput struct {
+	AppIDs []string `json:"app_ids"`
+}
+
 // Routes mounts application and entry point CRUD endpoints.
 func (h *ApplicationsHandler) Routes(r chi.Router) {
 	r.Get("/applications", h.List)
 	r.Post("/applications", h.Create)
+	r.Post("/applications/bulk-delete", h.BulkDelete) // must come BEFORE /{id}
 	r.Get("/applications/{id}", h.Get)
 	r.Put("/applications/{id}", h.Update)
 	r.Patch("/applications/{id}", h.Update) // Python frontend sends PATCH; accept both
 	r.Delete("/applications/{id}", h.Delete)
+	r.Put("/applications/{id}/runtime", h.PutRuntime)
 
 	r.Post("/applications/{id}/entry-points", h.CreateEntryPoint)
 	r.Put("/applications/{id}/entry-points/{ep_id}", h.UpdateEntryPoint)
@@ -195,4 +205,50 @@ func (h *ApplicationsHandler) DeleteEntryPoint(w http.ResponseWriter, r *http.Re
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "deleted": true})
+}
+
+// PutRuntime handles PUT /api/v1/admin/applications/{id}/runtime.
+func (h *ApplicationsHandler) PutRuntime(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+
+	var input RuntimeConfigInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	cfg, err := h.svc.PutRuntime(r.Context(), tenantID, id, input)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "update runtime config")
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// BulkDelete handles POST /api/v1/admin/applications/bulk-delete.
+func (h *ApplicationsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
+	var input BulkDeleteInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	deleted, err := h.svc.BulkDelete(r.Context(), tenantID, input.AppIDs)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "bulk delete applications")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
 }

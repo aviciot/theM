@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/aviciot/them/internal/admin/dal"
@@ -10,6 +11,22 @@ import (
 // epConfigChannel is the Redis pub/sub channel for cross-pod EP config cache invalidation.
 // Must stay in sync with the Python platform's EP_CONFIG_CHANGED_CHANNEL constant.
 const epConfigChannel = "them:ep:config:changed"
+
+const (
+	orchCacheKeyFmt  = "them:app:%s:orch:%s"
+	orchLocKeyFmt    = "them:orch:loc:%s"
+	agentRegistryKey = "them:agents:registry"
+)
+
+// AppRuntimeConfig is the runtime configuration for an application.
+// Mirrors Python's AppRuntimeConfig schema exactly.
+type AppRuntimeConfig struct {
+	MaxConcurrentSessions *int     `json:"max_concurrent_sessions"`
+	RateLimitRPM          *int     `json:"rate_limit_rpm"`
+	BlockedTokens         []string `json:"blocked_tokens"`
+	BlockedUserIDs        []int    `json:"blocked_user_ids"`
+	SessionTimeoutMinutes *int     `json:"session_timeout_minutes"`
+}
 
 // validEPTypes is the canonical set of allowed entry_point_type values.
 // Must stay in sync with the Python platform's _VALID_EP_TYPES list.
@@ -139,4 +156,76 @@ func (s *AppService) invalidateAppEPs(ctx context.Context, appID string) {
 	for _, slug := range s.dal.ListEPSlugsForApp(ctx, appID) {
 		_ = s.cache.Publish(ctx, fmt.Sprintf(epConfigChannel), slug)
 	}
+}
+
+// flushApplicationOrchCaches busts the orchestrator config/locator caches for all
+// named app_orchestrators, invalidates the agent registry, and publishes the
+// EP config changed event so Go replicas evict their epconfig entries.
+func (s *AppService) flushApplicationOrchCaches(ctx context.Context, appID string, orchNames []string) {
+	if s.cache == nil {
+		return
+	}
+	for _, name := range orchNames {
+		_ = s.cache.Del(ctx, fmt.Sprintf(orchCacheKeyFmt, appID, name))
+		_ = s.cache.Del(ctx, fmt.Sprintf(orchLocKeyFmt, name))
+	}
+	_ = s.cache.Del(ctx, agentRegistryKey)
+	_ = s.cache.Publish(ctx, epConfigChannel, appID)
+}
+
+// PutRuntime replaces the runtime_config for the application. Returns ErrNotFound
+// if the application does not exist or belongs to a different tenant.
+func (s *AppService) PutRuntime(ctx context.Context, tenantID, appID string, cfg AppRuntimeConfig) (AppRuntimeConfig, error) {
+	// Ensure non-nil slices so they serialize as [] not null
+	if cfg.BlockedTokens == nil {
+		cfg.BlockedTokens = []string{}
+	}
+	if cfg.BlockedUserIDs == nil {
+		cfg.BlockedUserIDs = []int{}
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return AppRuntimeConfig{}, err
+	}
+	if err := s.dal.UpdateRuntimeConfig(ctx, tenantID, appID, b); err != nil {
+		if dal.IsNoRows(err) {
+			return AppRuntimeConfig{}, ErrNotFound
+		}
+		return AppRuntimeConfig{}, err
+	}
+	// Pre-load orch names for cache flush
+	orchNames, _ := s.dal.ListAppOrchestratorNames(ctx, appID)
+	s.flushApplicationOrchCaches(ctx, appID, orchNames)
+	return cfg, nil
+}
+
+// BulkDelete hard-deletes up to 200 applications by UUID. Only applications
+// belonging to the tenant are deleted. Returns the count actually deleted.
+// Cache flush happens AFTER the database commit (flush is best-effort).
+func (s *AppService) BulkDelete(ctx context.Context, tenantID string, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if len(ids) > 200 {
+		return 0, validation("maximum 200 IDs per bulk-delete request")
+	}
+	// Pre-fetch orch names BEFORE delete, per-app, for cache flush.
+	type appOrchNames struct {
+		appID string
+		names []string
+	}
+	perApp := make([]appOrchNames, 0, len(ids))
+	for _, id := range ids {
+		names, _ := s.dal.ListAppOrchestratorNames(ctx, id)
+		perApp = append(perApp, appOrchNames{appID: id, names: names})
+	}
+	deleted, err := s.dal.BulkDeleteApplications(ctx, tenantID, ids)
+	if err != nil {
+		return 0, err
+	}
+	// Flush caches only after successful DB commit
+	for _, ao := range perApp {
+		s.flushApplicationOrchCaches(ctx, ao.appID, ao.names)
+	}
+	return deleted, nil
 }

@@ -121,6 +121,13 @@ services:
       - "traefik.http.routers.them-go-eps-writes.entrypoints=web"
       - "traefik.http.routers.them-go-eps-writes.priority=115"
       - "traefik.http.routers.them-go-eps-writes.service=them-go-svc"
+      # ── Wave 8: applications sub-routes — PUT /{id}/runtime + POST /bulk-delete ─
+      # Matches PUT/POST/PATCH/DELETE on /applications/{id}/anything
+      # Priority 115 — same as other Wave 2 app writes; regex is more specific than them-go-apps-update.
+      - "traefik.http.routers.them-go-apps-subroutes.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/.+$$`) && (Method(`PUT`) || Method(`POST`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-apps-subroutes.entrypoints=web"
+      - "traefik.http.routers.them-go-apps-subroutes.priority=115"
+      - "traefik.http.routers.them-go-apps-subroutes.service=them-go-svc"
       # ── Wave 2d: runs signal ────────────────────────────────────────────────────
       # POST /api/v1/runs/{run_id}/signal → Go HITL signal relay
       - "traefik.http.routers.them-go-runs-signal.rule=PathRegexp(`^/api/v1/runs/[^/]+/signal$$`) && Method(`POST`)"

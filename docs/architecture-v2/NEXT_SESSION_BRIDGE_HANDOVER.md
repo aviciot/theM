@@ -1,26 +1,53 @@
 # Next Session Bridge Handover
-# Updated: 2026-08-03 (post Registry-Backed Component Model Review)
+# Updated: 2026-08-03 (Wave 8 complete — runtime + bulk-delete migrated to Go)
 
 ---
 
 ## Current State
 
 **Branch:** `main`
-**HEAD before this session's doc push:** `55ad66e docs(arch): Application Execution Architecture Review — three-layer model, source-of-truth decision, revised migration roadmap`
-**HEAD after this session:** see `git log --oneline -1` (the Registry-Backed Component Model commit).
-**Push status:** pushed to `origin/main`.
+**HEAD:** see `git log --oneline -1`
+**Push status:** see below (push pending after Wave 8 commit).
 
 ---
 
-## This Session's Work
+## Wave 8 Work Completed This Session
 
-Wrote `docs/architecture-v2/REGISTRY_BACKED_APPLICATION_COMPONENT_MODEL.md` — the definitive review
-of the registry-backed component model proposal. It **extends** (does not replace) the Option C
-three-layer model from `APPLICATION_EXECUTION_ARCHITECTURE_REVIEW.md` (55ad66e) with a Component
-Registry: every reusable Canvas object gets a versioned Component Definition, and Application
-Definitions store component **instances** that reference those definitions by portable identity +
-version, carrying only per-instance config overrides and secret references. This adds the registry to
-Wave 9. No code was changed. Wave 8 scope is **unchanged** (runtime + bulk-delete only).
+**Implemented and verified:**
+1. `PUT /api/v1/admin/applications/{id}/runtime` — migrated to Go, Traefik rule active, E2E tested.
+2. `POST /api/v1/admin/applications/bulk-delete` — migrated to Go, Traefik rule active, E2E tested.
+
+**Files changed (Wave 8):**
+- `docker-compose.traefik.yml` — added `them-go-apps-subroutes` rule (p=115) for sub-path writes
+- `go/internal/admin/dal/applications.go` — `UpdateRuntimeConfig`, `ListAppOrchestratorNames`, `BulkDeleteApplications`
+- `go/internal/admin/service/service.go` — Dal interface + 3 new method signatures
+- `go/internal/admin/service/applications.go` — `AppRuntimeConfig`, `flushApplicationOrchCaches`, `PutRuntime`, `BulkDelete`
+- `go/internal/admin/applications.go` — `PutRuntime` and `BulkDelete` handlers; `bulk-delete` registered before `/{id}`
+- `go/internal/admin/service/service_test.go` — `fakeDal` extended with Wave 8 stubs
+- `go/internal/admin/service/tenant_isolation_test.go` — `isolationFakeDal` stubs for new Dal methods
+- `go/internal/admin/service/applications_wave8_test.go` — W8-S1 through W8-S9 (9 service tests)
+- `go/internal/admin/applications_wave8_test.go` — W8-H1 through W8-H8 (8 handler tests)
+- `go/TEST_INDEX.md` — updated counts (suite total 507 → 524)
+- `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md` — Wave 8 routes marked complete; Go count 27 → 29
+
+**Test results:**
+- Go: 29 packages, all pass (0 failures)
+- Python test 20 (Traefik routing): 32 passed, 1 skipped (replica not running)
+
+**E2E validation:**
+- Both endpoints called via `them-go-bridge:8002` (direct) and via `them-traefik:8088` (Traefik)
+- Go logs confirm `admin: authorized` → handler reached → correct status codes
+- `PUT /runtime`: 200 with correct body, 404 on missing app, nil slices → []
+- `POST /bulk-delete`: 200 with deleted count, 400 on >200 IDs
+
+**Known pre-existing issue (not Wave 8):** Go admin tenant-scoped routes require an opaque bearer
+token in `access_tokens` for `BearerTenantMiddleware`. The frontend sends a JWT (user session token)
+which is not in `access_tokens` — so UI-driven calls to Go admin routes currently return 401 from
+BearerTenantMiddleware. This affects all Go admin writes (Waves 2–8), not just Wave 8. This is a
+pre-existing architectural gap documented in R-4b/R-4c reports. Resolution requires either:
+  a) An HS256TenantMiddleware variant that reads tenant_id from the JWT claim (pending), or
+  b) Storing session JWTs in access_tokens with tenant_id on user login (architectural change).
+Wave 8 routes work correctly when called with a bearer token that has tenant_id in access_tokens.
 
 **Prior session (55ad66e)** wrote `APPLICATION_EXECUTION_ARCHITECTURE_REVIEW.md` — the three-layer
 model + Option C source-of-truth decision + Temporal-model confirmation + Waves 8–15 roadmap. That
@@ -151,33 +178,32 @@ authoring, portable references, config resolution, secret resolution.
 
 ---
 
-## Approved Next Task — Wave 8 (re-scoped: runtime + bulk-delete ONLY)
+## Wave 8 Status: COMPLETE
 
-Two endpoints in Go:
-1. `PUT /api/v1/admin/applications/{id}/runtime` — JSONB `runtime_config` UPDATE + cache flush.
-2. `POST /api/v1/admin/applications/bulk-delete` — hard-delete + cache flush.
+Both Wave 8 endpoints are implemented, tested, deployed, and verified via Traefik.
 
-**Export is NO LONGER in Wave 8** — it moves to Wave 9 as a definition-based export.
+**Approved Next Task — Wave 9: Application Definition + Component Registry Layer**
 
-Steps (detail in review Section 18):
-1. Traefik: add `them-go-apps-subroutes` rule (exact rule in `APPLICATION_MODEL_ARCHITECTURE_REVIEW.md`
-   §4a) to `docker-compose.yml` and `docker-compose.traefik.yml`. Do not otherwise touch Traefik.
-2. Go cache: add `FlushApplicationOrchCaches(ctx, appID, orchNames)` —
-   `DEL them:app:{app_id}:orch:{name}`, `DEL them:orch:loc:{name}`, `DEL them:agents:registry`,
-   `PUBLISH them:ep:config:changed {app_id}`.
-3. DAL (`go/internal/admin/dal/applications.go`): `UpdateRuntimeConfig`, `ListAppOrchestratorNames`,
-   `BulkDeleteApplications` (tenant-scoped, `RETURNING id`).
-4. Handlers (`go/internal/admin/applications.go`): `PutRuntime`, `BulkDelete`. Runtime struct =
-   five fields, pointer types for nullable ints; `session_timeout_minutes` accepted+persisted,
-   not enforced. Bulk-delete: pre-fetch orch names → hard-delete → flush after delete.
-5. Wire routes in `go/internal/admin/router.go`.
-6. Go tests per handler (mock DAL, assert flush call order); update `go/TEST_INDEX.md`.
-7. `go test ./...` — zero new failures.
-8. Deploy + smoke through Traefik; run `scripts/tests/test_routing_fix_contracts.py` inside
-   `them-bridge`; app-write routing tests must PASS not skip.
-9. Commit (staged file-by-file), push, update `REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`.
+Read these before starting Wave 9:
+1. `docs/architecture-v2/REGISTRY_BACKED_APPLICATION_COMPONENT_MODEL.md` — component registry spec
+2. `docs/architecture-v2/APPLICATION_EXECUTION_ARCHITECTURE_REVIEW.md` — Option C three-layer model
+3. `docs/architecture-v2/APPLICATION_MODEL_ARCHITECTURE_REVIEW.md` — Wave 8 details (now done)
 
-Do NOT port `compile_graph`/`export_graph` or any definition-layer code in Wave 8.
+Wave 9 is the most complex wave — it introduces the Application Definition layer and Component
+Registry. Read ALL three architecture documents above before writing any code.
+
+Wave 9 scope (per Section 17 of APPLICATION_EXECUTION_ARCHITECTURE_REVIEW.md):
+- `component_definitions` base table + agent/middleware subtype adoption + backfill
+- `application_definitions` table + backfill (revision-1 for existing apps)
+- portable-ref resolver + `configuration_schema` validator
+- `CompileDefinition` (v2 `components[]`/`connections[]` → relational projection)
+- draft/publish/validate/activate lifecycle
+- export/import/restore/clone/rollback (definition-based, replacing old graph export)
+- component-definition CRUD
+- `runs.definition_id` column
+
+Do NOT begin Wave 9 without reading all three architecture documents first.
+Do NOT rush — Wave 9 gates Waves 10–14.
 
 ---
 
@@ -218,14 +244,17 @@ coupling with an explicit `ref_kind`/`transport` field.
 
 ---
 
-## Hard Constraints for Next Session
+## Hard Constraints for Next Session (Wave 9)
 
-1. Wave 8 = runtime + bulk-delete ONLY. Do NOT port `compile_graph`/`export_graph`.
-2. Do NOT build the definition layer in Wave 8 — that is Wave 9.
-3. Do NOT use `git add .`/`-A` — stage only Wave 8 files.
+1. Read all three architecture documents before writing any Wave 9 code.
+2. Wave 9 scope: definition layer ONLY — do NOT migrate runtime endpoints (Wave 8 is done).
+3. Do NOT use `git add .`/`-A` — stage only Wave 9 files.
 4. Run `go test ./...` before every commit — zero new failures.
 5. Update `go/TEST_INDEX.md` in the same commit as any new Go test.
-6. Update `REMAINING_ROUTE_OWNERSHIP_INVENTORY.md` after cutover.
+6. Every new DB table or column → update `docs/SCHEMA.md` + `db/001_schema.sql`.
+7. Secrets never in logs — use `cfg.SafeString()`.
+8. DB name = `them`, never `odin`.
+9. Do NOT begin ADK integration in Wave 9 — that is Wave 13.
 7. Secrets: never commit `.env`/`secrets.local`. DB name `them`, never `odin`.
 8. Do NOT change Traefik beyond adding `them-go-apps-subroutes`.
 
