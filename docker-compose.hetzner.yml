@@ -1,0 +1,452 @@
+version: "3.9"
+# docker-compose.hetzner.yml — Hetzner production overlay
+#
+# Merges: docker-compose.linux.yml + docker-compose.integration.yml +
+#         docker-compose.soak.yml + docker-compose.traefik.yml +
+#         docker-compose.cloudflare.yml
+#
+# Usage:
+#   ./scripts/deploy.sh up
+#   — OR —
+#   docker compose --project-name them_gateway --project-directory /home/avi/them \
+#     -f docker-compose.yml -f docker-compose.hetzner.yml \
+#     --profile temporal up -d
+#
+# Route ownership:
+#   /ws/*                    → them-go-svc (Go bridge, priority 120)
+#   /sse/*                   → them-go-svc (Go bridge, priority 120)
+#   /health/live,/ready      → them-go-svc (Go bridge, priority 130)
+#   /api/v1/admin/tokens     → them-go-svc (priority 120)
+#   /api/v1/admin/sessions   → them-go-svc (priority 120)
+#   /api/v1/admin/llm-providers → them-go-svc (priority 120)
+#   /api/v1/* (writes+other) → them-bridge-svc (Python, priority 100)
+#   /health/*                → them-bridge-svc (Python, priority 90)
+#   /apps/*                  → them-bridge-svc (Python, priority 100)
+#   /a2a/*                   → them-bridge-svc (Python, priority 100)
+#   /temporal/*              → temporal-ui (priority 150)
+#   /                        → them-frontend (priority 10)
+
+networks:
+  # Use the existing shared proxy-network (infra-traefik + cloudflared live here).
+  # Overrides docker-compose.yml which declares proxy-network as external: true
+  # without a name — Docker would look for "them_proxy-network" by default.
+  proxy-network:
+    name: proxy-network
+    external: true
+
+services:
+
+  # ── Traefik: joins both networks ─────────────────────────────────────────────
+  them-traefik:
+    networks:
+      - proxy-network
+      - them-network
+
+  # ── Postgres: named volume instead of ./data/ bind mount ─────────────────────
+  them-postgres:
+    ports:
+      - "15432:5432"
+    volumes:
+      - them-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+
+  # ── Redis: named volume ───────────────────────────────────────────────────────
+  them-redis:
+    ports:
+      - "16379:6379"
+    volumes:
+      - them-redis-data:/data
+      - ./redis/config/redis.conf:/etc/redis/redis.conf:ro
+
+  # ── Python bridge: no source bind mount — code baked into image ───────────────
+  # WS and SSE routes intentionally absent — Go bridge owns them at priority 120.
+  them-bridge:
+    volumes:
+      - them-logs:/app/logs
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-api.rule=PathPrefix(`/api/v1`)"
+      - "traefik.http.routers.them-api.entrypoints=web"
+      - "traefik.http.routers.them-api.priority=100"
+      - "traefik.http.routers.them-api.service=them-bridge-svc"
+      - "traefik.http.routers.them-health.rule=PathPrefix(`/health`)"
+      - "traefik.http.routers.them-health.entrypoints=web"
+      - "traefik.http.routers.them-health.priority=90"
+      - "traefik.http.routers.them-health.service=them-bridge-svc"
+      - "traefik.http.routers.them-apps.rule=PathPrefix(`/apps`)"
+      - "traefik.http.routers.them-apps.entrypoints=web"
+      - "traefik.http.routers.them-apps.priority=100"
+      - "traefik.http.routers.them-apps.service=them-bridge-svc"
+      - "traefik.http.routers.them-a2a.rule=PathPrefix(`/a2a`)"
+      - "traefik.http.routers.them-a2a.entrypoints=web"
+      - "traefik.http.routers.them-a2a.priority=100"
+      - "traefik.http.routers.them-a2a.service=them-bridge-svc"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.server.port=8001"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.timeout=3s"
+
+  # ── Python worker: no source bind mount ───────────────────────────────────────
+  them-worker:
+    volumes:
+      - them-logs:/app/logs
+
+  # ── Frontend: production build ─────────────────────────────────────────────────
+  them-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    command: node server.js
+    volumes: []
+    environment:
+      NODE_ENV: production
+      PORT: "3200"
+      THE_M_API_URL: "http://them-bridge:8001"
+      THE_M_AUTH_URL: "http://them-auth-service:8701"
+      NEXT_PUBLIC_BRIDGE_WS_URL: ""
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-ui.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.them-ui.entrypoints=web"
+      - "traefik.http.routers.them-ui.priority=10"
+      - "traefik.http.routers.them-ui.service=them-ui-svc"
+      - "traefik.http.services.them-ui-svc.loadbalancer.server.port=3200"
+
+  # ── Temporal UI ───────────────────────────────────────────────────────────────
+  temporal-frontend:
+    ports:
+      - "17233:7233"
+
+  temporal-ui:
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-temporal-ui.rule=PathPrefix(`/temporal`)"
+      - "traefik.http.routers.them-temporal-ui.entrypoints=web"
+      - "traefik.http.routers.them-temporal-ui.priority=150"
+      - "traefik.http.routers.them-temporal-ui.service=them-temporal-ui-svc"
+      - "traefik.http.services.them-temporal-ui-svc.loadbalancer.server.port=8080"
+
+  # ── Go bridge 1 — Traefik routing + Hetzner environment ─────────────────────
+  them-go-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.go
+    container_name: them-go-bridge
+    profiles: [temporal]
+    ports:
+      - "8002:8002"
+    environment:
+      THE_M_INSTANCE_ID: "go-bridge-1"
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8002"
+      APP_ENV: "integration"
+      LOG_LEVEL: "DEBUG"
+      LOG_FORMAT: "text"
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
+      JWT_SECRET: ${THE_M_JWT_SECRET:-change-this-jwt-secret}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_HOST_PORT: "temporal-frontend:7233"
+      RECONCILER_DRY_RUN: "true"
+      RUN_EVENTS_MODE: "dual"
+    networks:
+      - them-network
+      - proxy-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_healthy
+      temporal-frontend:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8002/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      # ── Shared load-balanced service ───────────────────────────────────────────
+      - "traefik.http.services.them-go-svc.loadbalancer.server.port=8002"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.timeout=3s"
+      # ── Wave 1a: /health/live + /health/ready (priority 130) ──────────────────
+      - "traefik.http.routers.them-go-health-sub.rule=PathPrefix(`/health/live`) || PathPrefix(`/health/ready`)"
+      - "traefik.http.routers.them-go-health-sub.entrypoints=web"
+      - "traefik.http.routers.them-go-health-sub.priority=130"
+      - "traefik.http.routers.them-go-health-sub.service=them-go-svc"
+      # ── Wave 1b: GET-only admin reads (priority 110) ───────────────────────────
+      - "traefik.http.routers.them-go-admin-reads.rule=(PathPrefix(`/api/v1/admin/agents`) || PathPrefix(`/api/v1/admin/orchestrators`) || PathPrefix(`/api/v1/admin/applications`) || Path(`/api/v1/runs`) || PathRegexp(`^/api/v1/runs/[^/]+$$`)) && Method(`GET`)"
+      - "traefik.http.routers.them-go-admin-reads.entrypoints=web"
+      - "traefik.http.routers.them-go-admin-reads.priority=110"
+      - "traefik.http.routers.them-go-admin-reads.service=them-go-svc"
+      # ── Wave 2a: agents writes ──────────────────────────────────────────────────
+      - "traefik.http.routers.them-go-agents-create.rule=Path(`/api/v1/admin/agents`) && Method(`POST`)"
+      - "traefik.http.routers.them-go-agents-create.entrypoints=web"
+      - "traefik.http.routers.them-go-agents-create.priority=115"
+      - "traefik.http.routers.them-go-agents-create.service=them-go-svc"
+      - "traefik.http.routers.them-go-agents-update.rule=PathRegexp(`^/api/v1/admin/agents/[^/]+$$`) && (Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-agents-update.entrypoints=web"
+      - "traefik.http.routers.them-go-agents-update.priority=115"
+      - "traefik.http.routers.them-go-agents-update.service=them-go-svc"
+      # ── Wave 2b: orchestrators writes ──────────────────────────────────────────
+      - "traefik.http.routers.them-go-orchs-create.rule=Path(`/api/v1/admin/orchestrators`) && Method(`POST`)"
+      - "traefik.http.routers.them-go-orchs-create.entrypoints=web"
+      - "traefik.http.routers.them-go-orchs-create.priority=115"
+      - "traefik.http.routers.them-go-orchs-create.service=them-go-svc"
+      - "traefik.http.routers.them-go-orchs-update.rule=PathRegexp(`^/api/v1/admin/orchestrators/[^/]+$$`) && (Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-orchs-update.entrypoints=web"
+      - "traefik.http.routers.them-go-orchs-update.priority=115"
+      - "traefik.http.routers.them-go-orchs-update.service=them-go-svc"
+      # ── Wave 2c: applications writes ───────────────────────────────────────────
+      - "traefik.http.routers.them-go-apps-create.rule=Path(`/api/v1/admin/applications`) && Method(`POST`)"
+      - "traefik.http.routers.them-go-apps-create.entrypoints=web"
+      - "traefik.http.routers.them-go-apps-create.priority=115"
+      - "traefik.http.routers.them-go-apps-create.service=them-go-svc"
+      - "traefik.http.routers.them-go-apps-update.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+$$`) && (Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-apps-update.entrypoints=web"
+      - "traefik.http.routers.them-go-apps-update.priority=115"
+      - "traefik.http.routers.them-go-apps-update.service=them-go-svc"
+      - "traefik.http.routers.them-go-eps-writes.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/entry-points(/[^/]+)?$$`) && (Method(`POST`) || Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-eps-writes.entrypoints=web"
+      - "traefik.http.routers.them-go-eps-writes.priority=115"
+      - "traefik.http.routers.them-go-eps-writes.service=them-go-svc"
+      # ── Wave 8: applications sub-routes ────────────────────────────────────────
+      - "traefik.http.routers.them-go-apps-subroutes.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/.+$$`) && (Method(`PUT`) || Method(`POST`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-apps-subroutes.entrypoints=web"
+      - "traefik.http.routers.them-go-apps-subroutes.priority=115"
+      - "traefik.http.routers.them-go-apps-subroutes.service=them-go-svc"
+      # ── Wave 2d: runs signal ────────────────────────────────────────────────────
+      - "traefik.http.routers.them-go-runs-signal.rule=PathRegexp(`^/api/v1/runs/[^/]+/signal$$`) && Method(`POST`)"
+      - "traefik.http.routers.them-go-runs-signal.entrypoints=web"
+      - "traefik.http.routers.them-go-runs-signal.priority=115"
+      - "traefik.http.routers.them-go-runs-signal.service=them-go-svc"
+      # ── Wave 4a: /apps/{slug}/ws → Go WS handler ───────────────────────────────
+      - "traefik.http.routers.them-go-apps-ws.rule=PathRegexp(`^/apps/[^/]+/ws$$`) && Method(`GET`)"
+      - "traefik.http.routers.them-go-apps-ws.entrypoints=web"
+      - "traefik.http.routers.them-go-apps-ws.priority=120"
+      - "traefik.http.routers.them-go-apps-ws.service=them-go-svc"
+      # ── Wave 4b: /apps/{slug}/sse → Go SSE handler ──────────────────────────────
+      - "traefik.http.routers.them-go-apps-sse.rule=PathRegexp(`^/apps/[^/]+/sse$$`) && (Method(`GET`) || Method(`POST`))"
+      - "traefik.http.routers.them-go-apps-sse.entrypoints=web"
+      - "traefik.http.routers.them-go-apps-sse.priority=120"
+      - "traefik.http.routers.them-go-apps-sse.service=them-go-svc"
+      # ── Wave 4c: /ws/orchestrate/{app}/{ep} (two-segment) → Go ─────────────────
+      - "traefik.http.routers.them-go-ws-two-seg.rule=PathRegexp(`^/ws/orchestrate/[^/]+/[^/]+$$`) && Method(`GET`)"
+      - "traefik.http.routers.them-go-ws-two-seg.entrypoints=web"
+      - "traefik.http.routers.them-go-ws-two-seg.priority=120"
+      - "traefik.http.routers.them-go-ws-two-seg.service=them-go-svc"
+      # ── Wave 4d: /sse/orchestrate/{app}/{ep} (two-segment) → Go ─────────────────
+      - "traefik.http.routers.them-go-sse-two-seg.rule=PathRegexp(`^/sse/orchestrate/[^/]+/[^/]+$$`) && (Method(`GET`) || Method(`POST`))"
+      - "traefik.http.routers.them-go-sse-two-seg.entrypoints=web"
+      - "traefik.http.routers.them-go-sse-two-seg.priority=120"
+      - "traefik.http.routers.them-go-sse-two-seg.service=them-go-svc"
+      # ── Wave 5: /api/v1/admin/tokens — full CRUD ──────────────────────────────
+      - "traefik.http.routers.them-go-tokens.rule=PathPrefix(`/api/v1/admin/tokens`)"
+      - "traefik.http.routers.them-go-tokens.entrypoints=web"
+      - "traefik.http.routers.them-go-tokens.priority=120"
+      - "traefik.http.routers.them-go-tokens.service=them-go-svc"
+      # ── Wave 5: /api/v1/admin/sessions — list + disconnect ─────────────────────
+      - "traefik.http.routers.them-go-sessions.rule=PathPrefix(`/api/v1/admin/sessions`)"
+      - "traefik.http.routers.them-go-sessions.entrypoints=web"
+      - "traefik.http.routers.them-go-sessions.priority=120"
+      - "traefik.http.routers.them-go-sessions.service=them-go-svc"
+      # ── Wave 6: /api/v1/admin/llm-providers/routing/config ────────────────────
+      - "traefik.http.routers.them-go-llm-routing-config.rule=Path(`/api/v1/admin/llm-providers/routing/config`)"
+      - "traefik.http.routers.them-go-llm-routing-config.entrypoints=web"
+      - "traefik.http.routers.them-go-llm-routing-config.priority=120"
+      - "traefik.http.routers.them-go-llm-routing-config.service=them-go-svc"
+      # ── Wave 7: /api/v1/admin/llm-providers CRUD ──────────────────────────────
+      - "traefik.http.routers.them-go-llm-providers.rule=PathPrefix(`/api/v1/admin/llm-providers`) && !Path(`/api/v1/admin/llm-providers/routing/config`)"
+      - "traefik.http.routers.them-go-llm-providers.entrypoints=web"
+      - "traefik.http.routers.them-go-llm-providers.priority=120"
+      - "traefik.http.routers.them-go-llm-providers.service=them-go-svc"
+      # ── Legacy /go-health/* (backward compat) ──────────────────────────────────
+      - "traefik.http.routers.them-go-health.rule=PathPrefix(`/go-health`)"
+      - "traefik.http.routers.them-go-health.entrypoints=web"
+      - "traefik.http.routers.them-go-health.priority=120"
+      - "traefik.http.routers.them-go-health.service=them-go-svc"
+      - "traefik.http.routers.them-go-health.middlewares=them-go-rewrite"
+      - "traefik.http.middlewares.them-go-rewrite.replacepathregex.regex=^/go-health(.*)"
+      - "traefik.http.middlewares.them-go-rewrite.replacepathregex.replacement=/health$$1"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ── Go bridge 2 — second replica (soak / advisory lock validation) ────────────
+  them-go-bridge-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.go
+    container_name: them-go-bridge-2
+    profiles: [temporal]
+    ports:
+      - "8003:8002"
+    environment:
+      THE_M_INSTANCE_ID: "go-bridge-2"
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8002"
+      APP_ENV: "integration"
+      LOG_LEVEL: "DEBUG"
+      LOG_FORMAT: "text"
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
+      JWT_SECRET: ${THE_M_JWT_SECRET:-change-this-jwt-secret}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_HOST_PORT: "temporal-frontend:7233"
+      RECONCILER_DRY_RUN: "true"
+      RUN_EVENTS_MODE: "dual"
+    networks:
+      - them-network
+      - proxy-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_healthy
+      temporal-frontend:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8002/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.services.them-go-svc.loadbalancer.server.port=8002"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-go-svc.loadbalancer.healthcheck.timeout=3s"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ── Go Temporal Worker 1 ───────────────────────────────────────────────────────
+  them-go-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-worker
+    container_name: them-go-worker
+    profiles: [temporal]
+    environment:
+      THE_M_INSTANCE_ID: "go-worker-1"
+      APP_ENV: "integration"
+      LOG_LEVEL: "DEBUG"
+      LOG_FORMAT: "text"
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
+      JWT_SECRET: ${THE_M_JWT_SECRET:-change-this-jwt-secret}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_HOST_PORT: "temporal-frontend:7233"
+      WORKER_TASK_QUEUE: "them-orchestration-go"
+      RUN_EVENTS_MODE: "streams"
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_healthy
+      temporal-frontend:
+        condition: service_started
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ── Go Temporal Worker 2 ───────────────────────────────────────────────────────
+  them-go-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-worker
+    container_name: them-go-worker-2
+    profiles: [temporal]
+    environment:
+      THE_M_INSTANCE_ID: "go-worker-2"
+      APP_ENV: "integration"
+      LOG_LEVEL: "DEBUG"
+      LOG_FORMAT: "text"
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
+      JWT_SECRET: ${THE_M_JWT_SECRET:-change-this-jwt-secret}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_HOST_PORT: "temporal-frontend:7233"
+      WORKER_TASK_QUEUE: "them-orchestration-go"
+      RUN_EVENTS_MODE: "streams"
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_healthy
+      temporal-frontend:
+        condition: service_started
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+# ── Named volumes (Docker manages ownership — no manual chown required) ────────
+volumes:
+  them-postgres-data:
+    name: them-postgres-data
+  them-redis-data:
+    name: them-redis-data
+  them-logs:
+    name: them-logs

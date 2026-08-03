@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/deploy.sh — path-independent deployment helper for the-M
+# scripts/deploy.sh — path-independent deployment helper for the-M (Hetzner)
 #
 # Works from any directory. Derives ROOT_DIR from this script's location.
 # Never contains secret values. Fails clearly if required files are missing.
@@ -26,18 +26,14 @@ SECRETS_FILE="$ROOT_DIR/secrets.local"
 
 # ── Compose file chain ───────────────────────────────────────────────────────
 F_BASE="$ROOT_DIR/docker-compose.yml"
-F_LINUX="$ROOT_DIR/docker-compose.linux.yml"
-F_INTEGRATION="$ROOT_DIR/docker-compose.integration.yml"
-F_SOAK="$ROOT_DIR/docker-compose.soak.yml"
-F_TRAEFIK="$ROOT_DIR/docker-compose.traefik.yml"
-F_CLOUDFLARE="$ROOT_DIR/docker-compose.cloudflare.yml"
+F_HETZNER="$ROOT_DIR/docker-compose.hetzner.yml"
 
 PROJECT_NAME="them_gateway"
 
 # ── Preflight checks ─────────────────────────────────────────────────────────
 _preflight() {
     local missing=0
-    for f in "$F_BASE" "$F_LINUX" "$F_INTEGRATION" "$F_SOAK" "$F_TRAEFIK" "$F_CLOUDFLARE"; do
+    for f in "$F_BASE" "$F_HETZNER"; do
         if [ ! -f "$f" ]; then
             echo "ERROR: required Compose file missing: $f" >&2
             missing=1
@@ -67,11 +63,7 @@ _compose() {
         --project-directory "$ROOT_DIR" \
         --env-file "$ENV_FILE" \
         -f "$F_BASE" \
-        -f "$F_LINUX" \
-        -f "$F_INTEGRATION" \
-        -f "$F_SOAK" \
-        -f "$F_TRAEFIK" \
-        -f "$F_CLOUDFLARE" \
+        -f "$F_HETZNER" \
         "$@"
 }
 

@@ -1,0 +1,170 @@
+version: "3.9"
+# docker-compose.dev.yml — Local development overlay
+#
+# Replaces: docker-compose.local.yml
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile go-worker up -d
+#
+# Differences from Hetzner:
+#   - proxy-network is created locally (not external) — no infra-traefik
+#   - Frontend runs in dev mode with source bind mount (Turbopack HMR)
+#   - Python bridge mounts source for live reload
+#   - Python bridge owns /ws/* and /sse/* (no Go WS/SSE routing)
+#   - Data stored in ./data/ bind mounts (visible on host, easy to inspect)
+
+networks:
+  proxy-network:
+    name: them-proxy-local
+    driver: bridge
+    external: false
+
+services:
+
+  # ── Python bridge: source bind mount for live reload ─────────────────────────
+  # Owns /ws/* and /sse/* here — Go bridge is not active in local dev by default.
+  them-bridge:
+    volumes:
+      - .:/app
+      - ./data/them-logs:/app/logs
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-api.rule=PathPrefix(`/api/v1`)"
+      - "traefik.http.routers.them-api.entrypoints=web"
+      - "traefik.http.routers.them-api.priority=100"
+      - "traefik.http.routers.them-api.service=them-bridge-svc"
+      - "traefik.http.routers.them-ws.rule=PathPrefix(`/ws`)"
+      - "traefik.http.routers.them-ws.entrypoints=web"
+      - "traefik.http.routers.them-ws.priority=100"
+      - "traefik.http.routers.them-ws.service=them-bridge-svc"
+      - "traefik.http.routers.them-health.rule=PathPrefix(`/health`)"
+      - "traefik.http.routers.them-health.entrypoints=web"
+      - "traefik.http.routers.them-health.priority=90"
+      - "traefik.http.routers.them-health.service=them-bridge-svc"
+      - "traefik.http.routers.them-apps.rule=PathPrefix(`/apps`)"
+      - "traefik.http.routers.them-apps.entrypoints=web"
+      - "traefik.http.routers.them-apps.priority=100"
+      - "traefik.http.routers.them-apps.service=them-bridge-svc"
+      - "traefik.http.routers.them-a2a.rule=PathPrefix(`/a2a`)"
+      - "traefik.http.routers.them-a2a.entrypoints=web"
+      - "traefik.http.routers.them-a2a.priority=100"
+      - "traefik.http.routers.them-a2a.service=them-bridge-svc"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.server.port=8001"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.timeout=3s"
+
+  # ── Frontend: dev mode with source bind mount (Turbopack HMR) ────────────────
+  them-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    command: []
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      NODE_ENV: development
+      THE_M_API_URL: "http://them-bridge:8001"
+      THE_M_AUTH_URL: "http://them-auth-service:8701"
+      NEXT_PUBLIC_BRIDGE_WS_URL: ""
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-ui.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.them-ui.entrypoints=web"
+      - "traefik.http.routers.them-ui.priority=10"
+      - "traefik.http.routers.them-ui.service=them-ui-svc"
+      - "traefik.http.services.them-ui-svc.loadbalancer.server.port=3200"
+
+  # ── Temporal UI ───────────────────────────────────────────────────────────────
+  temporal-ui:
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-temporal-ui.rule=PathPrefix(`/temporal`)"
+      - "traefik.http.routers.them-temporal-ui.entrypoints=web"
+      - "traefik.http.routers.them-temporal-ui.priority=150"
+      - "traefik.http.routers.them-temporal-ui.service=them-temporal-ui-svc"
+      - "traefik.http.services.them-temporal-ui-svc.loadbalancer.server.port=8080"
+
+  # ── Go Temporal Worker 1 (profile: go-worker) ─────────────────────────────────
+  them-go-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.go.worker
+    container_name: them-go-worker
+    profiles: [go-worker]
+    environment:
+      - THE_M_INSTANCE_ID=go-worker-1
+      - APP_ENV=production
+      - DATABASE_HOST=them-postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=them
+      - DATABASE_USER=${THE_M_DB_USER:-them}
+      - DATABASE_PASSWORD=${THE_M_DB_PASSWORD:-them_secret}
+      - REDIS_HOST=them-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
+      - REDIS_DB=0
+      - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-secret-key}
+      - JWT_SECRET=${THE_M_JWT_SECRET:-}
+      - LOG_FORMAT=json
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TEMPORAL_ENABLED=true
+      - TEMPORAL_HOST_PORT=temporal-frontend:7233
+      - WORKER_TASK_QUEUE=them-orchestration-go
+      - RUN_EVENTS_MODE=${RUN_EVENTS_MODE:-streams}
+    networks:
+      - them-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
+
+  # ── Go Temporal Worker 2 (profile: go-worker) ─────────────────────────────────
+  them-go-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.go.worker
+    container_name: them-go-worker-2
+    profiles: [go-worker]
+    environment:
+      - THE_M_INSTANCE_ID=go-worker-2
+      - APP_ENV=production
+      - DATABASE_HOST=them-postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=them
+      - DATABASE_USER=${THE_M_DB_USER:-them}
+      - DATABASE_PASSWORD=${THE_M_DB_PASSWORD:-them_secret}
+      - REDIS_HOST=them-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
+      - REDIS_DB=0
+      - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-secret-key}
+      - JWT_SECRET=${THE_M_JWT_SECRET:-}
+      - LOG_FORMAT=json
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TEMPORAL_ENABLED=true
+      - TEMPORAL_HOST_PORT=temporal-frontend:7233
+      - WORKER_TASK_QUEUE=them-orchestration-go
+      - RUN_EVENTS_MODE=${RUN_EVENTS_MODE:-streams}
+    networks:
+      - them-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
