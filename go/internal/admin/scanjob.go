@@ -155,20 +155,17 @@ func runScanJob(
 		return
 	}
 
-	taskID := newUUID()
+	msgID := newUUID()
 	rpcBody := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "1",
-		"method":  "tasks/send",
+		"method":  "SendMessage",
 		"params": map[string]any{
-			"id": taskID,
 			"message": map[string]any{
-				"role": "user",
+				"role":      1, // ROLE_USER
+				"messageId": msgID,
 				"parts": []any{
-					map[string]any{
-						"type": "data",
-						"data": json.RawMessage(payloadBytes),
-					},
+					map[string]any{"text": string(payloadBytes)},
 				},
 			},
 		},
@@ -211,16 +208,16 @@ func runScanJob(
 		return
 	}
 
-	// Step 5 — Parse A2A response. Result text at result.status.message.parts[0].text
+	// Step 5 — Parse A2A v1.0 SendMessage response: result.task.artifacts[0].parts[0].text
 	var rpcResp struct {
 		Result *struct {
-			Status *struct {
-				Message *struct {
+			Task *struct {
+				Artifacts []struct {
 					Parts []struct {
 						Text string `json:"text"`
 					} `json:"parts"`
-				} `json:"message"`
-			} `json:"status"`
+				} `json:"artifacts"`
+			} `json:"task"`
 		} `json:"result"`
 		Error *struct {
 			Message string `json:"message"`
@@ -234,13 +231,13 @@ func runScanJob(
 		publishScanFailed(ctx, rc, hashKey, dashCh, agentID, "rpc error: "+rpcResp.Error.Message)
 		return
 	}
-	if rpcResp.Result == nil || rpcResp.Result.Status == nil ||
-		rpcResp.Result.Status.Message == nil ||
-		len(rpcResp.Result.Status.Message.Parts) == 0 {
+	if rpcResp.Result == nil || rpcResp.Result.Task == nil ||
+		len(rpcResp.Result.Task.Artifacts) == 0 ||
+		len(rpcResp.Result.Task.Artifacts[0].Parts) == 0 {
 		publishScanFailed(ctx, rc, hashKey, dashCh, agentID, "empty result in rpc response")
 		return
 	}
-	resultText := rpcResp.Result.Status.Message.Parts[0].Text
+	resultText := rpcResp.Result.Task.Artifacts[0].Parts[0].Text
 	if resultText == "" {
 		publishScanFailed(ctx, rc, hashKey, dashCh, agentID, "empty result text")
 		return

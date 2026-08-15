@@ -65,6 +65,9 @@ func (s *AgentService) Update(ctx context.Context, tenantID, id string, in dal.A
 	if in.MaxConcurrency <= 0 {
 		in.MaxConcurrency = 5
 	}
+	if in.Transport == "" {
+		in.Transport = "a2a_async"
+	}
 	enabled := enabledOrDefault(in.Enabled)
 	if err := s.dal.UpdateAgent(ctx, tenantID, id, in, enabled); err != nil {
 		return err
