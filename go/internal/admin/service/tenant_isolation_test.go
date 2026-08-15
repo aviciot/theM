@@ -245,6 +245,27 @@ func (f *isolationFakeDal) GetRunContextID(_ context.Context, tenantID, runID st
 	}
 	return "ctx-" + runID, nil
 }
+func (f *isolationFakeDal) GetRunStats(_ context.Context, _ string) (dal.RunStats, error) {
+	return dal.RunStats{ByStatus: make(map[string]int), TotalCostUSD: "0"}, nil
+}
+func (f *isolationFakeDal) GetRunDetail(_ context.Context, tenantID, runID string) (dal.RunDetail, error) {
+	r, ok := f.findByIDAndTenant(f.runs, tenantID, runID)
+	if !ok {
+		return dal.RunDetail{}, errors.New("not found")
+	}
+	return dal.RunDetail{
+		Run:      dal.Run{ID: r.id},
+		Steps:    []dal.RunStep{},
+		Usage:    []dal.RunUsage{},
+		Children: []dal.Run{},
+	}, nil
+}
+func (f *isolationFakeDal) GetRunTasks(_ context.Context, _ string) ([]dal.Task, error) {
+	return []dal.Task{}, nil
+}
+func (f *isolationFakeDal) GetRunArtifacts(_ context.Context, _ string) ([]dal.Artifact, error) {
+	return []dal.Artifact{}, nil
+}
 
 // ── Token methods ─────────────────────────────────────────────────────────────
 

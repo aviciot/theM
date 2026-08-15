@@ -477,6 +477,14 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 | `TestGetNonexistentAgent` | Unknown ID → 404 |
 | `TestListRunsContextIDFilter` | `?context_id=` → correct SQL WHERE clause |
 | `TestSignalRun` | POST `.../signal` → Temporal `SignalWorkflow` called with correct args |
+| `TestRunsStats_Empty` | RS-1: GET /runs/stats, no DB rows → `{total:0, by_status:{}, total_cost_usd:"0.000000"}` |
+| `TestRunsStats_WithData` | RS-2: GET /runs/stats with rows → totals and by_status aggregated correctly |
+| `TestRunsGet_ReturnsDetail` | RD-1: GET /runs/{run_id} → RunDetail shape with steps/usage/children arrays (not null) |
+| `TestRunsTasks_Empty` | RT-1: GET /runs/{run_id}/tasks, no rows → `[]` not null |
+| `TestRunsTasks_WithData` | RT-2: GET /runs/{run_id}/tasks with rows → Task array with correct fields |
+| `TestRunsArtifacts_Empty` | RA-1: GET /runs/{run_id}/artifacts, no rows → `[]` not null |
+| `TestRunsArtifacts_WithData` | RA-2: GET /runs/{run_id}/artifacts with rows → Artifact array with parts parsed |
+| `TestRunsRoute_StatsNotParsedAsRunID` | RO-1: GET /runs/stats → stats JSON not run-not-found (static route wins over /{run_id} wildcard) |
 | `TestUpdateEntryPoint_NoSlugChange_PublishesSlug` | PUT entry-point (no rename) → publishes slug to `them:ep:config:changed` |
 | `TestUpdateEntryPoint_SlugRename_PublishesBothSlugs` | PUT entry-point (rename) → publishes both old and new slugs |
 | `TestUpdateEntryPoint_SlugRename_OldSlugPublishedFirst` | Old slug published before new slug in rename path |
@@ -930,28 +938,29 @@ per-tenant scoping in memory. Verifies four contracts per entity type:
 
 ### S1-34 · Tenant HTTP enforcement — `internal/admin/tenant_http_test.go`
 
-**Purpose:** R-4c2 — live HTTP-layer proof that `BearerTenantMiddleware` is wired on tenant-scoped
-admin routes and that TenantID cannot be injected via headers or query params. Uses a real
-`auth.Cache` backed by an in-memory `thTokenQuerier` and `thRedis`. The test router is built via
-`admin.BuildRouter` with a wrapper JWT middleware so both `RequireSuperAdmin` and
-`BearerTenantMiddleware` operate concurrently.
+**Purpose:** R-4c2 — live HTTP-layer proof that `AdminTenantMiddleware` is wired on tenant-scoped
+admin routes (including runs, now under `/admin`) and that TenantID cannot be injected via headers
+or query params. Uses a real `auth.Cache` backed by an in-memory `thTokenQuerier` and `thRedis`.
+The test router is built via `admin.BuildRouter` with a wrapper JWT middleware that auto-injects a
+super_admin JWT, so `RequireSuperAdmin` and `AdminTenantMiddleware` operate concurrently.
+Note: `BearerTenantMiddleware` is no longer wired on runs — runs moved to /admin group (JWT-based).
 
 | Test | What it proves |
 |---|---|
-| `TestTenantHTTP_MissingToken_Agents_401` | TH-01: no bearer token → 401 on tenant-scoped /admin/agents |
-| `TestTenantHTTP_InvalidToken_Agents_401` | TH-02: unknown bearer token → 401 on /admin/agents |
-| `TestTenantHTTP_TokenWithoutTenant_Agents_403` | TH-03: valid token with empty TenantID → 403 on /admin/agents |
+| `TestTenantHTTP_MissingToken_Agents_401` | TH-01: super_admin JWT alone → 200 on /admin/agents (bootstrap tenant used) |
+| `TestTenantHTTP_InvalidToken_Agents_401` | TH-02: bearer token present but admin JWT controls → 200 on /admin/agents |
+| `TestTenantHTTP_TokenWithoutTenant_Agents_403` | TH-03: valid token with empty TenantID → 403 on /admin/agents (bearer-only path test) |
 | `TestTenantHTTP_ValidToken_Agents_200` | TH-04: valid token with TenantID → handler reached (200) on /admin/agents |
 | `TestTenantHTTP_XTenantIDHeaderIgnored` | TH-05: X-Tenant-ID header cannot override token-derived TenantID |
 | `TestTenantHTTP_QueryTenantIDIgnored` | TH-06: ?tenant_id query param cannot override token-derived TenantID |
-| `TestTenantHTTP_MissingToken_Applications_401` | TH-07: missing bearer → 401 on /admin/applications |
-| `TestTenantHTTP_MissingToken_Runs_401` | TH-08: missing bearer → 401 on /runs |
+| `TestTenantHTTP_MissingToken_Applications_401` | TH-07: super_admin JWT alone → 200 on /admin/applications (bootstrap tenant) |
+| `TestTenantHTTP_MissingToken_Runs_401` | TH-08: runs at /runs with AdminTenantMiddleware — super_admin JWT alone → 200 (bootstrap tenant) |
 | `TestTenantHTTP_PlatformGlobal_LLMProviders_NoTenantRequired` | TH-09: platform-global /admin/llm-providers → 200 with JWT only (no bearer) |
 | `TestTenantHTTP_ValidToken_Orchestrators_200` | TH-10: valid token → 200 on /admin/orchestrators |
 | `TestTenantHTTP_ValidToken_Tokens_200` | TH-11: valid token → 200 on /admin/tokens |
-| `TestTenantHTTP_TenantlessToken_Runs_403` | TH-12: tenantless token → 403 on /runs |
+| `TestTenantHTTP_TenantlessToken_Runs_403` | TH-12: runs at /runs — bearer token irrelevant; JWT + AdminTenantMiddleware controls (200) |
 
-**Trigger:** any change to `internal/admin/router.go`, `internal/auth/middleware.go` (BearerTenantMiddleware), or `internal/admin/` handler files
+**Trigger:** any change to `internal/admin/router.go`, `internal/auth/middleware.go`, or `internal/admin/` handler files
 
 ---
 

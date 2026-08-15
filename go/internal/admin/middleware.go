@@ -64,6 +64,14 @@ type TokenCreatedOut = dal.TokenCreatedOut
 type TokenCreateRow = dal.TokenCreateRow
 type TokenPatchRow = dal.TokenPatchRow
 
+// Run detail types re-exported for handler use.
+type RunStep = dal.RunStep
+type RunUsage = dal.RunUsage
+type RunDetail = dal.RunDetail
+type Task = dal.Task
+type Artifact = dal.Artifact
+type RunStats = dal.RunStats
+
 // RequireSuperAdmin returns a middleware that requires a valid JWT with the
 // super_admin role. Relies on auth.ClaimsFromCtx (set by JWTMiddleware).
 func RequireSuperAdmin(logger *slog.Logger) func(http.Handler) http.Handler {

@@ -186,6 +186,18 @@ func (f *fakeDal) GetRun(_ context.Context, _, _ string) (dal.Run, error) {
 func (f *fakeDal) GetRunContextID(_ context.Context, _, _ string) (string, error) {
 	return f.contextID, f.getContextIDErr
 }
+func (f *fakeDal) GetRunStats(_ context.Context, _ string) (dal.RunStats, error) {
+	return dal.RunStats{ByStatus: make(map[string]int), TotalCostUSD: "0"}, nil
+}
+func (f *fakeDal) GetRunDetail(_ context.Context, _, _ string) (dal.RunDetail, error) {
+	return dal.RunDetail{Run: f.run, Steps: []dal.RunStep{}, Usage: []dal.RunUsage{}, Children: []dal.Run{}}, f.getRunErr
+}
+func (f *fakeDal) GetRunTasks(_ context.Context, _ string) ([]dal.Task, error) {
+	return []dal.Task{}, nil
+}
+func (f *fakeDal) GetRunArtifacts(_ context.Context, _ string) ([]dal.Artifact, error) {
+	return []dal.Artifact{}, nil
+}
 
 func (f *fakeDal) ListTokens(_ context.Context, _ string, _ *int64) ([]dal.Token, error) {
 	return f.tokens, f.listTokensErr

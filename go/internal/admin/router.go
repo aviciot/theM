@@ -16,8 +16,9 @@ import (
 // Route classification:
 //
 //   - Tenant-scoped control-plane (agents, orchestrators, applications, tokens, runs):
-//     JWT + RequireSuperAdmin + BearerTenantMiddleware. TenantID comes exclusively
-//     from the bearer token; never from headers, query params, or body.
+//     JWT + RequireSuperAdmin + AdminTenantMiddleware. TenantID comes from the JWT
+//     Claims set by jwtMiddleware; super_admin users with no tenant_id claim fall back
+//     to the bootstrap tenant (covers all UI-authenticated admin users).
 //
 //   - Platform-global control-plane (llm-providers, monitoring-config, llm-routing, sessions):
 //     JWT + RequireSuperAdmin only. No tenant scoping — these are platform-wide resources.
@@ -27,8 +28,8 @@ import (
 // jwtMiddleware is the JWT validation middleware (HS256 or RS256).
 // Pass nil to disable JWT protection (tests only).
 //
-// tokenCache is the bearer-token cache used by BearerTenantMiddleware on the
-// runs data-plane. Pass nil to skip tenant enforcement (tests only).
+// tokenCache is the bearer-token cache (reserved for future data-plane use).
+// Pass nil in tests.
 //
 // sessionReader is the session store for admin session listing/disconnect.
 // Pass nil to disable session admin routes (tests only).
@@ -67,7 +68,10 @@ import (
 //	PATCH  /admin/llm-providers/{id}
 //	DELETE /admin/llm-providers/{id}
 //	GET    /runs
+//	GET    /runs/stats
 //	GET    /runs/{run_id}
+//	GET    /runs/{run_id}/tasks
+//	GET    /runs/{run_id}/artifacts
 //	POST   /runs/{run_id}/signal
 func BuildRouter(
 	db DBQuerier,
@@ -93,7 +97,7 @@ func BuildRouter(
 	llmProviders := NewLLMProvidersHandler(db, secretKey)
 
 	// Admin routes — all require JWT + super_admin.
-	// Within /admin, tenant-scoped resources also require BearerTenantMiddleware.
+	// Within /admin, tenant-scoped resources also require AdminTenantMiddleware.
 	r.Group(func(adminGroup chi.Router) {
 		if jwtMiddleware != nil {
 			adminGroup.Use(jwtMiddleware)
@@ -123,19 +127,14 @@ func BuildRouter(
 				NewSessionsHandler(sessionReader).Routes(a)
 			}
 		})
-	})
 
-	// Tenant-scoped runs routes — JWT + BearerTenantMiddleware.
-	// Runs are tenant-owned; RequireSuperAdmin is not applied here (run access
-	// uses the bearer token's tenant, not the super_admin JWT role).
-	r.Group(func(runsGroup chi.Router) {
-		if jwtMiddleware != nil {
-			runsGroup.Use(jwtMiddleware)
-		}
-		if tokenCache != nil {
-			runsGroup.Use(auth.BearerTenantMiddleware(tokenCache))
-		}
-		runs.Routes(runsGroup)
+		// Runs routes are at /runs (not /admin/runs) to match the existing Traefik
+		// rules that capture /api/v1/runs/*. They use JWT + super_admin + AdminTenantMiddleware
+		// (same auth as other admin routes) instead of the old BearerTenantMiddleware.
+		adminGroup.Group(func(runsGroup chi.Router) {
+			runsGroup.Use(AdminTenantMiddleware())
+			runs.Routes(runsGroup)
+		})
 	})
 
 	return r

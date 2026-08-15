@@ -24,9 +24,14 @@ func NewRunsHandler(db DBQuerier, temporal TemporalSignaler) *RunsHandler {
 }
 
 // Routes mounts the runs API endpoints.
+// Static routes (e.g. /runs/stats) must be registered before dynamic ones
+// (e.g. /runs/{run_id}) so chi does not treat "stats" as a run_id.
 func (h *RunsHandler) Routes(r chi.Router) {
 	r.Get("/runs", h.List)
+	r.Get("/runs/stats", h.Stats)
 	r.Get("/runs/{run_id}", h.Get)
+	r.Get("/runs/{run_id}/tasks", h.Tasks)
+	r.Get("/runs/{run_id}/artifacts", h.Artifacts)
 	r.Post("/runs/{run_id}/signal", h.Signal)
 }
 
@@ -50,7 +55,7 @@ func (h *RunsHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, runs)
 }
 
-// Get handles GET /api/v1/runs/{run_id}.
+// Get handles GET /api/v1/runs/{run_id} — returns RunDetail (run + steps + usage + children).
 func (h *RunsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	runID := chi.URLParam(r, "run_id")
 	if runID == "" {
@@ -59,12 +64,53 @@ func (h *RunsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	run, err := h.svc.Get(r.Context(), tenantID, runID)
+	detail, err := h.svc.GetDetail(r.Context(), tenantID, runID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "run not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, run)
+	writeJSON(w, http.StatusOK, detail)
+}
+
+// Stats handles GET /api/v1/runs/stats.
+func (h *RunsHandler) Stats(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	stats, err := h.svc.Stats(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// Tasks handles GET /api/v1/runs/{run_id}/tasks.
+func (h *RunsHandler) Tasks(w http.ResponseWriter, r *http.Request) {
+	runID := chi.URLParam(r, "run_id")
+	if runID == "" {
+		writeError(w, http.StatusBadRequest, "run_id is required")
+		return
+	}
+	tasks, err := h.svc.GetTasks(r.Context(), runID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, tasks)
+}
+
+// Artifacts handles GET /api/v1/runs/{run_id}/artifacts.
+func (h *RunsHandler) Artifacts(w http.ResponseWriter, r *http.Request) {
+	runID := chi.URLParam(r, "run_id")
+	if runID == "" {
+		writeError(w, http.StatusBadRequest, "run_id is required")
+		return
+	}
+	artifacts, err := h.svc.GetArtifacts(r.Context(), runID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, artifacts)
 }
 
 // Signal handles POST /api/v1/runs/{run_id}/signal (HITL).

@@ -34,6 +34,31 @@ func (s *RunService) Get(ctx context.Context, tenantID, runID string) (dal.Run, 
 	return run, nil
 }
 
+// Stats returns aggregate run counts and cost for the tenant.
+func (s *RunService) Stats(ctx context.Context, tenantID string) (dal.RunStats, error) {
+	return s.dal.GetRunStats(ctx, tenantID)
+}
+
+// GetDetail returns a run with its steps, usage rows, and child runs.
+// Any DAL error maps to ErrNotFound to preserve the API contract.
+func (s *RunService) GetDetail(ctx context.Context, tenantID, runID string) (dal.RunDetail, error) {
+	detail, err := s.dal.GetRunDetail(ctx, tenantID, runID)
+	if err != nil {
+		return dal.RunDetail{}, ErrNotFound
+	}
+	return detail, nil
+}
+
+// GetTasks returns tasks belonging to a run.
+func (s *RunService) GetTasks(ctx context.Context, runID string) ([]dal.Task, error) {
+	return s.dal.GetRunTasks(ctx, runID)
+}
+
+// GetArtifacts returns artifacts for a run via their tasks.
+func (s *RunService) GetArtifacts(ctx context.Context, runID string) ([]dal.Artifact, error) {
+	return s.dal.GetRunArtifacts(ctx, runID)
+}
+
 // Signal sends a HITL payload to the Temporal workflow for the given run, scoped to the tenant.
 // It constructs the workflow ID using the "ctx-{contextID}" convention that
 // Python's OrchestrationWorkflow registers under.

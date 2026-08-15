@@ -227,6 +227,83 @@ type SignalInput struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+// RunStep is one step in a run from them.run_steps.
+type RunStep struct {
+	ID         string `json:"id"`
+	Iteration  int    `json:"iteration"`
+	AgentSlug  string `json:"agent_slug,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Input      any    `json:"input,omitempty"`
+	Output     string `json:"output,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Error      string `json:"error,omitempty"`
+	LatencyMS  *int64 `json:"latency_ms,omitempty"`
+	StartedAt  string `json:"started_at"`
+	EndedAt    string `json:"ended_at,omitempty"`
+}
+
+// RunUsage is one usage row from them.run_usage.
+type RunUsage struct {
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+	TokensIn  int    `json:"tokens_input"`
+	TokensOut int    `json:"tokens_output"`
+	CostUSD   string `json:"cost_usd,omitempty"`
+}
+
+// RunDetail extends Run with steps, usage, and child run IDs.
+type RunDetail struct {
+	Run
+	Steps    []RunStep  `json:"steps"`
+	Usage    []RunUsage `json:"usage"`
+	Children []Run      `json:"children"`
+}
+
+// Task is one task row from them.tasks.
+type Task struct {
+	ID             string `json:"id"`
+	ParentTaskID   string `json:"parent_task_id,omitempty"`
+	AgentID        string `json:"agent_id,omitempty"`
+	OrchestratorID string `json:"orchestrator_id,omitempty"`
+	ContextID      string `json:"context_id,omitempty"`
+	State          string `json:"state"`
+	Kind           string `json:"kind"`
+	RemoteTaskID   string `json:"remote_task_id,omitempty"`
+	BudgetTokens   *int   `json:"budget_tokens,omitempty"`
+	TokensUsed     *int   `json:"tokens_used,omitempty"`
+	Error          string `json:"error,omitempty"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+// ArtifactPart is one element in an artifact's parts array.
+type ArtifactPart struct {
+	Kind      string `json:"kind,omitempty"`
+	Text      string `json:"text,omitempty"`
+	Filename  string `json:"filename,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
+}
+
+// Artifact is one artifact row from them.artifacts.
+type Artifact struct {
+	ID          string         `json:"id"`
+	TaskID      string         `json:"task_id"`
+	ContextID   string         `json:"context_id,omitempty"`
+	ArtifactID  string         `json:"artifact_id,omitempty"`
+	Name        string         `json:"name,omitempty"`
+	Parts       []ArtifactPart `json:"parts"`
+	AppendIndex int            `json:"append_index"`
+	LastChunk   bool           `json:"last_chunk"`
+	CreatedAt   string         `json:"created_at"`
+}
+
+// RunStats is the summary returned by GET /runs/stats.
+type RunStats struct {
+	Total        int            `json:"total"`
+	ByStatus     map[string]int `json:"by_status"`
+	TotalCostUSD string         `json:"total_cost_usd"`
+}
+
 // ── Token types ───────────────────────────────────────────────────────────────
 
 // Token is the JSON representation of a them.access_tokens row.

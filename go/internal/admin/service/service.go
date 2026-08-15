@@ -57,6 +57,10 @@ type Dal interface {
 	ListRuns(ctx context.Context, tenantID, contextID string, limit int) ([]dal.Run, error)
 	GetRun(ctx context.Context, tenantID, runID string) (dal.Run, error)
 	GetRunContextID(ctx context.Context, tenantID, runID string) (string, error)
+	GetRunStats(ctx context.Context, tenantID string) (dal.RunStats, error)
+	GetRunDetail(ctx context.Context, tenantID, runID string) (dal.RunDetail, error)
+	GetRunTasks(ctx context.Context, runID string) ([]dal.Task, error)
+	GetRunArtifacts(ctx context.Context, runID string) ([]dal.Artifact, error)
 
 	// Tokens — tenant-scoped
 	ListTokens(ctx context.Context, tenantID string, userID *int64) ([]dal.Token, error)
