@@ -121,7 +121,7 @@ func (d *DB) UpdateAgent(ctx context.Context, tenantID, id string, in AgentInput
 	const q = `
 		UPDATE them.agents
 		SET display_name=$3, description=$4, transport=$5,
-		    endpoint_url=NULLIF($6, ''), max_concurrency=$7, max_retries=$8,
+		    endpoint_url=COALESCE(NULLIF($6, ''), endpoint_url), max_concurrency=$7, max_retries=$8,
 		    timeout_seconds=$9, enabled=$10,
 		    supports_streaming=$11, supports_push=$12,
 		    icon=$13, category=$14, updated_at=now()
