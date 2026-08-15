@@ -307,3 +307,37 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml ps
 docker compose -f docker-compose.yml -f docker-compose.local.yml --profile go up -d them-go-bridge
 cd go && go test ./...
 ```
+
+---
+
+## Cloudflare Exposure Status (2026-08-03)
+
+**Goal:** Expose the-M UI at `https://them.avico78.com` using the existing Cloudflare Tunnel.
+
+**Work completed this session:**
+
+1. Read and audited `EXPOSE.md` (infrastructure file, untracked in this repo).
+2. Confirmed full routing chain is intact:
+   - `infra-cloudflared` running, 4 PoP connections, tunnel ingress already includes `them.avico78.com → http://traefik:80` (updated 2026-08-01).
+   - `them-traefik` is on `proxy-network` (via `docker-compose.cloudflare.yml`, already in active project).
+   - `them-traefik-svc@file` (target: `http://them-traefik:8088`) already defined and enabled in infra-traefik.
+   - CORS already includes `https://them.avico78.com` in running `them-bridge` and `them-auth-service` containers.
+   - `NEXT_PUBLIC_BRIDGE_WS_URL` empty is correct — frontend derives `wss://them.avico78.com` from `window.location.host` automatically.
+3. **Enabled the `them-external` router** in `/home/avi/infrastructure/traefik/dynamic/them-routes.yml` (uncommented). Traefik hot-reloaded immediately — `them-external@file | Host(them.avico78.com) | enabled` confirmed.
+4. **Internal routing validated:** `Host: them.avico78.com` through infra-traefik → them-traefik → UI returns 200.
+5. **Updated `EXPOSE.md`** with full architecture, deployment status, and instructions.
+
+**One remaining step (manual, Cloudflare dashboard):**
+
+Add a DNS CNAME record in Cloudflare for `them.avico78.com` → `<tunnel-UUID>.cfargotunnel.com` (proxied). The DNS record is currently missing — this is why `them.avico78.com` does not resolve publicly. Everything else is done.
+
+**Known pre-existing issue (not a Cloudflare routing failure):**
+
+The `infra-traefik` Docker socket access picks up them-container labels and creates shadow docker-provider routers (e.g. `them-go-admin-reads@docker`) with no Host() condition. These route direct `/api/v1/...` requests to go-bridge IPs that infra-traefik cannot reach (different subnet), causing 503 for direct API paths through infra-traefik. This does NOT affect the browser user flow: the UI (/) routes correctly through `them-external@file`, and all browser API calls use the Next.js proxy (`/api/them/...`) which routes through the same `them-external@file` → them-traefik path correctly.
+
+**Files changed this session:**
+
+- `/home/avi/infrastructure/traefik/dynamic/them-routes.yml` — uncommented `them-external` router (infrastructure repo, separate from this repo)
+- `/home/avi/them/EXPOSE.md` — updated with full architecture, status, and instructions (untracked file, not committed)
+
+**No commits created this session** (the infrastructure file is in a separate repo; EXPOSE.md is intentionally untracked per memory note).

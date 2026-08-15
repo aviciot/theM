@@ -192,6 +192,6 @@ No shared state makes any rollback risky.
 
 ## Related
 
-- `phase-11c-design.md` — full design with all implementation details (historical)
-- `runbook-reconciler.md` — Phase 11b reconciler (preceding phase)
+- `archive/migrations/phase-11c-design.md` — full design with all implementation details (historical)
+- `archive/reports/runbook-reconciler.md` — Phase 11b reconciler (preceding phase)
 - `docs/REDIS.md` — Redis key registry (stream keys added on implementation)

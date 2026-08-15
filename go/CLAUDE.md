@@ -17,7 +17,7 @@ Before touching any Go code, read:
 | `TEST_INDEX.md` | Before adding or changing any test |
 | `docs/architecture-v2/implementation-status.md` | Package inventory, route ownership, completed waves |
 | `docs/architecture-v2/lessons-learned.md` | Before any judgment call — what burned us before |
-| `docs/architecture-v2/NEXT_SESSION_BRIDGE_HANDOVER.md` | Current wave state, exact route ownership table |
+| `docs/architecture-v2/CURRENT.md` | Current state, next task, hard constraints |
 
 ---
 
@@ -174,7 +174,7 @@ docker compose --profile go logs -f them-go-bridge
 | `cmd/them/main.go` | `go test ./...` (full suite) |
 | `go.mod` or `go.sum` | `go test ./...` (full suite) |
 | `Dockerfile.go` | rebuild image + `go test -tags=integration ./...` |
-| `docker-compose.yml` (Go labels) | `go test -tags=integration ./...` + live smoke test per `docs/architecture-v2/NEXT_SESSION_BRIDGE_HANDOVER.md` |
+| `docker-compose.yml` (Go labels) | `go test -tags=integration ./...` + live smoke test per `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md` |
 | Any `internal/` change | `go test ./...` before commit |
 | Before any production deploy | `go test -race ./...` + `go test -tags=integration ./...` + live smoke tests per handover doc |
 

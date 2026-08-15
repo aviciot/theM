@@ -1,6 +1,6 @@
 # Implementation Status — Go Gateway
 
-**Last updated:** 2026-08-01 (Compose consolidation complete; deployment canonical root is now `/home/avi/them`)
+**Last updated:** 2026-08-15 (Agent actions migrated; Python auth removed; AdminTenantMiddleware)
 
 ---
 
@@ -64,7 +64,7 @@ Phase 11c-C validation complete (2026-07-21). 229 unit tests pass. Race detector
 
 ## Route Map (post-Wave 5, as routed through Traefik)
 
-For full Traefik priority details see `NEXT_SESSION_BRIDGE_HANDOVER.md`.
+For full Traefik priority details see `REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`.
 
 | Route | Handler | Auth | Owner |
 |---|---|---|---|
@@ -93,7 +93,11 @@ For full Traefik priority details see `NEXT_SESSION_BRIDGE_HANDOVER.md`.
 | `GET /api/v1/runs/{run_id}/artifacts/{artifact_id}` | `internal/artifacts` (R-3) | Bearer token | Go |
 | All other `/api/v1/*` | Python bridge | — | Python |
 
-**Python still owns:** `/api/v1/auth/*`, agent test/discover/security-scan, orchestrator test-llm, application import/export/restore/bulk-delete/runtime, dashboard WS `/ws/dashboard`, one-segment `/ws/orchestrate/{name}`.
+**Python still owns:** orchestrator test-llm/voice/tts, application import/export/restore/middleware-wirings, per-app orchestrator test-llm/voice/tts, runs stats/contexts/tasks/artifacts/cancel/delete/bulk-delete, dashboard WS `/ws/dashboard`, one-segment `/ws/orchestrate/{name}`, A2A server `/a2a/*`.
+
+**Go now owns (as of 2026-08-15):** all of `/api/v1/auth/*` (via `them-auth-go`), agent discover + test + security-scan (p=116), agents/orchs/apps/entry-points full CRUD, tokens, sessions, LLM providers, monitoring-config, runtime + bulk-delete, WS/SSE.
+
+**AdminTenantMiddleware:** Admin routes use JWT-based tenant resolution (not opaque bearer tokens). Super_admin users without `tenant_id` claim fall back to bootstrap tenant `00000000-0000-0000-0000-000000000001`.
 
 ---
 
@@ -146,14 +150,14 @@ Bugs fixed in this phase:
 - `replay_unavailable` silently dropped by SSE `formatSSE` switch — **Fixed**
 - ADR-003 D4 doc inconsistency — **Fixed**
 
-All five transport routing combinations confirmed by `TestDispatcher_*` (6 tests). Full MAXLEN and reconnect validation passed. See `docs/architecture-v2/phase-11c-design.md` for detailed validation results (historical record).
+All five transport routing combinations confirmed by `TestDispatcher_*` (6 tests). Full MAXLEN and reconnect validation passed. See `docs/architecture-v2/archive/migrations/phase-11c-design.md` for detailed validation results (historical record).
 
 ---
 
 ## Wave 5 — Admin Tokens + Sessions (complete, 2026-07-24)
 
 Routes `/api/v1/admin/tokens*` and `/api/v1/admin/sessions*` migrated to Go.
-Detailed implementation: `WAVE5_PLAN.md` (historical). Current state: `NEXT_SESSION_BRIDGE_HANDOVER.md`.
+Detailed implementation: archived in `archive/migrations/WAVE5_PLAN.md`. Current state: `CURRENT.md`.
 
 ---
 

@@ -102,6 +102,6 @@ Silently mapping `NotFound` to `"failed"` would incorrectly fail valid runs
 after history retention expires, and would permanently fail all Python-native
 runs on the Go reconciler.
 
-**Operational guidance:** See `runbook-reconciler.md` for how to handle rows
+**Operational guidance:** See `archive/reports/runbook-reconciler.md` for how to handle rows
 permanently stuck in `"running"` when history retention is confirmed to have
 expired.

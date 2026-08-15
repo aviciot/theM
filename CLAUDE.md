@@ -1,6 +1,6 @@
 # the-M — Claude Session Guide
 # multi-agent orchestration platform
-# Last updated: 2026-07-25
+# Last updated: 2026-08-15
 
 ---
 
@@ -49,7 +49,7 @@ Migration order:
 
 **One focused subsystem per task.** Do not migrate multiple subsystems in a single session.
 
-Current state: Wave 5 complete (tokens + sessions admin now served by Go). See `docs/architecture-v2/NEXT_SESSION_BRIDGE_HANDOVER.md` for exact route ownership and next steps.
+Current state: Agents Store slice complete (agents CRUD + discover/test/security-scan + Go auth). See `docs/architecture-v2/CURRENT.md` for exact state and next steps. See `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md` for route ownership.
 
 ---
 
@@ -94,24 +94,16 @@ Do not wait until context quality has already degraded.
 2. Finish and test the current focused task only — do not widen scope.
 3. Commit all safe changes.
 4. Push if credentials are available (`git push origin main`).
-5. Record the following in `docs/architecture-v2/NEXT_SESSION_HANDOVER.md`:
-   - current objective
-   - branch and exact HEAD (`git log --oneline -1`)
-   - commits created this session
-   - push status
-   - working tree state (`git status`)
-   - work completed
-   - deployed/live state
-   - tests executed and exact pass/fail/skip totals
-   - architecture decisions made
-   - temporary compatibility code still in place
-   - known bugs and blockers
-   - files most relevant to the next task
-   - hard constraints that must remain in force
-   - exact next single focused task
-   - exact commands and first prompt for starting the next session
+5. Update `docs/architecture-v2/CURRENT.md` with:
+   - current HEAD (`git log --oneline -1`)
+   - deployment state
+   - current migration slice and what was completed
+   - next recommended task
+   - known blockers
+   - any new hard constraints
+   Do NOT create a new `NEXT_SESSION_*.md` file — always update CURRENT.md.
 6. Recommend closing the current Claude session and opening a new one.
-7. Return the exact tmux/Claude startup commands and first prompt for the next session.
+7. Return the exact startup commands and first prompt for the next session.
 
 **Do not begin the next subsystem in the same session.**
 

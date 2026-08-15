@@ -1,6 +1,6 @@
 # Route Ownership Inventory — THEM Python → Go Migration
 # Generated: 2026-08-02
-# Updated: 2026-08-02 — routing fixes applied (UUID regex + runs path narrowing)
+# Updated: 2026-08-15 — agent actions (discover/test/security-scan) marked complete; auth cutover reflected
 # Scope: All externally exposed routes. Source of truth: router registrations + Traefik config.
 # Do NOT trust this document alone — verify against live logs before any cutover.
 
@@ -21,17 +21,17 @@
 
 ## Route Counts Summary
 
-**Post-routing-fix counts** (UUID regex corrected + runs path narrowed):
+**Current counts (2026-08-15):**
 
 | Category | Count |
 |---|---|
 | **Total externally exposed routes** | **73** |
-| Currently owned by Go (live via Traefik) | 29 |
-| Currently owned by Python (live via Traefik) | 44 |
+| Currently owned by Go (live via Traefik) | 32 |
+| Currently owned by Python (live via Traefik) | 41 |
 | Implemented in Go but NOT yet cut over | 2 (A2A routes — no Traefik labels) |
 | Legacy / deprecation candidates | 4 |
 
-**Wave 8 update (2026-08-03):** Added `POST /bulk-delete` and `PUT /{id}/runtime` to Go. Go count: 27 → 29. Python count: 46 → 44. The Go count (27) pre-Wave 8 reflects routes with verified Traefik labels + working handler, after the UUID regex fix restored agents/apps write ownership to Go.
+**2026-08-15 update:** Agent actions (discover, test, security-scan) migrated to Go (+3). Go count: 29 → 32. Python auth replaced by Go (`them-auth-go`).
 
 ---
 
@@ -62,9 +62,9 @@
 | PUT | `/api/v1/admin/agents/{id}` | ✓ | ✓ | **Go**⚠ (p=115) | complete* | `go/internal/admin/agents.go:30` |
 | PATCH | `/api/v1/admin/agents/{id}` | ✓ | ✓ | **Go**⚠ (p=115) | complete* | `go/internal/admin/agents.go:31` |
 | DELETE | `/api/v1/admin/agents/{id}` | ✓ | ✓ | **Go**⚠ (p=115) | complete* | `go/internal/admin/agents.go:32` |
-| POST | `/api/v1/admin/agents/{id}/test` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_agents.py:334` |
-| POST | `/api/v1/admin/agents/discover` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_agents.py:370` |
-| POST | `/api/v1/admin/agents/{id}/security-scan` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/admin_agents.py:496` |
+| POST | `/api/v1/admin/agents/{id}/test` | ✓ | ✓ | **Go** (p=116) | complete | `go/internal/admin/agents.go` |
+| POST | `/api/v1/admin/agents/discover` | ✓ | ✓ | **Go** (p=116) | complete | `go/internal/admin/agents.go` |
+| POST | `/api/v1/admin/agents/{id}/security-scan` | ✓ | ✓ | **Go** (p=116) | complete | `go/internal/admin/agents.go` |
 
 **✓ FIXED — Traefik UUID regex corrected:**
 `them-go-agents-update` rule updated from `[0-9]+` to `[^/]+`.

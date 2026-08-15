@@ -1,65 +1,90 @@
 # Documentation Index — the-M
-# Last updated: 2026-07-04
+# Last updated: 2026-08-15
 
 One line per doc. Read this first, then open only what you need.
-**Also read:** `scripts/tests/INDEX.md` before touching tests.
+**Code beats docs.** If they diverge, fix the doc — stale docs are a bug.
 
 ---
 
-## How to use this index
+## Session start
 
-- **Read** column: what you'll find inside — use this to decide if you need the doc
-- **Update when** column: mandatory — if you do one of these things, update that doc before the session ends
-- Trust code over docs. If they diverge, fix the doc.
+| File | Read when |
+|---|---|
+| `CLAUDE.md` | Every session — always read first |
+| `docs/STATUS.md` | Start of session — current containers, migration state, known blockers |
+| `docs/architecture-v2/CURRENT.md` | Start of session — current HEAD, next task, hard constraints |
 
 ---
 
-## Session Entrypoint
+## System reference
 
-| File | Read when | Update when |
+| File | Subject | Update when |
 |---|---|---|
-| `/CLAUDE.md` | Every session — always read first | Stack changes, new rules, state changes |
+| `docs/ARCHITECTURE.md` | Current Go/Python hybrid architecture, Traefik routing, application model | Any flow or component changes |
+| `docs/AUTH.md` | Auth service contract, JWT claims, AdminTenantMiddleware, machine tokens | Auth flow changes |
+| `docs/SCHEMA.md` | All `them.*` tables — columns, FKs, rationale | DB table or column changes |
+| `docs/REDIS.md` | Every Redis key pattern, TTL, owner, pub/sub channels | Redis key added or renamed |
+| `docs/ADAPTERS.md` | Agent transport adapter contract, how to add new transports | New transport type |
+| `docs/A2A_REFERENCE.md` | A2A SDK v1.1.0 — Part types, AgentCard/Skill fields, wire format | A2A SDK version change |
+| `docs/A2A_AGENTS.md` | A2A test agents — start/stop, DB enable, cache bust, test commands | A2A agent changes |
+| `docs/FLOWS.md` | End-to-end orchestration sequence, Redis pub/sub trace | Orchestration flow changes |
+| `docs/LESSONS.md` | Past bugs and non-obvious fixes — append only | Any bug fix or unexpected behavior |
 
 ---
 
-## System Reference
+## Migration tracking (temporary — remove when Python is gone)
 
-| File | Read when | Update when |
-|---|---|---|
-| `ARCHITECTURE.md` | Touching `app/` — covers agentic loop, adapter fan-out, WS protocol, scalability design | Any flow or component changes |
-| `SCHEMA.md` | Touching `app/models.py`, `db/001_schema.sql`, or writing queries — covers all `them.*` tables with column descriptions and FK rationale | Adding/changing any DB table or column |
-| `REDIS.md` | Touching anything that reads/writes Redis — covers every key pattern, TTL, owner, pub/sub channels | Adding/renaming any Redis key or channel |
-| `ADAPTERS.md` | Adding or changing an agent transport — covers `AgentAdapter` contract, `AdapterEvent`, `omni_ws` protocol, how to add new transports | New transport type, changed adapter interface |
-| `A2A_REFERENCE.md` | A2A SDK v1.1.0 reference — Part types (text/data/raw/url), AgentCard/AgentSkill fields, wire format, typed input examples, current gaps vs true A2A | A2A SDK version bump or spec changes |
-| `A2A_AGENTS.md` | Working with A2A test agents — start/stop commands, DB enable/disable, cache bust, playground prompts, raw JSON-RPC test, adapter integration test | A2A agent code changes, new test agents added |
-| `AUTH.md` | Touching auth flow, cookies, JWT, bearer tokens — covers JWT (dashboard) vs bearer tokens (WS), cache flow, token hashing, cookie names | Auth flow changes, new token types |
-| `FLOWS.md` | Understanding end-to-end orchestration — covers full sequence for a multi-agent run, Redis pub/sub trace events | Orchestration flow changes |
-| `WORKFLOW_ADVISOR.md` | Touching the AI Workflow Advisor — advisor agent, proposal protocol, Apply flow, serialization, cache invalidation | Changes to `agents/workflow_advisor/`, `AdvisorPanel`, `serializeWorkflow`, proposal types |
+| File | Subject |
+|---|---|
+| `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md` | Live route ownership: Go vs Python per endpoint |
+| `docs/architecture-v2/implementation-status.md` | Go package inventory, test counts, route map |
 
 ---
 
-## Status & History
+## Architecture decisions (permanent)
 
-| File | Read when | Update when |
-|---|---|---|
-| `STATUS.md` | Start of session — know what's broken/pending before touching anything | End of session: update build progress, open items, infrastructure state |
-| `LESSONS.md` | Before any non-obvious judgment call — covers past bugs and fixes | Any bug fix or non-obvious behavior discovered — append only, never edit existing entries |
-| `KNOWLEDGE_BASE_PLAN.md` | Adding a new doc — lists allowed files and maintenance rules | When a new doc is added or a doc is retired |
+| File | Decision |
+|---|---|
+| `docs/architecture-v2/adr-001-canonical-run-id.md` | Canonical run ID strategy |
+| `docs/architecture-v2/adr-002-reconciler-status-mapping.md` | Reconciler status mapping |
+| `docs/architecture-v2/adr-003-redis-streams-event-delivery.md` | Redis streams for event delivery |
+| `docs/architecture-v2/REGISTRY_BACKED_APPLICATION_COMPONENT_MODEL.md` | Component registry model (Wave 9 foundation) |
+
+---
+
+## Operational runbooks
+
+| File | When to read |
+|---|---|
+| `docs/architecture-v2/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` | Docker, deployment, container recreation |
+| `docs/architecture-v2/schema-migrations.md` | DB migration ordering and approach |
+| `scripts/tests/INDEX.md` | Before running or writing Python tests |
+| `go/TEST_INDEX.md` | Before running or writing Go tests |
+
+---
+
+## Test runners
+
+```bash
+# Python tests (must use python3.12)
+python3.12 scripts/tests/run_tests.py
+
+# Go tests
+cd go && go test ./...
+```
 
 ---
 
 ## What lives where (quick lookup)
 
-| You want to know about... | Read |
+| Question | Read |
 |---|---|
-| How the LLM agentic loop works | `ARCHITECTURE.md` |
-| What columns `them.agents` has | `SCHEMA.md` |
-| What `them:orchestrators:*` TTL is | `REDIS.md` |
-| How to add a new agent transport | `ADAPTERS.md` |
-| Why cookie names are `them_access_token` | `AUTH.md` |
-| Full sequence of a WS orchestration run | `FLOWS.md` |
-| What tests exist and when to run them | `scripts/tests/INDEX.md` |
-| What's currently broken | `STATUS.md` |
-| Why we use `init` callback not `server_settings` | `LESSONS.md` |
-| How the AI Workflow Advisor works end-to-end | `WORKFLOW_ADVISOR.md` |
-| How proposal blocks are parsed and applied to the DB | `WORKFLOW_ADVISOR.md` |
+| What's running right now? | `docs/STATUS.md` |
+| What's the next task? | `docs/architecture-v2/CURRENT.md` |
+| How does the LLM agentic loop work? | `docs/ARCHITECTURE.md` |
+| How does auth work? | `docs/AUTH.md` |
+| What columns does `them.agents` have? | `docs/SCHEMA.md` |
+| What Redis TTL does `them:token:*` have? | `docs/REDIS.md` |
+| Which routes does Go own? | `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md` |
+| What burned us before? | `docs/LESSONS.md` |
+| Historical plans and reports? | `docs/architecture-v2/archive/` |
