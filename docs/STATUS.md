@@ -53,7 +53,7 @@ Add `--profile go` to enable Go routing (Waves 1-8 admin + WS/SSE ownership).
 | Admin sessions | List + disconnect |
 | Admin LLM providers | Full CRUD + routing/config |
 | Admin monitoring-config | GET + PUT |
-| Runs (reads) | `GET /api/v1/runs`, `GET /api/v1/runs/stats`, `GET /api/v1/runs/{id}`, `GET /api/v1/runs/{id}/tasks`, `GET /api/v1/runs/{id}/artifacts`, `POST /api/v1/runs/{id}/signal` |
+| Runs | `GET /api/v1/runs`, `GET /api/v1/runs/stats`, `GET /api/v1/runs/{id}`, `GET /api/v1/runs/{id}/tasks`, `GET /api/v1/runs/{id}/artifacts`, `POST /api/v1/runs/{id}/signal`, `PATCH /api/v1/runs/{id}/cancel`, `DELETE /api/v1/runs/{id}`, `POST /api/v1/runs/bulk-delete` |
 | WS/SSE | `/apps/{slug}/ws`, `/apps/{slug}/sse`, `/ws/orchestrate/{app}/{ep}`, `/sse/orchestrate/{app}/{ep}` |
 | Auth | `/api/v1/auth/*` (login, me, refresh, logout) |
 
@@ -61,7 +61,7 @@ Add `--profile go` to enable Go routing (Waves 1-8 admin + WS/SSE ownership).
 
 | Domain | Routes |
 |---|---|
-| Runs (remaining) | context/{ctx}/artifacts, cancel, delete, bulk-delete |
+| Runs (low-priority) | context/{ctx}/artifacts (not used by admin UI) |
 | Applications (remaining) | export, import, restore, middleware-wirings, orchestrator test-llm/tts/voice |
 | A2A server | `/a2a/*` |
 | Health (bare) | `GET /health` |
@@ -71,11 +71,11 @@ Add `--profile go` to enable Go routing (Waves 1-8 admin + WS/SSE ownership).
 
 ## Current migration target
 
-**Runs READ slice** — complete as of cf953cf.
+**Runs WRITE slice** — complete as of a6b9953, live Python-OFF verified 2026-08-15.
 
-All 5 GET runs endpoints are Go-owned: `/runs`, `/runs/stats`, `/runs/{id}`, `/runs/{id}/tasks`, `/runs/{id}/artifacts`.
+All Runs routes Go-owned (both READ and WRITE): `/runs`, `/runs/stats`, `/runs/{id}`, `/runs/{id}/tasks`, `/runs/{id}/artifacts`, `/runs/{id}/signal`, `/runs/{id}/cancel`, `DELETE /runs/{id}`, `/runs/bulk-delete`.
 
-Next: Runs writes (cancel, delete, bulk-delete).
+Next: Applications export/import/restore + middleware-wirings (Wave 8).
 
 ---
 

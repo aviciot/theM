@@ -92,20 +92,20 @@ After runs writes complete: the Applications page still partially relies on Pyth
 
 Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`
 
-Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`
-
 ---
 
-## Python-OFF baseline (2026-08-15, verified with cf953cf)
+## Python-OFF baseline (2026-08-15, verified with a6b9953 + live smoke tests at cddc30a)
 
-**Confirmed working with Python OFF, Go active:**
+**Confirmed working with Python OFF, Go active (them-bridge + them-worker stopped):**
 - All admin routes (Waves 1-8): agents CRUD+discover+test+security-scan, orchestrators, applications, tokens, sessions, LLM providers, monitoring-config ✓
 - Runs READ: `GET /runs`, `/runs/stats`, `/runs/{id}`, `/runs/{id}/tasks`, `/runs/{id}/artifacts` → all 200 ✓
+- Runs WRITE: `PATCH /runs/{id}/cancel` → 200 (canceled), 409 (not running) ✓
+- Runs WRITE: `DELETE /runs/{id}` → 204, 404 (not found) ✓
+- Runs WRITE: `POST /runs/bulk-delete` → 200 `{"deleted":N}` ✓
 - Auth (login, me, refresh) → auth-go 200 ✓
 - `/health/live`, `/health/ready` → Go 200 ✓
 
 **Still broken with Python OFF:**
-- Runs writes: cancel, delete, bulk-delete → requires deploying updated Go image (`--profile go` stack rebuild)
 - `GET /runs/context/{ctx}/artifacts` → 404 (no Traefik rule, no Go handler; not used by admin UI)
 - `GET /apps`, `GET /apps/{slug}` → 404 (Traefik only captures WS/SSE paths for apps)
 - `GET /health` (bare) → 404 (no Traefik router)

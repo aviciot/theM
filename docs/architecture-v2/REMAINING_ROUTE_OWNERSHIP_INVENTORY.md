@@ -216,49 +216,34 @@ Fix applied in `docker-compose.traefik.yml`.
 
 | Method | Path | Python impl | Go impl | Live owner | Migration | Source |
 |---|---|---|---|---|---|---|
-| GET | `/api/v1/runs` | ✓ | ✓ | **Go** (p=110) | **broken** | `go/internal/admin/runs.go:28` |
-| GET | `/api/v1/runs/{run_id}` | ✓ | ✓ | **Go** (p=110) | **broken** | `go/internal/admin/runs.go:29` |
-| POST | `/api/v1/runs/{run_id}/signal` | ✓ | ✓ | **Go** (p=115) | complete | `go/internal/admin/runs.go:30` |
-| GET | `/api/v1/runs/stats` | ✓ | ✗ | **Go** (p=110) ⚠ | **broken** | `app/routers/runs.py:156` |
-| GET | `/api/v1/runs/contexts` | ✓ | ✗ | **Go** (p=110) ⚠ | **broken** | `app/routers/runs.py:187` |
-| POST | `/api/v1/runs/bulk-delete` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:267` |
-| DELETE | `/api/v1/runs/{run_id}` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:316` |
-| PATCH | `/api/v1/runs/{run_id}/cancel` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:334` |
-| GET | `/api/v1/runs/{run_id}/tasks` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:478` |
-| GET | `/api/v1/runs/{run_id}/artifacts` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:495` |
+| GET | `/api/v1/runs` | ✓ | ✓ | **Go** (p=110) | **complete** | `go/internal/admin/runs.go:30` |
+| GET | `/api/v1/runs/{run_id}` | ✓ | ✓ | **Go** (p=110) | **complete** | `go/internal/admin/runs.go:35` |
+| POST | `/api/v1/runs/{run_id}/signal` | ✓ | ✓ | **Go** (p=115) | complete | `go/internal/admin/runs.go:47` |
+| GET | `/api/v1/runs/stats` | ✓ | ✓ | **Go** (p=110) | **complete** | `go/internal/admin/runs.go:32` |
+| GET | `/api/v1/runs/contexts` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:187` |
+| POST | `/api/v1/runs/bulk-delete` | ✓ | ✓ | **Go** (p=116) | **complete** | `go/internal/admin/runs.go:33` |
+| DELETE | `/api/v1/runs/{run_id}` | ✓ | ✓ | **Go** (p=114) | **complete** | `go/internal/admin/runs.go:36` |
+| PATCH | `/api/v1/runs/{run_id}/cancel` | ✓ | ✓ | **Go** (p=116) | **complete** | `go/internal/admin/runs.go:34` |
+| GET | `/api/v1/runs/{run_id}/tasks` | ✓ | ✓ | **Go** (p=115) | **complete** | `go/internal/admin/runs.go:44` |
+| GET | `/api/v1/runs/{run_id}/artifacts` | ✓ | ✓ | **Go** (p=115) | **complete** | `go/internal/admin/runs.go:45` |
 | GET | `/api/v1/runs/context/{context_id}/artifacts` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:513` |
 | GET | `/api/v1/runs/{run_id}/artifacts/{artifact_id}` | ✗ | ✓ | **Go** (direct) | complete | `go/internal/artifacts/handler.go:68` |
 
 **Notes:**
-- `/runs/stats`: aggregated run statistics for dashboard. No Go handler. **Broken** — Go `admin-reads` Traefik rule matches this path (one segment after `/runs/`) but Go returns 404.
-- `/runs/contexts`: list distinct context sessions. No Go handler. **Broken** — same routing capture as `/runs/stats`.
-- `/runs` and `/runs/{run_id}`: Go handler exists but uses `BearerTenantMiddleware` — requires opaque bearer token, not the session JWT that the admin UI sends. **Returns 401 for admin dashboard users.** Python used `require_jwt` (session JWT) for these. Auth mismatch must be fixed before Go runs list is useful to the UI.
-- `/runs/bulk-delete`: batch delete. Simple SQL. No Go equivalent.
-- `/runs/{run_id}/cancel`: sends Temporal signal to cancel a running workflow. Requires Temporal.
-- `/runs/{run_id}/tasks` and `/runs/{run_id}/artifacts`: list A2A tasks and artifacts for a run. No Go equivalent. These fall through to Python correctly (two-segment path not matched by admin-reads regex).
-- `/runs/context/{context_id}/artifacts`: cross-run artifact lookup. No Go equivalent.
+- **Runs READ + WRITE: fully Go-owned as of a6b9953 (2026-08-15). Live Python-OFF verified.**
+- `/runs/contexts`: list distinct context sessions. No Go handler; falls through to Python.
+- `/runs/context/{context_id}/artifacts`: cross-run artifact lookup. No Go handler; not used by admin UI.
+- `/runs/{run_id}/cancel`: DB-only status update (matches Python behavior — no Temporal signal). Temporal cancellation uses the separate `POST /runs/{id}/signal` endpoint.
 - `/runs/{run_id}/artifacts/{artifact_id}`: single artifact download — Go-only (mounted at direct path before admin router).
 
-**⚠ ROUTING CAPTURE BUG — `/runs/stats` and `/runs/contexts` captured by Go:**
-The `them-go-admin-reads` Traefik rule `PathRegexp(^/api/v1/runs/[^/]+$$) && Method(GET)` matches
-`/api/v1/runs/stats` and `/api/v1/runs/contexts` (both have one path segment after `/runs/`).
-Go has no handler for these paths → Go returns `{"error":"run not found"}` (404).
-Python never sees these requests even when Python is running.
-**Fix required:** Either add Go handlers for stats/contexts (migration) OR narrow the Traefik regex
-to exclude static names like `stats` and `contexts`.
-
-**⚠ AUTH MISMATCH — runs list/detail require bearer token, admin UI sends JWT:**
-Go's runs routes use `BearerTenantMiddleware` — validates opaque `access_tokens` bearer tokens.
-Admin UI calls `/api/v1/runs` with a session JWT (from auth-go login). Go returns 401.
-Python used `require_jwt` (session JWT) for the same routes.
-**Fix required:** Add JWT super_admin auth path to Go's runs list/detail (same pattern as admin routes).
-
-**✓ FIXED — Runs GET rule narrowed (prior fix):**
-`them-go-admin-reads` rule changed from `PathPrefix(/api/v1/runs) && Method(GET)` to:
-`(Path(/api/v1/runs) || PathRegexp(^/api/v1/runs/[^/]+$$)) && Method(GET)`.
-The end-anchored regex matches exactly one path segment after `/runs/` (covers `/{run_id}`) but NOT `/{run_id}/tasks`, `/{run_id}/artifacts`, or `/context/{ctx}/artifacts`.
-Those routes fall through to Python (p=100) correctly.
-However `/stats` and `/contexts` (also one segment) are still captured — see bug above.
+**✓ ROUTING RESOLVED — Runs domain fully migrated (a6b9953, 2026-08-15):**
+- Static routes (`/runs/stats`, `/runs/bulk-delete`) registered before `/{run_id}` in chi router — no wildcard shadowing.
+- `them-go-admin-reads` Traefik GET rule captures `/runs` and `/runs/{run_id}` (Go handles both).
+- Wave 2d (`them-go-runs-signal`): PATCH `/{id}/signal` → Go.
+- Wave 2e (`them-go-runs-sub`): GET `/{id}/tasks`, `/{id}/artifacts` → Go.
+- Wave 2f (`them-go-runs-cancel`, `them-go-runs-delete`, `them-go-runs-bulk-delete`): PATCH cancel, DELETE, POST bulk-delete → Go.
+- All auth mismatch issues were resolved in the Runs READ slice (cf953cf): JWT + RequireSuperAdmin + AdminTenantMiddleware.
+- `/runs/contexts` and `/runs/context/{ctx}/artifacts` remain on Python (not used by admin UI; low priority).
 
 ---
 
@@ -387,13 +372,13 @@ All routes currently served by Python through Traefik:
 | 22 | GET | `/api/v1/admin/system-agents` | System Agents | 100 |
 | 23 | PUT | `/api/v1/admin/system-agents` | System Agents | 100 |
 | 24 | POST | `/api/v1/admin/system-agents/{role}/test-llm` | System Agents | 100 |
-| 25 | GET | `/api/v1/runs/stats` | Runs | 100 |
+| ~~25~~ | ~~GET~~ | ~~`/api/v1/runs/stats`~~ | ~~Runs~~ | **Go** |
 | 26 | GET | `/api/v1/runs/contexts` | Runs | 100 |
-| 27 | POST | `/api/v1/runs/bulk-delete` | Runs | 100 |
-| 28 | DELETE | `/api/v1/runs/{run_id}` | Runs | 100 |
-| 29 | PATCH | `/api/v1/runs/{run_id}/cancel` | Runs | 100 |
-| 30 | GET | `/api/v1/runs/{run_id}/tasks` | Runs | 100 |
-| 31 | GET | `/api/v1/runs/{run_id}/artifacts` | Runs | 100 |
+| ~~27~~ | ~~POST~~ | ~~`/api/v1/runs/bulk-delete`~~ | ~~Runs~~ | **Go** |
+| ~~28~~ | ~~DELETE~~ | ~~`/api/v1/runs/{run_id}`~~ | ~~Runs~~ | **Go** |
+| ~~29~~ | ~~PATCH~~ | ~~`/api/v1/runs/{run_id}/cancel`~~ | ~~Runs~~ | **Go** |
+| ~~30~~ | ~~GET~~ | ~~`/api/v1/runs/{run_id}/tasks`~~ | ~~Runs~~ | **Go** |
+| ~~31~~ | ~~GET~~ | ~~`/api/v1/runs/{run_id}/artifacts`~~ | ~~Runs~~ | **Go** |
 | 32 | GET | `/api/v1/runs/context/{context_id}/artifacts` | Runs | 100 |
 | 33 | GET | `/api/v1/orchestrators/{name}/transcribe` *(legacy)* | Voice | 100 |
 | 34 | POST | `/api/v1/orchestrators/{name}/tts` *(legacy)* | Voice | 100 |
@@ -468,7 +453,7 @@ The base `docker-compose.yml` contains the Wave 1b, Wave 5, Wave 6, Wave 7 Go ro
 | Wave | Routes | Domain | Dependencies | Difficulty |
 |---|---|---|---|---|
 | **Wave 8** | Applications special ops: export, import, restore, bulk-delete, runtime | Applications | Port `app_compiler.py` graph logic to Go; Redis flush; no crypto | **Medium** |
-| Wave 9 | Remaining runs: stats, contexts, cancel, bulk-delete, tasks, artifacts | Runs | Temporal cancel; task/artifact DB queries | Medium |
+| ~~Wave 9~~ | ~~Remaining runs: stats, contexts, cancel, bulk-delete, tasks, artifacts~~ | ~~Runs~~ | ~~complete~~ | ~~complete~~ |
 | Wave 10 | Middleware defs CRUD + app middleware-wirings | Middleware | New Go package; Redis flush | Low-Medium |
 | Wave 11 | System agents CRUD | System Agents | Config table (already Go) | Low |
 | Wave 12 | Apps catalogue: GET /apps, GET /apps/{slug}, POST /apps/{slug} (REST) | Apps/REST | Admission gate; task store | Medium |
