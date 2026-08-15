@@ -53,7 +53,7 @@ Add `--profile go` to enable Go routing (Waves 1-8 admin + WS/SSE ownership).
 | Admin sessions | List + disconnect |
 | Admin LLM providers | Full CRUD + routing/config |
 | Admin monitoring-config | GET + PUT |
-| Runs | `GET /api/v1/runs`, `GET /api/v1/runs/{id}`, `POST /api/v1/runs/{id}/signal` |
+| Runs (reads) | `GET /api/v1/runs`, `GET /api/v1/runs/stats`, `GET /api/v1/runs/{id}`, `GET /api/v1/runs/{id}/tasks`, `GET /api/v1/runs/{id}/artifacts`, `POST /api/v1/runs/{id}/signal` |
 | WS/SSE | `/apps/{slug}/ws`, `/apps/{slug}/sse`, `/ws/orchestrate/{app}/{ep}`, `/sse/orchestrate/{app}/{ep}` |
 | Auth | `/api/v1/auth/*` (login, me, refresh, logout) |
 
@@ -61,7 +61,7 @@ Add `--profile go` to enable Go routing (Waves 1-8 admin + WS/SSE ownership).
 
 | Domain | Routes |
 |---|---|
-| Runs (remaining) | stats, contexts, tasks, artifacts, cancel, delete, bulk-delete |
+| Runs (remaining) | context/{ctx}/artifacts, cancel, delete, bulk-delete |
 | Applications (remaining) | export, import, restore, middleware-wirings, orchestrator test-llm/tts/voice |
 | A2A server | `/a2a/*` |
 | Health (bare) | `GET /health` |
@@ -71,9 +71,11 @@ Add `--profile go` to enable Go routing (Waves 1-8 admin + WS/SSE ownership).
 
 ## Current migration target
 
-**Agents Store slice** — complete as of 888861b.
+**Runs READ slice** — complete as of cf953cf.
 
-Next: Runs read/audit tail — port `/stats`, `/contexts`, `/{id}/tasks`, `/{id}/artifacts` to Go.
+All 5 GET runs endpoints are Go-owned: `/runs`, `/runs/stats`, `/runs/{id}`, `/runs/{id}/tasks`, `/runs/{id}/artifacts`.
+
+Next: Runs writes (cancel, delete, bulk-delete).
 
 ---
 

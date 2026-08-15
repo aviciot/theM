@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `ca29acd` — aligned to origin/main (local dev server, 2026-08-15)
+Commit: `cf953cf` — Runs READ/UI slice complete (2026-08-15)
 
 ---
 
@@ -44,60 +44,59 @@ All containers healthy. See `docs/STATUS.md` for full container list.
 
 ## Current migration slice
 
-**Agents Store — COMPLETE** (888861b and prior commits this cycle)
+**Runs READ/UI — COMPLETE** (cf953cf, 2026-08-15)
 
 What was done:
-- `POST /agents/discover` → Go (classify via Anthropic, fetch card)
-- `POST /agents/{id}/test` → Go (connectivity check, latency_ms)
-- `POST /agents/{id}/security-scan` → Go (async scan job, 202 response)
-- `AdminTenantMiddleware` replacing `BearerTenantMiddleware` for UI admin routes
-- Go auth service cutover complete; Python auth container removed
+- Auth fixed: runs routes moved from `BearerTenantMiddleware` to `JWT + RequireSuperAdmin + AdminTenantMiddleware` — session JWTs from auth-go now work
+- New handlers: `GET /runs/stats`, `GET /runs/{id}` (now returns RunDetail with steps/usage/children), `GET /runs/{id}/tasks`, `GET /runs/{id}/artifacts`
+- New DAL types: `RunStep`, `RunUsage`, `RunDetail`, `Task`, `ArtifactPart`, `Artifact`, `RunStats`
+- New DAL methods: `GetRunStats`, `GetRunDetail`, `GetRunTasks`, `GetRunArtifacts`
+- Static route `/runs/stats` registered before `/{run_id}` to prevent chi wildcard shadowing
+- Traefik Wave 2e added: `them-go-runs-sub` rule captures `/{id}/tasks` and `/{id}/artifacts`
+- `THE_M_API_URL` in dev overlay changed to `http://them-traefik:8088` — Next.js proxy now routes through Go
+- 8 new tests (RS-1/2, RD-1, RT-1/2, RA-1/2, RO-1) in `go/internal/admin/runs_test.go`
+- Python-OFF verified: all 5 GET endpoints return 200 with `them-bridge` stopped
+
+**Agents Store — COMPLETE** (888861b)
+
+- `POST /agents/discover` → Go
+- `POST /agents/{id}/test` → Go
+- `POST /agents/{id}/security-scan` → Go
+- `AdminTenantMiddleware` for UI admin routes
+- Go auth service cutover; Python auth container removed
 
 ---
 
 ## Next recommended task
 
-**Fix runs auth mismatch** — this is blocking the entire Runs section of the admin UI.
+**Runs writes** (cancel, delete, bulk-delete) — still on Python.
 
-Root cause: Go's runs routes (`GET /api/v1/runs`, `GET /api/v1/runs/{id}`) use `BearerTenantMiddleware`, which requires an opaque bearer token from `access_tokens`. The admin UI sends a session JWT (from `them-auth-go`). Go returns 401. Python used `require_jwt` (session JWT) for the same routes.
+Routes not yet migrated to Go:
+- `POST /runs/{id}/cancel` — Python
+- `DELETE /runs/{id}` — Python
+- `DELETE /runs` (bulk with filters) — Python
+- `GET /runs/context/{ctx}/artifacts` — Python (not used by admin UI; low priority)
 
-Additionally: `GET /api/v1/runs/stats` and `GET /api/v1/runs/contexts` are captured by the Go `admin-reads` Traefik rule but have no Go handler → 404 even with Python running.
-
-**Two changes needed in one session:**
-1. Add JWT super_admin auth path to Go runs list (`GET /runs`) and detail (`GET /runs/{id}`) — same auth pattern as admin routes (jwtMiddleware + RequireSuperAdmin, no BearerTenantMiddleware for super_admin callers)
-2. Add Go handlers for `GET /runs/stats` and `GET /runs/contexts` — or narrow the Traefik regex to `PathRegexp(^/api/v1/runs/[0-9a-f-]{36}$)` to exclude static sub-paths
-
-After that: port `GET /runs/{id}/tasks`, `GET /runs/{id}/artifacts`, `GET /runs/context/{ctx}/artifacts` to Go.
-Then runs writes (cancel, delete, bulk-delete).
+After runs writes: the Applications page still partially relies on Python for export/import/restore and middleware-wirings. Consider as next slice.
 
 Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`
 
 ---
 
-## Real Python-OFF baseline (2026-08-15 with Go profile active)
+## Python-OFF baseline (2026-08-15, verified with cf953cf)
 
 **Confirmed working with Python OFF, Go active:**
-- All of Wave 1-7 admin routes: agents, orchestrators, applications, tokens, sessions, LLM providers, monitoring-config ✓
-- Agent CRUD, discover, test ✓ (discover takes `endpoint_url` not `url`)
-- Security-scan returns 503 if `security_scanner` agent slug not registered (expected without `--profile security`)
-- `/health/live`, `/health/ready` → Go 200 ✓
+- All admin routes (Waves 1-8): agents CRUD+discover+test+security-scan, orchestrators, applications, tokens, sessions, LLM providers, monitoring-config ✓
+- Runs READ: `GET /runs`, `/runs/stats`, `/runs/{id}`, `/runs/{id}/tasks`, `/runs/{id}/artifacts` → all 200 ✓
 - Auth (login, me, refresh) → auth-go 200 ✓
+- `/health/live`, `/health/ready` → Go 200 ✓
 
-**Broken with Python OFF, Go active:**
-- `GET /api/v1/runs`, `GET /api/v1/runs/{id}` → Go 401 (BearerTenantMiddleware rejects session JWT)
-- `GET /api/v1/runs/stats`, `GET /api/v1/runs/contexts` → Go 404 (captured by Traefik rule, no handler)
-- `GET /api/v1/runs/{id}/tasks`, `GET /api/v1/runs/{id}/artifacts` → 404 (Python stopped, no Go handler)
-- `GET /apps`, `GET /apps/{slug}`, `POST /apps/{slug}` → 404 (no Traefik router for non-WS/SSE apps routes; falls to frontend)
-- `GET /health` (bare) → 404 (no Traefik router; falls to frontend)
-
-**Important discovery:** Go binary in Docker was built 2026-07-28 — predated Wave 8 agent action handlers. Rebuilt on 2026-08-15. Always rebuild `them-go-bridge` at session start if Go source was changed since last container start.
-
----
-
-## Known baseline issue
-
-`GET /api/v1/runs` returns 401 with Go active (JWT auth incompatibility).
-Pre-existing data issue: one run row has NULL fields — causes Python validation error when Python serves runs.
+**Still broken with Python OFF:**
+- Runs writes: cancel, delete, bulk-delete → 404/405 (no Go handler)
+- `GET /runs/context/{ctx}/artifacts` → 404 (no Traefik rule, no Go handler; not used by admin UI)
+- `GET /apps`, `GET /apps/{slug}` → 404 (Traefik only captures WS/SSE paths for apps)
+- `GET /health` (bare) → 404 (no Traefik router)
+- Applications export/import/restore/middleware-wirings → Python only
 
 ---
 
