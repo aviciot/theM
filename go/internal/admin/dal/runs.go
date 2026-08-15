@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // runSelectCols is the column list shared by ListRuns and GetRun queries.
@@ -251,6 +252,61 @@ func (d *DB) GetRunTasks(ctx context.Context, runID string) ([]Task, error) {
 		tasks = append(tasks, t)
 	}
 	return tasks, nil
+}
+
+// CancelRun sets a running run to "canceled" with ended_at=now() and a fixed error message.
+// Returns pgx.ErrNoRows if the run does not exist or does not belong to the tenant.
+// Returns ErrRunNotRunning if the run status is not "running".
+func (d *DB) CancelRun(ctx context.Context, tenantID, runID string) (Run, error) {
+	q := `UPDATE them.runs
+	      SET status = 'canceled', ended_at = now(), error = 'Canceled by user'
+	      WHERE id = $1::uuid AND tenant_id = $2::uuid AND status = 'running'
+	      RETURNING ` + runSelectCols
+	return scanRun(d.q.QueryRow(ctx, q, runID, tenantID))
+}
+
+// DeleteRun deletes a single run scoped to the tenant.
+// Uses RETURNING id::text so that no matching row → pgx.ErrNoRows.
+func (d *DB) DeleteRun(ctx context.Context, tenantID, runID string) error {
+	var id string
+	return d.q.ExecReturning(ctx,
+		`DELETE FROM them.runs WHERE id = $1::uuid AND tenant_id = $2::uuid RETURNING id::text`,
+		runID, tenantID,
+	).Scan(&id)
+}
+
+// BulkDeleteRuns deletes up to 500 runs by ID, scoped to the tenant.
+// Returns the number of rows deleted (via RETURNING).
+func (d *DB) BulkDeleteRuns(ctx context.Context, tenantID string, runIDs []string) (int64, error) {
+	if len(runIDs) == 0 {
+		return 0, nil
+	}
+	// Build $2, $3, … placeholders for the run ID list.
+	args := make([]any, 0, len(runIDs)+1)
+	args = append(args, tenantID)
+	placeholders := make([]string, len(runIDs))
+	for i, id := range runIDs {
+		args = append(args, id)
+		placeholders[i] = fmt.Sprintf("$%d::uuid", i+2)
+	}
+	q := fmt.Sprintf(
+		`DELETE FROM them.runs WHERE tenant_id = $1::uuid AND id IN (%s) RETURNING id::text`,
+		strings.Join(placeholders, ","),
+	)
+	rows, err := d.q.Query(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var count int64
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
 }
 
 // GetRunArtifacts returns artifacts for a run via their tasks, ordered by created_at.

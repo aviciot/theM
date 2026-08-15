@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `cf953cf` — Runs READ/UI slice complete (2026-08-15)
+Commit: TBD (pending commit) — Runs WRITE slice complete (2026-08-15)
 
 ---
 
@@ -44,6 +44,18 @@ All containers healthy. See `docs/STATUS.md` for full container list.
 
 ## Current migration slice
 
+**Runs WRITE — COMPLETE** (2026-08-15)
+
+What was done:
+- New DAL methods: `CancelRun` (UPDATE...RETURNING), `DeleteRun` (DELETE...RETURNING), `BulkDeleteRuns` (DELETE...RETURNING with IN list)
+- New service methods: `Cancel` (404/409 distinction via fallback GetRun), `Delete`, `BulkDelete` (max 500 IDs enforced)
+- New handlers: `PATCH /runs/{run_id}/cancel`, `DELETE /runs/{run_id}`, `POST /runs/bulk-delete`
+- `POST /runs/bulk-delete` registered as static route before `/{run_id}` to prevent wildcard shadowing
+- Traefik Wave 2f: 3 new routers — `them-go-runs-cancel` (PATCH, priority 116), `them-go-runs-delete` (DELETE, priority 114), `them-go-runs-bulk-delete` (POST, priority 116)
+- 6 new handler tests (RW-1 through RW-6) in `go/internal/admin/runs_test.go`
+- `isolationFakeDal` and `fakeDal` in service tests updated to satisfy Dal interface
+- All 30 Go packages pass `go test ./...`
+
 **Runs READ/UI — COMPLETE** (cf953cf, 2026-08-15)
 
 What was done:
@@ -69,15 +81,16 @@ What was done:
 
 ## Next recommended task
 
-**Runs writes** (cancel, delete, bulk-delete) — still on Python.
+**Applications export/import/restore + middleware-wirings** — still on Python.
 
 Routes not yet migrated to Go:
-- `POST /runs/{id}/cancel` — Python
-- `DELETE /runs/{id}` — Python
-- `DELETE /runs` (bulk with filters) — Python
 - `GET /runs/context/{ctx}/artifacts` — Python (not used by admin UI; low priority)
+- Applications export/import/restore routes
+- Middleware-wiring admin routes
 
-After runs writes: the Applications page still partially relies on Python for export/import/restore and middleware-wirings. Consider as next slice.
+After runs writes complete: the Applications page still partially relies on Python. Consider as next slice.
+
+Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`
 
 Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`
 
@@ -92,7 +105,7 @@ Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.
 - `/health/live`, `/health/ready` → Go 200 ✓
 
 **Still broken with Python OFF:**
-- Runs writes: cancel, delete, bulk-delete → 404/405 (no Go handler)
+- Runs writes: cancel, delete, bulk-delete → requires deploying updated Go image (`--profile go` stack rebuild)
 - `GET /runs/context/{ctx}/artifacts` → 404 (no Traefik rule, no Go handler; not used by admin UI)
 - `GET /apps`, `GET /apps/{slug}` → 404 (Traefik only captures WS/SSE paths for apps)
 - `GET /health` (bare) → 404 (no Traefik router)

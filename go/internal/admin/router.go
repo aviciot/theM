@@ -69,7 +69,10 @@ import (
 //	DELETE /admin/llm-providers/{id}
 //	GET    /runs
 //	GET    /runs/stats
+//	POST   /runs/bulk-delete
 //	GET    /runs/{run_id}
+//	PATCH  /runs/{run_id}/cancel
+//	DELETE /runs/{run_id}
 //	GET    /runs/{run_id}/tasks
 //	GET    /runs/{run_id}/artifacts
 //	POST   /runs/{run_id}/signal

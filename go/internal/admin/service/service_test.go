@@ -198,6 +198,13 @@ func (f *fakeDal) GetRunTasks(_ context.Context, _ string) ([]dal.Task, error) {
 func (f *fakeDal) GetRunArtifacts(_ context.Context, _ string) ([]dal.Artifact, error) {
 	return []dal.Artifact{}, nil
 }
+func (f *fakeDal) CancelRun(_ context.Context, _, _ string) (dal.Run, error) {
+	return f.run, f.getRunErr
+}
+func (f *fakeDal) DeleteRun(_ context.Context, _, _ string) error { return f.getRunErr }
+func (f *fakeDal) BulkDeleteRuns(_ context.Context, _ string, ids []string) (int64, error) {
+	return int64(len(ids)), nil
+}
 
 func (f *fakeDal) ListTokens(_ context.Context, _ string, _ *int64) ([]dal.Token, error) {
 	return f.tokens, f.listTokensErr

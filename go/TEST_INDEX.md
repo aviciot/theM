@@ -485,6 +485,12 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 | `TestRunsArtifacts_Empty` | RA-1: GET /runs/{run_id}/artifacts, no rows → `[]` not null |
 | `TestRunsArtifacts_WithData` | RA-2: GET /runs/{run_id}/artifacts with rows → Artifact array with parts parsed |
 | `TestRunsRoute_StatsNotParsedAsRunID` | RO-1: GET /runs/stats → stats JSON not run-not-found (static route wins over /{run_id} wildcard) |
+| `TestRunsCancel_Success` | RW-1: PATCH /runs/{run_id}/cancel with matching run → 200 Run JSON |
+| `TestRunsCancel_NotFound` | RW-2: PATCH /runs/{run_id}/cancel run not found (both QueryRows return ErrNoRows) → 404 |
+| `TestRunsDelete_Success` | RW-3: DELETE /runs/{run_id} → 204 No Content |
+| `TestRunsDelete_NotFound` | RW-4: DELETE /runs/{run_id} run not found → 404 |
+| `TestRunsBulkDelete_WithIDs` | RW-5: POST /runs/bulk-delete with IDs → 200 `{"deleted":1}` |
+| `TestRunsBulkDelete_EmptyIDs` | RW-6: POST /runs/bulk-delete empty run_ids → 200 `{"deleted":0}` without DB hit |
 | `TestUpdateEntryPoint_NoSlugChange_PublishesSlug` | PUT entry-point (no rename) → publishes slug to `them:ep:config:changed` |
 | `TestUpdateEntryPoint_SlugRename_PublishesBothSlugs` | PUT entry-point (rename) → publishes both old and new slugs |
 | `TestUpdateEntryPoint_SlugRename_OldSlugPublishedFirst` | Old slug published before new slug in rename path |

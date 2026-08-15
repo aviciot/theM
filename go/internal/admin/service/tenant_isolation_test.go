@@ -336,6 +336,13 @@ func (f *isolationFakeDal) ListAppOrchestratorNames(_ context.Context, _ string)
 func (f *isolationFakeDal) BulkDeleteApplications(_ context.Context, _ string, _ []string) (int64, error) {
 	return 0, nil
 }
+func (f *isolationFakeDal) CancelRun(_ context.Context, _, _ string) (dal.Run, error) {
+	return dal.Run{}, nil
+}
+func (f *isolationFakeDal) DeleteRun(_ context.Context, _, _ string) error { return nil }
+func (f *isolationFakeDal) BulkDeleteRuns(_ context.Context, _ string, ids []string) (int64, error) {
+	return int64(len(ids)), nil
+}
 
 // Agent action stubs — platform-global, no tenant scope.
 func (f *isolationFakeDal) GetAgentBySlug(_ context.Context, _ string) (dal.Agent, error) {

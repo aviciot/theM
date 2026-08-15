@@ -1,16 +1,18 @@
 package admin_test
 
-// runs_test.go — unit tests for RunsHandler Stats, Get (RunDetail), Tasks, Artifacts.
+// runs_test.go — unit tests for RunsHandler (Stats, Get (RunDetail), Tasks, Artifacts, writes).
 // Uses the same fakeDB / fakeRows / withTestTenant helpers defined in admin_test.go.
 // multiQueryFakeDB is defined in applications_wave8_test.go (same package).
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -20,11 +22,23 @@ import (
 // serveRuns mounts RunsHandler on a chi router with withTestTenant middleware.
 func serveRuns(t *testing.T, db admin.DBQuerier, method, path string) *httptest.ResponseRecorder {
 	t.Helper()
+	return serveRunsBody(t, db, method, path, nil)
+}
+
+// serveRunsBody is like serveRuns but allows a JSON request body.
+func serveRunsBody(t *testing.T, db admin.DBQuerier, method, path string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
 	h := admin.NewRunsHandler(db, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)
-	req := httptest.NewRequest(method, path, nil)
+	var req *http.Request
+	if body != nil {
+		req = httptest.NewRequest(method, path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		req = httptest.NewRequest(method, path, nil)
+	}
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
@@ -165,6 +179,73 @@ func TestRunsArtifacts_WithData(t *testing.T) {
 	parts, ok := artifacts[0]["parts"].([]any)
 	assert.True(t, ok, "parts must be an array")
 	require.Len(t, parts, 1)
+}
+
+// ── Cancel tests ───────────────────────────────────────────────────────────────
+
+// RW-1: PATCH /runs/{run_id}/cancel with a running run → 200 with Run JSON.
+// fakeDB.QueryRow returns &fakeRow{err:nil} → scanRun fills zero values → valid Run.
+func TestRunsCancel_Success(t *testing.T) {
+	db := &fakeDB{} // QueryRow returns &fakeRow{err:nil}
+	w := serveRuns(t, db, http.MethodPatch, "/runs/run-abc/cancel")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.NotNil(t, out, "cancel response must be a JSON object")
+}
+
+// RW-2: PATCH /runs/{run_id}/cancel run not found → 404.
+// Both QueryRow calls (UPDATE RETURNING and fallback GetRun) return error → ErrNotFound.
+func TestRunsCancel_NotFound(t *testing.T) {
+	db := &fakeDB{queryRowErr: pgx.ErrNoRows}
+	w := serveRuns(t, db, http.MethodPatch, "/runs/run-abc/cancel")
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ── Delete tests ───────────────────────────────────────────────────────────────
+
+// RW-3: DELETE /runs/{run_id} success → 204 No Content.
+func TestRunsDelete_Success(t *testing.T) {
+	db := &fakeDB{execRetStr: "run-abc"} // ExecReturning returns the run ID
+	w := serveRuns(t, db, http.MethodDelete, "/runs/run-abc")
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+}
+
+// RW-4: DELETE /runs/{run_id} run not found → 404.
+func TestRunsDelete_NotFound(t *testing.T) {
+	db := &fakeDB{execRetErr: pgx.ErrNoRows}
+	w := serveRuns(t, db, http.MethodDelete, "/runs/run-abc")
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ── BulkDelete tests ────────────────────────────────────────────────────────
+
+// RW-5: POST /runs/bulk-delete with IDs → 200 {"deleted": 1}.
+// fakeDB.Query returns one row with an ID string; BulkDeleteRuns counts them.
+func TestRunsBulkDelete_WithIDs(t *testing.T) {
+	db := &fakeDB{queryRows: newFakeRows([][]any{{"run-1"}})}
+	body, _ := json.Marshal(map[string]any{"run_ids": []string{"run-1"}})
+	w := serveRunsBody(t, db, http.MethodPost, "/runs/bulk-delete", body)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, float64(1), out["deleted"])
+}
+
+// RW-6: POST /runs/bulk-delete with empty run_ids → 200 {"deleted": 0} without hitting DB.
+func TestRunsBulkDelete_EmptyIDs(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{"run_ids": []string{}})
+	w := serveRunsBody(t, &fakeDB{}, http.MethodPost, "/runs/bulk-delete", body)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, float64(0), out["deleted"])
 }
 
 // ── Route ordering test ────────────────────────────────────────────────────────
