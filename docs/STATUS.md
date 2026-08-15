@@ -1,10 +1,16 @@
 # the-M — Current Status
 # Last updated: 2026-08-15
-# HEAD: 888861b
+# HEAD: ca29acd
 
 ---
 
 ## What is running
+
+### Local Linux (dev overlay) — startup command
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d
+```
+UI: `http://<server-ip>:8088`
 
 | Container | Source | Port | Status |
 |---|---|---|---|
@@ -13,16 +19,23 @@
 | `them-redis` | redis:7 | 6379 (internal) | Running |
 | `them-auth-go` | `go/cmd/auth-server` | 8703 (internal) | Running — sole auth service |
 | `them-bridge` | `app/` (Python FastAPI) | 8001 (internal) | Running — remaining Python routes |
-| `them-go-bridge` | `go/cmd/them` | 8002 (internal) | Running — Go routes (profile: go) |
-| `them-frontend` | `frontend/` (Next.js) | 3200 (internal) | Running |
+| `them-frontend` | `frontend/` (Next.js, dev mode) | 3200 (internal) | Running |
 | `them-worker` | Python Temporal worker | — | Running |
-| `them-go-bridge-2` | Go replica | 8002 (internal) | Running (profile: temporal) |
-| `them-go-worker` | Go Temporal worker | — | Running |
-| `them-security-agent` | `agents/security_scanner` | 9500 | Running (profile: security) |
 | `vision-agent` | `agents/vision_agent` | 9100 | Running |
-| A2A test agents | `agents/a2a_*` | 9200-9202 | Available (profile: test-agents) |
+| `temporal-frontend` | temporalio/auto-setup | 7233 (internal) | Running |
+| `temporal-ui` | temporalio/ui | via Traefik /temporal/ | Running |
+
+**Optional profiles:**
+- `--profile go` — adds `them-go-bridge` (Go gateway, Waves 1-8 routes)
+- `--profile go-worker` — adds `them-go-worker` + `them-go-worker-2` (Go Temporal workers)
+- `--profile test-agents` — adds A2A echo/slow/stream test agents
+- `--profile security` — adds `them-security-agent`
+- `--profile debate` — adds debate stack agents
 
 **Removed:** `them-auth-service` (Python auth — removed August 2026, replaced by `them-auth-go`)
+
+**Note:** `them-go-bridge` runs in `--profile go`. Without it, Python bridge handles all routes.
+Add `--profile go` to enable Go routing (Waves 1-8 admin + WS/SSE ownership).
 
 ---
 

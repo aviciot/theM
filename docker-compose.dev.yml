@@ -1,5 +1,5 @@
 version: "3.9"
-# docker-compose.dev.yml — Local development overlay
+# docker-compose.dev.yml — Local Linux development overlay
 #
 # Replaces: docker-compose.local.yml
 #
@@ -12,23 +12,39 @@ version: "3.9"
 #   - proxy-network is created locally (not external) — no infra-traefik
 #   - Frontend runs in dev mode with source bind mount (Turbopack HMR)
 #   - Python bridge mounts source for live reload
-#   - Python bridge owns /ws/* and /sse/* (no Go WS/SSE routing)
-#   - Data stored in ./data/ bind mounts (visible on host, easy to inspect)
+#   - Python bridge owns /ws/* and /sse/* in default mode (Go not active unless --profile go)
+#   - Data stored in named Docker volumes (same as Hetzner, avoids UID issues on Linux)
+#   - Auth: them-auth-go at 8703 (Python auth service removed)
 
 networks:
+  # them-proxy-local already exists from previous deployment; mark external to reuse.
+  # On a fresh install where it doesn't exist yet, change external to false (or remove this override).
   proxy-network:
     name: them-proxy-local
-    driver: bridge
-    external: false
+    external: true
 
 services:
 
+  # ── Postgres: named volume (avoids UID/GID issues on Linux) ──────────────────
+  them-postgres:
+    volumes:
+      - them-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+
+  # ── Redis: named volume ───────────────────────────────────────────────────────
+  them-redis:
+    volumes:
+      - them-redis-data:/data
+      - ./redis/config/redis.conf:/etc/redis/redis.conf:ro
+
   # ── Python bridge: source bind mount for live reload ─────────────────────────
+  # Python owns /ws/* and /sse/* in default dev mode.
+  # To enable Go WS/SSE routing, use --profile go to start them-go-bridge.
   # Owns /ws/* and /sse/* here — Go bridge is not active in local dev by default.
   them-bridge:
     volumes:
       - .:/app
-      - ./data/them-logs:/app/logs
+      - them-logs:/app/logs
     labels:
       - "traefik.enable=true"
       - "traefik-instance=them"
@@ -73,7 +89,7 @@ services:
       NODE_ENV: development
       PORT: "3200"
       THE_M_API_URL: "http://them-bridge:8001"
-      THE_M_AUTH_URL: "http://them-auth-service:8701"
+      THE_M_AUTH_URL: "http://them-auth-go:8703"
       NEXT_PUBLIC_BRIDGE_WS_URL: ""
     labels:
       - "traefik.enable=true"
@@ -101,7 +117,7 @@ services:
   them-go-worker:
     build:
       context: .
-      dockerfile: Dockerfile.go.worker
+      dockerfile: Dockerfile.go-worker
     container_name: them-go-worker
     profiles: [go-worker]
     environment:
@@ -138,7 +154,7 @@ services:
   them-go-worker-2:
     build:
       context: .
-      dockerfile: Dockerfile.go.worker
+      dockerfile: Dockerfile.go-worker
     container_name: them-go-worker-2
     profiles: [go-worker]
     environment:
@@ -170,3 +186,17 @@ services:
       options:
         max-size: "50m"
         max-file: "10"
+
+# ── Named volumes (Docker manages ownership — no UID/GID issues on Linux) ─────
+# external: true allows re-use of volumes created by a previous project invocation
+# (e.g. after project name changes or stack migrations).
+volumes:
+  them-postgres-data:
+    name: them-postgres-data
+    external: true
+  them-redis-data:
+    name: them-redis-data
+    external: true
+  them-logs:
+    name: them-logs
+    external: true
