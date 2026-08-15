@@ -7,19 +7,38 @@
 ## HEAD
 
 Branch: `main`
-Commit: `888861b` — fix(traefik): sync Go bridge route labels in base compose with Hetzner overlay
+Commit: `ca29acd` — aligned to origin/main (local dev server, 2026-08-15)
 
 ---
 
 ## Deployment state
 
-All containers healthy. See `docs/STATUS.md` for full container list.
+**Active deployment: local Linux server** (moved from Hetzner 2026-08-15)
+
+Stack: `docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d`
+UI: `http://<server-ip>:8088`
 
 Key facts:
 - `them-auth-go` is sole auth service — Python `them-auth-service` removed from compose
-- `them-go-bridge` serves all Go-owned routes behind Traefik
-- `them-bridge` (Python) still handles remaining routes
-- Both Python and Go Temporal workers are registered
+- `them-bridge` (Python) handles all non-auth API routes in default dev mode
+- `them-go-bridge` is NOT started in default dev mode (requires `--profile go`)
+- Without `--profile go`, Traefik has no routers for `/api/v1/`, `/health/`, `/ws/`, `/sse/`, `/apps/`
+- To match Hetzner prod routing: add `--profile go` to startup command
+- `docker-compose.dev.yml` is the local Linux overlay (replaces old `docker-compose.local.yml`)
+- Named Docker volumes: `them-postgres-data`, `them-redis-data`, `them-logs` — `external: true`
+- Project name: `them_gateway` — required for volume/network ownership consistency
+
+All containers healthy. See `docs/STATUS.md` for full container list.
+
+---
+
+## Environment alignment done this session
+
+- `docker-compose.dev.yml` fixed: `THE_M_AUTH_URL` → `them-auth-go:8703`, Dockerfile names, named volumes, external network
+- `.dockerignore` updated: added `theM_gateway/` to prevent build-context permission errors
+- `docs/STATUS.md` updated: HEAD, startup command, container map
+- `docs/architecture-v2/LOCAL_DEV_PYTHON_OFF_AUDIT.md` created: Phase 10/11 route audit
+- Local repo aligned to `origin/main` at `ca29acd` (saved local R-4 work to `local-r4-backup` branch)
 
 ---
 
@@ -48,6 +67,18 @@ What was done:
 No new schema. Pure SQL reads. Self-contained, one session.
 
 After that: runs writes (cancel, delete, bulk-delete).
+
+Full missing-contract inventory: `docs/architecture-v2/LOCAL_DEV_PYTHON_OFF_AUDIT.md`
+
+---
+
+## Known baseline issue
+
+`GET /api/v1/runs` returns 500 with Python ON:
+- Error: `ValidationError: 4 validation errors for RunOut`
+- One run row has `orchestrator_id=NULL, user_id=NULL, session_id=NULL, goal=NULL`
+- A Go-created Temporal run that didn't set these fields
+- Pre-existing; not caused by any recent change
 
 ---
 
