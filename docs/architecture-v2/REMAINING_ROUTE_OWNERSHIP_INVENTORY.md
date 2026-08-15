@@ -1,6 +1,6 @@
 # Route Ownership Inventory — THEM Python → Go Migration
 # Generated: 2026-08-02
-# Updated: 2026-08-15 — agent actions (discover/test/security-scan) marked complete; auth cutover reflected
+# Updated: 2026-08-15 — real Python-OFF UI audit with Go profile active; runs auth mismatch + routing capture bug documented
 # Scope: All externally exposed routes. Source of truth: router registrations + Traefik config.
 # Do NOT trust this document alone — verify against live logs before any cutover.
 
@@ -31,7 +31,13 @@
 | Implemented in Go but NOT yet cut over | 2 (A2A routes — no Traefik labels) |
 | Legacy / deprecation candidates | 4 |
 
-**2026-08-15 update:** Agent actions (discover, test, security-scan) migrated to Go (+3). Go count: 29 → 32. Python auth replaced by Go (`them-auth-go`).
+**2026-08-15 update (initial):** Agent actions (discover, test, security-scan) migrated to Go (+3). Go count: 29 → 32. Python auth replaced by Go (`them-auth-go`).
+
+**2026-08-15 update (real Python-OFF audit with Go profile active):**
+- Go binary was stale (built 2026-07-28); rebuilt to include Wave 8 handlers.
+- `/api/v1/runs` and `/api/v1/runs/{id}`: marked `broken` — Go uses `BearerTenantMiddleware` but admin UI sends session JWT → 401 for all admin dashboard users.
+- `/api/v1/runs/stats` and `/api/v1/runs/contexts`: marked `broken` — caught by Go Traefik rule, Go returns 404. Python never handles them.
+- **Next task: fix runs auth mismatch** — add JWT super_admin path to Go runs endpoints (same pattern as admin routes). This unblocks the entire Runs section of the admin UI.
 
 ---
 
@@ -210,11 +216,11 @@ Fix applied in `docker-compose.traefik.yml`.
 
 | Method | Path | Python impl | Go impl | Live owner | Migration | Source |
 |---|---|---|---|---|---|---|
-| GET | `/api/v1/runs` | ✓ | ✓ | **Go** (p=110) | complete | `go/internal/admin/runs.go:28` |
-| GET | `/api/v1/runs/{run_id}` | ✓ | ✓ | **Go** (p=110) | complete | `go/internal/admin/runs.go:29` |
+| GET | `/api/v1/runs` | ✓ | ✓ | **Go** (p=110) | **broken** | `go/internal/admin/runs.go:28` |
+| GET | `/api/v1/runs/{run_id}` | ✓ | ✓ | **Go** (p=110) | **broken** | `go/internal/admin/runs.go:29` |
 | POST | `/api/v1/runs/{run_id}/signal` | ✓ | ✓ | **Go** (p=115) | complete | `go/internal/admin/runs.go:30` |
-| GET | `/api/v1/runs/stats` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:156` |
-| GET | `/api/v1/runs/contexts` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:187` |
+| GET | `/api/v1/runs/stats` | ✓ | ✗ | **Go** (p=110) ⚠ | **broken** | `app/routers/runs.py:156` |
+| GET | `/api/v1/runs/contexts` | ✓ | ✗ | **Go** (p=110) ⚠ | **broken** | `app/routers/runs.py:187` |
 | POST | `/api/v1/runs/bulk-delete` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:267` |
 | DELETE | `/api/v1/runs/{run_id}` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:316` |
 | PATCH | `/api/v1/runs/{run_id}/cancel` | ✓ | ✗ | Python (p=100) | not-started | `app/routers/runs.py:334` |
@@ -224,20 +230,35 @@ Fix applied in `docker-compose.traefik.yml`.
 | GET | `/api/v1/runs/{run_id}/artifacts/{artifact_id}` | ✗ | ✓ | **Go** (direct) | complete | `go/internal/artifacts/handler.go:68` |
 
 **Notes:**
-- `/runs/stats`: aggregated run statistics for dashboard. No Go equivalent.
-- `/runs/contexts`: list distinct context sessions. No Go equivalent.
+- `/runs/stats`: aggregated run statistics for dashboard. No Go handler. **Broken** — Go `admin-reads` Traefik rule matches this path (one segment after `/runs/`) but Go returns 404.
+- `/runs/contexts`: list distinct context sessions. No Go handler. **Broken** — same routing capture as `/runs/stats`.
+- `/runs` and `/runs/{run_id}`: Go handler exists but uses `BearerTenantMiddleware` — requires opaque bearer token, not the session JWT that the admin UI sends. **Returns 401 for admin dashboard users.** Python used `require_jwt` (session JWT) for these. Auth mismatch must be fixed before Go runs list is useful to the UI.
 - `/runs/bulk-delete`: batch delete. Simple SQL. No Go equivalent.
 - `/runs/{run_id}/cancel`: sends Temporal signal to cancel a running workflow. Requires Temporal.
-- `/runs/{run_id}/tasks` and `/runs/{run_id}/artifacts`: list A2A tasks and artifacts for a run. No Go equivalent.
+- `/runs/{run_id}/tasks` and `/runs/{run_id}/artifacts`: list A2A tasks and artifacts for a run. No Go equivalent. These fall through to Python correctly (two-segment path not matched by admin-reads regex).
 - `/runs/context/{context_id}/artifacts`: cross-run artifact lookup. No Go equivalent.
 - `/runs/{run_id}/artifacts/{artifact_id}`: single artifact download — Go-only (mounted at direct path before admin router).
 
-**✓ FIXED — Runs GET rule narrowed:**
+**⚠ ROUTING CAPTURE BUG — `/runs/stats` and `/runs/contexts` captured by Go:**
+The `them-go-admin-reads` Traefik rule `PathRegexp(^/api/v1/runs/[^/]+$$) && Method(GET)` matches
+`/api/v1/runs/stats` and `/api/v1/runs/contexts` (both have one path segment after `/runs/`).
+Go has no handler for these paths → Go returns `{"error":"run not found"}` (404).
+Python never sees these requests even when Python is running.
+**Fix required:** Either add Go handlers for stats/contexts (migration) OR narrow the Traefik regex
+to exclude static names like `stats` and `contexts`.
+
+**⚠ AUTH MISMATCH — runs list/detail require bearer token, admin UI sends JWT:**
+Go's runs routes use `BearerTenantMiddleware` — validates opaque `access_tokens` bearer tokens.
+Admin UI calls `/api/v1/runs` with a session JWT (from auth-go login). Go returns 401.
+Python used `require_jwt` (session JWT) for the same routes.
+**Fix required:** Add JWT super_admin auth path to Go's runs list/detail (same pattern as admin routes).
+
+**✓ FIXED — Runs GET rule narrowed (prior fix):**
 `them-go-admin-reads` rule changed from `PathPrefix(/api/v1/runs) && Method(GET)` to:
 `(Path(/api/v1/runs) || PathRegexp(^/api/v1/runs/[^/]+$$)) && Method(GET)`.
-The end-anchored regex matches exactly one path segment after `/runs/` (covers `/{run_id}`) but NOT `/{run_id}/tasks`, `/{run_id}/artifacts`, `/stats`, `/contexts`, or `/context/{ctx}/artifacts`.
-Those Python-only routes now correctly fall through to Python (p=100).
-Fix applied in both `docker-compose.traefik.yml` and `docker-compose.yml`.
+The end-anchored regex matches exactly one path segment after `/runs/` (covers `/{run_id}`) but NOT `/{run_id}/tasks`, `/{run_id}/artifacts`, or `/context/{ctx}/artifacts`.
+Those routes fall through to Python (p=100) correctly.
+However `/stats` and `/contexts` (also one segment) are still captured — see bug above.
 
 ---
 

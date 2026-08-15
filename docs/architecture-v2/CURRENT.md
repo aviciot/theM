@@ -57,28 +57,47 @@ What was done:
 
 ## Next recommended task
 
-**Runs read/audit tail** — port these Python routes to Go:
-- `GET /api/v1/runs/stats`
-- `GET /api/v1/runs/contexts`
-- `GET /api/v1/runs/{id}/tasks`
-- `GET /api/v1/runs/{id}/artifacts`
-- `GET /api/v1/runs/context/{ctx_id}/artifacts`
+**Fix runs auth mismatch** — this is blocking the entire Runs section of the admin UI.
 
-No new schema. Pure SQL reads. Self-contained, one session.
+Root cause: Go's runs routes (`GET /api/v1/runs`, `GET /api/v1/runs/{id}`) use `BearerTenantMiddleware`, which requires an opaque bearer token from `access_tokens`. The admin UI sends a session JWT (from `them-auth-go`). Go returns 401. Python used `require_jwt` (session JWT) for the same routes.
 
-After that: runs writes (cancel, delete, bulk-delete).
+Additionally: `GET /api/v1/runs/stats` and `GET /api/v1/runs/contexts` are captured by the Go `admin-reads` Traefik rule but have no Go handler → 404 even with Python running.
 
-Full missing-contract inventory: `docs/architecture-v2/LOCAL_DEV_PYTHON_OFF_AUDIT.md`
+**Two changes needed in one session:**
+1. Add JWT super_admin auth path to Go runs list (`GET /runs`) and detail (`GET /runs/{id}`) — same auth pattern as admin routes (jwtMiddleware + RequireSuperAdmin, no BearerTenantMiddleware for super_admin callers)
+2. Add Go handlers for `GET /runs/stats` and `GET /runs/contexts` — or narrow the Traefik regex to `PathRegexp(^/api/v1/runs/[0-9a-f-]{36}$)` to exclude static sub-paths
+
+After that: port `GET /runs/{id}/tasks`, `GET /runs/{id}/artifacts`, `GET /runs/context/{ctx}/artifacts` to Go.
+Then runs writes (cancel, delete, bulk-delete).
+
+Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`
+
+---
+
+## Real Python-OFF baseline (2026-08-15 with Go profile active)
+
+**Confirmed working with Python OFF, Go active:**
+- All of Wave 1-7 admin routes: agents, orchestrators, applications, tokens, sessions, LLM providers, monitoring-config ✓
+- Agent CRUD, discover, test ✓ (discover takes `endpoint_url` not `url`)
+- Security-scan returns 503 if `security_scanner` agent slug not registered (expected without `--profile security`)
+- `/health/live`, `/health/ready` → Go 200 ✓
+- Auth (login, me, refresh) → auth-go 200 ✓
+
+**Broken with Python OFF, Go active:**
+- `GET /api/v1/runs`, `GET /api/v1/runs/{id}` → Go 401 (BearerTenantMiddleware rejects session JWT)
+- `GET /api/v1/runs/stats`, `GET /api/v1/runs/contexts` → Go 404 (captured by Traefik rule, no handler)
+- `GET /api/v1/runs/{id}/tasks`, `GET /api/v1/runs/{id}/artifacts` → 404 (Python stopped, no Go handler)
+- `GET /apps`, `GET /apps/{slug}`, `POST /apps/{slug}` → 404 (no Traefik router for non-WS/SSE apps routes; falls to frontend)
+- `GET /health` (bare) → 404 (no Traefik router; falls to frontend)
+
+**Important discovery:** Go binary in Docker was built 2026-07-28 — predated Wave 8 agent action handlers. Rebuilt on 2026-08-15. Always rebuild `them-go-bridge` at session start if Go source was changed since last container start.
 
 ---
 
 ## Known baseline issue
 
-`GET /api/v1/runs` returns 500 with Python ON:
-- Error: `ValidationError: 4 validation errors for RunOut`
-- One run row has `orchestrator_id=NULL, user_id=NULL, session_id=NULL, goal=NULL`
-- A Go-created Temporal run that didn't set these fields
-- Pre-existing; not caused by any recent change
+`GET /api/v1/runs` returns 401 with Go active (JWT auth incompatibility).
+Pre-existing data issue: one run row has NULL fields — causes Python validation error when Python serves runs.
 
 ---
 
