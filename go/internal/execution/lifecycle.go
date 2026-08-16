@@ -135,16 +135,19 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	}
 
 	// ── 2. EPConfig resolution ────────────────────────────────────────────────
+	// tenantID comes from req.TenantID which the protocol handler sets from
+	// the caller's auth token or JWT. For public EPs, the handler passes the
+	// bootstrap tenant UUID. Never accept tenantID from request data.
 	if lc.epLoader == nil {
 		lc.logger.Warn("execution: no ep loader configured", "ep_slug", req.EPSlug)
 		return nil, admitErr(AdmitErrInternal)
 	}
-	resolvedCfg, err := lc.epLoader.Load(ctx, req.EPSlug)
+	resolvedCfg, err := lc.epLoader.Load(ctx, req.TenantID, req.EPSlug)
 	if err != nil {
 		if errors.Is(err, epconfig.ErrNotFound) {
 			return nil, admitErr(AdmitErrNotFound)
 		}
-		lc.logger.Warn("execution: epconfig load failed", "ep_slug", req.EPSlug, "error", err)
+		lc.logger.Warn("execution: epconfig load failed", "tenant_id", req.TenantID, "ep_slug", req.EPSlug, "error", err)
 		return nil, admitErr(AdmitErrDBUnavailable)
 	}
 

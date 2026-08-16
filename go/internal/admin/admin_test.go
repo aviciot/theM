@@ -146,13 +146,14 @@ func scanInto(dest, src any) error {
 
 // fakeDB satisfies admin.DBQuerier.
 type fakeDB struct {
-	queryRows   *fakeRows // returned by Query
-	queryRowErr error     // error returned by QueryRow's Scan
-	queryRowStr string    // string value scanned by QueryRow (e.g. slug lookup)
-	execErr     error     // returned by Exec
-	execRetStr  string    // string id returned by ExecReturning (UUID)
-	execRetErr  error     // error returned by ExecReturning's Scan
-	querySQLLog []string  // log of executed SQL
+	queryRows       *fakeRows // returned by Query
+	queryRowErr     error     // error returned by QueryRow's Scan
+	queryRowStr     string    // string value scanned by QueryRow (e.g. slug lookup)
+	queryRowStrings []string  // multi-column QueryRow (e.g. tenantID + slug)
+	execErr         error     // returned by Exec
+	execRetStr      string    // string id returned by ExecReturning (UUID)
+	execRetErr      error     // error returned by ExecReturning's Scan
+	querySQLLog     []string  // log of executed SQL
 }
 
 func (f *fakeDB) Query(_ context.Context, sql string, _ ...any) (admin.RowScanner, error) {
@@ -164,6 +165,9 @@ func (f *fakeDB) Query(_ context.Context, sql string, _ ...any) (admin.RowScanne
 }
 
 func (f *fakeDB) QueryRow(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
+	if f.queryRowStrings != nil {
+		return &multiStringRow{vals: f.queryRowStrings}
+	}
 	if f.queryRowStr != "" {
 		return &stringRow{val: f.queryRowStr}
 	}
@@ -182,6 +186,21 @@ func (r *stringRow) Scan(dest ...any) error {
 		return nil
 	}
 	return fmt.Errorf("stringRow: cannot scan into %T", dest[0])
+}
+
+// multiStringRow scans multiple string values (used for tenant_id + slug lookups).
+type multiStringRow struct{ vals []string }
+
+func (r *multiStringRow) Scan(dest ...any) error {
+	for i, d := range dest {
+		if i >= len(r.vals) {
+			return nil
+		}
+		if sp, ok := d.(*string); ok {
+			*sp = r.vals[i]
+		}
+	}
+	return nil
 }
 
 func (f *fakeDB) Exec(_ context.Context, _ string, _ ...any) error {
@@ -370,8 +389,8 @@ func serveApps(t *testing.T, db *fakeDB, cache admin.CacheInvalidator, method, p
 
 // AI-1: UpdateEntryPoint without slug change — publishes new slug (same as old).
 func TestUpdateEntryPoint_NoSlugChange_PublishesSlug(t *testing.T) {
-	// queryRowStr = old slug returned by the pre-update SELECT
-	db := &fakeDB{queryRowStr: "my-ep"}
+	// queryRowStrings = [tenantID, old slug] returned by the pre-update SELECT
+	db := &fakeDB{queryRowStrings: []string{testTenantID, "my-ep"}}
 	cache := &fakeCache{}
 	body, _ := json.Marshal(map[string]any{
 		"slug":             "my-ep", // unchanged
@@ -379,12 +398,12 @@ func TestUpdateEntryPoint_NoSlugChange_PublishesSlug(t *testing.T) {
 	})
 	w := serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/2", body)
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:my-ep")
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:"+testTenantID+":my-ep")
 }
 
 // AI-1a: UpdateEntryPoint with slug rename — publishes BOTH old and new slugs.
 func TestUpdateEntryPoint_SlugRename_PublishesBothSlugs(t *testing.T) {
-	db := &fakeDB{queryRowStr: "old-slug"} // old slug from DB
+	db := &fakeDB{queryRowStrings: []string{testTenantID, "old-slug"}} // old tenantID+slug from DB
 	cache := &fakeCache{}
 	body, _ := json.Marshal(map[string]any{
 		"slug":             "new-slug", // renamed
@@ -392,15 +411,15 @@ func TestUpdateEntryPoint_SlugRename_PublishesBothSlugs(t *testing.T) {
 	})
 	w := serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/2", body)
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:old-slug",
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:"+testTenantID+":old-slug",
 		"old slug must be evicted so stale cache entry is invalidated")
-	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:new-slug",
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:"+testTenantID+":new-slug",
 		"new slug must be evicted in case it was previously cached under a different EP")
 }
 
 // AI-1b: UpdateEntryPoint — old slug cache entry is evicted (slug rename scenario).
 func TestUpdateEntryPoint_SlugRename_OldSlugPublishedFirst(t *testing.T) {
-	db := &fakeDB{queryRowStr: "original-ep"}
+	db := &fakeDB{queryRowStrings: []string{testTenantID, "original-ep"}}
 	cache := &fakeCache{}
 	body, _ := json.Marshal(map[string]any{
 		"slug":             "renamed-ep",
@@ -409,13 +428,13 @@ func TestUpdateEntryPoint_SlugRename_OldSlugPublishedFirst(t *testing.T) {
 	serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/9", body)
 
 	require.Len(t, cache.publishedMsgs, 2, "exactly two invalidation messages")
-	assert.Equal(t, "them:ep:config:changed:original-ep", cache.publishedMsgs[0],
+	assert.Equal(t, "them:ep:config:changed:"+testTenantID+":original-ep", cache.publishedMsgs[0],
 		"old slug published first")
-	assert.Equal(t, "them:ep:config:changed:renamed-ep", cache.publishedMsgs[1],
+	assert.Equal(t, "them:ep:config:changed:"+testTenantID+":renamed-ep", cache.publishedMsgs[1],
 		"new slug published second")
 }
 
-// AI-1c: UpdateEntryPoint — old slug lookup fails → only new slug published.
+// AI-1c: UpdateEntryPoint — old slug lookup fails → only new slug published (using tenantID from context).
 func TestUpdateEntryPoint_OldSlugLookupFails_OnlyNewSlugPublished(t *testing.T) {
 	db := &fakeDB{queryRowErr: errors.New("no rows")}
 	cache := &fakeCache{}
@@ -425,44 +444,44 @@ func TestUpdateEntryPoint_OldSlugLookupFails_OnlyNewSlugPublished(t *testing.T) 
 	})
 	w := serveApps(t, db, cache, http.MethodPut, "/applications/1/entry-points/3", body)
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, []string{"them:ep:config:changed:only-new-slug"}, cache.publishedMsgs)
+	assert.Equal(t, []string{"them:ep:config:changed:" + testTenantID + ":only-new-slug"}, cache.publishedMsgs)
 }
 
-// AI-2: DeleteEntryPoint fetches slug then publishes it.
+// AI-2: DeleteEntryPoint fetches tenant+slug then publishes it.
 func TestDeleteEntryPoint_PublishesSlug(t *testing.T) {
-	db := &fakeDB{queryRowStr: "slug-to-delete"}
+	db := &fakeDB{queryRowStrings: []string{testTenantID, "slug-to-delete"}}
 	cache := &fakeCache{}
 	w := serveApps(t, db, cache, http.MethodDelete, "/applications/1/entry-points/5", nil)
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:slug-to-delete",
-		"should publish fetched slug to invalidation channel")
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:"+testTenantID+":slug-to-delete",
+		"should publish tenantID:slug to invalidation channel")
 }
 
 // AI-3: UpdateApplication publishes all EP slugs for that app.
 func TestUpdateApplication_PublishesAllEPSlugs(t *testing.T) {
 	slugRows := newFakeRows([][]any{
-		{"ep-one"},
-		{"ep-two"},
+		{testTenantID, "ep-one"},
+		{testTenantID, "ep-two"},
 	})
 	db := &fakeDB{queryRows: slugRows}
 	cache := &fakeCache{}
 	body, _ := json.Marshal(map[string]any{"name": "MyApp"})
 	w := serveApps(t, db, cache, http.MethodPut, "/applications/10", body)
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:ep-one")
-	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:ep-two")
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:"+testTenantID+":ep-one")
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:"+testTenantID+":ep-two")
 }
 
 // AI-4: DeleteApplication (disable) publishes all EP slugs for that app.
 func TestDeleteApplication_PublishesAllEPSlugs(t *testing.T) {
 	slugRows := newFakeRows([][]any{
-		{"ep-alpha"},
+		{testTenantID, "ep-alpha"},
 	})
 	db := &fakeDB{queryRows: slugRows}
 	cache := &fakeCache{}
 	w := serveApps(t, db, cache, http.MethodDelete, "/applications/7", nil)
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:ep-alpha")
+	assert.Contains(t, cache.publishedMsgs, "them:ep:config:changed:"+testTenantID+":ep-alpha")
 }
 
 // AI-5: No cache → no panic (cache is nil).

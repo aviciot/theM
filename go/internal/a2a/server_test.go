@@ -50,7 +50,7 @@ type fakeEPLoader struct {
 	err error
 }
 
-func (f *fakeEPLoader) Load(_ context.Context, _ string) (*epconfig.EPConfig, error) {
+func (f *fakeEPLoader) Load(_ context.Context, _, _ string) (*epconfig.EPConfig, error) {
 	if f.err != nil {
 		return nil, f.err
 	}

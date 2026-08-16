@@ -89,10 +89,12 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 }
 
 // CreateEntryPoint inserts a new entry point row and returns the new UUID.
+// tenant_id is backfilled from the parent application row (migration 028).
 func (d *DB) CreateEntryPoint(ctx context.Context, appID, slug, epType string, enabled bool) (string, error) {
 	const q = `
-		INSERT INTO them.entry_points (application_id, slug, entry_point_type, enabled)
-		VALUES ($1::uuid, $2, $3, $4)
+		INSERT INTO them.entry_points (application_id, tenant_id, slug, entry_point_type, enabled)
+		SELECT $1::uuid, tenant_id, $2, $3, $4
+		  FROM them.applications WHERE id = $1::uuid
 		RETURNING id::text`
 
 	var id string
@@ -113,6 +115,44 @@ func (d *DB) GetEntryPointSlug(ctx context.Context, epID, appID string) (string,
 		return "", err
 	}
 	return slug, nil
+}
+
+// EPTenantSlug is a (tenant_id, slug) pair for cache invalidation.
+type EPTenantSlug struct {
+	TenantID string
+	Slug     string
+}
+
+// GetEntryPointTenantAndSlug returns the tenant_id and slug for cache invalidation.
+// Returns empty strings on error (caller skips invalidation).
+func (d *DB) GetEntryPointTenantAndSlug(ctx context.Context, epID, appID string) EPTenantSlug {
+	row := d.q.QueryRow(ctx,
+		`SELECT tenant_id::text, slug FROM them.entry_points WHERE id=$1::uuid AND application_id=$2::uuid`,
+		epID, appID)
+	var ts EPTenantSlug
+	_ = row.Scan(&ts.TenantID, &ts.Slug)
+	return ts
+}
+
+// ListEPTenantSlugsForApp returns all (tenant_id, slug) pairs for a given application UUID.
+// Used by the cache invalidation helper when an application is modified/deleted.
+func (d *DB) ListEPTenantSlugsForApp(ctx context.Context, appID string) []EPTenantSlug {
+	const q = `SELECT tenant_id::text, slug FROM them.entry_points WHERE application_id = $1::uuid`
+	rows, err := d.q.Query(ctx, q, appID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var result []EPTenantSlug
+	for rows.Next() {
+		var ts EPTenantSlug
+		if err := rows.Scan(&ts.TenantID, &ts.Slug); err != nil {
+			break
+		}
+		result = append(result, ts)
+	}
+	return result
 }
 
 // UpdateEntryPoint modifies an existing entry point row.

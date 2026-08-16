@@ -206,23 +206,28 @@ type EPConfigRow struct {
 
 // DBQuerier is the single query needed by the epconfig loader.
 type DBQuerier interface {
-	// QueryEPConfig fetches the config row for the given EP slug.
+	// QueryEPConfig fetches the config row for the given tenant ID and EP slug.
 	// Returns ErrNotFound (wrapped) when no matching row exists.
-	QueryEPConfig(ctx context.Context, epSlug string) (*EPConfigRow, error)
+	// The tenantID filter prevents cross-tenant slug collision (migration 028).
+	QueryEPConfig(ctx context.Context, tenantID, epSlug string) (*EPConfigRow, error)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Loader
 // ──────────────────────────────────────────────────────────────────────────────
 
-// Loader resolves EPConfig for a given entry point slug. It caches results
+// epCacheKey returns the in-process cache key for a (tenantID, slug) pair.
+// Format: "{tenantID}:{slug}" — same convention as agent registry (SEC-03).
+func epCacheKey(tenantID, slug string) string { return tenantID + ":" + slug }
+
+// Loader resolves EPConfig for a given (tenantID, slug) pair. It caches results
 // for CacheTTL to avoid a DB query on every connection.
 type Loader struct {
 	db     DBQuerier
 	logger *slog.Logger
 
 	mu    sync.Mutex
-	cache map[string]*EPConfig // keyed by ep_slug
+	cache map[string]*EPConfig // keyed by epCacheKey(tenantID, slug)
 }
 
 // NewLoader creates a Loader backed by the given DB querier.
@@ -237,28 +242,32 @@ func NewLoader(db DBQuerier, logger *slog.Logger) *Loader {
 	}
 }
 
-// Load resolves the EPConfig for the given EP slug.
+// Load resolves the EPConfig for the given tenant ID and EP slug.
+// The tenantID must be the authoritative UUID from the caller's auth token or
+// JWT. For public EPs in a single-tenant deployment the bootstrap tenant UUID
+// must be passed explicitly — never infer tenantID from the EP slug.
 //
 // Errors:
-//   - ErrNotFound — no entry point with this slug exists
+//   - ErrNotFound — no entry point with this (tenantID, slug) exists
 //   - ErrDBUnavailable — DB query failed
 //
 // Callers should additionally call CheckAccess after Load to enforce
 // enabled/blocked checks.
-func (l *Loader) Load(ctx context.Context, epSlug string) (*EPConfig, error) {
+func (l *Loader) Load(ctx context.Context, tenantID, epSlug string) (*EPConfig, error) {
+	key := epCacheKey(tenantID, epSlug)
 	l.mu.Lock()
-	if cached, ok := l.cache[epSlug]; ok && !cached.expired() {
+	if cached, ok := l.cache[key]; ok && !cached.expired() {
 		l.mu.Unlock()
 		return cached, nil
 	}
 	l.mu.Unlock()
 
-	row, err := l.db.QueryEPConfig(ctx, epSlug)
+	row, err := l.db.QueryEPConfig(ctx, tenantID, epSlug)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return nil, ErrNotFound
 		}
-		l.logger.Warn("epconfig: db query failed", "ep_slug", epSlug, "error", err)
+		l.logger.Warn("epconfig: db query failed", "tenant_id", tenantID, "ep_slug", epSlug, "error", err)
 		return nil, fmt.Errorf("%w: %v", ErrDBUnavailable, err)
 	}
 
@@ -268,18 +277,19 @@ func (l *Loader) Load(ctx context.Context, epSlug string) (*EPConfig, error) {
 	// re-enabled, ensuring the disabled state is enforced within one request.
 	if cfg.EPEnabled && cfg.AppEnabled {
 		l.mu.Lock()
-		l.cache[epSlug] = cfg
+		l.cache[key] = cfg
 		l.mu.Unlock()
 	}
 
 	return cfg, nil
 }
 
-// Invalidate evicts the cached config for the given EP slug. Call this when
-// the admin API mutates an entry point or its parent application.
-func (l *Loader) Invalidate(epSlug string) {
+// Invalidate evicts the cached config for the given (tenantID, slug) pair.
+// Call this when the admin API mutates an entry point or its parent application.
+func (l *Loader) Invalidate(tenantID, epSlug string) {
+	key := epCacheKey(tenantID, epSlug)
 	l.mu.Lock()
-	delete(l.cache, epSlug)
+	delete(l.cache, key)
 	l.mu.Unlock()
 }
 
@@ -287,9 +297,9 @@ func (l *Loader) Invalidate(epSlug string) {
 // Used when applications.runtime_config is updated.
 func (l *Loader) InvalidateApp(appID string) {
 	l.mu.Lock()
-	for slug, cfg := range l.cache {
+	for key, cfg := range l.cache {
 		if cfg.AppID == appID {
-			delete(l.cache, slug)
+			delete(l.cache, key)
 		}
 	}
 	l.mu.Unlock()
@@ -306,23 +316,47 @@ type RedisSubscriber interface {
 }
 
 // Subscribe starts a background goroutine that listens on EPConfigChannel.
-// Message payloads are either:
-//   - An EP slug string → evict that single entry from the cache.
-//   - A UUID string (app_id, 36 chars with hyphens) → evict all cached entries
-//     belonging to that application (published by Python admin when app config changes).
+// Message payloads are one of three formats:
+//   - "{tenantID}:{slug}" (36+1+slug chars) → evict that single (tenantID, slug) entry.
+//   - A bare UUID string (app_id, exactly 36 chars) → evict all cached entries
+//     belonging to that application (published by the Go admin on app config changes).
+//   - A bare slug string (legacy Python path, no colon, not a UUID) → best-effort evict
+//     any entry matching that slug across all tenants. Python is permanently retired;
+//     this branch is kept only as a safety net during the transition period.
 //
 // Call Subscribe once at startup after creating the Loader. It is optional:
 // without it the 30-second TTL alone bounds staleness.
 func (l *Loader) Subscribe(ctx context.Context, sub RedisSubscriber) {
 	go func() {
 		err := sub.Subscribe(ctx, EPConfigChannel, func(payload string) {
+			if payload == "" {
+				l.logger.Warn("epconfig: empty pub/sub payload ignored")
+				return
+			}
+			// Check if payload is "{tenantID}:{slug}" format (tenant-scoped invalidation).
+			// tenantID is a UUID (36 chars), so the colon must be at position 36.
+			if len(payload) > 37 && payload[36] == ':' && looksLikeUUID(payload[:36]) {
+				tenantID := payload[:36]
+				slug := payload[37:]
+				l.Invalidate(tenantID, slug)
+				l.logger.Debug("epconfig: ep cache evicted via pub/sub", "tenant_id", tenantID, "ep_slug", slug)
+				return
+			}
+			// Bare UUID → app-level invalidation.
 			if looksLikeUUID(payload) {
 				l.InvalidateApp(payload)
 				l.logger.Debug("epconfig: app cache evicted via pub/sub", "app_id", payload)
-			} else {
-				l.Invalidate(payload)
-				l.logger.Debug("epconfig: ep cache evicted via pub/sub", "ep_slug", payload)
+				return
 			}
+			// Legacy bare slug (Python path, permanently retired) — evict any matching entry.
+			l.mu.Lock()
+			for key, cfg := range l.cache {
+				if cfg.EPSlug == payload {
+					delete(l.cache, key)
+				}
+			}
+			l.mu.Unlock()
+			l.logger.Warn("epconfig: legacy bare-slug pub/sub payload — evicted by slug", "ep_slug", payload)
 		})
 		if err != nil && ctx.Err() == nil {
 			l.logger.Warn("epconfig: pub/sub subscriber exited with error", "error", err)

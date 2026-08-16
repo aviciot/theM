@@ -45,9 +45,11 @@ type Dal interface {
 	ListEntryPoints(ctx context.Context, appID string) []dal.EntryPoint
 	CreateEntryPoint(ctx context.Context, appID, slug, epType string, enabled bool) (string, error)
 	GetEntryPointSlug(ctx context.Context, epID, appID string) (string, error)
+	GetEntryPointTenantAndSlug(ctx context.Context, epID, appID string) dal.EPTenantSlug
 	UpdateEntryPoint(ctx context.Context, epID, appID, slug, epType string, enabled bool) error
 	DeleteEntryPoint(ctx context.Context, epID, appID string) error
 	ListEPSlugsForApp(ctx context.Context, appID string) []string
+	ListEPTenantSlugsForApp(ctx context.Context, appID string) []dal.EPTenantSlug
 	// Runtime config + bulk delete
 	UpdateRuntimeConfig(ctx context.Context, tenantID, appID string, configJSON []byte) error
 	ListAppOrchestratorNames(ctx context.Context, appID string) ([]string, error)

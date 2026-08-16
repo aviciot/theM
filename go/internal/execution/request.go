@@ -15,6 +15,13 @@ type ExecutionRequest struct {
 	EPSlug        string           // entry-point slug from URL path
 	RawToken      string           // bearer token string; empty if none presented
 	TokenInfo     *auth.TokenInfo  // nil if public EP or token absent/invalid
+	// TenantID is the caller's resolved tenant identity from their auth token or JWT.
+	// For authenticated EPs: set from TokenInfo.TenantID.
+	// For public EPs in the current single-tenant deployment: set to the bootstrap
+	// tenant UUID "00000000-0000-0000-0000-000000000001". For true multi-tenant public
+	// EPs, a Wave 10 hostname/path-prefix routing layer will provide this.
+	// MUST NOT be taken from the request body or any HTTP header.
+	TenantID      string
 	UserMessage   domain.Message   // parsed user message (content + role)
 	ContextID     string           // caller-supplied; empty → Lifecycle generates UUID v4
 	RunEventsMode config.RunEventsMode

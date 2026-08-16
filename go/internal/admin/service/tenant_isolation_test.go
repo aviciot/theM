@@ -220,6 +220,12 @@ func (f *isolationFakeDal) UpdateEntryPoint(_ context.Context, _, _, _, _ string
 }
 func (f *isolationFakeDal) DeleteEntryPoint(_ context.Context, _, _ string) error { return nil }
 func (f *isolationFakeDal) ListEPSlugsForApp(_ context.Context, _ string) []string { return nil }
+func (f *isolationFakeDal) GetEntryPointTenantAndSlug(_ context.Context, _, _ string) dal.EPTenantSlug {
+	return dal.EPTenantSlug{}
+}
+func (f *isolationFakeDal) ListEPTenantSlugsForApp(_ context.Context, _ string) []dal.EPTenantSlug {
+	return nil
+}
 
 // ── Run methods ───────────────────────────────────────────────────────────────
 

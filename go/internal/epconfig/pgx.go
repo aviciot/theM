@@ -20,6 +20,11 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 }
 
 // epConfigQuery joins entry_points → applications → app_orchestrators (LEFT JOIN).
+// The WHERE clause filters by BOTH tenant_id AND slug (tenant-safe resolution,
+// migration 028). This prevents one tenant's EP shadowing another tenant's EP
+// with the same slug. The UNIQUE(tenant_id, slug) DB constraint guarantees the
+// query returns at most one row.
+//
 // The LEFT JOIN on app_orchestrators means ao.id and ao.name are NULL when
 // entry_points.app_orchestrator_id IS NULL (unbound EP). Handlers must treat
 // an empty OrchestratorName as a configuration error — they must NOT fall back
@@ -27,14 +32,12 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 //
 // The JOIN on app_orchestrators also implicitly verifies that the bound
 // orchestrator belongs to the same application as the entry point, because
-// app_orchestrators.application_id must equal ep.application_id. This is
-// enforced by the FK constraint, but we add the explicit join condition for
-// clarity and defence-in-depth.
+// app_orchestrators.application_id must equal ep.application_id.
 const epConfigQuery = `
 SELECT
     ep.id::text,
     a.id::text,
-    COALESCE(a.tenant_id::text, ''),
+    ep.tenant_id::text,
     ep.slug,
     ep.entry_point_type,
     ep.enabled,
@@ -50,17 +53,18 @@ JOIN them.applications a ON a.id = ep.application_id
 LEFT JOIN them.app_orchestrators ao
     ON ao.id = ep.app_orchestrator_id
    AND ao.application_id = ep.application_id
-WHERE ep.slug = $1
+WHERE ep.tenant_id = $1::uuid
+  AND ep.slug = $2
 LIMIT 1`
 
-// QueryEPConfig fetches one EPConfigRow for the given slug.
-// Returns ErrNotFound (wrapped) when no row is found.
-func (q *PgxQuerier) QueryEPConfig(ctx context.Context, epSlug string) (*EPConfigRow, error) {
+// QueryEPConfig fetches one EPConfigRow for the given tenant ID and slug.
+// Returns ErrNotFound (wrapped) when no matching row exists.
+func (q *PgxQuerier) QueryEPConfig(ctx context.Context, tenantID, epSlug string) (*EPConfigRow, error) {
 	var row EPConfigRow
 	var accessPolicyText string
 	var runtimeConfigText string
 
-	err := q.pool.QueryRow(ctx, epConfigQuery, epSlug).Scan(
+	err := q.pool.QueryRow(ctx, epConfigQuery, tenantID, epSlug).Scan(
 		&row.EPID,
 		&row.AppID,
 		&row.TenantID,

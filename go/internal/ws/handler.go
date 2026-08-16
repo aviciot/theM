@@ -32,6 +32,7 @@ import (
 	"github.com/aviciot/them/internal/metrics"
 	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/tenantctx"
 	"github.com/aviciot/them/internal/transport"
 )
 
@@ -191,11 +192,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ── 1. Extract raw token (Lifecycle.Admit owns all validation/enforcement) ─
 	rawToken := h.extractRawToken(r)
 
-	// ── 2. Lifecycle.Admit — full pipeline before upgrade ────────────────────
+	// ── 2. Resolve tenant identity for EP config lookup ──────────────────────
+	// Tenant comes from the bearer token (validated by auth.Cache) or JWT claims.
+	// For public EPs (no token), use the bootstrap tenant UUID. This is correct
+	// for the current single-tenant deployment. Multi-tenant public EPs require
+	// Wave 10 hostname/path-prefix routing to supply the tenantID.
+	// The tokenInfo validation happens inside Lifecycle.Admit; we only need the
+	// TenantID here to scope the EP lookup. For token EPs we pre-validate now.
+	tenantID := tenantctx.BootstrapTenantID
+	if rawToken != "" && h.authenticator != nil {
+		if ti, err := h.authenticator.Validate(r.Context(), rawToken); err == nil && ti.TenantID != "" {
+			tenantID = ti.TenantID
+		}
+	}
+
+	// ── 3. Lifecycle.Admit — full pipeline before upgrade ────────────────────
 	// All pre-upgrade errors are clean HTTP responses (not WS close frames).
 	// The voice EP check (→ 501) is inside Lifecycle, so no separate check needed.
 	admitReq := execution.ExecutionRequest{
 		EPSlug:        epSlug,
+		TenantID:      tenantID,
 		RawToken:      rawToken,
 		RunEventsMode: h.runEventsMode,
 		InstanceID:    h.instanceID,

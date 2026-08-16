@@ -43,6 +43,7 @@ import (
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/tenantctx"
 	"github.com/aviciot/them/internal/transport"
 )
 
@@ -162,11 +163,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ── 2. Extract raw token (Lifecycle.Admit owns all validation/enforcement) ─
 	rawToken := h.extractRawToken(r)
 
-	// ── 3. Admit (auth → EPConfig → voice-check → access → gate → session → CreateRun) ──
+	// ── 3. Resolve tenant identity for EP config lookup ──────────────────────
+	// Tenant comes from the bearer token or JWT. For public EPs (no token),
+	// use the bootstrap tenant UUID (single-tenant deployment safe).
+	tenantID := tenantctx.BootstrapTenantID
+	if rawToken != "" && h.authenticator != nil {
+		if ti, err := h.authenticator.Validate(r.Context(), rawToken); err == nil && ti.TenantID != "" {
+			tenantID = ti.TenantID
+		}
+	}
+
+	// ── 4. Admit (auth → EPConfig → voice-check → access → gate → session → CreateRun) ──
 	// All pre-Admit errors return clean HTTP responses. After Admit succeeds,
 	// SSE headers are written and errors become SSE error events.
 	admitReq := execution.ExecutionRequest{
 		EPSlug:        epSlug,
+		TenantID:      tenantID,
 		RawToken:      rawToken,
 		UserMessage:   domain.TextMessage(domain.RoleUser, userText),
 		RunEventsMode: h.runEventsMode,

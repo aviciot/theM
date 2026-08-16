@@ -111,50 +111,61 @@ func (s *AppService) CreateEntryPoint(ctx context.Context, appID, slug, epType s
 }
 
 // UpdateEntryPoint validates the EP type (if provided), persists, and publishes
-// cache invalidation. On slug rename: old slug is published before new slug so
-// that the old cache entry is evicted before the new one is written.
-func (s *AppService) UpdateEntryPoint(ctx context.Context, epID, appID, slug, epType string, enabled *bool) error {
+// cache invalidation. On slug rename: old (tenantID, slug) is published before
+// new (tenantID, slug) so the old cache entry is evicted first (critical ordering).
+// tenantID is the caller's tenant (from context) and is used as a fallback when
+// the old EP lookup returns an empty TenantID (e.g. EP deleted between read and update).
+func (s *AppService) UpdateEntryPoint(ctx context.Context, tenantID, epID, appID, slug, epType string, enabled *bool) error {
 	if epType != "" && !IsValidEPType(epType) {
 		return unprocessable("invalid entry_point_type: must be one of websocket, sse, voice, webrtc, a2a")
 	}
 
-	// Fetch old slug before the update for cache invalidation on rename.
-	oldSlug, _ := s.dal.GetEntryPointSlug(ctx, epID, appID)
+	// Fetch old (tenantID, slug) before the update for cache invalidation on rename.
+	oldTS := s.dal.GetEntryPointTenantAndSlug(ctx, epID, appID)
+
+	// Fall back to the caller's tenantID when the DB lookup returned empty
+	// (e.g. row not found between read and update).
+	effectiveTenantID := oldTS.TenantID
+	if effectiveTenantID == "" {
+		effectiveTenantID = tenantID
+	}
 
 	if err := s.dal.UpdateEntryPoint(ctx, epID, appID, slug, epType, enabledOrDefault(enabled)); err != nil {
 		return err
 	}
 
-	// Old slug must be published first so the stale cache entry is evicted before
+	// Old entry must be published first so the stale cache entry is evicted before
 	// the new slug is registered (critical ordering contract).
-	s.publishEP(ctx, oldSlug)
-	s.publishEP(ctx, slug)
+	s.publishEP(ctx, effectiveTenantID, oldTS.Slug)
+	s.publishEP(ctx, effectiveTenantID, slug)
 	return nil
 }
 
-// DeleteEntryPoint fetches the slug, deletes the EP, and publishes invalidation.
+// DeleteEntryPoint fetches the (tenantID, slug), deletes the EP, and publishes invalidation.
 func (s *AppService) DeleteEntryPoint(ctx context.Context, epID, appID string) error {
-	epSlug, _ := s.dal.GetEntryPointSlug(ctx, epID, appID)
+	ts := s.dal.GetEntryPointTenantAndSlug(ctx, epID, appID)
 	if err := s.dal.DeleteEntryPoint(ctx, epID, appID); err != nil {
 		return err
 	}
-	s.publishEP(ctx, epSlug)
+	s.publishEP(ctx, ts.TenantID, ts.Slug)
 	return nil
 }
 
-func (s *AppService) publishEP(ctx context.Context, slug string) {
-	if s.cache == nil || slug == "" {
+// publishEP publishes a tenant-scoped EP cache invalidation payload.
+// Payload format: "{tenantID}:{slug}" — matches the format expected by epconfig.Loader.Subscribe.
+func (s *AppService) publishEP(ctx context.Context, tenantID, slug string) {
+	if s.cache == nil || tenantID == "" || slug == "" {
 		return
 	}
-	_ = s.cache.Publish(ctx, epConfigChannel, slug)
+	_ = s.cache.Publish(ctx, epConfigChannel, tenantID+":"+slug)
 }
 
 func (s *AppService) invalidateAppEPs(ctx context.Context, appID string) {
 	if s.cache == nil {
 		return
 	}
-	for _, slug := range s.dal.ListEPSlugsForApp(ctx, appID) {
-		_ = s.cache.Publish(ctx, fmt.Sprintf(epConfigChannel), slug)
+	for _, ts := range s.dal.ListEPTenantSlugsForApp(ctx, appID) {
+		s.publishEP(ctx, ts.TenantID, ts.Slug)
 	}
 }
 

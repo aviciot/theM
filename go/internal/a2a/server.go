@@ -29,6 +29,7 @@ import (
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/tenantctx"
 	"github.com/aviciot/them/internal/transport"
 )
 
@@ -231,9 +232,20 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req r
 		return
 	}
 
-	// ── 3. Admit: auth → EPConfig → access → gate → session → CreateRun ──────
+	// ── 3. Resolve tenant identity for EP config lookup ──────────────────────
+	// Tenant comes from the bearer token. For public EPs (no token), use the
+	// bootstrap tenant UUID (single-tenant deployment safe).
+	tenantID := tenantctx.BootstrapTenantID
+	if rawToken != "" && s.authenticator != nil {
+		if ti, err := s.authenticator.Validate(ctx, rawToken); err == nil && ti.TenantID != "" {
+			tenantID = ti.TenantID
+		}
+	}
+
+	// ── 4. Admit: auth → EPConfig → access → gate → session → CreateRun ──────
 	admitReq := execution.ExecutionRequest{
 		EPSlug:      appSlug,
+		TenantID:    tenantID,
 		RawToken:    rawToken,
 		ContextID:   params.Message.ContextID, // caller-supplied multi-turn ID; empty → generated
 		InstanceID:  s.instanceID,

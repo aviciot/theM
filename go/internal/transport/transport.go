@@ -43,8 +43,10 @@ type GateStore interface {
 
 // EPConfigLoader resolves Entry Point and Application runtime config.
 // Implemented by epconfig.Loader.
+// tenantID must come from trusted server-side context (token/JWT), never from
+// the request body or headers. See migration 028 for the DB-level guarantee.
 type EPConfigLoader interface {
-	Load(ctx context.Context, epSlug string) (*epconfig.EPConfig, error)
+	Load(ctx context.Context, tenantID, epSlug string) (*epconfig.EPConfig, error)
 }
 
 // TemporalClientExecutor starts a Temporal workflow execution.

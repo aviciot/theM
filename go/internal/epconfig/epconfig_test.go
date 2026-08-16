@@ -22,7 +22,7 @@ type fakeDB struct {
 	callCount int
 }
 
-func (f *fakeDB) QueryEPConfig(_ context.Context, _ string) (*epconfig.EPConfigRow, error) {
+func (f *fakeDB) QueryEPConfig(_ context.Context, _, _ string) (*epconfig.EPConfigRow, error) {
 	f.callCount++
 	if f.err != nil {
 		return nil, f.err
@@ -32,12 +32,15 @@ func (f *fakeDB) QueryEPConfig(_ context.Context, _ string) (*epconfig.EPConfigR
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
+const testTenantID = "00000000-0000-0000-0000-000000000001"
+
 func intPtr(n int) *int { return &n }
 
 func enabledRow(slug string) *epconfig.EPConfigRow {
 	return &epconfig.EPConfigRow{
 		EPID:                 "ep-uuid-1",
 		AppID:                "app-uuid-1",
+		TenantID:             testTenantID,
 		EPSlug:               slug,
 		EPType:               "websocket",
 		EPEnabled:            true,
@@ -56,7 +59,7 @@ func TestLoad_EPMaxConcurrentSessions(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "my-ep")
+	cfg, err := loader.Load(context.Background(), testTenantID, "my-ep")
 	require.NoError(t, err)
 	assert.Equal(t, 5, cfg.EPMaxConcurrent)
 	assert.Equal(t, 0, cfg.AppMaxConcurrent) // no app-level limit
@@ -71,7 +74,7 @@ func TestLoad_AppMaxConcurrentSessions(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "ep1")
+	cfg, err := loader.Load(context.Background(), testTenantID, "ep1")
 	require.NoError(t, err)
 	assert.Equal(t, 0, cfg.EPMaxConcurrent)   // no EP limit
 	assert.Equal(t, 10, cfg.AppMaxConcurrent) // app-level limit
@@ -87,7 +90,7 @@ func TestLoad_BothLimitsSet(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "ep2")
+	cfg, err := loader.Load(context.Background(), testTenantID, "ep2")
 	require.NoError(t, err)
 	assert.Equal(t, 3, cfg.EPMaxConcurrent)   // EP limit governs EP set
 	assert.Equal(t, 20, cfg.AppMaxConcurrent) // app limit governs app set
@@ -103,7 +106,7 @@ func TestLoad_RateLimitRPM(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "rate-ep")
+	cfg, err := loader.Load(context.Background(), testTenantID, "rate-ep")
 	require.NoError(t, err)
 	assert.Equal(t, 100, cfg.RateLimitRPM)
 }
@@ -117,7 +120,7 @@ func TestLoad_QueueTimeout(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "queue-ep")
+	cfg, err := loader.Load(context.Background(), testTenantID, "queue-ep")
 	require.NoError(t, err)
 	assert.Equal(t, 30*time.Second, cfg.QueueTimeout)
 }
@@ -131,7 +134,7 @@ func TestLoad_NullQueueTimeout(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "no-queue-ep")
+	cfg, err := loader.Load(context.Background(), testTenantID, "no-queue-ep")
 	require.NoError(t, err)
 	assert.Equal(t, time.Duration(0), cfg.QueueTimeout)
 }
@@ -171,7 +174,7 @@ func TestLoad_PublicEP(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "pub-ep")
+	cfg, err := loader.Load(context.Background(), testTenantID, "pub-ep")
 	require.NoError(t, err)
 	assert.Equal(t, epconfig.AccessModePublic, cfg.AccessMode)
 }
@@ -185,7 +188,7 @@ func TestLoad_AuthenticatedEP(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "auth-ep")
+	cfg, err := loader.Load(context.Background(), testTenantID, "auth-ep")
 	require.NoError(t, err)
 	assert.Equal(t, epconfig.AccessModeToken, cfg.AccessMode)
 }
@@ -238,7 +241,7 @@ func TestLoad_EPNotFound(t *testing.T) {
 	db := &fakeDB{err: fmt.Errorf("%w: slug=unknown", epconfig.ErrNotFound)}
 	loader := epconfig.NewLoader(db, nil)
 
-	_, err := loader.Load(context.Background(), "unknown")
+	_, err := loader.Load(context.Background(), testTenantID, "unknown")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, epconfig.ErrNotFound))
 }
@@ -249,7 +252,7 @@ func TestLoad_DBUnavailable(t *testing.T) {
 	db := &fakeDB{err: errors.New("connection refused")}
 	loader := epconfig.NewLoader(db, nil)
 
-	_, err := loader.Load(context.Background(), "ep1")
+	_, err := loader.Load(context.Background(), testTenantID, "ep1")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, epconfig.ErrDBUnavailable))
 }
@@ -263,7 +266,7 @@ func TestLoad_MalformedRuntimeConfig(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "ep-bad-json")
+	cfg, err := loader.Load(context.Background(), testTenantID, "ep-bad-json")
 	require.NoError(t, err, "malformed JSONB must not fail the Load call")
 	assert.Equal(t, 0, cfg.AppMaxConcurrent, "malformed config defaults to unlimited")
 	assert.Equal(t, 0, cfg.RateLimitRPM)
@@ -280,7 +283,7 @@ func TestLoad_NullAndZeroLimits(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "unlimited-ep")
+	cfg, err := loader.Load(context.Background(), testTenantID, "unlimited-ep")
 	require.NoError(t, err)
 	assert.Equal(t, 0, cfg.EPMaxConcurrent)
 	assert.Equal(t, 0, cfg.AppMaxConcurrent)
@@ -298,7 +301,7 @@ func TestLoad_NegativeLimitsTreatedAsUnlimited(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "neg-ep")
+	cfg, err := loader.Load(context.Background(), testTenantID, "neg-ep")
 	require.NoError(t, err)
 	assert.Equal(t, 0, cfg.EPMaxConcurrent, "negative EPMax treated as unlimited")
 	assert.Equal(t, 0, cfg.AppMaxConcurrent)
@@ -311,10 +314,10 @@ func TestLoad_CacheHit(t *testing.T) {
 	db := &fakeDB{row: enabledRow("cached-ep")}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg1, err := loader.Load(context.Background(), "cached-ep")
+	cfg1, err := loader.Load(context.Background(), testTenantID, "cached-ep")
 	require.NoError(t, err)
 
-	cfg2, err := loader.Load(context.Background(), "cached-ep")
+	cfg2, err := loader.Load(context.Background(), testTenantID, "cached-ep")
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, db.callCount, "DB queried only once due to cache hit")
@@ -329,8 +332,8 @@ func TestLoad_DisabledEPNotCached(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	_, _ = loader.Load(context.Background(), "disabled-ep")
-	_, _ = loader.Load(context.Background(), "disabled-ep")
+	_, _ = loader.Load(context.Background(), testTenantID, "disabled-ep")
+	_, _ = loader.Load(context.Background(), testTenantID, "disabled-ep")
 
 	assert.Equal(t, 2, db.callCount, "disabled EP must not be cached; DB hit on every call")
 }
@@ -341,12 +344,12 @@ func TestInvalidate_EvictsEntry(t *testing.T) {
 	db := &fakeDB{row: enabledRow("inv-ep")}
 	loader := epconfig.NewLoader(db, nil)
 
-	_, _ = loader.Load(context.Background(), "inv-ep")
+	_, _ = loader.Load(context.Background(), testTenantID, "inv-ep")
 	assert.Equal(t, 1, db.callCount)
 
-	loader.Invalidate("inv-ep")
+	loader.Invalidate(testTenantID, "inv-ep")
 
-	_, _ = loader.Load(context.Background(), "inv-ep")
+	_, _ = loader.Load(context.Background(), testTenantID, "inv-ep")
 	assert.Equal(t, 2, db.callCount, "after Invalidate, DB is queried again")
 }
 
@@ -363,15 +366,15 @@ func TestInvalidateApp_EvictsAppEntries(t *testing.T) {
 	db := &multiDB{rows: slugToRow, callsPtr: &callCount}
 	loader := epconfig.NewLoader(db, nil)
 
-	_, _ = loader.Load(context.Background(), "ep-a")
-	_, _ = loader.Load(context.Background(), "ep-b")
+	_, _ = loader.Load(context.Background(), testTenantID, "ep-a")
+	_, _ = loader.Load(context.Background(), testTenantID, "ep-b")
 	assert.Equal(t, 2, callCount)
 
 	// Invalidate app-uuid-A — only ep-a should be evicted.
 	loader.InvalidateApp("app-uuid-A")
 
-	_, _ = loader.Load(context.Background(), "ep-a") // re-query
-	_, _ = loader.Load(context.Background(), "ep-b") // cache hit
+	_, _ = loader.Load(context.Background(), testTenantID, "ep-a") // re-query
+	_, _ = loader.Load(context.Background(), testTenantID, "ep-b") // cache hit
 	assert.Equal(t, 3, callCount, "only ep-a re-queried after InvalidateApp")
 }
 
@@ -384,7 +387,7 @@ func TestLoad_MissingAccessPolicyDefaultsToToken(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "ep-default-auth")
+	cfg, err := loader.Load(context.Background(), testTenantID, "ep-default-auth")
 	require.NoError(t, err)
 	assert.Equal(t, epconfig.AccessModeToken, cfg.AccessMode)
 }
@@ -398,7 +401,7 @@ func TestLoad_AppIDPropagated(t *testing.T) {
 	db := &fakeDB{row: row}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "ep-appid")
+	cfg, err := loader.Load(context.Background(), testTenantID, "ep-appid")
 	require.NoError(t, err)
 	assert.Equal(t, "abc-123-def-456", cfg.AppID)
 }
@@ -442,11 +445,11 @@ func TestSubscribe_MessageEvictsCache(t *testing.T) {
 	loader := epconfig.NewLoader(db, nil)
 
 	// Populate cache.
-	_, _ = loader.Load(context.Background(), "pub-ep")
+	_, _ = loader.Load(context.Background(), testTenantID, "pub-ep")
 	assert.Equal(t, 1, db.callCount)
 
 	// Deliver pub/sub message via subscriber; wait for goroutine to finish.
-	sub := newFakeSubscriber("pub-ep")
+	sub := newFakeSubscriber(testTenantID + ":pub-ep")
 	loader.Subscribe(context.Background(), sub)
 
 	select {
@@ -456,7 +459,7 @@ func TestSubscribe_MessageEvictsCache(t *testing.T) {
 	}
 
 	// After eviction, next Load should re-query DB.
-	_, err := loader.Load(context.Background(), "pub-ep")
+	_, err := loader.Load(context.Background(), testTenantID, "pub-ep")
 	require.NoError(t, err)
 	assert.Equal(t, 2, db.callCount, "DB re-queried after pub/sub eviction")
 }
@@ -470,13 +473,13 @@ func TestLoad_TTLFallback_NoSubscriber(t *testing.T) {
 	db := &fakeDB{row: enabledRow("ttl-ep")}
 	loader := epconfig.NewLoader(db, nil)
 
-	cfg, err := loader.Load(context.Background(), "ttl-ep")
+	cfg, err := loader.Load(context.Background(), testTenantID, "ttl-ep")
 	require.NoError(t, err)
 	assert.NotNil(t, cfg, "freshly loaded config must not be nil (TTL not yet expired)")
 	assert.Equal(t, 1, db.callCount)
 
 	// Second load still hits cache (TTL not expired in < 1 ms).
-	_, err = loader.Load(context.Background(), "ttl-ep")
+	_, err = loader.Load(context.Background(), testTenantID, "ttl-ep")
 	require.NoError(t, err)
 	assert.Equal(t, 1, db.callCount, "TTL not yet expired — cache hit expected")
 }
@@ -488,7 +491,7 @@ type multiDB struct {
 	callsPtr *int
 }
 
-func (m *multiDB) QueryEPConfig(_ context.Context, slug string) (*epconfig.EPConfigRow, error) {
+func (m *multiDB) QueryEPConfig(_ context.Context, _, slug string) (*epconfig.EPConfigRow, error) {
 	*m.callsPtr++
 	row, ok := m.rows[slug]
 	if !ok {

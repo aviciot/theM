@@ -179,7 +179,8 @@ func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := h.svc.UpdateEntryPoint(r.Context(), epID, appID, input.Slug, input.EntryPointType, input.Enabled); err != nil {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if err := h.svc.UpdateEntryPoint(r.Context(), tenantID, epID, appID, input.Slug, input.EntryPointType, input.Enabled); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}

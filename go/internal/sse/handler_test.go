@@ -134,7 +134,7 @@ type fakeEPLoader struct {
 	err error
 }
 
-func (f *fakeEPLoader) Load(_ context.Context, _ string) (*epconfig.EPConfig, error) {
+func (f *fakeEPLoader) Load(_ context.Context, _, _ string) (*epconfig.EPConfig, error) {
 	return f.cfg, f.err
 }
 

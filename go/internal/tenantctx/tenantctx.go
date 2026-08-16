@@ -24,6 +24,14 @@ import (
 	"errors"
 )
 
+// BootstrapTenantID is the well-known UUID of the platform's default (bootstrap)
+// tenant. It is used as the tenantID for public entry points in the current
+// single-tenant deployment, where no auth token is presented and tenant identity
+// cannot be derived from the request. In a future multi-tenant deployment with
+// public EPs, Wave 10 hostname/path-prefix routing will supply the tenantID
+// before it reaches the handler.
+const BootstrapTenantID = "00000000-0000-0000-0000-000000000001"
+
 // ErrNoTenant is returned when no TenantID has been placed into the context.
 // This indicates that the request did not carry valid authentication, or that
 // the middleware chain did not run before the caller.
