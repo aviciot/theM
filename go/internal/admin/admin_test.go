@@ -303,8 +303,9 @@ func TestCreateAgent(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code)
 	assert.True(t, strings.Contains(w.Header().Get("Location"), "uuid-42"),
 		"Location header should contain the new agent id")
-	assert.Contains(t, cache.deletedKeys, "them:agents:registry",
-		"cache should be invalidated")
+	// SEC-03: cache key is now tenant-scoped, not global.
+	assert.Contains(t, cache.deletedKeys, "them:agents:registry:"+testTenantID,
+		"cache should be invalidated with tenant-scoped key")
 }
 
 // 3. Get nonexistent agent — 404.

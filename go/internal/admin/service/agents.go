@@ -56,7 +56,7 @@ func (s *AgentService) Create(ctx context.Context, tenantID string, in dal.Agent
 	if err != nil {
 		return "", err
 	}
-	s.invalidate(ctx)
+	s.invalidate(ctx, tenantID)
 	return id, nil
 }
 
@@ -72,7 +72,7 @@ func (s *AgentService) Update(ctx context.Context, tenantID, id string, in dal.A
 	if err := s.dal.UpdateAgent(ctx, tenantID, id, in, enabled); err != nil {
 		return err
 	}
-	s.invalidate(ctx)
+	s.invalidate(ctx, tenantID)
 	return nil
 }
 
@@ -81,12 +81,19 @@ func (s *AgentService) Delete(ctx context.Context, tenantID, id string) error {
 	if err := s.dal.DeleteAgent(ctx, tenantID, id); err != nil {
 		return err
 	}
-	s.invalidate(ctx)
+	s.invalidate(ctx, tenantID)
 	return nil
 }
 
-func (s *AgentService) invalidate(ctx context.Context) {
-	if s.cache != nil {
-		_ = s.cache.Del(ctx, fmt.Sprintf("them:agents:registry"))
+func (s *AgentService) invalidate(ctx context.Context, tenantID string) {
+	if s.cache == nil {
+		return
 	}
+	// Delete the per-tenant L2 Redis cache bucket (SEC-03).
+	// Key format matches agentregistry.redisCacheKeyFmt.
+	_ = s.cache.Del(ctx, fmt.Sprintf("them:agents:registry:%s", tenantID))
+	// Publish the tenantID so every pod's L1 evicts only that tenant's entries.
+	// Payload is the tenantID UUID string — registry.invalidateTenant uses it to
+	// evict only keys prefixed by "{tenantID}:", leaving other tenants untouched.
+	_ = s.cache.Publish(ctx, "them:agents:changed", tenantID)
 }

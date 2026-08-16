@@ -267,13 +267,16 @@ type wsBuilder struct {
 
 func (b *wsBuilder) defaultEP() *epconfig.EPConfig {
 	return &epconfig.EPConfig{
-		EPSlug:     "ep1",
-		EPType:     "websocket",
-		AccessMode: epconfig.AccessModeToken,
-		EPEnabled:  true,
-		AppEnabled: true,
-		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
-		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		EPSlug:            "ep1",
+		EPType:            "websocket",
+		AccessMode:        epconfig.AccessModeToken,
+		EPEnabled:         true,
+		AppEnabled:        true,
+		TenantID:          "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:             "bbbbbbbb-0000-0000-0000-000000000001",
+		// SEC-04: orchestrator resolved from EP binding, not from EP slug.
+		AppOrchestratorID: "cccccccc-0000-0000-0000-000000000001",
+		OrchestratorName:  "test-orchestrator",
 	}
 }
 
@@ -812,13 +815,15 @@ func TestWS_RunStoresTenantID(t *testing.T) {
 	tenantID := "cccccccc-0000-0000-0000-000000000001"
 	appID := "dddddddd-0000-0000-0000-000000000002"
 	ep := &fakeEPLoader{cfg: &epconfig.EPConfig{
-		EPSlug:     "ep1",
-		EPType:     "websocket",
-		AccessMode: epconfig.AccessModeToken,
-		EPEnabled:  true,
-		AppEnabled: true,
-		TenantID:   tenantID,
-		AppID:      appID,
+		EPSlug:            "ep1",
+		EPType:            "websocket",
+		AccessMode:        epconfig.AccessModeToken,
+		EPEnabled:         true,
+		AppEnabled:        true,
+		TenantID:          tenantID,
+		AppID:             appID,
+		AppOrchestratorID: "orch-uuid-tenant-test",
+		OrchestratorName:  "test-orchestrator",
 	}}
 	b := &wsBuilder{authn: authn, temporal: tc, recorder: capRec, epLoader: ep}
 	h, _ := b.build()

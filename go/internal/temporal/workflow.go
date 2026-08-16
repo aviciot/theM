@@ -51,7 +51,17 @@ type WorkflowInput struct {
 	// History is pre-loaded by the caller (DB-level LIMIT applied).
 	History []domain.Message
 	// OrchestratorName identifies which orchestrator config to load.
+	// Resolved from entry_points.app_orchestrator_id → app_orchestrators.name (SEC-04).
+	// Never set to an EP slug — always the actual orchestrator name from the DB row.
 	OrchestratorName string
+
+	// AppOrchestratorID is the UUID of the bound app_orchestrators row (SEC-04).
+	// The future Go Temporal worker MUST use this UUID for orchestrator resolution
+	// rather than performing a global name lookup. This field is the authoritative
+	// identity; OrchestratorName is kept for current Python worker compatibility only.
+	// LEGACY NOTE: Python worker (permanently retired) ignored this field and
+	// resolved orchestrators by name only — that global lookup path is dead.
+	AppOrchestratorID string
 }
 
 // WorkflowResult is returned by OrchestrationWorkflow on completion.

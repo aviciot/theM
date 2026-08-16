@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-15
+# Last updated: 2026-08-16
 # Replaces: NEXT_SESSION_BRIDGE_HANDOVER.md, NEXT_SESSION_HANDOVER.md
 
 ---
@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `a6b9953` — Runs WRITE slice complete (2026-08-15)
+Commit: pending — Tenant/runtime foundation fixes (P-08, SEC-03, SEC-04) + R5/R6 reviews
 
 ---
 
@@ -43,6 +43,25 @@ All containers healthy. See `docs/STATUS.md` for full container list.
 ---
 
 ## Current migration slice
+
+**Tenant/Runtime Foundation — COMPLETE** (2026-08-16)
+
+Architecture decision: **Python is permanently retired.** `them-bridge` and `them-worker` MUST remain OFF. No Python patches. No Python fallbacks. No compatibility shims.
+
+What was done:
+- `db/027_app_orchestrators_uniqueness.sql` — drops global `UNIQUE(name)` on `app_orchestrators`, adds `UNIQUE(application_id, name)`. Applied to live DB. Verified.
+- **SEC-03:** Agent registry fully tenant-scoped. Redis key: `them:agents:registry:{tenant_id}`. L1 key: `"{tenantID}:{slug}"`. SQL: `QueryAgentsByTenant(ctx, tenantID)`. Invalidation: per-tenant only. 9 new isolation tests.
+- **SEC-04:** `EPConfig` now carries `AppOrchestratorID` + `OrchestratorName` loaded via LEFT JOIN `app_orchestrators`. WS/SSE/A2A/Lifecycle all use `EPConfig.OrchestratorName`. NULL binding = hard error (503). `WorkflowInput.AppOrchestratorID` added for future Go worker.
+- **SEC-01/SEC-02:** Documented as LEGACY PYTHON PATH — RETIRED. Not implementation blockers. Dead paths that will not be reactivated.
+- R5 Application Readiness Review + R6 Tenant Architecture Review written and committed.
+- `go test ./...`: 30/30 packages, 0 failures. Go bridge rebuilt and healthy.
+
+**Wave 9 pre-requisite verdict (from R6): SAFE TO DEVELOP WAVE 9: YES**
+
+Permanent architectural constraint (enforced, never waive):
+> Go Temporal worker MUST resolve orchestrators by `AppOrchestratorID` UUID. Never by name globally.
+
+---
 
 **Runs WRITE — COMPLETE** (2026-08-15)
 
@@ -81,14 +100,21 @@ What was done:
 
 ## Next recommended task
 
-**Applications export/import/restore + middleware-wirings** — still on Python.
+**Wave 9 — Multi-tenant runtime enablement.** Pre-requisites are now complete.
 
-Routes not yet migrated to Go:
-- `GET /runs/context/{ctx}/artifacts` — Python (not used by admin UI; low priority)
-- Applications export/import/restore routes
-- Middleware-wiring admin routes
+Wave 9 scope (from R6 Phase 1–8 plan):
+1. EP slug uniqueness per-tenant: add `tenant_id` to `entry_points`, add `UNIQUE(tenant_id, slug)` constraint
+2. Route resolution: update `epconfig` loader SQL to filter by `tenant_id`
+3. Session and rate-limit keys: ensure all runtime keys include tenant scope
+4. Tenant provisioning: admin endpoints to create/manage tenants
+5. Auth: tenant_id claim in JWT and bearer token validation
 
-After runs writes complete: the Applications page still partially relies on Python. Consider as next slice.
+Before starting Wave 9: read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 (Implementation Plan).
+
+Lower-priority backlog:
+- `GET /runs/context/{ctx}/artifacts` — no Traefik rule, no Go handler (not used by admin UI)
+- Applications export/import/restore routes — still Python
+- Middleware-wiring admin routes — still Python
 
 Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`
 
@@ -116,8 +142,9 @@ Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.
 ## Known blockers
 
 1. Auth admin CRUD (users/roles/teams) — not exposed since Python auth removed. Needs Go port.
-2. Python Temporal worker is still primary orchestration path. Go worker is parallel but not sole owner.
+2. Go Temporal worker is not yet sole owner of orchestration. Python worker is permanently retired (must remain OFF). Go worker must become sole owner before any second tenant is provisioned.
 3. A2A server (`/a2a/*`) still on Python — not yet migrated to Go.
+4. `entry_points` has no `tenant_id` column and no per-tenant slug uniqueness constraint (Wave 9 blocker for multi-tenant EP routing).
 
 ---
 
@@ -130,6 +157,11 @@ Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.
 - `go/TEST_INDEX.md` updated in same commit as new Go tests
 - Secrets never in logs — use `cfg.SafeString()`
 - Never `git add .` or `git add -A`
+- **Python is permanently retired.** `them-bridge` and `them-worker` MUST remain OFF. Do NOT patch Python for compatibility. Do NOT plan for Python bridge/worker to return.
+- **Go Temporal worker MUST resolve orchestrators by `AppOrchestratorID` UUID** (from `WorkflowInput.AppOrchestratorID`). Never resolve orchestrators globally by name.
+- **SEC-01/SEC-02 are dead paths.** Legacy Python globally-namespaced orchestrator Redis keys (`them:orch:loc:{name}`, `them:orch:tmpl:{name}`) will not be written again. Do not reactivate.
+- **Agent registry Redis key is `them:agents:registry:{tenant_id}`.** The old global key `them:agents:registry` must not be written or read.
+- No secrets in Application Definition JSONB, Component Definition JSONB, export files, logs, or Temporal history. Only secret references.
 
 ---
 

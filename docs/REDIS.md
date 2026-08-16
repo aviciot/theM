@@ -8,7 +8,8 @@
 |---|---|---|---|---|
 | `them:session:token:{sha256(token)}` | 300s | token_cache.py | Yes | L2 token cache (user context) |
 | `them:session:user:{user_id}` | 300s | token_cache.py | Yes | Reverse index for per-user invalidation |
-| `them:agents:registry` | 600s | agent_registry.py | Yes | Serialized enabled agents list |
+| `them:agents:registry` | 600s | agent_registry.py (LEGACY — Python permanently retired) | Yes | **LEGACY Python agent registry key — no longer written or read. See `them:agents:registry:{tenant_id}` below.** |
+| `them:agents:registry:{tenant_id}` | 600s | go/internal/agentregistry/registry.go | Yes | Per-tenant serialized enabled agents list (SEC-03 fix). Keyed by tenant UUID. L1 in-process by `"{tenantID}:{slug}"`. Invalidation is per-tenant only — publishing to `them:agents:changed` with tenantID as payload. |
 | `them:orch:tmpl:{name}` | 600s | loaders.py / task_runner.py | Yes | Serialized shared orchestrator template (them.orchestrators) |
 | `them:app:{app_id}:orch:{name}` | 600s | loaders.py / task_runner.py | Yes | Serialized app-owned orchestrator instance (them.app_orchestrators) |
 | `them:orch:loc:{name}` | 600s | loaders.py / task_runner.py | Yes | Locator pointer: `"tmpl"` or `"app:{app_id}"` — tells readers which namespace holds the config |
@@ -28,7 +29,7 @@
 
 | Channel | Publisher | Subscribers | Purpose |
 |---|---|---|---|
-| `them:agents:changed` | admin_agents.py on write | agent_registry.py | Invalidate agent cache on all replicas |
+| `them:agents:changed` | go/internal/admin/service/agents.go on write | go/internal/agentregistry/registry.go | Per-tenant agent cache invalidation. Payload is tenantID UUID string. Empty payload = ignored (guards against global eviction). |
 | `them:orchestrators:changed` | admin_orchestrators.py on write | (no subscriber — reserved for future in-process L1 cache) | Invalidate orchestrator template cache signal |
 | `them:dash:runs` | task_runner.py per run event | ws_dashboard.py (channel: runs) | Lightweight summary of every run event (no tool inputs) |
 | `them:dash:agents` | (reserved) | ws_dashboard.py (channel: agents) | Agent registry change events |

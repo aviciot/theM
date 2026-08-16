@@ -89,12 +89,22 @@ type EPConfig struct {
 	// Identity
 	EPID          string // entry_points.id (UUID string)
 	AppID         string // applications.id (UUID string)
-	TenantID      string // applications.tenant_id (UUID string); empty until Phase R-4 adds the column
+	TenantID      string // applications.tenant_id (UUID string)
 	EPSlug        string
 	AppEnabled    bool
 	EPEnabled     bool
 	EPType        string // "websocket" | "sse" | etc.
 	AccessMode    string // "public" | "token"
+
+	// Orchestrator binding (SEC-04).
+	// AppOrchestratorID is the UUID of the bound app_orchestrators row.
+	// Empty when no orchestrator is bound to this entry point.
+	// OrchestratorName is the resolved name from app_orchestrators.name.
+	// Empty when AppOrchestratorID is empty (unbound EP).
+	// Handlers MUST check for empty OrchestratorName and return a config error —
+	// they must NOT fall back to using EPSlug as the orchestrator name.
+	AppOrchestratorID string // entry_points.app_orchestrator_id (UUID string); empty if NULL
+	OrchestratorName  string // app_orchestrators.name; empty if unbound
 
 	// Session limits
 	EPMaxConcurrent  int           // entry_points.max_concurrent_sessions; 0 = unlimited
@@ -176,11 +186,11 @@ func parseAccessPolicy(logger *slog.Logger, data []byte) string {
 // ──────────────────────────────────────────────────────────────────────────────
 
 // EPConfigRow is the raw data returned by a single DB query joining
-// them.entry_points and them.applications.
+// them.entry_points, them.applications, and (left join) them.app_orchestrators.
 type EPConfigRow struct {
 	EPID                    string // UUID string
 	AppID                   string // UUID string
-	TenantID                string // UUID string; empty until Phase R-4 adds applications.tenant_id column
+	TenantID                string // UUID string
 	EPSlug                  string
 	EPType                  string
 	EPEnabled               bool
@@ -189,6 +199,9 @@ type EPConfigRow struct {
 	AccessPolicyJSON        []byte
 	AppEnabled              bool
 	AppRuntimeConfigJSON    []byte
+	// Orchestrator binding (SEC-04). Nil when entry_points.app_orchestrator_id IS NULL.
+	AppOrchestratorID *string // entry_points.app_orchestrator_id
+	OrchestratorName  *string // app_orchestrators.name; nil when unbound
 }
 
 // DBQuerier is the single query needed by the epconfig loader.
@@ -352,22 +365,32 @@ func (l *Loader) buildConfig(row *EPConfigRow) *EPConfig {
 		queueTimeout = time.Duration(*row.EPQueueTimeoutSeconds) * time.Second
 	}
 
+	var appOrchID, orchName string
+	if row.AppOrchestratorID != nil {
+		appOrchID = *row.AppOrchestratorID
+	}
+	if row.OrchestratorName != nil {
+		orchName = *row.OrchestratorName
+	}
+
 	return &EPConfig{
-		EPID:             row.EPID,
-		AppID:            row.AppID,
-		TenantID:         row.TenantID,
-		EPSlug:           row.EPSlug,
-		EPType:           row.EPType,
-		EPEnabled:        row.EPEnabled,
-		AppEnabled:       row.AppEnabled,
-		AccessMode:       accessMode,
-		EPMaxConcurrent:  epMax,
-		AppMaxConcurrent: rt.MaxConcurrentSessions,
-		RateLimitRPM:     rt.RateLimitRPM,
-		QueueTimeout:     queueTimeout,
+		EPID:              row.EPID,
+		AppID:             row.AppID,
+		TenantID:          row.TenantID,
+		EPSlug:            row.EPSlug,
+		EPType:            row.EPType,
+		EPEnabled:         row.EPEnabled,
+		AppEnabled:        row.AppEnabled,
+		AccessMode:        accessMode,
+		EPMaxConcurrent:   epMax,
+		AppMaxConcurrent:  rt.MaxConcurrentSessions,
+		RateLimitRPM:      rt.RateLimitRPM,
+		QueueTimeout:      queueTimeout,
 		BlockedTokenHashes: rt.BlockedTokens,
-		BlockedUserIDs:     rt.BlockedUserIDs,
-		fetchedAt:        time.Now(),
+		BlockedUserIDs:    rt.BlockedUserIDs,
+		AppOrchestratorID: appOrchID,
+		OrchestratorName:  orchName,
+		fetchedAt:         time.Now(),
 	}
 }
 

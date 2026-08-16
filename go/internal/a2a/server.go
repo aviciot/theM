@@ -258,13 +258,27 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req r
 	_, _, unsub := s.bus.Subscribe(ctx, h.ContextID, 256)
 	defer unsub()
 
-	// ── 5. Start Temporal workflow ────────────────────────────────────────────
-	// OrchestratorName uses appSlug, matching the WS/SSE convention.
+	// ── 5. Resolve orchestrator name from EP binding (SEC-04) ────────────────
+	// OrchestratorName comes from entry_points.app_orchestrator_id →
+	// app_orchestrators.name, resolved by epconfig at admission time.
+	// An unbound EP is a configuration error — we do not fall back to appSlug.
+	orchName := h.EPConfig.OrchestratorName
+	if orchName == "" {
+		s.logger.Warn("a2a: entry point has no orchestrator bound",
+			"app_slug", appSlug,
+			"app_id", h.EPConfig.AppID,
+		)
+		writeHTTPError(w, req.ID, http.StatusServiceUnavailable, "entry point has no orchestrator configured")
+		return
+	}
+
+	// ── 6. Start Temporal workflow ────────────────────────────────────────────
 	// RunID, ContextID, TenantID, ApplicationID, EntryPointSlug are set by Start
 	// from the handle — caller-supplied values in input are overwritten.
 	input := temporal.WorkflowInput{
-		OrchestratorName: appSlug,
-		UserMessage:      domain.TextMessage(domain.RoleUser, userText),
+		OrchestratorName:  orchName,
+		AppOrchestratorID: h.EPConfig.AppOrchestratorID,
+		UserMessage:       domain.TextMessage(domain.RoleUser, userText),
 	}
 	wfRun, startErr := s.lc.Start(ctx, h, input)
 	if startErr != nil {

@@ -74,7 +74,12 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 		}
 	}()
 
-	finalText, err := a.Runner.Run(ctx, input.RunID, input.ContextID, input.UserMessage, input.History)
+	finalText, err := a.Runner.Run(ctx, input.RunID, input.ContextID, input.UserMessage, input.History,
+		orchestrator.RunContext{
+			TenantID:      input.TenantID,
+			ApplicationID: input.ApplicationID,
+		},
+	)
 	if err != nil {
 		// Wrap as Temporal ApplicationError for typed error handling in the workflow.
 		return WorkflowResult{Status: domain.RunStatusFailed},

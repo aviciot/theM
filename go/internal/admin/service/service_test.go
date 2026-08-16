@@ -581,14 +581,16 @@ func TestAgentService_Create_InvalidatesRegistry(t *testing.T) {
 	c := &fakeCache{}
 	svc := service.NewAgentService(&fakeDal{createdID: "id-3"}, c)
 	_, _ = svc.Create(context.Background(), "t1", dal.AgentInput{Slug: "s", DisplayName: "D"})
+	// SEC-03: cache key is now tenant-scoped: them:agents:registry:{tenantID}
+	expectedKey := "them:agents:registry:t1"
 	found := false
 	for _, k := range c.deletedKeys {
-		if k == "them:agents:registry" {
+		if k == expectedKey {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("them:agents:registry not deleted, got %v", c.deletedKeys)
+		t.Errorf("%s not deleted, got %v", expectedKey, c.deletedKeys)
 	}
 }
 

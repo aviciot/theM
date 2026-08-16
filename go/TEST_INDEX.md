@@ -306,7 +306,9 @@ sanitization, and cross-run access denial.
 
 ### S1-11 · Agent registry — `internal/agentregistry/registry_test.go`
 
-**Purpose:** Agent invocation routing + two-level Redis cache + pub/sub invalidation.
+**Purpose:** Agent invocation routing + two-level per-tenant Redis cache + pub/sub invalidation.
+Fully rewritten for SEC-03: Redis key is now `them:agents:registry:{tenant_id}`, L1 key is
+`"{tenantID}:{slug}"`. Invalidation is per-tenant only — global eviction is impossible by design.
 
 | Test | What it proves |
 |---|---|
@@ -315,8 +317,13 @@ sanitization, and cross-run access denial.
 | `TestCacheMissThenPopulate` | Cache miss → DB load → Redis populated |
 | `TestPubSubInvalidation` | Pub/sub message on `them:agents:changed` → in-process cache cleared |
 | `TestUnknownSlug` | Unknown agent slug → `ErrUnknownAgent` (typed sentinel) |
+| `TestCacheMissThenPopulate_TenantScopedKey` | SEC-03: Redis key is `them:agents:registry:{tenantA}` — global key `them:agents:registry` does NOT exist |
+| `TestTenantIsolation_SameSlug` | SEC-03: tenantA and tenantB with same slug → separate cache entries, no sharing |
+| `TestTenantInvalidation_DoesNotCrossContaminate` | SEC-03: invalidating tenantA does NOT evict tenantB's cache entries |
+| `TestCrossTenatLookup_ReturnsMiss` | SEC-03: tenantA cannot retrieve an agent registered under tenantB (returns ErrUnknownAgent) |
+| `TestPubSubEmptyPayload_Ignored` | SEC-03: empty pub/sub payload → no eviction (guards against accidental global eviction) |
 
-**Trigger:** any change to `internal/agentregistry/registry.go`
+**Trigger:** any change to `internal/agentregistry/registry.go` or `internal/agentregistry/pgx_querier.go`
 
 ---
 
@@ -1062,6 +1069,8 @@ distinct and correctly named.
 | `TestRunOrchestratorActivity_RejectsEmptyRunID` | R-4d: empty RunID → non-retryable ApplicationError at activity boundary |
 | `TestRunOrchestratorActivity_PropagatesTenantToRunner` | R-4d: all required fields present → activity runs to completion (tenant passes through) |
 
+Note: `WorkflowInput.OrchestratorName` is set from `EPConfig.OrchestratorName` (resolved via JOIN from `app_orchestrators`). `WorkflowInput.AppOrchestratorID` carries the authoritative UUID for the Go Temporal worker to use for resolution. The Go worker MUST resolve orchestrators by UUID, never by name globally (SEC-04 architectural constraint).
+
 **Trigger:** any change to `internal/temporal/activities.go`, `internal/temporal/workflow.go`, or `cmd/worker/main.go`
 
 ---
@@ -1437,7 +1446,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-08 | domain | 3 |
 | S1-09 | runrecorder | 21 |
 | S1-10 | llm | 6 |
-| S1-11 | agentregistry | 5 |
+| S1-11 | agentregistry | 10 |
 | S1-12 | ws | 24 |
 | S1-13 | sse | 23 |
 | S1-14 | a2a | 27 |
@@ -1464,7 +1473,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-35 | execution lifecycle (unification refactor) | 21 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan) | 8 |
 | S1-40 | authserver (Go auth service) | 38 |
-| **S1 total** | | **570** |
+| **S1 total** | | **575** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1473,4 +1482,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **593** |
+| **`go test ./...` total** | | **598** |

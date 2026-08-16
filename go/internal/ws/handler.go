@@ -284,12 +284,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 7. Lifecycle.Start → ExecuteWorkflow ─────────────────────────────────
+	// ── 7. Resolve orchestrator name from EP binding (SEC-04) ────────────────
+	// OrchestratorName is resolved from entry_points.app_orchestrator_id →
+	// app_orchestrators.name — never from the URL slug.
+	// An unbound EP (app_orchestrator_id IS NULL) is a configuration error:
+	// return a clear error rather than silently mis-routing.
+	orchName := handle.EPConfig.OrchestratorName
+	if orchName == "" {
+		h.logger.Warn("ws: entry point has no orchestrator bound",
+			"ep_slug", epSlug,
+			"app_id", handle.EPConfig.AppID,
+		)
+		h.writeError(conn, "entry point has no orchestrator configured")
+		return
+	}
+
+	// ── 8. Lifecycle.Start → ExecuteWorkflow ─────────────────────────────────
 	// Identity fields (RunID, ContextID, TenantID, ApplicationID, EPSlug) are
 	// overwritten inside Start from the handle — never from client-supplied data.
 	input := temporal.WorkflowInput{
-		OrchestratorName: chi.URLParam(r, "app_slug"),
-		UserMessage:      userMsg,
+		OrchestratorName:  orchName,
+		AppOrchestratorID: handle.EPConfig.AppOrchestratorID,
+		UserMessage:       userMsg,
 	}
 	wfRun, startErr := h.lc.Start(ctx, handle, input)
 	if startErr != nil {
@@ -312,7 +328,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// ── 8. Stream run events to client ───────────────────────────────────────
+	// ── 9. Stream run events to client ───────────────────────────────────────
 	h.streamEvents(ctx, cancel, conn, rsEvCh, nil, orchDone)
 }
 

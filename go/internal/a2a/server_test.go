@@ -169,14 +169,18 @@ var devLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Lev
 
 func tokenEPConfig() *epconfig.EPConfig {
 	return &epconfig.EPConfig{
-		EPID:       "ep-uuid-1",
-		AppID:      "app-uuid-1",
-		TenantID:   "tenant-uuid-1",
-		EPSlug:     "myapp",
-		EPType:     "a2a",
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModeToken,
+		EPID:              "ep-uuid-1",
+		AppID:             "app-uuid-1",
+		TenantID:          "tenant-uuid-1",
+		EPSlug:            "myapp",
+		EPType:            "a2a",
+		EPEnabled:         true,
+		AppEnabled:        true,
+		AccessMode:        epconfig.AccessModeToken,
+		// SEC-04: OrchestratorName comes from app_orchestrators.name via EP binding,
+		// never from the EP slug. Tests use a representative orchestrator name.
+		AppOrchestratorID: "orch-uuid-1",
+		OrchestratorName:  "test-orchestrator",
 	}
 }
 
@@ -423,7 +427,10 @@ func TestA2A_WorkflowInputHasTenantID(t *testing.T) {
 	assert.NotEmpty(t, tc.lastInput.RunID)
 	assert.NotEmpty(t, tc.lastInput.ContextID)
 	assert.Equal(t, "myapp", tc.lastInput.EntryPointSlug)
-	assert.Equal(t, "myapp", tc.lastInput.OrchestratorName)
+	// OrchestratorName must come from app_orchestrators.name via EP binding (SEC-04),
+	// not from the EP slug.
+	assert.Equal(t, "test-orchestrator", tc.lastInput.OrchestratorName)
+	assert.Equal(t, "orch-uuid-1", tc.lastInput.AppOrchestratorID)
 }
 
 // A2A-10: session.Register called before ExecuteWorkflow

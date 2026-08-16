@@ -19,10 +19,17 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 	return &PgxQuerier{pool: pool}
 }
 
-// epConfigQuery is the single query that joins entry_points → applications.
-// All columns used by EPConfig are selected here. NULLable columns are
-// scanned into pointer types so the caller can apply defaults.
-// R-4e: a.tenant_id added so TenantID flows into EPConfig for A2A (and WS/SSE).
+// epConfigQuery joins entry_points → applications → app_orchestrators (LEFT JOIN).
+// The LEFT JOIN on app_orchestrators means ao.id and ao.name are NULL when
+// entry_points.app_orchestrator_id IS NULL (unbound EP). Handlers must treat
+// an empty OrchestratorName as a configuration error — they must NOT fall back
+// to using the EP slug as the orchestrator name (SEC-04).
+//
+// The JOIN on app_orchestrators also implicitly verifies that the bound
+// orchestrator belongs to the same application as the entry point, because
+// app_orchestrators.application_id must equal ep.application_id. This is
+// enforced by the FK constraint, but we add the explicit join condition for
+// clarity and defence-in-depth.
 const epConfigQuery = `
 SELECT
     ep.id::text,
@@ -35,9 +42,14 @@ SELECT
     ep.queue_timeout_seconds,
     COALESCE(ep.access_policy, '{"mode":"token"}')::text,
     a.enabled,
-    COALESCE(a.runtime_config, '{}')::text
+    COALESCE(a.runtime_config, '{}')::text,
+    ep.app_orchestrator_id::text,
+    ao.name
 FROM them.entry_points ep
 JOIN them.applications a ON a.id = ep.application_id
+LEFT JOIN them.app_orchestrators ao
+    ON ao.id = ep.app_orchestrator_id
+   AND ao.application_id = ep.application_id
 WHERE ep.slug = $1
 LIMIT 1`
 
@@ -60,6 +72,8 @@ func (q *PgxQuerier) QueryEPConfig(ctx context.Context, epSlug string) (*EPConfi
 		&accessPolicyText,
 		&row.AppEnabled,
 		&runtimeConfigText,
+		&row.AppOrchestratorID,
+		&row.OrchestratorName,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

@@ -47,8 +47,10 @@ type artifactBody struct {
 }
 
 // RunContext carries per-run identity metadata (tenant + session) that is
-// not part of the core orchestration logic but is needed for artifact storage.
+// not part of the core orchestration logic but is needed for artifact storage
+// and tenant-scoped agent registry lookups (SEC-03).
 type RunContext struct {
+	TenantID      string // server-resolved; used to scope agent registry cache
 	ApplicationID string
 	SessionID     string
 }
@@ -74,8 +76,10 @@ type Config struct {
 
 // AgentInvoker is the interface the orchestrator uses to call agents.
 // Implemented by the agent registry (Phase 7).
+// tenantID must be the server-resolved tenant ID from RunContext — never from
+// client-supplied data (SEC-03).
 type AgentInvoker interface {
-	Invoke(ctx context.Context, slug string, input json.RawMessage) (json.RawMessage, error)
+	Invoke(ctx context.Context, tenantID, slug string, input json.RawMessage) (json.RawMessage, error)
 }
 
 // HistoryLoader loads prior conversation messages from persistent storage.
@@ -584,7 +588,7 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 			}
 
 			inputBytes, _ := json.Marshal(tc.Input)
-			out, err := o.agents.Invoke(ctx, slug, inputBytes)
+			out, err := o.agents.Invoke(ctx, rctx.TenantID, slug, inputBytes)
 
 			// Complete child task row (non-fatal).
 			if o.taskRecorder != nil && taskID != "" {

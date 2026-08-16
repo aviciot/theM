@@ -233,13 +233,15 @@ type sseBuilder struct {
 
 func (b *sseBuilder) defaultEP() *epconfig.EPConfig {
 	return &epconfig.EPConfig{
-		EPSlug:     "ep",
-		EPType:     "sse",
-		AccessMode: epconfig.AccessModeToken,
-		EPEnabled:  true,
-		AppEnabled: true,
-		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
-		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		EPSlug:            "ep",
+		EPType:            "sse",
+		AccessMode:        epconfig.AccessModeToken,
+		EPEnabled:         true,
+		AppEnabled:        true,
+		TenantID:          "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:             "bbbbbbbb-0000-0000-0000-000000000001",
+		AppOrchestratorID: "cccccccc-0000-0000-0000-000000000001",
+		OrchestratorName:  "test-orchestrator",
 	}
 }
 
@@ -796,13 +798,15 @@ func TestSSE_RunStoresTenantID(t *testing.T) {
 		recorder: capRec,
 		temporal: capTC,
 		epLoader: &fakeEPLoader{cfg: &epconfig.EPConfig{
-			EPSlug:     "ep1",
-			EPType:     "sse",
-			EPEnabled:  true,
-			AppEnabled: true,
-			AccessMode: epconfig.AccessModeToken,
-			TenantID:   tenantID,
-			AppID:      appID,
+			EPSlug:            "ep1",
+			EPType:            "sse",
+			EPEnabled:         true,
+			AppEnabled:        true,
+			AccessMode:        epconfig.AccessModeToken,
+			TenantID:          tenantID,
+			AppID:             appID,
+			AppOrchestratorID: "orch-uuid-tenant-test",
+			OrchestratorName:  "test-orchestrator",
 		}},
 		streamMsgs: []string{`{"type":"done","run_id":"r"}`},
 	}
@@ -1005,13 +1009,15 @@ func TestSSE_RunStreamSubscribedBeforeStart(t *testing.T) {
 	tc := &orderingTemporalClient{spy: spy}
 
 	ep := &epconfig.EPConfig{
-		EPSlug:     "ep",
-		EPType:     "sse",
-		EPEnabled:  true,
-		AppEnabled: true,
-		AccessMode: epconfig.AccessModePublic,
-		TenantID:   "aaaaaaaa-0000-0000-0000-000000000001",
-		AppID:      "bbbbbbbb-0000-0000-0000-000000000001",
+		EPSlug:            "ep",
+		EPType:            "sse",
+		EPEnabled:         true,
+		AppEnabled:        true,
+		AccessMode:        epconfig.AccessModePublic,
+		TenantID:          "aaaaaaaa-0000-0000-0000-000000000001",
+		AppID:             "bbbbbbbb-0000-0000-0000-000000000001",
+		AppOrchestratorID: "orch-uuid-ordering-test",
+		OrchestratorName:  "test-orchestrator",
 	}
 	lc := execution.NewLifecycleWithRecorder(authn, &fakeEPLoader{cfg: ep}, nil, nil, &fakeRunCreator{}, tc, nil)
 	bus := event.New()

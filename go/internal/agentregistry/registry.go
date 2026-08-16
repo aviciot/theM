@@ -14,9 +14,19 @@ import (
 )
 
 const (
-	redisCacheKey     = "them:agents:registry"
-	redisCacheTTL     = 600 * time.Second
-	invalidateChannel = "them:agents:changed" // matches Python admin_agents.py publisher
+	// redisCacheKeyFmt is the per-tenant L2 cache key.
+	// Tenant ID comes from the server-side auth context, never from client payload.
+	// Replaces the old global "them:agents:registry" key (SEC-03).
+	redisCacheKeyFmt = "them:agents:registry:%s" // %s = tenant_id UUID string
+
+	redisCacheTTL = 600 * time.Second
+
+	// invalidateChannel is the Redis pub/sub channel for cache invalidation.
+	// Message payload is the tenant_id UUID string whose cache should be evicted.
+	// The admin service publishes the tenantID when any agent in that tenant mutates.
+	// Matches the constant used in admin/service/agents.go.
+	invalidateChannel = "them:agents:changed"
+
 	httpInvokeTimeout = 60 * time.Second
 )
 
@@ -32,9 +42,11 @@ type AgentConfig struct {
 	MaxConcurrency int    `json:"max_concurrency"`
 }
 
-// DBReader loads agent configurations from the database.
+// DBReader loads agent configurations from the database, scoped to a tenant.
 type DBReader interface {
-	QueryAgents(ctx context.Context) ([]*AgentConfig, error)
+	// QueryAgentsByTenant returns all enabled agents belonging to the given tenant.
+	// tenantID is a UUID string from the server-side auth context.
+	QueryAgentsByTenant(ctx context.Context, tenantID string) ([]*AgentConfig, error)
 }
 
 // CacheClient is the Redis interface used by the registry.
@@ -48,11 +60,21 @@ type CacheClient interface {
 // ErrUnknownAgent is returned when no agent with the given slug is registered.
 var ErrUnknownAgent = errors.New("agentregistry: unknown agent slug")
 
-// Registry caches agent configurations and routes tool invocations.
+// Registry caches agent configurations per tenant and routes tool invocations.
+//
+// Tenant isolation guarantees (SEC-03):
+//   - L1 (sync.Map): keys are "{tenantID}:{slug}" — two tenants with agents of
+//     the same slug never collide.
+//   - L2 (Redis): key is "them:agents:registry:{tenantID}" — per-tenant bucket,
+//     no global fallback.
+//   - Pub/sub invalidation: payload must be the tenantID string whose cache to
+//     evict. An empty payload evicts nothing (no global wipe).
+//   - tenantID must come from the server-side auth context (epconfig.TenantID or
+//     JWT claim). It must never be sourced from client request body/headers.
 type Registry struct {
 	db         DBReader
 	cache      CacheClient
-	l1         sync.Map
+	l1         sync.Map // key: "{tenantID}:{slug}" → *AgentConfig
 	httpClient *http.Client
 	logger     *slog.Logger
 }
@@ -70,9 +92,22 @@ func New(db DBReader, cache CacheClient, logger *slog.Logger) *Registry {
 	}
 }
 
+// l1Key returns the L1 cache key for a given tenant and agent slug.
+// This is the only place the key format is defined — never inline.
+func l1Key(tenantID, slug string) string {
+	return tenantID + ":" + slug
+}
+
+// redisCacheKey returns the L2 Redis key for a given tenant.
+func redisCacheKey(tenantID string) string {
+	return fmt.Sprintf(redisCacheKeyFmt, tenantID)
+}
+
 // Invoke routes a tool call to the correct adapter.
-func (r *Registry) Invoke(ctx context.Context, slug string, input json.RawMessage) (json.RawMessage, error) {
-	cfg, err := r.getAgent(ctx, slug)
+// tenantID must be the server-resolved tenant ID (from epconfig or JWT), never
+// from client-supplied data.
+func (r *Registry) Invoke(ctx context.Context, tenantID, slug string, input json.RawMessage) (json.RawMessage, error) {
+	cfg, err := r.getAgent(ctx, tenantID, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -89,69 +124,86 @@ func (r *Registry) Invoke(ctx context.Context, slug string, input json.RawMessag
 	}
 }
 
-func (r *Registry) getAgent(ctx context.Context, slug string) (*AgentConfig, error) {
-	if v, ok := r.l1.Load(slug); ok {
+func (r *Registry) getAgent(ctx context.Context, tenantID, slug string) (*AgentConfig, error) {
+	key := l1Key(tenantID, slug)
+	if v, ok := r.l1.Load(key); ok {
 		return v.(*AgentConfig), nil
 	}
-	if err := r.LoadAll(ctx); err != nil {
+	if err := r.LoadAll(ctx, tenantID); err != nil {
 		return nil, fmt.Errorf("agentregistry: reload failed: %w", err)
 	}
-	if v, ok := r.l1.Load(slug); ok {
+	if v, ok := r.l1.Load(key); ok {
 		return v.(*AgentConfig), nil
 	}
 	return nil, fmt.Errorf("%w: %s", ErrUnknownAgent, slug)
 }
 
-// LoadAll populates L1 from L2 (Redis) or DB.
-func (r *Registry) LoadAll(ctx context.Context) error {
-	raw, found, err := r.cache.Get(ctx, redisCacheKey)
+// LoadAll populates L1 for the given tenant from L2 (Redis) or DB.
+// tenantID must be a server-resolved UUID string — never from client data.
+func (r *Registry) LoadAll(ctx context.Context, tenantID string) error {
+	redisKey := redisCacheKey(tenantID)
+	raw, found, err := r.cache.Get(ctx, redisKey)
 	if err == nil && found && len(raw) > 0 {
-		return r.populateL1FromJSON(raw)
+		return r.populateL1FromJSON(tenantID, raw)
 	}
 
-	agents, err := r.db.QueryAgents(ctx)
+	agents, err := r.db.QueryAgentsByTenant(ctx, tenantID)
 	if err != nil {
 		return fmt.Errorf("agentregistry: db load: %w", err)
 	}
 
 	encoded, err := json.Marshal(agents)
 	if err == nil {
-		_ = r.cache.SetEX(ctx, redisCacheKey, encoded, redisCacheTTL)
+		_ = r.cache.SetEX(ctx, redisKey, encoded, redisCacheTTL)
 	}
 
 	for _, a := range agents {
-		r.l1.Store(a.Slug, a)
+		r.l1.Store(l1Key(tenantID, a.Slug), a)
 	}
-	r.logger.Info("agentregistry: loaded from DB", "count", len(agents))
+	r.logger.Info("agentregistry: loaded from DB", "tenant_id", tenantID, "count", len(agents))
 	return nil
 }
 
 // Subscribe starts the Redis pub/sub listener for cache invalidation.
+// The pub/sub message payload must be the tenantID UUID string whose cache
+// should be evicted. An empty payload is a no-op (no global eviction).
 func (r *Registry) Subscribe(ctx context.Context) {
 	r.logger.Info("agentregistry: pub/sub listener started", "channel", invalidateChannel)
-	err := r.cache.Subscribe(ctx, invalidateChannel, func(_ string) {
-		r.invalidateL1()
-		r.logger.Info("agentregistry: L1 cache invalidated via pub/sub")
+	err := r.cache.Subscribe(ctx, invalidateChannel, func(payload string) {
+		if payload == "" {
+			r.logger.Warn("agentregistry: received empty invalidation payload — ignoring")
+			return
+		}
+		r.invalidateTenant(payload)
+		r.logger.Info("agentregistry: L1 cache evicted for tenant", "tenant_id", payload)
 	})
 	if err != nil && !errors.Is(err, context.Canceled) {
 		r.logger.Error("agentregistry: pub/sub listener error", "error", err)
 	}
 }
 
-func (r *Registry) invalidateL1() {
+// invalidateTenant removes all L1 entries for the given tenant.
+// Only entries with keys prefixed by "{tenantID}:" are evicted — other tenants
+// are unaffected.
+func (r *Registry) invalidateTenant(tenantID string) {
+	prefix := tenantID + ":"
 	r.l1.Range(func(key, _ any) bool {
-		r.l1.Delete(key)
+		if k, ok := key.(string); ok {
+			if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+				r.l1.Delete(key)
+			}
+		}
 		return true
 	})
 }
 
-func (r *Registry) populateL1FromJSON(raw []byte) error {
+func (r *Registry) populateL1FromJSON(tenantID string, raw []byte) error {
 	var agents []*AgentConfig
 	if err := json.Unmarshal(raw, &agents); err != nil {
 		return fmt.Errorf("agentregistry: unmarshal L2: %w", err)
 	}
 	for _, a := range agents {
-		r.l1.Store(a.Slug, a)
+		r.l1.Store(l1Key(tenantID, a.Slug), a)
 	}
 	return nil
 }

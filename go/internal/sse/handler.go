@@ -251,12 +251,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 8. Start Temporal workflow ────────────────────────────────────────────
+	// ── 8. Resolve orchestrator name from EP binding (SEC-04) ────────────────
+	// OrchestratorName comes from entry_points.app_orchestrator_id →
+	// app_orchestrators.name, resolved by epconfig at admission time.
+	// An unbound EP (OrchestratorName == "") is a configuration error.
+	orchName := handle.EPConfig.OrchestratorName
+	if orchName == "" {
+		epSlug := chi.URLParam(r, "entry_point_slug")
+		h.logger.Warn("sse: entry point has no orchestrator bound",
+			"ep_slug", epSlug,
+			"app_id", handle.EPConfig.AppID,
+		)
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"entry point has no orchestrator configured\"}\n\n")
+		if hasFlusher {
+			flusher.Flush()
+		}
+		return
+	}
+
+	// ── 9. Start Temporal workflow ────────────────────────────────────────────
 	// Run-stream is already subscribed — no events can be lost.
-	appSlug := chi.URLParam(r, "app_slug")
 	input := temporal.WorkflowInput{
-		OrchestratorName: appSlug,
-		UserMessage:      domain.TextMessage(domain.RoleUser, userText),
+		OrchestratorName:  orchName,
+		AppOrchestratorID: handle.EPConfig.AppOrchestratorID,
+		UserMessage:       domain.TextMessage(domain.RoleUser, userText),
 	}
 	// Identity fields (RunID, ContextID, TenantID, ApplicationID, EntryPointSlug) are
 	// overwritten by Lifecycle.Start from the handle — caller values are ignored.

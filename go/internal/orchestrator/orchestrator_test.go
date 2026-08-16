@@ -174,7 +174,7 @@ type fakeAgentInvoker struct {
 	maxActive  int32
 }
 
-func (f *fakeAgentInvoker) Invoke(ctx context.Context, slug string, _ json.RawMessage) (json.RawMessage, error) {
+func (f *fakeAgentInvoker) Invoke(ctx context.Context, _ string, slug string, _ json.RawMessage) (json.RawMessage, error) {
 	// Track concurrency.
 	cur := atomic.AddInt32(&f.active, 1)
 	defer atomic.AddInt32(&f.active, -1)
@@ -461,7 +461,7 @@ type artifactAgentInvoker struct {
 	data     []byte
 }
 
-func (a *artifactAgentInvoker) Invoke(_ context.Context, _ string, _ json.RawMessage) (json.RawMessage, error) {
+func (a *artifactAgentInvoker) Invoke(_ context.Context, _ string, _ string, _ json.RawMessage) (json.RawMessage, error) {
 	encoded := base64.StdEncoding.EncodeToString(a.data)
 	payload := map[string]any{
 		"artifact": map[string]any{
@@ -844,7 +844,7 @@ type rawBase64AgentInvoker struct {
 	dataBase64 string
 }
 
-func (a *rawBase64AgentInvoker) Invoke(_ context.Context, _ string, _ json.RawMessage) (json.RawMessage, error) {
+func (a *rawBase64AgentInvoker) Invoke(_ context.Context, _ string, _ string, _ json.RawMessage) (json.RawMessage, error) {
 	payload := map[string]any{
 		"artifact": map[string]any{
 			"filename":     a.filename,

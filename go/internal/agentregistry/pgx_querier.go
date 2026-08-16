@@ -16,8 +16,10 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 	return &PgxQuerier{pool: pool}
 }
 
-// QueryAgents loads all enabled agents from the them.agents table.
-func (q *PgxQuerier) QueryAgents(ctx context.Context) ([]*AgentConfig, error) {
+// QueryAgentsByTenant loads all enabled agents belonging to the given tenant.
+// tenantID is the server-resolved UUID string from the auth context.
+// Scoped to tenant_id so agents from different tenants are never mixed (SEC-03).
+func (q *PgxQuerier) QueryAgentsByTenant(ctx context.Context, tenantID string) ([]*AgentConfig, error) {
 	const sql = `
 		SELECT id, slug, name, description,
 		       adapter_type, COALESCE(endpoint_url, ''),
@@ -25,9 +27,10 @@ func (q *PgxQuerier) QueryAgents(ctx context.Context) ([]*AgentConfig, error) {
 		       max_concurrency
 		FROM them.agents
 		WHERE enabled = true
+		  AND tenant_id = $1::uuid
 		ORDER BY id`
 
-	rows, err := q.pool.Query(ctx, sql)
+	rows, err := q.pool.Query(ctx, sql, tenantID)
 	if err != nil {
 		return nil, err
 	}

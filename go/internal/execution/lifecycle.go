@@ -225,7 +225,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		SessionID:        sessionID,
 		InstanceID:       req.InstanceID,
 		UserID:           userID,
-		OrchestratorName: req.EPSlug, // appSlug convention (matches WS handler)
+		OrchestratorName: resolvedCfg.OrchestratorName, // resolved from EP binding (SEC-04)
 		EPSlug:           req.EPSlug,
 		AppID:            resolvedCfg.AppID,
 		TenantID:         resolvedCfg.TenantID,
