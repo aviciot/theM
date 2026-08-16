@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: pending — Tenant/runtime foundation fixes (P-08, SEC-03, SEC-04) + R5/R6 reviews
+Commit: `efeb1ec` — fix(tenant): P-08 + SEC-03 + SEC-04 — tenant/runtime foundation hardening (2026-08-16)
 
 ---
 
