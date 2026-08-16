@@ -280,7 +280,23 @@ func runScanJob(
 	if v, ok := scanResult["risk"]; ok {
 		completeFields["risk"] = fmt.Sprintf("%v", v)
 	}
-	hsetExpire(ctx, rc, hashKey, 30, completeFields)
+	if v, ok := scanResult["summary"]; ok {
+		completeFields["summary"] = fmt.Sprintf("%v", v)
+	}
+	if v, ok := scanResult["scanned_at"]; ok {
+		completeFields["scanned_at"] = fmt.Sprintf("%v", v)
+	}
+	if v, ok := scanResult["findings"]; ok {
+		if b, err := json.Marshal(v); err == nil {
+			completeFields["findings"] = string(b)
+		}
+	}
+	if v, ok := scanResult["http_probes"]; ok {
+		if b, err := json.Marshal(v); err == nil {
+			completeFields["http_probes"] = string(b)
+		}
+	}
+	hsetExpire(ctx, rc, hashKey, 300, completeFields)
 	pubJSON(ctx, rc, dashCh, completeEvent)
 }
 
