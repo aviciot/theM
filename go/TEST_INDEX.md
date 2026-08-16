@@ -150,6 +150,32 @@ no header can override TenantID; no secret appears in errors; two tenants resolv
 
 ---
 
+### S1-41 · Component registry resolver — `internal/registry/resolver_test.go`
+
+**Purpose:** Phase A of Application v2 — design-time component definition resolver with tenant isolation.
+Verifies the two-path resolution (UUID fast path → portable ref fallback), tenant access rules
+(builtin accessible to all; tenant-scoped only to owning tenant), and publish-pipeline constraints
+(deprecated blocked at ResolveForPublish, allowed at Resolve for palette queries).
+
+| Test | What it proves |
+|---|---|
+| `TestResolver_TenantOwnedDefinitionResolvesForOwner` | Tenant-scoped definition resolves for its owning tenant |
+| `TestResolver_BuiltinResolvesForAnyTenant` | Builtin definition (scope=builtin) is accessible to any tenant ID |
+| `TestResolver_NoCrossTenantResolution` | Tenant A cannot resolve a definition owned by tenant B → ErrNotFound |
+| `TestResolver_ExactVersionResolution` | Version is forwarded to DAL; correct versioned definition returned |
+| `TestResolver_MissingDefinitionReturnsErrNotFound` | Unknown definition → ErrNotFound |
+| `TestResolver_DisabledDefinitionReturnsErrDisabled` | enabled=false → ErrDisabled regardless of scope |
+| `TestResolver_DeprecatedDefinition_ResolveSucceeds` | Deprecated definition: Resolve succeeds (palette queries allowed to see deprecated) |
+| `TestResolver_DeprecatedDefinition_ResolveForPublishReturnsErrDeprecated` | Deprecated definition: ResolveForPublish → ErrDeprecated (blocks new pins) |
+| `TestResolver_UUIDFastPathHitsBeforeRef` | UUID provided + found → UUID result returned; ref lookup not used |
+| `TestResolver_UUIDMissFallsThroughToRef` | UUID provided but not found → falls through to portable ref lookup |
+| `TestResolver_ResolveForPublish_PublishedDefinitionSucceeds` | ResolveForPublish happy path: published definition resolves cleanly |
+| `TestResolver_TwoTenantsIndependent` | Alpha and bravo tenants with same-named definitions resolve independently |
+
+**Trigger:** any change to `internal/registry/resolver.go`, `internal/registry/pgx.go`, or `internal/registry/types.go`
+
+---
+
 ### S1-40 · Auth server (Go) — `internal/authserver/*_test.go`
 
 **Purpose:** the Go replacement for the Python `them-auth-service`. Proves HS256 JWT issuance
@@ -1408,6 +1434,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/cache/runstream_adapter.go` | S1-20 |
 | `internal/runstream/stream.go` | S1-21 |
 | `internal/reconciler/reconciler.go` | S1-22 |
+| `internal/registry/resolver.go`, `internal/registry/pgx.go`, `internal/registry/types.go` | S1-41 |
 | `cmd/them/main.go` | S1-24 + S1 (full suite) |
 | `go.mod` or `go.sum` | S1 (full suite) |
 | `Dockerfile.go` | S1 + rebuild + S2 |
@@ -1473,7 +1500,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-35 | execution lifecycle (unification refactor) | 21 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan) | 8 |
 | S1-40 | authserver (Go auth service) | 38 |
-| **S1 total** | | **575** |
+| S1-41 | registry (component definition resolver) | 12 |
+| **S1 total** | | **587** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1482,4 +1510,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **598** |
+| **`go test ./...` total** | | **610** |
