@@ -498,8 +498,8 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 | `TestRunsDelete_NotFound` | RW-4: DELETE /runs/{run_id} run not found → 404 |
 | `TestRunsBulkDelete_WithIDs` | RW-5: POST /runs/bulk-delete with IDs → 200 `{"deleted":1}` |
 | `TestRunsBulkDelete_EmptyIDs` | RW-6: POST /runs/bulk-delete empty run_ids → 200 `{"deleted":0}` without DB hit |
-| `TestUpdateEntryPoint_NoSlugChange_PublishesSlug` | PUT entry-point (no rename) → publishes slug to `them:ep:config:changed` |
-| `TestUpdateEntryPoint_SlugRename_PublishesBothSlugs` | PUT entry-point (rename) → publishes both old and new slugs |
+| `TestUpdateEntryPoint_NoSlugChange_PublishesSlug` | PUT entry-point (no rename) → publishes `"{tenantID}:{slug}"` to `them:ep:config:changed` |
+| `TestUpdateEntryPoint_SlugRename_PublishesBothSlugs` | PUT entry-point (rename) → publishes both `"{tenantID}:{old}"` and `"{tenantID}:{new}"` |
 | `TestUpdateEntryPoint_SlugRename_OldSlugPublishedFirst` | Old slug published before new slug in rename path |
 | `TestUpdateEntryPoint_OldSlugLookupFails_OnlyNewSlugPublished` | Old slug lookup fails → only new slug published; no error |
 | `TestDeleteEntryPoint_PublishesSlug` | DELETE entry-point → fetches slug then publishes it |
@@ -809,11 +809,11 @@ history-expired rows). Status mapping per ADR-002.
 | `TestLoad_NegativeLimitsTreatedAsUnlimited` | Negative limits clamped to 0 (unlimited) |
 | `TestLoad_CacheHit` | Second `Load` for same slug → DB called only once |
 | `TestLoad_DisabledEPNotCached` | Disabled EP never cached → DB queried every call |
-| `TestInvalidate_EvictsEntry` | `Invalidate(slug)` → next `Load` re-queries DB |
+| `TestInvalidate_EvictsEntry` | `Invalidate(tenantID, slug)` → next `Load(tenantID, slug)` re-queries DB (tenant-scoped) |
 | `TestInvalidateApp_EvictsAppEntries` | `InvalidateApp(appID)` → only EPs for that app evicted |
 | `TestLoad_MissingAccessPolicyDefaultsToToken` | NULL `access_policy` → defaults to `"token"` auth |
 | `TestLoad_AppIDPropagated` | `AppID` from DB propagated correctly to `EPConfig.AppID` |
-| `TestSubscribe_MessageEvictsCache` | Pub/sub message with EP slug → cache evicted; next Load re-queries DB |
+| `TestSubscribe_MessageEvictsCache` | Pub/sub message `"{tenantID}:{slug}"` → cache evicted; next Load re-queries DB (tenant-scoped payload) |
 | `TestLoad_TTLFallback_NoSubscriber` | Without subscriber, fresh entry is cached (TTL not yet expired) |
 
 **Trigger:** any change to `internal/epconfig/epconfig.go` or `internal/epconfig/pgx.go`
@@ -854,10 +854,10 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 | `TestAppService_Create_MissingName_Validation` | Missing name → `ErrValidation` |
 | `TestAppService_CreateEntryPoint_InvalidType_Unprocessable` | `ep_type="grpc"` → `ErrUnprocessable` |
 | `TestAppService_CreateEntryPoint_ValidTypes` | All 5 valid EP types (websocket, sse, voice, webrtc, a2a) → no error |
-| `TestAppService_UpdateEntryPoint_OldSlugBeforeNew` | Rename: old slug published before new slug (critical ordering contract) |
+| `TestAppService_UpdateEntryPoint_OldSlugBeforeNew` | Rename: old `"{tenantID}:{slug}"` published before new — critical ordering; `UpdateEntryPoint` now takes `tenantID` for fallback |
 | `TestAppService_UpdateEntryPoint_InvalidType_Unprocessable` | `ep_type="tcp"` on update → `ErrUnprocessable` |
-| `TestAppService_DeleteEntryPoint_PublishesSlug` | Delete EP → slug published to invalidation channel |
-| `TestAppService_Update_InvalidatesAppEPs` | Update app → all EP slugs published to invalidation channel |
+| `TestAppService_DeleteEntryPoint_PublishesSlug` | Delete EP → `"{tenantID}:{slug}"` published to invalidation channel (tenant-scoped) |
+| `TestAppService_Update_InvalidatesAppEPs` | Update app → all `"{tenantID}:{slug}"` pairs published (uses `ListEPTenantSlugsForApp`) |
 | `TestRunService_Signal_BuildsWorkflowID` | `Signal` constructs `"ctx-{contextID}"` workflow ID |
 | `TestRunService_Signal_TemporalNil_Unavailable` | nil Temporal → `ErrTemporalUnavailable` |
 | `TestRunService_Signal_DBError_NotNotFound` | Non-pgx DB error → returned as-is, not mapped to ErrNotFound |

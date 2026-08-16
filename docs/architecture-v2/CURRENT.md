@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `efeb1ec` — fix(tenant): P-08 + SEC-03 + SEC-04 — tenant/runtime foundation hardening (2026-08-16)
+Commit: `54a7dad` — feat(sec): EP resolution tenant-safe end-to-end (migration 028) (2026-08-16)
 
 ---
 
@@ -44,6 +44,30 @@ All containers healthy. See `docs/STATUS.md` for full container list.
 
 ## Current migration slice
 
+**EP Resolution Tenant-Safe End-to-End — COMPLETE** (2026-08-16)
+
+Migration 028: `entry_points.tenant_id` NOT NULL, `UNIQUE(tenant_id, slug)` — applied to live DB.
+
+What was done:
+- `db/028_entry_points_tenant_scoped_slug.sql`: adds `tenant_id` to `entry_points`, backfills from `applications.tenant_id`, drops global `UNIQUE(slug)`, adds `UNIQUE(tenant_id, slug)` + index.
+- `epconfig.Loader.Load(ctx, tenantID, slug)` — SQL filters by `tenant_id`. Cache key: `"{tenantID}:{slug}"`.
+- `epconfig.Loader.Invalidate(tenantID, slug)` — tenant-scoped.
+- `epconfig.Loader.Subscribe` — handles `"{tenantID}:{slug}"` payload format; legacy bare slug as safety net.
+- `dal.CreateEntryPoint` — backfills `tenant_id` from parent application via INSERT...SELECT.
+- `dal.GetEntryPointTenantAndSlug`, `dal.ListEPTenantSlugsForApp` — new methods for tenant-scoped cache invalidation.
+- `service.AppService.UpdateEntryPoint` — takes `tenantID` param as fallback when EP lookup returns empty.
+- `service.AppService.publishEP` — payload format `"{tenantID}:{slug}"`.
+- WS/SSE/A2A handlers: resolve `tenantID` from bearer token; fall back to `BootstrapTenantID` for public EPs.
+- `tenantctx.BootstrapTenantID` constant: `"00000000-0000-0000-0000-000000000001"`.
+- `execution.ExecutionRequest.TenantID` field added.
+- `transport.EPConfigLoader.Load` signature updated to `Load(ctx, tenantID, slug)`.
+- All test fakes updated; `go test ./...`: 30/30 packages, 0 failures. Go bridge rebuilt and healthy.
+
+**SAFE TO DEVELOP WAVE 9: YES**
+**SAFE FOR GO-ONLY MULTI-TENANT ENTRY-POINT ROUTING: YES**
+
+---
+
 **Tenant/Runtime Foundation — COMPLETE** (2026-08-16)
 
 Architecture decision: **Python is permanently retired.** `them-bridge` and `them-worker` MUST remain OFF. No Python patches. No Python fallbacks. No compatibility shims.
@@ -55,8 +79,6 @@ What was done:
 - **SEC-01/SEC-02:** Documented as LEGACY PYTHON PATH — RETIRED. Not implementation blockers. Dead paths that will not be reactivated.
 - R5 Application Readiness Review + R6 Tenant Architecture Review written and committed.
 - `go test ./...`: 30/30 packages, 0 failures. Go bridge rebuilt and healthy.
-
-**Wave 9 pre-requisite verdict (from R6): SAFE TO DEVELOP WAVE 9: YES**
 
 Permanent architectural constraint (enforced, never waive):
 > Go Temporal worker MUST resolve orchestrators by `AppOrchestratorID` UUID. Never by name globally.
@@ -100,14 +122,15 @@ What was done:
 
 ## Next recommended task
 
-**Wave 9 — Multi-tenant runtime enablement.** Pre-requisites are now complete.
+**Wave 9 — Multi-tenant runtime enablement.** All pre-requisites are now complete.
 
-Wave 9 scope (from R6 Phase 1–8 plan):
-1. EP slug uniqueness per-tenant: add `tenant_id` to `entry_points`, add `UNIQUE(tenant_id, slug)` constraint
-2. Route resolution: update `epconfig` loader SQL to filter by `tenant_id`
+Items 1 and 2 from the original Wave 9 plan are **done** (EP tenant_id column + epconfig tenant-scoped resolution).
+
+Remaining Wave 9 scope:
 3. Session and rate-limit keys: ensure all runtime keys include tenant scope
 4. Tenant provisioning: admin endpoints to create/manage tenants
-5. Auth: tenant_id claim in JWT and bearer token validation
+5. Auth: tenant_id claim in JWT and bearer token validation (multi-tenant token issuance)
+6. Live two-tenant verification: create two test tenants/apps with same EP slug, verify correct routing, no cross-tenant cache leakage
 
 Before starting Wave 9: read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 (Implementation Plan).
 
@@ -144,7 +167,8 @@ Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.
 1. Auth admin CRUD (users/roles/teams) — not exposed since Python auth removed. Needs Go port.
 2. Go Temporal worker is not yet sole owner of orchestration. Python worker is permanently retired (must remain OFF). Go worker must become sole owner before any second tenant is provisioned.
 3. A2A server (`/a2a/*`) still on Python — not yet migrated to Go.
-4. `entry_points` has no `tenant_id` column and no per-tenant slug uniqueness constraint (Wave 9 blocker for multi-tenant EP routing).
+4. ~~`entry_points` has no `tenant_id` column~~ — DONE (migration 028).
+5. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant auth) remain open.
 
 ---
 
@@ -161,6 +185,8 @@ Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.
 - **Go Temporal worker MUST resolve orchestrators by `AppOrchestratorID` UUID** (from `WorkflowInput.AppOrchestratorID`). Never resolve orchestrators globally by name.
 - **SEC-01/SEC-02 are dead paths.** Legacy Python globally-namespaced orchestrator Redis keys (`them:orch:loc:{name}`, `them:orch:tmpl:{name}`) will not be written again. Do not reactivate.
 - **Agent registry Redis key is `them:agents:registry:{tenant_id}`.** The old global key `them:agents:registry` must not be written or read.
+- **EP cache key is `"{tenantID}:{slug}"`.** Cache invalidation payload on `them:ep:config:changed` is always `"{tenantID}:{slug}"`. Global slug-only keys must not be written.
+- **`entry_points.tenant_id` is NOT NULL.** All new EPs inherit tenant from parent application. `UNIQUE(tenant_id, slug)` enforced at DB level (migration 028).
 - No secrets in Application Definition JSONB, Component Definition JSONB, export files, logs, or Temporal history. Only secret references.
 
 ---
