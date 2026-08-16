@@ -1,174 +1,180 @@
 # Current Session State — the-M
 # Last updated: 2026-08-16
-# Replaces: NEXT_SESSION_BRIDGE_HANDOVER.md, NEXT_SESSION_HANDOVER.md
+# Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
 
 ## HEAD
 
 Branch: `main`
-Commit: `54a7dad` — feat(sec): EP resolution tenant-safe end-to-end (migration 028) (2026-08-16)
+Commit: `b93dff4` — feat(registry): Phase A — component_definitions + application_definitions + Go resolver
 
 ---
 
 ## Deployment state
 
-**Active deployment: local Linux server** (moved from Hetzner 2026-08-15)
+**Active deployment: local Linux server**
 
-Stack: `docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d`
+Stack startup command:
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile go --profile temporal up -d
+```
+
 UI: `http://<server-ip>:8088`
 
 Key facts:
-- `them-auth-go` is sole auth service — Python `them-auth-service` removed from compose
-- `them-bridge` (Python) handles all non-auth API routes in default dev mode
-- `them-go-bridge` is NOT started in default dev mode (requires `--profile go`)
-- Without `--profile go`, Traefik has no routers for `/api/v1/`, `/health/`, `/ws/`, `/sse/`, `/apps/`
-- To match Hetzner prod routing: add `--profile go` to startup command
-- `docker-compose.dev.yml` is the local Linux overlay (replaces old `docker-compose.local.yml`)
+- `them-auth-go` is sole auth service
+- **`them-bridge` (Python) is permanently retired** — behind `profiles: [legacy]`; does NOT start in default, `--profile go`, or `--profile temporal` mode
+- **`them-worker` (Python) is behind `profiles: [temporal]`** and the go-worker replaces it; Python worker will be moved to `[legacy]` once Go worker is sole owner
+- `them-go-bridge` is the active API gateway — started with `--profile go`
+- Frontend `depends_on` changed from `them-bridge` → `them-auth-go` (Python removed from dependency chain)
+- Frontend `THE_M_API_URL` points to `http://them-traefik:8088` (not them-bridge directly)
+- `docker-compose.dev.yml` is the local Linux overlay
 - Named Docker volumes: `them-postgres-data`, `them-redis-data`, `them-logs` — `external: true`
 - Project name: `them_gateway` — required for volume/network ownership consistency
 
-All containers healthy. See `docs/STATUS.md` for full container list.
+All containers healthy as of 2026-08-16. See `docs/STATUS.md` for full container map.
 
 ---
 
-## Environment alignment done this session
+## Python permanently locked out via compose profiles
 
-- `docker-compose.dev.yml` fixed: `THE_M_AUTH_URL` → `them-auth-go:8703`, Dockerfile names, named volumes, external network
-- `.dockerignore` updated: added `theM_gateway/` to prevent build-context permission errors
-- `docs/STATUS.md` updated: HEAD, startup command, container map
-- `docs/architecture-v2/LOCAL_DEV_PYTHON_OFF_AUDIT.md` created: Phase 10/11 route audit
-- Local repo aligned to `origin/main` at `ca29acd` (saved local R-4 work to `local-r4-backup` branch)
+`docker-compose.yml` change (committed this session):
+- `them-bridge` now has `profiles: [legacy]` — will NOT start under any normal profile
+- `them-bridge-2` already had `profiles: [replica]` — unchanged
+- `them-worker` stays under `profiles: [temporal]` — Go worker is the active path
+
+Verified clean restart:
+```
+PRESENT:  them-go-bridge, them-auth-go, them-frontend, them-postgres, them-redis, them-traefik
+ABSENT:   them-bridge (Python), them-worker (Python)
+```
 
 ---
 
 ## Current migration slice
 
-**EP Resolution Tenant-Safe End-to-End — COMPLETE** (2026-08-16)
+**Phase A — Application v2 Component Registry: COMPLETE** (b93dff4, 2026-08-16)
 
-Migration 028: `entry_points.tenant_id` NOT NULL, `UNIQUE(tenant_id, slug)` — applied to live DB.
+Goal: DB foundation + Go resolver. No UI, no compiler, no Python. Scope-locked.
 
-What was done:
-- `db/028_entry_points_tenant_scoped_slug.sql`: adds `tenant_id` to `entry_points`, backfills from `applications.tenant_id`, drops global `UNIQUE(slug)`, adds `UNIQUE(tenant_id, slug)` + index.
-- `epconfig.Loader.Load(ctx, tenantID, slug)` — SQL filters by `tenant_id`. Cache key: `"{tenantID}:{slug}"`.
-- `epconfig.Loader.Invalidate(tenantID, slug)` — tenant-scoped.
-- `epconfig.Loader.Subscribe` — handles `"{tenantID}:{slug}"` payload format; legacy bare slug as safety net.
-- `dal.CreateEntryPoint` — backfills `tenant_id` from parent application via INSERT...SELECT.
-- `dal.GetEntryPointTenantAndSlug`, `dal.ListEPTenantSlugsForApp` — new methods for tenant-scoped cache invalidation.
-- `service.AppService.UpdateEntryPoint` — takes `tenantID` param as fallback when EP lookup returns empty.
-- `service.AppService.publishEP` — payload format `"{tenantID}:{slug}"`.
-- WS/SSE/A2A handlers: resolve `tenantID` from bearer token; fall back to `BootstrapTenantID` for public EPs.
-- `tenantctx.BootstrapTenantID` constant: `"00000000-0000-0000-0000-000000000001"`.
-- `execution.ExecutionRequest.TenantID` field added.
-- `transport.EPConfigLoader.Load` signature updated to `Load(ctx, tenantID, slug)`.
-- All test fakes updated; `go test ./...`: 30/30 packages, 0 failures. Go bridge rebuilt and healthy.
+### DB migrations applied (live DB)
+
+- `db/028_entry_points_tenant_scoped_slug.sql` — EP tenant isolation (prior session)
+- `db/029_component_registry_foundation.sql` — `component_definitions`, `application_definitions`, `active_definition_id` on applications, `definition_id` on runs
+- `db/030_component_subtype_adoption.sql` — namespace/version/scope/status columns on `agents` + `middleware_defs`; inserts matching `component_definitions` base rows (same UUIDs, FK constraints); seeds builtin `llm-orchestrator` + 5 EP palette rows
+
+Total rows in `component_definitions`: 20 (as of b93dff4)
+
+### Go packages added
+
+`go/internal/registry/` — Component Registry resolver:
+- `types.go` — `ComponentKind`, `ComponentScope`, `ComponentStatus`, `DefinitionRef`, `ComponentDefinition`, `CredentialSlot`
+- `pgx.go` — `PgxQuerier` (ResolveByRef + ResolveByID), `ErrNotFound`, `ErrDisabled`, `ErrDeprecated`
+- `resolver.go` — `Resolver.Resolve` (tenant access check, UUID fast-path, ref fallback) + `ResolveForPublish` (blocks deprecated)
+- `resolver_test.go` — 12 tests (S1-41 in TEST_INDEX.md)
+
+### Architecture decisions (permanent)
+
+- **Portable identity**: `{kind, namespace, name, version}` tuple — stable across environments; UUID is fast-path cache
+- **Builtin scope**: `scope=builtin` → all-tenant access; `scope=tenant` → owner-only access
+- **No deprecated in publish**: `ResolveForPublish` returns `ErrDeprecated` for deprecated components
+- **No secrets in Definition JSONB**: only secret references; secrets never in logs, exports, or Temporal history
+- **Exact version pinning**: integer revision pinned at publish; no "latest" or floating ranges
+- **`BootstrapTenantID`**: `"00000000-0000-0000-0000-000000000001"` for single-tenant/public EPs
+
+### Test state
+
+`go test ./...`: **31 packages, 0 failures** (as of b93dff4)
+
+---
+
+**EP Resolution Tenant-Safe End-to-End — COMPLETE** (54a7dad, 2026-08-16)
+
+- `db/028_entry_points_tenant_scoped_slug.sql`: `entry_points.tenant_id` NOT NULL; `UNIQUE(tenant_id, slug)`
+- `epconfig.Loader.Load(ctx, tenantID, slug)` — SQL filters by `tenant_id`
+- Cache key: `"{tenantID}:{slug}"` — invalidation payload: `"{tenantID}:{slug}"`
+- WS/SSE/A2A handlers: resolve `tenantID` from bearer token; fallback to `BootstrapTenantID`
+- `tenantctx.BootstrapTenantID` = `"00000000-0000-0000-0000-000000000001"`
+- All fakes updated; 30→31 packages pass
 
 **SAFE TO DEVELOP WAVE 9: YES**
 **SAFE FOR GO-ONLY MULTI-TENANT ENTRY-POINT ROUTING: YES**
 
 ---
 
-**Tenant/Runtime Foundation — COMPLETE** (2026-08-16)
+**Tenant/Runtime Foundation — COMPLETE** (efeb1ec, 2026-08-16)
 
-Architecture decision: **Python is permanently retired.** `them-bridge` and `them-worker` MUST remain OFF. No Python patches. No Python fallbacks. No compatibility shims.
-
-What was done:
-- `db/027_app_orchestrators_uniqueness.sql` — drops global `UNIQUE(name)` on `app_orchestrators`, adds `UNIQUE(application_id, name)`. Applied to live DB. Verified.
-- **SEC-03:** Agent registry fully tenant-scoped. Redis key: `them:agents:registry:{tenant_id}`. L1 key: `"{tenantID}:{slug}"`. SQL: `QueryAgentsByTenant(ctx, tenantID)`. Invalidation: per-tenant only. 9 new isolation tests.
-- **SEC-04:** `EPConfig` now carries `AppOrchestratorID` + `OrchestratorName` loaded via LEFT JOIN `app_orchestrators`. WS/SSE/A2A/Lifecycle all use `EPConfig.OrchestratorName`. NULL binding = hard error (503). `WorkflowInput.AppOrchestratorID` added for future Go worker.
-- **SEC-01/SEC-02:** Documented as LEGACY PYTHON PATH — RETIRED. Not implementation blockers. Dead paths that will not be reactivated.
-- R5 Application Readiness Review + R6 Tenant Architecture Review written and committed.
-- `go test ./...`: 30/30 packages, 0 failures. Go bridge rebuilt and healthy.
-
-Permanent architectural constraint (enforced, never waive):
-> Go Temporal worker MUST resolve orchestrators by `AppOrchestratorID` UUID. Never by name globally.
+- P-08: `db/027` — `UNIQUE(application_id, name)` on `app_orchestrators`. Live DB.
+- SEC-03: Agent registry Redis key: `them:agents:registry:{tenant_id}`.
+- SEC-04: `EPConfig` carries `AppOrchestratorID` + `OrchestratorName` via LEFT JOIN. NULL = 503.
+- SEC-01/SEC-02: Dead legacy Python paths — retired, will not be reactivated.
 
 ---
 
-**Runs WRITE — COMPLETE** (2026-08-15)
+**Runs WRITE — COMPLETE** (prior session)
 
-What was done:
-- New DAL methods: `CancelRun` (UPDATE...RETURNING), `DeleteRun` (DELETE...RETURNING), `BulkDeleteRuns` (DELETE...RETURNING with IN list)
-- New service methods: `Cancel` (404/409 distinction via fallback GetRun), `Delete`, `BulkDelete` (max 500 IDs enforced)
-- New handlers: `PATCH /runs/{run_id}/cancel`, `DELETE /runs/{run_id}`, `POST /runs/bulk-delete`
-- `POST /runs/bulk-delete` registered as static route before `/{run_id}` to prevent wildcard shadowing
-- Traefik Wave 2f: 3 new routers — `them-go-runs-cancel` (PATCH, priority 116), `them-go-runs-delete` (DELETE, priority 114), `them-go-runs-bulk-delete` (POST, priority 116)
-- 6 new handler tests (RW-1 through RW-6) in `go/internal/admin/runs_test.go`
-- `isolationFakeDal` and `fakeDal` in service tests updated to satisfy Dal interface
-- All 30 Go packages pass `go test ./...`
+- `PATCH /runs/{run_id}/cancel`, `DELETE /runs/{run_id}`, `POST /runs/bulk-delete`
+- Traefik Wave 2f: 3 new routers
 
-**Runs READ/UI — COMPLETE** (cf953cf, 2026-08-15)
+**Runs READ/UI — COMPLETE** (cf953cf)
 
-What was done:
-- Auth fixed: runs routes moved from `BearerTenantMiddleware` to `JWT + RequireSuperAdmin + AdminTenantMiddleware` — session JWTs from auth-go now work
-- New handlers: `GET /runs/stats`, `GET /runs/{id}` (now returns RunDetail with steps/usage/children), `GET /runs/{id}/tasks`, `GET /runs/{id}/artifacts`
-- New DAL types: `RunStep`, `RunUsage`, `RunDetail`, `Task`, `ArtifactPart`, `Artifact`, `RunStats`
-- New DAL methods: `GetRunStats`, `GetRunDetail`, `GetRunTasks`, `GetRunArtifacts`
-- Static route `/runs/stats` registered before `/{run_id}` to prevent chi wildcard shadowing
-- Traefik Wave 2e added: `them-go-runs-sub` rule captures `/{id}/tasks` and `/{id}/artifacts`
-- `THE_M_API_URL` in dev overlay changed to `http://them-traefik:8088` — Next.js proxy now routes through Go
-- 8 new tests (RS-1/2, RD-1, RT-1/2, RA-1/2, RO-1) in `go/internal/admin/runs_test.go`
-- Python-OFF verified: all 5 GET endpoints return 200 with `them-bridge` stopped
+- `GET /runs/stats`, `GET /runs/{id}` (RunDetail), `GET /runs/{id}/tasks`, `GET /runs/{id}/artifacts`
+- Auth fixed: moved to `JWT + RequireSuperAdmin + AdminTenantMiddleware`
+- Python-OFF verified for all 5 GET endpoints
 
 **Agents Store — COMPLETE** (888861b)
 
-- `POST /agents/discover` → Go
-- `POST /agents/{id}/test` → Go
-- `POST /agents/{id}/security-scan` → Go
-- `AdminTenantMiddleware` for UI admin routes
+- `POST /agents/discover`, `POST /agents/{id}/test`, `POST /agents/{id}/security-scan`
+- `AdminTenantMiddleware` for admin routes
 - Go auth service cutover; Python auth container removed
 
 ---
 
 ## Next recommended task
 
-**Wave 9 — Multi-tenant runtime enablement.** All pre-requisites are now complete.
+**Phase B — Application Definition Save/Publish** (Application v2, next slice)
 
-Items 1 and 2 from the original Wave 9 plan are **done** (EP tenant_id column + epconfig tenant-scoped resolution).
+Pre-reading: `docs/architecture-v2/REGISTRY_BACKED_APPLICATION_COMPONENT_MODEL.md` Section 5–8
 
-Remaining Wave 9 scope:
-3. Session and rate-limit keys: ensure all runtime keys include tenant scope
-4. Tenant provisioning: admin endpoints to create/manage tenants
-5. Auth: tenant_id claim in JWT and bearer token validation (multi-tenant token issuance)
-6. Live two-tenant verification: create two test tenants/apps with same EP slug, verify correct routing, no cross-tenant cache leakage
+Phase B scope (implement in a fresh session):
+1. `AppDefinitionService.SaveDraft(ctx, tenantID, appID, payload AppDefinitionInput) (revision int, err error)` — validates component refs via Resolver, rejects secrets in JSONB, writes to `application_definitions`
+2. `AppDefinitionService.Publish(ctx, tenantID, appID, revision int) error` — sets `active_definition_id` on `applications`
+3. New DAL methods: `CreateApplicationDefinition`, `GetApplicationDefinition`, `PublishApplicationDefinition`
+4. New handler: `PUT /api/v1/admin/applications/{id}/definition` (save draft), `POST /api/v1/admin/applications/{id}/definition/publish`
+5. Tests: save-draft happy path, secret-in-JSONB rejection, cross-tenant component blocked, publish sets active
+6. Traefik: add two new routers for these paths at priority 112+
+7. No UI, no compiler, no Python
 
-Before starting Wave 9: read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 (Implementation Plan).
+Alternative next task: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims)
 
-Lower-priority backlog:
-- `GET /runs/context/{ctx}/artifacts` — no Traefik rule, no Go handler (not used by admin UI)
-- Applications export/import/restore routes — still Python
-- Middleware-wiring admin routes — still Python
-
-Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md`
+Read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 before starting Wave 9.
 
 ---
 
-## Python-OFF baseline (2026-08-15, verified with a6b9953 + live smoke tests at cddc30a)
+## Python-OFF baseline (verified 2026-08-16, all with them-bridge locked to profiles: [legacy])
 
-**Confirmed working with Python OFF, Go active (them-bridge + them-worker stopped):**
+**Confirmed working:**
 - All admin routes (Waves 1-8): agents CRUD+discover+test+security-scan, orchestrators, applications, tokens, sessions, LLM providers, monitoring-config ✓
-- Runs READ: `GET /runs`, `/runs/stats`, `/runs/{id}`, `/runs/{id}/tasks`, `/runs/{id}/artifacts` → all 200 ✓
-- Runs WRITE: `PATCH /runs/{id}/cancel` → 200 (canceled), 409 (not running) ✓
-- Runs WRITE: `DELETE /runs/{id}` → 204, 404 (not found) ✓
-- Runs WRITE: `POST /runs/bulk-delete` → 200 `{"deleted":N}` ✓
+- Runs READ: `GET /runs`, `/runs/stats`, `/runs/{id}`, `/runs/{id}/tasks`, `/runs/{id}/artifacts` ✓
+- Runs WRITE: cancel, delete, bulk-delete ✓
 - Auth (login, me, refresh) → auth-go 200 ✓
-- `/health/live`, `/health/ready` → Go 200 ✓
+- `/health/live`, `/health/ready` ✓
 
-**Still broken with Python OFF:**
-- `GET /runs/context/{ctx}/artifacts` → 404 (no Traefik rule, no Go handler; not used by admin UI)
-- `GET /apps`, `GET /apps/{slug}` → 404 (Traefik only captures WS/SSE paths for apps)
-- `GET /health` (bare) → 404 (no Traefik router)
-- Applications export/import/restore/middleware-wirings → Python only
+**Still not covered by Go:**
+- `GET /runs/context/{ctx}/artifacts` → no Traefik rule, no Go handler (not used by admin UI)
+- `GET /apps`, `GET /apps/{slug}` → Traefik only captures WS/SSE paths for apps
+- `GET /health` (bare) → no Traefik router
+- Applications export/import/restore/middleware-wirings → Python-only endpoints, not yet migrated
 
 ---
 
 ## Known blockers
 
 1. Auth admin CRUD (users/roles/teams) — not exposed since Python auth removed. Needs Go port.
-2. Go Temporal worker is not yet sole owner of orchestration. Python worker is permanently retired (must remain OFF). Go worker must become sole owner before any second tenant is provisioned.
+2. Go Temporal worker is not yet sole owner of orchestration. Python worker `them-worker` is still behind `profiles: [temporal]`; it must be moved to `profiles: [legacy]` only after Go worker has been verified as the exclusive owner.
 3. A2A server (`/a2a/*`) still on Python — not yet migrated to Go.
-4. ~~`entry_points` has no `tenant_id` column~~ — DONE (migration 028).
-5. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant auth) remain open.
+4. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims, live two-tenant verification) remain open.
 
 ---
 
@@ -181,13 +187,13 @@ Full route inventory: `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.
 - `go/TEST_INDEX.md` updated in same commit as new Go tests
 - Secrets never in logs — use `cfg.SafeString()`
 - Never `git add .` or `git add -A`
-- **Python is permanently retired.** `them-bridge` and `them-worker` MUST remain OFF. Do NOT patch Python for compatibility. Do NOT plan for Python bridge/worker to return.
-- **Go Temporal worker MUST resolve orchestrators by `AppOrchestratorID` UUID** (from `WorkflowInput.AppOrchestratorID`). Never resolve orchestrators globally by name.
-- **SEC-01/SEC-02 are dead paths.** Legacy Python globally-namespaced orchestrator Redis keys (`them:orch:loc:{name}`, `them:orch:tmpl:{name}`) will not be written again. Do not reactivate.
-- **Agent registry Redis key is `them:agents:registry:{tenant_id}`.** The old global key `them:agents:registry` must not be written or read.
-- **EP cache key is `"{tenantID}:{slug}"`.** Cache invalidation payload on `them:ep:config:changed` is always `"{tenantID}:{slug}"`. Global slug-only keys must not be written.
-- **`entry_points.tenant_id` is NOT NULL.** All new EPs inherit tenant from parent application. `UNIQUE(tenant_id, slug)` enforced at DB level (migration 028).
-- No secrets in Application Definition JSONB, Component Definition JSONB, export files, logs, or Temporal history. Only secret references.
+- **Python is permanently retired.** `them-bridge` MUST remain behind `profiles: [legacy]`. Do NOT move it back to default profile. Do NOT patch Python for compatibility.
+- **Go Temporal worker MUST resolve orchestrators by `AppOrchestratorID` UUID** — never globally by name.
+- **SEC-01/SEC-02 are dead paths.** Legacy Python globally-namespaced orchestrator Redis keys will not be written again.
+- **Agent registry Redis key is `them:agents:registry:{tenant_id}`.** The old global key must not be written or read.
+- **EP cache key is `"{tenantID}:{slug}"`.** Cache invalidation payload on `them:ep:config:changed` is always `"{tenantID}:{slug}"`.
+- **`entry_points.tenant_id` is NOT NULL.** All new EPs inherit tenant from parent application. `UNIQUE(tenant_id, slug)` enforced at DB level.
+- **No secrets in Definition JSONB, Component Definition JSONB, export files, logs, or Temporal history. Only secret references.**
 
 ---
 

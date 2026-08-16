@@ -4,17 +4,19 @@ version: "3.9"
 # Replaces: docker-compose.local.yml
 #
 # Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d          # Go-only (default)
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile go-worker up -d
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile legacy up -d  # Python bridge (retired, emergency only)
 #
-# Differences from Hetzner:
+# Active stack (Go-only, Python permanently retired):
+#   - them-go-bridge owns all API routes (/api/v1, /ws, /sse, /health, /apps, /a2a)
+#   - them-bridge (Python) is behind profiles: [legacy] — does NOT start by default
+#   - Frontend depends on them-go-bridge (not them-bridge)
 #   - proxy-network is created locally (not external) — no infra-traefik
 #   - Frontend runs in dev mode with source bind mount (Turbopack HMR)
-#   - Python bridge mounts source for live reload
-#   - Python bridge owns /ws/* and /sse/* in default mode (Go not active unless --profile go)
 #   - Data stored in named Docker volumes (same as Hetzner, avoids UID issues on Linux)
-#   - Auth: them-auth-go at 8703 (Python auth service removed)
+#   - Auth: them-auth-go at 8703
 
 networks:
   # them-proxy-local already exists from previous deployment; mark external to reuse.
@@ -37,10 +39,10 @@ services:
       - them-redis-data:/data
       - ./redis/config/redis.conf:/etc/redis/redis.conf:ro
 
-  # ── Python bridge: source bind mount for live reload ─────────────────────────
-  # Python owns /ws/* and /sse/* in default dev mode.
-  # To enable Go WS/SSE routing, use --profile go to start them-go-bridge.
-  # Owns /ws/* and /sse/* here — Go bridge is not active in local dev by default.
+  # ── Python bridge: RETIRED — behind profiles: [legacy] ──────────────────────
+  # them-bridge does NOT start in default or --profile go mode.
+  # This overlay stanza only supplies the source bind mount if --profile legacy is used
+  # (emergency/archaeology only). Python is permanently retired.
   them-bridge:
     volumes:
       - .:/app

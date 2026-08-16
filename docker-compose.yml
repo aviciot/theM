@@ -173,13 +173,16 @@ services:
         max-file: "5"
 
   # ============================================================
-  # the-M Bridge — orchestrator API + WS (replica 1)
+  # the-M Bridge — Python orchestrator API (RETIRED — legacy profile only)
+  # Python is permanently retired. Start ONLY with: --profile legacy
+  # Normal startup and --profile go must NOT start this container.
   # ============================================================
   them-bridge:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: them-bridge
+    profiles: [legacy]
     expose:
       - "8001"
     volumes:
@@ -358,7 +361,7 @@ services:
       NODE_ENV: production
       PORT: "3200"
       HOSTNAME: "0.0.0.0"
-      THE_M_API_URL: "http://them-bridge:8001"
+      THE_M_API_URL: "http://them-traefik:8088"
       THE_M_AUTH_URL: "http://them-auth-go:8703"
       NEXT_PUBLIC_BRIDGE_WS_URL: ""
     labels:
@@ -374,8 +377,6 @@ services:
       - them-network
       - proxy-network
     depends_on:
-      them-bridge:
-        condition: service_healthy
       them-auth-go:
         condition: service_healthy
     restart: unless-stopped
