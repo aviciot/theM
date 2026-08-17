@@ -137,10 +137,10 @@ func (d *DB) UpdateAgent(ctx context.Context, tenantID, id string, in AgentInput
 	)
 }
 
-// DeleteAgent soft-deletes an agent by setting enabled=false, scoped to the tenant.
+// DeleteAgent hard-deletes an agent, scoped to the tenant.
 func (d *DB) DeleteAgent(ctx context.Context, tenantID, id string) error {
 	return d.q.Exec(ctx,
-		`UPDATE them.agents SET enabled=false, updated_at=now() WHERE id=$1::uuid AND tenant_id=$2::uuid`,
+		`DELETE FROM them.agents WHERE id=$1::uuid AND tenant_id=$2::uuid`,
 		id, tenantID)
 }
 

@@ -136,7 +136,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
 
-// Delete handles DELETE /api/v1/admin/agents/{id} (soft delete: enabled=false).
+// Delete handles DELETE /api/v1/admin/agents/{id}.
 func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
