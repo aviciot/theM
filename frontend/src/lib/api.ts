@@ -401,6 +401,89 @@ export interface SessionInfo {
   active_agents?: string[];
 }
 
+// ── Application Definition types (Phase D) ────────────────────────────────────
+
+export interface ComponentDefinitionSummary {
+  id: string;
+  kind: 'orchestrator' | 'agent' | 'middleware' | 'entry_point' | 'tool';
+  namespace: string;
+  name: string;
+  version: number;
+  display_name: string;
+  description?: string;
+  implementation_type: string;
+  scope: 'builtin' | 'tenant';
+  status: string;
+  enabled: boolean;
+}
+
+export interface DefinitionRef {
+  kind: string;
+  namespace: string;
+  name: string;
+  version: number;
+}
+
+export interface ComponentInstance {
+  instance_id: string;
+  name?: string;          // orchestrators only — immutable Temporal key
+  definition_ref: DefinitionRef;
+  definition_id?: string; // UUID fast-path
+  config: Record<string, unknown>;
+  secret_bindings?: Record<string, string>;
+}
+
+export interface EPInstance {
+  instance_id: string;
+  slug: string;
+  protocol: 'websocket' | 'sse' | 'webrtc' | 'a2a' | 'voice';
+  root: string;           // instance_id of root orchestrator
+}
+
+export interface ConnectionDef {
+  source: string;
+  target: string;
+  type: 'entry' | 'delegation' | 'tool';
+}
+
+export interface AppDefinitionDoc {
+  schema_version: 2;
+  name?: string;
+  components: ComponentInstance[];
+  entry_points: EPInstance[];
+  connections: ConnectionDef[];
+}
+
+export interface AppDefinition {
+  id: string;
+  application_id: string;
+  tenant_id: string;
+  revision: number;
+  status: 'draft' | 'published';
+  definition: AppDefinitionDoc;
+  definition_hash: string;
+  created_at: string;
+  published_at?: string;
+}
+
+export interface ValidationError {
+  instance_id?: string;
+  field?: string;
+  code: string;
+  message: string;
+}
+
+export interface ValidationReport {
+  valid: boolean;
+  errors?: ValidationError[];
+}
+
+export interface PublishResult {
+  definition_id: string;
+  revision: number;
+  definition_hash: string;
+}
+
 export const themApi = {
   health: () => fetch(`${HEALTH_BASE}/health`)
     .then((r) => r.json())
@@ -497,4 +580,22 @@ export const themApi = {
       return false;
     }
   },
+
+  // Component Registry (Phase D)
+  listComponentDefinitions: () =>
+    api.get<ComponentDefinitionSummary[]>('/admin/component-definitions'),
+
+  // Application Definitions (Phase D)
+  listDefinitions: (appId: string) =>
+    api.get<AppDefinition[]>(`/admin/applications/${appId}/definitions`),
+  createDefinition: (appId: string, body: { definition: AppDefinitionDoc }) =>
+    api.post<{ id: string; revision: number }>(`/admin/applications/${appId}/definitions`, body),
+  updateDefinition: (appId: string, defId: string, body: { definition: AppDefinitionDoc }) =>
+    api.put<{ id: string; updated: boolean }>(`/admin/applications/${appId}/definitions/${defId}`, body),
+  deleteDefinition: (appId: string, defId: string) =>
+    api.delete<void>(`/admin/applications/${appId}/definitions/${defId}`),
+  validateDefinition: (appId: string, defId: string) =>
+    api.post<ValidationReport>(`/admin/applications/${appId}/definitions/${defId}/validate`, {}),
+  publishDefinition: (appId: string, defId: string) =>
+    api.post<PublishResult>(`/admin/applications/${appId}/definitions/${defId}/publish`, {}),
 };

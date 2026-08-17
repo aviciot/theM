@@ -133,6 +133,8 @@ func BuildRouter(
 				apps.Routes(tenantScoped)
 				defs.Routes(tenantScoped)
 				tokens.Routes(tenantScoped)
+				reg := NewRegistryHandler(db)
+				tenantScoped.Get("/component-definitions", reg.ListComponentDefinitions)
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,

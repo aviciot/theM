@@ -400,6 +400,9 @@ func (f *isolationFakeDal) DeactivateStaleOrchestrators(_ context.Context, _, _,
 func (f *isolationFakeDal) DeactivateStaleEntryPoints(_ context.Context, _, _, _ string) error {
 	return nil
 }
+func (f *isolationFakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.ComponentDefinitionSummary, error) {
+	return []dal.ComponentDefinitionSummary{}, nil
+}
 
 // ── pgxUniqueViolation stub ───────────────────────────────────────────────────
 //

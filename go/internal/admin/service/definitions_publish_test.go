@@ -200,6 +200,9 @@ func (f *publishFakeDal) GetProvider(_ context.Context, _ int64) (dal.LLMProvide
 func (f *publishFakeDal) CreateProvider(_ context.Context, _ dal.LLMProviderInput) (dal.LLMProvider, error) { return dal.LLMProvider{}, nil }
 func (f *publishFakeDal) UpdateProvider(_ context.Context, _ int64, _ dal.LLMProviderInput) (dal.LLMProvider, error) { return dal.LLMProvider{}, nil }
 func (f *publishFakeDal) DeleteProvider(_ context.Context, _ int64) error              { return nil }
+func (f *publishFakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.ComponentDefinitionSummary, error) {
+	return []dal.ComponentDefinitionSummary{}, nil
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

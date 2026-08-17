@@ -315,6 +315,11 @@ func (f *fakeDal) DeleteProvider(_ context.Context, _ int64) error {
 	return f.deleteProviderErr
 }
 
+// Component definitions registry stub.
+func (f *fakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.ComponentDefinitionSummary, error) {
+	return []dal.ComponentDefinitionSummary{}, nil
+}
+
 // fakeCache implements service.Cache.
 type fakeCache struct {
 	deletedKeys  []string

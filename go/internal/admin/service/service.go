@@ -90,6 +90,9 @@ type Dal interface {
 	DeactivateStaleOrchestrators(ctx context.Context, tenantID, appID, defID string) error
 	DeactivateStaleEntryPoints(ctx context.Context, tenantID, appID, defID string) error
 
+	// Component definitions registry — platform-global for builtins, tenant-scoped for tenant-owned
+	ListComponentDefinitions(ctx context.Context, tenantID string) ([]dal.ComponentDefinitionSummary, error)
+
 	// Config table (monitoring, llm_routing, …) — platform-global, no tenant
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
 	UpsertConfig(ctx context.Context, key string, value []byte) error

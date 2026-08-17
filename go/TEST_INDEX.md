@@ -254,6 +254,20 @@ atomic DAL publish call. Tests use a fake registry and fake DAL — no PostgreSQ
 
 ---
 
+### S1-45 · Admin registry handler (Phase D) — `internal/admin/registry_test.go`
+
+**Purpose:** Phase D — RegistryHandler covers the GET /admin/component-definitions endpoint.
+Tests use a fakeDB with no rows (empty result) and verify the handler returns 200 OK with
+a JSON array (not null) even when no component definitions exist.
+
+| Test | What it proves |
+|---|---|
+| `TestRegistryHandler_ListComponentDefinitions_ReturnsArray` | Happy path: empty table → 200 OK with `[]` JSON array, not null |
+
+**Trigger:** any change to `internal/admin/registry.go`, `internal/admin/dal/registry.go`, or `internal/admin/router.go`
+
+---
+
 ### S1-40 · Auth server (Go) — `internal/authserver/*_test.go`
 
 **Purpose:** the Go replacement for the Python `them-auth-service`. Proves HS256 JWT issuance
@@ -1497,16 +1511,18 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/execution/lifecycle.go` | S1-35 + S1-14 + S1-13 |
 | `internal/execution/errors.go` | S1-35 + S1-13 |
 | `internal/execution/request.go` | S1-35 + S1-13 |
-| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 |
-| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S2-05 (integration) |
+| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 |
+| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S2-05 (integration) |
 | `internal/admin/dal/definitions.go` | S1-42 |
+| `internal/admin/dal/registry.go` | S1-45 |
 | `internal/admin/dal/llm_providers.go` | S1-25 + S2-05 (integration) |
 | `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 |
 | `internal/admin/service/definitions.go` | S1-42 + S1-43 + S1-44 |
 | `internal/admin/service/publish.go` | S1-43 + S1-44 |
 | `internal/admin/dal/publish.go` | S1-43 + S1-44 |
 | `internal/admin/definitions.go` | S1-42 + S1-43 + S1-44 |
-| `internal/admin/router.go` | S1-43 + S1-44 |
+| `internal/admin/registry.go` | S1-45 |
+| `internal/admin/router.go` | S1-43 + S1-44 + S1-45 |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |
@@ -1561,7 +1577,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-12 | ws | 24 |
 | S1-13 | sse | 23 |
 | S1-14 | a2a | 27 |
-| S1-15 | admin | 54 |
+| S1-15 | admin | 55 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
@@ -1588,7 +1604,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
 | S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |
 | S1-44 | admin definitions publish (Phase C: PublishDefinition) | 12 |
-| **S1 total** | | **621** |
+| S1-45 | admin registry handler (Phase D: ListComponentDefinitions) | 1 |
+| **S1 total** | | **622** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1597,4 +1614,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **632** |
+| **`go test ./...` total** | | **633** |

@@ -5,7 +5,7 @@ const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 import Sidebar from '@/components/Sidebar';
 import ChromaGrid from '@/components/ChromaGrid';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Application, type Agent, type EntryPoint, type MiddlewareDef, type AppOrchestratorOut, type SessionInfo, type MonitoringConfig } from '@/lib/api';
+import { themApi, type Application, type Agent, type EntryPoint, type MiddlewareDef, type AppOrchestratorOut, type SessionInfo, type MonitoringConfig, type AppDefinition, type AppDefinitionDoc, type ComponentDefinitionSummary, type ValidationReport } from '@/lib/api';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -2722,758 +2722,624 @@ function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPickerEntry[
   );
 }
 
-// ── Builder view ──────────────────────────────────────────────────────────────
-function BuilderView({
+// ── DefinitionView ────────────────────────────────────────────────────────────
+// Phase D: Application Definition editor — draft, validate, publish
+// Canonical model: components[] + connections[] + entry_points[]
+// Old builder (nodes/edges graph canvas) is retired.
+function DefinitionView({
   app,
-  agents,
   onBack,
-  onSaved,
-  onAgentsChange,
+  onAppUpdated,
 }: {
-  app: Application | null;
-  agents: Agent[];
+  app: Application;
   onBack: () => void;
-  onSaved: () => void;
-  onAgentsChange: (update: (prev: Agent[]) => Agent[]) => void;
+  onAppUpdated?: (updated: Application) => void;
 }) {
-  const initial = app
-    ? buildNodesFromApp(app, agents)
-    : {
-        nodes: [],
-        edges: [],
-      };
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
-  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-  const [currentApp, setCurrentApp] = useState<Application | null>(app);
-  const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-  const [libWidth, setLibWidth] = useState(280);
-  const [middlewareDefs, setMiddlewareDefs] = useState<MiddlewareDef[]>([]);
-  const [appName, setAppName] = useState(app?.name ?? '');
-  const [convTokenLimit, setConvTokenLimit] = useState<string>(
-    app?.entry_points?.[0]?.conversation_token_limit != null ? String(app.entry_points[0].conversation_token_limit) : ''
-  );
-  const [slugLocked, setSlugLocked] = useState(!!(app?.entry_points?.[0]?.slug));
+  // ── DefinitionView state ──────────────────────────────────────────────────────
+  const [defs, setDefs] = useState<AppDefinition[]>([]);
+  const [activeDef, setActiveDef] = useState<AppDefinition | null>(null);
+  const [draft, setDraft] = useState<AppDefinitionDoc | null>(null);
   const [isDirty, setIsDirty] = useState(false);
-  const [testPickerOpen, setTestPickerOpen] = useState(false);
-  const [logoState, setLogoState] = useState<LogoState>('idle');
-  const logoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const rfWrapper = useRef<HTMLDivElement>(null);
+  const [componentDefs, setComponentDefs] = useState<ComponentDefinitionSummary[]>([]);
+  const [selectedItem, setSelectedItem] = useState<{ type: 'component' | 'ep'; id: string } | null>(null);
+  const [validating, setValidating] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [validationReport, setValidationReport] = useState<ValidationReport | null>(null);
+  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
-  // ── Advisor state ────────────────────────────────────────────────────────────
-  const [advisorOpen, setAdvisorOpen] = useState(false);
-  const [advisorMessages, setAdvisorMessages] = useState<AdvisorMessage[]>([]);
-  const [advisorBusy, setAdvisorBusy] = useState(false);
-  const [advisorInput, setAdvisorInput] = useState('');
-  const [advisorContextId, setAdvisorContextId] = useState<string | null>(null);
-  const [advisorScanning, setAdvisorScanning] = useState(false);
-  const advisorWsRef = useRef<WebSocket | null>(null);
-  const advisorBufRef = useRef('');
-  const advisorScanningRef = useRef(false);
-
-  function triggerLogo(state: LogoState, duration = 2000) {
-    if (logoTimerRef.current) clearTimeout(logoTimerRef.current);
-    setLogoState(state);
-    logoTimerRef.current = setTimeout(() => setLogoState('idle'), duration);
-  }
-  const nodesRef = useRef<Node[]>(initial.nodes);
-  const edgesRef = useRef<Edge[]>(initial.edges);
-  const { screenToFlowPosition, getViewport } = useReactFlow();
-
-  const epNode = nodes.find((n: Node) => n.type === 'entryPoint');
-
-  deleteNodeRef.current = (id: string) => {
-    // Deleting an EP node just removes it from the canvas; the diff is applied on next Save.
-    setNodes((nds: Node[]) => nds.filter(n => n.id !== id));
-    setEdges((eds: Edge[]) => eds.filter(e => e.source !== id && e.target !== id));
-    setSelectedNode((prev: Node | null) => prev?.id === id ? null : prev);
+  const fieldStyle: React.CSSProperties = {
+    width: '100%', padding: '10px 12px', borderRadius: 8,
+    border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)',
+    color: C.text, fontSize: 14, outline: 'none', boxSizing: 'border-box',
   };
-
-  // Fetch middleware defs on mount
-  useEffect(() => {
-    themApi.listMiddlewareDefs().then(setMiddlewareDefs).catch(() => {/* non-critical */});
-  }, []);
-
-  // Keep refs in sync so onConnect can read current state synchronously
-  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
-  useEffect(() => { edgesRef.current = edges; }, [edges]);
-
-  // Dirty tracking — set on any change after mount
-  const mountedRef = useRef(false);
-  useEffect(() => {
-    if (!mountedRef.current) { mountedRef.current = true; return; }
-    setIsDirty(true);
-    // Only switch to dirty state if not mid-animation
-    setLogoState(prev => (prev === 'idle' || prev === 'dirty') ? 'dirty' : prev);
-  }, [nodes, edges, appName]);
-
-  // Return logo to idle when canvas becomes clean
-  useEffect(() => {
-    if (!isDirty) setLogoState(prev => prev === 'dirty' ? 'idle' : prev);
-  }, [isDirty]);
-
-  // Warn before leaving when dirty
-  useEffect(() => {
-    function onBeforeUnload(e: BeforeUnloadEvent) {
-      if (!isDirty) return;
-      e.preventDefault();
-      e.returnValue = '';
-    }
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [isDirty]);
-
-  // Reactive validation: inject _error/_errorMsg on problem nodes whenever the
-  // canvas structure changes. We derive a stable key from fields that affect rules
-  // (slugs, node types, edges) so we don't re-run on every minor data change.
-  const validationKey = JSON.stringify([
-    edges.map(e => `${e.source}->${e.target}`).sort(),
-    nodes.map(n => `${n.id}:${n.type}:${(n.data as Record<string, unknown>).slug ?? ''}`).sort(),
-  ]);
-  useEffect(() => {
-    const errorMap = getErrorNodeMap(nodesRef.current, edgesRef.current);
-    setNodes(nds => nds.map(n => {
-      const msg = errorMap.get(n.id);
-      const hasError = msg !== undefined;
-      if (hasError === Boolean(n.data._error) && (n.data._errorMsg ?? '') === (msg ?? '')) return n;
-      return { ...n, data: { ...n.data, _error: hasError || undefined, _errorMsg: msg ?? undefined } };
-    }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [validationKey]);
-
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNode) {
-        const tag = (document.activeElement as HTMLElement)?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-        setNodes((nds: Node[]) => nds.filter(n => n.id !== selectedNode.id));
-        setEdges((eds: Edge[]) => eds.filter(e => e.source !== selectedNode.id && e.target !== selectedNode.id));
-        setSelectedNode(null);
-      }
-    }
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [selectedNode, setNodes, setEdges]);
 
   function showToast(msg: string, ok: boolean) {
     setToast({ msg, ok });
     setTimeout(() => setToast(null), 3000);
   }
 
-  // ── Advisor functions ────────────────────────────────────────────────────────
-
-  function serializeWorkflow(): object {
-    const nds = nodesRef.current;
-    const eds = edgesRef.current;
-
-    // Build agent id→slug lookup so orchestrators can name their assigned agents
-    const agentIdToSlug: Record<string, string> = {};
-    for (const a of agents) agentIdToSlug[a.id] = a.slug || a.id;
-
-    return {
-      nodes: nds.map(n => {
-        if (n.type === 'entryPoint') {
-          const d = n.data as EntryPointData;
-          return { type: 'entry_point', id: n.id, epType: d.epType, accessMode: d.accessMode, slug: d.slug, convTokenLimit: d.convTokenLimit, maxConcurrentSessions: d.maxConcurrentSessions, queueTimeout: d.queueTimeout, queueMessage: d.queueMessage };
-        }
-        if (n.type === 'orchestrator') {
-          const d = n.data as OrchestratorData;
-          const rawPrompt = d.systemPrompt ?? '';
-          const assignedAgentIds = (d.allowedAgentIds ?? []) as string[];
-          return {
-            type: 'orchestrator',
-            id: n.id,
-            orchestratorId: d.appOrchestratorId ?? null,
-            name: d.name,
-            displayName: d.displayName,
-            model: d.model,
-            maxParallelTools: d.maxParallelTools,
-            maxIterations: d.maxIterations ?? 10,
-            historyWindow: d.historyWindow ?? null,
-            memoryEnabled: d.memoryEnabled ?? false,
-            systemPrompt: rawPrompt.slice(0, 800) + (rawPrompt.length > 800 ? '…[truncated]' : ''),
-            assignedAgents: assignedAgentIds.map(aid => ({
-              id: aid,
-              slug: agentIdToSlug[aid] ?? aid,
-            })),
-          };
-        }
-        if (n.type === 'agent') {
-          const d = n.data as AgentData;
-          const full = agents.find(a => a.id === d.agentId);
-          return {
-            type: 'agent',
-            id: n.id,
-            agentId: full?.id,
-            slug: d.name,
-            displayName: d.displayName,
-            description: d.description,
-            transport: d.transport,
-            hasAuthToken: full?.auth_token_set ?? false,
-            scanResult: full?.last_scan_result
-              ? { score: full.last_scan_result.score, risk: full.last_scan_result.risk, summary: full.last_scan_result.summary }
-              : null,
-          };
-        }
-        return { type: n.type, id: n.id };
-      }),
-      edges: eds.map(e => ({ source: e.source, target: e.target })),
-    };
+  function loadDef(def: AppDefinition) {
+    setActiveDef(def);
+    setDraft(JSON.parse(JSON.stringify(def.definition)));
+    setIsDirty(false);
+    setValidationReport(null);
+    setSelectedItem(null);
   }
 
-  async function advisorSend(text: string | null, isInitial = false) {
-    if (advisorBusy) return;
-    setAdvisorBusy(true);
-    advisorBufRef.current = '';
-    triggerLogo('thinking', 120000); // hold until done
-
-    const content = isInitial
-      ? `Analyze this workflow:\n\n${JSON.stringify(serializeWorkflow(), null, 2)}`
-      : (text ?? '').trim();
-
-    if (!isInitial && !content) { setAdvisorBusy(false); return; }
-
-    setAdvisorMessages(prev => [
-      ...prev,
-      { role: 'user', text: isInitial ? '🔍 Analyzing your workflow…' : content },
-    ]);
-
-    let token: string;
+  async function reloadDefs(selectId?: string) {
     try {
-      const r = await fetch('/api/auth/token');
-      if (!r.ok) throw new Error('auth');
-      ({ token } = await r.json());
+      const list = await themApi.listDefinitions(app.id);
+      setDefs(list);
+      if (selectId) {
+        const found = list.find(d => d.id === selectId);
+        if (found) { loadDef(found); return; }
+      }
+      // Auto-select newest draft, else latest published
+      const drafts = list.filter(d => d.status === 'draft');
+      const target = drafts.length > 0 ? drafts[drafts.length - 1] : list.length > 0 ? list[list.length - 1] : null;
+      if (target) loadDef(target);
+      else { setActiveDef(null); setDraft(null); }
     } catch {
-      setAdvisorMessages(prev => [...prev, { role: 'assistant', text: 'Could not connect — please refresh and try again.' }]);
-      setAdvisorBusy(false);
-      return;
+      showToast('Failed to load definitions', false);
     }
+  }
 
-    const ws = new WebSocket(`${getBridgeWs()}/ws/orchestrate/workflow_advisor?token=${encodeURIComponent(token)}`);
-    advisorWsRef.current = ws;
+  useEffect(() => {
+    reloadDefs();
+    themApi.listComponentDefinitions().then(setComponentDefs).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.id]);
 
-    ws.onopen = () => {
-      const payload: Record<string, string> = { type: 'message', content };
-      if (advisorContextId) payload.context_id = advisorContextId;
-      ws.send(JSON.stringify(payload));
+  async function newDraft() {
+    const emptyDoc: AppDefinitionDoc = {
+      schema_version: 2, name: app.name,
+      components: [], entry_points: [], connections: [],
     };
-
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data as string);
-        if (msg.type === 'ready') {
-          if (msg.context_id) setAdvisorContextId(msg.context_id as string);
-          setAdvisorMessages(prev => [...prev, { role: 'assistant', text: '', streaming: true }]);
-        } else if (msg.type === 'token') {
-          advisorBufRef.current += (msg.text ?? '') as string;
-          const { text: parsed, proposals } = parseAdvisorBuffer(advisorBufRef.current);
-          setAdvisorMessages(prev => {
-            const last = prev[prev.length - 1];
-            const merged = mergeProposals(last?.proposals, proposals);
-            const next: AdvisorMessage = { role: 'assistant', text: parsed, streaming: true, proposals: merged };
-            if (last?.role === 'assistant') return [...prev.slice(0, -1), next];
-            return [...prev, next];
-          });
-        } else if (msg.type === 'done') {
-          const { text: parsed, proposals } = parseAdvisorBuffer(advisorBufRef.current);
-          setAdvisorMessages(prev => {
-            const last = prev[prev.length - 1];
-            if (last?.role === 'assistant') {
-              const merged = mergeProposals(last.proposals, proposals);
-              return [...prev.slice(0, -1), { ...last, text: parsed, proposals: merged, streaming: false }];
-            }
-            return prev;
-          });
-          setAdvisorBusy(false);
-          triggerLogo('idle', 1);
-          ws.close();
-        } else if (msg.type === 'error') {
-          setAdvisorMessages(prev => [...prev, { role: 'assistant', text: `⚠️ ${msg.message ?? 'Something went wrong.'}` }]);
-          setAdvisorBusy(false);
-          triggerLogo('idle', 1);
-          ws.close();
-        }
-      } catch { /* ignore parse errors */ }
-    };
-
-    ws.onerror = () => { setAdvisorBusy(false); triggerLogo('idle', 1); };
-    ws.onclose = () => { setAdvisorBusy(false); };
-  }
-
-  async function handleAdvisorOpen() {
-    if (advisorScanningRef.current) return;
-
-    // If already open, just re-focus (no re-scan)
-    if (advisorOpen) { setAdvisorOpen(false); triggerLogo('idle', 1); return; }
-
-    advisorScanningRef.current = true;
-    setAdvisorScanning(true);
-    setAdvisorOpen(true);
-
-    // Scan animation — nodes light up sequentially
-    const nodeIds = nodesRef.current.map(n => n.id);
-    if (nodeIds.length > 0) {
-      const delay = Math.min(200, Math.floor(1200 / nodeIds.length));
-      for (let i = 0; i < nodeIds.length; i++) {
-        setNodes(nds => nds.map(n => ({
-          ...n,
-          data: { ...n.data, _scanning: n.id === nodeIds[i] },
-        })));
-        await new Promise(r => setTimeout(r, delay));
-      }
-      // Clear scan highlight
-      setNodes(nds => nds.map(n => ({ ...n, data: { ...n.data, _scanning: false } })));
-      await new Promise(r => setTimeout(r, 200));
-    }
-
-    advisorScanningRef.current = false;
-    setAdvisorScanning(false);
-
-    // Only send initial analysis if fresh session
-    if (advisorMessages.length === 0) {
-      await advisorSend(null, true);
-    }
-  }
-
-  function handleAdvisorRescan() {
-    setAdvisorMessages([]);
-    setAdvisorContextId(null);
-    advisorBufRef.current = '';
-    handleAdvisorOpen();
-  }
-
-  function setProposalStatus(msgIndex: number, proposalId: string, status: ProposalStatus, error?: string) {
-    setAdvisorMessages(prev => prev.map((m, i) => {
-      if (i !== msgIndex || !m.proposals) return m;
-      return {
-        ...m,
-        proposals: m.proposals.map(p =>
-          p.id === proposalId ? { ...p, status, error } : p
-        ),
-      };
-    }));
-  }
-
-  function reflectProposalOnCanvas(proposal: Proposal, updated?: Agent) {
-    if (proposal.targetType === 'agent' && updated) {
-      onAgentsChange(prev => prev.map(a => a.id === proposal.targetId ? updated : a));
-    }
-    // Update canvas node data for fields that live there
-    const nodeId = nodesRef.current.find(n => {
-      const d = n.data as Record<string, unknown>;
-      return d.appOrchestratorId === proposal.targetId || d.orchestratorId === proposal.targetId || d.agentId === proposal.targetId;
-    })?.id;
-    if (!nodeId) return;
-    if (proposal.field === 'display_name') updateNodeData(nodeId, { displayName: proposal.suggested });
-    if (proposal.field === 'description') updateNodeData(nodeId, { description: proposal.suggested });
-    if (proposal.field === 'max_parallel_tools') updateNodeData(nodeId, { maxParallelTools: proposal.suggested });
-    if (proposal.field === 'system_prompt') updateNodeData(nodeId, { systemPrompt: proposal.suggested });
-  }
-
-  async function applyProposal(msgIndex: number, proposal: Proposal) {
-    if (proposal.status === 'applying' || proposal.status === 'applied') return;
-    setProposalStatus(msgIndex, proposal.id, 'applying');
     try {
-      const body: Record<string, unknown> = { [proposal.field]: proposal.suggested };
-      if (proposal.targetType === 'orchestrator') {
-        // Orchestrators are now app-scoped — reflect change on canvas only (save will persist)
-        reflectProposalOnCanvas(proposal);
-      } else {
-        const updated = await themApi.updateAgent(proposal.targetId, body);
-        reflectProposalOnCanvas(proposal, updated);
-      }
-      setProposalStatus(msgIndex, proposal.id, 'applied');
-      showToast(`Applied: ${FIELD_LABEL[proposal.field] ?? proposal.field} on ${proposal.targetName}`, true);
-    } catch (e) {
-      setProposalStatus(msgIndex, proposal.id, 'failed', String(e));
-      showToast(`Failed to apply ${FIELD_LABEL[proposal.field] ?? proposal.field}`, false);
+      const res = await themApi.createDefinition(app.id, { definition: emptyDoc });
+      await reloadDefs(res.id);
+      showToast('New draft created', true);
+    } catch {
+      showToast('Failed to create draft', false);
     }
   }
 
-  async function applyAll(msgIndex: number) {
-    const msg = advisorMessages[msgIndex];
-    if (!msg?.proposals) return;
-    const pending = msg.proposals.filter(p => p.status === 'pending' || p.status === 'stale' || p.status === 'failed');
-    for (const p of pending) {
-      await applyProposal(msgIndex, p);
-    }
-  }
-
-  const onConnect = useCallback((c: Connection) => {
-    const nds = nodesRef.current;
-    const eds = edgesRef.current;
-    const srcNode = nds.find(n => n.id === c.source);
-    const tgtNode = nds.find(n => n.id === c.target);
-    if (!srcNode || !tgtNode) return;
-    const err = validateConnection(srcNode.type!, tgtNode.type!, c.source!, c.target!, eds);
-    if (err) { showToast(err, false); triggerLogo('warning', 1800); return; }
-    setEdges(eds => addEdge({ ...c, animated: true, style: { stroke: C.cyan, strokeWidth: 2 } }, eds));
-  }, [setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function onDragOver(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  }
-
-  function onDrop(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    const nodeType = e.dataTransfer.getData('nodeType');
-    const rawData = e.dataTransfer.getData('nodeData');
-    if (!nodeType || !rawData) return;
-    let nodeData: Record<string, unknown>;
-    try { nodeData = JSON.parse(rawData) as Record<string, unknown>; } catch { return; }
-
-    if (nodeType === 'entryPoint') {
-      nodeData = { ...nodeData, slug: '' };
-    }
-
-    const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-    const orchId = makeId();
-    const newNode: Node = { id: orchId, type: nodeType, position, data: nodeData };
-
-    if (nodeType === 'orchestrator') {
-      const preAssigned = (nodeData.allowedAgentIds as string[] | undefined) ?? [];
-      const connectedAgents = preAssigned.length > 0 ? agents.filter(a => preAssigned.includes(a.id)) : [];
-
-      if (connectedAgents.length > 0) {
-        const spread = Math.max(connectedAgents.length * 140, 300);
-        const startX = position.x - spread / 2 + 70;
-        const agentNodes: Node[] = connectedAgents.map((agent, i) => ({
-          id: makeId(),
-          type: 'agent',
-          position: { x: startX + i * 140, y: position.y + 160 },
-          data: {
-            agentId: agent.id,
-            name: agent.slug,
-            displayName: agent.display_name,
-            description: agent.description,
-            transport: agent.transport,
-            endpointUrl: agent.endpoint_url,
-            tags: agent.tags ?? [],
-            icon: agent.icon || agentIconForLibrary(agent),
-          } satisfies AgentData,
-        }));
-        const agentEdges: Edge[] = agentNodes.map((an, i) => ({
-          id: `e_${orchId}_agent_${i}`,
-          source: orchId,
-          target: an.id,
-          animated: true,
-          style: EDGE_STYLE,
-        }));
-        setNodes(nds => [...nds, newNode, ...agentNodes]);
-        setEdges(eds => [...eds, ...agentEdges]);
-        return;
-      }
-    }
-
-    setNodes((nds: Node[]) => [...nds, newNode]);
-  }
-
-  function deleteEdge(edgeId: string) {
-    setEdges(eds => eds.filter(e => e.id !== edgeId));
-  }
-
-  function autoLayout() {
-    setNodes(nds => applyDagreLayout(nds, edgesRef.current));
-  }
-
-  function updateNodeData(id: string, partialData: Record<string, unknown>) {
-    setNodes((nds: Node[]) => nds.map((n: Node) => n.id === id ? { ...n, data: { ...n.data, ...partialData } } : n));
-    setSelectedNode((prev: Node | null) => prev && prev.id === id ? { ...prev, data: { ...prev.data, ...partialData } } : prev);
-  }
-
-  async function handleSave(deploy = false) {
-    const validation = runRules(nodes, edges, deploy ? 'deploy' : 'save');
-    if (!validation.ok) {
-      showToast(validation.message!, false);
-      triggerLogo('error', 1800);
-      // Shake problem nodes and show per-node error tooltip
-      const errorMap = getErrorNodeMap(nodes, edges);
-      if (errorMap.size > 0) {
-        setNodes(nds => nds.map(n => {
-          const msg = errorMap.get(n.id);
-          if (!msg) return n;
-          return { ...n, data: { ...n.data, _error: true, _shake: true, _errorMsg: msg } };
-        }));
-        setTimeout(() => {
-          setNodes(nds => nds.map(n => n.data._shake ? { ...n, data: { ...n.data, _shake: undefined } } : n));
-        }, 650);
-      }
-      return;
-    }
-
-    // Collect EP nodes — need at least one connected to an orch for name resolution
-    const epNodes = nodes.filter((n: Node) => n.type === 'entryPoint');
-    if (epNodes.length === 0) { showToast('Drop an Entry Point to start', false); return; }
-    const firstSlug = (epNodes[0].data as EntryPointData).slug || '';
-    const resolvedName = appName.trim() || firstSlug;
-
+  async function saveDraft() {
+    if (!activeDef || !draft) return;
     setSaving(true);
-    setLogoState('thinking');
     try {
-      // Build canvas layout keyed by node id (simple, stable)
-      const canvasLayout: Record<string, { x: number; y: number }> = {};
-      nodes.forEach((n: Node) => { canvasLayout[n.id] = { x: n.position.x, y: n.position.y }; });
-
-      // Send the graph exactly as React Flow has it — backend compiler handles everything
-      const graphNodes = nodes.map((n: Node) => ({ id: n.id, type: n.type!, data: n.data as Record<string, unknown> }));
-      const graphEdges = edges.map((e: Edge) => ({ id: e.id, source: e.source, target: e.target }));
-
-      const body: Record<string, unknown> = {
-        name: resolvedName,
-        enabled: deploy ? true : (currentApp?.enabled ?? false),
-        graph: { nodes: graphNodes, edges: graphEdges },
-        canvas: { layout: canvasLayout, viewport: getViewport() },
-      };
-
-      let saved: Application;
-      if (currentApp?.id) {
-        saved = await themApi.updateApplication(currentApp.id, body);
-      } else {
-        saved = await themApi.createApplication(body);
-      }
-      setCurrentApp(saved);
-      // Rehydrate canvas from the saved application so AO ids are correct.
-      {
-        const rebuilt = buildNodesFromApp(saved, agents);
-        setNodes(rebuilt.nodes);
-        setEdges(rebuilt.edges);
-      }
-
+      await themApi.updateDefinition(app.id, activeDef.id, { definition: draft });
       setIsDirty(false);
-      triggerLogo('success', deploy ? 2500 : 1800);
-      showToast(deploy ? '🚀 Application deployed!' : 'Saved successfully', true);
-      onSaved();
-    } catch (err: any) {
-      triggerLogo('error', 1800);
-      showToast(err?.message ?? 'Save failed', false);
+      showToast('Saved', true);
+    } catch {
+      showToast('Save failed', false);
     } finally {
       setSaving(false);
     }
   }
 
-  function handleTest() {
-    const anyEnabled = currentApp?.enabled || currentApp?.entry_points?.some(ep => ep.enabled);
-    if (!anyEnabled) { showToast('Deploy the application first', false); return; }
-    const epNodes = nodes.filter((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug);
-    if (epNodes.length === 0) { showToast('No entry points configured', false); return; }
-    const buildEntry = (n: Node): EpPickerEntry => {
-      const d = n.data as EntryPointData;
-      const orchEdge = edges.find((e: Edge) => e.source === n.id);
-      const orchNode = orchEdge ? nodes.find((nd: Node) => nd.id === orchEdge.target && nd.type === 'orchestrator') : undefined;
-      return { epNode: n, orchName: orchNode ? (orchNode.data as OrchestratorData).name : '', slug: d.slug, label: d.label, epType: d.epType };
-    };
-    if (epNodes.length === 1) {
-      const entry = buildEntry(epNodes[0]);
-      const url = entry.orchName ? `/admin/playground?orchestrator=${encodeURIComponent(entry.orchName)}` : '/admin/playground';
-      window.open(url, '_blank', 'noopener');
-    } else {
-      setTestPickerOpen(true);
+  async function validate() {
+    if (!activeDef || !draft) return;
+    if (isDirty) await saveDraft();
+    setValidating(true);
+    try {
+      const report = await themApi.validateDefinition(app.id, activeDef.id);
+      setValidationReport(report);
+      showToast(report.valid ? 'Valid ✓' : `${report.errors?.length ?? 0} error(s)`, report.valid);
+    } catch {
+      showToast('Validation failed', false);
+    } finally {
+      setValidating(false);
     }
   }
 
-  const chain = analyzeChain(nodes, edges);
-  const epPickerEntries: EpPickerEntry[] = nodes
-    .filter((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug)
-    .map((n: Node) => {
-      const d = n.data as EntryPointData;
-      const orchEdge = edges.find((e: Edge) => e.source === n.id);
-      const orchNode = orchEdge ? nodes.find((nd: Node) => nd.id === orchEdge.target && nd.type === 'orchestrator') : undefined;
-      return { epNode: n, orchName: orchNode ? (orchNode.data as OrchestratorData).name : '', slug: d.slug, label: d.label, epType: d.epType };
-    });
+  async function publish() {
+    if (!activeDef) return;
+    setPublishing(true);
+    try {
+      const res = await themApi.publishDefinition(app.id, activeDef.id);
+      showToast(`Published revision ${res.revision}`, true);
+      await reloadDefs();
+      onAppUpdated?.({ ...app });
+    } catch {
+      showToast('Publish failed', false);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  function addComponent(cd: ComponentDefinitionSummary) {
+    if (!draft) return;
+    const newComp = {
+      instance_id: `${cd.kind}_${Date.now()}`,
+      definition_ref: { kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version },
+      definition_id: cd.id,
+      config: {} as Record<string, unknown>,
+    };
+    setDraft(prev => prev ? { ...prev, components: [...prev.components, newComp] } : prev);
+    setIsDirty(true);
+  }
+
+  function addEntryPoint(protocol: string) {
+    if (!draft) return;
+    const slug = `ep-${Date.now()}`;
+    const newEP = {
+      instance_id: `ep_${Date.now()}`,
+      slug,
+      protocol: protocol as AppDefinitionDoc['entry_points'][0]['protocol'],
+      root: '',
+    };
+    setDraft(prev => prev ? { ...prev, entry_points: [...prev.entry_points, newEP] } : prev);
+    setIsDirty(true);
+  }
+
+  function removeComponent(instanceId: string) {
+    setDraft(prev => prev ? {
+      ...prev,
+      components: prev.components.filter(c => c.instance_id !== instanceId),
+      connections: prev.connections.filter(c => c.source !== instanceId && c.target !== instanceId),
+    } : prev);
+    setIsDirty(true);
+    if (selectedItem?.id === instanceId) setSelectedItem(null);
+  }
+
+  function removeEntryPoint(instanceId: string) {
+    setDraft(prev => prev ? {
+      ...prev,
+      entry_points: prev.entry_points.filter(ep => ep.instance_id !== instanceId),
+      connections: prev.connections.filter(c => c.source !== instanceId && c.target !== instanceId),
+    } : prev);
+    setIsDirty(true);
+    if (selectedItem?.id === instanceId) setSelectedItem(null);
+  }
+
+  function removeConnection(idx: number) {
+    setDraft(prev => prev ? {
+      ...prev,
+      connections: prev.connections.filter((_, i) => i !== idx),
+    } : prev);
+    setIsDirty(true);
+  }
+
+  function updateComponent(instanceId: string, patch: Partial<import('@/lib/api').ComponentInstance>) {
+    setDraft(prev => prev ? {
+      ...prev,
+      components: prev.components.map(c => c.instance_id === instanceId ? { ...c, ...patch } : c),
+    } : prev);
+    setIsDirty(true);
+  }
+
+  function updateEntryPoint(instanceId: string, patch: Partial<import('@/lib/api').EPInstance>) {
+    setDraft(prev => prev ? {
+      ...prev,
+      entry_points: prev.entry_points.map(ep => ep.instance_id === instanceId ? { ...ep, ...patch } : ep),
+    } : prev);
+    setIsDirty(true);
+  }
+
+  const selectedComp = selectedItem?.type === 'component'
+    ? draft?.components.find(c => c.instance_id === selectedItem.id) ?? null
+    : null;
+  const selectedEP = selectedItem?.type === 'ep'
+    ? draft?.entry_points.find(ep => ep.instance_id === selectedItem.id) ?? null
+    : null;
+
+  const kindColors: Record<string, string> = {
+    orchestrator: C.purple, agent: C.green, middleware: C.amber, entry_point: C.cyan, tool: '#f59e0b',
+  };
+
+  const protocolOptions = ['websocket', 'sse', 'webrtc', 'a2a', 'voice'];
+  const componentKinds = ['orchestrator', 'agent', 'middleware', 'entry_point', 'tool'];
+
+  const isPublished = activeDef?.status === 'published';
+  const canPublish = activeDef?.status === 'draft' && !isDirty && validationReport?.valid === true;
+
+  // Validation error index by instance_id
+  const errorsByInstance: Record<string, string[]> = {};
+  for (const err of validationReport?.errors ?? []) {
+    if (err.instance_id) {
+      errorsByInstance[err.instance_id] = errorsByInstance[err.instance_id] ?? [];
+      errorsByInstance[err.instance_id].push(err.message);
+    }
+  }
 
   return (
-    <div className="builder-root" style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
       {/* Top bar */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 16, padding: '0 24px', height: 56, flexShrink: 0,
-        ...glass, borderBottom: `1px solid ${C.glassBorder}`, zIndex: 20,
+        height: 56, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12,
+        padding: '0 20px', borderBottom: `1px solid ${C.glassBorder}`,
+        background: C.surface, position: 'sticky', top: 0, zIndex: 20,
       }}>
-        <button
-          onClick={() => {
-            if (isDirty && !confirm('You have unsaved changes. Leave anyway?')) return;
-            onBack();
-          }}
-          style={{ ...toolBtnStyle, padding: '6px 10px', color: C.textMuted }}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
         </button>
-        <div style={{ width: 1, height: 20, background: C.outlineVariant }} />
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <input
-              className="nodrag"
-              value={appName}
-              onChange={e => {
-                setAppName(e.target.value);
-                if (!slugLocked && epNode) {
-                  updateNodeData(epNode.id, { slug: toSlug(e.target.value) });
-                }
-              }}
-              placeholder="Application name…"
-              style={{
-                background: 'transparent', border: 'none', outline: 'none',
-                fontSize: 15, fontWeight: 700, color: 'var(--tm-card-text)',
-                fontFamily: 'Geist, sans-serif', width: '100%', padding: 0,
-              }}
-            />
-            {epNode && (
-              <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
-                {(epNode.data as EntryPointData).slug || (app?.entry_points?.[0]?.slug ?? '')}
-              </div>
-            )}
-          </div>
-          {isDirty && (
-            <div title="Unsaved changes" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 6, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)' }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f59e0b', boxShadow: '0 0 6px #f59e0b', display: 'inline-block' }} />
-              <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>Unsaved</span>
-            </div>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', gap: 8 }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{app.name}</span>
+        {activeDef && (
+          <span style={{
+            padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+            background: activeDef.status === 'published' ? C.greenBg : 'rgba(208,188,255,0.12)',
+            color: activeDef.status === 'published' ? C.green : C.purple,
+            border: `1px solid ${activeDef.status === 'published' ? C.greenBorder : 'rgba(208,188,255,0.3)'}`,
+          }}>
+            Rev {activeDef.revision} • {activeDef.status}
+          </span>
+        )}
+        <div style={{ flex: 1 }} />
+        {activeDef && !isPublished && isDirty && (
           <button
-            onClick={() => handleSave(false)}
-            disabled={saving}
-            style={{
-              padding: '7px 18px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`,
-              background: 'transparent', color: C.text, cursor: 'pointer', fontSize: 13, fontWeight: 600,
-              opacity: saving ? 0.6 : 1,
-            }}
+            onClick={saveDraft} disabled={saving}
+            style={{ padding: '7px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.08)', color: C.text }}
           >
             {saving ? 'Saving…' : 'Save'}
           </button>
-          <button
-            onClick={handleTest}
-            disabled={saving}
-            title={!currentApp?.enabled && !currentApp?.entry_points?.some(ep => ep.enabled) ? 'Deploy first to test' : 'Open in playground'}
-            style={{
-              padding: '7px 18px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`,
-              background: 'transparent', color: (currentApp?.enabled || currentApp?.entry_points?.some(ep => ep.enabled)) ? C.green : C.textMuted,
-              cursor: saving ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600,
-              opacity: saving ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 6,
-              transition: 'all 0.2s',
-            }}
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>play_arrow</span>
-            Test
-          </button>
-          <button
-            onClick={() => handleSave(true)}
-            disabled={saving || !chain.ready}
-            style={{
-              padding: '7px 18px', borderRadius: 8, border: 'none',
-              background: chain.ready ? C.cyan : C.outlineVariant,
-              color: chain.ready ? '#00363a' : C.textMuted,
-              cursor: saving || !chain.ready ? 'not-allowed' : 'pointer',
-              fontSize: 13, fontWeight: 700,
-              opacity: saving ? 0.6 : 1,
-              boxShadow: chain.ready ? `0 0 12px rgba(0,240,255,0.25)` : 'none',
-              transition: 'all 0.2s ease',
-            }}
-          >
-            Deploy
-          </button>
-        </div>
-      </div>
-
-      {/* Builder area */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }} ref={rfWrapper}>
-        <NodeLibrary agents={agents} middlewareDefs={middlewareDefs} width={libWidth} onWidthChange={setLibWidth} />
-
-        {/* Canvas */}
-        <div style={{ flex: 1, position: 'relative', height: 'calc(100vh - 56px)' }}>
-          <CanvasInner
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onDrop={onDrop}
-            onDragOver={onDragOver}
-            selectedNode={selectedNode}
-            setSelectedNode={setSelectedNode}
-            onUpdateNode={updateNodeData}
-            onDeleteEdge={deleteEdge}
-            onAutoLayout={autoLayout}
-            logoState={logoState}
-            advisorOpen={advisorOpen}
-            onAdvisorOpen={handleAdvisorOpen}
-          />
-        </div>
-
-        {advisorOpen && (
-          <AdvisorPanel
-            messages={advisorMessages}
-            busy={advisorBusy}
-            input={advisorInput}
-            scanning={advisorScanning}
-            onInputChange={setAdvisorInput}
-            onSend={text => advisorSend(text)}
-            onClose={() => { setAdvisorOpen(false); triggerLogo('idle', 1); }}
-            onRescan={handleAdvisorRescan}
-            onApplyProposal={applyProposal}
-            onApplyAll={applyAll}
-          />
         )}
-
-        <PropertiesPanel
-          selectedNode={selectedNode}
-          onUpdateNode={updateNodeData}
-          slugLocked={slugLocked}
-          onSlugManualEdit={() => setSlugLocked(true)}
-          appName={appName}
-          onAppNameChange={name => {
-            setAppName(name);
-            if (!slugLocked && epNode) updateNodeData(epNode.id, { slug: toSlug(name) });
-          }}
-          convTokenLimit={convTokenLimit}
-          onConvTokenLimitChange={val => {
-            setConvTokenLimit(val);
-            if (epNode) updateNodeData(epNode.id, { convTokenLimit: val });
-            setIsDirty(true);
-          }}
-          chain={chain}
-          app={currentApp}
-          epCount={nodes.filter((n: Node) => n.type === 'entryPoint').length}
-          nodes={nodes}
-          edges={edges}
-        />
+        {activeDef && !isPublished && (
+          <button
+            onClick={validate} disabled={validating || saving}
+            style={{ padding: '7px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(167,139,250,0.2)', color: C.purple }}
+          >
+            {validating ? 'Validating…' : 'Validate'}
+          </button>
+        )}
+        {activeDef && !isPublished && (
+          <button
+            onClick={publish} disabled={!canPublish || publishing}
+            style={{
+              padding: '7px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+              background: canPublish ? C.greenBg : 'rgba(255,255,255,0.04)',
+              color: canPublish ? C.green : C.textMuted,
+              border: `1px solid ${canPublish ? C.greenBorder : 'rgba(255,255,255,0.1)'}`,
+            }}
+          >
+            {publishing ? 'Publishing…' : 'Publish'}
+          </button>
+        )}
       </div>
 
-      {/* Status bar */}
-      <div style={{
-        height: 28, display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px',
-        ...glass, borderTop: `1px solid ${C.glassBorder}`, fontSize: 11, color: C.textMuted, flexShrink: 0,
-      }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{
-            width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
-            background: chain.color,
-            boxShadow: chain.ready ? `0 0 6px ${chain.color}` : 'none',
-          }} />
-          <span style={{ color: chain.color, fontWeight: 600 }}>{chain.label}</span>
-        </span>
-        <span style={{ color: C.outlineVariant }}>·</span>
-        <span>Nodes: {nodes.length}</span>
-        <span style={{ color: C.outlineVariant }}>·</span>
-        <span>Edges: {edges.length}</span>
-      </div>
-
-      {/* Entry Point Picker */}
-      {testPickerOpen && (
-        <EpPickerModal
-          entries={epPickerEntries}
-          onSelect={entry => {
-            setTestPickerOpen(false);
-            const url = entry.orchName ? `/admin/playground?orchestrator=${encodeURIComponent(entry.orchName)}` : '/admin/playground';
-            window.open(url, '_blank', 'noopener');
-          }}
-          onClose={() => setTestPickerOpen(false)}
-        />
+      {/* Validation errors banner */}
+      {validationReport && !validationReport.valid && (
+        <div style={{
+          background: C.errorBg, borderBottom: `1px solid rgba(255,180,171,0.3)`,
+          padding: '10px 20px', flexShrink: 0,
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.error, marginBottom: 4 }}>Validation errors:</div>
+          {(validationReport.errors ?? []).map((err, i) => (
+            <div key={i} style={{ fontSize: 12, color: C.error }}>
+              {err.instance_id ? `[${err.instance_id}] ` : ''}{err.message}
+            </div>
+          ))}
+        </div>
       )}
+
+      {/* Body — three columns */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+
+        {/* Left panel: Component Palette (260px) */}
+        <div style={{ width: 260, flexShrink: 0, borderRight: `1px solid ${C.glassBorder}`, overflowY: 'auto', padding: 16, ...glass }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 12 }}>Component Palette</div>
+          {componentKinds.map(kind => {
+            const items = componentDefs.filter(cd => cd.kind === kind);
+            if (items.length === 0) return null;
+            return (
+              <div key={kind} style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: kindColors[kind] ?? C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>{kind}</div>
+                {items.map(cd => (
+                  <button
+                    key={cd.id}
+                    onClick={() => addComponent(cd)}
+                    disabled={isPublished || !activeDef}
+                    style={{
+                      width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8, border: `1px solid rgba(255,255,255,0.08)`,
+                      background: 'rgba(255,255,255,0.03)', color: C.text, cursor: isPublished || !activeDef ? 'not-allowed' : 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 12,
+                    }}
+                    onMouseEnter={e => { if (!isPublished && activeDef) { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.borderColor = kindColors[kind] ?? 'rgba(255,255,255,0.2)'; } }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
+                  >
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: kindColors[kind] ? `${kindColors[kind]}22` : 'rgba(255,255,255,0.06)', color: kindColors[kind] ?? C.textMuted }}>
+                      {cd.kind[0].toUpperCase()}
+                    </span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.display_name}</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, flexShrink: 0 }}>add</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+          {componentDefs.length === 0 && (
+            <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic' }}>No components available</div>
+          )}
+          <div style={{ marginTop: 16, borderTop: `1px solid ${C.glassBorder}`, paddingTop: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.cyan, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Entry Points</div>
+            {protocolOptions.map(p => (
+              <button
+                key={p}
+                onClick={() => addEntryPoint(p)}
+                disabled={isPublished || !activeDef}
+                style={{
+                  width: '100%', textAlign: 'left', padding: '6px 10px', borderRadius: 8, border: '1px solid rgba(0,240,255,0.15)',
+                  background: 'rgba(0,240,255,0.03)', color: C.cyan, cursor: isPublished || !activeDef ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: 12,
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>add</span>
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Center panel: Definition Editor */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Revision selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <select
+              value={activeDef?.id ?? ''}
+              onChange={e => { const d = defs.find(x => x.id === e.target.value); if (d) loadDef(d); }}
+              style={{ ...fieldStyle, width: 'auto', minWidth: 180 }}
+            >
+              {defs.length === 0 && <option value="">No definitions yet</option>}
+              {[...defs].reverse().map(d => (
+                <option key={d.id} value={d.id}>Rev {d.revision} — {d.status}</option>
+              ))}
+            </select>
+            <button
+              onClick={newDraft}
+              style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid rgba(0,240,255,0.3)`, background: 'rgba(0,240,255,0.06)', color: C.cyan, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}
+            >
+              + New Draft
+            </button>
+          </div>
+
+          {!activeDef && (
+            <div style={{ textAlign: 'center', padding: '60px 20px', color: C.textMuted }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 48, display: 'block', marginBottom: 12, opacity: 0.4 }}>description</span>
+              <div style={{ fontSize: 15, marginBottom: 16 }}>No definitions yet</div>
+              <button onClick={newDraft} style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: C.cyan, color: '#021520', fontWeight: 700, cursor: 'pointer' }}>
+                Create First Definition
+              </button>
+            </div>
+          )}
+
+          {activeDef && draft && (
+            <>
+              {isPublished && (
+                <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#f59e0b' }}>
+                  This revision is published and immutable. Create a new draft to make changes.
+                </div>
+              )}
+
+              {/* Definition name */}
+              <div style={{ ...glass, borderRadius: 10, padding: '14px 16px' }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}>Definition Name</label>
+                <input
+                  style={fieldStyle} value={draft.name ?? ''} disabled={isPublished}
+                  onChange={e => { setDraft(prev => prev ? { ...prev, name: e.target.value } : prev); setIsDirty(true); }}
+                  placeholder="e.g. My Orchestration"
+                />
+              </div>
+
+              {/* Components */}
+              <div style={{ ...glass, borderRadius: 10, padding: '14px 16px' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>
+                  Components ({draft.components.length})
+                </div>
+                {draft.components.length === 0 && (
+                  <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic' }}>No components. Add from the palette.</div>
+                )}
+                {draft.components.map(comp => {
+                  const hasErrors = !!(errorsByInstance[comp.instance_id]?.length);
+                  const isSelected = selectedItem?.id === comp.instance_id;
+                  return (
+                    <div
+                      key={comp.instance_id}
+                      style={{
+                        padding: '10px 12px', borderRadius: 8, marginBottom: 6,
+                        border: `1px solid ${hasErrors ? 'rgba(255,180,171,0.4)' : isSelected ? 'rgba(0,240,255,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                        background: isSelected ? 'rgba(0,240,255,0.04)' : 'rgba(255,255,255,0.02)',
+                        display: 'flex', alignItems: 'center', gap: 10,
+                      }}
+                    >
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                        background: kindColors[comp.definition_ref.kind] ? `${kindColors[comp.definition_ref.kind]}22` : 'rgba(255,255,255,0.08)',
+                        color: kindColors[comp.definition_ref.kind] ?? C.textMuted,
+                      }}>{comp.definition_ref.kind}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{comp.instance_id}</div>
+                        <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{comp.definition_ref.namespace}/{comp.definition_ref.name}@{comp.definition_ref.version}</div>
+                      </div>
+                      {hasErrors && <span className="material-symbols-outlined" style={{ fontSize: 16, color: C.error }} title={(errorsByInstance[comp.instance_id] ?? []).join('; ')}>error</span>}
+                      <button onClick={() => setSelectedItem({ type: 'component', id: comp.instance_id })} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>settings</span>
+                      </button>
+                      {!isPublished && (
+                        <button onClick={() => removeComponent(comp.instance_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.error, display: 'flex', alignItems: 'center' }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Entry Points */}
+              <div style={{ ...glass, borderRadius: 10, padding: '14px 16px' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>
+                  Entry Points ({draft.entry_points.length})
+                </div>
+                {draft.entry_points.length === 0 && (
+                  <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic' }}>No entry points. Add from the palette.</div>
+                )}
+                {draft.entry_points.map(ep => {
+                  const isSelected = selectedItem?.id === ep.instance_id;
+                  return (
+                    <div
+                      key={ep.instance_id}
+                      style={{
+                        padding: '10px 12px', borderRadius: 8, marginBottom: 6,
+                        border: `1px solid ${isSelected ? C.cyanBorder : 'rgba(0,240,255,0.15)'}`,
+                        background: isSelected ? 'rgba(0,240,255,0.04)' : 'rgba(0,240,255,0.02)',
+                        display: 'flex', alignItems: 'center', gap: 10,
+                      }}
+                    >
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(0,240,255,0.12)', color: C.cyan }}>{ep.protocol}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>{ep.slug || ep.instance_id}</div>
+                        {ep.root && <div style={{ fontSize: 11, color: C.textMuted }}>→ {ep.root}</div>}
+                      </div>
+                      <button onClick={() => setSelectedItem({ type: 'ep', id: ep.instance_id })} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>settings</span>
+                      </button>
+                      {!isPublished && (
+                        <button onClick={() => removeEntryPoint(ep.instance_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.error, display: 'flex', alignItems: 'center' }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Connections */}
+              <div style={{ ...glass, borderRadius: 10, padding: '14px 16px' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 10 }}>
+                  Connections ({draft.connections.length})
+                </div>
+                {draft.connections.length === 0 && (
+                  <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic' }}>No explicit connections. Entry→Orchestrator connections derive from entry point root bindings.</div>
+                )}
+                {draft.connections.map((conn, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, marginBottom: 4, border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)' }}>
+                    <span style={{ fontSize: 12, color: C.text, fontFamily: 'JetBrains Mono, monospace' }}>{conn.source}</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted }}>arrow_forward</span>
+                    <span style={{ fontSize: 12, color: C.text, fontFamily: 'JetBrains Mono, monospace' }}>{conn.target}</span>
+                    <span style={{ marginLeft: 4, fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: 'rgba(255,255,255,0.08)', color: C.textMuted }}>{conn.type}</span>
+                    <div style={{ flex: 1 }} />
+                    {!isPublished && (
+                      <button onClick={() => removeConnection(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.error, display: 'flex', alignItems: 'center' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Right panel: Properties (320px) */}
+        <div style={{ width: 320, flexShrink: 0, borderLeft: `1px solid ${C.glassBorder}`, overflowY: 'auto', padding: 16, ...glass }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 12 }}>Properties</div>
+
+          {!selectedItem && (
+            <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic' }}>Select a component or entry point to configure.</div>
+          )}
+
+          {selectedComp && draft && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Instance ID</label>
+                <input
+                  style={fieldStyle} value={selectedComp.instance_id} disabled={isPublished}
+                  onChange={e => updateComponent(selectedComp.instance_id, { instance_id: e.target.value })}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Definition</label>
+                <div style={{ fontSize: 12, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', padding: '8px 10px', borderRadius: 6, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  {selectedComp.definition_ref.namespace}/{selectedComp.definition_ref.name}@{selectedComp.definition_ref.version}
+                </div>
+              </div>
+              {selectedComp.definition_ref.kind === 'orchestrator' && (
+                <>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Name (Temporal key — immutable)</label>
+                    <input
+                      style={fieldStyle} value={(selectedComp.config as any)?.name ?? selectedComp.name ?? ''} disabled={isPublished}
+                      onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, name: e.target.value } })}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>System Prompt</label>
+                    <textarea
+                      style={{ ...fieldStyle, height: 100, resize: 'vertical' }} value={(selectedComp.config as any)?.system_prompt ?? ''} disabled={isPublished}
+                      onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, system_prompt: e.target.value } })}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>LLM Provider</label>
+                    <select style={fieldStyle} value={(selectedComp.config as any)?.llm_provider ?? ''} disabled={isPublished}
+                      onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, llm_provider: e.target.value } })}>
+                      <option value="">— inherit —</option>
+                      <option value="anthropic">anthropic</option>
+                      <option value="openai">openai</option>
+                      <option value="gemini">gemini</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>LLM Model</label>
+                    <input style={fieldStyle} value={(selectedComp.config as any)?.llm_model ?? ''} disabled={isPublished}
+                      onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, llm_model: e.target.value } })} />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    {(['max_iterations', 'history_window', 'max_parallel_tools', 'budget_tokens'] as const).map(field => (
+                      <div key={field}>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 4 }}>{field.replace(/_/g, ' ')}</label>
+                        <input type="number" style={fieldStyle} value={(selectedComp.config as any)?.[field] ?? ''} disabled={isPublished}
+                          onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, [field]: e.target.value === '' ? null : Number(e.target.value) } })} />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              {selectedComp.definition_ref.kind !== 'orchestrator' && (
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Config (JSON)</label>
+                  <textarea
+                    style={{ ...fieldStyle, height: 180, resize: 'vertical', fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}
+                    value={JSON.stringify(selectedComp.config, null, 2)} disabled={isPublished}
+                    onChange={e => {
+                      try { updateComponent(selectedComp.instance_id, { config: JSON.parse(e.target.value) }); } catch { /* invalid JSON — ignore */ }
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {selectedEP && draft && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Slug</label>
+                <input
+                  style={fieldStyle} value={selectedEP.slug} disabled={isPublished}
+                  onChange={e => updateEntryPoint(selectedEP.instance_id, { slug: e.target.value })}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Protocol</label>
+                <select style={fieldStyle} value={selectedEP.protocol} disabled={isPublished}
+                  onChange={e => updateEntryPoint(selectedEP.instance_id, { protocol: e.target.value as any })}>
+                  {protocolOptions.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Root Orchestrator</label>
+                <select style={fieldStyle} value={selectedEP.root} disabled={isPublished}
+                  onChange={e => updateEntryPoint(selectedEP.instance_id, { root: e.target.value })}>
+                  <option value="">— none —</option>
+                  {draft.components.filter(c => c.definition_ref.kind === 'orchestrator').map(c => (
+                    <option key={c.instance_id} value={c.instance_id}>{c.instance_id}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Toast */}
       {toast && (
@@ -3483,7 +3349,7 @@ function BuilderView({
           background: toast.ok ? 'rgba(74,222,128,0.15)' : C.errorBg,
           border: `1px solid ${toast.ok ? C.greenBorder : 'rgba(255,180,171,0.3)'}`,
           color: toast.ok ? C.green : C.error,
-          boxShadow: `0 4px 20px rgba(0,0,0,0.4)`,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
           backdropFilter: 'blur(8px)',
         }}>
           {toast.msg}
@@ -3492,7 +3358,6 @@ function BuilderView({
     </div>
   );
 }
-
 // ── List view ─────────────────────────────────────────────────────────────────
 const APP_CARD_STYLES = `
 .app-glass-card {
@@ -3617,7 +3482,7 @@ function AppCard({
   sessionCount: number;
   selected?: boolean;
   onToggleSelect?: (id: string, checked: boolean) => void;
-  onEdit: (a: Application) => void;
+  onEdit: (a: Application) => void;  // now opens DefinitionView
   onSessions: (a: Application) => void;
   onRuntime: (a: Application) => void;
   onToggle: (a: Application) => void;
@@ -3833,11 +3698,11 @@ function AppCard({
                 }}>{sessionCount}</span>
               )}
             </button>
-            {/* Open builder — primary, full-width feel */}
+            {/* Definition — primary, full-width feel */}
             <button className="app-card-btn app-card-btn--open" onClick={() => onEdit(app)}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>open_in_new</span>
-              Open Builder
+              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>description</span>
+              Definition
             </button>
             {/* Runtime button */}
             <button
@@ -4965,8 +4830,8 @@ export default function ApplicationsPage() {
   const [list, setList] = useState<Application[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'list' | 'builder' | 'sessions' | 'runtime'>('list');
-  const [editApp, setEditApp] = useState<Application | null>(null);
+  const [view, setView] = useState<'list' | 'definition' | 'sessions' | 'runtime'>('list');
+  const [definitionApp, setDefinitionApp] = useState<Application | null>(null);
   const [sessionsApp, setSessionsApp] = useState<Application | null>(null);
   const [runtimeApp, setRuntimeApp] = useState<Application | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -5019,14 +4884,14 @@ export default function ApplicationsPage() {
     }
   }
 
-  function openBuilder(app: Application | null) {
-    setEditApp(app);
-    setView('builder');
+  function openDefinition(app: Application) {
+    setDefinitionApp(app);
+    setView('definition');
   }
 
   function backToList() {
     setView('list');
-    setEditApp(null);
+    setDefinitionApp(null);
     setSessionsApp(null);
     setRuntimeApp(null);
   }
@@ -5039,11 +4904,6 @@ export default function ApplicationsPage() {
   function openRuntime(app: Application) {
     setRuntimeApp(app);
     setView('runtime');
-  }
-
-  async function onBuilderSaved() {
-    await load();
-    // Stay in builder — let user navigate back manually if they want
   }
 
   if (view === 'runtime' && runtimeApp) {
@@ -5080,21 +4940,20 @@ export default function ApplicationsPage() {
     );
   }
 
-  if (view === 'builder') {
+  if (view === 'definition' && definitionApp) {
     return (
       <AuthGuard>
         <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
           <Sidebar />
           <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-            <ReactFlowProvider>
-              <BuilderView
-                app={editApp}
-                agents={agents}
-                onBack={backToList}
-                onSaved={onBuilderSaved}
-                onAgentsChange={setAgents}
-              />
-            </ReactFlowProvider>
+            <DefinitionView
+              app={definitionApp}
+              onBack={() => { setView('list'); setDefinitionApp(null); }}
+              onAppUpdated={(updated) => {
+                setList(prev => prev.map(a => a.id === updated.id ? updated : a));
+                setDefinitionApp(updated);
+              }}
+            />
           </div>
         </div>
       </AuthGuard>
@@ -5108,8 +4967,8 @@ export default function ApplicationsPage() {
         <ListView
           list={list}
           loading={loading}
-          onNew={() => openBuilder(null)}
-          onEdit={(app) => openBuilder(app)}
+          onNew={() => { themApi.createApplication({ name: 'New Application', enabled: false }).then(load).catch(() => {}); }}
+          onEdit={(app) => openDefinition(app)}
           onSessions={openSessions}
           onRuntime={openRuntime}
           onToggle={handleToggle}
