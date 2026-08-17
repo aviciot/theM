@@ -93,7 +93,13 @@ func (p *AnthropicProvider) Stream(ctx context.Context, messages []domain.Messag
 		if err != nil {
 			return nil, fmt.Errorf("llm: anthropic: marshal message: %w", err)
 		}
-		apiMsgs = append(apiMsgs, anthropicMessage{Role: m.Role, Content: content})
+		// Anthropic requires tool results to be sent with role "user", not "tool".
+		// The content parts already carry the tool_result type; only the role differs.
+		role := m.Role
+		if role == domain.RoleTool {
+			role = domain.RoleUser
+		}
+		apiMsgs = append(apiMsgs, anthropicMessage{Role: role, Content: content})
 	}
 
 	var apiTools []anthropicTool

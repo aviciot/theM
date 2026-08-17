@@ -18,6 +18,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/aviciot/them/internal/crypto"
 	"github.com/aviciot/them/internal/orchestrator"
 )
 
@@ -31,6 +32,11 @@ type RunConfig struct {
 	// LLMAPIKey is the plaintext API key for LLMProvider, read from
 	// applications.provider_keys. Empty string means fall back to global key.
 	LLMAPIKey string
+
+	// Summarizer fields — populated when memory_enabled=true on the orchestrator row.
+	SummarizerProvider string
+	SummarizerModel    string
+	SummarizerAPIKey   string // plaintext, decrypted from provider_keys or summarizer_api_key_encrypted
 }
 
 // Loader resolves per-run orchestrator config from persistent storage.
@@ -44,12 +50,15 @@ type Loader interface {
 
 // PgxLoader implements Loader against a live PostgreSQL pool.
 type PgxLoader struct {
-	pool *pgxpool.Pool
+	pool      *pgxpool.Pool
+	fernetKey []byte
 }
 
 // NewPgxLoader creates a PgxLoader backed by the given connection pool.
-func NewPgxLoader(pool *pgxpool.Pool) *PgxLoader {
-	return &PgxLoader{pool: pool}
+// fernetKey is the 32-byte key used to decrypt provider_keys values; derive it
+// with crypto.DeriveKey(cfg.SecretKey).
+func NewPgxLoader(pool *pgxpool.Pool, fernetKey []byte) *PgxLoader {
+	return &PgxLoader{pool: pool, fernetKey: fernetKey}
 }
 
 // LoadRunConfig resolves orchestrator config + provider key for one run.
@@ -65,7 +74,13 @@ SELECT
     ao.max_parallel_tools,
     ao.history_window,
     ao.budget_tokens,
-    ao.allowed_agent_ids
+    ao.allowed_agent_ids,
+    COALESCE(ao.memory_enabled, false),
+    COALESCE(ao.summarize_every_n_calls, 0),
+    COALESCE(ao.memory_raw_fallback_n, 5),
+    ao.summarizer_provider,
+    ao.summarizer_model,
+    ao.summarizer_api_key_encrypted
 FROM them.app_orchestrators ao
 JOIN them.applications a ON a.id = ao.application_id
 WHERE ao.id = $1::uuid
@@ -75,14 +90,20 @@ WHERE ao.id = $1::uuid
 	row := l.pool.QueryRow(ctx, orchQ, appOrchestratorID, applicationID)
 
 	var (
-		systemPrompt    *string
-		llmProvider     *string
-		llmModel        *string
-		maxIterations   int
-		maxParallelTools int
-		historyWindow   int
-		budgetTokens    *int
-		allowedAgentIDs []string
+		systemPrompt              *string
+		llmProvider               *string
+		llmModel                  *string
+		maxIterations             int
+		maxParallelTools          int
+		historyWindow             int
+		budgetTokens              *int
+		allowedAgentIDs           []string
+		memoryEnabled             bool
+		summarizeEveryNCalls      int
+		memoryRawFallbackN        int
+		summarizerProvider        *string
+		summarizerModel           *string
+		summarizerAPIKeyEncrypted *string
 	)
 
 	if err := row.Scan(
@@ -94,6 +115,12 @@ WHERE ao.id = $1::uuid
 		&historyWindow,
 		&budgetTokens,
 		&allowedAgentIDs,
+		&memoryEnabled,
+		&summarizeEveryNCalls,
+		&memoryRawFallbackN,
+		&summarizerProvider,
+		&summarizerModel,
+		&summarizerAPIKeyEncrypted,
 	); err != nil {
 		return RunConfig{}, fmt.Errorf("workerconfig: load orchestrator %s: %w", appOrchestratorID, err)
 	}
@@ -106,10 +133,13 @@ WHERE ao.id = $1::uuid
 	}
 
 	cfg := orchestrator.Config{
-		MaxIterations:    maxIterations,
-		MaxParallelTools: maxParallelTools,
-		HistoryWindow:    historyWindow,
-		AllowedAgents:    slugs,
+		MaxIterations:        maxIterations,
+		MaxParallelTools:     maxParallelTools,
+		HistoryWindow:        historyWindow,
+		AllowedAgents:        slugs,
+		MemoryEnabled:        memoryEnabled,
+		SummarizeEveryNCalls: summarizeEveryNCalls,
+		MemoryRawFallbackN:   memoryRawFallbackN,
 	}
 	if systemPrompt != nil {
 		cfg.SystemPrompt = *systemPrompt
@@ -126,16 +156,38 @@ WHERE ao.id = $1::uuid
 		cfg.BudgetTokens = *budgetTokens
 	}
 
-	// Load the plaintext API key from applications.provider_keys.
+	// Load the plaintext API key from applications.provider_keys (decrypted).
 	apiKey := ""
 	if providerName != "" {
 		apiKey, _ = l.loadProviderKey(ctx, applicationID, providerName)
+	}
+
+	// Resolve summarizer config.
+	sumProvider := ""
+	if summarizerProvider != nil {
+		sumProvider = *summarizerProvider
+	}
+	sumModel := ""
+	if summarizerModel != nil {
+		sumModel = *summarizerModel
+	}
+
+	// Summarizer API key: try app provider_keys first, then fall back to row-level encrypted key.
+	sumAPIKey := ""
+	if memoryEnabled && sumProvider != "" {
+		sumAPIKey, _ = l.loadProviderKey(ctx, applicationID, sumProvider)
+		if sumAPIKey == "" && summarizerAPIKeyEncrypted != nil {
+			sumAPIKey, _ = l.decryptValue(*summarizerAPIKeyEncrypted)
+		}
 	}
 
 	return RunConfig{
 		OrchestratorConfig: cfg,
 		LLMProvider:        providerName,
 		LLMAPIKey:          apiKey,
+		SummarizerProvider: sumProvider,
+		SummarizerModel:    sumModel,
+		SummarizerAPIKey:   sumAPIKey,
 	}, nil
 }
 
@@ -165,24 +217,34 @@ func (l *PgxLoader) resolveAgentSlugs(ctx context.Context, ids []string) ([]stri
 	return slugs, nil
 }
 
-// loadProviderKey reads the plaintext key from applications.provider_keys JSONB.
+// loadProviderKey reads and decrypts the key from applications.provider_keys JSONB.
 // Returns empty string when the application is not found or no key is stored.
-// Keys are stored as plain JSON strings: {"anthropic": "sk-ant-..."}.
+// Keys are stored as Fernet-encrypted JSON strings: {"anthropic": "enc:..."}.
 func (l *PgxLoader) loadProviderKey(ctx context.Context, applicationID, provider string) (string, error) {
 	const q = `SELECT COALESCE(provider_keys->$2, 'null'::jsonb)::text
-               FROM them.applications
-               WHERE id = $1::uuid`
+	           FROM them.applications
+	           WHERE id = $1::uuid`
 	var raw string
 	if err := l.pool.QueryRow(ctx, q, applicationID, provider).Scan(&raw); err != nil {
 		return "", err
 	}
-	// raw is a JSON string: `"sk-ant-..."` or `null`
+	// raw is a JSON string: `"enc:..."` or `null`
 	if raw == "null" || raw == "" {
 		return "", nil
 	}
 	// Strip JSON string quotes.
 	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-		return raw[1 : len(raw)-1], nil
+		raw = raw[1 : len(raw)-1]
 	}
-	return raw, nil
+	return l.decryptValue(raw)
+}
+
+// decryptValue decrypts a Fernet-encrypted value (with "enc:" prefix) or returns
+// the value as-is if it is not encrypted (legacy plain-text entries).
+func (l *PgxLoader) decryptValue(stored string) (string, error) {
+	if len(l.fernetKey) == 0 {
+		// No key configured — return as-is (graceful degradation).
+		return stored, nil
+	}
+	return crypto.DecryptStored(l.fernetKey, stored)
 }

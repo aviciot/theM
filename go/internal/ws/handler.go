@@ -47,6 +47,7 @@ type clientMsg struct {
 	Type        string `json:"type"`
 	Content     string `json:"content"`
 	LastEventID string `json:"last_event_id,omitempty"`
+	ContextID   string `json:"context_id,omitempty"`
 }
 
 // serverMsg is the message shape sent to the WebSocket client.
@@ -259,10 +260,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// ── 5. Wait for first client message ─────────────────────────────────────
-	userMsg, lastEventID, msgErr := h.readClientMessage(conn)
+	// context_id is client-supplied for multi-turn continuity: if present it
+	// overrides the server-generated ContextID so history is loaded from the
+	// same conversation thread.
+	userMsg, lastEventID, clientContextID, msgErr := h.readClientMessage(conn)
 	if msgErr != nil {
 		h.writeError(conn, "failed to read message")
 		return
+	}
+	if clientContextID != "" {
+		handle.ContextID = clientContextID
 	}
 
 	// ── 6. Subscribe to run-stream BEFORE Lifecycle.Start ─────────────────────
@@ -378,21 +385,22 @@ func (h *Handler) extractRawToken(r *http.Request) string {
 }
 
 // readClientMessage reads the first message from the WebSocket client. It
-// returns the user message and the optional stream resume cursor
-// (last_event_id) supplied by reconnecting clients — "" when absent.
-func (h *Handler) readClientMessage(conn *websocket.Conn) (domain.Message, string, error) {
+// returns the user message, the optional stream resume cursor (last_event_id),
+// and the optional context_id supplied by reconnecting clients for multi-turn
+// conversation continuity — "" when absent.
+func (h *Handler) readClientMessage(conn *websocket.Conn) (domain.Message, string, string, error) {
 	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	_, msgBytes, err := conn.ReadMessage()
 	if err != nil {
-		return domain.Message{}, "", fmt.Errorf("ws: read: %w", err)
+		return domain.Message{}, "", "", fmt.Errorf("ws: read: %w", err)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 
 	var cm clientMsg
 	if err := json.Unmarshal(msgBytes, &cm); err != nil {
-		return domain.Message{}, "", fmt.Errorf("ws: decode: %w", err)
+		return domain.Message{}, "", "", fmt.Errorf("ws: decode: %w", err)
 	}
-	return domain.TextMessage(domain.RoleUser, cm.Content), cm.LastEventID, nil
+	return domain.TextMessage(domain.RoleUser, cm.Content), cm.LastEventID, cm.ContextID, nil
 }
 
 // streamEvents forwards bus events to the WebSocket client until orchestration

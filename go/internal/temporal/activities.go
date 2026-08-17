@@ -21,23 +21,21 @@ type OrchestratorRunner interface {
 }
 
 // OrchestratorFactory builds a per-run orchestrator from a loaded RunConfig.
-// Injected into Activities so tests can substitute a fake factory.
+// Implemented by runOrchestratorFactory in cmd/worker/main.go; tests may inject a fake.
 type OrchestratorFactory interface {
 	Build(cfg workerconfig.RunConfig) OrchestratorRunner
 }
 
 // Activities holds dependencies for Temporal activities.
 type Activities struct {
-	// Runner is the fallback orchestrator used when ConfigLoader is nil or
-	// AppOrchestratorID is not set. Kept for backward-compat and tests.
+	// Runner is the static fallback orchestrator used when AppOrchestratorID is absent.
 	Runner OrchestratorRunner
-
-	// ConfigLoader resolves per-run orchestrator config from DB by AppOrchestratorID.
-	// When nil, falls back to Runner.
+	// ConfigLoader resolves per-run orchestrator config from DB. Optional.
+	// When set (and WorkflowInput.AppOrchestratorID is non-empty), the activity
+	// loads fresh config per-run and calls Factory.Build instead of using Runner.
 	ConfigLoader workerconfig.Loader
-
-	// Factory builds a per-run orchestrator from a loaded RunConfig.
-	// When nil, falls back to Runner.
+	// Factory builds a per-run orchestrator from a loaded RunConfig. Optional.
+	// Only used when ConfigLoader is also set.
 	Factory OrchestratorFactory
 }
 
@@ -91,17 +89,16 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 		}
 	}()
 
-	// Resolve per-run orchestrator when ConfigLoader + Factory are wired and
-	// AppOrchestratorID is set. Falls back to the static Runner for tests and
-	// legacy calls that predate per-app orchestrator resolution.
+	// Select runner: use per-run config when AppOrchestratorID is set and
+	// ConfigLoader + Factory are wired; otherwise fall back to the static Runner.
 	runner := a.Runner
-	if a.ConfigLoader != nil && a.Factory != nil && input.AppOrchestratorID != "" {
-		runCfg, err := a.ConfigLoader.LoadRunConfig(ctx, input.AppOrchestratorID, input.ApplicationID)
-		if err != nil {
+	if input.AppOrchestratorID != "" && a.ConfigLoader != nil && a.Factory != nil {
+		runCfg, cfgErr := a.ConfigLoader.LoadRunConfig(ctx, input.AppOrchestratorID, input.ApplicationID)
+		if cfgErr != nil {
 			return WorkflowResult{Status: domain.RunStatusFailed},
 				temporalerr.NewNonRetryableApplicationError(
-					"RunOrchestratorActivity: failed to load orchestrator config",
-					"ConfigLoadError", err,
+					"RunOrchestratorActivity: failed to load orchestrator config: "+cfgErr.Error(),
+					"ConfigLoadError", cfgErr,
 				)
 		}
 		runner = a.Factory.Build(runCfg)
@@ -124,5 +121,4 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 		Status:    domain.RunStatusCompleted,
 	}, nil
 }
-
 

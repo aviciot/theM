@@ -72,6 +72,11 @@ type Config struct {
 
 	// MaxParallelTools limits concurrent agent tool invocations. 0 = unlimited.
 	MaxParallelTools int
+
+	// Memory / summarizer configuration.
+	MemoryEnabled        bool
+	SummarizeEveryNCalls int
+	MemoryRawFallbackN   int
 }
 
 // AgentInvoker is the interface the orchestrator uses to call agents.
@@ -151,6 +156,11 @@ type Orchestrator struct {
 	taskRecorder     TaskRecorder
 	budgetStore      BudgetStore
 	artifactRecorder ArtifactRecorder
+
+	// Summarizer fields (all optional; wired by WithSummarizer).
+	summarizer   Summarizer
+	summaryStore SummaryStore
+	summaryCfg   SummaryConfig
 }
 
 // New creates a new Orchestrator. agents may be nil (tools disabled).
@@ -249,6 +259,16 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 				"context_id", contextID, "error", err)
 		} else {
 			history = loaded
+		}
+	}
+
+	// Apply summarization if enabled.
+	history = o.maybeSummarize(ctx, contextID, runID, history)
+
+	// Checkpoint the user message for crash recovery (non-fatal).
+	if o.checkpointer != nil {
+		if cpErr := o.checkpointer.WriteMessage(ctx, contextID, runID, userMsg); cpErr != nil {
+			o.logger.Warn("orchestrator: user message checkpoint failed", "run_id", runID, "error", cpErr)
 		}
 	}
 

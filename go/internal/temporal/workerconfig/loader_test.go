@@ -19,7 +19,7 @@ func TestRunConfig_ZeroValue(t *testing.T) {
 // TestPgxLoader_NewPgxLoader verifies that NewPgxLoader returns a non-nil *PgxLoader.
 // The loader is not called here (no live DB in unit tests) — this is a construction guard.
 func TestPgxLoader_NewPgxLoader(t *testing.T) {
-	loader := workerconfig.NewPgxLoader(nil)
+	loader := workerconfig.NewPgxLoader(nil, nil)
 	assert.NotNil(t, loader, "NewPgxLoader must return a non-nil *PgxLoader")
 
 	// PgxLoader must satisfy the Loader interface at compile time.

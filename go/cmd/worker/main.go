@@ -42,12 +42,15 @@ import (
 	"github.com/aviciot/them/internal/agentregistry"
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/config"
+	"github.com/aviciot/them/internal/crypto"
 	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/event"
+	"github.com/aviciot/them/internal/history"
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/runstream"
+	"github.com/aviciot/them/internal/summarizer"
 	"github.com/aviciot/them/internal/telemetry"
 	"github.com/aviciot/them/internal/temporal"
 	"github.com/aviciot/them/internal/temporal/workerconfig"
@@ -122,23 +125,27 @@ func run() error {
 	go registry.Subscribe(registryCtx)
 	log.Info("agent registry initialised with pub/sub invalidation")
 
-	// ── 9. Create per-run config loader ──────────────────────────────────────
-	cfgLoader := workerconfig.NewPgxLoader(pool)
+	// ── 9. Derive fernet key for decrypting provider_keys ────────────────────
+	fernetKey := crypto.DeriveKey(cfg.SecretKey)
 
-	// ── 10. Create orchestrator factory ──────────────────────────────────────
-	// The factory builds a fresh orchestrator per activity execution using
-	// config loaded from DB, so each run gets its own system_prompt, model,
-	// history_window, budget, and agent tool list.
+	// ── 10. Create per-run config loader ──────────────────────────────────────
+	cfgLoader := workerconfig.NewPgxLoader(pool, fernetKey)
+
+	// ── 11. Create history store ──────────────────────────────────────────────
+	historyStore := history.NewStore(pool, log)
+
+	// ── 12. Create orchestrator factory ──────────────────────────────────────
 	factory := &runOrchestratorFactory{
 		globalProvider: globalLLMProvider,
 		globalAPIKey:   cfg.AnthropicAPIKey,
 		registry:       registry,
 		recorder:       recorder,
 		bus:            bus,
+		historyStore:   historyStore,
 		logger:         log,
 	}
 
-	// ── 10b. Phase 3 — forward bus events to Redis Streams ───────────────────
+	// ── 12b. Phase 3 — forward bus events to Redis Streams ───────────────────
 	streamWriter := cache.NewRunStreamerWriterRedisClient(redisCache.Client())
 	log.Info("Redis Stream writer initialised — cross-process event forwarding active")
 
@@ -157,7 +164,7 @@ func run() error {
 		}
 	}()
 
-	// ── 11. Connect Temporal client ───────────────────────────────────────────
+	// ── 13. Connect Temporal client ───────────────────────────────────────────
 	if !cfg.TemporalEnabled {
 		return fmt.Errorf("Go Worker requires TEMPORAL_ENABLED=true — worker cannot run without Temporal")
 	}
@@ -170,7 +177,7 @@ func run() error {
 	defer temporalCli.Close()
 	log.Info("Temporal client connected", "host_port", cfg.TemporalHostPort)
 
-	// ── 12. Create and register Go Temporal worker ────────────────────────────
+	// ── 14. Create and register Go Temporal worker ────────────────────────────
 	taskQueue := cfg.WorkerTaskQueue
 	goWorker := temporalworker.New(temporalCli, taskQueue, temporalworker.Options{})
 	goWorker.RegisterWorkflow(temporal.OrchestrationWorkflow)
@@ -187,7 +194,7 @@ func run() error {
 
 	log.Info("Go Worker polling", "task_queue", taskQueue)
 
-	// ── 13. Block on SIGTERM / SIGINT ─────────────────────────────────────────
+	// ── 15. Block on SIGTERM / SIGINT ─────────────────────────────────────────
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
 	<-quit
@@ -210,6 +217,7 @@ type runOrchestratorFactory struct {
 	registry       *agentregistry.Registry
 	recorder       *runrecorder.Recorder
 	bus            event.Bus
+	historyStore   *history.Store
 	logger         *slog.Logger
 }
 
@@ -218,7 +226,23 @@ type runOrchestratorFactory struct {
 // chosen provider; otherwise fall back to the global provider.
 func (f *runOrchestratorFactory) Build(cfg workerconfig.RunConfig) temporal.OrchestratorRunner {
 	provider := f.resolveProvider(cfg)
-	orch := orchestrator.New(cfg.OrchestratorConfig, provider, f.registry, f.recorder, f.bus, f.logger)
+	orch := orchestrator.New(cfg.OrchestratorConfig, provider, f.registry, f.recorder, f.bus, f.logger).
+		WithHistoryLoader(f.historyStore).
+		WithCheckpointer(f.historyStore)
+
+	// Wire summarizer if memory is enabled and a provider is configured.
+	if cfg.OrchestratorConfig.MemoryEnabled && cfg.SummarizerProvider != "" {
+		sumProvider := f.resolveSummarizerProvider(cfg)
+		sum := summarizer.New(sumProvider, cfg.SummarizerModel, f.logger)
+		sumCfg := orchestrator.SummaryConfig{
+			MemoryEnabled:   true,
+			SummarizeEveryN: cfg.OrchestratorConfig.SummarizeEveryNCalls,
+			RawFallbackN:    cfg.OrchestratorConfig.MemoryRawFallbackN,
+			HistoryWindow:   cfg.OrchestratorConfig.HistoryWindow,
+		}
+		orch = orch.WithSummarizer(sum, f.historyStore, sumCfg)
+	}
+
 	return orch
 }
 
@@ -240,6 +264,22 @@ func (f *runOrchestratorFactory) resolveProvider(cfg workerconfig.RunConfig) llm
 		default:
 			f.logger.Warn("workerconfig: unknown provider — falling back to global",
 				"provider", cfg.LLMProvider)
+		}
+	}
+	return f.globalProvider
+}
+
+// resolveSummarizerProvider selects and constructs the LLM provider for the summarizer.
+// Uses the summarizer-specific key/provider if available, otherwise falls back to
+// the global provider.
+func (f *runOrchestratorFactory) resolveSummarizerProvider(cfg workerconfig.RunConfig) llm.Provider {
+	if cfg.SummarizerAPIKey != "" && cfg.SummarizerProvider != "" {
+		switch cfg.SummarizerProvider {
+		case "anthropic":
+			return llm.NewAnthropicProvider(cfg.SummarizerAPIKey, cfg.SummarizerModel, 0)
+		default:
+			f.logger.Warn("workerconfig: unknown summarizer provider — falling back to global",
+				"provider", cfg.SummarizerProvider)
 		}
 	}
 	return f.globalProvider
