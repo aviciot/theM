@@ -1487,6 +1487,17 @@ function PlaygroundInner() {
   useEffect(() => {
     themApi.applications().then(apps => {
       setApplications(apps);
+      // Seed first tab from first enabled app entry point
+      for (const a of apps) {
+        if (!a.enabled) continue;
+        const ep = a.entry_points.find(e => e.enabled && (e.entry_point_type === 'websocket' || e.entry_point_type === 'sse'));
+        if (ep) {
+          const t: ConnTarget = { kind: 'entrypoint', slug: ep.slug, epType: ep.entry_point_type as 'websocket' | 'sse', appName: a.name, orchName: a.app_orchestrators?.[0]?.name ?? '' };
+          setTabs([t]);
+          setActiveTabId(targetId(t));
+          break;
+        }
+      }
       // Build webrtcSlugs map: orchName → first webrtc EP slug
       const m: Record<string, string> = {};
       for (const a of apps) {
