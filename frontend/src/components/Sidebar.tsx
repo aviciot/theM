@@ -10,7 +10,6 @@ const NAV = [
 ];
 
 const ADMIN_NAV = [
-  { href: '/admin/orchestrators', icon: 'account_tree', label: 'Orchestrators' },
   { href: '/admin/agents',        icon: 'smart_toy',    label: 'Agents' },
   { href: '/admin/applications',  icon: 'apps',          label: 'Applications' },
   { href: '/admin/tokens',        icon: 'key',           label: 'Access Tokens' },
