@@ -4,8 +4,16 @@
 // WORKER_TASK_QUEUE env var) and executes OrchestrationWorkflow +
 // RunOrchestratorActivity. It does NOT expose any HTTP/WS/SSE/admin routes.
 //
-// The Bridge (cmd/them) connects to Temporal only as a client (starts workflows),
-// while this binary is the sole Go worker registrant.
+// # Per-run orchestrator resolution
+//
+// Each WorkflowInput carries AppOrchestratorID — the UUID of the
+// app_orchestrators row that governs the run. The worker loads config from
+// DB on every activity execution: system_prompt, llm_provider, llm_model,
+// max_iterations, history_window, budget_tokens, and allowed_agent_ids
+// (resolved to agent slugs via agents.id = component_definitions.id).
+// The provider API key is read from applications.provider_keys for the
+// chosen provider. If no per-app key is stored, the global env-var key
+// is used as a fallback.
 //
 // # Phase 3 — cross-process Redis Streams
 //
@@ -31,6 +39,7 @@ import (
 
 	temporalworker "go.temporal.io/sdk/worker"
 
+	"github.com/aviciot/them/internal/agentregistry"
 	"github.com/aviciot/them/internal/cache"
 	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/db"
@@ -41,6 +50,7 @@ import (
 	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/telemetry"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/temporal/workerconfig"
 )
 
 func main() {
@@ -91,31 +101,45 @@ func run() error {
 	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(database.Pool())).
 		WithRunEventsMode(cfg.RunEventsMode)
 
-	// ── 7. Create LLM provider ────────────────────────────────────────────────
-	var llmProvider llm.Provider
+	// ── 7. Create global LLM provider (fallback when no per-app key is stored) ──
+	var globalLLMProvider llm.Provider
 	if cfg.AnthropicAPIKey != "" {
-		llmProvider = llm.NewAnthropicProvider(cfg.AnthropicAPIKey, "", 0)
-		log.Info("LLM: Anthropic provider configured")
+		globalLLMProvider = llm.NewAnthropicProvider(cfg.AnthropicAPIKey, "", 0)
+		log.Info("LLM: Anthropic provider configured (global fallback)")
 	} else {
-		llmProvider = &llm.MockProvider{}
-		log.Warn("LLM: no ANTHROPIC_API_KEY set — using mock provider")
+		globalLLMProvider = &llm.MockProvider{}
+		log.Warn("LLM: no ANTHROPIC_API_KEY set — using mock provider as global fallback")
 	}
 
-	// ── 8. Create orchestrator ────────────────────────────────────────────────
-	// agents (agent registry) is nil for now — tool invocations are wired in a
-	// later phase. The orchestrator handles agent-less runs correctly.
-	orchCfg := orchestrator.Config{
-		MaxIterations: 10,
-	}
-	orch := orchestrator.New(orchCfg, llmProvider, nil, recorder, bus, log)
+	// ── 8. Create agent registry ─────────────────────────────────────────────
+	pool := database.Pool()
+	agentDB := agentregistry.NewPgxQuerier(pool)
+	agentCacheRedis := cache.NewAuthRedisClient(redisCache.Client())
+	registry := agentregistry.New(agentDB, agentCacheRedis, log)
 
-	// ── 8b. Phase 3 — forward bus events to Redis Streams ────────────────────
-	// The worker and bridge are separate processes. Subscribe to all events on
-	// the in-process bus with a wildcard topic ("*") and forward each to the
-	// run's Redis Stream so StreamFromRedis in the bridge can receive them.
-	//
-	// We use a background context tied to the worker's lifetime; the goroutine
-	// exits when the subscription channel is closed (on unsub() call below).
+	// Start agent registry pub/sub invalidation listener.
+	registryCtx, registryCancel := context.WithCancel(ctx)
+	defer registryCancel()
+	go registry.Subscribe(registryCtx)
+	log.Info("agent registry initialised with pub/sub invalidation")
+
+	// ── 9. Create per-run config loader ──────────────────────────────────────
+	cfgLoader := workerconfig.NewPgxLoader(pool)
+
+	// ── 10. Create orchestrator factory ──────────────────────────────────────
+	// The factory builds a fresh orchestrator per activity execution using
+	// config loaded from DB, so each run gets its own system_prompt, model,
+	// history_window, budget, and agent tool list.
+	factory := &runOrchestratorFactory{
+		globalProvider: globalLLMProvider,
+		globalAPIKey:   cfg.AnthropicAPIKey,
+		registry:       registry,
+		recorder:       recorder,
+		bus:            bus,
+		logger:         log,
+	}
+
+	// ── 10b. Phase 3 — forward bus events to Redis Streams ───────────────────
 	streamWriter := cache.NewRunStreamerWriterRedisClient(redisCache.Client())
 	log.Info("Redis Stream writer initialised — cross-process event forwarding active")
 
@@ -128,14 +152,13 @@ func run() error {
 	go func() {
 		for ev := range evCh {
 			if ev.RunID == "" {
-				// Skip events without a run ID — they cannot be routed to a stream.
 				continue
 			}
 			runstream.PublishEvent(streamCtx, streamWriter, log, ev)
 		}
 	}()
 
-	// ── 9. Connect Temporal client ────────────────────────────────────────────
+	// ── 11. Connect Temporal client ───────────────────────────────────────────
 	if !cfg.TemporalEnabled {
 		return fmt.Errorf("Go Worker requires TEMPORAL_ENABLED=true — worker cannot run without Temporal")
 	}
@@ -148,13 +171,15 @@ func run() error {
 	defer temporalCli.Close()
 	log.Info("Temporal client connected", "host_port", cfg.TemporalHostPort)
 
-	// ── 10. Create and register Go Temporal worker ────────────────────────────
-	// The worker polls GoTaskQueue ("them-orchestration-go") exclusively.
-	// Override the queue via WORKER_TASK_QUEUE for non-default deployments.
+	// ── 12. Create and register Go Temporal worker ────────────────────────────
 	taskQueue := cfg.WorkerTaskQueue
 	goWorker := temporalworker.New(temporalCli, taskQueue, temporalworker.Options{})
 	goWorker.RegisterWorkflow(temporal.OrchestrationWorkflow)
-	acts := &temporal.Activities{Runner: orch}
+	acts := &temporal.Activities{
+		Runner:       factory.buildFallback(), // static fallback for legacy/test paths
+		ConfigLoader: cfgLoader,
+		Factory:      factory,
+	}
 	goWorker.RegisterActivity(acts.RunOrchestratorActivity)
 
 	if err := goWorker.Start(); err != nil {
@@ -163,7 +188,7 @@ func run() error {
 
 	log.Info("Go Worker polling", "task_queue", taskQueue)
 
-	// ── 11. Block on SIGTERM / SIGINT ─────────────────────────────────────────
+	// ── 13. Block on SIGTERM / SIGINT ─────────────────────────────────────────
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
 	<-quit
@@ -173,4 +198,50 @@ func run() error {
 	log.Info("Go Worker stopped")
 
 	return nil
+}
+
+// ── runOrchestratorFactory ────────────────────────────────────────────────────
+
+// runOrchestratorFactory implements temporal.OrchestratorFactory.
+// It builds a per-run *orchestrator.Orchestrator from a loaded RunConfig,
+// wiring the correct LLM provider (per-app key → global fallback).
+type runOrchestratorFactory struct {
+	globalProvider llm.Provider
+	globalAPIKey   string
+	registry       *agentregistry.Registry
+	recorder       *runrecorder.Recorder
+	bus            event.Bus
+	logger         *slog.Logger
+}
+
+// Build creates a per-run orchestrator from the loaded RunConfig.
+// LLM provider selection: if RunConfig.LLMAPIKey is set, use it for the
+// chosen provider; otherwise fall back to the global provider.
+func (f *runOrchestratorFactory) Build(cfg workerconfig.RunConfig) temporal.OrchestratorRunner {
+	provider := f.resolveProvider(cfg)
+	orch := orchestrator.New(cfg.OrchestratorConfig, provider, f.registry, f.recorder, f.bus, f.logger)
+	return orch
+}
+
+// buildFallback returns a static orchestrator used when AppOrchestratorID is
+// absent (legacy paths, unit tests). Uses global provider + default config.
+func (f *runOrchestratorFactory) buildFallback() temporal.OrchestratorRunner {
+	cfg := orchestrator.Config{MaxIterations: 10}
+	return orchestrator.New(cfg, f.globalProvider, nil, f.recorder, f.bus, f.logger)
+}
+
+// resolveProvider selects and constructs the LLM provider for one run.
+// Priority: per-app key for the named provider → global provider.
+func (f *runOrchestratorFactory) resolveProvider(cfg workerconfig.RunConfig) llm.Provider {
+	if cfg.LLMAPIKey != "" && cfg.LLMProvider != "" {
+		switch cfg.LLMProvider {
+		case "anthropic":
+			return llm.NewAnthropicProvider(cfg.LLMAPIKey, cfg.OrchestratorConfig.Model, 0)
+		// Future: openai, gemini, groq — add cases here as providers are implemented
+		default:
+			f.logger.Warn("workerconfig: unknown provider — falling back to global",
+				"provider", cfg.LLMProvider)
+		}
+	}
+	return f.globalProvider
 }

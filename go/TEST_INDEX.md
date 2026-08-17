@@ -1171,8 +1171,9 @@ Enforces cardinality rules (no high-cardinality label names). Tests gauge isolat
 
 **Purpose:** Verify the Go Temporal worker wiring at the type/interface level without a live
 Temporal server. Confirms Activities satisfies OrchestratorRunner, constants are non-empty,
-WorkflowInput serialises cleanly for Temporal's wire format, and the R-2C queue constants are
-distinct and correctly named.
+WorkflowInput serialises cleanly for Temporal's wire format, the R-2C queue constants are
+distinct and correctly named, and the per-run config loading path (E2E wiring) uses the
+OrchestratorFactory instead of the static fallback Runner.
 
 | Test | What it proves |
 |---|---|
@@ -1186,10 +1187,29 @@ distinct and correctly named.
 | `TestRunOrchestratorActivity_RejectsEmptyApplicationID` | R-4d: empty ApplicationID → non-retryable ApplicationError at activity boundary |
 | `TestRunOrchestratorActivity_RejectsEmptyRunID` | R-4d: empty RunID → non-retryable ApplicationError at activity boundary |
 | `TestRunOrchestratorActivity_PropagatesTenantToRunner` | R-4d: all required fields present → activity runs to completion (tenant passes through) |
+| `TestRunOrchestratorActivity_UsesPerRunConfigWhenAvailable` | E2E: ConfigLoader+Factory+AppOrchestratorID set → Factory.Build called with loaded config; static Runner bypassed |
+| `TestRunOrchestratorActivity_FallsBackToRunnerWhenNoOrchestratorID` | E2E: AppOrchestratorID empty → static Runner used; Factory.Build NOT called |
+| `TestRunOrchestratorActivity_ConfigLoadError_FailsFast` | E2E: LoadRunConfig returns error → non-retryable ConfigLoadError; Factory.Build NOT called |
+| `TestWorkflowInput_AppOrchestratorID_Serialization` | AppOrchestratorID survives JSON round-trip (Temporal wire format requirement) |
 
 Note: `WorkflowInput.OrchestratorName` is set from `EPConfig.OrchestratorName` (resolved via JOIN from `app_orchestrators`). `WorkflowInput.AppOrchestratorID` carries the authoritative UUID for the Go Temporal worker to use for resolution. The Go worker MUST resolve orchestrators by UUID, never by name globally (SEC-04 architectural constraint).
 
-**Trigger:** any change to `internal/temporal/activities.go`, `internal/temporal/workflow.go`, or `cmd/worker/main.go`
+**Trigger:** any change to `internal/temporal/activities.go`, `internal/temporal/workflow.go`, `internal/temporal/workerconfig/`, or `cmd/worker/main.go`
+
+---
+
+### S1-46 · Workerconfig loader — `internal/temporal/workerconfig/loader_test.go`
+
+**Purpose:** Unit tests for the per-run orchestrator config loading package. Verifies RunConfig
+zero-value semantics (empty provider/key → global fallback signal) and that NewPgxLoader satisfies
+the Loader interface. SQL/DB behaviour is exercised by integration test S2-02 (real Temporal stack).
+
+| Test | What it proves |
+|---|---|
+| `TestRunConfig_ZeroValue` | Zero-value RunConfig has empty LLMProvider and LLMAPIKey (signals global fallback to factory) |
+| `TestPgxLoader_NewPgxLoader` | NewPgxLoader(nil) returns non-nil *PgxLoader that satisfies workerconfig.Loader interface |
+
+**Trigger:** any change to `internal/temporal/workerconfig/loader.go`
 
 ---
 

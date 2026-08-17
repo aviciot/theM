@@ -3,6 +3,7 @@ package temporal_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +12,7 @@ import (
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/temporal/workerconfig"
 )
 
 // fakeOrchestratorRunner implements OrchestratorRunner for testing.
@@ -203,4 +205,137 @@ func TestRunOrchestratorActivity_PropagatesTenantToRunner(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "done", result.FinalText)
+}
+
+// ── Per-run config loading tests (E2E wiring) ────────────────────────────────
+
+// fakeConfigLoader implements workerconfig.Loader for testing.
+type fakeConfigLoader struct {
+	cfg workerconfig.RunConfig
+	err error
+}
+
+func (f *fakeConfigLoader) LoadRunConfig(_ context.Context, _, _ string) (workerconfig.RunConfig, error) {
+	return f.cfg, f.err
+}
+
+// fakeOrchestratorFactory implements OrchestratorFactory for testing.
+// It records which RunConfig was passed to Build.
+type fakeOrchestratorFactory struct {
+	built []workerconfig.RunConfig
+}
+
+func (f *fakeOrchestratorFactory) Build(cfg workerconfig.RunConfig) temporal.OrchestratorRunner {
+	f.built = append(f.built, cfg)
+	return &fakeOrchestratorRunner{}
+}
+
+// TestRunOrchestratorActivity_UsesPerRunConfigWhenAvailable verifies that when
+// ConfigLoader and Factory are wired and AppOrchestratorID is set, the activity
+// calls Factory.Build with the loaded config instead of using the fallback Runner.
+func TestRunOrchestratorActivity_UsesPerRunConfigWhenAvailable(t *testing.T) {
+	loadedCfg := workerconfig.RunConfig{
+		LLMProvider: "anthropic",
+		LLMAPIKey:   "sk-ant-test",
+	}
+	loader := &fakeConfigLoader{cfg: loadedCfg}
+	factory := &fakeOrchestratorFactory{}
+
+	acts := &temporal.Activities{
+		Runner:       &fakeOrchestratorRunner{}, // fallback — must NOT be called
+		ConfigLoader: loader,
+		Factory:      factory,
+	}
+	ctx := context.Background()
+
+	result, err := acts.RunOrchestratorActivity(ctx, temporal.WorkflowInput{
+		RunID:               "run-per-cfg",
+		ContextID:           "ctx-per-cfg",
+		TenantID:            "aaaa0000-0000-0000-0000-000000000001",
+		ApplicationID:       "bbbb0000-0000-0000-0000-000000000002",
+		AppOrchestratorID:   "cccc0000-0000-0000-0000-000000000003",
+		UserMessage:         domain.TextMessage(domain.RoleUser, "hello"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "done", result.FinalText)
+
+	// Factory.Build must have been called exactly once with the loaded config.
+	require.Len(t, factory.built, 1, "Factory.Build must be called once per activity")
+	assert.Equal(t, "anthropic", factory.built[0].LLMProvider)
+	assert.Equal(t, "sk-ant-test", factory.built[0].LLMAPIKey)
+}
+
+// TestRunOrchestratorActivity_FallsBackToRunnerWhenNoOrchestratorID verifies that
+// when AppOrchestratorID is empty, the activity uses the static Runner (legacy path).
+func TestRunOrchestratorActivity_FallsBackToRunnerWhenNoOrchestratorID(t *testing.T) {
+	loader := &fakeConfigLoader{cfg: workerconfig.RunConfig{LLMProvider: "anthropic"}}
+	factory := &fakeOrchestratorFactory{}
+
+	acts := &temporal.Activities{
+		Runner:       &fakeOrchestratorRunner{},
+		ConfigLoader: loader,
+		Factory:      factory,
+	}
+	ctx := context.Background()
+
+	result, err := acts.RunOrchestratorActivity(ctx, temporal.WorkflowInput{
+		RunID:         "run-no-orch-id",
+		ContextID:     "ctx-no-orch-id",
+		TenantID:      "aaaa0000-0000-0000-0000-000000000001",
+		ApplicationID: "bbbb0000-0000-0000-0000-000000000002",
+		// AppOrchestratorID deliberately empty → must use fallback Runner
+		UserMessage: domain.TextMessage(domain.RoleUser, "hello"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "done", result.FinalText)
+
+	// Factory.Build must NOT have been called.
+	assert.Empty(t, factory.built, "Factory.Build must not be called when AppOrchestratorID is empty")
+}
+
+// TestRunOrchestratorActivity_ConfigLoadError_FailsFast verifies that when
+// LoadRunConfig returns an error, the activity returns a non-retryable error
+// immediately without calling the runner.
+func TestRunOrchestratorActivity_ConfigLoadError_FailsFast(t *testing.T) {
+	loader := &fakeConfigLoader{err: fmt.Errorf("db timeout")}
+	factory := &fakeOrchestratorFactory{}
+
+	acts := &temporal.Activities{
+		Runner:       &fakeOrchestratorRunner{},
+		ConfigLoader: loader,
+		Factory:      factory,
+	}
+	ctx := context.Background()
+
+	_, err := acts.RunOrchestratorActivity(ctx, temporal.WorkflowInput{
+		RunID:             "run-cfg-err",
+		ContextID:         "ctx-cfg-err",
+		TenantID:          "aaaa0000-0000-0000-0000-000000000001",
+		ApplicationID:     "bbbb0000-0000-0000-0000-000000000002",
+		AppOrchestratorID: "cccc0000-0000-0000-0000-000000000003",
+		UserMessage:       domain.TextMessage(domain.RoleUser, "hello"),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ConfigLoadError")
+	assert.Empty(t, factory.built, "Factory.Build must not be called when config load fails")
+}
+
+// TestWorkflowInput_AppOrchestratorID_Serialization verifies that AppOrchestratorID
+// survives a JSON round-trip (required for Temporal workflow input serialization).
+func TestWorkflowInput_AppOrchestratorID_Serialization(t *testing.T) {
+	orchID := "dddd0000-0000-0000-0000-000000000004"
+	input := temporal.WorkflowInput{
+		RunID:             "run-serial",
+		TenantID:          "aaaa0000-0000-0000-0000-000000000001",
+		ApplicationID:     "bbbb0000-0000-0000-0000-000000000002",
+		AppOrchestratorID: orchID,
+	}
+
+	data, err := json.Marshal(input)
+	require.NoError(t, err)
+
+	var decoded temporal.WorkflowInput
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	assert.Equal(t, orchID, decoded.AppOrchestratorID,
+		"AppOrchestratorID must survive JSON round-trip (Temporal serialization)")
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/orchestrator"
+	"github.com/aviciot/them/internal/temporal/workerconfig"
 )
 
 // OrchestratorRunner is the interface activities use to call the orchestrator.
@@ -19,9 +20,25 @@ type OrchestratorRunner interface {
 	Run(ctx context.Context, runID, contextID string, userMsg domain.Message, history []domain.Message, runCtx ...orchestrator.RunContext) (string, error)
 }
 
+// OrchestratorFactory builds a per-run orchestrator from a loaded RunConfig.
+// Injected into Activities so tests can substitute a fake factory.
+type OrchestratorFactory interface {
+	Build(cfg workerconfig.RunConfig) OrchestratorRunner
+}
+
 // Activities holds dependencies for Temporal activities.
 type Activities struct {
+	// Runner is the fallback orchestrator used when ConfigLoader is nil or
+	// AppOrchestratorID is not set. Kept for backward-compat and tests.
 	Runner OrchestratorRunner
+
+	// ConfigLoader resolves per-run orchestrator config from DB by AppOrchestratorID.
+	// When nil, falls back to Runner.
+	ConfigLoader workerconfig.Loader
+
+	// Factory builds a per-run orchestrator from a loaded RunConfig.
+	// When nil, falls back to Runner.
+	Factory OrchestratorFactory
 }
 
 // RunOrchestratorActivity calls the orchestrator agentic loop.
@@ -74,7 +91,23 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 		}
 	}()
 
-	finalText, err := a.Runner.Run(ctx, input.RunID, input.ContextID, input.UserMessage, input.History,
+	// Resolve per-run orchestrator when ConfigLoader + Factory are wired and
+	// AppOrchestratorID is set. Falls back to the static Runner for tests and
+	// legacy calls that predate per-app orchestrator resolution.
+	runner := a.Runner
+	if a.ConfigLoader != nil && a.Factory != nil && input.AppOrchestratorID != "" {
+		runCfg, err := a.ConfigLoader.LoadRunConfig(ctx, input.AppOrchestratorID, input.ApplicationID)
+		if err != nil {
+			return WorkflowResult{Status: domain.RunStatusFailed},
+				temporalerr.NewNonRetryableApplicationError(
+					"RunOrchestratorActivity: failed to load orchestrator config",
+					"ConfigLoadError", err,
+				)
+		}
+		runner = a.Factory.Build(runCfg)
+	}
+
+	finalText, err := runner.Run(ctx, input.RunID, input.ContextID, input.UserMessage, input.History,
 		orchestrator.RunContext{
 			TenantID:      input.TenantID,
 			ApplicationID: input.ApplicationID,
@@ -91,4 +124,5 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 		Status:    domain.RunStatusCompleted,
 	}, nil
 }
+
 
