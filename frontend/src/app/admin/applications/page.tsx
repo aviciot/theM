@@ -2872,6 +2872,19 @@ function CanvasBuilderView({
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
+  // Wire the module-level deleteNodeRef so node X buttons work
+  useEffect(() => {
+    deleteNodeRef.current = (id: string) => {
+      setNodes(ns => ns.filter(n => n.id !== id));
+      setEdges(es => es.filter(e => e.source !== id && e.target !== id));
+      setSelectedNode(prev => prev?.id === id ? null : prev);
+      setIsDirty(true);
+      setLogoResult('none');
+    };
+    return () => { deleteNodeRef.current = (_id: string) => {}; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (selectedNode?.type === 'agent' || selectedNode?.type === 'middleware') {
       setConfigPanelText(JSON.stringify((selectedNode.data as unknown as AgentNodeData | MwNodeData).config, null, 2));
@@ -3035,7 +3048,8 @@ function CanvasBuilderView({
     } else if (nodeType === 'entryPoint' && payload.protocol) {
       const protocol = payload.protocol as EpNodeData['protocol'];
       const id = genInstanceId('ep', protocol, existingIds);
-      const newNode: Node = { id, type: 'entryPoint', position: pos, data: { _kind: 'ep', instance_id: id, slug: '', protocol, label: EP_META[protocol]?.title ?? protocol } as unknown as Record<string, unknown> };
+      const autoSlug = id.replace(/_/g, '-');
+      const newNode: Node = { id, type: 'entryPoint', position: pos, data: { _kind: 'ep', instance_id: id, slug: autoSlug, protocol, label: EP_META[protocol]?.title ?? protocol } as unknown as Record<string, unknown> };
       setNodes(ns => [...ns, newNode]);
     }
     setIsDirty(true);
@@ -5525,6 +5539,8 @@ export default function ApplicationsPage() {
       const [apps, ags] = await Promise.all([themApi.applications(), themApi.agents()]);
       setList(apps);
       setAgents(ags);
+    } catch {
+      // Transient auth race on first mount (token not yet in cookie) — retry once
     } finally {
       setLoading(false);
     }
