@@ -2987,7 +2987,7 @@ function DefinitionView({
           <button
             onClick={publish} disabled={!canPublish || publishing}
             style={{
-              padding: '7px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+              padding: '7px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 700,
               background: canPublish ? C.greenBg : 'rgba(255,255,255,0.04)',
               color: canPublish ? C.green : C.textMuted,
               border: `1px solid ${canPublish ? C.greenBorder : 'rgba(255,255,255,0.1)'}`,

@@ -1074,6 +1074,11 @@ services:
       - "traefik.http.routers.them-go-sessions.entrypoints=web"
       - "traefik.http.routers.them-go-sessions.priority=120"
       - "traefik.http.routers.them-go-sessions.service=them-go-bridge-svc"
+      # ── Phase D: /api/v1/admin/component-definitions — registry read ──────────
+      - "traefik.http.routers.them-go-component-defs.rule=PathPrefix(`/api/v1/admin/component-definitions`)"
+      - "traefik.http.routers.them-go-component-defs.entrypoints=web"
+      - "traefik.http.routers.them-go-component-defs.priority=120"
+      - "traefik.http.routers.them-go-component-defs.service=them-go-bridge-svc"
     profiles:
       - go
     restart: unless-stopped
