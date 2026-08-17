@@ -547,6 +547,16 @@ const EDGE_STYLE = {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function makeId() { return `node_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`; }
 
+function fallbackCopy(text: string) {
+  const el = document.createElement('textarea');
+  el.value = text;
+  el.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+  document.body.appendChild(el);
+  el.select();
+  document.execCommand('copy');
+  document.body.removeChild(el);
+}
+
 // ── Dagre auto-layout ─────────────────────────────────────────────────────────
 const NODE_WIDTH  = 240;
 const NODE_HEIGHT = 80;
@@ -4915,7 +4925,14 @@ function AppCard({
                   </code>
                   {primaryUrl && (
                     <button
-                      onClick={() => { if (typeof navigator !== 'undefined') navigator.clipboard?.writeText(primaryUrl.val); }}
+                      onClick={() => {
+                        const val = primaryUrl.val;
+                        if (navigator.clipboard) {
+                          navigator.clipboard.writeText(val).catch(() => fallbackCopy(val));
+                        } else {
+                          fallbackCopy(val);
+                        }
+                      }}
                       title="Copy URL"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', padding: 2, flexShrink: 0 }}
                       onMouseEnter={e => (e.currentTarget.style.color = C.text)}
