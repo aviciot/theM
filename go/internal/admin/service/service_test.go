@@ -235,6 +235,26 @@ func (f *fakeDal) DeleteToken(_ context.Context, _, _ string) (string, error) {
 	return f.deletedTokenHash, f.deleteTokenErr
 }
 
+// Application definition stubs.
+func (f *fakeDal) GetNextRevision(_ context.Context, _ string) (int, error) {
+	return 1, nil
+}
+func (f *fakeDal) CreateDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string) (string, error) {
+	return f.createdID, nil
+}
+func (f *fakeDal) GetDefinition(_ context.Context, _, _, _ string) (dal.AppDefinition, error) {
+	return dal.AppDefinition{}, nil
+}
+func (f *fakeDal) ListDefinitions(_ context.Context, _, _ string) ([]dal.AppDefinition, error) {
+	return []dal.AppDefinition{}, nil
+}
+func (f *fakeDal) UpdateDraftDefinition(_ context.Context, _, _, _ string, _ []byte, _ string) error {
+	return nil
+}
+func (f *fakeDal) DeleteDraftDefinition(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 // Config stubs — populated by config service tests.
 func (f *fakeDal) GetConfig(_ context.Context, _ string) (*dal.ConfigRow, error) {
 	return f.configRow, f.configErr

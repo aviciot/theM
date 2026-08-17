@@ -93,6 +93,7 @@ func BuildRouter(
 	agents := NewAgentsHandler(db, cache, redis, fernetKey)
 	orchs := NewOrchestratorsHandler(db, cache)
 	apps := NewApplicationsHandler(db, cache)
+	defs := NewDefinitionsHandler(db)
 	runs := NewRunsHandler(db, temporal)
 	tokens := NewTokensHandler(db, cache)
 	monitoring := NewMonitoringConfigHandler(db)
@@ -117,6 +118,7 @@ func BuildRouter(
 				agents.Routes(tenantScoped)
 				orchs.Routes(tenantScoped)
 				apps.Routes(tenantScoped)
+				defs.Routes(tenantScoped)
 				tokens.Routes(tenantScoped)
 			})
 

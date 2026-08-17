@@ -364,6 +364,26 @@ func (f *isolationFakeDal) GetAgentTokenEncrypted(_ context.Context, _ string) (
 	return "", nil
 }
 
+// Application definition stubs (no business logic needed for isolation tests).
+func (f *isolationFakeDal) GetNextRevision(_ context.Context, _ string) (int, error) {
+	return 1, nil
+}
+func (f *isolationFakeDal) CreateDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string) (string, error) {
+	return "", nil
+}
+func (f *isolationFakeDal) GetDefinition(_ context.Context, _, _, _ string) (dal.AppDefinition, error) {
+	return dal.AppDefinition{}, nil
+}
+func (f *isolationFakeDal) ListDefinitions(_ context.Context, _, _ string) ([]dal.AppDefinition, error) {
+	return []dal.AppDefinition{}, nil
+}
+func (f *isolationFakeDal) UpdateDraftDefinition(_ context.Context, _, _, _ string, _ []byte, _ string) error {
+	return nil
+}
+func (f *isolationFakeDal) DeleteDraftDefinition(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 // ── pgxUniqueViolation stub ───────────────────────────────────────────────────
 //
 // dal.IsUniqueViolation checks for pgconn.PgError with Code "23505".

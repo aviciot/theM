@@ -75,6 +75,14 @@ type Dal interface {
 	UpdateToken(ctx context.Context, tenantID, id string, patch dal.TokenPatchRow) (hash string, out dal.Token, err error)
 	DeleteToken(ctx context.Context, tenantID, id string) (hash string, err error)
 
+	// Application definitions — tenant+app scoped
+	GetNextRevision(ctx context.Context, appID string) (int, error)
+	CreateDefinition(ctx context.Context, tenantID, appID string, rev int, defJSON []byte, hash string) (string, error)
+	GetDefinition(ctx context.Context, tenantID, appID, defID string) (dal.AppDefinition, error)
+	ListDefinitions(ctx context.Context, tenantID, appID string) ([]dal.AppDefinition, error)
+	UpdateDraftDefinition(ctx context.Context, tenantID, appID, defID string, defJSON []byte, hash string) error
+	DeleteDraftDefinition(ctx context.Context, tenantID, appID, defID string) error
+
 	// Config table (monitoring, llm_routing, …) — platform-global, no tenant
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
 	UpsertConfig(ctx context.Context, key string, value []byte) error

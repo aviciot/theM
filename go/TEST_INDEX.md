@@ -176,6 +176,34 @@ Verifies the two-path resolution (UUID fast path → portable ref fallback), ten
 
 ---
 
+### S1-42 · Application Definition CRUD — `internal/admin/definitions_test.go`
+
+**Purpose:** Phase B — Application Definition draft CRUD with tenant isolation. Verifies the full
+lifecycle of draft definitions: create, read, list, update, delete. Proves tenant isolation
+(cross-tenant UUID guessing returns 404), application ownership checks (wrong app ID returns 404),
+immutability constraints (published definition cannot be updated or deleted → 409), and
+structural validation (duplicate instance_id → 422, malformed JSON → 400, secret_value key → 400).
+
+| Test | What it proves |
+|---|---|
+| `TestDefinitions_CreateDraft_HappyPath` | POST /definitions returns 201 with id+revision |
+| `TestDefinitions_CreateDraft_AppNotFound` | Wrong tenant → application sub-SELECT returns 0 rows → 404 |
+| `TestDefinitions_CreateDraft_DuplicateInstanceID` | Duplicate instance_id in components → 422 |
+| `TestDefinitions_CreateDraft_MalformedJSON` | Definition is not a JSON object → 400 |
+| `TestDefinitions_GetDefinition_HappyPath` | GET /definitions/{def_id} returns 200 with body |
+| `TestDefinitions_GetDefinition_WrongTenant` | UUID guessing across tenants → 404 |
+| `TestDefinitions_ListDefinitions_ReturnsOrdered` | GET /definitions returns [] slice ordered by revision desc |
+| `TestDefinitions_UpdateDraft_HappyPath` | PUT /definitions/{def_id} returns 200 updated:true |
+| `TestDefinitions_UpdateDraft_PublishedConflict` | PUT on published definition → 409 |
+| `TestDefinitions_UpdateDraft_WrongApp` | PUT with wrong appID → 404 |
+| `TestDefinitions_DeleteDraft_HappyPath` | DELETE /definitions/{def_id} returns 204 |
+| `TestDefinitions_DeleteDraft_PublishedConflict` | DELETE on published definition → 409 |
+
+**Trigger:** any change to `internal/admin/definitions.go`, `internal/admin/service/definitions.go`,
+or `internal/admin/dal/definitions.go`
+
+---
+
 ### S1-40 · Auth server (Go) — `internal/authserver/*_test.go`
 
 **Purpose:** the Go replacement for the Python `them-auth-service`. Proves HS256 JWT issuance
@@ -1419,10 +1447,13 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/execution/lifecycle.go` | S1-35 + S1-14 + S1-13 |
 | `internal/execution/errors.go` | S1-35 + S1-13 |
 | `internal/execution/request.go` | S1-35 + S1-13 |
-| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 |
-| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S2-05 (integration) |
+| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 |
+| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S2-05 (integration) |
+| `internal/admin/dal/definitions.go` | S1-42 |
 | `internal/admin/dal/llm_providers.go` | S1-25 + S2-05 (integration) |
-| `internal/admin/service/` (any file) | S1-25 + S1-33 |
+| `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 |
+| `internal/admin/service/definitions.go` | S1-42 |
+| `internal/admin/definitions.go` | S1-42 |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |
@@ -1501,7 +1532,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan) | 8 |
 | S1-40 | authserver (Go auth service) | 38 |
 | S1-41 | registry (component definition resolver) | 12 |
-| **S1 total** | | **587** |
+| S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
+| **S1 total** | | **599** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

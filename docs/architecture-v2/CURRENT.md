@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `0cb4dfd` — chore(compose): lock Python worker behind profiles: [legacy]
+Commit: `TBD` — feat(admin): Application Definition CRUD (Phase B)
 
 ---
 
@@ -127,6 +127,39 @@ Total rows in `component_definitions`: 20 (as of b93dff4)
 - `PATCH /runs/{run_id}/cancel`, `DELETE /runs/{run_id}`, `POST /runs/bulk-delete`
 - Traefik Wave 2f: 3 new routers
 
+**Phase B — Application Definition CRUD — COMPLETE** (HEAD)
+
+Routes added (all under `/api/v1/admin/applications/{id}/definitions`):
+- `POST   .../definitions` → 201 `{"id":"...","revision":N}`
+- `GET    .../definitions` → 200 `[AppDefinition,...]`
+- `GET    .../definitions/{def_id}` → 200 `AppDefinition`
+- `PUT    .../definitions/{def_id}` → 200 `{"id":"...","updated":true}`
+- `DELETE .../definitions/{def_id}` → 204
+
+Packages added/modified:
+- `go/internal/admin/dal/definitions.go` — 6 DAL methods (GetNextRevision, CreateDefinition, GetDefinition, ListDefinitions, UpdateDraftDefinition, DeleteDraftDefinition)
+- `go/internal/admin/service/definitions.go` — DefinitionService with validation, hash, published-immutability
+- `go/internal/admin/definitions.go` — DefinitionsHandler with 5 HTTP handlers
+- `go/internal/admin/definitions_test.go` — 12 tests (S1-42 to S1-53)
+- `go/internal/admin/service/service.go` — Dal interface extended with 6 new methods
+- `go/internal/admin/router.go` — defs.Routes() wired in tenant-scoped group
+- `go/internal/admin/service/service_test.go` — fakeDal stubs for new Dal methods
+- `go/internal/admin/service/tenant_isolation_test.go` — isolationFakeDal stubs
+
+Key behaviors:
+- Tenant isolation: every DAL query includes `AND tenant_id=$N::uuid`; cross-tenant access silently returns 404
+- Insert via sub-SELECT: INSERT...SELECT FROM applications WHERE id=$1 AND tenant_id=$2 — zero rows = ErrNotFound
+- Published immutability: UPDATE/DELETE require `AND status='draft'`; ErrNoRows → lookup to distinguish 404 vs 409
+- Secret key rejection: rejects `"secret_value"` keys and `"enc:"` prefixed values with secret/key in key name at any nesting depth
+- Canonical hash: unmarshal→marshal→sha256→`"sha256:"` prefix
+- No `updated_at` on `application_definitions` table — SET clause omits it
+
+Live verification (Python OFF, all 9 scenarios):
+- CREATE 201 ✓, GET 200 ✓, LIST 200 ✓, UPDATE 200 ✓
+- CROSS-TENANT 404 ✓, WRONG APP 404 ✓, DUP INSTANCE_ID 422 ✓, SECRET KEY 400 ✓, DELETE 204 ✓
+
+Test state: `go test ./...` — **31 packages, 0 failures, 12 new tests**
+
 **Runs READ/UI — COMPLETE** (cf953cf)
 
 - `GET /runs/stats`, `GET /runs/{id}` (RunDetail), `GET /runs/{id}/tasks`, `GET /runs/{id}/artifacts`
@@ -143,18 +176,18 @@ Total rows in `component_definitions`: 20 (as of b93dff4)
 
 ## Next recommended task
 
-**Phase B — Application Definition Save/Publish** (Application v2, next slice)
+**Phase C — Application Definition Validate + Publish + Compile**
 
 Pre-reading: `docs/architecture-v2/REGISTRY_BACKED_APPLICATION_COMPONENT_MODEL.md` Section 5–8
 
-Phase B scope (implement in a fresh session):
-1. `AppDefinitionService.SaveDraft(ctx, tenantID, appID, payload AppDefinitionInput) (revision int, err error)` — validates component refs via Resolver, rejects secrets in JSONB, writes to `application_definitions`
-2. `AppDefinitionService.Publish(ctx, tenantID, appID, revision int) error` — sets `active_definition_id` on `applications`
-3. New DAL methods: `CreateApplicationDefinition`, `GetApplicationDefinition`, `PublishApplicationDefinition`
-4. New handler: `PUT /api/v1/admin/applications/{id}/definition` (save draft), `POST /api/v1/admin/applications/{id}/definition/publish`
-5. Tests: save-draft happy path, secret-in-JSONB rejection, cross-tenant component blocked, publish sets active
-6. Traefik: add two new routers for these paths at priority 112+
-7. No UI, no compiler, no Python
+Phase C scope (implement in a fresh session):
+1. `POST /api/v1/admin/applications/{id}/definitions/{def_id}/validate` — resolve all component refs via `registry.Resolver`; return validation report (missing/deprecated/cross-tenant blocked)
+2. `POST /api/v1/admin/applications/{id}/definitions/{def_id}/publish` — call ResolveForPublish, set `applications.active_definition_id`, set `application_definitions.status='published'`, set `published_at`
+3. New DAL method: `PublishDefinition(ctx, tenantID, appID, defID string) error` — UPDATE definitions + UPDATE applications in same TX
+4. New service: `ValidateDefinition`, `PublishDefinition` on `DefinitionService`
+5. Tests: validate happy, validate missing component, validate deprecated component, publish happy, publish cross-tenant blocked, publish sets active_definition_id
+6. Traefik: no new labels needed (routes already under `/admin/applications/` priority 112)
+7. No compiler, no UI, no Python
 
 Alternative next task: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims)
 
