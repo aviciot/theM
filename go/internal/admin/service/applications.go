@@ -55,9 +55,16 @@ func NewAppService(d Dal, c Cache) *AppService {
 	return &AppService{dal: d, cache: c}
 }
 
-// List returns all applications for the given tenant.
+// List returns all applications for the given tenant, each with their entry points.
 func (s *AppService) List(ctx context.Context, tenantID string) ([]dal.Application, error) {
-	return s.dal.ListApplications(ctx, tenantID)
+	apps, err := s.dal.ListApplications(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range apps {
+		apps[i].EntryPoints = s.dal.ListEntryPoints(ctx, apps[i].ID)
+	}
+	return apps, nil
 }
 
 // Get returns a single application with its entry points, scoped to the tenant. Any DAL error maps
