@@ -285,20 +285,11 @@ const CANVAS_STYLES = `
   .nl-section-list::-webkit-scrollbar-track { background: transparent; }
   .nl-section-list::-webkit-scrollbar-thumb { background: rgba(0,240,255,0.2); border-radius: 4px; }
   .nl-section-list::-webkit-scrollbar-thumb:hover { background: rgba(0,240,255,0.4); }
-  /* Resize handle */
-  .nl-resize-handle {
-    width: 4px;
-    flex-shrink: 0;
-    cursor: col-resize;
-    background: transparent;
-    transition: background 150ms ease;
-    position: relative;
-    z-index: 10;
-  }
-  .nl-resize-handle:hover,
-  .nl-resize-handle.dragging {
-    background: rgba(0,240,255,0.35);
-  }
+  .comp-panel { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent; }
+  .comp-panel::-webkit-scrollbar { width: 4px; }
+  .comp-panel::-webkit-scrollbar-track { background: transparent; }
+  .comp-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+  .comp-panel::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
 `;
 
 // ── Node Components ──────────────────────────────────────────────────────────
@@ -3727,8 +3718,8 @@ function CanvasBuilderView({
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
         {/* Left: Component Palette */}
-        <div style={{ width: compPanelWidth, flexShrink: 0, display: 'flex', flexDirection: 'row' }}>
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', background: 'rgba(0,0,0,0.2)' }}>
+        <div style={{ width: compPanelWidth, flexShrink: 0, display: 'flex', position: 'relative' }}>
+          <div className="comp-panel" style={{ flex: 1, background: 'rgba(0,0,0,0.2)', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '14px 16px 8px', fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Components</div>
 
           {/* Entry Points */}
@@ -3787,13 +3778,21 @@ function CanvasBuilderView({
             </div>
           )}
           </div>
-          {/* Drag handle — right edge */}
+          {/* Resize grip */}
           <div
             onMouseDown={startCompPanelResize}
-            style={{ width: 4, flexShrink: 0, cursor: 'col-resize', background: 'rgba(255,255,255,0.06)', transition: 'background 0.15s' }}
-            onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(0,209,255,0.35)'; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.06)'; }}
-          />
+            style={{
+              width: 10, flexShrink: 0, cursor: 'col-resize',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(0,0,0,0.25)', borderRight: '1px solid rgba(255,255,255,0.05)',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.45)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.25)'; }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {[0,1,2,3].map(i => <div key={i} style={{ width: 2, height: 2, borderRadius: '50%', background: 'rgba(255,255,255,0.2)' }} />)}
+            </div>
+          </div>
         </div>
 
         {/* Center: ReactFlow canvas */}
