@@ -142,7 +142,6 @@ services:
       - TEMPORAL_ENABLED=true
       - TEMPORAL_HOST_PORT=temporal-frontend:7233
       - WORKER_TASK_QUEUE=them-orchestration-go
-      - RUN_EVENTS_MODE=${RUN_EVENTS_MODE:-streams}
     networks:
       - them-network
     restart: unless-stopped
@@ -179,7 +178,6 @@ services:
       - TEMPORAL_ENABLED=true
       - TEMPORAL_HOST_PORT=temporal-frontend:7233
       - WORKER_TASK_QUEUE=them-orchestration-go
-      - RUN_EVENTS_MODE=${RUN_EVENTS_MODE:-streams}
     networks:
       - them-network
     restart: unless-stopped

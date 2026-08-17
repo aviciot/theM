@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/runrecorder"
+	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/session"
 	"github.com/aviciot/them/internal/temporal"
 	"github.com/aviciot/them/internal/transport"
@@ -238,18 +240,42 @@ func (f *fakeTemporalClient) ExecuteWorkflow(_ context.Context, opts temporalcli
 	return &fakeWorkflowRun{id: opts.ID}, nil
 }
 
-// fakeRunStreamSub returns a channel pre-loaded with messages then closes.
-type fakeRunStreamSub struct {
+// fakeRunStreamer implements runstream.RedisStreamer by replaying a fixed list
+// of pre-loaded JSON messages as stream entries via XRange, then blocking on
+// XRead until the context is cancelled. StreamFromRedis replays every entry and
+// closes the output channel once it hits a terminal event ("done"/"error"), so
+// the message list should end with one.
+type fakeRunStreamer struct {
 	messages []string
 }
 
-func (f *fakeRunStreamSub) Subscribe(_ context.Context, _ string) (<-chan string, error) {
-	ch := make(chan string, len(f.messages)+1)
-	for _, m := range f.messages {
-		ch <- m
+func (f *fakeRunStreamer) entries() []runstream.StreamEntry {
+	out := make([]runstream.StreamEntry, 0, len(f.messages))
+	for i, m := range f.messages {
+		out = append(out, runstream.StreamEntry{
+			ID:     fmt.Sprintf("%d-0", i+1),
+			Values: map[string]interface{}{"data": m},
+		})
 	}
-	close(ch)
-	return ch, nil
+	return out
+}
+
+func (f *fakeRunStreamer) XRange(_ context.Context, _, start, _ string) ([]runstream.StreamEntry, error) {
+	// Replay everything on the first read (start == "-"); return nothing after
+	// the cursor has advanced so the reader transitions to the live XRead loop.
+	if start == "-" {
+		return f.entries(), nil
+	}
+	return nil, nil
+}
+
+func (f *fakeRunStreamer) XRangeN(_ context.Context, _, _, _ string, _ int64) ([]runstream.StreamEntry, error) {
+	return nil, nil
+}
+
+func (f *fakeRunStreamer) XRead(ctx context.Context, _ runstream.XReadArgs) ([]runstream.StreamMessage, error) {
+	<-ctx.Done()
+	return nil, nil
 }
 
 // ── Builder ───────────────────────────────────────────────────────────────────
@@ -280,7 +306,7 @@ func (b *wsBuilder) defaultEP() *epconfig.EPConfig {
 	}
 }
 
-func (b *wsBuilder) build() (*wshandler.Handler, *fakeRunStreamSub) {
+func (b *wsBuilder) build() (*wshandler.Handler, *fakeRunStreamer) {
 	ep := b.epLoader
 	if ep == nil {
 		ep = &fakeEPLoader{cfg: b.defaultEP()}
@@ -305,12 +331,12 @@ func (b *wsBuilder) build() (*wshandler.Handler, *fakeRunStreamSub) {
 		raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
 		msgs = []string{string(raw)}
 	}
-	rsSub := &fakeRunStreamSub{messages: msgs}
+	rsStreamer := &fakeRunStreamer{messages: msgs}
 
 	bus := event.New()
 	h := wshandler.NewHandler(lc, bus, b.authn, "test-instance", nil)
-	h.WithTemporal(tc, rsSub, true)
-	return h, rsSub
+	h.WithRunStreamer(rsStreamer)
+	return h, rsStreamer
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -780,10 +806,10 @@ func TestWS_NoTemporalReturnsErrorEvent(t *testing.T) {
 		nil,
 	)
 
-	rsSub := &fakeRunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
+	rsStreamer := &fakeRunStreamer{messages: []string{`{"type":"done","run_id":"r"}`}}
 	bus := event.New()
 	h := wshandler.NewHandler(lc, bus, authn, "test-instance", nil)
-	h.WithTemporal(nil, rsSub, true)
+	h.WithRunStreamer(rsStreamer)
 
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
@@ -1059,10 +1085,10 @@ func TestWS_StartFailure_RunMarkedFailed(t *testing.T) {
 		nil,
 	)
 
-	rsSub := &fakeRunStreamSub{messages: []string{`{"type":"done","run_id":"r"}`}}
+	rsStreamer := &fakeRunStreamer{messages: []string{`{"type":"done","run_id":"r"}`}}
 	bus := event.New()
 	wsH := wshandler.NewHandler(lc, bus, authn, "test-instance", nil)
-	wsH.WithTemporal(failTemporal, rsSub, true)
+	wsH.WithRunStreamer(rsStreamer)
 
 	srv := httptest.NewServer(wsH.Routes())
 	defer srv.Close()

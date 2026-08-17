@@ -50,8 +50,8 @@ type StreamPublisher interface {
 }
 
 const (
-	// streamWriteMaxLen is the approximate MAXLEN cap passed to XADD.
-	// Must match the cap used by Python (streamMaxLen = 5000 above).
+	// streamWriteMaxLen is the approximate MAXLEN cap passed to XADD, bounding
+	// per-run stream retention.
 	streamWriteMaxLen = 5000
 )
 

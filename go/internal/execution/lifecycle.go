@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	temporalclient "go.temporal.io/sdk/client"
 
-	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/gate"
@@ -279,15 +278,15 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	//
 	// TenantID and ApplicationID come exclusively from resolvedCfg (server-side DB).
 	// Never from request data — enforced by not reading those fields from req.
-	eventsTransport := eventsTransportFromMode(req.RunEventsMode)
+	// EventsTransport is left empty so the recorder stamps the canonical
+	// "streams" value; the Go worker always writes run events to Redis Streams.
 	run := domain.Run{
-		ID:              runID,
-		ContextID:       contextID,
-		EntryPointSlug:  req.EPSlug,
-		TenantID:        resolvedCfg.TenantID,
-		ApplicationID:   resolvedCfg.AppID,
-		Status:          domain.RunStatusAdmitted,
-		EventsTransport: eventsTransport,
+		ID:             runID,
+		ContextID:      contextID,
+		EntryPointSlug: req.EPSlug,
+		TenantID:       resolvedCfg.TenantID,
+		ApplicationID:  resolvedCfg.AppID,
+		Status:         domain.RunStatusAdmitted,
 	}
 	runCreated := false
 	if lc.recorder != nil {
@@ -303,14 +302,13 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	}
 
 	return &ExecutionHandle{
-		RunID:           runID,
-		ContextID:       contextID,
-		SessionID:       sessionID,
-		EPConfig:        resolvedCfg,
-		EventsTransport: eventsTransport,
-		gateCfg:         gateCfg,
-		gateAdmitted:    gateAdmitted,
-		runCreated:      runCreated,
+		RunID:        runID,
+		ContextID:    contextID,
+		SessionID:    sessionID,
+		EPConfig:     resolvedCfg,
+		gateCfg:      gateCfg,
+		gateAdmitted: gateAdmitted,
+		runCreated:   runCreated,
 	}, nil
 }
 
@@ -433,15 +431,6 @@ func (lc *Lifecycle) Release(h *ExecutionHandle) {
 	}
 }
 
-// newRunID returns a new UUID v4 string. The Python Temporal worker parses run,
+// newRunID returns a new UUID v4 string. The Temporal worker parses run,
 // context, and session IDs via uuid.UUID() — all IDs must use this format.
 func newRunID() string { return uuid.New().String() }
-
-// eventsTransportFromMode converts a RunEventsMode to the storage/routing value.
-// "pubsub" → Pub/Sub channel; "streams"/"dual" → Redis Streams.
-func eventsTransportFromMode(mode config.RunEventsMode) string {
-	if mode == config.RunEventsModeDual || mode == config.RunEventsModeStreams {
-		return "streams"
-	}
-	return "pubsub"
-}

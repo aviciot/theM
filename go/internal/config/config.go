@@ -74,32 +74,11 @@ type Config struct {
 	// Any invalid or missing value falls back to true.
 	ReconcilerDryRun bool
 
-	// RunEventsMode selects the run-event delivery transport (Phase 11c-B).
-	// Parsed from RUN_EVENTS_MODE: "dual" | "streams" | anything-else→"pubsub".
-	RunEventsMode RunEventsMode
-
 	// ShutdownDrainSeconds is how long the HTTP server waits for in-flight
 	// requests to complete after receiving SIGTERM/SIGINT before force-closing.
 	// Parsed from SHUTDOWN_DRAIN_SECONDS; default 30, min 5.
 	ShutdownDrainSeconds int
 }
-
-// RunEventsMode selects how run events are delivered to WS/SSE clients.
-// It is set from the RUN_EVENTS_MODE environment variable (Phase 11c-B).
-type RunEventsMode string
-
-const (
-	// RunEventsModePublish is legacy Pub/Sub-only delivery (default). New runs
-	// get events_transport='pubsub' and the Go bridge reads from the Pub/Sub
-	// channel only. This is the safe default for anything but 'dual'/'streams'.
-	RunEventsModePublish RunEventsMode = "pubsub"
-	// RunEventsModeDual writes to Redis Streams AND Pub/Sub (via the Python Lua
-	// script). New runs get events_transport='streams'; legacy rows keep 'pubsub'.
-	RunEventsModeDual RunEventsMode = "dual"
-	// RunEventsModeStreams writes to Redis Streams only. New runs get
-	// events_transport='streams'; the Go bridge reads exclusively from the stream.
-	RunEventsModeStreams RunEventsMode = "streams"
-)
 
 // DefaultSecretKey is the insecure placeholder that must never reach production.
 const DefaultSecretKey = "change-this-in-production"
@@ -141,8 +120,6 @@ func Load() (*Config, error) {
 		WorkerTaskQueue:  getEnv("WORKER_TASK_QUEUE", "them-orchestration-go"),
 
 		ReconcilerDryRun: getEnvBoolSafe("RECONCILER_DRY_RUN", true),
-
-		RunEventsMode: parseRunEventsMode(os.Getenv("RUN_EVENTS_MODE")),
 
 		ShutdownDrainSeconds: parseShutdownDrain(os.Getenv("SHUTDOWN_DRAIN_SECONDS")),
 	}
@@ -220,7 +197,7 @@ func (c *Config) SafeString() string {
 			"log_level=%s log_format=%s otel_enabled=%v secret_key=*** "+
 			"jwt_middleware=%s anthropic_api_key=%s "+
 			"temporal_enabled=%v temporal_host_port=%s worker_task_queue=%s "+
-			"reconciler_dry_run=%v run_events_mode=%s "+
+			"reconciler_dry_run=%v "+
 			"shutdown_drain_seconds=%d",
 		c.AppEnv, c.AppHost, c.AppPort, c.InstanceID,
 		c.DBHost, c.DBPort, c.DBName, c.DBUser,
@@ -228,7 +205,7 @@ func (c *Config) SafeString() string {
 		c.LogLevel, c.LogFormat, c.OtelEnabled,
 		jwtMode, anthropicMode,
 		c.TemporalEnabled, c.TemporalHostPort, c.WorkerTaskQueue,
-		c.ReconcilerDryRun, c.RunEventsMode,
+		c.ReconcilerDryRun,
 		c.ShutdownDrainSeconds,
 	)
 }
@@ -277,21 +254,6 @@ func parseShutdownDrain(v string) int {
 		return minDrain
 	}
 	return n
-}
-
-// parseRunEventsMode maps the RUN_EVENTS_MODE env value to a RunEventsMode.
-// Only "dual" and "streams" (case-insensitive) select non-default transports;
-// every other value — including "pubsub", unset, or garbage — falls back to
-// pubsub. This mirrors getEnvBoolSafe intent: default to the safe legacy path.
-func parseRunEventsMode(v string) RunEventsMode {
-	switch strings.ToLower(v) {
-	case "dual":
-		return RunEventsModeDual
-	case "streams":
-		return RunEventsModeStreams
-	default:
-		return RunEventsModePublish
-	}
 }
 
 // getEnv returns the value of the named environment variable, or fallback when

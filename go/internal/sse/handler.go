@@ -34,7 +34,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/event"
@@ -59,9 +58,7 @@ type Handler struct {
 	authenticator Authenticator
 	instanceID    string
 	logger        *slog.Logger
-	runStreamSub  runstream.Subscriber
-	dispatcher    *runstream.Dispatcher
-	runEventsMode config.RunEventsMode
+	runStreamer   runstream.RedisStreamer
 }
 
 // NewHandler creates a Handler. The lifecycle owns auth, EPConfig, gate, session,
@@ -88,31 +85,18 @@ func NewHandler(
 	}
 }
 
-// WithTemporal attaches a run-stream subscriber. The Temporal client is held by
-// the Lifecycle; this method keeps the caller-side TemporalClientExecutor
-// reference only as a nil-check sentinel (kept for API compatibility with WS
-// handler wiring in main.go).
-func (h *Handler) WithTemporal(tc transport.TemporalClientExecutor, sub runstream.Subscriber, _ bool) *Handler {
-	h.runStreamSub = sub
+// WithRunStreamer attaches the Redis Streams reader used to deliver run events
+// to the client. The Temporal client is held by the Lifecycle. When not
+// attached, runEvents fails fast at connect time.
+func (h *Handler) WithRunStreamer(rc runstream.RedisStreamer) *Handler {
+	h.runStreamer = rc
 	return h
 }
 
-// WithRunEvents attaches the run-event dispatcher and the active RUN_EVENTS_MODE.
-// The dispatcher chooses Pub/Sub or Redis Streams per run based on mode and the
-// run's events_transport value.
-func (h *Handler) WithRunEvents(d *runstream.Dispatcher, mode config.RunEventsMode) *Handler {
-	h.dispatcher = d
-	h.runEventsMode = mode
-	return h
-}
-
-// runEvents opens the event channel for a run using the dispatcher (when wired)
-// or the legacy Pub/Sub subscriber.
-func (h *Handler) runEvents(ctx context.Context, runID, eventsTransport, lastEventID string) (<-chan event.Event, error) {
-	if h.dispatcher != nil {
-		return h.dispatcher.Stream(ctx, runID, eventsTransport, lastEventID)
-	}
-	return runstream.Stream(ctx, h.runStreamSub, runID)
+// runEvents opens the event channel for a run by reading the run's Redis Stream
+// (them:dash:run:{runID}:stream). lastEventID is the client's resume cursor.
+func (h *Handler) runEvents(ctx context.Context, runID, lastEventID string) (<-chan event.Event, error) {
+	return runstream.StreamFromRedis(ctx, h.runStreamer, runID, runstream.StreamerOptions{LastEventID: lastEventID})
 }
 
 // Routes returns an http.Handler that mounts the SSE orchestration routes.
@@ -177,12 +161,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// All pre-Admit errors return clean HTTP responses. After Admit succeeds,
 	// SSE headers are written and errors become SSE error events.
 	admitReq := execution.ExecutionRequest{
-		EPSlug:        epSlug,
-		TenantID:      tenantID,
-		RawToken:      rawToken,
-		UserMessage:   domain.TextMessage(domain.RoleUser, userText),
-		RunEventsMode: h.runEventsMode,
-		InstanceID:    h.instanceID,
+		EPSlug:      epSlug,
+		TenantID:    tenantID,
+		RawToken:    rawToken,
+		UserMessage: domain.TextMessage(domain.RoleUser, userText),
+		InstanceID:  h.instanceID,
 	}
 	handle, admitErr := h.lc.Admit(r.Context(), admitReq)
 	if admitErr != nil {
@@ -239,12 +222,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.lc.Release(handle)
 	}()
 
-	// ── 6. Subscribe to event bus (kept for future in-process events) ────────
-	// After Temporal migration, SSE streams from the Redis run-stream (rsEvCh).
-	// The in-process bus subscription is a no-op for the Temporal path.
-	_, _, unsub := h.bus.Subscribe(r.Context(), handle.ContextID, 256)
-	defer unsub()
-
 	lastEventID := r.Header.Get("Last-Event-ID")
 
 	// ── 7. Subscribe to run-stream ───────────────────────────────────────────
@@ -253,7 +230,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	rsEvCh, rsErr := h.runEvents(ctx, handle.RunID, handle.EventsTransport, lastEventID)
+	rsEvCh, rsErr := h.runEvents(ctx, handle.RunID, lastEventID)
 	if rsErr != nil {
 		h.logger.Warn("sse: runstream subscribe failed", "run_id", handle.RunID, "error", rsErr)
 		_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"message\":\"event stream unavailable\"}\n\n")

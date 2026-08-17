@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/runrecorder"
+	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/session"
 	ssehandler "github.com/aviciot/them/internal/sse"
 	"github.com/aviciot/them/internal/temporal"
@@ -204,18 +206,40 @@ func (f *fakeWorkflowRun) GetWithOptions(ctx context.Context, _ interface{}, _ t
 	return nil
 }
 
-// fakeRunStreamSub returns a pre-loaded channel of messages then closes.
-type fakeRunStreamSub struct {
+// fakeRunStreamer implements runstream.RedisStreamer by replaying a fixed list
+// of pre-loaded JSON messages as stream entries via XRange, then blocking on
+// XRead until the context is cancelled. StreamFromRedis replays every entry and
+// closes the output channel once it hits a terminal event ("done"/"error"), so
+// the message list should end with one.
+type fakeRunStreamer struct {
 	messages []string
 }
 
-func (f *fakeRunStreamSub) Subscribe(_ context.Context, _ string) (<-chan string, error) {
-	ch := make(chan string, len(f.messages)+1)
-	for _, m := range f.messages {
-		ch <- m
+func (f *fakeRunStreamer) entries() []runstream.StreamEntry {
+	out := make([]runstream.StreamEntry, 0, len(f.messages))
+	for i, m := range f.messages {
+		out = append(out, runstream.StreamEntry{
+			ID:     fmt.Sprintf("%d-0", i+1),
+			Values: map[string]interface{}{"data": m},
+		})
 	}
-	close(ch)
-	return ch, nil
+	return out
+}
+
+func (f *fakeRunStreamer) XRange(_ context.Context, _, start, _ string) ([]runstream.StreamEntry, error) {
+	if start == "-" {
+		return f.entries(), nil
+	}
+	return nil, nil
+}
+
+func (f *fakeRunStreamer) XRangeN(_ context.Context, _, _, _ string, _ int64) ([]runstream.StreamEntry, error) {
+	return nil, nil
+}
+
+func (f *fakeRunStreamer) XRead(ctx context.Context, _ runstream.XReadArgs) ([]runstream.StreamMessage, error) {
+	<-ctx.Done()
+	return nil, nil
 }
 
 // ── Builder ───────────────────────────────────────────────────────────────────
@@ -245,7 +269,7 @@ func (b *sseBuilder) defaultEP() *epconfig.EPConfig {
 	}
 }
 
-func (b *sseBuilder) build() (*ssehandler.Handler, *fakeRunStreamSub) {
+func (b *sseBuilder) build() (*ssehandler.Handler, *fakeRunStreamer) {
 	ep := b.epLoader
 	if ep == nil {
 		ep = &fakeEPLoader{cfg: b.defaultEP()}
@@ -265,13 +289,13 @@ func (b *sseBuilder) build() (*ssehandler.Handler, *fakeRunStreamSub) {
 		raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "mock-run"})
 		msgs = []string{string(raw)}
 	}
-	rsSub := &fakeRunStreamSub{messages: msgs}
+	rsStreamer := &fakeRunStreamer{messages: msgs}
 
 	bus := event.New()
 	recorder := runrecorder.New(&fakeDBQuerier{})
 	h := ssehandler.NewHandler(lc, recorder, bus, b.authn, "test-instance", nil)
-	h.WithTemporal(b.temporal, rsSub, true)
-	return h, rsSub
+	h.WithRunStreamer(rsStreamer)
+	return h, rsStreamer
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -757,9 +781,8 @@ func TestSSENoTemporalReturns503(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
 	// temporal = nil → Lifecycle.Start returns *StartError → handler writes SSE error event
 	b := &sseBuilder{authn: authn, temporal: nil}
-	h, rsSub := b.build()
-	// Wire the subscriber so we'd see events if Start somehow succeeded.
-	h.WithTemporal(nil, rsSub, true)
+	h, _ := b.build()
+	// build() already wired the run streamer; events would flow if Start succeeded.
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -876,9 +899,10 @@ func TestSSE_ClientTenantHeaderIgnored(t *testing.T) {
 		"tenant_id must be server-resolved, not client-supplied")
 }
 
-// 19. SSE handler wires EventsTransport from RunEventsMode to the handle.
-// Lifecycle.Admit must set EventsTransport="pubsub" when RunEventsMode is default.
-func TestSSE_EventsTransportDerivedFromMode(t *testing.T) {
+// 19. SSE-created runs record events_transport="streams" — the Go worker always
+// writes run events to Redis Streams (Python retired; no Pub/Sub path remains).
+// Lifecycle.Admit leaves EventsTransport empty so the recorder stamps "streams".
+func TestSSE_EventsTransportIsStreams(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
 	capRec := &captureRunCreator{}
 	tc := &fakeTemporalClient{}
@@ -889,7 +913,6 @@ func TestSSE_EventsTransportDerivedFromMode(t *testing.T) {
 		streamMsgs: defaultStreamMsgs(),
 	}
 	h, _ := b.build()
-	// Default RunEventsMode (not set) → "pubsub"
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -903,8 +926,8 @@ func TestSSE_EventsTransportDerivedFromMode(t *testing.T) {
 
 	run, ok := capRec.last()
 	require.True(t, ok)
-	// Default mode → pubsub transport on run record.
-	assert.Equal(t, "pubsub", run.EventsTransport, "run must record correct EventsTransport")
+	// Admit leaves EventsTransport empty; the recorder stamps "streams".
+	assert.Empty(t, run.EventsTransport, "Admit must not set EventsTransport on the handle")
 }
 
 // 20. R-5: SSE handler satisfies the Lifecycle interface — Admit/Start/Release are called.
@@ -963,50 +986,62 @@ func TestSSE_MissingMessage(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
-// orderingRunStreamSub records whether Subscribe was called before ExecuteWorkflow.
-type orderingRunStreamSub struct {
-	mu                  sync.Mutex
-	subscribeCalled     bool
-	workflowCalledFirst bool
+// orderingStreamer records whether its stream reader was opened (first XRange)
+// before ExecuteWorkflow ran, and delivers a terminal "done" on replay.
+type orderingStreamer struct {
+	mu        sync.Mutex
+	readCalled bool
+	tc        *orderingTemporalClient
 }
 
-func (s *orderingRunStreamSub) Subscribe(_ context.Context, _ string) (<-chan string, error) {
+func (s *orderingStreamer) XRange(_ context.Context, _, start, _ string) ([]runstream.StreamEntry, error) {
+	s.mu.Lock()
+	s.readCalled = true
+	s.mu.Unlock()
+	if start != "-" {
+		return nil, nil
+	}
+	raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "r"})
+	return []runstream.StreamEntry{{ID: "1-0", Values: map[string]interface{}{"data": string(raw)}}}, nil
+}
+
+func (s *orderingStreamer) XRangeN(_ context.Context, _, _, _ string, _ int64) ([]runstream.StreamEntry, error) {
+	return nil, nil
+}
+
+func (s *orderingStreamer) XRead(ctx context.Context, _ runstream.XReadArgs) ([]runstream.StreamMessage, error) {
+	<-ctx.Done()
+	return nil, nil
+}
+
+func (s *orderingStreamer) opened() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.subscribeCalled = true
-	raw, _ := json.Marshal(map[string]any{"type": "done", "run_id": "r"})
-	ch := make(chan string, 1)
-	ch <- string(raw)
-	close(ch)
-	return ch, nil
+	return s.readCalled
 }
 
-// orderingTemporalClient records whether subscribe happened before ExecuteWorkflow.
+// orderingTemporalClient records that ExecuteWorkflow was called.
 type orderingTemporalClient struct {
-	mu                  sync.Mutex
-	called              bool
-	subscribeCalledFirst bool
-	spy                 *orderingRunStreamSub
+	mu     sync.Mutex
+	called bool
 }
 
 func (c *orderingTemporalClient) ExecuteWorkflow(_ context.Context, opts temporalclient.StartWorkflowOptions, _ interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.called = true
-	c.spy.mu.Lock()
-	if c.spy.subscribeCalled {
-		c.subscribeCalledFirst = true
-	}
-	c.spy.mu.Unlock()
 	return &fakeWorkflowRun{id: opts.ID}, nil
 }
 
-// 23. Run-stream subscribe must happen BEFORE Lifecycle.Start (ExecuteWorkflow).
-// Ordering invariant: no event emitted between workflow start and subscribe open can be lost.
-func TestSSE_RunStreamSubscribedBeforeStart(t *testing.T) {
+// 23. The run-stream reader must be opened (StreamFromRedis called) before
+// Lifecycle.Start (ExecuteWorkflow). With the durable Redis stream the reader
+// replays from cursor 0-0, so no event emitted after workflow start is lost;
+// this test verifies the handler still opens the reader before starting and
+// that events flow through to the client.
+func TestSSE_RunStreamOpenedBeforeStart(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
-	spy := &orderingRunStreamSub{}
-	tc := &orderingTemporalClient{spy: spy}
+	tc := &orderingTemporalClient{}
+	rs := &orderingStreamer{tc: tc}
 
 	ep := &epconfig.EPConfig{
 		EPSlug:            "ep",
@@ -1023,7 +1058,7 @@ func TestSSE_RunStreamSubscribedBeforeStart(t *testing.T) {
 	bus := event.New()
 	recorder := runrecorder.New(&fakeDBQuerier{})
 	h := ssehandler.NewHandler(lc, recorder, bus, authn, "test-instance", nil)
-	h.WithTemporal(tc, spy, true)
+	h.WithRunStreamer(rs)
 
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
@@ -1036,9 +1071,7 @@ func TestSSE_RunStreamSubscribedBeforeStart(t *testing.T) {
 	_ = collectSSE(t, resp, 3*time.Second)
 
 	assert.True(t, tc.called, "ExecuteWorkflow must be called")
-	assert.True(t, spy.subscribeCalled, "run-stream subscribe must be called")
-	assert.True(t, tc.subscribeCalledFirst,
-		"run-stream subscribe must happen BEFORE ExecuteWorkflow (bootstrap ordering invariant)")
+	assert.True(t, rs.opened(), "run-stream reader must be opened (StreamFromRedis called)")
 }
 
 // 22. SSE handler: all run/session/context IDs are UUID v4.

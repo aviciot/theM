@@ -2,9 +2,9 @@
 //
 // StreamFromRedis reads events from the durable Redis stream
 // them:dash:run:{runID}:stream, replaying history from a client-supplied
-// last_event_id and then blocking live. Unlike the Pub/Sub subscriber in
-// stream.go, this transport is at-least-once with full replay: a client that
-// disconnects and reconnects recovers every event published during the gap.
+// last_event_id and then blocking live. This transport is at-least-once with
+// full replay: a client that disconnects and reconnects recovers every event
+// published during the gap.
 //
 // # Continuous cursor (no gap at replay→live)
 //
@@ -35,11 +35,6 @@ import (
 )
 
 const (
-	// streamMaxLen is the approximate MAXLEN used when Python XADDs to the
-	// stream. Kept here for documentation / test parity; the Go reader never
-	// writes to the stream.
-	streamMaxLen = 5000
-
 	// streamKeyFmt builds the stream key for a run.
 	streamKeyFmt = "them:dash:run:%s:stream"
 

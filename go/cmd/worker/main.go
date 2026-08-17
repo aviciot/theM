@@ -98,8 +98,7 @@ func run() error {
 	log.Info("event bus initialised")
 
 	// ── 6. Create run recorder ────────────────────────────────────────────────
-	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(database.Pool())).
-		WithRunEventsMode(cfg.RunEventsMode)
+	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(database.Pool()))
 
 	// ── 7. Create global LLM provider (fallback when no per-app key is stored) ──
 	var globalLLMProvider llm.Provider
