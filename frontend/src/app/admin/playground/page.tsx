@@ -1072,7 +1072,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
           setStatus(`Run ${(msg.run_id as string).slice(0, 8)}…`);
 
         } else if (msg.type === 'token') {
-          assistantBuf.current += msg.text || '';
+          assistantBuf.current += msg.content || msg.text || '';
           setMessages(prev => {
             const copy = [...prev];
             const last = copy[copy.length - 1];

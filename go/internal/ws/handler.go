@@ -320,15 +320,50 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = conn.WriteMessage(websocket.TextMessage, ready)
 	}
 
-	orchDone := make(chan struct{})
+	// ── 9. Ping/pong keepalive ───────────────────────────────────────────────
+	// Send WS pings every 15 s to prevent Traefik / proxies from dropping the
+	// idle TCP connection before the Temporal worker starts producing events.
+	const pingInterval = 15 * time.Second
+	const pongDeadline = 5 * time.Second
+	// Initial read deadline: first ping arrives within pingInterval; pong handler
+	// resets the deadline on each round-trip.
+	_ = conn.SetReadDeadline(time.Now().Add(pingInterval + pongDeadline))
+	conn.SetPongHandler(func(_ string) error {
+		return conn.SetReadDeadline(time.Now().Add(pingInterval + pongDeadline))
+	})
 	go func() {
-		defer close(orchDone)
-		if err := wfRun.Get(ctx, nil); err != nil {
-			h.logger.Warn("ws: temporal workflow error", "run_id", handle.RunID, "error", err)
+		t := time.NewTicker(pingInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				_ = conn.SetWriteDeadline(time.Now().Add(pongDeadline))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					return
+				}
+				_ = conn.SetWriteDeadline(time.Time{})
+			}
 		}
 	}()
 
-	// ── 9. Stream run events to client ───────────────────────────────────────
+	// Monitor workflow completion on a detached context so a transport timeout
+	// does not cancel the wfRun.Get call before the workflow actually finishes.
+	orchDone := make(chan struct{})
+	go func() {
+		defer close(orchDone)
+		// Use background context: we still want to know when the workflow finishes
+		// even if the WS transport is momentarily slow. Cancel is handled by the
+		// main ctx below when the client disconnects.
+		if err := wfRun.Get(context.Background(), nil); err != nil {
+			if ctx.Err() == nil {
+				h.logger.Warn("ws: temporal workflow error", "run_id", handle.RunID, "error", err)
+			}
+		}
+	}()
+
+	// ── 10. Stream run events to client ──────────────────────────────────────
 	h.streamEvents(ctx, cancel, conn, rsEvCh, nil, orchDone)
 }
 
