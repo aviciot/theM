@@ -4843,9 +4843,13 @@ export default function ApplicationsPage() {
 
   async function load() {
     setLoading(true);
-    Promise.all([themApi.applications(), themApi.agents()])
-      .then(([apps, ags]) => { setList(apps); setAgents(ags); })
-      .finally(() => setLoading(false));
+    try {
+      const [apps, ags] = await Promise.all([themApi.applications(), themApi.agents()]);
+      setList(apps);
+      setAgents(ags);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => { load(); }, []);
@@ -4855,7 +4859,6 @@ export default function ApplicationsPage() {
   }
 
   async function handleDelete(app: Application) {
-    if (!confirm(`Delete application "${app.name}"?`)) return;
     try { await themApi.deleteApplication(app.id); await load(); } catch {/* ignore */}
   }
 
@@ -4873,7 +4876,6 @@ export default function ApplicationsPage() {
 
   async function handleBulkDelete() {
     if (selectedApps.size === 0) return;
-    if (!confirm(`Delete ${selectedApps.size} application${selectedApps.size !== 1 ? 's' : ''}? This cannot be undone.`)) return;
     setBulkDeleting(true);
     try {
       await themApi.bulkDeleteApplications(Array.from(selectedApps));
