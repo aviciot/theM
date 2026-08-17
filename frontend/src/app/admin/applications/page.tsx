@@ -3024,10 +3024,11 @@ function CanvasBuilderView({
       }
       const drafts = list.filter(d => d.status === 'draft');
       if (drafts.length > 0) {
-        loadDef(drafts[drafts.length - 1]);
+        loadDef(drafts[0]);
       } else if (list.length > 0) {
         // Only published defs exist — load the latest to seed a new draft
-        const latest = list[list.length - 1];
+        // list is ORDER BY revision DESC so index 0 is the newest
+        const latest = list[0];
         loadDef(latest);
         // Auto-create a working draft seeded from the published definition
         const seedDoc: AppDefinitionDoc = JSON.parse(JSON.stringify(latest.definition));
@@ -3132,7 +3133,10 @@ function CanvasBuilderView({
       const res = await themApi.publishDefinition(app.id, activeDef.id);
       showToast(`Published revision ${res.revision}`, true);
       await reloadDefs();
-      onAppUpdated?.({ ...app });
+      try {
+        const freshApp = await themApi.getApplication(app.id);
+        onAppUpdated?.(freshApp);
+      } catch { onAppUpdated?.({ ...app }); }
     } catch {
       showToast('Publish failed', false);
     } finally {
@@ -3953,9 +3957,10 @@ function DefinitionView({
       }
       const drafts = list.filter(d => d.status === 'draft');
       if (drafts.length > 0) {
-        loadDef(drafts[drafts.length - 1]);
+        loadDef(drafts[0]);
       } else if (list.length > 0) {
-        const latest = list[list.length - 1];
+        // list is ORDER BY revision DESC so index 0 is the newest
+        const latest = list[0];
         loadDef(latest);
         const seedDoc: AppDefinitionDoc = JSON.parse(JSON.stringify(latest.definition));
         const seedWithName: AppDefinitionDoc = { ...seedDoc, name: app.name };
@@ -4038,7 +4043,10 @@ function DefinitionView({
       const res = await themApi.publishDefinition(app.id, activeDef.id);
       showToast(`Published revision ${res.revision}`, true);
       await reloadDefs();
-      onAppUpdated?.({ ...app });
+      try {
+        const freshApp = await themApi.getApplication(app.id);
+        onAppUpdated?.(freshApp);
+      } catch { onAppUpdated?.({ ...app }); }
     } catch {
       showToast('Publish failed', false);
     } finally {
@@ -4702,7 +4710,8 @@ function AppCard({
     return () => document.removeEventListener('mousedown', handler);
   }, [menuOpen]);
 
-  const firstEp = app.entry_points?.[0];
+  const enabledEps = (app.entry_points ?? []).filter(e => e.enabled);
+  const firstEp = enabledEps[0] ?? app.entry_points?.[0];
   const ep = epIconColor(firstEp?.entry_point_type ?? 'websocket');
 
   // Liveness derived from multiplexed WS push (no per-card polling)
@@ -4790,14 +4799,14 @@ function AppCard({
             <span className="material-symbols-outlined" style={{ fontSize: 22, color: ep.color }}>
               {EP_ICON[firstEp?.entry_point_type ?? ''] ?? 'extension'}
             </span>
-            {(app.entry_points?.length ?? 0) > 1 && (
+            {enabledEps.length > 1 && (
               <span style={{
                 position: 'absolute', top: -6, right: -6,
                 minWidth: 18, height: 18, borderRadius: 9,
                 background: '#00d1ff', color: '#021520',
                 fontSize: 10, fontWeight: 700,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px',
-              }}>{app.entry_points?.length ?? 0}</span>
+              }}>{enabledEps.length}</span>
             )}
           </div>
 
@@ -4807,7 +4816,7 @@ function AppCard({
               {app.name}
             </div>
             <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
-              {(app.entry_points?.length ?? 0)} entry point{(app.entry_points?.length ?? 0) !== 1 ? 's' : ''}
+              {enabledEps.length} entry point{enabledEps.length !== 1 ? 's' : ''}
               {' · '}
               <span style={{ color: publishBadge.color }}>{publishBadge.label}</span>
             </div>
@@ -4890,11 +4899,11 @@ function AppCard({
           </div>
         </div>
 
-        {/* Row 4: entry point URL rows */}
-        {(app.entry_points ?? []).length > 0 && (
+        {/* Row 4: entry point URL rows — only enabled EPs */}
+        {enabledEps.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 4 }}>
             <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 2 }}>Entry Points</div>
-            {(app.entry_points ?? []).map(epRow => {
+            {enabledEps.map(epRow => {
               const urls = epUrls(epRow);
               const epC = epIconColor(epRow.entry_point_type);
               const primaryUrl = urls[0];
