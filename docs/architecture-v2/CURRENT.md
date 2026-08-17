@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `5508260` — fix(phase-d): Traefik route + TS fix
+Commit: `c0fdb1a` — feat(worker): E2E per-run orchestrator resolution from DB
 
 ---
 
@@ -195,7 +195,8 @@ Live verification (Python OFF, all scenarios):
 - Dangling connection → validate returns valid=false, publish → 422 ✓
 - Active_definition_id unchanged after failed publish ✓
 
-Test state: `go test ./...` — **32 packages, 0 failures, 22 new tests (S1-43, S1-44)**
+Test state: `go test ./...` — **33 packages, 0 failures, 22 new tests (S1-43, S1-44)** (Phase C)
+E2E wiring: `go test ./...` — **33 packages, 0 failures, 6 new tests (S1-29 extended, S1-46)** (c0fdb1a)
 
 **Runs READ/UI — COMPLETE** (cf953cf)
 
@@ -211,9 +212,24 @@ Test state: `go test ./...` — **32 packages, 0 failures, 22 new tests (S1-43, 
 
 ---
 
+## E2E Run Wiring — COMPLETE (c0fdb1a, 2026-08-17)
+
+The Go Temporal worker now loads per-run orchestrator config from DB on every activity execution:
+
+- `go/internal/temporal/workerconfig/loader.go` — `PgxLoader.LoadRunConfig`: queries `app_orchestrators` JOIN `applications`, resolves agent UUIDs to slugs, reads provider key from `applications.provider_keys`
+- `go/internal/temporal/activities.go` — `OrchestratorFactory` interface + optional `ConfigLoader`/`Factory` fields on `Activities`; `RunOrchestratorActivity` uses per-run config when `AppOrchestratorID` is set
+- `go/cmd/worker/main.go` — fixed `cache.NewAuthRedisClient` for agentregistry; wires `PgxLoader`, `runOrchestratorFactory`, and per-run `Activities`
+- 6 new tests (S1-29 extended, S1-46 added); 33 packages pass
+
+Worker is running and polling `them-orchestration-go`. Next: create an application, publish it, and trigger a real run to verify E2E.
+
+---
+
 ## Next recommended task
 
-**Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims)
+**End-to-end run test** — Create a published application with an orchestrator, publish it, trigger a run via the WS/SSE/A2A endpoint, and verify the Go Temporal worker picks it up, loads config from DB, and returns a real LLM response.
+
+Then: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims)
 - Read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 before starting Wave 9.
 
 ---
@@ -238,7 +254,7 @@ Test state: `go test ./...` — **32 packages, 0 failures, 22 new tests (S1-43, 
 ## Known blockers
 
 1. Auth admin CRUD (users/roles/teams) — not exposed since Python auth removed. Needs Go port.
-2. Go Temporal worker is not yet implemented as the active orchestration path. `them-worker` (Python) is locked to `profiles: [legacy]` and must NOT be started. The Go worker (`them-go-worker`) is defined in `docker-compose.dev.yml` behind `profiles: [go-worker]` but is not yet production-ready. No orchestration runs until this is complete.
+2. Go Temporal worker (`them-go-worker`) is running and wired for per-run config loading. E2E run test not yet performed — a published application with a real LLM call has not been verified end-to-end against the live stack.
 3. A2A server (`/a2a/*`) still on Python — not yet migrated to Go.
 4. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims, live two-tenant verification) remain open.
 
