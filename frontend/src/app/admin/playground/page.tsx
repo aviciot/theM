@@ -1423,22 +1423,15 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
 // Returns selected ConnTarget or null.
 
 interface TargetSelectorProps {
-  orchestrators: OrchestratorFull[];
   applications: Application[];
   value: ConnTarget | null;
   onChange: (t: ConnTarget) => void;
 }
 
-function TargetSelector({ orchestrators, applications, value, onChange }: TargetSelectorProps) {
-  // Encode/decode ConnTarget to/from a string option value
+function TargetSelector({ applications, value, onChange }: TargetSelectorProps) {
   const encodeTarget = (t: ConnTarget) => targetId(t);
 
   const decodeTarget = useCallback((v: string): ConnTarget | null => {
-    if (v.startsWith('orch:')) {
-      const name = v.slice(5);
-      const o = orchestrators.find(o => o.name === name);
-      return o ? { kind: 'orchestrator', name, label: o.display_name || o.name } : null;
-    }
     if (v.startsWith('ep:')) {
       const slug = v.slice(3);
       for (const app of applications) {
@@ -1449,7 +1442,7 @@ function TargetSelector({ orchestrators, applications, value, onChange }: Target
       }
     }
     return null;
-  }, [orchestrators, applications]);
+  }, [applications]);
 
   const selectedValue = value ? encodeTarget(value) : '';
 
@@ -1459,13 +1452,6 @@ function TargetSelector({ orchestrators, applications, value, onChange }: Target
       onChange={e => { const t = decodeTarget(e.target.value); if (t) onChange(t); }}
       style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text)', fontSize: 13, cursor: 'pointer', maxWidth: 260 }}
     >
-      {orchestrators.length > 0 && (
-        <optgroup label="Orchestrators (direct)">
-          {orchestrators.map(o => (
-            <option key={o.id} value={`orch:${o.name}`}>{o.display_name || o.name}</option>
-          ))}
-        </optgroup>
-      )}
       {applications.filter(a => a.enabled && a.entry_points.some(e => e.enabled && e.entry_point_type !== 'webrtc')).map(app => (
         <optgroup key={app.id} label={`App: ${app.name}`}>
           {app.entry_points.filter(e => e.enabled && e.entry_point_type !== 'webrtc').map(ep => (
@@ -1482,10 +1468,6 @@ function TargetSelector({ orchestrators, applications, value, onChange }: Target
 // ── Component ──────────────────────────────────────────────────────────────
 
 function PlaygroundInner() {
-  const searchParams = useSearchParams();
-  const initialOrch = searchParams.get('orchestrator') || '';
-
-  const [orchestrators, setOrchestrators] = useState<OrchestratorFull[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
 
   // Tabs: each tab = a ConnTarget. We keep them in an ordered list.
@@ -1501,20 +1483,8 @@ function PlaygroundInner() {
   // WebRTC slugs associated with any orchestrator (for the voice button)
   const [webrtcSlugs, setWebrtcSlugs] = useState<Record<string, string>>({});
 
-  // Load orchestrators + applications once
+  // Load applications once
   useEffect(() => {
-    themApi.orchestrators().then(list => {
-      const enabled = list.filter(o => o.enabled);
-      setOrchestrators(enabled);
-      // Seed first tab from URL param or first orchestrator
-      const orchName = initialOrch || (enabled.length > 0 ? enabled[0].name : '');
-      const o = enabled.find(o => o.name === orchName);
-      if (o) {
-        const t: ConnTarget = { kind: 'orchestrator', name: o.name, label: o.display_name || o.name };
-        setTabs([t]);
-        setActiveTabId(targetId(t));
-      }
-    });
     themApi.applications().then(apps => {
       setApplications(apps);
       // Build webrtcSlugs map: orchName → first webrtc EP slug
@@ -1527,7 +1497,7 @@ function PlaygroundInner() {
       }
       setWebrtcSlugs(m);
     }).catch(() => {});
-  }, [initialOrch]);
+  }, []);
 
   const activeTab = useMemo(() => tabs.find(t => targetId(t) === activeTabId) ?? null, [tabs, activeTabId]);
 
@@ -1586,7 +1556,6 @@ function PlaygroundInner() {
 
             {/* Target selector — adds a new tab */}
             <TargetSelector
-              orchestrators={orchestrators}
               applications={applications}
               value={activeTab}
               onChange={t => openNewTab(t)}
