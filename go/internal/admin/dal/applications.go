@@ -6,9 +6,62 @@ import (
 	"strings"
 )
 
+// listAppQuery is shared by ListApplications and GetApplication.
+// It returns: id, name, slug, enabled, active_revision, active_status.
+// app_orchestrators are fetched separately per-app to avoid N×M fanout.
+const listAppQuery = `
+SELECT
+    a.id::text,
+    a.name,
+    COALESCE(a.slug, ''),
+    a.enabled,
+    d.revision,
+    d.status
+FROM them.applications a
+LEFT JOIN them.application_definitions d ON d.id = a.active_definition_id
+WHERE a.tenant_id = $1::uuid`
+
+// scanApplication scans one application row from listAppQuery.
+func scanApplication(rows SingleRowScanner) (Application, error) {
+	var a Application
+	if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.Enabled, &a.ActiveRevision, &a.ActiveStatus); err != nil {
+		return a, err
+	}
+	return a, nil
+}
+
+// listAppOrchSummaries returns lightweight orchestrator summaries for one app.
+// app_orchestrators has no tenant_id — tenant safety is through application_id FK.
+func (d *DB) listAppOrchSummaries(ctx context.Context, appID string) []AppOrchestratorSummary {
+	const q = `
+SELECT id::text, name, COALESCE(display_name,''), llm_provider, llm_model
+FROM them.app_orchestrators
+WHERE application_id = $1::uuid AND enabled = true
+ORDER BY created_at`
+
+	rows, err := d.q.Query(ctx, q, appID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var out []AppOrchestratorSummary
+	for rows.Next() {
+		var s AppOrchestratorSummary
+		if err := rows.Scan(&s.ID, &s.Name, &s.DisplayName, &s.LLMProvider, &s.LLMModel); err != nil {
+			break
+		}
+		out = append(out, s)
+	}
+	if out == nil {
+		out = []AppOrchestratorSummary{}
+	}
+	return out
+}
+
 // ListApplications returns all applications for the given tenant, ordered by creation date.
 func (d *DB) ListApplications(ctx context.Context, tenantID string) ([]Application, error) {
-	const q = `SELECT id::text, name, enabled FROM them.applications WHERE tenant_id = $1::uuid ORDER BY created_at`
+	q := listAppQuery + ` ORDER BY a.created_at`
 
 	rows, err := d.q.Query(ctx, q, tenantID)
 	if err != nil {
@@ -18,10 +71,11 @@ func (d *DB) ListApplications(ctx context.Context, tenantID string) ([]Applicati
 
 	apps := make([]Application, 0)
 	for rows.Next() {
-		var a Application
-		if err := rows.Scan(&a.ID, &a.Name, &a.Enabled); err != nil {
+		a, err := scanApplication(rows)
+		if err != nil {
 			return nil, err
 		}
+		a.AppOrchestrators = d.listAppOrchSummaries(ctx, a.ID)
 		apps = append(apps, a)
 	}
 	return apps, nil
@@ -30,13 +84,13 @@ func (d *DB) ListApplications(ctx context.Context, tenantID string) ([]Applicati
 // GetApplication returns a single application by UUID id, scoped to the tenant.
 // Returns pgx.ErrNoRows when not found or when it belongs to another tenant.
 func (d *DB) GetApplication(ctx context.Context, tenantID, id string) (Application, error) {
-	const q = `SELECT id::text, name, enabled FROM them.applications WHERE id=$1::uuid AND tenant_id=$2::uuid`
+	q := listAppQuery + ` AND a.id = $2::uuid`
 
-	var a Application
-	row := d.q.QueryRow(ctx, q, id, tenantID)
-	if err := row.Scan(&a.ID, &a.Name, &a.Enabled); err != nil {
-		return a, err
+	a, err := scanApplication(d.q.QueryRow(ctx, q, tenantID, id))
+	if err != nil {
+		return Application{}, err
 	}
+	a.AppOrchestrators = d.listAppOrchSummaries(ctx, a.ID)
 	return a, nil
 }
 

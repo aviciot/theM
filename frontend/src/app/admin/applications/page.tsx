@@ -5,7 +5,7 @@ const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 import Sidebar from '@/components/Sidebar';
 import ChromaGrid from '@/components/ChromaGrid';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Application, type Agent, type EntryPoint, type MiddlewareDef, type AppOrchestratorOut, type SessionInfo, type MonitoringConfig, type AppDefinition, type AppDefinitionDoc, type ComponentDefinitionSummary, type ValidationReport } from '@/lib/api';
+import { themApi, type Application, type Agent, type EntryPoint, type MiddlewareDef, type AppOrchestratorOut, type AppOrchestratorSummary, type SessionInfo, type MonitoringConfig, type AppDefinition, type AppDefinitionDoc, type ComponentDefinitionSummary, type ValidationReport } from '@/lib/api';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -694,8 +694,10 @@ function buildNodesFromApp(
   const edges: Edge[] = [];
 
   // Build a lookup from app_orchestrator id → AppOrchestratorOut
+  // app_orchestrators from the list API returns a summary; the canvas builder
+  // only needs the id/name to find nodes — full fields come from entry_points.
   const aoById = new Map<string, AppOrchestratorOut>();
-  (app.app_orchestrators ?? []).forEach(ao => aoById.set(ao.id, ao));
+  (app.app_orchestrators ?? []).forEach(ao => aoById.set(ao.id, ao as unknown as AppOrchestratorOut));
   // Also pick up inline app_orchestrator objects from entry_points
   (app.entry_points ?? []).forEach(ep => {
     if (ep.app_orchestrator) aoById.set(ep.app_orchestrator.id, ep.app_orchestrator);
@@ -4530,21 +4532,22 @@ function AppCard({
   onRuntime,
   onToggle,
   onDelete,
-  onUrls,
+  onRename,
 }: {
   app: Application;
   liveness: { reachable: boolean; latency_ms: number | null } | null;
   sessionCount: number;
   selected?: boolean;
   onToggleSelect?: (id: string, checked: boolean) => void;
-  onEdit: (a: Application) => void;  // now opens DefinitionView
+  onEdit: (a: Application) => void;
   onSessions: (a: Application) => void;
   onRuntime: (a: Application) => void;
   onToggle: (a: Application) => void;
   onDelete: (a: Application) => void;
-  onUrls: (a: Application) => void;
+  onRename: (a: Application) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -4558,19 +4561,55 @@ function AppCard({
 
   const firstEp = app.entry_points?.[0];
   const ep = epIconColor(firstEp?.entry_point_type ?? 'websocket');
-  const accessMode = (firstEp?.access_policy as any)?.mode ?? 'token';
 
   // Liveness derived from multiplexed WS push (no per-card polling)
   const reachable = app.enabled ? (liveness?.reachable ?? null) : false;
   const latencyMs = liveness?.latency_ms ?? null;
 
-  const statusColor = !app.enabled ? C.error : reachable === null ? C.textMuted : reachable ? C.green : '#f59e0b';
-  const statusLabel = !app.enabled ? 'disabled' : reachable === null ? 'checking…' : reachable ? 'live' : 'unreachable';
-  const statusBg    = !app.enabled ? 'rgba(255,180,171,0.1)' : reachable === null ? 'rgba(255,255,255,0.04)' : reachable ? 'rgba(74,222,128,0.08)' : 'rgba(245,158,11,0.08)';
+  const statusColor  = !app.enabled ? C.error : reachable === null ? C.textMuted : reachable ? C.green : '#f59e0b';
+  const statusLabel  = !app.enabled ? 'disabled' : reachable === null ? 'checking…' : reachable ? 'live' : 'unreachable';
+  const statusBg     = !app.enabled ? 'rgba(255,180,171,0.1)' : reachable === null ? 'rgba(255,255,255,0.04)' : reachable ? 'rgba(74,222,128,0.08)' : 'rgba(245,158,11,0.08)';
   const statusBorder = !app.enabled ? 'rgba(255,180,171,0.3)' : reachable === null ? 'rgba(255,255,255,0.1)' : reachable ? C.greenBorder : 'rgba(245,158,11,0.4)';
 
   const chromaAccent = !app.enabled ? '#64748b' : reachable === false ? '#f59e0b' : '#6366f1';
-  const chromaGrad = `linear-gradient(145deg, ${chromaAccent}1a 0%, ${chromaAccent}08 40%, #07090f 100%)`;
+  const chromaGrad   = `linear-gradient(145deg, ${chromaAccent}1a 0%, ${chromaAccent}08 40%, #07090f 100%)`;
+
+  // Publish badge
+  const publishBadge = app.active_revision != null
+    ? { label: `Rev ${app.active_revision} · live`, color: C.green, bg: 'rgba(74,222,128,0.10)', border: C.greenBorder }
+    : { label: 'Draft · not live', color: '#f59e0b', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.3)' };
+
+  // Orchestrator summary
+  const orch = (app.app_orchestrators ?? [])[0];
+  const orchLabel = orch?.display_name || orch?.name;
+  const orchModel = orch?.llm_model ?? null;
+
+  // Inline EP URLs (resolve host from window)
+  function epUrls(epRow: EntryPoint): Array<{ label: string; val: string; icon: string }> {
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+    const port = typeof window !== 'undefined' ? (window.location.port || (window.location.protocol === 'https:' ? '443' : '80')) : '8088';
+    const portSuffix = (port === '80' || port === '443') ? '' : `:${port}`;
+    const http = window.location.protocol === 'https:' ? 'https' : 'http';
+    const ws   = window.location.protocol === 'https:' ? 'wss'  : 'ws';
+    const base = `${host}${portSuffix}`;
+    const t = epRow.entry_point_type;
+    if (t === 'websocket') return [{ label: 'WS', val: `${ws}://${base}/apps/${epRow.slug}/ws`, icon: 'electrical_services' }];
+    if (t === 'sse')       return [
+      { label: 'SSE', val: `${http}://${base}/apps/${epRow.slug}/sse`, icon: 'stream' },
+      { label: 'REST', val: `${http}://${base}/apps/${epRow.slug}`, icon: 'api' },
+    ];
+    if (t === 'webrtc')    return [
+      { label: 'Voice', val: `${http}://${base}/apps/${epRow.slug}/voice`, icon: 'mic' },
+      { label: 'Token', val: `${http}://${base}/apps/${epRow.slug}/webrtc/token`, icon: 'token' },
+    ];
+    if (t === 'a2a')       return [
+      { label: 'A2A', val: `${http}://${base}/a2a/${epRow.slug}`, icon: 'smart_toy' },
+      { label: 'Card', val: `${http}://${base}/a2a/${epRow.slug}/.well-known/agent.json`, icon: 'badge' },
+    ];
+    return [];
+  }
+
+  const hasRuntime = app.runtime_config && Object.values(app.runtime_config).some(v => v !== null && !(Array.isArray(v) && v.length === 0));
 
   return (
     <div
@@ -4592,20 +4631,20 @@ function AppCard({
           style={{ position: 'absolute', top: 10, left: 10, width: 16, height: 16, accentColor: '#00d1ff', cursor: 'pointer', zIndex: 10 }}
         />
       )}
-      {/* Top section */}
-      <div style={{ padding: '20px 20px 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-        {/* Icon + name + menu row */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-          {/* Icon tile */}
+      {/* ── Top section ── */}
+      <div style={{ padding: '20px 20px 0', display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+        {/* Row 1: icon + name + publish badge + menu */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          {/* App icon */}
           <div style={{
-            width: 52, height: 52, borderRadius: 12, flexShrink: 0,
+            width: 48, height: 48, borderRadius: 12, flexShrink: 0,
             background: `radial-gradient(circle at 30% 30%, ${ep.glow}, transparent 70%)`,
             border: `1px solid ${ep.border}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            position: 'relative',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative',
           }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 24, color: ep.color }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 22, color: ep.color }}>
               {EP_ICON[firstEp?.entry_point_type ?? ''] ?? 'extension'}
             </span>
             {(app.entry_points?.length ?? 0) > 1 && (
@@ -4614,40 +4653,28 @@ function AppCard({
                 minWidth: 18, height: 18, borderRadius: 9,
                 background: '#00d1ff', color: '#021520',
                 fontSize: 10, fontWeight: 700,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                padding: '0 4px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px',
               }}>{app.entry_points?.length ?? 0}</span>
             )}
           </div>
 
-          {/* Name + slugs + type badge */}
+          {/* Name + subtitle */}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, color: C.text, fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: 3 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: C.text, fontFamily: 'Geist, sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {app.name}
             </div>
-            <div style={{ marginBottom: 5 }}>
-              {(app.entry_points ?? []).map(epRow => (
-                <div key={epRow.id} style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span className="material-symbols-outlined" style={{ fontSize: 11, color: epIconColor(epRow.entry_point_type).color, flexShrink: 0 }}>{EP_ICON[epRow.entry_point_type] ?? 'bolt'}</span>
-                  {epRow.slug}
-                </div>
-              ))}
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+              {(app.entry_points?.length ?? 0)} entry point{(app.entry_points?.length ?? 0) !== 1 ? 's' : ''}
+              {' · '}
+              <span style={{ color: publishBadge.color }}>{publishBadge.label}</span>
             </div>
-            <span style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '2px 7px', borderRadius: 20, fontSize: 10, fontWeight: 700,
-              background: 'var(--tm-filter-bg)', color: ep.color,
-              border: `1px solid ${ep.border}`,
-            }}>
-              {EP_LABEL[firstEp?.entry_point_type ?? ''] ?? firstEp?.entry_point_type ?? '—'}
-            </span>
           </div>
 
           {/* Three-dot menu */}
           <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
             <button
               onClick={() => setMenuOpen(v => !v)}
-              style={{ width: 30, height: 30, borderRadius: 7, cursor: 'pointer', background: 'var(--tm-btn-2-bg)', border: '1px solid var(--tm-btn-2-border)', color: 'var(--tm-card-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 150ms ease' }}
+              style={{ width: 30, height: 30, borderRadius: 7, cursor: 'pointer', background: 'var(--tm-btn-2-bg)', border: '1px solid var(--tm-btn-2-border)', color: 'var(--tm-card-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                 <circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/>
@@ -4655,10 +4682,20 @@ function AppCard({
             </button>
             {menuOpen && (
               <div style={{
-                position: 'absolute', top: 34, right: 0, zIndex: 50, minWidth: 130,
+                position: 'absolute', top: 34, right: 0, zIndex: 50, minWidth: 140,
                 background: 'var(--tm-menu-bg)', border: '1px solid var(--tm-menu-border)',
                 borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.35)', overflow: 'hidden',
               }}>
+                <button
+                  onClick={() => { setMenuOpen(false); onRename(app); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: C.text, fontWeight: 500 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 16 }}>edit</span>
+                  Rename
+                </button>
+                <div style={{ height: 1, background: 'var(--tm-divider)', margin: '0 10px' }} />
                 <button
                   onClick={() => { setMenuOpen(false); onDelete(app); }}
                   style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: C.error, fontWeight: 600 }}
@@ -4673,18 +4710,10 @@ function AppCard({
           </div>
         </div>
 
-        {/* Live status bar */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '8px 12px', borderRadius: 10,
-          background: statusBg, border: `1px solid ${statusBorder}`,
-        }}>
+        {/* Row 2: live status bar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', borderRadius: 10, background: statusBg, border: `1px solid ${statusBorder}` }}>
           {app.enabled && (
-            <span style={{
-              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-              background: statusColor,
-              boxShadow: reachable ? `0 0 7px ${statusColor}` : 'none',
-            }} />
+            <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: statusColor, boxShadow: reachable ? `0 0 7px ${statusColor}` : 'none' }} />
           )}
           <span style={{ fontSize: 12, fontWeight: 700, color: statusColor }}>{statusLabel}</span>
           {reachable && latencyMs != null && (
@@ -4692,119 +4721,129 @@ function AppCard({
           )}
         </div>
 
-        {/* Info tiles: orchestrator + access */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, paddingBottom: 16 }}>
+        {/* Row 3: orchestrator + access tiles */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <div style={{ padding: '8px 12px', borderRadius: 10, background: 'var(--tm-filter-bg)', border: '1px solid var(--tm-divider)', display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#a78bfa', flexShrink: 0 }}>hub</span>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Orchestrator</div>
               <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {app.app_orchestrators?.[0]?.display_name ?? app.app_orchestrators?.[0]?.name ?? <span style={{ color: C.textMuted, fontStyle: 'italic' }}>none</span>}
+                {orchLabel
+                  ? <>{orchLabel}{orchModel && <span style={{ color: C.textMuted, fontWeight: 400, marginLeft: 4 }}>· {orchModel.split('/').pop()?.split('-').slice(0,2).join('-')}</span>}</>
+                  : <span style={{ color: C.textMuted, fontStyle: 'italic' }}>none — publish to activate</span>
+                }
               </div>
             </div>
           </div>
           <div style={{ padding: '8px 12px', borderRadius: 10, background: 'var(--tm-filter-bg)', border: '1px solid var(--tm-divider)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 16, color: accessMode === 'public' ? C.green : '#f59e0b', flexShrink: 0 }}>
-              {accessMode === 'public' ? 'lock_open' : 'lock'}
-            </span>
+            <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#f59e0b', flexShrink: 0 }}>lock</span>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Access</div>
-              <div style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>{accessMode === 'public' ? 'Public' : 'Token'}</div>
+              <div style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>
+                Bearer token
+                <span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400, display: 'block' }}>Authorization: Bearer …</span>
+              </div>
             </div>
           </div>
         </div>
+
+        {/* Row 4: entry point URL rows */}
+        {(app.entry_points ?? []).length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 4 }}>
+            <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 2 }}>Entry Points</div>
+            {(app.entry_points ?? []).map(epRow => {
+              const urls = epUrls(epRow);
+              const epC = epIconColor(epRow.entry_point_type);
+              const primaryUrl = urls[0];
+              return (
+                <div key={epRow.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 13, color: epC.color, flexShrink: 0 }}>{EP_ICON[epRow.entry_point_type] ?? 'bolt'}</span>
+                  <code style={{ fontSize: 10, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {primaryUrl ? primaryUrl.val : epRow.slug}
+                  </code>
+                  {primaryUrl && (
+                    <button
+                      onClick={() => { if (typeof navigator !== 'undefined') navigator.clipboard?.writeText(primaryUrl.val); }}
+                      title="Copy URL"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', padding: 2, flexShrink: 0 }}
+                      onMouseEnter={e => (e.currentTarget.style.color = C.text)}
+                      onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>content_copy</span>
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* Action buttons */}
-      {(() => {
-        const webrtcEp = app.entry_points?.find(e => e.entry_point_type === 'webrtc');
-        const hasRuntime = app.runtime_config && Object.values(app.runtime_config).some(v => v !== null && !(Array.isArray(v) && v.length === 0));
-        return (
-          <div style={{
-            borderTop: '1px solid var(--tm-divider)', padding: '10px 14px', display: 'grid',
-            gridTemplateColumns: webrtcEp ? '2fr 1fr 1fr 1fr 1fr' : '2fr 1fr 1fr 1fr',
-            gap: 8,
-          }}>
-            {/* Sessions button */}
-            <button
-              className="app-card-btn"
-              onClick={() => onSessions(app)}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                background: sessionCount > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)',
-                color: sessionCount > 0 ? '#00f0ff' : C.textMuted,
-                border: `1px solid ${sessionCount > 0 ? 'rgba(0,240,255,0.35)' : 'rgba(255,255,255,0.1)'}`,
-                position: 'relative',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,240,255,0.12)'; e.currentTarget.style.color = '#00f0ff'; }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background = sessionCount > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)';
-                e.currentTarget.style.color = sessionCount > 0 ? '#00f0ff' : C.textMuted;
-              }}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>person</span>
-              Sessions
-              {sessionCount > 0 && (
-                <span style={{
-                  background: '#00f0ff', color: '#000',
-                  fontSize: 10, fontWeight: 800,
-                  borderRadius: 8, padding: '0px 5px',
-                  lineHeight: '16px', minWidth: 16, textAlign: 'center',
-                }}>{sessionCount}</span>
-              )}
-            </button>
-            {/* Definition — primary, full-width feel */}
-            <button className="app-card-btn app-card-btn--open" onClick={() => onEdit(app)}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-              <span className="material-symbols-outlined" style={{ fontSize: 15 }}>description</span>
-              Definition
-            </button>
-            {/* Runtime button */}
-            <button
-              className="app-card-btn"
-              onClick={() => onRuntime(app)}
-              title="Runtime policy"
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-                background: hasRuntime ? 'rgba(251,146,60,0.1)' : 'rgba(255,255,255,0.03)',
-                color: hasRuntime ? '#fb923c' : C.textMuted,
-                border: `1px solid ${hasRuntime ? 'rgba(251,146,60,0.4)' : 'rgba(255,255,255,0.1)'}`,
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(251,146,60,0.15)'; e.currentTarget.style.color = '#fb923c'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = hasRuntime ? 'rgba(251,146,60,0.1)' : 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = hasRuntime ? '#fb923c' : C.textMuted; }}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>tune</span>
-              Runtime
-            </button>
-            {webrtcEp && (
-              <button
-                className="app-card-btn"
-                onClick={() => window.open(`/apps/${webrtcEp.slug}/voice`, '_blank', 'noopener')}
-                title="Open voice room"
-                style={{
-                  background: 'rgba(167,139,250,0.1)',
-                  color: '#a78bfa',
-                  border: '1px solid rgba(167,139,250,0.3)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.2)'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.5)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.1)'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.3)'; }}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 14 }}>mic</span>
-                Voice
-              </button>
-            )}
-            <button className="app-card-btn app-card-btn--urls" onClick={() => onUrls(app)}>
-              URLs
-            </button>
-            {app.enabled ? (
-              <button className="app-card-btn app-card-btn--toggle-on" onClick={() => onToggle(app)}>Disable</button>
-            ) : (
-              <button className="app-card-btn app-card-btn--toggle-off" onClick={() => onToggle(app)}>Enable</button>
-            )}
-          </div>
-        );
-      })()}
+      {/* ── Action buttons ── */}
+      <div style={{ borderTop: '1px solid var(--tm-divider)', padding: '10px 14px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {/* Sessions */}
+        <button
+          className="app-card-btn"
+          onClick={() => onSessions(app)}
+          style={{
+            flex: '2 1 80px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            background: sessionCount > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)',
+            color: sessionCount > 0 ? '#00f0ff' : C.textMuted,
+            border: `1px solid ${sessionCount > 0 ? 'rgba(0,240,255,0.35)' : 'rgba(255,255,255,0.1)'}`,
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,240,255,0.12)'; e.currentTarget.style.color = '#00f0ff'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = sessionCount > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = sessionCount > 0 ? '#00f0ff' : C.textMuted; }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>person</span>
+          Sessions
+          {sessionCount > 0 && (
+            <span style={{ background: '#00f0ff', color: '#000', fontSize: 10, fontWeight: 800, borderRadius: 8, padding: '0px 5px', lineHeight: '16px', minWidth: 16, textAlign: 'center' }}>{sessionCount}</span>
+          )}
+        </button>
+
+        {/* Builder (was "Definition") */}
+        <button className="app-card-btn app-card-btn--open" onClick={() => onEdit(app)}
+          style={{ flex: '1 1 60px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>hub</span>
+          Builder
+        </button>
+
+        {/* Runtime */}
+        <button
+          className="app-card-btn"
+          onClick={() => onRuntime(app)}
+          title="Runtime policy"
+          style={{
+            flex: '1 1 60px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+            background: hasRuntime ? 'rgba(251,146,60,0.1)' : 'rgba(255,255,255,0.03)',
+            color: hasRuntime ? '#fb923c' : C.textMuted,
+            border: `1px solid ${hasRuntime ? 'rgba(251,146,60,0.4)' : 'rgba(255,255,255,0.1)'}`,
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(251,146,60,0.15)'; e.currentTarget.style.color = '#fb923c'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = hasRuntime ? 'rgba(251,146,60,0.1)' : 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = hasRuntime ? '#fb923c' : C.textMuted; }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>tune</span>
+          Runtime
+        </button>
+
+        {/* Enable / Disable toggle with feedback */}
+        <button
+          className={`app-card-btn ${app.enabled ? 'app-card-btn--toggle-on' : 'app-card-btn--toggle-off'}`}
+          onClick={async () => {
+            if (toggling) return;
+            setToggling(true);
+            try { await (onToggle(app) as unknown as Promise<void>); } finally { setToggling(false); }
+          }}
+          disabled={toggling}
+          title={app.enabled ? 'Disable this application' : 'Enable this application'}
+          style={{ flex: '1 1 60px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, opacity: toggling ? 0.6 : 1 }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
+            {toggling ? 'hourglass_empty' : app.enabled ? 'toggle_on' : 'toggle_off'}
+          </span>
+          {toggling ? '…' : app.enabled ? 'Disable' : 'Enable'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -5714,7 +5753,7 @@ function SessionsView({
 }
 
 function ListView({
-  list, loading, onNew, onEdit, onSessions, onRuntime, onToggle, onDelete,
+  list, loading, onNew, onEdit, onSessions, onRuntime, onToggle, onDelete, onReload,
   selectedApps, onToggleSelect, onSelectAll, onBulkDelete, bulkDeleting,
 }: {
   list: Application[];
@@ -5725,14 +5764,42 @@ function ListView({
   onRuntime: (app: Application) => void;
   onToggle: (app: Application) => void;
   onDelete: (app: Application) => void;
+  onReload: () => void;
   selectedApps: Set<string>;
   onToggleSelect: (id: string, checked: boolean) => void;
   onSelectAll: (checked: boolean) => void;
   onBulkDelete: () => void;
   bulkDeleting: boolean;
 }) {
-  const [urlModalApp, setUrlModalApp] = useState<Application | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [renameApp, setRenameApp] = useState<Application | null>(null);
+  const [renameName, setRenameName] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  const [listToast, setListToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+  function showListToast(msg: string, ok: boolean) {
+    setListToast({ msg, ok });
+    setTimeout(() => setListToast(null), 3000);
+  }
+
+  function openRename(app: Application) {
+    setRenameApp(app);
+    setRenameName(app.name);
+  }
+
+  async function commitRename() {
+    if (!renameApp || !renameName.trim()) return;
+    setRenaming(true);
+    try {
+      await themApi.updateApplication(renameApp.id, { name: renameName.trim(), enabled: renameApp.enabled });
+      setRenameApp(null);
+      showListToast('Renamed', true);
+      onReload();
+    } catch {
+      showListToast('Rename failed', false);
+    } finally {
+      setRenaming(false);
+    }
+  }
 
   // Read JWT for WS auth — same cookie the rest of the app uses
   const [token, setToken] = useState<string | null>(null);
@@ -5781,12 +5848,6 @@ function ListView({
     connect();
     return () => { dead = true; ws?.close(); };
   }, [token, list]);
-
-  function copy(val: string, id: string) {
-    navigator.clipboard?.writeText(val).catch(() => {});
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 1800);
-  }
 
   return (
     <div style={{ marginLeft: 260, flex: 1, background: C.bg, minHeight: '100vh' }}>
@@ -5898,7 +5959,7 @@ function ListView({
             onRuntime={onRuntime}
             onToggle={onToggle}
             onDelete={onDelete}
-            onUrls={setUrlModalApp}
+            onRename={openRename}
           />
           );
         })}
@@ -5924,66 +5985,45 @@ function ListView({
       </div>
       </ChromaGrid>
 
-      {/* URL Modal */}
-      {urlModalApp && (
+      {/* Rename Modal */}
+      {renameApp && (
         <div
           style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(5,20,36,0.85)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          onClick={() => setUrlModalApp(null)}
+          onClick={() => !renaming && setRenameApp(null)}
         >
           <div
-            style={{ ...glass, borderRadius: 16, padding: '28px 32px', minWidth: 480, maxWidth: 600, position: 'relative' }}
+            style={{ ...glass, borderRadius: 16, padding: '28px 32px', minWidth: 360, maxWidth: 480, position: 'relative' }}
             onClick={e => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, fontFamily: 'Geist, sans-serif' }}>
-                Entry Point URLs — {urlModalApp.name}
-              </div>
-              <button onClick={() => setUrlModalApp(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center' }}>
-                <span className="material-icons" style={{ fontSize: 20 }}>close</span>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 16 }}>Rename Application</div>
+            <input
+              autoFocus
+              value={renameName}
+              onChange={e => setRenameName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenameApp(null); }}
+              placeholder="Application name"
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: C.surfaceContainer, color: C.text, fontSize: 14, outline: 'none', boxSizing: 'border-box', marginBottom: 16 }}
+            />
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setRenameApp(null)} disabled={renaming} style={{ padding: '8px 18px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
+              <button onClick={commitRename} disabled={renaming || !renameName.trim()} style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', cursor: renaming ? 'default' : 'pointer', fontSize: 13, fontWeight: 700, opacity: renaming ? 0.7 : 1 }}>
+                {renaming ? 'Saving…' : 'Save'}
               </button>
             </div>
-            {(urlModalApp.entry_points ?? []).map((epRow, epIdx) => {
-              const urls: Array<{ label: string; val: string }> = [];
-              if (epRow.entry_point_type === 'websocket') urls.push({ label: 'WebSocket', val: `ws://<host>:8088/apps/${epRow.slug}/ws` });
-              if (epRow.entry_point_type === 'sse') urls.push({ label: 'SSE', val: `http://<host>:8088/apps/${epRow.slug}/sse` }, { label: 'REST', val: `http://<host>:8088/apps/${epRow.slug}` });
-              if (epRow.entry_point_type === 'webrtc') urls.push(
-                { label: 'Voice Page', val: `http://<host>:8088/apps/${epRow.slug}/voice` },
-                { label: 'Token API', val: `http://<host>:8088/apps/${epRow.slug}/webrtc/token` },
-              );
-              const epColor = epIconColor(epRow.entry_point_type);
-              return (
-                <div key={epRow.id} style={{ marginBottom: epIdx < (urlModalApp.entry_points?.length ?? 0) - 1 ? 18 : 0 }}>
-                  {(urlModalApp.entry_points?.length ?? 0) > 1 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 14, color: epColor.color }}>{EP_ICON[epRow.entry_point_type] ?? 'bolt'}</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: epColor.color, fontFamily: 'JetBrains Mono, monospace' }}>{epRow.slug}</span>
-                      <span style={{ fontSize: 10, color: C.textMuted }}>· {(epRow.access_policy as any)?.mode === 'public' ? 'public' : 'token'}</span>
-                    </div>
-                  )}
-                  {urls.map(({ label, val }) => {
-                    const cid = `modal_${epRow.id}_${label}`;
-                    return (
-                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                        <span style={{ fontSize: 11, color: C.textMuted, minWidth: 100, fontFamily: 'Inter, sans-serif' }}>{label}</span>
-                        <code style={{ flex: 1, fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.text, background: C.surfaceContainer, padding: '5px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val}</code>
-                        <button
-                          onClick={() => copy(val, cid)}
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: 'transparent', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: copiedId === cid ? C.green : C.textMuted, transition: 'all 0.15s' }}
-                        >
-                          {copiedId === cid ? 'Copied!' : 'Copy'}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-            <div style={{ marginTop: 14, fontSize: 11, color: C.textMuted, fontFamily: 'Inter, sans-serif' }}>
-              {urlModalApp.entry_points.every(ep => (ep.access_policy as any)?.mode === 'public')
-                ? 'No auth required — public access'
-                : 'Bearer token required — use /admin/tokens to create one'}
-            </div>
           </div>
+        </div>
+      )}
+
+      {/* List-level toast */}
+      {listToast && (
+        <div style={{
+          position: 'fixed', bottom: 32, right: 32, zIndex: 9999,
+          background: listToast.ok ? C.greenBg : C.errorBg,
+          border: `1px solid ${listToast.ok ? C.greenBorder : 'rgba(255,180,171,0.3)'}`,
+          color: listToast.ok ? C.green : C.error,
+          borderRadius: 10, padding: '10px 20px', fontSize: 13, fontWeight: 600,
+        }}>
+          {listToast.msg}
         </div>
       )}
     </div>
@@ -6022,7 +6062,10 @@ export default function ApplicationsPage() {
   useEffect(() => { load(); }, []);
 
   async function handleToggle(app: Application) {
-    try { await themApi.updateApplication(app.id, { enabled: !app.enabled }); await load(); } catch {/* ignore */}
+    try {
+      await themApi.updateApplication(app.id, { name: app.name, enabled: !app.enabled });
+      await load();
+    } catch {/* ignore — AppCard shows toggling state, failure resets on next load */}
   }
 
   async function handleDelete(app: Application) {
@@ -6143,6 +6186,7 @@ export default function ApplicationsPage() {
           onRuntime={openRuntime}
           onToggle={handleToggle}
           onDelete={handleDelete}
+          onReload={load}
           selectedApps={selectedApps}
           onToggleSelect={handleToggleSelect}
           onSelectAll={handleSelectAll}

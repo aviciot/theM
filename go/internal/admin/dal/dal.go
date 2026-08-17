@@ -165,12 +165,27 @@ type OrchestratorInput struct {
 
 // ── Application types ─────────────────────────────────────────────────────────
 
+// AppOrchestratorSummary is the lightweight orchestrator summary returned with
+// the application list / get responses so the card UI can display name + model
+// without a separate API call.
+type AppOrchestratorSummary struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	DisplayName string  `json:"display_name"`
+	LLMProvider *string `json:"llm_provider,omitempty"`
+	LLMModel    *string `json:"llm_model,omitempty"`
+}
+
 // Application is the JSON representation of a them.applications row.
 type Application struct {
-	ID          string       `json:"id"`
-	Name        string       `json:"name"`
-	Enabled     bool         `json:"enabled"`
-	EntryPoints []EntryPoint `json:"entry_points"`
+	ID               string                   `json:"id"`
+	Name             string                   `json:"name"`
+	Slug             string                   `json:"slug"`
+	Enabled          bool                     `json:"enabled"`
+	ActiveRevision   *int                     `json:"active_revision,omitempty"`
+	ActiveStatus     *string                  `json:"active_status,omitempty"`
+	EntryPoints      []EntryPoint             `json:"entry_points"`
+	AppOrchestrators []AppOrchestratorSummary `json:"app_orchestrators"`
 }
 
 // EntryPoint is one access door for an application.

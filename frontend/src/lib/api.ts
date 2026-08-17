@@ -228,15 +228,25 @@ export interface AppRuntimeConfig {
   session_timeout_minutes: number | null;
 }
 
+export interface AppOrchestratorSummary {
+  id: string;
+  name: string;
+  display_name: string;
+  llm_provider?: string | null;
+  llm_model?: string | null;
+}
+
 export interface Application {
   id: string;
   name: string;
   slug: string;
   presentation: Record<string, unknown>;
   enabled: boolean;
+  active_revision?: number | null;
+  active_status?: string | null;
   canvas?: CanvasLayout | null;
   entry_points: EntryPoint[];
-  app_orchestrators?: AppOrchestratorOut[];
+  app_orchestrators: AppOrchestratorSummary[];
   runtime_config?: AppRuntimeConfig;
   created_at: string;
   updated_at: string;
