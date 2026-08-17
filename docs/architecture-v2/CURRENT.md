@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `c0fdb1a` — feat(worker): E2E per-run orchestrator resolution from DB
+Commit: `3862a43` — feat(history): multi-turn history persistence + in-process summarizer
 
 ---
 
@@ -225,9 +225,29 @@ Worker is running and polling `them-orchestration-go`. Next: create an applicati
 
 ---
 
+## Multi-turn History + Summarizer — COMPLETE (3862a43, 2026-08-17)
+
+New packages:
+- `go/internal/history/pgx.go` — `HistoryLoader` + `CheckpointWriter` + `SummaryStore` backed by pgxpool; JOIN task_messages→tasks on context_id; JSONB envelope with canonical_role for lossless role round-trip; `resolveRootTaskID` creates tasks row on first message
+- `go/internal/summarizer/summarizer.go` — in-process LLM call; drains text_delta; max 1024 tokens; no microservice dependency
+- `go/internal/orchestrator/summary.go` — `maybeSummarize` trigger (len(history) > HistoryWindow); older/recent split; summary persisted as system message; `SummaryConfig` struct
+
+Modified:
+- `go/internal/orchestrator/orchestrator.go` — `MemoryEnabled`/`SummarizeEveryNCalls`/`MemoryRawFallbackN` config fields; user message now checkpointed before LLM call (was missing)
+- `go/internal/temporal/workerconfig/loader.go` — loads `memory_enabled`, `summarize_every_n_calls`, `memory_raw_fallback_n`, `summarizer_provider`, `summarizer_model` from DB; fixed `loadProviderKey` to decrypt via `crypto.DecryptStored` (was returning raw ciphertext — latent bug)
+- `go/cmd/worker/main.go` — wires `historyStore`, `WithHistoryLoader`, `WithCheckpointer`; conditional `WithSummarizer` when `MemoryEnabled && SummarizerProvider != ""`
+- `go/internal/temporal/activities.go` — restore `ConfigLoadError` non-retryable Temporal error type (was broken by merge)
+- `go/internal/llm/anthropic.go` — map `RoleTool→RoleUser` for Anthropic API compatibility (fixes 400 on second message)
+- `go/internal/ws/handler.go` — 15s ping/pong keepalive (fixes WS drop during Temporal schedule-to-start); `wfRun.Get(context.Background(), nil)` (fixes context-canceled on WS disconnect propagating to workflow monitor)
+- `frontend/src/app/admin/playground/page.tsx` — fix token field: `msg.content || msg.text || ''`
+
+Test state: `go test ./...` — all packages pass, Docker build clean.
+
+---
+
 ## Next recommended task
 
-**End-to-end run test** — Create a published application with an orchestrator, publish it, trigger a run via the WS/SSE/A2A endpoint, and verify the Go Temporal worker picks it up, loads config from DB, and returns a real LLM response.
+**End-to-end run test** — Create a published application with an orchestrator, publish it, trigger a run via the WS/SSE/A2A endpoint, and verify the Go Temporal worker picks it up, loads config from DB, and returns a real LLM response with multi-turn context preserved across second message.
 
 Then: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims)
 - Read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 before starting Wave 9.
@@ -254,9 +274,11 @@ Then: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant 
 ## Known blockers
 
 1. Auth admin CRUD (users/roles/teams) — not exposed since Python auth removed. Needs Go port.
-2. Go Temporal worker (`them-go-worker`) is running and wired for per-run config loading. E2E run test not yet performed — a published application with a real LLM call has not been verified end-to-end against the live stack.
-3. A2A server (`/a2a/*`) still on Python — not yet migrated to Go.
-4. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims, live two-tenant verification) remain open.
+2. E2E run test not yet performed — multi-turn history round-trip with real LLM not verified on live stack.
+3. DB migrations for history columns (`memory_enabled`, `summarize_every_n_calls`, `memory_raw_fallback_n`, `summarizer_provider`, `summarizer_model`, `summarizer_api_key_encrypted`) exist in schema but must be verified live (added in earlier session, not re-verified in this one).
+4. A2A server (`/a2a/*`) still on Python — not yet migrated to Go.
+5. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims, live two-tenant verification) remain open.
+6. `them-go-bridge` container startup: must use `--project-name them_gateway` when starting via compose to share the `them-network` network with the `them_gateway` project. Without it, postgres/redis conflict. Command: `docker compose -p them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge`.
 
 ---
 
