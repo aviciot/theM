@@ -60,7 +60,7 @@ func (d *DB) UpdateApplication(ctx context.Context, tenantID, id, name string, e
 
 // DeleteApplication soft-deletes an application by setting enabled=false, scoped to the tenant.
 func (d *DB) DeleteApplication(ctx context.Context, tenantID, id string) error {
-	const q = `UPDATE them.applications SET enabled=false, updated_at=now() WHERE id=$1::uuid AND tenant_id=$2::uuid`
+	const q = `DELETE FROM them.applications WHERE id=$1::uuid AND tenant_id=$2::uuid`
 	return d.q.Exec(ctx, q, id, tenantID)
 }
 
