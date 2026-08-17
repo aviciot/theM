@@ -333,12 +333,13 @@ function InternalMBadge() {
 
 // EntryPointNode — icon-only, transparent, name below
 function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
+  const epKind = data.epType || (data as unknown as Record<string, unknown>).protocol as string | undefined;
   const slugMissing = !data.slug;
   const hasError = data._error || data._shake;
-  const isVoice = data.epType === 'voice';
+  const isVoice = epKind === 'voice';
   const accent = hasError ? '#f87171' : slugMissing ? '#f59e0b' : isVoice ? C.amber : C.cyan;
   const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
-  const msIcon = EP_MS_ICON[data.epType] ?? 'bolt';
+  const msIcon = EP_MS_ICON[epKind ?? ''] ?? 'bolt';
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
       title={data._errorMsg || undefined}>
@@ -371,7 +372,7 @@ function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointDa
       </div>
       <div style={{ marginTop: 6, textAlign: 'center' }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, transition: 'color 0.18s' }}>
-          {data.label || (data.epType === 'sse' ? 'SSE' : data.epType === 'voice' ? 'Voice' : data.epType === 'webrtc' ? 'WebRTC' : data.epType === 'a2a' ? 'A2A' : 'WebSocket')}
+          {data.label || (epKind === 'sse' ? 'SSE' : epKind === 'voice' ? 'Voice' : epKind === 'webrtc' ? 'WebRTC' : epKind === 'a2a' ? 'A2A' : 'WebSocket')}
         </div>
         {data.slug ? (
           <div style={{ fontSize: 10, color: C.cyan, fontFamily: 'JetBrains Mono, monospace', opacity: 0.8, marginTop: 1 }}>{data.slug}</div>
@@ -803,8 +804,27 @@ function buildNodesFromApp(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function agentIconForLibrary(a: Agent): string {
-  return a.icon || 'smart_toy';
+function agentIconForLibrary(a: { slug?: string; icon?: string | null }): string {
+  if (a.icon) return a.icon;
+  const slug = (a.slug ?? '').toLowerCase();
+  if (slug.includes('vision') || slug.includes('image') || slug.includes('ocr') || slug.includes('photo')) return 'image_search';
+  if (slug.includes('security') || slug.includes('scan') || slug.includes('audit')) return 'security';
+  if (slug.includes('code') || slug.includes('dev') || slug.includes('engineer')) return 'code';
+  if (slug.includes('search') || slug.includes('web') || slug.includes('browse')) return 'travel_explore';
+  if (slug.includes('doc') || slug.includes('write') || slug.includes('text') || slug.includes('summar')) return 'description';
+  if (slug.includes('data') || slug.includes('analyt') || slug.includes('sql') || slug.includes('db')) return 'table_chart';
+  if (slug.includes('email') || slug.includes('mail') || slug.includes('gmail')) return 'email';
+  if (slug.includes('slack') || slug.includes('chat') || slug.includes('message')) return 'chat';
+  if (slug.includes('judge') || slug.includes('eval') || slug.includes('review')) return 'rate_review';
+  if (slug.includes('logic') || slug.includes('reason') || slug.includes('think')) return 'psychology';
+  if (slug.includes('creat') || slug.includes('design') || slug.includes('art')) return 'palette';
+  if (slug.includes('voice') || slug.includes('audio') || slug.includes('speech') || slug.includes('tts')) return 'record_voice_over';
+  if (slug.includes('echo') || slug.includes('test') || slug.includes('mock')) return 'bug_report';
+  if (slug.includes('slow') || slug.includes('queue') || slug.includes('batch')) return 'hourglass_top';
+  if (slug.includes('stream')) return 'stream';
+  if (slug.includes('a2a') || slug.includes('robot')) return 'robot_2';
+  if (slug.includes('evidence') || slug.includes('fact') || slug.includes('verify')) return 'fact_check';
+  return 'smart_toy';
 }
 
 const EP_META: Record<string, { emoji: string; title: string; desc: string; color?: string }> = {
