@@ -6180,7 +6180,13 @@ export default function ApplicationsPage() {
         <ListView
           list={list}
           loading={loading}
-          onNew={() => { themApi.createApplication({ name: 'New Application', enabled: false }).then(load).catch(() => {}); }}
+          onNew={async () => {
+            try {
+              const app = await themApi.createApplication({ name: 'New Application', enabled: false });
+              await load();
+              openDefinition(app);
+            } catch {/* ignore */}
+          }}
           onEdit={(app) => openDefinition(app)}
           onSessions={openSessions}
           onRuntime={openRuntime}

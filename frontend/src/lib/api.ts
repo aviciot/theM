@@ -537,7 +537,10 @@ export const themApi = {
     return res.json();
   },
   applications: () => api.get<Application[]>('/admin/applications'),
-  createApplication: (body: unknown) => api.post<Application>('/admin/applications', body),
+  createApplication: async (body: unknown): Promise<Application> => {
+    const { id } = await api.post<{ id: string }>('/admin/applications', body);
+    return api.get<Application>(`/admin/applications/${id}`);
+  },
   updateApplication: (id: string, body: unknown) => api.patch<Application>(`/admin/applications/${id}`, body),
   deleteApplication: (id: string) => api.delete<void>(`/admin/applications/${id}`),
   listMiddlewareDefs: () => api.get<MiddlewareDef[]>('/admin/middleware-defs'),
