@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `e625fbc` — fix(admin): Phase C publish — remove tenant_id from app_orchestrators upsert
+Commit: `5508260` — fix(phase-d): Traefik route + TS fix
 
 ---
 
@@ -136,7 +136,25 @@ Routes added (all under `/api/v1/admin/applications/{id}/definitions`):
 - `PUT    .../definitions/{def_id}` → 200 `{"id":"...","updated":true}`
 - `DELETE .../definitions/{def_id}` → 204
 
-**Phase C — Application Definition Validate + Publish + Compile — COMPLETE** (HEAD)
+**Phase D — Application Definition UI — COMPLETE** (HEAD)
+
+Routes added:
+- `GET /api/v1/admin/component-definitions` → 200 `[ComponentDefinitionSummary,...]`
+
+Files added/modified:
+- `go/internal/admin/dal/registry.go` — `ListComponentDefinitions` DAL (published+enabled, builtins+tenant)
+- `go/internal/admin/registry.go` — `RegistryHandler` + `GET /admin/component-definitions`
+- `go/internal/admin/registry_test.go` — S1-45 handler test (633 total)
+- `go/internal/admin/router.go` — wire RegistryHandler; add `them-go-component-defs` Traefik label
+- `go/internal/admin/service/service.go` — `ListComponentDefinitions` added to Dal interface
+- `go/TEST_INDEX.md` — S1-45 added
+- `frontend/src/lib/api.ts` — 10 types + 7 API methods (listComponentDefinitions, listDefinitions, createDefinition, updateDefinition, deleteDefinition, validateDefinition, publishDefinition)
+- `frontend/src/app/admin/applications/page.tsx` — BuilderView (ReactFlow) retired; DefinitionView added (component palette + form editor + properties panel); view state `'builder'` → `'definition'`; AppCard "Open Builder" → "Definition"
+- `docker-compose.yml` — Traefik router `them-go-component-defs` at priority 120
+
+Live verified: `GET /api/v1/admin/component-definitions` through Traefik returns 15 component definitions. TypeScript compiles clean.
+
+**Phase C — Application Definition Validate + Publish + Compile — COMPLETE** (e625fbc)
 
 Routes added:
 - `POST .../definitions/{def_id}/validate` → 200 `{"valid":true|false,"errors":[...]}`
@@ -195,14 +213,7 @@ Test state: `go test ./...` — **32 packages, 0 failures, 22 new tests (S1-43, 
 
 ## Next recommended task
 
-**Phase D — Application Definition Canvas UI** or **Wave 9 — Multi-tenant runtime enablement**
-
-Phase D scope (Canvas UI for Application Definition editing/publishing):
-1. Frontend `ApplicationsPage` → Definition tab with component palette, canvas, connections editor
-2. Validate + Publish buttons wired to the new API endpoints
-3. Requires UI work only — no new Go routes needed
-
-Alternative: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims)
+**Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims)
 - Read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 before starting Wave 9.
 
 ---
