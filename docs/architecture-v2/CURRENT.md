@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `TBD` — feat(admin): Application Definition CRUD (Phase B)
+Commit: `bcb2943` — feat(admin): Application Definition CRUD — Phase B
 
 ---
 
