@@ -134,9 +134,9 @@ type Run struct {
 	OutputTokens   int
 	ErrorMessage   string
 
-	// EventsTransport is the run-event delivery transport for this run:
-	// "pubsub" (legacy/default) or "streams" (Phase 11c). It is decided when the
-	// run row is created (based on RUN_EVENTS_MODE) and is stable for the run's
-	// lifetime. The WS/SSE dispatcher reads this to pick Pub/Sub or Streams.
+	// EventsTransport is the run-event delivery transport recorded on the run
+	// row. Always "streams": the Go worker writes run events to Redis Streams
+	// (them:dash:run:{runID}:stream) and the bridge reads them from there.
+	// Retained on the row for observability; there is no per-run transport switch.
 	EventsTransport string
 }

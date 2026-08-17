@@ -2,7 +2,6 @@ package execution
 
 import (
 	"github.com/aviciot/them/internal/auth"
-	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/gate"
@@ -21,11 +20,10 @@ type ExecutionRequest struct {
 	// tenant UUID "00000000-0000-0000-0000-000000000001". For true multi-tenant public
 	// EPs, a Wave 10 hostname/path-prefix routing layer will provide this.
 	// MUST NOT be taken from the request body or any HTTP header.
-	TenantID      string
-	UserMessage   domain.Message   // parsed user message (content + role)
-	ContextID     string           // caller-supplied; empty → Lifecycle generates UUID v4
-	RunEventsMode config.RunEventsMode
-	InstanceID    string // pod/replica identity for session record
+	TenantID    string
+	UserMessage domain.Message // parsed user message (content + role)
+	ContextID   string         // caller-supplied; empty → Lifecycle generates UUID v4
+	InstanceID  string         // pod/replica identity for session record
 }
 
 // ExecutionHandle is the admission ticket returned by Admit on success.
@@ -35,11 +33,10 @@ type ExecutionRequest struct {
 // The gateAdmitted/gateCfg fields are unexported — Release uses them internally;
 // callers should not access gate state directly.
 type ExecutionHandle struct {
-	RunID          string
-	ContextID      string
-	SessionID      string
-	EPConfig       *epconfig.EPConfig
-	EventsTransport string // "pubsub" or "streams" — derived from RunEventsMode at admit time
+	RunID     string
+	ContextID string
+	SessionID string
+	EPConfig  *epconfig.EPConfig
 
 	// internal gate state — used by Release only
 	gateAdmitted bool

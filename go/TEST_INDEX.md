@@ -43,7 +43,6 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestReconcilerDryRun_ExplicitTrue` | `RECONCILER_DRY_RUN=true` → `true` |
 | `TestReconcilerDryRun_ExplicitFalse` | `RECONCILER_DRY_RUN=false` → `false` (enables writes) |
 | `TestReconcilerDryRun_InvalidValueFallsToTrue` | `RECONCILER_DRY_RUN=not-a-bool` → `true` (fail-safe) |
-| `TestRunEventsMode` | `RUN_EVENTS_MODE` parsing (Phase 11c-B): missing/invalid→pubsub, dual, streams, case-insensitive |
 | `TestShutdownDrain_Default` | Missing `SHUTDOWN_DRAIN_SECONDS` → 30 (default) |
 | `TestShutdownDrain_Valid` | `SHUTDOWN_DRAIN_SECONDS=60` → 60 |
 | `TestShutdownDrain_BelowMin_Clamped` | `SHUTDOWN_DRAIN_SECONDS=2` → 5 (clamped to minimum) |
@@ -379,9 +378,9 @@ sanitization, and cross-run access denial.
 
 | Test | What it proves |
 |---|---|
-| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with 6-arg signature (id, tenant_id, entry_point_slug, status, started_at, events_transport); tenant_id is a plain string (NOT NULL) |
-| `TestCreateRun_eventsTransportByMode` | events_transport derived from RunEventsMode: pubsub→"pubsub", dual/streams→"streams" (Phase 11c-B) |
-| `TestCreateRun_explicitTransportOverridesMode` | non-empty `run.EventsTransport` overrides the configured mode |
+| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with 6-arg signature (id, tenant_id, entry_point_slug, status, started_at, events_transport); tenant_id is a plain string (NOT NULL); events_transport defaults to "streams" |
+| `TestCreateRun_defaultsToStreams` | empty `run.EventsTransport` → events_transport stamped "streams" (Go worker always writes Redis Streams; Python retired) |
+| `TestCreateRun_explicitTransportPreserved` | non-empty `run.EventsTransport` written verbatim |
 | `TestUpdateRunStatus_withErrorMessage` | `UPDATE` sets `status` and `error` (column is "error", not "error_message") |
 | `TestUpdateRunStatus_completed` | Completed run → empty error string |
 | `TestRecordUsage_insertsCorrectly` | `INSERT INTO them.run_usage` correct args |
@@ -511,10 +510,10 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestSSENoTemporalReturns503` | Temporal nil → Lifecycle.Start returns error → SSE error event (headers already sent) |
 | `TestSSE_RunStoresTenantID` | R-5: CreateRun receives TenantID/ApplicationID from EPConfig; WorkflowInput fields overwritten by Lifecycle.Start |
 | `TestSSE_ClientTenantHeaderIgnored` | R-5: X-Tenant-ID header cannot override server-resolved TenantID |
-| `TestSSE_EventsTransportDerivedFromMode` | EventsTransport set on run from RunEventsMode (default → "pubsub") |
+| `TestSSE_EventsTransportIsStreams` | Admit leaves handle.EventsTransport empty so the recorder stamps "streams" (Streams-only; Python retired) |
 | `TestSSE_LifecycleCallSequence` | gate.Check + CreateRun + ExecuteWorkflow all called; gate.Release called on cleanup |
 | `TestSSE_MissingMessage` | Missing ?message= → 400 before any Lifecycle call |
-| `TestSSE_RunStreamSubscribedBeforeStart` | R-5.2: runEvents subscribe called BEFORE ExecuteWorkflow (bootstrap ordering invariant) |
+| `TestSSE_RunStreamOpenedBeforeStart` | runEvents (StreamFromRedis) opened BEFORE ExecuteWorkflow; events flow to client (durable stream replays from 0-0) |
 | `TestSSE_IDsAreUUIDv4` | All run/session/context IDs are UUID v4 (Python worker requires uuid.UUID() parsing) |
 
 **Trigger:** any change to `internal/sse/handler.go` or `internal/execution/lifecycle.go`
@@ -755,62 +754,31 @@ The behavioural contract of `auth.RedisClient` is exercised in S1-05 via `mockRe
 
 ---
 
-### S1-20 · RunStream Redis adapter — `internal/cache/runstream_adapter_test.go`
+### S1-20 · RunStream Redis Streams adapters — `internal/cache/runstreamer_adapter.go`, `runstreamer_writer_adapter.go`
 
-**Purpose:** Compile-time interface satisfaction check — `*RunStreamRedisClient` implements `runstream.Subscriber`.
-The Streams reader adapter `*RunStreamerRedisClient` (`internal/cache/runstreamer_adapter.go`) satisfies
-`runstream.RedisStreamer` via a compile-time assertion in that file; exercised end-to-end by S1-24 integration.
-The Streams writer adapter `*RunStreamerWriterRedisClient` (`internal/cache/runstreamer_writer_adapter.go`)
-satisfies `runstream.StreamPublisher` via a compile-time assertion in that file (R-2C Phase 3).
+**Purpose:** Compile-time interface satisfaction checks for the Streams-only transport.
+The Streams reader adapter `*RunStreamerRedisClient` satisfies `runstream.RedisStreamer`
+(XRange/XRangeN/XRead) via a compile-time assertion in that file; exercised end-to-end by the
+S1-23/S2-03 integration tests. The Streams writer adapter `*RunStreamerWriterRedisClient`
+satisfies `runstream.StreamPublisher` (XAdd) via a compile-time assertion in that file (R-2C Phase 3).
 
-| Test | What it proves |
-|---|---|
-| `TestRunStreamRedisClient_ImplementsInterface` | `*RunStreamRedisClient` satisfies `runstream.Subscriber` at compile time |
+The former pub/sub subscriber adapter (`RunStreamRedisClient` / `runstream_adapter.go`) was removed
+with the pub/sub transport — Python is retired and the Go worker always writes to Redis Streams.
 
-**Trigger:** any change to `internal/cache/runstream_adapter.go`, `internal/cache/runstreamer_adapter.go`, or `internal/cache/runstreamer_writer_adapter.go`
-
----
-
-### S1-21 · Run stream — `internal/runstream/stream_test.go`
-
-**Purpose:** Redis pub/sub stream with reconnect. Go pre-generates runID and subscribes to
-`them:dash:run:{runID}:tokens` before workflow start. Terminal events close the output channel
-immediately. Transient Redis disconnects trigger bounded exponential backoff reconnect (up to
-`ReconnectMaxAttempts=6`, `ReconnectBaseDelay=100ms` → `ReconnectMaxDelay=3200ms`).
-At-most-once delivery: events missed during a reconnect gap are lost, not replayed.
-
-| Test | What it proves |
-|---|---|
-| `TestStream_ForwardsMessages` | Messages forwarded with correct Type; channel closes on terminal event |
-| `TestStream_TerminalDoneClosesImmediately` | `"done"` event closes output channel without waiting for source to close |
-| `TestStream_TerminalErrorClosesImmediately` | `"error"` event (max_iterations=0 path) also closes immediately |
-| `TestStream_ContextCancel` | Context cancelled → output closes promptly |
-| `TestStream_ReconnectOnSourceClose` | Source closes without terminal → reconnect → resumes delivery from second subscription |
-| `TestStream_ContextCancelDuringBackoff` | ctx cancel during backoff wait → clean exit, no further attempts |
-| `TestStream_ReconnectExhaustionEmitsOneError` | All 6 attempts fail → exactly one synthetic `error` event emitted |
-| `TestStream_NoDuplicateTerminalEvent` | Second terminal in source not delivered — Stream already closed after first |
-| `TestStream_NoGoroutineLeak` | Goroutine exits cleanly after terminal event path |
-| `TestStream_TerminalAfterReconnectNoFurtherAttempts` | Terminal event after reconnect stops further reconnect attempts |
-
-**Prometheus counters exposed:**
-- `them_runstream_disconnects_total`
-- `them_runstream_reconnect_attempts_total`
-- `them_runstream_reconnect_success_total`
-- `them_runstream_reconnect_failure_total`
-
-**Trigger:** any change to `internal/runstream/stream.go`
+**Trigger:** any change to `internal/cache/runstreamer_adapter.go` or `internal/cache/runstreamer_writer_adapter.go`
 
 ---
 
-### S1-23 · Run stream Streamer (Redis Streams read/replay + publisher) — `internal/runstream/streamer_test.go`, `dispatcher_test.go`, `publisher_test.go`
+### S1-23 · Run stream Streamer (Redis Streams read/replay + publisher) — `internal/runstream/streamer_test.go`, `publisher_test.go`
 
-**Purpose:** Phase 11c-B durable event delivery. `StreamFromRedis` replays history from a
-client-supplied `last_event_id` via XRANGE, then transitions to live XREAD BLOCK using a
-**continuous cursor** (resume from the last replayed entry ID, not `$`) so no entry is dropped
-at the replay→live boundary. `Dispatcher` picks Pub/Sub vs Streams from `RUN_EVENTS_MODE` × the
-run's `events_transport` value — never inferred from key existence or timing.
-`PublishEvent` (R-2C Phase 3) writes events to Redis Streams cross-process; `publisher_test.go`
-verifies key format, JSON structure, nil-safety, and round-trip compatibility with `decodeEntry`.
+**Purpose:** Durable, Streams-only event delivery. The Go worker always writes run events to
+`them:dash:run:{runID}:stream`; the bridge reads them back with `StreamFromRedis`, which replays
+history from a client-supplied `last_event_id` via XRANGE, then transitions to live XREAD BLOCK
+using a **continuous cursor** (resume from the last replayed entry ID, not `$`) so no entry is
+dropped at the replay→live boundary. `PublishEvent` (R-2C Phase 3) writes events to Redis Streams
+cross-process; `publisher_test.go` verifies key format, JSON structure, nil-safety, and round-trip
+compatibility with `decodeEntry`. The pub/sub `Dispatcher`/`Subscriber`/`Stream` transport and the
+`RUN_EVENTS_MODE` mode selection were removed — there is no per-run transport switching.
 
 **Streamer tests (`streamer_test.go`):**
 
@@ -826,24 +794,11 @@ verifies key format, JSON structure, nil-safety, and round-trip compatibility wi
 | `TestStreamFromRedis_ContextCancelStops` | ctx cancel during live block → goroutine exits, channel closes |
 | `TestStreamFromRedis_MultiPodSafety` | two concurrent readers for the same run each keep their own cursor |
 
-**Dispatcher tests (`dispatcher_test.go`):**
-
-| Test | What it proves |
-|---|---|
-| `TestDispatcher_PubsubMode_AlwaysPubsub` | mode=pubsub → Pub/Sub regardless of events_transport |
-| `TestDispatcher_DualMode_StreamsRun` | mode=dual + events_transport=streams → Streams |
-| `TestDispatcher_DualMode_LegacyRun` | mode=dual + events_transport=pubsub → Pub/Sub (legacy run) |
-| `TestDispatcher_StreamsMode_StreamsRun` | mode=streams + events_transport=streams → Streams |
-| `TestDispatcher_StreamsMode_LegacyRow` | mode=streams + events_transport=pubsub → Pub/Sub (legacy row, not forced) |
-| `TestDispatcher_PubsubMode_ModeTakesPrecedence` | mode=pubsub + events_transport=streams → Pub/Sub (mode wins) |
-
 **Prometheus metrics exposed (`metrics.go`):**
-- `them_runstream_xadd_total`
 - `them_runstream_xadd_errors_total`
 - `them_runstream_replay_sessions_total`
 - `them_runstream_replay_events_total`
 - `them_runstream_replay_unavailable_total`
-- `them_runstream_mode` (gauge: 0=pubsub, 1=dual, 2=streams)
 
 **Publisher tests (`publisher_test.go` — R-2C Phase 3):**
 
@@ -859,7 +814,7 @@ verifies key format, JSON structure, nil-safety, and round-trip compatibility wi
 **Integration (`streamer_integration_test.go`, `//go:build integration`):** writes real events to a
 Redis stream via XADD, verifies replay + live delivery + terminal close against a live Redis.
 
-**Trigger:** any change to `internal/runstream/streamer.go`, `publisher.go`, `dispatcher.go`, `metrics.go`, `streamid.go`, `internal/cache/runstreamer_adapter.go`, or `internal/cache/runstreamer_writer_adapter.go`
+**Trigger:** any change to `internal/runstream/streamer.go`, `publisher.go`, `stream.go`, `metrics.go`, `streamid.go`, `internal/cache/runstreamer_adapter.go`, or `internal/cache/runstreamer_writer_adapter.go`
 
 ---
 
@@ -1369,74 +1324,6 @@ go test -tags=integration -v ./...
 
 ---
 
-### S2-02 · Hybrid Temporal integration — `internal/temporal/hybrid_integration_test.go`
-
-**Purpose:** End-to-end Go↔Python Temporal single-phase architecture with real Temporal server, Redis, and PostgreSQL.
-Verifies the canonical design: Go pre-generates runID, subscribes to `them:dash:run:{runID}:tokens` before
-`ExecuteWorkflow`, passes runID in `PythonOrchestrationInput.RunID`, and Python uses that exact ID for all
-publish calls. No context-channel bootstrap handshake. Seeds minimal DB rows (orchestrator with
-`max_iterations=0`, one agent) — no LLM calls needed.
-
-**Required infrastructure:**
-- Temporal server at `$TEMPORAL_HOST_PORT` (default: `localhost:17233` on integration overlay)
-- PostgreSQL at `$TEST_POSTGRES_DSN` (default: `host=localhost port=15432 dbname=them user=them password=them_secret sslmode=disable`)
-- Redis at `$TEST_REDIS_ADDR` (default: `localhost:16379`)
-- Python Temporal worker running and polling `them-orchestration` task queue
-
-**ID format constraint:** All IDs (runID, sessionID, contextID) are UUID v4 strings.
-Python's `init_run_activity` calls `uuid.UUID(run_id)` — non-UUID strings raise `ValueError`.
-`newID()` and `newRunID()` use `github.com/google/uuid`.
-
-**Slug constraint:** `agents.slug` must match `^[a-z0-9_]{1,48}$` — no hyphens. Test data uses
-`integ_orch_{nanos}` / `integ_agent_{nanos%1_000_000_000}` to satisfy this constraint.
-
-**Terminal event semantics:** With `max_iterations=0`, Python workflow status is `"stopped"` and
-`finalize_run` publishes `{"type":"error","message":"Reached max iterations (0)"}`.
-`{"type":"done"}` is only published when `status=="completed"`.
-Tests T3, T4, T8 accept EITHER `"done"` OR `"error"` as the valid terminal event.
-
-| Test | What it proves |
-|---|---|
-| `TestHybrid_GoProvidedRunIDPreservedEndToEnd` | UUID runID passed in `PythonOrchestrationInput.RunID` appears in the `them.runs` DB row — Python did not generate a different UUID |
-| `TestHybrid_DirectSubscriptionBeforeWorkflowStart` | Subscribe to `:tokens` before `ExecuteWorkflow` → receive at least one event; invariant holds |
-| `TestHybrid_NoContextChannelHandshake` | Terminal event (`done` or `error`) received on direct `{runID}:tokens` channel with NO `:ctx` subscription — single-phase architecture is complete |
-| `TestHybrid_FirstAndTerminalEventsNotLost` | Terminal event received; timestamps prove subscribe happened before workflow start → no race |
-| `TestHybrid_FullWireFormatAccepted` | All `PythonOrchestrationInput` fields (including `RunID`) serialise correctly; Python accepts without error |
-| `TestHybrid_CancelPropagates` | `CancelWorkflow` causes workflow to end (COMPLETED/CANCELED/TERMINATED) — not stuck |
-| `TestHybrid_PythonNativeCallWithoutRunID` | Input without `RunID` → Python falls back to `workflow.uuid4()` and returns a different run_id — backward compat confirmed |
-| `TestHybrid_RunIDPassedMatchesPublishedChannel` | Terminal event received on the Go-provided runID channel; `run_id` field present in `done` payload, absent in `error` payload |
-
-**Start infrastructure (one command):**
-```bash
-./scripts/run-go-integration-tests.sh
-```
-
-**Manual start:**
-```bash
-docker compose -f docker-compose.yml -f docker-compose.hetzner.yml --profile temporal up -d
-```
-
-**Run command:**
-```powershell
-$env:TEST_POSTGRES_DSN="host=localhost port=15432 dbname=them user=them password=them_secret sslmode=disable"
-$env:TEST_REDIS_ADDR="localhost:16379"
-$env:TEMPORAL_HOST_PORT="localhost:17233"
-go test -tags=integration -v -timeout 120s ./internal/temporal/...
-```
-
-**Manual smoke tests (full hybrid stack with Go gateway container):**
-```bash
-# Start full stack including them-go-bridge on port 8002
-docker compose -f docker-compose.yml -f docker-compose.hetzner.yml --profile temporal up -d --build
-
-# Run smoke tests (from repo root)
-python3 go/scripts/smoke_test_go_gateway.py --token <tok> --app <app_slug> --ep <ep_slug>
-```
-
-**Trigger:** any change to `internal/temporal/`, `internal/runstream/`, `internal/ws/id.go`, `internal/sse/handler.go` (newID), `docker-compose.hetzner.yml`
-
----
-
 ### S2-03 · runstream MAXLEN + reconnect + cross-replica — `internal/runstream/maxlen_integration_test.go`
 
 **Purpose:** Phase 11c-C live soak validation. MAXLEN boundary correctness, WS cursor resume
@@ -1583,7 +1470,7 @@ If a test is added without updating this index, the PR should not be merged.
 
 | Suite | Package | Tests |
 |---|---|---|
-| S1-01 | config | 18 |
+| S1-01 | config | 19 |
 | S1-02 | health | 5 |
 | S1-03 | server | 4 |
 | S1-04 | auth/jwt | 9 |
@@ -1602,10 +1489,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
 | S1-19 | cache | 1 |
-| S1-20 | cache (runstream adapter) | 1 |
-| S1-21 | runstream (pub/sub) | 10 |
+| S1-20 | cache (runstream streams adapters) | 0 (compile-time asserts) |
 | S1-22 | reconciler | 15 |
-| S1-23 | runstream (streamer + dispatcher + publisher) | 21 |
+| S1-23 | runstream (streamer + publisher) | 15 |
 | S1-24 | cmd/them (apps dispatcher) | 5 |
 | S1-25 | admin/service | 69 |
 | S1-26 | crypto (fernet) | 32 |
@@ -1625,13 +1511,12 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |
 | S1-44 | admin definitions publish (Phase C: PublishDefinition) | 12 |
 | S1-45 | admin registry handler (Phase D: ListComponentDefinitions) | 1 |
-| **S1 total** | | **622** |
+| **S1 total** | | **607** |
 | S2-01 | integration | 4 |
-| S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
 | S2-03 (MAXLEN) | runstream MAXLEN + reconnect + cross-replica | 7 |
 | S2-04 | admin tokens + sessions integration | 11 |
 | S2-05 | admin/dal llm_providers integration | 11 |
-| **S2 total** | | **42** |
+| **S2 total** | | **34** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **633** |
+| **`go test ./...` total** | | **618** |

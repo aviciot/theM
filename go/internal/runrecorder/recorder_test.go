@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aviciot/them/internal/config"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -119,45 +118,33 @@ func TestCreateRun_callsCorrectSQL(t *testing.T) {
 	assert.Equal(t, "ws-chat", call.args[2])
 	assert.Equal(t, "running", call.args[3])
 	assert.Equal(t, now, call.args[4])
-	// Default mode (pubsub) → events_transport "pubsub".
-	assert.Equal(t, "pubsub", call.args[5])
+	// The Go worker always writes to Redis Streams → events_transport "streams".
+	assert.Equal(t, "streams", call.args[5])
 }
 
-// TestCreateRun_eventsTransportByMode verifies that the events_transport column
-// value is derived from the configured RunEventsMode (Phase 11c-B):
-// pubsub → "pubsub"; dual → "streams"; streams → "streams".
-func TestCreateRun_eventsTransportByMode(t *testing.T) {
-	cases := []struct {
-		mode config.RunEventsMode
-		want string
-	}{
-		{config.RunEventsModePublish, "pubsub"},
-		{config.RunEventsModeDual, "streams"},
-		{config.RunEventsModeStreams, "streams"},
-	}
-	for _, tc := range cases {
-		t.Run(string(tc.mode), func(t *testing.T) {
-			db := &mockDB{}
-			rec := New(db).WithRunEventsMode(tc.mode)
-			// TenantID required (NOT NULL column).
-			err := rec.CreateRun(context.Background(), domain.Run{
-				ID:        "r",
-				TenantID:  "00000000-0000-0000-0000-000000000001",
-				StartedAt: time.Now(),
-			})
-			require.NoError(t, err)
-			require.Len(t, db.calls, 1)
-			// events_transport is arg[5]: id, tenant_id, entry_point_slug, status, started_at, events_transport.
-			assert.Equal(t, tc.want, db.calls[0].args[5])
-		})
-	}
-}
-
-// TestCreateRun_explicitTransportOverridesMode verifies that a non-empty
-// run.EventsTransport takes precedence over the configured mode.
-func TestCreateRun_explicitTransportOverridesMode(t *testing.T) {
+// TestCreateRun_defaultsToStreams verifies that a run with no explicit
+// EventsTransport records events_transport="streams" — the only transport now
+// that Python is retired and the Go worker always writes to Redis Streams.
+func TestCreateRun_defaultsToStreams(t *testing.T) {
 	db := &mockDB{}
-	rec := New(db).WithRunEventsMode(config.RunEventsModePublish)
+	rec := New(db)
+	err := rec.CreateRun(context.Background(), domain.Run{
+		ID:        "r",
+		TenantID:  "00000000-0000-0000-0000-000000000001",
+		StartedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	require.Len(t, db.calls, 1)
+	// events_transport is arg[5]: id, tenant_id, entry_point_slug, status, started_at, events_transport.
+	assert.Equal(t, "streams", db.calls[0].args[5])
+}
+
+// TestCreateRun_explicitTransportPreserved verifies that a non-empty
+// run.EventsTransport is written verbatim (defensive: callers normally leave it
+// empty so the recorder stamps "streams").
+func TestCreateRun_explicitTransportPreserved(t *testing.T) {
+	db := &mockDB{}
+	rec := New(db)
 	err := rec.CreateRun(context.Background(), domain.Run{
 		ID:              "r",
 		TenantID:        "00000000-0000-0000-0000-000000000001",
