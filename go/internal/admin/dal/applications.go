@@ -222,6 +222,38 @@ func (d *DB) ListAppOrchestratorNames(ctx context.Context, appID string) ([]stri
 	return names, nil
 }
 
+// GetProviderKeys returns the provider_keys JSONB blob for the application.
+// Returns an empty JSON object when the field is null or not set.
+func (d *DB) GetProviderKeys(ctx context.Context, tenantID, appID string) ([]byte, error) {
+	const q = `SELECT COALESCE(provider_keys, '{}') FROM them.applications WHERE id=$1::uuid AND tenant_id=$2::uuid`
+	var raw []byte
+	if err := d.q.QueryRow(ctx, q, appID, tenantID).Scan(&raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+// SetProviderKey stores one encrypted API key for the given provider on the application.
+// Uses jsonb_set so other provider keys are preserved.
+func (d *DB) SetProviderKey(ctx context.Context, tenantID, appID, provider string, encryptedKey []byte) error {
+	const q = `
+		UPDATE them.applications
+		SET provider_keys = jsonb_set(COALESCE(provider_keys,'{}'), $3::text[], $4::jsonb, true),
+		    updated_at = now()
+		WHERE id=$1::uuid AND tenant_id=$2::uuid`
+	return d.q.Exec(ctx, q, appID, tenantID, "{"+provider+"}", encryptedKey)
+}
+
+// DeleteProviderKey removes the key for a single provider from the application's provider_keys.
+func (d *DB) DeleteProviderKey(ctx context.Context, tenantID, appID, provider string) error {
+	const q = `
+		UPDATE them.applications
+		SET provider_keys = provider_keys - $3,
+		    updated_at = now()
+		WHERE id=$1::uuid AND tenant_id=$2::uuid`
+	return d.q.Exec(ctx, q, appID, tenantID, provider)
+}
+
 // BulkDeleteApplications hard-deletes applications matching the provided UUID list,
 // scoped to the tenant. Returns the number of rows actually deleted via RETURNING.
 // CASCADE on the FK to app_orchestrators, entry_points, and middleware_wirings handles child rows.

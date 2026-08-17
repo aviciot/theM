@@ -570,6 +570,10 @@ export const themApi = {
   disconnectSession: (sessionId: string) => api.post<{ session_id: string; signal_delivered: boolean }>(`/admin/sessions/${sessionId}/disconnect`, {}),
   getAppRuntime: (appId: string) => api.get<Application>(`/admin/applications/${appId}`).then(a => a.runtime_config ?? { max_concurrent_sessions: null, rate_limit_rpm: null, blocked_tokens: [], blocked_user_ids: [], session_timeout_minutes: null }),
   putAppRuntime: (appId: string, config: AppRuntimeConfig) => api.put<AppRuntimeConfig>(`/admin/applications/${appId}/runtime`, config),
+  getProviderKeys: (appId: string) => api.get<{ provider: string; key_set: boolean; key_hint?: string }[]>(`/admin/applications/${appId}/provider-keys`),
+  setProviderKey: (appId: string, provider: string, key: string) => api.put<{ provider: string; updated: boolean }>(`/admin/applications/${appId}/provider-keys/${provider}`, { key }),
+  deleteProviderKey: (appId: string, provider: string) => api.delete<{ provider: string; deleted: boolean }>(`/admin/applications/${appId}/provider-keys/${provider}`),
+  testAppLlm: (appId: string, provider: string, model: string) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/test-llm`, { provider, model }),
   getMonitoringConfig: () => api.get<MonitoringConfig>('/admin/monitoring-config'),
   putMonitoringConfig: (body: MonitoringConfig) => api.put<MonitoringConfig>('/admin/monitoring-config', body),
   // Live reachability check for a deployed application slug

@@ -342,6 +342,9 @@ func (f *isolationFakeDal) ListAppOrchestratorNames(_ context.Context, _ string)
 func (f *isolationFakeDal) BulkDeleteApplications(_ context.Context, _ string, _ []string) (int64, error) {
 	return 0, nil
 }
+func (f *isolationFakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte, error)       { return []byte(`{}`), nil }
+func (f *isolationFakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []byte) error     { return nil }
+func (f *isolationFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error            { return nil }
 func (f *isolationFakeDal) CancelRun(_ context.Context, _, _ string) (dal.Run, error) {
 	return dal.Run{}, nil
 }

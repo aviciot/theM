@@ -1,9 +1,13 @@
 package admin
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -40,6 +44,10 @@ func (h *ApplicationsHandler) Routes(r chi.Router) {
 	r.Patch("/applications/{id}", h.Update) // Python frontend sends PATCH; accept both
 	r.Delete("/applications/{id}", h.Delete)
 	r.Put("/applications/{id}/runtime", h.PutRuntime)
+	r.Get("/applications/{id}/provider-keys", h.GetProviderKeys)
+	r.Put("/applications/{id}/provider-keys/{provider}", h.SetProviderKey)
+	r.Delete("/applications/{id}/provider-keys/{provider}", h.DeleteProviderKey)
+	r.Post("/applications/{id}/test-llm", h.TestLLM)
 
 	r.Post("/applications/{id}/entry-points", h.CreateEntryPoint)
 	r.Put("/applications/{id}/entry-points/{ep_id}", h.UpdateEntryPoint)
@@ -232,6 +240,192 @@ func (h *ApplicationsHandler) PutRuntime(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, cfg)
+}
+
+// GetProviderKeys handles GET /api/v1/admin/applications/{id}/provider-keys.
+// Returns key-set status per provider — never the plaintext key.
+func (h *ApplicationsHandler) GetProviderKeys(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	keys, err := h.svc.GetProviderKeys(r.Context(), tenantID, id)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get provider keys")
+		return
+	}
+	writeJSON(w, http.StatusOK, keys)
+}
+
+// SetProviderKey handles PUT /api/v1/admin/applications/{id}/provider-keys/{provider}.
+// Body: {"key": "<plaintext api key>"}
+func (h *ApplicationsHandler) SetProviderKey(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	provider := chi.URLParam(r, "provider")
+	if id == "" || provider == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id or provider")
+		return
+	}
+	var body struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if err := h.svc.SetProviderKey(r.Context(), tenantID, id, provider, body.Key); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "set provider key")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"provider": provider, "updated": true})
+}
+
+// DeleteProviderKey handles DELETE /api/v1/admin/applications/{id}/provider-keys/{provider}.
+func (h *ApplicationsHandler) DeleteProviderKey(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	provider := chi.URLParam(r, "provider")
+	if id == "" || provider == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id or provider")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if err := h.svc.DeleteProviderKey(r.Context(), tenantID, id, provider); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "delete provider key")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"provider": provider, "deleted": true})
+}
+
+// TestLLM handles POST /api/v1/admin/applications/{id}/test-llm.
+// Body: {"provider": "anthropic", "model": "claude-haiku-4-5-20251001"}
+// Reads the stored key from provider_keys, fires a minimal probe request, returns latency.
+func (h *ApplicationsHandler) TestLLM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+
+	var body struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if body.Provider == "" || body.Model == "" {
+		writeError(w, http.StatusBadRequest, "provider and model are required")
+		return
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	raw, err := h.svc.GetProviderKeys(r.Context(), tenantID, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "application not found")
+		return
+	}
+	// raw is []ProviderKeyOut — we need the plaintext key; call DAL directly via svc
+	apiKey, err := h.svc.GetPlaintextProviderKey(r.Context(), tenantID, id, body.Provider)
+	if err != nil || apiKey == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "No API key stored for " + body.Provider + " — save one in Runtime settings first"})
+		return
+	}
+	_ = raw // used above only for not-found check
+
+	start := time.Now()
+	ok, testErr := probeLLM(r.Context(), body.Provider, body.Model, apiKey)
+	latency := time.Since(start).Milliseconds()
+
+	if ok {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "latency_ms": latency})
+	} else {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": testErr})
+	}
+}
+
+// probeLLM fires a minimal single-message request to validate the provider key.
+func probeLLM(ctx context.Context, provider, model, apiKey string) (bool, string) {
+	switch provider {
+	case "anthropic":
+		return probeAnthropic(ctx, model, apiKey)
+	case "openai":
+		return probeOpenAI(ctx, model, apiKey)
+	case "groq":
+		return probeOpenAICompat(ctx, model, apiKey, "https://api.groq.com/openai/v1/chat/completions")
+	case "gemini":
+		return probeGemini(ctx, model, apiKey)
+	default:
+		return false, "unsupported provider: " + provider
+	}
+}
+
+func probeAnthropic(ctx context.Context, model, apiKey string) (bool, string) {
+	payload := map[string]any{
+		"model":      model,
+		"max_tokens": 1,
+		"messages":   []map[string]any{{"role": "user", "content": "hi"}},
+	}
+	b, _ := json.Marshal(payload)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	return doProbe(req)
+}
+
+func probeOpenAI(ctx context.Context, model, apiKey string) (bool, string) {
+	return probeOpenAICompat(ctx, model, apiKey, "https://api.openai.com/v1/chat/completions")
+}
+
+func probeOpenAICompat(ctx context.Context, model, apiKey, url string) (bool, string) {
+	payload := map[string]any{
+		"model":      model,
+		"max_tokens": 1,
+		"messages":   []map[string]any{{"role": "user", "content": "hi"}},
+	}
+	b, _ := json.Marshal(payload)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	return doProbe(req)
+}
+
+func probeGemini(ctx context.Context, model, apiKey string) (bool, string) {
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
+	payload := map[string]any{
+		"contents": []map[string]any{{"parts": []map[string]any{{"text": "hi"}}}},
+	}
+	b, _ := json.Marshal(payload)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	return doProbe(req)
+}
+
+func doProbe(req *http.Request) (bool, string) {
+	c := &http.Client{Timeout: 15 * time.Second}
+	resp, err := c.Do(req)
+	if err != nil {
+		return false, err.Error()
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		return true, ""
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	return false, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body))
 }
 
 // BulkDelete handles POST /api/v1/admin/applications/bulk-delete.

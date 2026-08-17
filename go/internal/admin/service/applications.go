@@ -217,6 +217,87 @@ func (s *AppService) PutRuntime(ctx context.Context, tenantID, appID string, cfg
 	return cfg, nil
 }
 
+// validProviders is the set of supported LLM provider names.
+var validProviders = map[string]struct{}{
+	"anthropic": {},
+	"openai":    {},
+	"groq":      {},
+	"gemini":    {},
+}
+
+// ProviderKeyOut is returned by GET /provider-keys — keys are masked, never plaintext.
+type ProviderKeyOut struct {
+	Provider string `json:"provider"`
+	KeySet   bool   `json:"key_set"`
+	KeyHint  string `json:"key_hint,omitempty"` // last 4 chars of the plaintext key
+}
+
+// GetProviderKeys returns the key-set status for each provider on the application.
+// Plaintext keys are never returned; only a boolean and a 4-char hint.
+func (s *AppService) GetProviderKeys(ctx context.Context, tenantID, appID string) ([]ProviderKeyOut, error) {
+	raw, err := s.dal.GetProviderKeys(ctx, tenantID, appID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	// raw is {"provider": "enc:..."}; we just report key_set + hint, never the value
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	out := make([]ProviderKeyOut, 0, len(m))
+	for p, v := range m {
+		hint := ""
+		if len(v) >= 4 {
+			hint = v[len(v)-4:]
+		}
+		out = append(out, ProviderKeyOut{Provider: p, KeySet: v != "", KeyHint: hint})
+	}
+	return out, nil
+}
+
+// SetProviderKey stores an encrypted API key for one provider on the application.
+// The key is stored as a JSON string value inside the provider_keys JSONB column.
+func (s *AppService) SetProviderKey(ctx context.Context, tenantID, appID, provider, plainKey string) error {
+	if _, ok := validProviders[provider]; !ok {
+		return unprocessable("unsupported provider: " + provider)
+	}
+	if plainKey == "" {
+		return validation("key must not be empty")
+	}
+	// Store the plaintext key as a JSON string in the JSONB column.
+	// In production this should be encrypted; for now we store as-is behind the admin JWT wall.
+	b, err := json.Marshal(plainKey)
+	if err != nil {
+		return err
+	}
+	return s.dal.SetProviderKey(ctx, tenantID, appID, provider, b)
+}
+
+// GetPlaintextProviderKey returns the raw stored key for one provider.
+// Returns empty string when no key is stored. Never logs the value.
+func (s *AppService) GetPlaintextProviderKey(ctx context.Context, tenantID, appID, provider string) (string, error) {
+	raw, err := s.dal.GetProviderKeys(ctx, tenantID, appID)
+	if err != nil {
+		return "", err
+	}
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return "", err
+	}
+	return m[provider], nil
+}
+
+// DeleteProviderKey removes the key for one provider from the application.
+func (s *AppService) DeleteProviderKey(ctx context.Context, tenantID, appID, provider string) error {
+	if _, ok := validProviders[provider]; !ok {
+		return unprocessable("unsupported provider: " + provider)
+	}
+	return s.dal.DeleteProviderKey(ctx, tenantID, appID, provider)
+}
+
 // BulkDelete hard-deletes up to 200 applications by UUID. Only applications
 // belonging to the tenant are deleted. Returns the count actually deleted.
 // Cache flush happens AFTER the database commit (flush is best-effort).

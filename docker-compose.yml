@@ -1012,7 +1012,7 @@ services:
       - "traefik.http.routers.them-go-eps-writes.priority=115"
       - "traefik.http.routers.them-go-eps-writes.service=them-go-bridge-svc"
       # ── Wave 8: applications sub-routes ───────────────────────────────────────
-      - "traefik.http.routers.them-go-apps-subroutes.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/.+$$`) && (Method(`PUT`) || Method(`POST`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-apps-subroutes.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/.+$$`) && (Method(`GET`) || Method(`PUT`) || Method(`POST`) || Method(`PATCH`) || Method(`DELETE`))"
       - "traefik.http.routers.them-go-apps-subroutes.entrypoints=web"
       - "traefik.http.routers.them-go-apps-subroutes.priority=115"
       - "traefik.http.routers.them-go-apps-subroutes.service=them-go-bridge-svc"

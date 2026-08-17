@@ -843,7 +843,7 @@ const EP_META: Record<string, { emoji: string; title: string; desc: string; colo
 const MODELS_BY_PROVIDER: Record<string, string[]> = {
   anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
   openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o3-mini'],
-  groq:      ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+  groq:      ['moonshotai/kimi-k2-instruct', 'llama-3.3-70b-versatile', 'llama3-70b-8192', 'llama3-8b-8192', 'gemma2-9b-it'],
   gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro'],
 };
 const PROVIDER_OPTIONS = ['anthropic', 'openai', 'groq', 'gemini'];
@@ -1428,7 +1428,7 @@ function PropertiesPanel({
             const ORCH_PROVIDERS: Record<string, string[]> = {
               anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
               openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o3-mini'],
-              groq:      ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+              groq:      ['moonshotai/kimi-k2-instruct', 'llama-3.3-70b-versatile', 'llama3-70b-8192', 'llama3-8b-8192', 'gemma2-9b-it'],
               gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro'],
             };
             const CUSTOM = '__custom__';
@@ -2914,7 +2914,19 @@ function CanvasBuilderView({
   const [configPanelText, setConfigPanelText] = useState('{}');
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
   const [configPanelErr, setConfigPanelErr] = useState(false);
-  const [llmTestState, setLlmTestState] = useState<{ loading: boolean; ok?: boolean; latency?: number; error?: string }>({ loading: false });
+  const [llmTestState, setLlmTestState] = useState<Record<string, { loading: boolean; ok?: boolean; latency?: number; error?: string }>>({});
+  const [providerKeyStatuses, setProviderKeyStatuses] = useState<Record<string, boolean>>({});
+
+  const refreshProviderKeys = () => {
+    themApi.getProviderKeys(app.id)
+      .then(keys => {
+        const m: Record<string, boolean> = {};
+        keys.forEach(k => { m[k.provider] = k.key_set; });
+        setProviderKeyStatuses(m);
+      })
+      .catch(() => {});
+  };
+  useEffect(() => { refreshProviderKeys(); }, [app.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Canvas state
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -2926,7 +2938,7 @@ function CanvasBuilderView({
       setConfigPanelText(JSON.stringify((selectedNode.data as unknown as AgentNodeData | MwNodeData).config, null, 2));
       setConfigPanelErr(false);
     }
-    setLlmTestState({ loading: false });
+    setLlmTestState({});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNode?.id, selectedNode?.type]);
 
@@ -2952,18 +2964,14 @@ function CanvasBuilderView({
     setLogoResult('none');
   }
 
-  async function testOrchLlm(provider: string, model: string) {
+  async function testOrchLlm(epId: string, provider: string, model: string) {
     if (!provider || !model) return;
-    setLlmTestState({ loading: true });
+    setLlmTestState(s => ({ ...s, [epId]: { loading: true } }));
     try {
-      // Borrow any existing orchestrator row as the API-key vehicle
-      const orchs = await themApi.orchestrators();
-      const orchId = orchs[0]?.id;
-      if (!orchId) { setLlmTestState({ loading: false, ok: false, error: 'No orchestrator found — create one in Orchestrators first' }); return; }
-      const res = await themApi.testLlm(orchId, { provider, model });
-      setLlmTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
+      const res = await themApi.testAppLlm(app.id, provider, model);
+      setLlmTestState(s => ({ ...s, [epId]: { loading: false, ok: res.ok, latency: res.latency_ms, error: res.error } }));
     } catch (e: unknown) {
-      setLlmTestState({ loading: false, ok: false, error: e instanceof Error ? e.message : 'Request failed' });
+      setLlmTestState(s => ({ ...s, [epId]: { loading: false, ok: false, error: e instanceof Error ? e.message : 'Request failed' } }));
     }
   }
 
@@ -3171,12 +3179,18 @@ function CanvasBuilderView({
 
     // ── orchestrator ─────────────────────────────────────────────────────────
     if (selectedNode.type === 'orchestrator') {
-      const d = selectedNode.data as unknown as OrchNodeData;
+      // Read from live nodes state — selectedNode.data is stale after setNodes
+      const liveNode = nodes.find(n => n.id === selectedNode.id);
+      const d = (liveNode?.data ?? selectedNode.data) as unknown as OrchNodeData;
       const isDelegatable = edges.some(e => e.target === selectedNode.id && nodes.find(n => n.id === e.source)?.type === 'orchestrator');
-      const isVoiceRoot = edges.some(e =>
-        e.target === selectedNode.id &&
-        (nodes.find(n => n.id === e.source)?.data as unknown as EpNodeData | undefined)?.protocol === 'voice'
-      );
+
+      // Connected EPs — one section per EP, keyed by instance_id
+      const connectedEps = edges
+        .filter(e => e.target === selectedNode.id)
+        .map(e => nodes.find(n => n.id === e.source))
+        .filter((n): n is Node => !!n && n.type === 'entryPoint')
+        .map(n => n.data as unknown as EpNodeData);
+      const hasVoice = connectedEps.some(ep => ep.protocol === 'voice');
 
       function setOrchConfig(patch: Record<string, unknown>) {
         setNodes(ns => ns.map(n => n.id === selectedNode!.id
@@ -3186,10 +3200,21 @@ function CanvasBuilderView({
         setLogoResult('none');
       }
 
-      const provider = (d.config.llm_provider as string) || 'anthropic';
-      const model = (d.config.llm_model as string) || '';
-      const knownModels = MODELS_BY_PROVIDER[provider] ?? [];
-      const isCustomModel = model !== '' && !knownModels.includes(model);
+      // Per-EP LLM config stored under config.ep_llm.<instance_id>.{provider,model}
+      function getEpLlm(epId: string) {
+        const epLlm = ((d.config.ep_llm ?? {}) as Record<string, { provider?: string; model?: string }>)[epId] ?? {};
+        return { provider: epLlm.provider || 'anthropic', model: epLlm.model || '' };
+      }
+      function setEpLlm(epId: string, patch: { provider?: string; model?: string }) {
+        const current = (d.config.ep_llm ?? {}) as Record<string, unknown>;
+        const existing = (current[epId] ?? {}) as Record<string, unknown>;
+        setOrchConfig({ ep_llm: { ...current, [epId]: { ...existing, ...patch } } });
+        setLlmTestState(s => { const n = { ...s }; delete n[epId]; return n; });
+      }
+
+      // EP icon + accent per protocol
+      const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
+      const EP_COLOR: Record<string, string> = { websocket: C.cyan, sse: C.cyan, webrtc: C.amber, a2a: '#f59e0b', voice: C.amber };
 
       const sttProvider = (d.config.stt_provider as string) || 'openai';
       const ttsProvider = (d.config.tts_provider as string) || 'openai';
@@ -3197,172 +3222,139 @@ function CanvasBuilderView({
 
       return (
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
-          {/* Section A — Identity */}
+          {/* Identity */}
           <div style={{ fontSize: 12, fontWeight: 700, color: C.purple, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Orchestrator</div>
-          <div>
-            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Instance ID</label>
-            <div style={chipStyle}>{d.instance_id}</div>
-          </div>
           <div>
             <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Display Name</label>
             <input style={fieldStyle} value={d.display_name} onChange={e => { setNodes(ns => ns.map(n => n.id === selectedNode!.id ? { ...n, data: { ...n.data, display_name: e.target.value } } : n)); setIsDirty(true); setLogoResult('none'); }} />
           </div>
-          <div>
-            <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 20, background: isDelegatable ? C.purpleBg : 'rgba(255,255,255,0.04)', color: isDelegatable ? C.purple : C.textMuted, border: `1px solid ${isDelegatable ? C.purpleBorder : 'rgba(255,255,255,0.1)'}` }}>
-              {isDelegatable ? 'Delegation target' : 'Not delegatable'}
-            </span>
-          </div>
+          {isDelegatable && (
+            <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: C.purpleBg, color: C.purple, border: `1px solid ${C.purpleBorder}`, alignSelf: 'flex-start' }}>Delegation target</span>
+          )}
 
-          {/* Section B — Brain */}
+          {/* Brain — system prompt, always visible */}
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
             <div style={{ ...sectionHdrStyle, marginBottom: 8 }}>Brain</div>
-            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>System Prompt</label>
             <textarea
               style={{ ...fieldStyle, minHeight: 90, resize: 'vertical', fontFamily: 'inherit' }}
               value={(d.config.system_prompt as string) ?? ''}
               onChange={e => setOrchConfig({ system_prompt: e.target.value })}
-              placeholder="System prompt..."
+              placeholder="System prompt…"
             />
           </div>
 
-          {/* Section C — Default Model */}
-          <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
-            <div style={{ ...sectionHdrStyle, marginBottom: 8 }}>Default Model</div>
-            <div style={{ marginBottom: 8 }}>
-              <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Provider</label>
-              <select
-                style={selectStyle}
-                value={provider}
-                onChange={e => { setOrchConfig({ llm_provider: e.target.value, llm_model: MODELS_BY_PROVIDER[e.target.value]?.[0] ?? '' }); setLlmTestState({ loading: false }); }}
-              >
-                {PROVIDER_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
+          {/* Per-EP LLM config — one section per connected entry point */}
+          {connectedEps.length === 0 ? (
+            <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: C.textMuted, fontSize: 12, textAlign: 'center' }}>
+              Connect an entry point to configure LLM settings
             </div>
-            <div style={{ marginBottom: 10 }}>
-              <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Model</label>
-              <select
-                style={selectStyle}
-                value={isCustomModel ? 'custom' : model}
-                onChange={e => { if (e.target.value === 'custom') setOrchConfig({ llm_model: '' }); else setOrchConfig({ llm_model: e.target.value }); setLlmTestState({ loading: false }); }}
-              >
-                {knownModels.map(m => <option key={m} value={m}>{m}</option>)}
-                <option value="custom">Custom…</option>
-              </select>
-              {isCustomModel && (
-                <input
-                  style={{ ...fieldStyle, marginTop: 6 }}
-                  value={model}
-                  onChange={e => { setOrchConfig({ llm_model: e.target.value }); setLlmTestState({ loading: false }); }}
-                  placeholder="Enter model id"
-                />
-              )}
-            </div>
-            {/* Test button */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <button
-                onClick={() => testOrchLlm(provider, model)}
-                disabled={llmTestState.loading || !provider || !model}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '6px 14px', borderRadius: 8,
-                  border: `1px solid ${C.purpleBorder}`,
-                  background: 'rgba(208,188,255,0.07)',
-                  color: (!provider || !model || llmTestState.loading) ? C.textMuted : C.purple,
-                  cursor: (!provider || !model || llmTestState.loading) ? 'not-allowed' : 'pointer',
-                  fontSize: 12, fontWeight: 600, transition: 'all 150ms',
-                }}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>bolt</span>
-                {llmTestState.loading ? 'Testing…' : 'Test connection'}
-              </button>
-              {!llmTestState.loading && llmTestState.ok === true && (
-                <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({llmTestState.latency}ms)</span>
-              )}
-              {!llmTestState.loading && llmTestState.ok === false && (
-                <span style={{ fontSize: 12, color: '#f87171' }}>✗ {llmTestState.error ?? 'Failed'}</span>
-              )}
-            </div>
-          </div>
+          ) : connectedEps.map(ep => {
+            const epColor = EP_COLOR[ep.protocol] ?? C.cyan;
+            const epIcon = EP_ICON[ep.protocol] ?? 'bolt';
+            const { provider: epProv, model: epModel } = getEpLlm(ep.instance_id);
+            const epKnownModels = MODELS_BY_PROVIDER[epProv] ?? [];
+            const epIsCustom = epModel !== '' && !epKnownModels.includes(epModel);
+            return (
+              <div key={ep.instance_id} style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
+                {/* EP header */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: epColor }}>{epIcon}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: epColor, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{ep.protocol}</span>
+                  <span style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', marginLeft: 2 }}>{ep.slug}</span>
+                </div>
+                {/* Provider */}
+                <div style={{ marginBottom: 8 }}>
+                  <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Provider</label>
+                  <select style={selectStyle} value={epProv}
+                    onChange={e => setEpLlm(ep.instance_id, { provider: e.target.value, model: MODELS_BY_PROVIDER[e.target.value]?.[0] ?? '' })}>
+                    {PROVIDER_OPTIONS.map(p => <option key={p} value={p}>{p}{providerKeyStatuses[p] ? ' ✓' : ''}</option>)}
+                  </select>
+                  {!providerKeyStatuses[epProv] && (
+                    <div style={{ fontSize: 11, color: '#fb923c', marginTop: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      No API key set for {epProv} — configure in Runtime settings
+                      <button onClick={refreshProviderKeys} style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, border: '1px solid rgba(251,146,60,0.4)', background: 'transparent', color: '#fb923c', cursor: 'pointer' }}>Refresh</button>
+                    </div>
+                  )}
+                </div>
+                {/* Model */}
+                <div style={{ marginBottom: 10 }}>
+                  <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Model</label>
+                  <select style={selectStyle} value={epIsCustom ? 'custom' : epModel}
+                    onChange={e => setEpLlm(ep.instance_id, { model: e.target.value === 'custom' ? '' : e.target.value })}>
+                    {epKnownModels.map(m => <option key={m} value={m}>{m}</option>)}
+                    <option value="custom">Custom…</option>
+                  </select>
+                  {epIsCustom && (
+                    <input style={{ ...fieldStyle, marginTop: 6 }} value={epModel}
+                      onChange={e => setEpLlm(ep.instance_id, { model: e.target.value })}
+                      placeholder="Enter model id" />
+                  )}
+                </div>
+                {/* Test button — per-EP isolated state */}
+                {(() => {
+                  const ts = llmTestState[ep.instance_id] ?? { loading: false };
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => testOrchLlm(ep.instance_id, epProv, epModel)}
+                        disabled={ts.loading || !epProv || !epModel}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.06)', color: (!epProv || !epModel || ts.loading) ? C.textMuted : C.purple, cursor: (!epProv || !epModel || ts.loading) ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600, transition: 'all 150ms' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>bolt</span>
+                        {ts.loading ? 'Testing…' : 'Test'}
+                      </button>
+                      {!ts.loading && ts.ok === true && <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ {ts.latency}ms</span>}
+                      {!ts.loading && ts.ok === false && <span style={{ fontSize: 12, color: '#f87171' }}>✗ {ts.error ?? 'Failed'}</span>}
+                    </div>
+                  );
+                })()}
+              </div>
+            );
+          })}
 
-          {/* Section D — Loop Tuning (collapsible, default collapsed) */}
+          {/* Loop Tuning — collapsible */}
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
             <SectionHeader id="orch-loop" label="Loop Tuning" defaultOpen={false} />
             {isSectionOpen('orch-loop', false) && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Max Iterations</label>
-                  <input type="number" style={fieldStyle} value={(d.config.max_iterations as number) ?? 10} onChange={e => setOrchConfig({ max_iterations: Number(e.target.value) || null })} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Max Parallel Tools</label>
-                  <input type="number" style={fieldStyle} value={(d.config.max_parallel_tools as number) ?? 5} onChange={e => setOrchConfig({ max_parallel_tools: Number(e.target.value) || null })} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>History Window</label>
-                  <input type="number" style={fieldStyle} value={(d.config.history_window as number) ?? 20} onChange={e => setOrchConfig({ history_window: Number(e.target.value) || null })} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Budget Tokens</label>
-                  <input type="number" style={fieldStyle} value={(d.config.budget_tokens as number) ?? ''} placeholder="none" onChange={e => setOrchConfig({ budget_tokens: e.target.value === '' ? null : Number(e.target.value) })} />
-                </div>
+                <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Max Iterations</label>
+                  <input type="number" style={fieldStyle} value={(d.config.max_iterations as number) ?? 10} onChange={e => setOrchConfig({ max_iterations: Number(e.target.value) || null })} /></div>
+                <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Parallel Tools</label>
+                  <input type="number" style={fieldStyle} value={(d.config.max_parallel_tools as number) ?? 5} onChange={e => setOrchConfig({ max_parallel_tools: Number(e.target.value) || null })} /></div>
+                <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>History Window</label>
+                  <input type="number" style={fieldStyle} value={(d.config.history_window as number) ?? 20} onChange={e => setOrchConfig({ history_window: Number(e.target.value) || null })} /></div>
+                <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Budget Tokens</label>
+                  <input type="number" style={fieldStyle} value={(d.config.budget_tokens as number) ?? ''} placeholder="none" onChange={e => setOrchConfig({ budget_tokens: e.target.value === '' ? null : Number(e.target.value) })} /></div>
               </div>
             )}
           </div>
 
-          {/* Section E — Voice (conditional on voice EP connected) */}
-          {isVoiceRoot && (
+          {/* Voice STT/TTS — only when a voice EP is connected */}
+          {hasVoice && (
             <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
               <SectionHeader id="orch-voice" label="Voice (STT / TTS)" defaultOpen={true} />
               {isSectionOpen('orch-voice', true) && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-                  <div>
-                    <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>STT Provider</label>
-                    <select
-                      style={selectStyle}
-                      value={sttProvider}
-                      onChange={e => {
-                        const p = e.target.value;
-                        const m = p === 'openai' ? 'whisper-1' : p === 'groq' ? 'whisper-large-v3' : '';
-                        setOrchConfig({ stt_provider: p, stt_model: m });
-                      }}
-                    >
+                  <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>STT Provider</label>
+                    <select style={selectStyle} value={sttProvider} onChange={e => { const p = e.target.value; setOrchConfig({ stt_provider: p, stt_model: p === 'openai' ? 'whisper-1' : 'whisper-large-v3' }); }}>
                       <option value="openai">openai</option>
                       <option value="groq">groq</option>
                     </select>
                   </div>
-                  <div>
-                    <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>STT Model</label>
-                    <input
-                      style={fieldStyle}
-                      value={(d.config.stt_model as string) ?? ''}
-                      onChange={e => setOrchConfig({ stt_model: e.target.value })}
-                      placeholder="e.g. whisper-1"
-                    />
+                  <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>STT Model</label>
+                    <input style={fieldStyle} value={(d.config.stt_model as string) ?? ''} onChange={e => setOrchConfig({ stt_model: e.target.value })} placeholder="e.g. whisper-1" />
                   </div>
-                  <div>
-                    <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>TTS Provider</label>
-                    <select
-                      style={selectStyle}
-                      value={ttsProvider}
-                      onChange={e => setOrchConfig({ tts_provider: e.target.value, tts_voice: '' })}
-                    >
+                  <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>TTS Provider</label>
+                    <select style={selectStyle} value={ttsProvider} onChange={e => setOrchConfig({ tts_provider: e.target.value, tts_voice: '' })}>
                       <option value="openai">openai</option>
                       <option value="elevenlabs">elevenlabs</option>
                     </select>
                   </div>
-                  <div>
-                    <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>TTS Voice</label>
-                    {ttsProvider === 'openai' ? (
-                      <select style={selectStyle} value={ttsVoice} onChange={e => setOrchConfig({ tts_voice: e.target.value })}>
-                        {['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'].map(v => <option key={v} value={v}>{v}</option>)}
-                      </select>
-                    ) : (
-                      <input style={fieldStyle} value={ttsVoice} onChange={e => setOrchConfig({ tts_voice: e.target.value })} placeholder="ElevenLabs voice ID" />
-                    )}
+                  <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>TTS Voice</label>
+                    {ttsProvider === 'openai'
+                      ? <select style={selectStyle} value={ttsVoice} onChange={e => setOrchConfig({ tts_voice: e.target.value })}>{['alloy','echo','fable','onyx','nova','shimmer'].map(v => <option key={v} value={v}>{v}</option>)}</select>
+                      : <input style={fieldStyle} value={ttsVoice} onChange={e => setOrchConfig({ tts_voice: e.target.value })} placeholder="ElevenLabs voice ID" />}
                   </div>
-                  <div style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic', marginTop: 2 }}>
-                    API keys: use Secret Bindings, not stored here
-                  </div>
+                  <div style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic' }}>API keys via Secret Bindings — not stored here</div>
                 </div>
               )}
             </div>
@@ -3411,24 +3403,17 @@ function CanvasBuilderView({
 
     // ── entry point ──────────────────────────────────────────────────────────
     if (selectedNode.type === 'entryPoint') {
-      const d = selectedNode.data as unknown as EpNodeData;
+      const liveEpNode = nodes.find(n => n.id === selectedNode.id);
+      const d = (liveEpNode?.data ?? selectedNode.data) as unknown as EpNodeData;
       const cfg = d.config ?? {};
       const rootOrchNode = edges
         .filter(e => e.source === selectedNode.id)
         .map(e => nodes.find(n => n.id === e.target))
         .find(n => n?.type === 'orchestrator');
-      const rootOrchConfig = rootOrchNode ? (rootOrchNode.data as unknown as OrchNodeData).config : null;
-      const overrideEnabled = !!(cfg.llm_override_enabled);
-
       const slugValid = /^[a-z0-9_-]{1,64}$/.test(d.slug);
       const rootLabel = rootOrchNode
         ? ((rootOrchNode.data as unknown as OrchNodeData).display_name ?? rootOrchNode.id)
         : 'Not connected';
-
-      const epProvider = (cfg.llm_provider as string) || 'anthropic';
-      const epModel = (cfg.llm_model as string) || '';
-      const epKnownModels = MODELS_BY_PROVIDER[epProvider] ?? [];
-      const epIsCustomModel = epModel !== '' && !epKnownModels.includes(epModel);
 
       return (
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
@@ -3457,72 +3442,20 @@ function CanvasBuilderView({
             <div style={{ fontSize: 12, color: rootOrchNode ? C.purple : C.textMuted, fontStyle: rootOrchNode ? 'normal' : 'italic' }}>{rootLabel}</div>
           </div>
 
-          {/* Section B — LLM Override */}
+          {/* Section B — LLM (read-only: shows what orchestrator has configured for this EP) */}
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
-            <div style={{ ...sectionHdrStyle, marginBottom: 8 }}>LLM Override</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <input
-                type="checkbox"
-                id="ep-llm-override"
-                checked={overrideEnabled}
-                onChange={e => {
-                  if (e.target.checked) {
-                    setEpConfig(selectedNode!.id, {
-                      llm_override_enabled: true,
-                      llm_provider: rootOrchConfig?.llm_provider ?? 'anthropic',
-                      llm_model: rootOrchConfig?.llm_model ?? MODELS_BY_PROVIDER['anthropic'][0],
-                    });
-                  } else {
-                    setEpConfig(selectedNode!.id, { llm_override_enabled: false }, ['llm_provider', 'llm_model']);
-                  }
-                }}
-                style={{ cursor: 'pointer', width: 16, height: 16 }}
-              />
-              <label htmlFor="ep-llm-override" style={{ fontSize: 13, color: C.text, cursor: 'pointer' }}>Override LLM</label>
-            </div>
-            {!overrideEnabled && (
-              <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic' }}>
-                {rootOrchConfig
-                  ? `Using orchestrator default: ${rootOrchConfig.llm_provider ?? 'anthropic'} / ${rootOrchConfig.llm_model ?? '(not set)'}`
-                  : 'Connect an orchestrator to see default'}
-              </div>
-            )}
-            {overrideEnabled && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Provider</label>
-                  <select
-                    style={selectStyle}
-                    value={epProvider}
-                    onChange={e => setEpConfig(selectedNode!.id, { llm_provider: e.target.value, llm_model: MODELS_BY_PROVIDER[e.target.value]?.[0] ?? '' })}
-                  >
-                    {PROVIDER_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Model</label>
-                  <select
-                    style={selectStyle}
-                    value={epIsCustomModel ? 'custom' : epModel}
-                    onChange={e => {
-                      if (e.target.value === 'custom') setEpConfig(selectedNode!.id, { llm_model: '' });
-                      else setEpConfig(selectedNode!.id, { llm_model: e.target.value });
-                    }}
-                  >
-                    {epKnownModels.map(m => <option key={m} value={m}>{m}</option>)}
-                    <option value="custom">Custom…</option>
-                  </select>
-                  {epIsCustomModel && (
-                    <input
-                      style={{ ...fieldStyle, marginTop: 6 }}
-                      value={epModel}
-                      onChange={e => setEpConfig(selectedNode!.id, { llm_model: e.target.value })}
-                      placeholder="Enter model id"
-                    />
-                  )}
-                </div>
-              </div>
-            )}
+            <div style={{ ...sectionHdrStyle, marginBottom: 8 }}>LLM</div>
+            {rootOrchNode ? (() => {
+              const orchConfig = (rootOrchNode.data as unknown as OrchNodeData).config;
+              const epLlm = ((orchConfig.ep_llm ?? {}) as Record<string, { provider?: string; model?: string }>)[d.instance_id];
+              const prov = epLlm?.provider;
+              const mdl = epLlm?.model;
+              return prov && mdl
+                ? <div style={{ fontSize: 12, color: C.text }}><span style={{ color: C.purple }}>{prov}</span> / <span style={{ fontFamily: 'JetBrains Mono, monospace', color: C.cyan }}>{mdl}</span></div>
+                : <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic' }}>Configure on the orchestrator panel</div>;
+            })()
+              : <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic' }}>Connect an orchestrator to configure LLM</div>
+            }
           </div>
 
           {/* Section C — Access */}
@@ -4979,6 +4912,8 @@ function useDashSessions(token: string | null, appId: string | null): {
 }
 
 // ── RuntimeView ───────────────────────────────────────────────────────────────
+const PROVIDER_LIST = ['anthropic', 'openai', 'groq', 'gemini'] as const;
+
 function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) {
   const emptyRuntime = { max_concurrent_sessions: null, rate_limit_rpm: null, blocked_tokens: [], blocked_user_ids: [], session_timeout_minutes: null };
   const [cfg, setCfg] = useState<import('@/lib/api').AppRuntimeConfig>(app.runtime_config ?? emptyRuntime);
@@ -4989,6 +4924,56 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
   // Tag input helpers
   const [tokensInput, setTokensInput] = useState((app.runtime_config?.blocked_tokens ?? []).join('\n'));
   const [usersInput, setUsersInput] = useState((app.runtime_config?.blocked_user_ids ?? []).join(', '));
+
+  // Provider keys state
+  type KeyStatus = { provider: string; key_set: boolean; key_hint?: string };
+  const [keyStatuses, setKeyStatuses] = useState<KeyStatus[]>([]);
+  const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
+  const [keySaving, setKeySaving] = useState<string | null>(null);
+  const [keyMsg, setKeyMsg] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    themApi.getProviderKeys(app.id)
+      .then(keys => setKeyStatuses(keys))
+      .catch(() => {});
+  }, [app.id]);
+
+  function getKeyStatus(provider: string): KeyStatus {
+    return keyStatuses.find(k => k.provider === provider) ?? { provider, key_set: false };
+  }
+
+  async function handleSaveKey(provider: string) {
+    const key = (keyInputs[provider] ?? '').trim();
+    if (!key) return;
+    setKeySaving(provider);
+    try {
+      await themApi.setProviderKey(app.id, provider, key);
+      const keys = await themApi.getProviderKeys(app.id);
+      setKeyStatuses(keys);
+      setKeyInputs(ki => ({ ...ki, [provider]: '' }));
+      setKeyMsg(m => ({ ...m, [provider]: 'Saved' }));
+      setTimeout(() => setKeyMsg(m => ({ ...m, [provider]: '' })), 2500);
+    } catch (e: unknown) {
+      setKeyMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Failed' }));
+    } finally {
+      setKeySaving(null);
+    }
+  }
+
+  async function handleDeleteKey(provider: string) {
+    setKeySaving(provider);
+    try {
+      await themApi.deleteProviderKey(app.id, provider);
+      const keys = await themApi.getProviderKeys(app.id);
+      setKeyStatuses(keys);
+      setKeyMsg(m => ({ ...m, [provider]: 'Removed' }));
+      setTimeout(() => setKeyMsg(m => ({ ...m, [provider]: '' })), 2500);
+    } catch (e: unknown) {
+      setKeyMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Failed' }));
+    } finally {
+      setKeySaving(null);
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -5082,6 +5067,64 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
               onChange={e => setTokensInput(e.target.value)} />
             <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Paste the SHA-256 hash of the token (not the raw token). One hash per line.</div>
           </div>
+        </div>
+
+        {/* Provider Keys */}
+        <div style={sectionStyle}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>LLM Provider Keys</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
+            One API key per provider for this application. Keys are stored encrypted and never exported with the canvas definition.
+          </div>
+          {PROVIDER_LIST.map(provider => {
+            const status = getKeyStatus(provider);
+            const isBusy = keySaving === provider;
+            const msg = keyMsg[provider] ?? '';
+            const isError = msg && msg !== 'Saved' && msg !== 'Removed';
+            return (
+              <div key={provider} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                {/* Provider label + key-set badge */}
+                <div style={{ width: 90, flexShrink: 0 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{provider}</span>
+                  <span style={{
+                    marginLeft: 8, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20,
+                    background: status.key_set ? 'rgba(74,222,128,0.12)' : 'rgba(251,146,60,0.12)',
+                    color: status.key_set ? C.green : '#fb923c',
+                    border: `1px solid ${status.key_set ? 'rgba(74,222,128,0.3)' : 'rgba(251,146,60,0.3)'}`,
+                  }}>
+                    {status.key_set ? `set ···${status.key_hint ?? ''}` : 'not set'}
+                  </span>
+                </div>
+                {/* Key input */}
+                <input
+                  type="password"
+                  placeholder={status.key_set ? 'Enter new key to replace…' : 'Paste API key…'}
+                  value={keyInputs[provider] ?? ''}
+                  onChange={e => setKeyInputs(ki => ({ ...ki, [provider]: e.target.value }))}
+                  style={{ ...fieldStyle, flex: 1, minWidth: 180, fontSize: 13 }}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }}
+                />
+                {/* Save key button */}
+                <button
+                  onClick={() => handleSaveKey(provider)}
+                  disabled={isBusy || !(keyInputs[provider] ?? '').trim()}
+                  style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', opacity: isBusy || !(keyInputs[provider] ?? '').trim() ? 0.5 : 1 }}
+                >
+                  {isBusy ? '…' : 'Save'}
+                </button>
+                {/* Remove button — only shown when a key is set */}
+                {status.key_set && (
+                  <button
+                    onClick={() => handleDeleteKey(provider)}
+                    disabled={isBusy}
+                    style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.07)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}
+                  >
+                    Remove
+                  </button>
+                )}
+                {msg && <span style={{ fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
+              </div>
+            );
+          })}
         </div>
 
         {/* Save */}

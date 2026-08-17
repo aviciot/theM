@@ -54,6 +54,10 @@ type Dal interface {
 	UpdateRuntimeConfig(ctx context.Context, tenantID, appID string, configJSON []byte) error
 	ListAppOrchestratorNames(ctx context.Context, appID string) ([]string, error)
 	BulkDeleteApplications(ctx context.Context, tenantID string, ids []string) (int64, error)
+	// Provider keys
+	GetProviderKeys(ctx context.Context, tenantID, appID string) ([]byte, error)
+	SetProviderKey(ctx context.Context, tenantID, appID, provider string, encryptedKey []byte) error
+	DeleteProviderKey(ctx context.Context, tenantID, appID, provider string) error
 
 	// Runs — tenant-scoped
 	ListRuns(ctx context.Context, tenantID, contextID string, limit int) ([]dal.Run, error)
