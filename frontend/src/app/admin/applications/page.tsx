@@ -570,6 +570,111 @@ function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
   });
 }
 
+// ── Canvas V2 node data interfaces ───────────────────────────────────────────
+interface OrchNodeData { _kind: 'orchestrator'; instance_id: string; display_name: string; definition_ref: import('@/lib/api').DefinitionRef; definition_id?: string; config: Record<string, unknown>; _error?: boolean; _shake?: boolean; _errorMsg?: string; }
+interface AgentNodeData { _kind: 'agent'; instance_id: string; display_name: string; description: string; definition_ref: import('@/lib/api').DefinitionRef; definition_id?: string; config: Record<string, unknown>; secret_bindings?: Record<string, string>; icon?: string; _error?: boolean; _shake?: boolean; _errorMsg?: string; }
+interface MwNodeData { _kind: 'middleware'; instance_id: string; display_name: string; definition_ref: import('@/lib/api').DefinitionRef; definition_id?: string; config: Record<string, unknown>; _error?: boolean; _shake?: boolean; _errorMsg?: string; }
+interface EpNodeData { _kind: 'ep'; instance_id: string; slug: string; protocol: 'websocket' | 'sse' | 'webrtc' | 'a2a' | 'voice'; label: string; _error?: boolean; _shake?: boolean; _errorMsg?: string; }
+type CanvasNodeData = OrchNodeData | AgentNodeData | MwNodeData | EpNodeData;
+
+// ── Canvas V2 serialization helpers ──────────────────────────────────────────
+function sanitize(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, 20);
+}
+
+function genInstanceId(kind: 'orchestrator' | 'agent' | 'middleware' | 'ep', defName: string | undefined, existing: Set<string>): string {
+  let base: string;
+  if (kind === 'orchestrator') base = 'orch';
+  else if (kind === 'ep') base = 'ep_' + sanitize(defName ?? 'ep');
+  else if (kind === 'agent') base = 'agent_' + sanitize(defName ?? 'agent');
+  else base = 'mw_' + sanitize(defName ?? 'mw');
+  let n = 1;
+  while (existing.has(`${base}_${n}`)) n++;
+  return `${base}_${n}`;
+}
+
+function canvasToDoc(nodes: Node[], edges: Edge[], name?: string): import('@/lib/api').AppDefinitionDoc {
+  const nodeTypeById = new Map(nodes.map(n => [n.id, n.type]));
+  const rootByEp = new Map<string, string>();
+  edges.forEach(e => {
+    if (nodeTypeById.get(e.source) === 'entryPoint' && nodeTypeById.get(e.target) === 'orchestrator') {
+      rootByEp.set(e.source, e.target);
+    }
+  });
+  const components: import('@/lib/api').ComponentInstance[] = [];
+  const entry_points: import('@/lib/api').EPInstance[] = [];
+  const connections: import('@/lib/api').ConnectionDef[] = [];
+  nodes.forEach(n => {
+    if (n.type === 'orchestrator') {
+      const d = n.data as unknown as OrchNodeData;
+      components.push({ instance_id: n.id, name: n.id, definition_ref: d.definition_ref, definition_id: d.definition_id, config: { ...d.config, display_name: d.display_name } });
+    } else if (n.type === 'agent') {
+      const d = n.data as unknown as AgentNodeData;
+      const comp: import('@/lib/api').ComponentInstance = { instance_id: n.id, definition_ref: d.definition_ref, definition_id: d.definition_id, config: d.config };
+      if (d.secret_bindings && Object.keys(d.secret_bindings).length) comp.secret_bindings = d.secret_bindings;
+      components.push(comp);
+    } else if (n.type === 'middleware') {
+      const d = n.data as unknown as MwNodeData;
+      components.push({ instance_id: n.id, definition_ref: d.definition_ref, definition_id: d.definition_id, config: d.config });
+    } else if (n.type === 'entryPoint') {
+      const d = n.data as unknown as EpNodeData;
+      entry_points.push({ instance_id: n.id, slug: d.slug, protocol: d.protocol, root: rootByEp.get(n.id) ?? '' });
+    }
+  });
+  edges.forEach(e => {
+    const srcType = nodeTypeById.get(e.source);
+    const tgtType = nodeTypeById.get(e.target);
+    if (srcType === 'entryPoint' && tgtType === 'orchestrator') return;
+    if (srcType === 'orchestrator' && tgtType === 'agent') connections.push({ source: e.source, target: e.target, type: 'tool' });
+    if (srcType === 'orchestrator' && tgtType === 'orchestrator') connections.push({ source: e.source, target: e.target, type: 'delegation' });
+  });
+  return { schema_version: 2 as const, name, components, entry_points, connections };
+}
+
+function docToCanvas(doc: import('@/lib/api').AppDefinitionDoc, componentDefs: ComponentDefinitionSummary[], layout: Record<string, { x: number; y: number }>): { nodes: Node[]; edges: Edge[] } {
+  const defById = new Map(componentDefs.map(cd => [cd.id, cd]));
+  const refKey = (r: import('@/lib/api').DefinitionRef) => `${r.kind}:${r.namespace}:${r.name}:${r.version}`;
+  const defByRef = new Map(componentDefs.map(cd => [refKey({ kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }), cd]));
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  (doc.components ?? []).forEach(c => {
+    const cd = defById.get(c.definition_id ?? '') ?? defByRef.get(refKey(c.definition_ref));
+    const pos = layout[c.instance_id] ?? { x: 0, y: 0 };
+    if (c.definition_ref.kind === 'orchestrator') {
+      nodes.push({ id: c.instance_id, type: 'orchestrator', position: pos, data: { _kind: 'orchestrator', instance_id: c.instance_id, display_name: (c.config.display_name as string) ?? cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config } as unknown as Record<string, unknown> });
+    } else if (c.definition_ref.kind === 'agent') {
+      nodes.push({ id: c.instance_id, type: 'agent', position: pos, data: { _kind: 'agent', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, description: cd?.description ?? '', definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, secret_bindings: c.secret_bindings } as unknown as Record<string, unknown> });
+    } else if (c.definition_ref.kind === 'middleware') {
+      nodes.push({ id: c.instance_id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config } as unknown as Record<string, unknown> });
+    }
+  });
+  (doc.entry_points ?? []).forEach(ep => {
+    const pos = layout[ep.instance_id] ?? { x: 0, y: 0 };
+    nodes.push({ id: ep.instance_id, type: 'entryPoint', position: pos, data: { _kind: 'ep', instance_id: ep.instance_id, slug: ep.slug, protocol: ep.protocol, label: EP_META[ep.protocol]?.title ?? ep.protocol } as unknown as Record<string, unknown> });
+    if (ep.root) edges.push({ id: `e_${ep.instance_id}_${ep.root}`, source: ep.instance_id, target: ep.root, type: 'default' });
+  });
+  (doc.connections ?? []).forEach(conn => {
+    if (conn.type === 'tool' || conn.type === 'delegation') {
+      edges.push({ id: `e_${conn.source}_${conn.target}`, source: conn.source, target: conn.target, type: 'default' });
+    }
+  });
+  if (Object.keys(layout).length === 0 && nodes.length > 0) {
+    const laid = applyDagreLayout(nodes, edges);
+    laid.forEach((ln, i) => { nodes[i].position = ln.position; });
+  }
+  return { nodes, edges };
+}
+
+function computeLogoState(s: { loaded: boolean; isDirty: boolean; busy: boolean; lastResult: 'none' | 'valid' | 'invalid' | 'warn' }): LogoState {
+  if (s.busy) return 'thinking';
+  if (s.lastResult === 'invalid') return 'error';
+  if (s.lastResult === 'warn') return 'warning';
+  if (s.lastResult === 'valid') return 'success';
+  if (!s.loaded) return 'idle';
+  if (s.isDirty) return 'dirty';
+  return 'idle';
+}
+
 function buildNodesFromApp(
   app: Application,
   agents: Agent[],
@@ -2718,6 +2823,579 @@ function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPickerEntry[
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+function CanvasInnerWithDrop({
+  onDropWithInstance,
+  ...props
+}: Omit<Parameters<typeof CanvasInner>[0], 'onDrop'> & {
+  onDropWithInstance: (e: DragEvent<HTMLDivElement>, rfInstance: ReturnType<typeof useReactFlow>) => void;
+}) {
+  const rfInstance = useReactFlow();
+  return (
+    <CanvasInner
+      {...props}
+      onDrop={e => onDropWithInstance(e, rfInstance)}
+    />
+  );
+}
+
+// ── Canvas Builder View (V2) ──────────────────────────────────────────────────
+function CanvasBuilderView({
+  app,
+  onBack,
+  onAppUpdated,
+}: {
+  app: Application;
+  onBack: () => void;
+  onAppUpdated?: (updated: Application) => void;
+}) {
+  // State (mirroring DefinitionView)
+  const [defs, setDefs] = useState<AppDefinition[]>([]);
+  const [activeDef, setActiveDef] = useState<AppDefinition | null>(null);
+  const [draft, setDraft] = useState<AppDefinitionDoc | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const [componentDefs, setComponentDefs] = useState<ComponentDefinitionSummary[]>([]);
+  const [validating, setValidating] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [validationReport, setValidationReport] = useState<ValidationReport | null>(null);
+  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [logoResult, setLogoResult] = useState<'none' | 'valid' | 'invalid' | 'warn'>('none');
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [configPanelText, setConfigPanelText] = useState('{}');
+  const [configPanelErr, setConfigPanelErr] = useState(false);
+
+  // Canvas state
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  useEffect(() => {
+    if (selectedNode?.type === 'agent' || selectedNode?.type === 'middleware') {
+      setConfigPanelText(JSON.stringify((selectedNode.data as unknown as AgentNodeData | MwNodeData).config, null, 2));
+      setConfigPanelErr(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNode?.id, selectedNode?.type]);
+
+  const fieldStyle: React.CSSProperties = {
+    width: '100%', padding: '10px 12px', borderRadius: 8,
+    border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)',
+    color: C.text, fontSize: 14, outline: 'none', boxSizing: 'border-box',
+  };
+
+  function showToast(msg: string, ok: boolean) {
+    setToast({ msg, ok });
+    setTimeout(() => setToast(null), 3000);
+  }
+
+  function loadDef(def: AppDefinition) {
+    setActiveDef(def);
+    setDraft(JSON.parse(JSON.stringify(def.definition)));
+    setIsDirty(false);
+    setValidationReport(null);
+    setSelectedNode(null);
+    setLogoResult('none');
+    const { nodes: n, edges: e } = docToCanvas(def.definition, componentDefs, {});
+    setNodes(n);
+    setEdges(e);
+  }
+
+  async function reloadDefs(selectId?: string) {
+    try {
+      const list = await themApi.listDefinitions(app.id);
+      setDefs(list);
+      if (selectId) {
+        const found = list.find(d => d.id === selectId);
+        if (found) { loadDef(found); return; }
+      }
+      const drafts = list.filter(d => d.status === 'draft');
+      const target = drafts.length > 0 ? drafts[drafts.length - 1] : list.length > 0 ? list[list.length - 1] : null;
+      if (target) loadDef(target);
+      else { setActiveDef(null); setDraft(null); setNodes([]); setEdges([]); }
+    } catch {
+      showToast('Failed to load definitions', false);
+    }
+  }
+
+  useEffect(() => {
+    reloadDefs();
+    themApi.listComponentDefinitions().then(setComponentDefs).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.id]);
+
+  async function newDraft() {
+    const emptyDoc: AppDefinitionDoc = {
+      schema_version: 2, name: app.name,
+      components: [], entry_points: [], connections: [],
+    };
+    try {
+      const res = await themApi.createDefinition(app.id, { definition: emptyDoc });
+      await reloadDefs(res.id);
+      showToast('New draft created', true);
+    } catch {
+      showToast('Failed to create draft', false);
+    }
+  }
+
+  async function saveDraft() {
+    if (!activeDef || isPublished) return;
+    setSaving(true);
+    try {
+      const doc = canvasToDoc(nodes, edges, draft?.name ?? app.name);
+      await themApi.updateDefinition(app.id, activeDef.id, { definition: doc });
+      setDraft(doc);
+      setIsDirty(false);
+      showToast('Saved', true);
+    } catch {
+      showToast('Save failed', false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function validate() {
+    if (!activeDef) return;
+    if (isDirty) await saveDraft();
+    setValidating(true);
+    setLogoResult('none');
+    try {
+      const report = await themApi.validateDefinition(app.id, activeDef.id);
+      setValidationReport(report);
+      const errorIds = new Set((report.errors ?? []).map(e => e.instance_id).filter((x): x is string => !!x));
+      setNodes(ns => ns.map(n => ({
+        ...n,
+        data: { ...n.data, _error: errorIds.has(n.id), _errorMsg: (report.errors ?? []).find(e => e.instance_id === n.id)?.message }
+      })));
+      const result = report.valid ? 'valid' : 'invalid';
+      setLogoResult(result);
+      showToast(report.valid ? 'Valid ✓' : `${report.errors?.length ?? 0} error(s)`, report.valid);
+      if (report.valid) setTimeout(() => setLogoResult('none'), 1800);
+    } catch {
+      showToast('Validation failed', false);
+      setLogoResult('none');
+    } finally {
+      setValidating(false);
+    }
+  }
+
+  async function publish() {
+    if (!activeDef) return;
+    setPublishing(true);
+    try {
+      const res = await themApi.publishDefinition(app.id, activeDef.id);
+      showToast(`Published revision ${res.revision}`, true);
+      await reloadDefs();
+      onAppUpdated?.({ ...app });
+    } catch {
+      showToast('Publish failed', false);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  function handleConnect(conn: Connection) {
+    const srcNode = nodes.find(n => n.id === conn.source);
+    const tgtNode = nodes.find(n => n.id === conn.target);
+    if (!srcNode || !tgtNode) return;
+    const err = validateConnection(srcNode.type ?? '', tgtNode.type ?? '', conn.source ?? '', conn.target ?? '', edges);
+    if (err) return;
+    setEdges(es => addEdge({ ...conn, type: 'default' }, es));
+    setIsDirty(true);
+    setLogoResult('none');
+  }
+
+  function handleDropOnCanvas(e: DragEvent<HTMLDivElement>, rfInstance: ReturnType<typeof useReactFlow>) {
+    e.preventDefault();
+    const nodeType = e.dataTransfer.getData('nodeType');
+    const rawData = e.dataTransfer.getData('nodeData');
+    if (!nodeType || !rawData) return;
+    let payload: { cd?: ComponentDefinitionSummary; protocol?: string };
+    try { payload = JSON.parse(rawData); } catch { return; }
+    const pos = rfInstance.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    const existingIds = new Set(nodes.map(n => n.id));
+
+    if (nodeType === 'orchestrator' && payload.cd) {
+      const cd = payload.cd;
+      const id = genInstanceId('orchestrator', cd.name, existingIds);
+      const newNode: Node = { id, type: 'orchestrator', position: pos, data: { _kind: 'orchestrator', instance_id: id, display_name: cd.display_name, definition_ref: { kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }, definition_id: cd.id, config: { max_iterations: 10, max_parallel_tools: 5, history_window: 20 } } as unknown as Record<string, unknown> };
+      setNodes(ns => [...ns, newNode]);
+    } else if (nodeType === 'agent' && payload.cd) {
+      const cd = payload.cd;
+      const id = genInstanceId('agent', cd.name, existingIds);
+      const newNode: Node = { id, type: 'agent', position: pos, data: { _kind: 'agent', instance_id: id, display_name: cd.display_name, description: cd.description ?? '', definition_ref: { kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }, definition_id: cd.id, config: {} } as unknown as Record<string, unknown> };
+      setNodes(ns => [...ns, newNode]);
+    } else if (nodeType === 'middleware' && payload.cd) {
+      const cd = payload.cd;
+      const id = genInstanceId('middleware', cd.name, existingIds);
+      const newNode: Node = { id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: id, display_name: cd.display_name, definition_ref: { kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }, definition_id: cd.id, config: {} } as unknown as Record<string, unknown> };
+      setNodes(ns => [...ns, newNode]);
+    } else if (nodeType === 'entryPoint' && payload.protocol) {
+      const protocol = payload.protocol as EpNodeData['protocol'];
+      const id = genInstanceId('ep', protocol, existingIds);
+      const newNode: Node = { id, type: 'entryPoint', position: pos, data: { _kind: 'ep', instance_id: id, slug: '', protocol, label: EP_META[protocol]?.title ?? protocol } as unknown as Record<string, unknown> };
+      setNodes(ns => [...ns, newNode]);
+    }
+    setIsDirty(true);
+    setLogoResult('none');
+  }
+
+  const isPublished = activeDef?.status === 'published';
+  const canPublish = activeDef?.status === 'draft' && !isDirty && validationReport?.valid === true;
+  const logoState = computeLogoState({ loaded: !!activeDef, isDirty, busy: validating || saving || publishing, lastResult: logoResult });
+
+  const EP_MS_ICON_MAP: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
+
+  function renderPropertiesPanel() {
+    if (!selectedNode) {
+      return (
+        <div style={{ padding: 20, color: C.textMuted, fontSize: 13, fontStyle: 'italic' }}>
+          Select a node to configure properties
+        </div>
+      );
+    }
+
+    if (selectedNode.type === 'orchestrator') {
+      const d = selectedNode.data as unknown as OrchNodeData;
+      const isDelegatable = edges.some(e => e.target === selectedNode.id && nodes.find(n => n.id === e.source)?.type === 'orchestrator');
+      return (
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.purple, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Orchestrator</div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Instance ID</label>
+            <div style={{ fontSize: 12, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)' }}>{d.instance_id}</div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Display Name</label>
+            <input style={fieldStyle} value={d.display_name} onChange={e => { setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, display_name: e.target.value } } : n)); setIsDirty(true); setLogoResult('none'); }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>System Prompt</label>
+            <textarea style={{ ...fieldStyle, minHeight: 90, resize: 'vertical', fontFamily: 'inherit' }} value={(d.config.system_prompt as string) ?? ''} onChange={e => { setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), system_prompt: e.target.value } } } : n)); setIsDirty(true); setLogoResult('none'); }} placeholder="System prompt..." />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>LLM Provider</label>
+            <input style={fieldStyle} value={(d.config.llm_provider as string) ?? ''} onChange={e => { setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), llm_provider: e.target.value } } } : n)); setIsDirty(true); setLogoResult('none'); }} placeholder="e.g. openai" />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>LLM Model</label>
+            <input style={fieldStyle} value={(d.config.llm_model as string) ?? ''} onChange={e => { setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), llm_model: e.target.value } } } : n)); setIsDirty(true); setLogoResult('none'); }} placeholder="e.g. gpt-4o" />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div>
+              <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Max Iterations</label>
+              <input type="number" style={fieldStyle} value={(d.config.max_iterations as number) ?? 10} onChange={e => { setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), max_iterations: Number(e.target.value) } } } : n)); setIsDirty(true); }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Max Parallel Tools</label>
+              <input type="number" style={fieldStyle} value={(d.config.max_parallel_tools as number) ?? 5} onChange={e => { setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), max_parallel_tools: Number(e.target.value) } } } : n)); setIsDirty(true); }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>History Window</label>
+              <input type="number" style={fieldStyle} value={(d.config.history_window as number) ?? 20} onChange={e => { setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), history_window: Number(e.target.value) } } } : n)); setIsDirty(true); }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Budget Tokens</label>
+              <input type="number" style={fieldStyle} value={(d.config.budget_tokens as number) ?? ''} placeholder="none" onChange={e => { const v = e.target.value === '' ? null : Number(e.target.value); setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), budget_tokens: v } } } : n)); setIsDirty(true); }} />
+            </div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Delegatable</label>
+            <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 20, background: isDelegatable ? C.purpleBg : 'rgba(255,255,255,0.04)', color: isDelegatable ? C.purple : C.textMuted, border: `1px solid ${isDelegatable ? C.purpleBorder : 'rgba(255,255,255,0.1)'}` }}>
+              {isDelegatable ? 'Delegation target' : 'Not delegatable'}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedNode.type === 'agent') {
+      const d = selectedNode.data as unknown as AgentNodeData;
+      return (
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.green, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Agent</div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Instance ID</label>
+            <div style={{ fontSize: 12, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)' }}>{d.instance_id}</div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Display Name</label>
+            <div style={{ fontSize: 13, color: C.text, padding: '6px 0' }}>{d.display_name}</div>
+          </div>
+          {d.description && <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Description</label>
+            <div style={{ fontSize: 12, color: C.textMuted }}>{d.description}</div>
+          </div>}
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Config (JSON)</label>
+            <textarea
+              style={{ ...fieldStyle, minHeight: 100, resize: 'vertical', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, borderColor: configPanelErr ? C.error : undefined }}
+              value={configPanelText}
+              onChange={e => setConfigPanelText(e.target.value)}
+              onBlur={() => {
+                try {
+                  const parsed = JSON.parse(configPanelText);
+                  setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: parsed } } : n));
+                  setIsDirty(true);
+                  setConfigPanelErr(false);
+                } catch { setConfigPanelErr(true); showToast('Invalid JSON', false); }
+              }}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedNode.type === 'entryPoint') {
+      const d = selectedNode.data as unknown as EpNodeData;
+      const rootEdge = edges.find(e => e.source === selectedNode.id);
+      const rootOrch = rootEdge ? nodes.find(n => n.id === rootEdge.target) : null;
+      const rootLabel = rootOrch ? ((rootOrch.data as unknown as OrchNodeData).display_name ?? rootOrch.id) : '— draw an edge to an orchestrator';
+      const slugValid = /^[a-z0-9_-]{1,64}$/.test(d.slug);
+      return (
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.cyan, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Entry Point</div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Instance ID</label>
+            <div style={{ fontSize: 12, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)' }}>{d.instance_id}</div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Slug</label>
+            <input style={{ ...fieldStyle, borderColor: d.slug && !slugValid ? C.amber : undefined }} value={d.slug} onChange={e => { setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, slug: e.target.value } } : n)); setIsDirty(true); setLogoResult('none'); }} placeholder="e.g. my-endpoint" />
+            {d.slug && !slugValid && <div style={{ fontSize: 11, color: C.amber, marginTop: 3 }}>Only a-z, 0-9, _, - (1-64 chars)</div>}
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Protocol</label>
+            <div style={{ fontSize: 13, color: C.cyan, padding: '6px 0' }}>{d.protocol}</div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Root Orchestrator</label>
+            <div style={{ fontSize: 12, color: rootOrch ? C.purple : C.textMuted, fontStyle: rootOrch ? 'normal' : 'italic' }}>{rootLabel}</div>
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedNode.type === 'middleware') {
+      const d = selectedNode.data as unknown as MwNodeData;
+      return (
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.amber, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Middleware</div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Instance ID</label>
+            <div style={{ fontSize: 12, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)' }}>{d.instance_id}</div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Display Name</label>
+            <div style={{ fontSize: 13, color: C.text }}>{d.display_name}</div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Config (JSON)</label>
+            <textarea
+              style={{ ...fieldStyle, minHeight: 100, resize: 'vertical', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, borderColor: configPanelErr ? C.error : undefined }}
+              value={configPanelText}
+              onChange={e => setConfigPanelText(e.target.value)}
+              onBlur={() => {
+                try {
+                  const parsed = JSON.parse(configPanelText);
+                  setNodes(ns => ns.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: parsed } } : n));
+                  setIsDirty(true);
+                  setConfigPanelErr(false);
+                } catch { setConfigPanelErr(true); showToast('Invalid JSON', false); }
+              }}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    return <div style={{ padding: 20, color: C.textMuted, fontSize: 13 }}>Select a node to edit</div>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
+      {/* Top bar */}
+      <div style={{
+        height: 56, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10,
+        padding: '0 20px', borderBottom: `1px solid ${C.glassBorder}`,
+        background: C.surface, position: 'sticky', top: 0, zIndex: 20,
+      }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_back</span>
+        </button>
+        <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{app.name}</span>
+        {activeDef && (
+          <span style={{
+            padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+            background: activeDef.status === 'published' ? C.greenBg : 'rgba(208,188,255,0.12)',
+            color: activeDef.status === 'published' ? C.green : C.purple,
+            border: `1px solid ${activeDef.status === 'published' ? C.greenBorder : 'rgba(208,188,255,0.3)'}`,
+          }}>
+            Rev {activeDef.revision} • {activeDef.status}
+          </span>
+        )}
+        <select
+          value={activeDef?.id ?? ''}
+          onChange={e => { const d = defs.find(x => x.id === e.target.value); if (d) loadDef(d); }}
+          style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: C.text, fontSize: 12, outline: 'none' }}
+        >
+          {defs.length === 0 && <option value="">No definitions yet</option>}
+          {[...defs].reverse().map(d => (
+            <option key={d.id} value={d.id}>Rev {d.revision} — {d.status}</option>
+          ))}
+        </select>
+        <button
+          onClick={newDraft}
+          style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid rgba(0,240,255,0.3)`, background: 'rgba(0,240,255,0.06)', color: C.cyan, cursor: 'pointer', fontSize: 12, fontWeight: 700, flexShrink: 0 }}
+        >
+          + New Draft
+        </button>
+        <div style={{ flex: 1 }} />
+        {activeDef && !isPublished && isDirty && (
+          <button onClick={saveDraft} disabled={saving} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.08)', color: C.text }}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        )}
+        {activeDef && !isPublished && (
+          <button onClick={validate} disabled={validating || saving} style={{ padding: '7px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(167,139,250,0.2)', color: C.purple }}>
+            {validating ? 'Validating…' : 'Validate'}
+          </button>
+        )}
+        {activeDef && !isPublished && (
+          <button onClick={publish} disabled={!canPublish || publishing} style={{ padding: '7px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 700, background: canPublish ? C.greenBg : 'rgba(255,255,255,0.04)', color: canPublish ? C.green : C.textMuted, border: `1px solid ${canPublish ? C.greenBorder : 'rgba(255,255,255,0.1)'}` }}>
+            {publishing ? 'Publishing…' : 'Publish'}
+          </button>
+        )}
+      </div>
+
+      {/* Validation errors banner */}
+      {validationReport && !validationReport.valid && (
+        <div style={{ background: C.errorBg, borderBottom: `1px solid rgba(255,180,171,0.3)`, padding: '10px 20px', flexShrink: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.error, marginBottom: 4 }}>Validation errors:</div>
+          {(validationReport.errors ?? []).map((err, i) => (
+            <div key={i} style={{ fontSize: 12, color: C.error }}>
+              {err.instance_id ? `[${err.instance_id}] ` : ''}{err.message}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Three-column canvas area */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+
+        {/* Left: Component Palette */}
+        <div style={{ width: 260, flexShrink: 0, background: 'rgba(0,0,0,0.2)', borderRight: '1px solid rgba(255,255,255,0.06)', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '14px 16px 8px', fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Components</div>
+
+          {/* Entry Points */}
+          <div style={{ padding: '0 8px 12px' }}>
+            <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600 }}>Entry Points</div>
+            {(['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const).map(protocol => (
+              <div
+                key={protocol}
+                draggable
+                onDragStart={e => { e.dataTransfer.setData('nodeType', 'entryPoint'); e.dataTransfer.setData('nodeData', JSON.stringify({ protocol })); e.dataTransfer.effectAllowed = 'move'; }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: 'rgba(0,209,255,0.04)', border: '1px solid rgba(0,209,255,0.12)' }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 16, color: '#00d1ff' }}>{EP_MS_ICON_MAP[protocol] ?? 'bolt'}</span>
+                <span style={{ fontSize: 12, color: C.text, fontWeight: 500 }}>{protocol.charAt(0).toUpperCase() + protocol.slice(1)}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Component kinds */}
+          {(['orchestrator', 'agent', 'middleware'] as const).map(kind => {
+            const items = componentDefs.filter(cd => cd.kind === kind);
+            if (items.length === 0) return null;
+            const kindColor = kind === 'orchestrator' ? '99,102,241' : kind === 'agent' ? '74,222,128' : '245,158,11';
+            const kindIconColor = kind === 'orchestrator' ? '#818cf8' : kind === 'agent' ? C.green : '#f59e0b';
+            const kindIcon = kind === 'orchestrator' ? 'hub' : kind === 'agent' ? 'smart_toy' : 'shield';
+            return (
+              <div key={kind} style={{ padding: '0 8px 12px' }}>
+                <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'capitalize' }}>{kind}s</div>
+                {items.map(cd => (
+                  <div
+                    key={cd.id}
+                    draggable
+                    onDragStart={e => { e.dataTransfer.setData('nodeType', kind); e.dataTransfer.setData('nodeData', JSON.stringify({ cd })); e.dataTransfer.effectAllowed = 'move'; }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${kindColor},0.04)`, border: `1px solid rgba(${kindColor},0.12)` }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 16, color: kindIconColor }}>{kindIcon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.display_name}</div>
+                      {cd.description && <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.description}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+
+          {!activeDef && (
+            <div style={{ padding: '20px 16px', textAlign: 'center' }}>
+              <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 10 }}>No definition loaded</div>
+              <button onClick={newDraft} style={{ padding: '8px 14px', borderRadius: 8, border: 'none', background: C.cyan, color: '#021520', fontWeight: 700, cursor: 'pointer', fontSize: 12 }}>
+                Create First Definition
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Center: ReactFlow canvas */}
+        <div style={{ flex: 1, position: 'relative', height: 'calc(100vh - 56px)', overflow: 'hidden' }}>
+          {activeDef ? (
+            <ReactFlowProvider>
+              <CanvasInnerWithDrop
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={handleConnect}
+                onDropWithInstance={handleDropOnCanvas}
+                onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                selectedNode={selectedNode}
+                setSelectedNode={setSelectedNode}
+                onUpdateNode={(id, patch) => { setNodes(ns => ns.map(n => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)); setIsDirty(true); setLogoResult('none'); }}
+                onDeleteEdge={edgeId => { setEdges(es => es.filter(e => e.id !== edgeId)); setIsDirty(true); }}
+                onAutoLayout={() => { setNodes(ns => applyDagreLayout([...ns], edges)); }}
+                logoState={logoState}
+                advisorOpen={false}
+                onAdvisorOpen={() => {}}
+              />
+            </ReactFlowProvider>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: C.textMuted }}>
+              <div style={{ textAlign: 'center' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: 48, display: 'block', marginBottom: 12, opacity: 0.4 }}>account_tree</span>
+                <div style={{ fontSize: 15, marginBottom: 16 }}>No definition loaded</div>
+                <button onClick={newDraft} style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: C.cyan, color: '#021520', fontWeight: 700, cursor: 'pointer' }}>
+                  Create First Definition
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right: Properties panel */}
+        <div style={{ width: 280, flexShrink: 0, borderLeft: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.15)', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '14px 16px 8px', fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>Properties</div>
+          {renderPropertiesPanel()}
+        </div>
+      </div>
+
+      {/* Toast */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
+          background: toast.ok ? C.greenBg : C.errorBg, border: `1px solid ${toast.ok ? C.greenBorder : 'rgba(255,180,171,0.3)'}`,
+          color: toast.ok ? C.green : C.error, borderRadius: 10, padding: '10px 20px', fontSize: 13, fontWeight: 600,
+          zIndex: 9999, boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+        }}>
+          {toast.msg}
+        </div>
+      )}
     </div>
   );
 }
@@ -4948,7 +5626,7 @@ export default function ApplicationsPage() {
         <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
           <Sidebar />
           <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-            <DefinitionView
+            <CanvasBuilderView
               app={definitionApp}
               onBack={() => { setView('list'); setDefinitionApp(null); }}
               onAppUpdated={(updated) => {
