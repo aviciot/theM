@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `(see git log)` — chore(compose): lock Python worker behind profiles: [legacy]
+Commit: `0cb4dfd` — chore(compose): lock Python worker behind profiles: [legacy]
 
 ---
 
