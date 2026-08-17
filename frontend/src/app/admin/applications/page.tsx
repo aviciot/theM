@@ -2920,6 +2920,9 @@ function CanvasBuilderView({
   const [providerKeyStatuses, setProviderKeyStatuses] = useState<Record<string, boolean>>({});
   const [propsPanelWidth, setPropsPanelWidth] = useState(280);
   const [compPanelWidth, setCompPanelWidth] = useState(260);
+  const [showRepublishModal, setShowRepublishModal] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function startCompPanelResize(e: React.MouseEvent) {
     e.preventDefault();
@@ -3031,9 +3034,25 @@ function CanvasBuilderView({
         if (found) { loadDef(found); return; }
       }
       const drafts = list.filter(d => d.status === 'draft');
-      const target = drafts.length > 0 ? drafts[drafts.length - 1] : list.length > 0 ? list[list.length - 1] : null;
-      if (target) loadDef(target);
-      else { setActiveDef(null); setDraft(null); setNodes([]); setEdges([]); }
+      if (drafts.length > 0) {
+        loadDef(drafts[drafts.length - 1]);
+      } else if (list.length > 0) {
+        // Only published defs exist — load the latest to seed a new draft
+        const latest = list[list.length - 1];
+        loadDef(latest);
+        // Auto-create a working draft seeded from the published definition
+        const seedDoc: AppDefinitionDoc = JSON.parse(JSON.stringify(latest.definition));
+        const seedWithName: AppDefinitionDoc = { ...seedDoc, name: app.name };
+        try {
+          const res = await themApi.createDefinition(app.id, { definition: seedWithName });
+          const updated = await themApi.listDefinitions(app.id);
+          setDefs(updated);
+          const newDef = updated.find(d => d.id === res.id);
+          if (newDef) loadDef(newDef);
+        } catch { /* keep showing published def if draft creation fails */ }
+      } else {
+        setActiveDef(null); setDraft(null); setNodes([]); setEdges([]);
+      }
     } catch {
       showToast('Failed to load definitions', false);
     }
@@ -3063,16 +3082,19 @@ function CanvasBuilderView({
   }
 
   async function saveDraft() {
-    if (!activeDef || isPublished) return;
+    if (!activeDef) return;
     setSaving(true);
+    setAutoSaveStatus('saving');
     try {
       const doc = canvasToDoc(nodes, edges, draft?.name ?? app.name);
       await themApi.updateDefinition(app.id, activeDef.id, { definition: doc });
       setDraft(doc);
       setIsDirty(false);
-      showToast('Saved', true);
+      setAutoSaveStatus('saved');
+      setTimeout(() => setAutoSaveStatus('idle'), 2000);
     } catch {
       showToast('Save failed', false);
+      setAutoSaveStatus('idle');
     } finally {
       setSaving(false);
     }
@@ -3107,6 +3129,20 @@ function CanvasBuilderView({
     if (!activeDef) return;
     setPublishing(true);
     try {
+      if (isDirty) await saveDraft();
+      const report = await themApi.validateDefinition(app.id, activeDef.id);
+      setValidationReport(report);
+      const errorIds = new Set((report.errors ?? []).map(e => e.instance_id).filter((x): x is string => !!x));
+      setNodes(ns => ns.map(n => ({
+        ...n,
+        data: { ...n.data, _error: errorIds.has(n.id), _errorMsg: (report.errors ?? []).find(e => e.instance_id === n.id)?.message }
+      })));
+      setLogoResult(report.valid ? 'valid' : 'invalid');
+      if (!report.valid) {
+        showToast(`${report.errors?.length ?? 1} validation error(s)`, false);
+        return;
+      }
+      setTimeout(() => setLogoResult('none'), 1800);
       const res = await themApi.publishDefinition(app.id, activeDef.id);
       showToast(`Published revision ${res.revision}`, true);
       await reloadDefs();
@@ -3115,6 +3151,15 @@ function CanvasBuilderView({
       showToast('Publish failed', false);
     } finally {
       setPublishing(false);
+    }
+  }
+
+  function handlePublishClick() {
+    // If the app already has a published revision, warn before re-publishing
+    if (app.active_revision != null) {
+      setShowRepublishModal(true);
+    } else {
+      void publish();
     }
   }
 
@@ -3166,8 +3211,16 @@ function CanvasBuilderView({
     setLogoResult('none');
   }
 
-  const isPublished = activeDef?.status === 'published';
-  const canPublish = activeDef?.status === 'draft' && !isDirty && validationReport?.valid === true;
+  // Auto-save: trigger 3s after last canvas change, only when a draft is loaded
+  useEffect(() => {
+    if (!isDirty || !activeDef) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => { void saveDraft(); }, 3000);
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDirty, nodes, edges, activeDef?.id]);
+
+  const isLive = app.active_revision != null;
   const logoState = computeLogoState({ loaded: !!activeDef, isDirty, busy: validating || saving || publishing, lastResult: logoResult });
 
   const EP_MS_ICON_MAP: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
@@ -3640,43 +3693,38 @@ function CanvasBuilderView({
         {activeDef && (
           <span style={{
             padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
-            background: activeDef.status === 'published' ? C.greenBg : 'rgba(208,188,255,0.12)',
-            color: activeDef.status === 'published' ? C.green : C.purple,
-            border: `1px solid ${activeDef.status === 'published' ? C.greenBorder : 'rgba(208,188,255,0.3)'}`,
+            background: isLive ? C.greenBg : 'rgba(208,188,255,0.12)',
+            color: isLive ? C.green : C.purple,
+            border: `1px solid ${isLive ? C.greenBorder : 'rgba(208,188,255,0.3)'}`,
           }}>
-            Rev {activeDef.revision} • {activeDef.status}
+            {isLive ? `Rev ${app.active_revision} • live` : 'draft'}
           </span>
         )}
-        <select
-          value={activeDef?.id ?? ''}
-          onChange={e => { const d = defs.find(x => x.id === e.target.value); if (d) loadDef(d); }}
-          style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: C.text, fontSize: 12, outline: 'none' }}
-        >
-          {defs.length === 0 && <option value="">No definitions yet</option>}
-          {[...defs].reverse().map(d => (
-            <option key={d.id} value={d.id}>Rev {d.revision} — {d.status}</option>
-          ))}
-        </select>
-        <button
-          onClick={newDraft}
-          style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid rgba(0,240,255,0.3)`, background: 'rgba(0,240,255,0.06)', color: C.cyan, cursor: 'pointer', fontSize: 12, fontWeight: 700, flexShrink: 0 }}
-        >
-          + New Draft
-        </button>
         <div style={{ flex: 1 }} />
-        {activeDef && !isPublished && isDirty && (
-          <button onClick={saveDraft} disabled={saving} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.08)', color: C.text }}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
+        {/* Auto-save status indicator */}
+        {autoSaveStatus === 'saving' && (
+          <span style={{ fontSize: 11, color: C.textMuted }}>Saving…</span>
         )}
-        {activeDef && !isPublished && (
-          <button onClick={validate} disabled={validating || saving} style={{ padding: '7px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(167,139,250,0.2)', color: C.purple }}>
-            {validating ? 'Validating…' : 'Validate'}
-          </button>
+        {autoSaveStatus === 'saved' && !isDirty && (
+          <span style={{ fontSize: 11, color: C.green }}>Saved ✓</span>
         )}
-        {activeDef && !isPublished && (
-          <button onClick={publish} disabled={!canPublish || publishing} style={{ padding: '7px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 700, background: canPublish ? C.greenBg : 'rgba(255,255,255,0.04)', color: canPublish ? C.green : C.textMuted, border: `1px solid ${canPublish ? C.greenBorder : 'rgba(255,255,255,0.1)'}` }}>
-            {publishing ? 'Publishing…' : 'Publish'}
+        {isDirty && autoSaveStatus === 'idle' && (
+          <span style={{ fontSize: 11, color: C.textMuted }}>Unsaved changes</span>
+        )}
+        {activeDef && (
+          <button
+            onClick={handlePublishClick}
+            disabled={publishing || saving || validating}
+            style={{
+              padding: '7px 16px', borderRadius: 8, cursor: publishing || saving || validating ? 'not-allowed' : 'pointer',
+              fontSize: 12, fontWeight: 700,
+              background: isLive ? 'rgba(245,158,11,0.15)' : C.greenBg,
+              color: isLive ? '#f59e0b' : C.green,
+              border: `1px solid ${isLive ? 'rgba(245,158,11,0.4)' : C.greenBorder}`,
+              opacity: publishing || saving || validating ? 0.6 : 1,
+            }}
+          >
+            {publishing ? 'Publishing…' : isLive ? 'Re-publish' : 'Publish'}
           </button>
         )}
       </div>
@@ -3829,6 +3877,41 @@ function CanvasBuilderView({
           {toast.msg}
         </div>
       )}
+
+      {/* Re-publish warning modal */}
+      {showRepublishModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 10000,
+        }}>
+          <div style={{
+            background: C.surface, border: `1px solid rgba(245,158,11,0.4)`, borderRadius: 14,
+            padding: '28px 32px', maxWidth: 420, width: '90%', boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 24, color: '#f59e0b' }}>warning</span>
+              <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Re-publish live app?</span>
+            </div>
+            <p style={{ fontSize: 13, color: C.textMuted, lineHeight: 1.6, margin: '0 0 22px' }}>
+              This app is currently live (revision {app.active_revision}). Re-publishing will apply your changes immediately and may affect active users.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowRepublishModal(false)}
+                style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: C.text, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowRepublishModal(false); void publish(); }}
+                style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.15)', color: '#f59e0b', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
+              >
+                Re-publish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3858,6 +3941,9 @@ function DefinitionView({
   const [saving, setSaving] = useState(false);
   const [validationReport, setValidationReport] = useState<ValidationReport | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [showRepublishModal, setShowRepublishModal] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const defAutoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fieldStyle: React.CSSProperties = {
     width: '100%', padding: '10px 12px', borderRadius: 8,
@@ -3886,11 +3972,24 @@ function DefinitionView({
         const found = list.find(d => d.id === selectId);
         if (found) { loadDef(found); return; }
       }
-      // Auto-select newest draft, else latest published
       const drafts = list.filter(d => d.status === 'draft');
-      const target = drafts.length > 0 ? drafts[drafts.length - 1] : list.length > 0 ? list[list.length - 1] : null;
-      if (target) loadDef(target);
-      else { setActiveDef(null); setDraft(null); }
+      if (drafts.length > 0) {
+        loadDef(drafts[drafts.length - 1]);
+      } else if (list.length > 0) {
+        const latest = list[list.length - 1];
+        loadDef(latest);
+        const seedDoc: AppDefinitionDoc = JSON.parse(JSON.stringify(latest.definition));
+        const seedWithName: AppDefinitionDoc = { ...seedDoc, name: app.name };
+        try {
+          const res = await themApi.createDefinition(app.id, { definition: seedWithName });
+          const updated = await themApi.listDefinitions(app.id);
+          setDefs(updated);
+          const newDef = updated.find(d => d.id === res.id);
+          if (newDef) loadDef(newDef);
+        } catch { /* keep showing published def if draft creation fails */ }
+      } else {
+        setActiveDef(null); setDraft(null);
+      }
     } catch {
       showToast('Failed to load definitions', false);
     }
@@ -3920,12 +4019,15 @@ function DefinitionView({
   async function saveDraft() {
     if (!activeDef || !draft) return;
     setSaving(true);
+    setAutoSaveStatus('saving');
     try {
       await themApi.updateDefinition(app.id, activeDef.id, { definition: draft });
       setIsDirty(false);
-      showToast('Saved', true);
+      setAutoSaveStatus('saved');
+      setTimeout(() => setAutoSaveStatus('idle'), 2000);
     } catch {
       showToast('Save failed', false);
+      setAutoSaveStatus('idle');
     } finally {
       setSaving(false);
     }
@@ -3950,6 +4052,13 @@ function DefinitionView({
     if (!activeDef) return;
     setPublishing(true);
     try {
+      if (isDirty) await saveDraft();
+      const report = await themApi.validateDefinition(app.id, activeDef.id);
+      setValidationReport(report);
+      if (!report.valid) {
+        showToast(`${report.errors?.length ?? 1} validation error(s)`, false);
+        return;
+      }
       const res = await themApi.publishDefinition(app.id, activeDef.id);
       showToast(`Published revision ${res.revision}`, true);
       await reloadDefs();
@@ -3958,6 +4067,14 @@ function DefinitionView({
       showToast('Publish failed', false);
     } finally {
       setPublishing(false);
+    }
+  }
+
+  function handlePublishClick() {
+    if (app.active_revision != null) {
+      setShowRepublishModal(true);
+    } else {
+      void publish();
     }
   }
 
@@ -4044,8 +4161,16 @@ function DefinitionView({
   const protocolOptions = ['websocket', 'sse', 'webrtc', 'a2a', 'voice'];
   const componentKinds = ['orchestrator', 'agent', 'middleware', 'entry_point', 'tool'];
 
-  const isPublished = activeDef?.status === 'published';
-  const canPublish = activeDef?.status === 'draft' && !isDirty && validationReport?.valid === true;
+  const isLive = app.active_revision != null;
+
+  // Auto-save: trigger 3s after last change, only when a draft is loaded
+  useEffect(() => {
+    if (!isDirty || !activeDef) return;
+    if (defAutoSaveTimer.current) clearTimeout(defAutoSaveTimer.current);
+    defAutoSaveTimer.current = setTimeout(() => { void saveDraft(); }, 3000);
+    return () => { if (defAutoSaveTimer.current) clearTimeout(defAutoSaveTimer.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDirty, draft, activeDef?.id]);
 
   // Validation error index by instance_id
   const errorsByInstance: Record<string, string[]> = {};
@@ -4071,41 +4196,37 @@ function DefinitionView({
         {activeDef && (
           <span style={{
             padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
-            background: activeDef.status === 'published' ? C.greenBg : 'rgba(208,188,255,0.12)',
-            color: activeDef.status === 'published' ? C.green : C.purple,
-            border: `1px solid ${activeDef.status === 'published' ? C.greenBorder : 'rgba(208,188,255,0.3)'}`,
+            background: isLive ? C.greenBg : 'rgba(208,188,255,0.12)',
+            color: isLive ? C.green : C.purple,
+            border: `1px solid ${isLive ? C.greenBorder : 'rgba(208,188,255,0.3)'}`,
           }}>
-            Rev {activeDef.revision} • {activeDef.status}
+            {isLive ? `Rev ${app.active_revision} • live` : 'draft'}
           </span>
         )}
         <div style={{ flex: 1 }} />
-        {activeDef && !isPublished && isDirty && (
-          <button
-            onClick={saveDraft} disabled={saving}
-            style={{ padding: '7px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.08)', color: C.text }}
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
+        {autoSaveStatus === 'saving' && (
+          <span style={{ fontSize: 11, color: C.textMuted }}>Saving…</span>
         )}
-        {activeDef && !isPublished && (
-          <button
-            onClick={validate} disabled={validating || saving}
-            style={{ padding: '7px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(167,139,250,0.2)', color: C.purple }}
-          >
-            {validating ? 'Validating…' : 'Validate'}
-          </button>
+        {autoSaveStatus === 'saved' && !isDirty && (
+          <span style={{ fontSize: 11, color: C.green }}>Saved ✓</span>
         )}
-        {activeDef && !isPublished && (
+        {isDirty && autoSaveStatus === 'idle' && (
+          <span style={{ fontSize: 11, color: C.textMuted }}>Unsaved changes</span>
+        )}
+        {activeDef && (
           <button
-            onClick={publish} disabled={!canPublish || publishing}
+            onClick={handlePublishClick}
+            disabled={publishing || saving || validating}
             style={{
-              padding: '7px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 700,
-              background: canPublish ? C.greenBg : 'rgba(255,255,255,0.04)',
-              color: canPublish ? C.green : C.textMuted,
-              border: `1px solid ${canPublish ? C.greenBorder : 'rgba(255,255,255,0.1)'}`,
+              padding: '7px 16px', borderRadius: 8, cursor: publishing || saving || validating ? 'not-allowed' : 'pointer',
+              fontSize: 12, fontWeight: 700,
+              background: isLive ? 'rgba(245,158,11,0.15)' : C.greenBg,
+              color: isLive ? '#f59e0b' : C.green,
+              border: `1px solid ${isLive ? 'rgba(245,158,11,0.4)' : C.greenBorder}`,
+              opacity: publishing || saving || validating ? 0.6 : 1,
             }}
           >
-            {publishing ? 'Publishing…' : 'Publish'}
+            {publishing ? 'Publishing…' : isLive ? 'Re-publish' : 'Publish'}
           </button>
         )}
       </div>
@@ -4141,13 +4262,13 @@ function DefinitionView({
                   <button
                     key={cd.id}
                     onClick={() => addComponent(cd)}
-                    disabled={isPublished || !activeDef}
+                    disabled={!activeDef}
                     style={{
                       width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 8, border: `1px solid rgba(255,255,255,0.08)`,
-                      background: 'rgba(255,255,255,0.03)', color: C.text, cursor: isPublished || !activeDef ? 'not-allowed' : 'pointer',
+                      background: 'rgba(255,255,255,0.03)', color: C.text, cursor: !activeDef ? 'not-allowed' : 'pointer',
                       display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, fontSize: 12,
                     }}
-                    onMouseEnter={e => { if (!isPublished && activeDef) { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.borderColor = kindColors[kind] ?? 'rgba(255,255,255,0.2)'; } }}
+                    onMouseEnter={e => { if (activeDef) { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.borderColor = kindColors[kind] ?? 'rgba(255,255,255,0.2)'; } }}
                     onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
                   >
                     <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: kindColors[kind] ? `${kindColors[kind]}22` : 'rgba(255,255,255,0.06)', color: kindColors[kind] ?? C.textMuted }}>
@@ -4169,10 +4290,10 @@ function DefinitionView({
               <button
                 key={p}
                 onClick={() => addEntryPoint(p)}
-                disabled={isPublished || !activeDef}
+                disabled={!activeDef}
                 style={{
                   width: '100%', textAlign: 'left', padding: '6px 10px', borderRadius: 8, border: '1px solid rgba(0,240,255,0.15)',
-                  background: 'rgba(0,240,255,0.03)', color: C.cyan, cursor: isPublished || !activeDef ? 'not-allowed' : 'pointer',
+                  background: 'rgba(0,240,255,0.03)', color: C.cyan, cursor: !activeDef ? 'not-allowed' : 'pointer',
                   display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: 12,
                 }}
               >
@@ -4185,26 +4306,6 @@ function DefinitionView({
 
         {/* Center panel: Definition Editor */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Revision selector */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <select
-              value={activeDef?.id ?? ''}
-              onChange={e => { const d = defs.find(x => x.id === e.target.value); if (d) loadDef(d); }}
-              style={{ ...fieldStyle, width: 'auto', minWidth: 180 }}
-            >
-              {defs.length === 0 && <option value="">No definitions yet</option>}
-              {[...defs].reverse().map(d => (
-                <option key={d.id} value={d.id}>Rev {d.revision} — {d.status}</option>
-              ))}
-            </select>
-            <button
-              onClick={newDraft}
-              style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid rgba(0,240,255,0.3)`, background: 'rgba(0,240,255,0.06)', color: C.cyan, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}
-            >
-              + New Draft
-            </button>
-          </div>
-
           {!activeDef && (
             <div style={{ textAlign: 'center', padding: '60px 20px', color: C.textMuted }}>
               <span className="material-symbols-outlined" style={{ fontSize: 48, display: 'block', marginBottom: 12, opacity: 0.4 }}>description</span>
@@ -4217,17 +4318,11 @@ function DefinitionView({
 
           {activeDef && draft && (
             <>
-              {isPublished && (
-                <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#f59e0b' }}>
-                  This revision is published and immutable. Create a new draft to make changes.
-                </div>
-              )}
-
               {/* Definition name */}
               <div style={{ ...glass, borderRadius: 10, padding: '14px 16px' }}>
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 6 }}>Definition Name</label>
                 <input
-                  style={fieldStyle} value={draft.name ?? ''} disabled={isPublished}
+                  style={fieldStyle} value={draft.name ?? ''}
                   onChange={e => { setDraft(prev => prev ? { ...prev, name: e.target.value } : prev); setIsDirty(true); }}
                   placeholder="e.g. My Orchestration"
                 />
@@ -4267,11 +4362,9 @@ function DefinitionView({
                       <button onClick={() => setSelectedItem({ type: 'component', id: comp.instance_id })} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center' }}>
                         <span className="material-symbols-outlined" style={{ fontSize: 16 }}>settings</span>
                       </button>
-                      {!isPublished && (
-                        <button onClick={() => removeComponent(comp.instance_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.error, display: 'flex', alignItems: 'center' }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
-                        </button>
-                      )}
+                      <button onClick={() => removeComponent(comp.instance_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.error, display: 'flex', alignItems: 'center' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                      </button>
                     </div>
                   );
                 })}
@@ -4305,11 +4398,9 @@ function DefinitionView({
                       <button onClick={() => setSelectedItem({ type: 'ep', id: ep.instance_id })} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center' }}>
                         <span className="material-symbols-outlined" style={{ fontSize: 16 }}>settings</span>
                       </button>
-                      {!isPublished && (
-                        <button onClick={() => removeEntryPoint(ep.instance_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.error, display: 'flex', alignItems: 'center' }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
-                        </button>
-                      )}
+                      <button onClick={() => removeEntryPoint(ep.instance_id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.error, display: 'flex', alignItems: 'center' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                      </button>
                     </div>
                   );
                 })}
@@ -4330,11 +4421,9 @@ function DefinitionView({
                     <span style={{ fontSize: 12, color: C.text, fontFamily: 'JetBrains Mono, monospace' }}>{conn.target}</span>
                     <span style={{ marginLeft: 4, fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: 'rgba(255,255,255,0.08)', color: C.textMuted }}>{conn.type}</span>
                     <div style={{ flex: 1 }} />
-                    {!isPublished && (
-                      <button onClick={() => removeConnection(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.error, display: 'flex', alignItems: 'center' }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
-                      </button>
-                    )}
+                    <button onClick={() => removeConnection(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.error, display: 'flex', alignItems: 'center' }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
+                    </button>
                   </div>
                 ))}
               </div>
@@ -4355,7 +4444,7 @@ function DefinitionView({
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Instance ID</label>
                 <input
-                  style={fieldStyle} value={selectedComp.instance_id} disabled={isPublished}
+                  style={fieldStyle} value={selectedComp.instance_id}
                   onChange={e => updateComponent(selectedComp.instance_id, { instance_id: e.target.value })}
                 />
               </div>
@@ -4370,20 +4459,20 @@ function DefinitionView({
                   <div>
                     <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Name (Temporal key — immutable)</label>
                     <input
-                      style={fieldStyle} value={(selectedComp.config as any)?.name ?? selectedComp.name ?? ''} disabled={isPublished}
+                      style={fieldStyle} value={(selectedComp.config as any)?.name ?? selectedComp.name ?? ''}
                       onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, name: e.target.value } })}
                     />
                   </div>
                   <div>
                     <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>System Prompt</label>
                     <textarea
-                      style={{ ...fieldStyle, height: 100, resize: 'vertical' }} value={(selectedComp.config as any)?.system_prompt ?? ''} disabled={isPublished}
+                      style={{ ...fieldStyle, height: 100, resize: 'vertical' }} value={(selectedComp.config as any)?.system_prompt ?? ''}
                       onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, system_prompt: e.target.value } })}
                     />
                   </div>
                   <div>
                     <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>LLM Provider</label>
-                    <select style={fieldStyle} value={(selectedComp.config as any)?.llm_provider ?? ''} disabled={isPublished}
+                    <select style={fieldStyle} value={(selectedComp.config as any)?.llm_provider ?? ''}
                       onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, llm_provider: e.target.value } })}>
                       <option value="">— inherit —</option>
                       <option value="anthropic">anthropic</option>
@@ -4393,14 +4482,14 @@ function DefinitionView({
                   </div>
                   <div>
                     <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>LLM Model</label>
-                    <input style={fieldStyle} value={(selectedComp.config as any)?.llm_model ?? ''} disabled={isPublished}
+                    <input style={fieldStyle} value={(selectedComp.config as any)?.llm_model ?? ''}
                       onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, llm_model: e.target.value } })} />
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     {(['max_iterations', 'history_window', 'max_parallel_tools', 'budget_tokens'] as const).map(field => (
                       <div key={field}>
                         <label style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 4 }}>{field.replace(/_/g, ' ')}</label>
-                        <input type="number" style={fieldStyle} value={(selectedComp.config as any)?.[field] ?? ''} disabled={isPublished}
+                        <input type="number" style={fieldStyle} value={(selectedComp.config as any)?.[field] ?? ''}
                           onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, [field]: e.target.value === '' ? null : Number(e.target.value) } })} />
                       </div>
                     ))}
@@ -4412,7 +4501,7 @@ function DefinitionView({
                   <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Config (JSON)</label>
                   <textarea
                     style={{ ...fieldStyle, height: 180, resize: 'vertical', fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}
-                    value={JSON.stringify(selectedComp.config, null, 2)} disabled={isPublished}
+                    value={JSON.stringify(selectedComp.config, null, 2)}
                     onChange={e => {
                       try { updateComponent(selectedComp.instance_id, { config: JSON.parse(e.target.value) }); } catch { /* invalid JSON — ignore */ }
                     }}
@@ -4427,20 +4516,20 @@ function DefinitionView({
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Slug</label>
                 <input
-                  style={fieldStyle} value={selectedEP.slug} disabled={isPublished}
+                  style={fieldStyle} value={selectedEP.slug}
                   onChange={e => updateEntryPoint(selectedEP.instance_id, { slug: e.target.value })}
                 />
               </div>
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Protocol</label>
-                <select style={fieldStyle} value={selectedEP.protocol} disabled={isPublished}
+                <select style={fieldStyle} value={selectedEP.protocol}
                   onChange={e => updateEntryPoint(selectedEP.instance_id, { protocol: e.target.value as any })}>
                   {protocolOptions.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>Root Orchestrator</label>
-                <select style={fieldStyle} value={selectedEP.root} disabled={isPublished}
+                <select style={fieldStyle} value={selectedEP.root}
                   onChange={e => updateEntryPoint(selectedEP.instance_id, { root: e.target.value })}>
                   <option value="">— none —</option>
                   {draft.components.filter(c => c.definition_ref.kind === 'orchestrator').map(c => (
@@ -4465,6 +4554,41 @@ function DefinitionView({
           backdropFilter: 'blur(8px)',
         }}>
           {toast.msg}
+        </div>
+      )}
+
+      {/* Re-publish warning modal */}
+      {showRepublishModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 10000,
+        }}>
+          <div style={{
+            background: C.surface, border: `1px solid rgba(245,158,11,0.4)`, borderRadius: 14,
+            padding: '28px 32px', maxWidth: 420, width: '90%', boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 24, color: '#f59e0b' }}>warning</span>
+              <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Re-publish live app?</span>
+            </div>
+            <p style={{ fontSize: 13, color: C.textMuted, lineHeight: 1.6, margin: '0 0 22px' }}>
+              This app is currently live (revision {app.active_revision}). Re-publishing will apply your changes immediately and may affect active users.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowRepublishModal(false)}
+                style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: C.text, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { setShowRepublishModal(false); void publish(); }}
+                style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.15)', color: '#f59e0b', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
+              >
+                Re-publish
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
