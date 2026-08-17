@@ -843,7 +843,7 @@ const EP_META: Record<string, { emoji: string; title: string; desc: string; colo
 const MODELS_BY_PROVIDER: Record<string, string[]> = {
   anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
   openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o3-mini'],
-  groq:      ['moonshotai/kimi-k2-instruct', 'llama-3.3-70b-versatile', 'llama3-70b-8192', 'llama3-8b-8192', 'gemma2-9b-it'],
+  groq:      ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.6-27b', 'groq/compound', 'groq/compound-mini'],
   gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro'],
 };
 const PROVIDER_OPTIONS = ['anthropic', 'openai', 'groq', 'gemini'];
@@ -1428,7 +1428,7 @@ function PropertiesPanel({
             const ORCH_PROVIDERS: Record<string, string[]> = {
               anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
               openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o3-mini'],
-              groq:      ['moonshotai/kimi-k2-instruct', 'llama-3.3-70b-versatile', 'llama3-70b-8192', 'llama3-8b-8192', 'gemma2-9b-it'],
+              groq:      ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.6-27b', 'groq/compound', 'groq/compound-mini'],
               gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro'],
             };
             const CUSTOM = '__custom__';
