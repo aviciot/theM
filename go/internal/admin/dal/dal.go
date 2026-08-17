@@ -170,7 +170,7 @@ type Application struct {
 	ID          string       `json:"id"`
 	Name        string       `json:"name"`
 	Enabled     bool         `json:"enabled"`
-	EntryPoints []EntryPoint `json:"entry_points,omitempty"`
+	EntryPoints []EntryPoint `json:"entry_points"`
 }
 
 // EntryPoint is one access door for an application.
