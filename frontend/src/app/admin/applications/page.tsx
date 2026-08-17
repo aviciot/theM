@@ -2918,6 +2918,39 @@ function CanvasBuilderView({
   const [configPanelErr, setConfigPanelErr] = useState(false);
   const [llmTestState, setLlmTestState] = useState<Record<string, { loading: boolean; ok?: boolean; latency?: number; error?: string }>>({});
   const [providerKeyStatuses, setProviderKeyStatuses] = useState<Record<string, boolean>>({});
+  const [propsPanelWidth, setPropsPanelWidth] = useState(280);
+  const [compPanelWidth, setCompPanelWidth] = useState(260);
+
+  function startCompPanelResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = compPanelWidth;
+    function onMove(ev: MouseEvent) {
+      setCompPanelWidth(Math.min(500, Math.max(180, startW + (ev.clientX - startX))));
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function startPropsPanelResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = propsPanelWidth;
+    function onMove(ev: MouseEvent) {
+      const delta = startX - ev.clientX;
+      setPropsPanelWidth(Math.min(600, Math.max(200, startW + delta)));
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
 
   const refreshProviderKeys = () => {
     themApi.getProviderKeys(app.id)
@@ -3664,7 +3697,8 @@ function CanvasBuilderView({
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
         {/* Left: Component Palette */}
-        <div style={{ width: 260, flexShrink: 0, background: 'rgba(0,0,0,0.2)', borderRight: '1px solid rgba(255,255,255,0.06)', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ width: compPanelWidth, flexShrink: 0, display: 'flex', flexDirection: 'row' }}>
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', background: 'rgba(0,0,0,0.2)' }}>
           <div style={{ padding: '14px 16px 8px', fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Components</div>
 
           {/* Entry Points */}
@@ -3722,6 +3756,14 @@ function CanvasBuilderView({
               </button>
             </div>
           )}
+          </div>
+          {/* Drag handle — right edge */}
+          <div
+            onMouseDown={startCompPanelResize}
+            style={{ width: 4, flexShrink: 0, cursor: 'col-resize', background: 'rgba(255,255,255,0.06)', transition: 'background 0.15s' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(0,209,255,0.35)'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.06)'; }}
+          />
         </div>
 
         {/* Center: ReactFlow canvas */}
@@ -3761,9 +3803,18 @@ function CanvasBuilderView({
         </div>
 
         {/* Right: Properties panel */}
-        <div style={{ width: 280, flexShrink: 0, borderLeft: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.15)', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '14px 16px 8px', fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>Properties</div>
-          {renderPropertiesPanel()}
+        <div style={{ width: propsPanelWidth, flexShrink: 0, display: 'flex', flexDirection: 'row' }}>
+          {/* Drag handle */}
+          <div
+            onMouseDown={startPropsPanelResize}
+            style={{ width: 4, flexShrink: 0, cursor: 'col-resize', background: 'rgba(255,255,255,0.06)', transition: 'background 0.15s' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(0,209,255,0.35)'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.06)'; }}
+          />
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', background: 'rgba(0,0,0,0.15)' }}>
+            <div style={{ padding: '14px 16px 8px', fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>Properties</div>
+            {renderPropertiesPanel()}
+          </div>
         </div>
       </div>
 
