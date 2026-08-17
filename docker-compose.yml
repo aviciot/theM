@@ -755,12 +755,16 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Python Temporal worker — RETIRED. Behind profiles: [legacy] only.
+  # Go worker (them-go-worker in docker-compose.dev.yml) is the future active path.
+  # --profile temporal starts Temporal infrastructure only (temporal-frontend, temporal-ui,
+  # temporal-admin-tools). It does NOT start this Python worker.
   them-worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
     container_name: them-worker
-    profiles: [temporal]
+    profiles: [legacy]
     volumes:
       - .:/app
       - ./data/them-logs:/app/logs

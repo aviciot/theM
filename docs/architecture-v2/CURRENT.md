@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `b93dff4` — feat(registry): Phase A — component_definitions + application_definitions + Go resolver
+Commit: `(see git log)` — chore(compose): lock Python worker behind profiles: [legacy]
 
 ---
 
@@ -39,14 +39,24 @@ All containers healthy as of 2026-08-16. See `docs/STATUS.md` for full container
 
 ## Python permanently locked out via compose profiles
 
-`docker-compose.yml` change (committed this session):
-- `them-bridge` now has `profiles: [legacy]` — will NOT start under any normal profile
-- `them-bridge-2` already had `profiles: [replica]` — unchanged
-- `them-worker` stays under `profiles: [temporal]` — Go worker is the active path
+Both Python runtimes are now behind `profiles: [legacy]`:
 
-Verified clean restart:
+| Service | Profile (before) | Profile (now) | Status |
+|---|---|---|---|
+| `them-bridge` | _(default — no profile)_ | `[legacy]` | Permanently retired |
+| `them-bridge-2` | `[replica]` | `[replica]` | Unchanged — also effectively dead |
+| `them-worker` | `[temporal]` | `[legacy]` | Permanently retired |
+
+**`--profile temporal` now starts Temporal infrastructure only:**
+- `temporal-frontend`, `temporal-ui`, `temporal-admin-tools`
+- Does NOT start `them-worker` (Python) — that is behind `[legacy]`
+
+**Go Temporal worker** (`them-go-worker` in `docker-compose.dev.yml`) is defined behind `profiles: [go-worker]` and is future work — not yet the active orchestration path.
+
+Verified clean restart with `--profile go --profile temporal`:
 ```
-PRESENT:  them-go-bridge, them-auth-go, them-frontend, them-postgres, them-redis, them-traefik
+PRESENT:  them-go-bridge, temporal-frontend, temporal-ui, temporal-admin-tools,
+          them-auth-go, them-frontend, them-postgres, them-redis, them-traefik
 ABSENT:   them-bridge (Python), them-worker (Python)
 ```
 
@@ -172,7 +182,7 @@ Read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 before s
 ## Known blockers
 
 1. Auth admin CRUD (users/roles/teams) — not exposed since Python auth removed. Needs Go port.
-2. Go Temporal worker is not yet sole owner of orchestration. Python worker `them-worker` is still behind `profiles: [temporal]`; it must be moved to `profiles: [legacy]` only after Go worker has been verified as the exclusive owner.
+2. Go Temporal worker is not yet implemented as the active orchestration path. `them-worker` (Python) is locked to `profiles: [legacy]` and must NOT be started. The Go worker (`them-go-worker`) is defined in `docker-compose.dev.yml` behind `profiles: [go-worker]` but is not yet production-ready. No orchestration runs until this is complete.
 3. A2A server (`/a2a/*`) still on Python — not yet migrated to Go.
 4. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims, live two-tenant verification) remain open.
 
