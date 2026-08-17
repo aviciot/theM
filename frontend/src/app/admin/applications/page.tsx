@@ -585,7 +585,7 @@ function buildNodesFromApp(
   const aoById = new Map<string, AppOrchestratorOut>();
   (app.app_orchestrators ?? []).forEach(ao => aoById.set(ao.id, ao));
   // Also pick up inline app_orchestrator objects from entry_points
-  app.entry_points.forEach(ep => {
+  (app.entry_points ?? []).forEach(ep => {
     if (ep.app_orchestrator) aoById.set(ep.app_orchestrator.id, ep.app_orchestrator);
   });
 
@@ -600,7 +600,7 @@ function buildNodesFromApp(
     layout[nodeId] ?? (legacyKey ? layout[legacyKey] : null) ?? null;
 
   // One EP node per entry-point row
-  app.entry_points.forEach((ep, idx) => {
+  (app.entry_points ?? []).forEach((ep, idx) => {
     const epId = `ep_${ep.slug}`;
     nodes.push({
       id: epId, type: 'entryPoint',
@@ -3553,7 +3553,7 @@ function AppCard({
             <span className="material-symbols-outlined" style={{ fontSize: 24, color: ep.color }}>
               {EP_ICON[firstEp?.entry_point_type ?? ''] ?? 'extension'}
             </span>
-            {app.entry_points.length > 1 && (
+            {(app.entry_points?.length ?? 0) > 1 && (
               <span style={{
                 position: 'absolute', top: -6, right: -6,
                 minWidth: 18, height: 18, borderRadius: 9,
@@ -3561,7 +3561,7 @@ function AppCard({
                 fontSize: 10, fontWeight: 700,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 padding: '0 4px',
-              }}>{app.entry_points.length}</span>
+              }}>{app.entry_points?.length ?? 0}</span>
             )}
           </div>
 
@@ -3571,7 +3571,7 @@ function AppCard({
               {app.name}
             </div>
             <div style={{ marginBottom: 5 }}>
-              {app.entry_points.map(epRow => (
+              {(app.entry_points ?? []).map(epRow => (
                 <div key={epRow.id} style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 11, color: epIconColor(epRow.entry_point_type).color, flexShrink: 0 }}>{EP_ICON[epRow.entry_point_type] ?? 'bolt'}</span>
                   {epRow.slug}
@@ -3662,7 +3662,7 @@ function AppCard({
 
       {/* Action buttons */}
       {(() => {
-        const webrtcEp = app.entry_points.find(e => e.entry_point_type === 'webrtc');
+        const webrtcEp = app.entry_points?.find(e => e.entry_point_type === 'webrtc');
         const hasRuntime = app.runtime_config && Object.values(app.runtime_config).some(v => v !== null && !(Array.isArray(v) && v.length === 0));
         return (
           <div style={{
@@ -4777,7 +4777,7 @@ function ListView({
                 <span className="material-icons" style={{ fontSize: 20 }}>close</span>
               </button>
             </div>
-            {urlModalApp.entry_points.map((epRow, epIdx) => {
+            {(urlModalApp.entry_points ?? []).map((epRow, epIdx) => {
               const urls: Array<{ label: string; val: string }> = [];
               if (epRow.entry_point_type === 'websocket') urls.push({ label: 'WebSocket', val: `ws://<host>:8088/apps/${epRow.slug}/ws` });
               if (epRow.entry_point_type === 'sse') urls.push({ label: 'SSE', val: `http://<host>:8088/apps/${epRow.slug}/sse` }, { label: 'REST', val: `http://<host>:8088/apps/${epRow.slug}` });
@@ -4787,8 +4787,8 @@ function ListView({
               );
               const epColor = epIconColor(epRow.entry_point_type);
               return (
-                <div key={epRow.id} style={{ marginBottom: epIdx < urlModalApp.entry_points.length - 1 ? 18 : 0 }}>
-                  {urlModalApp.entry_points.length > 1 && (
+                <div key={epRow.id} style={{ marginBottom: epIdx < (urlModalApp.entry_points?.length ?? 0) - 1 ? 18 : 0 }}>
+                  {(urlModalApp.entry_points?.length ?? 0) > 1 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                       <span className="material-symbols-outlined" style={{ fontSize: 14, color: epColor.color }}>{EP_ICON[epRow.entry_point_type] ?? 'bolt'}</span>
                       <span style={{ fontSize: 11, fontWeight: 700, color: epColor.color, fontFamily: 'JetBrains Mono, monospace' }}>{epRow.slug}</span>
