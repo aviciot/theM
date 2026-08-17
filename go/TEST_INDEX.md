@@ -1193,6 +1193,40 @@ Note: `WorkflowInput.OrchestratorName` is set from `EPConfig.OrchestratorName` (
 
 ---
 
+### S1-46 · History store — `internal/history/pgx_test.go`
+
+**Purpose:** DB role mapping for the task_messages CHECK constraint — proves every canonical domain
+role survives a lossless round-trip through the DB schema constraint (agent/user/system) by
+verifying the canonicalToDBRole and dbToCanonicalRole helpers. No live PostgreSQL required.
+
+| Test | What it proves |
+|---|---|
+| `TestCanonicalToDBRole` | user→user, assistant→agent, tool→agent, system→system, unknown→user (fallback) |
+| `TestDBToCanonicalRole_WithEnvelope` | Envelope canonical_role takes priority over DB role for all four combinations |
+| `TestDBToCanonicalRole_Fallback` | Empty canonical_role (legacy rows): agent→assistant, user→user, system→system |
+| `TestRoleRoundTrip` | Every domain role survives canonicalToDBRole+dbToCanonicalRole identity round-trip |
+
+**Trigger:** any change to `internal/history/pgx.go`
+
+---
+
+### S1-47 · Summarizer — `internal/summarizer/summarizer_test.go`
+
+**Purpose:** LLM-based conversation summarizer — proves text_delta events are drained into a
+summary string, prior summary is prepended in the prompt, LLM errors propagate, and context
+cancellation does not block or panic. Uses MockProvider, no real LLM calls.
+
+| Test | What it proves |
+|---|---|
+| `TestSummarize_DrainsDeltaEvents` | Multiple text_delta events concatenated into summary string |
+| `TestSummarize_IncludesPriorSummary` | Prior summary text appears in the prompt sent to the LLM |
+| `TestSummarize_PropagatesLLMError` | error event from provider → Summarize returns non-nil error |
+| `TestSummarize_ContextCancel` | Pre-cancelled context → does not block or panic |
+
+**Trigger:** any change to `internal/summarizer/summarizer.go`
+
+---
+
 ### S1-28 · Orchestrator — `internal/orchestrator/orchestrator_test.go`
 
 **Purpose:** Agentic loop feature parity — history loading, checkpoint/crash recovery, token budget
@@ -1214,7 +1248,7 @@ file artifact detection/recording (Phase R-3).
 | `TestOrchestrator_ArtifactExactBoundaryEncoded` | base64 string at exactly artifactMaxBase64Bytes → accepted, RecordArtifact called |
 | `TestOrchestrator_ArtifactOversizedEncodedInput` | base64 string exceeding max length → rejected before decode, error event, RecordArtifact NOT called |
 
-**Trigger:** any change to `internal/orchestrator/orchestrator.go`
+**Trigger:** any change to `internal/orchestrator/orchestrator.go` or `internal/orchestrator/summary.go`
 
 ---
 
@@ -1498,6 +1532,9 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/domain/domain.go` | S1-08 |
 | `internal/runrecorder/recorder.go` | S1-09 |
 | `internal/orchestrator/orchestrator.go` | S1-28 |
+| `internal/orchestrator/summary.go` | S1-28 |
+| `internal/history/pgx.go` | S1-46 |
+| `internal/summarizer/summarizer.go` | S1-47 |
 | `internal/temporal/activities.go`, `internal/temporal/workflow.go` | S1-29 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
@@ -1605,7 +1642,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |
 | S1-44 | admin definitions publish (Phase C: PublishDefinition) | 12 |
 | S1-45 | admin registry handler (Phase D: ListComponentDefinitions) | 1 |
-| **S1 total** | | **622** |
+| S1-46 | history (DB role mapping + round-trip) | 4 |
+| S1-47 | summarizer (LLM-based conversation summarizer) | 4 |
+| **S1 total** | | **630** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

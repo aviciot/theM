@@ -10,6 +10,7 @@ import (
 
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/orchestrator"
+	"github.com/aviciot/them/internal/temporal/workerconfig"
 )
 
 // OrchestratorRunner is the interface activities use to call the orchestrator.
@@ -19,9 +20,23 @@ type OrchestratorRunner interface {
 	Run(ctx context.Context, runID, contextID string, userMsg domain.Message, history []domain.Message, runCtx ...orchestrator.RunContext) (string, error)
 }
 
+// OrchestratorFactory builds a per-run orchestrator from a loaded RunConfig.
+// Implemented by runOrchestratorFactory in cmd/worker/main.go; tests may inject a fake.
+type OrchestratorFactory interface {
+	Build(cfg workerconfig.RunConfig) OrchestratorRunner
+}
+
 // Activities holds dependencies for Temporal activities.
 type Activities struct {
+	// Runner is the static fallback orchestrator used when AppOrchestratorID is absent.
 	Runner OrchestratorRunner
+	// ConfigLoader resolves per-run orchestrator config from DB. Optional.
+	// When set (and WorkflowInput.AppOrchestratorID is non-empty), the activity
+	// loads fresh config per-run and calls Factory.Build instead of using Runner.
+	ConfigLoader workerconfig.Loader
+	// Factory builds a per-run orchestrator from a loaded RunConfig. Optional.
+	// Only used when ConfigLoader is also set.
+	Factory OrchestratorFactory
 }
 
 // RunOrchestratorActivity calls the orchestrator agentic loop.
@@ -74,7 +89,19 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 		}
 	}()
 
-	finalText, err := a.Runner.Run(ctx, input.RunID, input.ContextID, input.UserMessage, input.History,
+	// Select runner: use per-run config when AppOrchestratorID is set and
+	// ConfigLoader + Factory are wired; otherwise fall back to the static Runner.
+	runner := a.Runner
+	if input.AppOrchestratorID != "" && a.ConfigLoader != nil && a.Factory != nil {
+		runCfg, cfgErr := a.ConfigLoader.LoadRunConfig(ctx, input.AppOrchestratorID, input.ApplicationID)
+		if cfgErr != nil {
+			return WorkflowResult{Status: domain.RunStatusFailed},
+				fmt.Errorf("RunOrchestratorActivity: load config: %w", cfgErr)
+		}
+		runner = a.Factory.Build(runCfg)
+	}
+
+	finalText, err := runner.Run(ctx, input.RunID, input.ContextID, input.UserMessage, input.History,
 		orchestrator.RunContext{
 			TenantID:      input.TenantID,
 			ApplicationID: input.ApplicationID,

@@ -242,6 +242,20 @@ func (r *Recorder) GetArtifact(ctx context.Context, runID, artifactID string) (A
 	return a, nil
 }
 
+// CreateRootTask ensures a root task row exists for (contextID, runID).
+// Called before writing task_messages so the FK constraint is satisfied.
+// Idempotent — ON CONFLICT DO NOTHING means repeated calls are safe.
+func (r *Recorder) CreateRootTask(ctx context.Context, contextID, runID string) error {
+	const q = `
+INSERT INTO them.tasks (context_id, run_id, state, kind)
+VALUES ($1::uuid, NULLIF($2, '')::uuid, 'working', 'root')
+ON CONFLICT DO NOTHING`
+	if err := r.db.Exec(ctx, q, contextID, runID); err != nil {
+		return fmt.Errorf("runrecorder: create root task: %w", err)
+	}
+	return nil
+}
+
 // sanitizeFilename strips directory components and control characters from a
 // filename to prevent path traversal attacks and unsafe filenames.
 func sanitizeFilename(name string) string {
