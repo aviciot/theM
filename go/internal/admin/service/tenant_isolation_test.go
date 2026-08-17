@@ -384,6 +384,23 @@ func (f *isolationFakeDal) DeleteDraftDefinition(_ context.Context, _, _, _ stri
 	return nil
 }
 
+// Phase C publish pipeline stubs.
+func (f *isolationFakeDal) PublishDefinition(_ context.Context, _, _, _, _ string) (dal.PublishResult, error) {
+	return dal.PublishResult{}, nil
+}
+func (f *isolationFakeDal) UpsertAppOrchestrator(_ context.Context, _ dal.AppOrchestratorRow) (string, error) {
+	return "orch-id", nil
+}
+func (f *isolationFakeDal) UpsertEntryPoint(_ context.Context, _ dal.EntryPointRow) (string, error) {
+	return "ep-id", nil
+}
+func (f *isolationFakeDal) DeactivateStaleOrchestrators(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (f *isolationFakeDal) DeactivateStaleEntryPoints(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 // ── pgxUniqueViolation stub ───────────────────────────────────────────────────
 //
 // dal.IsUniqueViolation checks for pgconn.PgError with Code "23505".

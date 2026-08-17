@@ -204,6 +204,56 @@ or `internal/admin/dal/definitions.go`
 
 ---
 
+### S1-43 · Application Definition Validate — `internal/admin/service/definitions_publish_test.go`
+
+**Purpose:** Phase C — ValidateDefinition exercises registry resolution errors, structural errors,
+protocol validation, dangling connections, and duplicate instance_ids in a component definition
+without touching the database.
+
+| Test | What it proves |
+|---|---|
+| `TestValidateDefinition_ValidDef_ReturnsValidTrue` | All components resolve → valid=true, no errors |
+| `TestValidateDefinition_UnknownComponent_ReturnsNotFound` | Unknown component ref → valid=false, code=component_not_found |
+| `TestValidateDefinition_DisabledComponent_ReturnsDisabled` | Disabled component → valid=false, code=component_disabled |
+| `TestValidateDefinition_DeprecatedComponent_ReturnsDeprecated` | Deprecated component → valid=false, code=component_deprecated |
+| `TestValidateDefinition_DuplicateInstanceID_ReturnsError` | Duplicate instance_id in components → valid=false, error reported |
+| `TestValidateDefinition_DanglingConnection_ReturnsError` | Connection target not in instance_ids → valid=false, code=dangling_connection |
+| `TestValidateDefinition_InvalidProtocol_ReturnsError` | Entry point protocol not in allowlist → valid=false, code=invalid_protocol |
+| `TestValidateDefinition_EmbeddedSecret_ReturnsError` | secret_value key → valid=false (structural_error) |
+| `TestValidateDefinition_DefinitionNotFound_ReturnsErrNotFound` | Missing defID → ErrNotFound (not a report) |
+| `TestValidateDefinition_WrongTenant_ReturnsErrNotFound` | DAL returns pgx.ErrNoRows → ErrNotFound |
+
+**Trigger:** any change to `internal/admin/service/publish.go`, `internal/admin/service/definitions.go`,
+`internal/admin/dal/publish.go`, or `internal/registry/`
+
+---
+
+### S1-44 · Application Definition Publish — `internal/admin/service/definitions_publish_test.go`
+
+**Purpose:** Phase C — PublishDefinition covers the full compile-and-publish pipeline: validation,
+orchestrator projection upsert, entry_point projection upsert, stale deactivation, and the final
+atomic DAL publish call. Tests use a fake registry and fake DAL — no PostgreSQL required.
+
+| Test | What it proves |
+|---|---|
+| `TestPublishDefinition_Success_ReturnsPublishResult` | Happy path: result has correct definition_id + revision |
+| `TestPublishDefinition_PublishedDefinition_ReturnsConflict` | Already-published def → ErrConflict, DAL not called |
+| `TestPublishDefinition_ValidationFails_ReturnsValidationError` | Invalid components → ErrValidation, DAL not called |
+| `TestPublishDefinition_OrchProjectionCreated` | Orchestrator row upserted with correct name/instance_id/config/component pin |
+| `TestPublishDefinition_EPProjectionCreated` | Entry point row upserted with correct slug/type/orchestrator ID |
+| `TestPublishDefinition_StaleProjectionsDeactivated` | DeactivateStaleOrchestrators + DeactivateStaleEntryPoints both called |
+| `TestPublishDefinition_ToolConnectionWiresAgentIDs` | Tool connections from orchestrator to agent populate AllowedAgentIDs |
+| `TestPublishDefinition_DelegationConnectionSetsDelegatable` | Delegation target orchestrator gets delegatable=true |
+| `TestPublishDefinition_UpsertOrchError_AbortsPipeline` | DAL upsert error → pipeline aborts, PublishDefinition not called |
+| `TestPublishDefinition_DefinitionNotFound_ReturnsErrNotFound` | Missing definition → ErrNotFound |
+| `TestPublishDefinition_WrongTenantBlocked` | DAL returns pgx.ErrNoRows → ErrNotFound |
+| `TestPublishDefinition_NoRegistry_SkipsResolution` | No registry wired → resolution skipped, publish succeeds |
+
+**Trigger:** any change to `internal/admin/service/publish.go`, `internal/admin/dal/publish.go`,
+`internal/admin/definitions.go`, `internal/admin/router.go`, or `internal/registry/`
+
+---
+
 ### S1-40 · Auth server (Go) — `internal/authserver/*_test.go`
 
 **Purpose:** the Go replacement for the Python `them-auth-service`. Proves HS256 JWT issuance
@@ -1447,13 +1497,16 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/execution/lifecycle.go` | S1-35 + S1-14 + S1-13 |
 | `internal/execution/errors.go` | S1-35 + S1-13 |
 | `internal/execution/request.go` | S1-35 + S1-13 |
-| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 |
-| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S2-05 (integration) |
+| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 |
+| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S2-05 (integration) |
 | `internal/admin/dal/definitions.go` | S1-42 |
 | `internal/admin/dal/llm_providers.go` | S1-25 + S2-05 (integration) |
-| `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 |
-| `internal/admin/service/definitions.go` | S1-42 |
-| `internal/admin/definitions.go` | S1-42 |
+| `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 |
+| `internal/admin/service/definitions.go` | S1-42 + S1-43 + S1-44 |
+| `internal/admin/service/publish.go` | S1-43 + S1-44 |
+| `internal/admin/dal/publish.go` | S1-43 + S1-44 |
+| `internal/admin/definitions.go` | S1-42 + S1-43 + S1-44 |
+| `internal/admin/router.go` | S1-43 + S1-44 |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |
@@ -1465,7 +1518,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/cache/runstream_adapter.go` | S1-20 |
 | `internal/runstream/stream.go` | S1-21 |
 | `internal/reconciler/reconciler.go` | S1-22 |
-| `internal/registry/resolver.go`, `internal/registry/pgx.go`, `internal/registry/types.go` | S1-41 |
+| `internal/registry/resolver.go`, `internal/registry/pgx.go`, `internal/registry/types.go` | S1-41 + S1-43 + S1-44 |
 | `cmd/them/main.go` | S1-24 + S1 (full suite) |
 | `go.mod` or `go.sum` | S1 (full suite) |
 | `Dockerfile.go` | S1 + rebuild + S2 |
@@ -1533,7 +1586,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-40 | authserver (Go auth service) | 38 |
 | S1-41 | registry (component definition resolver) | 12 |
 | S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
-| **S1 total** | | **599** |
+| S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |
+| S1-44 | admin definitions publish (Phase C: PublishDefinition) | 12 |
+| **S1 total** | | **621** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1542,4 +1597,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **610** |
+| **`go test ./...` total** | | **632** |

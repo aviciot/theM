@@ -13,12 +13,20 @@ import (
 // DefinitionService owns the business logic for application definition CRUD.
 // It is a standalone service — it does not embed AppService.
 type DefinitionService struct {
-	dal Dal
+	dal      Dal
+	registry RegistryResolver // nil in CRUD-only mode (tests, Phase B)
 }
 
-// NewDefinitionService creates a DefinitionService.
+// NewDefinitionService creates a DefinitionService without a registry resolver.
+// Suitable for CRUD operations only (Phase B). Validate/Publish require a resolver.
 func NewDefinitionService(d Dal) *DefinitionService {
 	return &DefinitionService{dal: d}
+}
+
+// NewDefinitionServiceWithRegistry creates a DefinitionService wired with a
+// component registry resolver. Required for ValidateDefinition and PublishDefinition.
+func NewDefinitionServiceWithRegistry(d Dal, r RegistryResolver) *DefinitionService {
+	return &DefinitionService{dal: d, registry: r}
 }
 
 // hashDefinition computes a canonical sha256 hash over the definition JSON.

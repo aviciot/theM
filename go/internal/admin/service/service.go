@@ -83,6 +83,13 @@ type Dal interface {
 	UpdateDraftDefinition(ctx context.Context, tenantID, appID, defID string, defJSON []byte, hash string) error
 	DeleteDraftDefinition(ctx context.Context, tenantID, appID, defID string) error
 
+	// Publish pipeline — Phase C
+	PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string) (dal.PublishResult, error)
+	UpsertAppOrchestrator(ctx context.Context, row dal.AppOrchestratorRow) (string, error)
+	UpsertEntryPoint(ctx context.Context, row dal.EntryPointRow) (string, error)
+	DeactivateStaleOrchestrators(ctx context.Context, tenantID, appID, defID string) error
+	DeactivateStaleEntryPoints(ctx context.Context, tenantID, appID, defID string) error
+
 	// Config table (monitoring, llm_routing, …) — platform-global, no tenant
 	GetConfig(ctx context.Context, key string) (*dal.ConfigRow, error)
 	UpsertConfig(ctx context.Context, key string, value []byte) error

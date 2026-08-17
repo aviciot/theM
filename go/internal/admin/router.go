@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -9,7 +10,19 @@ import (
 
 	"github.com/aviciot/them/internal/admin/service"
 	"github.com/aviciot/them/internal/auth"
+	"github.com/aviciot/them/internal/registry"
 )
+
+// registryQuerierAdapter adapts admin.DBQuerier to registry.DBQuerier.
+// Both interfaces expose QueryRow with the same signature except for the
+// return type — dal.SingleRowScanner vs registry.SingleRowScanner — which
+// are structurally identical (both have Scan(...any) error).
+// The adapter wraps the returned row to satisfy the registry interface.
+type registryQuerierAdapter struct{ q DBQuerier }
+
+func (a *registryQuerierAdapter) QueryRow(ctx context.Context, sql string, args ...any) registry.SingleRowScanner {
+	return a.q.QueryRow(ctx, sql, args...)
+}
 
 // BuildRouter returns an http.Handler with all admin and runs routes mounted.
 //
@@ -93,7 +106,7 @@ func BuildRouter(
 	agents := NewAgentsHandler(db, cache, redis, fernetKey)
 	orchs := NewOrchestratorsHandler(db, cache)
 	apps := NewApplicationsHandler(db, cache)
-	defs := NewDefinitionsHandler(db)
+	defs := NewDefinitionsHandlerWithRegistry(db, registry.NewResolver(&registryQuerierAdapter{db}))
 	runs := NewRunsHandler(db, temporal)
 	tokens := NewTokensHandler(db, cache)
 	monitoring := NewMonitoringConfigHandler(db)
