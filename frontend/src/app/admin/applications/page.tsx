@@ -2914,6 +2914,7 @@ function CanvasBuilderView({
   const [configPanelText, setConfigPanelText] = useState('{}');
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
   const [configPanelErr, setConfigPanelErr] = useState(false);
+  const [llmTestState, setLlmTestState] = useState<{ loading: boolean; ok?: boolean; latency?: number; error?: string }>({ loading: false });
 
   // Canvas state
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -2925,6 +2926,7 @@ function CanvasBuilderView({
       setConfigPanelText(JSON.stringify((selectedNode.data as unknown as AgentNodeData | MwNodeData).config, null, 2));
       setConfigPanelErr(false);
     }
+    setLlmTestState({ loading: false });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNode?.id, selectedNode?.type]);
 
@@ -2948,6 +2950,21 @@ function CanvasBuilderView({
     }));
     setIsDirty(true);
     setLogoResult('none');
+  }
+
+  async function testOrchLlm(provider: string, model: string) {
+    if (!provider || !model) return;
+    setLlmTestState({ loading: true });
+    try {
+      // Borrow any existing orchestrator row as the API-key vehicle
+      const orchs = await themApi.orchestrators();
+      const orchId = orchs[0]?.id;
+      if (!orchId) { setLlmTestState({ loading: false, ok: false, error: 'No orchestrator found — create one in Orchestrators first' }); return; }
+      const res = await themApi.testLlm(orchId, { provider, model });
+      setLlmTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
+    } catch (e: unknown) {
+      setLlmTestState({ loading: false, ok: false, error: e instanceof Error ? e.message : 'Request failed' });
+    }
   }
 
   function loadDef(def: AppDefinition) {
@@ -3216,20 +3233,17 @@ function CanvasBuilderView({
               <select
                 style={selectStyle}
                 value={provider}
-                onChange={e => setOrchConfig({ llm_provider: e.target.value, llm_model: MODELS_BY_PROVIDER[e.target.value]?.[0] ?? '' })}
+                onChange={e => { setOrchConfig({ llm_provider: e.target.value, llm_model: MODELS_BY_PROVIDER[e.target.value]?.[0] ?? '' }); setLlmTestState({ loading: false }); }}
               >
                 {PROVIDER_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
-            <div>
+            <div style={{ marginBottom: 10 }}>
               <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Model</label>
               <select
                 style={selectStyle}
                 value={isCustomModel ? 'custom' : model}
-                onChange={e => {
-                  if (e.target.value === 'custom') setOrchConfig({ llm_model: '' });
-                  else setOrchConfig({ llm_model: e.target.value });
-                }}
+                onChange={e => { if (e.target.value === 'custom') setOrchConfig({ llm_model: '' }); else setOrchConfig({ llm_model: e.target.value }); setLlmTestState({ loading: false }); }}
               >
                 {knownModels.map(m => <option key={m} value={m}>{m}</option>)}
                 <option value="custom">Custom…</option>
@@ -3238,9 +3252,34 @@ function CanvasBuilderView({
                 <input
                   style={{ ...fieldStyle, marginTop: 6 }}
                   value={model}
-                  onChange={e => setOrchConfig({ llm_model: e.target.value })}
+                  onChange={e => { setOrchConfig({ llm_model: e.target.value }); setLlmTestState({ loading: false }); }}
                   placeholder="Enter model id"
                 />
+              )}
+            </div>
+            {/* Test button */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => testOrchLlm(provider, model)}
+                disabled={llmTestState.loading || !provider || !model}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '6px 14px', borderRadius: 8,
+                  border: `1px solid ${C.purpleBorder}`,
+                  background: 'rgba(208,188,255,0.07)',
+                  color: (!provider || !model || llmTestState.loading) ? C.textMuted : C.purple,
+                  cursor: (!provider || !model || llmTestState.loading) ? 'not-allowed' : 'pointer',
+                  fontSize: 12, fontWeight: 600, transition: 'all 150ms',
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>bolt</span>
+                {llmTestState.loading ? 'Testing…' : 'Test connection'}
+              </button>
+              {!llmTestState.loading && llmTestState.ok === true && (
+                <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({llmTestState.latency}ms)</span>
+              )}
+              {!llmTestState.loading && llmTestState.ok === false && (
+                <span style={{ fontSize: 12, color: '#f87171' }}>✗ {llmTestState.error ?? 'Failed'}</span>
               )}
             </div>
           </div>
