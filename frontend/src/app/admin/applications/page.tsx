@@ -3013,12 +3013,15 @@ function CanvasBuilderView({
   }, [app.id]);
 
   async function newDraft() {
-    const emptyDoc: AppDefinitionDoc = {
+    // Seed from current canvas so edits continue from the published state.
+    // Fall back to empty doc only if there is no existing canvas.
+    const seedDoc: AppDefinitionDoc = draft ?? {
       schema_version: 2, name: app.name,
       components: [], entry_points: [], connections: [],
     };
+    const seedWithName: AppDefinitionDoc = { ...seedDoc, name: app.name };
     try {
-      const res = await themApi.createDefinition(app.id, { definition: emptyDoc });
+      const res = await themApi.createDefinition(app.id, { definition: seedWithName });
       await reloadDefs(res.id);
       showToast('New draft created', true);
     } catch {
@@ -3849,12 +3852,13 @@ function DefinitionView({
   }, [app.id]);
 
   async function newDraft() {
-    const emptyDoc: AppDefinitionDoc = {
+    const seedDoc: AppDefinitionDoc = draft ?? {
       schema_version: 2, name: app.name,
       components: [], entry_points: [], connections: [],
     };
+    const seedWithName: AppDefinitionDoc = { ...seedDoc, name: app.name };
     try {
-      const res = await themApi.createDefinition(app.id, { definition: emptyDoc });
+      const res = await themApi.createDefinition(app.id, { definition: seedWithName });
       await reloadDefs(res.id);
       showToast('New draft created', true);
     } catch {
