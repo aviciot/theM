@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `TBD` — fix(admin): Phase C — app_orchestrators tenant_id fix (no column)
+Commit: `e625fbc` — fix(admin): Phase C publish — remove tenant_id from app_orchestrators upsert
 
 ---
 
