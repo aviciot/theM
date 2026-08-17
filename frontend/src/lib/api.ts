@@ -239,8 +239,8 @@ export interface AppOrchestratorSummary {
 export interface Application {
   id: string;
   name: string;
-  slug: string;
-  presentation: Record<string, unknown>;
+  slug?: string;
+  presentation?: Record<string, unknown>;
   enabled: boolean;
   active_revision?: number | null;
   active_status?: string | null;

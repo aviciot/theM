@@ -180,7 +180,6 @@ type AppOrchestratorSummary struct {
 type Application struct {
 	ID               string                   `json:"id"`
 	Name             string                   `json:"name"`
-	Slug             string                   `json:"slug"`
 	Enabled          bool                     `json:"enabled"`
 	ActiveRevision   *int                     `json:"active_revision,omitempty"`
 	ActiveStatus     *string                  `json:"active_status,omitempty"`

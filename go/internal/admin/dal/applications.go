@@ -7,13 +7,13 @@ import (
 )
 
 // listAppQuery is shared by ListApplications and GetApplication.
-// It returns: id, name, slug, enabled, active_revision, active_status.
+// It returns: id, name, enabled, active_revision, active_status.
 // app_orchestrators are fetched separately per-app to avoid N×M fanout.
+// Note: them.applications has no slug column — slug lives on entry_points.
 const listAppQuery = `
 SELECT
     a.id::text,
     a.name,
-    COALESCE(a.slug, ''),
     a.enabled,
     d.revision,
     d.status
@@ -24,7 +24,7 @@ WHERE a.tenant_id = $1::uuid`
 // scanApplication scans one application row from listAppQuery.
 func scanApplication(rows SingleRowScanner) (Application, error) {
 	var a Application
-	if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.Enabled, &a.ActiveRevision, &a.ActiveStatus); err != nil {
+	if err := rows.Scan(&a.ID, &a.Name, &a.Enabled, &a.ActiveRevision, &a.ActiveStatus); err != nil {
 		return a, err
 	}
 	return a, nil
