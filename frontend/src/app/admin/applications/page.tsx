@@ -2921,8 +2921,6 @@ function CanvasBuilderView({
   const [propsPanelWidth, setPropsPanelWidth] = useState(280);
   const [compPanelWidth, setCompPanelWidth] = useState(260);
   const [showRepublishModal, setShowRepublishModal] = useState(false);
-  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function startCompPanelResize(e: React.MouseEvent) {
     e.preventDefault();
@@ -3084,17 +3082,14 @@ function CanvasBuilderView({
   async function saveDraft() {
     if (!activeDef) return;
     setSaving(true);
-    setAutoSaveStatus('saving');
     try {
       const doc = canvasToDoc(nodes, edges, draft?.name ?? app.name);
       await themApi.updateDefinition(app.id, activeDef.id, { definition: doc });
       setDraft(doc);
       setIsDirty(false);
-      setAutoSaveStatus('saved');
-      setTimeout(() => setAutoSaveStatus('idle'), 2000);
+      showToast('Saved', true);
     } catch {
       showToast('Save failed', false);
-      setAutoSaveStatus('idle');
     } finally {
       setSaving(false);
     }
@@ -3212,14 +3207,6 @@ function CanvasBuilderView({
   }
 
   // Auto-save: trigger 3s after last canvas change, only when a draft is loaded
-  useEffect(() => {
-    if (!isDirty || !activeDef) return;
-    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current = setTimeout(() => { void saveDraft(); }, 3000);
-    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDirty, nodes, edges, activeDef?.id]);
-
   const isLive = app.active_revision != null;
   const logoState = computeLogoState({ loaded: !!activeDef, isDirty, busy: validating || saving || publishing, lastResult: logoResult });
 
@@ -3701,15 +3688,10 @@ function CanvasBuilderView({
           </span>
         )}
         <div style={{ flex: 1 }} />
-        {/* Auto-save status indicator */}
-        {autoSaveStatus === 'saving' && (
-          <span style={{ fontSize: 11, color: C.textMuted }}>Saving…</span>
-        )}
-        {autoSaveStatus === 'saved' && !isDirty && (
-          <span style={{ fontSize: 11, color: C.green }}>Saved ✓</span>
-        )}
-        {isDirty && autoSaveStatus === 'idle' && (
-          <span style={{ fontSize: 11, color: C.textMuted }}>Unsaved changes</span>
+        {activeDef && isDirty && (
+          <button onClick={saveDraft} disabled={saving} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.08)', color: C.text }}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
         )}
         {activeDef && (
           <button
@@ -3942,8 +3924,6 @@ function DefinitionView({
   const [validationReport, setValidationReport] = useState<ValidationReport | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [showRepublishModal, setShowRepublishModal] = useState(false);
-  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const defAutoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fieldStyle: React.CSSProperties = {
     width: '100%', padding: '10px 12px', borderRadius: 8,
@@ -4019,15 +3999,12 @@ function DefinitionView({
   async function saveDraft() {
     if (!activeDef || !draft) return;
     setSaving(true);
-    setAutoSaveStatus('saving');
     try {
       await themApi.updateDefinition(app.id, activeDef.id, { definition: draft });
       setIsDirty(false);
-      setAutoSaveStatus('saved');
-      setTimeout(() => setAutoSaveStatus('idle'), 2000);
+      showToast('Saved', true);
     } catch {
       showToast('Save failed', false);
-      setAutoSaveStatus('idle');
     } finally {
       setSaving(false);
     }
@@ -4164,14 +4141,6 @@ function DefinitionView({
   const isLive = app.active_revision != null;
 
   // Auto-save: trigger 3s after last change, only when a draft is loaded
-  useEffect(() => {
-    if (!isDirty || !activeDef) return;
-    if (defAutoSaveTimer.current) clearTimeout(defAutoSaveTimer.current);
-    defAutoSaveTimer.current = setTimeout(() => { void saveDraft(); }, 3000);
-    return () => { if (defAutoSaveTimer.current) clearTimeout(defAutoSaveTimer.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDirty, draft, activeDef?.id]);
-
   // Validation error index by instance_id
   const errorsByInstance: Record<string, string[]> = {};
   for (const err of validationReport?.errors ?? []) {
@@ -4204,14 +4173,10 @@ function DefinitionView({
           </span>
         )}
         <div style={{ flex: 1 }} />
-        {autoSaveStatus === 'saving' && (
-          <span style={{ fontSize: 11, color: C.textMuted }}>Saving…</span>
-        )}
-        {autoSaveStatus === 'saved' && !isDirty && (
-          <span style={{ fontSize: 11, color: C.green }}>Saved ✓</span>
-        )}
-        {isDirty && autoSaveStatus === 'idle' && (
-          <span style={{ fontSize: 11, color: C.textMuted }}>Unsaved changes</span>
+        {activeDef && isDirty && (
+          <button onClick={saveDraft} disabled={saving} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,0.08)', color: C.text }}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
         )}
         {activeDef && (
           <button
