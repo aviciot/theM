@@ -1,13 +1,32 @@
 const API_BASE = '/api/them';
 const HEALTH_BASE = '/api/bridge';
 
+let _refreshing: Promise<boolean> | null = null;
+
+async function tryRefresh(): Promise<boolean> {
+  if (_refreshing) return _refreshing;
+  _refreshing = fetch('/api/auth/refresh', { method: 'POST' })
+    .then(r => r.ok)
+    .catch(() => false)
+    .finally(() => { _refreshing = null; });
+  return _refreshing;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
   };
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+
+  // On 401, attempt a silent token refresh and retry once.
+  if (res.status === 401) {
+    const refreshed = await tryRefresh();
+    if (refreshed) {
+      res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    }
+  }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -537,6 +556,7 @@ export const themApi = {
     return res.json();
   },
   applications: () => api.get<Application[]>('/admin/applications'),
+  getApplication: (id: string) => api.get<Application>(`/admin/applications/${id}`),
   createApplication: async (body: unknown): Promise<Application> => {
     const { id } = await api.post<{ id: string }>('/admin/applications', body);
     return api.get<Application>(`/admin/applications/${id}`);
