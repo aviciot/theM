@@ -64,7 +64,7 @@ const glass = {
   border: `1px solid ${C.glassBorder}`,
 };
 
-const deleteNodeRef = { current: (_id: string) => {} };
+// deleteNodeRef removed — nodes use useReactFlow().deleteElements() directly
 
 // ── Types ────────────────────────────────────────────────────────────────────
 const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc', 'a2a', 'voice'] as const;
@@ -333,6 +333,7 @@ function InternalMBadge() {
 
 // EntryPointNode — icon-only, transparent, name below
 function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
+  const { deleteElements } = useReactFlow();
   const epKind = data.epType || (data as unknown as Record<string, unknown>).protocol as string | undefined;
   const slugMissing = !data.slug;
   const hasError = data._error || data._shake;
@@ -346,7 +347,7 @@ function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointDa
       {selected && (
         <button
           className="nodrag"
-          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          onClick={(e) => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }); }}
           style={{
             position: 'absolute', top: -8, right: -8,
             width: 18, height: 18, borderRadius: '50%',
@@ -389,6 +390,7 @@ const INTERNAL_ORCHESTRATOR_NAMES = new Set(['workflow_advisor']);
 
 // OrchestratorNode — icon-only, transparent, name below
 function OrchestratorNode({ id, data, selected }: { id: string; data: OrchestratorData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
+  const { deleteElements } = useReactFlow();
   const isInternal = INTERNAL_ORCHESTRATOR_NAMES.has(data.name);
   const hasError = data._error || data._shake;
   const accent = hasError ? '#f87171' : isInternal ? '#a0f0d0' : C.purple;
@@ -400,7 +402,7 @@ function OrchestratorNode({ id, data, selected }: { id: string; data: Orchestrat
       {selected && (
         <button
           className="nodrag"
-          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          onClick={(e) => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }); }}
           style={{
             position: 'absolute', top: -8, right: -8,
             width: 18, height: 18, borderRadius: '50%',
@@ -437,6 +439,7 @@ function OrchestratorNode({ id, data, selected }: { id: string; data: Orchestrat
 
 // AgentNode — icon-only, transparent, name below; uses actual agent icon field first
 function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
+  const { deleteElements } = useReactFlow();
   const isInternal = data.tags?.includes('internal') ?? false;
   const hasError = data._error || data._shake;
   const accent = hasError ? '#f87171' : isInternal ? '#a0f0d0' : C.green;
@@ -450,7 +453,7 @@ function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _sc
       {selected && (
         <button
           className="nodrag"
-          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          onClick={(e) => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }); }}
           style={{
             position: 'absolute', top: -8, right: -8,
             width: 18, height: 18, borderRadius: '50%',
@@ -486,6 +489,7 @@ function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _sc
 
 // MiddlewareNode — amber-colored, shield for guard / bolt for cache
 function MiddlewareNode({ id, data, selected }: { id: string; data: MiddlewareData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
+  const { deleteElements } = useReactFlow();
   const hasError = data._error || data._shake;
   const accent = hasError ? '#f87171' : C.amber;
   const selGlow = 'rgba(245,158,11,0.35)';
@@ -497,7 +501,7 @@ function MiddlewareNode({ id, data, selected }: { id: string; data: MiddlewareDa
       {selected && (
         <button
           className="nodrag"
-          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          onClick={(e) => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }); }}
           style={{
             position: 'absolute', top: -8, right: -8,
             width: 18, height: 18, borderRadius: '50%',
@@ -2387,7 +2391,7 @@ function AdvisorPanel({
 
 // ── Canvas inner (needs ReactFlow context) ────────────────────────────────────
 function CanvasInner({
-  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, logoState, advisorOpen, onAdvisorOpen,
+  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, onNodesDelete, logoState, advisorOpen, onAdvisorOpen,
 }: {
   nodes: Node[];
   edges: Edge[];
@@ -2401,6 +2405,7 @@ function CanvasInner({
   onUpdateNode: (id: string, data: Record<string, unknown>) => void;
   onDeleteEdge: (edgeId: string) => void;
   onAutoLayout: () => void;
+  onNodesDelete?: () => void;
   logoState: LogoState;
   advisorOpen: boolean;
   onAdvisorOpen: () => void;
@@ -2533,6 +2538,8 @@ function CanvasInner({
         onNodeClick={(_evt: React.MouseEvent, node: Node) => setSelectedNode(node)}
         onPaneClick={() => setSelectedNode(null)}
         onEdgeDoubleClick={(_evt: React.MouseEvent, edge: Edge) => onDeleteEdge(edge.id)}
+        onNodesDelete={() => onNodesDelete?.()}
+        onEdgesDelete={() => onNodesDelete?.()}
         fitView
         fitViewOptions={{ padding: 0.15 }}
         style={{ background: C.bg }}
@@ -2902,18 +2909,6 @@ function CanvasBuilderView({
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
-  // Wire the module-level deleteNodeRef so node X buttons work
-  useEffect(() => {
-    deleteNodeRef.current = (id: string) => {
-      setNodes(ns => ns.filter(n => n.id !== id));
-      setEdges(es => es.filter(e => e.source !== id && e.target !== id));
-      setSelectedNode(prev => prev?.id === id ? null : prev);
-      setIsDirty(true);
-      setLogoResult('none');
-    };
-    return () => { deleteNodeRef.current = (_id: string) => {}; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (selectedNode?.type === 'agent' || selectedNode?.type === 'middleware') {
@@ -3408,6 +3403,7 @@ function CanvasBuilderView({
                 onUpdateNode={(id, patch) => { setNodes(ns => ns.map(n => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)); setIsDirty(true); setLogoResult('none'); }}
                 onDeleteEdge={edgeId => { setEdges(es => es.filter(e => e.id !== edgeId)); setIsDirty(true); }}
                 onAutoLayout={() => { setNodes(ns => applyDagreLayout([...ns], edges)); }}
+                onNodesDelete={() => { setIsDirty(true); setLogoResult('none'); setSelectedNode(null); }}
                 logoState={logoState}
                 advisorOpen={false}
                 onAdvisorOpen={() => {}}
