@@ -297,8 +297,7 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 
 		row := dal.AppOrchestratorRow{
 			ApplicationID:        appID,
-			TenantID:             tenantID,
-			Name:                 comp.InstanceID, // stable Temporal key
+			Name:                 comp.InstanceID, // stable Temporal key (instance_id)
 			InstanceID:           comp.InstanceID,
 			Kind:                 "standard",
 			Delegatable:          delegationTargets[comp.InstanceID],

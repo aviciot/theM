@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-16
+# Last updated: 2026-08-17
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `bcb2943` — feat(admin): Application Definition CRUD — Phase B
+Commit: `TBD` — fix(admin): Phase C — app_orchestrators tenant_id fix (no column)
 
 ---
 
@@ -127,7 +127,7 @@ Total rows in `component_definitions`: 20 (as of b93dff4)
 - `PATCH /runs/{run_id}/cancel`, `DELETE /runs/{run_id}`, `POST /runs/bulk-delete`
 - Traefik Wave 2f: 3 new routers
 
-**Phase B — Application Definition CRUD — COMPLETE** (HEAD)
+**Phase B — Application Definition CRUD — COMPLETE** (bcb2943)
 
 Routes added (all under `/api/v1/admin/applications/{id}/definitions`):
 - `POST   .../definitions` → 201 `{"id":"...","revision":N}`
@@ -136,29 +136,48 @@ Routes added (all under `/api/v1/admin/applications/{id}/definitions`):
 - `PUT    .../definitions/{def_id}` → 200 `{"id":"...","updated":true}`
 - `DELETE .../definitions/{def_id}` → 204
 
+**Phase C — Application Definition Validate + Publish + Compile — COMPLETE** (HEAD)
+
+Routes added:
+- `POST .../definitions/{def_id}/validate` → 200 `{"valid":true|false,"errors":[...]}`
+- `POST .../definitions/{def_id}/publish` → 200 `{"definition_id":"...","revision":N,"definition_hash":"sha256:..."}`
+
+DB migration applied (live DB):
+- `db/031_phase_c_compiler_pins.sql` — `source_definition_id` (FK) + `source_definition_hash` on `app_orchestrators` and `entry_points`
+
 Packages added/modified:
-- `go/internal/admin/dal/definitions.go` — 6 DAL methods (GetNextRevision, CreateDefinition, GetDefinition, ListDefinitions, UpdateDraftDefinition, DeleteDraftDefinition)
-- `go/internal/admin/service/definitions.go` — DefinitionService with validation, hash, published-immutability
-- `go/internal/admin/definitions.go` — DefinitionsHandler with 5 HTTP handlers
-- `go/internal/admin/definitions_test.go` — 12 tests (S1-42 to S1-53)
-- `go/internal/admin/service/service.go` — Dal interface extended with 6 new methods
-- `go/internal/admin/router.go` — defs.Routes() wired in tenant-scoped group
-- `go/internal/admin/service/service_test.go` — fakeDal stubs for new Dal methods
-- `go/internal/admin/service/tenant_isolation_test.go` — isolationFakeDal stubs
+- `go/internal/admin/dal/publish.go` — 5 DAL methods: `PublishDefinition` (mark published + update active_definition_id), `UpsertAppOrchestrator` (INSERT ON CONFLICT by application_id+name), `UpsertEntryPoint` (INSERT ON CONFLICT by tenant_id+slug), `DeactivateStaleOrchestrators`, `DeactivateStaleEntryPoints`
+- `go/internal/admin/service/publish.go` — `RegistryResolver` interface, `ValidationReport`/`ValidationError` types, `ValidateDefinition` (structural + registry resolution + connection integrity), `PublishDefinition` (resolve → upsert orchestrators → upsert entry_points → deactivate stale → atomic publish)
+- `go/internal/admin/service/definitions.go` — `registry` field + `NewDefinitionServiceWithRegistry`
+- `go/internal/admin/service/service.go` — Dal interface extended with 5 new methods
+- `go/internal/admin/definitions.go` — `Validate`/`Publish` HTTP handlers + updated constructor
+- `go/internal/admin/router.go` — registry resolver wired via `registryQuerierAdapter`
+- `go/internal/admin/service/definitions_publish_test.go` — 22 new tests (S1-43, S1-44)
+- `go/TEST_INDEX.md` — S1-43 + S1-44 documented; total 632 tests
 
 Key behaviors:
-- Tenant isolation: every DAL query includes `AND tenant_id=$N::uuid`; cross-tenant access silently returns 404
-- Insert via sub-SELECT: INSERT...SELECT FROM applications WHERE id=$1 AND tenant_id=$2 — zero rows = ErrNotFound
-- Published immutability: UPDATE/DELETE require `AND status='draft'`; ErrNoRows → lookup to distinguish 404 vs 409
-- Secret key rejection: rejects `"secret_value"` keys and `"enc:"` prefixed values with secret/key in key name at any nesting depth
-- Canonical hash: unmarshal→marshal→sha256→`"sha256:"` prefix
-- No `updated_at` on `application_definitions` table — SET clause omits it
+- **Validation** returns `{"valid":false,"errors":[...]}` for missing/disabled/deprecated components, dangling connections, duplicate instance_ids, invalid protocols — never 4xx unless definition not found
+- **Registry resolution** per `registry.ResolveForPublish`: tenant-safe, blocks disabled + deprecated definitions, no cross-tenant lookup
+- **Compiler** maps orchestrator components → `app_orchestrators` (UPSERT on application_id+name), entry_points → `entry_points` (UPSERT on tenant_id+slug); stale rows deactivated
+- **Component pins**: `component_definition_id` + `component_version` set on projection rows
+- **Source tracking**: `source_definition_id` + `source_definition_hash` on projection rows
+- **AllowedAgentIDs**: populated from "tool" connections using resolved component definition UUIDs (= agents.id via Option C FK)
+- **Published immutability**: re-publish → 409; update/delete published → 409
+- **Second revision**: new draft required; second publish reconciles stale rows
+- **Transaction**: `PublishDefinition` DAL atomically marks published + sets active_definition_id; upserts are idempotent before the gate
 
-Live verification (Python OFF, all 9 scenarios):
-- CREATE 201 ✓, GET 200 ✓, LIST 200 ✓, UPDATE 200 ✓
-- CROSS-TENANT 404 ✓, WRONG APP 404 ✓, DUP INSTANCE_ID 422 ✓, SECRET KEY 400 ✓, DELETE 204 ✓
+Live verification (Python OFF, all scenarios):
+- CREATE draft 201 ✓, VALIDATE valid=true 200 ✓, PUBLISH 200 ✓
+- active_definition_id set ✓, status='published' ✓
+- app_orchestrators row created with component_definition_id+component_version+source_definition_id ✓
+- entry_points row created with app_orchestrator_id bound ✓
+- Re-publish same def → 409 ✓
+- Second revision: new draft/validate/publish ✓, active_definition_id updated ✓
+- Stale projection rows deactivated ✓
+- Dangling connection → validate returns valid=false, publish → 422 ✓
+- Active_definition_id unchanged after failed publish ✓
 
-Test state: `go test ./...` — **31 packages, 0 failures, 12 new tests**
+Test state: `go test ./...` — **32 packages, 0 failures, 22 new tests (S1-43, S1-44)**
 
 **Runs READ/UI — COMPLETE** (cf953cf)
 
@@ -176,22 +195,15 @@ Test state: `go test ./...` — **31 packages, 0 failures, 12 new tests**
 
 ## Next recommended task
 
-**Phase C — Application Definition Validate + Publish + Compile**
+**Phase D — Application Definition Canvas UI** or **Wave 9 — Multi-tenant runtime enablement**
 
-Pre-reading: `docs/architecture-v2/REGISTRY_BACKED_APPLICATION_COMPONENT_MODEL.md` Section 5–8
+Phase D scope (Canvas UI for Application Definition editing/publishing):
+1. Frontend `ApplicationsPage` → Definition tab with component palette, canvas, connections editor
+2. Validate + Publish buttons wired to the new API endpoints
+3. Requires UI work only — no new Go routes needed
 
-Phase C scope (implement in a fresh session):
-1. `POST /api/v1/admin/applications/{id}/definitions/{def_id}/validate` — resolve all component refs via `registry.Resolver`; return validation report (missing/deprecated/cross-tenant blocked)
-2. `POST /api/v1/admin/applications/{id}/definitions/{def_id}/publish` — call ResolveForPublish, set `applications.active_definition_id`, set `application_definitions.status='published'`, set `published_at`
-3. New DAL method: `PublishDefinition(ctx, tenantID, appID, defID string) error` — UPDATE definitions + UPDATE applications in same TX
-4. New service: `ValidateDefinition`, `PublishDefinition` on `DefinitionService`
-5. Tests: validate happy, validate missing component, validate deprecated component, publish happy, publish cross-tenant blocked, publish sets active_definition_id
-6. Traefik: no new labels needed (routes already under `/admin/applications/` priority 112)
-7. No compiler, no UI, no Python
-
-Alternative next task: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims)
-
-Read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 before starting Wave 9.
+Alternative: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims)
+- Read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 before starting Wave 9.
 
 ---
 

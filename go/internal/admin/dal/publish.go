@@ -14,9 +14,10 @@ type PublishResult struct {
 }
 
 // AppOrchestratorRow is the shape used to upsert an app_orchestrators projection row.
+// Note: app_orchestrators does not have a tenant_id column — tenant safety is
+// enforced by scoping to application_id (applications.tenant_id = tenant's UUID).
 type AppOrchestratorRow struct {
 	ApplicationID         string
-	TenantID              string
 	Name                  string   // immutable identifier — Temporal key
 	InstanceID            string   // from definition JSON, used as node_id
 	Kind                  string   // "standard"|"router"|"voice"
@@ -106,7 +107,7 @@ func (d *DB) UpsertAppOrchestrator(ctx context.Context, row AppOrchestratorRow) 
 	// pgx/v5 does not expose pq.Array; we cast via PostgreSQL ARRAY constructor.
 	const q = `
 		INSERT INTO them.app_orchestrators
-			(application_id, tenant_id, name, node_id, kind, delegatable,
+			(application_id, name, node_id, kind, delegatable,
 			 llm_provider, llm_model, system_prompt,
 			 max_iterations, max_parallel_tools, history_window, budget_tokens,
 			 allowed_agent_ids,
@@ -114,12 +115,12 @@ func (d *DB) UpsertAppOrchestrator(ctx context.Context, row AppOrchestratorRow) 
 			 source_definition_id, source_definition_hash,
 			 enabled)
 		VALUES
-			($1::uuid, $2::uuid, $3, $4, $5, $6,
-			 $7, $8, $9,
-			 $10, $11, $12, $13,
-			 $14::uuid[],
-			 $15::uuid, $16,
-			 $17::uuid, $18,
+			($1::uuid, $2, $3, $4, $5,
+			 $6, $7, $8,
+			 $9, $10, $11, $12,
+			 $13::uuid[],
+			 $14::uuid, $15,
+			 $16::uuid, $17,
 			 true)
 		ON CONFLICT (application_id, name) DO UPDATE SET
 			node_id               = EXCLUDED.node_id,
@@ -147,7 +148,6 @@ func (d *DB) UpsertAppOrchestrator(ctx context.Context, row AppOrchestratorRow) 
 	var id string
 	scanRow := d.q.ExecReturning(ctx, q,
 		row.ApplicationID,
-		row.TenantID,
 		row.Name,
 		row.InstanceID, // node_id
 		row.Kind,
@@ -232,15 +232,17 @@ func (d *DB) UpsertEntryPoint(ctx context.Context, row EntryPointRow) (string, e
 
 // DeactivateStaleOrchestrators sets enabled=false for app_orchestrators that
 // belong to the given application but whose source_definition_id != defID.
-// Constrained to (application_id AND tenant_id) to prevent cross-app clobber.
+// Joins through applications for tenant safety (app_orchestrators has no tenant_id).
 func (d *DB) DeactivateStaleOrchestrators(ctx context.Context, tenantID, appID, defID string) error {
 	const q = `
-		UPDATE them.app_orchestrators
+		UPDATE them.app_orchestrators ao
 		   SET enabled    = false,
 		       updated_at = now()
-		 WHERE application_id     = $1::uuid
-		   AND tenant_id          = $2::uuid
-		   AND (source_definition_id IS NULL OR source_definition_id != $3::uuid)`
+		  FROM them.applications a
+		 WHERE ao.application_id = a.id
+		   AND a.id              = $1::uuid
+		   AND a.tenant_id       = $2::uuid
+		   AND (ao.source_definition_id IS NULL OR ao.source_definition_id != $3::uuid)`
 
 	return d.q.Exec(ctx, q, appID, tenantID, defID)
 }
@@ -249,7 +251,7 @@ func (d *DB) DeactivateStaleOrchestrators(ctx context.Context, tenantID, appID, 
 
 // DeactivateStaleEntryPoints sets enabled=false for entry_points that
 // belong to the given application but whose source_definition_id != defID.
-// Constrained to (application_id AND tenant_id) to prevent cross-app clobber.
+// Constrained to (application_id AND tenant_id) for cross-app safety.
 func (d *DB) DeactivateStaleEntryPoints(ctx context.Context, tenantID, appID, defID string) error {
 	const q = `
 		UPDATE them.entry_points
