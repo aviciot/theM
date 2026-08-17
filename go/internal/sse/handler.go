@@ -278,6 +278,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h.logger.Info("sse: temporal workflow started", "run_id", handle.RunID, "workflow_id", wfRun.GetID())
 
+	// Send ready — client needs run_id + context_id before stream events arrive.
+	if readyJSON, err := json.Marshal(map[string]any{"type": "ready", "run_id": handle.RunID, "context_id": handle.ContextID}); err == nil {
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", readyJSON)
+		if hasFlusher {
+			flusher.Flush()
+		}
+	}
+
 	orchDone := make(chan struct{})
 	go func() {
 		defer close(orchDone)

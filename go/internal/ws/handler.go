@@ -51,13 +51,14 @@ type clientMsg struct {
 
 // serverMsg is the message shape sent to the WebSocket client.
 type serverMsg struct {
-	Type    string          `json:"type"`
-	Content string          `json:"content,omitempty"`
-	Name    string          `json:"name,omitempty"`
-	Input   json.RawMessage `json:"input,omitempty"`
-	Output  json.RawMessage `json:"output,omitempty"`
-	RunID   string          `json:"run_id,omitempty"`
-	Message string          `json:"message,omitempty"`
+	Type      string          `json:"type"`
+	Content   string          `json:"content,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	Output    json.RawMessage `json:"output,omitempty"`
+	RunID     string          `json:"run_id,omitempty"`
+	ContextID string          `json:"context_id,omitempty"`
+	Message   string          `json:"message,omitempty"`
 }
 
 // Authenticator validates bearer tokens and returns auth claims.
@@ -312,6 +313,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"run_id", handle.RunID,
 		"workflow_id", wfRun.GetID(),
 	)
+
+	// Send ready — client needs run_id + context_id to open the dashboard WS
+	// and display the thinking bubble before any stream events arrive.
+	if ready, err := json.Marshal(serverMsg{Type: "ready", RunID: handle.RunID, ContextID: handle.ContextID}); err == nil {
+		_ = conn.WriteMessage(websocket.TextMessage, ready)
+	}
 
 	orchDone := make(chan struct{})
 	go func() {
