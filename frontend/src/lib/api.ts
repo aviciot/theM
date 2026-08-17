@@ -438,6 +438,7 @@ export interface EPInstance {
   slug: string;
   protocol: 'websocket' | 'sse' | 'webrtc' | 'a2a' | 'voice';
   root: string;           // instance_id of root orchestrator
+  config?: Record<string, unknown>;
 }
 
 export interface ConnectionDef {
