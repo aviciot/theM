@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback, useRef, DragEvent } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, DragEvent } from 'react';
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
 const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 import Sidebar from '@/components/Sidebar';
@@ -441,6 +441,7 @@ function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _sc
   const accent = hasError ? '#f87171' : isInternal ? '#a0f0d0' : C.green;
   const selGlow = isInternal ? 'rgba(160,240,208,0.35)' : 'rgba(74,222,128,0.35)';
   const selBg   = isInternal ? 'rgba(160,240,208,0.10)' : 'rgba(74,222,128,0.10)';
+  const displayName = (data as unknown as Record<string, unknown>).display_name as string | undefined || data.displayName;
   const icon = data.icon || agentIconForLibrary({ slug: data.name, icon: data.icon } as any);
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
@@ -475,7 +476,7 @@ function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _sc
       </div>
       <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 110 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.18s' }}>
-          {data.displayName}
+          {displayName}
         </div>
       </div>
     </div>
@@ -631,7 +632,7 @@ function canvasToDoc(nodes: Node[], edges: Edge[], name?: string): import('@/lib
   return { schema_version: 2 as const, name, components, entry_points, connections };
 }
 
-function docToCanvas(doc: import('@/lib/api').AppDefinitionDoc, componentDefs: ComponentDefinitionSummary[], layout: Record<string, { x: number; y: number }>): { nodes: Node[]; edges: Edge[] } {
+function docToCanvas(doc: import('@/lib/api').AppDefinitionDoc, componentDefs: ComponentDefinitionSummary[], layout: Record<string, { x: number; y: number }>, agentIconBySlug?: Map<string, string>): { nodes: Node[]; edges: Edge[] } {
   const defById = new Map(componentDefs.map(cd => [cd.id, cd]));
   const refKey = (r: import('@/lib/api').DefinitionRef) => `${r.kind}:${r.namespace}:${r.name}:${r.version}`;
   const defByRef = new Map(componentDefs.map(cd => [refKey({ kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }), cd]));
@@ -643,7 +644,8 @@ function docToCanvas(doc: import('@/lib/api').AppDefinitionDoc, componentDefs: C
     if (c.definition_ref.kind === 'orchestrator') {
       nodes.push({ id: c.instance_id, type: 'orchestrator', position: pos, data: { _kind: 'orchestrator', instance_id: c.instance_id, display_name: (c.config.display_name as string) ?? cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config } as unknown as Record<string, unknown> });
     } else if (c.definition_ref.kind === 'agent') {
-      nodes.push({ id: c.instance_id, type: 'agent', position: pos, data: { _kind: 'agent', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, description: cd?.description ?? '', definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, secret_bindings: c.secret_bindings } as unknown as Record<string, unknown> });
+      const agentIcon = agentIconBySlug?.get(c.definition_ref.name);
+      nodes.push({ id: c.instance_id, type: 'agent', position: pos, data: { _kind: 'agent', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, description: cd?.description ?? '', definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config, secret_bindings: c.secret_bindings, icon: agentIcon } as unknown as Record<string, unknown> });
     } else if (c.definition_ref.kind === 'middleware') {
       nodes.push({ id: c.instance_id, type: 'middleware', position: pos, data: { _kind: 'middleware', instance_id: c.instance_id, display_name: cd?.display_name ?? c.instance_id, definition_ref: c.definition_ref, definition_id: c.definition_id, config: c.config } as unknown as Record<string, unknown> });
     }
@@ -2845,13 +2847,21 @@ function CanvasInnerWithDrop({
 // ── Canvas Builder View (V2) ──────────────────────────────────────────────────
 function CanvasBuilderView({
   app,
+  agents,
   onBack,
   onAppUpdated,
 }: {
   app: Application;
+  agents: Agent[];
   onBack: () => void;
   onAppUpdated?: (updated: Application) => void;
 }) {
+  // Map agent slug → real icon (used for palette and canvas nodes)
+  const agentIconBySlug = useMemo(() => {
+    const m = new Map<string, string>();
+    agents.forEach(a => { m.set(a.slug, a.icon || agentIconForLibrary(a)); });
+    return m;
+  }, [agents]);
   // State (mirroring DefinitionView)
   const [defs, setDefs] = useState<AppDefinition[]>([]);
   const [activeDef, setActiveDef] = useState<AppDefinition | null>(null);
@@ -2911,7 +2921,7 @@ function CanvasBuilderView({
     setValidationReport(null);
     setSelectedNode(null);
     setLogoResult('none');
-    const { nodes: n, edges: e } = docToCanvas(def.definition, componentDefs, {});
+    const { nodes: n, edges: e } = docToCanvas(def.definition, componentDefs, {}, agentIconBySlug);
     setNodes(n);
     setEdges(e);
   }
@@ -3038,7 +3048,8 @@ function CanvasBuilderView({
     } else if (nodeType === 'agent' && payload.cd) {
       const cd = payload.cd;
       const id = genInstanceId('agent', cd.name, existingIds);
-      const newNode: Node = { id, type: 'agent', position: pos, data: { _kind: 'agent', instance_id: id, display_name: cd.display_name, description: cd.description ?? '', definition_ref: { kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }, definition_id: cd.id, config: {} } as unknown as Record<string, unknown> };
+      const agentIcon = agentIconBySlug.get(cd.name);
+      const newNode: Node = { id, type: 'agent', position: pos, data: { _kind: 'agent', instance_id: id, display_name: cd.display_name, description: cd.description ?? '', definition_ref: { kind: cd.kind, namespace: cd.namespace, name: cd.name, version: cd.version }, definition_id: cd.id, config: {}, icon: agentIcon } as unknown as Record<string, unknown> };
       setNodes(ns => [...ns, newNode]);
     } else if (nodeType === 'middleware' && payload.cd) {
       const cd = payload.cd;
@@ -3325,24 +3336,27 @@ function CanvasBuilderView({
             if (items.length === 0) return null;
             const kindColor = kind === 'orchestrator' ? '99,102,241' : kind === 'agent' ? '74,222,128' : '245,158,11';
             const kindIconColor = kind === 'orchestrator' ? '#818cf8' : kind === 'agent' ? C.green : '#f59e0b';
-            const kindIcon = kind === 'orchestrator' ? 'hub' : kind === 'agent' ? 'smart_toy' : 'shield';
+            const defaultKindIcon = kind === 'orchestrator' ? 'hub' : kind === 'agent' ? 'smart_toy' : 'shield';
             return (
               <div key={kind} style={{ padding: '0 8px 12px' }}>
                 <div style={{ fontSize: 11, color: C.textMuted, padding: '4px 8px', fontWeight: 600, textTransform: 'capitalize' }}>{kind}s</div>
-                {items.map(cd => (
-                  <div
-                    key={cd.id}
-                    draggable
-                    onDragStart={e => { e.dataTransfer.setData('nodeType', kind); e.dataTransfer.setData('nodeData', JSON.stringify({ cd })); e.dataTransfer.effectAllowed = 'move'; }}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${kindColor},0.04)`, border: `1px solid rgba(${kindColor},0.12)` }}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 16, color: kindIconColor }}>{kindIcon}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.display_name}</div>
-                      {cd.description && <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.description}</div>}
+                {items.map(cd => {
+                  const itemIcon = kind === 'agent' ? (agentIconBySlug.get(cd.name) ?? defaultKindIcon) : kind === 'middleware' ? (cd.name.includes('guard') ? 'shield' : 'bolt') : defaultKindIcon;
+                  return (
+                    <div
+                      key={cd.id}
+                      draggable
+                      onDragStart={e => { e.dataTransfer.setData('nodeType', kind); e.dataTransfer.setData('nodeData', JSON.stringify({ cd })); e.dataTransfer.effectAllowed = 'move'; }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'grab', marginBottom: 2, background: `rgba(${kindColor},0.04)`, border: `1px solid rgba(${kindColor},0.12)` }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 16, color: kindIconColor }}>{itemIcon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.display_name}</div>
+                        {cd.description && <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cd.description}</div>}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             );
           })}
@@ -5644,6 +5658,7 @@ export default function ApplicationsPage() {
           <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
             <CanvasBuilderView
               app={definitionApp}
+              agents={agents}
               onBack={() => { setView('list'); setDefinitionApp(null); }}
               onAppUpdated={(updated) => {
                 setList(prev => prev.map(a => a.id === updated.id ? updated : a));
