@@ -217,6 +217,46 @@ func (r *Recorder) GetArtifact(ctx context.Context, runID, artifactID string) (A
 	return a, nil
 }
 
+// CreateTask inserts a child task row for an agent invocation.
+// It looks up the agent UUID by slug+tenantID and writes a 'delegated'/'working' row.
+// Returns the new task UUID string. Non-fatal: callers should log but continue on error.
+func (r *Recorder) CreateTask(ctx context.Context, tenantID, runID, contextID, agentSlug string) (string, error) {
+	const q = `
+		WITH parent AS (
+			SELECT id FROM them.tasks
+			WHERE run_id = $2::uuid AND kind = 'root'
+			LIMIT 1
+		),
+		ag AS (
+			SELECT id FROM them.agents
+			WHERE slug = $5 AND tenant_id = $1::uuid AND enabled = true
+			LIMIT 1
+		)
+		INSERT INTO them.tasks (tenant_id, run_id, context_id, parent_task_id, agent_id, state, kind)
+		SELECT $1::uuid, $2::uuid, $3::uuid, parent.id, ag.id, 'working', 'delegated'
+		FROM parent CROSS JOIN ag
+		RETURNING id::text`
+	row := r.db.QueryRow(ctx, q, tenantID, runID, contextID, runID, agentSlug)
+	var id string
+	if err := row.Scan(&id); err != nil {
+		return "", fmt.Errorf("runrecorder: create task (slug=%s): %w", agentSlug, err)
+	}
+	return id, nil
+}
+
+// CompleteTask marks a child task as completed or failed.
+func (r *Recorder) CompleteTask(ctx context.Context, taskID string, success bool) error {
+	state := "completed"
+	if !success {
+		state = "failed"
+	}
+	const q = `UPDATE them.tasks SET state=$2, updated_at=now() WHERE id=$1::uuid`
+	if err := r.db.Exec(ctx, q, taskID, state); err != nil {
+		return fmt.Errorf("runrecorder: complete task %s: %w", taskID, err)
+	}
+	return nil
+}
+
 // CreateRootTask ensures a root task row exists for (contextID, runID).
 // Called before writing task_messages so the FK constraint is satisfied.
 // Idempotent — ON CONFLICT DO NOTHING means repeated calls are safe.

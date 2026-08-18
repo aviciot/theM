@@ -126,7 +126,7 @@ type UsageRecorder interface {
 
 // TaskRecorder tracks child task rows for each agent invocation.
 type TaskRecorder interface {
-	CreateTask(ctx context.Context, runID, contextID, agentSlug string) (string, error)
+	CreateTask(ctx context.Context, tenantID, runID, contextID, agentSlug string) (string, error)
 	CompleteTask(ctx context.Context, taskID string, success bool) error
 }
 
@@ -602,7 +602,7 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 			var taskID string
 			if o.taskRecorder != nil {
 				var taskErr error
-				taskID, taskErr = o.taskRecorder.CreateTask(ctx, runID, contextID, slug)
+				taskID, taskErr = o.taskRecorder.CreateTask(ctx, rctx.TenantID, runID, contextID, slug)
 				if taskErr != nil {
 					o.logger.Warn("orchestrator: create task failed", "slug", slug, "error", taskErr)
 				}
