@@ -18,17 +18,18 @@ export async function POST(req: NextRequest) {
   const { access_token, refresh_token, expires_in } = data;
   const res = NextResponse.json({ ok: true, expires_in });
 
+  const secure = process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production';
   res.cookies.set('them_access_token', access_token, {
     httpOnly: true,
     sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
+    secure,
     maxAge: expires_in,
     path: '/',
   });
   res.cookies.set('them_refresh_token', refresh_token, {
     httpOnly: true,
     sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
+    secure,
     maxAge: 60 * 60 * 24 * 7,
     path: '/',
   });
