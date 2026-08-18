@@ -306,6 +306,10 @@ Read the full design doc before starting. Do not implement the canvas UI (Phase 
 6. `them-go-bridge` container startup: must use `--project-name them_gateway` when starting via compose to share the `them-network` network with the `them_gateway` project. Without it, postgres/redis conflict. Command: `docker compose -p them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge`.
 7. `app_agent_bindings` table not yet created — needed before Phase 3 (binding UI + publish pipeline).
 8. `agentregistry` does not yet attach invocation context headers — needed for Phase 1 runtime to identify the calling application.
+9. Three invariants now locked in the A2A design (Revision 2, 2026-08-18) — must be implemented in Phase 1 before any other A2A work:
+   - **Version pinning mandatory at app-publish time:** `app_agent_bindings.definition_id` must be non-NULL in any published Application; compile step pins it.
+   - **Slug is routing-only:** runtime cross-checks URL slug against JWT `agent_id`; mismatch → 403.
+   - **Redis task ownership:** every `tasks/get`/`tasks/cancel`/HITL-resume checks `stored.TenantID+ApplicationID` against the signed InvocationContext; mismatch → 404 (not 403).
 
 ---
 

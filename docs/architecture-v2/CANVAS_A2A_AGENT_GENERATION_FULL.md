@@ -21,7 +21,9 @@ This contradicts two platform goals:
 
 This document specifies a system where a user designs an A2A agent on a visual ReactFlow canvas and the platform runs it as a live Go A2A agent — no code required — and where **one published agent version can be wired into many applications simultaneously, each supplying its own credentials and config, without cloning the agent.**
 
-> **This revision (2026-08-18)** corrects a multi-tenancy flaw in the earlier draft: the compiled `AgentSpec` used to carry `Secrets []string` (env var names), implying secrets are provisioned globally per-agent into the runtime container environment. That model cannot support the same agent being used by two applications with different credentials. The corrected model separates the **reusable agent definition** (no secrets, slot declarations only) from the **per-application binding** (encrypted credential values), resolved at runtime from a signed invocation context. See §5.6 and §5.7.
+> **Revision 1 (2026-08-18)** corrects a multi-tenancy flaw in the earlier draft: the compiled `AgentSpec` used to carry `Secrets []string` (env var names), implying secrets are provisioned globally per-agent into the runtime container environment. That model cannot support the same agent being used by two applications with different credentials. The corrected model separates the **reusable agent definition** (no secrets, slot declarations only) from the **per-application binding** (encrypted credential values), resolved at runtime from a signed invocation context. See §5.6 and §5.7.
+>
+> **Revision 2 (2026-08-18)** tightens three invariants before Phase 1 implementation: (1) version pinning is mandatory at application-publish time — `app_agent_bindings.definition_id` must be non-NULL when the application is published, preventing silent agent drift; (2) slug is routing-only — the runtime must cross-check the URL slug against the JWT `agent_id` and reject any mismatch; (3) Redis task operations enforce ownership — every `tasks/get`, `tasks/cancel`, and HITL-resume verifies the stored `tenant_id`/`application_id` against the signed `InvocationContext` before returning or modifying anything. See §5.5, §5.8, §8.1.
 
 ---
 
@@ -309,12 +311,13 @@ X-Them-Binding-Id:     {binding_id     UUID}   ← which app-level binding (opti
 Signed-JWT form (preferred): claims `tenant_id`, `application_id`, `agent_id`, `binding_id`, `iat`, `exp` (short, e.g. 60s), signed with the internal invocation signing key (`THE_M_INVOCATION_JWT_KEY`). The runtime verifies the signature before trusting any identity claim.
 
 The runtime uses these to:
-1. Load the correct `AgentSpec` from DB/cache (by `agent_id`)
-2. Load the correct `app_agent_bindings` row (by `binding_id`, else `application_id + agent_id`)
-3. Resolve credential slots: `binding.credential_bindings[slot_name]` → `crypto.DecryptStored` → actual value → `InvocationContext.Credentials[slot_name]`
-4. Apply `config_overrides` (e.g. model override, max_tokens cap)
-5. Apply `policies` (rate limit, allowed skills)
-6. Execute the pipeline with the resolved context
+1. **Cross-check slug vs JWT `agent_id` (Invariant 2).** The URL slug (e.g. `/agents/salesforce-agent`) is routing and display only. Before doing anything else, the runtime loads the `agents` row by `agent_id` from the verified JWT and asserts that `agents.slug == url_slug`. If they differ, the request is rejected with 403. The slug is never used as an authoritative identity — only the UUID from the signed JWT is.
+2. Load the correct `AgentSpec` from DB/cache (by JWT `agent_id`, not by slug)
+3. Load the correct `app_agent_bindings` row (by `binding_id`, else `application_id + agent_id`); if `definition_id` is non-NULL on the binding, assert that `spec.DefinitionID == binding.definition_id` — if not, the binding is stale and the request fails with 409 until the application is re-published.
+4. Resolve credential slots: `binding.credential_bindings[slot_name]` → `crypto.DecryptStored` → actual value → `InvocationContext.Credentials[slot_name]`
+5. Apply `config_overrides` (e.g. model override, max_tokens cap)
+6. Apply `policies` (rate limit, allowed skills)
+7. Execute the pipeline with the resolved context
 
 **The runtime NEVER reads env vars for per-agent credentials.** Env vars are for runtime **infrastructure only**: DB password, Redis URL, JWT signing key, the internal crypto key used for `DecryptStored`.
 
@@ -409,6 +412,19 @@ Task state lives in **Redis** (consistent with the rest of the-M's session/run s
 - **All replicas read/write the same Redis.** Any replica can resume a paused task.
 
 The SDK's task-store interface is implemented by a `redistaskstore` type in `go/internal/agentgen/`. No shared filesystem; no in-memory task map.
+
+**Ownership enforcement on every task operation (Invariant 3).** Every Redis task read or write — `tasks/get`, `tasks/cancel`, HITL-resume, artifact append — must verify ownership before proceeding:
+
+```go
+// redistaskstore — every read/write operation:
+stored := redis.Get("them:agent:task:" + taskID)
+if stored.TenantID != ic.TenantID || stored.ApplicationID != ic.ApplicationID {
+    return nil, ErrTaskNotFound  // 404, not 403 — do not confirm the task exists to other tenants
+}
+// proceed with read or mutation
+```
+
+`ErrTaskNotFound` (not `ErrForbidden`) is returned on ownership mismatch — the runtime must not confirm to a caller that a task with that ID exists at all. This prevents cross-tenant task enumeration. The `agent_id` in the stored value is additionally checked to assert the task belongs to this agent, preventing one canvas agent from reading another's tasks if they share a runtime pool.
 
 ### 5.9 End-to-end flow
 
@@ -699,13 +715,31 @@ func (b AppAgentBinding) ResolveCredentials(dec func(string) (string, error)) (m
 
 ```go
 func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
-    ic, err := rt.parseInvocation(r) // verify JWT / headers → tenant, app, agent, binding
+    urlSlug := chi.URLParam(r, "slug")
+
+    ic, err := rt.parseInvocation(r) // verify JWT signature → tenant, app, agent, binding
     if err != nil { http.Error(w, "unauthorized", 401); return }
 
-    spec, err := rt.specCache.Load(r.Context(), ic.AgentID)      // DB/cache, TTL 60s
+    // Invariant 2: cross-check slug vs authoritative agent_id from JWT.
+    // The slug is routing-only; the UUID is authoritative.
+    if row, err := rt.agents.SlugByID(r.Context(), ic.AgentID); err != nil || row != urlSlug {
+        http.Error(w, "forbidden", 403); return
+    }
+
+    spec, err := rt.specCache.Load(r.Context(), ic.AgentID) // DB/cache by UUID, TTL 60s
+    if err != nil { http.Error(w, "agent not found", 404); return }
+
     binding, err := rt.bindings.Load(r.Context(), ic.ApplicationID, ic.AgentID, ic.BindingID)
+    if err != nil { http.Error(w, "binding not found", 404); return }
+
+    // Invariant 1: assert binding definition_id matches the loaded spec (if pinned).
+    if binding.DefinitionID != nil && *binding.DefinitionID != spec.DefinitionID {
+        http.Error(w, "binding stale — application must be re-published", 409); return
+    }
 
     creds, err := binding.ResolveCredentials(rt.crypto.DecryptStored) // in-memory only
+    if err != nil { http.Error(w, "credential resolution failed", 500); return }
+
     ic.Spec, ic.Credentials = spec, creds
     ic.ConfigOverrides, ic.Policies = binding.ConfigOverrides, binding.Policies
 
@@ -900,9 +934,17 @@ CREATE TABLE them.app_agent_bindings (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     application_id      UUID NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
     agent_id            UUID NOT NULL REFERENCES them.agents(id) ON DELETE RESTRICT,
-    -- The specific published definition version this binding targets:
-    --   NULL     = always use the current active version (floating)
-    --   non-NULL = pinned to an exact revision
+    -- The exact published AgentDefinition revision this binding targets.
+    -- MUST be non-NULL when the parent Application is published (enforced by the
+    -- application publish pipeline). NULL is permitted only while the binding is
+    -- being drafted (before the app is published). The application-publish compiler
+    -- resolves any NULL to the current active definition_id and writes it back
+    -- before committing — after publish, definition_id is always pinned.
+    --
+    -- INVARIANT: a published Application never has a NULL definition_id on any
+    -- of its app_agent_bindings rows. Publishing a newer Agent version does NOT
+    -- silently update already-published Applications; they must be re-published
+    -- explicitly, at which point the author can choose to adopt the new version.
     definition_id       UUID REFERENCES them.agent_definitions(id),
     -- Per-slot credential bindings: slot_name → Fernet ciphertext.
     -- Same encryption as them.agents.auth_token_encrypted (crypto.EncryptStored /
@@ -1128,6 +1170,9 @@ The runtime needs `THE_M_CRYPTO_KEY` (to `DecryptStored` credential slots) and `
 | **Secret at rest** | Only Fernet ciphertext in `app_agent_bindings.credential_bindings`. Never plaintext in DB, JSONB, definitions, or specs. |
 | **Secret in transit / at runtime** | Decrypted value lives only in `InvocationContext.Credentials` for one request. Never logged (`InvocationContext.String()` is redacted), never in artifacts, never in Redis task state, never in Temporal history, never in HTTP responses, never in exports. |
 | **Header spoofing of identity** | Invocation context is a signed JWT (`THE_M_INVOCATION_JWT_KEY`), verified before any identity claim is trusted. Plain `X-Them-*` headers are debug-only / internal-network only. |
+| **Slug-based identity spoofing** | The URL slug is routing/display only. The runtime cross-checks `agents.slug` (loaded by the JWT's `agent_id` UUID) against the URL slug and rejects any mismatch with 403. A slug collision or slug-swap attack cannot route a request to the wrong agent. |
+| **Silent agent version drift** | `app_agent_bindings.definition_id` is pinned at application-publish time. A newer agent publish never silently affects a running application. The 409 response on a stale binding tells the caller to re-publish — it cannot proceed with a mismatched spec. |
+| **Cross-tenant task enumeration** | Every Redis task operation verifies `stored.TenantID == ic.TenantID && stored.ApplicationID == ic.ApplicationID` before returning anything. Ownership mismatch → `ErrTaskNotFound` (404), not 403 — the existence of the task is not disclosed. |
 | **BYO LLM key isolation** | `LLMStepConfig.ProviderKeySlot` resolves the LLM key from the application binding. Falls back to the platform key only if unset. The key never appears in the spec. |
 | **Runaway loops** | `max_iterations` enforced by the interpreter with a hard ceiling (e.g. 100). Per-step timeouts prevent hanging HTTP/LLM calls. |
 | **Tenant isolation** | Every DB row carries `tenant_id`. Runtime scopes spec loading per tenant. Redis keys include tenant/task ID: `them:agents:registry:{tenant_id}`, `them:agent:task:{task_id}`. |
