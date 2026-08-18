@@ -3295,6 +3295,17 @@ function CanvasBuilderView({
         setLlmTestState(s => { const n = { ...s }; delete n[epId]; return n; });
       }
 
+      // Per-EP memory config stored under config.ep_memory.<instance_id>
+      type EpMemory = { memory_enabled?: boolean; history_window?: number; summarize_every_n_calls?: number; memory_raw_fallback_n?: number; summarizer_provider?: string; summarizer_model?: string };
+      function getEpMemory(epId: string): EpMemory {
+        return ((d.config.ep_memory ?? {}) as Record<string, EpMemory>)[epId] ?? {};
+      }
+      function setEpMemory(epId: string, patch: EpMemory) {
+        const current = (d.config.ep_memory ?? {}) as Record<string, unknown>;
+        const existing = (current[epId] ?? {}) as Record<string, unknown>;
+        setOrchConfig({ ep_memory: { ...current, [epId]: { ...existing, ...patch } } });
+      }
+
       // EP icon + accent per protocol
       const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
       const EP_COLOR: Record<string, string> = { websocket: C.cyan, sse: C.cyan, webrtc: C.amber, a2a: '#f59e0b', voice: C.amber };
@@ -3390,6 +3401,74 @@ function CanvasBuilderView({
                     </div>
                   );
                 })()}
+
+                {/* Memory — collapsible, per-EP */}
+                {(() => {
+                  const mem = getEpMemory(ep.instance_id);
+                  const memEnabled = mem.memory_enabled ?? false;
+                  const sumProv = mem.summarizer_provider ?? '';
+                  const sumKnownModels = MODELS_BY_PROVIDER[sumProv] ?? [];
+                  const sumModel = mem.summarizer_model ?? '';
+                  const sumIsCustom = sumModel !== '' && !sumKnownModels.includes(sumModel);
+                  const memSectionId = `ep-memory-${ep.instance_id}`;
+                  return (
+                    <div style={{ marginTop: 10, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 8 }}>
+                      <SectionHeader id={memSectionId} label="Memory" defaultOpen={false} />
+                      {isSectionOpen(memSectionId, false) && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                          {/* Enable toggle */}
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={memEnabled} onChange={e => setEpMemory(ep.instance_id, { memory_enabled: e.target.checked })} />
+                            <span style={{ fontSize: 12, color: memEnabled ? C.text : C.textMuted }}>Enable history</span>
+                          </label>
+                          {memEnabled && (<>
+                            {/* History depth */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                              <div>
+                                <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>History Window</label>
+                                <input type="number" style={fieldStyle} value={mem.history_window ?? 20} min={1} onChange={e => setEpMemory(ep.instance_id, { history_window: Number(e.target.value) || 20 })} />
+                              </div>
+                              <div>
+                                <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Summarize After</label>
+                                <input type="number" style={fieldStyle} value={mem.summarize_every_n_calls ?? 0} min={0} placeholder="0 = off" onChange={e => setEpMemory(ep.instance_id, { summarize_every_n_calls: Number(e.target.value) })} />
+                              </div>
+                              <div>
+                                <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Keep Recent</label>
+                                <input type="number" style={fieldStyle} value={mem.memory_raw_fallback_n ?? 3} min={1} onChange={e => setEpMemory(ep.instance_id, { memory_raw_fallback_n: Number(e.target.value) || 3 })} />
+                              </div>
+                            </div>
+                            {/* Summarizer LLM */}
+                            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>Summarizer LLM</div>
+                            <div>
+                              <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Provider</label>
+                              <select style={selectStyle} value={sumProv}
+                                onChange={e => setEpMemory(ep.instance_id, { summarizer_provider: e.target.value, summarizer_model: MODELS_BY_PROVIDER[e.target.value]?.[0] ?? '' })}>
+                                <option value="">none (no summarization)</option>
+                                {PROVIDER_OPTIONS.map(p => <option key={p} value={p}>{p}{providerKeyStatuses[p] ? ' ✓' : ''}</option>)}
+                              </select>
+                            </div>
+                            {sumProv && (
+                              <div>
+                                <label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Model</label>
+                                <select style={selectStyle} value={sumIsCustom ? 'custom' : sumModel}
+                                  onChange={e => setEpMemory(ep.instance_id, { summarizer_model: e.target.value === 'custom' ? '' : e.target.value })}>
+                                  {sumKnownModels.map(m => <option key={m} value={m}>{m}</option>)}
+                                  <option value="custom">Custom…</option>
+                                </select>
+                                {sumIsCustom && (
+                                  <input style={{ ...fieldStyle, marginTop: 6 }} value={sumModel}
+                                    onChange={e => setEpMemory(ep.instance_id, { summarizer_model: e.target.value })}
+                                    placeholder="Enter model id" />
+                                )}
+                              </div>
+                            )}
+                            <div style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic' }}>Summarizer uses provider key from Runtime settings</div>
+                          </>)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
@@ -3403,8 +3482,6 @@ function CanvasBuilderView({
                   <input type="number" style={fieldStyle} value={(d.config.max_iterations as number) ?? 10} onChange={e => setOrchConfig({ max_iterations: Number(e.target.value) || null })} /></div>
                 <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Parallel Tools</label>
                   <input type="number" style={fieldStyle} value={(d.config.max_parallel_tools as number) ?? 5} onChange={e => setOrchConfig({ max_parallel_tools: Number(e.target.value) || null })} /></div>
-                <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>History Window</label>
-                  <input type="number" style={fieldStyle} value={(d.config.history_window as number) ?? 20} onChange={e => setOrchConfig({ history_window: Number(e.target.value) || null })} /></div>
                 <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Budget Tokens</label>
                   <input type="number" style={fieldStyle} value={(d.config.budget_tokens as number) ?? ''} placeholder="none" onChange={e => setOrchConfig({ budget_tokens: e.target.value === '' ? null : Number(e.target.value) })} /></div>
               </div>

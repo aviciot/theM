@@ -93,7 +93,7 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 	// ConfigLoader + Factory are wired; otherwise fall back to the static Runner.
 	runner := a.Runner
 	if input.AppOrchestratorID != "" && a.ConfigLoader != nil && a.Factory != nil {
-		runCfg, cfgErr := a.ConfigLoader.LoadRunConfig(ctx, input.AppOrchestratorID, input.ApplicationID)
+		runCfg, cfgErr := a.ConfigLoader.LoadRunConfig(ctx, input.AppOrchestratorID, input.ApplicationID, input.EntryPointID)
 		if cfgErr != nil {
 			return WorkflowResult{Status: domain.RunStatusFailed},
 				temporalerr.NewNonRetryableApplicationError(

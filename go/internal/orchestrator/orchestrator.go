@@ -88,15 +88,16 @@ type AgentInvoker interface {
 }
 
 // HistoryLoader loads prior conversation messages from persistent storage.
+// tenantID is used to scope history to a single tenant; pass "" to skip the filter.
 // The DB-level LIMIT ensures O(1) data transfer regardless of conversation length.
 type HistoryLoader interface {
-	LoadHistory(ctx context.Context, contextID string, limit int) ([]domain.Message, error)
+	LoadHistory(ctx context.Context, contextID, tenantID string, limit int) ([]domain.Message, error)
 }
 
 // CheckpointWriter persists individual messages to durable storage for crash recovery.
-// Implementations write to the run_steps table. Failure is non-fatal (log + continue).
+// tenantID is stored on the tasks row for history isolation.
 type CheckpointWriter interface {
-	WriteMessage(ctx context.Context, contextID, runID string, msg domain.Message) error
+	WriteMessage(ctx context.Context, contextID, runID, tenantID string, msg domain.Message) error
 }
 
 // CardDiscoverer retrieves agent cards for dynamic tool definition enrichment.
@@ -253,7 +254,7 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 		if limit <= 0 {
 			limit = 20
 		}
-		loaded, err := o.historyLoader.LoadHistory(ctx, contextID, limit)
+		loaded, err := o.historyLoader.LoadHistory(ctx, contextID, rctx.TenantID, limit)
 		if err != nil {
 			o.logger.Warn("orchestrator: history load failed — proceeding without history",
 				"context_id", contextID, "error", err)
@@ -263,11 +264,11 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 	}
 
 	// Apply summarization if enabled.
-	history = o.maybeSummarize(ctx, contextID, runID, history)
+	history = o.maybeSummarize(ctx, contextID, runID, rctx.TenantID, history)
 
 	// Checkpoint the user message for crash recovery (non-fatal).
 	if o.checkpointer != nil {
-		if cpErr := o.checkpointer.WriteMessage(ctx, contextID, runID, userMsg); cpErr != nil {
+		if cpErr := o.checkpointer.WriteMessage(ctx, contextID, runID, rctx.TenantID, userMsg); cpErr != nil {
 			o.logger.Warn("orchestrator: user message checkpoint failed", "run_id", runID, "error", cpErr)
 		}
 	}
@@ -357,7 +358,7 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 		// Checkpoint the assistant turn for crash recovery (non-fatal).
 		assistantMsg := buildAssistantMessage(assistantText, toolCalls)
 		if (assistantText != "" || len(toolCalls) > 0) && o.checkpointer != nil {
-			if cpErr := o.checkpointer.WriteMessage(ctx, contextID, runID, assistantMsg); cpErr != nil {
+			if cpErr := o.checkpointer.WriteMessage(ctx, contextID, runID, rctx.TenantID, assistantMsg); cpErr != nil {
 				o.logger.Warn("orchestrator: checkpoint write failed", "run_id", runID, "error", cpErr)
 			}
 		}
@@ -392,7 +393,7 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 
 			// Checkpoint tool results (non-fatal).
 			if o.checkpointer != nil {
-				if cpErr := o.checkpointer.WriteMessage(ctx, contextID, runID, toolResultMsg); cpErr != nil {
+				if cpErr := o.checkpointer.WriteMessage(ctx, contextID, runID, rctx.TenantID, toolResultMsg); cpErr != nil {
 					o.logger.Warn("orchestrator: tool result checkpoint failed", "run_id", runID, "error", cpErr)
 				}
 			}

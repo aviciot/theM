@@ -14,8 +14,8 @@ type Summarizer interface {
 
 // SummaryStore persists and retrieves conversation summaries.
 type SummaryStore interface {
-	LoadSummary(ctx context.Context, contextID string) (string, error)
-	SaveSummary(ctx context.Context, contextID, runID, summary string) error
+	LoadSummary(ctx context.Context, contextID, tenantID string) (string, error)
+	SaveSummary(ctx context.Context, contextID, runID, tenantID, summary string) error
 }
 
 // SummaryConfig controls when and how summarization fires.
@@ -48,7 +48,7 @@ func (o *Orchestrator) WithSummarizer(s Summarizer, store SummaryStore, cfg Summ
 //  5. Returns [summaryMsg] ++ recent.
 //
 // When disabled, nil, or history is short, returns history unchanged.
-func (o *Orchestrator) maybeSummarize(ctx context.Context, contextID, runID string, history []domain.Message) []domain.Message {
+func (o *Orchestrator) maybeSummarize(ctx context.Context, contextID, runID, tenantID string, history []domain.Message) []domain.Message {
 	if !o.summaryCfg.MemoryEnabled {
 		return history
 	}
@@ -75,7 +75,7 @@ func (o *Orchestrator) maybeSummarize(ctx context.Context, contextID, runID stri
 	recent := history[len(history)-rawN:]
 
 	// Load existing summary (non-fatal).
-	prior, err := o.summaryStore.LoadSummary(ctx, contextID)
+	prior, err := o.summaryStore.LoadSummary(ctx, contextID, tenantID)
 	if err != nil {
 		o.logger.Warn("orchestrator: load summary failed — summarizing without prior",
 			"context_id", contextID, "error", err)
@@ -91,7 +91,7 @@ func (o *Orchestrator) maybeSummarize(ctx context.Context, contextID, runID stri
 	}
 
 	// Persist the new summary (non-fatal).
-	if saveErr := o.summaryStore.SaveSummary(ctx, contextID, runID, summary); saveErr != nil {
+	if saveErr := o.summaryStore.SaveSummary(ctx, contextID, runID, tenantID, summary); saveErr != nil {
 		o.logger.Warn("orchestrator: save summary failed",
 			"context_id", contextID, "error", saveErr)
 	}

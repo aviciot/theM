@@ -306,6 +306,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	input := temporal.WorkflowInput{
 		OrchestratorName:  orchName,
 		AppOrchestratorID: handle.EPConfig.AppOrchestratorID,
+		EntryPointID:      handle.EPConfig.EPID,
 		UserMessage:       userMsg,
 	}
 	wfRun, startErr := h.lc.Start(ctx, handle, input)

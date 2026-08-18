@@ -62,6 +62,10 @@ type WorkflowInput struct {
 	// LEGACY NOTE: Python worker (permanently retired) ignored this field and
 	// resolved orchestrators by name only — that global lookup path is dead.
 	AppOrchestratorID string
+
+	// EntryPointID is the UUID of the entry_points row for this run.
+	// Used to load per-EP memory/history configuration from the DB.
+	EntryPointID string
 }
 
 // WorkflowResult is returned by OrchestrationWorkflow on completion.

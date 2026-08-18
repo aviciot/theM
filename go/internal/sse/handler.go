@@ -263,6 +263,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	input := temporal.WorkflowInput{
 		OrchestratorName:  orchName,
 		AppOrchestratorID: handle.EPConfig.AppOrchestratorID,
+		EntryPointID:      handle.EPConfig.EPID,
 		UserMessage:       domain.TextMessage(domain.RoleUser, userText),
 	}
 	// Identity fields (RunID, ContextID, TenantID, ApplicationID, EntryPointSlug) are

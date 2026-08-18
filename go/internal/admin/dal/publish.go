@@ -51,6 +51,14 @@ type EntryPointRow struct {
 	QueueMessage           *string
 	SourceDefinitionID     string
 	SourceDefinitionHash   string
+
+	// Per-EP memory / history configuration (from 032_ep_memory_config migration).
+	MemoryEnabled        bool
+	HistoryWindow        int
+	SummarizeEveryNCalls int
+	MemoryRawFallbackN   int
+	SummarizerProvider   *string
+	SummarizerModel      *string
 }
 
 // ── PublishDefinition ─────────────────────────────────────────────────────────
@@ -177,6 +185,16 @@ func (d *DB) UpsertAppOrchestrator(ctx context.Context, row AppOrchestratorRow) 
 // On conflict (tenant_id, slug) it updates all mutable columns.
 // Returns the entry point UUID.
 func (d *DB) UpsertEntryPoint(ctx context.Context, row EntryPointRow) (string, error) {
+	historyWindow := row.HistoryWindow
+	if historyWindow <= 0 {
+		historyWindow = 20
+	}
+	summarizeEveryN := row.SummarizeEveryNCalls
+	rawFallbackN := row.MemoryRawFallbackN
+	if rawFallbackN <= 0 {
+		rawFallbackN = 3
+	}
+
 	const q = `
 		INSERT INTO them.entry_points
 			(application_id, tenant_id, slug, entry_point_type,
@@ -184,6 +202,8 @@ func (d *DB) UpsertEntryPoint(ctx context.Context, row EntryPointRow) (string, e
 			 access_policy, conversation_token_limit,
 			 max_concurrent_sessions, queue_timeout_seconds, queue_message,
 			 source_definition_id, source_definition_hash,
+			 memory_enabled, history_window, summarize_every_n_calls,
+			 memory_raw_fallback_n, summarizer_provider, summarizer_model,
 			 enabled)
 		VALUES
 			($1::uuid, $2::uuid, $3, $4,
@@ -191,20 +211,28 @@ func (d *DB) UpsertEntryPoint(ctx context.Context, row EntryPointRow) (string, e
 			 $6::jsonb, $7,
 			 $8, $9, $10,
 			 $11::uuid, $12,
+			 $13, $14, $15,
+			 $16, $17, $18,
 			 true)
 		ON CONFLICT (tenant_id, slug) DO UPDATE SET
-			application_id          = EXCLUDED.application_id,
-			entry_point_type        = EXCLUDED.entry_point_type,
-			app_orchestrator_id     = EXCLUDED.app_orchestrator_id,
-			access_policy           = EXCLUDED.access_policy,
+			application_id           = EXCLUDED.application_id,
+			entry_point_type         = EXCLUDED.entry_point_type,
+			app_orchestrator_id      = EXCLUDED.app_orchestrator_id,
+			access_policy            = EXCLUDED.access_policy,
 			conversation_token_limit = EXCLUDED.conversation_token_limit,
-			max_concurrent_sessions = EXCLUDED.max_concurrent_sessions,
-			queue_timeout_seconds   = EXCLUDED.queue_timeout_seconds,
-			queue_message           = EXCLUDED.queue_message,
-			source_definition_id    = EXCLUDED.source_definition_id,
-			source_definition_hash  = EXCLUDED.source_definition_hash,
-			enabled                 = true,
-			updated_at              = now()
+			max_concurrent_sessions  = EXCLUDED.max_concurrent_sessions,
+			queue_timeout_seconds    = EXCLUDED.queue_timeout_seconds,
+			queue_message            = EXCLUDED.queue_message,
+			source_definition_id     = EXCLUDED.source_definition_id,
+			source_definition_hash   = EXCLUDED.source_definition_hash,
+			memory_enabled           = EXCLUDED.memory_enabled,
+			history_window           = EXCLUDED.history_window,
+			summarize_every_n_calls  = EXCLUDED.summarize_every_n_calls,
+			memory_raw_fallback_n    = EXCLUDED.memory_raw_fallback_n,
+			summarizer_provider      = EXCLUDED.summarizer_provider,
+			summarizer_model         = EXCLUDED.summarizer_model,
+			enabled                  = true,
+			updated_at               = now()
 		RETURNING id::text`
 
 	var id string
@@ -221,6 +249,12 @@ func (d *DB) UpsertEntryPoint(ctx context.Context, row EntryPointRow) (string, e
 		row.QueueMessage,
 		row.SourceDefinitionID,
 		row.SourceDefinitionHash,
+		row.MemoryEnabled,
+		historyWindow,
+		summarizeEveryN,
+		rawFallbackN,
+		row.SummarizerProvider,
+		row.SummarizerModel,
 	)
 	if err := scanRow.Scan(&id); err != nil {
 		return "", err

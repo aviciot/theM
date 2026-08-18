@@ -130,7 +130,7 @@ type fakeHistoryLoader struct {
 	err      error
 }
 
-func (f *fakeHistoryLoader) LoadHistory(_ context.Context, _ string, _ int) ([]domain.Message, error) {
+func (f *fakeHistoryLoader) LoadHistory(_ context.Context, _, _ string, _ int) ([]domain.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -149,7 +149,7 @@ type fakeCheckpointWriter struct {
 	messages []domain.Message
 }
 
-func (f *fakeCheckpointWriter) WriteMessage(_ context.Context, _, _ string, msg domain.Message) error {
+func (f *fakeCheckpointWriter) WriteMessage(_ context.Context, _, _, _ string, msg domain.Message) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.messages = append(f.messages, msg)

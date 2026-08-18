@@ -33,19 +33,20 @@ type RunConfig struct {
 	// applications.provider_keys. Empty string means fall back to global key.
 	LLMAPIKey string
 
-	// Summarizer fields — populated when memory_enabled=true on the orchestrator row.
+	// Summarizer fields — populated when memory_enabled=true on the entry_point row.
+	// Memory config is per-EP so each entry point can have independent history settings.
 	SummarizerProvider string
 	SummarizerModel    string
-	SummarizerAPIKey   string // plaintext, decrypted from provider_keys or summarizer_api_key_encrypted
+	SummarizerAPIKey   string // plaintext, decrypted from provider_keys
 }
 
 // Loader resolves per-run orchestrator config from persistent storage.
 // Tests inject a fake; production uses PgxLoader.
 type Loader interface {
 	// LoadRunConfig returns the RunConfig for the given AppOrchestratorID.
-	// ApplicationID is used for provider key lookup and as a cross-check
-	// that the orchestrator belongs to the expected application.
-	LoadRunConfig(ctx context.Context, appOrchestratorID, applicationID string) (RunConfig, error)
+	// ApplicationID is used for provider key lookup and as a cross-check.
+	// EntryPointID is used to load per-EP memory/history configuration.
+	LoadRunConfig(ctx context.Context, appOrchestratorID, applicationID, entryPointID string) (RunConfig, error)
 }
 
 // PgxLoader implements Loader against a live PostgreSQL pool.
@@ -62,9 +63,9 @@ func NewPgxLoader(pool *pgxpool.Pool, fernetKey []byte) *PgxLoader {
 }
 
 // LoadRunConfig resolves orchestrator config + provider key for one run.
-// The query joins app_orchestrators → applications to enforce tenant safety
-// (app_orchestrators has no tenant_id; safety comes from application FK).
-func (l *PgxLoader) LoadRunConfig(ctx context.Context, appOrchestratorID, applicationID string) (RunConfig, error) {
+// appOrchestratorID + applicationID load the LLM/agent/loop config.
+// entryPointID loads the per-EP memory/history config (may be empty — disables memory).
+func (l *PgxLoader) LoadRunConfig(ctx context.Context, appOrchestratorID, applicationID, entryPointID string) (RunConfig, error) {
 	const orchQ = `
 SELECT
     ao.system_prompt,
@@ -72,15 +73,8 @@ SELECT
     ao.llm_model,
     ao.max_iterations,
     ao.max_parallel_tools,
-    ao.history_window,
     ao.budget_tokens,
-    ao.allowed_agent_ids,
-    COALESCE(ao.memory_enabled, false),
-    COALESCE(ao.summarize_every_n_calls, 0),
-    COALESCE(ao.memory_raw_fallback_n, 5),
-    ao.summarizer_provider,
-    ao.summarizer_model,
-    ao.summarizer_api_key_encrypted
+    ao.allowed_agent_ids
 FROM them.app_orchestrators ao
 JOIN them.applications a ON a.id = ao.application_id
 WHERE ao.id = $1::uuid
@@ -90,20 +84,13 @@ WHERE ao.id = $1::uuid
 	row := l.pool.QueryRow(ctx, orchQ, appOrchestratorID, applicationID)
 
 	var (
-		systemPrompt              *string
-		llmProvider               *string
-		llmModel                  *string
-		maxIterations             int
-		maxParallelTools          int
-		historyWindow             int
-		budgetTokens              *int
-		allowedAgentIDs           []string
-		memoryEnabled             bool
-		summarizeEveryNCalls      int
-		memoryRawFallbackN        int
-		summarizerProvider        *string
-		summarizerModel           *string
-		summarizerAPIKeyEncrypted *string
+		systemPrompt    *string
+		llmProvider     *string
+		llmModel        *string
+		maxIterations   int
+		maxParallelTools int
+		budgetTokens    *int
+		allowedAgentIDs []string
 	)
 
 	if err := row.Scan(
@@ -112,23 +99,49 @@ WHERE ao.id = $1::uuid
 		&llmModel,
 		&maxIterations,
 		&maxParallelTools,
-		&historyWindow,
 		&budgetTokens,
 		&allowedAgentIDs,
-		&memoryEnabled,
-		&summarizeEveryNCalls,
-		&memoryRawFallbackN,
-		&summarizerProvider,
-		&summarizerModel,
-		&summarizerAPIKeyEncrypted,
 	); err != nil {
 		return RunConfig{}, fmt.Errorf("workerconfig: load orchestrator %s: %w", appOrchestratorID, err)
+	}
+
+	// Load per-EP memory config (only when entryPointID is provided).
+	var (
+		memoryEnabled        bool
+		historyWindow        = 20
+		summarizeEveryN      int
+		rawFallbackN         = 3
+		summarizerProvider   *string
+		summarizerModel      *string
+	)
+	if entryPointID != "" {
+		const epQ = `
+SELECT
+    COALESCE(ep.memory_enabled, false),
+    COALESCE(ep.history_window, 20),
+    COALESCE(ep.summarize_every_n_calls, 0),
+    COALESCE(ep.memory_raw_fallback_n, 3),
+    ep.summarizer_provider,
+    ep.summarizer_model
+FROM them.entry_points ep
+WHERE ep.id = $1::uuid`
+		epRow := l.pool.QueryRow(ctx, epQ, entryPointID)
+		if err := epRow.Scan(
+			&memoryEnabled,
+			&historyWindow,
+			&summarizeEveryN,
+			&rawFallbackN,
+			&summarizerProvider,
+			&summarizerModel,
+		); err != nil {
+			// Non-fatal: EP not found or missing columns — proceed without memory.
+			memoryEnabled = false
+		}
 	}
 
 	// Resolve allowed_agent_ids (component_definition UUIDs = agents.id) → slugs.
 	slugs, err := l.resolveAgentSlugs(ctx, allowedAgentIDs)
 	if err != nil {
-		// Non-fatal: proceed without tools rather than failing the whole run.
 		slugs = nil
 	}
 
@@ -138,8 +151,8 @@ WHERE ao.id = $1::uuid
 		HistoryWindow:        historyWindow,
 		AllowedAgents:        slugs,
 		MemoryEnabled:        memoryEnabled,
-		SummarizeEveryNCalls: summarizeEveryNCalls,
-		MemoryRawFallbackN:   memoryRawFallbackN,
+		SummarizeEveryNCalls: summarizeEveryN,
+		MemoryRawFallbackN:   rawFallbackN,
 	}
 	if systemPrompt != nil {
 		cfg.SystemPrompt = *systemPrompt
@@ -156,13 +169,12 @@ WHERE ao.id = $1::uuid
 		cfg.BudgetTokens = *budgetTokens
 	}
 
-	// Load the plaintext API key from applications.provider_keys (decrypted).
 	apiKey := ""
 	if providerName != "" {
 		apiKey, _ = l.loadProviderKey(ctx, applicationID, providerName)
 	}
 
-	// Resolve summarizer config.
+	// Summarizer key comes from app provider_keys using the EP-configured provider.
 	sumProvider := ""
 	if summarizerProvider != nil {
 		sumProvider = *summarizerProvider
@@ -171,14 +183,9 @@ WHERE ao.id = $1::uuid
 	if summarizerModel != nil {
 		sumModel = *summarizerModel
 	}
-
-	// Summarizer API key: try app provider_keys first, then fall back to row-level encrypted key.
 	sumAPIKey := ""
 	if memoryEnabled && sumProvider != "" {
 		sumAPIKey, _ = l.loadProviderKey(ctx, applicationID, sumProvider)
-		if sumAPIKey == "" && summarizerAPIKeyEncrypted != nil {
-			sumAPIKey, _ = l.decryptValue(*summarizerAPIKeyEncrypted)
-		}
 	}
 
 	return RunConfig{

@@ -350,12 +350,59 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 	}
 
 	// 6. Compile entry_points.
+	// Build a map of orchestrator instance_id → component config for ep_memory lookup.
+	orchConfigs := make(map[string]map[string]any, len(doc.Components))
+	for _, comp := range doc.Components {
+		if comp.Config != nil {
+			orchConfigs[comp.InstanceID] = comp.Config
+		}
+	}
+
 	defaultAccessPolicy := []byte(`{"mode":"token"}`)
 	for _, ep := range doc.EntryPoints {
 		var orchID *string
 		if ep.Root != "" {
 			if uid, ok := orchUUIDs[ep.Root]; ok {
 				orchID = &uid
+			}
+		}
+
+		// Extract per-EP memory config from the orchestrator's canvas config.
+		// Stored as config.ep_memory[ep.instance_id] on the orchestrator node.
+		var (
+			memoryEnabled        bool
+			historyWindow        = 20
+			summarizeEveryN      int
+			rawFallbackN         = 3
+			summarizerProvider   *string
+			summarizerModel      *string
+		)
+		if ep.Root != "" {
+			if orchCfg, ok := orchConfigs[ep.Root]; ok {
+				if epMemoryRaw, ok := orchCfg["ep_memory"]; ok {
+					if epMemoryMap, ok := epMemoryRaw.(map[string]any); ok {
+						if epMem, ok := epMemoryMap[ep.InstanceID].(map[string]any); ok {
+							if v, ok := epMem["memory_enabled"].(bool); ok {
+								memoryEnabled = v
+							}
+							if v, ok := epMem["history_window"].(float64); ok && v > 0 {
+								historyWindow = int(v)
+							}
+							if v, ok := epMem["summarize_every_n_calls"].(float64); ok {
+								summarizeEveryN = int(v)
+							}
+							if v, ok := epMem["memory_raw_fallback_n"].(float64); ok && v > 0 {
+								rawFallbackN = int(v)
+							}
+							if v, ok := epMem["summarizer_provider"].(string); ok && v != "" {
+								summarizerProvider = &v
+							}
+							if v, ok := epMem["summarizer_model"].(string); ok && v != "" {
+								summarizerModel = &v
+							}
+						}
+					}
+				}
 			}
 		}
 
@@ -369,6 +416,12 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 			AccessPolicy:         defaultAccessPolicy,
 			SourceDefinitionID:   defID,
 			SourceDefinitionHash: def.DefinitionHash,
+			MemoryEnabled:        memoryEnabled,
+			HistoryWindow:        historyWindow,
+			SummarizeEveryNCalls: summarizeEveryN,
+			MemoryRawFallbackN:   rawFallbackN,
+			SummarizerProvider:   summarizerProvider,
+			SummarizerModel:      summarizerModel,
 		}
 
 		if _, upsertErr := s.dal.UpsertEntryPoint(ctx, row); upsertErr != nil {
