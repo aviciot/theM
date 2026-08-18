@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import ChromaGrid from '@/components/ChromaGrid';
-import { themApi, type Agent, type AgentSkill, type DiscoverResult, type OrchestratorFull, type ScanResult } from '@/lib/api';
+import { themApi, getPreferences, setPreferences, type Agent, type AgentSkill, type DiscoverResult, type OrchestratorFull, type ScanResult } from '@/lib/api';
 
 // ── Folder state ───────────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ interface FolderState {
 
 const FOLDER_KEY = 'them:agents:folders';
 
-function loadFolders(): FolderState {
+function loadFoldersLocal(): FolderState {
   if (typeof window === 'undefined') return { folders: [] };
   try {
     const raw = localStorage.getItem(FOLDER_KEY);
@@ -31,7 +31,7 @@ function loadFolders(): FolderState {
   return { folders: [] };
 }
 
-function saveFolders(state: FolderState): void {
+function saveFoldersLocal(state: FolderState): void {
   try { localStorage.setItem(FOLDER_KEY, JSON.stringify(state)); } catch { /* ignore */ }
 }
 
@@ -476,7 +476,7 @@ function AgentCard({
         <div style={{
           width: '56px', height: '56px', flexShrink: 0, borderRadius: '14px',
           background: `radial-gradient(circle at 30% 25%, ${accent.glow}, transparent 65%),
-                       linear-gradient(145deg, rgba(20,32,52,0.96), rgba(8,16,30,0.96))`,
+                       linear-gradient(145deg, var(--tm-inset), var(--tm-inset-deep))`,
           border: `1px solid ${accent.border}`,
           boxShadow: `0 0 18px ${accent.glow}, inset 0 1px 0 var(--tm-card-border)`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1020,8 +1020,8 @@ export default function AdminAgentsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
 
-  // ── Folder state ──────────────────────────────────────────────────────────
-  const [folderState, setFolderState] = useState<FolderState>(() => loadFolders());
+  // ── Folder state — loaded from DB on mount, localStorage as initial paint cache ──
+  const [folderState, setFolderState] = useState<FolderState>(() => loadFoldersLocal());
   // dragOverId: the card/folder being hovered during a drag
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   // draggingFromFolder: agent ID currently being dragged out of a folder (shows eject zone)
@@ -1030,9 +1030,23 @@ export default function AdminAgentsPage() {
   const [pendingFolder, setPendingFolder] = useState<{ agentA: Agent; agentB: Agent } | null>(null);
   const [folderNameInput, setFolderNameInput] = useState('');
 
+  // Load preferences from DB on mount (overrides any stale localStorage)
+  useEffect(() => {
+    getPreferences().then(prefs => {
+      if (prefs.agentFolders && Array.isArray(prefs.agentFolders.folders)) {
+        setFolderState(prefs.agentFolders);
+        saveFoldersLocal(prefs.agentFolders);
+      }
+    }).catch(() => { /* keep localStorage state on network error */ });
+  }, []);
+
   function updateFolders(next: FolderState) {
     setFolderState(next);
-    saveFolders(next);
+    saveFoldersLocal(next);
+    // Fire-and-forget DB save — failures are non-fatal
+    getPreferences().then(prefs =>
+      setPreferences({ ...prefs, agentFolders: next })
+    ).catch(() => { /* silently ignore */ });
   }
 
   function handleAgentDrop(draggedAgentId: string, targetAgentId: string) {

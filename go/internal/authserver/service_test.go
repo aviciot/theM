@@ -83,6 +83,14 @@ func (f *fakeStore) Ping(_ context.Context) error {
 	return nil
 }
 
+func (f *fakeStore) GetPreferences(_ context.Context, _ int64) ([]byte, error) {
+	return []byte(`{}`), nil
+}
+
+func (f *fakeStore) SetPreferences(_ context.Context, _ int64, _ []byte) error {
+	return nil
+}
+
 func testService(t *testing.T) (*Service, *fakeStore) {
 	t.Helper()
 	store := newFakeStore()

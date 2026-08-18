@@ -44,6 +44,32 @@ export const api = {
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
 
+// ── User preferences (stored in auth service, persists across browsers) ──────
+// Preferences is a generic JSON object — add new keys freely without schema changes.
+
+export interface UserPreferences {
+  agentFolders?: { folders: Array<{ id: string; name: string; agentIds: string[]; collapsed: boolean }> };
+  [key: string]: unknown;
+}
+
+async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(`/api/auth${path}`, init);
+}
+
+export async function getPreferences(): Promise<UserPreferences> {
+  const res = await authFetch('/me/preferences');
+  if (!res.ok) return {};
+  return res.json().catch(() => ({}));
+}
+
+export async function setPreferences(prefs: UserPreferences): Promise<void> {
+  await authFetch('/me/preferences', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(prefs),
+  });
+}
+
 // ── Typed API calls ──────────────────────────────────────────────────────────
 
 export interface AgentSkill {

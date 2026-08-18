@@ -45,6 +45,12 @@ type Store interface {
 	// Blacklist inserts tokenHash with an expiry (idempotent).
 	Blacklist(ctx context.Context, tokenHash string, expiresAt time.Time) error
 
+	// GetPreferences returns the preferences JSON blob for the given user ID.
+	// Returns an empty object when no preferences have been saved yet.
+	GetPreferences(ctx context.Context, userID int64) ([]byte, error)
+	// SetPreferences replaces the full preferences blob for the given user ID.
+	SetPreferences(ctx context.Context, userID int64, prefs []byte) error
+
 	// Ping checks database reachability for readiness probes.
 	Ping(ctx context.Context) error
 }

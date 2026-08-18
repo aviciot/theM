@@ -19,6 +19,8 @@ var (
 	ErrNotAuthenticated = errors.New("authserver: not authenticated")
 	// ErrTokenRevoked — token is blacklisted. 401.
 	ErrTokenRevoked = errors.New("authserver: token revoked")
+	// ErrPreferencesTooLarge — preferences payload exceeds the allowed size. 400.
+	ErrPreferencesTooLarge = errors.New("authserver: preferences payload too large")
 )
 
 // Service holds the auth business logic. It is transport-agnostic: handlers call
@@ -154,6 +156,36 @@ func (s *Service) Me(ctx context.Context, accessToken string) (*PublicUser, erro
 // returns the fresh user record. Mirrors Python /verify.
 func (s *Service) Verify(ctx context.Context, accessToken string) (*PublicUser, error) {
 	return s.Me(ctx, accessToken)
+}
+
+// maxPrefsBytes is the maximum allowed size of a preferences payload (64 KB).
+const maxPrefsBytes = 64 * 1024
+
+// GetPreferences returns the preferences blob for the user identified by accessToken.
+func (s *Service) GetPreferences(ctx context.Context, accessToken string) ([]byte, error) {
+	if accessToken == "" {
+		return nil, ErrNotAuthenticated
+	}
+	claims, err := s.verifyUsable(ctx, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetPreferences(ctx, claims.UserID())
+}
+
+// SetPreferences replaces the preferences blob for the user identified by accessToken.
+func (s *Service) SetPreferences(ctx context.Context, accessToken string, prefs []byte) error {
+	if accessToken == "" {
+		return ErrNotAuthenticated
+	}
+	if len(prefs) > maxPrefsBytes {
+		return ErrPreferencesTooLarge
+	}
+	claims, err := s.verifyUsable(ctx, accessToken)
+	if err != nil {
+		return err
+	}
+	return s.store.SetPreferences(ctx, claims.UserID(), prefs)
 }
 
 // Logout blacklists the given access token until its natural expiry. It is

@@ -39,6 +39,8 @@ func registerAuth(r chi.Router, h *Handlers, base string) {
 	r.Route(base, func(a chi.Router) {
 		a.Post("/login", h.Login)
 		a.Get("/me", h.Me)
+		a.Get("/me/preferences", h.GetPreferences)
+		a.Put("/me/preferences", h.SetPreferences)
 		a.Post("/refresh", h.Refresh)
 		a.Post("/logout", h.Logout)
 		a.Post("/verify", h.Verify)

@@ -3,6 +3,7 @@ package authserver
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -146,6 +147,44 @@ func (h *Handlers) Verify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetPreferences handles GET /api/v1/auth/me/preferences.
+func (h *Handlers) GetPreferences(w http.ResponseWriter, r *http.Request) {
+	token := cookieValue(r, accessCookie)
+	raw, err := h.svc.GetPreferences(r.Context(), token)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+// SetPreferences handles PUT /api/v1/auth/me/preferences.
+func (h *Handlers) SetPreferences(w http.ResponseWriter, r *http.Request) {
+	token := cookieValue(r, accessCookie)
+	if r.ContentLength > maxPrefsBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "preferences payload too large")
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxPrefsBytes+1))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "could not read request body")
+		return
+	}
+	if !json.Valid(raw) {
+		writeErr(w, http.StatusBadRequest, "preferences must be a valid JSON object")
+		return
+	}
+	if err := h.svc.SetPreferences(r.Context(), token, raw); err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
 // Validate handles GET /api/v1/auth/validate — Traefik forwardAuth parity. On
 // success returns 200 with X-User-* headers.
 func (h *Handlers) Validate(w http.ResponseWriter, r *http.Request) {
@@ -201,6 +240,8 @@ func (h *Handlers) writeServiceError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusUnauthorized, "Token has been revoked")
 	case errors.Is(err, ErrWrongTokenType):
 		writeErr(w, http.StatusUnauthorized, "Invalid token type")
+	case errors.Is(err, ErrPreferencesTooLarge):
+		writeErr(w, http.StatusBadRequest, "preferences payload too large")
 	default:
 		// DB or unexpected error — never leak the underlying message.
 		h.log.Error("auth service error", "error", err)

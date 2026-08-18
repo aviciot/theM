@@ -114,6 +114,29 @@ func (s *pgxStore) Blacklist(ctx context.Context, tokenHash string, expiresAt ti
 	return err
 }
 
+func (s *pgxStore) GetPreferences(ctx context.Context, userID int64) ([]byte, error) {
+	var raw []byte
+	err := s.pool.QueryRow(ctx,
+		`SELECT COALESCE(preferences, '{}')::text FROM auth_service.users WHERE id = $1`,
+		userID,
+	).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return []byte("{}"), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func (s *pgxStore) SetPreferences(ctx context.Context, userID int64, prefs []byte) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE auth_service.users SET preferences = $2::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		userID, string(prefs),
+	)
+	return err
+}
+
 func (s *pgxStore) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
