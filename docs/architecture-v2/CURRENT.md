@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `50c9d71` — fix(ws): JWT fallback authenticator for playground token-mode EPs
+Commit: `ec66b8a` — fix(isolation): tenant-scope RunTasks, RunArtifacts, ContextMessages, resolveRootTaskID
 
 ---
 
@@ -258,6 +258,21 @@ Modified:
 - `frontend/src/app/admin/playground/page.tsx` — fix token field: `msg.content || msg.text || ''`
 
 Test state: `go test ./...` — all packages pass, Docker build clean.
+
+---
+
+## Tenant isolation fixes — COMPLETE (ec66b8a, 2026-08-18)
+
+Four data-isolation bugs in Go runtime fixed:
+
+1. **GetRunTasks**: Added `tenantID` param + `EXISTS` subquery on `them.runs` to verify run ownership before returning tasks. Cross-tenant run_id now returns empty result.
+2. **GetRunArtifacts**: Same pattern as GetRunTasks.
+3. **GetContextMessages**: Added `tenantID` param + `t.tenant_id = $2::uuid` filter. Fixed JSONB parsing: reads from `tm.parts->'parts'` envelope first (correct format written by `history.WriteMessage`), falls back to direct `jsonb_array_elements(tm.parts)` for legacy rows. Excludes summary messages (`summary IS NOT TRUE`).
+4. **resolveRootTaskID**: `findQ` now includes `AND ($3 = '' OR tenant_id = $3::uuid)`. Both initial find and post-ON-CONFLICT re-query pass `tenantID`. Prevents context_id from tenant A reusing a root task row owned by tenant B.
+
+Propagated through handler→service→Dal interface for all three methods. All three fake implementations updated. Three new isolation tests added.
+
+`go test ./...` — **36 packages, 0 failures**
 
 ---
 
