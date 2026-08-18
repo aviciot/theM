@@ -1226,14 +1226,24 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
           return copy;
         });
       } else if (busyRef.current) {
-        // Closed without a terminal event — mark the pending bubble as stopped
+        // Closed without a terminal event — surface an explicit error so the
+        // user knows something went wrong (e.g. Temporal activity crash before
+        // any events were emitted).
+        const closeMsg = ev.reason
+          ? `Backend error: ${ev.reason}`
+          : 'Connection closed unexpectedly — check the Trace tab for details';
         setMessages(prev => {
           const copy = [...prev];
           const last = copy[copy.length - 1];
-          if (last?.role === 'assistant' && last.pending) copy[copy.length - 1] = { ...last, text: last.text || '(connection closed)', pending: false };
+          if (last?.role === 'assistant' && last.pending) {
+            copy[copy.length - 1] = { ...last, text: last.text || closeMsg, pending: false };
+          } else if (!last?.text) {
+            copy.push({ role: 'assistant', text: closeMsg });
+          }
           return copy;
         });
-        setStatus('Connection closed');
+        setTrace(prev => [...prev, { ts: Date.now(), type: 'error', message: closeMsg }]);
+        setStatus('Error — connection closed');
       }
       setBusy(false); busyRef.current = false;
     };

@@ -32,7 +32,7 @@ const (
 
 // AgentConfig holds the configuration for a single agent loaded from DB.
 type AgentConfig struct {
-	ID             int64  `json:"id"`
+	ID             string `json:"id"`
 	Slug           string `json:"slug"`
 	Name           string `json:"name"`
 	Description    string `json:"description"`
