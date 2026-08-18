@@ -231,6 +231,8 @@ type Run struct {
 	TotalTokensOut   int     `json:"total_tokens_out"`
 	TotalTokens      int     `json:"total_tokens"`
 	TotalCostUSD     string  `json:"total_cost_usd,omitempty"`
+	CostUSD          string  `json:"cost_usd,omitempty"`          // alias for frontend compat
+	UserMessage      string  `json:"user_message,omitempty"`      // alias for goal, for frontend compat
 	StartedAt        string  `json:"started_at"`
 	EndedAt          string  `json:"ended_at,omitempty"`
 	DurationMS       *int64  `json:"duration_ms,omitempty"`

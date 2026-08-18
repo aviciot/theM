@@ -17,11 +17,16 @@ const runSelectCols = `
 	COALESCE(final_output, ''), COALESCE(error, ''), COALESCE(parent_run_id::text, ''),
 	iterations, total_tokens_in, total_tokens_out,
 	COALESCE(total_cost_usd::text, '0'),
-	started_at::text, COALESCE(ended_at::text, '')`
+	started_at::text, COALESCE(ended_at::text, ''),
+	CASE WHEN ended_at IS NOT NULL
+	     THEN EXTRACT(EPOCH FROM (ended_at - started_at)) * 1000
+	     ELSE NULL
+	END`
 
 // scanRun scans one run row from s.
 func scanRun(s SingleRowScanner) (Run, error) {
 	var r Run
+	var durationMS *float64
 	if err := s.Scan(
 		&r.ID, &r.OrchestratorID, &r.OrchestratorName,
 		&r.EntryPointSlug, &r.UserID, &r.SessionID,
@@ -30,10 +35,18 @@ func scanRun(s SingleRowScanner) (Run, error) {
 		&r.Iterations, &r.TotalTokensIn, &r.TotalTokensOut,
 		&r.TotalCostUSD,
 		&r.StartedAt, &r.EndedAt,
+		&durationMS,
 	); err != nil {
 		return r, err
 	}
 	r.TotalTokens = r.TotalTokensIn + r.TotalTokensOut
+	if durationMS != nil {
+		ms := int64(*durationMS)
+		r.DurationMS = &ms
+	}
+	// aliases for frontend compatibility
+	r.CostUSD = r.TotalCostUSD
+	r.UserMessage = r.Goal
 	return r, nil
 }
 

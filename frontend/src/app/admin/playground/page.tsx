@@ -79,16 +79,21 @@ function traceLabel(ev: TraceEvent): string {
     case 'tool_done':       return `${(ev.tool as string).replace(/^agent__/, '')} done (${ev.latency_ms}ms)`;
     case 'usage':           return `Iter ${ev.iteration}: ${ev.input_tokens}+ ${ev.output_tokens}- tokens`;
     case 'run_end':         return `Run ${ev.status} — ${ev.iterations} iterations`;
-    case 'error':           return `Error: ${ev.message}`;
+    case 'ready':           return `Run started — ${ev.run_id as string}`;
+    case 'done':            return 'Run complete';
+    case 'agent_status':    return `${ev.agent as string} — ${ev.state as string}`;
+    case 'error':           return `Error: ${(ev.message || ev.detail) as string}`;
     default:                return ev.type;
   }
 }
 
 function traceColor(type: string): string {
   if (type === 'error') return '#f87171';
-  if (type === 'run_end') return '#4edea3';
+  if (type === 'run_end' || type === 'done') return '#4edea3';
+  if (type === 'ready') return '#34d399';
   if (type === 'iteration_start') return '#f59e0b';
   if (type.startsWith('tool')) return '#a78bfa';
+  if (type === 'agent_status') return '#c084fc';
   if (type === 'usage') return '#60a5fa';
   return 'var(--tm-text-muted)';
 }
@@ -1064,10 +1069,13 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
+        // Feed all non-token, non-ping events into the Trace tab.
+        if (msg.type && msg.type !== 'token' && msg.type !== 'ping') {
+          setTrace(prev => [...prev, { ts: Date.now(), ...msg }]);
+        }
         if (msg.type === 'ready') {
           runId.current = msg.run_id;
           if (msg.context_id) setContextId(msg.context_id as string);
-          openDashWs(msg.run_id);
           setMessages(prev => [...prev, { role: 'assistant', text: '', pending: true }]);
           setStatus(`Run ${(msg.run_id as string).slice(0, 8)}…`);
 
