@@ -38,6 +38,7 @@ import (
 	"github.com/aviciot/them/internal/sse"
 	"github.com/aviciot/them/internal/telemetry"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/transport"
 	"github.com/aviciot/them/internal/ws"
 )
 
@@ -154,7 +155,22 @@ func run() error {
 	go tokenCache.Subscribe(runCtx)
 	log.Info("bearer token cache initialised (L1+L2+pub/sub revocation)")
 
-	authenticator := tokenCache
+	// Chain authenticator: try opaque bearer token cache first, then fall back to
+	// JWT session token validation. This allows the playground (which passes the
+	// session JWT as ?token) to authenticate against token-mode EPs without
+	// requiring a separate opaque access token.
+	var authenticator transport.Authenticator = tokenCache
+	if cfg.JWTSecret != "" {
+		authenticator = &jwtFallbackAuthenticator{
+			primary:   tokenCache,
+			jwtSecret: []byte(cfg.JWTSecret),
+		}
+	} else if cfg.SecretKey != "" {
+		authenticator = &jwtFallbackAuthenticator{
+			primary:   tokenCache,
+			jwtSecret: []byte(cfg.SecretKey),
+		}
+	}
 
 	// ── 13b. Conditionally wire Temporal client (gated on TEMPORAL_ENABLED) ──
 	var temporalCli temporalclient.Client
@@ -316,4 +332,31 @@ func appsDispatcher(wsApps, sseApps http.Handler) http.Handler {
 			http.NotFound(w, r)
 		}
 	})
+}
+
+// jwtFallbackAuthenticator tries the opaque bearer token cache first.
+// If the token is not found (not an opaque bearer token), it falls back to
+// validating it as an HS256 JWT session token (issued by the auth service).
+// This allows the playground to pass its session JWT as a WS ?token param
+// against token-mode EPs without requiring a separate access token.
+type jwtFallbackAuthenticator struct {
+	primary   transport.Authenticator
+	jwtSecret []byte
+}
+
+func (a *jwtFallbackAuthenticator) Validate(ctx context.Context, rawToken string) (*auth.TokenInfo, error) {
+	// Try opaque bearer token first.
+	if info, err := a.primary.Validate(ctx, rawToken); err == nil {
+		return info, nil
+	}
+	// Fall back to JWT session token.
+	claims, err := auth.ValidateHS256JWT(rawToken, a.jwtSecret)
+	if err != nil {
+		return nil, err
+	}
+	return &auth.TokenInfo{
+		TokenID:     claims.UserID,
+		TenantID:    claims.TenantID,
+		Permissions: []string{},
+	}, nil
 }
