@@ -229,14 +229,14 @@ func (r *Recorder) CreateTask(ctx context.Context, tenantID, runID, contextID, a
 		),
 		ag AS (
 			SELECT id FROM them.agents
-			WHERE slug = $5 AND tenant_id = $1::uuid AND enabled = true
+			WHERE slug = $4 AND tenant_id = $1::uuid AND enabled = true
 			LIMIT 1
 		)
 		INSERT INTO them.tasks (tenant_id, run_id, context_id, parent_task_id, agent_id, state, kind)
 		SELECT $1::uuid, $2::uuid, $3::uuid, parent.id, ag.id, 'working', 'delegated'
 		FROM parent CROSS JOIN ag
 		RETURNING id::text`
-	row := r.db.QueryRow(ctx, q, tenantID, runID, contextID, runID, agentSlug)
+	row := r.db.QueryRow(ctx, q, tenantID, runID, contextID, agentSlug)
 	var id string
 	if err := row.Scan(&id); err != nil {
 		return "", fmt.Errorf("runrecorder: create task (slug=%s): %w", agentSlug, err)

@@ -578,12 +578,12 @@ func TestCreateTask_insertsChildTaskRow(t *testing.T) {
 	call := db.queryRows[0]
 	assert.Contains(t, call.sql, "INSERT INTO them.tasks")
 	assert.Contains(t, call.sql, "delegated")
-	// tenantID, runID, contextID, runID (parent lookup), agentSlug
+	// tenantID, runID, contextID, agentSlug (4 args; $4 is slug)
+	require.Len(t, call.args, 4)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", call.args[0])
 	assert.Equal(t, "run-111", call.args[1])
 	assert.Equal(t, "ctx-222", call.args[2])
-	assert.Equal(t, "run-111", call.args[3])
-	assert.Equal(t, "my-agent", call.args[4])
+	assert.Equal(t, "my-agent", call.args[3])
 }
 
 // TestCompleteTask_updatesState verifies that CompleteTask issues the correct
