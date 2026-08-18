@@ -385,7 +385,7 @@ function AgentCard({
   const [copied, setCopied] = useState(false);
   const [showOverflow, setShowOverflow] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
-  const isInternal = agent.tags?.includes('internal') || agent.slug === 'workflow_advisor';
+  const isInternal = agent.tags?.includes('internal') ?? false;
   const isLocked = isInternal || (agent.tags?.includes('locked') ?? false);
   const category = agentCategory(agent);
   const accent = isInternal
