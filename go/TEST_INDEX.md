@@ -379,7 +379,7 @@ sanitization, and cross-run access denial.
 
 | Test | What it proves |
 |---|---|
-| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with 6-arg signature (id, tenant_id, entry_point_slug, status, started_at, events_transport); tenant_id is a plain string (NOT NULL) |
+| `TestCreateRun_callsCorrectSQL` | `INSERT INTO them.runs` with 8-arg signature (id, tenant_id, entry_point_slug, status, started_at, events_transport, goal, orchestrator_name); tenant_id is a plain string (NOT NULL) |
 | `TestCreateRun_eventsTransportByMode` | events_transport derived from RunEventsMode: pubsub→"pubsub", dual/streams→"streams" (Phase 11c-B) |
 | `TestCreateRun_explicitTransportOverridesMode` | non-empty `run.EventsTransport` overrides the configured mode |
 | `TestUpdateRunStatus_withErrorMessage` | `UPDATE` sets `status` and `error` (column is "error", not "error_message") |
@@ -400,6 +400,8 @@ sanitization, and cross-run access denial.
 | `TestCreateRun_writesTenantID` | R-4d fixup: TenantID written as plain string arg[1]; no *string nullable |
 | `TestCreateRun_emptyTenantIDReturnsError` | R-4d fixup: empty TenantID → `ErrMissingTenantID` before any DB call (NOT NULL constraint) |
 | `TestCreateRun_twoTenantsProduceDistinctRows` | R-4d: two different tenant UUIDs → two distinct plain-string arg[1] values |
+| `TestCreateTask_insertsChildTaskRow` | CreateTask issues INSERT INTO them.tasks with delegated kind; correct 5-arg order (tenantID, runID, contextID, runID, agentSlug) |
+| `TestCompleteTask_updatesState` | CompleteTask issues UPDATE them.tasks with 'completed' on success, 'failed' on error |
 
 **Trigger:** any change to `internal/runrecorder/recorder.go` or `internal/runrecorder/pgx.go`
 
