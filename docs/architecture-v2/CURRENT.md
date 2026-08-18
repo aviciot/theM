@@ -263,10 +263,19 @@ Test state: `go test ./...` — all packages pass, Docker build clean.
 
 ## Next recommended task
 
-**End-to-end playground verification** — With the JWT fallback fix deployed, test the playground WS connection using a token-mode EP. Verify multi-turn history is stored per-EP and preserved across messages.
+**Phase 1 — A2A Agent Runtime (`them-agent-runtime`)**
 
-Then: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims)
-- Read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 before starting Wave 9.
+Design locked (see `docs/architecture-v2/CANVAS_A2A_AGENT_GENERATION_FULL.md`).
+Start with:
+1. Bump `go/go.mod` → `go 1.25`; Dockerfiles → `golang:1.25-alpine`
+2. `go get github.com/a2aproject/a2a-go/v2`
+3. `go/internal/agentgen/` — AgentSpec, InvocationContext, StepSpec types
+4. `go/cmd/agent-runtime/main.go` — load spec from DB, resolve binding from DB, decrypt slots, execute pipeline (input+llm+transform+response steps only)
+5. Redis task store for task lifecycle
+6. `Dockerfile.agent-runtime` + compose service (profiles: [agents], replicas: 2)
+7. `agentregistry` extension: attach invocation context headers on outbound calls
+
+Read the full design doc before starting. Do not implement the canvas UI (Phase 2) or publish pipeline (Phase 3) in the same session.
 
 ---
 
@@ -295,6 +304,8 @@ Then: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant 
 4. A2A server (`/a2a/*`) still on Python — not yet migrated to Go.
 5. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims, live two-tenant verification) remain open.
 6. `them-go-bridge` container startup: must use `--project-name them_gateway` when starting via compose to share the `them-network` network with the `them_gateway` project. Without it, postgres/redis conflict. Command: `docker compose -p them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge`.
+7. `app_agent_bindings` table not yet created — needed before Phase 3 (binding UI + publish pipeline).
+8. `agentregistry` does not yet attach invocation context headers — needed for Phase 1 runtime to identify the calling application.
 
 ---
 
