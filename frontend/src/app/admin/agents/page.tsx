@@ -360,7 +360,6 @@ function AgentCard({
   onOpenScanModal,
   isDragOver,
   onDragStart,
-  onDragEnd,
   onDragOver,
   onDrop,
   onRemoveFromFolder,
@@ -378,7 +377,6 @@ function AgentCard({
   onOpenScanModal: () => void;
   isDragOver?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
-  onDragEnd?: () => void;
   onDragOver?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent) => void;
   onRemoveFromFolder?: () => void;
@@ -437,7 +435,6 @@ function AgentCard({
         }
         onDragStart?.(e);
       }}
-      onDragEnd={onDragEnd}
       onDragOver={onDragOver}
       onDrop={onDrop}
       style={{
@@ -1024,8 +1021,6 @@ export default function AdminAgentsPage() {
   const [folderState, setFolderState] = useState<FolderState>(() => loadFoldersLocal());
   // dragOverId: the card/folder being hovered during a drag
   const [dragOverId, setDragOverId] = useState<string | null>(null);
-  // draggingFromFolder: agent ID currently being dragged out of a folder (shows eject zone)
-  const [draggingFromFolder, setDraggingFromFolder] = useState<string | null>(null);
   // pendingFolder: when we need to prompt for a folder name
   const [pendingFolder, setPendingFolder] = useState<{ agentA: Agent; agentB: Agent } | null>(null);
   const [folderNameInput, setFolderNameInput] = useState('');
@@ -1987,8 +1982,7 @@ export default function AdminAgentsPage() {
                                     if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
                                   }}
                                   isDragOver={dragOverId === agent.id}
-                                  onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); setDragOverId(null); setDraggingFromFolder(agent.id); }}
-                                  onDragEnd={() => setDraggingFromFolder(null)}
+                                  onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); setDragOverId(null); }}
                                   onDragOver={(e) => { e.preventDefault(); setDragOverId(agent.id); }}
                                   onDrop={(e) => {
                                     e.preventDefault();
@@ -2003,39 +1997,6 @@ export default function AdminAgentsPage() {
                           </div>
                         );
                       })}
-
-                      {/* ── Eject drop zone — shown while dragging a foldered agent ── */}
-                      {draggingFromFolder && (
-                        <div
-                          onDragOver={(e) => { e.preventDefault(); setDragOverId('eject'); }}
-                          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null); }}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            setDragOverId(null);
-                            setDraggingFromFolder(null);
-                            const draggedId = e.dataTransfer.getData('agentId');
-                            if (draggedId) removeAgentFromFolder(draggedId);
-                          }}
-                          style={{
-                            marginBottom: '16px',
-                            padding: '20px',
-                            borderRadius: '12px',
-                            border: `2px dashed ${dragOverId === 'eject' ? 'rgba(0,209,255,0.7)' : 'rgba(255,255,255,0.15)'}`,
-                            background: dragOverId === 'eject' ? 'rgba(0,209,255,0.06)' : 'rgba(255,255,255,0.02)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '8px',
-                            color: dragOverId === 'eject' ? 'rgba(0,209,255,0.9)' : 'rgba(255,255,255,0.3)',
-                            fontSize: '13px',
-                            transition: 'all 150ms ease',
-                            cursor: 'copy',
-                          }}
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>folder_open</span>
-                          Drop here to remove from folder
-                        </div>
-                      )}
 
                       {/* ── Ungrouped agent grid — also a drop target to eject agents from folders ── */}
                       <ChromaGrid radius={420} damping={0.09} fadeOutMs={800}
@@ -2055,7 +2016,6 @@ export default function AdminAgentsPage() {
                         onDrop={(e: React.DragEvent) => {
                           e.preventDefault();
                           setDragOverId(null);
-                          setDraggingFromFolder(null);
                           const draggedId = e.dataTransfer.getData('agentId');
                           if (draggedId && folderedAgentIds2.has(draggedId)) removeAgentFromFolder(draggedId);
                         }}
