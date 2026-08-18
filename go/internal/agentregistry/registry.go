@@ -385,3 +385,55 @@ func (r *Registry) invokeHTTP(ctx context.Context, cfg *AgentConfig, input json.
 	}
 	return json.RawMessage(out), nil
 }
+
+// InvocationMeta carries runtime context forwarded to the agent-runtime service.
+// Phase 1: passed as X-Them-* headers on the internal Docker network.
+// Phase 3: will be replaced by a signed JWT in THE_M_INVOCATION_JWT_KEY.
+type InvocationMeta struct {
+	// ApplicationID is the application (tenant boundary) that owns this invocation.
+	ApplicationID string
+	// AgentID is the canonical agent UUID (matches the URL slug cross-check).
+	AgentID string
+	// BindingID is the AppAgentBinding UUID for this application+agent pair.
+	BindingID string
+}
+
+// InvokeWithMeta routes a call to the agent-runtime service, injecting InvocationMeta
+// as X-Them-* headers (Phase 1 protocol — internal Docker network only).
+// If meta is nil, the call degrades to Invoke (standard registry routing).
+func (r *Registry) InvokeWithMeta(ctx context.Context, tenantID, slug string, payload json.RawMessage, meta *InvocationMeta) (json.RawMessage, error) {
+	if meta == nil {
+		return r.Invoke(ctx, tenantID, slug, payload)
+	}
+
+	cfg, err := r.getAgent(ctx, tenantID, slug)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.EndpointURL, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("agentregistry: invoke with meta: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if cfg.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
+	}
+	// Phase 1 invocation context — internal Docker network only.
+	req.Header.Set("X-Them-Tenant-Id", tenantID)
+	req.Header.Set("X-Them-Application-Id", meta.ApplicationID)
+	req.Header.Set("X-Them-Agent-Id", meta.AgentID)
+	req.Header.Set("X-Them-Binding-Id", meta.BindingID)
+
+	resp, err := r.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("agentregistry: invoke with meta: http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("agentregistry: invoke with meta: read body: %w", err)
+	}
+	return json.RawMessage(out), nil
+}

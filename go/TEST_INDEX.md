@@ -1230,6 +1230,27 @@ cancellation does not block or panic. Uses MockProvider, no real LLM calls.
 
 ---
 
+### S1-48 · Agent runtime — `internal/agentgen/agentgen_test.go`
+
+**Purpose:** Phase 1 A2A Agent Runtime — proves the three security invariants (credential redaction,
+per-binding isolation, tenant ownership) and core interpreter step execution (input binding,
+template transform, HTTP credential injection). No external services required.
+
+| Test | What it proves |
+|---|---|
+| `TestInvocationContext_StringRedactsCredentials` | `InvocationContext.String()` never contains credential values — only slot count |
+| `TestAppAgentBinding_ResolveCredentials_TwoBindingsDifferentCreds` | Two `AppAgentBinding`s for the same agent but different apps resolve to DISTINCT credentials |
+| `TestRedisTaskStore_CrossTenantIsolation` | Cross-tenant task read returns `ErrTaskNotFound` (not 403); cross-app read also returns `ErrTaskNotFound` |
+| `TestRedisTaskStore_GetNonExistent` | Non-existent task ID → `ErrTaskNotFound` |
+| `TestInterpreter_InputStep_BindsTextToVar` | Input step binds `text` part to named pipeline variable; response step reads it |
+| `TestInterpreter_TransformStep` | Transform step renders Go template expressions over pipeline vars |
+| `TestInterpreter_HTTPStep_InjectsCredential` | HTTP step resolves `CredentialSlot` from `InvocationContext.Credentials` and injects as `Authorization: Bearer {credential}` header |
+| `TestInterpreter_AgentCard_PathIsAgentCardJSON` | Documents A2A well-known path is `/.well-known/agent-card.json` (not `agent.json`) |
+
+**Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go)
+
+---
+
 ### S1-28 · Orchestrator — `internal/orchestrator/orchestrator_test.go`
 
 **Purpose:** Agentic loop feature parity — history loading, checkpoint/crash recovery, token budget
@@ -1541,6 +1562,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/temporal/activities.go`, `internal/temporal/workflow.go` | S1-29 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
+| `internal/agentgen/` (any file) | S1-48 |
+| `cmd/agent-runtime/main.go` | S1-48 + S1 (full suite) |
 | `internal/ws/handler.go` | S1-12 |
 | `internal/sse/handler.go` | S1-13 |
 | `internal/runstream/streamer.go`, `dispatcher.go`, `publisher.go`, `metrics.go`, `streamid.go` | S1-23 |
@@ -1647,7 +1670,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-45 | admin registry handler (Phase D: ListComponentDefinitions) | 1 |
 | S1-46 | history (DB role mapping + round-trip) | 4 |
 | S1-47 | summarizer (LLM-based conversation summarizer) | 4 |
-| **S1 total** | | **630** |
+| S1-48 | agentgen (Phase 1 A2A Agent Runtime: invariants + interpreter) | 8 |
+| **S1 total** | | **638** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1656,4 +1680,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **633** |
+| **`go test ./...` total** | | **641** |

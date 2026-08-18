@@ -1087,3 +1087,43 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
+
+  # ── A2A Agent Runtime — interprets canvas-compiled AgentSpecs ───────────────
+  # Profile: agents. Replicas: 2 (no container_name — allows multiple instances).
+  # Port 9300 is internal only — never exposed through Traefik.
+  # Phase 1: invocation context via X-Them-* headers (Docker network only).
+  # Phase 3: upgrade to signed JWT (THE_M_INVOCATION_JWT_KEY).
+  them-agent-runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent-runtime
+    deploy:
+      replicas: 2
+    ports: []
+    environment:
+      - APP_PORT=9300
+      - APP_ENV=development
+      - DATABASE_HOST=them-postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=them
+      - DATABASE_USER=${THE_M_DB_USER:-them}
+      - DATABASE_PASSWORD=${THE_M_DB_PASSWORD:-them_secret}
+      - REDIS_HOST=them-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
+      - THE_M_CRYPTO_KEY=${THE_M_CRYPTO_KEY:-change-this-crypto-key}
+      - THE_M_INVOCATION_JWT_KEY=${THE_M_INVOCATION_JWT_KEY:-}
+      - ANTHROPIC_API_KEY_PLATFORM=${ANTHROPIC_API_KEY:-}
+    networks:
+      - them-network
+    depends_on:
+      - them-postgres
+      - them-redis
+    profiles:
+      - agents
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

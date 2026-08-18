@@ -276,21 +276,74 @@ Propagated through handler→service→Dal interface for all three methods. All 
 
 ---
 
+## Phase 1 — A2A Agent Runtime (`them-agent-runtime`) — COMPLETE (2026-08-18)
+
+Design: `docs/architecture-v2/CANVAS_A2A_AGENT_GENERATION_FULL.md`
+
+### What was built
+
+**Go 1.25 + a2a-go/v2 SDK:**
+- `go/go.mod`: bumped `go 1.23` → `go 1.25.0`; added `github.com/a2aproject/a2a-go/v2 v2.5.0`
+- `Dockerfile.go`, `Dockerfile.go-worker`, `Dockerfile.auth-go`: `golang:1.23-alpine` → `golang:1.25-alpine`
+
+**`go/internal/agentgen/` package:**
+- `spec.go` — `AgentSpec` (compiled, no secrets, slot names only), `SkillSpec`, `StepSpec`, `StepType` constants (input/llm/http/transform/response/branch/loop/parallel/a2a_call/human_wait/stream_out), all step config types
+- `context.go` — `InvocationContext` (holds decrypted credentials in-memory only; `String()` never logs them), `InvocationPolicies`
+- `binding.go` — `AppAgentBinding` (EncryptedCredentials = Fernet ciphertext only), `ResolveCredentials` method
+- `redistaskstore.go` — `RedisTaskStore` (ownership check: mismatch → `ErrTaskNotFound`, not 403; key `them:agent:task:{task_id}`, TTL 24h), `TaskState` struct (no credentials)
+- `interpreter.go` — `Interpreter.Execute` pipeline walker; Phase 1: `input`, `llm`, `http`, `transform`, `response` implemented; others return "not implemented in Phase 1"
+- `agentgen_test.go` — 8 tests (S1-48): credential redaction, per-binding isolation, cross-tenant ownership, interpreter steps
+
+**`go/cmd/agent-runtime/main.go`:** stateless chi HTTP server on port 9300
+- Routes: `GET /healthz`, `GET /agents/{slug}/.well-known/agent-card.json`, `POST /agents/{slug}`
+- `parseInvocationContext` reads `X-Them-Tenant-Id/Application-Id/Agent-Id/Binding-Id` headers
+- Spec cache: `sync.Map`, TTL 60s, invalidated by Redis pub/sub `them:agents:registry:{tenant_id}`
+- Three invariants enforced: definition_id pinned at publish (409 if mismatch), slug cross-check vs JWT agent_id (403 if mismatch), Redis task ownership (ErrTaskNotFound = 404 not 403)
+- `anthropicProviderAdapter.Complete` wraps `llm.AnthropicProvider.Stream` + drains `text_delta` events
+- Pool: `db.New(ctx, cfg.DSN())`, Redis: `cache.New(...)`, crypto key: `crypto.DeriveKey(cfg.SecretKey)`
+
+**`go/internal/agentregistry/registry.go`:** `InvocationMeta` struct + `InvokeWithMeta` method
+- Phase 1: injects `X-Them-Tenant-Id`, `X-Them-Application-Id`, `X-Them-Agent-Id`, `X-Them-Binding-Id` headers
+- If `meta == nil`, delegates to existing `Invoke` (backwards-compatible)
+- Phase 3 upgrade path: replace headers with signed JWT (THE_M_INVOCATION_JWT_KEY) — no other callers to update
+
+**`Dockerfile.agent-runtime`:** golang:1.25-alpine builder → alpine:3.21 runtime; port 9300; healthcheck via wget
+
+**`docker-compose.yml`:** `them-agent-runtime` service added
+- `profiles: [agents]`, `deploy: replicas: 2` (no `container_name`), internal Docker network only
+- Env: `THE_M_CRYPTO_KEY`, `THE_M_INVOCATION_JWT_KEY`, `ANTHROPIC_API_KEY_PLATFORM`
+- NOT exposed through Traefik — internal calls only (from `them-go-bridge` via `InvokeWithMeta`)
+
+**`go/TEST_INDEX.md`:** S1-48 added (8 tests); total 638 S1 / 641 overall
+
+### Three invariants (must remain in force)
+1. `binding.DefinitionID != nil && *binding.DefinitionID != spec.DefinitionID` → 409 (version pinning)
+2. `spec.Slug != slug` (URL vs spec) → 403 (slug cross-check)
+3. `ts.TenantID != tenantID || ts.ApplicationID != applicationID` → `ErrTaskNotFound` (ownership, 404 not 403)
+
+### Security constraints (always in force)
+- Credentials decrypted per-request, held only in `InvocationContext.Credentials`, never logged/persisted
+- `InvocationContext.String()` is explicitly redacted (slot count only)
+- `TaskState` has no credentials; credentials re-decrypted from binding on each resume
+- Port 9300 NOT in Traefik — internal Docker network only
+
+### Test state
+`go test ./...` — **36 packages, 0 failures** (includes new S1-48)
+
+---
+
 ## Next recommended task
 
-**Phase 1 — A2A Agent Runtime (`them-agent-runtime`)**
+**Phase 2 — Canvas Agent Publisher UI**
 
-Design locked (see `docs/architecture-v2/CANVAS_A2A_AGENT_GENERATION_FULL.md`).
-Start with:
-1. Bump `go/go.mod` → `go 1.25`; Dockerfiles → `golang:1.25-alpine`
-2. `go get github.com/a2aproject/a2a-go/v2`
-3. `go/internal/agentgen/` — AgentSpec, InvocationContext, StepSpec types
-4. `go/cmd/agent-runtime/main.go` — load spec from DB, resolve binding from DB, decrypt slots, execute pipeline (input+llm+transform+response steps only)
-5. Redis task store for task lifecycle
-6. `Dockerfile.agent-runtime` + compose service (profiles: [agents], replicas: 2)
-7. `agentregistry` extension: attach invocation context headers on outbound calls
+Requires reading `docs/architecture-v2/CANVAS_A2A_AGENT_GENERATION_FULL.md` Phase 2 section.
 
-Read the full design doc before starting. Do not implement the canvas UI (Phase 2) or publish pipeline (Phase 3) in the same session.
+Before starting:
+1. Apply `db/033_app_agent_bindings.sql` — create `agent_runtime_specs` + `app_agent_bindings` tables (the runtime DB does not have these yet)
+2. Add `PUT /api/v1/admin/applications/{id}/publish-agents` endpoint — compiles canvas agents → `agent_runtime_specs` + `app_agent_bindings`
+3. Frontend: "Canvas Agents" tab in ApplicationView; shows bound agents, credential slots, binding status
+
+Do NOT attempt to run `them-agent-runtime` until the DB tables exist. Do NOT implement canvas UI and binding publish in the same session.
 
 ---
 
@@ -319,12 +372,8 @@ Read the full design doc before starting. Do not implement the canvas UI (Phase 
 4. A2A server (`/a2a/*`) still on Python — not yet migrated to Go.
 5. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims, live two-tenant verification) remain open.
 6. `them-go-bridge` container startup: must use `--project-name them_gateway` when starting via compose to share the `them-network` network with the `them_gateway` project. Without it, postgres/redis conflict. Command: `docker compose -p them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge`.
-7. `app_agent_bindings` table not yet created — needed before Phase 3 (binding UI + publish pipeline).
-8. `agentregistry` does not yet attach invocation context headers — needed for Phase 1 runtime to identify the calling application.
-9. Three invariants now locked in the A2A design (Revision 2, 2026-08-18) — must be implemented in Phase 1 before any other A2A work:
-   - **Version pinning mandatory at app-publish time:** `app_agent_bindings.definition_id` must be non-NULL in any published Application; compile step pins it.
-   - **Slug is routing-only:** runtime cross-checks URL slug against JWT `agent_id`; mismatch → 403.
-   - **Redis task ownership:** every `tasks/get`/`tasks/cancel`/HITL-resume checks `stored.TenantID+ApplicationID` against the signed InvocationContext; mismatch → 404 (not 403).
+7. `agent_runtime_specs` and `app_agent_bindings` tables not yet created — needed before Phase 2 (binding publish pipeline + runtime DB queries). Apply `db/033_app_agent_bindings.sql` (to be written in Phase 2).
+8. `them-agent-runtime` reads from `agent_runtime_specs` table (`loadSpecByAgentID`), which does not exist until Phase 2 DB migration is applied. The service will fail to serve specs until the table exists.
 
 ---
 
