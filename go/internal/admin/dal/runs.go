@@ -387,9 +387,9 @@ func (d *DB) GetContextArtifacts(ctx context.Context, tenantID, contextID string
 		a.created_at::text
 		FROM them.artifacts a
 		JOIN them.tasks t ON t.id = a.task_id
-		JOIN them.runs r ON r.id = t.run_id
+		LEFT JOIN them.runs r ON r.id = t.run_id
 		WHERE a.context_id = $1::uuid
-		  AND r.tenant_id = $2::uuid
+		  AND COALESCE(r.tenant_id, t.tenant_id) = $2::uuid
 		ORDER BY a.created_at DESC
 		LIMIT $3`
 	rows, err := d.q.Query(ctx, q, contextID, tenantID, limit)
