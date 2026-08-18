@@ -273,6 +273,20 @@ func (r *Recorder) CompleteTask(ctx context.Context, taskID string, success bool
 	return nil
 }
 
+// CompleteRootTask marks the root task for a run as completed or failed.
+// Non-fatal: callers should log but continue on error.
+func (r *Recorder) CompleteRootTask(ctx context.Context, runID string, success bool) error {
+	state := "completed"
+	if !success {
+		state = "failed"
+	}
+	const q = `UPDATE them.tasks SET state=$2, updated_at=now() WHERE run_id=$1::uuid AND kind='root'`
+	if err := r.db.Exec(ctx, q, runID, state); err != nil {
+		return fmt.Errorf("runrecorder: complete root task for run %s: %w", runID, err)
+	}
+	return nil
+}
+
 // CreateRootTask ensures a root task row exists for (contextID, runID).
 // Called before writing task_messages so the FK constraint is satisfied.
 // Idempotent — ON CONFLICT DO NOTHING means repeated calls are safe.

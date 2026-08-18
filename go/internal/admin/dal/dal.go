@@ -280,6 +280,8 @@ type Task struct {
 	ID             string `json:"id"`
 	ParentTaskID   string `json:"parent_task_id,omitempty"`
 	AgentID        string `json:"agent_id,omitempty"`
+	AgentName      string `json:"agent_name,omitempty"`
+	AgentSlug      string `json:"agent_slug,omitempty"`
 	OrchestratorID string `json:"orchestrator_id,omitempty"`
 	ContextID      string `json:"context_id,omitempty"`
 	State          string `json:"state"`
@@ -290,6 +292,7 @@ type Task struct {
 	Error          string `json:"error,omitempty"`
 	CreatedAt      string `json:"created_at"`
 	UpdatedAt      string `json:"updated_at"`
+	DurationMS     *int64 `json:"duration_ms,omitempty"`
 }
 
 // ArtifactPart is one element in an artifact's parts array.

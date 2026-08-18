@@ -604,3 +604,22 @@ func TestCompleteTask_updatesState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "failed", db.calls[0].args[1])
 }
+
+// TestCompleteRootTask_updatesRootRow verifies that CompleteRootTask issues the correct
+// UPDATE targeting kind='root' rows for the given run.
+func TestCompleteRootTask_updatesRootRow(t *testing.T) {
+	db := &mockDB{}
+	rec := New(db)
+
+	err := rec.CompleteRootTask(context.Background(), "run-abc", true)
+	require.NoError(t, err)
+	require.Len(t, db.calls, 1)
+	assert.Contains(t, db.calls[0].sql, "kind='root'")
+	assert.Equal(t, "run-abc", db.calls[0].args[0])
+	assert.Equal(t, "completed", db.calls[0].args[1])
+
+	db.calls = nil
+	err = rec.CompleteRootTask(context.Background(), "run-def", false)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", db.calls[0].args[1])
+}

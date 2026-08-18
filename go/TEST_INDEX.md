@@ -402,6 +402,7 @@ sanitization, and cross-run access denial.
 | `TestCreateRun_twoTenantsProduceDistinctRows` | R-4d: two different tenant UUIDs → two distinct plain-string arg[1] values |
 | `TestCreateTask_insertsChildTaskRow` | CreateTask issues INSERT INTO them.tasks with delegated kind; correct 5-arg order (tenantID, runID, contextID, runID, agentSlug) |
 | `TestCompleteTask_updatesState` | CompleteTask issues UPDATE them.tasks with 'completed' on success, 'failed' on error |
+| `TestCompleteRootTask_updatesRootRow` | CompleteRootTask issues UPDATE WHERE kind='root' for the run, sets completed/failed state |
 
 **Trigger:** any change to `internal/runrecorder/recorder.go` or `internal/runrecorder/pgx.go`
 
@@ -1610,7 +1611,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-06 | session | 10 |
 | S1-07 | event | 9 |
 | S1-08 | domain | 3 |
-| S1-09 | runrecorder | 21 |
+| S1-09 | runrecorder | 22 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 10 |
 | S1-12 | ws | 24 |

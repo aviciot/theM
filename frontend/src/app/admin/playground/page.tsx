@@ -756,63 +756,98 @@ function TraceTab({ trace, traceBottom, runId, contextId }: { trace: TraceEvent[
   );
 }
 
-function TasksTab({ runId }: { runId: string | null }) {
+function taskStateIcon(state: string): string {
+  if (state === 'completed') return '✓';
+  if (state === 'failed') return '✗';
+  if (state === 'working') return '⟳';
+  if (state === 'canceled') return '⊘';
+  return '·';
+}
+
+function TasksTab({ runId, busy }: { runId: string | null; busy: boolean }) {
   const [tasks, setTasks] = useState<TaskOut[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
   useEffect(() => {
     if (!runId) { setTasks([]); return; }
+    let cancelled = false;
+    const load = () => {
+      themApi.runTasks(runId)
+        .then(t => { if (!cancelled) setTasks(t); })
+        .catch(e => { if (!cancelled) setErr(e.message); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    };
     setLoading(true);
     setErr('');
-    themApi.runTasks(runId)
-      .then(setTasks)
-      .catch(e => setErr(e.message))
-      .finally(() => setLoading(false));
-  }, [runId]);
+    load();
+    if (!busy) return () => { cancelled = true; };
+    const interval = setInterval(load, 2500);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [runId, busy]);
 
   if (!runId) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, textAlign: 'center', marginTop: 40, padding: 16 }}>Start a run to see the task graph</div>;
-  if (loading) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>Loading…</div>;
+  if (loading && tasks.length === 0) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>Loading…</div>;
   if (err) return <div style={{ color: '#f87171', fontSize: 12, padding: 16 }}>{err}</div>;
   if (tasks.length === 0) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>No tasks yet</div>;
 
+  const root = tasks.find(t => t.kind === 'root');
+  const children = tasks.filter(t => t.kind !== 'root');
+
   return (
-    <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {tasks.map(t => (
-        <div key={t.id} style={{
-          padding: '10px 12px',
-          borderRadius: 8,
-          border: '1px solid var(--tm-border)',
+    <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {/* Root task — orchestrator */}
+      {root && (
+        <div style={{
+          padding: '8px 12px', borderRadius: 8,
+          border: `1px solid ${stateColor(root.state)}44`,
           background: 'var(--tm-surface)',
-          marginLeft: t.parent_task_id ? 16 : 0,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: stateColor(t.state), color: '#fff', fontWeight: 700 }}>
-              {t.state}
-            </span>
-            <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace' }}>
-              {t.kind}
-            </span>
-            {t.tokens_used > 0 && (
-              <span style={{ fontSize: 11, color: '#60a5fa', marginLeft: 'auto' }}>{t.tokens_used} tok</span>
-            )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 13, color: stateColor(root.state), fontWeight: 700 }}>{taskStateIcon(root.state)}</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tm-text)' }}>Orchestrator</span>
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: 'rgba(107,114,128,0.15)', color: 'var(--tm-text-muted)' }}>root</span>
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: `${stateColor(root.state)}22`, color: stateColor(root.state), marginLeft: 'auto' }}>{root.state}</span>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace' }}>
-            {t.id.slice(0, 8)}…
-          </div>
-          {t.error && (
-            <div style={{ fontSize: 11, color: '#f87171', marginTop: 4, wordBreak: 'break-word' }}>{t.error}</div>
-          )}
-          {t.remote_task_id && (
-            <div style={{ fontSize: 10, color: 'var(--tm-text-muted)', marginTop: 2 }}>remote: {t.remote_task_id}</div>
-          )}
+          {root.error && <div style={{ fontSize: 11, color: '#f87171', marginTop: 4 }}>{root.error}</div>}
         </div>
-      ))}
+      )}
+      {/* Agent tasks */}
+      {children.length > 0 && (
+        <div style={{ paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 4, borderLeft: '2px solid var(--tm-border)' }}>
+          {children.map(t => {
+            const name = (t as TaskOut & { agent_name?: string; agent_slug?: string; duration_ms?: number }).agent_name
+              || (t as TaskOut & { agent_name?: string; agent_slug?: string; duration_ms?: number }).agent_slug
+              || t.agent_id?.slice(0, 8) || 'agent';
+            const dur = (t as TaskOut & { duration_ms?: number }).duration_ms;
+            return (
+              <div key={t.id} style={{
+                padding: '7px 10px', borderRadius: 7,
+                border: `1px solid ${stateColor(t.state)}44`,
+                background: 'var(--tm-bg)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <span style={{ fontSize: 12, color: stateColor(t.state), fontWeight: 700, flexShrink: 0 }}>{taskStateIcon(t.state)}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tm-text)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                  {dur != null && (
+                    <span style={{ fontSize: 10, color: 'var(--tm-text-muted)', flexShrink: 0 }}>{dur < 1000 ? `${dur}ms` : `${(dur / 1000).toFixed(1)}s`}</span>
+                  )}
+                  {t.tokens_used != null && t.tokens_used > 0 && (
+                    <span style={{ fontSize: 10, color: '#60a5fa', flexShrink: 0 }}>{t.tokens_used} tok</span>
+                  )}
+                  <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 8, background: `${stateColor(t.state)}22`, color: stateColor(t.state), flexShrink: 0 }}>{t.state}</span>
+                </div>
+                {t.error && <div style={{ fontSize: 11, color: '#f87171', marginTop: 3 }}>{t.error}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
-function ArtifactsTab({ runId }: { runId: string | null }) {
+function ArtifactsTab({ runId, busy }: { runId: string | null; busy: boolean }) {
   const [artifacts, setArtifacts] = useState<ArtifactOut[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -820,13 +855,20 @@ function ArtifactsTab({ runId }: { runId: string | null }) {
 
   useEffect(() => {
     if (!runId) { setArtifacts([]); return; }
+    let cancelled = false;
+    const load = () => {
+      themApi.runArtifacts(runId)
+        .then(a => { if (!cancelled) setArtifacts(a); })
+        .catch(e => { if (!cancelled) setErr(e.message); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    };
     setLoading(true);
     setErr('');
-    themApi.runArtifacts(runId)
-      .then(setArtifacts)
-      .catch(e => setErr(e.message))
-      .finally(() => setLoading(false));
-  }, [runId]);
+    load();
+    if (!busy) return () => { cancelled = true; };
+    const interval = setInterval(load, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [runId, busy]);
 
   const toggle = (id: string) => setExpanded(prev => {
     const next = new Set(prev);
@@ -835,9 +877,9 @@ function ArtifactsTab({ runId }: { runId: string | null }) {
   });
 
   if (!runId) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, textAlign: 'center', marginTop: 40, padding: 16 }}>Start a run to see artifacts</div>;
-  if (loading) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>Loading…</div>;
+  if (loading && artifacts.length === 0) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>Loading…</div>;
   if (err) return <div style={{ color: '#f87171', fontSize: 12, padding: 16 }}>{err}</div>;
-  if (artifacts.length === 0) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>No artifacts yet</div>;
+  if (artifacts.length === 0) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>No artifacts yet — agents produce artifacts when they return structured output</div>;
 
   const downloadPart = (text: string, filename: string, mediaType: string) => {
     const blob = new Blob([text], { type: mediaType });
@@ -1688,8 +1730,8 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
           </div>
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {debugTab === 'trace' && <TraceTab trace={trace} traceBottom={traceBottom} runId={runId.current} contextId={contextId} />}
-            {debugTab === 'tasks' && <TasksTab runId={runId.current} />}
-            {debugTab === 'artifacts' && <ArtifactsTab runId={runId.current} />}
+            {debugTab === 'tasks' && <TasksTab runId={runId.current} busy={busy} />}
+            {debugTab === 'artifacts' && <ArtifactsTab runId={runId.current} busy={busy} />}
             {debugTab === 'memory' && <MemoryTab contextId={contextId} agentInvocations={agentInvocations} allAgents={null} />}
             {debugTab === 'sessions' && <SessionsTab currentContextId={contextId} onResume={resumeSession} />}
           </div>

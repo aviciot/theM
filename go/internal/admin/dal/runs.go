@@ -238,13 +238,21 @@ func (d *DB) GetRunDetail(ctx context.Context, tenantID, runID string) (RunDetai
 }
 
 // GetRunTasks returns tasks belonging to a run, ordered by created_at.
+// Agent name and slug are resolved via LEFT JOIN on them.agents.
+// duration_ms is derived from (updated_at - created_at) for completed/failed tasks.
 func (d *DB) GetRunTasks(ctx context.Context, runID string) ([]Task, error) {
-	q := `SELECT id::text, COALESCE(parent_task_id::text, ''),
-        COALESCE(agent_id::text, ''), COALESCE(orchestrator_id::text, ''),
-        COALESCE(context_id::text, ''), state, kind,
-        COALESCE(remote_task_id, ''), budget_tokens, tokens_used,
-        COALESCE(error, ''), created_at::text, updated_at::text
-        FROM them.tasks WHERE run_id = $1::uuid ORDER BY created_at`
+	q := `SELECT t.id::text, COALESCE(t.parent_task_id::text, ''),
+        COALESCE(t.agent_id::text, ''), COALESCE(t.orchestrator_id::text, ''),
+        COALESCE(t.context_id::text, ''), t.state, t.kind,
+        COALESCE(t.remote_task_id, ''), t.budget_tokens, t.tokens_used,
+        COALESCE(t.error, ''), t.created_at::text, t.updated_at::text,
+        COALESCE(a.display_name, ''), COALESCE(a.slug, ''),
+        CASE WHEN t.state IN ('completed','failed','canceled')
+             THEN EXTRACT(EPOCH FROM (t.updated_at - t.created_at)) * 1000
+             ELSE NULL END
+        FROM them.tasks t
+        LEFT JOIN them.agents a ON a.id = t.agent_id
+        WHERE t.run_id = $1::uuid ORDER BY t.created_at`
 	rows, err := d.q.Query(ctx, q, runID)
 	if err != nil {
 		return nil, err
@@ -253,14 +261,21 @@ func (d *DB) GetRunTasks(ctx context.Context, runID string) ([]Task, error) {
 	tasks := make([]Task, 0)
 	for rows.Next() {
 		var t Task
+		var durMS *float64
 		if err := rows.Scan(
 			&t.ID, &t.ParentTaskID,
 			&t.AgentID, &t.OrchestratorID,
 			&t.ContextID, &t.State, &t.Kind,
 			&t.RemoteTaskID, &t.BudgetTokens, &t.TokensUsed,
 			&t.Error, &t.CreatedAt, &t.UpdatedAt,
+			&t.AgentName, &t.AgentSlug,
+			&durMS,
 		); err != nil {
 			return nil, err
+		}
+		if durMS != nil {
+			ms := int64(*durMS)
+			t.DurationMS = &ms
 		}
 		tasks = append(tasks, t)
 	}

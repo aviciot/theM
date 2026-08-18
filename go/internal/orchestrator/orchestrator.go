@@ -128,6 +128,7 @@ type UsageRecorder interface {
 type TaskRecorder interface {
 	CreateTask(ctx context.Context, tenantID, runID, contextID, agentSlug string) (string, error)
 	CompleteTask(ctx context.Context, taskID string, success bool) error
+	CompleteRootTask(ctx context.Context, runID string, success bool) error
 }
 
 // BudgetStore checkpoints cumulative token usage to the DB.
@@ -284,12 +285,22 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 		tokensUsed int
 	)
 
+	// failRun marks the run and root task as failed then returns the given error.
+	failRun := func(err error) error {
+		_ = o.recorder.UpdateStatus(ctx, runID, domain.RunStatusFailed)
+		if o.taskRecorder != nil {
+			if cerr := o.taskRecorder.CompleteRootTask(ctx, runID, false); cerr != nil {
+				o.logger.Warn("orchestrator: complete root task (fail) failed", "run_id", runID, "error", cerr)
+			}
+		}
+		return err
+	}
+
 	for iter := 0; iter < maxIter; iter++ {
 		// Budget check before each LLM call.
 		if o.cfg.BudgetTokens > 0 && tokensUsed >= o.cfg.BudgetTokens {
 			o.publishError(ctx, contextID, runID, ErrBudgetExceeded)
-			_ = o.recorder.UpdateStatus(ctx, runID, domain.RunStatusFailed)
-			return "", ErrBudgetExceeded
+			return "", failRun(ErrBudgetExceeded)
 		}
 
 		evCh, err := o.provider.Stream(ctx, messages, tools, llm.Options{
@@ -300,8 +311,7 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 		})
 		if err != nil {
 			o.publishError(ctx, contextID, runID, err)
-			_ = o.recorder.UpdateStatus(ctx, runID, domain.RunStatusFailed)
-			return "", fmt.Errorf("orchestrator: stream: %w", err)
+			return "", failRun(fmt.Errorf("orchestrator: stream: %w", err))
 		}
 
 		var (
@@ -339,8 +349,7 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 				}
 			case "error":
 				o.publishError(ctx, contextID, runID, ev.Error)
-				_ = o.recorder.UpdateStatus(ctx, runID, domain.RunStatusFailed)
-				return "", fmt.Errorf("orchestrator: llm error: %v", ev.Error)
+				return "", failRun(fmt.Errorf("orchestrator: llm error: %v", ev.Error))
 			}
 		}
 
@@ -378,8 +387,7 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 		// Budget check after accumulation.
 		if o.cfg.BudgetTokens > 0 && tokensUsed >= o.cfg.BudgetTokens {
 			o.publishError(ctx, contextID, runID, ErrBudgetExceeded)
-			_ = o.recorder.UpdateStatus(ctx, runID, domain.RunStatusFailed)
-			return "", ErrBudgetExceeded
+			return "", failRun(ErrBudgetExceeded)
 		}
 
 		if stop || stopReason == "end_turn" || stopReason == "max_tokens" || len(toolCalls) == 0 {
@@ -407,6 +415,11 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 
 	// Record completion.
 	_ = o.recorder.UpdateStatus(ctx, runID, domain.RunStatusCompleted)
+	if o.taskRecorder != nil {
+		if err := o.taskRecorder.CompleteRootTask(ctx, runID, true); err != nil {
+			o.logger.Warn("orchestrator: complete root task failed", "run_id", runID, "error", err)
+		}
+	}
 
 	// Publish done event.
 	o.publishJSON(ctx, contextID, runID, "done", map[string]string{"run_id": runID})
