@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-17
+# Last updated: 2026-08-18
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `3862a43` — feat(history): multi-turn history persistence + in-process summarizer
+Commit: `50c9d71` — fix(ws): JWT fallback authenticator for playground token-mode EPs
 
 ---
 
@@ -225,6 +225,22 @@ Worker is running and polling `them-orchestration-go`. Next: create an applicati
 
 ---
 
+## Per-EP History Config + Tenant Isolation + Playground JWT fix — COMPLETE (50c9d71, 2026-08-18)
+
+**Per-EP memory configuration (3882a9c):**
+- `db/032_ep_memory_config.sql` — 6 new columns on `entry_points`: `memory_enabled`, `history_window`, `summarize_every_n_calls`, `memory_raw_fallback_n`, `summarizer_provider`, `summarizer_model`. Also adds `tasks.tenant_id` with index.
+- `go/internal/history/pgx.go` — all methods gained `tenantID string` parameter; `LoadHistory` filters by `AND ($2 = '' OR t.tenant_id = $2::uuid)`. `resolveRootTaskID` inserts `tenant_id` column.
+- `go/internal/orchestrator/` — `HistoryLoader`/`CheckpointWriter`/`SummaryStore` interfaces all carry `tenantID`; call sites pass `rctx.TenantID`
+- `go/internal/temporal/workerconfig/loader.go` — `LoadRunConfig` takes 4 args (+ `entryPointID`); EP query reads memory config from `entry_points` when `entryPointID != ""`
+- `go/internal/temporal/workflow.go` — `WorkflowInput.EntryPointID string` added
+- `go/internal/ws/handler.go` + `go/internal/sse/handler.go` — `EntryPointID: handle.EPConfig.EPID` wired into `WorkflowInput`
+- `go/internal/admin/dal/publish.go` — `EntryPointRow` gets memory fields; `UpsertEntryPoint` writes them
+- `go/internal/admin/service/publish.go` — extracts `ep_memory[ep.instance_id]` from orchestrator canvas config during compile
+- `frontend/src/app/admin/applications/page.tsx` — Memory section inside each EP block in orchestrator properties panel; fields: enable, history_window, summarize_every, raw_fallback, provider+model; history_window removed from Loop Tuning
+
+**Playground JWT fix (50c9d71):**
+- `go/cmd/them/main.go` — `jwtFallbackAuthenticator` chain: try opaque bearer token cache first, then `auth.ValidateHS256JWT` so session JWTs work as `?token=` param on token-mode EPs
+
 ## Multi-turn History + Summarizer — COMPLETE (3862a43, 2026-08-17)
 
 New packages:
@@ -247,7 +263,7 @@ Test state: `go test ./...` — all packages pass, Docker build clean.
 
 ## Next recommended task
 
-**End-to-end run test** — Create a published application with an orchestrator, publish it, trigger a run via the WS/SSE/A2A endpoint, and verify the Go Temporal worker picks it up, loads config from DB, and returns a real LLM response with multi-turn context preserved across second message.
+**End-to-end playground verification** — With the JWT fallback fix deployed, test the playground WS connection using a token-mode EP. Verify multi-turn history is stored per-EP and preserved across messages.
 
 Then: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims)
 - Read `docs/architecture-v2/R6_TENANT_ARCHITECTURE_REVIEW.md` Section 15 before starting Wave 9.
@@ -275,7 +291,7 @@ Then: **Wave 9 — Multi-tenant runtime enablement** (session/rate-limit tenant 
 
 1. Auth admin CRUD (users/roles/teams) — not exposed since Python auth removed. Needs Go port.
 2. E2E run test not yet performed — multi-turn history round-trip with real LLM not verified on live stack.
-3. DB migrations for history columns (`memory_enabled`, `summarize_every_n_calls`, `memory_raw_fallback_n`, `summarizer_provider`, `summarizer_model`, `summarizer_api_key_encrypted`) exist in schema but must be verified live (added in earlier session, not re-verified in this one).
+3. `db/032_ep_memory_config.sql` applied live — verify `entry_points` and `tasks` have new columns before the next session: `\d them.entry_points` and `\d them.tasks`.
 4. A2A server (`/a2a/*`) still on Python — not yet migrated to Go.
 5. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims, live two-tenant verification) remain open.
 6. `them-go-bridge` container startup: must use `--project-name them_gateway` when starting via compose to share the `them-network` network with the `them_gateway` project. Without it, postgres/redis conflict. Command: `docker compose -p them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge`.
