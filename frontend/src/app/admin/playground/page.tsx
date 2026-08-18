@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, Suspense } from 'rea
 import { useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type OrchestratorFull, type TaskOut, type ArtifactOut, type AgentCard, type ContextSession, type Application, type EntryPoint } from '@/lib/api';
+import { themApi, type TaskOut, type ArtifactOut, type ContextSession, type Application, type EntryPoint } from '@/lib/api';
 
 // ── Connection target ──────────────────────────────────────────────────────
 type ConnTarget =
@@ -58,18 +58,7 @@ type TraceGroup = {
   usage?: TraceEvent;
 };
 type RecordingState = 'idle' | 'recording' | 'transcribing';
-type DebugTab = 'trace' | 'tasks' | 'artifacts' | 'memory' | 'sessions';
-
-type AgentInvocation = {
-  slug: string;
-  tool: string;
-  startedAt: number;
-  endedAt?: number;
-  latencyMs?: number;
-  endpointUrl?: string;
-  agentCard?: AgentCard | null;
-  fetchingCard?: boolean;
-};
+type DebugTab = 'trace' | 'tasks' | 'artifacts' | 'sessions';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -982,116 +971,6 @@ function ArtifactsTab({ runId, busy }: { runId: string | null; busy: boolean }) 
   );
 }
 
-function MemoryTab({ contextId, agentInvocations, allAgents }: {
-  contextId: string | null;
-  agentInvocations: AgentInvocation[];
-  allAgents: OrchestratorFull['allowed_agent_ids'] | null;
-}) {
-  const [artifacts, setArtifacts] = useState<ArtifactOut[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState('');
-  const [agentCards, setAgentCards] = useState<Record<string, { card?: AgentCard; fetching?: boolean; error?: string }>>({});
-
-  useEffect(() => {
-    if (!contextId) { setArtifacts([]); return; }
-    setLoading(true);
-    setErr('');
-    themApi.contextArtifacts(contextId)
-      .then(setArtifacts)
-      .catch(e => setErr(e.message))
-      .finally(() => setLoading(false));
-  }, [contextId]);
-
-  const fetchCard = async (inv: AgentInvocation) => {
-    if (!inv.endpointUrl) return;
-    const key = inv.slug;
-    setAgentCards(prev => ({ ...prev, [key]: { fetching: true } }));
-    try {
-      const card = await themApi.fetchAgentCard(inv.endpointUrl!);
-      setAgentCards(prev => ({ ...prev, [key]: { card } }));
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setAgentCards(prev => ({ ...prev, [key]: { error: msg } }));
-    }
-  };
-
-  return (
-    <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* Agent invocations with Fetch Agent Card button */}
-      {agentInvocations.length > 0 && (
-        <div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--tm-text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Agents Used</div>
-          {agentInvocations.map((inv, i) => {
-            const cardState = agentCards[inv.slug];
-            return (
-              <div key={i} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', marginBottom: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tm-text)' }}>{inv.slug}</span>
-                  {inv.latencyMs != null && (
-                    <span style={{ fontSize: 10, color: 'var(--tm-text-muted)' }}>{inv.latencyMs}ms</span>
-                  )}
-                  <button
-                    onClick={() => fetchCard(inv)}
-                    disabled={cardState?.fetching}
-                    style={{
-                      marginLeft: 'auto', padding: '3px 8px', borderRadius: 5, border: '1px solid var(--tm-border)',
-                      background: 'transparent', color: '#a78bfa', fontSize: 10, cursor: 'pointer', fontWeight: 600,
-                    }}
-                  >
-                    {cardState?.fetching ? 'Fetching…' : 'Fetch Agent Card'}
-                  </button>
-                </div>
-                {cardState?.error && (
-                  <div style={{ fontSize: 11, color: '#f87171' }}>{cardState.error}</div>
-                )}
-                {cardState?.card && (
-                  <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace' }}>
-                    <div style={{ color: 'var(--tm-text)', fontWeight: 600, marginBottom: 4 }}>{cardState.card.name} {cardState.card.version && `v${cardState.card.version}`}</div>
-                    {cardState.card.description && <div style={{ marginBottom: 4 }}>{cardState.card.description}</div>}
-                    {cardState.card.capabilities && (
-                      <div style={{ marginBottom: 4 }}>
-                        streaming: {cardState.card.capabilities.streaming ? 'yes' : 'no'}
-                        {' · '}
-                        push: {cardState.card.capabilities.pushNotifications ? 'yes' : 'no'}
-                      </div>
-                    )}
-                    {cardState.card.skills && cardState.card.skills.length > 0 && (
-                      <div>Skills: {cardState.card.skills.map(s => s.name).join(', ')}</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Context artifacts */}
-      <div>
-        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--tm-text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
-          Context Memory {contextId && <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 4 }}>{contextId.slice(0, 8)}…</span>}
-        </div>
-        {!contextId && <div style={{ color: 'var(--tm-text-muted)', fontSize: 12 }}>Start a run to inspect memory</div>}
-        {loading && <div style={{ color: 'var(--tm-text-muted)', fontSize: 12 }}>Loading…</div>}
-        {err && <div style={{ color: '#f87171', fontSize: 12 }}>{err}</div>}
-        {artifacts.map(a => (
-          <div key={a.id} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', marginBottom: 6, fontSize: 11 }}>
-            <div style={{ color: '#a78bfa', fontWeight: 600, marginBottom: 4 }}>{a.name || a.artifact_id}</div>
-            {a.parts.filter(p => p.text).map((p, i) => (
-              <div key={i} style={{ color: 'var(--tm-text)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                {String(p.text).slice(0, 400)}{String(p.text).length > 400 ? '…' : ''}
-              </div>
-            ))}
-          </div>
-        ))}
-        {contextId && !loading && artifacts.length === 0 && !err && (
-          <div style={{ color: 'var(--tm-text-muted)', fontSize: 12 }}>No context artifacts yet</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── Sessions tab ──────────────────────────────────────────────────────────
 function SessionsTab({ onResume, currentContextId }: {
   onResume: (session: ContextSession) => void;
@@ -1193,7 +1072,6 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   const [recordingState, setRecordingState] = useState<RecordingState>('idle');
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [debugTab, setDebugTab] = useState<DebugTab>('trace');
-  const [agentInvocations, setAgentInvocations] = useState<AgentInvocation[]>([]);
   const [contextId, setContextId] = useState<string | null>(null);
   const [restoredSession, setRestoredSession] = useState<ContextSession | null>(null);
   const [activities, setActivities] = useState<AgentActivity[]>([]);
@@ -1319,7 +1197,6 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
     setBusy(true);
     busyRef.current = true;
     setTrace([]);
-    setAgentInvocations([]);
     setMessages(prev => [...prev, { role: 'user', text }]);
 
     const r = await fetch('/api/auth/token');
@@ -1386,21 +1263,10 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
         } else if (msg.type === 'tool_start') {
           const slug = (msg.tool as string).replace(/^agent__/, '');
           setStatus(`Calling ${slug}…`);
-          setAgentInvocations(prev => {
-            if (prev.find(a => a.tool === msg.tool)) return prev;
-            return [...prev, { slug, tool: msg.tool as string, startedAt: Date.now() }];
-          });
 
         } else if (msg.type === 'tool_done') {
           const slug = (msg.tool as string).replace(/^agent__/, '');
-          setAgentInvocations(prev => {
-            const updated = prev.map(a => a.tool === msg.tool
-              ? { ...a, endedAt: Date.now(), latencyMs: msg.latency_ms as number ?? Date.now() - a.startedAt }
-              : a);
-            const stillRunning = updated.filter(a => !a.endedAt).map(a => a.slug);
-            setStatus(stillRunning.length > 0 ? `${slug} done — waiting for ${stillRunning.join(', ')}…` : `${slug} done`);
-            return updated;
-          });
+          setStatus(`${slug} done`);
 
         } else if (msg.type === 'file') {
           const fm: FileMsg = { filename: msg.filename as string, media_type: msg.media_type as string, text: msg.text as string ?? '' };
@@ -1549,18 +1415,32 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   const onKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
 
   const clearChat = useCallback(() => {
-    setMessages([]); setTrace([]); setStatus(''); setAgentInvocations([]);
+    setMessages([]); setTrace([]); setStatus('');
     setActivities([]); activitiesRef.current = [];
     setContextId(null); setRestoredSession(null); runId.current = null;
     const storageKey = `them:playground:ctx:${target.kind === 'orchestrator' ? target.name : target.slug}`;
     localStorage.removeItem(storageKey);
   }, [target]);
 
-  const resumeSession = useCallback((s: ContextSession) => {
+  const resumeSession = useCallback(async (s: ContextSession) => {
     setRestoredSession(null);
     setContextId(s.context_id);
-    setMessages([{ role: 'assistant', text: `↩ Resumed: **${s.title}** — ${s.turn_count} prior turn${s.turn_count !== 1 ? 's' : ''}. Continue below.` }]);
     setDebugTab('trace');
+    // Load conversation history from the context
+    try {
+      const msgs = await themApi.contextMessages(s.context_id, 200);
+      const chatMsgs: ChatMsg[] = msgs.map(m => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        text: m.text,
+      }));
+      if (chatMsgs.length > 0) {
+        setMessages(chatMsgs);
+      } else {
+        setMessages([{ role: 'assistant', text: `↩ Resumed: **${s.title}** — no stored messages. Continue below.` }]);
+      }
+    } catch {
+      setMessages([{ role: 'assistant', text: `↩ Resumed: **${s.title}** — ${s.turn_count} prior turn${s.turn_count !== 1 ? 's' : ''}. Continue below.` }]);
+    }
   }, []);
 
   // ── Voice ─────────────────────────────────────────────────────────────────
@@ -1725,14 +1605,12 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
             <TabBtn label="Trace" active={debugTab === 'trace'} onClick={() => setDebugTab('trace')} />
             <TabBtn label="Tasks" active={debugTab === 'tasks'} onClick={() => setDebugTab('tasks')} />
             <TabBtn label="Artifacts" active={debugTab === 'artifacts'} onClick={() => setDebugTab('artifacts')} />
-            <TabBtn label="Memory" active={debugTab === 'memory'} onClick={() => setDebugTab('memory')} />
             <TabBtn label="Sessions" active={debugTab === 'sessions'} onClick={() => setDebugTab('sessions')} />
           </div>
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {debugTab === 'trace' && <TraceTab trace={trace} traceBottom={traceBottom} runId={runId.current} contextId={contextId} />}
             {debugTab === 'tasks' && <TasksTab runId={runId.current} busy={busy} />}
             {debugTab === 'artifacts' && <ArtifactsTab runId={runId.current} busy={busy} />}
-            {debugTab === 'memory' && <MemoryTab contextId={contextId} agentInvocations={agentInvocations} allAgents={null} />}
             {debugTab === 'sessions' && <SessionsTab currentContextId={contextId} onResume={resumeSession} />}
           </div>
         </div>

@@ -69,6 +69,11 @@ func (s *RunService) GetContextArtifacts(ctx context.Context, tenantID, contextI
 	return s.dal.GetContextArtifacts(ctx, tenantID, contextID, limit)
 }
 
+// GetContextMessages returns chat turn history for a context (user+agent messages only).
+func (s *RunService) GetContextMessages(ctx context.Context, contextID string, limit int) ([]dal.ContextMessage, error) {
+	return s.dal.GetContextMessages(ctx, contextID, limit)
+}
+
 // Cancel sets a running run to "canceled". Returns ErrNotFound when the run does not exist
 // or belongs to another tenant, and ErrConflict when the run is not in "running" state
 // (matching the Python 409 contract).

@@ -475,3 +475,44 @@ func (d *DB) GetRunArtifacts(ctx context.Context, runID string) ([]Artifact, err
 	}
 	return artifacts, nil
 }
+
+// ContextMessage is one chat turn from task_messages.
+type ContextMessage struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
+// GetContextMessages returns user/agent turns for the root task of a context,
+// ordered by sequence. Only 'user' and 'agent' roles returned; empty texts skipped.
+func (d *DB) GetContextMessages(ctx context.Context, contextID string, limit int) ([]ContextMessage, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	q := `SELECT tm.role, COALESCE(
+		(SELECT p->>'text' FROM jsonb_array_elements(tm.parts) p WHERE p->>'type' = 'text' LIMIT 1),
+		(SELECT p->>'text' FROM jsonb_array_elements(tm.parts) p WHERE p->'text' IS NOT NULL LIMIT 1),
+		''
+	)
+	FROM them.task_messages tm
+	JOIN them.tasks t ON t.id = tm.task_id
+	WHERE t.context_id = $1::uuid AND t.kind = 'root'
+	  AND tm.role IN ('user', 'agent')
+	ORDER BY tm.seq
+	LIMIT $2`
+	rows, err := d.q.Query(ctx, q, contextID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	msgs := make([]ContextMessage, 0)
+	for rows.Next() {
+		var m ContextMessage
+		if err := rows.Scan(&m.Role, &m.Text); err != nil {
+			return nil, err
+		}
+		if m.Text != "" {
+			msgs = append(msgs, m)
+		}
+	}
+	return msgs, nil
+}

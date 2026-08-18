@@ -604,6 +604,8 @@ export const themApi = {
   runArtifacts: (runId: string) => api.get<ArtifactOut[]>(`/runs/${runId}/artifacts`),
   contextArtifacts: (contextId: string, limit = 100) =>
     api.get<ArtifactOut[]>(`/runs/context/${contextId}/artifacts?limit=${limit}`),
+  contextMessages: (contextId: string, limit = 100) =>
+    api.get<{ role: string; text: string }[]>(`/runs/context/${contextId}/messages?limit=${limit}`),
   contexts: (orchestrator?: string, limit = 50) =>
     api.get<ContextSession[]>(`/runs/contexts?limit=${limit}${orchestrator ? `&orchestrator=${orchestrator}` : ''}`),
   fetchAgentCard: async (endpointUrl: string): Promise<AgentCard> => {

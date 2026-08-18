@@ -32,6 +32,7 @@ func (h *RunsHandler) Routes(r chi.Router) {
 	r.Get("/runs/contexts", h.Contexts)
 	r.Post("/runs/bulk-delete", h.BulkDelete)
 	r.Get("/runs/context/{ctx_id}/artifacts", h.ContextArtifacts)
+	r.Get("/runs/context/{ctx_id}/messages", h.ContextMessages)
 	r.Get("/runs/{run_id}", h.Get)
 	r.Patch("/runs/{run_id}/cancel", h.Cancel)
 	r.Delete("/runs/{run_id}", h.Delete)
@@ -127,6 +128,27 @@ func (h *RunsHandler) ContextArtifacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, artifacts)
+}
+
+// ContextMessages handles GET /api/v1/runs/context/{ctx_id}/messages?limit=100.
+func (h *RunsHandler) ContextMessages(w http.ResponseWriter, r *http.Request) {
+	ctxID := chi.URLParam(r, "ctx_id")
+	if ctxID == "" {
+		writeError(w, http.StatusBadRequest, "ctx_id is required")
+		return
+	}
+	limit := 100
+	if ls := r.URL.Query().Get("limit"); ls != "" {
+		if n, err := strconv.Atoi(ls); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	msgs, err := h.svc.GetContextMessages(r.Context(), ctxID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, msgs)
 }
 
 // Tasks handles GET /api/v1/runs/{run_id}/tasks.

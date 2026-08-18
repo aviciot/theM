@@ -278,6 +278,9 @@ func (f *isolationFakeDal) ListContextSessions(_ context.Context, _, _ string, _
 func (f *isolationFakeDal) GetContextArtifacts(_ context.Context, _, _ string, _ int) ([]dal.Artifact, error) {
 	return []dal.Artifact{}, nil
 }
+func (f *isolationFakeDal) GetContextMessages(_ context.Context, _ string, _ int) ([]dal.ContextMessage, error) {
+	return []dal.ContextMessage{}, nil
+}
 
 // ── Token methods ─────────────────────────────────────────────────────────────
 
