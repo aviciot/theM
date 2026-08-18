@@ -87,7 +87,8 @@ func (s *pgxStore) InsertSession(ctx context.Context, userID int64, accessTokenH
 	// with real refresh hashes while satisfying the constraint.
 	const q = `
 		INSERT INTO auth_service.user_sessions (user_id, access_token_hash, refresh_token_hash, expires_at)
-		VALUES ($1, $2, $3, $4)`
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT DO NOTHING`
 	_, err := s.pool.Exec(ctx, q, userID, accessTokenHash, "pending:"+accessTokenHash, expiresAt)
 	return err
 }
