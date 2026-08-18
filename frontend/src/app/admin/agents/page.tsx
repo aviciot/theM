@@ -55,6 +55,7 @@ const EMPTY_FORM = {
   icon: '',
   agent_card: null as Record<string, unknown> | null,
   agent_card_url: '',
+  tags: [] as string[],
 };
 
 type FormState = typeof EMPTY_FORM;
@@ -385,6 +386,7 @@ function AgentCard({
   const [showOverflow, setShowOverflow] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
   const isInternal = agent.tags?.includes('internal') || agent.slug === 'workflow_advisor';
+  const isLocked = isInternal || (agent.tags?.includes('locked') ?? false);
   const category = agentCategory(agent);
   const accent = isInternal
     ? { color: '#a0f0d0', border: 'rgba(160,240,208,0.45)', glow: 'rgba(160,240,208,0.18)' }
@@ -477,8 +479,26 @@ function AgentCard({
           border: `1px solid ${accent.border}`,
           boxShadow: `0 0 18px ${accent.glow}, inset 0 1px 0 var(--tm-card-border)`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
+          position: 'relative',
         }}>
           <span className="material-symbols-outlined" style={{ fontSize: '26px', color: accent.color }}>{icon}</span>
+          {isLocked && (
+            <span
+              title={isInternal ? 'the-M system agent — cannot be deleted' : 'Locked — delete disabled'}
+              className="material-symbols-outlined"
+              style={{
+                position: 'absolute', bottom: '-6px', right: '-6px',
+                fontSize: '13px',
+                color: isInternal ? '#a0f0d0' : '#94a3b8',
+                background: 'var(--tm-inset-deep)',
+                border: `1px solid ${isInternal ? 'rgba(160,240,208,0.35)' : 'rgba(148,163,184,0.3)'}`,
+                borderRadius: '50%',
+                width: '20px', height: '20px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: `0 0 8px ${isInternal ? 'rgba(160,240,208,0.2)' : 'rgba(0,0,0,0.3)'}`,
+              }}
+            >lock</span>
+          )}
         </div>
 
         {/* Name + status badges */}
@@ -586,9 +606,16 @@ function AgentCard({
                 ✎ Edit
               </button>
               <div style={{ height: '1px', background: 'var(--tm-divider)', margin: '0 8px' }} />
-              <button onClick={onDelete} style={{ width: '100%', padding: '9px 14px', textAlign: 'left', background: 'none', border: 'none', color: '#f87171', fontSize: '12px', cursor: 'pointer' }}>
-                ✕ Delete
-              </button>
+              {isLocked ? (
+                <div style={{ width: '100%', padding: '9px 14px', textAlign: 'left', color: 'rgba(148,163,184,0.45)', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'default' }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>lock</span>
+                  Locked
+                </div>
+              ) : (
+                <button onClick={onDelete} style={{ width: '100%', padding: '9px 14px', textAlign: 'left', background: 'none', border: 'none', color: '#f87171', fontSize: '12px', cursor: 'pointer' }}>
+                  ✕ Delete
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1300,6 +1327,7 @@ export default function AdminAgentsPage() {
       icon: agent.icon || '',
       agent_card: agent.agent_card || null,
       agent_card_url: agent.agent_card_url || '',
+      tags: agent.tags || [],
     });
     setError('');
     setDiscoverError('');
@@ -1340,6 +1368,7 @@ export default function AdminAgentsPage() {
       const body: Record<string, unknown> = { ...form };
       if (!body.auth_token) delete body.auth_token;
       if (!body.icon) body.icon = null;
+      if (!Array.isArray(body.tags)) body.tags = [];
       if (editing) {
         delete body.slug;
         await themApi.updateAgent(editing.id, body);
@@ -2148,6 +2177,81 @@ export default function AdminAgentsPage() {
                 {form.enabled ? 'Enabled' : 'Disabled'}
               </button>
             </Field>
+            {/* ── the-M Agent + Locked toggles ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <Field label="">
+                {(() => {
+                  const isInternalForm = form.tags.includes('internal');
+                  function toggleInternal() {
+                    set('tags', isInternalForm
+                      ? form.tags.filter(t => t !== 'internal' && t !== 'locked')
+                      : [...form.tags.filter(t => t !== 'internal' && t !== 'locked'), 'internal', 'locked']);
+                  }
+                  return (
+                    <button type="button" onClick={toggleInternal} title="Mark as a built-in the-M system agent — adds the internal badge and locks from deletion" style={{
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      padding: '8px 12px', borderRadius: '9px', border: 'none',
+                      cursor: 'pointer', fontSize: '13px', fontWeight: 600, width: '100%',
+                      background: isInternalForm ? 'rgba(160,240,208,0.12)' : 'rgba(100,116,139,0.10)',
+                      color: isInternalForm ? '#a0f0d0' : 'var(--tm-card-text-muted)',
+                      outline: isInternalForm ? '1px solid rgba(160,240,208,0.3)' : '1px solid transparent',
+                      transition: 'all 0.18s',
+                    }}>
+                      <span style={{
+                        width: '28px', height: '16px', borderRadius: '8px', flexShrink: 0,
+                        background: isInternalForm ? '#a0f0d0' : '#475569',
+                        position: 'relative', display: 'inline-block', transition: 'background 0.18s',
+                      }}>
+                        <span style={{
+                          position: 'absolute', top: '2px', left: isInternalForm ? '14px' : '2px',
+                          width: '12px', height: '12px', borderRadius: '50%',
+                          background: '#fff', transition: 'left 0.18s',
+                        }} />
+                      </span>
+                      the-M Agent
+                    </button>
+                  );
+                })()}
+              </Field>
+              <Field label="">
+                {(() => {
+                  const isInternalForm = form.tags.includes('internal');
+                  const isLockedForm = form.tags.includes('locked') || isInternalForm;
+                  function toggleLocked() {
+                    if (isInternalForm) return;
+                    set('tags', isLockedForm
+                      ? form.tags.filter(t => t !== 'locked')
+                      : [...form.tags, 'locked']);
+                  }
+                  return (
+                    <button type="button" onClick={toggleLocked} disabled={isInternalForm} title={isInternalForm ? 'the-M agents are always locked' : 'Prevent this agent from being deleted'} style={{
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      padding: '8px 12px', borderRadius: '9px', border: 'none',
+                      cursor: isInternalForm ? 'not-allowed' : 'pointer',
+                      fontSize: '13px', fontWeight: 600, width: '100%',
+                      background: isLockedForm ? 'rgba(148,163,184,0.14)' : 'rgba(100,116,139,0.10)',
+                      color: isLockedForm ? '#94a3b8' : 'var(--tm-card-text-muted)',
+                      outline: isLockedForm && !isInternalForm ? '1px solid rgba(148,163,184,0.3)' : '1px solid transparent',
+                      opacity: isInternalForm ? 0.55 : 1,
+                      transition: 'all 0.18s',
+                    }}>
+                      <span style={{
+                        width: '28px', height: '16px', borderRadius: '8px', flexShrink: 0,
+                        background: isLockedForm ? '#94a3b8' : '#475569',
+                        position: 'relative', display: 'inline-block', transition: 'background 0.18s',
+                      }}>
+                        <span style={{
+                          position: 'absolute', top: '2px', left: isLockedForm ? '14px' : '2px',
+                          width: '12px', height: '12px', borderRadius: '50%',
+                          background: '#fff', transition: 'left 0.18s',
+                        }} />
+                      </span>
+                      Locked
+                    </button>
+                  );
+                })()}
+              </Field>
+            </div>
             {error && <div style={{ padding: '10px 12px', borderRadius: '8px', background: 'rgba(220,38,38,.08)', border: '1px solid rgba(220,38,38,.2)', color: '#f87171', fontSize: '13px', marginBottom: '16px' }}>{error}</div>}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
               <button className="ghost-btn" onClick={() => setShowModal(false)} style={{ padding: '8px 20px', fontSize: '14px' }}>Cancel</button>
