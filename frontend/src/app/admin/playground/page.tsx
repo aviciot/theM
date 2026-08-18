@@ -524,7 +524,7 @@ function TracePayload({ value, label }: { value: unknown; label: string }) {
 
 function TraceTab({ trace, traceBottom, runId, contextId }: { trace: TraceEvent[]; traceBottom: React.RefObject<HTMLDivElement | null>; runId?: string | null; contextId?: string | null }) {
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
       {(runId || contextId) && (
         <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--tm-text-muted)', background: 'var(--tm-surface)', border: '1px solid var(--tm-border)', borderRadius: 4, padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 4 }}>
           {runId && <span title={runId}><span style={{ opacity: 0.6 }}>run_id: </span>{runId}</span>}
@@ -587,7 +587,7 @@ function TasksTab({ runId }: { runId: string | null }) {
   if (tasks.length === 0) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>No tasks yet</div>;
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       {tasks.map(t => (
         <div key={t.id} style={{
           padding: '10px 12px',
@@ -660,7 +660,7 @@ function ArtifactsTab({ runId }: { runId: string | null }) {
   };
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       {artifacts.map(a => {
         const isOpen = expanded.has(a.id);
         const filePart = a.parts.find(p => p.filename || p.media_type || p.mediaType);
@@ -784,7 +784,7 @@ function MemoryTab({ contextId, agentInvocations, allAgents }: {
   };
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Agent invocations with Fetch Agent Card button */}
       {agentInvocations.length > 0 && (
         <div>
@@ -884,7 +884,7 @@ function SessionsTab({ onResume, currentContextId }: {
   };
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px' }}>
+    <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '10px 12px' }}>
       {loading && <div style={{ color: 'var(--tm-text-muted)', fontSize: 12 }}>Loading…</div>}
       {!loading && sessions.length === 0 && (
         <div style={{ color: 'var(--tm-text-muted)', fontSize: 12 }}>No past sessions yet</div>
@@ -1332,7 +1332,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
       )}
 
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: pad, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: pad, display: 'flex', flexDirection: 'column', gap: 12 }}>
         {messages.length === 0 && restoredSession && (
           <div style={{ margin: '40px auto', maxWidth: 360, padding: '14px 18px', borderRadius: 12, border: `1px solid ${color}`, background: 'rgba(124,58,237,0.06)', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tm-text)' }}>↩ Resume last conversation?</div>
