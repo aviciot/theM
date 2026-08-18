@@ -50,6 +50,13 @@ type AgentActivity = {
   visibleUntil: number; // timestamp after which we can update displayState
 };
 type TraceEvent = { ts: number; type: string; [key: string]: unknown };
+type TraceGroup = {
+  iteration: number;
+  startTs: number;
+  agents: string[];
+  events: TraceEvent[];
+  usage?: TraceEvent;
+};
 type RecordingState = 'idle' | 'recording' | 'transcribing';
 type DebugTab = 'trace' | 'tasks' | 'artifacts' | 'memory' | 'sessions';
 
@@ -66,6 +73,20 @@ type AgentInvocation = {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+function fmtRelMs(ms: number): string {
+  if (ms < 0) return '+0.0s';
+  if (ms < 1000) return `+${(ms / 1000).toFixed(2)}s`;
+  return `+${(ms / 1000).toFixed(1)}s`;
+}
+
+function fmtDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = ((ms % 60000) / 1000).toFixed(0);
+  return `${m}m${s}s`;
+}
+
 function traceLabel(ev: TraceEvent): string {
   switch (ev.type) {
     case 'run_start':       return `Run started — ${ev.goal as string}`;
@@ -77,8 +98,9 @@ function traceLabel(ev: TraceEvent): string {
     }
     case 'tool_start':      return `${(ev.tool as string).replace(/^agent__/, '')} called`;
     case 'tool_done':       return `${(ev.tool as string).replace(/^agent__/, '')} done (${ev.latency_ms}ms)`;
-    case 'usage':           return `Iter ${ev.iteration}: ${ev.input_tokens}+ ${ev.output_tokens}- tokens`;
-    case 'run_end':         return `Run ${ev.status} — ${ev.iterations} iterations`;
+    case 'tool_result':     return `${String(ev.tool || ev.agent || '').replace(/^agent__/, '')} result`;
+    case 'usage':           return `Iter ${ev.iteration}: ${ev.input_tokens}↑ ${ev.output_tokens}↓ tokens`;
+    case 'run_end':         return `Run ${ev.status} — ${ev.iterations} iter, ${fmtDuration((ev.duration_ms as number) || 0)}`;
     case 'ready':           return `Run started — ${ev.run_id as string}`;
     case 'done':            return 'Run complete';
     case 'agent_status':    return `${ev.agent as string} — ${ev.state as string}`;
@@ -96,6 +118,45 @@ function traceColor(type: string): string {
   if (type === 'agent_status') return '#c084fc';
   if (type === 'usage') return '#60a5fa';
   return 'var(--tm-text-muted)';
+}
+
+// Group trace events by orchestration iteration for the structured view.
+function groupTraceEvents(trace: TraceEvent[]): { preamble: TraceEvent[]; groups: TraceGroup[]; tail: TraceEvent[] } {
+  const preamble: TraceEvent[] = [];
+  const groups: TraceGroup[] = [];
+  const tail: TraceEvent[] = [];
+  let current: TraceGroup | null = null;
+
+  for (const ev of trace) {
+    if (ev.type === 'ready' || ev.type === 'run_start') {
+      preamble.push(ev);
+      continue;
+    }
+    if (ev.type === 'iteration_start') {
+      current = {
+        iteration: ev.iteration as number,
+        startTs: ev.ts,
+        agents: (ev.agents as string[] | undefined) || [],
+        events: [],
+      };
+      groups.push(current);
+      continue;
+    }
+    if (ev.type === 'usage' && current) {
+      current.usage = ev;
+      continue;
+    }
+    if (ev.type === 'run_end' || ev.type === 'done' || ev.type === 'error') {
+      tail.push(ev);
+      continue;
+    }
+    if (current) {
+      current.events.push(ev);
+    } else {
+      preamble.push(ev);
+    }
+  }
+  return { preamble, groups, tail };
 }
 
 function stateColor(state: string): string {
@@ -527,11 +588,134 @@ function TracePayload({ value, label }: { value: unknown; label: string }) {
   );
 }
 
+function TraceEventRow({ ev, runStartTs, indent }: { ev: TraceEvent; runStartTs: number; indent?: boolean }) {
+  const isError = ev.type === 'error';
+  const rel = fmtRelMs(ev.ts - runStartTs);
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 1,
+      marginLeft: indent ? 16 : 0,
+      borderLeft: indent ? '2px solid rgba(167,139,250,0.25)' : undefined,
+      paddingLeft: indent ? 8 : 0,
+      ...(isError ? {
+        background: 'rgba(248,113,113,0.08)',
+        border: '1px solid rgba(248,113,113,0.3)',
+        borderRadius: 6, padding: '5px 8px',
+      } : {}),
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ fontSize: 9, color: 'rgba(107,114,128,0.7)', fontFamily: 'monospace', flexShrink: 0 }}>{rel}</span>
+        <span style={{ fontSize: 12, color: traceColor(ev.type), fontWeight: 500, fontFamily: 'monospace', wordBreak: 'break-all' }}>
+          {traceLabel(ev)}
+        </span>
+      </div>
+      {ev.type === 'tool_start' && ev.input != null && (
+        <TracePayload value={ev.input} label="input" />
+      )}
+      {(ev.type === 'tool_done' || ev.type === 'tool_result') && ev.output != null && (
+        <TracePayload value={ev.output} label="output" />
+      )}
+      {ev.type === 'agent_status' && ev.detail != null && (
+        <TracePayload value={ev.detail} label="detail" />
+      )}
+    </div>
+  );
+}
+
+function TraceIterationGroup({ group, runStartTs }: { group: TraceGroup; runStartTs: number }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const agentPills = group.agents.map(a => a.replace(/^agent__/, ''));
+  const relStart = fmtRelMs(group.startTs - runStartTs);
+  const usageEv = group.usage;
+
+  return (
+    <div style={{ borderRadius: 8, border: '1px solid rgba(245,158,11,0.25)', overflow: 'hidden' }}>
+      {/* Iteration header */}
+      <div
+        onClick={() => setCollapsed(c => !c)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+          background: 'rgba(245,158,11,0.08)', cursor: 'pointer', userSelect: 'none',
+        }}
+      >
+        <span style={{ fontSize: 10, color: 'rgba(107,114,128,0.6)', fontFamily: 'monospace', flexShrink: 0 }}>{relStart}</span>
+        <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700 }}>Iter {group.iteration}</span>
+        {agentPills.map(a => (
+          <span key={a} style={{
+            fontSize: 9, padding: '1px 6px', borderRadius: 10,
+            background: 'rgba(167,139,250,0.15)', color: '#a78bfa', fontFamily: 'monospace',
+          }}>{a}</span>
+        ))}
+        {usageEv && (
+          <span style={{ fontSize: 10, color: '#60a5fa', marginLeft: 'auto', flexShrink: 0 }}>
+            {usageEv.input_tokens as number}↑ {usageEv.output_tokens as number}↓
+          </span>
+        )}
+        <span style={{ fontSize: 10, color: 'rgba(107,114,128,0.5)', flexShrink: 0 }}>
+          {collapsed ? '▸' : '▾'}
+        </span>
+      </div>
+      {/* Tool events */}
+      {!collapsed && group.events.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 10px', background: 'rgba(0,0,0,0.12)' }}>
+          {group.events.map((ev, i) => (
+            <TraceEventRow key={i} ev={ev} runStartTs={runStartTs} indent />
+          ))}
+        </div>
+      )}
+      {!collapsed && group.events.length === 0 && (
+        <div style={{ padding: '4px 10px', fontSize: 11, color: 'rgba(107,114,128,0.5)', fontStyle: 'italic' }}>
+          LLM processing…
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TraceRunSummary({ ev, runStartTs }: { ev: TraceEvent; runStartTs: number }) {
+  const durationMs = (ev.duration_ms as number) || (ev.ts - runStartTs);
+  const ok = ev.status === 'completed' || ev.type === 'done';
+  return (
+    <div style={{
+      borderRadius: 8, border: `1px solid ${ok ? 'rgba(78,222,163,0.4)' : 'rgba(248,113,113,0.4)'}`,
+      background: ok ? 'rgba(78,222,163,0.07)' : 'rgba(248,113,113,0.07)',
+      padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 3,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 13, color: ok ? '#4edea3' : '#f87171', fontWeight: 700 }}>
+          {ok ? '✓ Run complete' : '✗ Run failed'}
+        </span>
+        {ev.status != null && <span style={{ fontSize: 10, color: 'rgba(107,114,128,0.7)', fontFamily: 'monospace' }}>{String(ev.status)}</span>}
+      </div>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        {ev.iterations != null && (
+          <span style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>
+            <span style={{ color: 'var(--tm-text)', fontWeight: 600 }}>{ev.iterations as number}</span> iterations
+          </span>
+        )}
+        <span style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>
+          <span style={{ color: 'var(--tm-text)', fontWeight: 600 }}>{fmtDuration(durationMs)}</span> duration
+        </span>
+        {ev.input_tokens != null && (
+          <span style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>
+            <span style={{ color: '#60a5fa', fontWeight: 600 }}>{ev.input_tokens as number}</span>↑{' '}
+            <span style={{ color: '#60a5fa', fontWeight: 600 }}>{ev.output_tokens as number}</span>↓ tokens
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TraceTab({ trace, traceBottom, runId, contextId }: { trace: TraceEvent[]; traceBottom: React.RefObject<HTMLDivElement | null>; runId?: string | null; contextId?: string | null }) {
+  const runStartTs = trace.find(e => e.type === 'ready' || e.type === 'run_start')?.ts ?? (trace[0]?.ts ?? Date.now());
+  const { preamble, groups, tail } = groupTraceEvents(trace);
+
   return (
     <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {/* Run/Context IDs header */}
       {(runId || contextId) && (
-        <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--tm-text-muted)', background: 'var(--tm-surface)', border: '1px solid var(--tm-border)', borderRadius: 4, padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 4 }}>
+        <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--tm-text-muted)', background: 'var(--tm-surface)', border: '1px solid var(--tm-border)', borderRadius: 4, padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 2 }}>
           {runId && <span title={runId}><span style={{ opacity: 0.6 }}>run_id: </span>{runId}</span>}
           {contextId && <span title={contextId}><span style={{ opacity: 0.6 }}>ctx_id: </span>{contextId}</span>}
           {contextId && (
@@ -553,18 +737,19 @@ function TraceTab({ trace, traceBottom, runId, contextId }: { trace: TraceEvent[
           Trace events appear here when a run starts
         </div>
       )}
-      {trace.map((ev, i) => (
-        <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-          <div style={{ fontSize: 12, color: traceColor(ev.type), fontWeight: 500, fontFamily: 'monospace' }}>
-            {traceLabel(ev)}
-          </div>
-          {ev.type === 'tool_start' && ev.input != null && (
-            <TracePayload value={ev.input} label="input" />
-          )}
-          {ev.type === 'tool_done' && ev.output != null && (
-            <TracePayload value={ev.output} label="output" />
-          )}
-        </div>
+      {/* Pre-iteration events (ready, run_start) */}
+      {preamble.map((ev, i) => (
+        <TraceEventRow key={`pre-${i}`} ev={ev} runStartTs={runStartTs} />
+      ))}
+      {/* Iteration groups */}
+      {groups.map((g, i) => (
+        <TraceIterationGroup key={`iter-${i}`} group={g} runStartTs={runStartTs} />
+      ))}
+      {/* Post-run events (run_end, done, error) */}
+      {tail.map((ev, i) => (
+        ev.type === 'run_end' || ev.type === 'done'
+          ? <TraceRunSummary key={`tail-${i}`} ev={ev} runStartTs={runStartTs} />
+          : <TraceEventRow key={`tail-${i}`} ev={ev} runStartTs={runStartTs} />
       ))}
       <div ref={traceBottom} />
     </div>
@@ -971,6 +1156,12 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   const [restoredSession, setRestoredSession] = useState<ContextSession | null>(null);
   const [activities, setActivities] = useState<AgentActivity[]>([]);
   const activitiesRef = useRef<AgentActivity[]>([]);
+  const [panelHeight, setPanelHeight] = useState(280);
+  const [inputHeight, setInputHeight] = useState(90);
+  const panelDragY = useRef<number | null>(null);
+  const panelDragH = useRef<number>(280);
+  const inputDragY = useRef<number | null>(null);
+  const inputDragH = useRef<number>(90);
 
   const chatWs = useRef<WebSocket | null>(null);
   const dashWs = useRef<WebSocket | null>(null);
@@ -982,6 +1173,44 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
 
   // Keep busyRef in sync so closures can read current value without stale closure
   useEffect(() => { busyRef.current = busy; }, [busy]);
+
+  const onPanelDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    panelDragY.current = e.clientY;
+    panelDragH.current = panelHeight;
+    const onMove = (me: MouseEvent) => {
+      if (panelDragY.current === null) return;
+      const delta = panelDragY.current - me.clientY; // drag up → bigger panel
+      const next = Math.min(Math.max(panelDragH.current + delta, 120), Math.floor(window.innerHeight * 0.75));
+      setPanelHeight(next);
+    };
+    const onUp = () => {
+      panelDragY.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [panelHeight]);
+
+  const onInputDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    inputDragY.current = e.clientY;
+    inputDragH.current = inputHeight;
+    const onMove = (me: MouseEvent) => {
+      if (inputDragY.current === null) return;
+      const delta = inputDragY.current - me.clientY; // drag up → bigger input
+      const next = Math.min(Math.max(inputDragH.current + delta, 56), 320);
+      setInputHeight(next);
+    };
+    const onUp = () => {
+      inputDragY.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [inputHeight]);
 
   // Derive orchestrator name from target (for TTS)
   const orchName = target.kind === 'orchestrator' ? target.name : target.orchName;
@@ -1397,25 +1626,59 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
 
       {/* Input — hidden in Compare mode (parent owns the composer) */}
       {sharedInput === undefined && (
-        <div style={{ padding: '10px 14px', borderTop: '1px solid var(--tm-border)', display: 'flex', gap: 8, flexShrink: 0 }}>
-          {voiceEnabled && (
-            <button style={micBtnStyle()} onMouseDown={startRecording} onMouseUp={stopRecording} onTouchStart={startRecording} onTouchEnd={stopRecording} disabled={recordingState === 'transcribing' || busy} title={recordingState === 'recording' ? 'Release to transcribe' : 'Hold to record'}>
-              {recordingState === 'transcribing' ? <Spinner /> : <MicIcon />}
-            </button>
-          )}
-          <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={onKey} disabled={busy} dir="auto" placeholder="Send a message… (Enter to send, Shift+Enter for newline)" rows={3}
-            style={{ flex: 1, padding: '9px 12px', borderRadius: 10, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text)', fontSize: 13, resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.5 }} />
-          {busy ? (
-            <button onClick={stopRun} style={{ padding: '9px 16px', borderRadius: 10, border: `1.5px solid #ef4444`, background: 'transparent', color: '#ef4444', fontSize: 13, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-end' }}>Stop</button>
-          ) : (
-            <button onClick={send} disabled={!input.trim()} style={{ padding: '9px 16px', borderRadius: 10, border: 'none', background: !input.trim() ? 'var(--tm-surface)' : color, color: !input.trim() ? 'var(--tm-text-muted)' : '#fff', fontSize: 13, fontWeight: 600, cursor: !input.trim() ? 'not-allowed' : 'pointer', alignSelf: 'flex-end' }}>Send</button>
-          )}
+        <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+          {/* Input drag handle */}
+          <div
+            onMouseDown={onInputDragStart}
+            style={{
+              height: 10, cursor: 'ns-resize', flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              position: 'relative',
+            }}
+            onMouseEnter={e => { const el = e.currentTarget.querySelector<HTMLElement>('.grip-line'); if (el) el.style.background = '#7c3aed'; }}
+            onMouseLeave={e => { const el = e.currentTarget.querySelector<HTMLElement>('.grip-line'); if (el) el.style.background = 'var(--tm-border)'; }}
+          >
+            <div className="grip-line" style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1, background: 'var(--tm-border)', transition: 'background 0.15s' }} />
+            <div style={{ position: 'relative', display: 'flex', gap: 3, zIndex: 1 }}>
+              {[0,1,2].map(i => <div key={i} style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--tm-border)' }} />)}
+            </div>
+          </div>
+          <div style={{ padding: '6px 14px 10px', display: 'flex', gap: 8 }}>
+            {voiceEnabled && (
+              <button style={micBtnStyle()} onMouseDown={startRecording} onMouseUp={stopRecording} onTouchStart={startRecording} onTouchEnd={stopRecording} disabled={recordingState === 'transcribing' || busy} title={recordingState === 'recording' ? 'Release to transcribe' : 'Hold to record'}>
+                {recordingState === 'transcribing' ? <Spinner /> : <MicIcon />}
+              </button>
+            )}
+            <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={onKey} disabled={busy} dir="auto" placeholder="Send a message… (Enter to send, Shift+Enter for newline)"
+              style={{ flex: 1, height: inputHeight, padding: '9px 12px', borderRadius: 10, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text)', fontSize: 13, resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.5 }} />
+            {busy ? (
+              <button onClick={stopRun} style={{ padding: '9px 16px', borderRadius: 10, border: `1.5px solid #ef4444`, background: 'transparent', color: '#ef4444', fontSize: 13, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-end' }}>Stop</button>
+            ) : (
+              <button onClick={send} disabled={!input.trim()} style={{ padding: '9px 16px', borderRadius: 10, border: 'none', background: !input.trim() ? 'var(--tm-surface)' : color, color: !input.trim() ? 'var(--tm-text-muted)' : '#fff', fontSize: 13, fontWeight: 600, cursor: !input.trim() ? 'not-allowed' : 'pointer', alignSelf: 'flex-end' }}>Send</button>
+            )}
+          </div>
         </div>
       )}
 
       {/* Debug panel — below messages in single-column; inline tray in compare */}
       {sharedInput === undefined && (
-        <div style={{ borderTop: '1px solid var(--tm-border)', display: 'flex', flexDirection: 'column', maxHeight: 280, flexShrink: 0 }}>
+        <div style={{ height: panelHeight, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+          {/* Drag handle — slim 1px line with grip pip */}
+          <div
+            onMouseDown={onPanelDragStart}
+            style={{
+              height: 10, cursor: 'ns-resize', flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              position: 'relative',
+            }}
+            onMouseEnter={e => { const el = e.currentTarget.querySelector<HTMLElement>('.grip-line'); if (el) el.style.background = '#7c3aed'; }}
+            onMouseLeave={e => { const el = e.currentTarget.querySelector<HTMLElement>('.grip-line'); if (el) el.style.background = 'var(--tm-border)'; }}
+          >
+            <div className="grip-line" style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1, background: 'var(--tm-border)', transition: 'background 0.15s' }} />
+            <div style={{ position: 'relative', display: 'flex', gap: 3, zIndex: 1 }}>
+              {[0,1,2].map(i => <div key={i} style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--tm-border)' }} />)}
+            </div>
+          </div>
           <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--tm-border)', display: 'flex', gap: 4, alignItems: 'center', background: 'var(--tm-surface)' }}>
             <TabBtn label="Trace" active={debugTab === 'trace'} onClick={() => setDebugTab('trace')} />
             <TabBtn label="Tasks" active={debugTab === 'tasks'} onClick={() => setDebugTab('tasks')} />
