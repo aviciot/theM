@@ -281,12 +281,14 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	// EventsTransport is left empty so the recorder stamps the canonical
 	// "streams" value; the Go worker always writes run events to Redis Streams.
 	run := domain.Run{
-		ID:             runID,
-		ContextID:      contextID,
-		EntryPointSlug: req.EPSlug,
-		TenantID:       resolvedCfg.TenantID,
-		ApplicationID:  resolvedCfg.AppID,
-		Status:         domain.RunStatusAdmitted,
+		ID:               runID,
+		ContextID:        contextID,
+		EntryPointSlug:   req.EPSlug,
+		TenantID:         resolvedCfg.TenantID,
+		ApplicationID:    resolvedCfg.AppID,
+		Status:           domain.RunStatusAdmitted,
+		Goal:             firstTextPart(req.UserMessage),
+		OrchestratorName: resolvedCfg.OrchestratorName,
 	}
 	runCreated := false
 	if lc.recorder != nil {
@@ -429,6 +431,17 @@ func (lc *Lifecycle) Release(h *ExecutionHandle) {
 				"error", err)
 		}
 	}
+}
+
+// firstTextPart returns the text of the first text-type part in msg.
+// Returns "" when the message has no text parts (e.g. voice or image-only).
+func firstTextPart(msg domain.Message) string {
+	for _, p := range msg.Parts {
+		if p.Type == "text" && p.Text != "" {
+			return p.Text
+		}
+	}
+	return ""
 }
 
 // newRunID returns a new UUID v4 string. The Temporal worker parses run,

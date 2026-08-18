@@ -134,6 +134,14 @@ type Run struct {
 	OutputTokens   int
 	ErrorMessage   string
 
+	// Goal is the user's first message for this run, stored as a short summary
+	// in them.runs.goal for display in the run history UI.
+	Goal string
+
+	// OrchestratorName is the resolved orchestrator name for this run, stored
+	// in them.runs.orchestrator_name for display in the run history UI.
+	OrchestratorName string
+
 	// EventsTransport is the run-event delivery transport recorded on the run
 	// row. Always "streams": the Go worker writes run events to Redis Streams
 	// (them:dash:run:{runID}:stream) and the bridge reads them from there.

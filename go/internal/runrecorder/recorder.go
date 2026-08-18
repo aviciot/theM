@@ -77,8 +77,8 @@ func (r *Recorder) CreateRun(ctx context.Context, run domain.Run) error {
 		return ErrMissingTenantID
 	}
 	const q = `
-		INSERT INTO them.runs (id, tenant_id, entry_point_slug, status, started_at, events_transport)
-		VALUES ($1, $2::uuid, $3, $4, $5, $6)
+		INSERT INTO them.runs (id, tenant_id, entry_point_slug, status, started_at, events_transport, goal, orchestrator_name)
+		VALUES ($1, $2::uuid, $3, $4, $5, $6, NULLIF($7,''), NULLIF($8,''))
 		ON CONFLICT (id) DO NOTHING`
 	startedAt := run.StartedAt
 	if startedAt.IsZero() {
@@ -92,6 +92,7 @@ func (r *Recorder) CreateRun(ctx context.Context, run domain.Run) error {
 	err := r.db.Exec(ctx, q,
 		run.ID, run.TenantID, run.EntryPointSlug,
 		string(domain.RunRunning), startedAt, transport,
+		run.Goal, run.OrchestratorName,
 	)
 	if err != nil {
 		return fmt.Errorf("runrecorder: create run %s: %w", run.ID, err)

@@ -109,10 +109,10 @@ func TestCreateRun_callsCorrectSQL(t *testing.T) {
 	assert.Contains(t, call.sql, "tenant_id")
 	assert.Contains(t, call.sql, "events_transport")
 
-	// Arguments: id, tenant_id, entry_point_slug, status, started_at, events_transport (6 args).
+	// Arguments: id, tenant_id, entry_point_slug, status, started_at, events_transport, goal, orchestrator_name (8 args).
 	// context_id and application_id are NOT in the DB — them.runs has no such columns.
 	// tenant_id is passed as a plain string (NOT NULL column — no nullable *string).
-	require.Len(t, call.args, 6)
+	require.Len(t, call.args, 8)
 	assert.Equal(t, "run-abc", call.args[0])
 	assert.Equal(t, tenantID, call.args[1], "tenant_id must be the plain string UUID")
 	assert.Equal(t, "ws-chat", call.args[2])
@@ -120,6 +120,9 @@ func TestCreateRun_callsCorrectSQL(t *testing.T) {
 	assert.Equal(t, now, call.args[4])
 	// The Go worker always writes to Redis Streams → events_transport "streams".
 	assert.Equal(t, "streams", call.args[5])
+	// goal and orchestrator_name default to empty string when not set.
+	assert.Equal(t, "", call.args[6])
+	assert.Equal(t, "", call.args[7])
 }
 
 // TestCreateRun_defaultsToStreams verifies that a run with no explicit
