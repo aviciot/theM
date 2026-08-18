@@ -171,6 +171,7 @@ func (f *fakeRunCreator) CreateRun(_ context.Context, _ domain.Run) error { retu
 func (f *fakeRunCreator) UpdateRunStatus(_ context.Context, _ string, _ domain.RunStatus, _ string) error {
 	return nil
 }
+func (f *fakeRunCreator) UpdateRunGoal(_ context.Context, _, _ string) error { return nil }
 
 // captureRunCreator records CreateRun and UpdateRunStatus calls.
 type captureRunCreator struct {
@@ -192,6 +193,7 @@ func (c *captureRunCreator) UpdateRunStatus(_ context.Context, _ string, status 
 	c.updates = append(c.updates, status)
 	return nil
 }
+func (c *captureRunCreator) UpdateRunGoal(_ context.Context, _, _ string) error { return nil }
 
 func (c *captureRunCreator) last() (domain.Run, bool) {
 	c.mu.Lock()

@@ -100,10 +100,26 @@ func (r *Recorder) CreateRun(ctx context.Context, run domain.Run) error {
 	return nil
 }
 
+// UpdateRunGoal sets the goal column on an existing run row.
+// Called after the first client message is parsed so the user's text is recorded.
+func (r *Recorder) UpdateRunGoal(ctx context.Context, runID, goal string) error {
+	const q = `UPDATE them.runs SET goal=NULLIF($2,'') WHERE id=$1::uuid`
+	if err := r.db.Exec(ctx, q, runID, goal); err != nil {
+		return fmt.Errorf("runrecorder: update goal for run %s: %w", runID, err)
+	}
+	return nil
+}
+
 // UpdateRunStatus sets the status and error for the given run.
-// Note: them.runs has an "error" column (not "error_message"); "updated_at" does not exist.
+// Sets ended_at when the status is a terminal state (completed/failed/canceled).
 func (r *Recorder) UpdateRunStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg string) error {
-	const q = `UPDATE them.runs SET status=$2, error=$3 WHERE id=$1`
+	terminal := status == domain.RunCompleted || status == domain.RunFailed || status == domain.RunCanceled
+	var q string
+	if terminal {
+		q = `UPDATE them.runs SET status=$2, error=$3, ended_at=now() WHERE id=$1`
+	} else {
+		q = `UPDATE them.runs SET status=$2, error=$3 WHERE id=$1`
+	}
 	err := r.db.Exec(ctx, q, runID, string(status), errMsg)
 	if err != nil {
 		return fmt.Errorf("runrecorder: update status for run %s: %w", runID, err)

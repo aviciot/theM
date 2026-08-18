@@ -143,6 +143,7 @@ func (f *fakeEPLoader) Load(_ context.Context, _, _ string) (*epconfig.EPConfig,
 type fakeRunCreator struct{}
 
 func (f *fakeRunCreator) CreateRun(_ context.Context, _ domain.Run) error { return nil }
+func (f *fakeRunCreator) UpdateRunGoal(_ context.Context, _, _ string) error { return nil }
 func (f *fakeRunCreator) UpdateRunStatus(_ context.Context, _ string, _ domain.RunStatus, _ string) error {
 	return nil
 }
@@ -161,6 +162,7 @@ func (c *captureRunCreator) CreateRun(_ context.Context, run domain.Run) error {
 	return nil
 }
 
+func (c *captureRunCreator) UpdateRunGoal(_ context.Context, _, _ string) error { return nil }
 func (c *captureRunCreator) UpdateRunStatus(_ context.Context, _ string, status domain.RunStatus, _ string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

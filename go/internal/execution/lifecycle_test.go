@@ -108,6 +108,7 @@ func (f *fakeRecorder) CreateRun(_ context.Context, run domain.Run) error {
 	return f.createErr
 }
 
+func (f *fakeRecorder) UpdateRunGoal(_ context.Context, _, _ string) error { return nil }
 func (f *fakeRecorder) UpdateRunStatus(_ context.Context, runID string, status domain.RunStatus, _ string) error {
 	f.updateCalled = true
 	f.lastUpdateID = runID

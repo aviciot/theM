@@ -116,6 +116,7 @@ func (f *fakeRecorder) CreateRun(_ context.Context, run domain.Run) error {
 	return nil
 }
 
+func (f *fakeRecorder) UpdateRunGoal(_ context.Context, _, _ string) error { return nil }
 func (f *fakeRecorder) UpdateRunStatus(_ context.Context, _ string, _ domain.RunStatus, _ string) error {
 	return nil
 }

@@ -24,6 +24,9 @@ import (
 // Defined here so that tests can inject a fake without needing a live DB.
 type RunCreator interface {
 	CreateRun(ctx context.Context, run domain.Run) error
+	// UpdateRunGoal sets the user's first message as the run's goal.
+	UpdateRunGoal(ctx context.Context, runID, goal string) error
+
 	// UpdateRunStatus transitions a run to the given status. errMsg is the
 	// failure reason for failed runs; use "" for non-error transitions.
 	// Called by Start (admitted → running) and Release (admitted → failed).
@@ -378,6 +381,17 @@ func (lc *Lifecycle) Start(ctx context.Context, h *ExecutionHandle, input tempor
 	}
 	h.startedOK = true
 	return wfRun, nil
+}
+
+// RecordGoal writes the user's first message as the run's goal.
+// Non-fatal: logs on error but does not fail the request.
+func (lc *Lifecycle) RecordGoal(ctx context.Context, runID, goal string) {
+	if lc.recorder == nil || goal == "" {
+		return
+	}
+	if err := lc.recorder.UpdateRunGoal(ctx, runID, goal); err != nil {
+		lc.logger.Warn("execution: update run goal failed", "run_id", runID, "error", err)
+	}
 }
 
 // Release ends the session and releases the gate reservation. It must be called

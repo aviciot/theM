@@ -271,6 +271,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if clientContextID != "" {
 		handle.ContextID = clientContextID
 	}
+	// Record the user's first message as the run goal (non-fatal).
+	h.lc.RecordGoal(r.Context(), handle.RunID, firstTextPart(userMsg))
 
 	// ── 6. Subscribe to run-stream BEFORE Lifecycle.Start ─────────────────────
 	// This ensures no event emitted by the workflow immediately after start is
@@ -550,4 +552,14 @@ func epTypeLabel(h *execution.ExecutionHandle) string {
 	default:
 		return "unknown"
 	}
+}
+
+// firstTextPart returns the text of the first text-type part in msg.
+func firstTextPart(msg domain.Message) string {
+	for _, p := range msg.Parts {
+		if p.Type == "text" && p.Text != "" {
+			return p.Text
+		}
+	}
+	return ""
 }
