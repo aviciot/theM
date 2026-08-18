@@ -49,14 +49,14 @@ func (s *RunService) GetDetail(ctx context.Context, tenantID, runID string) (dal
 	return detail, nil
 }
 
-// GetTasks returns tasks belonging to a run.
-func (s *RunService) GetTasks(ctx context.Context, runID string) ([]dal.Task, error) {
-	return s.dal.GetRunTasks(ctx, runID)
+// GetTasks returns tasks belonging to a run, scoped to the tenant.
+func (s *RunService) GetTasks(ctx context.Context, tenantID, runID string) ([]dal.Task, error) {
+	return s.dal.GetRunTasks(ctx, tenantID, runID)
 }
 
-// GetArtifacts returns artifacts for a run via their tasks.
-func (s *RunService) GetArtifacts(ctx context.Context, runID string) ([]dal.Artifact, error) {
-	return s.dal.GetRunArtifacts(ctx, runID)
+// GetArtifacts returns artifacts for a run via their tasks, scoped to the tenant.
+func (s *RunService) GetArtifacts(ctx context.Context, tenantID, runID string) ([]dal.Artifact, error) {
+	return s.dal.GetRunArtifacts(ctx, tenantID, runID)
 }
 
 // ListContextSessions returns distinct conversation contexts for the tenant.
@@ -70,8 +70,8 @@ func (s *RunService) GetContextArtifacts(ctx context.Context, tenantID, contextI
 }
 
 // GetContextMessages returns chat turn history for a context (user+agent messages only).
-func (s *RunService) GetContextMessages(ctx context.Context, contextID string, limit int) ([]dal.ContextMessage, error) {
-	return s.dal.GetContextMessages(ctx, contextID, limit)
+func (s *RunService) GetContextMessages(ctx context.Context, tenantID, contextID string, limit int) ([]dal.ContextMessage, error) {
+	return s.dal.GetContextMessages(ctx, tenantID, contextID, limit)
 }
 
 // Cancel sets a running run to "canceled". Returns ErrNotFound when the run does not exist

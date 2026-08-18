@@ -143,7 +143,8 @@ func (h *RunsHandler) ContextMessages(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	msgs, err := h.svc.GetContextMessages(r.Context(), ctxID, limit)
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	msgs, err := h.svc.GetContextMessages(r.Context(), tenantID, ctxID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
@@ -158,7 +159,8 @@ func (h *RunsHandler) Tasks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "run_id is required")
 		return
 	}
-	tasks, err := h.svc.GetTasks(r.Context(), runID)
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	tasks, err := h.svc.GetTasks(r.Context(), tenantID, runID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
@@ -173,7 +175,8 @@ func (h *RunsHandler) Artifacts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "run_id is required")
 		return
 	}
-	artifacts, err := h.svc.GetArtifacts(r.Context(), runID)
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	artifacts, err := h.svc.GetArtifacts(r.Context(), tenantID, runID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return

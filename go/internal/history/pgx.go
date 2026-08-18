@@ -224,15 +224,17 @@ ON CONFLICT (task_id, seq) DO NOTHING`
 
 // resolveRootTaskID finds or creates the root tasks row for (contextID, runID, tenantID).
 // Uses a find-then-insert pattern to be idempotent — the row is created once per run.
+// tenantID is included in the lookup to prevent cross-tenant root task reuse.
 func (s *Store) resolveRootTaskID(ctx context.Context, contextID, runID, tenantID string) (string, error) {
-	// Try to find an existing task first.
+	// Try to find an existing task first, scoped to tenantID when non-empty.
 	const findQ = `
 SELECT id::text
 FROM them.tasks
 WHERE context_id = $1::uuid
   AND (run_id = $2::uuid OR ($2 = '' AND run_id IS NULL))
+  AND ($3 = '' OR tenant_id = $3::uuid)
 LIMIT 1`
-	row := s.pool.QueryRow(ctx, findQ, contextID, runID)
+	row := s.pool.QueryRow(ctx, findQ, contextID, runID, tenantID)
 	var id string
 	if err := row.Scan(&id); err == nil {
 		return id, nil
@@ -246,8 +248,8 @@ ON CONFLICT DO NOTHING
 RETURNING id::text`
 	row = s.pool.QueryRow(ctx, insertQ, contextID, runID, tenantID)
 	if err := row.Scan(&id); err != nil {
-		// Race: another goroutine inserted first — re-query.
-		row2 := s.pool.QueryRow(ctx, findQ, contextID, runID)
+		// Race: another goroutine inserted first — re-query with tenant filter.
+		row2 := s.pool.QueryRow(ctx, findQ, contextID, runID, tenantID)
 		if err2 := row2.Scan(&id); err2 != nil {
 			return "", fmt.Errorf("history: resolve task (re-query): %w", err2)
 		}

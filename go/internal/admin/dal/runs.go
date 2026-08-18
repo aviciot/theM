@@ -240,7 +240,8 @@ func (d *DB) GetRunDetail(ctx context.Context, tenantID, runID string) (RunDetai
 // GetRunTasks returns tasks belonging to a run, ordered by created_at.
 // Agent name and slug are resolved via LEFT JOIN on them.agents.
 // duration_ms is derived from (updated_at - created_at) for completed/failed tasks.
-func (d *DB) GetRunTasks(ctx context.Context, runID string) ([]Task, error) {
+// tenantID is used to verify the run belongs to the caller's tenant.
+func (d *DB) GetRunTasks(ctx context.Context, tenantID, runID string) ([]Task, error) {
 	q := `SELECT t.id::text, COALESCE(t.parent_task_id::text, ''),
         COALESCE(t.agent_id::text, ''), COALESCE(t.orchestrator_id::text, ''),
         COALESCE(t.context_id::text, ''), t.state, t.kind,
@@ -252,8 +253,10 @@ func (d *DB) GetRunTasks(ctx context.Context, runID string) ([]Task, error) {
              ELSE NULL END
         FROM them.tasks t
         LEFT JOIN them.agents a ON a.id = t.agent_id
-        WHERE t.run_id = $1::uuid ORDER BY t.created_at`
-	rows, err := d.q.Query(ctx, q, runID)
+        WHERE t.run_id = $1::uuid
+          AND EXISTS (SELECT 1 FROM them.runs r WHERE r.id = $1::uuid AND r.tenant_id = $2::uuid)
+        ORDER BY t.created_at`
+	rows, err := d.q.Query(ctx, q, runID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -437,7 +440,8 @@ func (d *DB) GetContextArtifacts(ctx context.Context, tenantID, contextID string
 }
 
 // GetRunArtifacts returns artifacts for a run via their tasks, ordered by created_at.
-func (d *DB) GetRunArtifacts(ctx context.Context, runID string) ([]Artifact, error) {
+// tenantID is used to verify the run belongs to the caller's tenant.
+func (d *DB) GetRunArtifacts(ctx context.Context, tenantID, runID string) ([]Artifact, error) {
 	q := `SELECT a.id::text, a.task_id::text,
         COALESCE(a.context_id::text, ''), COALESCE(a.artifact_id, ''),
         COALESCE(a.name, ''), COALESCE(a.parts::text, '[]'),
@@ -446,8 +450,9 @@ func (d *DB) GetRunArtifacts(ctx context.Context, runID string) ([]Artifact, err
         FROM them.artifacts a
         JOIN them.tasks t ON t.id = a.task_id
         WHERE t.run_id = $1::uuid
+          AND EXISTS (SELECT 1 FROM them.runs r WHERE r.id = $1::uuid AND r.tenant_id = $2::uuid)
         ORDER BY a.created_at`
-	rows, err := d.q.Query(ctx, q, runID)
+	rows, err := d.q.Query(ctx, q, runID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -483,23 +488,28 @@ type ContextMessage struct {
 }
 
 // GetContextMessages returns user/agent turns for the root task of a context,
-// ordered by sequence. Only 'user' and 'agent' roles returned; empty texts skipped.
-func (d *DB) GetContextMessages(ctx context.Context, contextID string, limit int) ([]ContextMessage, error) {
+// ordered by sequence. Only 'user' and 'agent' roles returned; summary messages
+// and empty texts skipped. Parts are stored as JSONB envelope {canonical_role,
+// summary?, parts: [...]}, so text is read from the envelope's parts array first;
+// falls back to reading tm.parts directly for legacy rows.
+func (d *DB) GetContextMessages(ctx context.Context, tenantID, contextID string, limit int) ([]ContextMessage, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	q := `SELECT tm.role, COALESCE(
+		(SELECT p->>'text' FROM jsonb_array_elements(tm.parts->'parts') p WHERE p->>'type' = 'text' LIMIT 1),
 		(SELECT p->>'text' FROM jsonb_array_elements(tm.parts) p WHERE p->>'type' = 'text' LIMIT 1),
-		(SELECT p->>'text' FROM jsonb_array_elements(tm.parts) p WHERE p->'text' IS NOT NULL LIMIT 1),
 		''
 	)
 	FROM them.task_messages tm
 	JOIN them.tasks t ON t.id = tm.task_id
 	WHERE t.context_id = $1::uuid AND t.kind = 'root'
+	  AND t.tenant_id = $2::uuid
 	  AND tm.role IN ('user', 'agent')
+	  AND (tm.parts->>'summary')::boolean IS NOT TRUE
 	ORDER BY tm.seq
-	LIMIT $2`
-	rows, err := d.q.Query(ctx, q, contextID, limit)
+	LIMIT $3`
+	rows, err := d.q.Query(ctx, q, contextID, tenantID, limit)
 	if err != nil {
 		return nil, err
 	}

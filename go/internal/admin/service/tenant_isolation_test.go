@@ -266,10 +266,18 @@ func (f *isolationFakeDal) GetRunDetail(_ context.Context, tenantID, runID strin
 		Children: []dal.Run{},
 	}, nil
 }
-func (f *isolationFakeDal) GetRunTasks(_ context.Context, _ string) ([]dal.Task, error) {
+func (f *isolationFakeDal) GetRunTasks(_ context.Context, tenantID, runID string) ([]dal.Task, error) {
+	_, ok := f.findByIDAndTenant(f.runs, tenantID, runID)
+	if !ok {
+		return nil, errors.New("not found")
+	}
 	return []dal.Task{}, nil
 }
-func (f *isolationFakeDal) GetRunArtifacts(_ context.Context, _ string) ([]dal.Artifact, error) {
+func (f *isolationFakeDal) GetRunArtifacts(_ context.Context, tenantID, runID string) ([]dal.Artifact, error) {
+	_, ok := f.findByIDAndTenant(f.runs, tenantID, runID)
+	if !ok {
+		return nil, errors.New("not found")
+	}
 	return []dal.Artifact{}, nil
 }
 func (f *isolationFakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) {
@@ -278,8 +286,14 @@ func (f *isolationFakeDal) ListContextSessions(_ context.Context, _, _ string, _
 func (f *isolationFakeDal) GetContextArtifacts(_ context.Context, _, _ string, _ int) ([]dal.Artifact, error) {
 	return []dal.Artifact{}, nil
 }
-func (f *isolationFakeDal) GetContextMessages(_ context.Context, _ string, _ int) ([]dal.ContextMessage, error) {
-	return []dal.ContextMessage{}, nil
+func (f *isolationFakeDal) GetContextMessages(_ context.Context, tenantID, contextID string, _ int) ([]dal.ContextMessage, error) {
+	// context messages are scoped to tenant via tenantID param; fake enforces it using runs keyed by contextID
+	for _, r := range f.runs {
+		if r.tenantID == tenantID && r.id == contextID {
+			return []dal.ContextMessage{}, nil
+		}
+	}
+	return nil, errors.New("not found")
 }
 
 // ── Token methods ─────────────────────────────────────────────────────────────
@@ -779,6 +793,48 @@ func TestTokenService_TenantIsolation_OtherTenantCannotDelete(t *testing.T) {
 	// The important thing is that the delete did NOT succeed.
 	if err == nil {
 		t.Error("Delete(bravo, alpha's token): expected error, got nil")
+	}
+}
+
+// ── RunService sub-resource isolation tests ───────────────────────────────────
+
+// TC-OTHER: other tenant cannot read run tasks
+func TestRunService_TenantIsolation_GetRunTasks_WrongTenant(t *testing.T) {
+	f := &isolationFakeDal{}
+	f.runs = append(f.runs, isoRecord{tenantID: tenantAlpha, id: "run-alpha-tasks"})
+	svc := service.NewRunService(f, nil)
+	ctx := context.Background()
+
+	_, err := svc.GetTasks(ctx, tenantBravo, "run-alpha-tasks")
+	if err == nil {
+		t.Error("GetTasks(bravo, alpha's run): expected error, got nil")
+	}
+}
+
+// TC-OTHER: other tenant cannot read run artifacts
+func TestRunService_TenantIsolation_GetRunArtifacts_WrongTenant(t *testing.T) {
+	f := &isolationFakeDal{}
+	f.runs = append(f.runs, isoRecord{tenantID: tenantAlpha, id: "run-alpha-arts"})
+	svc := service.NewRunService(f, nil)
+	ctx := context.Background()
+
+	_, err := svc.GetArtifacts(ctx, tenantBravo, "run-alpha-arts")
+	if err == nil {
+		t.Error("GetArtifacts(bravo, alpha's run): expected error, got nil")
+	}
+}
+
+// TC-OTHER: other tenant cannot read context messages
+func TestRunService_TenantIsolation_GetContextMessages_WrongTenant(t *testing.T) {
+	f := &isolationFakeDal{}
+	// store a "context" by run id so the fake can look it up
+	f.runs = append(f.runs, isoRecord{tenantID: tenantAlpha, id: "ctx-alpha-1"})
+	svc := service.NewRunService(f, nil)
+	ctx := context.Background()
+
+	_, err := svc.GetContextMessages(ctx, tenantBravo, "ctx-alpha-1", 10)
+	if err == nil {
+		t.Error("GetContextMessages(bravo, alpha's context): expected error, got nil")
 	}
 }
 

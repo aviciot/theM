@@ -204,10 +204,10 @@ func (f *fakeDal) GetRunStats(_ context.Context, _ string) (dal.RunStats, error)
 func (f *fakeDal) GetRunDetail(_ context.Context, _, _ string) (dal.RunDetail, error) {
 	return dal.RunDetail{Run: f.run, Steps: []dal.RunStep{}, Usage: []dal.RunUsage{}, Children: []dal.Run{}}, f.getRunErr
 }
-func (f *fakeDal) GetRunTasks(_ context.Context, _ string) ([]dal.Task, error) {
+func (f *fakeDal) GetRunTasks(_ context.Context, _, _ string) ([]dal.Task, error) {
 	return []dal.Task{}, nil
 }
-func (f *fakeDal) GetRunArtifacts(_ context.Context, _ string) ([]dal.Artifact, error) {
+func (f *fakeDal) GetRunArtifacts(_ context.Context, _, _ string) ([]dal.Artifact, error) {
 	return []dal.Artifact{}, nil
 }
 func (f *fakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) {
@@ -216,7 +216,7 @@ func (f *fakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]
 func (f *fakeDal) GetContextArtifacts(_ context.Context, _, _ string, _ int) ([]dal.Artifact, error) {
 	return []dal.Artifact{}, nil
 }
-func (f *fakeDal) GetContextMessages(_ context.Context, _ string, _ int) ([]dal.ContextMessage, error) {
+func (f *fakeDal) GetContextMessages(_ context.Context, _, _ string, _ int) ([]dal.ContextMessage, error) {
 	return []dal.ContextMessage{}, nil
 }
 func (f *fakeDal) CancelRun(_ context.Context, _, _ string) (dal.Run, error) {
