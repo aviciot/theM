@@ -216,18 +216,24 @@ type a2aRequest struct {
 }
 
 type a2aParams struct {
-	Message a2aMessage `json:"message"`
+	Message       a2aMessage       `json:"message"`
+	Configuration a2aConfiguration `json:"configuration,omitempty"`
+}
+
+type a2aConfiguration struct {
+	ReturnImmediately bool `json:"returnImmediately"`
 }
 
 type a2aMessage struct {
-	Role      string    `json:"role"`
+	Role      int       `json:"role"`       // 1 = user (A2A v1.1 proto enum)
 	Parts     []a2aPart `json:"parts"`
 	MessageID string    `json:"messageId"`
+	ContextID string    `json:"contextId,omitempty"`
 }
 
 type a2aPart struct {
-	Kind string `json:"kind"`
-	Text string `json:"text"`
+	Text string `json:"text,omitempty"`
+	Kind string `json:"kind,omitempty"` // kept for v0.3 compat probing
 }
 
 type a2aResponse struct {
@@ -237,9 +243,15 @@ type a2aResponse struct {
 	ID      string     `json:"id"`
 }
 
+// a2aResult wraps a task (SendMessage non-streaming response) or a message.
 type a2aResult struct {
-	Status    a2aStatus     `json:"status"`
+	Task    *a2aTask `json:"task,omitempty"`
+	Message *a2aTask `json:"message,omitempty"` // some agents return message instead of task
+}
+
+type a2aTask struct {
 	Artifacts []a2aArtifact `json:"artifacts"`
+	Status    a2aStatus     `json:"status,omitempty"`
 }
 
 type a2aStatus struct {
@@ -269,13 +281,14 @@ func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.R
 
 	rpcReq := a2aRequest{
 		JSONRPC: "2.0",
-		Method:  "message/send",
+		Method:  "SendMessage", // A2A v1.1 PascalCase gRPC method name
 		Params: a2aParams{
 			Message: a2aMessage{
-				Role:      "user",
-				Parts:     []a2aPart{{Kind: "text", Text: text}},
+				Role:      1, // ROLE_USER in proto enum
+				Parts:     []a2aPart{{Text: text}},
 				MessageID: msgID,
 			},
+			Configuration: a2aConfiguration{ReturnImmediately: false},
 		},
 		ID: reqID,
 	}
@@ -290,6 +303,7 @@ func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.R
 		return nil, fmt.Errorf("agentregistry: a2a: create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("A2A-Version", "1.0") // required by SDK v1.1 version validator
 	if cfg.AuthToken != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
 	}
@@ -317,10 +331,18 @@ func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.R
 		return nil, fmt.Errorf("agentregistry: a2a: empty result")
 	}
 
+	// Extract artifacts from task or message wrapper.
+	var artifacts []a2aArtifact
+	if rpcResp.Result.Task != nil {
+		artifacts = rpcResp.Result.Task.Artifacts
+	} else if rpcResp.Result.Message != nil {
+		artifacts = rpcResp.Result.Message.Artifacts
+	}
+
 	var output string
-	for _, artifact := range rpcResp.Result.Artifacts {
+	for _, artifact := range artifacts {
 		for _, part := range artifact.Parts {
-			if part.Kind == "text" {
+			if part.Text != "" {
 				output = part.Text
 				break
 			}

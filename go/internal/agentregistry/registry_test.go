@@ -129,7 +129,8 @@ func TestInvokeA2A(t *testing.T) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(new(map[string]any)))
 		_ = r.Body.Close()
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"status":{"state":"completed"},"artifacts":[{"parts":[{"kind":"text","text":"%s"}]}]},"id":"1"}`, expectedOutput)
+		// A2A v1.1 response: result wraps task which contains artifacts.
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"task":{"status":{"state":"TASK_STATE_COMPLETED"},"artifacts":[{"parts":[{"text":"%s"}]}]}},"id":"1"}`, expectedOutput)
 	}))
 	defer server.Close()
 
