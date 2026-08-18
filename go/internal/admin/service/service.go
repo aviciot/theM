@@ -67,6 +67,8 @@ type Dal interface {
 	GetRunDetail(ctx context.Context, tenantID, runID string) (dal.RunDetail, error)
 	GetRunTasks(ctx context.Context, runID string) ([]dal.Task, error)
 	GetRunArtifacts(ctx context.Context, runID string) ([]dal.Artifact, error)
+	ListContextSessions(ctx context.Context, tenantID, orchestrator string, limit int) ([]dal.ContextSession, error)
+	GetContextArtifacts(ctx context.Context, tenantID, contextID string, limit int) ([]dal.Artifact, error)
 	CancelRun(ctx context.Context, tenantID, runID string) (dal.Run, error)
 	DeleteRun(ctx context.Context, tenantID, runID string) error
 	BulkDeleteRuns(ctx context.Context, tenantID string, runIDs []string) (int64, error)

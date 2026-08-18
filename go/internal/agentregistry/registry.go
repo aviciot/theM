@@ -113,7 +113,7 @@ func (r *Registry) Invoke(ctx context.Context, tenantID, slug string, input json
 	}
 
 	switch cfg.AdapterType {
-	case "a2a":
+	case "a2a", "a2a_async":
 		return r.invokeA2A(ctx, cfg, input)
 	case "ws_mock", "mock":
 		return r.invokeMock(cfg, input)

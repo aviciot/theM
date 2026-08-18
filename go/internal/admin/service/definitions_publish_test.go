@@ -187,6 +187,8 @@ func (f *publishFakeDal) GetRunStats(_ context.Context, _ string) (dal.RunStats,
 func (f *publishFakeDal) GetRunDetail(_ context.Context, _, _ string) (dal.RunDetail, error) { return dal.RunDetail{Steps: []dal.RunStep{}, Usage: []dal.RunUsage{}, Children: []dal.Run{}}, nil }
 func (f *publishFakeDal) GetRunTasks(_ context.Context, _ string) ([]dal.Task, error)  { return nil, nil }
 func (f *publishFakeDal) GetRunArtifacts(_ context.Context, _ string) ([]dal.Artifact, error) { return nil, nil }
+func (f *publishFakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) { return nil, nil }
+func (f *publishFakeDal) GetContextArtifacts(_ context.Context, _, _ string, _ int) ([]dal.Artifact, error) { return nil, nil }
 func (f *publishFakeDal) CancelRun(_ context.Context, _, _ string) (dal.Run, error)    { return dal.Run{}, nil }
 func (f *publishFakeDal) DeleteRun(_ context.Context, _, _ string) error               { return nil }
 func (f *publishFakeDal) BulkDeleteRuns(_ context.Context, _ string, ids []string) (int64, error) { return int64(len(ids)), nil }

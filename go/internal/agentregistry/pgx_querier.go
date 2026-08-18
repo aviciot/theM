@@ -21,8 +21,8 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 // Scoped to tenant_id so agents from different tenants are never mixed (SEC-03).
 func (q *PgxQuerier) QueryAgentsByTenant(ctx context.Context, tenantID string) ([]*AgentConfig, error) {
 	const sql = `
-		SELECT id, slug, name, description,
-		       adapter_type, COALESCE(endpoint_url, ''),
+		SELECT id, slug, display_name, description,
+		       transport, COALESCE(endpoint_url, ''),
 		       COALESCE(auth_token_encrypted, ''),
 		       max_concurrency
 		FROM them.agents

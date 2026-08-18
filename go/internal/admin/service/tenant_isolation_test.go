@@ -272,6 +272,12 @@ func (f *isolationFakeDal) GetRunTasks(_ context.Context, _ string) ([]dal.Task,
 func (f *isolationFakeDal) GetRunArtifacts(_ context.Context, _ string) ([]dal.Artifact, error) {
 	return []dal.Artifact{}, nil
 }
+func (f *isolationFakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) {
+	return []dal.ContextSession{}, nil
+}
+func (f *isolationFakeDal) GetContextArtifacts(_ context.Context, _, _ string, _ int) ([]dal.Artifact, error) {
+	return []dal.Artifact{}, nil
+}
 
 // ── Token methods ─────────────────────────────────────────────────────────────
 

@@ -59,6 +59,16 @@ func (s *RunService) GetArtifacts(ctx context.Context, runID string) ([]dal.Arti
 	return s.dal.GetRunArtifacts(ctx, runID)
 }
 
+// ListContextSessions returns distinct conversation contexts for the tenant.
+func (s *RunService) ListContextSessions(ctx context.Context, tenantID, orchestrator string, limit int) ([]dal.ContextSession, error) {
+	return s.dal.ListContextSessions(ctx, tenantID, orchestrator, limit)
+}
+
+// GetContextArtifacts returns artifacts scoped to a context_id for the tenant.
+func (s *RunService) GetContextArtifacts(ctx context.Context, tenantID, contextID string, limit int) ([]dal.Artifact, error) {
+	return s.dal.GetContextArtifacts(ctx, tenantID, contextID, limit)
+}
+
 // Cancel sets a running run to "canceled". Returns ErrNotFound when the run does not exist
 // or belongs to another tenant, and ErrConflict when the run is not in "running" state
 // (matching the Python 409 contract).

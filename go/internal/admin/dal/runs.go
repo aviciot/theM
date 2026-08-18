@@ -309,6 +309,105 @@ func (d *DB) BulkDeleteRuns(ctx context.Context, tenantID string, runIDs []strin
 	return count, nil
 }
 
+// ContextSession is one row returned by ListContextSessions.
+type ContextSession struct {
+	ContextID       string `json:"context_id"`
+	OrchestratorName string `json:"orchestrator_name"`
+	TurnCount       int    `json:"turn_count"`
+	Title           string `json:"title"`
+	LastActive      string `json:"last_active"`
+}
+
+// ListContextSessions returns distinct conversation contexts for the given tenant.
+// Each context is the unique context_id on tasks; we join runs to surface the
+// orchestrator name and derive a title from the earliest run goal.
+func (d *DB) ListContextSessions(ctx context.Context, tenantID, orchestrator string, limit int) ([]ContextSession, error) {
+	q := `
+		SELECT
+			t.context_id::text,
+			COALESCE(MAX(r.orchestrator_name), '') AS orchestrator_name,
+			COUNT(DISTINCT r.id)                   AS turn_count,
+			COALESCE(
+				(SELECT COALESCE(rr.goal, '')
+				 FROM them.runs rr
+				 JOIN them.tasks tt ON tt.run_id = rr.id
+				 WHERE tt.context_id = t.context_id
+				   AND rr.tenant_id = $1::uuid
+				 ORDER BY rr.started_at ASC LIMIT 1),
+				''
+			) AS title,
+			MAX(r.started_at)::text AS last_active
+		FROM them.tasks t
+		JOIN them.runs r ON r.id = t.run_id
+		WHERE r.tenant_id = $1::uuid
+		  AND t.context_id IS NOT NULL
+		  AND ($2 = '' OR r.orchestrator_name = $2)
+		GROUP BY t.context_id
+		ORDER BY MAX(r.started_at) DESC
+		LIMIT $3`
+
+	rows, err := d.q.Query(ctx, q, tenantID, orchestrator, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	sessions := make([]ContextSession, 0)
+	for rows.Next() {
+		var s ContextSession
+		if err := rows.Scan(&s.ContextID, &s.OrchestratorName, &s.TurnCount, &s.Title, &s.LastActive); err != nil {
+			return nil, err
+		}
+		if s.Title == "" {
+			s.Title = s.ContextID[:8]
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, nil
+}
+
+// GetContextArtifacts returns artifacts whose context_id matches the given contextID, tenant-scoped.
+func (d *DB) GetContextArtifacts(ctx context.Context, tenantID, contextID string, limit int) ([]Artifact, error) {
+	q := `SELECT a.id::text, a.task_id::text,
+		COALESCE(a.context_id::text, ''), COALESCE(a.artifact_id, ''),
+		COALESCE(a.name, ''), COALESCE(a.parts::text, '[]'),
+		COALESCE(a.append_index, 0), COALESCE(a.last_chunk, false),
+		a.created_at::text
+		FROM them.artifacts a
+		JOIN them.tasks t ON t.id = a.task_id
+		JOIN them.runs r ON r.id = t.run_id
+		WHERE a.context_id = $1::uuid
+		  AND r.tenant_id = $2::uuid
+		ORDER BY a.created_at DESC
+		LIMIT $3`
+	rows, err := d.q.Query(ctx, q, contextID, tenantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	artifacts := make([]Artifact, 0)
+	for rows.Next() {
+		var a Artifact
+		var partsJSON string
+		if err := rows.Scan(
+			&a.ID, &a.TaskID,
+			&a.ContextID, &a.ArtifactID,
+			&a.Name, &partsJSON,
+			&a.AppendIndex, &a.LastChunk,
+			&a.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if partsJSON != "" && partsJSON != "[]" {
+			_ = json.Unmarshal([]byte(partsJSON), &a.Parts)
+		}
+		if a.Parts == nil {
+			a.Parts = []ArtifactPart{}
+		}
+		artifacts = append(artifacts, a)
+	}
+	return artifacts, nil
+}
+
 // GetRunArtifacts returns artifacts for a run via their tasks, ordered by created_at.
 func (d *DB) GetRunArtifacts(ctx context.Context, runID string) ([]Artifact, error) {
 	q := `SELECT a.id::text, a.task_id::text,

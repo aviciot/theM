@@ -29,7 +29,9 @@ func NewRunsHandler(db DBQuerier, temporal TemporalSignaler) *RunsHandler {
 func (h *RunsHandler) Routes(r chi.Router) {
 	r.Get("/runs", h.List)
 	r.Get("/runs/stats", h.Stats)
+	r.Get("/runs/contexts", h.Contexts)
 	r.Post("/runs/bulk-delete", h.BulkDelete)
+	r.Get("/runs/context/{ctx_id}/artifacts", h.ContextArtifacts)
 	r.Get("/runs/{run_id}", h.Get)
 	r.Patch("/runs/{run_id}/cancel", h.Cancel)
 	r.Delete("/runs/{run_id}", h.Delete)
@@ -84,6 +86,47 @@ func (h *RunsHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
+}
+
+// Contexts handles GET /api/v1/runs/contexts?orchestrator=&limit=50.
+// Returns distinct conversation contexts (grouped by context_id) for the tenant.
+func (h *RunsHandler) Contexts(w http.ResponseWriter, r *http.Request) {
+	orchestrator := r.URL.Query().Get("orchestrator")
+	limit := 50
+	if ls := r.URL.Query().Get("limit"); ls != "" {
+		if n, err := strconv.Atoi(ls); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	sessions, err := h.svc.ListContextSessions(r.Context(), tenantID, orchestrator, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, sessions)
+}
+
+// ContextArtifacts handles GET /api/v1/runs/context/{ctx_id}/artifacts?limit=100.
+func (h *RunsHandler) ContextArtifacts(w http.ResponseWriter, r *http.Request) {
+	ctxID := chi.URLParam(r, "ctx_id")
+	if ctxID == "" {
+		writeError(w, http.StatusBadRequest, "ctx_id is required")
+		return
+	}
+	limit := 100
+	if ls := r.URL.Query().Get("limit"); ls != "" {
+		if n, err := strconv.Atoi(ls); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	artifacts, err := h.svc.GetContextArtifacts(r.Context(), tenantID, ctxID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, artifacts)
 }
 
 // Tasks handles GET /api/v1/runs/{run_id}/tasks.

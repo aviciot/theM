@@ -210,6 +210,12 @@ func (f *fakeDal) GetRunTasks(_ context.Context, _ string) ([]dal.Task, error) {
 func (f *fakeDal) GetRunArtifacts(_ context.Context, _ string) ([]dal.Artifact, error) {
 	return []dal.Artifact{}, nil
 }
+func (f *fakeDal) ListContextSessions(_ context.Context, _, _ string, _ int) ([]dal.ContextSession, error) {
+	return []dal.ContextSession{}, nil
+}
+func (f *fakeDal) GetContextArtifacts(_ context.Context, _, _ string, _ int) ([]dal.Artifact, error) {
+	return []dal.Artifact{}, nil
+}
 func (f *fakeDal) CancelRun(_ context.Context, _, _ string) (dal.Run, error) {
 	return f.run, f.getRunErr
 }
