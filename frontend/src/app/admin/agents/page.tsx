@@ -16,9 +16,6 @@ interface AgentFolder {
 
 interface FolderState {
   folders: AgentFolder[];
-  // order: item IDs in display sequence. Each entry is either a folder ID or an agent ID.
-  // Items not listed appear at the end in creation order.
-  order?: string[];
 }
 
 const FOLDER_KEY = 'them:agents:folders';
@@ -36,21 +33,6 @@ function loadFoldersLocal(): FolderState {
 
 function saveFoldersLocal(state: FolderState): void {
   try { localStorage.setItem(FOLDER_KEY, JSON.stringify(state)); } catch { /* ignore */ }
-}
-
-// Returns the canonical display order: folder IDs + top-level agent IDs,
-// respecting any saved order from folderState.order.
-function buildDisplayOrder(agents: { id: string }[], folderState: FolderState): string[] {
-  const folderedIds = new Set(folderState.folders.flatMap(f => f.agentIds));
-  const folderIds = folderState.folders.map(f => f.id);
-  const ungroupedIds = agents.filter(a => !folderedIds.has(a.id)).map(a => a.id);
-  const allIds = [...folderIds, ...ungroupedIds];
-  if (!folderState.order?.length) return allIds;
-  // Apply saved order: keep only IDs that still exist, append new ones at end
-  const existing = new Set(allIds);
-  const ordered = folderState.order.filter(id => existing.has(id));
-  const added = allIds.filter(id => !ordered.includes(id));
-  return [...ordered, ...added];
 }
 
 function genId(): string {
@@ -1061,20 +1043,10 @@ export default function AdminAgentsPage() {
   function updateFolders(next: FolderState) {
     setFolderState(next);
     saveFoldersLocal(next);
+    // Fire-and-forget DB save — failures are non-fatal
     getPreferences().then(prefs =>
       setPreferences({ ...prefs, agentFolders: next })
-    ).catch(() => {});
-  }
-
-  // Reorder: move draggedId before targetId in the display order
-  function reorderItems(draggedId: string, targetId: string) {
-    if (draggedId === targetId) return;
-    const allIds = buildDisplayOrder(agents, folderState);
-    const filtered = allIds.filter(id => id !== draggedId);
-    const insertAt = filtered.indexOf(targetId);
-    if (insertAt === -1) return;
-    filtered.splice(insertAt, 0, draggedId);
-    updateFolders({ ...folderState, order: filtered });
+    ).catch(() => { /* silently ignore */ });
   }
 
   function handleAgentDrop(draggedAgentId: string, targetAgentId: string) {
@@ -1932,166 +1904,72 @@ export default function AdminAgentsPage() {
 
                 {!loading && agents.length > 0 && (() => {
                   const folderedAgentIds2 = new Set(folderState.folders.flatMap(f => f.agentIds));
-                  const folderMap = Object.fromEntries(folderState.folders.map(f => [f.id, f]));
-                  const agentMap = Object.fromEntries(agents.map(a => [a.id, a]));
-                  const displayOrder = buildDisplayOrder(agents, folderState);
-
-                  // Split into grid items (collapsed folders + ungrouped agents) and
-                  // full-width expanded folders, keeping their relative positions.
-                  // We render: grid row of collapsed/ungrouped items, then for each
-                  // expanded folder in its ordered position, a full-width block.
-                  const rows: Array<{ type: 'grid'; ids: string[] } | { type: 'expanded'; folderId: string }> = [];
-                  let currentGrid: string[] = [];
-                  for (const id of displayOrder) {
-                    const folder = folderMap[id];
-                    if (folder && !folder.collapsed) {
-                      if (currentGrid.length) { rows.push({ type: 'grid', ids: currentGrid }); currentGrid = []; }
-                      rows.push({ type: 'expanded', folderId: id });
-                    } else {
-                      currentGrid.push(id);
-                    }
-                  }
-                  if (currentGrid.length) rows.push({ type: 'grid', ids: currentGrid });
+                  const ungroupedAgents2 = agents.filter(a => !folderedAgentIds2.has(a.id));
+                  const collapsedFolders = folderState.folders.filter(f => f.collapsed);
+                  const expandedFolders = folderState.folders.filter(f => !f.collapsed);
 
                   return (
                     <>
-                      {/* ── Eject drop zone — shown while dragging a foldered agent ── */}
-                      {draggingFromFolder && (
-                        <div
-                          onDragOver={(e) => { e.preventDefault(); setDragOverId('eject'); }}
-                          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null); }}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            setDragOverId(null);
-                            setDraggingFromFolder(null);
-                            const draggedId = e.dataTransfer.getData('agentId');
-                            if (draggedId) removeAgentFromFolder(draggedId);
-                          }}
-                          style={{
-                            marginBottom: '16px', padding: '20px', borderRadius: '12px',
-                            border: `2px dashed ${dragOverId === 'eject' ? 'rgba(0,209,255,0.7)' : 'rgba(255,255,255,0.15)'}`,
-                            background: dragOverId === 'eject' ? 'rgba(0,209,255,0.06)' : 'rgba(255,255,255,0.02)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                            color: dragOverId === 'eject' ? 'rgba(0,209,255,0.9)' : 'rgba(255,255,255,0.3)',
-                            fontSize: '13px', transition: 'all 150ms ease', cursor: 'copy',
-                          }}
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>folder_open</span>
-                          Drop here to remove from folder
-                        </div>
+                      {/* ── Collapsed folders (iOS-style square cards in 3-col grid) ── */}
+                      {collapsedFolders.length > 0 && (
+                        <ChromaGrid radius={420} damping={0.09} fadeOutMs={800} style={{
+                          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px',
+                        }}>
+                          {collapsedFolders.map(folder => {
+                            const folderAgents = folder.agentIds.map(id => agents.find(a => a.id === id)).filter(Boolean) as Agent[];
+                            return (
+                              <FolderHeader
+                                key={folder.id}
+                                folder={folder}
+                                folderAgents={folderAgents}
+                                count={folderAgents.length}
+                                isDragOver={dragOverId === `folder:${folder.id}`}
+                                onToggleCollapse={() => toggleFolderCollapse(folder.id)}
+                                onRename={(name) => renameFolderInline(folder.id, name)}
+                                onDragOver={(e) => { e.preventDefault(); setDragOverId(`folder:${folder.id}`); }}
+                                onDragLeave={() => setDragOverId(null)}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  setDragOverId(null);
+                                  const draggedId = e.dataTransfer.getData('agentId');
+                                  if (draggedId) handleDropOntoFolder(draggedId, folder.id);
+                                }}
+                              />
+                            );
+                          })}
+                        </ChromaGrid>
                       )}
 
-                      {rows.map((row, rowIdx) => {
-                        if (row.type === 'expanded') {
-                          const folder = folderMap[row.folderId];
-                          const folderAgents = folder.agentIds.map(id => agentMap[id]).filter(Boolean) as Agent[];
-                          return (
-                            <div key={folder.id}
-                              draggable
-                              onDragStart={(e) => { e.dataTransfer.setData('itemId', folder.id); e.dataTransfer.setData('itemType', 'folder'); setDragOverId(null); }}
-                              onDragEnd={() => setDragOverId(null)}
+                      {/* ── Expanded folders (full-width, above agent grid) ── */}
+                      {expandedFolders.map(folder => {
+                        const folderAgents = folder.agentIds.map(id => agents.find(a => a.id === id)).filter(Boolean) as Agent[];
+                        return (
+                          <div key={folder.id} style={{ marginBottom: '24px' }}>
+                            <FolderHeader
+                              folder={folder}
+                              folderAgents={folderAgents}
+                              count={folderAgents.length}
+                              isDragOver={dragOverId === `folder:${folder.id}`}
+                              onToggleCollapse={() => toggleFolderCollapse(folder.id)}
+                              onRename={(name) => renameFolderInline(folder.id, name)}
                               onDragOver={(e) => { e.preventDefault(); setDragOverId(`folder:${folder.id}`); }}
                               onDragLeave={() => setDragOverId(null)}
                               onDrop={(e) => {
                                 e.preventDefault();
                                 setDragOverId(null);
-                                const agentDrag = e.dataTransfer.getData('agentId');
-                                const itemDrag = e.dataTransfer.getData('itemId');
-                                if (agentDrag) { handleDropOntoFolder(agentDrag, folder.id); return; }
-                                if (itemDrag && itemDrag !== folder.id) reorderItems(itemDrag, folder.id);
+                                const draggedId = e.dataTransfer.getData('agentId');
+                                if (draggedId) handleDropOntoFolder(draggedId, folder.id);
                               }}
-                              style={{ marginBottom: '24px', outline: dragOverId === `folder:${folder.id}` ? '2px solid rgba(0,209,255,0.4)' : 'none', borderRadius: '12px', transition: 'outline 100ms' }}
-                            >
-                              <FolderHeader
-                                folder={folder}
-                                folderAgents={folderAgents}
-                                count={folderAgents.length}
-                                isDragOver={false}
-                                onToggleCollapse={() => toggleFolderCollapse(folder.id)}
-                                onRename={(name) => renameFolderInline(folder.id, name)}
-                                onDragOver={() => {}}
-                                onDragLeave={() => {}}
-                                onDrop={() => {}}
-                              />
-                              <ChromaGrid radius={420} damping={0.09} fadeOutMs={800} style={{
-                                display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px',
-                                padding: '16px',
-                                background: 'rgba(255,255,255,0.02)',
-                                border: '1px solid rgba(255,255,255,0.06)',
-                                borderTop: 'none', borderRadius: '0 0 12px 12px',
-                              }}>
-                                {folderAgents.map(agent => (
-                                  <AgentCard
-                                    key={agent.id}
-                                    agent={agent}
-                                    scanResult={scanResults[agent.id]}
-                                    scanStep={scanSteps[agent.id]}
-                                    testResult={testResults[agent.id]}
-                                    isDiscovering={!!rowDiscoverState[agent.id]}
-                                    onTest={() => handleTest(agent)}
-                                    onScan={() => handleScan(agent)}
-                                    onDiscover={() => handleRowDiscover(agent)}
-                                    onEdit={() => openEdit(agent)}
-                                    onDelete={() => setDeleteTarget(agent)}
-                                    onOpenScanModal={() => {
-                                      const sr = scanResults[agent.id];
-                                      if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
-                                    }}
-                                    isDragOver={dragOverId === agent.id}
-                                    onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); setDragOverId(null); setDraggingFromFolder(agent.id); }}
-                                    onDragEnd={() => setDraggingFromFolder(null)}
-                                    onDragOver={(e) => { e.preventDefault(); setDragOverId(agent.id); }}
-                                    onDrop={(e) => {
-                                      e.preventDefault(); setDragOverId(null);
-                                      const draggedId = e.dataTransfer.getData('agentId');
-                                      if (draggedId) handleAgentDrop(draggedId, agent.id);
-                                    }}
-                                    onRemoveFromFolder={() => removeAgentFromFolder(agent.id)}
-                                  />
-                                ))}
-                              </ChromaGrid>
-                            </div>
-                          );
-                        }
-
-                        // Grid row: collapsed folders + ungrouped agents
-                        return (
-                          <ChromaGrid key={`grid-${rowIdx}`} radius={420} damping={0.09} fadeOutMs={800} style={{
-                            display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px', marginBottom: '24px',
-                          }}>
-                            {row.ids.map(id => {
-                              const folder = folderMap[id];
-                              if (folder) {
-                                const folderAgents = folder.agentIds.map(fid => agentMap[fid]).filter(Boolean) as Agent[];
-                                return (
-                                  <div key={folder.id}
-                                    draggable
-                                    onDragStart={(e) => { e.dataTransfer.setData('itemId', folder.id); e.dataTransfer.setData('itemType', 'folder'); setDragOverId(null); }}
-                                    onDragEnd={() => setDragOverId(null)}
-                                  >
-                                    <FolderHeader
-                                      folder={folder}
-                                      folderAgents={folderAgents}
-                                      count={folderAgents.length}
-                                      isDragOver={dragOverId === `folder:${folder.id}`}
-                                      onToggleCollapse={() => toggleFolderCollapse(folder.id)}
-                                      onRename={(name) => renameFolderInline(folder.id, name)}
-                                      onDragOver={(e) => { e.preventDefault(); setDragOverId(`folder:${folder.id}`); }}
-                                      onDragLeave={() => setDragOverId(null)}
-                                      onDrop={(e) => {
-                                        e.preventDefault(); setDragOverId(null);
-                                        const agentDrag = e.dataTransfer.getData('agentId');
-                                        const itemDrag = e.dataTransfer.getData('itemId');
-                                        if (agentDrag) { handleDropOntoFolder(agentDrag, folder.id); return; }
-                                        if (itemDrag && itemDrag !== folder.id) reorderItems(itemDrag, folder.id);
-                                      }}
-                                    />
-                                  </div>
-                                );
-                              }
-                              const agent = agentMap[id];
-                              if (!agent) return null;
-                              return (
+                            />
+                            <ChromaGrid radius={420} damping={0.09} fadeOutMs={800} style={{
+                              display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px',
+                              padding: '16px',
+                              background: 'rgba(255,255,255,0.02)',
+                              border: '1px solid rgba(255,255,255,0.06)',
+                              borderTop: 'none',
+                              borderRadius: '0 0 12px 12px',
+                            }}>
+                              {folderAgents.map(agent => (
                                 <AgentCard
                                   key={agent.id}
                                   agent={agent}
@@ -2109,34 +1987,109 @@ export default function AdminAgentsPage() {
                                     if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
                                   }}
                                   isDragOver={dragOverId === agent.id}
-                                  onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); e.dataTransfer.setData('itemId', agent.id); setDragOverId(null); }}
-                                  onDragEnd={() => setDragOverId(null)}
+                                  onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); setDragOverId(null); setDraggingFromFolder(agent.id); }}
+                                  onDragEnd={() => setDraggingFromFolder(null)}
                                   onDragOver={(e) => { e.preventDefault(); setDragOverId(agent.id); }}
                                   onDrop={(e) => {
-                                    e.preventDefault(); setDragOverId(null);
-                                    const agentDrag = e.dataTransfer.getData('agentId');
-                                    const itemDrag = e.dataTransfer.getData('itemId');
-                                    if (agentDrag && agentDrag !== agent.id) {
-                                      // If dragged from a folder — eject it first then reorder
-                                      if (folderedAgentIds2.has(agentDrag)) {
-                                        removeAgentFromFolder(agentDrag);
-                                      } else {
-                                        handleAgentDrop(agentDrag, agent.id);
-                                      }
-                                    } else if (itemDrag && itemDrag !== agent.id) {
-                                      reorderItems(itemDrag, agent.id);
-                                    }
+                                    e.preventDefault();
+                                    setDragOverId(null);
+                                    const draggedId = e.dataTransfer.getData('agentId');
+                                    if (draggedId) handleAgentDrop(draggedId, agent.id);
                                   }}
+                                  onRemoveFromFolder={() => removeAgentFromFolder(agent.id)}
                                 />
-                              );
-                            })}
-                          </ChromaGrid>
+                              ))}
+                            </ChromaGrid>
+                          </div>
                         );
                       })}
-                      {/* Add card always at the bottom */}
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}>
+
+                      {/* ── Eject drop zone — shown while dragging a foldered agent ── */}
+                      {draggingFromFolder && (
+                        <div
+                          onDragOver={(e) => { e.preventDefault(); setDragOverId('eject'); }}
+                          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null); }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            setDragOverId(null);
+                            setDraggingFromFolder(null);
+                            const draggedId = e.dataTransfer.getData('agentId');
+                            if (draggedId) removeAgentFromFolder(draggedId);
+                          }}
+                          style={{
+                            marginBottom: '16px',
+                            padding: '20px',
+                            borderRadius: '12px',
+                            border: `2px dashed ${dragOverId === 'eject' ? 'rgba(0,209,255,0.7)' : 'rgba(255,255,255,0.15)'}`,
+                            background: dragOverId === 'eject' ? 'rgba(0,209,255,0.06)' : 'rgba(255,255,255,0.02)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px',
+                            color: dragOverId === 'eject' ? 'rgba(0,209,255,0.9)' : 'rgba(255,255,255,0.3)',
+                            fontSize: '13px',
+                            transition: 'all 150ms ease',
+                            cursor: 'copy',
+                          }}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>folder_open</span>
+                          Drop here to remove from folder
+                        </div>
+                      )}
+
+                      {/* ── Ungrouped agent grid — also a drop target to eject agents from folders ── */}
+                      <ChromaGrid radius={420} damping={0.09} fadeOutMs={800}
+                        style={{
+                          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px',
+                          transition: 'background 150ms ease, box-shadow 150ms ease',
+                          ...(dragOverId === 'ungrouped' ? {
+                            background: 'rgba(0,209,255,0.04)',
+                            boxShadow: 'inset 0 0 0 2px rgba(0,209,255,0.25)',
+                            borderRadius: '12px',
+                          } : {}),
+                        }}
+                        onDragOver={(e: React.DragEvent) => { e.preventDefault(); setDragOverId('ungrouped'); }}
+                        onDragLeave={(e: React.DragEvent) => {
+                          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverId(null);
+                        }}
+                        onDrop={(e: React.DragEvent) => {
+                          e.preventDefault();
+                          setDragOverId(null);
+                          setDraggingFromFolder(null);
+                          const draggedId = e.dataTransfer.getData('agentId');
+                          if (draggedId && folderedAgentIds2.has(draggedId)) removeAgentFromFolder(draggedId);
+                        }}
+                      >
+                        {ungroupedAgents2.map(agent => (
+                          <AgentCard
+                            key={agent.id}
+                            agent={agent}
+                            scanResult={scanResults[agent.id]}
+                            scanStep={scanSteps[agent.id]}
+                            testResult={testResults[agent.id]}
+                            isDiscovering={!!rowDiscoverState[agent.id]}
+                            onTest={() => handleTest(agent)}
+                            onScan={() => handleScan(agent)}
+                            onDiscover={() => handleRowDiscover(agent)}
+                            onEdit={() => openEdit(agent)}
+                            onDelete={() => setDeleteTarget(agent)}
+                            onOpenScanModal={() => {
+                              const sr = scanResults[agent.id];
+                              if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
+                            }}
+                            isDragOver={dragOverId === agent.id}
+                            onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); setDragOverId(null); }}
+                            onDragOver={(e) => { e.preventDefault(); setDragOverId(agent.id); }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              setDragOverId(null);
+                              const draggedId = e.dataTransfer.getData('agentId');
+                              if (draggedId) handleAgentDrop(draggedId, agent.id);
+                            }}
+                          />
+                        ))}
                         <DeployCard onClick={openCreate} />
-                      </div>
+                      </ChromaGrid>
                     </>
                   );
                 })()}
