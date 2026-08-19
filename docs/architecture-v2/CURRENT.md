@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `ec66b8a` — fix(isolation): tenant-scope RunTasks, RunArtifacts, ContextMessages, resolveRootTaskID
+Commit: `148235b` — fix(runrecorder): correct schema column names and wire step/usage/final-output recording
 
 ---
 
@@ -329,6 +329,21 @@ Design: `docs/architecture-v2/CANVAS_A2A_AGENT_GENERATION_FULL.md`
 
 ### Test state
 `go test ./...` — **36 packages, 0 failures** (includes new S1-48)
+
+---
+
+## Run History Stabilization — COMPLETE (148235b, 2026-08-19)
+
+Four root causes for empty Flow/Steps/Answer tabs fixed:
+
+1. **`RecordUsage` wrong columns**: `input_tokens`/`output_tokens`/`recorded_at` → `tokens_input`/`tokens_output`/`created_at`; added required `provider`/`model`/`cost_usd` params; added `UPDATE them.runs` rollup for `total_tokens_in/out/cost_usd`
+2. **`RecordStep` broken**: Replaced with `RecordAgentStep` writing correct columns (`agent_slug`, `iteration`, `input` jsonb, `output`, `status`, `latency_ms`, `started_at`, `ended_at`). Old `RecordStep` made a no-op.
+3. **`SetFinalOutput`**: New method writes `them.runs.final_output` at completion → Answer tab now populated
+4. **Orchestrator wiring**: `StepRecorder` interface added; `executeTools` now calls `RecordAgentStep` per invocation with timing; `WithUsageRecorder`+`WithStepRecorder` wired in `cmd/worker/main.go`
+
+Test state: `go test ./...` — **36 packages, 0 failures** (3 new tests S1-09 extended: TestRecordAgentStep, TestSetFinalOutput, TestRecordStep_isNoop; count 22→25)
+
+**Effect**: New runs will populate `run_steps` rows (→ Flow tree + Steps tab) and `final_output` (→ Answer tab). Old runs (before this commit) remain empty.
 
 ---
 
