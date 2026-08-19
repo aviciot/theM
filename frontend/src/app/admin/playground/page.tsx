@@ -1170,6 +1170,23 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
     }).catch(() => {});
   }, []);
 
+  // Re-fetch history when user returns to this browser tab, in case the run
+  // finished while they were away and the answer wasn't loaded yet.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!contextId || chatWs.current) return; // skip if WS is active (mid-run)
+      themApi.contextMessages(contextId, 200).then(msgs => {
+        const chatMsgs: ChatMsg[] = msgs
+          .filter(m => m.text)
+          .map(m => ({ role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant', text: m.text }));
+        if (chatMsgs.length > 0) setMessages(chatMsgs);
+      }).catch(() => {});
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [contextId]);
+
   // Persist context_id
   useEffect(() => {
     if (!contextId) return;
@@ -1515,7 +1532,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
 
       {/* Messages */}
       <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: pad, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {messages.length === 0 && restoredSession && (
+        {restoredSession && (
           <div style={{ margin: '40px auto', maxWidth: 360, padding: '14px 18px', borderRadius: 12, border: `1px solid ${color}`, background: 'rgba(124,58,237,0.06)', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tm-text)' }}>↩ Resume last conversation?</div>
             <div style={{ fontSize: 12, color: 'var(--tm-text-muted)' }}>
