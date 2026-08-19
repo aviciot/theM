@@ -66,6 +66,10 @@ interface SkillData {
   skill_id: string;
   name: string;
   description: string;
+  tags: string[];
+  input_modes: string[];
+  output_modes: string[];
+  examples: string[];
 }
 
 interface StepData {
@@ -130,7 +134,12 @@ function SkillNode({ data }: { data: SkillData }) {
       <div style={{ color: C.purple, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '4px' }}>SKILL</div>
       <div style={{ color: '#fff', fontWeight: 600, fontSize: '13px' }}>{data.name || data.skill_id}</div>
       {data.description && <div style={{ color: C.textMuted, fontSize: '11px', marginTop: '2px' }}>{data.description}</div>}
-      <div style={{ marginTop: '6px', fontSize: '10px', color: C.textMuted }}>Double-click to edit pipeline</div>
+      <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: 3, background: 'rgba(0,240,255,0.1)', border: '1px solid rgba(0,240,255,0.3)', color: '#00f0ff' }}>
+          {(data.input_modes ?? ['text/plain'])[0]}
+        </span>
+        <span style={{ fontSize: '10px', color: C.textMuted }}>dbl-click to edit</span>
+      </div>
     </div>
   );
 }
@@ -159,6 +168,26 @@ function StepNode({ data }: { data: StepData }) {
       <Handle type="source" position={Position.Bottom} style={{ background: style.border }} />
       <div style={{ color: style.border, fontSize: '9px', fontWeight: 700, letterSpacing: '0.1em', marginBottom: '2px' }}>{style.label}</div>
       <div style={{ color: '#fff', fontWeight: 600, fontSize: '12px' }}>{data.label || data.step_id}</div>
+      {(() => {
+        const cfg = data.config ?? {};
+        let sub = '';
+        if (data.step_type === 'input') {
+          const bindings = cfg.bindings as Record<string, string> | undefined;
+          const v = bindings?.text ?? '';
+          sub = v ? `→ ${v}` : '→ input';
+        } else if (data.step_type === 'llm') {
+          sub = `→ ${(cfg.output_var as string) || 'output'}`;
+        } else if (data.step_type === 'transform') {
+          const exprs = cfg.expressions as Record<string, string> | undefined;
+          const keys = Object.keys(exprs ?? {});
+          sub = keys.length ? `→ ${keys.join(', ')}` : '→ vars';
+        } else if (data.step_type === 'response') {
+          sub = `from ${(cfg.from_var as string) || 'output'}`;
+        } else if (data.step_type === 'http') {
+          sub = (cfg.url_template as string) ? (cfg.url_template as string).replace(/^https?:\/\//, '').slice(0, 22) : 'url not set';
+        }
+        return sub ? <div style={{ fontSize: '10px', color: style.border, opacity: 0.8, marginTop: 2 }}>{sub}</div> : null;
+      })()}
     </div>
   );
 }
@@ -291,7 +320,15 @@ function CanvasInner() {
       id: `skill-${sk.skill_id}`,
       type: 'skill',
       position: sk.position ?? { x: 150 + i * 220, y: 250 },
-      data: { skill_id: sk.skill_id, name: sk.name, description: sk.description ?? '' },
+      data: {
+        skill_id: sk.skill_id,
+        name: sk.name,
+        description: sk.description ?? '',
+        tags: sk.tags ?? [],
+        input_modes: sk.input_modes ?? ['text/plain'],
+        output_modes: sk.output_modes ?? ['text/plain'],
+        examples: sk.examples ?? [],
+      },
     }));
     const skillEdges: Edge[] = doc.skills.map(sk => ({
       id: `root-to-${sk.skill_id}`,
@@ -349,9 +386,10 @@ function CanvasInner() {
           skill_id: sd.skill_id,
           name: sd.name,
           description: sd.description ?? '',
-          tags: [],
-          input_modes: ['text'],
-          output_modes: ['text'],
+          tags: sd.tags ?? [],
+          input_modes: sd.input_modes ?? ['text/plain'],
+          output_modes: sd.output_modes ?? ['text/plain'],
+          examples: sd.examples ?? [],
           input_schema: {},
           output_schema: {},
           steps,
@@ -457,7 +495,7 @@ function CanvasInner() {
       id: `skill-${sid}`,
       type: 'skill',
       position: { x: 150 + agentNodes.filter(n => n.type === 'skill').length * 220, y: 250 },
-      data: { skill_id: sid, name: 'New Skill', description: '' },
+      data: { skill_id: sid, name: 'New Skill', description: '', tags: [], input_modes: ['text/plain'], output_modes: ['text/plain'], examples: [] },
     };
     setAgentNodes(prev => [...prev, newNode]);
     if (agentNodes.find(n => n.id === 'agent-root')) {
@@ -752,7 +790,7 @@ function CanvasInner() {
                   const bounds = (e.currentTarget as HTMLElement).getBoundingClientRect();
                   const pos = screenToFlowPosition({ x: e.clientX - bounds.left, y: e.clientY - bounds.top });
                   const sid = `skill-${Date.now()}`;
-                  const newNode: Node = { id: `skill-${sid}`, type: 'skill', position: pos, data: { skill_id: sid, name: 'New Skill', description: '' } };
+                  const newNode: Node = { id: `skill-${sid}`, type: 'skill', position: pos, data: { skill_id: sid, name: 'New Skill', description: '', tags: [], input_modes: ['text/plain'], output_modes: ['text/plain'], examples: [] } };
                   setAgentNodes(prev => [...prev, newNode]);
                   setAgentEdges(prev => [...prev, { id: `root-to-${sid}`, source: 'agent-root', target: `skill-${sid}` }]);
                   setDirty(true);
@@ -836,27 +874,113 @@ function CanvasInner() {
 
             {selectedNode.type === 'skill' && (() => {
               const d = selectedNode.data as unknown as SkillData;
+              const skillNodeId = selectedNode.id;
+              const MODES = ['text/plain', 'text/markdown', 'application/json', 'application/octet-stream'];
+              function updateSkillArray(field: keyof SkillData, arr: string[]) {
+                if (activeView === 'agent') {
+                  setAgentNodes(prev => prev.map(n =>
+                    n.id === skillNodeId ? { ...n, data: { ...n.data, [field]: arr } } : n
+                  ));
+                }
+                setDirty(true);
+              }
+              function toggleMode(field: 'input_modes' | 'output_modes', mode: string) {
+                const current = (d[field] ?? []) as string[];
+                const next = current.includes(mode) ? current.filter(m => m !== mode) : [...current, mode];
+                updateSkillArray(field, next.length ? next : [mode]);
+              }
               return (
                 <>
-                  <label style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Skill ID</label>
+                  <label style={labelStyle}>Skill ID</label>
                   <input
                     value={d.skill_id}
                     onChange={e => updateSelectedNodeField('skill_id', e.target.value)}
-                    style={{ width: '100%', background: 'transparent', border: `1px solid ${C.outline}`, color: '#fff', padding: '6px', borderRadius: '4px', fontSize: '13px', boxSizing: 'border-box' }}
+                    style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '11px' }}
                   />
-                  <label style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, display: 'block', marginTop: '12px', marginBottom: '4px' }}>Name</label>
-                  <input
-                    value={d.name}
-                    onChange={e => updateSelectedNodeField('name', e.target.value)}
-                    style={{ width: '100%', background: 'transparent', border: `1px solid ${C.outline}`, color: '#fff', padding: '6px', borderRadius: '4px', fontSize: '13px', boxSizing: 'border-box' }}
-                  />
-                  <label style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, display: 'block', marginTop: '12px', marginBottom: '4px' }}>Description</label>
-                  <textarea
-                    value={d.description}
-                    onChange={e => updateSelectedNodeField('description', e.target.value)}
-                    rows={2}
-                    style={{ width: '100%', background: 'transparent', border: `1px solid ${C.outline}`, color: '#fff', padding: '6px', borderRadius: '4px', fontSize: '13px', resize: 'vertical', boxSizing: 'border-box' }}
-                  />
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Name</label>
+                    <input
+                      value={d.name}
+                      onChange={e => updateSelectedNodeField('name', e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Description</label>
+                    <textarea
+                      value={d.description}
+                      onChange={e => updateSelectedNodeField('description', e.target.value)}
+                      rows={2}
+                      style={textareaStyle}
+                    />
+                  </div>
+
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Input Modes</label>
+                    {MODES.map(m => (
+                      <label key={m} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, cursor: 'pointer', fontSize: '12px', color: '#ccc' }}>
+                        <input
+                          type="checkbox"
+                          checked={(d.input_modes ?? []).includes(m)}
+                          onChange={() => toggleMode('input_modes', m)}
+                          style={{ accentColor: C.cyan }}
+                        />
+                        {m}
+                      </label>
+                    ))}
+                  </div>
+
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Output Modes</label>
+                    {MODES.map(m => (
+                      <label key={m} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, cursor: 'pointer', fontSize: '12px', color: '#ccc' }}>
+                        <input
+                          type="checkbox"
+                          checked={(d.output_modes ?? []).includes(m)}
+                          onChange={() => toggleMode('output_modes', m)}
+                          style={{ accentColor: C.purple }}
+                        />
+                        {m}
+                      </label>
+                    ))}
+                  </div>
+
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Tags <span style={hint}>comma-separated</span></label>
+                    <input
+                      value={(d.tags ?? []).join(', ')}
+                      onChange={e => updateSkillArray('tags', e.target.value.split(',').map(t => t.trim()).filter(Boolean))}
+                      style={inputStyle}
+                      placeholder="search, nlp, ..."
+                    />
+                  </div>
+
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Examples</label>
+                    {(d.examples ?? []).map((ex, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                        <input
+                          value={ex}
+                          onChange={e => {
+                            const next = [...(d.examples ?? [])];
+                            next[i] = e.target.value;
+                            updateSkillArray('examples', next);
+                          }}
+                          style={{ ...inputStyle, flex: 1, fontSize: '12px' }}
+                          placeholder="e.g. Summarize this article"
+                        />
+                        <button
+                          onClick={() => updateSkillArray('examples', (d.examples ?? []).filter((_, j) => j !== i))}
+                          style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
+                        >×</button>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => updateSkillArray('examples', [...(d.examples ?? []), ''])}
+                      style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}
+                    >+ Add example</button>
+                  </div>
+
                   <button onClick={() => {
                     savePipelineState();
                     setActiveSkillId(d.skill_id);

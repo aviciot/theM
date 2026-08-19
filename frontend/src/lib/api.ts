@@ -575,6 +575,7 @@ export interface AgentSkillDoc {
   tags: string[];
   input_modes: string[];
   output_modes: string[];
+  examples: string[];
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
   steps: AgentStepDoc[];
