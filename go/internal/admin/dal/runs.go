@@ -357,24 +357,26 @@ func (d *DB) ListContextSessions(ctx context.Context, tenantID, orchestrator str
 		SELECT
 			t.context_id::text,
 			COALESCE(MAX(r.orchestrator_name), '') AS orchestrator_name,
-			COUNT(DISTINCT r.id)                   AS turn_count,
+			COUNT(DISTINCT r.id) FILTER (WHERE r.status IN ('completed','running')) AS turn_count,
 			COALESCE(
 				(SELECT COALESCE(rr.goal, '')
 				 FROM them.runs rr
 				 JOIN them.tasks tt ON tt.run_id = rr.id
 				 WHERE tt.context_id = t.context_id
 				   AND rr.tenant_id = $1::uuid
+				   AND rr.status IN ('completed','running')
 				 ORDER BY rr.started_at ASC LIMIT 1),
 				''
 			) AS title,
-			MAX(r.started_at)::text AS last_active
+			MAX(r.started_at) FILTER (WHERE r.status IN ('completed','running'))::text AS last_active
 		FROM them.tasks t
 		JOIN them.runs r ON r.id = t.run_id
 		WHERE r.tenant_id = $1::uuid
 		  AND t.context_id IS NOT NULL
 		  AND ($2 = '' OR r.orchestrator_name = $2)
 		GROUP BY t.context_id
-		ORDER BY MAX(r.started_at) DESC
+		HAVING COUNT(DISTINCT r.id) FILTER (WHERE r.status IN ('completed','running')) > 0
+		ORDER BY MAX(r.started_at) FILTER (WHERE r.status IN ('completed','running')) DESC
 		LIMIT $3`
 
 	rows, err := d.q.Query(ctx, q, tenantID, orchestrator, limit)

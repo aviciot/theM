@@ -1217,7 +1217,17 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
-        if (msg.type === 'no_active_run') { ws.close(); return; }
+        if (msg.type === 'no_active_run') {
+          ws.close();
+          // Run finished while we were away — load history so the conversation is visible.
+          themApi.contextMessages(ctxId, 200).then(msgs => {
+            const chatMsgs: ChatMsg[] = msgs
+              .filter(m => m.text)
+              .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant' as 'user' | 'assistant', text: m.text }));
+            if (chatMsgs.length > 0) setMessages(chatMsgs);
+          }).catch(() => {});
+          return;
+        }
         if (msg.type === 'ready') {
           runId.current = msg.run_id;
           if (msg.context_id) setContextId(msg.context_id as string);
