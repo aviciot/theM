@@ -600,6 +600,43 @@ export interface AgentDefinition {
   updated_at: string;
 }
 
+export interface AgentCompileError {
+  code: string;
+  message: string;
+  context?: string;
+}
+
+export interface AgentValidationResult {
+  valid: boolean;
+  errors?: AgentCompileError[];
+}
+
+export interface AgentPublishResult {
+  agent_id: string;
+  definition_id: string;
+  revision: number;
+  spec_hash: string;
+}
+
+export interface AgentBindingSlotStatus {
+  id: string;
+  application_id: string;
+  agent_id: string;
+  definition_id?: string;
+  credential_set: Record<string, boolean>;
+  config_overrides?: Record<string, unknown>;
+  policies?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentBindingUpsertBody {
+  definition_id?: string;
+  credentials: Record<string, string>;
+  config_overrides?: Record<string, unknown>;
+  policies?: Record<string, unknown>;
+}
+
 export const themApi = {
   health: () => fetch(`${HEALTH_BASE}/health`)
     .then((r) => r.json())

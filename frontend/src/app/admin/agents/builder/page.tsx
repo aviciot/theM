@@ -194,8 +194,12 @@ function CanvasInner() {
   // UI state
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [loadError, setLoadError] = useState('');
+  const [publishError, setPublishError] = useState('');
+  const [publishedRevision, setPublishedRevision] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
 
   // Properties panel
@@ -375,6 +379,39 @@ function CanvasInner() {
     }
   }
 
+  async function handleValidate() {
+    if (!defId) return;
+    setValidating(true);
+    setPublishError('');
+    try {
+      await themApi.validateAgentDefinition(defId);
+      alert('Validation passed — definition is ready to publish.');
+    } catch (e: unknown) {
+      const body = (e as { response?: { errors?: { message: string }[] } })?.response;
+      const msgs = body?.errors?.map((err: { message: string }) => err.message).join('\n');
+      setPublishError(msgs ?? String(e));
+    } finally {
+      setValidating(false);
+    }
+  }
+
+  async function handlePublish() {
+    if (!defId || !confirm('Publish this agent definition? This creates a runtime agent entry.')) return;
+    setPublishing(true);
+    setPublishError('');
+    try {
+      const result = await themApi.publishAgentDefinition(defId);
+      setPublishedRevision(result.revision);
+      setDirty(false);
+    } catch (e: unknown) {
+      const body = (e as { response?: { errors?: { message: string }[] } })?.response;
+      const msgs = body?.errors?.map((err: { message: string }) => err.message).join('\n');
+      setPublishError(msgs ?? String(e));
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   function handleBack() {
     savePipelineState();
     if (activeView === 'skill') {
@@ -494,8 +531,11 @@ function CanvasInner() {
           )}
         </div>
 
-        {saveError && (
-          <span style={{ color: '#f87171', fontSize: '12px', maxWidth: '300px' }}>{saveError}</span>
+        {(saveError || publishError) && (
+          <span style={{ color: '#f87171', fontSize: '12px', maxWidth: '300px' }}>{saveError || publishError}</span>
+        )}
+        {publishedRevision !== null && (
+          <span style={{ color: '#34d399', fontSize: '12px' }}>Published rev {publishedRevision}</span>
         )}
 
         {defId && (
@@ -504,6 +544,23 @@ function CanvasInner() {
             color: '#f87171', padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
           }}>
             {deleting ? 'Deleting...' : 'Delete Draft'}
+          </button>
+        )}
+        {defId && (
+          <button onClick={handleValidate} disabled={validating} style={{
+            background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.4)',
+            color: '#34d399', padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
+          }}>
+            {validating ? 'Validating...' : 'Validate'}
+          </button>
+        )}
+        {defId && (
+          <button onClick={handlePublish} disabled={publishing} style={{
+            background: publishing ? 'rgba(0,240,255,0.1)' : 'rgba(0,240,255,0.15)',
+            border: '1px solid rgba(0,240,255,0.4)',
+            color: '#00f0ff', padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
+          }}>
+            {publishing ? 'Publishing...' : 'Publish'}
           </button>
         )}
         <button onClick={handleSave} disabled={saving} style={{

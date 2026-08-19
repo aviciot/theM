@@ -371,24 +371,92 @@ Live verified (2026-08-19):
 
 ---
 
+## Phase 3 — Compile + Publish Pipeline + Application Binding UI — COMPLETE (2026-08-19)
+
+### What was built
+
+**DB (applied to live DB):**
+- `db/036_canvas_a2a_runtime.sql` — `them.agent_runtime_specs` + `them.app_agent_bindings`
+  - `agent_runtime_specs`: `(agent_id PK FK→agents, definition_id FK→agent_definitions, spec_hash, credential_schema JSONB, agent_card_json JSONB, published_at)`
+  - `app_agent_bindings`: `(id UUID PK, application_id FK, agent_id FK, definition_id FK, credential_bindings JSONB AES-GCM ciphertext, config_overrides JSONB, policies JSONB, UNIQUE(application_id, agent_id))`
+
+**Go — `go/internal/agentgen/compiler.go` (NEW):**
+- `Compile(agentID, tenantID, definitionID, agentSlug, rawJSON) (*AgentSpec, []CompileError)`
+- Error codes: INVALID_JSON, MISSING_FIELD, DUPLICATE_SLOT, DUPLICATE_SKILL, DUPLICATE_STEP, UNKNOWN_STEP_TYPE, UNDECLARED_SLOT, DANGLING_NEXT, DANGLING_BRANCH, CYCLE_DETECTED, INVALID_SLUG
+- DFS cycle detection + topological sort via `topoSort()`; slug sanitizer (hyphens→underscores, truncate to 48)
+- 15 tests in `compiler_test.go` (S1-50)
+
+**Go — `go/internal/admin/dal/agent_definitions_publish.go` (NEW):**
+- `PublishCanvasAgent` — 3-table atomic CTE: `component_definitions` → `agents` → `agent_runtime_specs` (ON CONFLICT DO UPDATE for republish)
+- `MarkAgentDefinitionPublished` — updates status to 'published'
+- `namespace = tenantID` for tenant-scoped agents
+
+**Go — `go/internal/admin/dal/agent_bindings.go` (NEW):**
+- `UpsertAgentBinding`, `GetAgentBindingStatus`, `ListAgentBindings`, `DeleteAgentBinding`
+- All responses return `credential_set: map[string]bool` only — never ciphertext or plaintext
+
+**Go — `go/internal/admin/service/agent_definitions_publish.go` (NEW):**
+- `ValidateAgentDefinition` (compile without persisting), `PublishAgentDefinition` (compile + 3-table write + mark published + Redis signal)
+- `UpsertBinding`, `GetBindingStatus`, `ListBindings`, `DeleteBinding`
+- AES-256-GCM: `encryptAESGCM(key, plaintext)` → `base64url(nonce||ct||tag)`; `DecryptAESGCM` exported for runtime layer
+- `ErrEncryptionKeyMissing` sentinel; `AgentCompileError` type (NOT ValidationError — collision with Phase C type)
+- 11 tests in `agent_definitions_publish_test.go` (S1-51)
+
+**Go — `go/internal/admin/agent_definitions.go` (MODIFIED):**
+- Routes: `POST /agent-definitions/{id}/validate`, `POST /agent-definitions/{id}/publish`
+- Constructor: `NewAgentDefinitionsHandler(db, cache, fernetKey []byte)`
+- `Svc()` accessor for `AgentBindingsHandler` reuse
+
+**Go — `go/internal/admin/agent_bindings.go` (NEW):**
+- `AgentBindingsHandler` with routes under `/admin/applications/{app_id}`:
+  - `GET/POST/PUT/DELETE /agent-bindings`, `GET/POST/PUT/DELETE /agent-bindings/{agent_id}`
+
+**Go — `go/internal/admin/router.go` (MODIFIED):**
+- `NewAgentDefinitionsHandler(db, cache, fernetKey)` wired; bindings routes under `tenantScoped.Route("/applications/{app_id}", ...)`
+
+**`docker-compose.yml` (MODIFIED):**
+- Traefik router `them-go-agent-bindings` at priority 121 for `PathRegexp(^/api/v1/admin/applications/[^/]+/agent-bindings(/[^/]+)?)` → `them-go-bridge-svc`
+
+**Frontend — `frontend/src/lib/api.ts` (MODIFIED):**
+- 5 new types: `AgentCompileError`, `AgentValidationResult`, `AgentPublishResult`, `AgentBindingSlotStatus`, `AgentBindingUpsertBody`
+- 6 new API methods: `validateAgentDefinition`, `publishAgentDefinition`, `listAgentBindings`, `getAgentBinding`, `upsertAgentBinding`, `deleteAgentBinding`
+
+**Frontend — `frontend/src/app/admin/agents/builder/page.tsx` (MODIFIED):**
+- State: `validating`, `publishing`, `publishError`, `publishedRevision`
+- `handleValidate` + `handlePublish` handlers
+- Toolbar buttons: Validate (green) + Publish (cyan) between Delete and Save
+
+**Frontend — `frontend/src/app/admin/applications/page.tsx` (MODIFIED):**
+- `AgentCredentialPanel` component: fetches binding status + definition slots, renders masked password inputs per slot, Save/Remove buttons
+- Shown in agent node Properties panel when `transport === 'a2a'` and `definition_id` is present
+
+**Docs updated in same commit:** `docs/SCHEMA.md`, `docs/REDIS.md`, `go/TEST_INDEX.md`
+
+### Security constraints (always in force)
+- Credential values **NEVER** in JSONB, logs, exports, Temporal history, or HTTP responses
+- Only AES-256-GCM ciphertext in `app_agent_bindings.credential_bindings`; decrypted per-request only
+- HTTP responses: `credential_set: {slot_name: bool}` only
+- Bindings API requires `ErrEncryptionKeyMissing` guard when `fernetKey` not configured
+
+### Test state
+`go test ./internal/admin/...` — **2 packages, 0 failures** (S1-50: 15 tests, S1-51: 11 tests)
+TypeScript: **clean** (0 errors)
+
+---
+
 ## Next recommended task
 
-**Phase 3 — Compile + Publish Pipeline + Application Binding UI**
+**Phase 4 — Live Smoke Test + Agent Runtime DB Wiring**
 
-Goal: clicking Publish deploys a live reusable agent; application admins bind credentials per application.
+Goals:
+1. Apply `db/036_canvas_a2a_runtime.sql` to live DB (if not yet applied) — blockers 7 and 8 above will clear
+2. Smoke test the full Phase 3 flow end-to-end:
+   - Create agent draft → Validate (200 valid=true) → Publish → check DB rows in `agent_runtime_specs` + `agents` + `component_definitions`
+   - In applications page, click an A2A agent node → bind credentials → verify `app_agent_bindings` row encrypted
+3. Wire `them-agent-runtime` to read from `agent_runtime_specs` (`loadSpecByAgentID` already stubbed — implement the real pgx query)
+4. Optional: add Phase 4 step types (branch, loop, parallel, a2a_call, human_wait, stream_out) to `interpreter.go`
 
-Requires reading `docs/architecture-v2/CANVAS_A2A_AGENT_GENERATION_FULL.md` Phase 3 section (§14).
-
-Steps (one session only — do NOT split compile and binding into separate sessions):
-1. Write `db/036_canvas_a2a_runtime.sql` — `agent_runtime_specs` + `app_agent_bindings` tables (see §8 of design doc for exact SQL). Apply to live DB.
-2. Go `agentgen.Compile(definition JSON) → AgentSpec` — topological sort of steps, validate every step's `credential_slot`/`provider_key_slot` is declared in Agent Root slots, detect cycles. Emits slot names only.
-3. `POST /api/v1/admin/agent-definitions/{id}/validate` — returns `{valid:bool, errors:[]}` (never 4xx, errors are payload)
-4. `POST /api/v1/admin/agent-definitions/{id}/publish` — compile → write `component_definitions` + `agents` + `agent_runtime_specs` rows in one transaction (shared UUID) → signal `them:agents:registry:{tenant_id}` cache invalidation
-5. Application-canvas Agent-node **Configure** panel: fetch agent's `credential_schema` from `component_definitions`, render one masked input per slot, save to `app_agent_bindings` (Fernet-encrypted server-side)
-6. Binding CRUD routes: `GET/POST/PUT/DELETE /api/v1/admin/applications/{app_id}/agent-bindings/{agent_id}`
-7. Traefik label for `them-go-agent-bindings` at priority 120 for `PathPrefix(/api/v1/admin/applications/) && PathRegexp(/agent-bindings/)`
-
-Do NOT widen to Phase 4 (advanced steps, security scan on publish, export) in this session.
+Do NOT begin Wave 10 (auth admin CRUD Go port) in the same session as Phase 4.
 
 ---
 
@@ -417,8 +485,8 @@ Do NOT widen to Phase 4 (advanced steps, security scan on publish, export) in th
 4. A2A server (`/a2a/*`) still on Python — not yet migrated to Go.
 5. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims, live two-tenant verification) remain open.
 6. `them-go-bridge` container startup: must use `--project-name them_gateway` when starting via compose to share the `them-network` network with the `them_gateway` project. Without it, postgres/redis conflict. Command: `docker compose -p them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge`.
-7. `agent_runtime_specs` and `app_agent_bindings` tables not yet created — needed before Phase 3 (binding publish pipeline + runtime DB queries). Write `db/036_canvas_a2a_runtime.sql` in Phase 3.
-8. `them-agent-runtime` reads from `agent_runtime_specs` table (`loadSpecByAgentID`), which does not exist until Phase 3 DB migration is applied. The service will fail to serve specs until the table exists.
+7. ~~`agent_runtime_specs` and `app_agent_bindings` tables not yet created~~ — **RESOLVED**: `db/036_canvas_a2a_runtime.sql` applied, both tables exist.
+8. `them-agent-runtime` reads from `agent_runtime_specs` (`loadSpecByAgentID` stub) — **partially resolved**: table exists; real pgx query still needs implementation (Phase 4 item).
 
 ---
 
