@@ -197,46 +197,86 @@ func TestUpdateRunStatus_completed(t *testing.T) {
 	assert.Equal(t, "", call.args[2])
 }
 
-// TestRecordUsage_insertsCorrectly verifies the INSERT … ON CONFLICT UPDATE
-// SQL and argument ordering for RecordUsage.
+// TestRecordUsage_insertsCorrectly verifies the INSERT SQL and argument ordering for RecordUsage.
 func TestRecordUsage_insertsCorrectly(t *testing.T) {
 	db := &mockDB{}
 	rec := New(db)
 
-	err := rec.RecordUsage(context.Background(), "run-tok", 150, 320)
+	err := rec.RecordUsage(context.Background(), "run-tok", "anthropic", "claude-sonnet-5", 150, 320, 0.0042)
 	require.NoError(t, err)
 
-	require.Len(t, db.calls, 1)
-	call := db.calls[0]
+	// Two calls: INSERT into run_usage, then UPDATE them.runs for rollup.
+	require.Len(t, db.calls, 2)
+	insert := db.calls[0]
+	rollup := db.calls[1]
 
-	assert.Contains(t, call.sql, "INSERT INTO them.run_usage")
-	assert.Contains(t, call.sql, "ON CONFLICT (run_id) DO UPDATE")
+	assert.Contains(t, insert.sql, "INSERT INTO them.run_usage")
+	assert.Contains(t, insert.sql, "tokens_input")
+	assert.Contains(t, insert.sql, "tokens_output")
 
-	// args: run_id, input_tokens, output_tokens, recorded_at
-	require.Len(t, call.args, 4)
-	assert.Equal(t, "run-tok", call.args[0])
-	assert.Equal(t, 150, call.args[1])
-	assert.Equal(t, 320, call.args[2])
-	_, ok := call.args[3].(time.Time)
-	assert.True(t, ok, "4th arg should be a time.Time")
+	// INSERT args: run_id, provider, model, tokens_input, tokens_output, cost_usd
+	require.Len(t, insert.args, 6)
+	assert.Equal(t, "run-tok", insert.args[0])
+	assert.Equal(t, "anthropic", insert.args[1])
+	assert.Equal(t, "claude-sonnet-5", insert.args[2])
+	assert.Equal(t, 150, insert.args[3])
+	assert.Equal(t, 320, insert.args[4])
+	assert.Equal(t, 0.0042, insert.args[5])
+
+	// Rollup UPDATE args: run_id, tokens_input, tokens_output, cost_usd
+	assert.Contains(t, rollup.sql, "UPDATE them.runs")
+	require.Len(t, rollup.args, 4)
+	assert.Equal(t, "run-tok", rollup.args[0])
 }
 
-// TestRecordStep_insertsCorrectly verifies the INSERT into them.run_steps.
-func TestRecordStep_insertsCorrectly(t *testing.T) {
+// TestRecordAgentStep_insertsCorrectly verifies the INSERT into them.run_steps.
+func TestRecordAgentStep_insertsCorrectly(t *testing.T) {
 	db := &mockDB{}
 	rec := New(db)
 
-	err := rec.RecordStep(context.Background(), "run-step", "llm_response", `{"text":"hello"}`)
+	inputJSON := []byte(`{"task":"summarise"}`)
+	err := rec.RecordAgentStep(context.Background(), "run-step", "summariser", 0, inputJSON, "done", 250, "completed", "")
 	require.NoError(t, err)
 
 	require.Len(t, db.calls, 1)
 	call := db.calls[0]
 
 	assert.Contains(t, call.sql, "INSERT INTO them.run_steps")
-	require.Len(t, call.args, 3)
+	assert.Contains(t, call.sql, "agent_slug")
+	assert.Contains(t, call.sql, "latency_ms")
+	// args: run_id, iteration, agent_slug, input, output, status, latency_ms, step_err
+	require.Len(t, call.args, 8)
 	assert.Equal(t, "run-step", call.args[0])
-	assert.Equal(t, "llm_response", call.args[1])
-	assert.Equal(t, `{"text":"hello"}`, call.args[2])
+	assert.Equal(t, 0, call.args[1])
+	assert.Equal(t, "summariser", call.args[2])
+}
+
+// TestSetFinalOutput_updatesRun verifies that SetFinalOutput writes to them.runs.final_output.
+func TestSetFinalOutput_updatesRun(t *testing.T) {
+	db := &mockDB{}
+	rec := New(db)
+
+	err := rec.SetFinalOutput(context.Background(), "run-fin", "The answer is 42.")
+	require.NoError(t, err)
+
+	require.Len(t, db.calls, 1)
+	call := db.calls[0]
+	assert.Contains(t, call.sql, "UPDATE them.runs")
+	assert.Contains(t, call.sql, "final_output")
+	require.Len(t, call.args, 2)
+	assert.Equal(t, "run-fin", call.args[0])
+	assert.Equal(t, "The answer is 42.", call.args[1])
+}
+
+// TestRecordStep_isNoop verifies that the legacy RecordStep method is a no-op
+// (returns nil without issuing any DB calls).
+func TestRecordStep_isNoop(t *testing.T) {
+	db := &mockDB{}
+	rec := New(db)
+
+	err := rec.RecordStep(context.Background(), "run-step", "llm_response", `{"text":"hello"}`)
+	require.NoError(t, err)
+	assert.Empty(t, db.calls, "RecordStep is a no-op and must not issue DB calls")
 }
 
 // TestDBError_propagates verifies that a database error is wrapped and
@@ -268,13 +308,19 @@ func TestDBError_propagates(t *testing.T) {
 		{
 			name: "RecordUsage",
 			fn: func(r *Recorder) error {
-				return r.RecordUsage(context.Background(), "x", 0, 0)
+				return r.RecordUsage(context.Background(), "x", "anthropic", "claude-sonnet-5", 0, 0, 0)
 			},
 		},
 		{
-			name: "RecordStep",
+			name: "RecordAgentStep",
 			fn: func(r *Recorder) error {
-				return r.RecordStep(context.Background(), "x", "t", "c")
+				return r.RecordAgentStep(context.Background(), "x", "slug", 0, []byte(`{}`), "", 0, "completed", "")
+			},
+		},
+		{
+			name: "SetFinalOutput",
+			fn: func(r *Recorder) error {
+				return r.SetFinalOutput(context.Background(), "x", "text")
 			},
 		},
 	}

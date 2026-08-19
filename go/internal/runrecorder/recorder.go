@@ -132,29 +132,53 @@ func (r *Recorder) UpdateStatus(ctx context.Context, runID string, status domain
 	return r.UpdateRunStatus(ctx, runID, status, "")
 }
 
-// RecordUsage inserts or updates token usage for a run.
-func (r *Recorder) RecordUsage(ctx context.Context, runID string, inputTokens, outputTokens int) error {
-	const q = `
-		INSERT INTO them.run_usage (run_id, input_tokens, output_tokens, recorded_at)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (run_id) DO UPDATE
-			SET input_tokens = excluded.input_tokens,
-			    output_tokens = excluded.output_tokens,
-			    recorded_at = excluded.recorded_at`
-	err := r.db.Exec(ctx, q, runID, inputTokens, outputTokens, time.Now().UTC())
-	if err != nil {
+// RecordUsage appends a token usage row for a run and rolls up totals on them.runs.
+// provider and model are recorded for cost breakdown; costUSD is the per-call cost.
+func (r *Recorder) RecordUsage(ctx context.Context, runID, provider, model string, inputTokens, outputTokens int, costUSD float64) error {
+	const insert = `
+		INSERT INTO them.run_usage (run_id, provider, model, tokens_input, tokens_output, cost_usd)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6)`
+	if err := r.db.Exec(ctx, insert, runID, provider, model, inputTokens, outputTokens, costUSD); err != nil {
 		return fmt.Errorf("runrecorder: record usage for run %s: %w", runID, err)
+	}
+	// Roll up totals onto the parent run row.
+	const rollup = `
+		UPDATE them.runs SET
+			total_tokens_in  = COALESCE(total_tokens_in,  0) + $2,
+			total_tokens_out = COALESCE(total_tokens_out, 0) + $3,
+			total_cost_usd   = COALESCE(total_cost_usd,   0) + $4
+		WHERE id = $1::uuid`
+	if err := r.db.Exec(ctx, rollup, runID, inputTokens, outputTokens, costUSD); err != nil {
+		return fmt.Errorf("runrecorder: rollup usage for run %s: %w", runID, err)
 	}
 	return nil
 }
 
-// RecordStep inserts a step record for a run.
-func (r *Recorder) RecordStep(ctx context.Context, runID, stepType, content string) error {
-	const q = `INSERT INTO them.run_steps (run_id, step_type, content) VALUES ($1, $2, $3)`
-	err := r.db.Exec(ctx, q, runID, stepType, content)
-	if err != nil {
-		return fmt.Errorf("runrecorder: record step for run %s: %w", runID, err)
+// RecordAgentStep inserts a run_steps row for one agent invocation.
+func (r *Recorder) RecordAgentStep(ctx context.Context, runID, agentSlug string, iteration int, inputJSON []byte, output string, latencyMS int64, status, stepErr string) error {
+	const q = `
+		INSERT INTO them.run_steps
+			(run_id, iteration, agent_slug, input, output, status, latency_ms, started_at, ended_at, error)
+		VALUES
+			($1::uuid, $2, $3, $4::jsonb, NULLIF($5,''), $6, $7::integer, now() - make_interval(secs => $7::float8 / 1000), now(), NULLIF($8,''))`
+	if err := r.db.Exec(ctx, q, runID, iteration, agentSlug, string(inputJSON), output, status, latencyMS, stepErr); err != nil {
+		return fmt.Errorf("runrecorder: record agent step for run %s: %w", runID, err)
 	}
+	return nil
+}
+
+// SetFinalOutput writes the final LLM answer text to them.runs.final_output.
+func (r *Recorder) SetFinalOutput(ctx context.Context, runID, text string) error {
+	const q = `UPDATE them.runs SET final_output = NULLIF($2, '') WHERE id = $1::uuid`
+	if err := r.db.Exec(ctx, q, runID, text); err != nil {
+		return fmt.Errorf("runrecorder: set final output for run %s: %w", runID, err)
+	}
+	return nil
+}
+
+// RecordStep is kept for backward compatibility but is a no-op in the new schema.
+// Use RecordAgentStep instead.
+func (r *Recorder) RecordStep(ctx context.Context, runID, stepType, content string) error {
 	return nil
 }
 

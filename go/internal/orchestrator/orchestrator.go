@@ -120,8 +120,15 @@ type AgentSkill struct {
 }
 
 // UsageRecorder persists token usage after each LLM call.
+// provider and model identify the backend; costUSD is the per-call cost (may be 0 if unknown).
 type UsageRecorder interface {
-	RecordUsage(ctx context.Context, runID string, inputTokens, outputTokens int) error
+	RecordUsage(ctx context.Context, runID, provider, model string, inputTokens, outputTokens int, costUSD float64) error
+}
+
+// StepRecorder persists individual agent invocation steps and the final run output.
+type StepRecorder interface {
+	RecordAgentStep(ctx context.Context, runID, agentSlug string, iteration int, inputJSON []byte, output string, latencyMS int64, status, stepErr string) error
+	SetFinalOutput(ctx context.Context, runID, text string) error
 }
 
 // TaskRecorder tracks child task rows for each agent invocation.
@@ -155,6 +162,7 @@ type Orchestrator struct {
 	checkpointer     CheckpointWriter
 	cardDiscoverer   CardDiscoverer
 	usageRecorder    UsageRecorder
+	stepRecorder     StepRecorder
 	taskRecorder     TaskRecorder
 	budgetStore      BudgetStore
 	artifactRecorder ArtifactRecorder
@@ -201,6 +209,12 @@ func (o *Orchestrator) WithCardDiscoverer(cd CardDiscoverer) *Orchestrator {
 // WithUsageRecorder attaches a usage recorder for token accounting.
 func (o *Orchestrator) WithUsageRecorder(ur UsageRecorder) *Orchestrator {
 	o.usageRecorder = ur
+	return o
+}
+
+// WithStepRecorder attaches a step recorder for agent invocation and final output persistence.
+func (o *Orchestrator) WithStepRecorder(sr StepRecorder) *Orchestrator {
+	o.stepRecorder = sr
 	return o
 }
 
@@ -359,7 +373,7 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 
 		// Non-fatal: record token usage.
 		if o.usageRecorder != nil && iterTokens > 0 {
-			if recErr := o.usageRecorder.RecordUsage(ctx, runID, inputTokens, outputTokens); recErr != nil {
+			if recErr := o.usageRecorder.RecordUsage(ctx, runID, o.cfg.LLMProvider, o.cfg.Model, inputTokens, outputTokens, 0); recErr != nil {
 				o.logger.Warn("orchestrator: usage record failed", "run_id", runID, "error", recErr)
 			}
 		}
@@ -418,6 +432,13 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 	if o.taskRecorder != nil {
 		if err := o.taskRecorder.CompleteRootTask(ctx, runID, true); err != nil {
 			o.logger.Warn("orchestrator: complete root task failed", "run_id", runID, "error", err)
+		}
+	}
+
+	// Persist the final LLM answer so the Answer tab can display it (non-fatal).
+	if o.stepRecorder != nil && finalText != "" {
+		if err := o.stepRecorder.SetFinalOutput(ctx, runID, finalText); err != nil {
+			o.logger.Warn("orchestrator: set final output failed", "run_id", runID, "error", err)
 		}
 	}
 
@@ -622,12 +643,27 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 			}
 
 			inputBytes, _ := json.Marshal(tc.Input)
+			stepStart := time.Now()
 			out, err := o.agents.Invoke(ctx, rctx.TenantID, slug, inputBytes)
+			latencyMS := time.Since(stepStart).Milliseconds()
 
 			// Complete child task row (non-fatal).
 			if o.taskRecorder != nil && taskID != "" {
 				if completeErr := o.taskRecorder.CompleteTask(ctx, taskID, err == nil); completeErr != nil {
 					o.logger.Warn("orchestrator: complete task failed", "task_id", taskID, "error", completeErr)
+				}
+			}
+
+			// Record agent step (non-fatal).
+			if o.stepRecorder != nil {
+				stepStatus := "completed"
+				stepErrMsg := ""
+				if err != nil {
+					stepStatus = "failed"
+					stepErrMsg = err.Error()
+				}
+				if recErr := o.stepRecorder.RecordAgentStep(ctx, runID, slug, i, inputBytes, string(out), latencyMS, stepStatus, stepErrMsg); recErr != nil {
+					o.logger.Warn("orchestrator: record agent step failed", "slug", slug, "error", recErr)
 				}
 			}
 

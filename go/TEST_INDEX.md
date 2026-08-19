@@ -384,8 +384,10 @@ sanitization, and cross-run access denial.
 | `TestCreateRun_explicitTransportOverridesMode` | non-empty `run.EventsTransport` overrides the configured mode |
 | `TestUpdateRunStatus_withErrorMessage` | `UPDATE` sets `status` and `error` (column is "error", not "error_message") |
 | `TestUpdateRunStatus_completed` | Completed run → empty error string |
-| `TestRecordUsage_insertsCorrectly` | `INSERT INTO them.run_usage` correct args |
-| `TestRecordStep_insertsCorrectly` | `INSERT INTO them.run_steps` correct args |
+| `TestRecordUsage_insertsCorrectly` | `INSERT INTO them.run_usage` with correct schema columns (tokens_input/tokens_output/provider/model/cost_usd) + rollup UPDATE on them.runs |
+| `TestRecordAgentStep_insertsCorrectly` | `INSERT INTO them.run_steps` with correct schema columns (agent_slug/latency_ms/started_at/ended_at) |
+| `TestSetFinalOutput_updatesRun` | `UPDATE them.runs SET final_output` with correct args |
+| `TestRecordStep_isNoop` | legacy `RecordStep` returns nil with no DB calls |
 | `TestDBError_propagates` | DB error is wrapped and returned, not swallowed |
 | `TestRecordArtifact_Success` | Valid artifact → INSERT issued, non-empty UUID returned |
 | `TestRecordArtifact_ExactlyOneMB` | Data at exactly 1 MiB → succeeds (boundary inclusive) |
@@ -1672,7 +1674,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-06 | session | 10 |
 | S1-07 | event | 9 |
 | S1-08 | domain | 3 |
-| S1-09 | runrecorder | 22 |
+| S1-09 | runrecorder | 25 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 10 |
 | S1-12 | ws | 24 |
