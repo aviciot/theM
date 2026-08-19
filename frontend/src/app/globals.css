@@ -207,11 +207,11 @@ input::placeholder {
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--tm-border); border-radius: 10px; }
 
-.dark-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent; }
-.dark-scrollbar::-webkit-scrollbar { width: 4px; }
-.dark-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.dark-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
-.dark-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+.dark-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.25) transparent; }
+.dark-scrollbar::-webkit-scrollbar { width: 6px; }
+.dark-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.03); border-radius: 6px; }
+.dark-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 6px; }
+.dark-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.45); }
 
 /* ── ChromaGrid ────────────────────────────────────────────────────────────── */
 
