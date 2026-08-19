@@ -171,15 +171,12 @@ func (h *AgentsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	// Canvas agents are served internally — short-circuit before URL validation.
+	// Canvas agents run inside them-agent-runtime on the same Docker network.
+	// Rewrite the endpoint_url to the internal DNS name so the standard card
+	// fetch path below works without any special casing.
 	if req.AgentID != "" {
 		if agent, err := h.dal.GetAgentByID(r.Context(), req.AgentID); err == nil && agent.Transport == "canvas_a2a" {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"ok":         true,
-				"detail":     "canvas agent — served internally by them-agent-runtime",
-				"agent_card": agent.AgentCard,
-			})
-			return
+			req.EndpointURL = "http://them-agent-runtime:9300/agents/" + agent.Slug
 		}
 	}
 
@@ -367,20 +364,14 @@ func (h *AgentsHandler) Test(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Canvas agents are served internally by them-agent-runtime; they have no
-	// external endpoint_url. Return the stored agent_card directly instead of
-	// attempting an outbound HTTP call that would fail with an empty URL.
+	// Canvas agents run inside them-agent-runtime (same Docker network).
+	// Build the internal card URL using the Docker DNS name + agent slug.
+	var cardURL string
 	if agent.Transport == "canvas_a2a" {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":         true,
-			"latency_ms": 0,
-			"detail":     "canvas agent — served internally by them-agent-runtime",
-			"agent_card": agent.AgentCard,
-		})
-		return
+		cardURL = "http://them-agent-runtime:9300/agents/" + agent.Slug + "/.well-known/agent-card.json"
+	} else {
+		cardURL = strings.TrimRight(agent.EndpointURL, "/") + "/.well-known/agent-card.json"
 	}
-
-	cardURL := strings.TrimRight(agent.EndpointURL, "/") + "/.well-known/agent-card.json"
 
 	start := time.Now()
 	httpReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, cardURL, nil)
