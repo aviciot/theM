@@ -171,15 +171,6 @@ func (h *AgentsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	// Canvas agents run inside them-agent-runtime on the same Docker network.
-	// Rewrite the endpoint_url to the internal DNS name so the standard card
-	// fetch path below works without any special casing.
-	if req.AgentID != "" {
-		if agent, err := h.dal.GetAgentByID(r.Context(), req.AgentID); err == nil && agent.Transport == "canvas_a2a" {
-			req.EndpointURL = "http://them-agent-runtime:9300/agents/" + agent.Slug
-		}
-	}
-
 	if req.EndpointURL == "" {
 		writeError(w, http.StatusBadRequest, "endpoint_url is required")
 		return
@@ -364,14 +355,7 @@ func (h *AgentsHandler) Test(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Canvas agents run inside them-agent-runtime (same Docker network).
-	// Build the internal card URL using the Docker DNS name + agent slug.
-	var cardURL string
-	if agent.Transport == "canvas_a2a" {
-		cardURL = "http://them-agent-runtime:9300/agents/" + agent.Slug + "/.well-known/agent-card.json"
-	} else {
-		cardURL = strings.TrimRight(agent.EndpointURL, "/") + "/.well-known/agent-card.json"
-	}
+	cardURL := strings.TrimRight(agent.EndpointURL, "/") + "/.well-known/agent-card.json"
 
 	start := time.Now()
 	httpReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, cardURL, nil)
