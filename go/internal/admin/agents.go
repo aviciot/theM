@@ -171,6 +171,18 @@ func (h *AgentsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
+	// Canvas agents are served internally — short-circuit before URL validation.
+	if req.AgentID != "" {
+		if agent, err := h.dal.GetAgentByID(r.Context(), req.AgentID); err == nil && agent.Transport == "canvas_a2a" {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":         true,
+				"detail":     "canvas agent — served internally by them-agent-runtime",
+				"agent_card": agent.AgentCard,
+			})
+			return
+		}
+	}
+
 	if req.EndpointURL == "" {
 		writeError(w, http.StatusBadRequest, "endpoint_url is required")
 		return
@@ -179,9 +191,6 @@ func (h *AgentsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	// Resolve auth token.
 	authToken := req.AuthToken
 	if authToken == "" && req.AgentID != "" {
-		// Load agent by id — any tenant, look across all tenants via GetAgentBySlug
-		// is not right here. Per spec: load by id and decrypt.
-		// We use a direct SQL query via the handler's dal.
 		agent, err := h.dal.GetAgentByID(r.Context(), req.AgentID)
 		if err == nil && agent.AuthTokenSet {
 			// We need the raw encrypted token. GetAgentByID doesn't return it.
@@ -356,6 +365,19 @@ func (h *AgentsHandler) Test(w http.ResponseWriter, r *http.Request) {
 				authToken = decrypted
 			}
 		}
+	}
+
+	// Canvas agents are served internally by them-agent-runtime; they have no
+	// external endpoint_url. Return the stored agent_card directly instead of
+	// attempting an outbound HTTP call that would fail with an empty URL.
+	if agent.Transport == "canvas_a2a" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":         true,
+			"latency_ms": 0,
+			"detail":     "canvas agent — served internally by them-agent-runtime",
+			"agent_card": agent.AgentCard,
+		})
+		return
 	}
 
 	cardURL := strings.TrimRight(agent.EndpointURL, "/") + "/.well-known/agent-card.json"
