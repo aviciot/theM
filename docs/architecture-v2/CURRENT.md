@@ -379,6 +379,7 @@ Live verified (2026-08-19):
 - `db/036_canvas_a2a_runtime.sql` — `them.agent_runtime_specs` + `them.app_agent_bindings`
   - `agent_runtime_specs`: `(agent_id PK FK→agents, definition_id FK→agent_definitions, spec_hash, credential_schema JSONB, agent_card_json JSONB, published_at)`
   - `app_agent_bindings`: `(id UUID PK, application_id FK, agent_id FK, definition_id FK, credential_bindings JSONB AES-GCM ciphertext, config_overrides JSONB, policies JSONB, UNIQUE(application_id, agent_id))`
+- `db/037_agents_transport_canvas.sql` — extends `agents_transport_check` to `ANY ('a2a_async', 'canvas_a2a')`. **Critical for publish**: `PublishCanvasAgent` CTE inserts `transport='canvas_a2a'`; the original CHECK only allowed `'a2a_async'` which caused the publish endpoint to return 500.
 
 **Go — `go/internal/agentgen/compiler.go` (NEW):**
 - `Compile(agentID, tenantID, definitionID, agentSlug, rawJSON) (*AgentSpec, []CompileError)`
@@ -439,22 +440,30 @@ Live verified (2026-08-19):
 - Bindings API requires `ErrEncryptionKeyMissing` guard when `fernetKey` not configured
 
 ### Test state
-`go test ./internal/admin/...` — **2 packages, 0 failures** (S1-50: 15 tests, S1-51: 11 tests)
+`go test ./...` — **37 packages, 0 failures** (S1-50: 15 tests, S1-51: 11 tests)
 TypeScript: **clean** (0 errors)
+
+### Live end-to-end verification (2026-08-19)
+- Validate → 200 `{"valid":true}` ✓
+- Publish → 200 `{"agent_id":"...","revision":1,"spec_hash":"fcc0b..."}` ✓
+- `component_definitions` row: status='published' ✓
+- `agents` row: transport='canvas_a2a', status='published' ✓
+- `agent_runtime_specs` row: spec_hash matches ✓
+- `agent_definitions` status: 'published' ✓
+
+### Key bug fixed in this session
+- **Root cause of publish 500**: `agents_transport_check` only allowed `'a2a_async'`; canvas agents use `'canvas_a2a'`. Fixed by `db/037_agents_transport_canvas.sql`.
 
 ---
 
 ## Next recommended task
 
-**Phase 4 — Live Smoke Test + Agent Runtime DB Wiring**
+**Phase 4 — Agent Runtime DB Wiring**
 
 Goals:
-1. Apply `db/036_canvas_a2a_runtime.sql` to live DB (if not yet applied) — blockers 7 and 8 above will clear
-2. Smoke test the full Phase 3 flow end-to-end:
-   - Create agent draft → Validate (200 valid=true) → Publish → check DB rows in `agent_runtime_specs` + `agents` + `component_definitions`
-   - In applications page, click an A2A agent node → bind credentials → verify `app_agent_bindings` row encrypted
-3. Wire `them-agent-runtime` to read from `agent_runtime_specs` (`loadSpecByAgentID` already stubbed — implement the real pgx query)
-4. Optional: add Phase 4 step types (branch, loop, parallel, a2a_call, human_wait, stream_out) to `interpreter.go`
+1. Wire `them-agent-runtime` to load compiled specs from `agent_runtime_specs` table — `loadSpecByAgentID` is currently a stub returning empty spec. Implement the real pgx query: `SELECT spec FROM them.agent_runtime_specs WHERE agent_id=$1`.
+2. Smoke test the full invocation path: Publish agent → invoke via agentregistry → `them-agent-runtime` executes steps.
+3. Optionally add Phase 4 step types to `interpreter.go`: `branch`, `loop`, `parallel`, `a2a_call`, `human_wait`, `stream_out`.
 
 Do NOT begin Wave 10 (auth admin CRUD Go port) in the same session as Phase 4.
 
@@ -487,6 +496,7 @@ Do NOT begin Wave 10 (auth admin CRUD Go port) in the same session as Phase 4.
 6. `them-go-bridge` container startup: must use `--project-name them_gateway` when starting via compose to share the `them-network` network with the `them_gateway` project. Without it, postgres/redis conflict. Command: `docker compose -p them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge`.
 7. ~~`agent_runtime_specs` and `app_agent_bindings` tables not yet created~~ — **RESOLVED**: `db/036_canvas_a2a_runtime.sql` applied, both tables exist.
 8. `them-agent-runtime` reads from `agent_runtime_specs` (`loadSpecByAgentID` stub) — **partially resolved**: table exists; real pgx query still needs implementation (Phase 4 item).
+9. ~~Publish endpoint returning 500~~ — **RESOLVED**: `agents_transport_check` extended to include `'canvas_a2a'` via `db/037_agents_transport_canvas.sql`. Publish end-to-end verified.
 
 ---
 

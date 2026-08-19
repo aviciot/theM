@@ -42,7 +42,7 @@ The agent registry. Each enabled row = one LLM tool named `agent__<slug>`.
 | slug | TEXT UNIQUE | `^[a-z0-9_]{1,48}$` — used in tool name |
 | display_name | TEXT | UI label |
 | description | TEXT | **LLM tool description** — critical for routing decisions |
-| transport | TEXT | `"omni_ws"` or `"a2a"` (or `"a2a_async"` alias) |
+| transport | TEXT | `"a2a_async"` (external A2A agent) or `"canvas_a2a"` (canvas-generated agent — spec served from `agent_runtime_specs`) |
 | endpoint_url | TEXT | base URL for the agent |
 | auth_token_encrypted | TEXT | `enc:` bearer token sent to agent |
 | input_schema | JSONB | JSON Schema for tool input (overrides agent card if set) |
@@ -418,3 +418,6 @@ Key relationships:
 | `db/006_phase11.sql` | `them.task_messages` table; `history_window` + `budget_tokens` + `a2a_exposed` on orchestrators; `agent_card` + `supports_streaming` + `input_modes` on agents |
 | `db/007_docu_stack.sql` | `docu_writer` agent seed + orchestrator config |
 | `db/008_debate_stack.sql` | Debate agents (evidence, logic, creative, judge) + `debate_flow` orchestrator |
+| `db/035_agent_definitions.sql` | `them.agent_definitions` table (canvas agent design-time store) |
+| `db/036_canvas_a2a_runtime.sql` | `them.agent_runtime_specs` + `them.app_agent_bindings` tables |
+| `db/037_agents_transport_canvas.sql` | Extend `agents_transport_check` to include `'canvas_a2a'` transport |
