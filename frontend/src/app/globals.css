@@ -207,11 +207,29 @@ input::placeholder {
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--tm-border); border-radius: 10px; }
 
-.dark-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.25) transparent; }
+/* Overlay-style scrollbar — thin, rounded, fades in on hover/scroll (Claude desktop style) */
+.dark-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,0,0,0.22) transparent;
+  scrollbar-gutter: stable;
+}
+html.dark .dark-scrollbar {
+  scrollbar-color: rgba(255,255,255,0.18) transparent;
+}
 .dark-scrollbar::-webkit-scrollbar { width: 6px; }
-.dark-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.03); border-radius: 6px; }
-.dark-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 6px; }
-.dark-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.45); }
+.dark-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.dark-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.22);
+  border-radius: 100px;
+  transition: background 0.2s ease;
+  min-height: 32px;
+}
+html.dark .dark-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.18);
+}
+.dark-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.42); }
+html.dark .dark-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.42); }
+.dark-scrollbar::-webkit-scrollbar-corner { background: transparent; }
 
 /* ── ChromaGrid ────────────────────────────────────────────────────────────── */
 

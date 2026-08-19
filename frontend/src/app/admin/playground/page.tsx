@@ -1510,7 +1510,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, borderRight: '1px solid var(--tm-border)' }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, overflow: 'hidden', borderRight: '1px solid var(--tm-border)' }}>
       {/* Column header */}
       {showHeader && (
         <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--tm-border)', display: 'flex', alignItems: 'center', gap: 8, background: 'var(--tm-surface)', flexShrink: 0 }}>
