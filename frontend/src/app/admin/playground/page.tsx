@@ -1195,7 +1195,9 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   }, [contextId]);
 
   useEffect(() => {
-    chatBottom.current?.scrollIntoView({ behavior: 'smooth' });
+    chatBottom.current?.scrollIntoView({
+      behavior: document.visibilityState === 'visible' ? 'smooth' : 'instant',
+    });
   }, [messages]);
 
   useEffect(() => {
@@ -1532,7 +1534,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
 
       {/* Messages */}
       <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: pad, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {restoredSession && (
+        {restoredSession && !messages.some(m => m.role === 'assistant') && (
           <div style={{ margin: '40px auto', maxWidth: 360, padding: '14px 18px', borderRadius: 12, border: `1px solid ${color}`, background: 'rgba(124,58,237,0.06)', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tm-text)' }}>↩ Resume last conversation?</div>
             <div style={{ fontSize: 12, color: 'var(--tm-text-muted)' }}>
