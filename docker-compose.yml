@@ -961,6 +961,11 @@ services:
       - "traefik.http.routers.them-go-admin-reads.entrypoints=web"
       - "traefik.http.routers.them-go-admin-reads.priority=110"
       - "traefik.http.routers.them-go-admin-reads.service=them-go-bridge-svc"
+      # ── system-agents — GET + PUT + POST /{role}/test-llm ───────────────────
+      - "traefik.http.routers.them-go-system-agents.rule=PathPrefix(`/api/v1/admin/system-agents`)"
+      - "traefik.http.routers.them-go-system-agents.entrypoints=web"
+      - "traefik.http.routers.them-go-system-agents.priority=120"
+      - "traefik.http.routers.them-go-system-agents.service=them-go-bridge-svc"
       # ── Wave 6: /api/v1/admin/monitoring-config — GET + PUT ─────────────────
       # Python owns /api/v1 at priority 100; Go claims monitoring-config at 120.
       # ROLLBACK: remove this router block (them-go-monitoring-config).
