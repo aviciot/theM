@@ -72,7 +72,29 @@ interface StepData {
   step_id: string;
   step_type: string;
   label: string;
+  config: Record<string, unknown>;
 }
+
+// ── Shared panel styles (match application canvas) ────────────────────────────
+const labelStyle: React.CSSProperties = {
+  fontSize: 11, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block', fontWeight: 700,
+};
+const inputStyle: React.CSSProperties = {
+  width: '100%', background: 'transparent',
+  border: '1px solid var(--tm-canvas-border)', color: '#fff',
+  padding: '6px', borderRadius: '4px', fontSize: '13px', boxSizing: 'border-box',
+};
+const textareaStyle: React.CSSProperties = {
+  ...inputStyle, resize: 'vertical' as const, fontFamily: 'inherit',
+};
+const selectStyle: React.CSSProperties = { ...inputStyle };
+const fieldGap: React.CSSProperties = { marginTop: '12px' };
+const hint: React.CSSProperties = { fontSize: 10, color: '#64748b', marginLeft: 4 };
+
+// ── Available LLM models (hardcoded, same as application canvas) ──────────────
+const LLM_MODELS: Record<string, string[]> = {
+  anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+};
 
 // ── Node components (must be outside the render component) ───────────────────
 
@@ -280,7 +302,7 @@ function CanvasInner() {
         id: `step-${step.id}`,
         type: 'step',
         position: step.position ?? { x: 200, y: 80 + si * 120 },
-        data: { step_id: step.id, step_type: step.type, label: step.type },
+        data: { step_id: step.id, step_type: step.type, label: step.type, config: (step.config as Record<string, unknown>) ?? {} },
       }));
       const stepEdges: Edge[] = [];
       for (const step of (sk.steps ?? [])) {
@@ -312,7 +334,7 @@ function CanvasInner() {
           return {
             id: stepd.step_id,
             type: stepd.step_type as AgentStepDoc['type'],
-            config: {},
+            config: stepd.config ?? {},
             next: outEdges.map(e => (e.target as string).replace('step-', '')),
             position: sn.position,
           };
@@ -445,7 +467,7 @@ function CanvasInner() {
       id: `step-${stepId}`,
       type: 'step',
       position: screenToFlowPosition({ x: 300, y: 200 }),
-      data: { step_id: stepId, step_type: type, label: type },
+      data: { step_id: stepId, step_type: type, label: type, config: {} },
     };
     setLocalPipeNodes(prev => [...prev, newNode]);
     setDirty(true);
@@ -489,6 +511,17 @@ function CanvasInner() {
         n.id === selectedNode.id ? { ...n, data: { ...n.data, [field]: value } } : n
       ));
     }
+    setDirty(true);
+  }
+
+  // Update a single key inside a step node's config object.
+  function updateStepConfig(key: string, value: unknown) {
+    if (!selectedNode || activeView !== 'skill') return;
+    setLocalPipeNodes(prev => prev.map(n =>
+      n.id === selectedNode.id
+        ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), [key]: value } } }
+        : n
+    ));
     setDirty(true);
   }
 
@@ -674,7 +707,7 @@ function CanvasInner() {
         {/* Properties panel */}
         {selectedNode && (
           <div style={{
-            width: '260px', flexShrink: 0, borderLeft: `1px solid ${C.outline}`,
+            width: '300px', flexShrink: 0, borderLeft: `1px solid ${C.outline}`,
             background: C.surface, padding: '16px', overflowY: 'auto',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -750,24 +783,384 @@ function CanvasInner() {
 
             {selectedNode.type === 'step' && (() => {
               const d = selectedNode.data as unknown as StepData;
+              const cfg = d.config ?? {};
+
+              // Helper: get config value with fallback.
+              function cfgStr(key: string): string { return (cfg[key] as string) ?? ''; }
+              function cfgNum(key: string, def = 0): number { return (cfg[key] as number) ?? def; }
+
               return (
                 <>
-                  <label style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Step ID</label>
-                  <input
-                    value={d.step_id}
-                    onChange={e => updateSelectedNodeField('step_id', e.target.value)}
-                    style={{ width: '100%', background: 'transparent', border: `1px solid ${C.outline}`, color: '#fff', padding: '6px', borderRadius: '4px', fontSize: '13px', boxSizing: 'border-box' }}
-                  />
-                  <label style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, display: 'block', marginTop: '12px', marginBottom: '4px' }}>Label</label>
-                  <input
-                    value={d.label}
-                    onChange={e => updateSelectedNodeField('label', e.target.value)}
-                    style={{ width: '100%', background: 'transparent', border: `1px solid ${C.outline}`, color: '#fff', padding: '6px', borderRadius: '4px', fontSize: '13px', boxSizing: 'border-box' }}
-                  />
-                  <label style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, display: 'block', marginTop: '12px', marginBottom: '4px' }}>Type</label>
-                  <div style={{ color: C.text, fontSize: '13px', padding: '6px', border: `1px solid ${C.outline}`, borderRadius: '4px' }}>
-                    {d.step_type}
+                  {/* ── Identity (always shown) ── */}
+                  <div style={{ marginBottom: '2px' }}>
+                    <label style={labelStyle}>Label</label>
+                    <input
+                      value={d.label}
+                      onChange={e => updateSelectedNodeField('label', e.target.value)}
+                      style={inputStyle}
+                    />
                   </div>
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Step ID <span style={hint}>(runtime key)</span></label>
+                    <input
+                      value={d.step_id}
+                      onChange={e => updateSelectedNodeField('step_id', e.target.value)}
+                      style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '11px' }}
+                    />
+                  </div>
+                  <div style={{ ...fieldGap, marginBottom: '16px' }}>
+                    <label style={labelStyle}>Type</label>
+                    <div style={{ ...inputStyle, color: C.textMuted, cursor: 'default' }}>{d.step_type}</div>
+                  </div>
+
+                  {/* ── Config: input ── */}
+                  {d.step_type === 'input' && (
+                    <>
+                      <div style={{ color: C.cyan, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>INPUT CONFIG</div>
+                      <label style={labelStyle}>Bind text input to variable</label>
+                      <input
+                        value={cfgStr('text_var') || ((cfg.bindings as Record<string,string>)?.text ?? '')}
+                        onChange={e => updateStepConfig('bindings', { text: e.target.value })}
+                        style={inputStyle}
+                        placeholder="e.g. user_query"
+                      />
+                      <div style={{ marginTop: 6, fontSize: 11, color: '#64748b' }}>
+                        The caller's message text will be available as <code style={{ color: C.cyan }}>{'{{.' + (cfgStr('text_var') || ((cfg.bindings as Record<string,string>)?.text) || 'user_query') + '}}'}</code> in downstream steps.
+                      </div>
+                    </>
+                  )}
+
+                  {/* ── Config: llm ── */}
+                  {d.step_type === 'llm' && (
+                    <>
+                      <div style={{ color: C.purple, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>LLM CONFIG</div>
+
+                      <label style={labelStyle}>Model</label>
+                      <select
+                        value={cfgStr('model') || 'claude-haiku-4-5-20251001'}
+                        onChange={e => updateStepConfig('model', e.target.value)}
+                        style={selectStyle}
+                      >
+                        {LLM_MODELS.anthropic.map(m => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>Max Tokens</label>
+                        <input
+                          type="number" min={1} max={32000}
+                          value={cfgNum('max_tokens', 4096)}
+                          onChange={e => updateStepConfig('max_tokens', parseInt(e.target.value) || 4096)}
+                          style={inputStyle}
+                        />
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>System Prompt</label>
+                        <textarea
+                          rows={4}
+                          value={cfgStr('system_prompt')}
+                          onChange={e => updateStepConfig('system_prompt', e.target.value)}
+                          style={textareaStyle}
+                          placeholder="You are a helpful assistant..."
+                        />
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>
+                          User Prompt <span style={hint}>Go template · leave blank to pass caller input directly</span>
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={cfgStr('user_prompt')}
+                          onChange={e => updateStepConfig('user_prompt', e.target.value)}
+                          style={textareaStyle}
+                          placeholder={'{{.user_query}}'}
+                        />
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>Output Variable <span style={hint}>default: output</span></label>
+                        <input
+                          value={cfgStr('output_var')}
+                          onChange={e => updateStepConfig('output_var', e.target.value)}
+                          style={inputStyle}
+                          placeholder="output"
+                        />
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>API Key Slot <span style={hint}>blank = platform key</span></label>
+                        <select
+                          value={cfgStr('provider_key_slot')}
+                          onChange={e => updateStepConfig('provider_key_slot', e.target.value)}
+                          style={selectStyle}
+                        >
+                          <option value="">— platform key —</option>
+                          {credentialSlots.map(s => (
+                            <option key={s.name} value={s.name}>{s.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </>
+                  )}
+
+                  {/* ── Config: http ── */}
+                  {d.step_type === 'http' && (
+                    <>
+                      <div style={{ color: C.amber, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>HTTP CONFIG</div>
+
+                      <label style={labelStyle}>Method</label>
+                      <select
+                        value={cfgStr('method') || 'GET'}
+                        onChange={e => updateStepConfig('method', e.target.value)}
+                        style={selectStyle}
+                      >
+                        {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(m => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>URL <span style={hint}>Go template</span></label>
+                        <input
+                          value={cfgStr('url_template')}
+                          onChange={e => updateStepConfig('url_template', e.target.value)}
+                          style={inputStyle}
+                          placeholder="https://api.example.com/{{.resource}}"
+                        />
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>Body Template <span style={hint}>Go template · optional</span></label>
+                        <textarea
+                          rows={3}
+                          value={cfgStr('body_template')}
+                          onChange={e => updateStepConfig('body_template', e.target.value)}
+                          style={textareaStyle}
+                          placeholder={'{"query": "{{.user_query}}"}'}
+                        />
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>Timeout (seconds)</label>
+                        <input
+                          type="number" min={1} max={300}
+                          value={cfgNum('timeout_seconds', 30)}
+                          onChange={e => updateStepConfig('timeout_seconds', parseInt(e.target.value) || 30)}
+                          style={inputStyle}
+                        />
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>Credential Slot <span style={hint}>blank = no auth</span></label>
+                        <select
+                          value={cfgStr('credential_slot')}
+                          onChange={e => updateStepConfig('credential_slot', e.target.value)}
+                          style={selectStyle}
+                        >
+                          <option value="">— none —</option>
+                          {credentialSlots.map(s => (
+                            <option key={s.name} value={s.name}>{s.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {cfgStr('credential_slot') && (
+                        <>
+                          <div style={fieldGap}>
+                            <label style={labelStyle}>Inject Mode</label>
+                            <select
+                              value={(cfg.credential_inject as {mode?: string})?.mode ?? 'header'}
+                              onChange={e => updateStepConfig('credential_inject', {
+                                ...(cfg.credential_inject as object ?? {}),
+                                mode: e.target.value,
+                              })}
+                              style={selectStyle}
+                            >
+                              <option value="header">Header</option>
+                              <option value="query">Query param</option>
+                              <option value="basic">HTTP Basic</option>
+                            </select>
+                          </div>
+
+                          {((cfg.credential_inject as {mode?: string})?.mode ?? 'header') === 'header' && (
+                            <>
+                              <div style={fieldGap}>
+                                <label style={labelStyle}>Header Name</label>
+                                <input
+                                  value={(cfg.credential_inject as {header_name?: string})?.header_name ?? 'Authorization'}
+                                  onChange={e => updateStepConfig('credential_inject', {
+                                    ...(cfg.credential_inject as object ?? {}),
+                                    header_name: e.target.value,
+                                  })}
+                                  style={inputStyle}
+                                  placeholder="Authorization"
+                                />
+                              </div>
+                              <div style={fieldGap}>
+                                <label style={labelStyle}>Value Template</label>
+                                <input
+                                  value={(cfg.credential_inject as {value_template?: string})?.value_template ?? 'Bearer {credential}'}
+                                  onChange={e => updateStepConfig('credential_inject', {
+                                    ...(cfg.credential_inject as object ?? {}),
+                                    value_template: e.target.value,
+                                  })}
+                                  style={inputStyle}
+                                  placeholder="Bearer {credential}"
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {((cfg.credential_inject as {mode?: string})?.mode) === 'query' && (
+                            <div style={fieldGap}>
+                              <label style={labelStyle}>Query Param Name</label>
+                              <input
+                                value={(cfg.credential_inject as {query_param?: string})?.query_param ?? ''}
+                                onChange={e => updateStepConfig('credential_inject', {
+                                  ...(cfg.credential_inject as object ?? {}),
+                                  query_param: e.target.value,
+                                })}
+                                style={inputStyle}
+                                placeholder="api_key"
+                              />
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      {/* Response extractions */}
+                      <div style={{ ...fieldGap, marginTop: '16px' }}>
+                        <label style={labelStyle}>Response Extractions <span style={hint}>JSONPath → variable</span></label>
+                        {((cfg.extractions as {var: string; json_path: string}[]) ?? []).map((ex, i) => (
+                          <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                            <input
+                              value={ex.json_path}
+                              onChange={e => {
+                                const next = [...((cfg.extractions as {var: string; json_path: string}[]) ?? [])];
+                                next[i] = { ...next[i], json_path: e.target.value };
+                                updateStepConfig('extractions', next);
+                              }}
+                              style={{ ...inputStyle, flex: 1, fontSize: '11px' }}
+                              placeholder="$.result"
+                            />
+                            <input
+                              value={ex.var}
+                              onChange={e => {
+                                const next = [...((cfg.extractions as {var: string; json_path: string}[]) ?? [])];
+                                next[i] = { ...next[i], var: e.target.value };
+                                updateStepConfig('extractions', next);
+                              }}
+                              style={{ ...inputStyle, flex: 1, fontSize: '11px' }}
+                              placeholder="var_name"
+                            />
+                            <button
+                              onClick={() => {
+                                const next = ((cfg.extractions as {var: string; json_path: string}[]) ?? []).filter((_, j) => j !== i);
+                                updateStepConfig('extractions', next);
+                              }}
+                              style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
+                            >×</button>
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => {
+                            const next = [...((cfg.extractions as {var: string; json_path: string}[]) ?? []), { json_path: '$.', var: '' }];
+                            updateStepConfig('extractions', next);
+                          }}
+                          style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}
+                        >+ Add extraction</button>
+                      </div>
+                    </>
+                  )}
+
+                  {/* ── Config: transform ── */}
+                  {d.step_type === 'transform' && (
+                    <>
+                      <div style={{ color: C.indigo, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>TRANSFORM CONFIG</div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>
+                        Each row maps an output variable name to a Go template expression.<br />
+                        Use <code style={{ color: C.cyan }}>{'{{.var_name}}'}</code> to reference upstream variables.
+                      </div>
+                      {Object.entries((cfg.expressions as Record<string, string>) ?? {}).map(([k, v], i) => (
+                        <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+                          <input
+                            value={k}
+                            onChange={e => {
+                              const entries = Object.entries((cfg.expressions as Record<string, string>) ?? {});
+                              entries[i] = [e.target.value, v];
+                              updateStepConfig('expressions', Object.fromEntries(entries));
+                            }}
+                            style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }}
+                            placeholder="output_var"
+                          />
+                          <input
+                            value={v}
+                            onChange={e => {
+                              const exprs = { ...((cfg.expressions as Record<string, string>) ?? {}), [k]: e.target.value };
+                              updateStepConfig('expressions', exprs);
+                            }}
+                            style={{ ...inputStyle, flex: 1, fontSize: '11px' }}
+                            placeholder={'Hello, {{.user_query}}!'}
+                          />
+                          <button
+                            onClick={() => {
+                              const exprs = { ...((cfg.expressions as Record<string, string>) ?? {}) };
+                              delete exprs[k];
+                              updateStepConfig('expressions', exprs);
+                            }}
+                            style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
+                          >×</button>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => {
+                          const exprs = { ...((cfg.expressions as Record<string, string>) ?? {}), '': '' };
+                          updateStepConfig('expressions', exprs);
+                        }}
+                        style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}
+                      >+ Add expression</button>
+                    </>
+                  )}
+
+                  {/* ── Config: response ── */}
+                  {d.step_type === 'response' && (
+                    <>
+                      <div style={{ color: C.cyan, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>RESPONSE CONFIG</div>
+
+                      <label style={labelStyle}>From Variable <span style={hint}>pipeline var to return</span></label>
+                      <input
+                        value={cfgStr('from_var') || 'output'}
+                        onChange={e => updateStepConfig('from_var', e.target.value)}
+                        style={inputStyle}
+                        placeholder="output"
+                      />
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>Media Type</label>
+                        <select
+                          value={cfgStr('media_type') || 'text/plain'}
+                          onChange={e => updateStepConfig('media_type', e.target.value)}
+                          style={selectStyle}
+                        >
+                          <option value="text/plain">text/plain</option>
+                          <option value="text/html">text/html</option>
+                          <option value="text/markdown">text/markdown</option>
+                          <option value="application/json">application/json</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+
+                  {/* ── Not yet implemented steps ── */}
+                  {!['input', 'llm', 'http', 'transform', 'response'].includes(d.step_type) && (
+                    <div style={{ color: '#64748b', fontSize: '12px', padding: '12px', border: `1px dashed ${C.outline}`, borderRadius: '6px', textAlign: 'center' }}>
+                      Config for <strong style={{ color: C.text }}>{d.step_type}</strong> is not yet supported in the builder.
+                    </div>
+                  )}
+
                 </>
               );
             })()}
