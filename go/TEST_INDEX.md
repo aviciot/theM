@@ -424,6 +424,10 @@ sanitization, and cross-run access denial.
 | `TestToolDef_emptyDescriptionReturnsError` | `ToolDef.Validate()` rejects empty description |
 | `TestToolDef_validDoesNotReturnError` | Valid ToolDef passes validation |
 | `TestMockProvider_emptyResponsesClosesChannelImmediately` | Empty response set → channel closed cleanly |
+| `TestDomainPartsToAnthropicContent_filtersEmptyTextParts/empty_text_part_skipped` | Empty `{type:text,text:""}` part → nil (skip-message sentinel); no Anthropic 400 |
+| `TestDomainPartsToAnthropicContent_filtersEmptyTextParts/non_empty_text_part_included` | Non-empty text part → non-nil content |
+| `TestDomainPartsToAnthropicContent_filtersEmptyTextParts/mixed_empty_and_non_empty_parts` | Mixed empty+non-empty → non-nil (non-empty parts survive) |
+| `TestDomainPartsToAnthropicContent_filtersEmptyTextParts/nil_parts_returns_nil` | Nil parts slice → nil (message skipped by caller) |
 
 **Trigger:** any change to `internal/llm/provider.go`, `internal/llm/mock.go`, `internal/llm/anthropic.go`
 

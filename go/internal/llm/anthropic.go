@@ -93,6 +93,9 @@ func (p *AnthropicProvider) Stream(ctx context.Context, messages []domain.Messag
 		if err != nil {
 			return nil, fmt.Errorf("llm: anthropic: marshal message: %w", err)
 		}
+		if content == nil {
+			continue // no non-empty content blocks — skip this message
+		}
 		// Anthropic requires tool results to be sent with role "user", not "tool".
 		// The content parts already carry the tool_result type; only the role differs.
 		role := m.Role
@@ -286,6 +289,9 @@ func domainPartsToAnthropicContent(parts []domain.ContentPart) (json.RawMessage,
 	for _, p := range parts {
 		switch p.Type {
 		case "text":
+			if p.Text == "" {
+				continue // Anthropic rejects {"type":"text","text":""}
+			}
 			blocks = append(blocks, textBlock{Type: "text", Text: p.Text})
 		case "tool_use":
 			blocks = append(blocks, toolUseBlock{
@@ -308,7 +314,7 @@ func domainPartsToAnthropicContent(parts []domain.ContentPart) (json.RawMessage,
 	}
 
 	if len(blocks) == 0 {
-		return json.Marshal("")
+		return nil, nil // caller must skip this message
 	}
 	return json.Marshal(blocks)
 }

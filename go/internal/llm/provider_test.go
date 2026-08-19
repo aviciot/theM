@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aviciot/them/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -100,6 +101,38 @@ func TestToolDef_validDoesNotReturnError(t *testing.T) {
 		Description: "Search the internet for information",
 	}
 	assert.NoError(t, td.Validate())
+}
+
+// TestDomainPartsToAnthropicContent_filtersEmptyTextParts verifies that empty
+// text parts are dropped and the function returns nil (skip-message signal)
+// when all parts are empty, preventing Anthropic 400 errors.
+func TestDomainPartsToAnthropicContent_filtersEmptyTextParts(t *testing.T) {
+	t.Run("empty_text_part_skipped", func(t *testing.T) {
+		parts := []domain.ContentPart{{Type: "text", Text: ""}}
+		got, err := domainPartsToAnthropicContent(parts)
+		require.NoError(t, err)
+		assert.Nil(t, got, "all-empty parts must return nil so the caller skips the message")
+	})
+	t.Run("non_empty_text_part_included", func(t *testing.T) {
+		parts := []domain.ContentPart{{Type: "text", Text: "hello"}}
+		got, err := domainPartsToAnthropicContent(parts)
+		require.NoError(t, err)
+		assert.NotNil(t, got)
+	})
+	t.Run("mixed_empty_and_non_empty_parts", func(t *testing.T) {
+		parts := []domain.ContentPart{
+			{Type: "text", Text: ""},
+			{Type: "text", Text: "world"},
+		}
+		got, err := domainPartsToAnthropicContent(parts)
+		require.NoError(t, err)
+		assert.NotNil(t, got)
+	})
+	t.Run("nil_parts_returns_nil", func(t *testing.T) {
+		got, err := domainPartsToAnthropicContent(nil)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
 }
 
 // TestMockProvider_emptyResponsesClosesChannelImmediately verifies that a
