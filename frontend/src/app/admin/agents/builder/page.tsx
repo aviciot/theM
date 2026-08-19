@@ -1268,9 +1268,9 @@ function CanvasInner() {
 export default function AgentBuilderPage() {
   return (
     <AuthGuard>
-      <div style={{ display: 'flex', height: '100vh', background: 'var(--tm-bg)' }}>
+      <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--tm-bg)' }}>
         <Sidebar />
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
           <ReactFlowProvider>
             <CanvasInner />
           </ReactFlowProvider>
