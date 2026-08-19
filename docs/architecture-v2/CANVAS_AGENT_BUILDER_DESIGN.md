@@ -28,9 +28,9 @@ This document specifies the next four development phases:
 | A | Step config panels (the core gap) | None |
 | B | Skill card editor + data flow variable visualization | None |
 | C | Data part input mode support in runtime | Go |
-| D | A2A SDK adoption (deferred) | Go — requires Go 1.25 |
+| D | A2A SDK adoption | Go — ready (repo is Go 1.25, SDK not yet imported) |
 
-Phases A and B are frontend-only. Phase C is a targeted Go change to `go/cmd/agent-runtime/main.go`. Phase D is deferred until the repo bumps Go to 1.25 for unrelated reasons.
+Phases A and B are frontend-only. Phase C is a targeted Go change to `go/cmd/agent-runtime/main.go`. Phase D was previously deferred pending Go 1.25 — the repo is now `go 1.25.0` (bumped during Phase 1 of the canvas work), so that blocker is resolved. The SDK (`github.com/a2aproject/a2a-go/v2`) has not yet been added to `go/go.mod`. Phase D can be scheduled as the next Go session after Phase C.
 
 ---
 
@@ -462,13 +462,13 @@ The a2a-go/v2 SDK uses clean Go types with no protobuf dependency: `a2a.NewDataP
 
 **Definition of done:** Skill with `input_modes: ["application/json"]`. Send `{"kind": "data", "data": {"city": "Paris"}}`. LLM step's user prompt `{{.city}}` renders to `"Paris"`.
 
-### Phase D — A2A SDK adoption (deferred)
+### Phase D — A2A SDK adoption
 
-**Trigger:** The repo bumps to Go 1.25 for an unrelated reason.
+**Status: ready to schedule.** The Go 1.25 blocker is resolved — `go/go.mod` is `go 1.25.0` (bumped during Phase 1 of the canvas work). `github.com/a2aproject/a2a-go/v2` has not yet been added to `go/go.mod`; it can be added with a single `go get` without touching other binaries or Dockerfiles.
 
-`github.com/a2aproject/a2a-go/v2` requires Go 1.25 (uses `iter.Seq2` range-over-func). The current module is `go 1.23`. Upgrading touches all Go binaries, all Dockerfiles, and CI.
+**What changes when the SDK is adopted:**
 
-When adopted, the `AgentExecutor` interface becomes:
+The `AgentExecutor` interface (what we implement in `go/cmd/agent-runtime/main.go`) becomes:
 ```go
 type AgentExecutor interface {
     Execute(ctx context.Context, execCtx *ExecutorContext) iter.Seq2[a2a.Event, error]
@@ -476,9 +476,9 @@ type AgentExecutor interface {
 }
 ```
 
-Part types move from hand-rolled structs to `a2a.NewTextPart()`, `a2a.NewDataPart(any)`, `a2a.NewFileURLPart(url, mimeType)` — no protobuf dependency. The AgentCard wire format is identical to what we hand-roll today, so published agents remain compatible.
+Part types move from hand-rolled structs to `a2a.NewTextPart()`, `a2a.NewDataPart(any)`, `a2a.NewFileURLPart(url, mimeType)` — no protobuf dependency. The AgentCard wire format is identical to what we hand-roll today, so published agents remain compatible without republishing.
 
-Do not begin Phase D until Go 1.25 is the repo baseline.
+**Phase D is not a prerequisite for A, B, or C.** Schedule it as the first Go session after Phase C ships. It replaces the hand-rolled JSON-RPC dispatch in `go/cmd/agent-runtime/main.go` with the SDK handler and cleans up the manual Part parsing added in Phase C.
 
 ---
 

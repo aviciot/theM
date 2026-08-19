@@ -282,9 +282,10 @@ Design: `docs/architecture-v2/CANVAS_A2A_AGENT_GENERATION_FULL.md`
 
 ### What was built
 
-**Go 1.25 + a2a-go/v2 SDK:**
-- `go/go.mod`: bumped `go 1.23` → `go 1.25.0`; added `github.com/a2aproject/a2a-go/v2 v2.5.0`
+**Go 1.25:**
+- `go/go.mod`: bumped `go 1.23` → `go 1.25.0`
 - `Dockerfile.go`, `Dockerfile.go-worker`, `Dockerfile.auth-go`: `golang:1.23-alpine` → `golang:1.25-alpine`
+- **Note:** `github.com/a2aproject/a2a-go/v2` was NOT added — runtime uses hand-rolled JSON-RPC. SDK adoption is Phase D of the canvas builder (now unblocked). See `docs/architecture-v2/CANVAS_AGENT_BUILDER_DESIGN.md`.
 
 **`go/internal/agentgen/` package:**
 - `spec.go` — `AgentSpec` (compiled, no secrets, slot names only), `SkillSpec`, `StepSpec`, `StepType` constants (input/llm/http/transform/response/branch/loop/parallel/a2a_call/human_wait/stream_out), all step config types
@@ -476,14 +477,17 @@ TypeScript: **clean** (0 errors)
 
 ## Next recommended task
 
-**Canvas A2A — stretch goals / optional**
+**Canvas Agent Builder — Phase A (step config panels)**
 
-The core 4-phase feature is complete and end-to-end verified. Optional next steps in order of value:
-1. **Advanced step types in interpreter.go**: `branch`, `loop`, `parallel`, `a2a_call`, `human_wait`, `stream_out` — currently return "not implemented in Phase 1"
-2. **Wave 10**: Auth admin CRUD Go port (users/roles/teams — currently no admin UI since Python auth admin removed)
-3. **`profiles: [agents]` to default**: Once canvas agents are in use, promote `them-agent-runtime` to start by default
+See `docs/architecture-v2/CANVAS_AGENT_BUILDER_DESIGN.md` for the full phased plan.
 
-Do NOT begin multiple items in the same session.
+Recommended order:
+1. **Phase A** — Step config panels (frontend only, one session): fill in LLM prompts, HTTP URLs, transform expressions, response vars. The `config: {}` gap that makes all published agents run with empty step config.
+2. **Phase B** — Skill card editor + data flow variable labels on canvas nodes (frontend, one session).
+3. **Phase C** — Data part input mode support in runtime (Go, one session): parse `application/json` parts in `handleMessageSend` so structured fields become pipeline vars.
+4. **Phase D** — A2A SDK adoption (Go, one session): add `github.com/a2aproject/a2a-go/v2` to `go/go.mod` and replace hand-rolled JSON-RPC dispatch with the SDK handler. **Previously deferred pending Go 1.25 — now unblocked** (repo is `go 1.25.0`). Schedule after Phase C.
+
+Do NOT begin multiple phases in the same session.
 
 ---
 
