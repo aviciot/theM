@@ -84,6 +84,7 @@ ag AS (
     ON CONFLICT (tenant_id, slug) DO UPDATE
         SET display_name    = EXCLUDED.display_name,
             description     = EXCLUDED.description,
+            transport       = EXCLUDED.transport,
             agent_card      = EXCLUDED.agent_card,
             skills          = EXCLUDED.skills,
             content_hash    = EXCLUDED.content_hash,
