@@ -682,12 +682,20 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 			} else {
 				// Check if the tool result contains an artifact payload.
 				// If so, record it and emit a "file" event (non-fatal).
-				// SECURITY: the artifact body is consumed here; it must not be
-				// forwarded to the bus in the tool_result event.
+				// Strip the artifact key before forwarding to the LLM — the
+				// base64 body must never appear in LLM context or event payloads.
 				var ap artifactPayload
 				if len(out) > 0 {
 					if jsonErr := json.Unmarshal(out, &ap); jsonErr == nil && ap.Artifact != nil {
 						o.emitArtifactEvent(ctx, contextID, runID, rctx, ap.Artifact)
+						// Replace out with artifact-stripped version for LLM tool_result.
+						var stripped map[string]any
+						if jsonErr2 := json.Unmarshal(out, &stripped); jsonErr2 == nil {
+							delete(stripped, "artifact")
+							if clean, jsonErr3 := json.Marshal(stripped); jsonErr3 == nil {
+								out = clean
+							}
+						}
 					}
 				}
 				o.publishJSON(ctx, contextID, runID, "tool_result", map[string]any{

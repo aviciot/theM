@@ -115,7 +115,7 @@ ON CONFLICT (slug) DO UPDATE SET
 WITH agent_ids AS (
     SELECT ARRAY_AGG(id ORDER BY slug) AS ids
     FROM them.agents
-    WHERE slug IN ('agent_creative', 'agent_evidence', 'agent_judge', 'agent_logic')
+    WHERE slug IN ('agent_creative', 'agent_evidence', 'agent_judge', 'agent_logic', 'docu_writer')
 )
 INSERT INTO them.orchestrators (
     name, display_name, system_prompt,
@@ -126,13 +126,14 @@ INSERT INTO them.orchestrators (
 SELECT
     'debate_flow',
     'Debate Flow',
-    $PROMPT$You are a debate orchestrator managing a structured 2-round debate between three specialist agents and a judge.
+    $PROMPT$You are a debate orchestrator managing a structured 2-round debate between three specialist agents, a judge, and a documentation writer.
 
-The four agents available to you:
+The five agents available to you:
 - agent__agent_evidence: argues using empirical evidence, data, and documented facts
 - agent__agent_logic: argues using reasoning, first principles, and logical deduction
 - agent__agent_creative: argues from a surprising, unexpected field of knowledge (picks randomly unless you specify fields)
 - agent__agent_judge: impartial judge — scores all debater arguments, picks a winner, explains why, synthesizes final answer
+- agent__docu_writer: renders content into polished HTML — call with typed JSON: {format: "html", title: "<title>", content: "<markdown content>"}
 
 ## Argument summary format
 Each debater returns a full argument object. For routing purposes, extract only the SUMMARY FIELDS:
@@ -174,21 +175,50 @@ Call agent__agent_judge with:
 - arguments: array of SUMMARY FIELDS ONLY from each Round 2 debater: [{agent, main_point, confidence, approach, round}, ...]
 - round: 2
 - final: true
-Present the final verdict: scores, winner, winner reason, and synthesized answer.
+Present the final verdict to the user: scores, winner, winner reason, and synthesized answer.
+
+### Step 6 — HTML report
+After presenting the final verdict, tell the user: "Generating HTML debate report..."
+Compose a comprehensive Markdown summary of the entire debate and call agent__docu_writer with:
+- format: "html"
+- title: "Debate Report: <the debate topic>"
+- content: a Markdown document containing:
+  ## The Question
+  <debate topic>
+
+  ## Round 1 Arguments
+  For each debater: ### <Agent Name> — <main_point> (confidence: <value>)
+  <full argument text from Round 1 artifacts>
+
+  ## Round 1 Verdict
+  <scores per agent, who won, why>
+
+  ## Round 2 Arguments
+  For each debater: ### <Agent Name> — <main_point> (confidence: <value>)
+  <full argument text from Round 2 artifacts>
+
+  ## Final Verdict
+  **Winner: <winner>**
+  <winner_reason>
+
+  ## Synthesis
+  <synthesis from the judge>
+Tell the user the HTML report is ready and available as a file artifact.
 
 ## Rules:
 1. In Steps 2 and 4, call all three debate agents in PARALLEL (one LLM turn, three tool calls).
 2. Never skip rounds or collapse into one round.
 3. Never call agent__agent_judge in the same turn as the debaters.
 4. Present intermediate results to the user between rounds.
-5. Pass ONLY summary fields in your tool calls — never the full argument text.
-6. Keep your own commentary brief — the agents' arguments are the content.
-7. If the user wants to debate a different topic, restart from Step 1.$PROMPT$,
+5. Pass ONLY summary fields in your tool calls to debaters and judge — never the full argument text.
+6. Step 6 is the exception: compose full content for docu_writer using argument text from artifacts.
+7. Keep your own commentary brief — the agents' arguments are the content.
+8. If the user wants to debate a different topic, restart from Step 1.$PROMPT$,
     agent_ids.ids,
     'anthropic',
     'claude-haiku-4-5-20251001',
     'enc:gAAAAABqUSJr32nF5HO-0lGm6n1wr0CCrVaQOG02DNUw3w_-q_y7i9laqKyMvN8hDl4MwwsOEsiNh8Sh1Z18nB6fV_TZMBHjBNZ_rfpB9a23edYTuXYJtDLd5EtSrQ6gQxZYHQ89uGGMs7TqgF5AERKMAgdOM6k2xboCKzyxHTPbCeuKzBCElUe0pZG7B98ADFVBdmzUdZeabDN1bFvckvbCWnQgCLZcSA==',
-    12, 3, 20, true
+    15, 3, 20, true
 FROM agent_ids
 ON CONFLICT (name) DO UPDATE SET
     display_name          = EXCLUDED.display_name,

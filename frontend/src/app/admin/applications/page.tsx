@@ -6444,7 +6444,13 @@ export default function ApplicationsPage() {
   }
 
   async function handleDelete(app: Application) {
-    try { await themApi.deleteApplication(app.id); await load(); } catch {/* ignore */}
+    try {
+      await themApi.deleteApplication(app.id);
+      await load();
+      showListToast(`"${app.name}" deleted`, true);
+    } catch (e) {
+      showListToast(e instanceof Error ? e.message : 'Delete failed', false);
+    }
   }
 
   function handleToggleSelect(id: string, checked: boolean) {
@@ -6466,7 +6472,9 @@ export default function ApplicationsPage() {
       await themApi.bulkDeleteApplications(Array.from(selectedApps));
       setSelectedApps(new Set());
       await load();
-    } catch {/* ignore */} finally {
+    } catch (e) {
+      showListToast(e instanceof Error ? e.message : 'Bulk delete failed', false);
+    } finally {
       setBulkDeleting(false);
     }
   }

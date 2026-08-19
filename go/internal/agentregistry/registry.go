@@ -3,6 +3,7 @@ package agentregistry
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,7 +28,10 @@ const (
 	// Matches the constant used in admin/service/agents.go.
 	invalidateChannel = "them:agents:changed"
 
-	httpInvokeTimeout = 60 * time.Second
+	// httpInvokeTimeout covers the full round-trip to an A2A agent including its
+	// internal LLM call.  docu_writer calls Claude with up to 8192 output tokens
+	// which can take 60-90 s; 3 minutes gives comfortable headroom.
+	httpInvokeTimeout = 3 * time.Minute
 )
 
 // AgentConfig holds the configuration for a single agent loaded from DB.
@@ -232,8 +236,12 @@ type a2aMessage struct {
 }
 
 type a2aPart struct {
-	Text string `json:"text,omitempty"`
-	Kind string `json:"kind,omitempty"` // kept for v0.3 compat probing
+	Text      string         `json:"text,omitempty"`
+	Kind      string         `json:"kind,omitempty"`      // kept for v0.3 compat probing
+	Data      map[string]any `json:"data,omitempty"`      // typed data part (A2A v1.1)
+	Mime      string         `json:"mimeType,omitempty"`  // media type for outbound data parts
+	MediaType string         `json:"mediaType,omitempty"` // media type on inbound file parts (docu_writer wire format)
+	Filename  string         `json:"filename,omitempty"`  // present on file parts
 }
 
 type a2aResponse struct {
@@ -259,7 +267,10 @@ type a2aStatus struct {
 }
 
 type a2aArtifact struct {
-	Parts []a2aPart `json:"parts"`
+	ArtifactID  string    `json:"artifactId,omitempty"`
+	Name        string    `json:"name,omitempty"`
+	Description string    `json:"description,omitempty"`
+	Parts       []a2aPart `json:"parts"`
 }
 
 type a2aError struct {
@@ -267,14 +278,35 @@ type a2aError struct {
 	Message string `json:"message"`
 }
 
-func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.RawMessage) (json.RawMessage, error) {
-	var inputMap map[string]any
-	text := string(input)
-	if err := json.Unmarshal(input, &inputMap); err == nil {
-		if s, ok := inputMap["input"].(string); ok {
-			text = s
+// buildA2APart decides whether to send input as a text part or a typed data part.
+//
+//   - {"input": "some text"}  → text part (plain agent call)
+//   - {"format":…, "title":…} → data part (structured call, e.g. docu_writer)
+//   - any other JSON object   → data part (pass fields through as-is)
+//   - non-object JSON         → text part (fallback)
+func buildA2APart(input json.RawMessage) a2aPart {
+	var m map[string]any
+	if err := json.Unmarshal(input, &m); err != nil {
+		// Not a JSON object — send raw as text.
+		return a2aPart{Text: string(input)}
+	}
+	// Unwrap simple {"input": "..."} wrapper → text part.
+	if len(m) == 1 {
+		if s, ok := m["input"].(string); ok {
+			return a2aPart{Text: s}
 		}
 	}
+	// Structured input → typed data part.
+	return a2aPart{Data: m, Mime: "application/json"}
+}
+
+func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.RawMessage) (json.RawMessage, error) {
+	// Build the A2A message part.
+	// If input is a JSON object and has fields other than "input", send it as a
+	// typed data part so agents like docu_writer receive structured fields
+	// (format, title, content) instead of a raw JSON string.
+	// If input is a plain {"input": "..."} wrapper, unwrap to a text part.
+	part := buildA2APart(input)
 
 	reqID := newUUID()
 	msgID := newUUID()
@@ -285,7 +317,7 @@ func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.R
 		Params: a2aParams{
 			Message: a2aMessage{
 				Role:      1, // ROLE_USER in proto enum
-				Parts:     []a2aPart{{Text: text}},
+				Parts:     []a2aPart{part},
 				MessageID: msgID,
 			},
 			Configuration: a2aConfiguration{ReturnImmediately: false},
@@ -339,6 +371,39 @@ func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.R
 		artifacts = rpcResp.Result.Message.Artifacts
 	}
 
+	// Walk artifacts: if any part has a filename, return an artifact payload so
+	// the orchestrator can persist the file.  Otherwise return plain text output.
+	for _, artifact := range artifacts {
+		for _, part := range artifact.Parts {
+			if part.Filename != "" && part.Text != "" {
+				// File artifact — encode content as base64 and wrap in the
+				// orchestrator's {"artifact": {filename, content_type, data_base64}} shape.
+				encoded := base64.StdEncoding.EncodeToString([]byte(part.Text))
+				contentType := part.MediaType
+				if contentType == "" {
+					contentType = part.Mime
+				}
+				if contentType == "" {
+					contentType = "application/octet-stream"
+				}
+				name := part.Filename
+				if artifact.Name != "" {
+					name = artifact.Name
+				}
+				out, _ := json.Marshal(map[string]any{
+					"output": "File artifact: " + name,
+					"artifact": map[string]string{
+						"filename":     name,
+						"content_type": contentType,
+						"data_base64":  encoded,
+					},
+				})
+				return out, nil
+			}
+		}
+	}
+
+	// No file artifact — extract plain text from the first non-empty text part.
 	var output string
 	for _, artifact := range artifacts {
 		for _, part := range artifact.Parts {
