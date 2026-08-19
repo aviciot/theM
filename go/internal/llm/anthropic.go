@@ -161,6 +161,7 @@ func (p *AnthropicProvider) parseSSE(ctx context.Context, r io.Reader, out chan<
 	var eventType string
 	toolInputBuf := map[int]*bytes.Buffer{}
 	toolCallAccum := map[int]ToolCall{}
+	var inputTokens, outputTokens int
 
 	for scanner.Scan() {
 		if ctx.Err() != nil {
@@ -176,7 +177,7 @@ func (p *AnthropicProvider) parseSSE(ctx context.Context, r io.Reader, out chan<
 			continue
 		}
 		if after, ok := cutPrefix(line, "data: "); ok {
-			p.handleSSEData(ctx, eventType, after, out, toolInputBuf, toolCallAccum)
+			p.handleSSEData(ctx, eventType, after, out, toolInputBuf, toolCallAccum, &inputTokens, &outputTokens)
 		}
 	}
 }
@@ -187,8 +188,21 @@ func (p *AnthropicProvider) handleSSEData(
 	out chan<- StreamEvent,
 	toolInputBuf map[int]*bytes.Buffer,
 	toolCallAccum map[int]ToolCall,
+	inputTokens, outputTokens *int,
 ) {
 	switch eventType {
+	case "message_start":
+		var ev struct {
+			Message struct {
+				Usage struct {
+					InputTokens int `json:"input_tokens"`
+				} `json:"usage"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(data), &ev); err == nil {
+			*inputTokens = ev.Message.Usage.InputTokens
+		}
+
 	case "content_block_start":
 		var ev struct {
 			Index        int `json:"index"`
@@ -254,16 +268,18 @@ func (p *AnthropicProvider) handleSSEData(
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
 			return
 		}
+		*outputTokens = ev.Usage.OutputTokens
+		usage := &Usage{InputTokens: *inputTokens, OutputTokens: *outputTokens}
 		if ev.Delta.StopReason == "tool_use" {
 			var calls []ToolCall
 			for _, tc := range toolCallAccum {
 				calls = append(calls, tc)
 			}
 			if len(calls) > 0 {
-				sendEvent(ctx, out, StreamEvent{Type: "tool_calls", ToolCalls: calls, StopReason: "tool_use"})
+				sendEvent(ctx, out, StreamEvent{Type: "tool_calls", ToolCalls: calls, StopReason: "tool_use", Usage: usage})
 			}
 		} else {
-			sendEvent(ctx, out, StreamEvent{Type: "stop", StopReason: ev.Delta.StopReason})
+			sendEvent(ctx, out, StreamEvent{Type: "stop", StopReason: ev.Delta.StopReason, Usage: usage})
 		}
 	}
 }

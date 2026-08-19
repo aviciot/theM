@@ -352,11 +352,14 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 					})
 				}
 				stopReason = ev.StopReason
+				if ev.Usage != nil {
+					inputTokens = ev.Usage.InputTokens
+					outputTokens = ev.Usage.OutputTokens
+				}
 			case "stop":
 				stop = true
 				stopReason = ev.StopReason
 				finalText = assistantText
-				// Extract token usage from the stop event.
 				if ev.Usage != nil {
 					inputTokens = ev.Usage.InputTokens
 					outputTokens = ev.Usage.OutputTokens
