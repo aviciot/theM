@@ -619,62 +619,116 @@ function CanvasInner() {
       )}
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Left palette */}
+        {/* ── Node Library (left panel) ── */}
         <div style={{
-          width: '180px', flexShrink: 0, borderRight: `1px solid ${C.outline}`,
-          background: C.surface, padding: '16px 12px', overflowY: 'auto',
+          width: '220px', flexShrink: 0, borderRight: `1px solid ${C.outline}`,
+          background: C.surface, overflowY: 'auto', display: 'flex', flexDirection: 'column',
         }}>
-          {activeView === 'agent' ? (
-            <>
-              <div style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>ADD</div>
-              <button onClick={addSkill} style={{
-                width: '100%', background: C.purpleBg, border: `1px solid ${C.purpleBorder}`,
-                color: C.purple, padding: '8px', borderRadius: '6px', cursor: 'pointer',
-                fontSize: '12px', fontWeight: 600, marginBottom: '6px',
-              }}>
-                + Skill
-              </button>
-              <div style={{ color: C.textMuted, fontSize: '11px', marginTop: '16px', marginBottom: '6px', fontWeight: 700, letterSpacing: '0.08em' }}>CREDENTIAL SLOTS</div>
-              <button onClick={() => {
-                setCredentialSlots(prev => [...prev, { name: `slot_${prev.length + 1}`, description: '', required: true }]);
-                setDirty(true);
-              }} style={{
-                width: '100%', background: C.amberBg, border: `1px solid ${C.amberBorder}`,
-                color: C.amber, padding: '8px', borderRadius: '6px', cursor: 'pointer',
-                fontSize: '12px', fontWeight: 600,
-              }}>
-                + Slot
-              </button>
-              {credentialSlots.map((slot, i) => (
-                <div key={i} style={{ marginTop: '6px', background: C.amberBg, border: `1px solid ${C.amberBorder}`, borderRadius: '6px', padding: '6px' }}>
-                  <input
-                    value={slot.name}
-                    onChange={e => {
-                      const next = [...credentialSlots];
-                      next[i] = { ...next[i], name: e.target.value };
-                      setCredentialSlots(next);
-                      setDirty(true);
-                    }}
-                    style={{ width: '100%', background: 'transparent', border: 'none', color: C.amber, fontSize: '11px', outline: 'none' }}
-                    placeholder="slot name"
-                  />
+          <div style={{ padding: '14px 14px 8px', fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', borderBottom: `1px solid ${C.outline}` }}>
+            {activeView === 'agent' ? 'Node Library' : 'Step Library'}
+          </div>
+
+          <div style={{ padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+            {activeView === 'agent' ? (
+              <>
+                {/* Skill draggable card */}
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>Skills</div>
+                <div
+                  draggable
+                  onDragStart={e => { e.dataTransfer.setData('nodeType', 'skill'); e.dataTransfer.effectAllowed = 'move'; }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
+                    borderRadius: 8, cursor: 'grab', userSelect: 'none',
+                    background: C.purpleBg, border: `1px solid ${C.purpleBorder}`,
+                  }}
+                >
+                  <span style={{ fontSize: 18 }}>⚡</span>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.purple }}>Skill</div>
+                    <div style={{ fontSize: 10, color: C.textMuted }}>Named capability</div>
+                  </div>
                 </div>
-              ))}
-            </>
-          ) : (
-            <>
-              <div style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>ADD STEP</div>
-              {STEP_TYPES.map(st => (
-                <button key={st.type} onClick={() => addStepToActivePipeline(st.type)} style={{
-                  width: '100%', background: 'transparent', border: `1px solid ${C.outline}`,
-                  color: C.text, padding: '7px 8px', borderRadius: '6px', cursor: 'pointer',
-                  fontSize: '12px', marginBottom: '4px', textAlign: 'left',
+
+                {/* Credential slots section */}
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', marginTop: 12, marginBottom: 4 }}>Credential Slots</div>
+                <button onClick={() => {
+                  setCredentialSlots(prev => [...prev, { name: `slot_${prev.length + 1}`, description: '', required: true }]);
+                  setDirty(true);
+                }} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px',
+                  borderRadius: 8, cursor: 'pointer', background: C.amberBg,
+                  border: `1px solid ${C.amberBorder}`, color: C.amber,
+                  fontSize: 13, fontWeight: 600, width: '100%', textAlign: 'left',
                 }}>
-                  {st.label}
+                  <span style={{ fontSize: 16 }}>🔑</span> + Add Slot
                 </button>
-              ))}
-            </>
-          )}
+                {credentialSlots.map((slot, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, background: C.amberBg, border: `1px solid ${C.amberBorder}`, borderRadius: 6, padding: '4px 8px' }}>
+                    <span style={{ fontSize: 12, color: C.amber, flexShrink: 0 }}>🔑</span>
+                    <input
+                      value={slot.name}
+                      onChange={e => {
+                        const next = [...credentialSlots];
+                        next[i] = { ...next[i], name: e.target.value };
+                        setCredentialSlots(next);
+                        setDirty(true);
+                      }}
+                      style={{ flex: 1, background: 'transparent', border: 'none', color: C.amber, fontSize: '11px', outline: 'none', minWidth: 0 }}
+                      placeholder="slot name"
+                    />
+                    <button onClick={() => { setCredentialSlots(prev => prev.filter((_, j) => j !== i)); setDirty(true); }}
+                      style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 14, padding: '0 2px', flexShrink: 0 }}>×</button>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <>
+                {/* Step type cards — grouped */}
+                {[
+                  { label: 'Data Flow', items: [
+                    { type: 'input', color: C.green, borderColor: C.greenBorder, icon: '→', desc: 'Bind caller input' },
+                    { type: 'response', color: C.cyan, borderColor: C.cyanBorder, icon: '←', desc: 'Return result' },
+                  ]},
+                  { label: 'Processing', items: [
+                    { type: 'llm', color: C.purple, borderColor: C.purpleBorder, icon: '🤖', desc: 'Call an LLM' },
+                    { type: 'transform', color: C.indigo, borderColor: C.indigoBorder, icon: '⚙', desc: 'Template expressions' },
+                    { type: 'http', color: C.amber, borderColor: C.amberBorder, icon: '🌐', desc: 'HTTP tool call' },
+                  ]},
+                  { label: 'Advanced', items: [
+                    { type: 'branch', color: C.amber, borderColor: C.amberBorder, icon: '⑂', desc: 'Conditional branch' },
+                    { type: 'loop', color: C.amber, borderColor: C.amberBorder, icon: '↺', desc: 'Repeat steps' },
+                    { type: 'parallel', color: C.purple, borderColor: C.purpleBorder, icon: '⫶', desc: 'Run in parallel' },
+                    { type: 'a2a_call', color: C.cyan, borderColor: C.cyanBorder, icon: '↗', desc: 'Call another agent' },
+                    { type: 'human_wait', color: C.green, borderColor: C.greenBorder, icon: '⏸', desc: 'Wait for human' },
+                    { type: 'stream_out', color: C.cyan, borderColor: C.cyanBorder, icon: '≋', desc: 'Stream output' },
+                  ]},
+                ].map(group => (
+                  <div key={group.label}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', margin: '8px 0 4px' }}>{group.label}</div>
+                    {group.items.map(st => (
+                      <div
+                        key={st.type}
+                        draggable
+                        onDragStart={e => { e.dataTransfer.setData('nodeType', 'step'); e.dataTransfer.setData('stepType', st.type); e.dataTransfer.effectAllowed = 'move'; }}
+                        onClick={() => addStepToActivePipeline(st.type as AgentStepDoc['type'])}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
+                          borderRadius: 7, cursor: 'grab', userSelect: 'none', marginBottom: 3,
+                          background: `${st.borderColor}18`, border: `1px solid ${st.borderColor}`,
+                        }}
+                      >
+                        <span style={{ fontSize: 14, width: 18, textAlign: 'center', flexShrink: 0, color: st.color }}>{st.icon}</span>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: st.color, textTransform: 'capitalize' }}>{st.type.replace('_', ' ')}</div>
+                          <div style={{ fontSize: 10, color: C.textMuted }}>{st.desc}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
         </div>
 
         {/* Canvas */}
@@ -686,8 +740,24 @@ function CanvasInner() {
               onNodesChange={onAgentNodesChange}
               onEdgesChange={onAgentEdgesChange}
               onConnect={onAgentConnect}
+              onNodeClick={(_: MouseEvent, node: Node) => setSelectedNode(node)}
               onNodeDoubleClick={onAgentNodeDoubleClick}
+              onPaneClick={() => setSelectedNode(null)}
               nodeTypes={nodeTypes}
+              onDragOver={(e: DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+              onDrop={(e: DragEvent) => {
+                e.preventDefault();
+                const nodeType = e.dataTransfer.getData('nodeType');
+                if (nodeType === 'skill') {
+                  const bounds = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  const pos = screenToFlowPosition({ x: e.clientX - bounds.left, y: e.clientY - bounds.top });
+                  const sid = `skill-${Date.now()}`;
+                  const newNode: Node = { id: `skill-${sid}`, type: 'skill', position: pos, data: { skill_id: sid, name: 'New Skill', description: '' } };
+                  setAgentNodes(prev => [...prev, newNode]);
+                  setAgentEdges(prev => [...prev, { id: `root-to-${sid}`, source: 'agent-root', target: `skill-${sid}` }]);
+                  setDirty(true);
+                }
+              }}
               fitView
             >
               <Background variant={BackgroundVariant.Dots} gap={20} color="rgba(255,255,255,0.05)" />
@@ -700,8 +770,24 @@ function CanvasInner() {
               onNodesChange={onPipeNodesChange}
               onEdgesChange={onPipeEdgesChange}
               onConnect={onPipeConnect}
+              onNodeClick={(_: MouseEvent, node: Node) => setSelectedNode(node)}
               onNodeDoubleClick={onPipeNodeDoubleClick}
+              onPaneClick={() => setSelectedNode(null)}
               nodeTypes={nodeTypes}
+              onDragOver={(e: DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+              onDrop={(e: DragEvent) => {
+                e.preventDefault();
+                const nodeType = e.dataTransfer.getData('nodeType');
+                if (nodeType === 'step') {
+                  const stepType = e.dataTransfer.getData('stepType') as AgentStepDoc['type'];
+                  const bounds = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  const pos = screenToFlowPosition({ x: e.clientX - bounds.left, y: e.clientY - bounds.top });
+                  const stepId = `step-${Date.now()}`;
+                  const newNode: Node = { id: `step-${stepId}`, type: 'step', position: pos, data: { step_id: stepId, step_type: stepType, label: stepType.replace('_', ' '), config: {} } };
+                  setLocalPipeNodes(prev => [...prev, newNode]);
+                  setDirty(true);
+                }
+              }}
               fitView
             >
               <Background variant={BackgroundVariant.Dots} gap={20} color="rgba(255,255,255,0.05)" />
