@@ -901,10 +901,8 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ── Go Bridge — Wave 1 traffic (profile: go) ─────────────────────────────────
-  # Enable with: docker compose --profile go up -d them-go-bridge
-  # Wave 1: Go serves /health (priority 130) and GET-only admin+runs reads (priority 110).
-  # Python still serves all writes and WS/SSE. Routes added incrementally per wave.
+  # ── Go Bridge — active API gateway (Python permanently retired) ──────────────
+  # Go serves all routes. Python bridge is behind profiles: [legacy] and must not start.
   them-go-bridge:
     build:
       context: .
@@ -1084,8 +1082,6 @@ services:
       - "traefik.http.routers.them-go-agent-defs.entrypoints=web"
       - "traefik.http.routers.them-go-agent-defs.priority=120"
       - "traefik.http.routers.them-go-agent-defs.service=them-go-bridge-svc"
-    profiles:
-      - go
     restart: unless-stopped
     logging:
       driver: "json-file"

@@ -115,13 +115,12 @@ services:
       - "traefik.http.routers.them-temporal-ui.service=them-temporal-ui-svc"
       - "traefik.http.services.them-temporal-ui-svc.loadbalancer.server.port=8080"
 
-  # ── Go Temporal Worker 1 (profile: go-worker) ─────────────────────────────────
+  # ── Go Temporal Worker 1 ───────────────────────────────────────────────────────
   them-go-worker:
     build:
       context: .
       dockerfile: Dockerfile.go-worker
     container_name: them-go-worker
-    profiles: [go-worker]
     environment:
       - THE_M_INSTANCE_ID=go-worker-1
       - APP_ENV=production
@@ -151,13 +150,12 @@ services:
         max-size: "50m"
         max-file: "10"
 
-  # ── Go Temporal Worker 2 (profile: go-worker) ─────────────────────────────────
+  # ── Go Temporal Worker 2 ───────────────────────────────────────────────────────
   them-go-worker-2:
     build:
       context: .
       dockerfile: Dockerfile.go-worker
     container_name: them-go-worker-2
-    profiles: [go-worker]
     environment:
       - THE_M_INSTANCE_ID=go-worker-2
       - APP_ENV=production

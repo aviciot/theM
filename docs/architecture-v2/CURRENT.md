@@ -17,7 +17,7 @@ Commit: `148235b` — fix(runrecorder): correct schema column names and wire ste
 
 Stack startup command:
 ```bash
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile go --profile temporal up -d
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d
 ```
 
 UI: `http://<server-ip>:8088`
@@ -53,7 +53,7 @@ Both Python runtimes are now behind `profiles: [legacy]`:
 
 **Go Temporal worker** (`them-go-worker` in `docker-compose.dev.yml`) is defined behind `profiles: [go-worker]` and is future work — not yet the active orchestration path.
 
-Verified clean restart with `--profile go --profile temporal`:
+Verified clean restart with `--profile temporal` (go-bridge and go-worker are now default services):
 ```
 PRESENT:  them-go-bridge, temporal-frontend, temporal-ui, temporal-admin-tools,
           them-auth-go, them-frontend, them-postgres, them-redis, them-traefik
