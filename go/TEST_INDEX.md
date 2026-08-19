@@ -388,6 +388,8 @@ sanitization, and cross-run access denial.
 | `TestRecordAgentStep_insertsCorrectly` | `INSERT INTO them.run_steps` with correct schema columns (agent_slug/latency_ms/started_at/ended_at) |
 | `TestSetFinalOutput_updatesRun` | `UPDATE them.runs SET final_output` with correct args |
 | `TestRecordStep_isNoop` | legacy `RecordStep` returns nil with no DB calls |
+| `TestGetActiveRunByContextID_found` | JOIN query returns RunID+Status when row exists |
+| `TestGetActiveRunByContextID_notFound` | scan error → `ErrNoActiveRun` |
 | `TestDBError_propagates` | DB error is wrapped and returned, not swallowed |
 | `TestRecordArtifact_Success` | Valid artifact → INSERT issued, non-empty UUID returned |
 | `TestRecordArtifact_ExactlyOneMB` | Data at exactly 1 MiB → succeeds (boundary inclusive) |
@@ -1674,7 +1676,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-06 | session | 10 |
 | S1-07 | event | 9 |
 | S1-08 | domain | 3 |
-| S1-09 | runrecorder | 25 |
+| S1-09 | runrecorder | 27 |
 | S1-10 | llm | 6 |
 | S1-11 | agentregistry | 10 |
 | S1-12 | ws | 24 |

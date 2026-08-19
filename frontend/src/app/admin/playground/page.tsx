@@ -1145,16 +1145,23 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
     }).catch(() => {});
   }, [target.kind === 'orchestrator' ? target.name : '']);
 
-  // Restore context_id from localStorage (only for orchestrator targets — EPs are stateless-keyed by slug)
+  // Restore context_id from localStorage — and probe for a running workflow.
+  // If one is found, reattach silently so the run continues in the foreground.
   useEffect(() => {
     const storageKey = `them:playground:ctx:${target.kind === 'orchestrator' ? target.name : target.slug}`;
     const saved = localStorage.getItem(storageKey);
     if (!saved) return;
     themApi.contexts().then(sessions => {
       const match = sessions.find(s => s.context_id === saved);
-      if (match) setRestoredSession(match);
-      else localStorage.removeItem(storageKey);
+      if (match) {
+        setRestoredSession(match);
+        setContextId(saved);
+        reattach(saved);
+      } else {
+        localStorage.removeItem(storageKey);
+      }
     }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Persist context_id
@@ -1189,6 +1196,58 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
     };
     ws.onerror = () => ws.close();
   }, []);
+
+  // ── Reattach to a running workflow (tab-switch / reconnect) ─────────────
+  // Opens a WS with empty content + context_id. Server re-attaches to the
+  // running workflow if one exists, or responds with no_active_run.
+  const reattach = useCallback(async (ctxId: string) => {
+    if (busyRef.current) return;
+    const r = await fetch('/api/auth/token');
+    if (!r.ok) return;
+    const { token } = await r.json();
+
+    const ws = new WebSocket(targetWsUrl(target, token));
+    chatWs.current = ws;
+    assistantBuf.current = '';
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'message', content: '', context_id: ctxId }));
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'no_active_run') { ws.close(); return; }
+        if (msg.type === 'ready') {
+          runId.current = msg.run_id;
+          if (msg.context_id) setContextId(msg.context_id as string);
+          setBusy(true); busyRef.current = true;
+          setStatus(`Reconnected — run ${(msg.run_id as string).slice(0, 8)}…`);
+          setMessages(prev => [...prev, { role: 'assistant', text: '', pending: true }]);
+        } else if (msg.type === 'token') {
+          assistantBuf.current += msg.content || msg.text || '';
+          setMessages(prev => {
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, text: assistantBuf.current };
+            return copy;
+          });
+        } else if (msg.type === 'done') {
+          setMessages(prev => prev.map((m, i) => i === prev.length - 1 && m.pending ? { ...m, pending: false } : m));
+          setBusy(false); busyRef.current = false;
+          setStatus('Done');
+          ws.close();
+        } else if (msg.type === 'error') {
+          setBusy(false); busyRef.current = false;
+          setStatus('Error');
+          ws.close();
+        }
+      } catch {}
+    };
+
+    ws.onerror = () => { setBusy(false); busyRef.current = false; ws.close(); };
+    ws.onclose = () => { if (chatWs.current === ws) chatWs.current = null; };
+  }, [target]);
 
   // ── Send ─────────────────────────────────────────────────────────────────
   const sendText = useCallback(async (text: string, currentContextId?: string | null) => {
