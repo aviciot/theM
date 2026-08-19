@@ -355,9 +355,29 @@ function RunModal({ run, onClose }: { run: Run; onClose: () => void }) {
           display: 'flex', alignItems: 'flex-start', gap: '16px', flexShrink: 0,
         }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }}>
               <StatusBadge status={run.status} />
-              <span style={{ fontSize: '12px', color: 'var(--tm-text-muted)', fontFamily: 'monospace' }}>{run.id.slice(0, 16)}…</span>
+              <span title={run.id} style={{ fontSize: '11px', color: 'var(--tm-text-muted)', fontFamily: 'monospace', cursor: 'default' }}>
+                run·{run.id.slice(0, 8)}
+              </span>
+              {(() => {
+                const rootTask = tasks.find(t => t.kind === 'root');
+                if (!rootTask?.context_id) return null;
+                const wfID = `ctx-${rootTask.context_id}`;
+                const temporalURL = '/temporal/namespaces/default/workflows?query=' + encodeURIComponent('WorkflowId="' + wfID + '"');
+                return (
+                  <a
+                    href={temporalURL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`Open in Temporal UI: ${wfID}`}
+                    style={{ fontSize: '11px', color: '#5b7fff', fontFamily: 'monospace', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '3px' }}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>open_in_new</span>
+                    {wfID.slice(0, 20)}…
+                  </a>
+                );
+              })()}
             </div>
             <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--tm-text)', marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {run.user_message || run.goal || 'No message'}

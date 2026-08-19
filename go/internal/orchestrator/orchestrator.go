@@ -410,7 +410,7 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 
 		// Execute tool calls and append results.
 		if len(toolCalls) > 0 && o.agents != nil {
-			toolResults := o.executeTools(ctx, contextID, runID, toolCalls, rctx)
+			toolResults := o.executeTools(ctx, contextID, runID, iter, toolCalls, rctx)
 			toolResultMsg := buildToolResultMessage(toolResults)
 
 			// Checkpoint tool results (non-fatal).
@@ -600,7 +600,8 @@ func (o *Orchestrator) emitArtifactEvent(ctx context.Context, contextID, runID s
 // executeTools invokes all tool calls in parallel (bounded by MaxParallelTools),
 // publishes results to the bus, and manages child task lifecycle.
 // OD-4: parallel fan-out with semaphore.
-func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string, calls []llm.ToolCall, rctx RunContext) []toolResult {
+// iter is the agentic loop iteration index — all parallel calls in one batch share the same iteration.
+func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string, iter int, calls []llm.ToolCall, rctx RunContext) []toolResult {
 	results := make([]toolResult, len(calls))
 
 	// Build semaphore for concurrency control (0 = unlimited).
@@ -662,7 +663,7 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 					stepStatus = "failed"
 					stepErrMsg = err.Error()
 				}
-				if recErr := o.stepRecorder.RecordAgentStep(ctx, runID, slug, i, inputBytes, string(out), latencyMS, stepStatus, stepErrMsg); recErr != nil {
+				if recErr := o.stepRecorder.RecordAgentStep(ctx, runID, slug, iter, inputBytes, string(out), latencyMS, stepStatus, stepErrMsg); recErr != nil {
 					o.logger.Warn("orchestrator: record agent step failed", "slug", slug, "error", recErr)
 				}
 			}
