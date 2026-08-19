@@ -1246,6 +1246,8 @@ template transform, HTTP credential injection). No external services required.
 | `TestInterpreter_TransformStep` | Transform step renders Go template expressions over pipeline vars |
 | `TestInterpreter_HTTPStep_InjectsCredential` | HTTP step resolves `CredentialSlot` from `InvocationContext.Credentials` and injects as `Authorization: Bearer {credential}` header |
 | `TestInterpreter_AgentCard_PathIsAgentCardJSON` | Documents A2A well-known path is `/.well-known/agent-card.json` (not `agent.json`) |
+| `TestInterpreter_LLMStep_FallsBackToInput` | LLM step with no `user_prompt` config falls back to `vars["input"]` (the user's message) |
+| `TestInterpreter_LLMStep_ExplicitUserPromptOverridesInput` | Explicit `user_prompt` template takes priority over `vars["input"]` |
 
 **Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go)
 
@@ -1802,13 +1804,13 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-45 | admin registry handler (Phase D: ListComponentDefinitions) | 1 |
 | S1-46 | history (DB role mapping + round-trip) | 4 |
 | S1-47 | summarizer (LLM-based conversation summarizer) | 4 |
-| S1-48 | agentgen (Phase 1 A2A Agent Runtime: invariants + interpreter) | 8 |
+| S1-48 | agentgen (Phase 1 A2A Agent Runtime: invariants + interpreter) | 10 |
 | S1-49 | agent definitions (Phase 2 Canvas A2A Builder CRUD) | 21 |
 | S1-50 | agent definition compiler | 14 |
 | S1-51 | agent definition publish service | 11 |
 | S1-52 | dashboard WebSocket handler | 11 |
 | S1-53 | agent-runtime spec cache | 2 |
-| **S1 total** | | **683** |
+| **S1 total** | | **685** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1817,4 +1819,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **654** |
+| **`go test ./...` total** | | **656** |

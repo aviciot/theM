@@ -294,6 +294,98 @@ func TestInterpreter_HTTPStep_InjectsCredential(t *testing.T) {
 	}
 }
 
+// fakeLLM records the prompts it receives and returns a fixed reply.
+type fakeLLM struct {
+	capturedSystem string
+	capturedUser   string
+	reply          string
+}
+
+func (f *fakeLLM) Complete(_ context.Context, system, user string) (string, error) {
+	f.capturedSystem = system
+	f.capturedUser = user
+	return f.reply, nil
+}
+
+type fakeLLMFactory struct{ llm *fakeLLM }
+
+func (f *fakeLLMFactory) NewProvider(_, _ string, _ int, _ string) (agentgen.LLMProvider, error) {
+	return f.llm, nil
+}
+
+func TestInterpreter_LLMStep_FallsBackToInput(t *testing.T) {
+	fake := &fakeLLM{reply: "echo: hello"}
+	interp := agentgen.NewInterpreter(nil, &fakeLLMFactory{llm: fake}, "platform-key")
+	ic := &agentgen.InvocationContext{
+		TenantID:      "t1",
+		ApplicationID: "a1",
+		AgentID:       "agent-1",
+		Credentials:   map[string]string{},
+	}
+	// No user_prompt configured — should fall back to vars["input"].
+	skill := &agentgen.SkillSpec{
+		ID: "skill-llm",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:     "llm_step",
+				Type:   agentgen.StepLLM,
+				Config: mustJSON(agentgen.LLMStepConfig{SystemPrompt: "You are helpful.", Model: "claude-haiku", MaxTokens: 100}),
+				Next:   []string{"respond"},
+			},
+			{
+				ID:     "respond",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "output"}),
+			},
+		},
+	}
+
+	result, err := interp.Execute(context.Background(), ic, skill, "hello world")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if result.Text != "echo: hello" {
+		t.Errorf("expected 'echo: hello', got %q", result.Text)
+	}
+	if fake.capturedUser != "hello world" {
+		t.Errorf("expected LLM to receive 'hello world' as user prompt, got %q", fake.capturedUser)
+	}
+}
+
+func TestInterpreter_LLMStep_ExplicitUserPromptOverridesInput(t *testing.T) {
+	fake := &fakeLLM{reply: "done"}
+	interp := agentgen.NewInterpreter(nil, &fakeLLMFactory{llm: fake}, "platform-key")
+	ic := &agentgen.InvocationContext{
+		TenantID:    "t1",
+		ApplicationID: "a1",
+		AgentID:     "agent-1",
+		Credentials: map[string]string{},
+	}
+	skill := &agentgen.SkillSpec{
+		ID: "skill-llm",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:     "llm_step",
+				Type:   agentgen.StepLLM,
+				Config: mustJSON(agentgen.LLMStepConfig{SystemPrompt: "sys", UserPrompt: "fixed prompt", Model: "m", MaxTokens: 10}),
+				Next:   []string{"respond"},
+			},
+			{
+				ID:     "respond",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "output"}),
+			},
+		},
+	}
+	_, err := interp.Execute(context.Background(), ic, skill, "ignored input")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if fake.capturedUser != "fixed prompt" {
+		t.Errorf("expected 'fixed prompt', got %q", fake.capturedUser)
+	}
+}
+
 func TestInterpreter_AgentCard_PathIsAgentCardJSON(t *testing.T) {
 	// The A2A well-known path must be /.well-known/agent-card.json (not agent.json).
 	// Verified by the router registration in cmd/agent-runtime/main.go:

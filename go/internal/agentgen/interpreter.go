@@ -163,6 +163,12 @@ func (interp *Interpreter) execLLM(ctx context.Context, ic *InvocationContext, s
 	if err != nil {
 		return fmt.Errorf("render user prompt: %w", err)
 	}
+	// When no user_prompt template is set, fall back to the skill's input text.
+	if userPrompt == "" {
+		if inputVal, ok := vars["input"]; ok {
+			userPrompt = fmt.Sprintf("%v", inputVal)
+		}
+	}
 
 	out, err := provider.Complete(ctx, systemPrompt, userPrompt)
 	if err != nil {
