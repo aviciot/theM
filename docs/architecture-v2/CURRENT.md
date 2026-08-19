@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: pending — fix(agent-runtime): wire spec DB queries + env vars + spec cache tests (Phase 4)
+Commit: `ae0bcb2` — fix(agent-runtime): wire spec DB queries, env vars, and add cache tests (Phase 4)
 
 ---
 
