@@ -305,7 +305,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"context_id", clientContextID,
 				"run_id", active.RunID,
 			)
-			handle.RunID = active.RunID
+			// Do NOT overwrite handle.RunID — that run belongs to the active workflow.
+			// The probe created its own orphan run (handle.RunID) which Release must
+			// mark as failed when we return here without calling Start.
 
 			rsEvCh, rsErr := h.runEvents(ctx, active.RunID, lastEventID)
 			if rsErr != nil {
