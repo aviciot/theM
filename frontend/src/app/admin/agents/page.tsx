@@ -354,6 +354,7 @@ function AgentCard({
   scanStep,
   testResult,
   isDiscovering,
+  discoverError,
   onTest,
   onScan,
   onDiscover,
@@ -371,6 +372,7 @@ function AgentCard({
   scanStep?: string;
   testResult: { ok: boolean; latency_ms: number; detail: string } | 'testing' | undefined;
   isDiscovering: boolean;
+  discoverError?: string;
   onTest: () => void;
   onScan: () => void;
   onDiscover: () => void;
@@ -721,10 +723,12 @@ function AgentCard({
         <button
           onClick={onDiscover}
           disabled={isDiscovering}
-          className="card-action-btn card-action-btn--secondary"
+          className={`card-action-btn card-action-btn--secondary${isDiscovering ? ' is-loading' : ''}`}
         >
-          <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>radar</span>
-          {isDiscovering ? 'Loading…' : 'Discover'}
+          <span className={`material-symbols-outlined${isDiscovering ? ' spin' : ''}`} style={{ fontSize: '14px' }}>
+            {isDiscovering ? 'sync' : 'radar'}
+          </span>
+          {isDiscovering ? 'Discovering…' : 'Discover'}
         </button>
 
         {/* Security Scan — secondary dark with shield tint */}
@@ -738,6 +742,23 @@ function AgentCard({
           {scanResult === 'scanning' ? 'Scanning…' : 'Scan'}
         </button>
       </div>
+
+      {/* Discover error — shown inline below buttons, auto-dismissed visually */}
+      {discoverError && (
+        <div style={{
+          marginTop: '8px',
+          padding: '6px 10px',
+          borderRadius: '6px',
+          background: 'rgba(220,38,38,0.08)',
+          border: '1px solid rgba(220,38,38,0.2)',
+          color: '#f87171',
+          fontSize: '11px',
+          lineHeight: 1.4,
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: '12px', verticalAlign: 'middle', marginRight: '4px' }}>error</span>
+          {discoverError}
+        </div>
+      )}
     </article>
   );
 }
@@ -1033,6 +1054,7 @@ export default function AdminAgentsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency_ms: number; detail: string } | 'testing'>>({});
   const [rowDiscoverState, setRowDiscoverState] = useState<Record<string, 'discovering'>>({});
+  const [rowDiscoverError, setRowDiscoverError] = useState<Record<string, string>>({});
   const [discoverPopup, setDiscoverPopup] = useState<{ agent: Agent; result: DiscoverResult; diff: CardDiff } | null>(null);
   const [applyingDiscover, setApplyingDiscover] = useState(false);
   const [discovering, setDiscovering] = useState(false);
@@ -1417,13 +1439,17 @@ export default function AdminAgentsPage() {
 
   async function handleRowDiscover(agent: Agent) {
     setRowDiscoverState((r) => ({ ...r, [agent.id]: 'discovering' }));
+    setRowDiscoverError((r) => { const n = { ...r }; delete n[agent.id]; return n; });
     try {
       const result = await themApi.discoverAgent({ endpoint_url: agent.endpoint_url, agent_id: agent.id });
-      if (!result.ok) { alert(`Discovery failed: ${result.detail}`); return; }
+      if (!result.ok) {
+        setRowDiscoverError((r) => ({ ...r, [agent.id]: result.detail ?? 'Discovery failed' }));
+        return;
+      }
       const diff = buildDiff(agent, result);
       setDiscoverPopup({ agent, result, diff });
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Discovery failed');
+      setRowDiscoverError((r) => ({ ...r, [agent.id]: e instanceof Error ? e.message : 'Discovery failed' }));
     } finally {
       setRowDiscoverState((r) => { const n = { ...r }; delete n[agent.id]; return n; });
     }
@@ -1578,6 +1604,13 @@ export default function AdminAgentsPage() {
           color: #818cf8;
           background: rgba(99,102,241,0.1);
         }
+        .card-action-btn--secondary.is-loading {
+          border-color: rgba(129,140,248,0.45);
+          color: #818cf8;
+          background: rgba(99,102,241,0.1);
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spin { animation: spin 0.8s linear infinite; display: inline-block; }
 
         /* Scan — dark with cyan-shield tint */
         .card-action-btn--scan {
@@ -1911,6 +1944,7 @@ export default function AdminAgentsPage() {
                       scanStep={scanSteps[agent.id]}
                       testResult={testResults[agent.id]}
                       isDiscovering={!!rowDiscoverState[agent.id]}
+                      discoverError={rowDiscoverError[agent.id]}
                       onTest={() => handleTest(agent)}
                       onScan={() => handleScan(agent)}
                       onDiscover={() => handleRowDiscover(agent)}
@@ -2017,6 +2051,7 @@ export default function AdminAgentsPage() {
                                   scanStep={scanSteps[agent.id]}
                                   testResult={testResults[agent.id]}
                                   isDiscovering={!!rowDiscoverState[agent.id]}
+                      discoverError={rowDiscoverError[agent.id]}
                                   onTest={() => handleTest(agent)}
                                   onScan={() => handleScan(agent)}
                                   onDiscover={() => handleRowDiscover(agent)}
@@ -2073,6 +2108,7 @@ export default function AdminAgentsPage() {
                             scanStep={scanSteps[agent.id]}
                             testResult={testResults[agent.id]}
                             isDiscovering={!!rowDiscoverState[agent.id]}
+                      discoverError={rowDiscoverError[agent.id]}
                             onTest={() => handleTest(agent)}
                             onScan={() => handleScan(agent)}
                             onDiscover={() => handleRowDiscover(agent)}
