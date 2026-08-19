@@ -71,7 +71,7 @@ docker compose \
   --project-directory "$REPO" \
   -f "$REPO/docker-compose.yml" \
   -f "$REPO/docker-compose.dev.yml" \
-  up -d
+  --profile temporal up -d
 ```
 
 ---

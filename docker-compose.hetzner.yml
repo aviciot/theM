@@ -12,19 +12,21 @@ version: "3.9"
 #     -f docker-compose.yml -f docker-compose.hetzner.yml \
 #     --profile temporal up -d
 #
-# Route ownership:
-#   /ws/*                    → them-go-svc (Go bridge, priority 120)
-#   /sse/*                   → them-go-svc (Go bridge, priority 120)
-#   /health/live,/ready      → them-go-svc (Go bridge, priority 130)
-#   /api/v1/admin/tokens     → them-go-svc (priority 120)
-#   /api/v1/admin/sessions   → them-go-svc (priority 120)
-#   /api/v1/admin/llm-providers → them-go-svc (priority 120)
-#   /api/v1/* (writes+other) → them-bridge-svc (Python, priority 100)
-#   /health/*                → them-bridge-svc (Python, priority 90)
-#   /apps/*                  → them-bridge-svc (Python, priority 100)
-#   /a2a/*                   → them-bridge-svc (Python, priority 100)
-#   /temporal/*              → temporal-ui (priority 150)
-#   /                        → them-frontend (priority 10)
+# Route ownership (Go bridge owns all active routes; Python is legacy/retired):
+#   /health/live,/ready                          → them-go-svc (priority 130)
+#   /api/v1/admin/agents/* (all methods)         → them-go-svc (priority 115–116)
+#   /api/v1/admin/orchestrators/* (all methods)  → them-go-svc (priority 115)
+#   /api/v1/admin/applications/* (all methods)   → them-go-svc (priority 115)
+#   /api/v1/admin/tokens                         → them-go-svc (priority 120)
+#   /api/v1/admin/sessions                       → them-go-svc (priority 120)
+#   /api/v1/admin/llm-providers                  → them-go-svc (priority 120)
+#   /api/v1/runs (GET, signal POST)              → them-go-svc (priority 110–115)
+#   /apps/{slug}/ws                              → them-go-svc (priority 120)
+#   /apps/{slug}/sse                             → them-go-svc (priority 120)
+#   /ws/orchestrate/{app}/{ep}                   → them-go-svc (priority 120)
+#   /sse/orchestrate/{app}/{ep}                  → them-go-svc (priority 120)
+#   /temporal/*                                  → temporal-ui (priority 150)
+#   /                                            → them-frontend (priority 10)
 
 networks:
   # Use the existing shared proxy-network (infra-traefik + cloudflared live here).

@@ -4,10 +4,8 @@ version: "3.9"
 # Replaces: docker-compose.local.yml
 #
 # Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d          # Go-only (default)
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile go-worker up -d
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile legacy up -d  # Python bridge (retired, emergency only)
+#   docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d
+#   docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal --profile legacy up -d  # Python bridge (retired, emergency only)
 #
 # Active stack (Go-only, Python permanently retired):
 #   - them-go-bridge owns all API routes (/api/v1, /ws, /sse, /health, /apps, /a2a)

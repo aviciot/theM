@@ -132,14 +132,14 @@ go build ./cmd/them/
 # Run locally (set env vars first)
 go run ./cmd/them/
 
-# Docker — build Go image
-docker compose --profile go build them-go-bridge
+# Docker — build Go image (them-go-bridge is a default service, no profile needed)
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-go-bridge
 
 # Docker — start Go bridge
-docker compose --profile go up -d them-go-bridge
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d them-go-bridge
 
 # Docker — watch logs
-docker compose --profile go logs -f them-go-bridge
+docker compose --project-name them_gateway logs -f them-go-bridge
 ```
 
 ---
