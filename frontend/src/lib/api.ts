@@ -605,6 +605,7 @@ export const themApi = {
     .then((r) => r.json())
     .catch(() => ({ status: 'error', postgres: 'unknown', redis: 'unknown' })),
   agents: () => api.get<Agent[]>('/admin/agents'),
+  getAgent: (id: string) => api.get<Agent>(`/admin/agents/${id}`),
   createAgent: (body: unknown) => api.post<Agent>('/admin/agents', body),
   updateAgent: (id: string, body: unknown) => api.patch<Agent>(`/admin/agents/${id}`, body),
   deleteAgent: (id: string) => api.delete<void>(`/admin/agents/${id}`),
