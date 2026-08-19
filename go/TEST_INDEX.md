@@ -1360,6 +1360,20 @@ shutdown on client disconnect. Uses a fakeRedis adapter (no real Redis) so all t
 
 ---
 
+### S1-53 · Agent-runtime spec cache — `cmd/agent-runtime/main_test.go`
+
+**Purpose:** Phase 4 — validates the in-process `specCache` TTL eviction and key isolation.
+No Postgres or Redis required.
+
+| Test | What it proves |
+|---|---|
+| `TestSpecCache_MissAndHit` | Cold miss returns nil; set+get returns spec; expired entry returns nil |
+| `TestSpecCache_IsolatedKeys` | Two distinct agentIDs cached independently, no key collision |
+
+**Trigger:** any change to `cmd/agent-runtime/main.go` (specCache struct/methods)
+
+---
+
 ### S1-28 · Orchestrator — `internal/orchestrator/orchestrator_test.go`
 
 **Purpose:** Agentic loop feature parity — history loading, checkpoint/crash recovery, token budget
@@ -1673,7 +1687,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 |
 | `internal/agentgen/compiler.go` | S1-50 |
-| `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1 (full suite) |
+| `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1 (full suite) |
 | `internal/admin/system_agents.go` | S1-15 + S1 (full suite) |
 | `internal/dashboard/handler.go` | S1-52 |
 | `internal/ws/handler.go` | S1-12 |
@@ -1793,7 +1807,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-50 | agent definition compiler | 14 |
 | S1-51 | agent definition publish service | 11 |
 | S1-52 | dashboard WebSocket handler | 11 |
-| **S1 total** | | **681** |
+| S1-53 | agent-runtime spec cache | 2 |
+| **S1 total** | | **683** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1802,4 +1817,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **652** |
+| **`go test ./...` total** | | **654** |

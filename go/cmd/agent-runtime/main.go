@@ -357,7 +357,7 @@ func (rt *Runtime) loadSpecByAgentID(ctx context.Context, agentID string) (*agen
 		return spec, nil
 	}
 	row := rt.pool.QueryRow(ctx,
-		`SELECT spec FROM them.agent_runtime_specs WHERE id = $1::uuid`, agentID)
+		`SELECT spec FROM them.agent_runtime_specs WHERE agent_id = $1::uuid`, agentID)
 	var specJSON []byte
 	if err := row.Scan(&specJSON); err != nil {
 		return nil, fmt.Errorf("load spec: %w", err)
@@ -373,7 +373,7 @@ func (rt *Runtime) loadSpecByAgentID(ctx context.Context, agentID string) (*agen
 func (rt *Runtime) loadSpecBySlug(ctx context.Context, slug string) (*agentgen.AgentSpec, error) {
 	row := rt.pool.QueryRow(ctx,
 		`SELECT s.spec FROM them.agent_runtime_specs s
-		 JOIN them.agents a ON a.id = s.id
+		 JOIN them.agents a ON a.id = s.agent_id
 		 WHERE a.slug = $1 AND a.enabled = true`, slug)
 	var specJSON []byte
 	if err := row.Scan(&specJSON); err != nil {

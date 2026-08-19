@@ -1127,9 +1127,9 @@ services:
       - REDIS_HOST=them-redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
-      - THE_M_CRYPTO_KEY=${THE_M_CRYPTO_KEY:-change-this-crypto-key}
+      - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-secret-key}
       - THE_M_INVOCATION_JWT_KEY=${THE_M_INVOCATION_JWT_KEY:-}
-      - ANTHROPIC_API_KEY_PLATFORM=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     networks:
       - them-network
     depends_on:

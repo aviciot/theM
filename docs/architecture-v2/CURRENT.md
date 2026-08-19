@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `148235b` — fix(runrecorder): correct schema column names and wire step/usage/final-output recording
+Commit: pending — fix(agent-runtime): wire spec DB queries + env vars + spec cache tests (Phase 4)
 
 ---
 
@@ -456,16 +456,34 @@ TypeScript: **clean** (0 errors)
 
 ---
 
+## Phase 4 — Agent Runtime DB Wiring — COMPLETE
+
+### What was fixed
+- `cmd/agent-runtime/main.go` `loadSpecByAgentID`: query was `WHERE id = $1` (wrong PK) → fixed to `WHERE agent_id = $1`
+- `loadSpecBySlug`: join was `ON a.id = s.id` → fixed to `ON a.id = s.agent_id`
+- `docker-compose.yml` `them-agent-runtime` env: `THE_M_CRYPTO_KEY` / `ANTHROPIC_API_KEY_PLATFORM` were wrong var names → fixed to `SECRET_KEY` / `ANTHROPIC_API_KEY` (matching `config.Load()` expectations)
+- `cmd/agent-runtime/main_test.go` added: 2 unit tests for `specCache` TTL and key isolation (S1-53)
+
+### Live end-to-end verification (2026-08-19)
+- `GET /agents/smoke_test_agent/.well-known/agent-card.json` → 200 with correct agent card ✓
+- `POST /agents/smoke_test_agent` message/send → spec loaded from DB, binding loaded, skill found → `"skill has no steps"` (correct — smoke test definition has no steps) ✓
+- `them-agent-runtime` started (2 replicas), logs show `"them-agent-runtime starting"` ✓
+
+### Test state
+`go test ./...` — **37 packages, 0 failures** (S1-53 added: 2 tests; `cmd/agent-runtime` now `ok` not `[no test files]`)
+
+---
+
 ## Next recommended task
 
-**Phase 4 — Agent Runtime DB Wiring**
+**Canvas A2A — stretch goals / optional**
 
-Goals:
-1. Wire `them-agent-runtime` to load compiled specs from `agent_runtime_specs` table — `loadSpecByAgentID` is currently a stub returning empty spec. Implement the real pgx query: `SELECT spec FROM them.agent_runtime_specs WHERE agent_id=$1`.
-2. Smoke test the full invocation path: Publish agent → invoke via agentregistry → `them-agent-runtime` executes steps.
-3. Optionally add Phase 4 step types to `interpreter.go`: `branch`, `loop`, `parallel`, `a2a_call`, `human_wait`, `stream_out`.
+The core 4-phase feature is complete and end-to-end verified. Optional next steps in order of value:
+1. **Advanced step types in interpreter.go**: `branch`, `loop`, `parallel`, `a2a_call`, `human_wait`, `stream_out` — currently return "not implemented in Phase 1"
+2. **Wave 10**: Auth admin CRUD Go port (users/roles/teams — currently no admin UI since Python auth admin removed)
+3. **`profiles: [agents]` to default**: Once canvas agents are in use, promote `them-agent-runtime` to start by default
 
-Do NOT begin Wave 10 (auth admin CRUD Go port) in the same session as Phase 4.
+Do NOT begin multiple items in the same session.
 
 ---
 
@@ -495,7 +513,7 @@ Do NOT begin Wave 10 (auth admin CRUD Go port) in the same session as Phase 4.
 5. Wave 9 items 3–6 (session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims, live two-tenant verification) remain open.
 6. `them-go-bridge` container startup: must use `--project-name them_gateway` when starting via compose to share the `them-network` network with the `them_gateway` project. Without it, postgres/redis conflict. Command: `docker compose -p them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge`.
 7. ~~`agent_runtime_specs` and `app_agent_bindings` tables not yet created~~ — **RESOLVED**: `db/036_canvas_a2a_runtime.sql` applied, both tables exist.
-8. `them-agent-runtime` reads from `agent_runtime_specs` (`loadSpecByAgentID` stub) — **partially resolved**: table exists; real pgx query still needs implementation (Phase 4 item).
+8. ~~`them-agent-runtime` reads from `agent_runtime_specs` stub~~ — **RESOLVED** (Phase 4): `loadSpecByAgentID` now queries `WHERE agent_id=$1`; `loadSpecBySlug` join fixed to `s.agent_id`; env vars corrected. Live verified.
 9. ~~Publish endpoint returning 500~~ — **RESOLVED**: `agents_transport_check` extended to include `'canvas_a2a'` via `db/037_agents_transport_canvas.sql`. Publish end-to-end verified.
 
 ---
