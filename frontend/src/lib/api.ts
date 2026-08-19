@@ -737,4 +737,23 @@ export const themApi = {
     api.put<{ id: string; updated: boolean }>(`/admin/agent-definitions/${id}`, body),
   deleteAgentDefinition: (id: string) =>
     api.delete<void>(`/admin/agent-definitions/${id}`),
+
+  // Phase 3: validate + publish
+  validateAgentDefinition: (id: string) =>
+    api.post<AgentValidationResult>(`/admin/agent-definitions/${id}/validate`, {}),
+  publishAgentDefinition: (id: string) =>
+    api.post<AgentPublishResult>(`/admin/agent-definitions/${id}/publish`, {}),
+
+  // Phase 3: application agent bindings
+  listAgentBindings: (appId: string) =>
+    api.get<AgentBindingSlotStatus[]>(`/admin/applications/${appId}/agent-bindings`),
+  getAgentBinding: (appId: string, agentId: string) =>
+    api.get<AgentBindingSlotStatus>(`/admin/applications/${appId}/agent-bindings/${agentId}`),
+  upsertAgentBinding: (appId: string, agentId: string, body: AgentBindingUpsertBody) =>
+    api.post<{ application_id: string; agent_id: string; updated: boolean }>(
+      `/admin/applications/${appId}/agent-bindings/${agentId}`,
+      body,
+    ),
+  deleteAgentBinding: (appId: string, agentId: string) =>
+    api.delete<void>(`/admin/applications/${appId}/agent-bindings/${agentId}`),
 };

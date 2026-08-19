@@ -1336,6 +1336,30 @@ error mapping (NotFound, AgentCompileError), and AES-GCM encryption of credentia
 
 ---
 
+### S1-52 · Dashboard WebSocket handler — `internal/dashboard/handler_test.go`
+
+**Purpose:** `/ws/dashboard` multiplexed Redis pub/sub relay — validates JWT auth gate, channel
+whitelist, subscribe/ack handshake, snapshot delivery (HGETALL), live event relay, and clean
+shutdown on client disconnect. Uses a fakeRedis adapter (no real Redis) so all tests run in unit mode.
+
+| Test | What it proves |
+|---|---|
+| `TestDashboard_MissingToken` | No token → 401 before upgrade |
+| `TestDashboard_InvalidToken` | Bad JWT → 401 before upgrade |
+| `TestDashboard_InvalidSubscribeType` | Wrong `type` field → error JSON sent |
+| `TestDashboard_NoValidChannels` | All channels invalid → error JSON sent |
+| `TestDashboard_SubscribedAck` | Valid channels → `{"type":"subscribed","channels":[...]}` ack |
+| `TestDashboard_EventRelay` | Redis pub/sub message → relayed with `channel` + `event` envelope |
+| `TestDashboard_AgentChannelRelayed` | `agent:<id>` channel → message relayed with correct logical channel name |
+| `TestDashboard_AgentSnapshot` | Agent channel + non-empty HGETALL → snapshot sent before live events |
+| `TestDashboard_PingReceived` | Ping frame format is `{"type":"ping"}` |
+| `TestIsValidChannel` | Channel whitelist: static names + `run:`, `agent:`, `sessions:` prefixes; rejects empty/malformed |
+| `TestDashboard_CleanShutdownOnDisconnect` | Client closes → server goroutines exit without panic |
+
+**Trigger:** any change to `internal/dashboard/handler.go`
+
+---
+
 ### S1-28 · Orchestrator — `internal/orchestrator/orchestrator_test.go`
 
 **Purpose:** Agentic loop feature parity — history loading, checkpoint/crash recovery, token budget
@@ -1650,6 +1674,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/agentgen/` (any file) | S1-48 + S1-50 |
 | `internal/agentgen/compiler.go` | S1-50 |
 | `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1 (full suite) |
+| `internal/dashboard/handler.go` | S1-52 |
 | `internal/ws/handler.go` | S1-12 |
 | `internal/sse/handler.go` | S1-13 |
 | `internal/runstream/streamer.go`, `dispatcher.go`, `publisher.go`, `metrics.go`, `streamid.go` | S1-23 |
@@ -1764,7 +1789,10 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-47 | summarizer (LLM-based conversation summarizer) | 4 |
 | S1-48 | agentgen (Phase 1 A2A Agent Runtime: invariants + interpreter) | 8 |
 | S1-49 | agent definitions (Phase 2 Canvas A2A Builder CRUD) | 21 |
-| **S1 total** | | **659** |
+| S1-50 | agent definition compiler | 14 |
+| S1-51 | agent definition publish service | 11 |
+| S1-52 | dashboard WebSocket handler | 11 |
+| **S1 total** | | **681** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1773,4 +1801,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **641** |
+| **`go test ./...` total** | | **652** |

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/aviciot/them/internal/a2a"
+	"github.com/aviciot/them/internal/dashboard"
 	"github.com/aviciot/them/internal/admin"
 	"github.com/aviciot/them/internal/agentregistry"
 	"github.com/aviciot/them/internal/artifacts"
@@ -225,7 +226,20 @@ func run() error {
 		log,
 	)
 
-	// ── 16b. Wire WebSocket handler (/ws/*) ──────────────────────────────────
+	// ── 16b. Wire dashboard WebSocket handler (/ws/dashboard) ───────────────
+	// Pure Redis pub/sub relay — multiplexes agent scan events, run events,
+	// session events to browser clients. No Temporal, no recording.
+	// Auth: session JWT (HS256) from ?token= query param.
+	// MountDashboardWS must be called BEFORE MountWS (exact path beats prefix mount).
+	dashJWTSecret := []byte(cfg.JWTSecret)
+	if len(dashJWTSecret) == 0 {
+		dashJWTSecret = []byte(cfg.SecretKey)
+	}
+	dashHandler := dashboard.New(redisCache.Client(), dashJWTSecret, log)
+	srv.MountDashboardWS(dashHandler)
+	log.Info("dashboard WebSocket handler mounted", "path", "/ws/dashboard")
+
+	// ── 16c. Wire WebSocket handler (/ws/*) ──────────────────────────────────
 	// Auth, EPConfig, gate, session, CreateRun, and temporal start are now owned by
 	// execLifecycle. The WS handler retains only upgrade, frame I/O, and metrics.
 	wsHandler := ws.NewHandler(execLifecycle, bus, authenticator, cfg.InstanceID, log).

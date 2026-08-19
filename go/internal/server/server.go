@@ -164,6 +164,13 @@ func (s *Server) MountWS(wsHandler http.Handler) {
 	s.router.Mount("/ws", wsHandler)
 }
 
+// MountDashboardWS registers the dashboard WebSocket handler at GET /ws/dashboard.
+// Uses router.Get (not Mount) so no path prefix stripping occurs.
+// Must be called BEFORE MountWS so the exact path is matched first.
+func (s *Server) MountDashboardWS(h http.Handler) {
+	s.router.Get("/ws/dashboard", h.ServeHTTP)
+}
+
 // MountSSE mounts an SSE handler under the /sse prefix.
 // Call before ListenAndServe.
 func (s *Server) MountSSE(sseHandler http.Handler) {

@@ -1411,44 +1411,8 @@ export default function AdminAgentsPage() {
       return;
     }
 
-    // Dashboard WS (/ws/dashboard) is not yet migrated to Go — poll the agent
-    // GET endpoint until last_scan_result is populated (max ~130s = scanner timeout).
-    if (!dashWsRef.current || dashWsRef.current.readyState !== WebSocket.OPEN) {
-      const scanStartedAt = agent.last_scan_at ?? '';
-      const pollSteps = ['Submitting to scanner…', 'Probing endpoint…', 'Analyzing agent card…', 'Computing risk score…'];
-      let pollStep = 0;
-      const stepInterval = setInterval(() => {
-        pollStep = Math.min(pollStep + 1, pollSteps.length - 1);
-        setScanSteps((s) => ({ ...s, [agent.id]: pollSteps[pollStep] }));
-      }, 2000);
-
-      const deadline = Date.now() + 130_000;
-      const poll = async () => {
-        if (!_inFlightScans.has(agent.id)) { clearInterval(stepInterval); return; }
-        if (Date.now() > deadline) {
-          clearInterval(stepInterval);
-          _inFlightScans.delete(agent.id);
-          setScanResults((r) => { const n = { ...r }; delete n[agent.id]; return n; });
-          setScanSteps((s) => { const n = { ...s }; delete n[agent.id]; return n; });
-          alert('Scan timed out — check security scanner agent');
-          return;
-        }
-        try {
-          const updated = await themApi.getAgent(agent.id);
-          if (updated.last_scan_at && updated.last_scan_at !== scanStartedAt && updated.last_scan_result) {
-            clearInterval(stepInterval);
-            _inFlightScans.delete(agent.id);
-            setScanSteps((s) => { const n = { ...s }; delete n[agent.id]; return n; });
-            const r = updated.last_scan_result as ScanResult;
-            setScanResults((prev) => ({ ...prev, [agent.id]: r }));
-            reload();
-            return;
-          }
-        } catch { /* ignore, keep polling */ }
-        setTimeout(poll, 2000);
-      };
-      setTimeout(poll, 2000);
-    }
+    // Scan progress and result arrive via /ws/dashboard (agent:<id> channel).
+    // The Go bridge relays Redis pub/sub events in real time — no polling needed.
   }
 
   async function handleRowDiscover(agent: Agent) {
