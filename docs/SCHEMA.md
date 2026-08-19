@@ -334,6 +334,26 @@ User-composable agentic applications. Each row is one deployable entry point bou
 
 ---
 
+## them.agent_definitions (Phase 2 Canvas A2A Agent Builder)
+Design-time table for canvas-authored agent definitions. Separate from the runtime registry `them.agents`. Migration: `db/035_agent_definitions.sql`.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | Auto-generated |
+| tenant_id | UUID NOT NULL | Tenant scoping |
+| agent_slug | TEXT NOT NULL | kebab-case agent identifier |
+| revision | INTEGER NOT NULL | Version within (tenant_id, agent_slug) |
+| definition | JSONB NOT NULL | AgentDefinitionDoc canvas JSON — slot NAMES only, never values |
+| definition_hash | TEXT NOT NULL | sha256 of canonical JSON |
+| status | TEXT | 'draft' or 'published' — Phase 2 only writes 'draft' |
+| created_at | TIMESTAMPTZ | |
+| updated_at | TIMESTAMPTZ | |
+
+Unique constraint: `(tenant_id, agent_slug, revision)`.
+Indexes: `agent_definitions_tenant_slug (tenant_id, agent_slug)`, `agent_definitions_tenant_status (tenant_id, status)`.
+
+---
+
 ## auth_service schema (read-only reference)
 Owned by `them-auth-service`. **Never query directly from the bridge** — use `app/services/auth_client.py`.
 

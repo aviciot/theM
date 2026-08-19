@@ -430,6 +430,22 @@ func (f *isolationFakeDal) ListComponentDefinitions(_ context.Context, _ string)
 	return []dal.ComponentDefinitionSummary{}, nil
 }
 
+// Agent definition stubs (no isolation-specific behavior needed for current tests).
+func (f *isolationFakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) { return 1, nil }
+func (f *isolationFakeDal) CreateAgentDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string) (string, error) {
+	return "", nil
+}
+func (f *isolationFakeDal) GetAgentDefinition(_ context.Context, _, _ string) (dal.AgentDefinition, error) {
+	return dal.AgentDefinition{}, nil
+}
+func (f *isolationFakeDal) ListAgentDefinitions(_ context.Context, _ string) ([]dal.AgentDefinition, error) {
+	return []dal.AgentDefinition{}, nil
+}
+func (f *isolationFakeDal) UpdateDraftAgentDefinition(_ context.Context, _, _ string, _ []byte, _ string) error {
+	return nil
+}
+func (f *isolationFakeDal) DeleteDraftAgentDefinition(_ context.Context, _, _ string) error { return nil }
+
 // ── pgxUniqueViolation stub ───────────────────────────────────────────────────
 //
 // dal.IsUniqueViolation checks for pgconn.PgError with Code "23505".

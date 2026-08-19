@@ -90,6 +90,14 @@ type Dal interface {
 	UpdateDraftDefinition(ctx context.Context, tenantID, appID, defID string, defJSON []byte, hash string) error
 	DeleteDraftDefinition(ctx context.Context, tenantID, appID, defID string) error
 
+	// Agent definitions (Canvas A2A Builder, Phase 2) — tenant-scoped, design-time only
+	GetNextAgentRevision(ctx context.Context, tenantID, agentSlug string) (int, error)
+	CreateAgentDefinition(ctx context.Context, tenantID, agentSlug string, rev int, defJSON []byte, hash string) (string, error)
+	GetAgentDefinition(ctx context.Context, tenantID, id string) (dal.AgentDefinition, error)
+	ListAgentDefinitions(ctx context.Context, tenantID string) ([]dal.AgentDefinition, error)
+	UpdateDraftAgentDefinition(ctx context.Context, tenantID, id string, defJSON []byte, hash string) error
+	DeleteDraftAgentDefinition(ctx context.Context, tenantID, id string) error
+
 	// Publish pipeline — Phase C
 	PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string) (dal.PublishResult, error)
 	UpsertAppOrchestrator(ctx context.Context, row dal.AppOrchestratorRow) (string, error)

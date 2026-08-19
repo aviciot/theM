@@ -540,6 +540,66 @@ export interface PublishResult {
   definition_hash: string;
 }
 
+// ── Canvas A2A Agent Builder (Phase 2) ───────────────────────────────────────
+
+export interface AgentCredentialSlot {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface AgentRootDoc {
+  display_name: string;
+  description: string;
+  version: string;
+  icon?: string;
+  category?: string;
+  capabilities: { streaming: boolean; push_notifications: boolean };
+  credential_slots: AgentCredentialSlot[];
+}
+
+export interface AgentStepDoc {
+  id: string;
+  type:
+    | 'input' | 'llm' | 'http' | 'transform' | 'response'
+    | 'branch' | 'loop' | 'parallel' | 'a2a_call' | 'human_wait' | 'stream_out';
+  config: Record<string, unknown>;
+  next: string[];
+  position?: { x: number; y: number };
+}
+
+export interface AgentSkillDoc {
+  skill_id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  input_modes: string[];
+  output_modes: string[];
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  steps: AgentStepDoc[];
+  position?: { x: number; y: number };
+}
+
+export interface AgentDefinitionDoc {
+  schema_version: 1;
+  agent_slug: string;
+  agent_root: AgentRootDoc;
+  skills: AgentSkillDoc[];
+}
+
+export interface AgentDefinition {
+  id: string;
+  tenant_id: string;
+  agent_slug: string;
+  revision: number;
+  status: 'draft' | 'published';
+  definition: AgentDefinitionDoc;
+  definition_hash: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export const themApi = {
   health: () => fetch(`${HEALTH_BASE}/health`)
     .then((r) => r.json())
@@ -664,4 +724,16 @@ export const themApi = {
     api.post<ValidationReport>(`/admin/applications/${appId}/definitions/${defId}/validate`, {}),
   publishDefinition: (appId: string, defId: string) =>
     api.post<PublishResult>(`/admin/applications/${appId}/definitions/${defId}/publish`, {}),
+
+  // Canvas A2A Agent Builder (Phase 2)
+  listAgentDefinitions: () =>
+    api.get<AgentDefinition[]>('/admin/agent-definitions'),
+  getAgentDefinition: (id: string) =>
+    api.get<AgentDefinition>(`/admin/agent-definitions/${id}`),
+  createAgentDefinition: (body: { agent_slug: string; definition: AgentDefinitionDoc }) =>
+    api.post<{ id: string; revision: number }>('/admin/agent-definitions', body),
+  updateAgentDefinition: (id: string, body: { definition: AgentDefinitionDoc }) =>
+    api.put<{ id: string; updated: boolean }>(`/admin/agent-definitions/${id}`, body),
+  deleteAgentDefinition: (id: string) =>
+    api.delete<void>(`/admin/agent-definitions/${id}`),
 };

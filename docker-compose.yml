@@ -1079,6 +1079,11 @@ services:
       - "traefik.http.routers.them-go-component-defs.entrypoints=web"
       - "traefik.http.routers.them-go-component-defs.priority=120"
       - "traefik.http.routers.them-go-component-defs.service=them-go-bridge-svc"
+      # ── Phase 2: /api/v1/admin/agent-definitions — Canvas A2A Agent Builder CRUD ──
+      - "traefik.http.routers.them-go-agent-defs.rule=PathPrefix(`/api/v1/admin/agent-definitions`)"
+      - "traefik.http.routers.them-go-agent-defs.entrypoints=web"
+      - "traefik.http.routers.them-go-agent-defs.priority=120"
+      - "traefik.http.routers.them-go-agent-defs.service=them-go-bridge-svc"
     profiles:
       - go
     restart: unless-stopped

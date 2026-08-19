@@ -210,6 +210,22 @@ func (f *publishFakeDal) ListComponentDefinitions(_ context.Context, _ string) (
 	return []dal.ComponentDefinitionSummary{}, nil
 }
 
+// Agent definition stubs.
+func (f *publishFakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) { return 1, nil }
+func (f *publishFakeDal) CreateAgentDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string) (string, error) {
+	return "", nil
+}
+func (f *publishFakeDal) GetAgentDefinition(_ context.Context, _, _ string) (dal.AgentDefinition, error) {
+	return dal.AgentDefinition{}, nil
+}
+func (f *publishFakeDal) ListAgentDefinitions(_ context.Context, _ string) ([]dal.AgentDefinition, error) {
+	return []dal.AgentDefinition{}, nil
+}
+func (f *publishFakeDal) UpdateDraftAgentDefinition(_ context.Context, _, _ string, _ []byte, _ string) error {
+	return nil
+}
+func (f *publishFakeDal) DeleteDraftAgentDefinition(_ context.Context, _, _ string) error { return nil }
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func orchRef() registry.DefinitionRef {

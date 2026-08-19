@@ -1251,6 +1251,41 @@ template transform, HTTP credential injection). No external services required.
 
 ---
 
+### S1-49 · Agent definitions — `internal/admin/service/agent_definitions_test.go`
+
+**Purpose:** Phase 2 Canvas A2A Builder — agent definition draft CRUD with validation. Verifies
+the full lifecycle: create, read, list, update, delete. Proves secret rejection (secret_value keys
+and credential slot value fields), duplicate ID detection (slot names, skill IDs, step IDs),
+draft-only constraints, and hash determinism.
+
+| Test | What it proves |
+|---|---|
+| `TestCreateDraft_Valid` | valid canvas JSON + slug → returns id + revision 1 |
+| `TestCreateDraft_MissingSlug` | empty agent_slug → ErrValidation |
+| `TestCreateDraft_EmptyDefinitionObject` | non-object definition → ErrValidation |
+| `TestCreateDraft_RejectsSecretValueKey` | definition with secret_value key → ErrValidation (no DB write) |
+| `TestCreateDraft_RejectsSlotWithValue` | credential slot with value field → ErrValidation |
+| `TestCreateDraft_DuplicateSlotName` | two slots same name → ErrUnprocessable |
+| `TestCreateDraft_DuplicateSkillId` | two skills same skill_id → ErrUnprocessable |
+| `TestCreateDraft_DuplicateStepId` | two steps same id in one skill → ErrUnprocessable |
+| `TestCreateDraft_RevisionIncrements` | second create same slug → revision 2 |
+| `TestCreateDraft_UniqueViolation_MapsConflict` | DAL unique violation → ErrConflict |
+| `TestGetDefinition_NotFound` | DAL no-rows → ErrNotFound |
+| `TestGetDefinition_Found` | returns row for correct tenant |
+| `TestListDefinitions_EmptyReturnsNonNil` | no rows → [] not nil |
+| `TestUpdateDraft_Valid` | valid update → nil error, DAL called with hash |
+| `TestUpdateDraft_NotFound` | DAL no-rows + get no-rows → ErrNotFound |
+| `TestUpdateDraft_Published_Conflict` | DAL no-rows + get returns published → ErrConflict |
+| `TestUpdateDraft_RejectsSecrets` | update with secret_value → ErrValidation (no DB write) |
+| `TestDeleteDraft_Valid` | draft delete → nil |
+| `TestDeleteDraft_NotFound` | not found → ErrNotFound |
+| `TestDeleteDraft_Published_Conflict` | published → ErrConflict |
+| `TestHashDeterminism` | same definition (reordered keys) → identical hash |
+
+**Trigger:** any change to `internal/admin/dal/agent_definitions.go`, `internal/admin/service/agent_definitions.go`, or `internal/admin/agent_definitions.go`
+
+---
+
 ### S1-28 · Orchestrator — `internal/orchestrator/orchestrator_test.go`
 
 **Purpose:** Agentic loop feature parity — history loading, checkpoint/crash recovery, token budget
@@ -1574,18 +1609,21 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/execution/lifecycle.go` | S1-35 + S1-14 + S1-13 |
 | `internal/execution/errors.go` | S1-35 + S1-13 |
 | `internal/execution/request.go` | S1-35 + S1-13 |
-| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 |
-| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S2-05 (integration) |
+| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 |
+| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S2-05 (integration) |
 | `internal/admin/dal/definitions.go` | S1-42 |
 | `internal/admin/dal/registry.go` | S1-45 |
 | `internal/admin/dal/llm_providers.go` | S1-25 + S2-05 (integration) |
-| `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 |
+| `internal/admin/dal/agent_definitions.go` | S1-49 |
+| `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 + S1-49 |
 | `internal/admin/service/definitions.go` | S1-42 + S1-43 + S1-44 |
 | `internal/admin/service/publish.go` | S1-43 + S1-44 |
 | `internal/admin/dal/publish.go` | S1-43 + S1-44 |
+| `internal/admin/service/agent_definitions.go` | S1-49 |
 | `internal/admin/definitions.go` | S1-42 + S1-43 + S1-44 |
+| `internal/admin/agent_definitions.go` | S1-49 |
 | `internal/admin/registry.go` | S1-45 |
-| `internal/admin/router.go` | S1-43 + S1-44 + S1-45 |
+| `internal/admin/router.go` | S1-43 + S1-44 + S1-45 + S1-49 |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |
@@ -1671,7 +1709,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-46 | history (DB role mapping + round-trip) | 4 |
 | S1-47 | summarizer (LLM-based conversation summarizer) | 4 |
 | S1-48 | agentgen (Phase 1 A2A Agent Runtime: invariants + interpreter) | 8 |
-| **S1 total** | | **638** |
+| S1-49 | agent definitions (Phase 2 Canvas A2A Builder CRUD) | 21 |
+| **S1 total** | | **659** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

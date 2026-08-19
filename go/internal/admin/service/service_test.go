@@ -333,6 +333,22 @@ func (f *fakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.C
 	return []dal.ComponentDefinitionSummary{}, nil
 }
 
+// Agent definition stubs.
+func (f *fakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) { return 1, nil }
+func (f *fakeDal) CreateAgentDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string) (string, error) {
+	return f.createdID, nil
+}
+func (f *fakeDal) GetAgentDefinition(_ context.Context, _, _ string) (dal.AgentDefinition, error) {
+	return dal.AgentDefinition{}, nil
+}
+func (f *fakeDal) ListAgentDefinitions(_ context.Context, _ string) ([]dal.AgentDefinition, error) {
+	return []dal.AgentDefinition{}, nil
+}
+func (f *fakeDal) UpdateDraftAgentDefinition(_ context.Context, _, _ string, _ []byte, _ string) error {
+	return nil
+}
+func (f *fakeDal) DeleteDraftAgentDefinition(_ context.Context, _, _ string) error { return nil }
+
 // fakeCache implements service.Cache.
 type fakeCache struct {
 	deletedKeys  []string

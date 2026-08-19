@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import ChromaGrid from '@/components/ChromaGrid';
@@ -1020,6 +1021,7 @@ function DeployCard({ onClick }: { onClick: () => void }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AdminAgentsPage() {
+  const router = useRouter();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [orchestrators, setOrchestrators] = useState<OrchestratorFull[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1817,16 +1819,26 @@ export default function AdminAgentsPage() {
               <h2 style={{ fontSize: '40px', fontWeight: 800, color: '#fff', margin: '0 0 6px 0', letterSpacing: '-0.03em', lineHeight: 1.1 }}>Agents</h2>
               <p style={{ fontSize: '14px', color: 'var(--tm-card-text-muted)', margin: 0 }}>Manage A2A (Agent-to-Agent) orchestrators and node connectors.</p>
             </div>
-            <button onClick={openCreate} style={{
-              display: 'flex', alignItems: 'center', gap: '8px',
-              padding: '12px 24px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-              background: '#00d1ff', color: '#000', fontSize: '14px', fontWeight: 700,
-              boxShadow: '0 0 20px rgba(0,209,255,0.4)',
-              transition: 'box-shadow 200ms ease, transform 200ms ease',
-            }}>
-              <span style={{ fontSize: '18px', lineHeight: 1 }}>+</span>
-              Deploy New Agent
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <button onClick={() => router.push('/admin/agents/builder')} style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '12px 24px', borderRadius: '8px', border: '1px solid rgba(99,102,241,0.5)', cursor: 'pointer',
+                background: 'rgba(99,102,241,0.1)', color: '#a5b4fc', fontSize: '14px', fontWeight: 700,
+                transition: 'box-shadow 200ms ease, transform 200ms ease',
+              }}>
+                Build Visually
+              </button>
+              <button onClick={openCreate} style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '12px 24px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                background: '#00d1ff', color: '#000', fontSize: '14px', fontWeight: 700,
+                boxShadow: '0 0 20px rgba(0,209,255,0.4)',
+                transition: 'box-shadow 200ms ease, transform 200ms ease',
+              }}>
+                <span style={{ fontSize: '18px', lineHeight: 1 }}>+</span>
+                Deploy New Agent
+              </button>
+            </div>
           </div>
 
           {/* Filter bar */}

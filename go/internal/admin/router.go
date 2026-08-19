@@ -68,6 +68,11 @@ func (a *registryQuerierAdapter) QueryRow(ctx context.Context, sql string, args 
 //	... (full CRUD)
 //	GET    /admin/applications
 //	... (full CRUD + entry points)
+//	POST   /admin/agent-definitions
+//	GET    /admin/agent-definitions
+//	GET    /admin/agent-definitions/{id}
+//	PUT    /admin/agent-definitions/{id}
+//	DELETE /admin/agent-definitions/{id}
 //	GET    /admin/tokens
 //	POST   /admin/tokens
 //	GET    /admin/tokens/{token_id}
@@ -135,6 +140,8 @@ func BuildRouter(
 				tokens.Routes(tenantScoped)
 				reg := NewRegistryHandler(db)
 				tenantScoped.Get("/component-definitions", reg.ListComponentDefinitions)
+				agentDefs := NewAgentDefinitionsHandler(db)
+				agentDefs.Routes(tenantScoped)
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,
