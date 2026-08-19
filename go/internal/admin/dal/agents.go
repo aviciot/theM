@@ -91,25 +91,44 @@ func (d *DB) GetAgent(ctx context.Context, tenantID, id string) (Agent, error) {
 }
 
 // CreateAgent inserts a new agent row for the given tenant and returns the new UUID.
+// agents.id is a FK into component_definitions, so we insert a component_definitions
+// row first to obtain the UUID, then insert agents with that same id.
 func (d *DB) CreateAgent(ctx context.Context, tenantID string, in AgentInput, enabled bool) (string, error) {
-	const q = `
-		INSERT INTO them.agents
-		  (tenant_id, slug, display_name, description, transport, endpoint_url,
-		   max_concurrency, max_retries, timeout_seconds, enabled,
-		   supports_streaming, supports_push, icon, category)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+	namespace := "them.tenant." + tenantID
+
+	const cdQ = `
+		INSERT INTO them.component_definitions
+		  (kind, namespace, name, version, display_name, description,
+		   implementation_type, scope, tenant_id, status, content_hash)
+		VALUES ('agent', $1, $2, 1, $3, $4, $5, 'tenant', $6::uuid, 'published', '')
 		RETURNING id::text`
 
-	row := d.q.ExecReturning(ctx, q,
-		tenantID,
+	var id string
+	if err := d.q.ExecReturning(ctx, cdQ,
+		namespace, in.Slug, in.DisplayName, in.Description,
+		in.Transport, tenantID,
+	).Scan(&id); err != nil {
+		return "", err
+	}
+
+	const agentQ = `
+		INSERT INTO them.agents
+		  (id, tenant_id, slug, display_name, description, transport, endpoint_url,
+		   max_concurrency, max_retries, timeout_seconds, enabled,
+		   supports_streaming, supports_push, icon, category,
+		   namespace)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+		        $16)`
+
+	if err := d.q.Exec(ctx, agentQ,
+		id, tenantID,
 		in.Slug, in.DisplayName, in.Description, in.Transport,
 		in.EndpointURL, in.MaxConcurrency, in.MaxRetries,
 		in.TimeoutSeconds, enabled,
 		in.SupportsStreaming, in.SupportsPush,
 		in.Icon, in.Category,
-	)
-	var id string
-	if err := row.Scan(&id); err != nil {
+		namespace,
+	); err != nil {
 		return "", err
 	}
 	return id, nil
@@ -137,11 +156,18 @@ func (d *DB) UpdateAgent(ctx context.Context, tenantID, id string, in AgentInput
 	)
 }
 
-// DeleteAgent hard-deletes an agent, scoped to the tenant.
+// DeleteAgent hard-deletes an agent and its component_definitions row, scoped to the tenant.
+// component_definitions has no CASCADE on the agents FK, so we delete both explicitly.
 func (d *DB) DeleteAgent(ctx context.Context, tenantID, id string) error {
-	return d.q.Exec(ctx,
+	if err := d.q.Exec(ctx,
 		`DELETE FROM them.agents WHERE id=$1::uuid AND tenant_id=$2::uuid`,
-		id, tenantID)
+		id, tenantID); err != nil {
+		return err
+	}
+	// component_definitions is not cascade-deleted — clean it up so the slug can be reused.
+	return d.q.Exec(ctx,
+		`DELETE FROM them.component_definitions WHERE id=$1::uuid`,
+		id)
 }
 
 // GetAgentBySlug returns a single agent by slug (platform-global, not tenant-scoped).
