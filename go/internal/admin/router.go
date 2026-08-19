@@ -85,6 +85,9 @@ func (a *registryQuerierAdapter) QueryRow(ctx context.Context, sql string, args 
 //	GET    /admin/llm-providers/{id}
 //	PATCH  /admin/llm-providers/{id}
 //	DELETE /admin/llm-providers/{id}
+//	GET    /admin/system-agents
+//	PUT    /admin/system-agents
+//	POST   /admin/system-agents/{role}/test-llm
 //	GET    /runs
 //	GET    /runs/stats
 //	POST   /runs/bulk-delete
@@ -117,6 +120,7 @@ func BuildRouter(
 	monitoring := NewMonitoringConfigHandler(db)
 	llmRouting := NewLLMRoutingHandler(db)
 	llmProviders := NewLLMProvidersHandler(db, secretKey)
+	systemAgents := NewSystemAgentsHandler(db, fernetKey)
 
 	// Admin routes — all require JWT + super_admin.
 	// Within /admin, tenant-scoped resources also require AdminTenantMiddleware.
@@ -152,11 +156,12 @@ func BuildRouter(
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,
-			// llm-routing, sessions. No tenant scoping — these resources are
-			// platform-wide and apply to all tenants.
+			// llm-routing, system-agents, sessions. No tenant scoping — these
+			// resources are platform-wide and apply to all tenants.
 			monitoring.Routes(a)
 			llmRouting.Routes(a)
 			llmProviders.Routes(a)
+			systemAgents.Routes(a)
 			if sessionReader != nil {
 				NewSessionsHandler(sessionReader).Routes(a)
 			}

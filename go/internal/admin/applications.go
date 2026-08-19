@@ -358,16 +358,28 @@ func (h *ApplicationsHandler) TestLLM(w http.ResponseWriter, r *http.Request) {
 
 // probeLLM fires a minimal single-message request to validate the provider key.
 func probeLLM(ctx context.Context, provider, model, apiKey string) (bool, string) {
+	return probeLLMWithBase(ctx, provider, model, apiKey, "")
+}
+
+// probeLLMWithBase is like probeLLM but accepts an optional baseURL for
+// OpenAI-compatible providers with custom endpoints.
+func probeLLMWithBase(ctx context.Context, provider, model, apiKey, baseURL string) (bool, string) {
 	switch provider {
 	case "anthropic":
 		return probeAnthropic(ctx, model, apiKey)
 	case "openai":
+		if baseURL != "" {
+			return probeOpenAICompat(ctx, model, apiKey, baseURL)
+		}
 		return probeOpenAI(ctx, model, apiKey)
 	case "groq":
 		return probeOpenAICompat(ctx, model, apiKey, "https://api.groq.com/openai/v1/chat/completions")
 	case "gemini":
 		return probeGemini(ctx, model, apiKey)
 	default:
+		if baseURL != "" {
+			return probeOpenAICompat(ctx, model, apiKey, baseURL)
+		}
 		return false, "unsupported provider: " + provider
 	}
 }

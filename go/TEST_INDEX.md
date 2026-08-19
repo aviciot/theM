@@ -1674,6 +1674,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/agentgen/` (any file) | S1-48 + S1-50 |
 | `internal/agentgen/compiler.go` | S1-50 |
 | `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1 (full suite) |
+| `internal/admin/system_agents.go` | S1-15 + S1 (full suite) |
 | `internal/dashboard/handler.go` | S1-52 |
 | `internal/ws/handler.go` | S1-12 |
 | `internal/sse/handler.go` | S1-13 |
