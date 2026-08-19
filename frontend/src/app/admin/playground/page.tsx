@@ -1915,7 +1915,7 @@ function PlaygroundInner() {
                 key={targetId(activeTab)}
                 target={activeTab}
                 color={TAB_COLORS[tabs.indexOf(activeTab) % TAB_COLORS.length]}
-                showHeader={false}
+                showHeader
               />
             )
           )}
