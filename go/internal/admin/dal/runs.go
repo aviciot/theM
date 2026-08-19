@@ -500,7 +500,9 @@ func (d *DB) GetContextMessages(ctx context.Context, tenantID, contextID string,
 	}
 	q := `SELECT tm.role, COALESCE(
 		(SELECT p->>'text' FROM jsonb_array_elements(tm.parts->'parts') p WHERE p->>'type' = 'text' LIMIT 1),
-		(SELECT p->>'text' FROM jsonb_array_elements(tm.parts) p WHERE p->>'type' = 'text' LIMIT 1),
+		CASE WHEN jsonb_typeof(tm.parts) = 'array'
+		     THEN (SELECT p->>'text' FROM jsonb_array_elements(tm.parts) p WHERE p->>'type' = 'text' LIMIT 1)
+		     ELSE NULL END,
 		''
 	)
 	FROM them.task_messages tm
@@ -509,7 +511,7 @@ func (d *DB) GetContextMessages(ctx context.Context, tenantID, contextID string,
 	  AND t.tenant_id = $2::uuid
 	  AND tm.role IN ('user', 'agent')
 	  AND (tm.parts->>'summary')::boolean IS NOT TRUE
-	ORDER BY tm.seq
+	ORDER BY tm.created_at
 	LIMIT $3`
 	rows, err := d.q.Query(ctx, q, contextID, tenantID, limit)
 	if err != nil {
