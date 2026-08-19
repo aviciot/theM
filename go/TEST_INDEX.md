@@ -1286,6 +1286,56 @@ draft-only constraints, and hash determinism.
 
 ---
 
+### S1-50 · Agent definition compiler — `internal/agentgen/compiler_test.go`
+
+**Purpose:** Phase 3 Canvas A2A Builder — validates the compiler that transforms canvas JSONB into a
+topologically-ordered AgentSpec. Covers all rejection codes and the cycle-detection / topo-sort algorithm.
+
+| Test | What it proves |
+|---|---|
+| `TestCompile_EmptyDefinition` | missing display_name → MISSING_FIELD error |
+| `TestCompile_InvalidJSON` | invalid JSON → INVALID_JSON error |
+| `TestCompile_MinimalValid` | minimal valid definition → non-nil spec with correct IDs |
+| `TestCompile_DefaultVersionFallback` | missing version → defaults to "1.0.0" |
+| `TestCompile_SlugSanitized` | hyphens in slug → sanitized to underscores (no error) |
+| `TestCompile_DuplicateSlotName` | two credential slots same name → DUPLICATE_SLOT |
+| `TestCompile_DuplicateSkillID` | two skills same skill_id → DUPLICATE_SKILL |
+| `TestCompile_DuplicateStepID` | two steps same id in one skill → DUPLICATE_STEP |
+| `TestCompile_UnknownStepType` | step with unknown type → UNKNOWN_STEP_TYPE |
+| `TestCompile_UndeclaredHTTPCredentialSlot` | http step refs undeclared slot → UNDECLARED_SLOT |
+| `TestCompile_UndeclaredLLMProviderKeySlot` | llm step refs undeclared provider_key_slot → UNDECLARED_SLOT |
+| `TestCompile_DanglingNextRef` | step.next refs nonexistent step → DANGLING_NEXT |
+| `TestCompile_CycleDetected` | A→B→A cycle → CYCLE_DETECTED |
+| `TestCompile_ValidCredentialSlotRef` | http step refs declared slot → nil errors, slot in spec |
+| `TestCompile_TopologicalOrder` | linear chain compiled in execution order |
+
+**Trigger:** any change to `internal/agentgen/compiler.go` or `internal/agentgen/spec.go`
+
+---
+
+### S1-51 · Agent definition publish service — `internal/admin/service/agent_definitions_publish_test.go`
+
+**Purpose:** Phase 3 Canvas A2A Builder — validate/publish service layer. Verifies DAL delegation,
+error mapping (NotFound, AgentCompileError), and AES-GCM encryption of credentials.
+
+| Test | What it proves |
+|---|---|
+| `TestValidateAgentDefinition_NotFound` | missing definition → ErrNotFound |
+| `TestValidateAgentDefinition_CompileError` | bad definition → *AgentCompileError |
+| `TestValidateAgentDefinition_Valid` | good definition → AgentValidationReport{Valid: true} |
+| `TestPublishAgentDefinition_NotFound` | missing definition → ErrNotFound |
+| `TestPublishAgentDefinition_CompileError` | bad definition → *AgentCompileError |
+| `TestPublishAgentDefinition_Success` | valid publish → AgentPublishResult with non-empty fields |
+| `TestUpsertBinding_NoKeyWithCredentials` | credentials provided + no key → ErrEncryptionKeyMissing |
+| `TestUpsertBinding_EmptyCredentials_NoKeyRequired` | no credentials, no key → nil |
+| `TestUpsertBinding_WithKey` | credentials + 32-byte key → nil (encrypted transparently) |
+| `TestGetBindingStatus_NotFound` | DAL no-rows → ErrNotFound |
+| `TestListBindings_Empty` | no bindings → [] not nil |
+
+**Trigger:** any change to `internal/admin/service/agent_definitions_publish.go`, `internal/admin/service/agent_definitions.go`, or `internal/admin/dal/agent_definitions_publish.go`
+
+---
+
 ### S1-28 · Orchestrator — `internal/orchestrator/orchestrator_test.go`
 
 **Purpose:** Agentic loop feature parity — history loading, checkpoint/crash recovery, token budget
@@ -1597,8 +1647,9 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/temporal/activities.go`, `internal/temporal/workflow.go` | S1-29 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
-| `internal/agentgen/` (any file) | S1-48 |
-| `cmd/agent-runtime/main.go` | S1-48 + S1 (full suite) |
+| `internal/agentgen/` (any file) | S1-48 + S1-50 |
+| `internal/agentgen/compiler.go` | S1-50 |
+| `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1 (full suite) |
 | `internal/ws/handler.go` | S1-12 |
 | `internal/sse/handler.go` | S1-13 |
 | `internal/runstream/streamer.go`, `dispatcher.go`, `publisher.go`, `metrics.go`, `streamid.go` | S1-23 |
@@ -1609,13 +1660,16 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/execution/lifecycle.go` | S1-35 + S1-14 + S1-13 |
 | `internal/execution/errors.go` | S1-35 + S1-13 |
 | `internal/execution/request.go` | S1-35 + S1-13 |
-| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 |
-| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S2-05 (integration) |
+| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S1-50 + S1-51 |
+| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S1-51 + S2-05 (integration) |
+| `internal/admin/dal/agent_definitions_publish.go` | S1-51 |
+| `internal/admin/dal/agent_bindings.go` | S1-51 |
 | `internal/admin/dal/definitions.go` | S1-42 |
 | `internal/admin/dal/registry.go` | S1-45 |
 | `internal/admin/dal/llm_providers.go` | S1-25 + S2-05 (integration) |
 | `internal/admin/dal/agent_definitions.go` | S1-49 |
-| `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 + S1-49 |
+| `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 + S1-49 + S1-51 |
+| `internal/admin/service/agent_definitions_publish.go` | S1-51 |
 | `internal/admin/service/definitions.go` | S1-42 + S1-43 + S1-44 |
 | `internal/admin/service/publish.go` | S1-43 + S1-44 |
 | `internal/admin/dal/publish.go` | S1-43 + S1-44 |

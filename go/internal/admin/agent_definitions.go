@@ -20,9 +20,13 @@ type AgentDefinitionsHandler struct {
 }
 
 // NewAgentDefinitionsHandler creates an AgentDefinitionsHandler backed by the given DB.
-func NewAgentDefinitionsHandler(db DBQuerier) *AgentDefinitionsHandler {
-	return &AgentDefinitionsHandler{svc: service.NewAgentDefinitionService(dal.NewDB(db))}
+// cache and fernetKey may be nil (disables publish pipeline; CRUD still works).
+func NewAgentDefinitionsHandler(db DBQuerier, cache CacheInvalidator, fernetKey []byte) *AgentDefinitionsHandler {
+	return &AgentDefinitionsHandler{svc: service.NewAgentDefinitionService(dal.NewDB(db), cache, fernetKey)}
 }
+
+// Svc returns the underlying AgentDefinitionService for use by sibling handlers.
+func (h *AgentDefinitionsHandler) Svc() *service.AgentDefinitionService { return h.svc }
 
 // agentDefinitionInput is the request body for POST and PUT agent definition endpoints.
 type agentDefinitionInput struct {
@@ -30,13 +34,15 @@ type agentDefinitionInput struct {
 	Definition json.RawMessage `json:"definition"`
 }
 
-// Routes mounts agent definition CRUD endpoints onto the provided router.
+// Routes mounts agent definition CRUD + publish endpoints onto the provided router.
 func (h *AgentDefinitionsHandler) Routes(r chi.Router) {
 	r.Post("/agent-definitions", h.Create)
 	r.Get("/agent-definitions", h.List)
 	r.Get("/agent-definitions/{id}", h.Get)
 	r.Put("/agent-definitions/{id}", h.Update)
 	r.Delete("/agent-definitions/{id}", h.Delete)
+	r.Post("/agent-definitions/{id}/validate", h.Validate)
+	r.Post("/agent-definitions/{id}/publish", h.Publish)
 }
 
 // Create handles POST /api/v1/admin/agent-definitions.
@@ -139,4 +145,73 @@ func (h *AgentDefinitionsHandler) Delete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Validate handles POST /api/v1/admin/agent-definitions/{id}/validate.
+// Compiles the definition without persisting anything.
+// Returns 200 {"valid": true} on success, 422 with compile errors on failure.
+func (h *AgentDefinitionsHandler) Validate(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid agent definition id")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	report, err := h.svc.ValidateAgentDefinition(r.Context(), tenantID, id)
+	if err != nil {
+		var compErr *service.AgentCompileError
+		if err != nil && isAgentCompileError(err, &compErr) {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"valid":  false,
+				"errors": compErr.Errors,
+			})
+			return
+		}
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "validate agent definition")
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// Publish handles POST /api/v1/admin/agent-definitions/{id}/publish.
+// Compiles, atomically writes runtime tables, marks definition published.
+// Returns 200 with AgentPublishResult on success.
+func (h *AgentDefinitionsHandler) Publish(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid agent definition id")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	result, err := h.svc.PublishAgentDefinition(r.Context(), tenantID, id)
+	if err != nil {
+		var compErr *service.AgentCompileError
+		if isAgentCompileError(err, &compErr) {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"errors": compErr.Errors,
+			})
+			return
+		}
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "publish agent definition")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// isAgentCompileError reports whether err is an *AgentCompileError and sets target.
+func isAgentCompileError(err error, target **service.AgentCompileError) bool {
+	if err == nil {
+		return false
+	}
+	if ce, ok := err.(*service.AgentCompileError); ok {
+		*target = ce
+		return true
+	}
+	return false
 }

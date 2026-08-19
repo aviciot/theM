@@ -7,14 +7,19 @@ import (
 	"github.com/aviciot/them/internal/admin/dal"
 )
 
-// AgentDefinitionService owns the business logic for canvas agent definition CRUD.
+// AgentDefinitionService owns the business logic for canvas agent definition CRUD
+// and the publish pipeline (Phase 3). fernetKey is 32 bytes (AES-256); pass nil
+// to disable credential encryption (tests only).
 type AgentDefinitionService struct {
-	dal Dal
+	dal        Dal
+	cache      Cache
+	fernetKey  []byte // 32-byte AES-GCM key derived from THE_M_SECRET_KEY
 }
 
 // NewAgentDefinitionService creates an AgentDefinitionService.
-func NewAgentDefinitionService(d Dal) *AgentDefinitionService {
-	return &AgentDefinitionService{dal: d}
+// cache and fernetKey may be nil (CRUD-only mode; publish will return an error if called).
+func NewAgentDefinitionService(d Dal, cache Cache, fernetKey []byte) *AgentDefinitionService {
+	return &AgentDefinitionService{dal: d, cache: cache, fernetKey: fernetKey}
 }
 
 // validateAgentDefinition performs structural validation on an agent definition

@@ -942,6 +942,11 @@ services:
       - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.path=/health/live"
       - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.interval=10s"
       - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.timeout=3s"
+      # ── /ws/dashboard → Go dashboard WebSocket handler (priority 150 > Python ws 100)
+      - "traefik.http.routers.them-go-ws-dashboard.rule=Path(`/ws/dashboard`)"
+      - "traefik.http.routers.them-go-ws-dashboard.entrypoints=web"
+      - "traefik.http.routers.them-go-ws-dashboard.priority=150"
+      - "traefik.http.routers.them-go-ws-dashboard.service=them-go-bridge-svc"
       # ── Wave 1: /health/live and /health/ready (priority 130 beats Python's 90)
       # Go health handlers live at /health/live and /health/ready only.
       # Do NOT claim bare /health — Python serves that; we don't want a 404 from Go.
@@ -1082,6 +1087,11 @@ services:
       - "traefik.http.routers.them-go-agent-defs.entrypoints=web"
       - "traefik.http.routers.them-go-agent-defs.priority=120"
       - "traefik.http.routers.them-go-agent-defs.service=them-go-bridge-svc"
+      # ── Phase 3: /api/v1/admin/applications/{id}/agent-bindings — credential bindings ──
+      - "traefik.http.routers.them-go-agent-bindings.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/agent-bindings(/[^/]+)?$`)"
+      - "traefik.http.routers.them-go-agent-bindings.entrypoints=web"
+      - "traefik.http.routers.them-go-agent-bindings.priority=121"
+      - "traefik.http.routers.them-go-agent-bindings.service=them-go-bridge-svc"
     restart: unless-stopped
     logging:
       driver: "json-file"

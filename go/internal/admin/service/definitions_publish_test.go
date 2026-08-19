@@ -226,6 +226,27 @@ func (f *publishFakeDal) UpdateDraftAgentDefinition(_ context.Context, _, _ stri
 }
 func (f *publishFakeDal) DeleteDraftAgentDefinition(_ context.Context, _, _ string) error { return nil }
 
+// Phase 3 stubs.
+func (f *publishFakeDal) GetAgentDefinitionForPublish(_ context.Context, _ string, _ string) (dal.AgentDefinition, error) {
+	return dal.AgentDefinition{}, nil
+}
+func (f *publishFakeDal) PublishCanvasAgent(_ context.Context, _ dal.CanvasAgentRow) error {
+	return nil
+}
+func (f *publishFakeDal) MarkAgentDefinitionPublished(_ context.Context, _, _ string) error {
+	return nil
+}
+func (f *publishFakeDal) UpsertAgentBinding(_ context.Context, _ dal.AgentBindingRow) error {
+	return nil
+}
+func (f *publishFakeDal) GetAgentBindingStatus(_ context.Context, _, _ string) (dal.AgentBindingSlotStatus, error) {
+	return dal.AgentBindingSlotStatus{CredentialSet: map[string]bool{}}, nil
+}
+func (f *publishFakeDal) ListAgentBindings(_ context.Context, _ string) ([]dal.AgentBindingSlotStatus, error) {
+	return []dal.AgentBindingSlotStatus{}, nil
+}
+func (f *publishFakeDal) DeleteAgentBinding(_ context.Context, _, _ string) error { return nil }
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func orchRef() registry.DefinitionRef {

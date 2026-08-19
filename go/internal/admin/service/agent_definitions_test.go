@@ -251,6 +251,29 @@ func (f *agentDefFakeDal) UpdateProvider(_ context.Context, _ int64, _ dal.LLMPr
 }
 func (f *agentDefFakeDal) DeleteProvider(_ context.Context, _ int64) error { return nil }
 
+// Canvas agent publish pipeline stubs (Phase 3).
+func (f *agentDefFakeDal) GetAgentDefinitionForPublish(_ context.Context, _ string, _ string) (dal.AgentDefinition, error) {
+	return f.agentDef, f.getAgentDefErr
+}
+func (f *agentDefFakeDal) PublishCanvasAgent(_ context.Context, _ dal.CanvasAgentRow) error {
+	return nil
+}
+func (f *agentDefFakeDal) MarkAgentDefinitionPublished(_ context.Context, _, _ string) error {
+	return nil
+}
+
+// Application agent binding stubs (Phase 3).
+func (f *agentDefFakeDal) UpsertAgentBinding(_ context.Context, _ dal.AgentBindingRow) error {
+	return nil
+}
+func (f *agentDefFakeDal) GetAgentBindingStatus(_ context.Context, _, _ string) (dal.AgentBindingSlotStatus, error) {
+	return dal.AgentBindingSlotStatus{CredentialSet: map[string]bool{}}, nil
+}
+func (f *agentDefFakeDal) ListAgentBindings(_ context.Context, _ string) ([]dal.AgentBindingSlotStatus, error) {
+	return []dal.AgentBindingSlotStatus{}, nil
+}
+func (f *agentDefFakeDal) DeleteAgentBinding(_ context.Context, _, _ string) error { return nil }
+
 // ── valid canvas JSON helpers ─────────────────────────────────────────────────
 
 func validAgentDef(t *testing.T) json.RawMessage {
@@ -270,7 +293,7 @@ func validAgentDef(t *testing.T) json.RawMessage {
 }
 
 func newAgentDefSvc(f *agentDefFakeDal) *service.AgentDefinitionService {
-	return service.NewAgentDefinitionService(f)
+	return service.NewAgentDefinitionService(f, nil, nil)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

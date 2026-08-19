@@ -140,8 +140,15 @@ func BuildRouter(
 				tokens.Routes(tenantScoped)
 				reg := NewRegistryHandler(db)
 				tenantScoped.Get("/component-definitions", reg.ListComponentDefinitions)
-				agentDefs := NewAgentDefinitionsHandler(db)
+				agentDefs := NewAgentDefinitionsHandler(db, cache, fernetKey)
 				agentDefs.Routes(tenantScoped)
+
+				// Agent bindings — mounted under /admin/applications/{app_id}
+				// so {app_id} can be extracted from the URL.
+				bindings := NewAgentBindingsHandler(agentDefs.Svc())
+				tenantScoped.Route("/applications/{app_id}", func(appRoute chi.Router) {
+					bindings.Routes(appRoute)
+				})
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,

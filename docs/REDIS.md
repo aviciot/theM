@@ -30,6 +30,7 @@
 | Channel | Publisher | Subscribers | Purpose |
 |---|---|---|---|
 | `them:agents:changed` | go/internal/admin/service/agents.go on write | go/internal/agentregistry/registry.go | Per-tenant agent cache invalidation. Payload is tenantID UUID string. Empty payload = ignored (guards against global eviction). |
+| `them:agents:registry:{tenant_id}` | — (pub/sub signal only) | go/internal/admin/service/agent_definitions_publish.go on canvas publish | Published after a canvas agent is published to runtime. Payload is agentID UUID. Triggers registry cache refresh in agentregistry. |
 | `them:orchestrators:changed` | admin_orchestrators.py on write | (no subscriber — reserved for future in-process L1 cache) | Invalidate orchestrator template cache signal |
 | `them:dash:runs` | task_runner.py per run event | ws_dashboard.py (channel: runs) | Lightweight summary of every run event (no tool inputs) |
 | `them:dash:agents` | (reserved) | ws_dashboard.py (channel: agents) | Agent registry change events |

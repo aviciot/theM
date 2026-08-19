@@ -349,6 +349,21 @@ func (f *fakeDal) UpdateDraftAgentDefinition(_ context.Context, _, _ string, _ [
 }
 func (f *fakeDal) DeleteDraftAgentDefinition(_ context.Context, _, _ string) error { return nil }
 
+// Phase 3 stubs for fakeDal.
+func (f *fakeDal) GetAgentDefinitionForPublish(_ context.Context, _ string, _ string) (dal.AgentDefinition, error) {
+	return dal.AgentDefinition{}, nil
+}
+func (f *fakeDal) PublishCanvasAgent(_ context.Context, _ dal.CanvasAgentRow) error { return nil }
+func (f *fakeDal) MarkAgentDefinitionPublished(_ context.Context, _, _ string) error { return nil }
+func (f *fakeDal) UpsertAgentBinding(_ context.Context, _ dal.AgentBindingRow) error { return nil }
+func (f *fakeDal) GetAgentBindingStatus(_ context.Context, _, _ string) (dal.AgentBindingSlotStatus, error) {
+	return dal.AgentBindingSlotStatus{CredentialSet: map[string]bool{}}, nil
+}
+func (f *fakeDal) ListAgentBindings(_ context.Context, _ string) ([]dal.AgentBindingSlotStatus, error) {
+	return []dal.AgentBindingSlotStatus{}, nil
+}
+func (f *fakeDal) DeleteAgentBinding(_ context.Context, _, _ string) error { return nil }
+
 // fakeCache implements service.Cache.
 type fakeCache struct {
 	deletedKeys  []string

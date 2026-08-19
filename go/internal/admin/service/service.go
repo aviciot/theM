@@ -98,6 +98,17 @@ type Dal interface {
 	UpdateDraftAgentDefinition(ctx context.Context, tenantID, id string, defJSON []byte, hash string) error
 	DeleteDraftAgentDefinition(ctx context.Context, tenantID, id string) error
 
+	// Canvas agent publish pipeline (Phase 3) — tenant-scoped
+	GetAgentDefinitionForPublish(ctx context.Context, tenantID, id string) (dal.AgentDefinition, error)
+	PublishCanvasAgent(ctx context.Context, row dal.CanvasAgentRow) error
+	MarkAgentDefinitionPublished(ctx context.Context, tenantID, id string) error
+
+	// Application agent bindings (Phase 3) — app-scoped, credentials AES-GCM encrypted
+	UpsertAgentBinding(ctx context.Context, row dal.AgentBindingRow) error
+	GetAgentBindingStatus(ctx context.Context, applicationID, agentID string) (dal.AgentBindingSlotStatus, error)
+	ListAgentBindings(ctx context.Context, applicationID string) ([]dal.AgentBindingSlotStatus, error)
+	DeleteAgentBinding(ctx context.Context, applicationID, agentID string) error
+
 	// Publish pipeline — Phase C
 	PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string) (dal.PublishResult, error)
 	UpsertAppOrchestrator(ctx context.Context, row dal.AppOrchestratorRow) (string, error)

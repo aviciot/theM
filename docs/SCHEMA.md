@@ -354,6 +354,45 @@ Indexes: `agent_definitions_tenant_slug (tenant_id, agent_slug)`, `agent_definit
 
 ---
 
+## them.agent_runtime_specs (Phase 3 Canvas A2A — compiled spec)
+Compiled AgentSpec produced from `agent_definitions` at publish time. One row per definition revision. Migration: `db/036_canvas_a2a_runtime.sql`.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | Auto-generated |
+| tenant_id | UUID NOT NULL | Tenant scoping |
+| definition_id | UUID NOT NULL FK→agent_definitions | Source definition |
+| agent_id | UUID NOT NULL FK→agents | Runtime agent row (same UUID as definition_id) |
+| spec | JSONB NOT NULL | Compiled AgentSpec — slot NAMES only, never credential values |
+| spec_hash | TEXT NOT NULL | sha256 of spec JSON |
+| deployed_at | TIMESTAMPTZ | When this spec became active |
+| created_at | TIMESTAMPTZ | |
+
+Unique constraint: `(definition_id)` — one compiled spec per definition revision.
+
+---
+
+## them.app_agent_bindings (Phase 3 Canvas A2A — per-app credential bindings)
+Per-application binding of a canvas agent with encrypted credentials. Migration: `db/036_canvas_a2a_runtime.sql`.
+
+**Security**: `credential_bindings` stores AES-256-GCM ciphertext (base64url). Responses return `{slot_name: bool}` only — never ciphertext or plaintext.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | Auto-generated |
+| application_id | UUID NOT NULL FK→applications | Application that owns this binding |
+| agent_id | UUID NOT NULL FK→agents | Canvas agent |
+| definition_id | UUID FK→agent_definitions | Pinned definition revision (nullable during drafting) |
+| credential_bindings | JSONB NOT NULL | AES-256-GCM ciphertext per credential slot — NEVER plaintext |
+| config_overrides | JSONB NOT NULL | Per-app configuration overrides |
+| policies | JSONB NOT NULL | Invocation policy overrides |
+| created_at | TIMESTAMPTZ | |
+| updated_at | TIMESTAMPTZ | |
+
+Unique constraint: `(application_id, agent_id)`.
+
+---
+
 ## auth_service schema (read-only reference)
 Owned by `them-auth-service`. **Never query directly from the bridge** — use `app/services/auth_client.py`.
 

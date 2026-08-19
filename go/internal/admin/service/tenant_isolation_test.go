@@ -446,6 +446,27 @@ func (f *isolationFakeDal) UpdateDraftAgentDefinition(_ context.Context, _, _ st
 }
 func (f *isolationFakeDal) DeleteDraftAgentDefinition(_ context.Context, _, _ string) error { return nil }
 
+// Phase 3 stubs.
+func (f *isolationFakeDal) GetAgentDefinitionForPublish(_ context.Context, _ string, _ string) (dal.AgentDefinition, error) {
+	return dal.AgentDefinition{}, nil
+}
+func (f *isolationFakeDal) PublishCanvasAgent(_ context.Context, _ dal.CanvasAgentRow) error {
+	return nil
+}
+func (f *isolationFakeDal) MarkAgentDefinitionPublished(_ context.Context, _, _ string) error {
+	return nil
+}
+func (f *isolationFakeDal) UpsertAgentBinding(_ context.Context, _ dal.AgentBindingRow) error {
+	return nil
+}
+func (f *isolationFakeDal) GetAgentBindingStatus(_ context.Context, _, _ string) (dal.AgentBindingSlotStatus, error) {
+	return dal.AgentBindingSlotStatus{CredentialSet: map[string]bool{}}, nil
+}
+func (f *isolationFakeDal) ListAgentBindings(_ context.Context, _ string) ([]dal.AgentBindingSlotStatus, error) {
+	return []dal.AgentBindingSlotStatus{}, nil
+}
+func (f *isolationFakeDal) DeleteAgentBinding(_ context.Context, _, _ string) error { return nil }
+
 // ── pgxUniqueViolation stub ───────────────────────────────────────────────────
 //
 // dal.IsUniqueViolation checks for pgconn.PgError with Code "23505".
