@@ -199,8 +199,14 @@ function CanvasInner() {
   const [activeView, setActiveView] = useState<'agent' | 'skill'>('agent');
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
 
-  // Agent-level nodes/edges
-  const [agentNodes, setAgentNodes, onAgentNodesChange] = useNodesState<Node>([]);
+  // Agent-level nodes/edges — pre-seed AGENT ROOT for new drafts
+  const initialAgentNodes: Node[] = defId ? [] : [{
+    id: 'agent-root',
+    type: 'agentRoot',
+    position: { x: 300, y: 80 },
+    data: { display_name: 'My Agent', description: '', version: '1.0.0', credential_slots: [] },
+  }];
+  const [agentNodes, setAgentNodes, onAgentNodesChange] = useNodesState<Node>(initialAgentNodes);
   const [agentEdges, setAgentEdges, onAgentEdgesChange] = useEdgesState<Edge>([]);
 
   // Per-skill pipeline state
