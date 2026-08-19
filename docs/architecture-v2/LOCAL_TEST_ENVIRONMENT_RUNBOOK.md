@@ -224,6 +224,17 @@ The same logical secret uses different environment variable names in different s
 | `THE_M_INSTANCE_ID` | Python bridge, Go bridge | Python: `THE_M_INSTANCE_ID`; Go: `THE_M_INSTANCE_ID` | No | `bridge-1` / `go-bridge-1` | Must be unique per replica | Session routing and Redis pod keys collide across replicas |
 | `RUN_EVENTS_MODE` | Go bridge | Go: `RUN_EVENTS_MODE` | No | `pubsub` | — | Controls run event delivery path (`pubsub`/`dual`/`streams`) |
 | `RECONCILER_DRY_RUN` | Go bridge | Go: `RECONCILER_DRY_RUN` | No | `true` | — | When `false`, reconciler writes stale-run corrections to DB |
+| `COOKIE_SECURE` | Frontend (Next.js) | `frontend/src/app/api/auth/login/route.ts`, `refresh/route.ts` | No | `false` (local HTTP) | — | Controls the `Secure` flag on auth cookies. **Must be `false` on HTTP (local/Hetzner without TLS termination) and `true` (or omitted) behind HTTPS.** Browsers silently drop `Secure` cookies over plain HTTP — login appears to succeed but `/me` immediately returns 401. |
+
+### HTTPS / Hetzner production note — cookies
+
+When deploying to Hetzner with TLS termination (Caddy, Nginx, or Traefik with a cert):
+
+1. Remove `COOKIE_SECURE: "false"` from `docker-compose.hetzner.yml` (or set it to `"true"`).
+2. The cookies will be issued with `Secure=true`, which browsers require over HTTPS.
+3. If TLS is terminated at the proxy and traffic to the frontend container is plain HTTP internally, cookies are still safe — the `Secure` flag is evaluated by the **browser** based on the public URL, not the internal hop.
+
+If you ever see "Failed to load user" after login on a new environment, the first thing to check is whether `COOKIE_SECURE` matches the protocol the browser is using to reach the site.
 
 ### Key naming mismatch reference
 
