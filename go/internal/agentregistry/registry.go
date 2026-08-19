@@ -239,9 +239,8 @@ type a2aPart struct {
 	Text      string         `json:"text,omitempty"`
 	Kind      string         `json:"kind,omitempty"`      // kept for v0.3 compat probing
 	Data      map[string]any `json:"data,omitempty"`      // typed data part (A2A v1.1)
-	Mime      string         `json:"mimeType,omitempty"`  // media type for outbound data parts
-	MediaType string         `json:"mediaType,omitempty"` // media type on inbound file parts (docu_writer wire format)
-	Filename  string         `json:"filename,omitempty"`  // present on file parts
+	MediaType string         `json:"mediaType,omitempty"` // media type — both outbound data parts and inbound file parts
+	Filename  string         `json:"filename,omitempty"`  // present on inbound file parts
 }
 
 type a2aResponse struct {
@@ -297,7 +296,7 @@ func buildA2APart(input json.RawMessage) a2aPart {
 		}
 	}
 	// Structured input → typed data part.
-	return a2aPart{Data: m, Mime: "application/json"}
+	return a2aPart{Data: m, MediaType: "application/json"}
 }
 
 func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.RawMessage) (json.RawMessage, error) {
@@ -380,9 +379,6 @@ func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.R
 				// orchestrator's {"artifact": {filename, content_type, data_base64}} shape.
 				encoded := base64.StdEncoding.EncodeToString([]byte(part.Text))
 				contentType := part.MediaType
-				if contentType == "" {
-					contentType = part.Mime
-				}
 				if contentType == "" {
 					contentType = "application/octet-stream"
 				}
