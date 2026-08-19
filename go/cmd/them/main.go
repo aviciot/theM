@@ -229,8 +229,7 @@ func run() error {
 	// Auth, EPConfig, gate, session, CreateRun, and temporal start are now owned by
 	// execLifecycle. The WS handler retains only upgrade, frame I/O, and metrics.
 	wsHandler := ws.NewHandler(execLifecycle, bus, authenticator, cfg.InstanceID, log).
-		WithRunStreamer(rsStreamer).
-		WithRunLookup(recorder)
+		WithRunStreamer(rsStreamer)
 	srv.MountWS(wsHandler.Routes())
 	log.Info("WebSocket handler mounted", "prefix", "/ws")
 

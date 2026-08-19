@@ -338,37 +338,6 @@ func TestDBError_propagates(t *testing.T) {
 	}
 }
 
-// TestGetActiveRunByContextID_found verifies the query is issued and result scanned.
-func TestGetActiveRunByContextID_found(t *testing.T) {
-	db := &mockDB{}
-	db.queryRowFn = func(sql string, args ...any) SingleRowScanner {
-		return &mockRow{scanFn: func(dest ...any) error {
-			if sp, ok := dest[0].(*string); ok { *sp = "run-abc" }
-			if sp, ok := dest[1].(*string); ok { *sp = "running" }
-			return nil
-		}}
-	}
-	rec := New(db)
-	active, err := rec.GetActiveRunByContextID(context.Background(), "tenant-1", "ctx-1")
-	require.NoError(t, err)
-	assert.Equal(t, "run-abc", active.RunID)
-	assert.Equal(t, "running", active.Status)
-	require.Len(t, db.queryRows, 1)
-	assert.Contains(t, db.queryRows[0].sql, "them.runs")
-	assert.Contains(t, db.queryRows[0].sql, "context_id")
-}
-
-// TestGetActiveRunByContextID_notFound verifies ErrNoActiveRun is returned on scan error.
-func TestGetActiveRunByContextID_notFound(t *testing.T) {
-	db := &mockDB{}
-	db.queryRowFn = func(sql string, args ...any) SingleRowScanner {
-		return &mockRow{scanFn: func(dest ...any) error { return errors.New("no rows") }}
-	}
-	rec := New(db)
-	_, err := rec.GetActiveRunByContextID(context.Background(), "tenant-1", "ctx-missing")
-	assert.ErrorIs(t, err, ErrNoActiveRun)
-}
-
 // ── Artifact tests ────────────────────────────────────────────────────────────
 
 // TestRecordArtifact_Success verifies that a valid artifact is persisted and

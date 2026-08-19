@@ -29,7 +29,6 @@ import (
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/metrics"
-	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/temporal"
 	"github.com/aviciot/them/internal/tenantctx"
@@ -83,13 +82,6 @@ type EPConfigLoader = transport.EPConfigLoader
 // Sourced from internal/transport.
 type TemporalClientExecutor = transport.TemporalClientExecutor
 
-// RunLookup resolves the most recent run for a (tenantID, contextID) pair.
-// Used to re-attach a reconnecting client to an existing workflow instead of
-// starting a duplicate run.
-type RunLookup interface {
-	GetActiveRunByContextID(ctx context.Context, tenantID, contextID string) (runrecorder.ActiveRun, error)
-}
-
 // Handler is the WebSocket orchestration handler.
 //
 // After migration to execution.Lifecycle the handler retains only:
@@ -107,7 +99,6 @@ type Handler struct {
 	instanceID    string
 	logger        *slog.Logger
 	runStreamer   runstream.RedisStreamer
-	runLookup     RunLookup
 }
 
 // NewHandler creates a Handler. All admission/session/gate logic is delegated
@@ -136,13 +127,6 @@ func NewHandler(
 // execution.Lifecycle. When not attached, runEvents fails fast at connect time.
 func (h *Handler) WithRunStreamer(rc runstream.RedisStreamer) *Handler {
 	h.runStreamer = rc
-	return h
-}
-
-// WithRunLookup attaches the run lookup used to re-attach reconnecting clients
-// to existing workflows instead of starting duplicate runs.
-func (h *Handler) WithRunLookup(rl RunLookup) *Handler {
-	h.runLookup = rl
 	return h
 }
 
@@ -287,58 +271,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if clientContextID != "" {
 		handle.ContextID = clientContextID
 	}
-
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
-	// ── 6. Re-attach if a run is already in progress on this context ──────────
-	// When the client sends context_id with empty content it is a reconnect probe
-	// (tab-switch, network blip). Check if the workflow is still running; if so,
-	// stream its events without starting a new workflow.
-	// Security: lookup is always scoped by tenantID from EPConfig (server-resolved).
-	isReattachProbe := clientContextID != "" && firstTextPart(userMsg) == ""
-	if clientContextID != "" && h.runLookup != nil {
-		active, lookupErr := h.runLookup.GetActiveRunByContextID(r.Context(), handle.EPConfig.TenantID, clientContextID)
-		if lookupErr == nil && active.Status == "running" {
-			h.logger.Info("ws: re-attaching to running workflow",
-				"ep_slug", epSlug,
-				"context_id", clientContextID,
-				"run_id", active.RunID,
-			)
-			// Do NOT overwrite handle.RunID — that run belongs to the active workflow.
-			// The probe created its own orphan run (handle.RunID) which Release must
-			// mark as failed when we return here without calling Start.
-
-			rsEvCh, rsErr := h.runEvents(ctx, active.RunID, lastEventID)
-			if rsErr != nil {
-				h.logger.Warn("ws: reattach runstream failed", "run_id", active.RunID, "error", rsErr)
-				h.writeError(conn, "event stream unavailable")
-				return
-			}
-			if ready, err := json.Marshal(serverMsg{Type: "ready", RunID: active.RunID, ContextID: clientContextID}); err == nil {
-				_ = conn.WriteMessage(websocket.TextMessage, ready)
-			}
-			// Stream delivers its own terminal event; orchDone is not needed here.
-			orchDone := make(chan struct{})
-			h.streamEvents(ctx, cancel, conn, rsEvCh, nil, orchDone)
-			return
-		}
-		// No running workflow found on this context. If this was a probe (no new
-		// message content), tell the client so it can clear the busy state.
-		if isReattachProbe {
-			if msg, err := json.Marshal(serverMsg{Type: "no_active_run", ContextID: clientContextID}); err == nil {
-				_ = conn.WriteMessage(websocket.TextMessage, msg)
-			}
-			return
-		}
-	}
-
 	// Record the user's first message as the run goal (non-fatal).
 	h.lc.RecordGoal(r.Context(), handle.RunID, firstTextPart(userMsg))
 
-	// ── 7. Subscribe to run-stream BEFORE Lifecycle.Start ─────────────────────
+	// ── 6. Subscribe to run-stream BEFORE Lifecycle.Start ─────────────────────
 	// This ensures no event emitted by the workflow immediately after start is
 	// missed (bootstrap ordering invariant — same pattern as SSE and A2A).
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
 	rsEvCh, rsErr := h.runEvents(ctx, handle.RunID, lastEventID)
 	if rsErr != nil {
 		h.logger.Warn("ws: runstream subscribe failed", "run_id", handle.RunID, "error", rsErr)
@@ -346,7 +287,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 8. Resolve orchestrator name from EP binding (SEC-04) ────────────────
+	// ── 7. Resolve orchestrator name from EP binding (SEC-04) ────────────────
 	// OrchestratorName is resolved from entry_points.app_orchestrator_id →
 	// app_orchestrators.name — never from the URL slug.
 	// An unbound EP (app_orchestrator_id IS NULL) is a configuration error:
@@ -361,7 +302,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 9. Lifecycle.Start → ExecuteWorkflow ─────────────────────────────────
+	// ── 8. Lifecycle.Start → ExecuteWorkflow ─────────────────────────────────
 	// Identity fields (RunID, ContextID, TenantID, ApplicationID, EPSlug) are
 	// overwritten inside Start from the handle — never from client-supplied data.
 	input := temporal.WorkflowInput{

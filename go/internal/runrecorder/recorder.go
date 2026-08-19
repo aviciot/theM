@@ -167,32 +167,6 @@ func (r *Recorder) RecordAgentStep(ctx context.Context, runID, agentSlug string,
 	return nil
 }
 
-// ActiveRun holds the minimal fields needed to re-attach to a running workflow.
-type ActiveRun struct {
-	RunID  string
-	Status string // "running", "completed", "failed", etc.
-}
-
-// GetActiveRunByContextID returns the most recent run for a (tenantID, contextID) pair.
-// Returns ("", ErrNoActiveRun) when no run exists for that context.
-// The caller uses Status to decide whether to re-attach or start fresh.
-var ErrNoActiveRun = errors.New("runrecorder: no run found for context")
-
-func (r *Recorder) GetActiveRunByContextID(ctx context.Context, tenantID, contextID string) (ActiveRun, error) {
-	const q = `
-		SELECT r.id::text, r.status
-		FROM them.runs r
-		JOIN them.tasks t ON t.run_id = r.id AND t.kind = 'root'
-		WHERE t.context_id = $1::uuid AND r.tenant_id = $2::uuid
-		ORDER BY r.started_at DESC LIMIT 1`
-	row := r.db.QueryRow(ctx, q, contextID, tenantID)
-	var a ActiveRun
-	if err := row.Scan(&a.RunID, &a.Status); err != nil {
-		return ActiveRun{}, ErrNoActiveRun
-	}
-	return a, nil
-}
-
 // SetFinalOutput writes the final LLM answer text to them.runs.final_output.
 func (r *Recorder) SetFinalOutput(ctx context.Context, runID, text string) error {
 	const q = `UPDATE them.runs SET final_output = NULLIF($2, '') WHERE id = $1::uuid`
