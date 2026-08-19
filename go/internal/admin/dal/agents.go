@@ -136,7 +136,38 @@ func (d *DB) CreateAgent(ctx context.Context, tenantID string, in AgentInput, en
 
 // UpdateAgent modifies an existing agent row identified by UUID id, scoped to the tenant.
 // A row belonging to another tenant is silently treated as not found (0 rows affected).
+// When AgentInput.AgentCard is non-nil, agent_card, agent_card_url, skills, and
+// card_fetched_at are also updated (populated by the Discover + Apply flow).
 func (d *DB) UpdateAgent(ctx context.Context, tenantID, id string, in AgentInput, enabled bool) error {
+	cardJSON, _ := json.Marshal(in.AgentCard)
+	skillsJSON, _ := json.Marshal(in.Skills)
+
+	// Use CASE to update card fields only when a new card is provided.
+	// An empty AgentCard (nil or {}) is encoded as "null" — treat that as no update.
+	updateCard := in.AgentCard != nil && string(cardJSON) != "null"
+
+	if updateCard {
+		const q = `
+			UPDATE them.agents
+			SET display_name=$3, description=$4, transport=$5,
+			    endpoint_url=COALESCE(NULLIF($6, ''), endpoint_url), max_concurrency=$7, max_retries=$8,
+			    timeout_seconds=$9, enabled=$10,
+			    supports_streaming=$11, supports_push=$12,
+			    icon=$13, category=$14,
+			    agent_card=$15::jsonb, agent_card_url=$16, skills=$17::jsonb,
+			    card_fetched_at=now(), updated_at=now()
+			WHERE id=$1::uuid AND tenant_id=$2::uuid`
+		return d.q.Exec(ctx, q,
+			id, tenantID,
+			in.DisplayName, in.Description, in.Transport,
+			in.EndpointURL, in.MaxConcurrency, in.MaxRetries,
+			in.TimeoutSeconds, enabled,
+			in.SupportsStreaming, in.SupportsPush,
+			in.Icon, in.Category,
+			string(cardJSON), in.AgentCardURL, string(skillsJSON),
+		)
+	}
+
 	const q = `
 		UPDATE them.agents
 		SET display_name=$3, description=$4, transport=$5,
@@ -145,7 +176,6 @@ func (d *DB) UpdateAgent(ctx context.Context, tenantID, id string, in AgentInput
 		    supports_streaming=$11, supports_push=$12,
 		    icon=$13, category=$14, updated_at=now()
 		WHERE id=$1::uuid AND tenant_id=$2::uuid`
-
 	return d.q.Exec(ctx, q,
 		id, tenantID,
 		in.DisplayName, in.Description, in.Transport,

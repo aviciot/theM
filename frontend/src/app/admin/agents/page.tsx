@@ -355,6 +355,7 @@ function AgentCard({
   testResult,
   isDiscovering,
   discoverError,
+  discoverSuccess,
   onTest,
   onScan,
   onDiscover,
@@ -373,6 +374,7 @@ function AgentCard({
   testResult: { ok: boolean; latency_ms: number; detail: string } | 'testing' | undefined;
   isDiscovering: boolean;
   discoverError?: string;
+  discoverSuccess?: boolean;
   onTest: () => void;
   onScan: () => void;
   onDiscover: () => void;
@@ -743,19 +745,24 @@ function AgentCard({
         </button>
       </div>
 
-      {/* Discover error — shown inline below buttons, auto-dismissed visually */}
-      {discoverError && (
+      {/* Discover feedback — success or error, shown inline below buttons */}
+      {discoverSuccess && (
         <div style={{
-          marginTop: '8px',
-          padding: '6px 10px',
-          borderRadius: '6px',
-          background: 'rgba(220,38,38,0.08)',
-          border: '1px solid rgba(220,38,38,0.2)',
-          color: '#f87171',
-          fontSize: '11px',
-          lineHeight: 1.4,
+          marginTop: '8px', padding: '6px 10px', borderRadius: '6px',
+          background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
+          color: '#34d399', fontSize: '11px', lineHeight: 1.4, display: 'flex', alignItems: 'center', gap: '5px',
         }}>
-          <span className="material-symbols-outlined" style={{ fontSize: '12px', verticalAlign: 'middle', marginRight: '4px' }}>error</span>
+          <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>check_circle</span>
+          Agent card synced — skills and last sync updated
+        </div>
+      )}
+      {!discoverSuccess && discoverError && (
+        <div style={{
+          marginTop: '8px', padding: '6px 10px', borderRadius: '6px',
+          background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.2)',
+          color: '#f87171', fontSize: '11px', lineHeight: 1.4, display: 'flex', alignItems: 'center', gap: '5px',
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>error</span>
           {discoverError}
         </div>
       )}
@@ -1055,6 +1062,7 @@ export default function AdminAgentsPage() {
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency_ms: number; detail: string } | 'testing'>>({});
   const [rowDiscoverState, setRowDiscoverState] = useState<Record<string, 'discovering'>>({});
   const [rowDiscoverError, setRowDiscoverError] = useState<Record<string, string>>({});
+  const [rowDiscoverSuccess, setRowDiscoverSuccess] = useState<Record<string, boolean>>({});
   const [discoverPopup, setDiscoverPopup] = useState<{ agent: Agent; result: DiscoverResult; diff: CardDiff } | null>(null);
   const [applyingDiscover, setApplyingDiscover] = useState(false);
   const [discovering, setDiscovering] = useState(false);
@@ -1482,6 +1490,8 @@ export default function AdminAgentsPage() {
         agent_card_url: result.agent_card_url,
       });
       setDiscoverPopup(null);
+      setRowDiscoverSuccess((r) => ({ ...r, [agent.id]: true }));
+      setTimeout(() => setRowDiscoverSuccess((r) => { const n = { ...r }; delete n[agent.id]; return n; }), 3000);
       reload();
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : 'Apply failed');
@@ -1945,6 +1955,7 @@ export default function AdminAgentsPage() {
                       testResult={testResults[agent.id]}
                       isDiscovering={!!rowDiscoverState[agent.id]}
                       discoverError={rowDiscoverError[agent.id]}
+                      discoverSuccess={!!rowDiscoverSuccess[agent.id]}
                       onTest={() => handleTest(agent)}
                       onScan={() => handleScan(agent)}
                       onDiscover={() => handleRowDiscover(agent)}
@@ -2052,6 +2063,7 @@ export default function AdminAgentsPage() {
                                   testResult={testResults[agent.id]}
                                   isDiscovering={!!rowDiscoverState[agent.id]}
                       discoverError={rowDiscoverError[agent.id]}
+                      discoverSuccess={!!rowDiscoverSuccess[agent.id]}
                                   onTest={() => handleTest(agent)}
                                   onScan={() => handleScan(agent)}
                                   onDiscover={() => handleRowDiscover(agent)}
@@ -2109,6 +2121,7 @@ export default function AdminAgentsPage() {
                             testResult={testResults[agent.id]}
                             isDiscovering={!!rowDiscoverState[agent.id]}
                       discoverError={rowDiscoverError[agent.id]}
+                      discoverSuccess={!!rowDiscoverSuccess[agent.id]}
                             onTest={() => handleTest(agent)}
                             onScan={() => handleScan(agent)}
                             onDiscover={() => handleRowDiscover(agent)}

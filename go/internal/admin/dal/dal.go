@@ -111,6 +111,10 @@ type AgentInput struct {
 	SupportsPush     bool     `json:"supports_push"`
 	Icon             *string  `json:"icon,omitempty"`
 	Category         *string  `json:"category,omitempty"`
+	// Discovery fields — populated by Discover + Apply flow.
+	AgentCard    any     `json:"agent_card,omitempty"`
+	AgentCardURL *string `json:"agent_card_url,omitempty"`
+	Skills       any     `json:"skills,omitempty"`
 }
 
 // ── Orchestrator types ────────────────────────────────────────────────────────
