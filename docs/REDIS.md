@@ -1,5 +1,5 @@
 # the-M Redis Key Space
-# Last updated: 2026-07-18
+# Last updated: 2026-08-19
 # Redis: them-redis container (fully isolated). DB index: 0 (the-M owns this Redis entirely).
 
 ## Key Patterns
@@ -22,6 +22,7 @@
 | `them:pod:{pod_id}` | 30s | session_manager.py + main.py | Yes | Pod liveness + session count Hash (written every 15s by heartbeat loop) |
 | `them:pods` | none | session_manager.py | Yes | Set of live pod instance_ids |
 | `them:dash:sessions:state:{app_id}` | 120s | dashboard_broadcaster.py | Yes | Session state Hash (session_id → JSON) for snapshot delivery to new WS subscribers |
+| `them:scan:state:{agent_id}` | none | go/internal/admin/ security-scan goroutine | Yes | Agent security scan result Hash (type, score, risk, summary, findings, scanned_at). Written on scan_complete. Read by Go dashboard WS on connect to deliver snapshot to newly subscribed clients. |
 | `them:ctx:{context_id}:heads` | 300s | context_service.py | Yes | Hot cache of recent artifacts for a context (Phase 5) |
 | `them:ctx:{context_id}:summary` | 3600s | memory_service.py | Yes | Latest context summary text for injecting into agent messages (Phase 8.4) |
 
@@ -32,14 +33,14 @@
 | `them:agents:changed` | go/internal/admin/service/agents.go on write | go/internal/agentregistry/registry.go | Per-tenant agent cache invalidation. Payload is tenantID UUID string. Empty payload = ignored (guards against global eviction). |
 | `them:agents:registry:{tenant_id}` | — (pub/sub signal only) | go/internal/admin/service/agent_definitions_publish.go on canvas publish | Published after a canvas agent is published to runtime. Payload is agentID UUID. Triggers registry cache refresh in agentregistry. |
 | `them:orchestrators:changed` | admin_orchestrators.py on write | (no subscriber — reserved for future in-process L1 cache) | Invalidate orchestrator template cache signal |
-| `them:dash:runs` | task_runner.py per run event | ws_dashboard.py (channel: runs) | Lightweight summary of every run event (no tool inputs) |
-| `them:dash:agents` | (reserved) | ws_dashboard.py (channel: agents) | Agent registry change events |
-| `them:dash:metrics` | (reserved) | ws_dashboard.py (channel: metrics) | System metrics |
-| `them:dash:apps` | main.py `_app_liveness_loop` every 30s | ws_dashboard.py (channel: apps) | App liveness probe results: `{type: "app_status", statuses: {slug: {reachable, latency_ms}}}` |
-| `them:dash:run:{run_id}` | task_runner.py per run event | ws_dashboard.py (channel: run:{uuid}) | Full per-run trace: tool inputs/outputs, token usage, iteration events |
-| `them:dash:agent:{agent_id}` | admin_agents.py `_run_scan_job` | ws_dashboard.py (channel: agent:{id}) | Per-agent events: `scan_started`, `scan_complete`, `scan_failed`. Transient pub/sub — no TTL, no persistence. |
+| `them:dash:runs` | task_runner.py per run event | go/internal/dashboard (channel: runs) | Lightweight summary of every run event (no tool inputs) |
+| `them:dash:agents` | (reserved) | go/internal/dashboard (channel: agents) | Agent registry change events |
+| `them:dash:metrics` | (reserved) | go/internal/dashboard (channel: metrics) | System metrics |
+| `them:dash:apps` | main.py `_app_liveness_loop` every 30s | go/internal/dashboard (channel: apps) | App liveness probe results: `{type: "app_status", statuses: {slug: {reachable, latency_ms}}}` |
+| `them:dash:run:{run_id}` | task_runner.py per run event | go/internal/dashboard (channel: run:{uuid}) | Full per-run trace: tool inputs/outputs, token usage, iteration events |
+| `them:dash:agent:{agent_id}` | go/internal/admin security-scan goroutine | go/internal/dashboard (channel: agent:{id}) | Per-agent events: `scan_started`, `scan_complete`, `scan_failed`. On connect, Go bridge also delivers snapshot from `them:scan:state:{agent_id}` hash. Transient pub/sub — no TTL, no persistence. |
 | `them:tasks:{task_id}:events` | task_store.py on every state transition | ws_orchestrator.py subscribers | Task lifecycle events (created, state, artifact) |
-| `them:dash:sessions:{app_id}` | dashboard_broadcaster.py publish_session_event | ws_dashboard.py (channel: sessions:\<app_id\>) | Per-app session_start / session_end events; snapshot on subscribe |
+| `them:dash:sessions:{app_id}` | dashboard_broadcaster.py publish_session_event | go/internal/dashboard (channel: sessions:\<app_id\>) | Per-app session_start / session_end events; snapshot from `them:dash:sessions:state:{app_id}` delivered on connect |
 | `them:sess:control:{session_id}` | runtime_manager.py signal_disconnect (via admin_sessions router) | apps.py + ws_orchestrator.py per-session `_control_listener` | Cross-replica admin session termination. One message closes the WS with code 4000. Best-effort pub/sub — no persistence, no TTL. |
 
 ## Naming Rules
