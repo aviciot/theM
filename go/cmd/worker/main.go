@@ -226,6 +226,11 @@ type runOrchestratorFactory struct {
 // chosen provider; otherwise fall back to the global provider.
 func (f *runOrchestratorFactory) Build(cfg workerconfig.RunConfig) temporal.OrchestratorRunner {
 	provider := f.resolveProvider(cfg)
+	// Copy resolved provider name into OrchestratorConfig so RecordUsage gets
+	// the correct provider string (LLMProvider lives on RunConfig, not the nested Config).
+	if cfg.LLMProvider != "" {
+		cfg.OrchestratorConfig.LLMProvider = cfg.LLMProvider
+	}
 	orch := orchestrator.New(cfg.OrchestratorConfig, provider, f.registry, f.recorder, f.bus, f.logger).
 		WithHistoryLoader(f.historyStore).
 		WithCheckpointer(f.historyStore).
