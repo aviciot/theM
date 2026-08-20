@@ -236,7 +236,8 @@ func (f *runOrchestratorFactory) Build(cfg workerconfig.RunConfig) temporal.Orch
 		WithCheckpointer(f.historyStore).
 		WithTaskRecorder(f.recorder).
 		WithUsageRecorder(f.recorder).
-		WithStepRecorder(f.recorder)
+		WithStepRecorder(f.recorder).
+		WithArtifactRecorder(f.recorder)
 
 	// Wire summarizer if memory is enabled and a provider is configured.
 	if cfg.OrchestratorConfig.MemoryEnabled && cfg.SummarizerProvider != "" {

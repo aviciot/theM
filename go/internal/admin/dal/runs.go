@@ -2,6 +2,7 @@ package dal
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -441,9 +442,11 @@ func (d *DB) GetContextArtifacts(ctx context.Context, tenantID, contextID string
 	return artifacts, nil
 }
 
-// GetRunArtifacts returns artifacts for a run via their tasks, ordered by created_at.
+// GetRunArtifacts returns artifacts for a run, combining them.artifacts (A2A task-based)
+// and them.run_artifacts (file artifacts saved by the Go worker), ordered by created_at.
 // tenantID is used to verify the run belongs to the caller's tenant.
 func (d *DB) GetRunArtifacts(ctx context.Context, tenantID, runID string) ([]Artifact, error) {
+	// Query them.artifacts (A2A task-linked artifacts).
 	q := `SELECT a.id::text, a.task_id::text,
         COALESCE(a.context_id::text, ''), COALESCE(a.artifact_id, ''),
         COALESCE(a.name, ''), COALESCE(a.parts::text, '[]'),
@@ -477,6 +480,42 @@ func (d *DB) GetRunArtifacts(ctx context.Context, tenantID, runID string) ([]Art
 		}
 		if a.Parts == nil {
 			a.Parts = []ArtifactPart{}
+		}
+		artifacts = append(artifacts, a)
+	}
+
+	// Also query them.run_artifacts (file artifacts from the Go worker).
+	q2 := `SELECT ra.id::text, ra.filename, ra.content_type, ra.size, ra.data, ra.created_at::text
+           FROM them.run_artifacts ra
+           WHERE ra.run_id = $1::uuid
+             AND ra.tenant_id = $2::uuid
+           ORDER BY ra.created_at`
+	rows2, err := d.q.Query(ctx, q2, runID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var id, filename, contentType, createdAt string
+		var size int64
+		var data []byte
+		if err := rows2.Scan(&id, &filename, &contentType, &size, &data, &createdAt); err != nil {
+			return nil, err
+		}
+		encoded := base64.StdEncoding.EncodeToString(data)
+		a := Artifact{
+			ID:         id,
+			ArtifactID: id,
+			Name:       filename,
+			CreatedAt:  createdAt,
+			Parts: []ArtifactPart{
+				{
+					Kind:      "file",
+					Filename:  filename,
+					MediaType: contentType,
+					Text:      encoded,
+				},
+			},
 		}
 		artifacts = append(artifacts, a)
 	}

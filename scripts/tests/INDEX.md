@@ -48,6 +48,7 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 | 35 | `run_tests.py::test_35_ep_queue` | structural | no | EP queue config: migration `024_ep_queue.sql` (`queue_timeout_seconds`, `queue_message` on `them.entry_points`); `EntryPoint` ORM fields; `app_compiler.py` reads/writes queue fields in `compile_graph`/`export_graph`; `admin_applications.py` `EntryPointIn/Out` queue fields; `runtime_manager.py` (`RuntimeQueueFull` class, `ep_gate_try` function, `queue_timeout_seconds`/`queue_message` params in `runtime_gate`); `apps.py` (`RuntimeQueueFull` import, `ep_gate_try` import, `"waiting"` WS message, async sleep retry loop, queue params passed from EP); `api.ts` `queue_timeout_seconds`/`queue_message` on `EntryPoint`; `page.tsx` `EntryPointData` queue fields, Max Concurrent Sessions/Queue Timeout/Queue Message builder panel, `saveEpLimit`+Entry Point Limits panel removed from `SessionsView` |
 | MT | `scripts/test_multiturn.py` | e2e | yes + JWT (auto-fetched) | Multi-turn conversation history: recall across fresh WS connections, `history_window` behavioral proof (window=1 forgets old turns) |
 | RC | `scripts/tests/test_routing_fix_contracts.py` | live | Traefik only | Routing correctness after UUID regex + runs path fixes: UUID agent/app/EP writes reach Go, GET /runs and GET /runs/{id} reachable, Python-only runs sub-paths not captured by Go |
+| DA | `scripts/test_doc_artifact.py` | e2e | yes + Anthropic API key | A2A artifact pipeline smoke test: login → SSE run on `doc-artifact-test-sse` → poll until completed → assert a2a_echo + docu_writer called → assert HTML artifact in `/api/v1/runs/{id}/artifacts` with `filename=documentation.html`, `mediaType=text/html`, non-empty HTML |
 
 **Types:**
 - **live** — makes real HTTP/Docker calls against the running stack
@@ -97,7 +98,8 @@ python scripts/tests/run_tests.py
 | `db/014_app_orchestrators.sql`, `app/models.py` (AppOrchestrator), `app/routers/admin_applications.py` (_flush_orch_caches) | 01 29 |
 | `app/services/task_runner.py` (history), `app/models.py` (history_window), `app/routers/admin_orchestrators.py` | 10 + MT |
 | `agents/security_scanner/`, `app/routers/admin_agents.py` (security-scan), `app/routers/ws_dashboard.py` (agent: channel), `app/services/dashboard_broadcaster.py`, `db/009_security_scan.sql`, `frontend/src/app/admin/agents/page.tsx` | 26 |
-| Before release / PR merge | all + 14 (with JWT) + MT |
+| `go/internal/agentregistry/registry.go`, `go/internal/orchestrator/orchestrator.go` (artifact pipeline) | DA |
+| Before release / PR merge | all + 14 (with JWT) + MT + DA |
 
 ---
 
@@ -119,6 +121,11 @@ $env:ADMIN_JWT="<token>"; python3.12 scripts/tests/run_tests.py 14   # Windows P
 # Multi-turn behavioral test (auto-fetches JWT, must run inside bridge container)
 docker cp scripts/test_multiturn.py them-bridge:/tmp/test_multiturn.py
 docker exec them-bridge python3 /tmp/test_multiturn.py
+
+# A2A artifact pipeline smoke test (DA) — requires live stack + Anthropic API quota
+python3.12 scripts/test_doc_artifact.py
+# Override base URL if needed:
+THEM_BASE=http://localhost:8088 python3.12 scripts/test_doc_artifact.py
 ```
 
 ## Expected Clean Result
