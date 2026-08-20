@@ -180,8 +180,9 @@ func (rt *Runtime) handleMessageSend(w http.ResponseWriter, r *http.Request, ic 
 		Message struct {
 			TaskID string `json:"taskId"`
 			Parts  []struct {
-				Kind string `json:"kind"`
-				Text string `json:"text,omitempty"`
+				Kind string          `json:"kind"`
+				Text string          `json:"text,omitempty"`
+				Data json.RawMessage `json:"data,omitempty"`
 			} `json:"parts"`
 		} `json:"message"`
 	}
@@ -195,11 +196,27 @@ func (rt *Runtime) handleMessageSend(w http.ResponseWriter, r *http.Request, ic 
 		taskID = uuid.NewString()
 	}
 
+	// Extract text and structured data from parts.
+	// text part  → vars["input"] (the raw caller message)
+	// data part  → each top-level key becomes a named pipeline var
+	// Both may coexist; data keys override "input" only if the key name is "input".
 	inputText := ""
+	dataVars := map[string]any{}
 	for _, p := range params.Message.Parts {
-		if p.Kind == "text" && p.Text != "" {
-			inputText = p.Text
-			break
+		switch p.Kind {
+		case "text":
+			if p.Text != "" && inputText == "" {
+				inputText = p.Text
+			}
+		case "data":
+			if len(p.Data) > 0 {
+				var obj map[string]any
+				if err := json.Unmarshal(p.Data, &obj); err == nil {
+					for k, v := range obj {
+						dataVars[k] = v
+					}
+				}
+			}
 		}
 	}
 
@@ -221,7 +238,7 @@ func (rt *Runtime) handleMessageSend(w http.ResponseWriter, r *http.Request, ic 
 		rt.logger.Warn("task store create failed", "task_id", taskID, "err", err)
 	}
 
-	execResult, err := rt.interp.Execute(r.Context(), ic, skill, inputText)
+	execResult, err := rt.interp.Execute(r.Context(), ic, skill, inputText, dataVars)
 	if err != nil {
 		ts.Status = "failed"
 		_ = rt.taskStore.Set(r.Context(), ts)

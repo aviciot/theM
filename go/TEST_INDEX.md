@@ -1234,7 +1234,7 @@ cancellation does not block or panic. Uses MockProvider, no real LLM calls.
 
 **Purpose:** Phase 1 A2A Agent Runtime — proves the three security invariants (credential redaction,
 per-binding isolation, tenant ownership) and core interpreter step execution (input binding,
-template transform, HTTP credential injection). No external services required.
+template transform, HTTP credential injection, data part variable injection). No external services required.
 
 | Test | What it proves |
 |---|---|
@@ -1248,8 +1248,10 @@ template transform, HTTP credential injection). No external services required.
 | `TestInterpreter_AgentCard_PathIsAgentCardJSON` | Documents A2A well-known path is `/.well-known/agent-card.json` (not `agent.json`) |
 | `TestInterpreter_LLMStep_FallsBackToInput` | LLM step with no `user_prompt` config falls back to `vars["input"]` (the user's message) |
 | `TestInterpreter_LLMStep_ExplicitUserPromptOverridesInput` | Explicit `user_prompt` template takes priority over `vars["input"]` |
+| `TestInterpreter_DataPartVars_AvailableInTemplate` | Phase C: data part fields passed as `extraVars` are available as pipeline vars; `{{.city}}` resolves correctly |
+| `TestInterpreter_DataPartVars_DoNotOverwriteExplicitInput` | Phase C: `vars["input"]` from text part set before data vars merged; extra keys don't clobber input |
 
-**Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go)
+**Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go) or `cmd/agent-runtime/main.go` (data part parsing)
 
 ---
 

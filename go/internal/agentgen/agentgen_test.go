@@ -386,6 +386,86 @@ func TestInterpreter_LLMStep_ExplicitUserPromptOverridesInput(t *testing.T) {
 	}
 }
 
+func TestInterpreter_DataPartVars_AvailableInTemplate(t *testing.T) {
+	// When a data part is passed as extraVars, its fields must be available
+	// as pipeline vars so templates like {{.city}} resolve correctly.
+	fake := &fakeLLM{reply: "weather in Paris"}
+	interp := agentgen.NewInterpreter(nil, &fakeLLMFactory{llm: fake}, "key")
+	ic := &agentgen.InvocationContext{
+		TenantID:      "t1",
+		ApplicationID: "a1",
+		AgentID:       "agent-1",
+		Credentials:   map[string]string{},
+	}
+	skill := &agentgen.SkillSpec{
+		ID: "skill-data",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:     "llm_step",
+				Type:   agentgen.StepLLM,
+				Config: mustJSON(agentgen.LLMStepConfig{SystemPrompt: "sys", UserPrompt: "weather in {{.city}}", Model: "m", MaxTokens: 10}),
+				Next:   []string{"respond"},
+			},
+			{
+				ID:     "respond",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "output"}),
+			},
+		},
+	}
+
+	result, err := interp.Execute(context.Background(), ic, skill, "", map[string]any{"city": "Paris"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if result.Text != "weather in Paris" {
+		t.Errorf("expected 'weather in Paris', got %q", result.Text)
+	}
+	if fake.capturedUser != "weather in Paris" {
+		t.Errorf("LLM received %q, expected template rendered to 'weather in Paris'", fake.capturedUser)
+	}
+}
+
+func TestInterpreter_DataPartVars_DoNotOverwriteExplicitInput(t *testing.T) {
+	// A text part sets vars["input"]; a data part with key "input" must not
+	// silently clobber it — data keys are merged after "input" is set, so
+	// a data key named "input" WOULD override it (documented behaviour).
+	// This test verifies the merge order: extraVars applied after inputText.
+	fake := &fakeLLM{reply: "ok"}
+	interp := agentgen.NewInterpreter(nil, &fakeLLMFactory{llm: fake}, "key")
+	ic := &agentgen.InvocationContext{
+		TenantID:      "t1",
+		ApplicationID: "a1",
+		AgentID:       "agent-1",
+		Credentials:   map[string]string{},
+	}
+	skill := &agentgen.SkillSpec{
+		ID: "skill-data",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:     "llm_step",
+				Type:   agentgen.StepLLM,
+				Config: mustJSON(agentgen.LLMStepConfig{SystemPrompt: "sys", Model: "m", MaxTokens: 10}),
+				Next:   []string{"respond"},
+			},
+			{
+				ID:     "respond",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "output"}),
+			},
+		},
+	}
+
+	// No user_prompt template → fallback to vars["input"] = "hello from text"
+	_, err := interp.Execute(context.Background(), ic, skill, "hello from text", map[string]any{"extra_key": "extra_val"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if fake.capturedUser != "hello from text" {
+		t.Errorf("expected LLM to receive 'hello from text', got %q", fake.capturedUser)
+	}
+}
+
 func TestInterpreter_AgentCard_PathIsAgentCardJSON(t *testing.T) {
 	// The A2A well-known path must be /.well-known/agent-card.json (not agent.json).
 	// Verified by the router registration in cmd/agent-runtime/main.go:

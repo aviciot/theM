@@ -52,8 +52,15 @@ type ExecutionResult struct {
 }
 
 // Execute runs the pipeline for the given skill.
-func (interp *Interpreter) Execute(ctx context.Context, ic *InvocationContext, skill *SkillSpec, inputText string) (*ExecutionResult, error) {
+// extraVars are merged into the initial pipeline vars after "input" is set;
+// they are used to expose structured data parts (application/json) as named vars.
+func (interp *Interpreter) Execute(ctx context.Context, ic *InvocationContext, skill *SkillSpec, inputText string, extraVars ...map[string]any) (*ExecutionResult, error) {
 	vars := PipelineVars{"input": inputText}
+	for _, ev := range extraVars {
+		for k, v := range ev {
+			vars[k] = v
+		}
+	}
 	result := &ExecutionResult{MediaType: "text/plain"}
 
 	stepIdx := make(map[string]*StepSpec, len(skill.Steps))
