@@ -513,13 +513,30 @@ E2E verified: login → SSE → run → a2a_echo called → docu_writer called �
 
 ---
 
+## Canvas Builder — Live Debug Mode: COMPLETE (9c49db3, 2026-08-20)
+
+Two-mode client-side pipeline debugger added to the skill pipeline view:
+
+- **Run All** (`▶`): executes full pipeline in topological order; edge value bubbles + node green borders show actual data flow
+- **Step Through** (`⏭`): one step at a time; properties panel shows var override inputs per pending node before each execution
+
+All LLM calls go directly browser→Anthropic API using a user-provided debug API key; key is React state + session only, never sent to the-M backend.
+
+Node visual states: `idle` (no border), `pending` (amber glow), `running` (blue glow), `done` (green glow + output value), `error` (red glow).
+
+Files changed: `frontend/src/app/admin/agents/builder/page.tsx` (+507 lines), `docs/architecture-v2/CANVAS_DEBUG_MODE_PLAN.md`.
+
+Middle-click code removed (replaced by right-click context menu in prior session).
+
+---
+
 ## Next recommended task
 
 **E2E canvas agent run** — verify a canvas agent can be invoked through a real Temporal run.
 
 Steps:
-1. Build a simple canvas agent (Input→LLM→Response, no HTTP steps) using the builder
-2. Publish it → canvas agent appears in `agents` with `transport='canvas_a2a'`
+1. Use the builder debug mode to test a pipeline locally (Input→LLM→Response) first
+2. Publish the agent → canvas agent appears in `agents` with `transport='canvas_a2a'`
 3. Bind it to an application via the credential panel in the Applications view
 4. Create an application definition using that agent as a tool, publish the definition
 5. Trigger a real run through the playground — verify the agent-runtime is called and the run completes
