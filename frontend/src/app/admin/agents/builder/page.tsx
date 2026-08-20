@@ -23,6 +23,11 @@ import {
   type Edge,
   type Connection,
   type NodeTypes,
+  type EdgeTypes,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
+  type EdgeProps,
   Handle,
   Position,
   useReactFlow,
@@ -224,6 +229,84 @@ function StepNode({ data }: { data: StepNodeData; id: string }) {
   );
 }
 
+// ── Animated debug edge ────────────────────────────────────────────────────────
+const debugEdgeStyle = `
+  @keyframes flowDash {
+    from { stroke-dashoffset: 24; }
+    to   { stroke-dashoffset: 0; }
+  }
+  @keyframes flowPulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.5; }
+  }
+`;
+
+interface DebugEdgeData {
+  debugState?: 'idle' | 'flowing' | 'done';
+  label?: string;
+}
+
+function DebugEdge({
+  id, sourceX, sourceY, targetX, targetY,
+  sourcePosition, targetPosition, data, markerEnd,
+}: EdgeProps) {
+  const d = (data ?? {}) as DebugEdgeData;
+  const [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+
+  const isFlowing = d.debugState === 'flowing';
+  const isDone    = d.debugState === 'done';
+
+  return (
+    <>
+      <style>{debugEdgeStyle}</style>
+      {/* Base track */}
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={{ stroke: isDone ? '#00f0ff' : isFlowing ? '#7c3aed' : '#334155', strokeWidth: isDone ? 2 : isFlowing ? 2.5 : 1.5 }} />
+      {/* Animated dash overlay when flowing */}
+      {isFlowing && (
+        <path
+          d={edgePath}
+          fill="none"
+          stroke="#a78bfa"
+          strokeWidth={3}
+          strokeDasharray="8 4"
+          style={{ animation: 'flowDash 0.4s linear infinite', opacity: 0.9 }}
+        />
+      )}
+      {/* Glowing dot travelling the path when flowing */}
+      {isFlowing && (
+        <circle r={5} fill="#a78bfa" style={{ animation: 'flowPulse 0.6s ease-in-out infinite' }}>
+          <animateMotion dur="0.8s" repeatCount="indefinite">
+            <mpath href={`#edge-path-${id}`} />
+          </animateMotion>
+        </circle>
+      )}
+      {/* Value label when done */}
+      {isDone && d.label && (
+        <EdgeLabelRenderer>
+          <div style={{
+            position: 'absolute',
+            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            pointerEvents: 'none',
+            background: 'rgba(0,15,30,0.85)',
+            border: '1px solid #00f0ff',
+            borderRadius: '4px',
+            padding: '2px 6px',
+            fontSize: '10px',
+            fontFamily: 'monospace',
+            color: '#00f0ff',
+            whiteSpace: 'nowrap',
+            maxWidth: '140px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}>
+            {d.label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
 // nodeTypes MUST be defined outside the component for stable references.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const nodeTypes: NodeTypes = {
@@ -231,6 +314,9 @@ const nodeTypes: NodeTypes = {
   skill:     SkillNode     as any,
   step:      StepNode      as any,
 };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const edgeTypes: EdgeTypes = { debugEdge: DebugEdge as any };
 
 // ── Step type palette ─────────────────────────────────────────────────────────
 
@@ -797,13 +883,11 @@ function CanvasInner() {
       const messages: { role: string; content: string }[] = [];
       if (userPrompt) messages.push({ role: 'user', content: userPrompt });
 
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      const resp = await fetch('/api/debug/llm', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
+          'x-debug-api-key': apiKey,
         },
         body: JSON.stringify({
           model,
@@ -1022,17 +1106,25 @@ function CanvasInner() {
       }))
     : localPipeNodes;
 
-  // Inject edge value labels after debug run.
-  const debugEdges = activeView === 'skill' && debug.active && Object.keys(debug.edgeValues).length > 0
-    ? localPipeEdges.map(e => ({
-        ...e,
-        label: debug.edgeValues[e.id] ?? e.label,
-        style: debug.edgeValues[e.id]
-          ? { stroke: '#00f0ff', strokeWidth: 2 }
-          : e.style,
-        labelStyle: { fill: '#00f0ff', fontSize: 10, fontFamily: 'monospace' },
-        labelBgStyle: { fill: 'rgba(0,0,0,0.7)' },
-      }))
+  // Compute which node is currently running (for flowing edge highlight).
+  const runningNodeId = Object.entries(debug.nodeStates).find(([, s]) => s === 'running')?.[0];
+
+  // Build debug edges with custom type + animated state.
+  const debugEdges = activeView === 'skill' && debug.active
+    ? localPipeEdges.map(e => {
+        const hasDoneValue = !!debug.edgeValues[e.id];
+        const isFlowing = runningNodeId === e.source;
+        const edgeState: 'idle' | 'flowing' | 'done' = isFlowing ? 'flowing' : hasDoneValue ? 'done' : 'idle';
+        return {
+          ...e,
+          type: 'debugEdge',
+          data: {
+            ...((e.data ?? {}) as Record<string, unknown>),
+            debugState: edgeState,
+            label: hasDoneValue ? `"${debug.edgeValues[e.id]}"` : undefined,
+          },
+        };
+      })
     : localPipeEdges;
 
   const currentNodes = activeView === 'agent' ? agentNodes : (debug.active ? debugNodes : localPipeNodes);
@@ -1403,6 +1495,7 @@ function CanvasInner() {
               onNodeDoubleClick={onPipeNodeDoubleClick}
               onPaneClick={() => { setSelectedNode(null); closeCtx(); }}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               onDragOver={(e: DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
               onDrop={(e: DragEvent) => {
                 e.preventDefault();
