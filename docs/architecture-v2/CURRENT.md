@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `c79da05` — feat(agent-runtime): Phase D — adopt official a2a-go/v2 SDK for JSON-RPC dispatch
+Commit: `c84696c` — fix(artifact): wire ArtifactRecorder in Go worker + expose run_artifacts in API
 
 ---
 
@@ -496,6 +496,22 @@ Canvas agents (`transport='canvas_a2a'`) can now participate in real orchestrate
 2 new tests: `TestInvokeForRun_CanvasA2A_UsesBindingID`, `TestInvokeForRun_NonCanvas_DelegatesToStandardRouting` (S1-11 extended)
 
 `go test ./...` — **37 packages, 0 failures** (21ca0ec)
+
+## A2A Artifact Pipeline Fix — COMPLETE (c84696c, 2026-08-20)
+
+Two bugs caused the docu_writer file artifact to be silently dropped:
+
+1. **`WithArtifactRecorder` missing in worker** (`go/cmd/worker/main.go`): The Temporal worker built the orchestrator with `WithStepRecorder` but not `WithArtifactRecorder`. `emitArtifactEvent` checked `o.artifactRecorder == nil` and returned immediately without writing to `run_artifacts`.
+
+2. **API queried wrong table** (`go/internal/admin/dal/runs.go`): `GetRunArtifacts` only queried `them.artifacts` (A2A task-based artifact table). The Go worker saves to `them.run_artifacts` (a separate table). Updated `GetRunArtifacts` to also query `run_artifacts` and synthesize `Artifact` structs with base64-encoded file content.
+
+Also: `scripts/test_doc_artifact.py` — E2E smoke test verifying the full pipeline; `scripts/tests/INDEX.md` updated with DA trigger row.
+
+E2E verified: login → SSE → run → a2a_echo called → docu_writer called → HTML artifact (23,488 chars) saved and returned by API — ALL CHECKS PASSED.
+
+**Root cause of stale binary**: `them-go-worker-2` was running the `them_gateway` project's cached image (built Aug 19 16:41), not the newly rebuilt `them` project image. Both images used the same `Dockerfile.go-worker` but were cached separately. Fixed by removing all cached images and force-rebuilding both.
+
+---
 
 ## Next recommended task
 
