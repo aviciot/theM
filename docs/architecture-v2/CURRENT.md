@@ -475,7 +475,7 @@ TypeScript: **clean** (0 errors)
 
 ---
 
-## Canvas A2A Agent Builder — Phases A–D: ALL COMPLETE (2026-08-20)
+## Canvas A2A Agent Builder — Phases A–D + Orchestrator Wiring: ALL COMPLETE
 
 | Phase | What | Commit | State |
 |---|---|---|---|
@@ -483,21 +483,31 @@ TypeScript: **clean** (0 errors)
 | B | Skill editor, node library, data-flow subtitles, round-trip serialization | prior session | ✅ |
 | C | `kind:"data"` part input mode; variadic `extraVars` in interpreter | prior session | ✅ |
 | D | `a2a-go/v2` SDK replaces hand-rolled JSON-RPC dispatch; 8 tests (S1-53) | `c79da05` | ✅ |
+| Wiring | `AgentInvoker.InvokeForRun` + `GetBindingID`; orchestrator uses canvas agents | `21ca0ec` | ✅ |
+
+## What the wiring does
+
+Canvas agents (`transport='canvas_a2a'`) can now participate in real orchestrated runs:
+
+- `agentregistry.DBReader.GetBindingID(ctx, applicationID, agentID)` — queries `app_agent_bindings` to get the binding UUID for an (application, agent) pair
+- `agentregistry.Registry.InvokeForRun(ctx, tenantID, applicationID, slug, input)` — for `canvas_a2a` agents: looks up `bindingID` then calls `InvokeWithMeta` (injects `X-Them-Binding-Id` + `X-Them-Application-Id` + `X-Them-Agent-Id` headers); for all other transports: delegates to standard adapter dispatch unchanged
+- `orchestrator.AgentInvoker` interface extended with `InvokeForRun`; `executeTools` now calls `o.agents.InvokeForRun(ctx, rctx.TenantID, rctx.ApplicationID, slug, inputBytes)`
+
+2 new tests: `TestInvokeForRun_CanvasA2A_UsesBindingID`, `TestInvokeForRun_NonCanvas_DelegatesToStandardRouting` (S1-11 extended)
+
+`go test ./...` — **37 packages, 0 failures** (21ca0ec)
 
 ## Next recommended task
 
-**Canvas agent → orchestrator wiring** — canvas agents must be invocable from real runs.
+**E2E canvas agent run** — verify a canvas agent can be invoked through a real Temporal run.
 
-Current gap: `agentregistry.InvokeWithMeta` exists but the Temporal activities and direct
-orchestrator path do not call canvas agents. Canvas agents with `transport='canvas_a2a'` are
-registered in `them.agents` but never selected by the orchestrator.
-
-Work needed:
-1. Orchestrator's tool-selection: treat `canvas_a2a` agents the same as `a2a_async` — look them up
-   by slug, call `InvokeWithMeta` with the tenant/app/agent/binding headers.
-2. Temporal activity: ensure `InvokeWithMeta` path gets invocation context from the run's
-   `AppOrchestratorID` → `application_id` + per-agent `binding_id` from `app_agent_bindings`.
-3. Add integration test: agent with `transport='canvas_a2a'` is invoked via orchestrator.
+Steps:
+1. Build a simple canvas agent (Input→LLM→Response, no HTTP steps) using the builder
+2. Publish it → canvas agent appears in `agents` with `transport='canvas_a2a'`
+3. Bind it to an application via the credential panel in the Applications view
+4. Create an application definition using that agent as a tool, publish the definition
+5. Trigger a real run through the playground — verify the agent-runtime is called and the run completes
+6. Check `run_steps` to confirm the agent-runtime step was recorded
 
 Do NOT begin multiple subsystems in the same session.
 
