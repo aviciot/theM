@@ -94,6 +94,12 @@ const textareaStyle: React.CSSProperties = {
 const selectStyle: React.CSSProperties = { ...inputStyle };
 const fieldGap: React.CSSProperties = { marginTop: '12px' };
 const hint: React.CSSProperties = { fontSize: 10, color: '#64748b', marginLeft: 4 };
+const ctxItemStyle: React.CSSProperties = {
+  display: 'block', width: '100%', textAlign: 'left',
+  background: 'transparent', border: 'none', color: '#e2e8f0',
+  padding: '7px 12px', borderRadius: '5px', cursor: 'pointer',
+  fontSize: '13px', transition: 'background 0.1s',
+};
 
 // ── Available LLM models (hardcoded, same as application canvas) ──────────────
 const LLM_MODELS: Record<string, string[]> = {
@@ -102,19 +108,14 @@ const LLM_MODELS: Record<string, string[]> = {
 
 // ── Node components (must be outside the render component) ───────────────────
 
-function AgentRootNode({ data }: { data: AgentRootData }) {
+function AgentRootNode({ data }: { data: AgentRootData; id: string }) {
   return (
-    <div style={{
-      background: C.cyanBg, border: `2px solid ${C.cyanBorder}`,
-      borderRadius: '12px', padding: '16px', minWidth: '200px',
-      boxShadow: '0 0 20px rgba(0,240,255,0.2)',
-    }}>
+    <div style={{ background: 'transparent', border: 'none', padding: '8px', minWidth: '120px', textAlign: 'center' }}>
       <Handle type="source" position={Position.Bottom} style={{ background: C.cyan }} />
-      <div style={{ color: C.cyan, fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', marginBottom: '6px' }}>AGENT ROOT</div>
-      <div style={{ color: '#fff', fontWeight: 700, fontSize: '14px' }}>{data.display_name || 'Unnamed Agent'}</div>
-      {data.description && <div style={{ color: C.textMuted, fontSize: '12px', marginTop: '4px' }}>{data.description}</div>}
+      <div style={{ fontSize: '42px', textAlign: 'center', lineHeight: 1 }}>🤖</div>
+      <div style={{ color: '#fff', fontWeight: 700, fontSize: '13px', textAlign: 'center', marginTop: '6px' }}>{data.display_name || 'Unnamed Agent'}</div>
       {data.credential_slots.length > 0 && (
-        <div style={{ marginTop: '8px', fontSize: '11px', color: C.amber }}>
+        <div style={{ marginTop: '6px', fontSize: '11px', color: C.amber, textAlign: 'center' }}>
           {data.credential_slots.length} credential slot{data.credential_slots.length !== 1 ? 's' : ''}
         </div>
       )}
@@ -122,72 +123,55 @@ function AgentRootNode({ data }: { data: AgentRootData }) {
   );
 }
 
-function SkillNode({ data }: { data: SkillData }) {
+function SkillNode({ data }: { data: SkillData; id: string }) {
   return (
-    <div style={{
-      background: C.purpleBg, border: `1.5px solid ${C.purpleBorder}`,
-      borderRadius: '10px', padding: '12px', minWidth: '160px',
-      cursor: 'pointer',
-    }}>
+    <div style={{ background: 'transparent', border: 'none', padding: '8px', minWidth: '100px', textAlign: 'center' }}>
       <Handle type="target" position={Position.Top} style={{ background: C.purple }} />
       <Handle type="source" position={Position.Bottom} style={{ background: C.purple }} />
-      <div style={{ color: C.purple, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '4px' }}>SKILL</div>
-      <div style={{ color: '#fff', fontWeight: 600, fontSize: '13px' }}>{data.name || data.skill_id}</div>
-      {data.description && <div style={{ color: C.textMuted, fontSize: '11px', marginTop: '2px' }}>{data.description}</div>}
-      <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: 3, background: 'rgba(0,240,255,0.1)', border: '1px solid rgba(0,240,255,0.3)', color: '#00f0ff' }}>
-          {(data.input_modes ?? ['text/plain'])[0]}
-        </span>
-        <span style={{ fontSize: '10px', color: C.textMuted }}>dbl-click to edit</span>
-      </div>
+      <div style={{ fontSize: '36px', lineHeight: 1 }}>⚡</div>
+      <div style={{ color: '#fff', fontWeight: 700, fontSize: '12px', marginTop: '6px' }}>{data.name || 'Skill'}</div>
     </div>
   );
 }
 
-function StepNode({ data }: { data: StepData }) {
-  const colors: Record<string, { bg: string; border: string; label: string }> = {
-    input:      { bg: C.greenBg,  border: C.greenBorder, label: 'INPUT' },
-    response:   { bg: C.cyanBg,   border: C.cyanBorder,  label: 'RESPONSE' },
-    llm:        { bg: C.purpleBg, border: C.purpleBorder, label: 'LLM' },
-    http:       { bg: C.amberBg,  border: C.amberBorder,  label: 'HTTP' },
-    transform:  { bg: C.indigoBg, border: C.indigoBorder, label: 'TRANSFORM' },
-    branch:     { bg: C.amberBg,  border: C.amberBorder,  label: 'BRANCH' },
-    loop:       { bg: C.amberBg,  border: C.amberBorder,  label: 'LOOP' },
-    parallel:   { bg: C.purpleBg, border: C.purpleBorder, label: 'PARALLEL' },
-    a2a_call:   { bg: C.cyanBg,   border: C.cyanBorder,   label: 'A2A CALL' },
-    human_wait: { bg: C.greenBg,  border: C.greenBorder,  label: 'HUMAN WAIT' },
-    stream_out: { bg: C.cyanBg,   border: C.cyanBorder,   label: 'STREAM OUT' },
-  };
-  const style = colors[data.step_type] ?? { bg: C.indigoBg, border: C.indigoBorder, label: data.step_type.toUpperCase() };
+const STEP_META: Record<string, { bg: string; border: string; emoji: string; label: string }> = {
+  input:      { bg: C.greenBg,  border: C.greenBorder,  emoji: '📥', label: 'Input' },
+  response:   { bg: C.cyanBg,   border: C.cyanBorder,   emoji: '📤', label: 'Response' },
+  llm:        { bg: C.purpleBg, border: C.purpleBorder, emoji: '🧠', label: 'LLM' },
+  http:       { bg: C.amberBg,  border: C.amberBorder,  emoji: '🌐', label: 'HTTP' },
+  transform:  { bg: C.indigoBg, border: C.indigoBorder, emoji: '⚙️',  label: 'Transform' },
+  branch:     { bg: C.amberBg,  border: C.amberBorder,  emoji: '🔀', label: 'Branch' },
+  loop:       { bg: C.amberBg,  border: C.amberBorder,  emoji: '🔁', label: 'Loop' },
+  parallel:   { bg: C.purpleBg, border: C.purpleBorder, emoji: '⚡', label: 'Parallel' },
+  a2a_call:   { bg: C.cyanBg,   border: C.cyanBorder,   emoji: '🤝', label: 'A2A Call' },
+  human_wait: { bg: C.greenBg,  border: C.greenBorder,  emoji: '⏸️',  label: 'Human Wait' },
+  stream_out: { bg: C.cyanBg,   border: C.cyanBorder,   emoji: '📡', label: 'Stream Out' },
+};
+
+function StepNode({ data }: { data: StepData; id: string }) {
+  const meta = STEP_META[data.step_type] ?? { bg: C.indigoBg, border: C.indigoBorder, emoji: '🔧', label: data.step_type };
+  const cfg = data.config ?? {};
+  let sub = '';
+  if (data.step_type === 'input') {
+    const bindings = cfg.bindings as Record<string, string> | undefined;
+    sub = bindings?.text ? `→ ${bindings.text}` : '→ input';
+  } else if (data.step_type === 'llm') {
+    sub = `→ ${(cfg.output_var as string) || 'output'}`;
+  } else if (data.step_type === 'transform') {
+    const keys = Object.keys((cfg.expressions as Record<string, string> | undefined) ?? {});
+    sub = keys.length ? `→ ${keys.join(', ')}` : '→ vars';
+  } else if (data.step_type === 'response') {
+    sub = `from ${(cfg.from_var as string) || 'output'}`;
+  } else if (data.step_type === 'http') {
+    sub = (cfg.url_template as string) ? (cfg.url_template as string).replace(/^https?:\/\//, '').slice(0, 22) : 'url not set';
+  }
   return (
-    <div style={{
-      background: style.bg, border: `1.5px solid ${style.border}`,
-      borderRadius: '8px', padding: '10px 14px', minWidth: '130px',
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: style.border }} />
-      <Handle type="source" position={Position.Bottom} style={{ background: style.border }} />
-      <div style={{ color: style.border, fontSize: '9px', fontWeight: 700, letterSpacing: '0.1em', marginBottom: '2px' }}>{style.label}</div>
-      <div style={{ color: '#fff', fontWeight: 600, fontSize: '12px' }}>{data.label || data.step_id}</div>
-      {(() => {
-        const cfg = data.config ?? {};
-        let sub = '';
-        if (data.step_type === 'input') {
-          const bindings = cfg.bindings as Record<string, string> | undefined;
-          const v = bindings?.text ?? '';
-          sub = v ? `→ ${v}` : '→ input';
-        } else if (data.step_type === 'llm') {
-          sub = `→ ${(cfg.output_var as string) || 'output'}`;
-        } else if (data.step_type === 'transform') {
-          const exprs = cfg.expressions as Record<string, string> | undefined;
-          const keys = Object.keys(exprs ?? {});
-          sub = keys.length ? `→ ${keys.join(', ')}` : '→ vars';
-        } else if (data.step_type === 'response') {
-          sub = `from ${(cfg.from_var as string) || 'output'}`;
-        } else if (data.step_type === 'http') {
-          sub = (cfg.url_template as string) ? (cfg.url_template as string).replace(/^https?:\/\//, '').slice(0, 22) : 'url not set';
-        }
-        return sub ? <div style={{ fontSize: '10px', color: style.border, opacity: 0.8, marginTop: 2 }}>{sub}</div> : null;
-      })()}
+    <div style={{ background: 'transparent', border: 'none', padding: '8px', minWidth: '80px', textAlign: 'center' }}>
+      <Handle type="target" position={Position.Top} style={{ background: meta.border }} />
+      <Handle type="source" position={Position.Bottom} style={{ background: meta.border }} />
+      <div style={{ fontSize: '32px', lineHeight: 1 }}>{meta.emoji}</div>
+      <div style={{ color: '#fff', fontWeight: 700, fontSize: '11px', marginTop: '5px' }}>{meta.label}</div>
+      {sub && <div style={{ fontSize: '10px', color: meta.border, opacity: 0.9, marginTop: 2 }}>{sub}</div>}
     </div>
   );
 }
@@ -216,7 +200,27 @@ const STEP_TYPES: { type: AgentStepDoc['type']; label: string }[] = [
   { type: 'stream_out', label: 'Stream Out' },
 ];
 
+function genUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
 // ── Canvas inner (uses ReactFlow hooks — must be inside ReactFlowProvider) ───
+
+// Step type → which config field receives the auto-filled upstream variable reference.
+const STEP_INPUT_FIELD: Record<string, string> = {
+  llm: 'user_prompt',
+  http: 'url_template',
+  transform: 'expression',
+  response: 'template',
+};
+// Step types that accept only one incoming edge.
+const SINGLE_INPUT_TYPES = new Set(['llm', 'transform', 'response']);
 
 function CanvasInner() {
   const router = useRouter();
@@ -412,6 +416,10 @@ function CanvasInner() {
   }
 
   async function handleSave() {
+    if (!agentSlug.trim()) {
+      setSaveError('Agent slug is required — fill in the slug field in the toolbar before saving.');
+      return;
+    }
     setSaving(true);
     setSaveError('');
     savePipelineState();
@@ -489,8 +497,22 @@ function CanvasInner() {
     }
   }
 
+  function makeDefaultPipeline(): { nodes: Node[]; edges: Edge[] } {
+    const inputId = genUUID();
+    const responseId = genUUID();
+    return {
+      nodes: [
+        { id: `step-${inputId}`,    type: 'step', position: { x: 160, y: 80  }, data: { step_id: inputId,    step_type: 'input',    label: 'Input',    config: {} } },
+        { id: `step-${responseId}`, type: 'step', position: { x: 160, y: 240 }, data: { step_id: responseId, step_type: 'response', label: 'Response', config: {} } },
+      ],
+      edges: [
+        { id: `${inputId}-to-${responseId}`, source: `step-${inputId}`, target: `step-${responseId}` },
+      ],
+    };
+  }
+
   function addSkill() {
-    const sid = `skill-${Date.now()}`;
+    const sid = genUUID();
     const newNode: Node = {
       id: `skill-${sid}`,
       type: 'skill',
@@ -501,12 +523,13 @@ function CanvasInner() {
     if (agentNodes.find(n => n.id === 'agent-root')) {
       setAgentEdges(prev => [...prev, { id: `root-to-${sid}`, source: 'agent-root', target: `skill-${sid}` }]);
     }
+    setSkillPipelines(prev => ({ ...prev, [sid]: makeDefaultPipeline() }));
     setDirty(true);
   }
 
   function addStepToActivePipeline(type: AgentStepDoc['type']) {
     if (!activeSkillId) return;
-    const stepId = `step-${Date.now()}`;
+    const stepId = genUUID();
     const newNode: Node = {
       id: `step-${stepId}`,
       type: 'step',
@@ -538,10 +561,106 @@ function CanvasInner() {
     setDirty(true);
   }, [setAgentEdges]);
 
+  // ── Context menu ──────────────────────────────────────────────────────────────
+  type CtxTarget =
+    | { kind: 'node'; node: Node }
+    | { kind: 'edge'; edge: Edge };
+
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; target: CtxTarget } | null>(null);
+
+  const closeCtx = useCallback(() => setCtxMenu(null), []);
+
+  const onNodeCtx = useCallback((e: MouseEvent, node: Node) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, target: { kind: 'node', node } });
+    setSelectedNode(node);
+  }, []);
+
+  const onEdgeCtx = useCallback((e: MouseEvent, edge: Edge) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, target: { kind: 'edge', edge } });
+  }, []);
+
+  const ctxDelete = useCallback(() => {
+    if (!ctxMenu) return;
+    if (ctxMenu.target.kind === 'node') {
+      const id = ctxMenu.target.node.id;
+      if (activeView === 'agent') {
+        setAgentNodes(prev => prev.filter(n => n.id !== id));
+        setAgentEdges(prev => prev.filter(e => e.source !== id && e.target !== id));
+      } else {
+        setLocalPipeNodes(prev => prev.filter(n => n.id !== id));
+        setLocalPipeEdges(prev => prev.filter(e => e.source !== id && e.target !== id));
+      }
+    } else {
+      const id = ctxMenu.target.edge.id;
+      if (activeView === 'agent') {
+        setAgentEdges(prev => prev.filter(e => e.id !== id));
+      } else {
+        setLocalPipeEdges(prev => prev.filter(e => e.id !== id));
+      }
+    }
+    setDirty(true);
+    closeCtx();
+  }, [ctxMenu, activeView, setAgentNodes, setAgentEdges, setLocalPipeNodes, setLocalPipeEdges, closeCtx]);
+
+  const ctxEditPipeline = useCallback(() => {
+    if (!ctxMenu || ctxMenu.target.kind !== 'node') return;
+    const node = ctxMenu.target.node;
+    if (node.type === 'skill') {
+      savePipelineState();
+      const sd = node.data as unknown as SkillData;
+      setActiveSkillId(sd.skill_id);
+      setActiveView('skill');
+      setSelectedNode(null);
+    }
+    closeCtx();
+  }, [ctxMenu, savePipelineState, closeCtx]);
+
   const onPipeConnect = useCallback((conn: Connection) => {
     setLocalPipeEdges(prev => addEdge(conn, prev));
     setDirty(true);
-  }, [setLocalPipeEdges]);
+
+    // Auto-fill: read source output_var → suggest it in target input field (only if empty).
+    setLocalPipeNodes(prev => {
+      const sourceNode = prev.find(n => n.id === conn.source);
+      const targetNode = prev.find(n => n.id === conn.target);
+      if (!sourceNode || !targetNode) return prev;
+
+      const srcData = sourceNode.data as unknown as StepData;
+      const tgtData = targetNode.data as unknown as StepData;
+
+      // Resolve what variable name the source produces.
+      const sourceVar: string =
+        srcData.step_type === 'input'
+          ? ((srcData.config?.bindings as Record<string, string>)?.text || 'input')
+          : ((srcData.config?.output_var as string) || 'output');
+
+      // Find which field on the target to auto-fill.
+      const targetField = STEP_INPUT_FIELD[tgtData.step_type];
+      if (!targetField) return prev;
+
+      // Only fill if currently empty.
+      const currentValue = tgtData.config?.[targetField] as string | undefined;
+      if (currentValue && currentValue.trim() !== '') return prev;
+
+      return prev.map(n =>
+        n.id === conn.target
+          ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), [targetField]: `{{${sourceVar}}}` } } }
+          : n
+      );
+    });
+  }, [setLocalPipeEdges, setLocalPipeNodes]);
+
+  const isPipeConnectionValid = useCallback((conn: Connection) => {
+    const targetNode = localPipeNodes.find(n => n.id === conn.target);
+    if (!targetNode) return true;
+    const tgtType = (targetNode.data as unknown as StepData).step_type;
+    if (!SINGLE_INPUT_TYPES.has(tgtType)) return true;
+    // Reject if there's already an incoming edge to this target.
+    const alreadyHasInput = localPipeEdges.some(e => e.target === conn.target);
+    return !alreadyHasInput;
+  }, [localPipeNodes, localPipeEdges]);
 
   // Properties panel update
   function updateSelectedNodeField(field: string, value: string) {
@@ -550,6 +669,11 @@ function CanvasInner() {
       setAgentNodes(prev => prev.map(n =>
         n.id === selectedNode.id ? { ...n, data: { ...n.data, [field]: value } } : n
       ));
+      // Auto-populate slug from display_name when slug hasn't been manually set
+      if (field === 'display_name' && selectedNode.id === 'agent-root' && !defId) {
+        const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        setAgentSlug(slug);
+      }
     } else {
       setLocalPipeNodes(prev => prev.map(n =>
         n.id === selectedNode.id ? { ...n, data: { ...n.data, [field]: value } } : n
@@ -724,44 +848,47 @@ function CanvasInner() {
                 {/* Step type cards — grouped */}
                 {[
                   { label: 'Data Flow', items: [
-                    { type: 'input', color: C.green, borderColor: C.greenBorder, icon: '→', desc: 'Bind caller input' },
-                    { type: 'response', color: C.cyan, borderColor: C.cyanBorder, icon: '←', desc: 'Return result' },
+                    { type: 'input',    desc: 'Bind caller input' },
+                    { type: 'response', desc: 'Return result' },
                   ]},
                   { label: 'Processing', items: [
-                    { type: 'llm', color: C.purple, borderColor: C.purpleBorder, icon: '🤖', desc: 'Call an LLM' },
-                    { type: 'transform', color: C.indigo, borderColor: C.indigoBorder, icon: '⚙', desc: 'Template expressions' },
-                    { type: 'http', color: C.amber, borderColor: C.amberBorder, icon: '🌐', desc: 'HTTP tool call' },
+                    { type: 'llm',       desc: 'Call an LLM' },
+                    { type: 'transform', desc: 'Template expressions' },
+                    { type: 'http',      desc: 'HTTP tool call' },
                   ]},
                   { label: 'Advanced', items: [
-                    { type: 'branch', color: C.amber, borderColor: C.amberBorder, icon: '⑂', desc: 'Conditional branch' },
-                    { type: 'loop', color: C.amber, borderColor: C.amberBorder, icon: '↺', desc: 'Repeat steps' },
-                    { type: 'parallel', color: C.purple, borderColor: C.purpleBorder, icon: '⫶', desc: 'Run in parallel' },
-                    { type: 'a2a_call', color: C.cyan, borderColor: C.cyanBorder, icon: '↗', desc: 'Call another agent' },
-                    { type: 'human_wait', color: C.green, borderColor: C.greenBorder, icon: '⏸', desc: 'Wait for human' },
-                    { type: 'stream_out', color: C.cyan, borderColor: C.cyanBorder, icon: '≋', desc: 'Stream output' },
+                    { type: 'branch',     desc: 'Conditional branch' },
+                    { type: 'loop',       desc: 'Repeat steps' },
+                    { type: 'parallel',   desc: 'Run in parallel' },
+                    { type: 'a2a_call',   desc: 'Call another agent' },
+                    { type: 'human_wait', desc: 'Wait for human' },
+                    { type: 'stream_out', desc: 'Stream output' },
                   ]},
                 ].map(group => (
                   <div key={group.label}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', margin: '8px 0 4px' }}>{group.label}</div>
-                    {group.items.map(st => (
-                      <div
-                        key={st.type}
-                        draggable
-                        onDragStart={e => { e.dataTransfer.setData('nodeType', 'step'); e.dataTransfer.setData('stepType', st.type); e.dataTransfer.effectAllowed = 'move'; }}
-                        onClick={() => addStepToActivePipeline(st.type as AgentStepDoc['type'])}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
-                          borderRadius: 7, cursor: 'grab', userSelect: 'none', marginBottom: 3,
-                          background: `${st.borderColor}18`, border: `1px solid ${st.borderColor}`,
-                        }}
-                      >
-                        <span style={{ fontSize: 14, width: 18, textAlign: 'center', flexShrink: 0, color: st.color }}>{st.icon}</span>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: st.color, textTransform: 'capitalize' }}>{st.type.replace('_', ' ')}</div>
-                          <div style={{ fontSize: 10, color: C.textMuted }}>{st.desc}</div>
+                    {group.items.map(st => {
+                      const meta = STEP_META[st.type] ?? { border: C.indigoBorder, emoji: '🔧', label: st.type };
+                      return (
+                        <div
+                          key={st.type}
+                          draggable
+                          onDragStart={e => { e.dataTransfer.setData('nodeType', 'step'); e.dataTransfer.setData('stepType', st.type); e.dataTransfer.effectAllowed = 'move'; }}
+                          onClick={() => addStepToActivePipeline(st.type as AgentStepDoc['type'])}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
+                            borderRadius: 7, cursor: 'grab', userSelect: 'none', marginBottom: 3,
+                            background: `${meta.border}18`, border: `1px solid ${meta.border}`,
+                          }}
+                        >
+                          <span style={{ fontSize: 18, width: 22, textAlign: 'center', flexShrink: 0 }}>{meta.emoji}</span>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: meta.border }}>{meta.label}</div>
+                            <div style={{ fontSize: 10, color: C.textMuted }}>{st.desc}</div>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ))}
               </>
@@ -771,6 +898,40 @@ function CanvasInner() {
 
         {/* Canvas */}
         <div style={{ flex: 1, position: 'relative' }}>
+          {/* Context menu */}
+          {ctxMenu && (
+            <div
+              onMouseLeave={closeCtx}
+              style={{
+                position: 'fixed', zIndex: 9999,
+                left: ctxMenu.x, top: ctxMenu.y,
+                background: '#1e293b', border: '1px solid #334155',
+                borderRadius: '8px', padding: '4px', minWidth: '160px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+              }}
+            >
+              {ctxMenu.target.kind === 'node' && (
+                <>
+                  <div style={{ padding: '4px 8px', fontSize: '10px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    {ctxMenu.target.node.type === 'agentRoot' ? 'Agent' : ctxMenu.target.node.type === 'skill' ? 'Skill' : (ctxMenu.target.node.data as unknown as StepData).step_type}
+                  </div>
+                  <button onClick={() => { setSelectedNode(ctxMenu.target.kind === 'node' ? ctxMenu.target.node : null); closeCtx(); }} style={ctxItemStyle}>
+                    ✏️ Properties
+                  </button>
+                  {ctxMenu.target.node.type === 'skill' && (
+                    <button onClick={ctxEditPipeline} style={ctxItemStyle}>
+                      ⚡ Edit Pipeline
+                    </button>
+                  )}
+                  <div style={{ borderTop: '1px solid #334155', margin: '4px 0' }} />
+                </>
+              )}
+              <button onClick={ctxDelete} style={{ ...ctxItemStyle, color: '#f87171' }}>
+                🗑️ Delete
+              </button>
+            </div>
+          )}
+
           {activeView === 'agent' ? (
             <ReactFlow
               nodes={currentNodes}
@@ -778,9 +939,11 @@ function CanvasInner() {
               onNodesChange={onAgentNodesChange}
               onEdgesChange={onAgentEdgesChange}
               onConnect={onAgentConnect}
-              onNodeClick={(_: MouseEvent, node: Node) => setSelectedNode(node)}
+              onNodeContextMenu={onNodeCtx}
+              onEdgeContextMenu={onEdgeCtx}
+              onNodeClick={(_: MouseEvent, node: Node) => { setSelectedNode(node); closeCtx(); }}
               onNodeDoubleClick={onAgentNodeDoubleClick}
-              onPaneClick={() => setSelectedNode(null)}
+              onPaneClick={() => { setSelectedNode(null); closeCtx(); }}
               nodeTypes={nodeTypes}
               onDragOver={(e: DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
               onDrop={(e: DragEvent) => {
@@ -789,10 +952,11 @@ function CanvasInner() {
                 if (nodeType === 'skill') {
                   const bounds = (e.currentTarget as HTMLElement).getBoundingClientRect();
                   const pos = screenToFlowPosition({ x: e.clientX - bounds.left, y: e.clientY - bounds.top });
-                  const sid = `skill-${Date.now()}`;
+                  const sid = genUUID();
                   const newNode: Node = { id: `skill-${sid}`, type: 'skill', position: pos, data: { skill_id: sid, name: 'New Skill', description: '', tags: [], input_modes: ['text/plain'], output_modes: ['text/plain'], examples: [] } };
                   setAgentNodes(prev => [...prev, newNode]);
                   setAgentEdges(prev => [...prev, { id: `root-to-${sid}`, source: 'agent-root', target: `skill-${sid}` }]);
+                  setSkillPipelines(prev => ({ ...prev, [sid]: makeDefaultPipeline() }));
                   setDirty(true);
                 }
               }}
@@ -808,9 +972,12 @@ function CanvasInner() {
               onNodesChange={onPipeNodesChange}
               onEdgesChange={onPipeEdgesChange}
               onConnect={onPipeConnect}
-              onNodeClick={(_: MouseEvent, node: Node) => setSelectedNode(node)}
+              isValidConnection={isPipeConnectionValid}
+              onNodeContextMenu={onNodeCtx}
+              onEdgeContextMenu={onEdgeCtx}
+              onNodeClick={(_: MouseEvent, node: Node) => { setSelectedNode(node); closeCtx(); }}
               onNodeDoubleClick={onPipeNodeDoubleClick}
-              onPaneClick={() => setSelectedNode(null)}
+              onPaneClick={() => { setSelectedNode(null); closeCtx(); }}
               nodeTypes={nodeTypes}
               onDragOver={(e: DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
               onDrop={(e: DragEvent) => {
@@ -820,7 +987,7 @@ function CanvasInner() {
                   const stepType = e.dataTransfer.getData('stepType') as AgentStepDoc['type'];
                   const bounds = (e.currentTarget as HTMLElement).getBoundingClientRect();
                   const pos = screenToFlowPosition({ x: e.clientX - bounds.left, y: e.clientY - bounds.top });
-                  const stepId = `step-${Date.now()}`;
+                  const stepId = genUUID();
                   const newNode: Node = { id: `step-${stepId}`, type: 'step', position: pos, data: { step_id: stepId, step_type: stepType, label: stepType.replace('_', ' '), config: {} } };
                   setLocalPipeNodes(prev => [...prev, newNode]);
                   setDirty(true);
@@ -846,7 +1013,7 @@ function CanvasInner() {
             </div>
 
             {selectedNode.type === 'agentRoot' && (() => {
-              const d = selectedNode.data as unknown as AgentRootData;
+              const d = (agentNodes.find(n => n.id === selectedNode.id)?.data ?? selectedNode.data) as unknown as AgentRootData;
               return (
                 <>
                   <label style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Display Name</label>
@@ -873,7 +1040,8 @@ function CanvasInner() {
             })()}
 
             {selectedNode.type === 'skill' && (() => {
-              const d = selectedNode.data as unknown as SkillData;
+              const liveSkillNode = agentNodes.find(n => n.id === selectedNode.id);
+              const d = (liveSkillNode?.data ?? selectedNode.data) as unknown as SkillData;
               const skillNodeId = selectedNode.id;
               const MODES = ['text/plain', 'text/markdown', 'application/json', 'application/octet-stream'];
               function updateSkillArray(field: keyof SkillData, arr: string[]) {
@@ -891,12 +1059,10 @@ function CanvasInner() {
               }
               return (
                 <>
-                  <label style={labelStyle}>Skill ID</label>
-                  <input
-                    value={d.skill_id}
-                    onChange={e => updateSelectedNodeField('skill_id', e.target.value)}
-                    style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '11px' }}
-                  />
+                  <label style={labelStyle}>Skill ID <span style={{ fontWeight: 400, color: '#475569' }}>(auto-generated)</span></label>
+                  <div style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '10px', color: '#475569', userSelect: 'all', cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {d.skill_id}
+                  </div>
                   <div style={fieldGap}>
                     <label style={labelStyle}>Name</label>
                     <input
@@ -998,7 +1164,7 @@ function CanvasInner() {
             })()}
 
             {selectedNode.type === 'step' && (() => {
-              const d = selectedNode.data as unknown as StepData;
+              const d = (localPipeNodes.find(n => n.id === selectedNode.id)?.data ?? selectedNode.data) as unknown as StepData;
               const cfg = d.config ?? {};
 
               // Helper: get config value with fallback.
@@ -1017,12 +1183,10 @@ function CanvasInner() {
                     />
                   </div>
                   <div style={fieldGap}>
-                    <label style={labelStyle}>Step ID <span style={hint}>(runtime key)</span></label>
-                    <input
-                      value={d.step_id}
-                      onChange={e => updateSelectedNodeField('step_id', e.target.value)}
-                      style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '11px' }}
-                    />
+                    <label style={labelStyle}>Step ID <span style={{ fontWeight: 400, color: '#475569' }}>(auto-generated)</span></label>
+                    <div style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '10px', color: '#475569', userSelect: 'all', cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {d.step_id}
+                    </div>
                   </div>
                   <div style={{ ...fieldGap, marginBottom: '16px' }}>
                     <label style={labelStyle}>Type</label>

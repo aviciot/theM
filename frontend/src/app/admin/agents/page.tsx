@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import ChromaGrid from '@/components/ChromaGrid';
-import { themApi, getPreferences, setPreferences, type Agent, type AgentSkill, type DiscoverResult, type OrchestratorFull, type ScanResult } from '@/lib/api';
+import { themApi, getPreferences, setPreferences, type Agent, type AgentSkill, type AgentDefinition, type DiscoverResult, type OrchestratorFull, type ScanResult } from '@/lib/api';
 
 // ── Folder state ───────────────────────────────────────────────────────────────
 
@@ -1206,11 +1206,14 @@ export default function AdminAgentsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents]);
 
+  const [draftDefinitions, setDraftDefinitions] = useState<AgentDefinition[]>([]);
+
   const reload = () => {
-    Promise.all([themApi.agents(), themApi.orchestrators()])
-      .then(([a, o]) => {
+    Promise.all([themApi.agents(), themApi.orchestrators(), themApi.listAgentDefinitions()])
+      .then(([a, o, defs]) => {
         setAgents(a);
         setOrchestrators(o);
+        setDraftDefinitions(defs.filter(d => d.status === 'draft'));
         setScanResults((prev) => {
           const next = { ...prev };
           for (const agent of a) {
@@ -1887,6 +1890,42 @@ export default function AdminAgentsPage() {
               </button>
             </div>
           </div>
+
+          {/* Draft definitions section */}
+          {draftDefinitions.length > 0 && (
+            <div style={{ padding: '0 32px 28px' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-card-text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '12px' }}>
+                Drafts in builder
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                {draftDefinitions.map(d => (
+                  <div key={d.id} style={{
+                    display: 'flex', alignItems: 'center', gap: '12px',
+                    background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.25)',
+                    borderRadius: '10px', padding: '10px 16px',
+                  }}>
+                    <span style={{ fontSize: '24px' }}>🤖</span>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ color: '#fff', fontWeight: 600, fontSize: '13px' }}>
+                        {d.definition?.agent_root?.display_name || d.agent_slug}
+                      </div>
+                      <div style={{ color: 'var(--tm-card-text-muted)', fontSize: '11px' }}>{d.agent_slug} · rev {d.revision}</div>
+                    </div>
+                    <button
+                      onClick={() => router.push(`/admin/agents/builder?id=${d.id}`)}
+                      style={{
+                        background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)',
+                        color: '#a5b4fc', borderRadius: '6px', padding: '5px 12px',
+                        fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                      }}
+                    >
+                      Open Builder
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Filter bar */}
           <div style={{ padding: '0 32px 28px' }}>
