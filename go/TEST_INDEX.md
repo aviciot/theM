@@ -1034,6 +1034,28 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 
 ---
 
+### S1-60 · Provider key encryption — `internal/admin/service/provider_keys_test.go`
+
+**Purpose:** Unit tests for per-app provider key encryption/decryption and `parseProviderKeys` format
+detection. All paths exercised through the exported service API; the unexported `parseProviderKeys`
+is reached indirectly. Includes regression tests for the empty-CT fall-through bug.
+
+| Test | What it proves |
+|---|---|
+| `TestSetGetProviderKey_NewFormat_RoundTrip` | PK-1: `SetProviderKey` stores `{"ct":"…","hint":"1234"}` and `GetPlaintextProviderKey` recovers the plaintext after round-trip |
+| `TestSetGetProviderKey_NoCryptoKey_RoundTrip` | PK-2: nil crypto key → `CT = "plain:…"` stored; `GetPlaintextProviderKey` strips prefix |
+| `TestGetPlaintextProviderKey_LegacyFlatFormat` | PK-3: legacy `{"anthropic":"sk-ant-…"}` flat row → plaintext returned without error |
+| `TestGetProviderKeys_ReturnsHint` | PK-4: `GetProviderKeys` returns `KeySet=true` + correct 4-char hint for non-empty CT |
+| `TestSetProviderKey_UnsupportedProvider` | PK-5: unknown provider → `ErrUnprocessable` |
+| `TestSetProviderKey_EmptyKey` | PK-6: empty key string → `ErrValidation` |
+| `TestSetProviderKey_ShortKey_EmptyHint` | PK-7: key shorter than 4 chars → hint is `""` |
+| `TestGetProviderKeys_EmptyCTStructured_ReturnsEmpty` | PK-8 (regression): `{"anthropic":{"ct":"","hint":""}}` → empty list, no error (was: parse error due to flat-unmarshal fall-through) |
+| `TestGetPlaintextProviderKey_EmptyCTStructured_ReturnsEmpty` | PK-9 (regression): same all-empty CT row → empty string, no error |
+
+**Trigger:** any change to `internal/admin/service/applications.go` (provider key methods) OR `internal/admin/service/provider_keys_test.go`
+
+---
+
 ### S1-33 · Tenant isolation — `internal/admin/service/tenant_isolation_test.go`
 
 **Purpose:** R-4c1 service-layer tenant isolation contracts. Each tenant-owned entity (agents,
@@ -1235,8 +1257,9 @@ cancellation does not block or panic. Uses MockProvider, no real LLM calls.
 ### S1-48 · Agent runtime — `internal/agentgen/agentgen_test.go`
 
 **Purpose:** Phase 1 A2A Agent Runtime — proves the three security invariants (credential redaction,
-per-binding isolation, tenant ownership) and core interpreter step execution (input binding,
-template transform, HTTP credential injection, data part variable injection). No external services required.
+per-binding isolation, tenant ownership), core interpreter step execution (input binding,
+template transform, HTTP credential injection, data part variable injection), and the three-tier
+LLM key resolution (platform → per-app → per-binding slot). No external services required.
 
 | Test | What it proves |
 |---|---|
@@ -1252,6 +1275,10 @@ template transform, HTTP credential injection, data part variable injection). No
 | `TestInterpreter_LLMStep_ExplicitUserPromptOverridesInput` | Explicit `user_prompt` template takes priority over `vars["input"]` |
 | `TestInterpreter_DataPartVars_AvailableInTemplate` | Phase C: data part fields passed as `extraVars` are available as pipeline vars; `{{.city}}` resolves correctly |
 | `TestInterpreter_DataPartVars_DoNotOverwriteExplicitInput` | Phase C: `vars["input"]` from text part set before data vars merged; extra keys don't clobber input |
+| `TestInterpreter_LLMStep_ThreeTier_PlatformKey` | No AppAPIKey, no slot → platform env key used |
+| `TestInterpreter_LLMStep_ThreeTier_AppKeyOverridesPlatform` | AppAPIKey["anthropic"] set → overrides platform key |
+| `TestInterpreter_LLMStep_ThreeTier_SlotOverridesAppKey` | Per-binding slot set → overrides both platform and per-app key |
+| `TestInterpreter_LLMStep_ThreeTier_EmptyAppKeyFallsBack` | AppAPIKey["anthropic"]="" (explicitly empty) → falls back to platform key |
 
 **Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go) or `cmd/agent-runtime/main.go` (data part parsing)
 
@@ -1722,7 +1749,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/dal/registry.go` | S1-45 |
 | `internal/admin/dal/llm_providers.go` | S1-25 + S2-05 (integration) |
 | `internal/admin/dal/agent_definitions.go` | S1-49 |
-| `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 + S1-49 + S1-51 |
+| `internal/admin/service/applications.go` | S1-25 + S1-33 + S1-60 |
+| `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 + S1-49 + S1-51 + S1-60 |
 | `internal/admin/service/agent_definitions_publish.go` | S1-51 |
 | `internal/admin/service/definitions.go` | S1-42 + S1-43 + S1-44 |
 | `internal/admin/service/publish.go` | S1-43 + S1-44 |

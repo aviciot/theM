@@ -69,6 +69,10 @@ type fakeDal struct {
 	bulkDeleteErr             error
 	bulkDeleteCalled          bool
 
+	// provider key fields
+	setProviderKeyValue []byte // last raw JSON written by SetProviderKey
+	providerKeysRaw     []byte // what GetProviderKeys returns (nil → "{}")
+
 	// config fields
 	configRow         *dal.ConfigRow
 	configErr         error
@@ -185,8 +189,16 @@ func (f *fakeDal) BulkDeleteApplications(_ context.Context, _ string, _ []string
 	return f.bulkDeletedCount, f.bulkDeleteErr
 }
 
-func (f *fakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte, error) { return []byte(`{}`), nil }
-func (f *fakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []byte) error { return nil }
+func (f *fakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte, error) {
+	if f.providerKeysRaw != nil {
+		return f.providerKeysRaw, nil
+	}
+	return []byte(`{}`), nil
+}
+func (f *fakeDal) SetProviderKey(_ context.Context, _, _, _ string, value []byte) error {
+	f.setProviderKeyValue = value
+	return nil
+}
 func (f *fakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error { return nil }
 
 func (f *fakeDal) ListRuns(_ context.Context, _, _ string, _ int) ([]dal.Run, error) {

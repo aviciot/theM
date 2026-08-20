@@ -479,6 +479,129 @@ func TestInterpreter_AgentCard_PathIsAgentCardJSON(t *testing.T) {
 	t.Logf("agent-card served at correct path: %s", correctPath)
 }
 
+// capturingLLMFactory records the apiKey passed to NewProvider for key-resolution tests.
+type capturingLLMFactory struct {
+	llm         *fakeLLM
+	capturedKey string
+}
+
+func (f *capturingLLMFactory) NewProvider(_, _ string, _ int, apiKey string) (agentgen.LLMProvider, error) {
+	f.capturedKey = apiKey
+	return f.llm, nil
+}
+
+// Three-tier key resolution: platform → per-app → per-binding slot.
+
+// LLM-KEY-1: Platform env key is used when neither AppAPIKey nor slot is set.
+func TestInterpreter_LLMStep_ThreeTier_PlatformKey(t *testing.T) {
+	fake := &fakeLLM{reply: "ok"}
+	factory := &capturingLLMFactory{llm: fake}
+	interp := agentgen.NewInterpreter(nil, factory, "platform-key-xxx")
+	ic := &agentgen.InvocationContext{
+		TenantID: "t1", ApplicationID: "a1", AgentID: "ag1",
+		Credentials: map[string]string{},
+		AppAPIKey:   map[string]string{},
+	}
+	skill := simpleLLMSkill("anthropic", "")
+	if _, err := interp.Execute(context.Background(), ic, skill, "hi"); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if factory.capturedKey != "platform-key-xxx" {
+		t.Errorf("want platform key, got %q", factory.capturedKey)
+	}
+}
+
+// LLM-KEY-2: Per-app key overrides the platform key when present.
+func TestInterpreter_LLMStep_ThreeTier_AppKeyOverridesPlatform(t *testing.T) {
+	fake := &fakeLLM{reply: "ok"}
+	factory := &capturingLLMFactory{llm: fake}
+	interp := agentgen.NewInterpreter(nil, factory, "platform-key-xxx")
+	ic := &agentgen.InvocationContext{
+		TenantID: "t1", ApplicationID: "a1", AgentID: "ag1",
+		Credentials: map[string]string{},
+		AppAPIKey:   map[string]string{"anthropic": "app-level-key-yyy"},
+	}
+	skill := simpleLLMSkill("anthropic", "")
+	if _, err := interp.Execute(context.Background(), ic, skill, "hi"); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if factory.capturedKey != "app-level-key-yyy" {
+		t.Errorf("want app-level key, got %q", factory.capturedKey)
+	}
+}
+
+// LLM-KEY-3: Per-binding slot overrides both the platform key and the per-app key.
+func TestInterpreter_LLMStep_ThreeTier_SlotOverridesAppKey(t *testing.T) {
+	fake := &fakeLLM{reply: "ok"}
+	factory := &capturingLLMFactory{llm: fake}
+	interp := agentgen.NewInterpreter(nil, factory, "platform-key-xxx")
+	ic := &agentgen.InvocationContext{
+		TenantID: "t1", ApplicationID: "a1", AgentID: "ag1",
+		Credentials: map[string]string{"anthropic_slot": "binding-key-zzz"},
+		AppAPIKey:   map[string]string{"anthropic": "app-level-key-yyy"},
+	}
+	skill := simpleLLMSkill("anthropic", "anthropic_slot")
+	if _, err := interp.Execute(context.Background(), ic, skill, "hi"); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if factory.capturedKey != "binding-key-zzz" {
+		t.Errorf("want binding slot key, got %q", factory.capturedKey)
+	}
+}
+
+// LLM-KEY-4: Empty AppAPIKey entry falls back to platform key (no accidental empty-string injection).
+func TestInterpreter_LLMStep_ThreeTier_EmptyAppKeyFallsBack(t *testing.T) {
+	fake := &fakeLLM{reply: "ok"}
+	factory := &capturingLLMFactory{llm: fake}
+	interp := agentgen.NewInterpreter(nil, factory, "platform-key-xxx")
+	ic := &agentgen.InvocationContext{
+		TenantID: "t1", ApplicationID: "a1", AgentID: "ag1",
+		Credentials: map[string]string{},
+		AppAPIKey:   map[string]string{"anthropic": ""}, // explicitly empty
+	}
+	skill := simpleLLMSkill("anthropic", "")
+	if _, err := interp.Execute(context.Background(), ic, skill, "hi"); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if factory.capturedKey != "platform-key-xxx" {
+		t.Errorf("want platform key as fallback, got %q", factory.capturedKey)
+	}
+}
+
+// simpleLLMSkill builds a minimal input→llm→response pipeline for key-resolution tests.
+func simpleLLMSkill(provider, providerKeySlot string) *agentgen.SkillSpec {
+	return &agentgen.SkillSpec{
+		ID: "skill-llm",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:   "in",
+				Type: agentgen.StepInput,
+				Config: mustJSON(agentgen.InputStepConfig{
+					Bindings: map[string]string{"text": "inp"},
+				}),
+				Next: []string{"llm"},
+			},
+			{
+				ID:   "llm",
+				Type: agentgen.StepLLM,
+				Config: mustJSON(agentgen.LLMStepConfig{
+					Provider:        provider,
+					Model:           "claude-haiku",
+					MaxTokens:       10,
+					SystemPrompt:    "sys",
+					ProviderKeySlot: providerKeySlot,
+				}),
+				Next: []string{"out"},
+			},
+			{
+				ID:     "out",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "output"}),
+			},
+		},
+	}
+}
+
 func mustJSON(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil {
