@@ -58,6 +58,7 @@ type Dal interface {
 	GetProviderKeys(ctx context.Context, tenantID, appID string) ([]byte, error)
 	SetProviderKey(ctx context.Context, tenantID, appID, provider string, encryptedKey []byte) error
 	DeleteProviderKey(ctx context.Context, tenantID, appID, provider string) error
+	SetOrchestratorLLM(ctx context.Context, appID, orchID, provider, model string) error
 
 	// Runs — tenant-scoped
 	ListRuns(ctx context.Context, tenantID, contextID string, limit int) ([]dal.Run, error)

@@ -170,10 +170,13 @@ WHERE ep.id = $1::uuid`
 		cfg.BudgetTokens = *budgetTokens
 	}
 
-	apiKey := ""
-	if providerName != "" {
-		apiKey, _ = l.loadProviderKey(ctx, applicationID, providerName)
+	// Safety net: if the orchestrator has no provider set, default to "anthropic" so
+	// the app's stored key is still used rather than falling through to the platform key.
+	lookupProvider := providerName
+	if lookupProvider == "" {
+		lookupProvider = "anthropic"
 	}
+	apiKey, _ := l.loadProviderKey(ctx, applicationID, lookupProvider)
 
 	// Summarizer key comes from app provider_keys using the EP-configured provider.
 	sumProvider := ""

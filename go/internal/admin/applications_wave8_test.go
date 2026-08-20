@@ -3,6 +3,7 @@ package admin_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -202,4 +203,73 @@ func (f *multiQueryFakeDB) ExecReturning(_ context.Context, _ string, _ ...any) 
 		return &fakeRow{err: f.execRetErr}
 	}
 	return &stringIDRow{id: f.execRetStr}
+}
+
+// ── PatchOrchestratorLLM handler tests ────────────────────────────────────────
+
+// bytesQueryFakeDB is a DBQuerier whose QueryRow returns a fixed []byte blob.
+// Used to simulate GetProviderKeys returning a JSONB payload.
+type bytesQueryFakeDB struct {
+	jsonbBlob []byte // returned by QueryRow (for GetProviderKeys)
+	execErr   error  // returned by Exec (for SetOrchestratorLLM)
+}
+
+func (f *bytesQueryFakeDB) Query(_ context.Context, _ string, _ ...any) (admin.RowScanner, error) {
+	return newFakeRows(nil), nil
+}
+
+func (f *bytesQueryFakeDB) QueryRow(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
+	return &bytesRow{data: f.jsonbBlob}
+}
+
+func (f *bytesQueryFakeDB) Exec(_ context.Context, _ string, _ ...any) error {
+	return f.execErr
+}
+
+func (f *bytesQueryFakeDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
+	return &fakeRow{}
+}
+
+// bytesRow scans a single []byte value.
+type bytesRow struct{ data []byte }
+
+func (r *bytesRow) Scan(dest ...any) error {
+	if len(dest) == 0 {
+		return nil
+	}
+	if d, ok := dest[0].(*[]byte); ok {
+		*d = r.data
+		return nil
+	}
+	return fmt.Errorf("bytesRow: cannot scan into %T", dest[0])
+}
+
+// OL-H1: PatchOrchestratorLLM 200 when provider key is set.
+func TestPatchOrchestratorLLM_Handler_200(t *testing.T) {
+	// QueryRow returns a JSONB blob with an anthropic key set (plain: prefix = test mode).
+	db := &bytesQueryFakeDB{
+		jsonbBlob: []byte(`{"anthropic":{"ct":"plain:sk-ant-testkey","hint":"tkey"}}`),
+	}
+	body, _ := json.Marshal(map[string]any{
+		"provider": "anthropic",
+		"model":    "claude-haiku-4-5-20251001",
+	})
+	w := serveAppsQuerier(t, db, nil, http.MethodPatch, "/applications/app-uuid/orchestrators/orch-uuid/llm", body)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, "anthropic", out["llm_provider"])
+	assert.Equal(t, "claude-haiku-4-5-20251001", out["llm_model"])
+}
+
+// OL-H2: PatchOrchestratorLLM 422 when no key is stored for the provider.
+func TestPatchOrchestratorLLM_Handler_422_NoKey(t *testing.T) {
+	db := &bytesQueryFakeDB{jsonbBlob: []byte(`{}`)}
+	body, _ := json.Marshal(map[string]any{
+		"provider": "anthropic",
+		"model":    "claude-haiku-4-5-20251001",
+	})
+	w := serveAppsQuerier(t, db, nil, http.MethodPatch, "/applications/app-uuid/orchestrators/orch-uuid/llm", body)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 }

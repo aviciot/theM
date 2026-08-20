@@ -157,3 +157,53 @@ func TestBulkDelete_NoFlushOnDBError(t *testing.T) {
 		t.Errorf("cache must not be flushed on DB error, got %v", c.deletedKeys)
 	}
 }
+
+// ── SetOrchestratorLLM tests ───────────────────────────────────────────────────
+
+// OL-1: Valid provider with key stored → DAL called, no error.
+func TestSetOrchestratorLLM_ValidProviderWithKey(t *testing.T) {
+	d := &fakeDal{
+		providerKeysRaw: []byte(`{"anthropic":{"ct":"plain:sk-ant-test","hint":"test"}}`),
+	}
+	svc := service.NewAppService(d, nil, nil)
+
+	err := svc.SetOrchestratorLLM(context.Background(), "tenant-1", "app-1", "orch-1", "anthropic", "claude-haiku-4-5-20251001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// OL-2: Unknown provider → ErrUnprocessable, DAL not called.
+func TestSetOrchestratorLLM_UnknownProvider(t *testing.T) {
+	d := &fakeDal{}
+	svc := service.NewAppService(d, nil, nil)
+
+	err := svc.SetOrchestratorLLM(context.Background(), "tenant-1", "app-1", "orch-1", "unknown-llm", "model-x")
+	if !errors.Is(err, service.ErrUnprocessable) {
+		t.Errorf("want ErrUnprocessable, got %v", err)
+	}
+}
+
+// OL-3: Provider known but no key stored → ErrUnprocessable.
+func TestSetOrchestratorLLM_NoKeyStored(t *testing.T) {
+	d := &fakeDal{providerKeysRaw: []byte(`{}`)}
+	svc := service.NewAppService(d, nil, nil)
+
+	err := svc.SetOrchestratorLLM(context.Background(), "tenant-1", "app-1", "orch-1", "anthropic", "claude-haiku-4-5-20251001")
+	if !errors.Is(err, service.ErrUnprocessable) {
+		t.Errorf("want ErrUnprocessable, got %v", err)
+	}
+}
+
+// OL-4: Empty model → ErrValidation.
+func TestSetOrchestratorLLM_EmptyModel(t *testing.T) {
+	d := &fakeDal{
+		providerKeysRaw: []byte(`{"anthropic":{"ct":"plain:sk-ant-test","hint":"test"}}`),
+	}
+	svc := service.NewAppService(d, nil, nil)
+
+	err := svc.SetOrchestratorLLM(context.Background(), "tenant-1", "app-1", "orch-1", "anthropic", "")
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation, got %v", err)
+	}
+}

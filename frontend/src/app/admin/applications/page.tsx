@@ -4658,20 +4658,8 @@ function DefinitionView({
                       onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, system_prompt: e.target.value } })}
                     />
                   </div>
-                  <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>LLM Provider</label>
-                    <select style={fieldStyle} value={(selectedComp.config as any)?.llm_provider ?? ''}
-                      onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, llm_provider: e.target.value } })}>
-                      <option value="">— inherit —</option>
-                      <option value="anthropic">anthropic</option>
-                      <option value="openai">openai</option>
-                      <option value="gemini">gemini</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 4 }}>LLM Model</label>
-                    <input style={fieldStyle} value={(selectedComp.config as any)?.llm_model ?? ''}
-                      onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, llm_model: e.target.value } })} />
+                  <div style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic', padding: '4px 0' }}>
+                    LLM provider &amp; model are configured in App Runtime → LLM Configuration.
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     {(['max_iterations', 'history_window', 'max_parallel_tools', 'budget_tokens'] as const).map(field => (
@@ -5345,6 +5333,29 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [keySaving, setKeySaving] = useState<string | null>(null);
   const [keyMsg, setKeyMsg] = useState<Record<string, string>>({});
+  const [keyTestMsg, setKeyTestMsg] = useState<Record<string, string>>({});
+  const [keyTesting, setKeyTesting] = useState<string | null>(null);
+
+  // LLM objects state (per-orchestrator provider+model assignment)
+  type OrchLLM = { id: string; name: string; displayName: string; provider: string; model: string };
+  const [orchLLMs, setOrchLLMs] = useState<OrchLLM[]>(
+    (app.app_orchestrators ?? []).map(o => ({
+      id: o.id,
+      name: o.name,
+      displayName: o.display_name || o.name,
+      provider: o.llm_provider ?? '',
+      model: o.llm_model ?? '',
+    }))
+  );
+  const [orchSaving, setOrchSaving] = useState<string | null>(null);
+  const [orchMsg, setOrchMsg] = useState<Record<string, string>>({});
+
+  const DEFAULT_MODELS: Record<string, string> = {
+    anthropic: 'claude-haiku-4-5-20251001',
+    openai: 'gpt-4o-mini',
+    groq: 'llama3-8b-8192',
+    gemini: 'gemini-1.5-flash',
+  };
 
   useEffect(() => {
     themApi.getProviderKeys(app.id)
@@ -5355,6 +5366,8 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
   function getKeyStatus(provider: string): KeyStatus {
     return keyStatuses.find(k => k.provider === provider) ?? { provider, key_set: false };
   }
+
+  const setProviders = keyStatuses.filter(k => k.key_set).map(k => k.provider);
 
   async function handleSaveKey(provider: string) {
     const key = (keyInputs[provider] ?? '').trim();
@@ -5386,6 +5399,39 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
       setKeyMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Failed' }));
     } finally {
       setKeySaving(null);
+    }
+  }
+
+  async function handleTestKey(provider: string) {
+    setKeyTesting(provider);
+    setKeyTestMsg(m => ({ ...m, [provider]: '' }));
+    try {
+      const model = DEFAULT_MODELS[provider] ?? 'unknown';
+      const res = await themApi.testAppLlm(app.id, provider, model);
+      if (res.ok) {
+        setKeyTestMsg(m => ({ ...m, [provider]: `✓ ${res.latency_ms}ms` }));
+      } else {
+        setKeyTestMsg(m => ({ ...m, [provider]: res.error ?? 'Failed' }));
+      }
+    } catch (e: unknown) {
+      setKeyTestMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Error' }));
+    } finally {
+      setKeyTesting(null);
+    }
+  }
+
+  async function handleSaveOrchLLM(orchId: string) {
+    const orch = orchLLMs.find(o => o.id === orchId);
+    if (!orch || !orch.provider || !orch.model) return;
+    setOrchSaving(orchId);
+    try {
+      await themApi.patchOrchestratorLLM(app.id, orchId, orch.provider, orch.model);
+      setOrchMsg(m => ({ ...m, [orchId]: 'Saved' }));
+      setTimeout(() => setOrchMsg(m => ({ ...m, [orchId]: '' })), 2500);
+    } catch (e: unknown) {
+      setOrchMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Failed' }));
+    } finally {
+      setOrchSaving(null);
     }
   }
 
@@ -5487,59 +5533,129 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
         <div style={sectionStyle}>
           <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>LLM Provider Keys</div>
           <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
-            One API key per provider for this application. Keys are stored encrypted and never exported with the canvas definition.
+            One API key per provider. Keys are AES-GCM encrypted at rest. Use Test to verify the key works.
           </div>
           {PROVIDER_LIST.map(provider => {
             const status = getKeyStatus(provider);
             const isBusy = keySaving === provider;
+            const isTesting = keyTesting === provider;
             const msg = keyMsg[provider] ?? '';
+            const testMsg = keyTestMsg[provider] ?? '';
             const isError = msg && msg !== 'Saved' && msg !== 'Removed';
+            const isTestError = testMsg && !testMsg.startsWith('✓');
             return (
-              <div key={provider} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                {/* Provider label + key-set badge */}
-                <div style={{ width: 90, flexShrink: 0 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{provider}</span>
-                  <span style={{
-                    marginLeft: 8, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20,
-                    background: status.key_set ? 'rgba(74,222,128,0.12)' : 'rgba(251,146,60,0.12)',
-                    color: status.key_set ? C.green : '#fb923c',
-                    border: `1px solid ${status.key_set ? 'rgba(74,222,128,0.3)' : 'rgba(251,146,60,0.3)'}`,
-                  }}>
-                    {status.key_set ? `set ···${status.key_hint ?? ''}` : 'not set'}
-                  </span>
-                </div>
-                {/* Key input */}
-                <input
-                  type="password"
-                  placeholder={status.key_set ? 'Enter new key to replace…' : 'Paste API key…'}
-                  value={keyInputs[provider] ?? ''}
-                  onChange={e => setKeyInputs(ki => ({ ...ki, [provider]: e.target.value }))}
-                  style={{ ...fieldStyle, flex: 1, minWidth: 180, fontSize: 13 }}
-                  onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }}
-                />
-                {/* Save key button */}
-                <button
-                  onClick={() => handleSaveKey(provider)}
-                  disabled={isBusy || !(keyInputs[provider] ?? '').trim()}
-                  style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', opacity: isBusy || !(keyInputs[provider] ?? '').trim() ? 0.5 : 1 }}
-                >
-                  {isBusy ? '…' : 'Save'}
-                </button>
-                {/* Remove button — only shown when a key is set */}
-                {status.key_set && (
+              <div key={provider} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  {/* Provider label + key-set badge */}
+                  <div style={{ width: 90, flexShrink: 0 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{provider}</span>
+                    <span style={{
+                      marginLeft: 8, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20,
+                      background: status.key_set ? 'rgba(74,222,128,0.12)' : 'rgba(251,146,60,0.12)',
+                      color: status.key_set ? C.green : '#fb923c',
+                      border: `1px solid ${status.key_set ? 'rgba(74,222,128,0.3)' : 'rgba(251,146,60,0.3)'}`,
+                    }}>
+                      {status.key_set ? `set ···${status.key_hint ?? ''}` : 'not set'}
+                    </span>
+                  </div>
+                  {/* Key input */}
+                  <input
+                    type="password"
+                    placeholder={status.key_set ? 'Enter new key to replace…' : 'Paste API key…'}
+                    value={keyInputs[provider] ?? ''}
+                    onChange={e => setKeyInputs(ki => ({ ...ki, [provider]: e.target.value }))}
+                    style={{ ...fieldStyle, flex: 1, minWidth: 180, fontSize: 13 }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }}
+                  />
+                  {/* Save key button */}
                   <button
-                    onClick={() => handleDeleteKey(provider)}
-                    disabled={isBusy}
-                    style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.07)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}
+                    onClick={() => handleSaveKey(provider)}
+                    disabled={isBusy || !(keyInputs[provider] ?? '').trim()}
+                    style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', opacity: isBusy || !(keyInputs[provider] ?? '').trim() ? 0.5 : 1 }}
                   >
-                    Remove
+                    {isBusy ? '…' : 'Save'}
                   </button>
+                  {/* Test button — only when key is set */}
+                  {status.key_set && (
+                    <button
+                      onClick={() => handleTestKey(provider)}
+                      disabled={isBusy || isTesting}
+                      style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy || isTesting ? 0.5 : 1 }}
+                    >
+                      {isTesting ? '…' : 'Test'}
+                    </button>
+                  )}
+                  {/* Remove button — only shown when a key is set */}
+                  {status.key_set && (
+                    <button
+                      onClick={() => handleDeleteKey(provider)}
+                      disabled={isBusy}
+                      style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.07)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                  {msg && <span style={{ fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
+                </div>
+                {testMsg && (
+                  <div style={{ fontSize: 12, color: isTestError ? C.error : C.green, fontWeight: 600, paddingLeft: 98 }}>{testMsg}</div>
                 )}
-                {msg && <span style={{ fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
               </div>
             );
           })}
         </div>
+
+        {/* LLM Objects — assign provider+model per orchestrator */}
+        {orchLLMs.length > 0 && (
+          <div style={sectionStyle}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>LLM Configuration</div>
+            <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
+              Assign a provider and model to each orchestrator. Only providers with a saved key are available.
+            </div>
+            {setProviders.length === 0 && (
+              <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic' }}>Set an API key above first.</div>
+            )}
+            {orchLLMs.map(orch => {
+              const isBusy = orchSaving === orch.id;
+              const msg = orchMsg[orch.id] ?? '';
+              const isError = msg && msg !== 'Saved';
+              const canSave = orch.provider && orch.model;
+              return (
+                <div key={orch.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ width: 130, flexShrink: 0, fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={orch.displayName}>
+                    {orch.displayName}
+                  </div>
+                  {/* Provider dropdown — only shows providers with a key set */}
+                  <select
+                    value={orch.provider}
+                    onChange={e => setOrchLLMs(prev => prev.map(o => o.id === orch.id ? { ...o, provider: e.target.value, model: DEFAULT_MODELS[e.target.value] ?? '' } : o))}
+                    style={{ ...fieldStyle, width: 130, fontSize: 13 }}
+                    disabled={setProviders.length === 0}
+                  >
+                    <option value="">— provider —</option>
+                    {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  {/* Model input */}
+                  <input
+                    type="text"
+                    placeholder="model name"
+                    value={orch.model}
+                    onChange={e => setOrchLLMs(prev => prev.map(o => o.id === orch.id ? { ...o, model: e.target.value } : o))}
+                    style={{ ...fieldStyle, flex: 1, minWidth: 180, fontSize: 13 }}
+                  />
+                  <button
+                    onClick={() => handleSaveOrchLLM(orch.id)}
+                    disabled={isBusy || !canSave}
+                    style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', opacity: isBusy || !canSave ? 0.5 : 1 }}
+                  >
+                    {isBusy ? '…' : 'Save'}
+                  </button>
+                  {msg && <span style={{ fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Save */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

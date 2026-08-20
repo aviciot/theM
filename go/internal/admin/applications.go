@@ -52,6 +52,7 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Put("/provider-keys/{provider}", h.SetProviderKey)
 		app.Delete("/provider-keys/{provider}", h.DeleteProviderKey)
 		app.Post("/test-llm", h.TestLLM)
+		app.Patch("/orchestrators/{orch_id}/llm", h.PatchOrchestratorLLM)
 		app.Post("/entry-points", h.CreateEntryPoint)
 		app.Put("/entry-points/{ep_id}", h.UpdateEntryPoint)
 		app.Patch("/entry-points/{ep_id}", h.UpdateEntryPoint) // Python sends PATCH
@@ -366,6 +367,39 @@ func (h *ApplicationsHandler) TestLLM(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": testErr})
 	}
+}
+
+// PatchOrchestratorLLM handles PATCH /api/v1/admin/applications/{id}/orchestrators/{orch_id}/llm.
+// Body: {"provider": "anthropic", "model": "claude-haiku-4-5-20251001"}
+// Validates that the provider has a key stored on the app, then updates the orchestrator row.
+func (h *ApplicationsHandler) PatchOrchestratorLLM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orchID := chi.URLParam(r, "orch_id")
+	if id == "" || orchID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or orchestrator id")
+		return
+	}
+
+	var body struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if err := h.svc.SetOrchestratorLLM(r.Context(), tenantID, id, orchID, body.Provider, body.Model); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":           orchID,
+		"app_id":       id,
+		"llm_provider": body.Provider,
+		"llm_model":    body.Model,
+	})
 }
 
 // probeLLM fires a minimal single-message request to validate the provider key.

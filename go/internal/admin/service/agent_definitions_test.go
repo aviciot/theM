@@ -146,6 +146,7 @@ func (f *agentDefFakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []
 	return nil
 }
 func (f *agentDefFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error { return nil }
+func (f *agentDefFakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error { return nil }
 func (f *agentDefFakeDal) ListRuns(_ context.Context, _, _ string, _ int) ([]dal.Run, error) {
 	return nil, nil
 }

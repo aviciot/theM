@@ -308,6 +308,16 @@ func (d *DB) DeleteProviderKey(ctx context.Context, tenantID, appID, provider st
 	return d.q.Exec(ctx, q, appID, tenantID, provider)
 }
 
+// SetOrchestratorLLM updates llm_provider and llm_model on one app_orchestrators row.
+// Scoped to appID so a caller cannot modify an orchestrator belonging to another application.
+func (d *DB) SetOrchestratorLLM(ctx context.Context, appID, orchID, provider, model string) error {
+	const q = `
+		UPDATE them.app_orchestrators
+		SET llm_provider = $3, llm_model = $4, updated_at = now()
+		WHERE id = $1::uuid AND application_id = $2::uuid`
+	return d.q.Exec(ctx, q, orchID, appID, provider, model)
+}
+
 // BulkDeleteApplications hard-deletes applications matching the provided UUID list,
 // scoped to the tenant. Returns the number of rows actually deleted via RETURNING.
 // CASCADE on the FK to app_orchestrators, entry_points, and middleware_wirings handles child rows.

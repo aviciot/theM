@@ -411,6 +411,32 @@ func parseProviderKeys(raw []byte) (map[string]providerKeyEntry, error) {
 	return out, nil
 }
 
+// SetOrchestratorLLM assigns a provider+model to one app_orchestrators row.
+// Validates that the provider is known and has a key stored on the application.
+func (s *AppService) SetOrchestratorLLM(ctx context.Context, tenantID, appID, orchID, provider, model string) error {
+	if _, ok := validProviders[provider]; !ok {
+		return unprocessable("unsupported provider: " + provider)
+	}
+	if model == "" {
+		return validation("model must not be empty")
+	}
+	keys, err := s.GetProviderKeys(ctx, tenantID, appID)
+	if err != nil {
+		return ErrNotFound
+	}
+	hasKey := false
+	for _, k := range keys {
+		if k.Provider == provider && k.KeySet {
+			hasKey = true
+			break
+		}
+	}
+	if !hasKey {
+		return unprocessable("no API key stored for provider " + provider + " — save one in Runtime settings first")
+	}
+	return s.dal.SetOrchestratorLLM(ctx, appID, orchID, provider, model)
+}
+
 // DeleteProviderKey removes the key for one provider from the application.
 func (s *AppService) DeleteProviderKey(ctx context.Context, tenantID, appID, provider string) error {
 	if _, ok := validProviders[provider]; !ok {

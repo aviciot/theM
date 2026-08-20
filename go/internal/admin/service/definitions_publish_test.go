@@ -180,6 +180,7 @@ func (f *publishFakeDal) BulkDeleteApplications(_ context.Context, _ string, _ [
 func (f *publishFakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte, error)        { return []byte(`{}`), nil }
 func (f *publishFakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []byte) error      { return nil }
 func (f *publishFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error              { return nil }
+func (f *publishFakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error          { return nil }
 func (f *publishFakeDal) ListRuns(_ context.Context, _, _ string, _ int) ([]dal.Run, error) { return nil, nil }
 func (f *publishFakeDal) GetRun(_ context.Context, _, _ string) (dal.Run, error)       { return dal.Run{}, nil }
 func (f *publishFakeDal) GetRunContextID(_ context.Context, _, _ string) (string, error) { return "", nil }
