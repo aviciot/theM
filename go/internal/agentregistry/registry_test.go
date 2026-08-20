@@ -286,7 +286,8 @@ func TestInvokeForRun_CanvasA2A_UsesBindingID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedBindingID = r.Header.Get("X-Them-Binding-Id")
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"output":"canvas result"}`)
+		// A2A JSON-RPC response with a text artifact so extractA2AResult can parse it.
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":"test","result":{"task":{"artifacts":[{"parts":[{"text":"canvas result"}]}]}}}`)
 	}))
 	defer server.Close()
 

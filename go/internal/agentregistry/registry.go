@@ -405,13 +405,19 @@ func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.R
 	if rpcResp.Result == nil {
 		return nil, fmt.Errorf("agentregistry: a2a: empty result")
 	}
+	return extractA2AResult(rpcResp.Result)
+}
 
+// extractA2AResult extracts the tool output from an A2A response result.
+// Returns a file artifact payload when a named file part is present,
+// otherwise returns plain text wrapped as {"output": "..."}.
+func extractA2AResult(result *a2aResult) (json.RawMessage, error) {
 	// Extract artifacts from task or message wrapper.
 	var artifacts []a2aArtifact
-	if rpcResp.Result.Task != nil {
-		artifacts = rpcResp.Result.Task.Artifacts
-	} else if rpcResp.Result.Message != nil {
-		artifacts = rpcResp.Result.Message.Artifacts
+	if result.Task != nil {
+		artifacts = result.Task.Artifacts
+	} else if result.Message != nil {
+		artifacts = result.Message.Artifacts
 	}
 
 	// Walk artifacts: if any part has a filename, return an artifact payload so
@@ -516,11 +522,35 @@ func (r *Registry) InvokeWithMeta(ctx context.Context, tenantID, slug string, pa
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.EndpointURL, bytes.NewReader(payload))
+	// canvas_a2a agents are served by the agent-runtime which speaks A2A JSON-RPC.
+	// Wrap the tool input in a SendMessage envelope identical to invokeA2A.
+	part := buildA2APart(payload)
+	reqID := newUUID()
+	msgID := newUUID()
+	rpcReq := a2aRequest{
+		JSONRPC: "2.0",
+		Method:  "SendMessage",
+		Params: a2aParams{
+			Message: a2aMessage{
+				Role:      1,
+				Parts:     []a2aPart{part},
+				MessageID: msgID,
+			},
+			Configuration: a2aConfiguration{ReturnImmediately: false},
+		},
+		ID: reqID,
+	}
+	body, err := json.Marshal(rpcReq)
+	if err != nil {
+		return nil, fmt.Errorf("agentregistry: invoke with meta: marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.EndpointURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("agentregistry: invoke with meta: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("A2A-Version", "1.0")
 	if cfg.AuthToken != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
 	}
@@ -536,9 +566,20 @@ func (r *Registry) InvokeWithMeta(ctx context.Context, tenantID, slug string, pa
 	}
 	defer resp.Body.Close()
 
-	out, err := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("agentregistry: invoke with meta: read body: %w", err)
 	}
-	return json.RawMessage(out), nil
+
+	var rpcResp a2aResponse
+	if err := json.Unmarshal(respBytes, &rpcResp); err != nil {
+		return nil, fmt.Errorf("agentregistry: invoke with meta: decode response: %w", err)
+	}
+	if rpcResp.Error != nil {
+		return nil, fmt.Errorf("agentregistry: invoke with meta: a2a error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+	}
+	if rpcResp.Result == nil {
+		return nil, fmt.Errorf("agentregistry: invoke with meta: empty result")
+	}
+	return extractA2AResult(rpcResp.Result)
 }
