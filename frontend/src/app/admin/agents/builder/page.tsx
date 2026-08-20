@@ -148,9 +148,18 @@ const STEP_META: Record<string, { bg: string; border: string; emoji: string; lab
   stream_out: { bg: C.cyanBg,   border: C.cyanBorder,   emoji: '📡', label: 'Stream Out' },
 };
 
-function StepNode({ data }: { data: StepData; id: string }) {
+interface StepNodeData extends StepData {
+  _debug?: {
+    state: DebugNodeState;
+    output?: string;
+    error?: string;
+  };
+}
+
+function StepNode({ data }: { data: StepNodeData; id: string }) {
   const meta = STEP_META[data.step_type] ?? { bg: C.indigoBg, border: C.indigoBorder, emoji: '🔧', label: data.step_type };
   const cfg = data.config ?? {};
+  const dbg = data._debug;
   let sub = '';
   if (data.step_type === 'input') {
     const bindings = cfg.bindings as Record<string, string> | undefined;
@@ -165,13 +174,52 @@ function StepNode({ data }: { data: StepData; id: string }) {
   } else if (data.step_type === 'http') {
     sub = (cfg.url_template as string) ? (cfg.url_template as string).replace(/^https?:\/\//, '').slice(0, 22) : 'url not set';
   }
+
+  const debugBorder: Record<DebugNodeState, string> = {
+    idle: 'transparent',
+    pending: '#f59e0b',
+    running: '#60a5fa',
+    done: '#4ade80',
+    error: '#f87171',
+  };
+  const debugGlow: Record<DebugNodeState, string> = {
+    idle: 'none',
+    pending: '0 0 8px 2px rgba(245,158,11,0.5)',
+    running: '0 0 8px 2px rgba(96,165,250,0.5)',
+    done: '0 0 8px 2px rgba(74,222,128,0.4)',
+    error: '0 0 8px 2px rgba(248,113,113,0.5)',
+  };
+  const state = dbg?.state ?? 'idle';
+  const borderColor = state !== 'idle' ? debugBorder[state] : 'transparent';
+  const boxShadow = state !== 'idle' ? debugGlow[state] : 'none';
+
   return (
-    <div style={{ background: 'transparent', border: 'none', padding: '8px', minWidth: '80px', textAlign: 'center' }}>
+    <div style={{
+      background: 'transparent', padding: '8px', minWidth: '80px', textAlign: 'center',
+      border: `2px solid ${borderColor}`, borderRadius: '10px', boxShadow,
+      transition: 'border-color 0.2s, box-shadow 0.2s',
+    }}>
       <Handle type="target" position={Position.Top} style={{ background: meta.border }} />
       <Handle type="source" position={Position.Bottom} style={{ background: meta.border }} />
       <div style={{ fontSize: '32px', lineHeight: 1 }}>{meta.emoji}</div>
       <div style={{ color: '#fff', fontWeight: 700, fontSize: '11px', marginTop: '5px' }}>{meta.label}</div>
       {sub && <div style={{ fontSize: '10px', color: meta.border, opacity: 0.9, marginTop: 2 }}>{sub}</div>}
+      {dbg?.state === 'done' && dbg.output && (
+        <div style={{ marginTop: 4, fontSize: '9px', color: '#4ade80', maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {dbg.output.length > 30 ? dbg.output.slice(0, 30) + '…' : dbg.output}
+        </div>
+      )}
+      {dbg?.state === 'error' && dbg.error && (
+        <div style={{ marginTop: 4, fontSize: '9px', color: '#f87171', maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {dbg.error.slice(0, 30)}
+        </div>
+      )}
+      {dbg?.state === 'running' && (
+        <div style={{ marginTop: 4, fontSize: '9px', color: '#60a5fa' }}>running…</div>
+      )}
+      {dbg?.state === 'pending' && (
+        <div style={{ marginTop: 4, fontSize: '9px', color: '#f59e0b' }}>next ↓</div>
+      )}
     </div>
   );
 }
@@ -209,6 +257,33 @@ function genUUID(): string {
     return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
   });
 }
+
+// ── Debug mode ────────────────────────────────────────────────────────────────
+
+type DebugNodeState = 'idle' | 'pending' | 'running' | 'done' | 'error';
+
+interface DebugState {
+  active: boolean;
+  mode: 'run-all' | 'step' | null;
+  testInput: string;
+  apiKey: string;
+  vars: Record<string, unknown>;
+  nodeStates: Record<string, DebugNodeState>;
+  nodeOutputs: Record<string, string>;
+  nodeErrors: Record<string, string>;
+  edgeValues: Record<string, string>;
+  executionOrder: string[];
+  currentStepIndex: number;
+  pendingVarOverrides: Record<string, string>;
+  error: string | null;
+}
+
+const INITIAL_DEBUG: DebugState = {
+  active: false, mode: null, testInput: '', apiKey: '',
+  vars: {}, nodeStates: {}, nodeOutputs: {}, nodeErrors: {},
+  edgeValues: {}, executionOrder: [], currentStepIndex: 0,
+  pendingVarOverrides: {}, error: null,
+};
 
 // ── Canvas inner (uses ReactFlow hooks — must be inside ReactFlowProvider) ───
 
@@ -262,6 +337,9 @@ function CanvasInner() {
   const [publishError, setPublishError] = useState('');
   const [publishedRevision, setPublishedRevision] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
+
+  // Debug mode
+  const [debug, setDebug] = useState<DebugState>(INITIAL_DEBUG);
 
   // Properties panel
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
@@ -659,6 +737,245 @@ function CanvasInner() {
     return true;
   }, []);
 
+  // ── Debug helpers ─────────────────────────────────────────────────────────────
+
+  function renderTemplate(template: string, vars: Record<string, unknown>): string {
+    return template.replace(/\{\{(\w+)\}\}/g, (_, key) => String(vars[key] ?? ''));
+  }
+
+  function topoSort(nodes: Node[], edges: Edge[]): string[] | null {
+    const inDegree: Record<string, number> = {};
+    const adj: Record<string, string[]> = {};
+    for (const n of nodes) { inDegree[n.id] = 0; adj[n.id] = []; }
+    for (const e of edges) {
+      adj[e.source]?.push(e.target);
+      if (inDegree[e.target] !== undefined) inDegree[e.target]++;
+    }
+    const queue = nodes.filter(n => inDegree[n.id] === 0).map(n => n.id);
+    const order: string[] = [];
+    while (queue.length) {
+      const id = queue.shift()!;
+      order.push(id);
+      for (const next of (adj[id] ?? [])) {
+        inDegree[next]--;
+        if (inDegree[next] === 0) queue.push(next);
+      }
+    }
+    return order.length === nodes.length ? order : null;
+  }
+
+  async function executeStep(
+    nodeId: string,
+    nodes: Node[],
+    edges: Edge[],
+    vars: Record<string, unknown>,
+    apiKey: string,
+  ): Promise<{ vars: Record<string, unknown>; output: string; edgeValues: Record<string, string> }> {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) throw new Error(`Node ${nodeId} not found`);
+    const d = node.data as unknown as StepData;
+    const cfg = d.config ?? {};
+    const newVars = { ...vars };
+    let output = '';
+    const edgeValues: Record<string, string> = {};
+
+    const outEdgesForNode = edges.filter(e => e.source === nodeId);
+
+    if (d.step_type === 'input') {
+      const bindVar = (cfg.bindings as Record<string,string>)?.text || 'input';
+      // value already set in vars by caller
+      output = String(newVars[bindVar] ?? '');
+      for (const e of outEdgesForNode) edgeValues[e.id] = output;
+    } else if (d.step_type === 'llm') {
+      const model = (cfg.model as string) || 'claude-haiku-4-5-20251001';
+      const maxTokens = (cfg.max_tokens as number) || 4096;
+      const systemPrompt = (cfg.system_prompt as string) || '';
+      const userPromptTemplate = (cfg.user_prompt as string) || '{{input}}';
+      const userPrompt = renderTemplate(userPromptTemplate, newVars);
+      const outVar = (cfg.output_var as string) || 'output';
+
+      const messages: { role: string; content: string }[] = [];
+      if (userPrompt) messages.push({ role: 'user', content: userPrompt });
+
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          ...(systemPrompt ? { system: systemPrompt } : {}),
+          messages,
+        }),
+      });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`Anthropic API error ${resp.status}: ${errText.slice(0, 200)}`);
+      }
+      const json = await resp.json() as { content: { type: string; text: string }[] };
+      const text = json.content?.find(c => c.type === 'text')?.text ?? '';
+      newVars[outVar] = text;
+      output = text;
+      for (const e of outEdgesForNode) edgeValues[e.id] = text.length > 50 ? text.slice(0, 50) + '…' : text;
+    } else if (d.step_type === 'response') {
+      const fromVar = (cfg.from_var as string) || 'output';
+      output = String(newVars[fromVar] ?? '');
+      // response has no outgoing edges (or they're terminal)
+    } else if (d.step_type === 'transform') {
+      const exprs = (cfg.expressions as Record<string, string>) ?? {};
+      for (const [outKey, tmpl] of Object.entries(exprs)) {
+        const val = renderTemplate(tmpl, newVars);
+        newVars[outKey] = val;
+        output = val;
+      }
+      for (const e of outEdgesForNode) edgeValues[e.id] = output.length > 50 ? output.slice(0, 50) + '…' : output;
+    } else if (d.step_type === 'http') {
+      const method = (cfg.method as string) || 'GET';
+      const urlTemplate = (cfg.url_template as string) || '';
+      const bodyTemplate = (cfg.body_template as string) || '';
+      const outVar = (cfg.output_var as string) || 'response';
+      const url = renderTemplate(urlTemplate, newVars);
+      const fetchOpts: RequestInit = { method };
+      if (bodyTemplate && method !== 'GET') {
+        fetchOpts.body = renderTemplate(bodyTemplate, newVars);
+        fetchOpts.headers = { 'Content-Type': 'application/json' };
+      }
+      const resp = await fetch(url, fetchOpts);
+      const text = await resp.text();
+      newVars[outVar] = text;
+      output = text;
+      for (const e of outEdgesForNode) edgeValues[e.id] = text.length > 50 ? text.slice(0, 50) + '…' : text;
+    } else {
+      output = `[${d.step_type} not supported in debug mode]`;
+    }
+
+    return { vars: newVars, output, edgeValues };
+  }
+
+  function debugReset() {
+    setDebug(prev => ({ ...INITIAL_DEBUG, active: prev.active, testInput: prev.testInput, apiKey: prev.apiKey }));
+  }
+
+  async function debugRunAll() {
+    if (!debug.testInput.trim()) { setDebug(prev => ({ ...prev, error: 'Enter a test input first.' })); return; }
+    if (!debug.apiKey.trim()) { setDebug(prev => ({ ...prev, error: 'Enter an Anthropic API key.' })); return; }
+
+    const order = topoSort(localPipeNodes, localPipeEdges);
+    if (!order) { setDebug(prev => ({ ...prev, error: 'Pipeline has a cycle — cannot execute.' })); return; }
+
+    setDebug(prev => ({
+      ...prev, mode: 'run-all', error: null, executionOrder: order,
+      nodeStates: Object.fromEntries(order.map(id => [id, 'pending' as DebugNodeState])),
+      nodeOutputs: {}, nodeErrors: {}, edgeValues: {}, vars: {},
+    }));
+
+    const inputNode = localPipeNodes.find(n => (n.data as unknown as StepData).step_type === 'input');
+    let vars: Record<string, unknown> = {};
+    if (inputNode) {
+      const inputData = inputNode.data as unknown as StepData;
+      const bindVar = (inputData.config?.bindings as Record<string,string>)?.text || 'input';
+      vars[bindVar] = debug.testInput;
+    }
+
+    const allEdgeValues: Record<string, string> = {};
+
+    for (const nodeId of order) {
+      setDebug(prev => ({
+        ...prev, vars,
+        nodeStates: { ...prev.nodeStates, [nodeId]: 'running' },
+      }));
+      try {
+        const result = await executeStep(nodeId, localPipeNodes, localPipeEdges, vars, debug.apiKey);
+        vars = result.vars;
+        Object.assign(allEdgeValues, result.edgeValues);
+        setDebug(prev => ({
+          ...prev, vars,
+          edgeValues: { ...prev.edgeValues, ...result.edgeValues },
+          nodeStates: { ...prev.nodeStates, [nodeId]: 'done' },
+          nodeOutputs: { ...prev.nodeOutputs, [nodeId]: result.output },
+        }));
+      } catch (err) {
+        const msg = String(err);
+        setDebug(prev => ({
+          ...prev,
+          nodeStates: { ...prev.nodeStates, [nodeId]: 'error' },
+          nodeErrors: { ...prev.nodeErrors, [nodeId]: msg },
+          error: `Step failed: ${msg}`,
+        }));
+        return;
+      }
+    }
+    setDebug(prev => ({ ...prev, currentStepIndex: order.length }));
+  }
+
+  async function debugStep() {
+    if (!debug.testInput.trim()) { setDebug(prev => ({ ...prev, error: 'Enter a test input first.' })); return; }
+    if (!debug.apiKey.trim()) { setDebug(prev => ({ ...prev, error: 'Enter an Anthropic API key.' })); return; }
+
+    // First call: initialise
+    if (!debug.mode) {
+      const order = topoSort(localPipeNodes, localPipeEdges);
+      if (!order) { setDebug(prev => ({ ...prev, error: 'Pipeline has a cycle.' })); return; }
+
+      const inputNode = localPipeNodes.find(n => (n.data as unknown as StepData).step_type === 'input');
+      let initVars: Record<string, unknown> = {};
+      if (inputNode) {
+        const inputData = inputNode.data as unknown as StepData;
+        const bindVar = (inputData.config?.bindings as Record<string,string>)?.text || 'input';
+        initVars[bindVar] = debug.testInput;
+      }
+
+      const firstNodeId = order[0];
+      setDebug(prev => ({
+        ...prev, mode: 'step', error: null, executionOrder: order, currentStepIndex: 0,
+        vars: initVars,
+        nodeStates: { ...Object.fromEntries(order.map(id => [id, 'idle' as DebugNodeState])), [firstNodeId]: 'pending' },
+        nodeOutputs: {}, nodeErrors: {}, edgeValues: {}, pendingVarOverrides: {},
+      }));
+      return;
+    }
+
+    const { executionOrder, currentStepIndex, vars } = debug;
+    if (currentStepIndex >= executionOrder.length) return;
+
+    const nodeId = executionOrder[currentStepIndex];
+    const mergedVars = { ...vars, ...debug.pendingVarOverrides };
+
+    setDebug(prev => ({
+      ...prev, nodeStates: { ...prev.nodeStates, [nodeId]: 'running' }, pendingVarOverrides: {},
+    }));
+
+    try {
+      const result = await executeStep(nodeId, localPipeNodes, localPipeEdges, mergedVars, debug.apiKey);
+      const nextIdx = currentStepIndex + 1;
+      const nextNodeId = executionOrder[nextIdx];
+      setDebug(prev => ({
+        ...prev,
+        vars: result.vars,
+        edgeValues: { ...prev.edgeValues, ...result.edgeValues },
+        nodeStates: {
+          ...prev.nodeStates,
+          [nodeId]: 'done',
+          ...(nextNodeId ? { [nextNodeId]: 'pending' } : {}),
+        },
+        nodeOutputs: { ...prev.nodeOutputs, [nodeId]: result.output },
+        currentStepIndex: nextIdx,
+      }));
+    } catch (err) {
+      const msg = String(err);
+      setDebug(prev => ({
+        ...prev,
+        nodeStates: { ...prev.nodeStates, [nodeId]: 'error' },
+        nodeErrors: { ...prev.nodeErrors, [nodeId]: msg },
+        error: `Step failed: ${msg}`,
+      }));
+    }
+  }
+
   // Properties panel update
   function updateSelectedNodeField(field: string, value: string) {
     if (!selectedNode) return;
@@ -690,8 +1007,36 @@ function CanvasInner() {
     setDirty(true);
   }
 
-  const currentNodes = activeView === 'agent' ? agentNodes : localPipeNodes;
-  const currentEdges = activeView === 'agent' ? agentEdges : localPipeEdges;
+  // Inject debug state into node data for StepNode rendering.
+  const debugNodes = activeView === 'skill' && debug.active
+    ? localPipeNodes.map(n => ({
+        ...n,
+        data: {
+          ...n.data,
+          _debug: {
+            state: debug.nodeStates[n.id] ?? 'idle',
+            output: debug.nodeOutputs[n.id],
+            error: debug.nodeErrors[n.id],
+          },
+        },
+      }))
+    : localPipeNodes;
+
+  // Inject edge value labels after debug run.
+  const debugEdges = activeView === 'skill' && debug.active && Object.keys(debug.edgeValues).length > 0
+    ? localPipeEdges.map(e => ({
+        ...e,
+        label: debug.edgeValues[e.id] ?? e.label,
+        style: debug.edgeValues[e.id]
+          ? { stroke: '#00f0ff', strokeWidth: 2 }
+          : e.style,
+        labelStyle: { fill: '#00f0ff', fontSize: 10, fontFamily: 'monospace' },
+        labelBgStyle: { fill: 'rgba(0,0,0,0.7)' },
+      }))
+    : localPipeEdges;
+
+  const currentNodes = activeView === 'agent' ? agentNodes : (debug.active ? debugNodes : localPipeNodes);
+  const currentEdges = activeView === 'agent' ? agentEdges : (debug.active ? debugEdges : localPipeEdges);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg }}>
@@ -761,6 +1106,22 @@ function CanvasInner() {
             {publishing ? 'Publishing...' : 'Publish'}
           </button>
         )}
+        {activeView === 'skill' && (
+          <button onClick={() => {
+            if (debug.active) {
+              setDebug(INITIAL_DEBUG);
+            } else {
+              setDebug(prev => ({ ...INITIAL_DEBUG, active: true, testInput: prev.testInput, apiKey: prev.apiKey }));
+            }
+          }} style={{
+            background: debug.active ? 'rgba(245,158,11,0.2)' : 'rgba(100,116,139,0.1)',
+            border: `1px solid ${debug.active ? C.amber : C.outline}`,
+            color: debug.active ? C.amber : C.textMuted,
+            padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
+          }}>
+            {debug.active ? '🐛 Exit Debug' : '🐛 Debug'}
+          </button>
+        )}
         <button onClick={handleSave} disabled={saving} style={{
           background: dirty ? C.cyan : 'rgba(0,240,255,0.2)',
           border: 'none', color: '#000', fontWeight: 700,
@@ -774,6 +1135,72 @@ function CanvasInner() {
       {loadError && (
         <div style={{ background: 'rgba(239,68,68,0.1)', padding: '10px 24px', color: '#f87171', fontSize: '13px' }}>
           {loadError}
+        </div>
+      )}
+
+      {/* ── Debug bar (only in skill view when debug is active) ── */}
+      {activeView === 'skill' && debug.active && (
+        <div style={{
+          flexShrink: 0, borderBottom: `1px solid ${C.amberBorder}`,
+          background: 'rgba(245,158,11,0.06)', padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
+        }}>
+          <span style={{ color: C.amber, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', flexShrink: 0 }}>DEBUG</span>
+
+          <input
+            value={debug.testInput}
+            onChange={e => setDebug(prev => ({ ...prev, testInput: e.target.value }))}
+            placeholder="Test input message…"
+            style={{ ...inputStyle, width: '220px', fontSize: '12px' }}
+          />
+
+          <input
+            value={debug.apiKey}
+            onChange={e => setDebug(prev => ({ ...prev, apiKey: e.target.value }))}
+            placeholder="sk-ant-… Anthropic API key"
+            type="password"
+            style={{ ...inputStyle, width: '180px', fontSize: '12px' }}
+          />
+
+          <button onClick={debugRunAll} disabled={debug.mode === 'run-all' && debug.currentStepIndex < debug.executionOrder.length && debug.currentStepIndex > 0} style={{
+            background: 'rgba(74,222,128,0.1)', border: `1px solid rgba(74,222,128,0.4)`,
+            color: '#4ade80', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
+          }}>
+            ▶ Run All
+          </button>
+
+          <button onClick={debugStep} style={{
+            background: 'rgba(96,165,250,0.1)', border: `1px solid rgba(96,165,250,0.4)`,
+            color: '#60a5fa', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
+          }}>
+            ⏭ Step
+          </button>
+
+          <button onClick={debugReset} style={{
+            background: 'transparent', border: `1px solid ${C.outline}`,
+            color: C.textMuted, padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px',
+          }}>
+            ⏹ Reset
+          </button>
+
+          {/* Status indicator */}
+          {debug.error && (
+            <span style={{ color: '#f87171', fontSize: '11px', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              ✗ {debug.error}
+            </span>
+          )}
+          {!debug.error && debug.mode === 'run-all' && debug.currentStepIndex > 0 && debug.currentStepIndex >= debug.executionOrder.length && (
+            <span style={{ color: '#4ade80', fontSize: '11px' }}>✓ Complete — {debug.executionOrder.length} steps</span>
+          )}
+          {!debug.error && debug.mode === 'step' && debug.currentStepIndex > 0 && (
+            <span style={{ color: '#60a5fa', fontSize: '11px' }}>
+              Step {Math.min(debug.currentStepIndex, debug.executionOrder.length)}/{debug.executionOrder.length}
+            </span>
+          )}
+
+          <span style={{ color: '#475569', fontSize: '10px', marginLeft: 'auto' }}>
+            API key used only for debug calls — never sent to the-M server
+          </span>
         </div>
       )}
 
@@ -964,8 +1391,8 @@ function CanvasInner() {
             </ReactFlow>
           ) : (
             <ReactFlow
-              nodes={localPipeNodes}
-              edges={localPipeEdges}
+              nodes={debug.active ? debugNodes : localPipeNodes}
+              edges={debug.active ? debugEdges : localPipeEdges}
               onNodesChange={onPipeNodesChange}
               onEdgesChange={onPipeEdgesChange}
               onConnect={onPipeConnect}
@@ -1592,6 +2019,80 @@ function CanvasInner() {
                         })}
                       </div>
                     );
+                  })()}
+
+                  {/* ── Debug: output / override panel ── */}
+                  {debug.active && (() => {
+                    const nodeDebugState = debug.nodeStates[selectedNode.id];
+                    const nodeOutput = debug.nodeOutputs[selectedNode.id];
+                    const nodeError = debug.nodeErrors[selectedNode.id];
+
+                    // Step-through: show var overrides if this node is pending
+                    if (debug.mode === 'step' && nodeDebugState === 'pending') {
+                      const inEdges = localPipeEdges.filter(e => e.target === selectedNode.id);
+                      const pendingVars = inEdges.map(e => {
+                        const src = localPipeNodes.find(n => n.id === e.source);
+                        const srcData = src?.data as unknown as StepData | undefined;
+                        const varName = srcData?.step_type === 'input'
+                          ? ((srcData?.config?.bindings as Record<string,string>)?.text || 'input')
+                          : ((srcData?.config?.output_var as string) || 'output');
+                        return { varName, currentVal: String(debug.vars[varName] ?? '') };
+                      });
+                      if (pendingVars.length > 0) {
+                        return (
+                          <div style={{ marginTop: '16px', padding: '10px', background: 'rgba(245,158,11,0.08)', border: `1px solid ${C.amberBorder}`, borderRadius: '8px' }}>
+                            <div style={{ fontSize: '10px', fontWeight: 700, color: C.amber, marginBottom: '8px', letterSpacing: '0.08em' }}>
+                              STEP OVERRIDE — edit values before step runs
+                            </div>
+                            {pendingVars.map(({ varName, currentVal }) => (
+                              <div key={varName} style={{ marginBottom: '8px' }}>
+                                <label style={{ ...labelStyle, color: C.amber }}>{`{{${varName}}}`}</label>
+                                <textarea
+                                  rows={2}
+                                  value={debug.pendingVarOverrides[varName] ?? currentVal}
+                                  onChange={e => setDebug(prev => ({
+                                    ...prev,
+                                    pendingVarOverrides: { ...prev.pendingVarOverrides, [varName]: e.target.value },
+                                  }))}
+                                  style={{ ...textareaStyle, borderColor: C.amberBorder, fontSize: '11px' }}
+                                />
+                              </div>
+                            ))}
+                            <button onClick={debugStep} style={{
+                              width: '100%', background: 'rgba(96,165,250,0.1)', border: `1px solid rgba(96,165,250,0.4)`,
+                              color: '#60a5fa', padding: '6px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
+                            }}>
+                              ⏭ Execute this step
+                            </button>
+                          </div>
+                        );
+                      }
+                    }
+
+                    // Show output after step ran
+                    if (nodeDebugState === 'done' && nodeOutput !== undefined) {
+                      return (
+                        <div style={{ marginTop: '16px', padding: '10px', background: 'rgba(74,222,128,0.06)', border: `1px solid rgba(74,222,128,0.3)`, borderRadius: '8px' }}>
+                          <div style={{ fontSize: '10px', fontWeight: 700, color: C.green, marginBottom: '6px', letterSpacing: '0.08em' }}>DEBUG OUTPUT</div>
+                          <pre style={{ color: '#e2e8f0', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>
+                            {nodeOutput || '(empty)'}
+                          </pre>
+                        </div>
+                      );
+                    }
+
+                    if (nodeDebugState === 'error' && nodeError) {
+                      return (
+                        <div style={{ marginTop: '16px', padding: '10px', background: 'rgba(248,113,113,0.06)', border: `1px solid rgba(248,113,113,0.3)`, borderRadius: '8px' }}>
+                          <div style={{ fontSize: '10px', fontWeight: 700, color: '#f87171', marginBottom: '6px', letterSpacing: '0.08em' }}>DEBUG ERROR</div>
+                          <pre style={{ color: '#f87171', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>
+                            {nodeError}
+                          </pre>
+                        </div>
+                      );
+                    }
+
+                    return null;
                   })()}
 
                 </>
