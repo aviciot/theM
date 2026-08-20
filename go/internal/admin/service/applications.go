@@ -317,12 +317,20 @@ func (s *AppService) encryptKey(plainKey string) (string, error) {
 }
 
 // decryptKey reverses encryptKey.
+// Handles three cases:
+//   - "plain:" prefix: test-mode plaintext (no crypto key configured)
+//   - "enc:" prefix: AES-GCM ciphertext from crypto.EncryptStored
+//   - anything else: legacy plaintext row written before encryption was added; returned as-is
 func (s *AppService) decryptKey(ct string) (string, error) {
 	if len(s.cryptoKey) == 0 {
-		// test mode: strip "plain:" prefix
 		if len(ct) > 6 && ct[:6] == "plain:" {
 			return ct[6:], nil
 		}
+		return ct, nil
+	}
+	// Legacy plaintext row: crypto.EncryptStored always produces "enc:..." — if the
+	// stored value has no such prefix it was written before encryption was introduced.
+	if len(ct) < 4 || ct[:4] != "enc:" {
 		return ct, nil
 	}
 	return crypto.DecryptStored(s.cryptoKey, ct)
@@ -338,15 +346,54 @@ func parseProviderKeys(raw []byte) (map[string]providerKeyEntry, error) {
 	// Try new structured format first.
 	var structured map[string]providerKeyEntry
 	if err := json.Unmarshal(raw, &structured); err == nil {
-		// Verify it's actually the structured format (has "ct" key somewhere), not accidentally
-		// parsed a flat string map into zero-value structs.
+		// Check whether any entry actually uses the structured schema.
+		// A flat string map like {"anthropic": "sk-ant-..."} will also unmarshal here into
+		// zero-value structs — we distinguish the two by trying a flat unmarshal only when
+		// no entry has an "ct" field AND the flat unmarshal also succeeds.
+		// If the structured unmarshal succeeded AND every entry has empty CT, the row is
+		// either a legitimate new-format row with no keys set (return empty map) OR a legacy
+		// flat-string row (fall through to flat unmarshal).
+		// We fall through only when a flat unmarshal of the same bytes also succeeds.
+		hasStructured := false
 		for _, e := range structured {
-			if e.CT != "" {
-				return structured, nil
+			if e.CT != "" || e.Hint != "" {
+				hasStructured = true
+				break
 			}
 		}
+		if hasStructured {
+			return structured, nil
+		}
+		// All entries are zero-value — could be new-format (no keys set) or legacy flat.
+		// Try flat; if flat fails or all values are empty objects, treat as new-format (empty).
+		var flat map[string]string
+		if err2 := json.Unmarshal(raw, &flat); err2 != nil {
+			// Bytes are valid JSON objects but not flat strings — new format with empty keys.
+			return map[string]providerKeyEntry{}, nil
+		}
+		// If every flat value is also empty, we can't distinguish — return empty.
+		hasFlat := false
+		for _, v := range flat {
+			if v != "" {
+				hasFlat = true
+				break
+			}
+		}
+		if !hasFlat {
+			return map[string]providerKeyEntry{}, nil
+		}
+		// Legacy flat-string row — convert to providerKeyEntry with CT = plaintext.
+		out := make(map[string]providerKeyEntry, len(flat))
+		for p, v := range flat {
+			hint := ""
+			if len(v) >= 4 {
+				hint = v[len(v)-4:]
+			}
+			out[p] = providerKeyEntry{CT: v, Hint: hint}
+		}
+		return out, nil
 	}
-	// Fall back to legacy flat string map {"provider": "plaintext"}.
+	// Structured unmarshal itself failed — try legacy flat string map.
 	var flat map[string]string
 	if err := json.Unmarshal(raw, &flat); err != nil {
 		return nil, fmt.Errorf("parse provider_keys: %w", err)

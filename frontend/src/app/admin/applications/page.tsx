@@ -6420,6 +6420,12 @@ export default function ApplicationsPage() {
   }, []);
   const [selectedApps, setSelectedApps] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [pageToast, setPageToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+  function showListToast(msg: string, ok: boolean) {
+    setPageToast({ msg, ok });
+    setTimeout(() => setPageToast(null), 3000);
+  }
 
   async function load() {
     setLoading(true);
@@ -6582,6 +6588,17 @@ export default function ApplicationsPage() {
           onBulkDelete={handleBulkDelete}
           bulkDeleting={bulkDeleting}
         />
+        {pageToast && (
+          <div style={{
+            position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+            background: pageToast.ok ? C.greenBg : 'rgba(239,68,68,0.12)',
+            border: `1px solid ${pageToast.ok ? C.greenBorder : 'rgba(239,68,68,0.3)'}`,
+            color: pageToast.ok ? C.green : '#f87171',
+            borderRadius: 10, padding: '10px 20px', fontSize: 13, fontWeight: 600,
+          }}>
+            {pageToast.msg}
+          </div>
+        )}
       </div>
     </AuthGuard>
   );

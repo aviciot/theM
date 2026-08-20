@@ -14,6 +14,7 @@ package workerconfig
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -224,30 +225,51 @@ func (l *PgxLoader) resolveAgentSlugs(ctx context.Context, ids []string) ([]stri
 	return slugs, nil
 }
 
-// loadProviderKey reads and decrypts the key from applications.provider_keys JSONB.
+// loadProviderKey reads and decrypts the key for one provider from applications.provider_keys.
 // Returns empty string when the application is not found or no key is stored.
-// Keys are stored as Fernet-encrypted JSON strings: {"anthropic": "enc:..."}.
+//
+// provider_keys JSONB stores two formats:
+//   - New (encrypted): {"anthropic": {"ct": "enc:...", "hint": "XXXX"}}
+//   - Legacy (plaintext): {"anthropic": "sk-ant-..."}
+//
+// Both are handled transparently.
 func (l *PgxLoader) loadProviderKey(ctx context.Context, applicationID, provider string) (string, error) {
-	const q = `SELECT COALESCE(provider_keys->$2, 'null'::jsonb)::text
-	           FROM them.applications
-	           WHERE id = $1::uuid`
-	var raw string
-	if err := l.pool.QueryRow(ctx, q, applicationID, provider).Scan(&raw); err != nil {
+	const q = `SELECT COALESCE(provider_keys, '{}') FROM them.applications WHERE id = $1::uuid`
+	var raw []byte
+	if err := l.pool.QueryRow(ctx, q, applicationID).Scan(&raw); err != nil {
 		return "", err
 	}
-	// raw is a JSON string: `"enc:..."` or `null`
-	if raw == "null" || raw == "" {
-		return "", nil
+
+	// Try new structured format: {"provider": {"ct": "enc:...", "hint": "XXXX"}}.
+	type entry struct {
+		CT string `json:"ct"`
 	}
-	// Strip JSON string quotes.
-	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-		raw = raw[1 : len(raw)-1]
+	var structured map[string]entry
+	if err := json.Unmarshal(raw, &structured); err == nil {
+		if e, ok := structured[provider]; ok && e.CT != "" {
+			return l.decryptValue(e.CT)
+		}
+		// Check if any entry has a structured shape (not a flat string map).
+		for _, e := range structured {
+			if e.CT != "" {
+				// Structured format confirmed; this provider has no key.
+				return "", nil
+			}
+		}
 	}
-	return l.decryptValue(raw)
+
+	// Legacy flat format: {"provider": "plaintext"}.
+	var flat map[string]string
+	if err := json.Unmarshal(raw, &flat); err == nil {
+		if v, ok := flat[provider]; ok && v != "" {
+			return v, nil
+		}
+	}
+	return "", nil
 }
 
-// decryptValue decrypts a Fernet-encrypted value (with "enc:" prefix) or returns
-// the value as-is if it is not encrypted (legacy plain-text entries).
+// decryptValue decrypts a stored value encrypted by crypto.EncryptStored.
+// Returns the value as-is when no fernetKey is configured (graceful degradation / tests).
 func (l *PgxLoader) decryptValue(stored string) (string, error) {
 	if len(l.fernetKey) == 0 {
 		// No key configured — return as-is (graceful degradation).

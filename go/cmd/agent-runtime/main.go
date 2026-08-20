@@ -335,13 +335,14 @@ func (rt *Runtime) loadAppAPIKey(ctx context.Context, appID string) map[string]s
 
 	// Try new structured format {"anthropic": {"ct": "...", "hint": "XXXX"}}.
 	type entry struct {
-		CT string `json:"ct"`
+		CT   string `json:"ct"`
+		Hint string `json:"hint"`
 	}
 	var structured map[string]entry
 	if err := json.Unmarshal(raw, &structured); err == nil {
 		out := make(map[string]string, len(structured))
 		for provider, e := range structured {
-			if e.CT == "" {
+			if e.CT == "" && e.Hint == "" {
 				continue
 			}
 			plain, err := crypto.DecryptStored(rt.cryptoKey, e.CT)
@@ -350,7 +351,12 @@ func (rt *Runtime) loadAppAPIKey(ctx context.Context, appID string) map[string]s
 				// This handles the migration window until keys are re-encrypted.
 				if len(e.CT) > 6 && e.CT[:6] == "plain:" {
 					out[provider] = e.CT[6:]
+					continue
 				}
+				// Decryption failed for an encrypted entry — likely a key rotation mismatch.
+				// Log at warn so operators can detect and re-save affected keys.
+				slog.Warn("agent-runtime: provider key decryption failed; falling back to platform key",
+					"app_id", appID, "provider", provider, "err", err)
 				continue
 			}
 			out[provider] = plain

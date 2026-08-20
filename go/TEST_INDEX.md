@@ -1052,7 +1052,7 @@ is reached indirectly. Includes regression tests for the empty-CT fall-through b
 | `TestGetProviderKeys_EmptyCTStructured_ReturnsEmpty` | PK-8 (regression): `{"anthropic":{"ct":"","hint":""}}` → empty list, no error (was: parse error due to flat-unmarshal fall-through) |
 | `TestGetPlaintextProviderKey_EmptyCTStructured_ReturnsEmpty` | PK-9 (regression): same all-empty CT row → empty string, no error |
 
-**Trigger:** any change to `internal/admin/service/applications.go` (provider key methods) OR `internal/admin/service/provider_keys_test.go`
+**Trigger:** any change to `internal/admin/service/applications.go` (provider key methods), `go/cmd/agent-runtime/main.go` (`loadAppAPIKey`), OR `internal/admin/service/provider_keys_test.go`
 
 ---
 
@@ -1217,6 +1217,21 @@ distinct and correctly named.
 Note: `WorkflowInput.OrchestratorName` is set from `EPConfig.OrchestratorName` (resolved via JOIN from `app_orchestrators`). `WorkflowInput.AppOrchestratorID` carries the authoritative UUID for the Go Temporal worker to use for resolution. The Go worker MUST resolve orchestrators by UUID, never by name globally (SEC-04 architectural constraint).
 
 **Trigger:** any change to `internal/temporal/activities.go`, `internal/temporal/workflow.go`, or `cmd/worker/main.go`
+
+---
+
+### S1-61 · Workerconfig provider key format — `internal/temporal/workerconfig/loader_test.go`
+
+**Purpose:** Verifies that `PgxLoader` constructs without panicking and that `RunConfig` zero values
+signal global-key fallback correctly. The `loadProviderKey` function is integration-tested via the
+live DB path; these unit tests cover construction and type contracts only.
+
+| Test | What it proves |
+|---|---|
+| `TestRunConfig_ZeroValue` | Zero-value `RunConfig` has empty LLMProvider+LLMAPIKey (global fallback signal) |
+| `TestPgxLoader_NewPgxLoader` | `NewPgxLoader(nil, nil)` returns non-nil; `*PgxLoader` satisfies `Loader` interface |
+
+**Trigger:** any change to `internal/temporal/workerconfig/loader.go`
 
 ---
 
@@ -1724,6 +1739,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/history/pgx.go` | S1-46 |
 | `internal/summarizer/summarizer.go` | S1-47 |
 | `internal/temporal/activities.go`, `internal/temporal/workflow.go` | S1-29 |
+| `internal/temporal/workerconfig/loader.go` | S1-61 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 |
@@ -1850,7 +1866,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-51 | agent definition publish service | 11 |
 | S1-52 | dashboard WebSocket handler | 11 |
 | S1-53 | agent-runtime spec cache | 2 |
-| **S1 total** | | **685** |
+| S1-60 | admin/service provider key encryption | 9 |
+| S1-61 | temporal/workerconfig loader contracts | 2 |
+| **S1 total** | | **696** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
