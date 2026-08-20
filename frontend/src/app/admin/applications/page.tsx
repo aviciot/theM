@@ -1599,70 +1599,9 @@ function PropertiesPanel({
                 {/* LLM section — shown when at least one non-webrtc EP is connected, or webrtc */}
                 {(hasLlmEp || hasWebrtc) && (
                   <>
-                    {/* LLM Provider */}
-                    <div style={fieldWrap}>
-                      <label style={labelStyle}>LLM Provider</label>
-                      <select
-                        style={{ ...inputStyle, cursor: 'pointer' }}
-                        value={currentProvider}
-                        onChange={e => {
-                          const p = e.target.value;
-                          const firstModel = ORCH_PROVIDERS[p]?.[0] ?? '';
-                          onUpdateNode(selectedNode.id, { llmProvider: p || null, llmModel: firstModel || null, model: firstModel || null });
-                        }}
-                      >
-                        <option value="">— inherit default —</option>
-                        {Object.keys(ORCH_PROVIDERS).map(p => <option key={p} value={p}>{p}</option>)}
-                      </select>
-                    </div>
-
-                    {/* LLM Model */}
-                    <div style={fieldWrap}>
-                      <label style={labelStyle}>LLM Model</label>
-                      {knownModels.length > 0 ? (
-                        <>
-                          <select
-                            style={{ ...inputStyle, cursor: 'pointer', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
-                            value={selectVal}
-                            onChange={e => {
-                              const v = e.target.value;
-                              if (v !== CUSTOM) onUpdateNode(selectedNode.id, { llmModel: v, model: v });
-                              else onUpdateNode(selectedNode.id, { llmModel: '', model: '' });
-                            }}
-                          >
-                            {knownModels.map(m => <option key={m} value={m}>{m}</option>)}
-                            <option value={CUSTOM}>Custom…</option>
-                          </select>
-                          {(selectVal === CUSTOM || isCustomModel) && (
-                            <input
-                              style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11, marginTop: 6 }}
-                              value={d.llmModel ?? ''}
-                              onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })}
-                              placeholder="Enter model ID"
-                              autoFocus
-                            />
-                          )}
-                        </>
-                      ) : (
-                        <input
-                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
-                          value={d.llmModel ?? ''}
-                          onChange={e => onUpdateNode(selectedNode.id, { llmModel: e.target.value, model: e.target.value })}
-                          placeholder="e.g. claude-sonnet-4-6"
-                        />
-                      )}
-                    </div>
-
-                    {/* API Key */}
-                    <div style={fieldWrap}>
-                      <label style={labelStyle}>API Key</label>
-                      <input
-                        type="password"
-                        style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}
-                        value={d.llmApiKey ?? ''}
-                        onChange={e => onUpdateNode(selectedNode.id, { llmApiKey: e.target.value })}
-                        placeholder={d.appOrchestratorId ? '••••••••  (leave blank to keep existing)' : 'Enter API key'}
-                      />
+                    {/* LLM notice */}
+                    <div style={{ padding: '8px 10px', borderRadius: 7, background: 'rgba(208,188,255,0.06)', border: '1px solid rgba(208,188,255,0.15)', fontSize: 11, color: C.textMuted, marginBottom: 4 }}>
+                      LLM provider, model &amp; API key are configured in <strong style={{ color: C.purple }}>App Runtime → LLM Configuration</strong>.
                     </div>
 
                     {/* System Prompt */}
@@ -1721,39 +1660,6 @@ function PropertiesPanel({
                       </div>
                     </div>
 
-                    {/* Test LLM connection */}
-                    {d.llmProvider && d.llmModel && (
-                      <div style={{ marginTop: 4, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                        <button
-                          onClick={() => testOrchLlm(d)}
-                          disabled={orchTestState.loading || !d.appOrchestratorId}
-                          title={!d.appOrchestratorId ? 'Save the application first to enable testing' : undefined}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 6,
-                            padding: '7px 14px', borderRadius: 8,
-                            border: `1px solid ${C.purpleBorder}`,
-                            background: 'rgba(208,188,255,0.07)',
-                            color: (!d.appOrchestratorId || orchTestState.loading) ? C.textMuted : C.purple,
-                            cursor: (!d.appOrchestratorId || orchTestState.loading) ? 'not-allowed' : 'pointer',
-                            fontSize: 12, fontWeight: 600, opacity: !d.appOrchestratorId ? 0.5 : 1,
-                            transition: 'all 150ms',
-                          }}
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: 15 }}>bolt</span>
-                          {orchTestState.loading ? 'Testing…' : 'Test connection'}
-                        </button>
-                        {!orchTestState.loading && orchTestState.ok !== undefined && (
-                          orchTestState.ok
-                            ? <span style={{ fontSize: 12, color: '#4edea3', fontWeight: 600 }}>✓ Connected ({orchTestState.latency}ms)</span>
-                            : <span style={{ fontSize: 12, color: '#f87171' }}>✗ {orchTestState.error ?? 'Failed'}</span>
-                        )}
-                        {!d.appOrchestratorId && (
-                          <span style={{ fontSize: 11, color: C.textMuted }}>
-                            Save the application first to enable testing
-                          </span>
-                        )}
-                      </div>
-                    )}
 
                     {/* Connected Agents read-only */}
                     <div style={fieldWrap}>
@@ -5350,11 +5256,11 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
   const [orchSaving, setOrchSaving] = useState<string | null>(null);
   const [orchMsg, setOrchMsg] = useState<Record<string, string>>({});
 
-  const DEFAULT_MODELS: Record<string, string> = {
-    anthropic: 'claude-haiku-4-5-20251001',
-    openai: 'gpt-4o-mini',
-    groq: 'llama3-8b-8192',
-    gemini: 'gemini-1.5-flash',
+  const RUNTIME_MODELS: Record<string, string[]> = {
+    anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+    openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+    groq:      ['llama3-70b-8192', 'llama3-8b-8192', 'mixtral-8x7b-32768'],
+    gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'],
   };
 
   useEffect(() => {
@@ -5406,7 +5312,7 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
     setKeyTesting(provider);
     setKeyTestMsg(m => ({ ...m, [provider]: '' }));
     try {
-      const model = DEFAULT_MODELS[provider] ?? 'unknown';
+      const model = RUNTIME_MODELS[provider]?.[0] ?? 'unknown';
       const res = await themApi.testAppLlm(app.id, provider, model);
       if (res.ok) {
         setKeyTestMsg(m => ({ ...m, [provider]: `✓ ${res.latency_ms}ms` }));
@@ -5610,47 +5516,50 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
           <div style={sectionStyle}>
             <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>LLM Configuration</div>
             <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
-              Assign a provider and model to each orchestrator. Only providers with a saved key are available.
+              Assign a provider and model to each orchestrator. Providers with a saved key are marked ✓.
             </div>
-            {setProviders.length === 0 && (
-              <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic' }}>Set an API key above first.</div>
-            )}
             {orchLLMs.map(orch => {
               const isBusy = orchSaving === orch.id;
               const msg = orchMsg[orch.id] ?? '';
               const isError = msg && msg !== 'Saved';
               const canSave = orch.provider && orch.model;
               return (
-                <div key={orch.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <div style={{ width: 130, flexShrink: 0, fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={orch.displayName}>
-                    {orch.displayName}
+                <div key={orch.id} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.12)', marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                    {orch.displayName || orch.name}
                   </div>
-                  {/* Provider dropdown — only shows providers with a key set */}
-                  <select
-                    value={orch.provider}
-                    onChange={e => setOrchLLMs(prev => prev.map(o => o.id === orch.id ? { ...o, provider: e.target.value, model: DEFAULT_MODELS[e.target.value] ?? '' } : o))}
-                    style={{ ...fieldStyle, width: 130, fontSize: 13 }}
-                    disabled={setProviders.length === 0}
-                  >
-                    <option value="">— provider —</option>
-                    {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                  {/* Model input */}
-                  <input
-                    type="text"
-                    placeholder="model name"
-                    value={orch.model}
-                    onChange={e => setOrchLLMs(prev => prev.map(o => o.id === orch.id ? { ...o, model: e.target.value } : o))}
-                    style={{ ...fieldStyle, flex: 1, minWidth: 180, fontSize: 13 }}
-                  />
-                  <button
-                    onClick={() => handleSaveOrchLLM(orch.id)}
-                    disabled={isBusy || !canSave}
-                    style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', opacity: isBusy || !canSave ? 0.5 : 1 }}
-                  >
-                    {isBusy ? '…' : 'Save'}
-                  </button>
-                  {msg && <span style={{ fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {/* Provider — only shows providers with a saved key */}
+                    <select
+                      value={orch.provider}
+                      onChange={e => {
+                        const p = e.target.value;
+                        setOrchLLMs(prev => prev.map(o => o.id === orch.id ? { ...o, provider: p, model: RUNTIME_MODELS[p]?.[0] ?? '' } : o));
+                      }}
+                      style={{ ...fieldStyle, width: 160, fontSize: 13, flexShrink: 0 }}
+                    >
+                      <option value="">— select provider —</option>
+                      {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                    {/* Model — dropdown of known models for the chosen provider */}
+                    <select
+                      value={orch.model}
+                      onChange={e => setOrchLLMs(prev => prev.map(o => o.id === orch.id ? { ...o, model: e.target.value } : o))}
+                      style={{ ...fieldStyle, flex: 1, fontSize: 12, fontFamily: 'JetBrains Mono, monospace', flexShrink: 1 }}
+                      disabled={!orch.provider}
+                    >
+                      <option value="">— select model —</option>
+                      {(RUNTIME_MODELS[orch.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <button
+                      onClick={() => handleSaveOrchLLM(orch.id)}
+                      disabled={isBusy || !canSave}
+                      style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0, opacity: isBusy || !canSave ? 0.5 : 1 }}
+                    >
+                      {isBusy ? '…' : 'Save'}
+                    </button>
+                  </div>
+                  {msg && <div style={{ marginTop: 6, fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
                 </div>
               );
             })}
