@@ -495,10 +495,7 @@ type anthropicLLMFactory struct {
 
 func (f *anthropicLLMFactory) NewProvider(provider, model string, maxTokens int, apiKey string) (agentgen.LLMProvider, error) {
 	if apiKey == "" {
-		apiKey = f.platformKey
-	}
-	if apiKey == "" {
-		return nil, fmt.Errorf("no API key available (no slot bound and no platform key)")
+		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime", provider)
 	}
 	p := llm.NewAnthropicProvider(apiKey, model, maxTokens)
 	return &anthropicProviderAdapter{p: p}, nil
