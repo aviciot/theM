@@ -5222,7 +5222,14 @@ function useDashSessions(token: string | null, appId: string | null): {
 // ── RuntimeView ───────────────────────────────────────────────────────────────
 const PROVIDER_LIST = ['anthropic', 'openai', 'groq', 'gemini'] as const;
 
-function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) {
+const RUNTIME_MODELS: Record<string, string[]> = {
+  anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+  openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+  groq:      ['llama3-70b-8192', 'llama3-8b-8192', 'mixtral-8x7b-32768'],
+  gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'],
+};
+
+function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; onBack: () => void; onOrchSaved?: (orchId: string, provider: string, model: string) => void }) {
   const emptyRuntime = { max_concurrent_sessions: null, rate_limit_rpm: null, blocked_tokens: [], blocked_user_ids: [], session_timeout_minutes: null };
   const [cfg, setCfg] = useState<import('@/lib/api').AppRuntimeConfig>(app.runtime_config ?? emptyRuntime);
   const [saving, setSaving] = useState(false);
@@ -5255,13 +5262,6 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
   );
   const [orchSaving, setOrchSaving] = useState<string | null>(null);
   const [orchMsg, setOrchMsg] = useState<Record<string, string>>({});
-
-  const RUNTIME_MODELS: Record<string, string[]> = {
-    anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
-    openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
-    groq:      ['llama3-70b-8192', 'llama3-8b-8192', 'mixtral-8x7b-32768'],
-    gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'],
-  };
 
   useEffect(() => {
     themApi.getProviderKeys(app.id)
@@ -5334,6 +5334,7 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
       await themApi.patchOrchestratorLLM(app.id, orchId, orch.provider, orch.model);
       setOrchMsg(m => ({ ...m, [orchId]: 'Saved' }));
       setTimeout(() => setOrchMsg(m => ({ ...m, [orchId]: '' })), 2500);
+      onOrchSaved?.(orchId, orch.provider, orch.model);
     } catch (e: unknown) {
       setOrchMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Failed' }));
     } finally {
@@ -5534,7 +5535,12 @@ function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) 
                       value={orch.provider}
                       onChange={e => {
                         const p = e.target.value;
-                        setOrchLLMs(prev => prev.map(o => o.id === orch.id ? { ...o, provider: p, model: RUNTIME_MODELS[p]?.[0] ?? '' } : o));
+                        setOrchLLMs(prev => prev.map(o => {
+                          if (o.id !== orch.id) return o;
+                          const models = RUNTIME_MODELS[p] ?? [];
+                          const model = models.includes(o.model) ? o.model : (models[0] ?? '');
+                          return { ...o, provider: p, model };
+                        }));
                       }}
                       style={{ ...fieldStyle, width: 160, fontSize: 13, flexShrink: 0 }}
                     >
@@ -6541,6 +6547,17 @@ export default function ApplicationsPage() {
             <RuntimeView
               app={runtimeApp}
               onBack={backToList}
+              onOrchSaved={(orchId, provider, model) => {
+                setRuntimeApp(prev => {
+                  if (!prev) return prev;
+                  return {
+                    ...prev,
+                    app_orchestrators: (prev.app_orchestrators ?? []).map(o =>
+                      o.id === orchId ? { ...o, llm_provider: provider, llm_model: model } : o
+                    ),
+                  };
+                });
+              }}
             />
           </div>
         </div>

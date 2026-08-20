@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -175,7 +176,11 @@ WHERE ep.id = $1::uuid`
 	if providerName == "" {
 		providerName = "anthropic"
 	}
-	apiKey, _ := l.loadProviderKey(ctx, applicationID, providerName)
+	apiKey, keyErr := l.loadProviderKey(ctx, applicationID, providerName)
+	if keyErr != nil {
+		slog.Warn("workerconfig: failed to decrypt provider key — falling back to global",
+			"app_id", applicationID, "provider", providerName, "error", keyErr)
+	}
 
 	// Summarizer key comes from app provider_keys using the EP-configured provider.
 	sumProvider := ""
@@ -188,7 +193,12 @@ WHERE ep.id = $1::uuid`
 	}
 	sumAPIKey := ""
 	if memoryEnabled && sumProvider != "" {
-		sumAPIKey, _ = l.loadProviderKey(ctx, applicationID, sumProvider)
+		var sumKeyErr error
+		sumAPIKey, sumKeyErr = l.loadProviderKey(ctx, applicationID, sumProvider)
+		if sumKeyErr != nil {
+			slog.Warn("workerconfig: failed to decrypt summarizer key — memory disabled for run",
+				"app_id", applicationID, "provider", sumProvider, "error", sumKeyErr)
+		}
 	}
 
 	return RunConfig{

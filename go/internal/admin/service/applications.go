@@ -434,7 +434,10 @@ func (s *AppService) SetOrchestratorLLM(ctx context.Context, tenantID, appID, or
 	if !hasKey {
 		return unprocessable("no API key stored for provider " + provider + " — save one in Runtime settings first")
 	}
-	return s.dal.SetOrchestratorLLM(ctx, appID, orchID, provider, model)
+	if err := s.dal.SetOrchestratorLLM(ctx, appID, orchID, provider, model); err != nil {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // DeleteProviderKey removes the key for one provider from the application.

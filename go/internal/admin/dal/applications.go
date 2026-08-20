@@ -314,8 +314,10 @@ func (d *DB) SetOrchestratorLLM(ctx context.Context, appID, orchID, provider, mo
 	const q = `
 		UPDATE them.app_orchestrators
 		SET llm_provider = $3, llm_model = $4, updated_at = now()
-		WHERE id = $1::uuid AND application_id = $2::uuid`
-	return d.q.Exec(ctx, q, orchID, appID, provider, model)
+		WHERE id = $1::uuid AND application_id = $2::uuid
+		RETURNING id`
+	var id string
+	return d.q.ExecReturning(ctx, q, orchID, appID, provider, model).Scan(&id)
 }
 
 // BulkDeleteApplications hard-deletes applications matching the provided UUID list,

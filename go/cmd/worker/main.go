@@ -269,9 +269,12 @@ func (f *runOrchestratorFactory) resolveProvider(cfg workerconfig.RunConfig) llm
 		switch cfg.LLMProvider {
 		case "anthropic":
 			return llm.NewAnthropicProvider(cfg.LLMAPIKey, cfg.OrchestratorConfig.Model, 0)
-		// Future: openai, gemini, groq — add cases here as providers are implemented
 		default:
-			f.logger.Warn("workerconfig: unknown provider — falling back to global",
+			// Provider is configured and a key is stored but the worker has no
+			// implementation for it yet. Log an error and fall back to the global
+			// provider so the run fails with a clear auth error rather than silently
+			// billing a different account.
+			f.logger.Error("workerconfig: provider not yet implemented in worker — using global fallback",
 				"provider", cfg.LLMProvider)
 		}
 	}
