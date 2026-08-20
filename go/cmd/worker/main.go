@@ -222,10 +222,13 @@ type runOrchestratorFactory struct {
 }
 
 // Build creates a per-run orchestrator from the loaded RunConfig.
-// LLM provider selection: if RunConfig.LLMAPIKey is set, use it for the
-// chosen provider; otherwise fall back to the global provider.
-func (f *runOrchestratorFactory) Build(cfg workerconfig.RunConfig) temporal.OrchestratorRunner {
-	provider := f.resolveProvider(cfg)
+// Returns an error when no API key is configured for the provider — the caller
+// surfaces this as a non-retryable run failure so the user gets a clear message.
+func (f *runOrchestratorFactory) Build(cfg workerconfig.RunConfig) (temporal.OrchestratorRunner, error) {
+	provider, err := f.resolveProvider(cfg)
+	if err != nil {
+		return nil, err
+	}
 	// Copy resolved provider name into OrchestratorConfig so RecordUsage gets
 	// the correct provider string (LLMProvider lives on RunConfig, not the nested Config).
 	if cfg.LLMProvider != "" {
@@ -241,18 +244,23 @@ func (f *runOrchestratorFactory) Build(cfg workerconfig.RunConfig) temporal.Orch
 
 	// Wire summarizer if memory is enabled and a provider is configured.
 	if cfg.OrchestratorConfig.MemoryEnabled && cfg.SummarizerProvider != "" {
-		sumProvider := f.resolveSummarizerProvider(cfg)
-		sum := summarizer.New(sumProvider, cfg.SummarizerModel, f.logger)
-		sumCfg := orchestrator.SummaryConfig{
-			MemoryEnabled:   true,
-			SummarizeEveryN: cfg.OrchestratorConfig.SummarizeEveryNCalls,
-			RawFallbackN:    cfg.OrchestratorConfig.MemoryRawFallbackN,
-			HistoryWindow:   cfg.OrchestratorConfig.HistoryWindow,
+		sumProvider, sumErr := f.resolveSummarizerProvider(cfg)
+		if sumErr != nil {
+			f.logger.Warn("workerconfig: summarizer provider unavailable — memory disabled for run",
+				"error", sumErr)
+		} else {
+			sum := summarizer.New(sumProvider, cfg.SummarizerModel, f.logger)
+			sumCfg := orchestrator.SummaryConfig{
+				MemoryEnabled:   true,
+				SummarizeEveryN: cfg.OrchestratorConfig.SummarizeEveryNCalls,
+				RawFallbackN:    cfg.OrchestratorConfig.MemoryRawFallbackN,
+				HistoryWindow:   cfg.OrchestratorConfig.HistoryWindow,
+			}
+			orch = orch.WithSummarizer(sum, f.historyStore, sumCfg)
 		}
-		orch = orch.WithSummarizer(sum, f.historyStore, sumCfg)
 	}
 
-	return orch
+	return orch, nil
 }
 
 // buildFallback returns a static orchestrator used when AppOrchestratorID is
@@ -263,36 +271,29 @@ func (f *runOrchestratorFactory) buildFallback() temporal.OrchestratorRunner {
 }
 
 // resolveProvider selects and constructs the LLM provider for one run.
-// Priority: per-app key for the named provider → global provider.
-func (f *runOrchestratorFactory) resolveProvider(cfg workerconfig.RunConfig) llm.Provider {
-	if cfg.LLMAPIKey != "" && cfg.LLMProvider != "" {
-		switch cfg.LLMProvider {
-		case "anthropic":
-			return llm.NewAnthropicProvider(cfg.LLMAPIKey, cfg.OrchestratorConfig.Model, 0)
-		default:
-			// Provider is configured and a key is stored but the worker has no
-			// implementation for it yet. Log an error and fall back to the global
-			// provider so the run fails with a clear auth error rather than silently
-			// billing a different account.
-			f.logger.Error("workerconfig: provider not yet implemented in worker — using global fallback",
-				"provider", cfg.LLMProvider)
-		}
+// Returns (nil, error) when no per-app key is stored or the provider is unknown —
+// the caller must treat this as a non-retryable run failure.
+func (f *runOrchestratorFactory) resolveProvider(cfg workerconfig.RunConfig) (llm.Provider, error) {
+	if cfg.LLMAPIKey == "" {
+		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime", cfg.LLMProvider)
 	}
-	return f.globalProvider
+	switch cfg.LLMProvider {
+	case "anthropic":
+		return llm.NewAnthropicProvider(cfg.LLMAPIKey, cfg.OrchestratorConfig.Model, 0), nil
+	default:
+		return nil, fmt.Errorf("provider %q is not yet supported in the Go worker", cfg.LLMProvider)
+	}
 }
 
 // resolveSummarizerProvider selects and constructs the LLM provider for the summarizer.
-// Uses the summarizer-specific key/provider if available, otherwise falls back to
-// the global provider.
-func (f *runOrchestratorFactory) resolveSummarizerProvider(cfg workerconfig.RunConfig) llm.Provider {
-	if cfg.SummarizerAPIKey != "" && cfg.SummarizerProvider != "" {
-		switch cfg.SummarizerProvider {
-		case "anthropic":
-			return llm.NewAnthropicProvider(cfg.SummarizerAPIKey, cfg.SummarizerModel, 0)
-		default:
-			f.logger.Warn("workerconfig: unknown summarizer provider — falling back to global",
-				"provider", cfg.SummarizerProvider)
-		}
+func (f *runOrchestratorFactory) resolveSummarizerProvider(cfg workerconfig.RunConfig) (llm.Provider, error) {
+	if cfg.SummarizerAPIKey == "" {
+		return nil, fmt.Errorf("no API key configured for summarizer provider %q", cfg.SummarizerProvider)
 	}
-	return f.globalProvider
+	switch cfg.SummarizerProvider {
+	case "anthropic":
+		return llm.NewAnthropicProvider(cfg.SummarizerAPIKey, cfg.SummarizerModel, 0), nil
+	default:
+		return nil, fmt.Errorf("summarizer provider %q is not yet supported", cfg.SummarizerProvider)
+	}
 }

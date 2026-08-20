@@ -225,9 +225,9 @@ type fakeOrchestratorFactory struct {
 	built []workerconfig.RunConfig
 }
 
-func (f *fakeOrchestratorFactory) Build(cfg workerconfig.RunConfig) temporal.OrchestratorRunner {
+func (f *fakeOrchestratorFactory) Build(cfg workerconfig.RunConfig) (temporal.OrchestratorRunner, error) {
 	f.built = append(f.built, cfg)
-	return &fakeOrchestratorRunner{}
+	return &fakeOrchestratorRunner{}, nil
 }
 
 // TestRunOrchestratorActivity_UsesPerRunConfigWhenAvailable verifies that when

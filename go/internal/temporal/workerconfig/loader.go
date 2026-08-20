@@ -178,8 +178,7 @@ WHERE ep.id = $1::uuid`
 	}
 	apiKey, keyErr := l.loadProviderKey(ctx, applicationID, providerName)
 	if keyErr != nil {
-		slog.Warn("workerconfig: failed to decrypt provider key — falling back to global",
-			"app_id", applicationID, "provider", providerName, "error", keyErr)
+		return RunConfig{}, fmt.Errorf("workerconfig: decrypt provider key for %s: %w", providerName, keyErr)
 	}
 
 	// Summarizer key comes from app provider_keys using the EP-configured provider.

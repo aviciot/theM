@@ -21,9 +21,10 @@ type OrchestratorRunner interface {
 }
 
 // OrchestratorFactory builds a per-run orchestrator from a loaded RunConfig.
+// Returns an error when the config is invalid (e.g. no API key set for the provider).
 // Implemented by runOrchestratorFactory in cmd/worker/main.go; tests may inject a fake.
 type OrchestratorFactory interface {
-	Build(cfg workerconfig.RunConfig) OrchestratorRunner
+	Build(cfg workerconfig.RunConfig) (OrchestratorRunner, error)
 }
 
 // Activities holds dependencies for Temporal activities.
@@ -101,7 +102,15 @@ func (a *Activities) RunOrchestratorActivity(ctx context.Context, input Workflow
 					"ConfigLoadError", cfgErr,
 				)
 		}
-		runner = a.Factory.Build(runCfg)
+		built, buildErr := a.Factory.Build(runCfg)
+		if buildErr != nil {
+			return WorkflowResult{Status: domain.RunStatusFailed},
+				temporalerr.NewNonRetryableApplicationError(
+					"RunOrchestratorActivity: "+buildErr.Error(),
+					"ConfigError", buildErr,
+				)
+		}
+		runner = built
 	}
 
 	finalText, err := runner.Run(ctx, input.RunID, input.ContextID, input.UserMessage, input.History,
