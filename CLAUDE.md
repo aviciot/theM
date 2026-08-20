@@ -16,7 +16,6 @@ Before touching any code, read these docs if you haven't this session:
 | `docs/REDIS.md` | Touching anything that reads/writes Redis |
 | `docs/ADAPTERS.md` | Adding/changing an agent transport |
 | `docs/A2A_AGENTS.md` | Working with A2A test agents — start/stop, enable, test commands |
-| `docs/A2A_REFERENCE.md` | A2A SDK v1.1.0 ground truth — Part types, AgentCard/Skill fields, wire format, platform gaps |
 | `docs/STATUS.md` | Know what's broken/pending before you start |
 | `docs/LESSONS.md` | Before any judgment call — read what burned us before |
 | `scripts/tests/INDEX.md` | Before running or writing tests |
@@ -150,7 +149,7 @@ Application ID must flow through every new feature:
 - **Never** query `auth_service.*` tables directly — use `app/services/auth_client.py` (HTTP to 8701) from Python, or `internal/auth/` from Go
 - **Never** use DB name `odin` or schema `odin` — everything is `them`
 - New agent transport → new file in `app/adapters/` + register in `factory.py` + doc in `docs/ADAPTERS.md`
-- **A2A work** (adapters, agents, agent cards, typed parts, orchestrator↔agent wiring) → invoke `/a2a` skill first — it loads the full SDK reference and platform gap list
+- **A2A work** (canvas agent builder, agentgen, agent cards, typed parts, wire format) → invoke `/a2a` skill first — it loads the Go A2A ground truth (wire format, AgentSpec, interpreter, security invariants, Phase D checklist)
 - Work under `go/` must also follow `go/CLAUDE.md`
 
 ---
