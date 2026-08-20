@@ -854,7 +854,16 @@ function ArtifactsTab({ runId, busy }: { runId: string | null; busy: boolean }) 
     setLoading(true);
     setErr('');
     load();
-    if (!busy) return () => { cancelled = true; };
+    // When busy=false (run completed), poll for 15s grace period so async
+    // artifact writes from agents finish landing before we stop checking.
+    if (!busy) {
+      let ticks = 5; // 5 × 3000ms = 15s grace window
+      const grace = setInterval(() => {
+        if (cancelled || ticks-- <= 0) { clearInterval(grace); return; }
+        load();
+      }, 3000);
+      return () => { cancelled = true; clearInterval(grace); };
+    }
     const interval = setInterval(load, 3000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [runId, busy]);
