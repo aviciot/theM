@@ -1,6 +1,7 @@
 // Package main is the them-agent-runtime — a generic stateless A2A agent server.
 // It reads AgentSpec definitions from PostgreSQL (cached locally, TTL 60s) and
-// serves any canvas-designed agent over the A2A JSON-RPC 2.0 wire protocol.
+// serves any canvas-designed agent over the A2A JSON-RPC 2.0 and streaming wire
+// protocol, backed by the official github.com/a2aproject/a2a-go/v2 SDK.
 // Credentials are resolved per-request from app_agent_bindings and decrypted
 // in-memory only — never logged, persisted, or returned in responses.
 package main
@@ -9,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -53,7 +57,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// AuthRedisClient satisfies agentgen.TaskStoreRedis (Get/SetEX/Del).
 	taskRedis := cache.NewAuthRedisClient(redisCache.Client())
 	cryptoKey := crypto.DeriveKey(cfg.SecretKey)
 
@@ -77,7 +80,12 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Get("/healthz", rt.healthz)
+	// SDK card handler: NewStaticAgentCardHandler requires the spec to build the card.
+	// We serve it via a thin wrapper that loads the spec then delegates to the SDK handler.
 	r.Get("/agents/{slug}/.well-known/agent-card.json", rt.agentCard)
+	// A2A JSON-RPC endpoint: auth + spec + binding resolution happens here in middleware,
+	// then the SDK's NewJSONRPCHandler dispatches message/send, tasks/get, tasks/cancel,
+	// message/stream, tasks/resubscribe and all other A2A methods.
 	r.Post("/agents/{slug}", rt.handle)
 
 	logger.Info("them-agent-runtime starting", "port", port)
@@ -102,7 +110,7 @@ func (rt *Runtime) healthz(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
 }
 
-// agentCard serves /.well-known/agent-card.json (correct A2A path, not agent.json).
+// agentCard serves /.well-known/agent-card.json using the SDK's NewStaticAgentCardHandler.
 func (rt *Runtime) agentCard(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	spec, err := rt.loadSpecBySlug(r.Context(), slug)
@@ -110,11 +118,14 @@ func (rt *Runtime) agentCard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"agent not found"}`, http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(buildAgentCard(spec)) //nolint:errcheck
+	card := buildSDKAgentCard(spec)
+	a2asrv.NewStaticAgentCardHandler(card).ServeHTTP(w, r)
 }
 
-// handle is the A2A JSON-RPC endpoint for a specific agent.
+// handle is the A2A JSON-RPC endpoint. It resolves auth/spec/binding in our middleware,
+// then creates a per-request AgentExecutor and delegates to the SDK's JSON-RPC handler.
+// The SDK provides full method dispatch: message/send, tasks/get, tasks/cancel,
+// message/stream, tasks/resubscribe, and push notification methods.
 func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 
@@ -157,171 +168,90 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 	ic.ConfigOverrides = binding.ConfigOverrides
 	ic.Policies = binding.Policies
 
-	var req jsonRPCRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONRPCError(w, nil, -32700, "parse error", http.StatusBadRequest)
-		return
-	}
+	// Build the SDK executor function. It is called by the SDK for each message/send
+	// or message/stream request. The closure captures the fully-resolved InvocationContext.
+	executor := a2asrv.AgentExecutorFunc(func(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+		return rt.executeSkill(ctx, ic, execCtx)
+	})
 
-	switch req.Method {
-	case "message/send":
-		rt.handleMessageSend(w, r, ic, &req)
-	case "tasks/get":
-		rt.handleTasksGet(w, r, ic, &req)
-	case "tasks/cancel":
-		rt.handleTasksCancel(w, r, ic, &req)
-	default:
-		writeJSONRPCError(w, req.ID, -32601, "method not found: "+req.Method, http.StatusOK)
-	}
+	// NewHandler creates a RequestHandler backed by the SDK's local task manager
+	// (in-memory by default). It handles GetTask, ListTasks, CancelTask,
+	// SendMessage, SubscribeToTask, SendStreamingMessage, and push config methods.
+	handler := a2asrv.NewHandler(executor,
+		a2asrv.WithLogger(rt.logger),
+	)
+
+	// NewJSONRPCHandler wraps the RequestHandler in a single POST endpoint that
+	// dispatches all A2A JSON-RPC 2.0 methods, replacing our hand-rolled dispatch.
+	a2asrv.NewJSONRPCHandler(handler).ServeHTTP(w, r)
 }
 
-func (rt *Runtime) handleMessageSend(w http.ResponseWriter, r *http.Request, ic *agentgen.InvocationContext, req *jsonRPCRequest) {
-	var params struct {
-		Message struct {
-			TaskID string `json:"taskId"`
-			Parts  []struct {
-				Kind string          `json:"kind"`
-				Text string          `json:"text,omitempty"`
-				Data json.RawMessage `json:"data,omitempty"`
-			} `json:"parts"`
-		} `json:"message"`
-	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		writeJSONRPCError(w, req.ID, -32602, "invalid params", http.StatusOK)
-		return
-	}
-
-	taskID := params.Message.TaskID
-	if taskID == "" {
-		taskID = uuid.NewString()
-	}
-
-	// Extract text and structured data from parts.
-	// text part  → vars["input"] (the raw caller message)
-	// data part  → each top-level key becomes a named pipeline var
-	// Both may coexist; data keys override "input" only if the key name is "input".
-	inputText := ""
-	dataVars := map[string]any{}
-	for _, p := range params.Message.Parts {
-		switch p.Kind {
-		case "text":
-			if p.Text != "" && inputText == "" {
-				inputText = p.Text
+// executeSkill runs the agent's first skill pipeline and emits SDK-compliant A2A events.
+// It follows the template from agentexec.go:
+//
+//	Submitted → Working → ArtifactEvent → Completed  (success path)
+//	Submitted → Working → Failed                     (error path)
+func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationContext, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		// Emit Submitted only for new tasks (no prior StoredTask).
+		if execCtx.StoredTask == nil {
+			submitted := a2a.NewSubmittedTask(execCtx, execCtx.Message)
+			if !yield(submitted, nil) {
+				return
 			}
-		case "data":
-			if len(p.Data) > 0 {
-				var obj map[string]any
-				if err := json.Unmarshal(p.Data, &obj); err == nil {
-					for k, v := range obj {
-						dataVars[k] = v
+		}
+
+		if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, nil), nil) {
+			return
+		}
+
+		if len(ic.Spec.Skills) == 0 {
+			errMsg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("agent has no skills"))
+			if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, errMsg), nil) {
+				return
+			}
+			return
+		}
+		skill := &ic.Spec.Skills[0]
+
+		// Extract text and structured data from the incoming message parts.
+		// text part  → vars["input"] (the raw caller message)
+		// data part  → each top-level key becomes a named pipeline var
+		inputText := ""
+		dataVars := map[string]any{}
+		if execCtx.Message != nil {
+			for _, part := range execCtx.Message.Parts {
+				if t := part.Text(); t != "" && inputText == "" {
+					inputText = t
+				} else if d := part.Data(); d != nil {
+					raw, err := json.Marshal(d)
+					if err == nil {
+						var obj map[string]any
+						if json.Unmarshal(raw, &obj) == nil {
+							for k, v := range obj {
+								dataVars[k] = v
+							}
+						}
 					}
 				}
 			}
 		}
-	}
 
-	if len(ic.Spec.Skills) == 0 {
-		writeJSONRPCError(w, req.ID, -32603, "agent has no skills", http.StatusOK)
-		return
-	}
-	skill := &ic.Spec.Skills[0]
+		execResult, err := rt.interp.Execute(ctx, ic, skill, inputText, dataVars)
+		if err != nil {
+			errMsg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(err.Error()))
+			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, errMsg), nil) //nolint:errcheck
+			return
+		}
 
-	ts := &agentgen.TaskState{
-		TaskID:        taskID,
-		TenantID:      ic.TenantID,
-		ApplicationID: ic.ApplicationID,
-		AgentID:       ic.AgentID,
-		BindingID:     ic.BindingID,
-		Status:        "working",
-	}
-	if err := rt.taskStore.Create(r.Context(), ts); err != nil {
-		rt.logger.Warn("task store create failed", "task_id", taskID, "err", err)
-	}
+		// Emit the result as an artifact, then mark completed.
+		artifactEvent := a2a.NewArtifactEvent(execCtx, a2a.NewTextPart(execResult.Text))
+		if !yield(artifactEvent, nil) {
+			return
+		}
 
-	execResult, err := rt.interp.Execute(r.Context(), ic, skill, inputText, dataVars)
-	if err != nil {
-		ts.Status = "failed"
-		_ = rt.taskStore.Set(r.Context(), ts)
-		writeJSONRPCError(w, req.ID, -32603, err.Error(), http.StatusOK)
-		return
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil) //nolint:errcheck
 	}
-
-	ts.Status = "completed"
-	ts.Artifacts = []string{execResult.Text}
-	_ = rt.taskStore.Set(r.Context(), ts)
-
-	resp := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      req.ID,
-		"result": map[string]any{
-			"id":     taskID,
-			"status": map[string]any{"state": "completed"},
-			"artifacts": []map[string]any{
-				{
-					"parts": []map[string]any{
-						{"kind": "text", "text": execResult.Text},
-					},
-					"index": 0,
-				},
-			},
-		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp) //nolint:errcheck
-}
-
-func (rt *Runtime) handleTasksGet(w http.ResponseWriter, r *http.Request, ic *agentgen.InvocationContext, req *jsonRPCRequest) {
-	var params struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		writeJSONRPCError(w, req.ID, -32602, "invalid params", http.StatusOK)
-		return
-	}
-	// Invariant 3: ownership enforced inside Get.
-	ts, err := rt.taskStore.Get(r.Context(), params.ID, ic.TenantID, ic.ApplicationID)
-	if err != nil {
-		writeJSONRPCError(w, req.ID, -32001, "task not found", http.StatusOK)
-		return
-	}
-	resp := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      req.ID,
-		"result": map[string]any{
-			"id":     ts.TaskID,
-			"status": map[string]any{"state": ts.Status},
-		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp) //nolint:errcheck
-}
-
-func (rt *Runtime) handleTasksCancel(w http.ResponseWriter, r *http.Request, ic *agentgen.InvocationContext, req *jsonRPCRequest) {
-	var params struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		writeJSONRPCError(w, req.ID, -32602, "invalid params", http.StatusOK)
-		return
-	}
-	// Invariant 3: ownership enforced inside Get.
-	ts, err := rt.taskStore.Get(r.Context(), params.ID, ic.TenantID, ic.ApplicationID)
-	if err != nil {
-		writeJSONRPCError(w, req.ID, -32001, "task not found", http.StatusOK)
-		return
-	}
-	ts.Status = "canceled"
-	_ = rt.taskStore.Set(r.Context(), ts)
-	resp := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      req.ID,
-		"result": map[string]any{
-			"id":     ts.TaskID,
-			"status": map[string]any{"state": "canceled"},
-		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp) //nolint:errcheck
 }
 
 // parseInvocationContext reads identity from X-Them-* headers.
@@ -446,36 +376,44 @@ func (rt *Runtime) loadBinding(ctx context.Context, appID, agentID, bindingID st
 	}, nil
 }
 
-func buildAgentCard(spec *agentgen.AgentSpec) map[string]any {
-	skills := make([]map[string]any, len(spec.Skills))
+// buildSDKAgentCard constructs a proper a2a.AgentCard from the AgentSpec.
+// It sets InputModes and OutputModes per-skill, populates SupportedInterfaces
+// (the SDK v2.5 replacement for the deprecated URL field), and uses value-typed
+// AgentCapabilities as required by the struct definition.
+func buildSDKAgentCard(spec *agentgen.AgentSpec) *a2a.AgentCard {
+	skills := make([]a2a.AgentSkill, len(spec.Skills))
 	for i, sk := range spec.Skills {
-		skills[i] = map[string]any{
-			"id":          sk.ID,
-			"name":        sk.Name,
-			"description": sk.Description,
-			"tags":        sk.Tags,
+		skills[i] = a2a.AgentSkill{
+			ID:          sk.ID,
+			Name:        sk.Name,
+			Description: sk.Description,
+			Tags:        sk.Tags,
+			InputModes:  []string{"text/plain", "application/json"},
+			OutputModes: []string{"text/plain"},
 		}
 	}
-	return map[string]any{
-		"name":        spec.Card.Name,
-		"description": spec.Card.Description,
-		"version":     spec.Card.Version,
-		"url":         fmt.Sprintf("http://them-agent-runtime:9300/agents/%s", spec.Slug),
-		"capabilities": map[string]any{
-			"streaming":         spec.Card.Capabilities.Streaming,
-			"pushNotifications": spec.Card.Capabilities.PushNotifications,
+
+	agentURL := fmt.Sprintf("http://them-agent-runtime:9300/agents/%s", spec.Slug)
+
+	return &a2a.AgentCard{
+		Name:        spec.Card.Name,
+		Description: spec.Card.Description,
+		Version:     spec.Card.Version,
+		SupportedInterfaces: []*a2a.AgentInterface{
+			a2a.NewAgentInterface(agentURL, a2a.TransportProtocolJSONRPC),
 		},
-		"skills": skills,
+		DefaultInputModes:  []string{"text/plain", "application/json"},
+		DefaultOutputModes: []string{"text/plain"},
+		Capabilities: a2a.AgentCapabilities{
+			Streaming:         spec.Card.Capabilities.Streaming,
+			PushNotifications: spec.Card.Capabilities.PushNotifications,
+		},
+		Skills: skills,
 	}
 }
 
-type jsonRPCRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
-}
-
+// writeJSONRPCError writes a JSON-RPC 2.0 error response before the SDK handler is reached
+// (i.e., during our auth/spec/binding middleware phase).
 func writeJSONRPCError(w http.ResponseWriter, id any, code int, message string, httpStatus int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus)
@@ -535,3 +473,6 @@ func (a *anthropicProviderAdapter) Complete(ctx context.Context, systemPrompt, u
 
 var _ agentgen.LLMProvider = (*anthropicProviderAdapter)(nil)
 var _ agentgen.LLMFactory = (*anthropicLLMFactory)(nil)
+
+// Ensure uuid is referenced (used in tests, kept for backward compat with generated IDs).
+var _ = uuid.NewString

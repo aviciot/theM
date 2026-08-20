@@ -1364,17 +1364,25 @@ shutdown on client disconnect. Uses a fakeRedis adapter (no real Redis) so all t
 
 ---
 
-### S1-53 · Agent-runtime spec cache — `cmd/agent-runtime/main_test.go`
+### S1-53 · Agent-runtime SDK adoption (Phase D) — `cmd/agent-runtime/main_test.go`
 
-**Purpose:** Phase 4 — validates the in-process `specCache` TTL eviction and key isolation.
-No Postgres or Redis required.
+**Purpose:** Phase D — validates the official `github.com/a2aproject/a2a-go/v2` SDK integration in
+`cmd/agent-runtime/main.go`. Covers spec cache TTL, SDK agent card construction, static card handler,
+and the `executeSkill` event sequence (Submitted → Working → Artifact → Completed / Failed).
+No Postgres or Redis required; interpreter uses a stub or direct `StepResponse`.
 
 | Test | What it proves |
 |---|---|
 | `TestSpecCache_MissAndHit` | Cold miss returns nil; set+get returns spec; expired entry returns nil |
 | `TestSpecCache_IsolatedKeys` | Two distinct agentIDs cached independently, no key collision |
+| `TestBuildSDKAgentCard_SupportedInterfacesAndModes` | `buildSDKAgentCard` emits `SupportedInterfaces` (not deprecated `URL`), JSONRPC binding, per-skill InputModes/OutputModes |
+| `TestBuildSDKAgentCard_StaticHandler` | `NewStaticAgentCardHandler` wrapping the built card returns 200 with `application/json` content-type and agent name in body |
+| `TestExecuteSkill_SDKEventSequence` | `executeSkill` emits Submitted → Working → ArtifactUpdateEvent → Completed on success |
+| `TestExecuteSkill_NoSkills_EmitsFailed` | Agent with empty skill list emits Working → Failed without panic |
+| `TestExecuteSkill_StoredTask_NoSubmitted` | When `ExecutorContext.StoredTask` is non-nil, Submitted event is skipped; first event is Working |
+| `TestJSONRPCHandler_MethodNotFound` | `NewJSONRPCHandler` wrapping `NewHandler` returns JSON error (HTTP 200) for unknown method names |
 
-**Trigger:** any change to `cmd/agent-runtime/main.go` (specCache struct/methods)
+**Trigger:** any change to `cmd/agent-runtime/main.go` (specCache, buildSDKAgentCard, executeSkill, handle, agentCard)
 
 ---
 

@@ -13,6 +13,8 @@ require (
 	go.temporal.io/sdk v1.26.1
 )
 
+require github.com/a2aproject/a2a-go/v2 v2.5.0
+
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
