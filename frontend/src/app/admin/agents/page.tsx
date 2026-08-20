@@ -1265,12 +1265,22 @@ export default function AdminAgentsPage() {
       } else if (event.type === 'scan_complete') {
         _inFlightScans.delete(agentId);
         setScanSteps((s) => { const n = { ...s }; delete n[agentId]; return n; });
+        const rawFindings = event.findings;
+        const parsedFindings: ScanResult['findings'] = Array.isArray(rawFindings)
+          ? rawFindings as ScanResult['findings']
+          : typeof rawFindings === 'string' ? (() => { try { return JSON.parse(rawFindings); } catch { return []; } })()
+          : [];
+        const rawProbes = event.http_probes;
+        const parsedProbes: ScanResult['http_probes'] = (rawProbes && typeof rawProbes === 'object' && !Array.isArray(rawProbes))
+          ? rawProbes as ScanResult['http_probes']
+          : typeof rawProbes === 'string' ? (() => { try { return JSON.parse(rawProbes); } catch { return { tls: '', auth_required: '', reachable: false }; } })()
+          : { tls: '', auth_required: '', reachable: false };
         setScanResults((r) => ({ ...r, [agentId]: {
           score: event.score as number,
           risk: event.risk as string,
           summary: event.summary as string,
-          findings: (event.findings as ScanResult['findings']) ?? [],
-          http_probes: (event.http_probes as ScanResult['http_probes']) ?? { tls: '', auth_required: '', reachable: false },
+          findings: parsedFindings,
+          http_probes: parsedProbes,
           scanned_at: (event.scanned_at as string) ?? new Date().toISOString(),
         } as ScanResult }));
         reload();
