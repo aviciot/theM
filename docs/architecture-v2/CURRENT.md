@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-18
+# Last updated: 2026-08-20
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `ae0bcb2` — fix(agent-runtime): wire spec DB queries, env vars, and add cache tests (Phase 4)
+Commit: `c79da05` — feat(agent-runtime): Phase D — adopt official a2a-go/v2 SDK for JSON-RPC dispatch
 
 ---
 
@@ -471,23 +471,35 @@ TypeScript: **clean** (0 errors)
 - `them-agent-runtime` started (2 replicas), logs show `"them-agent-runtime starting"` ✓
 
 ### Test state
-`go test ./...` — **37 packages, 0 failures** (S1-53 added: 2 tests; `cmd/agent-runtime` now `ok` not `[no test files]`)
+`go test ./...` — **38 packages, 0 failures** (Phase D: S1-53 expanded to 8 tests; SDK `a2a-go/v2` promoted to direct dep in go.mod)
 
 ---
 
+## Canvas A2A Agent Builder — Phases A–D: ALL COMPLETE (2026-08-20)
+
+| Phase | What | Commit | State |
+|---|---|---|---|
+| A | Step config panels (LLM/HTTP/Transform/Response/Input forms) | prior session | ✅ |
+| B | Skill editor, node library, data-flow subtitles, round-trip serialization | prior session | ✅ |
+| C | `kind:"data"` part input mode; variadic `extraVars` in interpreter | prior session | ✅ |
+| D | `a2a-go/v2` SDK replaces hand-rolled JSON-RPC dispatch; 8 tests (S1-53) | `c79da05` | ✅ |
+
 ## Next recommended task
 
-**Canvas Agent Builder — Phase A (step config panels)**
+**Canvas agent → orchestrator wiring** — canvas agents must be invocable from real runs.
 
-See `docs/architecture-v2/CANVAS_AGENT_BUILDER_DESIGN.md` for the full phased plan.
+Current gap: `agentregistry.InvokeWithMeta` exists but the Temporal activities and direct
+orchestrator path do not call canvas agents. Canvas agents with `transport='canvas_a2a'` are
+registered in `them.agents` but never selected by the orchestrator.
 
-Recommended order:
-1. **Phase A** — Step config panels (frontend only, one session): fill in LLM prompts, HTTP URLs, transform expressions, response vars. The `config: {}` gap that makes all published agents run with empty step config.
-2. **Phase B** — Skill card editor + data flow variable labels on canvas nodes (frontend, one session).
-3. **Phase C** — Data part input mode support in runtime (Go, one session): parse `application/json` parts in `handleMessageSend` so structured fields become pipeline vars.
-4. **Phase D** — A2A SDK adoption (Go, one session): add `github.com/a2aproject/a2a-go/v2` to `go/go.mod` and replace hand-rolled JSON-RPC dispatch with the SDK handler. **Previously deferred pending Go 1.25 — now unblocked** (repo is `go 1.25.0`). Schedule after Phase C.
+Work needed:
+1. Orchestrator's tool-selection: treat `canvas_a2a` agents the same as `a2a_async` — look them up
+   by slug, call `InvokeWithMeta` with the tenant/app/agent/binding headers.
+2. Temporal activity: ensure `InvokeWithMeta` path gets invocation context from the run's
+   `AppOrchestratorID` → `application_id` + per-agent `binding_id` from `app_agent_bindings`.
+3. Add integration test: agent with `transport='canvas_a2a'` is invoked via orchestrator.
 
-Do NOT begin multiple phases in the same session.
+Do NOT begin multiple subsystems in the same session.
 
 ---
 
