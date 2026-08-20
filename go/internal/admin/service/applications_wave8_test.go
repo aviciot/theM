@@ -16,7 +16,7 @@ import (
 func TestPutRuntime_Success(t *testing.T) {
 	d := &fakeDal{orchNames: []string{"orch-1"}}
 	c := &fakeCache{}
-	svc := service.NewAppService(d, c)
+	svc := service.NewAppService(d, c, nil)
 
 	n := 5
 	cfg := service.AppRuntimeConfig{MaxConcurrentSessions: &n}
@@ -35,7 +35,7 @@ func TestPutRuntime_Success(t *testing.T) {
 // W8-S2: PutRuntime — DAL returns pgx.ErrNoRows → ErrNotFound.
 func TestPutRuntime_NotFound(t *testing.T) {
 	d := &fakeDal{updateRuntimeConfigErr: pgx.ErrNoRows}
-	svc := service.NewAppService(d, nil)
+	svc := service.NewAppService(d, nil, nil)
 
 	_, err := svc.PutRuntime(context.Background(), "tenant-1", "missing-app", service.AppRuntimeConfig{})
 	if !errors.Is(err, service.ErrNotFound) {
@@ -46,7 +46,7 @@ func TestPutRuntime_NotFound(t *testing.T) {
 // W8-S3: PutRuntime — nil slices become [] not null.
 func TestPutRuntime_NilSlicesNormalized(t *testing.T) {
 	d := &fakeDal{}
-	svc := service.NewAppService(d, nil)
+	svc := service.NewAppService(d, nil, nil)
 
 	cfg := service.AppRuntimeConfig{} // BlockedTokens and BlockedUserIDs are nil
 	out, err := svc.PutRuntime(context.Background(), "t1", "app-1", cfg)
@@ -65,7 +65,7 @@ func TestPutRuntime_NilSlicesNormalized(t *testing.T) {
 func TestPutRuntime_CacheFlushAfterUpdate(t *testing.T) {
 	d := &fakeDal{orchNames: []string{"orch-a", "orch-b"}}
 	c := &fakeCache{}
-	svc := service.NewAppService(d, c)
+	svc := service.NewAppService(d, c, nil)
 
 	_, err := svc.PutRuntime(context.Background(), "t1", "app-1", service.AppRuntimeConfig{})
 	if err != nil {
@@ -83,7 +83,7 @@ func TestPutRuntime_CacheFlushAfterUpdate(t *testing.T) {
 // W8-S5: BulkDelete empty IDs → (0, nil), no DB calls.
 func TestBulkDelete_Empty(t *testing.T) {
 	d := &fakeDal{}
-	svc := service.NewAppService(d, nil)
+	svc := service.NewAppService(d, nil, nil)
 
 	count, err := svc.BulkDelete(context.Background(), "t1", []string{})
 	if err != nil {
@@ -103,7 +103,7 @@ func TestBulkDelete_TooMany(t *testing.T) {
 	for i := range ids {
 		ids[i] = "id"
 	}
-	svc := service.NewAppService(&fakeDal{}, nil)
+	svc := service.NewAppService(&fakeDal{}, nil, nil)
 	_, err := svc.BulkDelete(context.Background(), "t1", ids)
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation, got %v", err)
@@ -113,7 +113,7 @@ func TestBulkDelete_TooMany(t *testing.T) {
 // W8-S7: BulkDelete — returns deleted count.
 func TestBulkDelete_TenantIsolation(t *testing.T) {
 	d := &fakeDal{bulkDeletedCount: 3}
-	svc := service.NewAppService(d, nil)
+	svc := service.NewAppService(d, nil, nil)
 
 	count, err := svc.BulkDelete(context.Background(), "t1", []string{"a", "b", "c"})
 	if err != nil {
@@ -128,7 +128,7 @@ func TestBulkDelete_TenantIsolation(t *testing.T) {
 func TestBulkDelete_FlushAfterDelete(t *testing.T) {
 	d := &fakeDal{bulkDeletedCount: 1, orchNames: []string{"orch-x"}}
 	c := &fakeCache{}
-	svc := service.NewAppService(d, c)
+	svc := service.NewAppService(d, c, nil)
 
 	_, err := svc.BulkDelete(context.Background(), "t1", []string{"app-1"})
 	if err != nil {
@@ -147,7 +147,7 @@ func TestBulkDelete_FlushAfterDelete(t *testing.T) {
 func TestBulkDelete_NoFlushOnDBError(t *testing.T) {
 	d := &fakeDal{bulkDeleteErr: errors.New("db error")}
 	c := &fakeCache{}
-	svc := service.NewAppService(d, c)
+	svc := service.NewAppService(d, c, nil)
 
 	_, err := svc.BulkDelete(context.Background(), "t1", []string{"app-1"})
 	if err == nil {

@@ -22,8 +22,9 @@ type ApplicationsHandler struct {
 }
 
 // NewApplicationsHandler creates an ApplicationsHandler.
-func NewApplicationsHandler(db DBQuerier, cache CacheInvalidator) *ApplicationsHandler {
-	return &ApplicationsHandler{svc: service.NewAppService(dal.NewDB(db), cache)}
+// fernetKey is the AES-GCM key used to encrypt/decrypt provider_keys at rest.
+func NewApplicationsHandler(db DBQuerier, cache CacheInvalidator, fernetKey []byte) *ApplicationsHandler {
+	return &ApplicationsHandler{svc: service.NewAppService(dal.NewDB(db), cache, fernetKey)}
 }
 
 // RuntimeConfigInput mirrors Python's AppRuntimeConfig schema.
@@ -35,24 +36,35 @@ type BulkDeleteInput struct {
 }
 
 // Routes mounts application and entry point CRUD endpoints.
-func (h *ApplicationsHandler) Routes(r chi.Router) {
+// bindings is optional; when non-nil its routes are mounted under /applications/{id}
+// so they share the same chi sub-tree and don't shadow the flat /{id} routes.
+func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 	r.Get("/applications", h.List)
 	r.Post("/applications", h.Create)
 	r.Post("/applications/bulk-delete", h.BulkDelete) // must come BEFORE /{id}
-	r.Get("/applications/{id}", h.Get)
-	r.Put("/applications/{id}", h.Update)
-	r.Patch("/applications/{id}", h.Update) // Python frontend sends PATCH; accept both
-	r.Delete("/applications/{id}", h.Delete)
-	r.Put("/applications/{id}/runtime", h.PutRuntime)
-	r.Get("/applications/{id}/provider-keys", h.GetProviderKeys)
-	r.Put("/applications/{id}/provider-keys/{provider}", h.SetProviderKey)
-	r.Delete("/applications/{id}/provider-keys/{provider}", h.DeleteProviderKey)
-	r.Post("/applications/{id}/test-llm", h.TestLLM)
+	r.Route("/applications/{id}", func(app chi.Router) {
+		app.Get("/", h.Get)
+		app.Put("/", h.Update)
+		app.Patch("/", h.Update) // Python frontend sends PATCH; accept both
+		app.Delete("/", h.Delete)
+		app.Put("/runtime", h.PutRuntime)
+		app.Get("/provider-keys", h.GetProviderKeys)
+		app.Put("/provider-keys/{provider}", h.SetProviderKey)
+		app.Delete("/provider-keys/{provider}", h.DeleteProviderKey)
+		app.Post("/test-llm", h.TestLLM)
+		app.Post("/entry-points", h.CreateEntryPoint)
+		app.Put("/entry-points/{ep_id}", h.UpdateEntryPoint)
+		app.Patch("/entry-points/{ep_id}", h.UpdateEntryPoint) // Python sends PATCH
+		app.Delete("/entry-points/{ep_id}", h.DeleteEntryPoint)
+		for _, b := range bindings {
+			b.MountOn(app)
+		}
+	})
+}
 
-	r.Post("/applications/{id}/entry-points", h.CreateEntryPoint)
-	r.Put("/applications/{id}/entry-points/{ep_id}", h.UpdateEntryPoint)
-	r.Patch("/applications/{id}/entry-points/{ep_id}", h.UpdateEntryPoint) // Python sends PATCH
-	r.Delete("/applications/{id}/entry-points/{ep_id}", h.DeleteEntryPoint)
+// BindingRouter is implemented by any handler that mounts sub-routes under /applications/{id}.
+type BindingRouter interface {
+	MountOn(r chi.Router)
 }
 
 // List handles GET /api/v1/admin/applications.

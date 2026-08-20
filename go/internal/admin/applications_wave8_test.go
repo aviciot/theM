@@ -51,7 +51,7 @@ func TestPutRuntime_Handler_404_NotFound(t *testing.T) {
 // W8-H3: PutRuntime 400 on bad JSON.
 func TestPutRuntime_Handler_400_BadJSON(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewApplicationsHandler(db, nil)
+	h := admin.NewApplicationsHandler(db, nil, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)
@@ -85,7 +85,7 @@ func TestPutRuntime_Handler_NilSlicesAsEmptyArrays(t *testing.T) {
 // serveAppsQuerier is like serveApps but accepts any admin.DBQuerier (not just *fakeDB).
 func serveAppsQuerier(t *testing.T, db admin.DBQuerier, cache admin.CacheInvalidator, method, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
-	h := admin.NewApplicationsHandler(db, cache)
+	h := admin.NewApplicationsHandler(db, cache, nil)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -137,7 +137,7 @@ func TestBulkDelete_Handler_200(t *testing.T) {
 // W8-H6: BulkDelete 400 on bad JSON.
 func TestBulkDelete_Handler_400_BadJSON(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewApplicationsHandler(db, nil)
+	h := admin.NewApplicationsHandler(db, nil, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)

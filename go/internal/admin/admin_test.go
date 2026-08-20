@@ -370,7 +370,7 @@ func TestListRunsContextIDFilter(t *testing.T) {
 // withTestTenant is applied so MustTenantIDFromCtx does not panic.
 func serveApps(t *testing.T, db *fakeDB, cache admin.CacheInvalidator, method, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
-	h := admin.NewApplicationsHandler(db, cache)
+	h := admin.NewApplicationsHandler(db, cache, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)

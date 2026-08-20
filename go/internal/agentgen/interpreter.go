@@ -147,7 +147,18 @@ func (interp *Interpreter) execLLM(ctx context.Context, ic *InvocationContext, s
 		return fmt.Errorf("parse llm config: %w", err)
 	}
 
+	// Three-tier key resolution (most specific wins):
+	// 1. per-binding slot override (cfg.ProviderKeySlot → ic.Credentials)
+	// 2. per-app key from applications.provider_keys (ic.AppAPIKey)
+	// 3. platform ANTHROPIC_API_KEY env var (interp.platformAPIKey)
+	providerName := cfg.Provider
+	if providerName == "" {
+		providerName = "anthropic"
+	}
 	apiKey := interp.platformAPIKey
+	if appKey, ok := ic.AppAPIKey[providerName]; ok && appKey != "" {
+		apiKey = appKey
+	}
 	if cfg.ProviderKeySlot != "" {
 		if slotVal, ok := ic.Credentials[cfg.ProviderKeySlot]; ok && slotVal != "" {
 			apiKey = slotVal

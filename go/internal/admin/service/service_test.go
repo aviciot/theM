@@ -699,7 +699,7 @@ func TestAgentService_NilCache_NoPanic(t *testing.T) {
 // ── AppService tests ──────────────────────────────────────────────────────────
 
 func TestAppService_Create_MissingName_Validation(t *testing.T) {
-	svc := service.NewAppService(&fakeDal{}, nil)
+	svc := service.NewAppService(&fakeDal{}, nil, nil)
 	_, err := svc.Create(context.Background(), "t1", "", nil)
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation, got %v", err)
@@ -707,7 +707,7 @@ func TestAppService_Create_MissingName_Validation(t *testing.T) {
 }
 
 func TestAppService_CreateEntryPoint_InvalidType_Unprocessable(t *testing.T) {
-	svc := service.NewAppService(&fakeDal{}, nil)
+	svc := service.NewAppService(&fakeDal{}, nil, nil)
 	_, err := svc.CreateEntryPoint(context.Background(), "app-1", "my-ep", "grpc", nil)
 	if !errors.Is(err, service.ErrUnprocessable) {
 		t.Errorf("want ErrUnprocessable, got %v", err)
@@ -717,7 +717,7 @@ func TestAppService_CreateEntryPoint_InvalidType_Unprocessable(t *testing.T) {
 func TestAppService_CreateEntryPoint_ValidTypes(t *testing.T) {
 	for _, epType := range []string{"websocket", "sse", "voice", "webrtc", "a2a"} {
 		d := &fakeDal{createdID: "ep-1"}
-		svc := service.NewAppService(d, nil)
+		svc := service.NewAppService(d, nil, nil)
 		_, err := svc.CreateEntryPoint(context.Background(), "app-1", "sl", epType, nil)
 		if err != nil {
 			t.Errorf("type %q: unexpected error: %v", epType, err)
@@ -730,7 +730,7 @@ const svcTestTenantID = "00000000-0000-0000-0000-000000000001"
 func TestAppService_UpdateEntryPoint_OldSlugBeforeNew(t *testing.T) {
 	c := &fakeCache{}
 	d := &fakeDal{epTenantSlug: dal.EPTenantSlug{TenantID: svcTestTenantID, Slug: "old-slug"}}
-	svc := service.NewAppService(d, c)
+	svc := service.NewAppService(d, c, nil)
 	_ = svc.UpdateEntryPoint(context.Background(), svcTestTenantID, "ep-1", "app-1", "new-slug", "sse", nil)
 	if len(c.publishOrder) < 2 {
 		t.Fatalf("want 2 publishes, got %d: %v", len(c.publishOrder), c.publishOrder)
@@ -746,7 +746,7 @@ func TestAppService_UpdateEntryPoint_OldSlugBeforeNew(t *testing.T) {
 }
 
 func TestAppService_UpdateEntryPoint_InvalidType_Unprocessable(t *testing.T) {
-	svc := service.NewAppService(&fakeDal{}, nil)
+	svc := service.NewAppService(&fakeDal{}, nil, nil)
 	err := svc.UpdateEntryPoint(context.Background(), svcTestTenantID, "ep-1", "app-1", "sl", "tcp", nil)
 	if !errors.Is(err, service.ErrUnprocessable) {
 		t.Errorf("want ErrUnprocessable, got %v", err)
@@ -756,7 +756,7 @@ func TestAppService_UpdateEntryPoint_InvalidType_Unprocessable(t *testing.T) {
 func TestAppService_DeleteEntryPoint_PublishesSlug(t *testing.T) {
 	c := &fakeCache{}
 	d := &fakeDal{epTenantSlug: dal.EPTenantSlug{TenantID: svcTestTenantID, Slug: "my-ep"}}
-	svc := service.NewAppService(d, c)
+	svc := service.NewAppService(d, c, nil)
 	_ = svc.DeleteEntryPoint(context.Background(), "ep-1", "app-1")
 	want := svcTestTenantID + ":my-ep"
 	if len(c.publishOrder) != 1 || c.publishOrder[0] != want {
@@ -770,7 +770,7 @@ func TestAppService_Update_InvalidatesAppEPs(t *testing.T) {
 		{TenantID: svcTestTenantID, Slug: "ep-a"},
 		{TenantID: svcTestTenantID, Slug: "ep-b"},
 	}}
-	svc := service.NewAppService(d, c)
+	svc := service.NewAppService(d, c, nil)
 	_ = svc.Update(context.Background(), "t1", "app-1", "New Name", nil)
 	if len(c.publishOrder) != 2 {
 		t.Errorf("want 2 EP publishes, got %d: %v", len(c.publishOrder), c.publishOrder)

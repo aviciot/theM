@@ -113,7 +113,7 @@ func BuildRouter(
 
 	agents := NewAgentsHandler(db, cache, redis, fernetKey)
 	orchs := NewOrchestratorsHandler(db, cache)
-	apps := NewApplicationsHandler(db, cache)
+	apps := NewApplicationsHandler(db, cache, fernetKey)
 	defs := NewDefinitionsHandlerWithRegistry(db, registry.NewResolver(&registryQuerierAdapter{db}))
 	runs := NewRunsHandler(db, temporal)
 	tokens := NewTokensHandler(db, cache)
@@ -139,7 +139,6 @@ func BuildRouter(
 				tenantScoped.Use(AdminTenantMiddleware())
 				agents.Routes(tenantScoped)
 				orchs.Routes(tenantScoped)
-				apps.Routes(tenantScoped)
 				defs.Routes(tenantScoped)
 				tokens.Routes(tenantScoped)
 				reg := NewRegistryHandler(db)
@@ -147,12 +146,10 @@ func BuildRouter(
 				agentDefs := NewAgentDefinitionsHandler(db, cache, fernetKey)
 				agentDefs.Routes(tenantScoped)
 
-				// Agent bindings — mounted under /admin/applications/{app_id}
-				// so {app_id} can be extracted from the URL.
+				// Agent bindings are mounted inside apps.Routes under the /applications/{id}
+				// sub-tree so they share the same chi node and don't shadow the flat DELETE /{id}.
 				bindings := NewAgentBindingsHandler(agentDefs.Svc())
-				tenantScoped.Route("/applications/{app_id}", func(appRoute chi.Router) {
-					bindings.Routes(appRoute)
-				})
+				apps.Routes(tenantScoped, bindings)
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,

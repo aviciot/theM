@@ -679,7 +679,7 @@ func TestOrchService_TenantIsolation_DuplicateNameSameTenantReturnsError(t *test
 // TC-OWN: own record succeeds (application)
 func TestAppService_TenantIsolation_OwnRecordSucceeds(t *testing.T) {
 	f := &isolationFakeDal{}
-	svc := service.NewAppService(f, nil)
+	svc := service.NewAppService(f, nil, nil)
 	ctx := context.Background()
 
 	id, err := svc.Create(ctx, tenantAlpha, "my-app", nil)
@@ -699,7 +699,7 @@ func TestAppService_TenantIsolation_OwnRecordSucceeds(t *testing.T) {
 // TC-OTHER: other tenant cannot read application
 func TestAppService_TenantIsolation_OtherTenantCannotRead(t *testing.T) {
 	f := &isolationFakeDal{}
-	svc := service.NewAppService(f, nil)
+	svc := service.NewAppService(f, nil, nil)
 	ctx := context.Background()
 
 	id, _ := svc.Create(ctx, tenantAlpha, "secret-app", nil)
@@ -713,7 +713,7 @@ func TestAppService_TenantIsolation_OtherTenantCannotRead(t *testing.T) {
 // TC-SLUG: same name allowed across tenants (application)
 func TestAppService_TenantIsolation_SameNameAcrossTenantsAllowed(t *testing.T) {
 	f := &isolationFakeDal{}
-	svc := service.NewAppService(f, nil)
+	svc := service.NewAppService(f, nil, nil)
 	ctx := context.Background()
 
 	_, err := svc.Create(ctx, tenantAlpha, "shared-app", nil)

@@ -168,6 +168,10 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 	ic.ConfigOverrides = binding.ConfigOverrides
 	ic.Policies = binding.Policies
 
+	// Load per-app provider keys so the interpreter can prefer them over the platform env key.
+	// Errors are non-fatal — the platform key fallback still works.
+	ic.AppAPIKey = rt.loadAppAPIKey(r.Context(), ic.ApplicationID)
+
 	// Build the SDK executor function. It is called by the SDK for each message/send
 	// or message/stream request. The closure captures the fully-resolved InvocationContext.
 	executor := a2asrv.AgentExecutorFunc(func(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
@@ -315,6 +319,59 @@ func (rt *Runtime) loadSpecByAgentID(ctx context.Context, agentID string) (*agen
 	}
 	rt.specCache.set(agentID, &spec)
 	return &spec, nil
+}
+
+// loadAppAPIKey fetches and decrypts the provider_keys for the given application.
+// Returns a map of provider→plaintext key (e.g. "anthropic"→"sk-ant-...").
+// Returns an empty map on any error — callers fall back to the platform key.
+// The decrypted keys are never logged.
+func (rt *Runtime) loadAppAPIKey(ctx context.Context, appID string) map[string]string {
+	row := rt.pool.QueryRow(ctx,
+		`SELECT COALESCE(provider_keys, '{}') FROM them.applications WHERE id = $1::uuid`, appID)
+	var raw []byte
+	if err := row.Scan(&raw); err != nil {
+		return map[string]string{}
+	}
+
+	// Try new structured format {"anthropic": {"ct": "...", "hint": "XXXX"}}.
+	type entry struct {
+		CT string `json:"ct"`
+	}
+	var structured map[string]entry
+	if err := json.Unmarshal(raw, &structured); err == nil {
+		out := make(map[string]string, len(structured))
+		for provider, e := range structured {
+			if e.CT == "" {
+				continue
+			}
+			plain, err := crypto.DecryptStored(rt.cryptoKey, e.CT)
+			if err != nil {
+				// Legacy plaintext row (written before encryption): use CT directly.
+				// This handles the migration window until keys are re-encrypted.
+				if len(e.CT) > 6 && e.CT[:6] == "plain:" {
+					out[provider] = e.CT[6:]
+				}
+				continue
+			}
+			out[provider] = plain
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	// Legacy flat format {"anthropic": "sk-ant-..."} — plaintext, pre-encryption.
+	var flat map[string]string
+	if err := json.Unmarshal(raw, &flat); err != nil {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(flat))
+	for provider, v := range flat {
+		if v != "" {
+			out[provider] = v
+		}
+	}
+	return out
 }
 
 func (rt *Runtime) loadSpecBySlug(ctx context.Context, slug string) (*agentgen.AgentSpec, error) {

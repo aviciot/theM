@@ -14,6 +14,10 @@ type InvocationContext struct {
 	Credentials     map[string]string // slot_name → decrypted value (in-memory only)
 	ConfigOverrides map[string]any
 	Policies        InvocationPolicies
+	// AppAPIKey is the per-app LLM provider key decrypted from applications.provider_keys.
+	// It is preferred over the platform env key but overridden by a per-binding slot.
+	// NEVER logged or serialized — cleared after the request.
+	AppAPIKey map[string]string // provider → plaintext key (e.g. "anthropic" → "sk-ant-...")
 }
 
 type InvocationPolicies struct {

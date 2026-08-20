@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/crypto"
 )
 
 // epConfigChannel is the Redis pub/sub channel for cross-pod EP config cache invalidation.
@@ -46,13 +47,14 @@ func IsValidEPType(t string) bool {
 
 // AppService owns the business logic for application and entry point CRUD.
 type AppService struct {
-	dal   Dal
-	cache Cache
+	dal        Dal
+	cache      Cache
+	cryptoKey  []byte // AES-GCM key for provider_keys encryption; nil = no encryption (tests)
 }
 
 // NewAppService creates an AppService.
-func NewAppService(d Dal, c Cache) *AppService {
-	return &AppService{dal: d, cache: c}
+func NewAppService(d Dal, c Cache, cryptoKey []byte) *AppService {
+	return &AppService{dal: d, cache: c, cryptoKey: cryptoKey}
 }
 
 // List returns all applications for the given tenant, each with their entry points.
@@ -229,7 +231,15 @@ var validProviders = map[string]struct{}{
 type ProviderKeyOut struct {
 	Provider string `json:"provider"`
 	KeySet   bool   `json:"key_set"`
-	KeyHint  string `json:"key_hint,omitempty"` // last 4 chars of the plaintext key
+	KeyHint  string `json:"key_hint,omitempty"` // last 4 chars of the original plaintext key
+}
+
+// providerKeyEntry is the JSONB structure stored per provider in provider_keys.
+// {"ct": "<AES-GCM ciphertext>", "hint": "<last 4 chars of plaintext>"}
+// Legacy rows (plaintext string) are detected by the absence of "ct" and migrated on read.
+type providerKeyEntry struct {
+	CT   string `json:"ct"`
+	Hint string `json:"hint"`
 }
 
 // GetProviderKeys returns the key-set status for each provider on the application.
@@ -242,24 +252,19 @@ func (s *AppService) GetProviderKeys(ctx context.Context, tenantID, appID string
 		}
 		return nil, err
 	}
-	// raw is {"provider": "enc:..."}; we just report key_set + hint, never the value
-	var m map[string]string
-	if err := json.Unmarshal(raw, &m); err != nil {
+	entries, err := parseProviderKeys(raw)
+	if err != nil {
 		return nil, err
 	}
-	out := make([]ProviderKeyOut, 0, len(m))
-	for p, v := range m {
-		hint := ""
-		if len(v) >= 4 {
-			hint = v[len(v)-4:]
-		}
-		out = append(out, ProviderKeyOut{Provider: p, KeySet: v != "", KeyHint: hint})
+	out := make([]ProviderKeyOut, 0, len(entries))
+	for p, e := range entries {
+		out = append(out, ProviderKeyOut{Provider: p, KeySet: e.CT != "", KeyHint: e.Hint})
 	}
 	return out, nil
 }
 
-// SetProviderKey stores an encrypted API key for one provider on the application.
-// The key is stored as a JSON string value inside the provider_keys JSONB column.
+// SetProviderKey encrypts the plaintext key with AES-GCM and stores it alongside
+// a 4-char hint (extracted before encryption) in the provider_keys JSONB column.
 func (s *AppService) SetProviderKey(ctx context.Context, tenantID, appID, provider, plainKey string) error {
 	if _, ok := validProviders[provider]; !ok {
 		return unprocessable("unsupported provider: " + provider)
@@ -267,27 +272,96 @@ func (s *AppService) SetProviderKey(ctx context.Context, tenantID, appID, provid
 	if plainKey == "" {
 		return validation("key must not be empty")
 	}
-	// Store the plaintext key as a JSON string in the JSONB column.
-	// In production this should be encrypted; for now we store as-is behind the admin JWT wall.
-	b, err := json.Marshal(plainKey)
+	hint := ""
+	if len(plainKey) >= 4 {
+		hint = plainKey[len(plainKey)-4:]
+	}
+	ct, err := s.encryptKey(plainKey)
+	if err != nil {
+		return fmt.Errorf("encrypt provider key: %w", err)
+	}
+	entry := providerKeyEntry{CT: ct, Hint: hint}
+	b, err := json.Marshal(entry)
 	if err != nil {
 		return err
 	}
 	return s.dal.SetProviderKey(ctx, tenantID, appID, provider, b)
 }
 
-// GetPlaintextProviderKey returns the raw stored key for one provider.
+// GetPlaintextProviderKey decrypts and returns the raw key for one provider.
 // Returns empty string when no key is stored. Never logs the value.
 func (s *AppService) GetPlaintextProviderKey(ctx context.Context, tenantID, appID, provider string) (string, error) {
 	raw, err := s.dal.GetProviderKeys(ctx, tenantID, appID)
 	if err != nil {
 		return "", err
 	}
-	var m map[string]string
-	if err := json.Unmarshal(raw, &m); err != nil {
+	entries, err := parseProviderKeys(raw)
+	if err != nil {
 		return "", err
 	}
-	return m[provider], nil
+	e, ok := entries[provider]
+	if !ok || e.CT == "" {
+		return "", nil
+	}
+	return s.decryptKey(e.CT)
+}
+
+// encryptKey AES-GCM encrypts plainKey using the service crypto key.
+// When no crypto key is configured (tests) the plaintext is stored as-is with an "plain:" prefix
+// so it can be round-tripped by decryptKey without error.
+func (s *AppService) encryptKey(plainKey string) (string, error) {
+	if len(s.cryptoKey) == 0 {
+		return "plain:" + plainKey, nil
+	}
+	return crypto.EncryptStored(s.cryptoKey, plainKey)
+}
+
+// decryptKey reverses encryptKey.
+func (s *AppService) decryptKey(ct string) (string, error) {
+	if len(s.cryptoKey) == 0 {
+		// test mode: strip "plain:" prefix
+		if len(ct) > 6 && ct[:6] == "plain:" {
+			return ct[6:], nil
+		}
+		return ct, nil
+	}
+	return crypto.DecryptStored(s.cryptoKey, ct)
+}
+
+// parseProviderKeys decodes the provider_keys JSONB blob into a map of providerKeyEntry.
+// It handles two formats:
+//   - New format: {"anthropic": {"ct": "...", "hint": "XXXX"}}
+//   - Legacy format: {"anthropic": "sk-ant-..."} (plaintext, written before encryption was added)
+//
+// Legacy entries are returned with CT set to the raw value so callers can detect and migrate them.
+func parseProviderKeys(raw []byte) (map[string]providerKeyEntry, error) {
+	// Try new structured format first.
+	var structured map[string]providerKeyEntry
+	if err := json.Unmarshal(raw, &structured); err == nil {
+		// Verify it's actually the structured format (has "ct" key somewhere), not accidentally
+		// parsed a flat string map into zero-value structs.
+		for _, e := range structured {
+			if e.CT != "" {
+				return structured, nil
+			}
+		}
+	}
+	// Fall back to legacy flat string map {"provider": "plaintext"}.
+	var flat map[string]string
+	if err := json.Unmarshal(raw, &flat); err != nil {
+		return nil, fmt.Errorf("parse provider_keys: %w", err)
+	}
+	out := make(map[string]providerKeyEntry, len(flat))
+	for p, v := range flat {
+		hint := ""
+		if len(v) >= 4 {
+			hint = v[len(v)-4:]
+		}
+		// Store the plaintext in CT so GetPlaintextProviderKey can return it.
+		// Callers should re-encrypt on next SetProviderKey call.
+		out[p] = providerKeyEntry{CT: v, Hint: hint}
+	}
+	return out, nil
 }
 
 // DeleteProviderKey removes the key for one provider from the application.
