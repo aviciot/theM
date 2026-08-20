@@ -16,6 +16,24 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 	return &PgxQuerier{pool: pool}
 }
 
+// GetBindingID returns the app_agent_bindings.id for the given application + agent pair.
+// Returns ("", nil) when no binding row exists (unboundd canvas agent).
+func (q *PgxQuerier) GetBindingID(ctx context.Context, applicationID, agentID string) (string, error) {
+	const sql = `
+		SELECT id::text
+		FROM them.app_agent_bindings
+		WHERE application_id = $1::uuid
+		  AND agent_id = $2::uuid
+		LIMIT 1`
+	var id string
+	err := q.pool.QueryRow(ctx, sql, applicationID, agentID).Scan(&id)
+	if err != nil {
+		// pgx returns pgx.ErrNoRows when no binding exists — treat as missing, not an error.
+		return "", nil
+	}
+	return id, nil
+}
+
 // QueryAgentsByTenant loads all enabled agents belonging to the given tenant.
 // tenantID is the server-resolved UUID string from the auth context.
 // Scoped to tenant_id so agents from different tenants are never mixed (SEC-03).

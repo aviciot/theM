@@ -80,11 +80,17 @@ type Config struct {
 }
 
 // AgentInvoker is the interface the orchestrator uses to call agents.
-// Implemented by the agent registry (Phase 7).
+// Implemented by the agent registry.
 // tenantID must be the server-resolved tenant ID from RunContext — never from
 // client-supplied data (SEC-03).
 type AgentInvoker interface {
 	Invoke(ctx context.Context, tenantID, slug string, input json.RawMessage) (json.RawMessage, error)
+
+	// InvokeForRun is the preferred call path during an orchestrated run.
+	// It carries applicationID so canvas_a2a agents can have their invocation
+	// context headers (X-Them-*) populated from the app_agent_binding row.
+	// For non-canvas agents it behaves identically to Invoke.
+	InvokeForRun(ctx context.Context, tenantID, applicationID, slug string, input json.RawMessage) (json.RawMessage, error)
 }
 
 // HistoryLoader loads prior conversation messages from persistent storage.
@@ -649,7 +655,7 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 
 			inputBytes, _ := json.Marshal(tc.Input)
 			stepStart := time.Now()
-			out, err := o.agents.Invoke(ctx, rctx.TenantID, slug, inputBytes)
+			out, err := o.agents.InvokeForRun(ctx, rctx.TenantID, rctx.ApplicationID, slug, inputBytes)
 			latencyMS := time.Since(stepStart).Milliseconds()
 
 			// Complete child task row (non-fatal).

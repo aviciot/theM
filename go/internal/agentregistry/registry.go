@@ -51,6 +51,11 @@ type DBReader interface {
 	// QueryAgentsByTenant returns all enabled agents belonging to the given tenant.
 	// tenantID is a UUID string from the server-side auth context.
 	QueryAgentsByTenant(ctx context.Context, tenantID string) ([]*AgentConfig, error)
+
+	// GetBindingID returns the app_agent_bindings.id UUID for the given
+	// (applicationID, agentID) pair, or ("", nil) when no binding exists.
+	// Used by InvokeForRun to populate X-Them-Binding-Id for canvas_a2a agents.
+	GetBindingID(ctx context.Context, applicationID, agentID string) (string, error)
 }
 
 // CacheClient is the Redis interface used by the registry.
@@ -126,6 +131,45 @@ func (r *Registry) Invoke(ctx context.Context, tenantID, slug string, input json
 	default:
 		return nil, fmt.Errorf("agentregistry: unknown adapter type %q for agent %s", cfg.AdapterType, slug)
 	}
+}
+
+// InvokeForRun routes a tool call with full run context.
+// For canvas_a2a agents it looks up the app_agent_binding for (applicationID, agentID)
+// and calls InvokeWithMeta so the agent-runtime receives the invocation context headers.
+// For all other transports it delegates to Invoke.
+// applicationID must be the server-resolved application UUID — never from client data.
+func (r *Registry) InvokeForRun(ctx context.Context, tenantID, applicationID, slug string, input json.RawMessage) (json.RawMessage, error) {
+	cfg, err := r.getAgent(ctx, tenantID, slug)
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.AdapterType != "canvas_a2a" {
+		// Non-canvas agents: standard adapter routing.
+		switch cfg.AdapterType {
+		case "a2a", "a2a_async":
+			return r.invokeA2A(ctx, cfg, input)
+		case "ws_mock", "mock":
+			return r.invokeMock(cfg, input)
+		case "http":
+			return r.invokeHTTP(ctx, cfg, input)
+		default:
+			return nil, fmt.Errorf("agentregistry: unknown adapter type %q for agent %s", cfg.AdapterType, slug)
+		}
+	}
+
+	// canvas_a2a: look up binding so the agent-runtime can resolve credentials.
+	bindingID, err := r.db.GetBindingID(ctx, applicationID, cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("agentregistry: binding lookup for canvas agent %s: %w", slug, err)
+	}
+
+	meta := &InvocationMeta{
+		ApplicationID: applicationID,
+		AgentID:       cfg.ID,
+		BindingID:     bindingID,
+	}
+	return r.InvokeWithMeta(ctx, tenantID, slug, input, meta)
 }
 
 func (r *Registry) getAgent(ctx context.Context, tenantID, slug string) (*AgentConfig, error) {

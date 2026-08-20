@@ -50,6 +50,10 @@ func (f *fakeDB) QueryAgentsByTenant(_ context.Context, tenantID string) ([]*age
 	return f.tenants[tenantID], nil
 }
 
+func (f *fakeDB) GetBindingID(_ context.Context, _, _ string) (string, error) {
+	return "test-binding-id", nil
+}
+
 type fakeCache struct {
 	mu    sync.Mutex
 	data  map[string][]byte
@@ -275,7 +279,50 @@ func TestUnknownSlug(t *testing.T) {
 	assert.True(t, errors.Is(err, agentregistry.ErrUnknownAgent), "expected ErrUnknownAgent, got: %v", err)
 }
 
-// 9. Empty pub/sub payload is ignored (no global eviction).
+// 9. InvokeForRun with canvas_a2a transport routes through InvokeWithMeta.
+func TestInvokeForRun_CanvasA2A_UsesBindingID(t *testing.T) {
+	// Set up a mock HTTP server that captures X-Them-Binding-Id.
+	var capturedBindingID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBindingID = r.Header.Get("X-Them-Binding-Id")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"output":"canvas result"}`)
+	}))
+	defer server.Close()
+
+	db := newFakeDB(tenantA, []*agentregistry.AgentConfig{
+		{
+			ID:          "canvas-agent-uuid",
+			Slug:        "canvas_agent",
+			AdapterType: "canvas_a2a",
+			EndpointURL: server.URL,
+		},
+	})
+	reg := agentregistry.New(db, newFakeCache(), nil)
+	require.NoError(t, reg.LoadAll(context.Background(), tenantA))
+
+	const appID = "app-uuid-0000"
+	out, err := reg.InvokeForRun(context.Background(), tenantA, appID, "canvas_agent", json.RawMessage(`{"input":"hi"}`))
+	require.NoError(t, err)
+	assert.NotEmpty(t, out)
+	// fakeDB.GetBindingID always returns "test-binding-id".
+	assert.Equal(t, "test-binding-id", capturedBindingID, "X-Them-Binding-Id header must be set on canvas_a2a calls")
+}
+
+// 10. InvokeForRun with a non-canvas transport delegates to standard routing.
+func TestInvokeForRun_NonCanvas_DelegatesToStandardRouting(t *testing.T) {
+	db := newFakeDB(tenantA, []*agentregistry.AgentConfig{
+		{Slug: "mock_agent", AdapterType: "mock", EndpointURL: ""},
+	})
+	reg := agentregistry.New(db, newFakeCache(), nil)
+	require.NoError(t, reg.LoadAll(context.Background(), tenantA))
+
+	out, err := reg.InvokeForRun(context.Background(), tenantA, "any-app-id", "mock_agent", json.RawMessage(`{"input":"hi"}`))
+	require.NoError(t, err)
+	assert.NotEmpty(t, out)
+}
+
+// 11. Empty pub/sub payload is ignored (no global eviction).
 func TestPubSubEmptyPayload_Ignored(t *testing.T) {
 	// This test verifies that an empty payload on the invalidation channel does
 	// not wipe L1 for all tenants. The Subscribe handler must guard against this.

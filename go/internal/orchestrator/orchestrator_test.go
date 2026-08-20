@@ -200,6 +200,10 @@ func (f *fakeAgentInvoker) Invoke(ctx context.Context, _ string, slug string, _ 
 	return json.RawMessage(`{"result":"ok"}`), nil
 }
 
+func (f *fakeAgentInvoker) InvokeForRun(ctx context.Context, tenantID, _ string, slug string, input json.RawMessage) (json.RawMessage, error) {
+	return f.Invoke(ctx, tenantID, slug, input)
+}
+
 func (f *fakeAgentInvoker) getSlugs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -472,6 +476,10 @@ func (a *artifactAgentInvoker) Invoke(_ context.Context, _ string, _ string, _ j
 	}
 	b, _ := json.Marshal(payload)
 	return json.RawMessage(b), nil
+}
+
+func (a *artifactAgentInvoker) InvokeForRun(ctx context.Context, tenantID, _ string, slug string, input json.RawMessage) (json.RawMessage, error) {
+	return a.Invoke(ctx, tenantID, slug, input)
 }
 
 // TestOrchestrator_ArtifactEmitted verifies that when a tool returns an artifact
@@ -853,4 +861,8 @@ func (a *rawBase64AgentInvoker) Invoke(_ context.Context, _ string, _ string, _ 
 		},
 	}
 	return json.Marshal(payload)
+}
+
+func (a *rawBase64AgentInvoker) InvokeForRun(ctx context.Context, tenantID, _ string, slug string, input json.RawMessage) (json.RawMessage, error) {
+	return a.Invoke(ctx, tenantID, slug, input)
 }

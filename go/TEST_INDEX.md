@@ -443,6 +443,8 @@ Fully rewritten for SEC-03: Redis key is now `them:agents:registry:{tenant_id}`,
 | `TestTenantInvalidation_DoesNotCrossContaminate` | SEC-03: invalidating tenantA does NOT evict tenantB's cache entries |
 | `TestCrossTenatLookup_ReturnsMiss` | SEC-03: tenantA cannot retrieve an agent registered under tenantB (returns ErrUnknownAgent) |
 | `TestPubSubEmptyPayload_Ignored` | SEC-03: empty pub/sub payload → no eviction (guards against accidental global eviction) |
+| `TestInvokeForRun_CanvasA2A_UsesBindingID` | `canvas_a2a` transport → `GetBindingID` called; `X-Them-Binding-Id` header forwarded to agent-runtime |
+| `TestInvokeForRun_NonCanvas_DelegatesToStandardRouting` | Non-canvas transport in `InvokeForRun` falls through to standard mock adapter dispatch |
 
 **Trigger:** any change to `internal/agentregistry/registry.go` or `internal/agentregistry/pgx_querier.go`
 
