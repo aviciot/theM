@@ -17,7 +17,6 @@ Usage:
   THEM_BASE=http://localhost:8088 python3.12 scripts/test_doc_artifact.py
 """
 
-import base64
 import json
 import os
 import sys
@@ -204,20 +203,15 @@ def main() -> None:
        f"part keys: {[list(p.keys()) for p in parts]}")
 
     if file_part:
-        fname     = file_part.get("filename", "")
-        mime      = file_part.get("mediaType") or file_part.get("media_type", "")
-        raw_text  = file_part.get("text", "")
-        # API returns base64-encoded content for run_artifacts; decode for validation
-        try:
-            html = base64.b64decode(raw_text).decode("utf-8", errors="replace")
-        except Exception:
-            html = raw_text  # fall back if not base64 (old-style plain-text artifacts)
+        fname = file_part.get("filename", "")
+        mime  = file_part.get("mediaType") or file_part.get("media_type", "")
+        html  = file_part.get("text", "")
         ok("filename=documentation.html", fname == "documentation.html", fname)
         ok("mediaType=text/html",         mime  == "text/html",          mime)
-        ok("HTML content >100 chars",     len(html) > 100,               f"{len(html)} chars (decoded)")
+        ok("HTML content >100 chars",     len(html) > 100,               f"{len(html)} chars")
         ok("HTML contains <html or DOCTYPE",
            "<!DOCTYPE" in html or "<html" in html, html[:80])
-        print(f"  HTML size : {len(html):,} chars (decoded from {len(raw_text):,} base64 chars)")
+        print(f"  HTML size : {len(html):,} chars")
         print(f"  HTML start: {html[:160].strip()}")
 
     print(f"\n{'='*60}")

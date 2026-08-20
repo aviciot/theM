@@ -162,10 +162,9 @@ func TestRunsArtifacts_Empty(t *testing.T) {
 //
 //	parts_json, append_index, last_chunk, created_at
 func TestRunsArtifacts_WithData(t *testing.T) {
+	// New schema: run_artifacts columns — id, filename, content_type, size, data, created_at
 	rows := newFakeRows([][]any{
-		{"art-1", "task-1", "ctx-1", "ext-art-1", "my-artifact",
-			`[{"kind":"text","text":"hello"}]`,
-			0, false, "2026-01-01T00:00:00Z"},
+		{"art-1", "report.html", "text/html", int64(13), []byte("<h1>Hello</h1>"), "2026-01-01T00:00:00Z"},
 	})
 	db := &fakeDB{queryRows: rows}
 	w := serveRuns(t, db, http.MethodGet, "/runs/run-abc/artifacts")
@@ -175,10 +174,14 @@ func TestRunsArtifacts_WithData(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &artifacts))
 	require.Len(t, artifacts, 1)
 	assert.Equal(t, "art-1", artifacts[0]["id"])
-	assert.Equal(t, "my-artifact", artifacts[0]["name"])
+	assert.Equal(t, "report.html", artifacts[0]["name"])
 	parts, ok := artifacts[0]["parts"].([]any)
 	assert.True(t, ok, "parts must be an array")
 	require.Len(t, parts, 1)
+	part := parts[0].(map[string]any)
+	assert.Equal(t, "report.html", part["filename"])
+	assert.Equal(t, "text/html", part["media_type"])
+	assert.Equal(t, "<h1>Hello</h1>", part["text"])
 }
 
 // ── Cancel tests ───────────────────────────────────────────────────────────────

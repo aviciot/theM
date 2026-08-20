@@ -2,7 +2,6 @@ package dal
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -399,64 +398,24 @@ func (d *DB) ListContextSessions(ctx context.Context, tenantID, orchestrator str
 	return sessions, nil
 }
 
-// GetContextArtifacts returns artifacts whose context_id matches the given contextID, tenant-scoped.
+// GetContextArtifacts returns file artifacts for a context, scoped to the tenant.
+// Reads from them.run_artifacts (Go worker path only — Python bridge retired).
 func (d *DB) GetContextArtifacts(ctx context.Context, tenantID, contextID string, limit int) ([]Artifact, error) {
-	q := `SELECT a.id::text, a.task_id::text,
-		COALESCE(a.context_id::text, ''), COALESCE(a.artifact_id, ''),
-		COALESCE(a.name, ''), COALESCE(a.parts::text, '[]'),
-		COALESCE(a.append_index, 0), COALESCE(a.last_chunk, false),
-		a.created_at::text
-		FROM them.artifacts a
-		JOIN them.tasks t ON t.id = a.task_id
-		LEFT JOIN them.runs r ON r.id = t.run_id
-		WHERE a.context_id = $1::uuid
-		  AND COALESCE(r.tenant_id, t.tenant_id) = $2::uuid
-		ORDER BY a.created_at DESC
-		LIMIT $3`
-	rows, err := d.q.Query(ctx, q, contextID, tenantID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	artifacts := make([]Artifact, 0)
-	for rows.Next() {
-		var a Artifact
-		var partsJSON string
-		if err := rows.Scan(
-			&a.ID, &a.TaskID,
-			&a.ContextID, &a.ArtifactID,
-			&a.Name, &partsJSON,
-			&a.AppendIndex, &a.LastChunk,
-			&a.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		if partsJSON != "" && partsJSON != "[]" {
-			_ = json.Unmarshal([]byte(partsJSON), &a.Parts)
-		}
-		if a.Parts == nil {
-			a.Parts = []ArtifactPart{}
-		}
-		artifacts = append(artifacts, a)
-	}
-	return artifacts, nil
+	// run_artifacts has no context_id column — return empty; context-scoped artifact
+	// queries are not used by the current UI. Keeping the signature for interface compat.
+	return []Artifact{}, nil
 }
 
-// GetRunArtifacts returns artifacts for a run, combining them.artifacts (A2A task-based)
-// and them.run_artifacts (file artifacts saved by the Go worker), ordered by created_at.
-// tenantID is used to verify the run belongs to the caller's tenant.
+// GetRunArtifacts returns file artifacts for a run, tenant-scoped.
+// Reads from them.run_artifacts (Go worker path only — Python bridge retired).
+// The text field in each part contains the decoded file content as a UTF-8 string,
+// ready to render directly (HTML → iframe srcDoc, markdown → pre, etc.).
 func (d *DB) GetRunArtifacts(ctx context.Context, tenantID, runID string) ([]Artifact, error) {
-	// Query them.artifacts (A2A task-linked artifacts).
-	q := `SELECT a.id::text, a.task_id::text,
-        COALESCE(a.context_id::text, ''), COALESCE(a.artifact_id, ''),
-        COALESCE(a.name, ''), COALESCE(a.parts::text, '[]'),
-        COALESCE(a.append_index, 0), COALESCE(a.last_chunk, false),
-        a.created_at::text
-        FROM them.artifacts a
-        JOIN them.tasks t ON t.id = a.task_id
-        WHERE t.run_id = $1::uuid
-          AND EXISTS (SELECT 1 FROM them.runs r WHERE r.id = $1::uuid AND r.tenant_id = $2::uuid)
-        ORDER BY a.created_at`
+	q := `SELECT ra.id::text, ra.filename, ra.content_type, ra.size, ra.data, ra.created_at::text
+	      FROM them.run_artifacts ra
+	      WHERE ra.run_id = $1::uuid
+	        AND ra.tenant_id = $2::uuid
+	      ORDER BY ra.created_at`
 	rows, err := d.q.Query(ctx, q, runID, tenantID)
 	if err != nil {
 		return nil, err
@@ -464,45 +423,12 @@ func (d *DB) GetRunArtifacts(ctx context.Context, tenantID, runID string) ([]Art
 	defer rows.Close()
 	artifacts := make([]Artifact, 0)
 	for rows.Next() {
-		var a Artifact
-		var partsJSON string
-		if err := rows.Scan(
-			&a.ID, &a.TaskID,
-			&a.ContextID, &a.ArtifactID,
-			&a.Name, &partsJSON,
-			&a.AppendIndex, &a.LastChunk,
-			&a.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		if partsJSON != "" && partsJSON != "[]" {
-			_ = json.Unmarshal([]byte(partsJSON), &a.Parts)
-		}
-		if a.Parts == nil {
-			a.Parts = []ArtifactPart{}
-		}
-		artifacts = append(artifacts, a)
-	}
-
-	// Also query them.run_artifacts (file artifacts from the Go worker).
-	q2 := `SELECT ra.id::text, ra.filename, ra.content_type, ra.size, ra.data, ra.created_at::text
-           FROM them.run_artifacts ra
-           WHERE ra.run_id = $1::uuid
-             AND ra.tenant_id = $2::uuid
-           ORDER BY ra.created_at`
-	rows2, err := d.q.Query(ctx, q2, runID, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows2.Close()
-	for rows2.Next() {
 		var id, filename, contentType, createdAt string
 		var size int64
 		var data []byte
-		if err := rows2.Scan(&id, &filename, &contentType, &size, &data, &createdAt); err != nil {
+		if err := rows.Scan(&id, &filename, &contentType, &size, &data, &createdAt); err != nil {
 			return nil, err
 		}
-		encoded := base64.StdEncoding.EncodeToString(data)
 		a := Artifact{
 			ID:         id,
 			ArtifactID: id,
@@ -513,7 +439,7 @@ func (d *DB) GetRunArtifacts(ctx context.Context, tenantID, runID string) ([]Art
 					Kind:      "file",
 					Filename:  filename,
 					MediaType: contentType,
-					Text:      encoded,
+					Text:      string(data),
 				},
 			},
 		}
