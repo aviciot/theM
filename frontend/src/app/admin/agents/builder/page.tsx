@@ -217,7 +217,7 @@ const STEP_INPUT_FIELD: Record<string, string> = {
   llm: 'user_prompt',
   http: 'url_template',
   transform: 'expression',
-  response: 'template',
+  response: 'from_var',
 };
 // Step types that accept only one incoming edge.
 const SINGLE_INPUT_TYPES = new Set(['llm', 'transform', 'response']);
@@ -502,12 +502,10 @@ function CanvasInner() {
     const responseId = genUUID();
     return {
       nodes: [
-        { id: `step-${inputId}`,    type: 'step', position: { x: 160, y: 80  }, data: { step_id: inputId,    step_type: 'input',    label: 'Input',    config: {} } },
-        { id: `step-${responseId}`, type: 'step', position: { x: 160, y: 240 }, data: { step_id: responseId, step_type: 'response', label: 'Response', config: {} } },
+        { id: `step-${inputId}`,    type: 'step', position: { x: 160, y: 60  }, data: { step_id: inputId,    step_type: 'input',    label: 'Input',    config: {} } },
+        { id: `step-${responseId}`, type: 'step', position: { x: 160, y: 280 }, data: { step_id: responseId, step_type: 'response', label: 'Response', config: {} } },
       ],
-      edges: [
-        { id: `${inputId}-to-${responseId}`, source: `step-${inputId}`, target: `step-${responseId}` },
-      ],
+      edges: [],
     };
   }
 
@@ -618,7 +616,9 @@ function CanvasInner() {
   }, [ctxMenu, savePipelineState, closeCtx]);
 
   const onPipeConnect = useCallback((conn: Connection) => {
-    setLocalPipeEdges(prev => addEdge(conn, prev));
+    // Remove any existing incoming edge to the target before adding the new one.
+    // This allows re-routing (e.g. Input→Response replaced by LLM→Response).
+    setLocalPipeEdges(prev => addEdge(conn, prev.filter(e => e.target !== conn.target)));
     setDirty(true);
 
     // Auto-fill: read source output_var → suggest it in target input field (only if empty).
@@ -640,27 +640,24 @@ function CanvasInner() {
       const targetField = STEP_INPUT_FIELD[tgtData.step_type];
       if (!targetField) return prev;
 
-      // Only fill if currently empty.
+      // from_var always updates (it should reflect whatever is now connected upstream).
+      // Other fields only fill if currently empty — don't overwrite user-typed content.
       const currentValue = tgtData.config?.[targetField] as string | undefined;
-      if (currentValue && currentValue.trim() !== '') return prev;
+      if (targetField !== 'from_var' && currentValue && currentValue.trim() !== '') return prev;
+
+      const fillValue = targetField === 'from_var' ? sourceVar : `{{${sourceVar}}}`;
 
       return prev.map(n =>
         n.id === conn.target
-          ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), [targetField]: `{{${sourceVar}}}` } } }
+          ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), [targetField]: fillValue } } }
           : n
       );
     });
   }, [setLocalPipeEdges, setLocalPipeNodes]);
 
-  const isPipeConnectionValid = useCallback((conn: Connection) => {
-    const targetNode = localPipeNodes.find(n => n.id === conn.target);
-    if (!targetNode) return true;
-    const tgtType = (targetNode.data as unknown as StepData).step_type;
-    if (!SINGLE_INPUT_TYPES.has(tgtType)) return true;
-    // Reject if there's already an incoming edge to this target.
-    const alreadyHasInput = localPipeEdges.some(e => e.target === conn.target);
-    return !alreadyHasInput;
-  }, [localPipeNodes, localPipeEdges]);
+  const isPipeConnectionValid = useCallback((_conn: Connection) => {
+    return true;
+  }, []);
 
   // Properties panel update
   function updateSelectedNodeField(field: string, value: string) {
@@ -1193,6 +1190,34 @@ function CanvasInner() {
                     <div style={{ ...inputStyle, color: C.textMuted, cursor: 'default' }}>{d.step_type}</div>
                   </div>
 
+                  {/* ── INPUTS: live incoming connections ── */}
+                  {d.step_type !== 'input' && (() => {
+                    const inEdges = localPipeEdges.filter(e => e.target === selectedNode.id);
+                    return (
+                      <div style={{ marginBottom: '16px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: C.cyan, marginBottom: '6px' }}>
+                          INPUTS {inEdges.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400 }}>— nothing connected</span>}
+                        </div>
+                        {inEdges.map(e => {
+                          const src = localPipeNodes.find(n => n.id === e.source);
+                          const srcData = src?.data as unknown as StepData | undefined;
+                          const srcMeta = srcData ? (STEP_META[srcData.step_type] ?? { emoji: '🔧', label: srcData.step_type }) : { emoji: '?', label: 'unknown' };
+                          const srcVar = srcData?.step_type === 'input'
+                            ? ((srcData.config?.bindings as Record<string,string>)?.text || 'input')
+                            : ((srcData?.config?.output_var as string) || 'output');
+                          return (
+                            <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', marginBottom: '4px', background: 'rgba(0,240,255,0.05)', border: '1px solid rgba(0,240,255,0.15)' }}>
+                              <span style={{ fontSize: '14px' }}>{srcMeta.emoji}</span>
+                              <span style={{ color: '#e2e8f0', fontSize: '11px', fontWeight: 600 }}>{srcData?.label || srcMeta.label}</span>
+                              <span style={{ color: C.textMuted, fontSize: '11px' }}>→</span>
+                              <code style={{ color: C.cyan, fontSize: '11px', fontFamily: 'monospace' }}>{`{{${srcVar}}}`}</code>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+
                   {/* ── Config: input ── */}
                   {d.step_type === 'input' && (
                     <>
@@ -1540,6 +1565,34 @@ function CanvasInner() {
                       Config for <strong style={{ color: C.text }}>{d.step_type}</strong> is not yet supported in the builder.
                     </div>
                   )}
+
+                  {/* ── OUTPUTS: live outgoing connections ── */}
+                  {d.step_type !== 'response' && (() => {
+                    const outVar = d.step_type === 'input'
+                      ? ((d.config?.bindings as Record<string,string>)?.text || 'input')
+                      : ((d.config?.output_var as string) || 'output');
+                    const outEdges = localPipeEdges.filter(e => e.source === selectedNode.id);
+                    return (
+                      <div style={{ marginTop: '16px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: C.green, marginBottom: '6px' }}>
+                          OUTPUTS {outEdges.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400 }}>— nothing connected</span>}
+                        </div>
+                        {outEdges.map(e => {
+                          const tgt = localPipeNodes.find(n => n.id === e.target);
+                          const tgtData = tgt?.data as unknown as StepData | undefined;
+                          const tgtMeta = tgtData ? (STEP_META[tgtData.step_type] ?? { emoji: '🔧', label: tgtData.step_type }) : { emoji: '?', label: 'unknown' };
+                          return (
+                            <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', marginBottom: '4px', background: 'rgba(74,222,128,0.05)', border: '1px solid rgba(74,222,128,0.2)' }}>
+                              <code style={{ color: C.green, fontSize: '11px', fontFamily: 'monospace' }}>{`{{${outVar}}}`}</code>
+                              <span style={{ color: C.textMuted, fontSize: '11px' }}>→</span>
+                              <span style={{ fontSize: '14px' }}>{tgtMeta.emoji}</span>
+                              <span style={{ color: '#e2e8f0', fontSize: '11px', fontWeight: 600 }}>{tgtData?.label || tgtMeta.label}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
 
                 </>
               );
