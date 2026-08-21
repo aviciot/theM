@@ -303,6 +303,135 @@ func (p *stubLLMProvider) Complete(_ context.Context, _, _ string) (string, erro
 	return p.reply, nil
 }
 
+// TestExecuteSkill_SkillSelectionByID verifies that when Message.Metadata contains
+// "skill_id", executeSkill runs the matching skill rather than always picking Skills[0].
+func TestExecuteSkill_SkillSelectionByID(t *testing.T) {
+	rt := &Runtime{
+		interp: agentgen.NewInterpreter(&http.Client{}, &stubLLMFactory{reply: "from sk2"}, ""),
+	}
+	ic := &agentgen.InvocationContext{
+		Spec: &agentgen.AgentSpec{
+			Skills: []agentgen.SkillSpec{
+				{ID: "sk1", Steps: []agentgen.StepSpec{{ID: "s1", Type: agentgen.StepResponse, Config: []byte(`{"from_var":"output"}`)}}},
+				{ID: "sk2", Steps: []agentgen.StepSpec{{ID: "s2", Type: agentgen.StepResponse, Config: []byte(`{"from_var":"output"}`)}}},
+			},
+		},
+	}
+
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))
+	msg.Metadata = map[string]any{"skill_id": "sk2"}
+	execCtx := &a2asrv.ExecutorContext{
+		TaskID:    a2a.NewTaskID(),
+		ContextID: a2a.NewContextID(),
+		Message:   msg,
+	}
+
+	var events []a2a.Event
+	for evt, err := range rt.executeSkill(context.Background(), ic, execCtx) {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		events = append(events, evt)
+	}
+	// Must complete (not fail) — wrong skill would run a different pipeline but still succeed.
+	checkStatusEvent(t, events[len(events)-1], a2a.TaskStateCompleted, "last event")
+}
+
+// TestExecuteSkill_SkillSelectionByID_NotFound verifies that an unknown skill_id emits Failed.
+func TestExecuteSkill_SkillSelectionByID_NotFound(t *testing.T) {
+	rt := &Runtime{
+		interp: agentgen.NewInterpreter(&http.Client{}, &stubLLMFactory{}, ""),
+	}
+	ic := &agentgen.InvocationContext{
+		Spec: &agentgen.AgentSpec{
+			Skills: []agentgen.SkillSpec{
+				{ID: "sk1", Steps: []agentgen.StepSpec{{ID: "s1", Type: agentgen.StepResponse, Config: []byte(`{}`)}}},
+			},
+		},
+	}
+
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))
+	msg.Metadata = map[string]any{"skill_id": "does-not-exist"}
+	execCtx := &a2asrv.ExecutorContext{
+		TaskID:    a2a.NewTaskID(),
+		ContextID: a2a.NewContextID(),
+		Message:   msg,
+	}
+
+	var events []a2a.Event
+	for evt, err := range rt.executeSkill(context.Background(), ic, execCtx) {
+		if err != nil {
+			t.Fatalf("unexpected error from iterator: %v", err)
+		}
+		events = append(events, evt)
+	}
+	checkStatusEvent(t, events[len(events)-1], a2a.TaskStateFailed, "last event")
+}
+
+// TestExecuteSkill_PolicyAllowedSkillIDs_Denied verifies that when AllowedSkillIDs
+// is set in the binding policy, executing a non-listed skill emits Failed.
+func TestExecuteSkill_PolicyAllowedSkillIDs_Denied(t *testing.T) {
+	rt := &Runtime{
+		interp: agentgen.NewInterpreter(&http.Client{}, &stubLLMFactory{}, ""),
+	}
+	ic := &agentgen.InvocationContext{
+		Spec: &agentgen.AgentSpec{
+			Skills: []agentgen.SkillSpec{
+				{ID: "sk1", Steps: []agentgen.StepSpec{{ID: "s1", Type: agentgen.StepResponse, Config: []byte(`{}`)}}},
+			},
+		},
+		Policies: agentgen.InvocationPolicies{
+			AllowedSkillIDs: []string{"sk-other"}, // sk1 is NOT allowed
+		},
+	}
+	execCtx := &a2asrv.ExecutorContext{
+		TaskID:    a2a.NewTaskID(),
+		ContextID: a2a.NewContextID(),
+		Message:   a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi")),
+	}
+
+	var events []a2a.Event
+	for evt, err := range rt.executeSkill(context.Background(), ic, execCtx) {
+		if err != nil {
+			t.Fatalf("unexpected error from iterator: %v", err)
+		}
+		events = append(events, evt)
+	}
+	checkStatusEvent(t, events[len(events)-1], a2a.TaskStateFailed, "last event")
+}
+
+// TestExecuteSkill_PolicyAllowedSkillIDs_Permitted verifies that when the requested
+// skill IS in AllowedSkillIDs, execution succeeds normally.
+func TestExecuteSkill_PolicyAllowedSkillIDs_Permitted(t *testing.T) {
+	rt := &Runtime{
+		interp: agentgen.NewInterpreter(&http.Client{}, &stubLLMFactory{reply: "ok"}, ""),
+	}
+	ic := &agentgen.InvocationContext{
+		Spec: &agentgen.AgentSpec{
+			Skills: []agentgen.SkillSpec{
+				{ID: "sk1", Steps: []agentgen.StepSpec{{ID: "s1", Type: agentgen.StepResponse, Config: []byte(`{}`)}}},
+			},
+		},
+		Policies: agentgen.InvocationPolicies{
+			AllowedSkillIDs: []string{"sk1"}, // sk1 IS allowed
+		},
+	}
+	execCtx := &a2asrv.ExecutorContext{
+		TaskID:    a2a.NewTaskID(),
+		ContextID: a2a.NewContextID(),
+		Message:   a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi")),
+	}
+
+	var events []a2a.Event
+	for evt, err := range rt.executeSkill(context.Background(), ic, execCtx) {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		events = append(events, evt)
+	}
+	checkStatusEvent(t, events[len(events)-1], a2a.TaskStateCompleted, "last event")
+}
+
 // TestSpecCache_IsolatedKeys verifies that different keys don't collide.
 func TestSpecCache_IsolatedKeys(t *testing.T) {
 	c := &specCache{entries: make(map[string]*cachedSpec)}

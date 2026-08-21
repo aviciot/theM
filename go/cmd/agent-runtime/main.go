@@ -216,7 +216,43 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 			}
 			return
 		}
+
+		// Skill selection: prefer skill matching the requested ID in message metadata,
+		// fall back to first skill (single-skill agents have no skill ID in the message).
 		skill := &ic.Spec.Skills[0]
+		if execCtx.Message != nil {
+			if requestedID, ok := execCtx.Message.Metadata["skill_id"].(string); ok && requestedID != "" {
+				found := false
+				for i := range ic.Spec.Skills {
+					if ic.Spec.Skills[i].ID == requestedID {
+						skill = &ic.Spec.Skills[i]
+						found = true
+						break
+					}
+				}
+				if !found {
+					errMsg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("skill not found: "+requestedID))
+					yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, errMsg), nil) //nolint:errcheck
+					return
+				}
+			}
+		}
+
+		// Enforce AllowedSkillIDs policy from the binding (nil = all skills allowed).
+		if len(ic.Policies.AllowedSkillIDs) > 0 {
+			allowed := false
+			for _, id := range ic.Policies.AllowedSkillIDs {
+				if id == skill.ID {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				errMsg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("skill not permitted by binding policy"))
+				yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, errMsg), nil) //nolint:errcheck
+				return
+			}
+		}
 
 		// Extract text and structured data from the incoming message parts.
 		// text part  → vars["input"] (the raw caller message)
@@ -393,6 +429,10 @@ func (rt *Runtime) loadSpecBySlug(ctx context.Context, slug string) (*agentgen.A
 	if err := json.Unmarshal(specJSON, &spec); err != nil {
 		return nil, fmt.Errorf("unmarshal spec: %w", err)
 	}
+	// Populate the agent-ID cache so subsequent handle() calls avoid a DB round-trip.
+	if spec.ID != "" {
+		rt.specCache.set(spec.ID, &spec)
+	}
 	return &spec, nil
 }
 
@@ -428,6 +468,8 @@ func (rt *Runtime) loadBinding(ctx context.Context, appID, agentID, bindingID st
 	_ = json.Unmarshal(credJSON, &creds)
 	var overrides map[string]any
 	_ = json.Unmarshal(cfgJSON, &overrides)
+	var policies agentgen.InvocationPolicies
+	_ = json.Unmarshal(polJSON, &policies)
 
 	return &agentgen.AppAgentBinding{
 		ID:                   id,
@@ -436,6 +478,7 @@ func (rt *Runtime) loadBinding(ctx context.Context, appID, agentID, bindingID st
 		DefinitionID:         defID,
 		EncryptedCredentials: creds,
 		ConfigOverrides:      overrides,
+		Policies:             policies,
 	}, nil
 }
 

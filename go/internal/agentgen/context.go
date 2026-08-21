@@ -21,9 +21,9 @@ type InvocationContext struct {
 }
 
 type InvocationPolicies struct {
-	MaxConcurrentTasks int
-	AllowedSkillIDs    []string // nil = all skills allowed
-	RateLimitPerMinute int
+	MaxConcurrentTasks int      `json:"max_concurrent_tasks,omitempty"`
+	AllowedSkillIDs    []string `json:"allowed_skill_ids,omitempty"` // nil = all skills allowed
+	RateLimitPerMinute int      `json:"rate_limit_per_minute,omitempty"`
 }
 
 // String is deliberately redacted to prevent accidental credential logging.

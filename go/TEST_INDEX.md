@@ -1425,8 +1425,12 @@ No Postgres or Redis required; interpreter uses a stub or direct `StepResponse`.
 | `TestExecuteSkill_NoSkills_EmitsFailed` | Agent with empty skill list emits Working → Failed without panic |
 | `TestExecuteSkill_StoredTask_NoSubmitted` | When `ExecutorContext.StoredTask` is non-nil, Submitted event is skipped; first event is Working |
 | `TestJSONRPCHandler_MethodNotFound` | `NewJSONRPCHandler` wrapping `NewHandler` returns JSON error (HTTP 200) for unknown method names |
+| `TestExecuteSkill_SkillSelectionByID` | `Message.Metadata["skill_id"]` selects the matching skill (not always Skills[0]) |
+| `TestExecuteSkill_SkillSelectionByID_NotFound` | Unknown `skill_id` in metadata → Failed event (not panic) |
+| `TestExecuteSkill_PolicyAllowedSkillIDs_Denied` | `Policies.AllowedSkillIDs` excludes a skill → Failed event |
+| `TestExecuteSkill_PolicyAllowedSkillIDs_Permitted` | Skill in `AllowedSkillIDs` → Completed event |
 
-**Trigger:** any change to `cmd/agent-runtime/main.go` (specCache, buildSDKAgentCard, executeSkill, handle, agentCard)
+**Trigger:** any change to `cmd/agent-runtime/main.go` (specCache, buildSDKAgentCard, executeSkill, handle, agentCard, loadBinding, loadSpecBySlug)
 
 ---
 
@@ -1865,10 +1869,10 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-50 | agent definition compiler | 14 |
 | S1-51 | agent definition publish service | 11 |
 | S1-52 | dashboard WebSocket handler | 11 |
-| S1-53 | agent-runtime spec cache | 2 |
+| S1-53 | agent-runtime spec cache + skill routing + policy enforcement | 12 |
 | S1-60 | admin/service provider key encryption | 9 |
 | S1-61 | temporal/workerconfig loader contracts | 2 |
-| **S1 total** | | **696** |
+| **S1 total** | | **706** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -1877,4 +1881,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **656** |
+| **`go test ./...` total** | | **666** |
