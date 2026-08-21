@@ -7,14 +7,16 @@ import (
 
 // agentSelectCols is the column list shared by ListAgents and GetAgent queries.
 const agentSelectCols = `
-	SELECT id::text, slug, display_name, description, transport,
-	       COALESCE(endpoint_url, ''),
-	       auth_token_encrypted IS NOT NULL AND auth_token_encrypted <> '',
-	       input_schema, timeout_seconds, max_concurrency, max_retries,
-	       enabled, COALESCE(tags, '{}'), agent_card, agent_card_url,
-	       skills, supports_streaming, supports_push, icon, category,
-	       card_fetched_at::text, last_scan_at::text, last_scan_result
-	FROM them.agents`
+	SELECT a.id::text, a.slug, a.display_name, a.description, a.transport,
+	       COALESCE(a.endpoint_url, ''),
+	       a.auth_token_encrypted IS NOT NULL AND a.auth_token_encrypted <> '',
+	       a.input_schema, a.timeout_seconds, a.max_concurrency, a.max_retries,
+	       a.enabled, COALESCE(a.tags, '{}'), a.agent_card, a.agent_card_url,
+	       a.skills, a.supports_streaming, a.supports_push, a.icon, a.category,
+	       a.card_fetched_at::text, a.last_scan_at::text, a.last_scan_result,
+	       ars.definition_id::text
+	FROM them.agents a
+	LEFT JOIN them.agent_runtime_specs ars ON ars.agent_id = a.id`
 
 // scanAgent scans one agent row from r into an Agent value.
 // r must have been positioned by a preceding Next() call (multi-row) or
@@ -24,6 +26,7 @@ func scanAgent(r RowScanner) (Agent, error) {
 	var tagsArr []string
 	var inputSchema, agentCard, skills, lastScanResult []byte
 	var cardFetchedAt, lastScanAt *string
+	var definitionID *string
 	if err := r.Scan(
 		&a.ID, &a.Slug, &a.DisplayName, &a.Description, &a.Transport,
 		&a.EndpointURL, &a.AuthTokenSet,
@@ -31,6 +34,7 @@ func scanAgent(r RowScanner) (Agent, error) {
 		&a.Enabled, &tagsArr, &agentCard, &a.AgentCardURL,
 		&skills, &a.SupportsStreaming, &a.SupportsPush, &a.Icon, &a.Category,
 		&cardFetchedAt, &lastScanAt, &lastScanResult,
+		&definitionID,
 	); err != nil {
 		return a, err
 	}
@@ -53,6 +57,7 @@ func scanAgent(r RowScanner) (Agent, error) {
 	}
 	a.CardFetchedAt = cardFetchedAt
 	a.LastScanAt = lastScanAt
+	a.RuntimeDefinitionID = definitionID
 	return a, nil
 }
 
@@ -66,7 +71,7 @@ func (a *singleToRow) Scan(dest ...any) error { return a.s.Scan(dest...) }
 
 // ListAgents returns all agents for the given tenant, ordered by creation date.
 func (d *DB) ListAgents(ctx context.Context, tenantID string) ([]Agent, error) {
-	rows, err := d.q.Query(ctx, agentSelectCols+" WHERE tenant_id = $1::uuid ORDER BY created_at", tenantID)
+	rows, err := d.q.Query(ctx, agentSelectCols+" WHERE a.tenant_id = $1::uuid ORDER BY a.created_at", tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +91,7 @@ func (d *DB) ListAgents(ctx context.Context, tenantID string) ([]Agent, error) {
 // GetAgent returns a single agent by UUID id, scoped to the tenant.
 // Returns pgx.ErrNoRows when the agent does not exist or belongs to another tenant.
 func (d *DB) GetAgent(ctx context.Context, tenantID, id string) (Agent, error) {
-	row := d.q.QueryRow(ctx, agentSelectCols+" WHERE id = $1::uuid AND tenant_id = $2::uuid", id, tenantID)
+	row := d.q.QueryRow(ctx, agentSelectCols+" WHERE a.id = $1::uuid AND a.tenant_id = $2::uuid", id, tenantID)
 	return scanAgent(&singleToRow{s: row})
 }
 
@@ -204,7 +209,7 @@ func (d *DB) DeleteAgent(ctx context.Context, tenantID, id string) error {
 // Used for discovering the security_scanner agent which is a platform-level resource.
 // Returns pgx.ErrNoRows when the agent does not exist.
 func (d *DB) GetAgentBySlug(ctx context.Context, slug string) (Agent, error) {
-	row := d.q.QueryRow(ctx, agentSelectCols+" WHERE slug = $1 AND enabled = true LIMIT 1", slug)
+	row := d.q.QueryRow(ctx, agentSelectCols+" WHERE a.slug = $1 AND a.enabled = true LIMIT 1", slug)
 	return scanAgent(&singleToRow{s: row})
 }
 
@@ -221,7 +226,7 @@ func (d *DB) UpdateAgentScanResult(ctx context.Context, agentID string, result [
 // Used by the Discover handler when agent_id is provided to resolve auth tokens.
 // Returns pgx.ErrNoRows when the agent does not exist.
 func (d *DB) GetAgentByID(ctx context.Context, id string) (Agent, error) {
-	row := d.q.QueryRow(ctx, agentSelectCols+" WHERE id = $1::uuid", id)
+	row := d.q.QueryRow(ctx, agentSelectCols+" WHERE a.id = $1::uuid", id)
 	return scanAgent(&singleToRow{s: row})
 }
 

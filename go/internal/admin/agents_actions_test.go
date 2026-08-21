@@ -72,7 +72,8 @@ func (q *agentQuerier) ExecReturning(_ context.Context, _ string, _ ...any) admi
 //   input_schema, timeout_seconds, max_concurrency, max_retries,
 //   enabled, tags, agent_card, agent_card_url,
 //   skills, supports_streaming, supports_push, icon, category,
-//   card_fetched_at, last_scan_at, last_scan_result
+//   card_fetched_at, last_scan_at, last_scan_result,
+//   definition_id (from agent_runtime_specs LEFT JOIN)
 
 type agentScanRow struct {
 	id               string
@@ -87,7 +88,7 @@ type agentScanRow struct {
 }
 
 func (r *agentScanRow) Scan(dest ...any) error {
-	// 23 columns in order.
+	// 24 columns in order.
 	vals := []any{
 		r.id,           // id
 		r.slug,         // slug
@@ -112,6 +113,7 @@ func (r *agentScanRow) Scan(dest ...any) error {
 		(*string)(nil), // card_fetched_at
 		(*string)(nil), // last_scan_at
 		[]byte(nil),    // last_scan_result
+		(*string)(nil), // definition_id (agent_runtime_specs LEFT JOIN — nil when no canvas spec)
 	}
 	for i, d := range dest {
 		if i >= len(vals) {

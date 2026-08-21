@@ -140,6 +140,7 @@ export interface Agent {
   card_fetched_at?: string | null;
   last_scan_at?: string | null;
   last_scan_result?: ScanResult | null;
+  runtime_definition_id?: string | null;
   created_at: string;
 }
 

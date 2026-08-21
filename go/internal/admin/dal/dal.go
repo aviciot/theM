@@ -89,9 +89,10 @@ type Agent struct {
 	SupportsPush     bool     `json:"supports_push"`
 	Icon             *string  `json:"icon"`
 	Category         *string  `json:"category"`
-	CardFetchedAt    *string  `json:"card_fetched_at"`
-	LastScanAt       *string  `json:"last_scan_at"`
-	LastScanResult   any      `json:"last_scan_result"`
+	CardFetchedAt        *string  `json:"card_fetched_at"`
+	LastScanAt           *string  `json:"last_scan_at"`
+	LastScanResult       any      `json:"last_scan_result"`
+	RuntimeDefinitionID  *string  `json:"runtime_definition_id,omitempty"`
 }
 
 // AgentInput is the request body for agent create/update.
