@@ -1,5 +1,5 @@
 # Documentation Index — the-M
-# Last updated: 2026-08-15
+# Last updated: 2026-08-21
 
 One line per doc. Read this first, then open only what you need.
 **Code beats docs.** If they diverge, fix the doc — stale docs are a bug.
@@ -24,10 +24,8 @@ One line per doc. Read this first, then open only what you need.
 | `docs/AUTH.md` | Auth service contract, JWT claims, AdminTenantMiddleware, machine tokens | Auth flow changes |
 | `docs/SCHEMA.md` | All `them.*` tables — columns, FKs, rationale | DB table or column changes |
 | `docs/REDIS.md` | Every Redis key pattern, TTL, owner, pub/sub channels | Redis key added or renamed |
-| `docs/ADAPTERS.md` | Agent transport adapter contract, how to add new transports | New transport type |
 | `docs/A2A_REFERENCE.md` | A2A SDK v1.1.0 — Part types, AgentCard/Skill fields, wire format | A2A SDK version change |
 | `docs/A2A_AGENTS.md` | A2A test agents — start/stop, DB enable, cache bust, test commands | A2A agent changes |
-| `docs/FLOWS.md` | End-to-end orchestration sequence, Redis pub/sub trace | Orchestration flow changes |
 | `docs/LESSONS.md` | Past bugs and non-obvious fixes — append only | Any bug fix or unexpected behavior |
 
 ---
@@ -57,18 +55,13 @@ One line per doc. Read this first, then open only what you need.
 | File | When to read |
 |---|---|
 | `docs/architecture-v2/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` | Docker, deployment, container recreation |
-| `docs/architecture-v2/schema-migrations.md` | DB migration ordering and approach |
-| `scripts/tests/INDEX.md` | Before running or writing Python tests |
 | `go/TEST_INDEX.md` | Before running or writing Go tests |
 
 ---
 
-## Test runners
+## Test runner
 
 ```bash
-# Python tests (must use python3.12)
-python3.12 scripts/tests/run_tests.py
-
 # Go tests
 cd go && go test ./...
 ```
