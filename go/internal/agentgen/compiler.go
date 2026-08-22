@@ -23,20 +23,6 @@ func (e CompileError) Error() string {
 	return fmt.Sprintf("[%s] %s", e.Code, e.Message)
 }
 
-// knownStepTypes lists the types the compiler accepts.
-var knownStepTypes = map[StepType]bool{
-	StepInput:     true,
-	StepLLM:       true,
-	StepHTTP:      true,
-	StepTransform: true,
-	StepResponse:  true,
-	StepBranch:    true,
-	StepLoop:      true,
-	StepParallel:  true,
-	StepA2ACall:   true,
-	StepHumanWait: true,
-	StepStreamOut: true,
-}
 
 var slugRe = regexp.MustCompile(`^[a-z0-9_]{1,48}$`)
 
@@ -211,37 +197,15 @@ func compileSkillSteps(cs canvasSkill, knownSlots map[string]bool) ([]CompileErr
 		seenSteps[step.ID] = true
 		stepMap[step.ID] = step
 
-		if !knownStepTypes[step.Type] {
+		if _, ok := LookupNode(step.Type); !ok {
 			errs = append(errs, CompileError{Code: "UNKNOWN_STEP_TYPE", Message: "unknown step type: " + string(step.Type), Context: cs.SkillID + ":" + step.ID})
 		}
 
-		// Validate credential slot references.
-		switch step.Type {
-		case StepHTTP:
-			if len(step.Config) > 0 {
-				var cfg HTTPStepConfig
-				if err := json.Unmarshal(step.Config, &cfg); err == nil {
-					if cfg.CredentialSlot != "" && !knownSlots[cfg.CredentialSlot] {
-						errs = append(errs, CompileError{
-							Code:    "UNDECLARED_SLOT",
-							Message: fmt.Sprintf("HTTP step references undeclared credential slot %q", cfg.CredentialSlot),
-							Context: cs.SkillID + ":" + step.ID,
-						})
-					}
-				}
-			}
-		case StepLLM:
-			if len(step.Config) > 0 {
-				var cfg LLMStepConfig
-				if err := json.Unmarshal(step.Config, &cfg); err == nil {
-					if cfg.ProviderKeySlot != "" && !knownSlots[cfg.ProviderKeySlot] {
-						errs = append(errs, CompileError{
-							Code:    "UNDECLARED_SLOT",
-							Message: fmt.Sprintf("LLM step references undeclared provider_key_slot %q", cfg.ProviderKeySlot),
-							Context: cs.SkillID + ":" + step.ID,
-						})
-					}
-				}
+		// Delegate per-type config validation to the node registry.
+		if def, ok := LookupNode(step.Type); ok && def.Validate != nil {
+			for _, ve := range def.Validate(step, knownSlots) {
+				ve.Context = cs.SkillID + ":" + step.ID
+				errs = append(errs, ve)
 			}
 		}
 	}

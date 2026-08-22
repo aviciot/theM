@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, type MouseEvent, type DragEvent } fro
 import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
+import { getNodeDef, isSingleInput as _isSingleInput } from '@/lib/nodeRegistry';
 import {
   themApi,
   type AgentDefinitionDoc,
@@ -139,19 +140,12 @@ function SkillNode({ data }: { data: SkillData; id: string }) {
   );
 }
 
-const STEP_META: Record<string, { bg: string; border: string; emoji: string; label: string }> = {
-  input:      { bg: C.greenBg,  border: C.greenBorder,  emoji: '📥', label: 'Input' },
-  response:   { bg: C.cyanBg,   border: C.cyanBorder,   emoji: '📤', label: 'Response' },
-  llm:        { bg: C.purpleBg, border: C.purpleBorder, emoji: '🧠', label: 'LLM' },
-  http:       { bg: C.amberBg,  border: C.amberBorder,  emoji: '🌐', label: 'HTTP' },
-  transform:  { bg: C.indigoBg, border: C.indigoBorder, emoji: '⚙️',  label: 'Transform' },
-  branch:     { bg: C.amberBg,  border: C.amberBorder,  emoji: '🔀', label: 'Branch' },
-  loop:       { bg: C.amberBg,  border: C.amberBorder,  emoji: '🔁', label: 'Loop' },
-  parallel:   { bg: C.purpleBg, border: C.purpleBorder, emoji: '⚡', label: 'Parallel' },
-  a2a_call:   { bg: C.cyanBg,   border: C.cyanBorder,   emoji: '🤝', label: 'A2A Call' },
-  human_wait: { bg: C.greenBg,  border: C.greenBorder,  emoji: '⏸️',  label: 'Human Wait' },
-  stream_out: { bg: C.cyanBg,   border: C.cyanBorder,   emoji: '📡', label: 'Stream Out' },
-};
+// STEP_META is now derived from NODE_REGISTRY — kept as a helper for the few
+// places that still look up { bg, border, emoji, label } by type string.
+function stepMeta(type: string): { bg: string; border: string; emoji: string; label: string } {
+  const def = getNodeDef(type);
+  return { bg: def.bg, border: def.border, emoji: def.emoji, label: def.label };
+}
 
 interface StepNodeData extends StepData {
   _debug?: {
@@ -162,23 +156,11 @@ interface StepNodeData extends StepData {
 }
 
 function StepNode({ data }: { data: StepNodeData; id: string }) {
-  const meta = STEP_META[data.step_type] ?? { bg: C.indigoBg, border: C.indigoBorder, emoji: '🔧', label: data.step_type };
+  const nodeDef = getNodeDef(data.step_type);
+  const meta = { bg: nodeDef.bg, border: nodeDef.border, emoji: nodeDef.emoji, label: nodeDef.label };
   const cfg = data.config ?? {};
   const dbg = data._debug;
-  let sub = '';
-  if (data.step_type === 'input') {
-    const bindings = cfg.bindings as Record<string, string> | undefined;
-    sub = bindings?.text ? `→ ${bindings.text}` : '→ input';
-  } else if (data.step_type === 'llm') {
-    sub = `→ ${(cfg.output_var as string) || 'output'}`;
-  } else if (data.step_type === 'transform') {
-    const keys = Object.keys((cfg.expressions as Record<string, string> | undefined) ?? {});
-    sub = keys.length ? `→ ${keys.join(', ')}` : '→ vars';
-  } else if (data.step_type === 'response') {
-    sub = `from ${(cfg.from_var as string) || 'output'}`;
-  } else if (data.step_type === 'http') {
-    sub = (cfg.url_template as string) ? (cfg.url_template as string).replace(/^https?:\/\//, '').slice(0, 22) : 'url not set';
-  }
+  const sub = nodeDef.summary(cfg);
 
   const debugBorder: Record<DebugNodeState, string> = {
     idle: 'transparent',
@@ -373,15 +355,7 @@ const INITIAL_DEBUG: DebugState = {
 
 // ── Canvas inner (uses ReactFlow hooks — must be inside ReactFlowProvider) ───
 
-// Step type → which config field receives the auto-filled upstream variable reference.
-const STEP_INPUT_FIELD: Record<string, string> = {
-  llm: 'user_prompt',
-  http: 'url_template',
-  transform: 'expression',
-  response: 'from_var',
-};
-// Step types that accept only one incoming edge.
-const SINGLE_INPUT_TYPES = new Set(['llm', 'transform', 'response']);
+// STEP_INPUT_FIELD and SINGLE_INPUT_TYPES are now derived from NODE_REGISTRY.
 
 function CanvasInner() {
   const router = useRouter();
@@ -801,7 +775,7 @@ function CanvasInner() {
           : ((srcData.config?.output_var as string) || 'output');
 
       // Find which field on the target to auto-fill.
-      const targetField = STEP_INPUT_FIELD[tgtData.step_type];
+      const targetField = getNodeDef(tgtData.step_type).inputField;
       if (!targetField) return prev;
 
       // from_var always updates (it should reflect whatever is now connected upstream).
@@ -1384,7 +1358,7 @@ function CanvasInner() {
                   <div key={group.label}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', margin: '8px 0 4px' }}>{group.label}</div>
                     {group.items.map(st => {
-                      const meta = STEP_META[st.type] ?? { border: C.indigoBorder, emoji: '🔧', label: st.type };
+                      const meta = stepMeta(st.type);
                       return (
                         <div
                           key={st.type}
@@ -1721,7 +1695,7 @@ function CanvasInner() {
                         {inEdges.map(e => {
                           const src = localPipeNodes.find(n => n.id === e.source);
                           const srcData = src?.data as unknown as StepData | undefined;
-                          const srcMeta = srcData ? (STEP_META[srcData.step_type] ?? { emoji: '🔧', label: srcData.step_type }) : { emoji: '?', label: 'unknown' };
+                          const srcMeta = srcData ? stepMeta(srcData.step_type) : { emoji: '?', label: 'unknown' };
                           const srcVar = srcData?.step_type === 'input'
                             ? ((srcData.config?.bindings as Record<string,string>)?.text || 'input')
                             : ((srcData?.config?.output_var as string) || 'output');
@@ -2100,7 +2074,7 @@ function CanvasInner() {
                         {outEdges.map(e => {
                           const tgt = localPipeNodes.find(n => n.id === e.target);
                           const tgtData = tgt?.data as unknown as StepData | undefined;
-                          const tgtMeta = tgtData ? (STEP_META[tgtData.step_type] ?? { emoji: '🔧', label: tgtData.step_type }) : { emoji: '?', label: 'unknown' };
+                          const tgtMeta = tgtData ? stepMeta(tgtData.step_type) : { emoji: '?', label: 'unknown' };
                           return (
                             <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', marginBottom: '4px', background: 'rgba(74,222,128,0.05)', border: '1px solid rgba(74,222,128,0.2)' }}>
                               <code style={{ color: C.green, fontSize: '11px', fontFamily: 'monospace' }}>{`{{${outVar}}}`}</code>

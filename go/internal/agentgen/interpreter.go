@@ -110,22 +110,14 @@ func (interp *Interpreter) Execute(ctx context.Context, ic *InvocationContext, s
 }
 
 func (interp *Interpreter) executeStep(ctx context.Context, ic *InvocationContext, step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
-	switch step.Type {
-	case StepInput:
-		return interp.execInput(step, vars)
-	case StepLLM:
-		return interp.execLLM(ctx, ic, step, vars)
-	case StepHTTP:
-		return interp.execHTTP(ctx, ic, step, vars)
-	case StepTransform:
-		return interp.execTransform(step, vars)
-	case StepResponse:
-		return interp.execResponse(step, vars, result)
-	case StepBranch, StepLoop, StepParallel, StepA2ACall, StepHumanWait, StepStreamOut:
-		return fmt.Errorf("step type %q not implemented in Phase 1", step.Type)
-	default:
+	def, ok := LookupNode(step.Type)
+	if !ok {
 		return fmt.Errorf("unknown step type %q", step.Type)
 	}
+	if def.Execute == nil {
+		return fmt.Errorf("step type %q not yet implemented", step.Type)
+	}
+	return def.Execute(ctx, interp, ic, step, vars, result)
 }
 
 func (interp *Interpreter) execInput(step *StepSpec, vars PipelineVars) error {
