@@ -1737,7 +1737,7 @@ function CanvasInner() {
         {/* Canvas */}
         <div style={{ flex: 1, position: 'relative' }}>
           {/* Suppress ReactFlow's grab cursor; middle-mouse pan is handled via panOnDrag={[1]} */}
-          <style>{`.react-flow__pane { cursor: default !important; } .react-flow__pane.dragging { cursor: default !important; } .react-flow__node.selected > div { box-shadow: 0 0 0 2px #00f0ff, 0 0 14px rgba(0,240,255,0.35) !important; } .palette-card { transition: background 0.15s, box-shadow 0.15s, border-color 0.15s; } .palette-card:hover { filter: brightness(1.35); box-shadow: 0 0 8px rgba(255,255,255,0.06); }`}</style>
+          <style>{`.react-flow__pane { cursor: default !important; } .react-flow__pane.dragging { cursor: default !important; } .react-flow__node.selected > div { box-shadow: 0 0 0 2px #00f0ff, 0 0 14px rgba(0,240,255,0.35) !important; } .palette-card { transition: filter 0.15s, box-shadow 0.15s; } .palette-card:hover { filter: brightness(1.7) saturate(1.2); box-shadow: 0 0 10px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.3); }`}</style>
 
           {/* Canvas toolbar — fit + auto-arrange */}
           <div style={{
