@@ -20,7 +20,7 @@ import (
 // AgentCompileError is returned by ValidateAgentDefinition and PublishAgentDefinition
 // when compile-time errors are found. The handler maps this to 422 Unprocessable Entity.
 type AgentCompileError struct {
-	Errors []agentgen.CompileError `json:"errors"`
+	Errors []agentgen.Issue `json:"errors"`
 }
 
 func (e *AgentCompileError) Error() string {
@@ -31,9 +31,11 @@ func (e *AgentCompileError) Error() string {
 	return "agent definition compile failed: " + strings.Join(msgs, "; ")
 }
 
-// AgentValidationReport is returned to the caller when validation succeeds.
+// AgentValidationReport is returned to the caller after validation.
+// Valid is true even when warnings are present — only errors block.
 type AgentValidationReport struct {
-	Valid bool `json:"valid"`
+	Valid  bool             `json:"valid"`
+	Issues []agentgen.Issue `json:"issues,omitempty"`
 }
 
 // AgentPublishResult is returned after a successful publish.
@@ -55,17 +57,24 @@ func (s *AgentDefinitionService) ValidateAgentDefinition(ctx context.Context, te
 		return nil, err
 	}
 
-	_, compileErrs := agentgen.Compile(
+	_, issues := agentgen.Validate(
 		"00000000-0000-0000-0000-000000000000", // placeholder — validate only
 		tenantID,
 		id,
 		def.AgentSlug,
 		def.Definition,
 	)
-	if len(compileErrs) > 0 {
-		return nil, &AgentCompileError{Errors: compileErrs}
+	// Only hard errors fail validation; warnings are surfaced to the canvas.
+	var errors []agentgen.Issue
+	for _, iss := range issues {
+		if iss.Severity == "error" {
+			errors = append(errors, iss)
+		}
 	}
-	return &AgentValidationReport{Valid: true}, nil
+	if len(errors) > 0 {
+		return nil, &AgentCompileError{Errors: errors}
+	}
+	return &AgentValidationReport{Valid: true, Issues: issues}, nil
 }
 
 // PublishAgentDefinition compiles the definition, atomically writes the three
@@ -82,9 +91,9 @@ func (s *AgentDefinitionService) PublishAgentDefinition(ctx context.Context, ten
 	// Shared UUID: the agent's ID in the runtime tables equals the definition ID.
 	agentID := id
 
-	spec, compileErrs := agentgen.Compile(agentID, tenantID, id, def.AgentSlug, def.Definition)
-	if len(compileErrs) > 0 {
-		return nil, &AgentCompileError{Errors: compileErrs}
+	spec, issues := agentgen.CompileForPublish(agentID, tenantID, id, def.AgentSlug, def.Definition)
+	if len(issues) > 0 {
+		return nil, &AgentCompileError{Errors: issues}
 	}
 
 	specJSON, err := json.Marshal(spec)

@@ -10,8 +10,10 @@ import (
 func compileOK(t *testing.T, raw string) *agentgen.AgentSpec {
 	t.Helper()
 	spec, errs := agentgen.Compile("agent-1", "tenant-1", "def-1", "my_agent", json.RawMessage(raw))
-	if len(errs) > 0 {
-		t.Fatalf("expected no errors, got: %v", errs)
+	for _, e := range errs {
+		if e.Severity == "error" {
+			t.Fatalf("expected no errors, got: %v", errs)
+		}
 	}
 	if spec == nil {
 		t.Fatal("expected non-nil spec")
@@ -19,22 +21,62 @@ func compileOK(t *testing.T, raw string) *agentgen.AgentSpec {
 	return spec
 }
 
-func compileFail(t *testing.T, raw string) []agentgen.CompileError {
+func compileFail(t *testing.T, raw string) []agentgen.Issue {
 	t.Helper()
-	spec, errs := agentgen.Compile("agent-1", "tenant-1", "def-1", "my_agent", json.RawMessage(raw))
-	if len(errs) == 0 {
+	spec, issues := agentgen.Compile("agent-1", "tenant-1", "def-1", "my_agent", json.RawMessage(raw))
+	hasErr := false
+	for _, iss := range issues {
+		if iss.Severity == "error" {
+			hasErr = true
+			break
+		}
+	}
+	if !hasErr {
 		t.Fatalf("expected compile errors, got spec: %+v", spec)
 	}
-	return errs
+	return issues
 }
 
-func hasCode(errs []agentgen.CompileError, code string) bool {
-	for _, e := range errs {
-		if e.Code == code {
+func hasCode(issues []agentgen.Issue, code string) bool {
+	for _, iss := range issues {
+		if iss.Code == code {
 			return true
 		}
 	}
 	return false
+}
+
+func hasSeverity(issues []agentgen.Issue, code, severity string) bool {
+	for _, iss := range issues {
+		if iss.Code == code && iss.Severity == severity {
+			return true
+		}
+	}
+	return false
+}
+
+// validateIssues calls Validate and returns all issues (including warnings).
+func validateIssues(t *testing.T, raw string) []agentgen.Issue {
+	t.Helper()
+	_, issues := agentgen.Validate("agent-1", "tenant-1", "def-1", "my_agent", json.RawMessage(raw))
+	return issues
+}
+
+// publishFail calls CompileForPublish and expects at least one error.
+func publishFail(t *testing.T, raw string) []agentgen.Issue {
+	t.Helper()
+	spec, issues := agentgen.CompileForPublish("agent-1", "tenant-1", "def-1", "my_agent", json.RawMessage(raw))
+	hasErr := false
+	for _, iss := range issues {
+		if iss.Severity == "error" {
+			hasErr = true
+			break
+		}
+	}
+	if !hasErr {
+		t.Fatalf("expected publish errors, got spec: %+v", spec)
+	}
+	return issues
 }
 
 func TestCompile_EmptyDefinition(t *testing.T) {
@@ -253,5 +295,101 @@ func TestCompile_TopologicalOrder(t *testing.T) {
 	}
 	if pos["step-transform"] >= pos["step-response"] {
 		t.Errorf("step-transform must come before step-response, positions: %v", pos)
+	}
+}
+
+// ── BuildValidator severity tests ─────────────────────────────────────────────
+
+const stubGraph = `{
+	"agent_root": {"display_name": "X"},
+	"skills": [{
+		"skill_id": "s1",
+		"steps": [{"id": "step1", "type": "branch"}]
+	}]
+}`
+
+// TestValidate_StubNodeIsWarning verifies that Validate() surfaces stub nodes
+// as warnings, not errors — the user should be able to save a draft that uses
+// unimplemented node types.
+func TestValidate_StubNodeIsWarning(t *testing.T) {
+	issues := validateIssues(t, stubGraph)
+	if !hasSeverity(issues, "NODE_NOT_EXECUTABLE", "warning") {
+		t.Errorf("Validate: expected NODE_NOT_EXECUTABLE as warning, got: %v", issues)
+	}
+	for _, iss := range issues {
+		if iss.Code == "NODE_NOT_EXECUTABLE" && iss.Severity == "error" {
+			t.Errorf("Validate: NODE_NOT_EXECUTABLE must not be an error at validate time")
+		}
+	}
+}
+
+// TestValidate_StubNodeDoesNotBlockSpec verifies that Validate() returns a
+// non-nil spec even when stub nodes are present.
+func TestValidate_StubNodeDoesNotBlockSpec(t *testing.T) {
+	spec, _ := agentgen.Validate("agent-1", "tenant-1", "def-1", "my_agent", json.RawMessage(stubGraph))
+	if spec == nil {
+		t.Error("Validate: expected non-nil spec for a valid graph with stub nodes")
+	}
+}
+
+// TestCompileForPublish_StubNodeIsError verifies that CompileForPublish() treats
+// stub nodes as hard errors — publishing an agent with unimplemented nodes must fail.
+func TestCompileForPublish_StubNodeIsError(t *testing.T) {
+	issues := publishFail(t, stubGraph)
+	if !hasSeverity(issues, "NODE_NOT_EXECUTABLE", "error") {
+		t.Errorf("CompileForPublish: expected NODE_NOT_EXECUTABLE as error, got: %v", issues)
+	}
+}
+
+// TestCompileForPublish_ImplementedOnlySucceeds verifies that a graph with only
+// implemented node types publishes cleanly.
+func TestCompileForPublish_ImplementedOnlySucceeds(t *testing.T) {
+	spec, issues := agentgen.CompileForPublish("agent-1", "tenant-1", "def-1", "my_agent",
+		json.RawMessage(`{
+			"agent_root": {"display_name": "X"},
+			"skills": [{"skill_id": "s1", "steps": [
+				{"id": "in", "type": "input", "next": ["out"]},
+				{"id": "out", "type": "response", "config": {"from_var": "x"}}
+			]}]
+		}`))
+	for _, iss := range issues {
+		if iss.Severity == "error" {
+			t.Errorf("CompileForPublish: unexpected error: %v", iss)
+		}
+	}
+	if spec == nil {
+		t.Error("CompileForPublish: expected non-nil spec for implemented-only graph")
+	}
+}
+
+// TestIssue_StructuredFields verifies that issues returned by validateNodes
+// carry populated SkillID and NodeID fields.
+func TestIssue_StructuredFields(t *testing.T) {
+	_, issues := agentgen.Validate("a", "t", "d", "slug", json.RawMessage(`{
+		"agent_root": {"display_name": "X", "credential_slots": []},
+		"skills": [{"skill_id": "skill_abc", "steps": [{
+			"id": "node_xyz",
+			"type": "llm",
+			"config": {"provider": "anthropic", "provider_key_slot": "missing"}
+		}]}]
+	}`))
+	var found *agentgen.Issue
+	for i, iss := range issues {
+		if iss.Code == "UNDECLARED_SLOT" {
+			found = &issues[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("expected UNDECLARED_SLOT issue")
+	}
+	if found.SkillID != "skill_abc" {
+		t.Errorf("SkillID: want %q, got %q", "skill_abc", found.SkillID)
+	}
+	if found.NodeID != "node_xyz" {
+		t.Errorf("NodeID: want %q, got %q", "node_xyz", found.NodeID)
+	}
+	if found.Field != "provider_key_slot" {
+		t.Errorf("Field: want %q, got %q", "provider_key_slot", found.Field)
 	}
 }

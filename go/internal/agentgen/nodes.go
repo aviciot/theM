@@ -35,7 +35,7 @@ func init() {
 		IsSink:      false,
 		SingleInput: true,
 		InputField:  "user_prompt",
-		Validate: func(step canvasStep, knownSlots map[string]bool) []CompileError {
+		Validate: func(step canvasStep, knownSlots map[string]bool) []Issue {
 			if len(step.Config) == 0 {
 				return nil
 			}
@@ -44,9 +44,11 @@ func init() {
 				return nil
 			}
 			if cfg.ProviderKeySlot != "" && !knownSlots[cfg.ProviderKeySlot] {
-				return []CompileError{{
-					Code:    "UNDECLARED_SLOT",
-					Message: fmt.Sprintf("LLM step references undeclared provider_key_slot %q", cfg.ProviderKeySlot),
+				return []Issue{{
+					Severity: "error",
+					Code:     "UNDECLARED_SLOT",
+					Message:  fmt.Sprintf("LLM step references undeclared provider_key_slot %q", cfg.ProviderKeySlot),
+					Field:    "provider_key_slot",
 				}}
 			}
 			return nil
@@ -67,7 +69,7 @@ func init() {
 		IsSink:      false,
 		SingleInput: false,
 		InputField:  "url_template",
-		Validate: func(step canvasStep, knownSlots map[string]bool) []CompileError {
+		Validate: func(step canvasStep, knownSlots map[string]bool) []Issue {
 			if len(step.Config) == 0 {
 				return nil
 			}
@@ -76,9 +78,11 @@ func init() {
 				return nil
 			}
 			if cfg.CredentialSlot != "" && !knownSlots[cfg.CredentialSlot] {
-				return []CompileError{{
-					Code:    "UNDECLARED_SLOT",
-					Message: fmt.Sprintf("HTTP step references undeclared credential slot %q", cfg.CredentialSlot),
+				return []Issue{{
+					Severity: "error",
+					Code:     "UNDECLARED_SLOT",
+					Message:  fmt.Sprintf("HTTP step references undeclared credential slot %q", cfg.CredentialSlot),
+					Field:    "credential_slot",
 				}}
 			}
 			return nil
