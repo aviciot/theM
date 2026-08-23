@@ -2,6 +2,7 @@ package dal
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -408,8 +409,10 @@ func (d *DB) GetContextArtifacts(ctx context.Context, tenantID, contextID string
 
 // GetRunArtifacts returns file artifacts for a run, tenant-scoped.
 // Reads from them.run_artifacts (Go worker path only — Python bridge retired).
-// The text field in each part contains the decoded file content as a UTF-8 string,
-// ready to render directly (HTML → iframe srcDoc, markdown → pre, etc.).
+// Binary content is base64-encoded into the Data field so all file types
+// (images, PDFs, etc.) survive the JSON transport without corruption.
+// Text-based types (HTML, Markdown, plain text) also populate Text for
+// backwards-compatible rendering in older clients.
 func (d *DB) GetRunArtifacts(ctx context.Context, tenantID, runID string) ([]Artifact, error) {
 	q := `SELECT ra.id::text, ra.filename, ra.content_type, ra.size, ra.data, ra.created_at::text
 	      FROM them.run_artifacts ra
@@ -429,23 +432,38 @@ func (d *DB) GetRunArtifacts(ctx context.Context, tenantID, runID string) ([]Art
 		if err := rows.Scan(&id, &filename, &contentType, &size, &data, &createdAt); err != nil {
 			return nil, err
 		}
+		encoded := base64.StdEncoding.EncodeToString(data)
+		part := ArtifactPart{
+			Kind:      "file",
+			Filename:  filename,
+			MediaType: contentType,
+			Data:      encoded,
+		}
+		// For text-based types also populate Text so iframes / pre elements can use it directly.
+		if isTextMediaType(contentType) {
+			part.Text = string(data)
+		}
 		a := Artifact{
 			ID:         id,
 			ArtifactID: id,
 			Name:       filename,
 			CreatedAt:  createdAt,
-			Parts: []ArtifactPart{
-				{
-					Kind:      "file",
-					Filename:  filename,
-					MediaType: contentType,
-					Text:      string(data),
-				},
-			},
+			Parts:      []ArtifactPart{part},
 		}
 		artifacts = append(artifacts, a)
 	}
 	return artifacts, nil
+}
+
+// isTextMediaType returns true for content types that are safe to represent as
+// a UTF-8 string (no base64 decode needed in the browser).
+func isTextMediaType(ct string) bool {
+	switch ct {
+	case "text/html", "text/markdown", "text/plain", "text/csv",
+		"application/json", "application/xml", "text/xml":
+		return true
+	}
+	return false
 }
 
 // ContextMessage is one chat turn from task_messages.

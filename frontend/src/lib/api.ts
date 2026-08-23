@@ -393,6 +393,8 @@ export interface TaskOut {
 export interface ArtifactPart {
   kind?: string;
   text?: string;
+  /** Base64-encoded raw bytes — always present for file parts (images, PDFs, binaries). */
+  data?: string;
   filename?: string;
   media_type?: string;   // snake_case (normalized by adapter from v1.1+)
   mediaType?: string;    // camelCase (older records in DB — wire format from A2A SDK)

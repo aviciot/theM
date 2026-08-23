@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, Suspense } from 'rea
 import { useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type TaskOut, type ArtifactOut, type ContextSession, type Application, type EntryPoint } from '@/lib/api';
+import { themApi, type TaskOut, type ArtifactOut, type ArtifactPart, type ContextSession, type Application, type EntryPoint } from '@/lib/api';
 
 // ── Connection target ──────────────────────────────────────────────────────
 type ConnTarget =
@@ -879,26 +879,46 @@ function ArtifactsTab({ runId, busy }: { runId: string | null; busy: boolean }) 
   if (err) return <div style={{ color: '#f87171', fontSize: 12, padding: 16 }}>{err}</div>;
   if (artifacts.length === 0) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>No artifacts yet — agents produce artifacts when they return structured output</div>;
 
-  const downloadPart = (text: string, filename: string, mediaType: string) => {
-    const blob = new Blob([text], { type: mediaType });
+  // Download using base64 data when available (correct for binary), text fallback for legacy records.
+  const downloadPart = (part: ArtifactPart) => {
+    let blob: Blob;
+    if (part.data) {
+      const bytes = Uint8Array.from(atob(part.data), c => c.charCodeAt(0));
+      blob = new Blob([bytes], { type: part.media_type || part.mediaType || 'application/octet-stream' });
+    } else {
+      blob = new Blob([part.text || ''], { type: part.media_type || part.mediaType || 'text/plain' });
+    }
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
+    const el = document.createElement('a');
+    el.href = url;
+    el.download = part.filename || 'artifact';
+    el.click();
     URL.revokeObjectURL(url);
   };
+
+  const DownloadBtn = ({ part }: { part: ArtifactPart }) => (
+    <button
+      onClick={() => downloadPart(part)}
+      style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--tm-border)', background: 'transparent', color: '#a78bfa', cursor: 'pointer' }}
+    >
+      Download
+    </button>
+  );
 
   return (
     <div className="dark-scrollbar" style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       {artifacts.map(a => {
         const isOpen = expanded.has(a.id);
         const filePart = a.parts.find(p => p.filename || p.media_type || p.mediaType);
-        // Resolve media_type from either casing (old DB records use camelCase mediaType)
-        const resolvedMediaType = filePart?.media_type || filePart?.mediaType;
-        const isHtml = resolvedMediaType === 'text/html';
-        const isMarkdown = resolvedMediaType === 'text/markdown';
-        const textParts = a.parts.filter(p => !p.filename && !p.media_type && !p.mediaType && p.text !== undefined);
+        const mt = filePart?.media_type || filePart?.mediaType || '';
+        const isHtml     = mt === 'text/html';
+        const isMarkdown = mt === 'text/markdown';
+        const isImage    = mt.startsWith('image/');
+        const isPDF      = mt === 'application/pdf';
+        const isText     = mt === 'text/plain' || mt === 'text/csv' || mt === 'application/json' || mt === 'application/xml' || mt === 'text/xml';
+        const textParts  = a.parts.filter(p => !p.filename && !p.media_type && !p.mediaType && p.text !== undefined);
+        // Build a data-URI from base64 for binary preview (images, PDF).
+        const dataURI = (filePart?.data && mt) ? `data:${mt};base64,${filePart.data}` : null;
 
         return (
           <div key={a.id} style={{ border: '1px solid var(--tm-border)', borderRadius: 8, background: 'var(--tm-surface)', overflow: 'hidden' }}>
@@ -906,70 +926,86 @@ function ArtifactsTab({ runId, busy }: { runId: string | null; busy: boolean }) 
               onClick={() => toggle(a.id)}
               style={{ width: '100%', padding: '8px 12px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }}
             >
-              <span style={{ fontSize: 11, color: '#a78bfa', fontWeight: 600 }}>{a.artifact_id}</span>
+              <span style={{ fontSize: 11, color: '#a78bfa', fontWeight: 600 }}>{a.artifact_id || a.id}</span>
               {filePart?.filename
                 ? <span style={{ fontSize: 11, color: '#4edea3', fontWeight: 600 }}>{filePart.filename}</span>
                 : a.name && <span style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>{a.name}</span>
               }
-              {resolvedMediaType && (
-                <span style={{ fontSize: 10, color: 'var(--tm-text-muted)', padding: '1px 6px', border: '1px solid var(--tm-border)', borderRadius: 4 }}>{resolvedMediaType}</span>
+              {mt && (
+                <span style={{ fontSize: 10, color: 'var(--tm-text-muted)', padding: '1px 6px', border: '1px solid var(--tm-border)', borderRadius: 4 }}>{mt}</span>
               )}
               <span style={{ fontSize: 10, color: 'var(--tm-text-muted)', marginLeft: 'auto' }}>{isOpen ? '▲' : '▼'}</span>
             </button>
 
-            {isOpen && (
+            {isOpen && filePart && (
               <div style={{ borderTop: '1px solid var(--tm-border)' }}>
-                {/* HTML artifact — inline iframe */}
-                {isHtml && filePart?.text && (
-                  <div>
-                    <div style={{ padding: '6px 12px', display: 'flex', justifyContent: 'flex-end', borderBottom: '1px solid var(--tm-border)' }}>
-                      <button
-                        onClick={() => downloadPart(filePart.text!, filePart.filename!, resolvedMediaType!)}
-                        style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--tm-border)', background: 'transparent', color: '#a78bfa', cursor: 'pointer' }}
-                      >
-                        Download
-                      </button>
-                    </div>
-                    <iframe
-                      srcDoc={filePart.text}
-                      style={{ width: '100%', height: 500, border: 'none', display: 'block' }}
-                      sandbox="allow-scripts allow-same-origin"
-                      title={filePart.filename || 'preview'}
-                    />
+                {/* Toolbar row with download button for all file parts */}
+                <div style={{ padding: '6px 12px', display: 'flex', justifyContent: 'flex-end', borderBottom: '1px solid var(--tm-border)' }}>
+                  <DownloadBtn part={filePart} />
+                </div>
+
+                {/* HTML — inline iframe preview */}
+                {isHtml && filePart.text && (
+                  <iframe
+                    srcDoc={filePart.text}
+                    style={{ width: '100%', height: 500, border: 'none', display: 'block' }}
+                    sandbox="allow-scripts allow-same-origin"
+                    title={filePart.filename || 'preview'}
+                  />
+                )}
+
+                {/* Image — inline <img> from data-URI */}
+                {isImage && dataURI && (
+                  <div style={{ padding: 12, textAlign: 'center', background: '#111' }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={dataURI} alt={filePart.filename || 'image'} style={{ maxWidth: '100%', maxHeight: 500, objectFit: 'contain' }} />
                   </div>
                 )}
 
-                {/* Markdown / slides — styled pre with download */}
-                {isMarkdown && filePart?.text && (
-                  <div style={{ padding: '0 12px 10px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 0' }}>
-                      <button
-                        onClick={() => downloadPart(filePart.text!, filePart.filename!, resolvedMediaType!)}
-                        style={{ fontSize: 11, padding: '3px 10px', borderRadius: 5, border: '1px solid var(--tm-border)', background: 'transparent', color: '#a78bfa', cursor: 'pointer' }}
-                      >
-                        Download
-                      </button>
-                    </div>
-                    <pre style={{ fontSize: 12, color: 'var(--tm-text)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, maxHeight: 400, overflowY: 'auto' }}>
-                      {filePart.text}
-                    </pre>
-                  </div>
+                {/* PDF — iframe embed */}
+                {isPDF && dataURI && (
+                  <iframe
+                    src={dataURI}
+                    style={{ width: '100%', height: 600, border: 'none', display: 'block' }}
+                    title={filePart.filename || 'pdf'}
+                  />
                 )}
 
-                {/* Plain text parts */}
-                {!filePart && (
-                  <div style={{ padding: '0 12px 10px' }}>
-                    {textParts.map((p, i) => (
-                      <pre key={i} style={{ fontSize: 11, color: 'var(--tm-text)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: '8px 0 0' }}>
-                        {p.text}
-                      </pre>
-                    ))}
-                    {textParts.length === 0 && (
-                      <pre style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', margin: '8px 0 0' }}>
-                        {JSON.stringify(a.parts, null, 2)}
-                      </pre>
-                    )}
+                {/* Markdown — pre with word-wrap */}
+                {isMarkdown && (filePart.text || filePart.data) && (
+                  <pre style={{ fontSize: 12, color: 'var(--tm-text)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, padding: '12px', maxHeight: 400, overflowY: 'auto' }}>
+                    {filePart.text || atob(filePart.data!)}
+                  </pre>
+                )}
+
+                {/* Plain text / JSON / CSV / XML */}
+                {isText && (filePart.text || filePart.data) && (
+                  <pre style={{ fontSize: 12, color: 'var(--tm-text)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, padding: '12px', maxHeight: 400, overflowY: 'auto' }}>
+                    {filePart.text || atob(filePart.data!)}
+                  </pre>
+                )}
+
+                {/* Unknown binary — download only (header + button already shown above) */}
+                {!isHtml && !isImage && !isPDF && !isMarkdown && !isText && (
+                  <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--tm-text-muted)' }}>
+                    Binary file — use the Download button to save it.
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* Fallback: no file part — show raw text parts */}
+            {isOpen && !filePart && (
+              <div style={{ borderTop: '1px solid var(--tm-border)', padding: '0 12px 10px' }}>
+                {textParts.map((p, i) => (
+                  <pre key={i} style={{ fontSize: 11, color: 'var(--tm-text)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: '8px 0 0' }}>
+                    {p.text}
+                  </pre>
+                ))}
+                {textParts.length === 0 && (
+                  <pre style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', margin: '8px 0 0' }}>
+                    {JSON.stringify(a.parts, null, 2)}
+                  </pre>
                 )}
               </div>
             )}

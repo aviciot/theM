@@ -304,6 +304,9 @@ type Task struct {
 type ArtifactPart struct {
 	Kind      string `json:"kind,omitempty"`
 	Text      string `json:"text,omitempty"`
+	// Data is the base64-encoded raw bytes of the file. Always populated for
+	// file parts so binary types (images, PDFs) survive JSON transport intact.
+	Data      string `json:"data,omitempty"`
 	Filename  string `json:"filename,omitempty"`
 	MediaType string `json:"media_type,omitempty"`
 }
