@@ -2,8 +2,6 @@ package agentgen
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 )
 
 func init() {
@@ -38,25 +36,8 @@ func init() {
 		IsSink:      false,
 		SingleInput: true,
 		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
-		InputField:  "user_prompt",
-		Validate: func(step canvasStep, knownSlots map[string]bool) []Issue {
-			if len(step.Config) == 0 {
-				return nil
-			}
-			var cfg LLMStepConfig
-			if err := json.Unmarshal(step.Config, &cfg); err != nil {
-				return nil
-			}
-			if cfg.ProviderKeySlot != "" && !knownSlots[cfg.ProviderKeySlot] {
-				return []Issue{{
-					Severity: "error",
-					Code:     "UNDECLARED_SLOT",
-					Message:  fmt.Sprintf("LLM step references undeclared provider_key_slot %q", cfg.ProviderKeySlot),
-					Field:    "provider_key_slot",
-				}}
-			}
-			return nil
-		},
+		InputField: "user_prompt",
+		Validate:   nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
 			return interp.execLLM(ctx, ic, step, vars)
@@ -74,25 +55,8 @@ func init() {
 		IsSink:      false,
 		SingleInput: false,
 		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
-		InputField:  "url_template",
-		Validate: func(step canvasStep, knownSlots map[string]bool) []Issue {
-			if len(step.Config) == 0 {
-				return nil
-			}
-			var cfg HTTPStepConfig
-			if err := json.Unmarshal(step.Config, &cfg); err != nil {
-				return nil
-			}
-			if cfg.CredentialSlot != "" && !knownSlots[cfg.CredentialSlot] {
-				return []Issue{{
-					Severity: "error",
-					Code:     "UNDECLARED_SLOT",
-					Message:  fmt.Sprintf("HTTP step references undeclared credential slot %q", cfg.CredentialSlot),
-					Field:    "credential_slot",
-				}}
-			}
-			return nil
-		},
+		InputField: "url_template",
+		Validate:   nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
 			return interp.execHTTP(ctx, ic, step, vars)

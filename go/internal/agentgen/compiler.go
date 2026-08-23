@@ -56,20 +56,13 @@ type canvasDefinition struct {
 }
 
 type agentRoot struct {
-	DisplayName     string           `json:"display_name"`
-	Description     string           `json:"description"`
-	Version         string           `json:"version"`
-	Icon            string           `json:"icon"`
-	Category        string           `json:"category"`
-	DefaultModel    string           `json:"default_model"`
-	Capabilities    CapabilitiesSpec `json:"capabilities"`
-	CredentialSlots []canvasCredSlot `json:"credential_slots"`
-}
-
-type canvasCredSlot struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Required    bool   `json:"required"`
+	DisplayName  string           `json:"display_name"`
+	Description  string           `json:"description"`
+	Version      string           `json:"version"`
+	Icon         string           `json:"icon"`
+	Category     string           `json:"category"`
+	DefaultModel string           `json:"default_model"`
+	Capabilities CapabilitiesSpec `json:"capabilities"`
 }
 
 type canvasSkill struct {
@@ -108,38 +101,17 @@ func errorf(code, msg string) Issue {
 // ── Stage 1: structural ──────────────────────────────────────────────────────
 
 // validateStructural parses the raw JSON and checks spec-level invariants:
-// display_name present, no duplicate slots, no duplicate skill IDs, valid slug.
-// Returns the parsed definition and any structural issues.
-func validateStructural(agentID, tenantID, definitionID, agentSlug string, raw json.RawMessage) (*canvasDefinition, []CredentialSlotSpec, string, []Issue) {
+// display_name present, no duplicate skill IDs, valid slug.
+func validateStructural(agentID, tenantID, definitionID, agentSlug string, raw json.RawMessage) (*canvasDefinition, string, []Issue) {
 	var issues []Issue
 
 	var def canvasDefinition
 	if err := json.Unmarshal(raw, &def); err != nil {
-		return nil, nil, "", []Issue{errorf("INVALID_JSON", "definition is not valid JSON: "+err.Error())}
+		return nil, "", []Issue{errorf("INVALID_JSON", "definition is not valid JSON: "+err.Error())}
 	}
 
 	if def.AgentRoot.DisplayName == "" {
 		issues = append(issues, errorf("MISSING_FIELD", "agent_root.display_name is required"))
-	}
-
-	// Collect and dedup credential slot names for cross-referencing.
-	seenSlots := make(map[string]bool)
-	credSlots := make([]CredentialSlotSpec, 0, len(def.AgentRoot.CredentialSlots))
-	for _, slot := range def.AgentRoot.CredentialSlots {
-		if slot.Name == "" {
-			issues = append(issues, errorf("MISSING_FIELD", "credential slot name must be non-empty"))
-			continue
-		}
-		if seenSlots[slot.Name] {
-			issues = append(issues, Issue{Severity: "error", Code: "DUPLICATE_SLOT", Message: "duplicate credential slot", Field: slot.Name})
-			continue
-		}
-		seenSlots[slot.Name] = true
-		credSlots = append(credSlots, CredentialSlotSpec{
-			Name:        slot.Name,
-			Description: slot.Description,
-			Required:    slot.Required,
-		})
 	}
 
 	// Validate duplicate skill IDs.
@@ -156,22 +128,22 @@ func validateStructural(agentID, tenantID, definitionID, agentSlug string, raw j
 	}
 
 	if hasErrors(issues) {
-		return nil, nil, "", issues
+		return nil, "", issues
 	}
 
 	slug := sanitizeSlug(agentSlug)
 	if !slugRe.MatchString(slug) {
-		return nil, nil, "", []Issue{errorf("INVALID_SLUG", "agent slug must match ^[a-z0-9_]{1,48}$")}
+		return nil, "", []Issue{errorf("INVALID_SLUG", "agent slug must match ^[a-z0-9_]{1,48}$")}
 	}
 
-	return &def, credSlots, slug, issues
+	return &def, slug, issues
 }
 
 // ── Stage 2: node validation ─────────────────────────────────────────────────
 
 // validateNodes checks each step's type and per-type config rules.
 // SkillID and NodeID are stamped on every returned issue.
-func validateNodes(def *canvasDefinition, knownSlots map[string]bool) []Issue {
+func validateNodes(def *canvasDefinition) []Issue {
 	var issues []Issue
 	for _, cs := range def.Skills {
 		seenSteps := make(map[string]bool)
@@ -199,7 +171,7 @@ func validateNodes(def *canvasDefinition, knownSlots map[string]bool) []Issue {
 			}
 
 			if nd.Validate != nil {
-				for _, iss := range nd.Validate(step, knownSlots) {
+				for _, iss := range nd.Validate(step) {
 					iss.SkillID = cs.SkillID
 					iss.NodeID = step.ID
 					issues = append(issues, iss)
@@ -400,24 +372,17 @@ func validateExecutability(def *canvasDefinition, severity string) []Issue {
 // Returns a non-nil *AgentSpec when parsing succeeds, even if issues exist,
 // so callers can inspect the parsed graph. Returns nil only on structural failure.
 func Validate(agentID, tenantID, definitionID, agentSlug string, raw json.RawMessage) (*AgentSpec, []Issue) {
-	def, credSlots, slug, issues := validateStructural(agentID, tenantID, definitionID, agentSlug, raw)
+	def, slug, issues := validateStructural(agentID, tenantID, definitionID, agentSlug, raw)
 	if hasErrors(issues) {
 		return nil, issues
 	}
 
-	knownSlots := make(map[string]bool, len(credSlots))
-	for _, s := range credSlots {
-		knownSlots[s.Name] = true
-	}
-
-	// Collect node and graph issues without early-exit so the canvas sees
-	// all problems at once.
-	issues = append(issues, validateNodes(def, knownSlots)...)
+	issues = append(issues, validateNodes(def)...)
 	graphIssues, compiled := validateGraph(def)
 	issues = append(issues, graphIssues...)
 	issues = append(issues, validateExecutability(def, "warning")...)
 
-	spec := buildSpec(agentID, tenantID, definitionID, slug, def, credSlots, compiled)
+	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled)
 	return spec, issues
 }
 
@@ -425,17 +390,12 @@ func Validate(agentID, tenantID, definitionID, agentSlug string, raw json.RawMes
 // Returns nil spec + issues if any error-severity issue exists.
 // Used exclusively by the publish handler.
 func CompileForPublish(agentID, tenantID, definitionID, agentSlug string, raw json.RawMessage) (*AgentSpec, []Issue) {
-	def, credSlots, slug, issues := validateStructural(agentID, tenantID, definitionID, agentSlug, raw)
+	def, slug, issues := validateStructural(agentID, tenantID, definitionID, agentSlug, raw)
 	if hasErrors(issues) {
 		return nil, issues
 	}
 
-	knownSlots := make(map[string]bool, len(credSlots))
-	for _, s := range credSlots {
-		knownSlots[s.Name] = true
-	}
-
-	issues = append(issues, validateNodes(def, knownSlots)...)
+	issues = append(issues, validateNodes(def)...)
 	if hasErrors(issues) {
 		return nil, issues
 	}
@@ -451,7 +411,7 @@ func CompileForPublish(agentID, tenantID, definitionID, agentSlug string, raw js
 		return nil, issues
 	}
 
-	spec := buildSpec(agentID, tenantID, definitionID, slug, def, credSlots, compiled)
+	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled)
 	return spec, issues
 }
 
@@ -465,7 +425,7 @@ func Compile(agentID, tenantID, definitionID, agentSlug string, raw json.RawMess
 
 // buildSpec assembles the AgentSpec from parsed components. Called after all
 // validation stages pass.
-func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefinition, credSlots []CredentialSlotSpec, compiled map[string][]StepSpec) *AgentSpec {
+func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefinition, compiled map[string][]StepSpec) *AgentSpec {
 	specHash := computeSpecHash(agentID, tenantID, definitionID, slug)
 	_ = specHash
 
@@ -492,12 +452,11 @@ func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefiniti
 	}
 
 	return &AgentSpec{
-		ID:              agentID,
-		DefinitionID:    definitionID,
-		Slug:            slug,
-		TenantID:        tenantID,
-		DefaultModel:    def.AgentRoot.DefaultModel,
-		CredentialSlots: credSlots,
+		ID:           agentID,
+		DefinitionID: definitionID,
+		Slug:         slug,
+		TenantID:     tenantID,
+		DefaultModel: def.AgentRoot.DefaultModel,
 		Card: CardSpec{
 			Name:         def.AgentRoot.DisplayName,
 			Description:  def.AgentRoot.Description,

@@ -221,41 +221,49 @@ func TestNodeRegistry_StubTypesHaveNilExecute(t *testing.T) {
 	}
 }
 
-// TestNodeRegistry_LLMValidate_UndeclaredSlot verifies that the LLM node's
-// Validate function catches an undeclared provider_key_slot.
-func TestNodeRegistry_LLMValidate_UndeclaredSlot(t *testing.T) {
-	errs := compileFail(t, `{
-		"agent_root": {"display_name": "X", "credential_slots": []},
+// TestNodeRegistry_LLMNode_AcceptsConfig verifies the LLM node compiles without errors.
+func TestNodeRegistry_LLMNode_AcceptsConfig(t *testing.T) {
+	spec, errs := agentgen.Validate("a", "t", "d", "test_agent", json.RawMessage(`{
+		"agent_root": {"display_name": "X"},
 		"skills": [{
 			"skill_id": "s1",
-			"steps": [{
-				"id": "step1",
-				"type": "llm",
-				"config": {"provider": "anthropic", "provider_key_slot": "missing_key"}
-			}]
+			"steps": [
+				{"id": "in",  "type": "input",    "config": {}, "next": ["step1"]},
+				{"id": "step1","type": "llm",     "config": {"provider": "anthropic"}, "next": ["out"]},
+				{"id": "out", "type": "response", "config": {"from_var": "output"}}
+			]
 		}]
-	}`)
-	if !hasCode(errs, "UNDECLARED_SLOT") {
-		t.Errorf("LLM node Validate: expected UNDECLARED_SLOT, got: %v", errs)
+	}`))
+	if spec == nil {
+		t.Fatal("expected non-nil spec")
+	}
+	for _, iss := range errs {
+		if iss.Severity == "error" {
+			t.Errorf("unexpected compile error: %v", iss)
+		}
 	}
 }
 
-// TestNodeRegistry_HTTPValidate_UndeclaredSlot verifies that the HTTP node's
-// Validate function catches an undeclared credential_slot.
-func TestNodeRegistry_HTTPValidate_UndeclaredSlot(t *testing.T) {
-	errs := compileFail(t, `{
-		"agent_root": {"display_name": "X", "credential_slots": []},
+// TestNodeRegistry_HTTPNode_AcceptsConfig verifies the HTTP node compiles without errors.
+func TestNodeRegistry_HTTPNode_AcceptsConfig(t *testing.T) {
+	spec, errs := agentgen.Validate("a", "t", "d", "test_agent", json.RawMessage(`{
+		"agent_root": {"display_name": "X"},
 		"skills": [{
 			"skill_id": "s1",
-			"steps": [{
-				"id": "step1",
-				"type": "http",
-				"config": {"method": "GET", "url_template": "http://x", "credential_slot": "missing_slot"}
-			}]
+			"steps": [
+				{"id": "in",  "type": "input",    "config": {}, "next": ["step1"]},
+				{"id": "step1","type": "http",    "config": {"method": "GET", "url_template": "http://x"}, "next": ["out"]},
+				{"id": "out", "type": "response", "config": {"from_var": "output"}}
+			]
 		}]
-	}`)
-	if !hasCode(errs, "UNDECLARED_SLOT") {
-		t.Errorf("HTTP node Validate: expected UNDECLARED_SLOT, got: %v", errs)
+	}`))
+	if spec == nil {
+		t.Fatal("expected non-nil spec")
+	}
+	for _, iss := range errs {
+		if iss.Severity == "error" {
+			t.Errorf("unexpected compile error: %v", iss)
+		}
 	}
 }
 

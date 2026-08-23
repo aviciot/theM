@@ -2,8 +2,6 @@
 // It reads AgentSpec definitions from PostgreSQL (cached locally, TTL 60s) and
 // serves any canvas-designed agent over the A2A JSON-RPC 2.0 and streaming wire
 // protocol, backed by the official github.com/a2aproject/a2a-go/v2 SDK.
-// Credentials are resolved per-request from app_agent_bindings and decrypted
-// in-memory only — never logged, persisted, or returned in responses.
 package main
 
 import (
@@ -155,16 +153,6 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	creds, err := binding.ResolveCredentials(func(ct string) (string, error) {
-		return crypto.DecryptStored(rt.cryptoKey, ct)
-	})
-	if err != nil {
-		// Do not log err.Error() — it may contain partial credential material.
-		rt.logger.Error("credential resolution failed", "ic", ic.String())
-		writeJSONRPCError(w, nil, -32603, "credential resolution failed", http.StatusInternalServerError)
-		return
-	}
-	ic.Credentials = creds
 	ic.ConfigOverrides = binding.ConfigOverrides
 	ic.Policies = binding.Policies
 
@@ -456,29 +444,28 @@ func (rt *Runtime) loadBinding(ctx context.Context, appID, agentID, bindingID st
 
 	row := rt.pool.QueryRow(ctx, query, args...)
 	var (
-		id, appIDDB, agentIDDB     string
-		defID                      *string
-		credJSON, cfgJSON, polJSON []byte
+		id, appIDDB, agentIDDB string
+		defID                  *string
+		credJSON               []byte // selected but unused — column retained for future use
+		cfgJSON, polJSON       []byte
 	)
 	if err := row.Scan(&id, &appIDDB, &agentIDDB, &defID, &credJSON, &cfgJSON, &polJSON); err != nil {
 		return nil, fmt.Errorf("load binding: %w", err)
 	}
+	_ = credJSON
 
-	var creds map[string]string
-	_ = json.Unmarshal(credJSON, &creds)
 	var overrides map[string]any
 	_ = json.Unmarshal(cfgJSON, &overrides)
 	var policies agentgen.InvocationPolicies
 	_ = json.Unmarshal(polJSON, &policies)
 
 	return &agentgen.AppAgentBinding{
-		ID:                   id,
-		ApplicationID:        appIDDB,
-		AgentID:              agentIDDB,
-		DefinitionID:         defID,
-		EncryptedCredentials: creds,
-		ConfigOverrides:      overrides,
-		Policies:             policies,
+		ID:            id,
+		ApplicationID: appIDDB,
+		AgentID:       agentIDDB,
+		DefinitionID:  defID,
+		ConfigOverrides: overrides,
+		Policies:        policies,
 	}, nil
 }
 

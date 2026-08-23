@@ -545,12 +545,6 @@ export interface PublishResult {
 
 // ── Canvas A2A Agent Builder (Phase 2) ───────────────────────────────────────
 
-export interface AgentCredentialSlot {
-  name: string;
-  description: string;
-  required: boolean;
-}
-
 export interface AgentRootDoc {
   display_name: string;
   description: string;
@@ -558,7 +552,6 @@ export interface AgentRootDoc {
   icon?: string;
   category?: string;
   capabilities: { streaming: boolean; push_notifications: boolean };
-  credential_slots: AgentCredentialSlot[];
 }
 
 export interface AgentStepDoc {

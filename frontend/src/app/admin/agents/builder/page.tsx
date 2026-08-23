@@ -9,7 +9,6 @@ import {
   type AgentDefinitionDoc,
   type AgentSkillDoc,
   type AgentStepDoc,
-  type AgentCredentialSlot,
   type AgentIssue,
 } from '@/lib/api';
 import {
@@ -66,7 +65,6 @@ interface AgentRootData {
   display_name: string;
   description: string;
   version: string;
-  credential_slots: AgentCredentialSlot[];
 }
 
 interface SkillData {
@@ -121,11 +119,6 @@ function AgentRootNode({ data }: { data: AgentRootData; id: string }) {
       <Handle type="source" position={Position.Bottom} style={{ background: C.cyan }} />
       <div style={{ fontSize: '42px', textAlign: 'center', lineHeight: 1 }}>🤖</div>
       <div style={{ color: '#fff', fontWeight: 700, fontSize: '13px', textAlign: 'center', marginTop: '6px' }}>{data.display_name || 'Unnamed Agent'}</div>
-      {data.credential_slots.length > 0 && (
-        <div style={{ marginTop: '6px', fontSize: '11px', color: C.amber, textAlign: 'center' }}>
-          {data.credential_slots.length} credential slot{data.credential_slots.length !== 1 ? 's' : ''}
-        </div>
-      )}
     </div>
   );
 }
@@ -400,7 +393,7 @@ function CanvasInner() {
     id: 'agent-root',
     type: 'agentRoot',
     position: { x: 300, y: 80 },
-    data: { display_name: 'My Agent', description: '', version: '1.0.0', credential_slots: [] },
+    data: { display_name: 'My Agent', description: '', version: '1.0.0' },
   }];
   const [agentNodes, setAgentNodes, onAgentNodesChange] = useNodesState<Node>(initialAgentNodes);
   const [agentEdges, setAgentEdges, onAgentEdgesChange] = useEdgesState<Edge>([]);
@@ -413,7 +406,6 @@ function CanvasInner() {
   const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
   const [version, setVersion] = useState('1.0.0');
-  const [credentialSlots, setCredentialSlots] = useState<AgentCredentialSlot[]>([]);
 
   // UI state
   const [saving, setSaving] = useState(false);
@@ -518,7 +510,6 @@ function CanvasInner() {
           description: rootNodeData?.description ?? '',
           version: rootNodeData?.version ?? '1.0.0',
           capabilities: { streaming: false, push_notifications: false },
-          credential_slots: rootNodeData?.credential_slots ?? credentialSlots,
         },
         skills,
       };
@@ -538,7 +529,7 @@ function CanvasInner() {
       if (validationTimerRef.current) clearTimeout(validationTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defId, agentNodes, agentEdges, agentSlug, credentialSlots, skillPipelines, localPipeNodes, localPipeEdges]);
+  }, [defId, agentNodes, agentEdges, agentSlug, skillPipelines, localPipeNodes, localPipeEdges]);
 
   // Sync pipeline state when switching skills
   useEffect(() => {
@@ -568,7 +559,6 @@ function CanvasInner() {
       setDisplayName(doc.agent_root.display_name ?? '');
       setDescription(doc.agent_root.description ?? '');
       setVersion(doc.agent_root.version ?? '1.0.0');
-      setCredentialSlots(doc.agent_root.credential_slots ?? []);
       loadDefinitionDoc(doc);
     }).catch(e => {
       setLoadError('Failed to load definition: ' + String(e));
@@ -585,7 +575,6 @@ function CanvasInner() {
         display_name: doc.agent_root.display_name,
         description: doc.agent_root.description ?? '',
         version: doc.agent_root.version ?? '1.0.0',
-        credential_slots: doc.agent_root.credential_slots ?? [],
       },
     };
     const skillNodes: Node[] = doc.skills.map((sk, i) => ({
@@ -636,7 +625,6 @@ function CanvasInner() {
     const dn = rootNodeData?.display_name ?? displayName;
     const desc = rootNodeData?.description ?? description;
     const ver = rootNodeData?.version ?? version;
-    const slots = rootNodeData?.credential_slots ?? credentialSlots;
 
     const skills: AgentSkillDoc[] = agentNodes
       .filter(n => n.type === 'skill')
@@ -677,7 +665,6 @@ function CanvasInner() {
         description: desc,
         version: ver,
         capabilities: { streaming: false, push_notifications: false },
-        credential_slots: slots,
       },
       skills,
     };
@@ -1548,37 +1535,6 @@ function CanvasInner() {
                   </div>
                 </div>
 
-                {/* Credential slots section */}
-                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', marginTop: 12, marginBottom: 4 }}>Credential Slots</div>
-                <button onClick={() => {
-                  setCredentialSlots(prev => [...prev, { name: `slot_${prev.length + 1}`, description: '', required: true }]);
-                  setDirty(true);
-                }} style={{
-                  display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px',
-                  borderRadius: 8, cursor: 'pointer', background: C.amberBg,
-                  border: `1px solid ${C.amberBorder}`, color: C.amber,
-                  fontSize: 13, fontWeight: 600, width: '100%', textAlign: 'left',
-                }}>
-                  <span style={{ fontSize: 16 }}>🔑</span> + Add Slot
-                </button>
-                {credentialSlots.map((slot, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, background: C.amberBg, border: `1px solid ${C.amberBorder}`, borderRadius: 6, padding: '4px 8px' }}>
-                    <span style={{ fontSize: 12, color: C.amber, flexShrink: 0 }}>🔑</span>
-                    <input
-                      value={slot.name}
-                      onChange={e => {
-                        const next = [...credentialSlots];
-                        next[i] = { ...next[i], name: e.target.value };
-                        setCredentialSlots(next);
-                        setDirty(true);
-                      }}
-                      style={{ flex: 1, background: 'transparent', border: 'none', color: C.amber, fontSize: '11px', outline: 'none', minWidth: 0 }}
-                      placeholder="slot name"
-                    />
-                    <button onClick={() => { setCredentialSlots(prev => prev.filter((_, j) => j !== i)); setDirty(true); }}
-                      style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 14, padding: '0 2px', flexShrink: 0 }}>×</button>
-                  </div>
-                ))}
               </>
             ) : (
               <>
@@ -2056,19 +2012,6 @@ function CanvasInner() {
                         />
                       </div>
 
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>API Key Slot <span style={hint}>blank = platform key</span></label>
-                        <select
-                          value={cfgStr('provider_key_slot')}
-                          onChange={e => updateStepConfig('provider_key_slot', e.target.value)}
-                          style={{ ...selectStyle, ...issueStyle('provider_key_slot') }}
-                        >
-                          <option value="">— platform key —</option>
-                          {credentialSlots.map(s => (
-                            <option key={s.name} value={s.name}>{s.name}</option>
-                          ))}
-                        </select>
-                      </div>
                     </>
                   )}
 
@@ -2118,84 +2061,6 @@ function CanvasInner() {
                           style={inputStyle}
                         />
                       </div>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>Credential Slot <span style={hint}>blank = no auth</span></label>
-                        <select
-                          value={cfgStr('credential_slot')}
-                          onChange={e => updateStepConfig('credential_slot', e.target.value)}
-                          style={{ ...selectStyle, ...issueStyle('credential_slot') }}
-                        >
-                          <option value="">— none —</option>
-                          {credentialSlots.map(s => (
-                            <option key={s.name} value={s.name}>{s.name}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {cfgStr('credential_slot') && (
-                        <>
-                          <div style={fieldGap}>
-                            <label style={labelStyle}>Inject Mode</label>
-                            <select
-                              value={(cfg.credential_inject as {mode?: string})?.mode ?? 'header'}
-                              onChange={e => updateStepConfig('credential_inject', {
-                                ...(cfg.credential_inject as object ?? {}),
-                                mode: e.target.value,
-                              })}
-                              style={selectStyle}
-                            >
-                              <option value="header">Header</option>
-                              <option value="query">Query param</option>
-                              <option value="basic">HTTP Basic</option>
-                            </select>
-                          </div>
-
-                          {((cfg.credential_inject as {mode?: string})?.mode ?? 'header') === 'header' && (
-                            <>
-                              <div style={fieldGap}>
-                                <label style={labelStyle}>Header Name</label>
-                                <input
-                                  value={(cfg.credential_inject as {header_name?: string})?.header_name ?? 'Authorization'}
-                                  onChange={e => updateStepConfig('credential_inject', {
-                                    ...(cfg.credential_inject as object ?? {}),
-                                    header_name: e.target.value,
-                                  })}
-                                  style={inputStyle}
-                                  placeholder="Authorization"
-                                />
-                              </div>
-                              <div style={fieldGap}>
-                                <label style={labelStyle}>Value Template</label>
-                                <input
-                                  value={(cfg.credential_inject as {value_template?: string})?.value_template ?? 'Bearer {credential}'}
-                                  onChange={e => updateStepConfig('credential_inject', {
-                                    ...(cfg.credential_inject as object ?? {}),
-                                    value_template: e.target.value,
-                                  })}
-                                  style={inputStyle}
-                                  placeholder="Bearer {credential}"
-                                />
-                              </div>
-                            </>
-                          )}
-
-                          {((cfg.credential_inject as {mode?: string})?.mode) === 'query' && (
-                            <div style={fieldGap}>
-                              <label style={labelStyle}>Query Param Name</label>
-                              <input
-                                value={(cfg.credential_inject as {query_param?: string})?.query_param ?? ''}
-                                onChange={e => updateStepConfig('credential_inject', {
-                                  ...(cfg.credential_inject as object ?? {}),
-                                  query_param: e.target.value,
-                                })}
-                                style={inputStyle}
-                                placeholder="api_key"
-                              />
-                            </div>
-                          )}
-                        </>
-                      )}
 
                       {/* Response extractions */}
                       <div style={{ ...fieldGap, marginTop: '16px' }}>

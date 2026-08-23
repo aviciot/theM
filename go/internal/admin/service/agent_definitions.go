@@ -24,7 +24,7 @@ func NewAgentDefinitionService(d Dal, cache Cache, fernetKey []byte) *AgentDefin
 
 // validateAgentDefinition performs structural validation on an agent definition
 // canvas JSON. Returns ErrValidation for malformed input, ErrUnprocessable for
-// semantic violations. Rejects any secret material — slot NAMES only.
+// semantic violations. Rejects any secret material.
 func validateAgentDefinition(raw json.RawMessage) error {
 	// Must be a JSON object.
 	var top map[string]json.RawMessage
@@ -56,37 +56,6 @@ func validateAgentDefinition(raw json.RawMessage) error {
 	var dn string
 	if err := json.Unmarshal(dnRaw, &dn); err != nil || dn == "" {
 		return validation("agent_root.display_name must be a non-empty string")
-	}
-
-	// Validate credential_slots if present.
-	if slotsRaw, ok := root["credential_slots"]; ok {
-		var slots []json.RawMessage
-		if err := json.Unmarshal(slotsRaw, &slots); err != nil {
-			return validation("agent_root.credential_slots must be an array")
-		}
-		seenSlots := make(map[string]struct{}, len(slots))
-		for _, slotRaw := range slots {
-			var slot map[string]json.RawMessage
-			if err := json.Unmarshal(slotRaw, &slot); err != nil {
-				return validation("each credential slot must be a JSON object")
-			}
-			// Reject slot with a value field.
-			if _, hasVal := slot["value"]; hasVal {
-				return validation("credential slot must not contain a value")
-			}
-			nameRaw, ok := slot["name"]
-			if !ok {
-				return validation("each credential slot must have a name")
-			}
-			var name string
-			if err := json.Unmarshal(nameRaw, &name); err != nil || name == "" {
-				return validation("credential slot name must be a non-empty string")
-			}
-			if _, dup := seenSlots[name]; dup {
-				return unprocessable("duplicate credential slot name: " + name)
-			}
-			seenSlots[name] = struct{}{}
-		}
 	}
 
 	// Validate skills if present.

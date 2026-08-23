@@ -33,7 +33,7 @@ type PipelineVars map[string]any
 type Interpreter struct {
 	httpClient     HTTPDoer
 	llmFactory     LLMFactory
-	platformAPIKey string // fallback LLM key when no slot is bound
+	platformAPIKey string // fallback LLM key when no app key is set
 }
 
 // NewInterpreter creates an Interpreter.
@@ -139,10 +139,9 @@ func (interp *Interpreter) execLLM(ctx context.Context, ic *InvocationContext, s
 		return fmt.Errorf("parse llm config: %w", err)
 	}
 
-	// Three-tier key resolution (most specific wins):
-	// 1. per-binding slot override (cfg.ProviderKeySlot → ic.Credentials)
-	// 2. per-app key from applications.provider_keys (ic.AppAPIKey)
-	// 3. platform ANTHROPIC_API_KEY env var (interp.platformAPIKey)
+	// Two-tier key resolution (most specific wins):
+	// 1. per-app key from applications.provider_keys (ic.AppAPIKey)
+	// 2. platform ANTHROPIC_API_KEY env var (interp.platformAPIKey)
 	providerName := cfg.Provider
 	if providerName == "" {
 		providerName = "anthropic"
@@ -150,11 +149,6 @@ func (interp *Interpreter) execLLM(ctx context.Context, ic *InvocationContext, s
 	apiKey := interp.platformAPIKey
 	if appKey, ok := ic.AppAPIKey[providerName]; ok && appKey != "" {
 		apiKey = appKey
-	}
-	if cfg.ProviderKeySlot != "" {
-		if slotVal, ok := ic.Credentials[cfg.ProviderKeySlot]; ok && slotVal != "" {
-			apiKey = slotVal
-		}
 	}
 
 	if interp.llmFactory == nil {
@@ -229,32 +223,6 @@ func (interp *Interpreter) execHTTP(ctx context.Context, ic *InvocationContext, 
 
 	for k, v := range cfg.Headers {
 		req.Header.Set(k, v)
-	}
-
-	if cfg.CredentialSlot != "" {
-		cred, ok := ic.Credentials[cfg.CredentialSlot]
-		if !ok {
-			return fmt.Errorf("credential slot %q not found in invocation context", cfg.CredentialSlot)
-		}
-		switch cfg.CredentialInject.Mode {
-		case "query":
-			q := req.URL.Query()
-			q.Set(cfg.CredentialInject.QueryParam, cred)
-			req.URL.RawQuery = q.Encode()
-		case "basic":
-			req.SetBasicAuth(cred, "")
-		default: // "header" or empty
-			headerName := cfg.CredentialInject.HeaderName
-			if headerName == "" {
-				headerName = "Authorization"
-			}
-			value := cfg.CredentialInject.ValueTemplate
-			if value == "" {
-				value = "Bearer {credential}"
-			}
-			value = strings.ReplaceAll(value, "{credential}", cred)
-			req.Header.Set(headerName, value)
-		}
 	}
 
 	if interp.httpClient == nil {

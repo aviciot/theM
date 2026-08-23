@@ -124,19 +124,10 @@ func TestCompile_SlugSanitized(t *testing.T) {
 	}
 }
 
-func TestCompile_DuplicateSlotName(t *testing.T) {
-	errs := compileFail(t, `{
-		"agent_root": {
-			"display_name": "X",
-			"credential_slots": [
-				{"name": "api_key", "required": true},
-				{"name": "api_key", "required": false}
-			]
-		},
-		"skills": []
-	}`)
-	if !hasCode(errs, "DUPLICATE_SLOT") {
-		t.Errorf("expected DUPLICATE_SLOT, got: %v", errs)
+func TestCompile_EmptyAgentRoot_NoSkills(t *testing.T) {
+	spec := compileOK(t, `{"agent_root": {"display_name": "MyAgent"}, "skills": []}`)
+	if spec.Card.Name != "MyAgent" {
+		t.Errorf("expected card name MyAgent, got %q", spec.Card.Name)
 	}
 }
 
@@ -182,38 +173,34 @@ func TestCompile_UnknownStepType(t *testing.T) {
 	}
 }
 
-func TestCompile_UndeclaredHTTPCredentialSlot(t *testing.T) {
-	errs := compileFail(t, `{
-		"agent_root": {"display_name": "X", "credential_slots": []},
+func TestCompile_HTTPNode_AcceptsConfig(t *testing.T) {
+	// HTTP node config without credential slot is valid.
+	_ = compileOK(t, `{
+		"agent_root": {"display_name": "X"},
 		"skills": [{
 			"skill_id": "s1",
-			"steps": [{
-				"id": "step1",
-				"type": "http",
-				"config": {"method": "GET", "url_template": "http://x", "credential_slot": "missing_slot"}
-			}]
+			"steps": [
+				{"id": "in",   "type": "input",    "config": {}, "next": ["step1"]},
+				{"id": "step1","type": "http",     "config": {"method": "GET", "url_template": "http://x"}, "next": ["out"]},
+				{"id": "out",  "type": "response", "config": {"from_var": "output"}}
+			]
 		}]
 	}`)
-	if !hasCode(errs, "UNDECLARED_SLOT") {
-		t.Errorf("expected UNDECLARED_SLOT, got: %v", errs)
-	}
 }
 
-func TestCompile_UndeclaredLLMProviderKeySlot(t *testing.T) {
-	errs := compileFail(t, `{
-		"agent_root": {"display_name": "X", "credential_slots": []},
+func TestCompile_LLMNode_AcceptsConfig(t *testing.T) {
+	// LLM node config without provider_key_slot is valid.
+	_ = compileOK(t, `{
+		"agent_root": {"display_name": "X"},
 		"skills": [{
 			"skill_id": "s1",
-			"steps": [{
-				"id": "step1",
-				"type": "llm",
-				"config": {"provider": "anthropic", "provider_key_slot": "missing_key"}
-			}]
+			"steps": [
+				{"id": "in",   "type": "input",    "config": {}, "next": ["step1"]},
+				{"id": "step1","type": "llm",      "config": {"provider": "anthropic"}, "next": ["out"]},
+				{"id": "out",  "type": "response", "config": {"from_var": "output"}}
+			]
 		}]
 	}`)
-	if !hasCode(errs, "UNDECLARED_SLOT") {
-		t.Errorf("expected UNDECLARED_SLOT, got: %v", errs)
-	}
 }
 
 func TestCompile_DanglingNextRef(t *testing.T) {
@@ -245,23 +232,15 @@ func TestCompile_CycleDetected(t *testing.T) {
 	}
 }
 
-func TestCompile_ValidCredentialSlotRef(t *testing.T) {
+func TestCompile_SpecHasNoCredentialSlots(t *testing.T) {
+	// Credential slots were removed — compiled spec must not carry any.
 	spec := compileOK(t, `{
-		"agent_root": {
-			"display_name": "X",
-			"credential_slots": [{"name": "my_key", "required": true}]
-		},
-		"skills": [{
-			"skill_id": "s1",
-			"steps": [{
-				"id": "step1",
-				"type": "http",
-				"config": {"method": "GET", "url_template": "http://x", "credential_slot": "my_key"}
-			}]
-		}]
+		"agent_root": {"display_name": "X"},
+		"skills": []
 	}`)
-	if len(spec.CredentialSlots) != 1 || spec.CredentialSlots[0].Name != "my_key" {
-		t.Errorf("expected credential slot my_key, got: %v", spec.CredentialSlots)
+	// AgentSpec has no CredentialSlots field — this just verifies the spec compiles.
+	if spec.Card.Name != "X" {
+		t.Errorf("expected card name X, got %q", spec.Card.Name)
 	}
 }
 
@@ -366,30 +345,26 @@ func TestCompileForPublish_ImplementedOnlySucceeds(t *testing.T) {
 // carry populated SkillID and NodeID fields.
 func TestIssue_StructuredFields(t *testing.T) {
 	_, issues := agentgen.Validate("a", "t", "d", "slug", json.RawMessage(`{
-		"agent_root": {"display_name": "X", "credential_slots": []},
+		"agent_root": {"display_name": "X"},
 		"skills": [{"skill_id": "skill_abc", "steps": [{
 			"id": "node_xyz",
-			"type": "llm",
-			"config": {"provider": "anthropic", "provider_key_slot": "missing"}
+			"type": "unknown_type_that_does_not_exist"
 		}]}]
 	}`))
 	var found *agentgen.Issue
 	for i, iss := range issues {
-		if iss.Code == "UNDECLARED_SLOT" {
+		if iss.Code == "UNKNOWN_STEP_TYPE" {
 			found = &issues[i]
 			break
 		}
 	}
 	if found == nil {
-		t.Fatal("expected UNDECLARED_SLOT issue")
+		t.Fatal("expected UNKNOWN_STEP_TYPE issue")
 	}
 	if found.SkillID != "skill_abc" {
 		t.Errorf("SkillID: want %q, got %q", "skill_abc", found.SkillID)
 	}
 	if found.NodeID != "node_xyz" {
 		t.Errorf("NodeID: want %q, got %q", "node_xyz", found.NodeID)
-	}
-	if found.Field != "provider_key_slot" {
-		t.Errorf("Field: want %q, got %q", "provider_key_slot", found.Field)
 	}
 }

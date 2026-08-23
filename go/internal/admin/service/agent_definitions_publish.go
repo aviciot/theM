@@ -111,11 +111,6 @@ func (s *AgentDefinitionService) PublishAgentDefinition(ctx context.Context, ten
 		return nil, fmt.Errorf("marshal spec: %w", err)
 	}
 
-	credSchema, err := buildCredentialSchema(spec.CredentialSlots)
-	if err != nil {
-		return nil, fmt.Errorf("build cred schema: %w", err)
-	}
-
 	agentCardJSON, err := buildAgentCard(spec)
 	if err != nil {
 		return nil, fmt.Errorf("build agent card: %w", err)
@@ -142,7 +137,7 @@ func (s *AgentDefinitionService) PublishAgentDefinition(ctx context.Context, ten
 		SpecHash:      specHash,
 		AgentCardJSON: agentCardJSON,
 		SkillsJSON:    skillsJSON,
-		CredSchema:    credSchema,
+		CredSchema:    []byte("[]"),
 	}
 
 	if err := s.dal.PublishCanvasAgent(ctx, row); err != nil {
@@ -309,19 +304,6 @@ func DecryptAESGCM(key []byte, encoded string) (string, error) {
 }
 
 // ── Build helpers ─────────────────────────────────────────────────────────────
-
-func buildCredentialSchema(slots []agentgen.CredentialSlotSpec) (json.RawMessage, error) {
-	type credEntry struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Required    bool   `json:"required"`
-	}
-	entries := make([]credEntry, 0, len(slots))
-	for _, s := range slots {
-		entries = append(entries, credEntry{Name: s.Name, Description: s.Description, Required: s.Required})
-	}
-	return json.Marshal(entries)
-}
 
 func buildAgentCard(spec *agentgen.AgentSpec) ([]byte, error) {
 	type agentCardOut struct {

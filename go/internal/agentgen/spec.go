@@ -3,7 +3,6 @@ package agentgen
 import "encoding/json"
 
 // AgentSpec is the compiled, reusable form the runtime loads. Frozen at publish.
-// NO secret values and NO env-var names — only credential slot NAMES.
 type AgentSpec struct {
 	ID           string      `json:"id"`            // == agents.id == component_definitions.id
 	DefinitionID string      `json:"definition_id"` // which agent_definitions revision this came from
@@ -11,15 +10,7 @@ type AgentSpec struct {
 	TenantID     string      `json:"tenant_id"`
 	Card         CardSpec    `json:"card"`
 	Skills       []SkillSpec `json:"skills"`
-	// CredentialSlots is the contract every binding must satisfy. Names only.
-	CredentialSlots []CredentialSlotSpec `json:"credential_slots"`
-	DefaultModel    string               `json:"default_model"`
-}
-
-type CredentialSlotSpec struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Required    bool   `json:"required"`
+	DefaultModel string      `json:"default_model"`
 }
 
 type CardSpec struct {
@@ -76,7 +67,7 @@ type BranchArm struct {
 	Next      []string `json:"next"`
 }
 
-// LLMStepConfig configures one LLM step. Credential handling is slot-name-only.
+// LLMStepConfig configures one LLM step.
 type LLMStepConfig struct {
 	Provider     string `json:"provider"`
 	Model        string `json:"model"`
@@ -86,34 +77,16 @@ type LLMStepConfig struct {
 	Effort       string `json:"effort,omitempty"`
 	OutputVar    string `json:"output_var"`
 	Stream       bool   `json:"stream"`
-	// ProviderKeySlot: if set, the LLM API key is resolved from the application
-	// binding's credential slot of this name. If empty, falls back to platform key.
-	// The key value is NEVER in the spec.
-	ProviderKeySlot string `json:"provider_key_slot,omitempty"`
 }
 
-// HTTPStepConfig configures one HTTP tool step. Credential handling is slot-name-only.
+// HTTPStepConfig configures one HTTP tool step.
 type HTTPStepConfig struct {
-	Method      string `json:"method"`
-	URLTemplate string `json:"url_template"`
-	// Headers holds NON-SECRET static headers only (Accept, Content-Type, etc.).
-	Headers          map[string]string `json:"headers,omitempty"`
-	BodyTemplate     string            `json:"body_template,omitempty"`
-	Extractions      []JSONPathExtract `json:"extractions"`
-	// CredentialSlot names the slot whose decrypted value is injected at runtime.
-	// This is the ONLY way credentials enter an HTTP step.
-	CredentialSlot   string           `json:"credential_slot,omitempty"`
-	CredentialInject CredentialInject `json:"credential_inject,omitempty"`
-	TimeoutSeconds   int              `json:"timeout_seconds"`
-}
-
-// CredentialInject describes how the resolved slot value is applied to the request.
-type CredentialInject struct {
-	// Mode: "header" (default) | "query" | "basic"
-	Mode          string `json:"mode"`
-	HeaderName    string `json:"header_name,omitempty"`
-	ValueTemplate string `json:"value_template,omitempty"` // e.g. "Bearer {credential}"
-	QueryParam    string `json:"query_param,omitempty"`
+	Method         string            `json:"method"`
+	URLTemplate    string            `json:"url_template"`
+	Headers        map[string]string `json:"headers,omitempty"`
+	BodyTemplate   string            `json:"body_template,omitempty"`
+	Extractions    []JSONPathExtract `json:"extractions"`
+	TimeoutSeconds int               `json:"timeout_seconds"`
 }
 
 type JSONPathExtract struct {

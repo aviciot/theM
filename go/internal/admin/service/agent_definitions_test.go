@@ -354,38 +354,28 @@ func TestCreateDraft_RejectsSecretValueKey(t *testing.T) {
 	}
 }
 
-func TestCreateDraft_RejectsSlotWithValue(t *testing.T) {
+func TestCreateDraft_RejectsSecretValue(t *testing.T) {
+	// Any key named "secret_value" at any nesting level must be rejected.
 	f := &agentDefFakeDal{}
 	svc := newAgentDefSvc(f)
 	bad := json.RawMessage(`{
-		"agent_root": {
-			"display_name": "X",
-			"credential_slots": [{"name": "api_key", "value": "secret123", "required": true}]
-		},
-		"skills": []
+		"agent_root": {"display_name": "X"},
+		"skills": [],
+		"secret_value": "should-be-rejected"
 	}`)
 	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", bad)
 	if !errors.Is(err, service.ErrValidation) {
-		t.Errorf("want ErrValidation for slot with value, got %v", err)
+		t.Errorf("want ErrValidation for secret_value key, got %v", err)
 	}
 }
 
-func TestCreateDraft_DuplicateSlotName(t *testing.T) {
+func TestCreateDraft_ValidMinimalDefinition(t *testing.T) {
 	f := &agentDefFakeDal{}
 	svc := newAgentDefSvc(f)
-	bad := json.RawMessage(`{
-		"agent_root": {
-			"display_name": "X",
-			"credential_slots": [
-				{"name": "api_key", "required": true},
-				{"name": "api_key", "required": false}
-			]
-		},
-		"skills": []
-	}`)
-	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", bad)
-	if !errors.Is(err, service.ErrUnprocessable) {
-		t.Errorf("want ErrUnprocessable for duplicate slot name, got %v", err)
+	good := json.RawMessage(`{"agent_root": {"display_name": "Minimal"}, "skills": []}`)
+	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", good)
+	if err != nil {
+		t.Errorf("want no error for minimal valid definition, got %v", err)
 	}
 }
 

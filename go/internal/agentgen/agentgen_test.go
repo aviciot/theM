@@ -14,66 +14,41 @@ import (
 
 // --- InvocationContext redaction test ---
 
-func TestInvocationContext_StringRedactsCredentials(t *testing.T) {
+func TestInvocationContext_StringRedactsAppKey(t *testing.T) {
 	ic := agentgen.InvocationContext{
 		TenantID:      "tenant-1",
 		ApplicationID: "app-1",
 		AgentID:       "agent-1",
 		BindingID:     "binding-1",
-		Credentials: map[string]string{
-			"api_key":    "super-secret-key",
-			"other_slot": "another-secret",
-		},
+		AppAPIKey:     map[string]string{"anthropic": "sk-ant-super-secret"},
 	}
 	s := ic.String()
-	if strings.Contains(s, "super-secret-key") {
-		t.Error("InvocationContext.String() must not contain credential values")
+	if strings.Contains(s, "sk-ant-super-secret") {
+		t.Error("InvocationContext.String() must not contain API key values")
 	}
-	if strings.Contains(s, "another-secret") {
-		t.Error("InvocationContext.String() must not contain credential values")
-	}
-	if !strings.Contains(s, "slots=2") {
-		t.Errorf("InvocationContext.String() should report slot count, got: %s", s)
+	if !strings.Contains(s, "agent-1") {
+		t.Errorf("InvocationContext.String() should contain agent ID, got: %s", s)
 	}
 }
 
-// --- AppAgentBinding credential resolution ---
+// --- AppAgentBinding isolation test ---
 
-func TestAppAgentBinding_ResolveCredentials_TwoBindingsDifferentCreds(t *testing.T) {
-	// Simulates the Salesforce example: same agent, two apps, different credentials.
-	decryptMock := func(ct string) (string, error) {
-		if strings.HasPrefix(ct, "enc:") {
-			return strings.TrimPrefix(ct, "enc:"), nil
-		}
-		return ct, nil
-	}
-
+func TestAppAgentBinding_TwoBindingsDifferentPolicies(t *testing.T) {
+	// Same agent, two apps — policies must be per-binding.
 	bindingA := agentgen.AppAgentBinding{
-		ID:                   "binding-a",
-		EncryptedCredentials: map[string]string{"salesforce_api": "enc:org-a-token"},
+		ID:            "binding-a",
+		ApplicationID: "app-a",
+		AgentID:       "agent-1",
+		Policies:      agentgen.InvocationPolicies{MaxConcurrentTasks: 5},
 	}
 	bindingB := agentgen.AppAgentBinding{
-		ID:                   "binding-b",
-		EncryptedCredentials: map[string]string{"salesforce_api": "enc:org-b-token"},
+		ID:            "binding-b",
+		ApplicationID: "app-b",
+		AgentID:       "agent-1",
+		Policies:      agentgen.InvocationPolicies{MaxConcurrentTasks: 10},
 	}
-
-	credsA, err := bindingA.ResolveCredentials(decryptMock)
-	if err != nil {
-		t.Fatalf("resolve binding A: %v", err)
-	}
-	credsB, err := bindingB.ResolveCredentials(decryptMock)
-	if err != nil {
-		t.Fatalf("resolve binding B: %v", err)
-	}
-
-	if credsA["salesforce_api"] != "org-a-token" {
-		t.Errorf("binding A: expected org-a-token, got %q", credsA["salesforce_api"])
-	}
-	if credsB["salesforce_api"] != "org-b-token" {
-		t.Errorf("binding B: expected org-b-token, got %q", credsB["salesforce_api"])
-	}
-	if credsA["salesforce_api"] == credsB["salesforce_api"] {
-		t.Error("two different bindings for the same agent must resolve to DIFFERENT credentials")
+	if bindingA.Policies.MaxConcurrentTasks == bindingB.Policies.MaxConcurrentTasks {
+		t.Error("two different bindings must have independent policies")
 	}
 }
 
@@ -155,7 +130,6 @@ func TestInterpreter_InputStep_BindsTextToVar(t *testing.T) {
 		TenantID:      "t1",
 		ApplicationID: "a1",
 		AgentID:       "agent-1",
-		Credentials:   map[string]string{},
 	}
 	skill := &agentgen.SkillSpec{
 		ID:   "skill-1",
@@ -195,7 +169,6 @@ func TestInterpreter_TransformStep(t *testing.T) {
 		TenantID:      "t1",
 		ApplicationID: "a1",
 		AgentID:       "agent-1",
-		Credentials:   map[string]string{},
 	}
 	skill := &agentgen.SkillSpec{
 		ID: "skill-1",
@@ -235,10 +208,10 @@ func TestInterpreter_TransformStep(t *testing.T) {
 	}
 }
 
-func TestInterpreter_HTTPStep_InjectsCredential(t *testing.T) {
-	var capturedAuth string
+func TestInterpreter_HTTPStep_StaticHeader(t *testing.T) {
+	var capturedCustom string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedAuth = r.Header.Get("Authorization")
+		capturedCustom = r.Header.Get("X-Custom")
 		json.NewEncoder(w).Encode(map[string]any{"result": "ok"}) //nolint:errcheck
 	}))
 	defer server.Close()
@@ -248,7 +221,6 @@ func TestInterpreter_HTTPStep_InjectsCredential(t *testing.T) {
 		TenantID:      "t1",
 		ApplicationID: "a1",
 		AgentID:       "agent-1",
-		Credentials:   map[string]string{"my_api_key": "secret-token-123"},
 	}
 	skill := &agentgen.SkillSpec{
 		ID: "skill-1",
@@ -265,12 +237,7 @@ func TestInterpreter_HTTPStep_InjectsCredential(t *testing.T) {
 				Config: mustJSON(agentgen.HTTPStepConfig{
 					Method:         "GET",
 					URLTemplate:    server.URL,
-					CredentialSlot: "my_api_key",
-					CredentialInject: agentgen.CredentialInject{
-						Mode:          "header",
-						HeaderName:    "Authorization",
-						ValueTemplate: "Bearer {credential}",
-					},
+					Headers:        map[string]string{"X-Custom": "static-value"},
 					TimeoutSeconds: 5,
 				}),
 				Next: []string{"step-response"},
@@ -289,8 +256,8 @@ func TestInterpreter_HTTPStep_InjectsCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if capturedAuth != "Bearer secret-token-123" {
-		t.Errorf("expected Authorization: Bearer secret-token-123, got %q", capturedAuth)
+	if capturedCustom != "static-value" {
+		t.Errorf("expected X-Custom: static-value, got %q", capturedCustom)
 	}
 }
 
@@ -320,7 +287,6 @@ func TestInterpreter_LLMStep_FallsBackToInput(t *testing.T) {
 		TenantID:      "t1",
 		ApplicationID: "a1",
 		AgentID:       "agent-1",
-		Credentials:   map[string]string{},
 	}
 	// No user_prompt configured — should fall back to vars["input"].
 	skill := &agentgen.SkillSpec{
@@ -359,7 +325,6 @@ func TestInterpreter_LLMStep_ExplicitUserPromptOverridesInput(t *testing.T) {
 		TenantID:    "t1",
 		ApplicationID: "a1",
 		AgentID:     "agent-1",
-		Credentials: map[string]string{},
 	}
 	skill := &agentgen.SkillSpec{
 		ID: "skill-llm",
@@ -395,7 +360,6 @@ func TestInterpreter_DataPartVars_AvailableInTemplate(t *testing.T) {
 		TenantID:      "t1",
 		ApplicationID: "a1",
 		AgentID:       "agent-1",
-		Credentials:   map[string]string{},
 	}
 	skill := &agentgen.SkillSpec{
 		ID: "skill-data",
@@ -437,7 +401,6 @@ func TestInterpreter_DataPartVars_DoNotOverwriteExplicitInput(t *testing.T) {
 		TenantID:      "t1",
 		ApplicationID: "a1",
 		AgentID:       "agent-1",
-		Credentials:   map[string]string{},
 	}
 	skill := &agentgen.SkillSpec{
 		ID: "skill-data",
@@ -499,10 +462,9 @@ func TestInterpreter_LLMStep_ThreeTier_PlatformKey(t *testing.T) {
 	interp := agentgen.NewInterpreter(nil, factory, "platform-key-xxx")
 	ic := &agentgen.InvocationContext{
 		TenantID: "t1", ApplicationID: "a1", AgentID: "ag1",
-		Credentials: map[string]string{},
 		AppAPIKey:   map[string]string{},
 	}
-	skill := simpleLLMSkill("anthropic", "")
+	skill := simpleLLMSkill("anthropic")
 	if _, err := interp.Execute(context.Background(), ic, skill, "hi"); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -518,10 +480,9 @@ func TestInterpreter_LLMStep_ThreeTier_AppKeyOverridesPlatform(t *testing.T) {
 	interp := agentgen.NewInterpreter(nil, factory, "platform-key-xxx")
 	ic := &agentgen.InvocationContext{
 		TenantID: "t1", ApplicationID: "a1", AgentID: "ag1",
-		Credentials: map[string]string{},
 		AppAPIKey:   map[string]string{"anthropic": "app-level-key-yyy"},
 	}
-	skill := simpleLLMSkill("anthropic", "")
+	skill := simpleLLMSkill("anthropic")
 	if _, err := interp.Execute(context.Background(), ic, skill, "hi"); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -530,22 +491,21 @@ func TestInterpreter_LLMStep_ThreeTier_AppKeyOverridesPlatform(t *testing.T) {
 	}
 }
 
-// LLM-KEY-3: Per-binding slot overrides both the platform key and the per-app key.
-func TestInterpreter_LLMStep_ThreeTier_SlotOverridesAppKey(t *testing.T) {
+// LLM-KEY-3: App key overrides platform key.
+func TestInterpreter_LLMStep_TwoTier_AppKeyOverridesPlatform(t *testing.T) {
 	fake := &fakeLLM{reply: "ok"}
 	factory := &capturingLLMFactory{llm: fake}
 	interp := agentgen.NewInterpreter(nil, factory, "platform-key-xxx")
 	ic := &agentgen.InvocationContext{
 		TenantID: "t1", ApplicationID: "a1", AgentID: "ag1",
-		Credentials: map[string]string{"anthropic_slot": "binding-key-zzz"},
-		AppAPIKey:   map[string]string{"anthropic": "app-level-key-yyy"},
+		AppAPIKey: map[string]string{"anthropic": "app-level-key-yyy"},
 	}
-	skill := simpleLLMSkill("anthropic", "anthropic_slot")
+	skill := simpleLLMSkill("anthropic")
 	if _, err := interp.Execute(context.Background(), ic, skill, "hi"); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if factory.capturedKey != "binding-key-zzz" {
-		t.Errorf("want binding slot key, got %q", factory.capturedKey)
+	if factory.capturedKey != "app-level-key-yyy" {
+		t.Errorf("want app key, got %q", factory.capturedKey)
 	}
 }
 
@@ -556,10 +516,9 @@ func TestInterpreter_LLMStep_ThreeTier_EmptyAppKeyFallsBack(t *testing.T) {
 	interp := agentgen.NewInterpreter(nil, factory, "platform-key-xxx")
 	ic := &agentgen.InvocationContext{
 		TenantID: "t1", ApplicationID: "a1", AgentID: "ag1",
-		Credentials: map[string]string{},
 		AppAPIKey:   map[string]string{"anthropic": ""}, // explicitly empty
 	}
-	skill := simpleLLMSkill("anthropic", "")
+	skill := simpleLLMSkill("anthropic")
 	if _, err := interp.Execute(context.Background(), ic, skill, "hi"); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -569,7 +528,7 @@ func TestInterpreter_LLMStep_ThreeTier_EmptyAppKeyFallsBack(t *testing.T) {
 }
 
 // simpleLLMSkill builds a minimal input→llm→response pipeline for key-resolution tests.
-func simpleLLMSkill(provider, providerKeySlot string) *agentgen.SkillSpec {
+func simpleLLMSkill(provider string) *agentgen.SkillSpec {
 	return &agentgen.SkillSpec{
 		ID: "skill-llm",
 		Steps: []agentgen.StepSpec{
@@ -585,11 +544,10 @@ func simpleLLMSkill(provider, providerKeySlot string) *agentgen.SkillSpec {
 				ID:   "llm",
 				Type: agentgen.StepLLM,
 				Config: mustJSON(agentgen.LLMStepConfig{
-					Provider:        provider,
-					Model:           "claude-haiku",
-					MaxTokens:       10,
-					SystemPrompt:    "sys",
-					ProviderKeySlot: providerKeySlot,
+					Provider:     provider,
+					Model:        "claude-haiku",
+					MaxTokens:    10,
+					SystemPrompt: "sys",
 				}),
 				Next: []string{"out"},
 			},

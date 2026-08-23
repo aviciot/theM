@@ -32,7 +32,7 @@ type NodeDef struct {
 
 	// ── Runtime-only fields (not serialised) ─────────────────────────────────
 	// Validate checks per-type config constraints at compile time.
-	Validate func(step canvasStep, knownSlots map[string]bool) []Issue `json:"-"`
+	Validate func(step canvasStep) []Issue `json:"-"`
 	// Execute runs the step. nil means the type is not yet implemented.
 	Execute func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 		step *StepSpec, vars PipelineVars, result *ExecutionResult) error `json:"-"`
