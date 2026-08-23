@@ -4,9 +4,11 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null); // eslint-disable-line @typescript-eslint/no-explicit-any
-import { getNodeDef, isSingleInput as _isSingleInput, fetchNodeTypes, setCachedNodeTypes, outputArity, canAddIncoming, canAddOutgoing } from '@/lib/nodeRegistry';
+import { getNodeDef, getCachedNodeTypes, isSingleInput as _isSingleInput, fetchNodeTypes, setCachedNodeTypes, outputArity, canAddIncoming, canAddOutgoing } from '@/lib/nodeRegistry';
 import {
   themApi,
+  getPreferences,
+  setPreferences,
   type AgentDefinitionDoc,
   type AgentSkillDoc,
   type AgentStepDoc,
@@ -420,11 +422,21 @@ const INITIAL_VALIDATION: ValidationState = { issues: [], loading: false, lastVa
 
 type DebugNodeState = 'idle' | 'pending' | 'running' | 'done' | 'error';
 
+interface DebugParamSpec {
+  key: string;        // __test_input | __anthropic_key | <app_param_key>
+  label: string;
+  description: string;
+  isSecret: boolean;
+  required: boolean;
+  nodeLabel?: string; // which node requires this (for display)
+}
+
 interface DebugState {
   active: boolean;
+  setupComplete: boolean;            // true after user clicks "Start Debug"
+  paramSpecs: DebugParamSpec[];      // what the pipeline needs
+  debugParams: Record<string, string>; // collected values
   mode: 'run-all' | 'step' | null;
-  testInput: string;
-  apiKey: string;
   vars: Record<string, unknown>;
   nodeStates: Record<string, DebugNodeState>;
   nodeOutputs: Record<string, string>;
@@ -437,7 +449,8 @@ interface DebugState {
 }
 
 const INITIAL_DEBUG: DebugState = {
-  active: false, mode: null, testInput: '', apiKey: '',
+  active: false, setupComplete: false, paramSpecs: [], debugParams: {},
+  mode: null,
   vars: {}, nodeStates: {}, nodeOutputs: {}, nodeErrors: {},
   edgeValues: {}, executionOrder: [], currentStepIndex: 0,
   pendingVarOverrides: {}, error: null,
@@ -776,6 +789,21 @@ function CanvasInner() {
     };
   }
 
+  function handleImportJSON() {
+    const json = prompt('Paste agent definition JSON:');
+    if (!json) return;
+    try {
+      const doc = JSON.parse(json) as AgentDefinitionDoc;
+      if (!doc.agent_root || !Array.isArray(doc.skills)) throw new Error('Not a valid agent definition');
+      setAgentSlug(doc.agent_slug ?? '');
+      loadDefinitionDoc(doc);
+      setDirty(true);
+      setSaveError('');
+    } catch (e) {
+      setSaveError(`Import failed: ${String(e)}`);
+    }
+  }
+
   async function handleSave() {
     if (!agentSlug.trim()) {
       setSaveError('Agent slug is required — fill in the slug field in the toolbar before saving.');
@@ -1066,6 +1094,78 @@ function CanvasInner() {
 
   // ── Debug helpers ─────────────────────────────────────────────────────────────
 
+  // Session storage helpers — secrets never go to the server.
+  function ssKey(paramKey: string) { return `debug_param:${defId ?? 'new'}:${paramKey}`; }
+  function ssGet(paramKey: string) { try { return sessionStorage.getItem(ssKey(paramKey)) ?? ''; } catch { return ''; } }
+  function ssSet(paramKey: string, val: string) { try { sessionStorage.setItem(ssKey(paramKey), val); } catch { /* ignore */ } }
+
+  // Scan the current pipeline nodes and build the list of values needed for debug.
+  function buildDebugParamSpecs(nodes: Node[]): DebugParamSpec[] {
+    const specs: DebugParamSpec[] = [];
+    const seenParamKeys = new Set<string>();
+
+    // Always need the test message.
+    specs.push({
+      key: '__test_input',
+      label: 'Test message',
+      description: 'The user message to send into the pipeline',
+      isSecret: false,
+      required: true,
+    });
+
+    const hasLLM = nodes.some(n => (n.data as unknown as StepData).step_type === 'llm');
+    if (hasLLM) {
+      specs.push({
+        key: '__anthropic_key',
+        label: 'Anthropic API key',
+        description: 'Used only in browser for debug calls — never sent to the-M server',
+        isSecret: true,
+        required: true,
+      });
+    }
+
+    // For each HTTP node that references an app_param_key, collect that param's metadata.
+    for (const node of nodes) {
+      const d = node.data as unknown as StepData;
+      if (d.step_type !== 'http') continue;
+      const paramKey = d.config?.app_param_key as string | undefined;
+      if (!paramKey || seenParamKeys.has(paramKey)) continue;
+      seenParamKeys.add(paramKey);
+
+      // Look up label/description from the node registry app_params declaration.
+      const httpDef = getNodeDef('http');
+      const decl = httpDef.app_params?.find(p => p.key === paramKey);
+      specs.push({
+        key: paramKey,
+        label: decl?.label ?? paramKey,
+        description: decl?.description ?? `Required by HTTP node "${d.label || d.step_id}"`,
+        isSecret: decl?.type === 'secret',
+        required: true,
+        nodeLabel: d.label || d.step_id,
+      });
+    }
+
+    return specs;
+  }
+
+  // Load persisted non-secret debug values for the current agent.
+  async function loadDebugPrefs(): Promise<{ testInput: string }> {
+    try {
+      const prefs = await getPreferences();
+      const saved = (prefs as Record<string, unknown>).debugValues as Record<string, { testInput: string }> | undefined;
+      return { testInput: saved?.[defId ?? 'new']?.testInput ?? '' };
+    } catch { return { testInput: '' }; }
+  }
+
+  // Save non-secret debug values to user preferences.
+  async function saveDebugPrefs(testInput: string) {
+    try {
+      const prefs = await getPreferences();
+      const existing = (prefs as Record<string, unknown>).debugValues as Record<string, unknown> ?? {};
+      await setPreferences({ ...prefs, debugValues: { ...existing, [defId ?? 'new']: { testInput } } });
+    } catch { /* non-critical */ }
+  }
+
   function renderTemplate(template: string, vars: Record<string, unknown>): string {
     return template.replace(/\{\{(\w+)\}\}/g, (_, key) => String(vars[key] ?? ''));
   }
@@ -1096,7 +1196,7 @@ function CanvasInner() {
     nodes: Node[],
     edges: Edge[],
     vars: Record<string, unknown>,
-    apiKey: string,
+    debugParams: Record<string, string>,
   ): Promise<{ vars: Record<string, unknown>; output: string; edgeValues: Record<string, string> }> {
     const node = nodes.find(n => n.id === nodeId);
     if (!node) throw new Error(`Node ${nodeId} not found`);
@@ -1110,7 +1210,6 @@ function CanvasInner() {
 
     if (d.step_type === 'input') {
       const bindVar = (cfg.bindings as Record<string,string>)?.text || 'input';
-      // value already set in vars by caller
       output = String(newVars[bindVar] ?? '');
       for (const e of outEdgesForNode) edgeValues[e.id] = output;
     } else if (d.step_type === 'llm') {
@@ -1128,7 +1227,7 @@ function CanvasInner() {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-debug-api-key': apiKey,
+          'x-debug-api-key': debugParams['__anthropic_key'] ?? '',
         },
         body: JSON.stringify({
           model,
@@ -1149,7 +1248,6 @@ function CanvasInner() {
     } else if (d.step_type === 'response') {
       const fromVar = (cfg.from_var as string) || 'output';
       output = String(newVars[fromVar] ?? '');
-      // response has no outgoing edges (or they're terminal)
     } else if (d.step_type === 'transform') {
       const exprs = (cfg.expressions as Record<string, string>) ?? {};
       for (const [outKey, tmpl] of Object.entries(exprs)) {
@@ -1157,21 +1255,70 @@ function CanvasInner() {
         newVars[outKey] = val;
         output = val;
       }
+      // JSON extractions
+      const extractions = (cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? [];
+      for (const ext of extractions) {
+        const raw = newVars[ext.from_var];
+        if (raw === undefined) continue;
+        let parsed: Record<string, unknown> | null = null;
+        if (typeof raw === 'object' && raw !== null) parsed = raw as Record<string, unknown>;
+        else if (typeof raw === 'string') { try { parsed = JSON.parse(raw); } catch { continue; } }
+        if (!parsed) continue;
+        const parts = ext.json_path.replace(/^\$\./, '').split('.');
+        let cur: unknown = parsed;
+        for (const p of parts) { if (typeof cur === 'object' && cur !== null) cur = (cur as Record<string, unknown>)[p]; else { cur = undefined; break; } }
+        if (cur !== undefined) { newVars[ext.var] = String(cur); output = String(cur); }
+      }
       for (const e of outEdgesForNode) edgeValues[e.id] = output.length > 50 ? output.slice(0, 50) + '…' : output;
+    } else if (d.step_type === 'branch') {
+      const expr = (cfg.expression as string) || '';
+      const trueNext = (cfg.true_next as string) || '';
+      const falseNext = (cfg.false_next as string) || '';
+      const rendered = renderTemplate(expr, newVars);
+      const truthy = rendered.trim() !== '' && rendered.trim() !== 'false' && rendered.trim() !== '0' && rendered.trim() !== '<no value>';
+      output = truthy ? `→ ${trueNext} (true)` : `→ ${falseNext} (false)`;
+      for (const e of outEdgesForNode) edgeValues[e.id] = truthy ? 'true' : 'false';
     } else if (d.step_type === 'http') {
       const method = (cfg.method as string) || 'GET';
       const urlTemplate = (cfg.url_template as string) || '';
       const bodyTemplate = (cfg.body_template as string) || '';
-      const outVar = (cfg.output_var as string) || 'response';
-      const url = renderTemplate(urlTemplate, newVars);
-      const fetchOpts: RequestInit = { method };
+      const appParamKey = (cfg.app_param_key as string) || '';
+      const injectMode = (cfg.inject_mode as string) || 'header';
+      const injectHeaderName = (cfg.inject_header_name as string) || 'api_key';
+
+      let url = renderTemplate(urlTemplate, newVars);
+      const headers: Record<string, string> = { 'Accept': 'application/json' };
+
+      // Inject app param (secret) if configured and available.
+      if (appParamKey && debugParams[appParamKey]) {
+        const paramVal = debugParams[appParamKey];
+        if (injectMode === 'query') {
+          const sep = url.includes('?') ? '&' : '?';
+          url += `${sep}${encodeURIComponent(injectHeaderName)}=${encodeURIComponent(paramVal)}`;
+        } else if (injectMode === 'basic') {
+          headers['Authorization'] = 'Basic ' + btoa(paramVal);
+        } else if (injectMode === 'custom_header') {
+          headers[injectHeaderName] = paramVal;
+        } else {
+          headers['Authorization'] = 'Bearer ' + paramVal;
+        }
+      }
+
+      const fetchOpts: RequestInit = { method, headers };
       if (bodyTemplate && method !== 'GET') {
         fetchOpts.body = renderTemplate(bodyTemplate, newVars);
-        fetchOpts.headers = { 'Content-Type': 'application/json' };
+        (fetchOpts.headers as Record<string, string>)['Content-Type'] = 'application/json';
       }
       const resp = await fetch(url, fetchOpts);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} from ${url.replace(/\?.*/, '')}`);
       const text = await resp.text();
-      newVars[outVar] = text;
+      // Try to parse as JSON and store as both the raw map and the string.
+      try {
+        const parsed = JSON.parse(text);
+        newVars['http_response'] = parsed;
+      } catch {
+        newVars['http_response'] = text;
+      }
       output = text;
       for (const e of outEdgesForNode) edgeValues[e.id] = text.length > 50 ? text.slice(0, 50) + '…' : text;
     } else {
@@ -1182,13 +1329,52 @@ function CanvasInner() {
   }
 
   function debugReset() {
-    setDebug(prev => ({ ...INITIAL_DEBUG, active: prev.active, testInput: prev.testInput, apiKey: prev.apiKey }));
+    setDebug(prev => ({
+      ...INITIAL_DEBUG,
+      active: prev.active,
+      setupComplete: false,
+      paramSpecs: prev.paramSpecs,
+      debugParams: prev.debugParams,
+    }));
+  }
+
+  async function debugStartSetup() {
+    const specs = buildDebugParamSpecs(localPipeNodes);
+    // Pre-fill non-secret values from server prefs; secrets from sessionStorage.
+    const prefs = await loadDebugPrefs();
+    const params: Record<string, string> = {};
+    for (const spec of specs) {
+      if (spec.key === '__test_input') params[spec.key] = prefs.testInput;
+      else params[spec.key] = ssGet(spec.key);
+    }
+    setDebug(prev => ({
+      ...prev,
+      active: true,
+      setupComplete: false,
+      paramSpecs: specs,
+      debugParams: params,
+      error: null,
+    }));
+  }
+
+  async function debugCommitSetup() {
+    const testInput = debug.debugParams['__test_input'] ?? '';
+    if (!testInput.trim()) { setDebug(prev => ({ ...prev, error: 'Test message is required.' })); return; }
+    const hasLLM = debug.paramSpecs.some(s => s.key === '__anthropic_key');
+    if (hasLLM && !(debug.debugParams['__anthropic_key'] ?? '').trim()) {
+      setDebug(prev => ({ ...prev, error: 'Anthropic API key is required for LLM steps.' })); return;
+    }
+    // Persist non-secrets to server; secrets to sessionStorage.
+    saveDebugPrefs(testInput);
+    for (const spec of debug.paramSpecs) {
+      if (spec.isSecret) ssSet(spec.key, debug.debugParams[spec.key] ?? '');
+    }
+    setDebug(prev => ({ ...prev, setupComplete: true, error: null }));
   }
 
   async function debugRunAll() {
-    if (!debug.testInput.trim()) { setDebug(prev => ({ ...prev, error: 'Enter a test input first.' })); return; }
-    if (!debug.apiKey.trim()) { setDebug(prev => ({ ...prev, error: 'Enter an Anthropic API key.' })); return; }
-
+    if (!debug.setupComplete) return;
+    const testInput = debug.debugParams['__test_input'] ?? '';
     const order = topoSort(localPipeNodes, localPipeEdges);
     if (!order) { setDebug(prev => ({ ...prev, error: 'Pipeline has a cycle — cannot execute.' })); return; }
 
@@ -1203,20 +1389,14 @@ function CanvasInner() {
     if (inputNode) {
       const inputData = inputNode.data as unknown as StepData;
       const bindVar = (inputData.config?.bindings as Record<string,string>)?.text || 'input';
-      vars[bindVar] = debug.testInput;
+      vars[bindVar] = testInput;
     }
 
-    const allEdgeValues: Record<string, string> = {};
-
     for (const nodeId of order) {
-      setDebug(prev => ({
-        ...prev, vars,
-        nodeStates: { ...prev.nodeStates, [nodeId]: 'running' },
-      }));
+      setDebug(prev => ({ ...prev, vars, nodeStates: { ...prev.nodeStates, [nodeId]: 'running' } }));
       try {
-        const result = await executeStep(nodeId, localPipeNodes, localPipeEdges, vars, debug.apiKey);
+        const result = await executeStep(nodeId, localPipeNodes, localPipeEdges, vars, debug.debugParams);
         vars = result.vars;
-        Object.assign(allEdgeValues, result.edgeValues);
         setDebug(prev => ({
           ...prev, vars,
           edgeValues: { ...prev.edgeValues, ...result.edgeValues },
@@ -1238,10 +1418,9 @@ function CanvasInner() {
   }
 
   async function debugStep() {
-    if (!debug.testInput.trim()) { setDebug(prev => ({ ...prev, error: 'Enter a test input first.' })); return; }
-    if (!debug.apiKey.trim()) { setDebug(prev => ({ ...prev, error: 'Enter an Anthropic API key.' })); return; }
+    if (!debug.setupComplete) return;
+    const testInput = debug.debugParams['__test_input'] ?? '';
 
-    // First call: initialise
     if (!debug.mode) {
       const order = topoSort(localPipeNodes, localPipeEdges);
       if (!order) { setDebug(prev => ({ ...prev, error: 'Pipeline has a cycle.' })); return; }
@@ -1251,7 +1430,7 @@ function CanvasInner() {
       if (inputNode) {
         const inputData = inputNode.data as unknown as StepData;
         const bindVar = (inputData.config?.bindings as Record<string,string>)?.text || 'input';
-        initVars[bindVar] = debug.testInput;
+        initVars[bindVar] = testInput;
       }
 
       const firstNodeId = order[0];
@@ -1270,12 +1449,10 @@ function CanvasInner() {
     const nodeId = executionOrder[currentStepIndex];
     const mergedVars = { ...vars, ...debug.pendingVarOverrides };
 
-    setDebug(prev => ({
-      ...prev, nodeStates: { ...prev.nodeStates, [nodeId]: 'running' }, pendingVarOverrides: {},
-    }));
+    setDebug(prev => ({ ...prev, nodeStates: { ...prev.nodeStates, [nodeId]: 'running' }, pendingVarOverrides: {} }));
 
     try {
-      const result = await executeStep(nodeId, localPipeNodes, localPipeEdges, mergedVars, debug.apiKey);
+      const result = await executeStep(nodeId, localPipeNodes, localPipeEdges, mergedVars, debug.debugParams);
       const nextIdx = currentStepIndex + 1;
       const nextNodeId = executionOrder[nextIdx];
       setDebug(prev => ({
@@ -1523,7 +1700,7 @@ function CanvasInner() {
             if (debug.active) {
               setDebug(INITIAL_DEBUG);
             } else {
-              setDebug(prev => ({ ...INITIAL_DEBUG, active: true, testInput: prev.testInput, apiKey: prev.apiKey }));
+              debugStartSetup();
             }
           }} style={{
             background: debug.active ? 'rgba(245,158,11,0.2)' : 'rgba(100,116,139,0.1)',
@@ -1532,6 +1709,14 @@ function CanvasInner() {
             padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
           }}>
             {debug.active ? '🐛 Exit Debug' : '🐛 Debug'}
+          </button>
+        )}
+        {activeView === 'agent' && !defId && (
+          <button onClick={handleImportJSON} style={{
+            background: 'rgba(99,102,241,0.12)', border: `1px solid rgba(99,102,241,0.5)`,
+            color: C.indigo, padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
+          }}>
+            ↓ Import JSON
           </button>
         )}
         <button onClick={handleSave} disabled={saving} style={{
@@ -1555,74 +1740,108 @@ function CanvasInner() {
         <div style={{
           flexShrink: 0, borderBottom: `1px solid ${C.amberBorder}`,
           background: 'rgba(245,158,11,0.06)', padding: '10px 16px',
-          display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
         }}>
-          <span style={{ color: C.amber, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}>
-            DEBUG
-            {debugRunning && (
-              <>
-                <style>{`@keyframes dbg-dot{0%,80%,100%{opacity:0.15}40%{opacity:1}}`}</style>
-                {[0, 0.22, 0.44].map(delay => (
-                  <span key={delay} style={{ width: 5, height: 5, borderRadius: '50%', background: C.amber, display: 'inline-block', animation: `dbg-dot 1.1s ease-in-out ${delay}s infinite` }} />
+          {/* ── Setup form — shown until user clicks Start ── */}
+          {!debug.setupComplete && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: C.amber, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em' }}>
+                  DEBUG SETUP
+                </span>
+                <span style={{ color: '#64748b', fontSize: '11px' }}>
+                  Fill in the values the pipeline needs, then click Start
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
+                {debug.paramSpecs.map(spec => (
+                  <div key={spec.key} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <label style={{ fontSize: '10px', color: spec.isSecret ? C.amber : C.textMuted, fontWeight: 700, letterSpacing: '0.06em' }}>
+                      {spec.label.toUpperCase()}
+                      {spec.isSecret && <span style={{ marginLeft: 4, color: '#f59e0b', fontSize: '9px' }}>🔒 session only</span>}
+                    </label>
+                    {spec.key === '__test_input' ? (
+                      <input
+                        value={debug.debugParams[spec.key] ?? ''}
+                        onChange={e => setDebug(prev => ({ ...prev, debugParams: { ...prev.debugParams, [spec.key]: e.target.value } }))}
+                        placeholder="Compare Rome and Barcelona for a kosher trip…"
+                        style={{ ...inputStyle, width: '300px', fontSize: '12px' }}
+                      />
+                    ) : (
+                      <input
+                        value={debug.debugParams[spec.key] ?? ''}
+                        onChange={e => setDebug(prev => ({ ...prev, debugParams: { ...prev.debugParams, [spec.key]: e.target.value } }))}
+                        placeholder={spec.isSecret ? '••••••••' : spec.label}
+                        type={spec.isSecret ? 'password' : 'text'}
+                        title={spec.description}
+                        style={{ ...inputStyle, width: '200px', fontSize: '12px' }}
+                      />
+                    )}
+                  </div>
                 ))}
-              </>
-            )}
-          </span>
-
-          <input
-            value={debug.testInput}
-            onChange={e => setDebug(prev => ({ ...prev, testInput: e.target.value }))}
-            placeholder="Test input message…"
-            style={{ ...inputStyle, width: '220px', fontSize: '12px' }}
-          />
-
-          <input
-            value={debug.apiKey}
-            onChange={e => setDebug(prev => ({ ...prev, apiKey: e.target.value }))}
-            placeholder="sk-ant-… Anthropic API key"
-            type="password"
-            style={{ ...inputStyle, width: '180px', fontSize: '12px' }}
-          />
-
-          <button onClick={debugRunAll} disabled={debug.mode === 'run-all' && debug.currentStepIndex < debug.executionOrder.length && debug.currentStepIndex > 0} style={{
-            background: 'rgba(74,222,128,0.1)', border: `1px solid rgba(74,222,128,0.4)`,
-            color: '#4ade80', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
-          }}>
-            ▶ Run All
-          </button>
-
-          <button onClick={debugStep} style={{
-            background: 'rgba(96,165,250,0.1)', border: `1px solid rgba(96,165,250,0.4)`,
-            color: '#60a5fa', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
-          }}>
-            ⏭ Step
-          </button>
-
-          <button onClick={debugReset} style={{
-            background: 'transparent', border: `1px solid ${C.outline}`,
-            color: C.textMuted, padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px',
-          }}>
-            ⏹ Reset
-          </button>
-
-          {/* Status indicator */}
-          {debug.error && (
-            <span style={{ color: '#f87171', fontSize: '11px', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              ✗ {debug.error}
-            </span>
-          )}
-          {!debug.error && debug.mode === 'run-all' && debug.currentStepIndex > 0 && debug.currentStepIndex >= debug.executionOrder.length && (
-            <span style={{ color: '#4ade80', fontSize: '11px' }}>✓ Complete — {debug.executionOrder.length} steps</span>
-          )}
-          {!debug.error && debug.mode === 'step' && debug.currentStepIndex > 0 && (
-            <span style={{ color: '#60a5fa', fontSize: '11px' }}>
-              Step {Math.min(debug.currentStepIndex, debug.executionOrder.length)}/{debug.executionOrder.length}
-            </span>
+                <button onClick={debugCommitSetup} style={{
+                  background: 'rgba(74,222,128,0.12)', border: '1px solid rgba(74,222,128,0.5)',
+                  color: '#4ade80', padding: '6px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 700, alignSelf: 'flex-end',
+                }}>
+                  ▶ Start Debug
+                </button>
+              </div>
+              {debug.error && (
+                <span style={{ color: '#f87171', fontSize: '11px' }}>✗ {debug.error}</span>
+              )}
+              <span style={{ color: '#475569', fontSize: '10px' }}>
+                🔒 API keys and secrets are stored in your browser session only — never sent to the-M server. Test messages are saved to your profile.
+              </span>
+            </div>
           )}
 
-          <span style={{ color: '#475569', fontSize: '10px', marginLeft: 'auto' }}>
-            API key used only for debug calls — never sent to the-M server
-          </span>
+          {/* ── Run controls — shown after setup ── */}
+          {debug.setupComplete && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <span style={{ color: C.amber, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}>
+                DEBUG
+                {debugRunning && (
+                  <>
+                    <style>{`@keyframes dbg-dot{0%,80%,100%{opacity:0.15}40%{opacity:1}}`}</style>
+                    {[0, 0.22, 0.44].map(delay => (
+                      <span key={delay} style={{ width: 5, height: 5, borderRadius: '50%', background: C.amber, display: 'inline-block', animation: `dbg-dot 1.1s ease-in-out ${delay}s infinite` }} />
+                    ))}
+                  </>
+                )}
+              </span>
+              <span style={{ color: '#64748b', fontSize: '11px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {debug.debugParams['__test_input']}
+              </span>
+              <button onClick={() => setDebug(prev => ({ ...prev, setupComplete: false }))} style={{
+                background: 'transparent', border: `1px solid ${C.outline}`, color: C.textMuted,
+                padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px',
+              }}>Edit inputs</button>
+              <button onClick={debugRunAll} disabled={debug.mode === 'run-all' && debug.currentStepIndex < debug.executionOrder.length && debug.currentStepIndex > 0} style={{
+                background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.4)',
+                color: '#4ade80', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
+              }}>▶ Run All</button>
+              <button onClick={debugStep} style={{
+                background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.4)',
+                color: '#60a5fa', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
+              }}>⏭ Step</button>
+              <button onClick={debugReset} style={{
+                background: 'transparent', border: `1px solid ${C.outline}`,
+                color: C.textMuted, padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px',
+              }}>⏹ Reset</button>
+              {debug.error && (
+                <span style={{ color: '#f87171', fontSize: '11px', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  ✗ {debug.error}
+                </span>
+              )}
+              {!debug.error && debug.mode === 'run-all' && debug.currentStepIndex > 0 && debug.currentStepIndex >= debug.executionOrder.length && (
+                <span style={{ color: '#4ade80', fontSize: '11px' }}>✓ Complete — {debug.executionOrder.length} steps</span>
+              )}
+              {!debug.error && debug.mode === 'step' && debug.currentStepIndex > 0 && (
+                <span style={{ color: '#60a5fa', fontSize: '11px' }}>
+                  Step {Math.min(debug.currentStepIndex, debug.executionOrder.length)}/{debug.executionOrder.length}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
