@@ -102,7 +102,6 @@ const UI_SUPPS: Record<string, NodeUISupp> = {
     },
   },
   response:   { bg: cyanBg,    border: cyanBorder,    summary: (cfg) => `from ${(cfg.from_var as string) || 'output'}` },
-  condition:  { bg: orangeBg,  border: orangeBorder,  summary: (cfg) => (cfg.expression as string) ? `if ${(cfg.expression as string).slice(0, 18)}` : 'set expression' },
   branch:     { bg: orangeBg,  border: orangeBorder,  summary: (cfg) => (cfg.expression as string) ? `if ${(cfg.expression as string).slice(0, 18)}` : 'set expression' },
   loop:       { bg: amberBg,   border: amberBorder,   summary: () => '' },
   parallel:   { bg: purpleBg,  border: purpleBorder,  summary: () => '' },

@@ -15,7 +15,6 @@ var allStepTypes = []agentgen.StepType{
 	agentgen.StepTransform,
 	agentgen.StepResponse,
 	agentgen.StepBranch,
-	agentgen.StepCondition,
 	agentgen.StepLoop,
 	agentgen.StepParallel,
 	agentgen.StepA2ACall,
@@ -34,11 +33,11 @@ func TestNodeRegistry_AllTypesRegistered(t *testing.T) {
 	}
 }
 
-// TestNodeRegistry_KnownStepTypesCount verifies KnownStepTypes returns all 12 types.
+// TestNodeRegistry_KnownStepTypesCount verifies KnownStepTypes returns all 11 types.
 func TestNodeRegistry_KnownStepTypesCount(t *testing.T) {
 	known := agentgen.KnownStepTypes()
-	if len(known) != 12 {
-		t.Errorf("expected 12 registered node types, got %d: %v", len(known), known)
+	if len(known) != 11 {
+		t.Errorf("expected 11 registered node types, got %d: %v", len(known), known)
 	}
 }
 
@@ -138,20 +137,6 @@ func TestNodeRegistry_BranchOutputArity(t *testing.T) {
 	}
 }
 
-// TestNodeRegistry_ConditionOutputArity verifies condition is multi-output and implemented.
-func TestNodeRegistry_ConditionOutputArity(t *testing.T) {
-	def, ok := agentgen.LookupNode(agentgen.StepCondition)
-	if !ok {
-		t.Fatal("StepCondition not registered")
-	}
-	if def.OutputArity != "multi" {
-		t.Errorf("condition OutputArity: want %q, got %q", "multi", def.OutputArity)
-	}
-	if def.Execute == nil {
-		t.Error("condition Execute must be non-nil (implemented)")
-	}
-}
-
 // TestNodeRegistry_StreamOutIsSink verifies stream_out terminates the pipeline.
 func TestNodeRegistry_StreamOutIsSink(t *testing.T) {
 	def, ok := agentgen.LookupNode(agentgen.StepStreamOut)
@@ -201,7 +186,6 @@ func TestNodeRegistry_ImplementedTypesHaveNonNilExecute(t *testing.T) {
 		agentgen.StepTransform,
 		agentgen.StepResponse,
 		agentgen.StepBranch,
-		agentgen.StepCondition,
 	}
 	for _, st := range implemented {
 		def, ok := agentgen.LookupNode(st)

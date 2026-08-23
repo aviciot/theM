@@ -129,26 +129,6 @@ func init() {
 	// ── Implemented branching types ──────────────────────────────────────────
 
 	RegisterNode(NodeDef{
-		Type:        StepCondition,
-		Version:     1,
-		Label:       "Condition",
-		Description: "Evaluate a boolean expression. Routes to Pass or Fail output based on the result.",
-		Emoji:       "🔍",
-		OutputArity: "multi",
-		IsSource:    false,
-		IsSink:      false,
-		SingleInput: true,
-		// Routing is config-driven (PassNext/FailNext in ConditionStepConfig), not edge-driven.
-		// MinOut/MaxOut are 0 so the compiler does not enforce step.Next edge counts.
-		Edges: EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 0, MaxOut: 0},
-		Validate: nil,
-		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
-			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
-			return interp.execCondition(step, vars)
-		},
-	})
-
-	RegisterNode(NodeDef{
 		Type:        StepBranch,
 		Version:     1,
 		Label:       "Branch",

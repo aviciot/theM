@@ -81,7 +81,6 @@ const (
 	StepTransform StepType = "transform"
 	StepResponse  StepType = "response"
 	StepBranch    StepType = "branch"
-	StepCondition StepType = "condition"
 	StepLoop      StepType = "loop"
 	StepParallel  StepType = "parallel"
 	StepA2ACall   StepType = "a2a_call"
@@ -177,15 +176,6 @@ type LoopConfig struct {
 type ParallelConfig struct {
 	Branches [][]string `json:"branches"`
 	MergeVar string     `json:"merge_var"`
-}
-
-// ConditionStepConfig configures a condition step.
-// Expression is a Go template that renders to a truthy or falsy string.
-// PassNext is the step ID to go to when the condition passes; FailNext when it fails.
-type ConditionStepConfig struct {
-	Expression string `json:"expression"` // Go template; truthy = non-empty, non-"false", non-"0", non-"<no value>"
-	PassNext   string `json:"pass_next"`  // step ID when condition passes
-	FailNext   string `json:"fail_next"`  // step ID when condition fails
 }
 
 // BranchStepConfig configures a branch step.

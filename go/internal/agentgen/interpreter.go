@@ -317,27 +317,9 @@ func (interp *Interpreter) execTransform(step *StepSpec, vars PipelineVars) erro
 }
 
 // isTruthy returns true when s represents a non-empty, non-false value.
-// The same semantics are used by both condition and branch steps.
 func isTruthy(s string) bool {
 	s = strings.TrimSpace(s)
 	return s != "" && s != "false" && s != "0" && s != "<no value>"
-}
-
-func (interp *Interpreter) execCondition(step *StepSpec, vars PipelineVars) error {
-	var cfg ConditionStepConfig
-	if err := json.Unmarshal(step.Config, &cfg); err != nil {
-		return fmt.Errorf("parse condition config: %w", err)
-	}
-	rendered, err := renderTemplate(cfg.Expression, vars)
-	if err != nil {
-		return fmt.Errorf("render condition expression: %w", err)
-	}
-	if isTruthy(rendered) {
-		interp.nextStepOverride = cfg.PassNext
-	} else {
-		interp.nextStepOverride = cfg.FailNext
-	}
-	return nil
 }
 
 func (interp *Interpreter) execBranch(step *StepSpec, vars PipelineVars) error {
