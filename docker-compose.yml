@@ -1055,6 +1055,11 @@ services:
       - "traefik.http.routers.them-go-node-types.entrypoints=web"
       - "traefik.http.routers.them-go-node-types.priority=120"
       - "traefik.http.routers.them-go-node-types.service=them-go-bridge-svc"
+      # ── Debug proxy: /api/v1/admin/debug-proxy — server-side HTTP relay for canvas debug ──
+      - "traefik.http.routers.them-go-debug-proxy.rule=Path(`/api/v1/admin/debug-proxy`)"
+      - "traefik.http.routers.them-go-debug-proxy.entrypoints=web"
+      - "traefik.http.routers.them-go-debug-proxy.priority=121"
+      - "traefik.http.routers.them-go-debug-proxy.service=them-go-bridge-svc"
       # ── Phase D: /api/v1/admin/component-definitions — registry read ──────────
       - "traefik.http.routers.them-go-component-defs.rule=PathPrefix(`/api/v1/admin/component-definitions`)"
       - "traefik.http.routers.them-go-component-defs.entrypoints=web"

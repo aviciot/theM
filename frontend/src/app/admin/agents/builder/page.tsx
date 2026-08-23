@@ -460,6 +460,7 @@ interface DebugState {
   mode: 'run-all' | 'step' | null;
   vars: Record<string, unknown>;
   nodeStates: Record<string, DebugNodeState>;
+  nodeInputVars: Record<string, Record<string, unknown>>;  // vars snapshot before each step
   nodeOutputs: Record<string, string>;
   nodeErrors: Record<string, string>;
   edgeValues: Record<string, string>;
@@ -472,7 +473,7 @@ interface DebugState {
 const INITIAL_DEBUG: DebugState = {
   active: false, setupComplete: false, paramSpecs: [], debugParams: {},
   mode: null,
-  vars: {}, nodeStates: {}, nodeOutputs: {}, nodeErrors: {},
+  vars: {}, nodeStates: {}, nodeInputVars: {}, nodeOutputs: {}, nodeErrors: {},
   edgeValues: {}, executionOrder: [], currentStepIndex: 0,
   pendingVarOverrides: {}, error: null,
 };
@@ -1371,12 +1372,12 @@ function CanvasInner() {
         proxyBody.body = renderTemplate(bodyTemplate, newVars);
         (headers as Record<string, string>)['Content-Type'] = 'application/json';
       }
-      // Route through the server-side debug proxy to avoid CORS restrictions
-      // when calling third-party APIs directly from the browser.
+      // Route through the server-side debug proxy (Go bridge via Traefik) to avoid
+      // CORS restrictions when calling third-party APIs from the browser.
       const resp = await fetch('/api/v1/admin/debug-proxy', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(proxyBody),
       });
       if (!resp.ok) {
@@ -1464,7 +1465,7 @@ function CanvasInner() {
     setDebug(prev => ({
       ...prev, mode: 'run-all', error: null, executionOrder: order,
       nodeStates: Object.fromEntries(order.map(id => [id, 'pending' as DebugNodeState])),
-      nodeOutputs: {}, nodeErrors: {}, edgeValues: {}, vars: {},
+      nodeOutputs: {}, nodeErrors: {}, edgeValues: {}, vars: {}, nodeInputVars: {},
     }));
 
     const inputNode = localPipeNodes.find(n => (n.data as unknown as StepData).step_type === 'input');
@@ -1476,7 +1477,8 @@ function CanvasInner() {
     }
 
     for (const nodeId of order) {
-      setDebug(prev => ({ ...prev, vars, nodeStates: { ...prev.nodeStates, [nodeId]: 'running' } }));
+      const inputSnapshot = { ...vars };
+      setDebug(prev => ({ ...prev, vars, nodeStates: { ...prev.nodeStates, [nodeId]: 'running' }, nodeInputVars: { ...prev.nodeInputVars, [nodeId]: inputSnapshot } }));
       try {
         const result = await executeStep(nodeId, localPipeNodes, localPipeEdges, vars, debug.debugParams);
         vars = result.vars;
@@ -1521,7 +1523,7 @@ function CanvasInner() {
         ...prev, mode: 'step', error: null, executionOrder: order, currentStepIndex: 0,
         vars: initVars,
         nodeStates: { ...Object.fromEntries(order.map(id => [id, 'idle' as DebugNodeState])), [firstNodeId]: 'pending' },
-        nodeOutputs: {}, nodeErrors: {}, edgeValues: {}, pendingVarOverrides: {},
+        nodeOutputs: {}, nodeErrors: {}, edgeValues: {}, pendingVarOverrides: {}, nodeInputVars: {},
       }));
       return;
     }
@@ -1532,7 +1534,12 @@ function CanvasInner() {
     const nodeId = executionOrder[currentStepIndex];
     const mergedVars = { ...vars, ...debug.pendingVarOverrides };
 
-    setDebug(prev => ({ ...prev, nodeStates: { ...prev.nodeStates, [nodeId]: 'running' }, pendingVarOverrides: {} }));
+    setDebug(prev => ({
+      ...prev,
+      nodeStates: { ...prev.nodeStates, [nodeId]: 'running' },
+      nodeInputVars: { ...prev.nodeInputVars, [nodeId]: { ...mergedVars } },
+      pendingVarOverrides: {},
+    }));
 
     try {
       const result = await executeStep(nodeId, localPipeNodes, localPipeEdges, mergedVars, debug.debugParams);
@@ -2881,6 +2888,7 @@ function CanvasInner() {
                     const nodeDebugState = debug.nodeStates[selectedNode.id];
                     const nodeOutput = debug.nodeOutputs[selectedNode.id];
                     const nodeError = debug.nodeErrors[selectedNode.id];
+                    const nodeInputVars = debug.nodeInputVars[selectedNode.id];
 
                     // Step-through: show var overrides if this node is pending
                     if (debug.mode === 'step' && nodeDebugState === 'pending') {
@@ -2924,25 +2932,67 @@ function CanvasInner() {
                       }
                     }
 
-                    // Show output after step ran
+                    // Show input vars + output after step ran
                     if (nodeDebugState === 'done' && nodeOutput !== undefined) {
                       return (
-                        <div style={{ marginTop: '16px', padding: '10px', background: 'rgba(74,222,128,0.06)', border: `1px solid rgba(74,222,128,0.3)`, borderRadius: '8px' }}>
-                          <div style={{ fontSize: '10px', fontWeight: 700, color: C.green, marginBottom: '6px', letterSpacing: '0.08em' }}>DEBUG OUTPUT</div>
-                          <pre style={{ color: '#e2e8f0', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>
-                            {nodeOutput || '(empty)'}
-                          </pre>
+                        <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {nodeInputVars && Object.keys(nodeInputVars).length > 0 && (
+                            <details style={{ background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.25)', borderRadius: '8px', padding: '8px 10px' }}>
+                              <summary style={{ fontSize: '10px', fontWeight: 700, color: '#60a5fa', letterSpacing: '0.08em', cursor: 'pointer', userSelect: 'none' }}>
+                                VARS IN ({Object.keys(nodeInputVars).length})
+                              </summary>
+                              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {Object.entries(nodeInputVars).map(([k, v]) => {
+                                  const str = typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
+                                  const preview = str.length > 120 ? str.slice(0, 120) + '…' : str;
+                                  return (
+                                    <div key={k}>
+                                      <div style={{ fontSize: '10px', color: '#60a5fa', fontFamily: 'monospace', fontWeight: 600 }}>{`{{.${k}}}`}</div>
+                                      <pre style={{ color: '#94a3b8', fontSize: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, fontFamily: 'monospace' }}>{preview}</pre>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </details>
+                          )}
+                          <div style={{ padding: '10px', background: 'rgba(74,222,128,0.06)', border: `1px solid rgba(74,222,128,0.3)`, borderRadius: '8px' }}>
+                            <div style={{ fontSize: '10px', fontWeight: 700, color: C.green, marginBottom: '6px', letterSpacing: '0.08em' }}>OUTPUT</div>
+                            <pre style={{ color: '#e2e8f0', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>
+                              {nodeOutput || '(empty)'}
+                            </pre>
+                          </div>
                         </div>
                       );
                     }
 
                     if (nodeDebugState === 'error' && nodeError) {
                       return (
-                        <div style={{ marginTop: '16px', padding: '10px', background: 'rgba(248,113,113,0.06)', border: `1px solid rgba(248,113,113,0.3)`, borderRadius: '8px' }}>
-                          <div style={{ fontSize: '10px', fontWeight: 700, color: '#f87171', marginBottom: '6px', letterSpacing: '0.08em' }}>DEBUG ERROR</div>
-                          <pre style={{ color: '#f87171', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>
-                            {nodeError}
-                          </pre>
+                        <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {nodeInputVars && Object.keys(nodeInputVars).length > 0 && (
+                            <details style={{ background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.25)', borderRadius: '8px', padding: '8px 10px' }}>
+                              <summary style={{ fontSize: '10px', fontWeight: 700, color: '#60a5fa', letterSpacing: '0.08em', cursor: 'pointer', userSelect: 'none' }}>
+                                VARS IN ({Object.keys(nodeInputVars).length})
+                              </summary>
+                              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {Object.entries(nodeInputVars).map(([k, v]) => {
+                                  const str = typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
+                                  const preview = str.length > 120 ? str.slice(0, 120) + '…' : str;
+                                  return (
+                                    <div key={k}>
+                                      <div style={{ fontSize: '10px', color: '#60a5fa', fontFamily: 'monospace', fontWeight: 600 }}>{`{{.${k}}}`}</div>
+                                      <pre style={{ color: '#94a3b8', fontSize: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, fontFamily: 'monospace' }}>{preview}</pre>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </details>
+                          )}
+                          <div style={{ padding: '10px', background: 'rgba(248,113,113,0.06)', border: `1px solid rgba(248,113,113,0.3)`, borderRadius: '8px' }}>
+                            <div style={{ fontSize: '10px', fontWeight: 700, color: '#f87171', marginBottom: '6px', letterSpacing: '0.08em' }}>ERROR</div>
+                            <pre style={{ color: '#f87171', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>
+                              {nodeError}
+                            </pre>
+                          </div>
                         </div>
                       );
                     }
