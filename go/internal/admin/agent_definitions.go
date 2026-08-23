@@ -147,17 +147,31 @@ func (h *AgentDefinitionsHandler) Delete(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// validateInput is the optional request body for the Validate endpoint.
+// If Definition is non-nil it is used directly; otherwise the saved DB definition is loaded.
+type validateInput struct {
+	Definition json.RawMessage `json:"definition,omitempty"`
+}
+
 // Validate handles POST /api/v1/admin/agent-definitions/{id}/validate.
-// Compiles the definition without persisting anything.
-// Returns 200 {"valid": true} on success, 422 with compile errors on failure.
+// Accepts an optional {"definition": <json>} body. When provided, the body
+// definition is validated directly without reading from the DB — this lets the
+// frontend validate the current in-memory canvas state without requiring a save.
+// When the body is absent or definition is null, falls back to the saved DB definition.
+// Returns 200 AgentValidationReport on success, 422 with errors on compile failure.
 func (h *AgentDefinitionsHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "invalid agent definition id")
 		return
 	}
+
+	var input validateInput
+	// Decode body leniently — empty body is valid (means "use DB definition").
+	_ = json.NewDecoder(r.Body).Decode(&input)
+
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	report, err := h.svc.ValidateAgentDefinition(r.Context(), tenantID, id)
+	report, err := h.svc.ValidateAgentDefinition(r.Context(), tenantID, id, input.Definition)
 	if err != nil {
 		var compErr *service.AgentCompileError
 		if err != nil && isAgentCompileError(err, &compErr) {

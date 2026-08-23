@@ -47,8 +47,12 @@ type AgentPublishResult struct {
 }
 
 // ValidateAgentDefinition compiles the definition without persisting anything.
-// Returns AgentValidationReport on success, *ValidationError on compile failure.
-func (s *AgentDefinitionService) ValidateAgentDefinition(ctx context.Context, tenantID, id string) (*AgentValidationReport, error) {
+// When rawDefinition is non-nil it is validated directly (live canvas state from
+// the frontend). When nil the saved DB definition is loaded. The agent_slug and
+// tenant-ownership check always require a DB read regardless of which path is taken.
+// Returns AgentValidationReport on success, *AgentCompileError on compile failure.
+func (s *AgentDefinitionService) ValidateAgentDefinition(ctx context.Context, tenantID, id string, rawDefinition json.RawMessage) (*AgentValidationReport, error) {
+	// Always load the DB row to verify tenant ownership and get the agent slug.
 	def, err := s.dal.GetAgentDefinitionForPublish(ctx, tenantID, id)
 	if err != nil {
 		if dal.IsNoRows(err) {
@@ -57,12 +61,18 @@ func (s *AgentDefinitionService) ValidateAgentDefinition(ctx context.Context, te
 		return nil, err
 	}
 
+	// Use the caller-supplied definition when provided; fall back to the saved one.
+	definitionToValidate := def.Definition
+	if len(rawDefinition) > 0 {
+		definitionToValidate = rawDefinition
+	}
+
 	_, issues := agentgen.Validate(
 		"00000000-0000-0000-0000-000000000000", // placeholder — validate only
 		tenantID,
 		id,
 		def.AgentSlug,
-		def.Definition,
+		definitionToValidate,
 	)
 	// Only hard errors fail validation; warnings are surfaced to the canvas.
 	var errors []agentgen.Issue

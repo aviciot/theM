@@ -792,21 +792,36 @@ export const themApi = {
     api.delete<void>(`/admin/agent-definitions/${id}`),
 
   // Phase 3: validate + publish
-  // Always resolves (never throws). On 422, extracts errors from the body.
-  validateAgentDefinition: async (id: string): Promise<AgentValidationResult> => {
-    const res = await fetch(`/api/them/admin/agent-definitions/${id}/validate`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-    });
-    const body = await res.json().catch(() => ({})) as AgentValidationResult;
+  // Always resolves (never throws). Accepts an optional AbortSignal and an
+  // optional definition object. When definition is provided it is sent in the
+  // request body so the backend validates the live canvas state rather than the
+  // last-saved DB copy. On 422 the structured errors are returned as issues.
+  validateAgentDefinition: async (
+    id: string,
+    definition?: AgentDefinitionDoc,
+    signal?: AbortSignal,
+  ): Promise<AgentValidationResult> => {
+    const body = definition ? JSON.stringify({ definition }) : '{}';
+    let res: Response;
+    try {
+      res = await fetch(`/api/them/admin/agent-definitions/${id}/validate`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal,
+      });
+    } catch (e) {
+      if ((e as { name?: string }).name === 'AbortError') throw e;
+      return { valid: false, issues: [] }; // network error — keep prior results
+    }
+    const parsed = await res.json().catch(() => ({})) as AgentValidationResult;
     // 200: {valid, issues}  422: {valid:false, errors:[...]}
     if (!res.ok) {
-      const errors = (body as { errors?: AgentIssue[] }).errors ?? [];
+      const errors = (parsed as { errors?: AgentIssue[] }).errors ?? [];
       return { valid: false, issues: errors };
     }
-    return body;
+    return parsed;
   },
   publishAgentDefinition: (id: string) =>
     api.post<AgentPublishResult>(`/admin/agent-definitions/${id}/publish`, {}),

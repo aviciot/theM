@@ -1082,6 +1082,11 @@ services:
       - "traefik.http.routers.them-go-sessions.entrypoints=web"
       - "traefik.http.routers.them-go-sessions.priority=120"
       - "traefik.http.routers.them-go-sessions.service=them-go-bridge-svc"
+      # ── Node type registry: /api/v1/admin/node-types — canvas metadata ─────────
+      - "traefik.http.routers.them-go-node-types.rule=PathPrefix(`/api/v1/admin/node-types`)"
+      - "traefik.http.routers.them-go-node-types.entrypoints=web"
+      - "traefik.http.routers.them-go-node-types.priority=120"
+      - "traefik.http.routers.them-go-node-types.service=them-go-bridge-svc"
       # ── Phase D: /api/v1/admin/component-definitions — registry read ──────────
       - "traefik.http.routers.them-go-component-defs.rule=PathPrefix(`/api/v1/admin/component-definitions`)"
       - "traefik.http.routers.them-go-component-defs.entrypoints=web"

@@ -39,7 +39,7 @@ func validPublishDef() dal.AgentDefinition {
 func TestValidateAgentDefinition_NotFound(t *testing.T) {
 	f := &agentDefFakeDal{getAgentDefErr: pgx.ErrNoRows}
 	svc := publishSvc(f)
-	_, err := svc.ValidateAgentDefinition(context.Background(), "t1", "missing")
+	_, err := svc.ValidateAgentDefinition(context.Background(), "t1", "missing", nil)
 	if !errors.Is(err, service.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -50,7 +50,7 @@ func TestValidateAgentDefinition_CompileError(t *testing.T) {
 	def.Definition = []byte(`{"agent_root": {}, "skills": []}`) // missing display_name
 	f := &agentDefFakeDal{agentDef: def}
 	svc := publishSvc(f)
-	_, err := svc.ValidateAgentDefinition(context.Background(), "t1", "def-uuid-1")
+	_, err := svc.ValidateAgentDefinition(context.Background(), "t1", "def-uuid-1", nil)
 	var compErr *service.AgentCompileError
 	if !errors.As(err, &compErr) {
 		t.Errorf("expected *AgentCompileError, got %T: %v", err, err)
@@ -60,12 +60,42 @@ func TestValidateAgentDefinition_CompileError(t *testing.T) {
 func TestValidateAgentDefinition_Valid(t *testing.T) {
 	f := &agentDefFakeDal{agentDef: validPublishDef()}
 	svc := publishSvc(f)
-	report, err := svc.ValidateAgentDefinition(context.Background(), "t1", "def-uuid-1")
+	report, err := svc.ValidateAgentDefinition(context.Background(), "t1", "def-uuid-1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !report.Valid {
 		t.Error("expected Valid=true")
+	}
+}
+
+func TestValidateAgentDefinition_InlineDefinitionOverridesDB(t *testing.T) {
+	// DB has a valid definition; caller supplies an invalid inline one.
+	// The service must validate the inline definition, not the DB copy.
+	f := &agentDefFakeDal{agentDef: validPublishDef()}
+	svc := publishSvc(f)
+	badDef := []byte(`{"agent_root": {}, "skills": []}`) // missing display_name
+	_, err := svc.ValidateAgentDefinition(context.Background(), "t1", "def-uuid-1", badDef)
+	var compErr *service.AgentCompileError
+	if !errors.As(err, &compErr) {
+		t.Errorf("expected *AgentCompileError for invalid inline def, got %T: %v", err, err)
+	}
+}
+
+func TestValidateAgentDefinition_InlineValidDefinition(t *testing.T) {
+	// DB has an invalid definition; caller supplies a valid inline one.
+	// The service must use the inline definition and return Valid=true.
+	badDef := validPublishDef()
+	badDef.Definition = []byte(`{"agent_root": {}, "skills": []}`)
+	f := &agentDefFakeDal{agentDef: badDef}
+	svc := publishSvc(f)
+	goodDef := validPublishDef().Definition
+	report, err := svc.ValidateAgentDefinition(context.Background(), "t1", "def-uuid-1", goodDef)
+	if err != nil {
+		t.Fatalf("expected no error for valid inline def, got: %v", err)
+	}
+	if !report.Valid {
+		t.Error("expected Valid=true for valid inline def")
 	}
 }
 

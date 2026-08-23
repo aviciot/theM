@@ -1381,6 +1381,8 @@ PublishAgentDefinition uses `agentgen.CompileForPublish()` (stubs→errors).
 | `TestValidateAgentDefinition_NotFound` | missing definition → ErrNotFound |
 | `TestValidateAgentDefinition_CompileError` | bad definition → *AgentCompileError |
 | `TestValidateAgentDefinition_Valid` | good definition → AgentValidationReport{Valid: true, Issues: [...warnings]} |
+| `TestValidateAgentDefinition_InlineDefinitionOverridesDB` | valid DB def + invalid inline → *AgentCompileError (inline wins) |
+| `TestValidateAgentDefinition_InlineValidDefinition` | invalid DB def + valid inline → Valid=true (inline wins) |
 | `TestPublishAgentDefinition_NotFound` | missing definition → ErrNotFound |
 | `TestPublishAgentDefinition_CompileError` | bad definition → *AgentCompileError |
 | `TestPublishAgentDefinition_Success` | valid publish → AgentPublishResult with non-empty fields |

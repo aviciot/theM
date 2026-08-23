@@ -447,38 +447,84 @@ function CanvasInner() {
     fetchNodeTypes().then(setCachedNodeTypes).catch(() => {/* use fallback defs */});
   }, []);
 
-  // Debounced backend validation — fires 1200ms after any canvas edit.
-  // Only runs when a saved definition exists (defId present).
+  // Debounced backend validation — fires 1200ms after canvas content changes.
+  // Sends the current in-memory definition so the backend validates live state,
+  // not the last-saved DB copy. An AbortController cancels any in-flight request
+  // when a newer one is dispatched, preventing last-response-wins races.
+  // Depends on serialized canvas content (not dirty flag) so every edit triggers
+  // a fresh debounce, not just the first one per dirty session.
+  const abortRef = useRef<AbortController | null>(null);
+
   useEffect(() => {
-    if (!defId || !dirty) return;
+    if (!defId) return;
+
     if (validationTimerRef.current) clearTimeout(validationTimerRef.current);
+
     validationTimerRef.current = setTimeout(() => {
+      // Cancel any in-flight request from a prior debounce tick.
+      if (abortRef.current) abortRef.current.abort();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+
+      // Build the definition from the current in-memory canvas state.
+      // We cannot call buildDefinitionDoc() here (it's defined in component scope)
+      // so we inline the minimal serialization the backend needs.
+      const rootNodeData = agentNodes.find(n => n.id === 'agent-root')?.data as unknown as AgentRootData | undefined;
+      const skills: AgentSkillDoc[] = agentNodes
+        .filter(n => n.type === 'skill')
+        .map(n => {
+          const sd = n.data as unknown as SkillData;
+          const pipeline = (sd.skill_id === activeSkillId
+            ? { nodes: localPipeNodes, edges: localPipeEdges }
+            : skillPipelines[sd.skill_id]) ?? { nodes: [], edges: [] };
+          const steps: AgentStepDoc[] = pipeline.nodes.map(sn => {
+            const stepd = sn.data as unknown as StepData;
+            const outEdges = pipeline.edges.filter(e => e.source === sn.id);
+            return {
+              id: stepd.step_id,
+              type: stepd.step_type as AgentStepDoc['type'],
+              config: stepd.config ?? {},
+              next: outEdges.map(e => (e.target as string).replace('step-', '')),
+              position: sn.position,
+            };
+          });
+          return {
+            skill_id: sd.skill_id, name: sd.name, description: sd.description ?? '',
+            tags: sd.tags ?? [], input_modes: sd.input_modes ?? ['text/plain'],
+            output_modes: sd.output_modes ?? ['text/plain'], examples: sd.examples ?? [],
+            input_schema: {}, output_schema: {}, steps, position: n.position,
+          };
+        });
+
+      const liveDefinition: AgentDefinitionDoc = {
+        schema_version: 1,
+        agent_slug: agentSlug,
+        agent_root: {
+          display_name: rootNodeData?.display_name ?? '',
+          description: rootNodeData?.description ?? '',
+          version: rootNodeData?.version ?? '1.0.0',
+          capabilities: { streaming: false, push_notifications: false },
+          credential_slots: rootNodeData?.credential_slots ?? credentialSlots,
+        },
+        skills,
+      };
+
       setValidation(prev => ({ ...prev, loading: true }));
-      themApi.validateAgentDefinition(defId)
+      themApi.validateAgentDefinition(defId, liveDefinition, ctrl.signal)
         .then(result => {
           setValidation({ issues: result.issues ?? [], loading: false, lastValidatedAt: Date.now() });
         })
-        .catch(() => {
-          // On network error leave previous results; mark as done loading
+        .catch(e => {
+          if ((e as { name?: string }).name === 'AbortError') return; // superseded — ignore
           setValidation(prev => ({ ...prev, loading: false }));
         });
     }, 1200);
-    return () => { if (validationTimerRef.current) clearTimeout(validationTimerRef.current); };
-  }, [defId, dirty]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // After a successful save, immediately re-validate to get fresh results.
-  // Triggered by dirty going false (save completed) and defId present.
-  useEffect(() => {
-    if (!defId || dirty) return;
-    setValidation(prev => ({ ...prev, loading: true }));
-    themApi.validateAgentDefinition(defId)
-      .then(result => {
-        setValidation({ issues: result.issues ?? [], loading: false, lastValidatedAt: Date.now() });
-      })
-      .catch(() => {
-        setValidation(prev => ({ ...prev, loading: false }));
-      });
-  }, [defId, dirty]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      if (validationTimerRef.current) clearTimeout(validationTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defId, agentNodes, agentEdges, agentSlug, credentialSlots, skillPipelines, localPipeNodes, localPipeEdges]);
 
   // Sync pipeline state when switching skills
   useEffect(() => {
@@ -666,8 +712,9 @@ function CanvasInner() {
     setValidating(true);
     setPublishError('');
     setValidation(prev => ({ ...prev, loading: true }));
+    savePipelineState();
     try {
-      const result = await themApi.validateAgentDefinition(defId);
+      const result = await themApi.validateAgentDefinition(defId, buildDefinitionDoc());
       setValidation({ issues: result.issues ?? [], loading: false, lastValidatedAt: Date.now() });
     } catch {
       setValidation(prev => ({ ...prev, loading: false }));
@@ -685,7 +732,7 @@ function CanvasInner() {
       setPublishedRevision(result.revision);
       setDirty(false);
     } catch (e: unknown) {
-      // Re-validate to surface any new errors from the publish attempt
+      // Publish requires a saved definition — re-validate the DB copy to surface errors.
       const refreshed = await themApi.validateAgentDefinition(defId);
       if (refreshed.issues && refreshed.issues.length > 0) {
         setValidation({ issues: refreshed.issues, loading: false, lastValidatedAt: Date.now() });
