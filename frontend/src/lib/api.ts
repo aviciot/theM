@@ -604,6 +604,16 @@ export interface AgentDefinition {
   updated_at: string;
 }
 
+export interface AgentIssue {
+  severity: 'error' | 'warning';
+  code: string;
+  message: string;
+  skill_id?: string;
+  node_id?: string;
+  field?: string;
+}
+
+/** @deprecated use AgentIssue */
 export interface AgentCompileError {
   code: string;
   message: string;
@@ -612,7 +622,8 @@ export interface AgentCompileError {
 
 export interface AgentValidationResult {
   valid: boolean;
-  errors?: AgentCompileError[];
+  issues?: AgentIssue[];
+  errors?: AgentIssue[];
 }
 
 export interface AgentPublishResult {
@@ -781,8 +792,22 @@ export const themApi = {
     api.delete<void>(`/admin/agent-definitions/${id}`),
 
   // Phase 3: validate + publish
-  validateAgentDefinition: (id: string) =>
-    api.post<AgentValidationResult>(`/admin/agent-definitions/${id}/validate`, {}),
+  // Always resolves (never throws). On 422, extracts errors from the body.
+  validateAgentDefinition: async (id: string): Promise<AgentValidationResult> => {
+    const res = await fetch(`/api/them/admin/agent-definitions/${id}/validate`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const body = await res.json().catch(() => ({})) as AgentValidationResult;
+    // 200: {valid, issues}  422: {valid:false, errors:[...]}
+    if (!res.ok) {
+      const errors = (body as { errors?: AgentIssue[] }).errors ?? [];
+      return { valid: false, issues: errors };
+    }
+    return body;
+  },
   publishAgentDefinition: (id: string) =>
     api.post<AgentPublishResult>(`/admin/agent-definitions/${id}/publish`, {}),
 

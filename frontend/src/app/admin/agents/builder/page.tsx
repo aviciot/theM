@@ -1,15 +1,16 @@
 'use client';
-import { useCallback, useEffect, useState, type MouseEvent, type DragEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type DragEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { getNodeDef, isSingleInput as _isSingleInput, fetchNodeTypes, setCachedNodeTypes } from '@/lib/nodeRegistry';
+import { getNodeDef, isSingleInput as _isSingleInput, fetchNodeTypes, setCachedNodeTypes, outputArity } from '@/lib/nodeRegistry';
 import {
   themApi,
   type AgentDefinitionDoc,
   type AgentSkillDoc,
   type AgentStepDoc,
   type AgentCredentialSlot,
+  type AgentIssue,
 } from '@/lib/api';
 import {
   ReactFlow,
@@ -153,6 +154,8 @@ interface StepNodeData extends StepData {
     output?: string;
     error?: string;
   };
+  _validation?: 'error' | 'warning' | null;
+  _stub?: boolean;
 }
 
 function StepNode({ data }: { data: StepNodeData; id: string }) {
@@ -177,8 +180,19 @@ function StepNode({ data }: { data: StepNodeData; id: string }) {
     error: '0 0 8px 2px rgba(248,113,113,0.5)',
   };
   const state = dbg?.state ?? 'idle';
-  const borderColor = state !== 'idle' ? debugBorder[state] : 'transparent';
-  const boxShadow = state !== 'idle' ? debugGlow[state] : 'none';
+
+  // Validation ring takes priority over debug ring when not actively debugging
+  let borderColor = state !== 'idle' ? debugBorder[state] : 'transparent';
+  let boxShadow   = state !== 'idle' ? debugGlow[state]   : 'none';
+  if (state === 'idle') {
+    if (data._validation === 'error') {
+      borderColor = '#f87171';
+      boxShadow   = '0 0 8px 2px rgba(248,113,113,0.45)';
+    } else if (data._validation === 'warning' || data._stub) {
+      borderColor = '#f59e0b';
+      boxShadow   = '0 0 6px 1px rgba(245,158,11,0.35)';
+    }
+  }
 
   return (
     <div style={{
@@ -191,6 +205,10 @@ function StepNode({ data }: { data: StepNodeData; id: string }) {
       <div style={{ fontSize: '32px', lineHeight: 1 }}>{meta.emoji}</div>
       <div style={{ color: '#fff', fontWeight: 700, fontSize: '11px', marginTop: '5px' }}>{meta.label}</div>
       {sub && <div style={{ fontSize: '10px', color: meta.border, opacity: 0.9, marginTop: 2 }}>{sub}</div>}
+      {/* Stub badge */}
+      {data._stub && state === 'idle' && (
+        <div style={{ marginTop: 3, fontSize: '9px', color: '#f59e0b', fontWeight: 700, letterSpacing: '0.05em' }}>STUB</div>
+      )}
       {dbg?.state === 'done' && dbg.output && (
         <div style={{ marginTop: 4, fontSize: '9px', color: '#4ade80', maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {dbg.output.length > 30 ? dbg.output.slice(0, 30) + '…' : dbg.output}
@@ -326,6 +344,16 @@ function genUUID(): string {
   });
 }
 
+// ── Validation state ─────────────────────────────────────────────────────────
+
+interface ValidationState {
+  issues: AgentIssue[];
+  loading: boolean;
+  lastValidatedAt: number | null;
+}
+
+const INITIAL_VALIDATION: ValidationState = { issues: [], loading: false, lastValidatedAt: null };
+
 // ── Debug mode ────────────────────────────────────────────────────────────────
 
 type DebugNodeState = 'idle' | 'pending' | 'running' | 'done' | 'error';
@@ -401,6 +429,10 @@ function CanvasInner() {
   // Debug mode
   const [debug, setDebug] = useState<DebugState>(INITIAL_DEBUG);
 
+  // Validation state — populated by debounced backend call + immediate local checks
+  const [validation, setValidation] = useState<ValidationState>(INITIAL_VALIDATION);
+  const validationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Properties panel
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
 
@@ -414,6 +446,39 @@ function CanvasInner() {
   useEffect(() => {
     fetchNodeTypes().then(setCachedNodeTypes).catch(() => {/* use fallback defs */});
   }, []);
+
+  // Debounced backend validation — fires 1200ms after any canvas edit.
+  // Only runs when a saved definition exists (defId present).
+  useEffect(() => {
+    if (!defId || !dirty) return;
+    if (validationTimerRef.current) clearTimeout(validationTimerRef.current);
+    validationTimerRef.current = setTimeout(() => {
+      setValidation(prev => ({ ...prev, loading: true }));
+      themApi.validateAgentDefinition(defId)
+        .then(result => {
+          setValidation({ issues: result.issues ?? [], loading: false, lastValidatedAt: Date.now() });
+        })
+        .catch(() => {
+          // On network error leave previous results; mark as done loading
+          setValidation(prev => ({ ...prev, loading: false }));
+        });
+    }, 1200);
+    return () => { if (validationTimerRef.current) clearTimeout(validationTimerRef.current); };
+  }, [defId, dirty]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // After a successful save, immediately re-validate to get fresh results.
+  // Triggered by dirty going false (save completed) and defId present.
+  useEffect(() => {
+    if (!defId || dirty) return;
+    setValidation(prev => ({ ...prev, loading: true }));
+    themApi.validateAgentDefinition(defId)
+      .then(result => {
+        setValidation({ issues: result.issues ?? [], loading: false, lastValidatedAt: Date.now() });
+      })
+      .catch(() => {
+        setValidation(prev => ({ ...prev, loading: false }));
+      });
+  }, [defId, dirty]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync pipeline state when switching skills
   useEffect(() => {
@@ -600,13 +665,12 @@ function CanvasInner() {
     if (!defId) return;
     setValidating(true);
     setPublishError('');
+    setValidation(prev => ({ ...prev, loading: true }));
     try {
-      await themApi.validateAgentDefinition(defId);
-      alert('Validation passed — definition is ready to publish.');
-    } catch (e: unknown) {
-      const body = (e as { response?: { errors?: { message: string }[] } })?.response;
-      const msgs = body?.errors?.map((err: { message: string }) => err.message).join('\n');
-      setPublishError(msgs ?? String(e));
+      const result = await themApi.validateAgentDefinition(defId);
+      setValidation({ issues: result.issues ?? [], loading: false, lastValidatedAt: Date.now() });
+    } catch {
+      setValidation(prev => ({ ...prev, loading: false }));
     } finally {
       setValidating(false);
     }
@@ -621,9 +685,14 @@ function CanvasInner() {
       setPublishedRevision(result.revision);
       setDirty(false);
     } catch (e: unknown) {
-      const body = (e as { response?: { errors?: { message: string }[] } })?.response;
-      const msgs = body?.errors?.map((err: { message: string }) => err.message).join('\n');
-      setPublishError(msgs ?? String(e));
+      // Re-validate to surface any new errors from the publish attempt
+      const refreshed = await themApi.validateAgentDefinition(defId);
+      if (refreshed.issues && refreshed.issues.length > 0) {
+        setValidation({ issues: refreshed.issues, loading: false, lastValidatedAt: Date.now() });
+        setPublishError('Publish failed — fix errors before publishing.');
+      } else {
+        setPublishError(String(e));
+      }
     } finally {
       setPublishing(false);
     }
@@ -798,9 +867,17 @@ function CanvasInner() {
     });
   }, [setLocalPipeEdges, setLocalPipeNodes]);
 
-  const isPipeConnectionValid = useCallback((_conn: Connection) => {
+  const isPipeConnectionValid = useCallback((conn: Connection | Edge) => {
+    // Reject self-loops
+    if (conn.source === conn.target) return false;
+    // Source node must have output (output_arity !== 'none')
+    const srcNode = localPipeNodes.find(n => n.id === conn.source);
+    if (srcNode) {
+      const srcType = (srcNode.data as unknown as StepData).step_type;
+      if (outputArity(srcType) === 'none') return false;
+    }
     return true;
-  }, []);
+  }, [localPipeNodes]);
 
   // ── Debug helpers ─────────────────────────────────────────────────────────────
 
@@ -1106,7 +1183,41 @@ function CanvasInner() {
       })
     : localPipeEdges;
 
-  const currentNodes = activeView === 'agent' ? agentNodes : (debug.active ? debugNodes : localPipeNodes);
+  // Build node_id → worst severity map from backend issues.
+  const nodeValidationMap = (() => {
+    const m: Record<string, 'error' | 'warning'> = {};
+    for (const iss of validation.issues) {
+      if (!iss.node_id) continue;
+      const current = m[iss.node_id];
+      if (!current || (iss.severity === 'error' && current === 'warning')) {
+        m[iss.node_id] = iss.severity;
+      }
+    }
+    return m;
+  })();
+
+  // Issues scoped to the currently-viewed skill pipeline.
+  const pipelineIssues = activeSkillId
+    ? validation.issues.filter(iss => iss.skill_id === activeSkillId || !iss.skill_id)
+    : validation.issues;
+
+  // Inject validation and stub state into pipeline nodes for StepNode rendering.
+  const validatedPipeNodes = localPipeNodes.map(n => {
+    const stepId = (n.data as unknown as StepData).step_id;
+    const stepType = (n.data as unknown as StepData).step_type;
+    const isStub = !getNodeDef(stepType).executable;
+    const valSeverity = nodeValidationMap[stepId] ?? null;
+    if (!valSeverity && !isStub) return n;
+    return { ...n, data: { ...n.data, _validation: valSeverity, _stub: isStub } };
+  });
+
+  // Error and warning counts for the toolbar badge.
+  const errorCount   = validation.issues.filter(iss => iss.severity === 'error').length;
+  const warningCount = validation.issues.filter(iss => iss.severity === 'warning').length;
+
+  const currentNodes = activeView === 'agent'
+    ? agentNodes
+    : debug.active ? debugNodes : validatedPipeNodes;
   const currentEdges = activeView === 'agent' ? agentEdges : (debug.active ? debugEdges : localPipeEdges);
 
   return (
@@ -1145,11 +1256,39 @@ function CanvasInner() {
           )}
         </div>
 
-        {(saveError || publishError) && (
-          <span style={{ color: '#f87171', fontSize: '12px', maxWidth: '300px' }}>{saveError || publishError}</span>
+        {saveError && (
+          <span style={{ color: '#f87171', fontSize: '12px', maxWidth: '300px' }}>{saveError}</span>
         )}
         {publishedRevision !== null && (
           <span style={{ color: '#34d399', fontSize: '12px' }}>Published rev {publishedRevision}</span>
+        )}
+
+        {/* Validation issues badge */}
+        {defId && (validation.loading || errorCount > 0 || warningCount > 0) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            {validation.loading && (
+              <span style={{ color: '#64748b', fontSize: '11px', fontStyle: 'italic' }}>validating…</span>
+            )}
+            {!validation.loading && errorCount > 0 && (
+              <span style={{
+                background: 'rgba(248,113,113,0.15)', border: '1px solid rgba(248,113,113,0.4)',
+                color: '#f87171', padding: '3px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 700,
+              }}>
+                ✗ {errorCount} error{errorCount !== 1 ? 's' : ''}
+              </span>
+            )}
+            {!validation.loading && warningCount > 0 && (
+              <span style={{
+                background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)',
+                color: '#f59e0b', padding: '3px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 700,
+              }}>
+                ⚠ {warningCount} warning{warningCount !== 1 ? 's' : ''}
+              </span>
+            )}
+            {!validation.loading && errorCount === 0 && warningCount === 0 && validation.lastValidatedAt && (
+              <span style={{ color: '#34d399', fontSize: '11px' }}>✓ valid</span>
+            )}
+          </div>
         )}
 
         {defId && (
@@ -1161,20 +1300,26 @@ function CanvasInner() {
           </button>
         )}
         {defId && (
-          <button onClick={handleValidate} disabled={validating} style={{
+          <button onClick={handleValidate} disabled={validating || validation.loading} style={{
             background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.4)',
             color: '#34d399', padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
           }}>
-            {validating ? 'Validating...' : 'Validate'}
+            {validating || validation.loading ? 'Validating…' : 'Validate'}
           </button>
         )}
         {defId && (
-          <button onClick={handlePublish} disabled={publishing} style={{
-            background: publishing ? 'rgba(0,240,255,0.1)' : 'rgba(0,240,255,0.15)',
-            border: '1px solid rgba(0,240,255,0.4)',
-            color: '#00f0ff', padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
-          }}>
-            {publishing ? 'Publishing...' : 'Publish'}
+          <button
+            onClick={handlePublish}
+            disabled={publishing || errorCount > 0}
+            title={errorCount > 0 ? `Fix ${errorCount} error${errorCount !== 1 ? 's' : ''} before publishing` : undefined}
+            style={{
+              background: (publishing || errorCount > 0) ? 'rgba(0,240,255,0.05)' : 'rgba(0,240,255,0.15)',
+              border: '1px solid rgba(0,240,255,0.4)',
+              color: errorCount > 0 ? 'rgba(0,240,255,0.4)' : '#00f0ff',
+              padding: '6px 14px', borderRadius: '6px', cursor: errorCount > 0 ? 'not-allowed' : 'pointer', fontSize: '13px',
+            }}
+          >
+            {publishing ? 'Publishing…' : 'Publish'}
           </button>
         )}
         {activeView === 'skill' && (
@@ -1272,6 +1417,29 @@ function CanvasInner() {
           <span style={{ color: '#475569', fontSize: '10px', marginLeft: 'auto' }}>
             API key used only for debug calls — never sent to the-M server
           </span>
+        </div>
+      )}
+
+      {/* ── Issues panel — shown when there are validation issues ── */}
+      {activeView === 'skill' && pipelineIssues.length > 0 && !debug.active && (
+        <div style={{
+          flexShrink: 0, maxHeight: '130px', overflowY: 'auto',
+          borderBottom: `1px solid ${errorCount > 0 ? 'rgba(248,113,113,0.3)' : 'rgba(245,158,11,0.3)'}`,
+          background: errorCount > 0 ? 'rgba(248,113,113,0.04)' : 'rgba(245,158,11,0.04)',
+          padding: '6px 16px',
+        }}>
+          {pipelineIssues.map((iss, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '3px 0', borderBottom: i < pipelineIssues.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+              <span style={{ fontSize: '11px', color: iss.severity === 'error' ? '#f87171' : '#f59e0b', flexShrink: 0, marginTop: '1px' }}>
+                {iss.severity === 'error' ? '✗' : '⚠'}
+              </span>
+              <span style={{ fontSize: '11px', color: '#e2e8f0', flex: 1 }}>
+                <span style={{ fontFamily: 'monospace', color: '#94a3b8', marginRight: '6px' }}>[{iss.code}]</span>
+                {iss.message}
+                {iss.field && <span style={{ marginLeft: '6px', color: '#64748b' }}>· field: <code style={{ color: '#f59e0b' }}>{iss.field}</code></span>}
+              </span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -1663,12 +1831,44 @@ function CanvasInner() {
               const d = (localPipeNodes.find(n => n.id === selectedNode.id)?.data ?? selectedNode.data) as unknown as StepData;
               const cfg = d.config ?? {};
 
+              // Issues for this specific node
+              const nodeIssues = validation.issues.filter(iss => iss.node_id === d.step_id);
+              // Map field name → worst severity for field highlighting
+              const fieldIssues: Record<string, 'error' | 'warning'> = {};
+              for (const iss of nodeIssues) {
+                if (!iss.field) continue;
+                if (!fieldIssues[iss.field] || (iss.severity === 'error' && fieldIssues[iss.field] === 'warning')) {
+                  fieldIssues[iss.field] = iss.severity;
+                }
+              }
+
+              function issueStyle(field: string): React.CSSProperties {
+                const sev = fieldIssues[field];
+                if (!sev) return {};
+                return {
+                  borderColor: sev === 'error' ? '#f87171' : '#f59e0b',
+                  boxShadow: sev === 'error' ? '0 0 0 1px rgba(248,113,113,0.4)' : '0 0 0 1px rgba(245,158,11,0.4)',
+                };
+              }
+
               // Helper: get config value with fallback.
               function cfgStr(key: string): string { return (cfg[key] as string) ?? ''; }
               function cfgNum(key: string, def = 0): number { return (cfg[key] as number) ?? def; }
 
               return (
                 <>
+                  {/* ── Node-level issues ── */}
+                  {nodeIssues.length > 0 && (
+                    <div style={{ marginBottom: '12px', padding: '8px 10px', borderRadius: '6px', background: nodeIssues.some(i => i.severity === 'error') ? 'rgba(248,113,113,0.08)' : 'rgba(245,158,11,0.08)', border: `1px solid ${nodeIssues.some(i => i.severity === 'error') ? 'rgba(248,113,113,0.3)' : 'rgba(245,158,11,0.3)'}` }}>
+                      {nodeIssues.map((iss, i) => (
+                        <div key={i} style={{ fontSize: '11px', color: iss.severity === 'error' ? '#f87171' : '#f59e0b', display: 'flex', gap: '6px', marginBottom: i < nodeIssues.length - 1 ? '4px' : 0 }}>
+                          <span style={{ flexShrink: 0 }}>{iss.severity === 'error' ? '✗' : '⚠'}</span>
+                          <span>{iss.message}{iss.field && <span style={{ color: '#64748b' }}> · <code style={{ color: iss.severity === 'error' ? '#f87171' : '#f59e0b' }}>{iss.field}</code></span>}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* ── Identity (always shown) ── */}
                   <div style={{ marginBottom: '2px' }}>
                     <label style={labelStyle}>Label</label>
@@ -1799,7 +1999,7 @@ function CanvasInner() {
                         <select
                           value={cfgStr('provider_key_slot')}
                           onChange={e => updateStepConfig('provider_key_slot', e.target.value)}
-                          style={selectStyle}
+                          style={{ ...selectStyle, ...issueStyle('provider_key_slot') }}
                         >
                           <option value="">— platform key —</option>
                           {credentialSlots.map(s => (
@@ -1862,7 +2062,7 @@ function CanvasInner() {
                         <select
                           value={cfgStr('credential_slot')}
                           onChange={e => updateStepConfig('credential_slot', e.target.value)}
-                          style={selectStyle}
+                          style={{ ...selectStyle, ...issueStyle('credential_slot') }}
                         >
                           <option value="">— none —</option>
                           {credentialSlots.map(s => (
