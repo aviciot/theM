@@ -93,6 +93,12 @@ type AgentInvoker interface {
 	// context headers (X-Them-*) populated from the app_agent_binding row.
 	// For non-canvas agents it behaves identically to Invoke.
 	InvokeForRun(ctx context.Context, tenantID, applicationID, slug string, input json.RawMessage) (json.RawMessage, error)
+
+	// InvokeForRunStreaming is like InvokeForRun but accepts an ArtifactCallback
+	// for streaming A2A agents. onArtifact is called once per complete artifact
+	// as it arrives on the SSE stream. Non-streaming agents fall back to
+	// InvokeForRun (callback ignored).
+	InvokeForRunStreaming(ctx context.Context, tenantID, applicationID, slug string, input json.RawMessage, onArtifact func(filename, contentType, dataBase64 string)) (json.RawMessage, error)
 }
 
 // HistoryLoader loads prior conversation messages from persistent storage.
@@ -657,7 +663,15 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 
 			inputBytes, _ := json.Marshal(tc.Input)
 			stepStart := time.Now()
-			out, err := o.agents.InvokeForRun(ctx, rctx.TenantID, rctx.ApplicationID, slug, inputBytes)
+			// Use InvokeForRunStreaming so streaming agents can emit artifacts
+			// progressively via the callback while the SSE stream is still open.
+			// Non-streaming agents fall back to InvokeForRun (callback is never called).
+			out, err := o.agents.InvokeForRunStreaming(ctx, rctx.TenantID, rctx.ApplicationID, slug, inputBytes,
+				func(filename, contentType, dataBase64 string) {
+					body := &artifactBody{Filename: filename, ContentType: contentType, DataBase64: dataBase64}
+					o.emitArtifactEvent(ctx, contextID, runID, rctx, body)
+				},
+			)
 			latencyMS := time.Since(stepStart).Milliseconds()
 
 			// Complete child task row (non-fatal).

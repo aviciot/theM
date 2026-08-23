@@ -42,7 +42,7 @@ func (q *PgxQuerier) QueryAgentsByTenant(ctx context.Context, tenantID string) (
 		SELECT id::text, slug, display_name, description,
 		       transport, COALESCE(endpoint_url, ''),
 		       COALESCE(auth_token_encrypted, ''),
-		       max_concurrency
+		       max_concurrency, supports_streaming
 		FROM them.agents
 		WHERE enabled = true
 		  AND tenant_id = $1::uuid
@@ -60,7 +60,7 @@ func (q *PgxQuerier) QueryAgentsByTenant(ctx context.Context, tenantID string) (
 		if err := rows.Scan(
 			&a.ID, &a.Slug, &a.Name, &a.Description,
 			&a.AdapterType, &a.EndpointURL, &a.AuthToken,
-			&a.MaxConcurrency,
+			&a.MaxConcurrency, &a.SupportsStreaming,
 		); err != nil {
 			return nil, err
 		}

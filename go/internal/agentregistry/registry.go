@@ -1,6 +1,7 @@
 package agentregistry
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -37,15 +38,21 @@ const (
 
 // AgentConfig holds the configuration for a single agent loaded from DB.
 type AgentConfig struct {
-	ID             string `json:"id"`
-	Slug           string `json:"slug"`
-	Name           string `json:"name"`
-	Description    string `json:"description"`
-	AdapterType    string `json:"adapter_type"`
-	EndpointURL    string `json:"endpoint_url"`
-	AuthToken      string `json:"auth_token,omitempty"`
-	MaxConcurrency int    `json:"max_concurrency"`
+	ID               string `json:"id"`
+	Slug             string `json:"slug"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	AdapterType      string `json:"adapter_type"`
+	EndpointURL      string `json:"endpoint_url"`
+	AuthToken        string `json:"auth_token,omitempty"`
+	MaxConcurrency   int    `json:"max_concurrency"`
+	SupportsStreaming bool   `json:"supports_streaming"` // if true, use SendStreamingMessage (SSE)
 }
+
+// ArtifactCallback is called by invokeA2AStreaming once per complete artifact
+// as it arrives on the SSE stream. Used by the orchestrator to record and
+// emit artifacts progressively without waiting for the stream to close.
+type ArtifactCallback func(filename, contentType, dataBase64 string)
 
 // DBReader loads agent configurations from the database, scoped to a tenant.
 type DBReader interface {
@@ -124,6 +131,9 @@ func (r *Registry) Invoke(ctx context.Context, tenantID, slug string, input json
 
 	switch cfg.AdapterType {
 	case "a2a", "a2a_async":
+		if cfg.SupportsStreaming {
+			return r.invokeA2AStreaming(ctx, cfg, input, nil)
+		}
 		return r.invokeA2A(ctx, cfg, input)
 	case "ws_mock", "mock":
 		return r.invokeMock(cfg, input)
@@ -149,6 +159,9 @@ func (r *Registry) InvokeForRun(ctx context.Context, tenantID, applicationID, sl
 		// Non-canvas agents: standard adapter routing.
 		switch cfg.AdapterType {
 		case "a2a", "a2a_async":
+			if cfg.SupportsStreaming {
+				return r.invokeA2AStreaming(ctx, cfg, input, nil)
+			}
 			return r.invokeA2A(ctx, cfg, input)
 		case "ws_mock", "mock":
 			return r.invokeMock(cfg, input)
@@ -171,6 +184,24 @@ func (r *Registry) InvokeForRun(ctx context.Context, tenantID, applicationID, sl
 		BindingID:     bindingID,
 	}
 	return r.InvokeWithMeta(ctx, tenantID, slug, input, meta)
+}
+
+// InvokeForRunStreaming is like InvokeForRun but wires an ArtifactCallback for
+// streaming A2A agents. onArtifact is called once per complete artifact as it
+// arrives on the SSE stream, allowing the orchestrator to record and emit each
+// file progressively without waiting for the entire stream to close.
+//
+// For non-streaming agents this falls back to InvokeForRun (callback ignored).
+func (r *Registry) InvokeForRunStreaming(ctx context.Context, tenantID, applicationID, slug string, input json.RawMessage, onArtifact func(filename, contentType, dataBase64 string)) (json.RawMessage, error) {
+	cfg, err := r.getAgent(ctx, tenantID, slug)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.AdapterType != "canvas_a2a" && (cfg.AdapterType == "a2a" || cfg.AdapterType == "a2a_async") && cfg.SupportsStreaming {
+		return r.invokeA2AStreaming(ctx, cfg, input, onArtifact)
+	}
+	// Non-streaming fallback — delegate to standard routing.
+	return r.InvokeForRun(ctx, tenantID, applicationID, slug, input)
 }
 
 func (r *Registry) getAgent(ctx context.Context, tenantID, slug string) (*AgentConfig, error) {
@@ -414,6 +445,169 @@ func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.R
 		return nil, fmt.Errorf("agentregistry: a2a: empty result")
 	}
 	return extractA2AResult(rpcResp.Result)
+}
+
+// streamResponse mirrors the A2A v1.0 StreamResponse proto for JSON decoding.
+// Only the fields we act on are mapped; unknown fields are ignored.
+type streamResponse struct {
+	StatusUpdate   *streamStatusUpdate   `json:"status_update,omitempty"`
+	ArtifactUpdate *streamArtifactUpdate `json:"artifact_update,omitempty"`
+	Task           *a2aTask              `json:"task,omitempty"`
+}
+
+type streamStatusUpdate struct {
+	State string `json:"state"`
+}
+
+type streamArtifactUpdate struct {
+	Artifact  a2aArtifact `json:"artifact"`
+	Append    bool        `json:"append"`
+	LastChunk bool        `json:"last_chunk"`
+}
+
+// invokeA2AStreaming calls SendStreamingMessage on a streaming A2A agent.
+// It reads the SSE response line-by-line, calls onArtifact for each complete
+// artifact, and returns the final tool result (plain text summary, no base64).
+// onArtifact may be nil if the caller only needs the final result.
+func (r *Registry) invokeA2AStreaming(ctx context.Context, cfg *AgentConfig, input json.RawMessage, onArtifact func(filename, contentType, dataBase64 string)) (json.RawMessage, error) {
+	part := buildA2APart(input)
+	reqID := newUUID()
+	msgID := newUUID()
+
+	rpcReq := a2aRequest{
+		JSONRPC: "2.0",
+		Method:  "SendStreamingMessage",
+		Params: a2aParams{
+			Message: a2aMessage{
+				Role:      1,
+				Parts:     []a2aPart{part},
+				MessageID: msgID,
+			},
+			Configuration: a2aConfiguration{ReturnImmediately: false},
+		},
+		ID: reqID,
+	}
+
+	body, err := json.Marshal(rpcReq)
+	if err != nil {
+		return nil, fmt.Errorf("agentregistry: a2a-stream: marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.EndpointURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("agentregistry: a2a-stream: create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("A2A-Version", "1.0")
+	if cfg.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
+	}
+
+	// Use a client without a read deadline — streaming responses are long-lived.
+	streamClient := &http.Client{Timeout: 0}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("agentregistry: a2a-stream: http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("agentregistry: a2a-stream: agent returned %d: %s", resp.StatusCode, string(b))
+	}
+
+	// Parse SSE: each event is a "data: <json>" line.
+	scanner := bufio.NewScanner(resp.Body)
+	var lastOutput string
+	var artifactNames []string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+
+		// Each data line is a JSON-RPC response wrapping a StreamResponse.
+		var rpcResp struct {
+			Result *streamResponse `json:"result,omitempty"`
+			Error  *a2aError       `json:"error,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(data), &rpcResp); err != nil {
+			slog.Warn("agentregistry: a2a-stream: skip unparseable event", "data", data, "error", err)
+			continue
+		}
+		if rpcResp.Error != nil {
+			return nil, fmt.Errorf("agentregistry: a2a-stream: agent error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+		}
+		if rpcResp.Result == nil {
+			continue
+		}
+		ev := rpcResp.Result
+
+		// Artifact update — call onArtifact when the artifact is complete.
+		if ev.ArtifactUpdate != nil && ev.ArtifactUpdate.LastChunk {
+			for _, part := range ev.ArtifactUpdate.Artifact.Parts {
+				if part.Filename == "" {
+					continue
+				}
+				var encoded, contentType string
+				if part.Raw != "" {
+					encoded, contentType = part.Raw, part.MediaType
+				} else if part.Text != "" {
+					encoded = base64.StdEncoding.EncodeToString([]byte(part.Text))
+					contentType = part.MediaType
+				} else {
+					continue
+				}
+				if contentType == "" {
+					contentType = "application/octet-stream"
+				}
+				name := part.Filename
+				if ev.ArtifactUpdate.Artifact.Name != "" {
+					name = ev.ArtifactUpdate.Artifact.Name
+				}
+				artifactNames = append(artifactNames, name)
+				if onArtifact != nil {
+					onArtifact(name, contentType, encoded)
+				}
+			}
+		}
+
+		// Terminal task event — extract plain text output if present.
+		if ev.Task != nil {
+			result := &a2aResult{Task: ev.Task}
+			out, err := extractA2AResult(result)
+			if err == nil {
+				var m map[string]any
+				if json.Unmarshal(out, &m) == nil {
+					if s, ok := m["output"].(string); ok {
+						lastOutput = s
+					}
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("agentregistry: a2a-stream: read: %w", err)
+	}
+
+	// Build final tool result — clean summary, no base64.
+	if len(artifactNames) > 0 {
+		summary := fmt.Sprintf("%d file artifact(s) streamed: %s", len(artifactNames), strings.Join(artifactNames, ", "))
+		out, _ := json.Marshal(map[string]string{"output": summary})
+		return out, nil
+	}
+	if lastOutput != "" {
+		out, _ := json.Marshal(map[string]string{"output": lastOutput})
+		return out, nil
+	}
+	out, _ := json.Marshal(map[string]string{"output": "agent completed (no output)"})
+	return out, nil
 }
 
 // extractA2AResult extracts the tool output from an A2A response result.

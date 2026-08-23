@@ -435,20 +435,21 @@ Fully rewritten for SEC-03: Redis key is now `them:agents:registry:{tenant_id}`,
 |---|---|
 | `TestInvokeMock` | Mock adapter returns immediately without HTTP |
 | `TestInvokeA2A` | A2A adapter sends correct JSON-RPC 2.0 request, extracts result |
-| `TestCacheMissThenPopulate` | Cache miss → DB load → Redis populated |
-| `TestPubSubInvalidation` | Pub/sub message on `them:agents:changed` → in-process cache cleared |
-| `TestUnknownSlug` | Unknown agent slug → `ErrUnknownAgent` (typed sentinel) |
 | `TestCacheMissThenPopulate_TenantScopedKey` | SEC-03: Redis key is `them:agents:registry:{tenantA}` — global key `them:agents:registry` does NOT exist |
 | `TestTenantIsolation_SameSlug` | SEC-03: tenantA and tenantB with same slug → separate cache entries, no sharing |
 | `TestTenantInvalidation_DoesNotCrossContaminate` | SEC-03: invalidating tenantA does NOT evict tenantB's cache entries |
 | `TestCrossTenatLookup_ReturnsMiss` | SEC-03: tenantA cannot retrieve an agent registered under tenantB (returns ErrUnknownAgent) |
-| `TestPubSubEmptyPayload_Ignored` | SEC-03: empty pub/sub payload → no eviction (guards against accidental global eviction) |
+| `TestPubSubChannelRegistered` | Pub/sub subscription established on `them:agents:changed` at startup |
+| `TestUnknownSlug` | Unknown agent slug → `ErrUnknownAgent` (typed sentinel) |
 | `TestInvokeForRun_CanvasA2A_UsesBindingID` | `canvas_a2a` transport → `GetBindingID` called; `X-Them-Binding-Id` header forwarded to agent-runtime |
 | `TestInvokeForRun_NonCanvas_DelegatesToStandardRouting` | Non-canvas transport in `InvokeForRun` falls through to standard mock adapter dispatch |
 | `TestExtractA2AResult_SingleArtifact_LegacyShape` | Single file part → legacy `{"artifact":{}}` shape preserved (backward compat) |
 | `TestExtractA2AResult_MultiArtifact_TwoParts` | Two file parts in one artifact → `{"artifacts":[...]}` plural shape, both collected |
 | `TestExtractA2AResult_MultiArtifact_TwoArtifacts` | Two separate Artifact objects → both collected in plural shape |
 | `TestExtractA2AResult_MixedParts_OnlyFilePartsCollected` | Text-only parts skipped; only filename-bearing parts collected |
+| `TestPubSubEmptyPayload_Ignored` | SEC-03: empty pub/sub payload → no eviction (guards against accidental global eviction) |
+| `TestInvokeForRunStreaming_SingleArtifact_CallbackFired` | `SupportsStreaming=true` agent → SSE response parsed; `onArtifact` callback fired with correct filename/contentType/base64 |
+| `TestInvokeForRunStreaming_NonStreamingFallback` | `SupportsStreaming=false` agent → `InvokeForRunStreaming` falls through to `InvokeForRun`; callback not used |
 
 **Trigger:** any change to `internal/agentregistry/registry.go` or `internal/agentregistry/pgx_querier.go`
 
@@ -1878,7 +1879,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-08 | domain | 3 |
 | S1-09 | runrecorder | 22 |
 | S1-10 | llm | 6 |
-| S1-11 | agentregistry | 10 |
+| S1-11 | agentregistry | 17 |
 | S1-12 | ws | 24 |
 | S1-13 | sse | 23 |
 | S1-14 | a2a | 27 |

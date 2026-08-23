@@ -204,6 +204,10 @@ func (f *fakeAgentInvoker) InvokeForRun(ctx context.Context, tenantID, _ string,
 	return f.Invoke(ctx, tenantID, slug, input)
 }
 
+func (f *fakeAgentInvoker) InvokeForRunStreaming(ctx context.Context, tenantID, appID, slug string, input json.RawMessage, _ func(string, string, string)) (json.RawMessage, error) {
+	return f.InvokeForRun(ctx, tenantID, appID, slug, input)
+}
+
 func (f *fakeAgentInvoker) getSlugs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -480,6 +484,10 @@ func (a *artifactAgentInvoker) Invoke(_ context.Context, _ string, _ string, _ j
 
 func (a *artifactAgentInvoker) InvokeForRun(ctx context.Context, tenantID, _ string, slug string, input json.RawMessage) (json.RawMessage, error) {
 	return a.Invoke(ctx, tenantID, slug, input)
+}
+
+func (a *artifactAgentInvoker) InvokeForRunStreaming(ctx context.Context, tenantID, appID, slug string, input json.RawMessage, _ func(string, string, string)) (json.RawMessage, error) {
+	return a.InvokeForRun(ctx, tenantID, appID, slug, input)
 }
 
 // TestOrchestrator_ArtifactEmitted verifies that when a tool returns an artifact
@@ -865,4 +873,8 @@ func (a *rawBase64AgentInvoker) Invoke(_ context.Context, _ string, _ string, _ 
 
 func (a *rawBase64AgentInvoker) InvokeForRun(ctx context.Context, tenantID, _ string, slug string, input json.RawMessage) (json.RawMessage, error) {
 	return a.Invoke(ctx, tenantID, slug, input)
+}
+
+func (a *rawBase64AgentInvoker) InvokeForRunStreaming(ctx context.Context, tenantID, appID, slug string, input json.RawMessage, _ func(string, string, string)) (json.RawMessage, error) {
+	return a.InvokeForRun(ctx, tenantID, appID, slug, input)
 }

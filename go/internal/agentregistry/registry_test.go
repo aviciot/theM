@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -458,4 +459,78 @@ func TestPubSubEmptyPayload_Ignored(t *testing.T) {
 	out, err := reg.Invoke(context.Background(), tenantA, "stable", json.RawMessage(`{}`))
 	require.NoError(t, err)
 	assert.NotEmpty(t, out)
+}
+
+// 16. Streaming agent — SSE response with one artifact, callback fires once.
+func TestInvokeForRunStreaming_SingleArtifact_CallbackFired(t *testing.T) {
+	// Simulate a streaming A2A agent that sends one artifact_update SSE event
+	// followed by a terminal task event.
+	sseBody := strings.Join([]string{
+		`data: {"result":{"artifact_update":{"artifact":{"parts":[{"text":"<html/>","filename":"doc.html","mediaType":"text/html"}]},"append":false,"last_chunk":true}}}`,
+		`data: {"result":{"task":{"status":{"state":"TASK_STATE_COMPLETED"},"artifacts":[]}}}`,
+		"",
+	}, "\n")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, sseBody)
+	}))
+	defer server.Close()
+
+	db := newFakeDB(tenantA, []*agentregistry.AgentConfig{
+		{Slug: "streamer", AdapterType: "a2a", EndpointURL: server.URL, SupportsStreaming: true},
+	})
+	reg := agentregistry.New(db, newFakeCache(), nil)
+	require.NoError(t, reg.LoadAll(context.Background(), tenantA))
+
+	var callbackFilenames []string
+	out, err := reg.InvokeForRunStreaming(context.Background(), tenantA, "app-1", "streamer",
+		json.RawMessage(`{"input":"test"}`),
+		func(filename, contentType, _ string) {
+			callbackFilenames = append(callbackFilenames, filename)
+		},
+	)
+	require.NoError(t, err)
+
+	// Callback must have fired for the artifact.
+	assert.Equal(t, []string{"doc.html"}, callbackFilenames)
+	// Final result must be a clean text summary — no base64.
+	var result map[string]string
+	require.NoError(t, json.Unmarshal(out, &result))
+	assert.Contains(t, result["output"], "doc.html")
+	assert.NotContains(t, result["output"], "base64")
+}
+
+// 17. Streaming agent — non-streaming fallback when SupportsStreaming=false.
+func TestInvokeForRunStreaming_NonStreamingFallback(t *testing.T) {
+	// Agent declares SupportsStreaming=false — should get standard SendMessage call.
+	expectedOutput := "sync response"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		// Verify SendMessage method used, not SendStreamingMessage.
+		params := req["params"].(map[string]any)
+		_ = params // method is at top level
+		assert.Equal(t, "SendMessage", req["method"])
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","result":{"task":{"status":{"state":"TASK_STATE_COMPLETED"},"artifacts":[{"parts":[{"text":"%s"}]}]}},"id":"1"}`, expectedOutput)
+	}))
+	defer server.Close()
+
+	db := newFakeDB(tenantA, []*agentregistry.AgentConfig{
+		{Slug: "sync-agent", AdapterType: "a2a", EndpointURL: server.URL, SupportsStreaming: false},
+	})
+	reg := agentregistry.New(db, newFakeCache(), nil)
+	require.NoError(t, reg.LoadAll(context.Background(), tenantA))
+
+	callbackFired := false
+	out, err := reg.InvokeForRunStreaming(context.Background(), tenantA, "app-1", "sync-agent",
+		json.RawMessage(`{"input":"test"}`),
+		func(_, _, _ string) { callbackFired = true },
+	)
+	require.NoError(t, err)
+	assert.False(t, callbackFired, "callback must not fire for non-streaming agent")
+	var result map[string]string
+	require.NoError(t, json.Unmarshal(out, &result))
+	assert.Equal(t, expectedOutput, result["output"])
 }
