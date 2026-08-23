@@ -18,7 +18,7 @@ func init() {
 		IsSource:    true,
 		IsSink:      false,
 		SingleInput: false,
-		Edges:       EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 1, MaxOut: 1},
+		Edges:       EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 1, MaxOut: 0},
 		Validate:    nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {

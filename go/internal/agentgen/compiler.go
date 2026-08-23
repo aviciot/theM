@@ -321,8 +321,7 @@ func validateGraph(def *canvasDefinition) ([]Issue, map[string][]StepSpec) {
 					NodeID:   step.ID,
 				})
 			}
-			if r.MaxIn == 0 && r.MinIn == 0 && in > 0 {
-				// MaxIn=0 && MinIn=0 means no incoming edges allowed (source node)
+			if nd.IsSource && in > 0 {
 				issues = append(issues, Issue{
 					Severity: "error",
 					Code:     "SOURCE_HAS_INPUT",
@@ -340,7 +339,15 @@ func validateGraph(def *canvasDefinition) ([]Issue, map[string][]StepSpec) {
 					NodeID:   step.ID,
 				})
 			}
-			if r.MaxOut > 0 && out > r.MaxOut {
+			if nd.IsSink && out > 0 {
+				issues = append(issues, Issue{
+					Severity: "error",
+					Code:     "SINK_HAS_OUTPUT",
+					Message:  fmt.Sprintf("%s is a sink node and must not have outgoing edges", nd.Label),
+					SkillID:  cs.SkillID,
+					NodeID:   step.ID,
+				})
+			} else if r.MaxOut > 0 && out > r.MaxOut {
 				issues = append(issues, Issue{
 					Severity: "error",
 					Code:     "TOO_MANY_OUTPUT_EDGES",

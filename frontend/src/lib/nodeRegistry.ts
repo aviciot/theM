@@ -155,20 +155,20 @@ export function outputArity(type: string): 'single' | 'multi' | 'none' {
   return getNodeDef(type).output_arity;
 }
 
-// canAddIncoming returns true if adding one more incoming edge to a node of
-// this type is allowed by its EdgeRules. currentInCount = edges already present.
+// canAddIncoming: convention — is_source=true means no incoming allowed.
+// max_in>0 caps at that count. max_in=0 means unlimited.
 export function canAddIncoming(type: string, currentInCount: number): boolean {
-  const { edges } = getNodeDef(type);
-  if (edges.min_in === 0 && edges.max_in === 0) return false; // source node
-  if (edges.max_in > 0 && currentInCount >= edges.max_in) return false;
+  const def = getNodeDef(type);
+  if (def.is_source) return false;
+  if (def.edges.max_in > 0 && currentInCount >= def.edges.max_in) return false;
   return true;
 }
 
-// canAddOutgoing returns true if adding one more outgoing edge from a node of
-// this type is allowed by its EdgeRules. currentOutCount = edges already present.
+// canAddOutgoing: convention — is_sink=true means no outgoing allowed.
+// max_out>0 caps at that count. max_out=0 means unlimited.
 export function canAddOutgoing(type: string, currentOutCount: number): boolean {
-  const { edges } = getNodeDef(type);
-  if (edges.max_out > 0 && currentOutCount >= edges.max_out) return false;
-  if (edges.min_in === 0 && edges.max_in === 0 && edges.min_out === 0 && edges.max_out === 0) return false; // no-op fallback
+  const def = getNodeDef(type);
+  if (def.is_sink) return false;
+  if (def.edges.max_out > 0 && currentOutCount >= def.edges.max_out) return false;
   return true;
 }
