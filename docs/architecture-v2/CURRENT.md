@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-21
+# Last updated: 2026-08-23
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,10 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `74812b2` — feat(agents): canvas-built badge + Edit in Builder for published agents
+Commit: `a58287f` — feat(canvas): connect Canvas UI to BuildValidator — live validation, node/field highlighting
 
 Recent commits (newest first):
 ```
+a58287f feat(canvas): connect Canvas UI to BuildValidator — live validation, node/field highlighting
+6ff1981 fix(docu-writer): fix format routing and markdown fence stripping
+bf5b536 docs(test-index) + fix(a2a): update TEST_INDEX for BuildValidator + fix /a2a Traefik routing
+b9a84d4 feat(agentgen): BuildValidator — Issue type, Validate/CompileForPublish, stub severity
+00ee278 docs(agentgen): update BuildValidator design — real-time UX, explicit Validate/CompileForPublish, stub severity
 74812b2 feat(agents): canvas-built badge + Edit in Builder for published agents
 01465eb fix(agent-runtime): fix 4 deferred code-review bugs in executeSkill / loadBinding
 02648fb docs: remove Python-specific docs, clean up INDEX.md
@@ -170,6 +175,7 @@ go test ./... :   666
 | Runtime wiring | `InvokeForRun` in `agentregistry` + `GetBindingID` | ✅ |
 | Debug mode | Browser-side pipeline step-through with Anthropic API key | ✅ |
 | Bug fixes | polJSON unmarshal, AllowedSkillIDs enforcement, skill selection by ID, slug cache | ✅ |
+| BuildValidator UI | Debounced backend validation, node/field highlighting, issues panel, Publish gate | ✅ |
 
 ### Key security constraints (always in force)
 - Credentials decrypted per-request, held only in `InvocationContext.Credentials`, never logged/persisted
@@ -192,23 +198,14 @@ go test ./... :   666
 
 ## Next recommended task
 
-**Fix `/a2a/` routing** — redirect `them-a2a` Traefik router from `them-bridge-svc` to `them-go-bridge-svc`. This is a one-line compose label change. The Go A2A handler is already implemented and mounted — Traefik is the only thing pointing at the dead Python service.
-
-Fix: in `docker-compose.yml` (and `docker-compose.dev.yml`), change:
-```
-them-a2a.service=them-bridge-svc
-```
-to:
-```
-them-a2a.service=them-go-bridge-svc
-```
-
-After that the **next real task** is end-to-end canvas agent verification:
-1. Publish a canvas agent (Input→LLM→Response pipeline)
+**End-to-end canvas agent verification:**
+1. Publish a canvas agent (Input→LLM→Response pipeline) — use the new validation UI to confirm it shows green before publish
 2. Bind it to an application with a valid API key
 3. Include it as a tool in an application definition, publish
 4. Trigger a real run through playground
 5. Verify `run_steps` shows the agent-runtime step recorded
+
+**After that**: `/a2a/` routing fix — redirect `them-a2a` Traefik router from `them-bridge-svc` to `them-go-bridge-svc` (one-line compose label change).
 
 Do NOT begin multiple subsystems in the same session.
 
