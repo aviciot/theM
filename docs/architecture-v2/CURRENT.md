@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `4cb2dd9` — feat(a2a-stream): emit two file artifacts (HTML + zip) for multi-file streaming test
+Commit: `2f29cd3` — feat(agentgen): Phase 1 app-level agent params — decrypt-at-runtime injection
 
 Recent commits (newest first):
 ```
+2f29cd3 feat(agentgen): Phase 1 app-level agent params — decrypt-at-runtime injection
 4cb2dd9 feat(a2a-stream): emit two file artifacts (HTML + zip) for multi-file streaming test
 78be532 feat(agentgen): add Description to NodeDef + palette tooltips
 1f7e229 fix(agentgen): correct EdgeRules for Input + clean up is_source/is_sink convention
@@ -20,7 +21,6 @@ ccb9d40 feat(a2a-stream): add zip file artifact to streaming response for testin
 134dc48 fix(validation): detect disconnected nodes + reject cycle edges
 51e78c0 fix(admin): make /admin/node-types public — no auth required
 dd8d546 feat(a2a): multi-artifact + streaming agent support
-a58287f feat(canvas): connect Canvas UI to BuildValidator — live validation, node/field highlighting
 ```
 
 ---
@@ -144,14 +144,17 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 | `db/035_agent_definitions.sql` | ✅ applied — `agent_definitions` table exists |
 | `db/036_canvas_a2a_runtime.sql` | ✅ applied — `agent_runtime_specs` + `app_agent_bindings` exist |
 | `db/037_agents_transport_canvas.sql` | ✅ applied — `agents_transport_check` includes `'canvas_a2a'` |
+| `db/038_app_agent_params.sql` | ✅ applied — `app_agent_bindings.agent_params` JSONB column |
 
 ---
 
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified in Docker build dd8d546)
+go test ./...  — all packages, 0 failures (verified 2026-08-23, commit 2f29cd3)
 S1-11 agentregistry: 17 tests (was 10; +4 multi-artifact, +2 streaming)
+S1-48 agentgen (interpreter): +5 inject-mode tests (header/query/basic/custom_header/no-inject)
+S1-50 agentgen (compiler): +3 AppParam tests (populate/undeclared/empty)
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
   - run 5691b24a: streaming two files (HTML + zip) via a2a-stream ✅
@@ -237,25 +240,53 @@ Live e2e confirmed 2026-08-23:
 
 ---
 
+## App-level agent params — Phase 1 complete (2026-08-23)
+
+**Backend Go implementation fully done (commit 2f29cd3). DB migration applied.**
+
+What was built:
+- `AppParamDecl` on `NodeDef` — node types declare what runtime params they accept
+- `AgentParamSpec` collected by compiler (stage 3.5), stored in `agent_runtime_specs.spec` as `required_params`
+- `app_agent_bindings.agent_params` JSONB — encrypted storage (Fernet for secrets, plaintext for others)
+- `GET/PUT /admin/applications/{app_id}/agents/{agent_id}/params` — admin API (hint-only, no plaintext)
+- `InvocationContext.AgentParams` — decrypted per-request in agent-runtime, never logged
+- HTTP node: `bearer_token`/`api_key` params; inject modes: header/query/basic/custom_header
+- LLM node: `model_override` param — overrides compiled model at runtime
+- **Frontend (Phase 1) NOT yet done** — see next task below
+
+What is pending (Phase 1 frontend):
+1. `frontend/src/lib/api.ts`: Add `AgentParamMeta`, `AgentParamsResponse` types + `getAgentParams`/`putAgentParams`
+2. `frontend/src/app/admin/applications/page.tsx` `RuntimeView`: Add "Agent Parameters" section per bound agent
+3. `frontend/src/app/admin/agents/builder/page.tsx`: Add `app_param_key`/`inject_mode`/`inject_header_name` fields to HTTP step panel
+
+---
+
 ## Next recommended task
 
-### Step 1 — E2E canvas agent run (highest priority)
+### Step 1 — Phase 1 frontend for agent params (immediate)
+
+Implement the frontend side of the agent params system (see design doc `docs/architecture-v2/APP_AGENT_PARAMS_DESIGN.md`, section "Phase 1 Frontend"):
+1. `api.ts`: `getAgentParams(appId, agentId)` → `GET /admin/applications/{appId}/agents/{agentId}/params`; `putAgentParams(appId, agentId, params)` → `PUT` same route
+2. `applications/page.tsx` RuntimeView: for each bound canvas agent, show its `required_params` with fill status + input fields for secrets/strings (hint shown when set)
+3. `agents/builder/page.tsx` HTTP step panel: add `App Param Key` dropdown (from node's `AppParams` declarations) + `Inject Mode` select + conditional `Header Name` field
+
+### Step 3 — E2E canvas agent run (after frontend done)
 
 Streaming and multi-artifact are confirmed working. Next unverified path:
 1. Publish a canvas agent (Input→LLM→Response) — BuildValidator should show green
-2. Bind to an app with a valid API key in Runtime tab
+2. Bind to an app with a valid API key in Runtime tab; set any required agent params
 3. Add the canvas agent as a tool in an app EP, publish
 4. Run through playground — verify `run_steps` shows agent-runtime step
-5. Confirm credentials flow: binding → `InvocationContext.Credentials` → agent-runtime → Anthropic
+5. Confirm credentials + agent params flow: binding → `InvocationContext` → agent-runtime → Anthropic
 
-### Step 2 — Auth admin CRUD Go proxy (after canvas run verified)
+### Step 4 — Auth admin CRUD Go proxy (lower priority)
 - `them-auth-service` (Python, port 8701) still serves user/role/team management
 - Frontend hits it directly via its own Traefik routes
 - When ready: implement Go proxy at `go/internal/authadmin/` + Traefik redirect
 
-### Step 3 — Wave 9 tenant items
+### Step 5 — Wave 9 tenant items
 - Session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims
-- Not started — begin only after Step 1 and 2 are complete
+- Not started — begin only after Steps 1–3 are complete
 
 Do NOT begin multiple subsystems in the same session.
 

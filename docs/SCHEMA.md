@@ -384,6 +384,7 @@ Per-application binding of a canvas agent with encrypted credentials. Migration:
 | agent_id | UUID NOT NULL FK→agents | Canvas agent |
 | definition_id | UUID FK→agent_definitions | Pinned definition revision (nullable during drafting) |
 | credential_bindings | JSONB NOT NULL | AES-256-GCM ciphertext per credential slot — NEVER plaintext |
+| agent_params | JSONB NOT NULL DEFAULT '{}' | App-level runtime params. Secrets: `{key: {ct: "enc:...", hint: "XXXX"}}` (Fernet). Non-secrets: `{key: "value"}`. Never returned as plaintext. Migration: `db/038_app_agent_params.sql`. |
 | config_overrides | JSONB NOT NULL | Per-app configuration overrides |
 | policies | JSONB NOT NULL | Invocation policy overrides |
 | created_at | TIMESTAMPTZ | |
