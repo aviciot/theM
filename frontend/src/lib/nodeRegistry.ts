@@ -68,6 +68,10 @@ const amberBg      = 'rgba(245,158,11,0.05)';
 const amberBorder  = 'rgba(245,158,11,0.3)';
 const indigoBg     = 'rgba(99,102,241,0.1)';
 const indigoBorder = 'rgba(99,102,241,0.5)';
+const tealBg       = 'rgba(20,184,166,0.07)';
+const tealBorder   = 'rgba(20,184,166,0.5)';
+const orangeBg     = 'rgba(249,115,22,0.07)';
+const orangeBorder = 'rgba(249,115,22,0.5)';
 
 // ── UI supplement — only colours and summary logic ───────────────────────────
 
@@ -84,7 +88,7 @@ const UI_SUPPS: Record<string, NodeUISupp> = {
     summary: (cfg) => `→ ${(cfg.output_var as string) || 'output'}`,
   },
   http: {
-    bg: amberBg, border: amberBorder,
+    bg: tealBg, border: tealBorder,
     summary: (cfg) => {
       const url = cfg.url_template as string | undefined;
       return url ? url.replace(/^https?:\/\//, '').slice(0, 22) : 'url not set';
@@ -97,13 +101,14 @@ const UI_SUPPS: Record<string, NodeUISupp> = {
       return keys.length ? `→ ${keys.join(', ')}` : '→ vars';
     },
   },
-  response:   { bg: cyanBg,   border: cyanBorder,   summary: (cfg) => `from ${(cfg.from_var as string) || 'output'}` },
-  branch:     { bg: amberBg,  border: amberBorder,  summary: () => '' },
-  loop:       { bg: amberBg,  border: amberBorder,  summary: () => '' },
-  parallel:   { bg: purpleBg, border: purpleBorder, summary: () => '' },
-  a2a_call:   { bg: cyanBg,   border: cyanBorder,   summary: () => '' },
-  human_wait: { bg: greenBg,  border: greenBorder,  summary: () => '' },
-  stream_out: { bg: cyanBg,   border: cyanBorder,   summary: () => '' },
+  response:   { bg: cyanBg,    border: cyanBorder,    summary: (cfg) => `from ${(cfg.from_var as string) || 'output'}` },
+  condition:  { bg: orangeBg,  border: orangeBorder,  summary: (cfg) => (cfg.expression as string) ? `if ${(cfg.expression as string).slice(0, 18)}` : 'set expression' },
+  branch:     { bg: orangeBg,  border: orangeBorder,  summary: (cfg) => (cfg.expression as string) ? `if ${(cfg.expression as string).slice(0, 18)}` : 'set expression' },
+  loop:       { bg: amberBg,   border: amberBorder,   summary: () => '' },
+  parallel:   { bg: purpleBg,  border: purpleBorder,  summary: () => '' },
+  a2a_call:   { bg: cyanBg,    border: cyanBorder,    summary: () => '' },
+  human_wait: { bg: greenBg,   border: greenBorder,   summary: () => '' },
+  stream_out: { bg: cyanBg,    border: cyanBorder,    summary: () => '' },
 };
 
 const FALLBACK_SUPP: NodeUISupp = {

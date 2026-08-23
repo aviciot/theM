@@ -126,22 +126,48 @@ func init() {
 		},
 	})
 
-	// ── Stub types (Execute: nil — not yet implemented) ──────────────────────
+	// ── Implemented branching types ──────────────────────────────────────────
+
+	RegisterNode(NodeDef{
+		Type:        StepCondition,
+		Version:     1,
+		Label:       "Condition",
+		Description: "Evaluate a boolean expression. Routes to Pass or Fail output based on the result.",
+		Emoji:       "🔍",
+		OutputArity: "multi",
+		IsSource:    false,
+		IsSink:      false,
+		SingleInput: true,
+		// Routing is config-driven (PassNext/FailNext in ConditionStepConfig), not edge-driven.
+		// MinOut/MaxOut are 0 so the compiler does not enforce step.Next edge counts.
+		Edges: EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 0, MaxOut: 0},
+		Validate: nil,
+		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
+			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
+			return interp.execCondition(step, vars)
+		},
+	})
 
 	RegisterNode(NodeDef{
 		Type:        StepBranch,
 		Version:     1,
 		Label:       "Branch",
-		Description: "Conditional routing. Evaluates expressions and directs flow to one of multiple output paths. (stub)",
+		Description: "Route to one of two paths based on a Go template expression that evaluates to true or false.",
 		Emoji:       "🔀",
 		OutputArity: "multi",
 		IsSource:    false,
 		IsSink:      false,
-		SingleInput: false,
-		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 2, MaxOut: 0},
-		Validate:    nil,
-		Execute:     nil,
+		SingleInput: true,
+		// Routing is config-driven (TrueNext/FalseNext in BranchStepConfig), not edge-driven.
+		Edges: EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 0, MaxOut: 0},
+		Validate: nil,
+		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
+			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
+			return interp.execBranch(step, vars)
+		},
 	})
+
+	// ── Stub types (Execute: nil — not yet implemented) ──────────────────────
 
 	RegisterNode(NodeDef{
 		Type:        StepLoop,

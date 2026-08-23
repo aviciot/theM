@@ -388,6 +388,7 @@ const STEP_TYPES: { type: AgentStepDoc['type']; label: string }[] = [
   { type: 'http',       label: 'HTTP Tool' },
   { type: 'transform',  label: 'Transform' },
   { type: 'response',   label: 'Response' },
+  { type: 'condition',  label: 'Condition' },
   { type: 'branch',     label: 'Branch' },
   { type: 'loop',       label: 'Loop' },
   { type: 'parallel',   label: 'Parallel' },
@@ -1675,8 +1676,8 @@ function CanvasInner() {
                 {/* Step type cards — grouped */}
                 {[
                   { label: 'Data Flow',  items: ['input', 'response'] },
-                  { label: 'Processing', items: ['llm', 'transform', 'http'] },
-                  { label: 'Advanced',   items: ['branch', 'loop', 'parallel', 'a2a_call', 'human_wait', 'stream_out'] },
+                  { label: 'Processing', items: ['llm', 'transform', 'http', 'condition', 'branch'] },
+                  { label: 'Advanced',   items: ['loop', 'parallel', 'a2a_call', 'human_wait', 'stream_out'] },
                 ].map(group => (
                   <div key={group.label}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', margin: '8px 0 4px' }}>{group.label}</div>
@@ -2429,8 +2430,94 @@ function CanvasInner() {
                     </>
                   )}
 
+                  {/* ── Config: condition ── */}
+                  {d.step_type === 'condition' && (
+                    <>
+                      <div style={{ color: '#f97316', fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>CONDITION CONFIG</div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>
+                        Go template expression. Routes to <strong style={{ color: '#4ade80' }}>Pass</strong> when the result is non-empty, non-zero, and not &quot;false&quot;. Routes to <strong style={{ color: '#f87171' }}>Fail</strong> otherwise.
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>Expression <span style={hint}>Go template</span></label>
+                        <input
+                          value={cfgStr('expression')}
+                          onChange={e => updateStepConfig('expression', e.target.value)}
+                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
+                          placeholder={'{{.definition}}'}
+                        />
+                        <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
+                          Examples: <code style={{ color: '#94a3b8' }}>{'{{.status}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{eq .code 200}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{ne .result ""}}'}</code>
+                        </div>
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>Pass → Step ID <span style={hint}>step to run when condition passes</span></label>
+                        <input
+                          value={cfgStr('pass_next')}
+                          onChange={e => updateStepConfig('pass_next', e.target.value)}
+                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
+                          placeholder="step-id-on-pass"
+                        />
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>Fail → Step ID <span style={hint}>step to run when condition fails</span></label>
+                        <input
+                          value={cfgStr('fail_next')}
+                          onChange={e => updateStepConfig('fail_next', e.target.value)}
+                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
+                          placeholder="step-id-on-fail"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {/* ── Config: branch ── */}
+                  {d.step_type === 'branch' && (
+                    <>
+                      <div style={{ color: '#f97316', fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>BRANCH CONFIG</div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>
+                        Go template expression. Routes to <strong style={{ color: '#4ade80' }}>True</strong> path when the result is truthy, <strong style={{ color: '#f87171' }}>False</strong> path otherwise.
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>Expression <span style={hint}>Go template</span></label>
+                        <input
+                          value={cfgStr('expression')}
+                          onChange={e => updateStepConfig('expression', e.target.value)}
+                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
+                          placeholder={'{{eq .status "ok"}}'}
+                        />
+                        <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
+                          Examples: <code style={{ color: '#94a3b8' }}>{'{{eq .x "yes"}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{gt .count 0}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{.flag}}'}</code>
+                        </div>
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>True → Step ID</label>
+                        <input
+                          value={cfgStr('true_next')}
+                          onChange={e => updateStepConfig('true_next', e.target.value)}
+                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
+                          placeholder="step-id-when-true"
+                        />
+                      </div>
+
+                      <div style={fieldGap}>
+                        <label style={labelStyle}>False → Step ID</label>
+                        <input
+                          value={cfgStr('false_next')}
+                          onChange={e => updateStepConfig('false_next', e.target.value)}
+                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
+                          placeholder="step-id-when-false"
+                        />
+                      </div>
+                    </>
+                  )}
+
                   {/* ── Not yet implemented steps ── */}
-                  {!['input', 'llm', 'http', 'transform', 'response'].includes(d.step_type) && (
+                  {!['input', 'llm', 'http', 'transform', 'response', 'condition', 'branch'].includes(d.step_type) && (
                     <div style={{ color: '#64748b', fontSize: '12px', padding: '12px', border: `1px dashed ${C.outline}`, borderRadius: '6px', textAlign: 'center' }}>
                       Config for <strong style={{ color: C.text }}>{d.step_type}</strong> is not yet supported in the builder.
                     </div>

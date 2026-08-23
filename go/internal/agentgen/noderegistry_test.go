@@ -15,6 +15,7 @@ var allStepTypes = []agentgen.StepType{
 	agentgen.StepTransform,
 	agentgen.StepResponse,
 	agentgen.StepBranch,
+	agentgen.StepCondition,
 	agentgen.StepLoop,
 	agentgen.StepParallel,
 	agentgen.StepA2ACall,
@@ -33,11 +34,11 @@ func TestNodeRegistry_AllTypesRegistered(t *testing.T) {
 	}
 }
 
-// TestNodeRegistry_KnownStepTypesCount verifies KnownStepTypes returns all 11 types.
+// TestNodeRegistry_KnownStepTypesCount verifies KnownStepTypes returns all 12 types.
 func TestNodeRegistry_KnownStepTypesCount(t *testing.T) {
 	known := agentgen.KnownStepTypes()
-	if len(known) != 11 {
-		t.Errorf("expected 11 registered node types, got %d: %v", len(known), known)
+	if len(known) != 12 {
+		t.Errorf("expected 12 registered node types, got %d: %v", len(known), known)
 	}
 }
 
@@ -83,8 +84,8 @@ func TestNodeRegistry_ToInfo(t *testing.T) {
 
 	branchDef, _ := agentgen.LookupNode(agentgen.StepBranch)
 	branchInfo := branchDef.ToInfo()
-	if branchInfo.Executable {
-		t.Error("ToInfo: branch node must have Executable=false (Execute is nil)")
+	if !branchInfo.Executable {
+		t.Error("ToInfo: branch node must have Executable=true (Execute is implemented)")
 	}
 }
 
@@ -123,7 +124,7 @@ func TestNodeRegistry_ResponseProperties(t *testing.T) {
 	}
 }
 
-// TestNodeRegistry_BranchOutputArity verifies branch is multi-output.
+// TestNodeRegistry_BranchOutputArity verifies branch is multi-output and implemented.
 func TestNodeRegistry_BranchOutputArity(t *testing.T) {
 	def, ok := agentgen.LookupNode(agentgen.StepBranch)
 	if !ok {
@@ -132,8 +133,22 @@ func TestNodeRegistry_BranchOutputArity(t *testing.T) {
 	if def.OutputArity != "multi" {
 		t.Errorf("branch OutputArity: want %q, got %q", "multi", def.OutputArity)
 	}
-	if def.Execute != nil {
-		t.Error("branch Execute must be nil (stub — not yet implemented)")
+	if def.Execute == nil {
+		t.Error("branch Execute must be non-nil (implemented)")
+	}
+}
+
+// TestNodeRegistry_ConditionOutputArity verifies condition is multi-output and implemented.
+func TestNodeRegistry_ConditionOutputArity(t *testing.T) {
+	def, ok := agentgen.LookupNode(agentgen.StepCondition)
+	if !ok {
+		t.Fatal("StepCondition not registered")
+	}
+	if def.OutputArity != "multi" {
+		t.Errorf("condition OutputArity: want %q, got %q", "multi", def.OutputArity)
+	}
+	if def.Execute == nil {
+		t.Error("condition Execute must be non-nil (implemented)")
 	}
 }
 
@@ -176,8 +191,8 @@ func TestNodeRegistry_CompilerRejectsUnknownStepType(t *testing.T) {
 	}
 }
 
-// TestNodeRegistry_ImplementedTypesHaveNonNilExecute verifies that the five
-// implemented node types all have an Execute function set.
+// TestNodeRegistry_ImplementedTypesHaveNonNilExecute verifies that all
+// implemented node types have an Execute function set.
 func TestNodeRegistry_ImplementedTypesHaveNonNilExecute(t *testing.T) {
 	implemented := []agentgen.StepType{
 		agentgen.StepInput,
@@ -185,6 +200,8 @@ func TestNodeRegistry_ImplementedTypesHaveNonNilExecute(t *testing.T) {
 		agentgen.StepHTTP,
 		agentgen.StepTransform,
 		agentgen.StepResponse,
+		agentgen.StepBranch,
+		agentgen.StepCondition,
 	}
 	for _, st := range implemented {
 		def, ok := agentgen.LookupNode(st)
@@ -202,7 +219,6 @@ func TestNodeRegistry_ImplementedTypesHaveNonNilExecute(t *testing.T) {
 // Execute=nil, signalling they are not yet implemented.
 func TestNodeRegistry_StubTypesHaveNilExecute(t *testing.T) {
 	stubs := []agentgen.StepType{
-		agentgen.StepBranch,
 		agentgen.StepLoop,
 		agentgen.StepParallel,
 		agentgen.StepA2ACall,

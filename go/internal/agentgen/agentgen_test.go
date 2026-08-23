@@ -700,6 +700,156 @@ func TestInterpreter_HTTPStep_NoInject_WhenParamEmpty(t *testing.T) {
 	}
 }
 
+// ── Condition step tests ──────────────────────────────────────────────────────
+
+// buildConditionSkill builds: Input → Transform(sets pass_msg+fail_msg) → Condition → Response(pass) / Response(fail)
+// The condition checks whether the "value" variable is truthy.
+func buildConditionSkill(conditionExpr string) *agentgen.SkillSpec {
+	return &agentgen.SkillSpec{
+		ID: "skill-cond",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:   "in",
+				Type: agentgen.StepInput,
+				Config: mustJSON(agentgen.InputStepConfig{
+					Bindings: map[string]string{"text": "value"},
+				}),
+				Next: []string{"setup"},
+			},
+			{
+				ID:   "setup",
+				Type: agentgen.StepTransform,
+				Config: mustJSON(agentgen.TransformStepConfig{
+					Expressions: map[string]string{
+						"pass_msg": "pass result",
+						"fail_msg": "fail result",
+					},
+				}),
+				Next: []string{"cond"},
+			},
+			{
+				ID:   "cond",
+				Type: agentgen.StepCondition,
+				Config: mustJSON(agentgen.ConditionStepConfig{
+					Expression: conditionExpr,
+					PassNext:   "resp-pass",
+					FailNext:   "resp-fail",
+				}),
+				// Next is intentionally empty; routing is config-driven.
+			},
+			{
+				ID:     "resp-pass",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "pass_msg"}),
+			},
+			{
+				ID:     "resp-fail",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "fail_msg"}),
+			},
+		},
+	}
+}
+
+func TestInterpreter_ConditionStep_PassPath(t *testing.T) {
+	interp := agentgen.NewInterpreter(nil, nil, "")
+	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "ag1"}
+
+	// "{{.value}}" is truthy when value is non-empty.
+	skill := buildConditionSkill("{{.value}}")
+	result, err := interp.Execute(context.Background(), ic, skill, "hello")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if result.Text != "pass result" {
+		t.Errorf("expected 'pass result', got %q", result.Text)
+	}
+}
+
+func TestInterpreter_ConditionStep_FailPath(t *testing.T) {
+	interp := agentgen.NewInterpreter(nil, nil, "")
+	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "ag1"}
+
+	// Empty input → "{{.value}}" renders to "" → falsy → fail path.
+	skill := buildConditionSkill("{{.value}}")
+	result, err := interp.Execute(context.Background(), ic, skill, "")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if result.Text != "fail result" {
+		t.Errorf("expected 'fail result', got %q", result.Text)
+	}
+}
+
+// ── Branch step tests ─────────────────────────────────────────────────────────
+
+// buildBranchSkill builds: Input → Branch(expression) → Response(true_msg) / Response(false_msg)
+func buildBranchSkill(expression string) *agentgen.SkillSpec {
+	return &agentgen.SkillSpec{
+		ID: "skill-branch",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:   "in",
+				Type: agentgen.StepInput,
+				Config: mustJSON(agentgen.InputStepConfig{
+					Bindings: map[string]string{"text": "x"},
+				}),
+				Next: []string{"branch"},
+			},
+			{
+				ID:   "branch",
+				Type: agentgen.StepBranch,
+				Config: mustJSON(agentgen.BranchStepConfig{
+					Expression: expression,
+					TrueNext:   "resp-true",
+					FalseNext:  "resp-false",
+				}),
+				// Next is intentionally empty; routing is config-driven.
+			},
+			{
+				ID:     "resp-true",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "x"}),
+			},
+			{
+				ID:   "resp-false",
+				Type: agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "x"}),
+			},
+		},
+	}
+}
+
+func TestInterpreter_BranchStep_TruePath(t *testing.T) {
+	interp := agentgen.NewInterpreter(nil, nil, "")
+	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "ag1"}
+
+	// {{eq .x "yes"}} → renders "true" when x=yes → true path → resp-true returns x="yes"
+	skill := buildBranchSkill(`{{eq .x "yes"}}`)
+	result, err := interp.Execute(context.Background(), ic, skill, "yes")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if result.Text != "yes" {
+		t.Errorf("expected 'yes' from true path, got %q", result.Text)
+	}
+}
+
+func TestInterpreter_BranchStep_FalsePath(t *testing.T) {
+	interp := agentgen.NewInterpreter(nil, nil, "")
+	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "ag1"}
+
+	// {{eq .x "yes"}} → renders "false" when x=no → false path → resp-false returns x="no"
+	skill := buildBranchSkill(`{{eq .x "yes"}}`)
+	result, err := interp.Execute(context.Background(), ic, skill, "no")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if result.Text != "no" {
+		t.Errorf("expected 'no' from false path, got %q", result.Text)
+	}
+}
+
 func mustJSON(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil {

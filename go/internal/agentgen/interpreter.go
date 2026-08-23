@@ -32,9 +32,10 @@ type PipelineVars map[string]any
 
 // Interpreter executes a SkillSpec pipeline against an InvocationContext.
 type Interpreter struct {
-	httpClient     HTTPDoer
-	llmFactory     LLMFactory
-	platformAPIKey string // fallback LLM key when no app key is set
+	httpClient       HTTPDoer
+	llmFactory       LLMFactory
+	platformAPIKey   string // fallback LLM key when no app key is set
+	nextStepOverride string // set by condition/branch steps; read and cleared by the Execute loop
 }
 
 // NewInterpreter creates an Interpreter.
@@ -96,11 +97,16 @@ func (interp *Interpreter) Execute(ctx context.Context, ic *InvocationContext, s
 			return nil, fmt.Errorf("step %q not found in skill %q", currentID, skill.ID)
 		}
 
+		interp.nextStepOverride = ""
 		if err := interp.executeStep(ctx, ic, step, vars, result); err != nil {
 			return nil, fmt.Errorf("step %q (%s): %w", step.ID, step.Type, err)
 		}
+		override := interp.nextStepOverride
+		interp.nextStepOverride = ""
 
-		if len(step.Next) > 0 {
+		if override != "" {
+			currentID = override
+		} else if len(step.Next) > 0 {
 			currentID = step.Next[0]
 		} else {
 			break
@@ -306,6 +312,47 @@ func (interp *Interpreter) execTransform(step *StepSpec, vars PipelineVars) erro
 			return fmt.Errorf("transform expression for %q: %w", outputVar, err)
 		}
 		vars[outputVar] = val
+	}
+	return nil
+}
+
+// isTruthy returns true when s represents a non-empty, non-false value.
+// The same semantics are used by both condition and branch steps.
+func isTruthy(s string) bool {
+	s = strings.TrimSpace(s)
+	return s != "" && s != "false" && s != "0" && s != "<no value>"
+}
+
+func (interp *Interpreter) execCondition(step *StepSpec, vars PipelineVars) error {
+	var cfg ConditionStepConfig
+	if err := json.Unmarshal(step.Config, &cfg); err != nil {
+		return fmt.Errorf("parse condition config: %w", err)
+	}
+	rendered, err := renderTemplate(cfg.Expression, vars)
+	if err != nil {
+		return fmt.Errorf("render condition expression: %w", err)
+	}
+	if isTruthy(rendered) {
+		interp.nextStepOverride = cfg.PassNext
+	} else {
+		interp.nextStepOverride = cfg.FailNext
+	}
+	return nil
+}
+
+func (interp *Interpreter) execBranch(step *StepSpec, vars PipelineVars) error {
+	var cfg BranchStepConfig
+	if err := json.Unmarshal(step.Config, &cfg); err != nil {
+		return fmt.Errorf("parse branch config: %w", err)
+	}
+	rendered, err := renderTemplate(cfg.Expression, vars)
+	if err != nil {
+		return fmt.Errorf("render branch expression: %w", err)
+	}
+	if isTruthy(rendered) {
+		interp.nextStepOverride = cfg.TrueNext
+	} else {
+		interp.nextStepOverride = cfg.FalseNext
 	}
 	return nil
 }

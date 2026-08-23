@@ -283,7 +283,7 @@ const stubGraph = `{
 	"agent_root": {"display_name": "X"},
 	"skills": [{
 		"skill_id": "s1",
-		"steps": [{"id": "step1", "type": "branch"}]
+		"steps": [{"id": "step1", "type": "loop"}]
 	}]
 }`
 

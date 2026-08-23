@@ -1279,7 +1279,8 @@ cancellation does not block or panic. Uses MockProvider, no real LLM calls.
 **Purpose:** A2A Agent Runtime — proves security invariants (credential redaction, per-binding
 isolation, tenant ownership), core interpreter step execution (input binding, template transform,
 HTTP app-param injection in all 4 inject modes, data part variable injection), two-tier LLM key
-resolution (platform → per-app), and LLM model override via AgentParams. No external services required.
+resolution (platform → per-app), LLM model override via AgentParams, and config-driven routing
+via Condition and Branch step types. No external services required.
 
 | Test | What it proves |
 |---|---|
@@ -1303,6 +1304,10 @@ resolution (platform → per-app), and LLM model override via AgentParams. No ex
 | `TestInterpreter_LLMStep_TwoTier_PlatformKey` | No AppAPIKey → platform env key used |
 | `TestInterpreter_LLMStep_TwoTier_AppKeyOverridesPlatform` | `AppAPIKey["anthropic"]` set → overrides platform key |
 | `TestInterpreter_LLMStep_TwoTier_EmptyAppKeyFallsBack` | `AppAPIKey["anthropic"]=""` → falls back to platform key |
+| `TestInterpreter_ConditionStep_PassPath` | Condition step: truthy expression ("hello") → routes to PassNext |
+| `TestInterpreter_ConditionStep_FailPath` | Condition step: falsy expression ("") → routes to FailNext |
+| `TestInterpreter_BranchStep_TruePath` | Branch step: `{{eq .x "yes"}}` with x=yes renders "true" → TrueNext |
+| `TestInterpreter_BranchStep_FalsePath` | Branch step: `{{eq .x "yes"}}` with x=no renders "false" → FalseNext |
 
 **Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go) or `cmd/agent-runtime/main.go`
 
@@ -1371,7 +1376,7 @@ split (warning at validate / error at publish), and structured Issue fields (Ski
 | `TestCompile_CycleDetected` | A→B→A cycle → CYCLE_DETECTED |
 | `TestCompile_SpecHasNoCredentialSlots` | compiled spec has no CredentialSlots (removed) |
 | `TestCompile_TopologicalOrder` | linear chain compiled in execution order |
-| `TestValidate_StubNodeIsWarning` | Validate(): stub node (branch) → NODE_NOT_EXECUTABLE severity=warning |
+| `TestValidate_StubNodeIsWarning` | Validate(): stub node (loop) → NODE_NOT_EXECUTABLE severity=warning |
 | `TestValidate_StubNodeDoesNotBlockSpec` | Validate(): stub nodes present → spec still non-nil (canvas can render) |
 | `TestCompileForPublish_StubNodeIsError` | CompileForPublish(): stub node → NODE_NOT_EXECUTABLE severity=error |
 | `TestCompileForPublish_ImplementedOnlySucceeds` | CompileForPublish(): implemented-only graph → no errors, non-nil spec |
@@ -1410,25 +1415,26 @@ PublishAgentDefinition uses `agentgen.CompileForPublish()` (stubs→errors).
 
 ### S1-54 · Node Definition Registry — `internal/agentgen/noderegistry_test.go`
 
-**Purpose:** Validates the `NodeDef` registry is the single source of truth for all 11 canvas node
+**Purpose:** Validates the `NodeDef` registry is the single source of truth for all 12 canvas node
 types. Covers registration completeness, metadata correctness (IsSource/IsSink/OutputArity/Version),
 `ToInfo()` deriving `Executable` from `Execute != nil`, per-type `Validate` functions, and compiler
 integration via `LookupNode`.
 
 | Test | What it proves |
 |---|---|
-| `TestNodeRegistry_AllTypesRegistered` | all 11 StepType constants have a NodeDef in the registry |
-| `TestNodeRegistry_KnownStepTypesCount` | KnownStepTypes() returns exactly 11 |
+| `TestNodeRegistry_AllTypesRegistered` | all 12 StepType constants have a NodeDef in the registry |
+| `TestNodeRegistry_KnownStepTypesCount` | KnownStepTypes() returns exactly 12 |
 | `TestNodeRegistry_InputProperties` | input: IsSource=true, IsSink=false, OutputArity=single, Execute≠nil, Version≥1 |
-| `TestNodeRegistry_ToInfo` | ToInfo(): Executable=true for input (Execute≠nil), Executable=false for branch (Execute=nil) |
+| `TestNodeRegistry_ToInfo` | ToInfo(): Executable=true for input (Execute≠nil), Executable=true for branch (now implemented) |
 | `TestNodeRegistry_AllNodesHaveLabelAndVersion` | every registered node has non-empty Label and Version≥1 and valid OutputArity |
 | `TestNodeRegistry_ResponseProperties` | response: IsSource=false, IsSink=true, OutputArity=none, Execute≠nil |
-| `TestNodeRegistry_BranchOutputArity` | branch: OutputArity=multi, Execute=nil (stub) |
+| `TestNodeRegistry_BranchOutputArity` | branch: OutputArity=multi, Execute≠nil (implemented) |
+| `TestNodeRegistry_ConditionOutputArity` | condition: OutputArity=multi, Execute≠nil (implemented) |
 | `TestNodeRegistry_StreamOutIsSink` | stream_out: IsSink=true, OutputArity=none |
 | `TestNodeRegistry_UnknownTypeReturnsFalse` | LookupNode("banana") → ok=false |
 | `TestNodeRegistry_CompilerRejectsUnknownStepType` | compiler returns UNKNOWN_STEP_TYPE for unregistered type |
-| `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response all have Execute≠nil |
-| `TestNodeRegistry_StubTypesHaveNilExecute` | branch/loop/parallel/a2a_call/human_wait/stream_out all have Execute=nil |
+| `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response/branch/condition all have Execute≠nil |
+| `TestNodeRegistry_StubTypesHaveNilExecute` | loop/parallel/a2a_call/human_wait/stream_out all have Execute=nil |
 | `TestNodeRegistry_LLMValidate_UndeclaredSlot` | llm Validate(): undeclared provider_key_slot → UNDECLARED_SLOT |
 | `TestNodeRegistry_HTTPValidate_UndeclaredSlot` | http Validate(): undeclared credential_slot → UNDECLARED_SLOT |
 | `TestNodeRegistry_ParallelOutputArity` | parallel: OutputArity=multi |
@@ -1920,16 +1926,16 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-45 | admin registry handler (Phase D: ListComponentDefinitions) | 1 |
 | S1-46 | history (DB role mapping + round-trip) | 4 |
 | S1-47 | summarizer (LLM-based conversation summarizer) | 4 |
-| S1-48 | agentgen (Phase 1 A2A Agent Runtime: invariants + interpreter) | 10 |
+| S1-48 | agentgen (Phase 1 A2A Agent Runtime: invariants + interpreter) | 14 |
 | S1-49 | agent definitions (Phase 2 Canvas A2A Builder CRUD) | 21 |
 | S1-50 | agent definition compiler (BuildValidator: Issue type, Validate/CompileForPublish, severity split) | 20 |
 | S1-51 | agent definition publish service | 11 |
 | S1-52 | dashboard WebSocket handler | 11 |
 | S1-53 | agent-runtime spec cache + skill routing + policy enforcement | 12 |
-| S1-54 | node definition registry (all 11 types, metadata, Validate, ToInfo) | 16 |
+| S1-54 | node definition registry (all 12 types, metadata, Validate, ToInfo) | 17 |
 | S1-60 | admin/service provider key encryption | 9 |
 | S1-61 | temporal/workerconfig loader contracts | 2 |
-| **S1 total** | | **728** |
+| **S1 total** | | **733** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

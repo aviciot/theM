@@ -558,7 +558,7 @@ export interface AgentStepDoc {
   id: string;
   type:
     | 'input' | 'llm' | 'http' | 'transform' | 'response'
-    | 'branch' | 'loop' | 'parallel' | 'a2a_call' | 'human_wait' | 'stream_out';
+    | 'condition' | 'branch' | 'loop' | 'parallel' | 'a2a_call' | 'human_wait' | 'stream_out';
   config: Record<string, unknown>;
   next: string[];
   position?: { x: number; y: number };
