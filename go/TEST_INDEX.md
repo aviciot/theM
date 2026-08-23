@@ -1336,8 +1336,11 @@ draft-only constraints, and hash determinism.
 
 ### S1-50 · Agent definition compiler — `internal/agentgen/compiler_test.go`
 
-**Purpose:** Phase 3 Canvas A2A Builder — validates the compiler that transforms canvas JSONB into a
-topologically-ordered AgentSpec. Covers all rejection codes and the cycle-detection / topo-sort algorithm.
+**Purpose:** BuildValidator architecture — validates the compiler that transforms canvas JSONB into a
+topologically-ordered AgentSpec. Covers all rejection codes, cycle-detection / topo-sort, severity
+split (warning at validate / error at publish), and structured Issue fields (SkillID/NodeID/Field).
+
+`CompileError` is a type alias for `Issue` — tests use both names interchangeably.
 
 | Test | What it proves |
 |---|---|
@@ -1356,6 +1359,11 @@ topologically-ordered AgentSpec. Covers all rejection codes and the cycle-detect
 | `TestCompile_CycleDetected` | A→B→A cycle → CYCLE_DETECTED |
 | `TestCompile_ValidCredentialSlotRef` | http step refs declared slot → nil errors, slot in spec |
 | `TestCompile_TopologicalOrder` | linear chain compiled in execution order |
+| `TestValidate_StubNodeIsWarning` | Validate(): stub node (branch) → NODE_NOT_EXECUTABLE severity=warning |
+| `TestValidate_StubNodeDoesNotBlockSpec` | Validate(): stub nodes present → spec still non-nil (canvas can render) |
+| `TestCompileForPublish_StubNodeIsError` | CompileForPublish(): stub node → NODE_NOT_EXECUTABLE severity=error |
+| `TestCompileForPublish_ImplementedOnlySucceeds` | CompileForPublish(): implemented-only graph → no errors, non-nil spec |
+| `TestIssue_StructuredFields` | UNDECLARED_SLOT issue carries skill_id, node_id, field populated correctly |
 
 **Trigger:** any change to `internal/agentgen/compiler.go` or `internal/agentgen/spec.go`
 
@@ -1363,14 +1371,16 @@ topologically-ordered AgentSpec. Covers all rejection codes and the cycle-detect
 
 ### S1-51 · Agent definition publish service — `internal/admin/service/agent_definitions_publish_test.go`
 
-**Purpose:** Phase 3 Canvas A2A Builder — validate/publish service layer. Verifies DAL delegation,
-error mapping (NotFound, AgentCompileError), and AES-GCM encryption of credentials.
+**Purpose:** Canvas A2A Builder validate/publish service layer. Verifies DAL delegation,
+error mapping (NotFound, AgentCompileError), AES-GCM encryption of credentials, and the
+BuildValidator severity split: ValidateAgentDefinition uses `agentgen.Validate()` (stubs→warnings);
+PublishAgentDefinition uses `agentgen.CompileForPublish()` (stubs→errors).
 
 | Test | What it proves |
 |---|---|
 | `TestValidateAgentDefinition_NotFound` | missing definition → ErrNotFound |
 | `TestValidateAgentDefinition_CompileError` | bad definition → *AgentCompileError |
-| `TestValidateAgentDefinition_Valid` | good definition → AgentValidationReport{Valid: true} |
+| `TestValidateAgentDefinition_Valid` | good definition → AgentValidationReport{Valid: true, Issues: [...warnings]} |
 | `TestPublishAgentDefinition_NotFound` | missing definition → ErrNotFound |
 | `TestPublishAgentDefinition_CompileError` | bad definition → *AgentCompileError |
 | `TestPublishAgentDefinition_Success` | valid publish → AgentPublishResult with non-empty fields |
@@ -1381,6 +1391,36 @@ error mapping (NotFound, AgentCompileError), and AES-GCM encryption of credentia
 | `TestListBindings_Empty` | no bindings → [] not nil |
 
 **Trigger:** any change to `internal/admin/service/agent_definitions_publish.go`, `internal/admin/service/agent_definitions.go`, or `internal/admin/dal/agent_definitions_publish.go`
+
+---
+
+### S1-54 · Node Definition Registry — `internal/agentgen/noderegistry_test.go`
+
+**Purpose:** Validates the `NodeDef` registry is the single source of truth for all 11 canvas node
+types. Covers registration completeness, metadata correctness (IsSource/IsSink/OutputArity/Version),
+`ToInfo()` deriving `Executable` from `Execute != nil`, per-type `Validate` functions, and compiler
+integration via `LookupNode`.
+
+| Test | What it proves |
+|---|---|
+| `TestNodeRegistry_AllTypesRegistered` | all 11 StepType constants have a NodeDef in the registry |
+| `TestNodeRegistry_KnownStepTypesCount` | KnownStepTypes() returns exactly 11 |
+| `TestNodeRegistry_InputProperties` | input: IsSource=true, IsSink=false, OutputArity=single, Execute≠nil, Version≥1 |
+| `TestNodeRegistry_ToInfo` | ToInfo(): Executable=true for input (Execute≠nil), Executable=false for branch (Execute=nil) |
+| `TestNodeRegistry_AllNodesHaveLabelAndVersion` | every registered node has non-empty Label and Version≥1 and valid OutputArity |
+| `TestNodeRegistry_ResponseProperties` | response: IsSource=false, IsSink=true, OutputArity=none, Execute≠nil |
+| `TestNodeRegistry_BranchOutputArity` | branch: OutputArity=multi, Execute=nil (stub) |
+| `TestNodeRegistry_StreamOutIsSink` | stream_out: IsSink=true, OutputArity=none |
+| `TestNodeRegistry_UnknownTypeReturnsFalse` | LookupNode("banana") → ok=false |
+| `TestNodeRegistry_CompilerRejectsUnknownStepType` | compiler returns UNKNOWN_STEP_TYPE for unregistered type |
+| `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response all have Execute≠nil |
+| `TestNodeRegistry_StubTypesHaveNilExecute` | branch/loop/parallel/a2a_call/human_wait/stream_out all have Execute=nil |
+| `TestNodeRegistry_LLMValidate_UndeclaredSlot` | llm Validate(): undeclared provider_key_slot → UNDECLARED_SLOT |
+| `TestNodeRegistry_HTTPValidate_UndeclaredSlot` | http Validate(): undeclared credential_slot → UNDECLARED_SLOT |
+| `TestNodeRegistry_ParallelOutputArity` | parallel: OutputArity=multi |
+| `TestNodeRegistry_Helpers_Smoke` | compileFail/hasCode helpers work; minimal spec compiles cleanly |
+
+**Trigger:** any change to `internal/agentgen/noderegistry.go`, `internal/agentgen/nodes.go`, or `internal/agentgen/compiler.go`
 
 ---
 
@@ -1746,8 +1786,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/temporal/workerconfig/loader.go` | S1-61 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
-| `internal/agentgen/` (any file) | S1-48 + S1-50 |
-| `internal/agentgen/compiler.go` | S1-50 |
+| `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 |
+| `internal/agentgen/compiler.go` | S1-50 + S1-54 |
 | `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1 (full suite) |
 | `internal/admin/system_agents.go` | S1-15 + S1 (full suite) |
 | `internal/dashboard/handler.go` | S1-52 |
@@ -1771,7 +1811,9 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/dal/agent_definitions.go` | S1-49 |
 | `internal/admin/service/applications.go` | S1-25 + S1-33 + S1-60 |
 | `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 + S1-49 + S1-51 + S1-60 |
-| `internal/admin/service/agent_definitions_publish.go` | S1-51 |
+| `internal/admin/service/agent_definitions_publish.go` | S1-51 + S1-54 |
+| `internal/agentgen/noderegistry.go` | S1-54 + S1-50 |
+| `internal/agentgen/nodes.go` | S1-54 + S1-50 |
 | `internal/admin/service/definitions.go` | S1-42 + S1-43 + S1-44 |
 | `internal/admin/service/publish.go` | S1-43 + S1-44 |
 | `internal/admin/dal/publish.go` | S1-43 + S1-44 |
@@ -1866,13 +1908,14 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-47 | summarizer (LLM-based conversation summarizer) | 4 |
 | S1-48 | agentgen (Phase 1 A2A Agent Runtime: invariants + interpreter) | 10 |
 | S1-49 | agent definitions (Phase 2 Canvas A2A Builder CRUD) | 21 |
-| S1-50 | agent definition compiler | 14 |
+| S1-50 | agent definition compiler (BuildValidator: Issue type, Validate/CompileForPublish, severity split) | 20 |
 | S1-51 | agent definition publish service | 11 |
 | S1-52 | dashboard WebSocket handler | 11 |
 | S1-53 | agent-runtime spec cache + skill routing + policy enforcement | 12 |
+| S1-54 | node definition registry (all 11 types, metadata, Validate, ToInfo) | 16 |
 | S1-60 | admin/service provider key encryption | 9 |
 | S1-61 | temporal/workerconfig loader contracts | 2 |
-| **S1 total** | | **706** |
+| **S1 total** | | **728** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

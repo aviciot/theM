@@ -242,7 +242,7 @@ services:
       - "traefik.http.routers.them-a2a.rule=PathPrefix(`/a2a`)"
       - "traefik.http.routers.them-a2a.entrypoints=web"
       - "traefik.http.routers.them-a2a.priority=100"
-      - "traefik.http.routers.them-a2a.service=them-bridge-svc"
+      - "traefik.http.routers.them-a2a.service=them-go-bridge-svc"
       - "traefik.http.services.them-bridge-svc.loadbalancer.server.port=8001"
       - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.path=/health/live"
       - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.interval=10s"
@@ -1097,6 +1097,11 @@ services:
       - "traefik.http.routers.them-go-agent-bindings.entrypoints=web"
       - "traefik.http.routers.them-go-agent-bindings.priority=121"
       - "traefik.http.routers.them-go-agent-bindings.service=them-go-bridge-svc"
+      # ── A2A server: /a2a — Go A2A JSON-RPC handler (was pointing at dead Python bridge) ──
+      - "traefik.http.routers.them-go-a2a.rule=PathPrefix(`/a2a`)"
+      - "traefik.http.routers.them-go-a2a.entrypoints=web"
+      - "traefik.http.routers.them-go-a2a.priority=120"
+      - "traefik.http.routers.them-go-a2a.service=them-go-bridge-svc"
     restart: unless-stopped
     logging:
       driver: "json-file"
