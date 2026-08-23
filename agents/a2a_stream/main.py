@@ -1,11 +1,14 @@
 """
 a2a-stream — A2A v1.0 test agent.
-Streams a response word by word via TaskArtifactUpdateEvent chunks.
+Streams a response word by word via TaskArtifactUpdateEvent chunks,
+then emits a small binary file artifact to test the streaming file path.
 Advertises capabilities.streaming=True in its Agent Card.
 """
 
 import asyncio
+import io
 import os
+import zipfile
 import uvicorn
 from fastapi import FastAPI
 
@@ -27,6 +30,14 @@ STREAM_WORDS = "The quick brown fox jumps over the lazy dog. Streaming word by w
 WORD_DELAY_S = float(os.getenv("WORD_DELAY_S", "0.1"))
 
 
+def _make_dummy_zip() -> bytes:
+    """Build a minimal valid zip containing one text file."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("hello.txt", "Hello from a2a-stream!\nThis is a dummy zip artifact.\n")
+    return buf.getvalue()
+
+
 class StreamExecutor(AgentExecutor):
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         # SDK v1.1: must enqueue Task object first
@@ -42,7 +53,7 @@ class StreamExecutor(AgentExecutor):
         working_event.status.state = TaskState.TASK_STATE_WORKING
         await event_queue.enqueue_event(working_event)
 
-        # Stream words as artifact chunks
+        # Stream words as text artifact chunks
         for i, word in enumerate(STREAM_WORDS):
             is_last = (i == len(STREAM_WORDS) - 1)
             chunk_text = word + ("" if is_last else " ")
@@ -64,6 +75,25 @@ class StreamExecutor(AgentExecutor):
             if not is_last:
                 await asyncio.sleep(WORD_DELAY_S)
 
+        # Emit a binary file artifact (dummy zip) to exercise the file streaming path
+        await asyncio.sleep(0.1)
+        zip_bytes = _make_dummy_zip()
+        file_artifact = Artifact()
+        file_artifact.artifact_id = "stream-file"
+        file_artifact.name = "Stream Output"
+        file_part = file_artifact.parts.add()
+        file_part.raw = zip_bytes
+        file_part.filename = "stream_output.zip"
+        file_part.media_type = "application/zip"
+
+        file_event = TaskArtifactUpdateEvent()
+        file_event.task_id = context.task_id
+        file_event.context_id = context.context_id
+        file_event.artifact.CopyFrom(file_artifact)
+        file_event.append = False
+        file_event.last_chunk = True
+        await event_queue.enqueue_event(file_event)
+
         done_event = TaskStatusUpdateEvent()
         done_event.task_id = context.task_id
         done_event.context_id = context.context_id
@@ -81,18 +111,19 @@ class StreamExecutor(AgentExecutor):
 def make_agent_card() -> AgentCard:
     card = AgentCard()
     card.name = "a2a-stream"
-    card.description = "Streams a response word by word via A2A artifact chunks."
-    card.version = "1.0.0"
+    card.description = "Streams text word-by-word then emits a zip file artifact via A2A streaming."
+    card.version = "1.1.0"
     iface = card.supported_interfaces.add()
     iface.url = f"http://a2a-stream:{os.getenv('PORT', '9202')}"
     card.capabilities.streaming = True
     card.capabilities.push_notifications = False
     skill = card.skills.add()
     skill.id = "stream_words"
-    skill.name = "Stream Words"
-    skill.description = "Streams a response word by word."
+    skill.name = "Stream Words + File"
+    skill.description = "Streams text word by word, then emits a zip file artifact."
     skill.input_modes.append("text/plain")
     skill.output_modes.append("text/plain")
+    skill.output_modes.append("application/zip")
     return card
 
 
