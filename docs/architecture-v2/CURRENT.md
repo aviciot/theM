@@ -7,20 +7,20 @@
 ## HEAD
 
 Branch: `main`
-Commit: `dd8d546` — feat(a2a): multi-artifact + streaming agent support
+Commit: `4cb2dd9` — feat(a2a-stream): emit two file artifacts (HTML + zip) for multi-file streaming test
 
 Recent commits (newest first):
 ```
+4cb2dd9 feat(a2a-stream): emit two file artifacts (HTML + zip) for multi-file streaming test
+78be532 feat(agentgen): add Description to NodeDef + palette tooltips
+1f7e229 fix(agentgen): correct EdgeRules for Input + clean up is_source/is_sink convention
+a1ca8a3 fix(a2a-stream): fix SSE field names + role enum for streaming
+d09a93f feat(agentgen): data-driven edge rules (Option A)
+ccb9d40 feat(a2a-stream): add zip file artifact to streaming response for testing
+134dc48 fix(validation): detect disconnected nodes + reject cycle edges
+51e78c0 fix(admin): make /admin/node-types public — no auth required
 dd8d546 feat(a2a): multi-artifact + streaming agent support
-f11c2f5 feat(a2a): full multi-artifact support — A2A spec compliant
-671f371 fix(builder): force node re-render after registry fetch + fix controlled input
-9da0f2b fix(builder): re-render nodes after node-type registry fetch resolves
-8b00ab2 chore(traefik): remove stale Python bridge routing labels
-2fe7858 docs(a2a): multi-artifact analysis + streaming gap investigation
-5eb0e30 fix(canvas): validate live definition, fix emoji 404, fix debounce data flow
-7155933 docs(current): update CURRENT.md — BuildValidator UI complete, new next task
 a58287f feat(canvas): connect Canvas UI to BuildValidator — live validation, node/field highlighting
-6ff1981 fix(docu-writer): fix format routing and markdown fence stripping
 ```
 
 ---
@@ -152,37 +152,53 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ```
 go test ./...  — all packages, 0 failures (verified in Docker build dd8d546)
 S1-11 agentregistry: 17 tests (was 10; +4 multi-artifact, +2 streaming)
+Live e2e confirmed 2026-08-23:
+  - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
+  - run 5691b24a: streaming two files (HTML + zip) via a2a-stream ✅
 ```
 
 ---
 
-## A2A feature state
+## A2A feature state — COMPLETE AND LIVE VERIFIED (2026-08-23)
+
+| Scenario | Agent | Status |
+|---|---|---|
+| Sync single file | `docu-writer` (HTML/PDF/MD) | ✅ live |
+| Streaming single file | `a2a-stream` v1.1 | ✅ live (run 23aeb8bf) |
+| Streaming multi-file | `a2a-stream` v1.2 | ✅ live (run 5691b24a) |
 
 ### Playground + Artifacts tab
 - Artifacts tab renders all file types: `image/*` → `<img>`, `application/pdf` → iframe,
   `text/html` → srcDoc iframe, `text/markdown`/text → `<pre>`, unknown → download
-- `ArtifactPart.data` (base64) added to Go DAL + frontend API types
+- `ArtifactPart.data` (base64) in Go DAL + frontend API types for binary transport
 - Binary artifacts base64-encoded in `GetRunArtifacts` for transport to browser
 
 ### Multi-artifact (A2A spec compliant)
 - `extractA2AResult` loops ALL artifact objects and ALL parts within each
 - Single file → backward-compat `{"artifact":{}}` shape
 - Multiple files → `{"artifacts":[...]}` plural shape
-- Orchestrator fans out each artifact to `emitArtifactEvent` independently
+- Orchestrator fans out each artifact to `emitArtifactEvent` + `run_artifacts` independently
 - Strips both keys before LLM sees the result
 
 ### Streaming (SendStreamingMessage / SSE)
-- `AgentConfig.SupportsStreaming` DB column + pgx scan
-- `invokeA2AStreaming`: `bufio.Scanner` SSE reader, `onArtifact` callback per artifact
-- `InvokeForRunStreaming` on `Registry` — signature matches `orchestrator.AgentInvoker`
+- `AgentConfig.SupportsStreaming` set from agent card `capabilities.streaming` on discover
+- `invokeA2AStreaming`: `bufio.Scanner` SSE reader, `onArtifact` callback per `lastChunk:true` event
+- Wire format: `"role":"ROLE_USER"` (string, not int), camelCase JSON tags (`artifactUpdate`, `lastChunk`)
 - Non-streaming agents fall through to `InvokeForRun` transparently
-- Orchestrator uses callback for progressive artifact recording/emission
+- **All worker replicas must be rebuilt together** — Temporal load-balances across all workers on same task queue
 
 ### docu-writer agent
 - Model: `claude-haiku-4-5-20251001` (async) — ~15-25s vs ~84s with sync Sonnet
 - Formats: `html`, `markdown`, `pdf` (fpdf2)
 - PDF: Claude → Markdown → fpdf2 → `bytes(pdf.output())` → `part.raw` (NOT `part.data`)
+- `part.data` is `google.protobuf.Value` (JSON only) — cannot hold binary bytes
 - Markdown fence stripping applied before rendering
+
+### a2a-stream test agent (v1.2.0)
+- Streams ~16 text words word-by-word (0.1s apart)
+- Emits `stream_report.html` (`text/html`, text part with filename)
+- Emits `stream_output.zip` (`application/zip`, raw bytes via `part.raw`)
+- `capabilities.streaming: true` → `supports_streaming=true` set automatically on discover
 
 ---
 
@@ -223,44 +239,23 @@ S1-11 agentregistry: 17 tests (was 10; +4 multi-artifact, +2 streaming)
 
 ## Next recommended task
 
-### Step 1 — Test multi-artifact + streaming end-to-end (new, highest priority)
+### Step 1 — E2E canvas agent run (highest priority)
 
-The code is committed but the streaming path has not been exercised against a live agent yet.
-The docu-writer agent does NOT set `supports_streaming=true` — it is a sync A2A agent.
-To test streaming you need an agent with `supports_streaming=true` in the DB that actually uses SSE.
-
-**Testing checklist:**
-
-**A. Multi-artifact (docu-writer, no streaming):**
-1. Open playground → `doc-artifact-test` app
-2. Send: `"Generate both an HTML page and a PDF of a project summary"`
-3. Confirm Artifacts tab shows **two** entries — one `text/html`, one `application/pdf`
-4. Confirm both download correctly and render in their respective viewers
-5. Check run in admin → `/api/v1/runs/{id}/artifacts` returns 2 artifact objects
-
-**B. Streaming (requires a streaming-capable agent):**
-1. In DB: `UPDATE them.agents SET supports_streaming = true WHERE slug = '<your-a2a-agent>'`
-2. That agent must respond to `POST /` with `Content-Type: text/event-stream`
-3. Send a request through playground and observe artifacts arriving progressively
-4. Confirm `onArtifact` callback fires — check `them-go-bridge` logs for artifact events
-5. Verify each artifact is recorded in `them.artifacts` independently
-
-**B-alt: use the a2a-stream test agent (`--profile test-agents`):**
-```bash
-docker compose --project-name them_gateway \
-  -f docker-compose.yml -f docker-compose.dev.yml --profile test-agents up -d a2a-stream
-# Then register it in the agent store with supports_streaming=true
-# and point an EP at it
-```
-
-### Step 2 — E2E canvas agent run (after A2A testing)
-1. Publish a canvas agent (Input→LLM→Response) — validation UI should show green
-2. Bind to an app with a valid API key
-3. Include it as a tool in an app definition, publish
+Streaming and multi-artifact are confirmed working. Next unverified path:
+1. Publish a canvas agent (Input→LLM→Response) — BuildValidator should show green
+2. Bind to an app with a valid API key in Runtime tab
+3. Add the canvas agent as a tool in an app EP, publish
 4. Run through playground — verify `run_steps` shows agent-runtime step
+5. Confirm credentials flow: binding → `InvocationContext.Credentials` → agent-runtime → Anthropic
 
-### Step 3 — After canvas run verified
-- Auth admin CRUD (users/roles/teams) — Go implementation to retire Python `them-auth-service`
+### Step 2 — Auth admin CRUD Go proxy (after canvas run verified)
+- `them-auth-service` (Python, port 8701) still serves user/role/team management
+- Frontend hits it directly via its own Traefik routes
+- When ready: implement Go proxy at `go/internal/authadmin/` + Traefik redirect
+
+### Step 3 — Wave 9 tenant items
+- Session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims
+- Not started — begin only after Step 1 and 2 are complete
 
 Do NOT begin multiple subsystems in the same session.
 
@@ -268,13 +263,11 @@ Do NOT begin multiple subsystems in the same session.
 
 ## Known blockers
 
-1. **Multi-artifact streaming not live-tested** — code committed and unit-tested, but no real streaming agent hit yet. See testing checklist above.
+1. **E2E canvas agent run not verified** — all infrastructure exists (agent-runtime, InvokeForRun, A2A envelope, credential decryption) but no end-to-end run confirmed on live stack.
 
-2. **E2E canvas agent run not verified** — all infrastructure exists (agent-runtime, InvokeForRun, A2A envelope, credential decryption) but no end-to-end run confirmed on live stack.
+2. **Auth admin CRUD (users/roles/teams)** — `them-auth-service` (Python, port 8701) still serves user/role/team management. Frontend hits it directly. No Go proxy until we decide to retire the Python binary.
 
-3. **Auth admin CRUD (users/roles/teams)** — `them-auth-service` (Python, port 8701) still serves user/role/team management. Frontend hits it directly. No Go proxy until we decide to retire the Python binary.
-
-4. **Wave 9 tenant items** — session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims. Not started.
+3. **Wave 9 tenant items** — session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims. Not started.
 
 ---
 

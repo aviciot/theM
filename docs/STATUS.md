@@ -1,6 +1,6 @@
 # the-M — Current Status
 # Last updated: 2026-08-23
-# HEAD: dd8d546
+# HEAD: 4cb2dd9
 
 ---
 
@@ -66,15 +66,18 @@ All routes served by `them-go-bridge` (port 8002, behind Traefik on 8088):
 
 ## Current feature state
 
-### Multi-artifact (dd8d546)
+### Multi-artifact — CONFIRMED LIVE (2026-08-23)
 - A2A agents can return multiple files per response — `task.artifacts[]` is fully iterated
 - Single file → `{"artifact":{}}` (backward compat); multiple → `{"artifacts":[...]}`
 - Orchestrator records and emits each artifact independently
+- **Verified:** run `5691b24a` — 2 artifacts (HTML + zip) from `a2a-stream`
 
-### Streaming (dd8d546)
-- `AgentConfig.SupportsStreaming` DB column controls routing
-- `InvokeForRunStreaming` sends `SendStreamingMessage` → SSE, fires `onArtifact` per artifact
+### Streaming — CONFIRMED LIVE (2026-08-23)
+- `AgentConfig.SupportsStreaming` set from agent card `capabilities.streaming` on discover
+- `InvokeForRunStreaming` sends `SendStreamingMessage` → SSE, fires `onArtifact` per `lastChunk:true`
+- Wire format: `"role":"ROLE_USER"` (string), camelCase JSON tags (`artifactUpdate`, `lastChunk`)
 - Non-streaming agents fall through to `InvokeForRun` transparently
+- **Verified:** run `23aeb8bf` (single zip), run `5691b24a` (HTML + zip, two independent artifacts)
 
 ### Playground Artifacts tab
 - Renders: `image/*` → `<img>`, `application/pdf` → iframe, `text/html` → srcDoc iframe,
@@ -84,6 +87,10 @@ All routes served by `them-go-bridge` (port 8002, behind Traefik on 8088):
 - Haiku 4.5 (async), formats: html / markdown / pdf
 - PDF via fpdf2: `part.raw` (bytes), NOT `part.data` (protobuf JSON Value)
 
+### a2a-stream test agent (v1.2.0)
+- Words streamed word-by-word, then HTML file, then zip file — all via SSE artifacts
+- Start with: `docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile test-agents up -d a2a-stream`
+
 ### Canvas A2A Agent Builder
 - All phases complete: builder UI, compiler, publish pipeline, runtime wiring, BuildValidator
 - LLM keys per-app in `applications.provider_keys` (AES-GCM), no global fallback
@@ -92,11 +99,9 @@ All routes served by `them-go-bridge` (port 8002, behind Traefik on 8088):
 
 ## Known issues / blockers
 
-1. **Multi-artifact streaming not live-tested** — unit tests pass; no real streaming agent exercised yet. Need an agent with `supports_streaming=true` that responds with `text/event-stream`.
+1. **E2E canvas agent run not verified** — infrastructure complete but no confirmed end-to-end run through a canvas agent on the live stack.
 
-2. **E2E canvas agent run not verified** — infrastructure complete but no confirmed end-to-end run through a canvas agent on the live stack.
-
-3. **Auth admin CRUD** — `them-auth-service` (Python, 8701) still serves users/roles/teams for the frontend. No Go implementation yet.
+2. **Auth admin CRUD** — `them-auth-service` (Python, 8701) still serves users/roles/teams for the frontend. No Go implementation yet.
 
 ---
 

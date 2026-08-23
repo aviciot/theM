@@ -663,3 +663,22 @@ Added `label TEXT NOT NULL DEFAULT 'default'`, `enabled BOOLEAN NOT NULL DEFAULT
 **Fix:** Changed test 11 to use `user_id: 1` (admin). General principle: tests that hardcode user IDs must use IDs guaranteed to exist in a fresh seeded DB (1 = admin, 2 = avi).
 
 **Watch for:** Any test that hardcodes a `user_id` other than 1 or 2 — may fail on fresh installs.
+
+---
+
+## 2026-08-23 — Temporal load-balances across ALL worker replicas — rebuild all after code changes
+
+**Symptom:** After rebuilding `them-go-worker` and testing a streaming run, the run still failed. Checking Temporal UI showed the task was picked up by `them-go-worker-2` (started Aug 20, old binary).
+
+**Root cause:** Temporal load-balances randomly across all active workers registered on the same task queue. If you rebuild only one replica, the other replica(s) still run the old binary. Approximately 50% of runs will land on the stale worker.
+
+**Fix:** Always rebuild ALL workers in a single operation:
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml \
+  build them-go-worker them-go-worker-2
+docker rm -f them-go-worker them-go-worker-2
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml \
+  --profile temporal up -d them-go-worker them-go-worker-2
+```
+
+**Watch for:** Any code change to `go/` that affects worker behavior — always rebuild both worker replicas simultaneously. Verify container start timestamps with `docker ps` to confirm both are fresh.
