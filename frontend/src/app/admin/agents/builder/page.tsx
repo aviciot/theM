@@ -1401,6 +1401,17 @@ function CanvasInner() {
   }
 
   async function debugStartSetup() {
+    if (!activeSkillId) {
+      setDebug(prev => ({
+        ...prev,
+        active: true,
+        setupComplete: false,
+        paramSpecs: [],
+        debugParams: {},
+        error: 'Open a skill first — double-click a skill node on the canvas, then click Debug.',
+      }));
+      return;
+    }
     const specs = buildDebugParamSpecs(localPipeNodes);
     // Pre-fill non-secret values from server prefs; secrets from sessionStorage.
     const prefs = await loadDebugPrefs();
