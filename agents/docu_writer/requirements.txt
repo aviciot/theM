@@ -3,3 +3,4 @@ fastapi>=0.100.0
 uvicorn>=0.30.0
 sse-starlette>=1.6.1
 anthropic>=0.40.0
+fpdf2>=2.7.0
