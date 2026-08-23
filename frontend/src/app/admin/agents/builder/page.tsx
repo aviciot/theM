@@ -429,6 +429,10 @@ function CanvasInner() {
   // Debug mode
   const [debug, setDebug] = useState<DebugState>(INITIAL_DEBUG);
 
+  // Tracks whether the node-type registry has been fetched. Nodes render with
+  // fallback icons until this is true, so we re-render after the fetch resolves.
+  const [nodeTypesReady, setNodeTypesReady] = useState(false);
+
   // Validation state — populated by debounced backend call + immediate local checks
   const [validation, setValidation] = useState<ValidationState>(INITIAL_VALIDATION);
   const validationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -443,8 +447,12 @@ function CanvasInner() {
   const [localPipeEdges, setLocalPipeEdges, onPipeEdgesChange] = useEdgesState<Edge>(pipelineEdges);
 
   // Fetch node type definitions from the backend on mount (single source of truth).
+  // setNodeTypesReady(true) triggers a re-render so nodes pick up real emoji/labels
+  // instead of the fallback icons that render before the fetch completes.
   useEffect(() => {
-    fetchNodeTypes().then(setCachedNodeTypes).catch(() => {/* use fallback defs */});
+    fetchNodeTypes()
+      .then(defs => { setCachedNodeTypes(defs); setNodeTypesReady(true); })
+      .catch(() => { setNodeTypesReady(true); }); // fallback defs still usable
   }, []);
 
   // Debounced backend validation — fires 1200ms after canvas content changes.
