@@ -323,6 +323,124 @@ func TestInvokeForRun_NonCanvas_DelegatesToStandardRouting(t *testing.T) {
 	assert.NotEmpty(t, out)
 }
 
+// 12. Single file artifact — legacy {"artifact":{}} shape preserved.
+func TestExtractA2AResult_SingleArtifact_LegacyShape(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"task":{"status":{"state":"TASK_STATE_COMPLETED"},
+			"artifacts":[{"name":"doc.html","parts":[{"text":"<html/>","filename":"doc.html","mediaType":"text/html"}]}]}},"id":"1"}`)
+	}))
+	defer server.Close()
+
+	db := newFakeDB(tenantA, []*agentregistry.AgentConfig{
+		{Slug: "agent", AdapterType: "a2a", EndpointURL: server.URL},
+	})
+	reg := agentregistry.New(db, newFakeCache(), nil)
+	require.NoError(t, reg.LoadAll(context.Background(), tenantA))
+
+	out, err := reg.Invoke(context.Background(), tenantA, "agent", json.RawMessage(`{"input":"test"}`))
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(out, &result))
+	assert.NotNil(t, result["artifact"], "single artifact must use legacy 'artifact' key")
+	assert.Nil(t, result["artifacts"], "single artifact must not use plural 'artifacts' key")
+	art := result["artifact"].(map[string]any)
+	assert.Equal(t, "doc.html", art["filename"])
+}
+
+// 13. Two file parts in one artifact — plural {"artifacts":[]} shape.
+func TestExtractA2AResult_MultiArtifact_TwoParts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"task":{"status":{"state":"TASK_STATE_COMPLETED"},
+			"artifacts":[{"parts":[
+				{"text":"<html/>","filename":"report.html","mediaType":"text/html"},
+				{"text":"col1,col2","filename":"data.csv","mediaType":"text/csv"}
+			]}]}},"id":"1"}`)
+	}))
+	defer server.Close()
+
+	db := newFakeDB(tenantA, []*agentregistry.AgentConfig{
+		{Slug: "agent", AdapterType: "a2a", EndpointURL: server.URL},
+	})
+	reg := agentregistry.New(db, newFakeCache(), nil)
+	require.NoError(t, reg.LoadAll(context.Background(), tenantA))
+
+	out, err := reg.Invoke(context.Background(), tenantA, "agent", json.RawMessage(`{"input":"test"}`))
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(out, &result))
+	assert.Nil(t, result["artifact"], "multi-artifact must not use singular key")
+	arts, ok := result["artifacts"].([]any)
+	require.True(t, ok, "expected 'artifacts' slice")
+	assert.Len(t, arts, 2)
+	assert.Equal(t, "report.html", arts[0].(map[string]any)["filename"])
+	assert.Equal(t, "data.csv", arts[1].(map[string]any)["filename"])
+}
+
+// 14. Two separate Artifact objects — both collected.
+func TestExtractA2AResult_MultiArtifact_TwoArtifacts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"task":{"status":{"state":"TASK_STATE_COMPLETED"},
+			"artifacts":[
+				{"name":"report.pdf","parts":[{"raw":"JVBERi0=","filename":"report.pdf","mediaType":"application/pdf"}]},
+				{"name":"diagram.png","parts":[{"raw":"iVBORw0=","filename":"diagram.png","mediaType":"image/png"}]}
+			]}},"id":"1"}`)
+	}))
+	defer server.Close()
+
+	db := newFakeDB(tenantA, []*agentregistry.AgentConfig{
+		{Slug: "agent", AdapterType: "a2a", EndpointURL: server.URL},
+	})
+	reg := agentregistry.New(db, newFakeCache(), nil)
+	require.NoError(t, reg.LoadAll(context.Background(), tenantA))
+
+	out, err := reg.Invoke(context.Background(), tenantA, "agent", json.RawMessage(`{"input":"test"}`))
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(out, &result))
+	arts, ok := result["artifacts"].([]any)
+	require.True(t, ok)
+	assert.Len(t, arts, 2)
+	filenames := []string{
+		arts[0].(map[string]any)["filename"].(string),
+		arts[1].(map[string]any)["filename"].(string),
+	}
+	assert.ElementsMatch(t, []string{"report.pdf", "diagram.png"}, filenames)
+}
+
+// 15. Mixed parts — only file parts collected, text-only parts skipped.
+func TestExtractA2AResult_MixedParts_OnlyFilePartsCollected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"jsonrpc":"2.0","result":{"task":{"status":{"state":"TASK_STATE_COMPLETED"},
+			"artifacts":[{"parts":[
+				{"text":"some plain text"},
+				{"text":"<html/>","filename":"report.html","mediaType":"text/html"}
+			]}]}},"id":"1"}`)
+	}))
+	defer server.Close()
+
+	db := newFakeDB(tenantA, []*agentregistry.AgentConfig{
+		{Slug: "agent", AdapterType: "a2a", EndpointURL: server.URL},
+	})
+	reg := agentregistry.New(db, newFakeCache(), nil)
+	require.NoError(t, reg.LoadAll(context.Background(), tenantA))
+
+	out, err := reg.Invoke(context.Background(), tenantA, "agent", json.RawMessage(`{"input":"test"}`))
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(out, &result))
+	// Only the file part — single artifact → legacy shape.
+	assert.NotNil(t, result["artifact"])
+	assert.Nil(t, result["artifacts"])
+}
+
 // 11. Empty pub/sub payload is ignored (no global eviction).
 func TestPubSubEmptyPayload_Ignored(t *testing.T) {
 	// This test verifies that an empty payload on the invalidation channel does

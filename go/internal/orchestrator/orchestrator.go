@@ -33,11 +33,13 @@ var ErrBudgetExceeded = errors.New("orchestrator: token budget exceeded")
 // Formula: ceil(ArtifactMaxBytes / 3) * 4  == (1048576 + 2) / 3 * 4 == 1398104.
 const artifactMaxBase64Bytes = (runrecorder.ArtifactMaxBytes + 2) / 3 * 4
 
-// artifactPayload is the JSON structure agents use to return a file artifact
+// artifactPayload is the JSON structure agents use to return file artifacts
 // inside a tool result. The data_base64 field contains base64-encoded bytes.
 // SECURITY: data_base64 must never be forwarded to the event bus or logs.
+// Single-file agents use "artifact" (legacy); multi-file agents use "artifacts".
 type artifactPayload struct {
-	Artifact *artifactBody `json:"artifact,omitempty"`
+	Artifact  *artifactBody  `json:"artifact,omitempty"`  // single-file (legacy, backward-compat)
+	Artifacts []artifactBody `json:"artifacts,omitempty"` // multi-file (A2A compliant)
 }
 
 type artifactBody struct {
@@ -686,20 +688,30 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 					"error": err.Error(),
 				})
 			} else {
-				// Check if the tool result contains an artifact payload.
-				// If so, record it and emit a "file" event (non-fatal).
-				// Strip the artifact key before forwarding to the LLM — the
-				// base64 body must never appear in LLM context or event payloads.
+				// Check if the tool result contains artifact payload(s).
+				// Record each artifact and emit a "file" event (non-fatal).
+				// Strip artifact keys before forwarding to the LLM — base64
+				// must never appear in LLM context or event payloads.
 				var ap artifactPayload
 				if len(out) > 0 {
-					if jsonErr := json.Unmarshal(out, &ap); jsonErr == nil && ap.Artifact != nil {
-						o.emitArtifactEvent(ctx, contextID, runID, rctx, ap.Artifact)
-						// Replace out with artifact-stripped version for LLM tool_result.
-						var stripped map[string]any
-						if jsonErr2 := json.Unmarshal(out, &stripped); jsonErr2 == nil {
-							delete(stripped, "artifact")
-							if clean, jsonErr3 := json.Marshal(stripped); jsonErr3 == nil {
-								out = clean
+					if jsonErr := json.Unmarshal(out, &ap); jsonErr == nil {
+						// Normalise: singular "artifact" + plural "artifacts" → one slice.
+						bodies := ap.Artifacts
+						if ap.Artifact != nil {
+							bodies = append([]artifactBody{*ap.Artifact}, bodies...)
+						}
+						if len(bodies) > 0 {
+							for i := range bodies {
+								o.emitArtifactEvent(ctx, contextID, runID, rctx, &bodies[i])
+							}
+							// Replace out with artifact-stripped version for LLM tool_result.
+							var stripped map[string]any
+							if jsonErr2 := json.Unmarshal(out, &stripped); jsonErr2 == nil {
+								delete(stripped, "artifact")
+								delete(stripped, "artifacts")
+								if clean, jsonErr3 := json.Marshal(stripped); jsonErr3 == nil {
+									out = clean
+								}
 							}
 						}
 					}

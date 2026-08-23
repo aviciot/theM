@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -416,8 +417,10 @@ func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.R
 }
 
 // extractA2AResult extracts the tool output from an A2A response result.
-// Returns a file artifact payload when a named file part is present,
-// otherwise returns plain text wrapped as {"output": "..."}.
+// Collects ALL file parts across all artifacts and returns them in a
+// backward-compatible envelope: single file → {"artifact":{...}},
+// multiple files → {"artifacts":[...]}. Plain text is returned as
+// {"output":"..."} when no file parts are present.
 func extractA2AResult(result *a2aResult) (json.RawMessage, error) {
 	// Extract artifacts from task or message wrapper.
 	var artifacts []a2aArtifact
@@ -427,21 +430,18 @@ func extractA2AResult(result *a2aResult) (json.RawMessage, error) {
 		artifacts = result.Message.Artifacts
 	}
 
-	// Walk artifacts: if any part has a filename, return an artifact payload so
-	// the orchestrator can persist the file.  Otherwise return plain text output.
+	// Collect all file parts across all artifacts.
+	type fileBody = map[string]string
+	var bodies []fileBody
 	for _, artifact := range artifacts {
 		for _, part := range artifact.Parts {
 			if part.Filename == "" {
 				continue
 			}
-			var encoded string
-			var contentType string
+			var encoded, contentType string
 			if part.Raw != "" {
-				// Binary part (e.g. PDF) — part.raw serializes as base64 in protobuf-JSON.
-				encoded = part.Raw
-				contentType = part.MediaType
+				encoded, contentType = part.Raw, part.MediaType
 			} else if part.Text != "" {
-				// Text part (HTML, Markdown) — base64-encode the text.
 				encoded = base64.StdEncoding.EncodeToString([]byte(part.Text))
 				contentType = part.MediaType
 			} else {
@@ -454,16 +454,35 @@ func extractA2AResult(result *a2aResult) (json.RawMessage, error) {
 			if artifact.Name != "" {
 				name = artifact.Name
 			}
-			out, _ := json.Marshal(map[string]any{
-				"output": "File artifact: " + name,
-				"artifact": map[string]string{
-					"filename":     name,
-					"content_type": contentType,
-					"data_base64":  encoded,
-				},
+			bodies = append(bodies, fileBody{
+				"filename":     name,
+				"content_type": contentType,
+				"data_base64":  encoded,
 			})
-			return out, nil
 		}
+	}
+
+	switch len(bodies) {
+	case 0:
+		// fall through to plain-text extraction below
+	case 1:
+		// Single artifact — keep legacy {"artifact":{}} shape for backward compat.
+		out, _ := json.Marshal(map[string]any{
+			"output":   "File artifact: " + bodies[0]["filename"],
+			"artifact": bodies[0],
+		})
+		return out, nil
+	default:
+		// Multiple artifacts — plural envelope; orchestrator fans out recording.
+		names := make([]string, len(bodies))
+		for i, b := range bodies {
+			names[i] = b["filename"]
+		}
+		out, _ := json.Marshal(map[string]any{
+			"output":    fmt.Sprintf("%d file artifacts: %s", len(bodies), strings.Join(names, ", ")),
+			"artifacts": bodies,
+		})
+		return out, nil
 	}
 
 	// No file artifact — extract plain text from the first non-empty text part.

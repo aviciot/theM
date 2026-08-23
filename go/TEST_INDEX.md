@@ -445,6 +445,10 @@ Fully rewritten for SEC-03: Redis key is now `them:agents:registry:{tenant_id}`,
 | `TestPubSubEmptyPayload_Ignored` | SEC-03: empty pub/sub payload → no eviction (guards against accidental global eviction) |
 | `TestInvokeForRun_CanvasA2A_UsesBindingID` | `canvas_a2a` transport → `GetBindingID` called; `X-Them-Binding-Id` header forwarded to agent-runtime |
 | `TestInvokeForRun_NonCanvas_DelegatesToStandardRouting` | Non-canvas transport in `InvokeForRun` falls through to standard mock adapter dispatch |
+| `TestExtractA2AResult_SingleArtifact_LegacyShape` | Single file part → legacy `{"artifact":{}}` shape preserved (backward compat) |
+| `TestExtractA2AResult_MultiArtifact_TwoParts` | Two file parts in one artifact → `{"artifacts":[...]}` plural shape, both collected |
+| `TestExtractA2AResult_MultiArtifact_TwoArtifacts` | Two separate Artifact objects → both collected in plural shape |
+| `TestExtractA2AResult_MixedParts_OnlyFilePartsCollected` | Text-only parts skipped; only filename-bearing parts collected |
 
 **Trigger:** any change to `internal/agentregistry/registry.go` or `internal/agentregistry/pgx_querier.go`
 
