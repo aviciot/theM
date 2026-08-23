@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null); // eslint-disable-line @typescript-eslint/no-explicit-any
-import { getNodeDef, getCachedNodeTypes, isSingleInput as _isSingleInput, fetchNodeTypes, setCachedNodeTypes, outputArity, canAddIncoming, canAddOutgoing } from '@/lib/nodeRegistry';
+import { getNodeDef, fetchNodeTypes, setCachedNodeTypes, canAddIncoming, canAddOutgoing } from '@/lib/nodeRegistry';
 import {
   themApi,
   getPreferences,
@@ -12,7 +12,6 @@ import {
   type AgentDefinitionDoc,
   type AgentSkillDoc,
   type AgentStepDoc,
-  type AgentIssue,
 } from '@/lib/api';
 import {
   ReactFlow,
@@ -38,82 +37,13 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-
-// ── Design tokens ─────────────────────────────────────────────────────────────
-const C = {
-  bg: 'var(--tm-bg)',
-  surface: 'var(--tm-panel)',
-  cyan: '#00f0ff',
-  cyanBg: 'rgba(0,240,255,0.05)',
-  cyanBorder: 'rgba(0,240,255,0.4)',
-  purple: '#d0bcff',
-  purpleBg: 'rgba(87,27,193,0.1)',
-  purpleBorder: '#d0bcff',
-  green: '#4ade80',
-  greenBg: 'rgba(74,222,128,0.05)',
-  greenBorder: 'rgba(74,222,128,0.3)',
-  amber: '#f59e0b',
-  amberBg: 'rgba(245,158,11,0.05)',
-  amberBorder: 'rgba(245,158,11,0.3)',
-  indigo: '#6366f1',
-  indigoBg: 'rgba(99,102,241,0.1)',
-  indigoBorder: 'rgba(99,102,241,0.5)',
-  text: 'var(--tm-card-text)',
-  textMuted: 'var(--tm-card-text-muted)',
-  outline: 'var(--tm-canvas-border)',
-};
-
-// ── Node data types ────────────────────────────────────────────────────────────
-
-interface AgentRootData {
-  display_name: string;
-  description: string;
-  version: string;
-}
-
-interface SkillData {
-  skill_id: string;
-  name: string;
-  description: string;
-  tags: string[];
-  input_modes: string[];
-  output_modes: string[];
-  examples: string[];
-}
-
-interface StepData {
-  step_id: string;
-  step_type: string;
-  label: string;
-  config: Record<string, unknown>;
-}
-
-// ── Shared panel styles (match application canvas) ────────────────────────────
-const labelStyle: React.CSSProperties = {
-  fontSize: 11, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block', fontWeight: 700,
-};
-const inputStyle: React.CSSProperties = {
-  width: '100%', background: 'transparent',
-  border: '1px solid var(--tm-canvas-border)', color: '#fff',
-  padding: '6px', borderRadius: '4px', fontSize: '13px', boxSizing: 'border-box',
-};
-const textareaStyle: React.CSSProperties = {
-  ...inputStyle, resize: 'vertical' as const, fontFamily: 'inherit',
-};
-const selectStyle: React.CSSProperties = { ...inputStyle };
-const fieldGap: React.CSSProperties = { marginTop: '12px' };
-const hint: React.CSSProperties = { fontSize: 10, color: '#64748b', marginLeft: 4 };
-const ctxItemStyle: React.CSSProperties = {
-  display: 'block', width: '100%', textAlign: 'left',
-  background: 'transparent', border: 'none', color: '#e2e8f0',
-  padding: '7px 12px', borderRadius: '5px', cursor: 'pointer',
-  fontSize: '13px', transition: 'background 0.1s',
-};
-
-// ── Available LLM models (hardcoded, same as application canvas) ──────────────
-const LLM_MODELS: Record<string, string[]> = {
-  anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
-};
+import { C, inputStyle, INITIAL_DEBUG, INITIAL_VALIDATION, genUUID } from './constants';
+import type { AgentRootData, SkillData, StepData, DebugNodeState, DebugState, ValidationState, LogoState } from './types';
+import { StepNode, stepMeta } from './components/StepNode';
+import { DebugPanel } from './components/DebugPanel';
+import { NodeContextMenu } from './components/NodeContextMenu';
+import type { CtxTarget } from './components/NodeContextMenu';
+import { RightPanel } from './components/RightPanel';
 
 // ── Node components (must be outside the render component) ───────────────────
 
@@ -134,115 +64,6 @@ function SkillNode({ data }: { data: SkillData; id: string }) {
       <Handle type="source" position={Position.Bottom} style={{ background: C.purple }} />
       <div style={{ fontSize: '36px', lineHeight: 1 }}>⚡</div>
       <div style={{ color: '#fff', fontWeight: 700, fontSize: '12px', marginTop: '6px' }}>{data.name || 'Skill'}</div>
-    </div>
-  );
-}
-
-// STEP_META is now derived from NODE_REGISTRY — kept as a helper for the few
-// places that still look up { bg, border, emoji, label } by type string.
-function stepMeta(type: string): { bg: string; border: string; emoji: string; label: string } {
-  const def = getNodeDef(type);
-  return { bg: def.bg, border: def.border, emoji: def.emoji, label: def.label };
-}
-
-interface StepNodeData extends StepData {
-  _debug?: {
-    state: DebugNodeState;
-    output?: string;
-    error?: string;
-  };
-  _validation?: 'error' | 'warning' | null;
-  _stub?: boolean;
-}
-
-function StepNode({ data }: { data: StepNodeData; id: string }) {
-  const nodeDef = getNodeDef(data.step_type);
-  const meta = { bg: nodeDef.bg, border: nodeDef.border, emoji: nodeDef.emoji, label: nodeDef.label };
-  const cfg = data.config ?? {};
-  const dbg = data._debug;
-  const sub = nodeDef.summary(cfg);
-
-  const debugBorder: Record<DebugNodeState, string> = {
-    idle: 'transparent',
-    pending: '#f59e0b',
-    running: '#60a5fa',
-    done: '#4ade80',
-    error: '#f87171',
-  };
-  const debugGlow: Record<DebugNodeState, string> = {
-    idle: 'none',
-    pending: '0 0 8px 2px rgba(245,158,11,0.5)',
-    running: '0 0 8px 2px rgba(96,165,250,0.5)',
-    done: '0 0 8px 2px rgba(74,222,128,0.4)',
-    error: '0 0 8px 2px rgba(248,113,113,0.5)',
-  };
-  const state = dbg?.state ?? 'idle';
-
-  // Validation ring takes priority over debug ring when not actively debugging
-  let borderColor = state !== 'idle' ? debugBorder[state] : 'transparent';
-  let boxShadow   = state !== 'idle' ? debugGlow[state]   : 'none';
-  if (state === 'idle') {
-    if (data._validation === 'error') {
-      borderColor = '#f87171';
-      boxShadow   = '0 0 8px 2px rgba(248,113,113,0.45)';
-    } else if (data._validation === 'warning' || data._stub) {
-      borderColor = '#f59e0b';
-      boxShadow   = '0 0 6px 1px rgba(245,158,11,0.35)';
-    }
-  }
-
-  return (
-    <div style={{
-      background: 'transparent', padding: '8px', minWidth: '80px', textAlign: 'center',
-      border: `2px solid ${borderColor}`, borderRadius: '10px', boxShadow,
-      transition: 'border-color 0.2s, box-shadow 0.2s',
-    }}>
-      <Handle type="target" position={Position.Top} style={{ background: meta.border }} />
-      {data.step_type === 'branch' ? (
-        <>
-          {/* True path handle — left side of bottom */}
-          <Handle
-            id="source-true"
-            type="source"
-            position={Position.Bottom}
-            style={{ background: '#4ade80', left: '30%', bottom: -6, width: 10, height: 10 }}
-          />
-          <div style={{ position: 'absolute', bottom: -18, left: 'calc(30% - 6px)', fontSize: 9, color: '#4ade80', fontWeight: 700, pointerEvents: 'none' }}>T</div>
-          {/* False path handle — right side of bottom */}
-          <Handle
-            id="source-false"
-            type="source"
-            position={Position.Bottom}
-            style={{ background: '#f87171', left: '70%', bottom: -6, width: 10, height: 10 }}
-          />
-          <div style={{ position: 'absolute', bottom: -18, left: 'calc(70% - 6px)', fontSize: 9, color: '#f87171', fontWeight: 700, pointerEvents: 'none' }}>F</div>
-        </>
-      ) : (
-        <Handle type="source" position={Position.Bottom} style={{ background: meta.border }} />
-      )}
-      <div style={{ fontSize: '32px', lineHeight: 1 }}>{meta.emoji}</div>
-      <div style={{ color: '#fff', fontWeight: 700, fontSize: '11px', marginTop: '5px' }}>{data.label || meta.label}</div>
-      {sub && <div style={{ fontSize: '10px', color: meta.border, opacity: 0.9, marginTop: 2 }}>{sub}</div>}
-      {/* Stub badge */}
-      {data._stub && state === 'idle' && (
-        <div style={{ marginTop: 3, fontSize: '9px', color: '#f59e0b', fontWeight: 700, letterSpacing: '0.05em' }}>STUB</div>
-      )}
-      {dbg?.state === 'done' && dbg.output && (
-        <div style={{ marginTop: 4, fontSize: '9px', color: '#4ade80', maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {dbg.output.length > 30 ? dbg.output.slice(0, 30) + '…' : dbg.output}
-        </div>
-      )}
-      {dbg?.state === 'error' && dbg.error && (
-        <div style={{ marginTop: 4, fontSize: '9px', color: '#f87171', maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {dbg.error.slice(0, 30)}
-        </div>
-      )}
-      {dbg?.state === 'running' && (
-        <div style={{ marginTop: 4, fontSize: '9px', color: '#60a5fa' }}>running…</div>
-      )}
-      {dbg?.state === 'pending' && (
-        <div style={{ marginTop: 4, fontSize: '9px', color: '#f59e0b' }}>next ↓</div>
-      )}
     </div>
   );
 }
@@ -337,8 +158,7 @@ const nodeTypes: NodeTypes = {
 const edgeTypes: EdgeTypes = { debugEdge: DebugEdge as any };
 
 // ── Canvas Logo (copied from applications/page.tsx) ───────────────────────────
-type LogoState = 'idle' | 'dirty' | 'error' | 'success' | 'thinking' | 'warning';
-interface LogoStateDef { opacity: number; filter: string; animation: string; }
+type LogoStateDef = { opacity: number; filter: string; animation: string; }
 const LOGO_STATES: Record<LogoState, LogoStateDef> = {
   idle:     { opacity: 0.015, filter: 'none',   animation: 'none' },
   dirty:    { opacity: 0.015, filter: 'none',   animation: 'none' },
@@ -403,84 +223,7 @@ function CanvasLogo({ state }: { state: LogoState }) {
   );
 }
 
-// ── Step type palette ─────────────────────────────────────────────────────────
-
-const STEP_TYPES: { type: AgentStepDoc['type']; label: string }[] = [
-  { type: 'input',      label: 'Input' },
-  { type: 'llm',        label: 'LLM' },
-  { type: 'http',       label: 'HTTP Tool' },
-  { type: 'transform',  label: 'Transform' },
-  { type: 'response',   label: 'Response' },
-  { type: 'branch',     label: 'Branch' },
-  { type: 'loop',       label: 'Loop' },
-  { type: 'parallel',   label: 'Parallel' },
-  { type: 'a2a_call',   label: 'A2A Call' },
-  { type: 'human_wait', label: 'Human Wait' },
-  { type: 'stream_out', label: 'Stream Out' },
-];
-
-function genUUID(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-    const r = Math.random() * 16 | 0;
-    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-  });
-}
-
-// ── Validation state ─────────────────────────────────────────────────────────
-
-interface ValidationState {
-  issues: AgentIssue[];
-  loading: boolean;
-  lastValidatedAt: number | null;
-}
-
-const INITIAL_VALIDATION: ValidationState = { issues: [], loading: false, lastValidatedAt: null };
-
-// ── Debug mode ────────────────────────────────────────────────────────────────
-
-type DebugNodeState = 'idle' | 'pending' | 'running' | 'done' | 'error';
-
-interface DebugParamSpec {
-  key: string;        // __test_input | __anthropic_key | <app_param_key>
-  label: string;
-  description: string;
-  isSecret: boolean;
-  required: boolean;
-  nodeLabel?: string; // which node requires this (for display)
-}
-
-interface DebugState {
-  active: boolean;
-  setupComplete: boolean;            // true after user clicks "Start Debug"
-  paramSpecs: DebugParamSpec[];      // what the pipeline needs
-  debugParams: Record<string, string>; // collected values
-  mode: 'run-all' | 'step' | null;
-  vars: Record<string, unknown>;
-  nodeStates: Record<string, DebugNodeState>;
-  nodeInputVars: Record<string, Record<string, unknown>>;  // vars snapshot before each step
-  nodeOutputs: Record<string, string>;
-  nodeErrors: Record<string, string>;
-  edgeValues: Record<string, string>;
-  executionOrder: string[];
-  currentStepIndex: number;
-  pendingVarOverrides: Record<string, string>;
-  error: string | null;
-}
-
-const INITIAL_DEBUG: DebugState = {
-  active: false, setupComplete: false, paramSpecs: [], debugParams: {},
-  mode: null,
-  vars: {}, nodeStates: {}, nodeInputVars: {}, nodeOutputs: {}, nodeErrors: {},
-  edgeValues: {}, executionOrder: [], currentStepIndex: 0,
-  pendingVarOverrides: {}, error: null,
-};
-
 // ── Canvas inner (uses ReactFlow hooks — must be inside ReactFlowProvider) ───
-
-// STEP_INPUT_FIELD and SINGLE_INPUT_TYPES are now derived from NODE_REGISTRY.
 
 function CanvasInner() {
   const router = useRouter();
@@ -562,11 +305,10 @@ function CanvasInner() {
   // Debug mode
   const [debug, setDebug] = useState<DebugState>(INITIAL_DEBUG);
 
-  // Tracks whether the node-type registry has been fetched. Nodes render with
-  // fallback icons until this is true, so we re-render after the fetch resolves.
+  // Tracks whether the node-type registry has been fetched.
   const [nodeTypesReady, setNodeTypesReady] = useState(false);
 
-  // Validation state — populated by debounced backend call + immediate local checks
+  // Validation state
   const [validation, setValidation] = useState<ValidationState>(INITIAL_VALIDATION);
   const validationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -579,10 +321,6 @@ function CanvasInner() {
   const [localPipeNodes, setLocalPipeNodes, onPipeNodesChange] = useNodesState<Node>(pipelineNodes);
   const [localPipeEdges, setLocalPipeEdges, onPipeEdgesChange] = useEdgesState<Edge>(pipelineEdges);
 
-  // Fetch node type definitions from the backend on mount (single source of truth).
-  // After the fetch resolves we shallow-copy all existing nodes so ReactFlow sees
-  // new object references and re-renders StepNode/AgentRootNode with real emoji/labels
-  // instead of the fallback icons that show before the cache is populated.
   useEffect(() => {
     fetchNodeTypes()
       .then(defs => {
@@ -594,12 +332,6 @@ function CanvasInner() {
       .catch(() => { setNodeTypesReady(true); });
   }, []);
 
-  // Debounced backend validation — fires 1200ms after canvas content changes.
-  // Sends the current in-memory definition so the backend validates live state,
-  // not the last-saved DB copy. An AbortController cancels any in-flight request
-  // when a newer one is dispatched, preventing last-response-wins races.
-  // Depends on serialized canvas content (not dirty flag) so every edit triggers
-  // a fresh debounce, not just the first one per dirty session.
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -608,14 +340,10 @@ function CanvasInner() {
     if (validationTimerRef.current) clearTimeout(validationTimerRef.current);
 
     validationTimerRef.current = setTimeout(() => {
-      // Cancel any in-flight request from a prior debounce tick.
       if (abortRef.current) abortRef.current.abort();
       const ctrl = new AbortController();
       abortRef.current = ctrl;
 
-      // Build the definition from the current in-memory canvas state.
-      // We cannot call buildDefinitionDoc() here (it's defined in component scope)
-      // so we inline the minimal serialization the backend needs.
       const rootNodeData = agentNodes.find(n => n.id === 'agent-root')?.data as unknown as AgentRootData | undefined;
       const skills: AgentSkillDoc[] = agentNodes
         .filter(n => n.type === 'skill')
@@ -669,7 +397,7 @@ function CanvasInner() {
           setValidation({ issues: result.issues ?? [], loading: false, lastValidatedAt: Date.now() });
         })
         .catch(e => {
-          if ((e as { name?: string }).name === 'AbortError') return; // superseded — ignore
+          if ((e as { name?: string }).name === 'AbortError') return;
           setValidation(prev => ({ ...prev, loading: false }));
         });
     }, 1200);
@@ -680,7 +408,6 @@ function CanvasInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defId, agentNodes, agentEdges, agentSlug, skillPipelines, localPipeNodes, localPipeEdges]);
 
-  // Sync pipeline state when switching skills
   useEffect(() => {
     if (activeSkillId) {
       const state = skillPipelines[activeSkillId] ?? { nodes: [], edges: [] };
@@ -689,7 +416,6 @@ function CanvasInner() {
     }
   }, [activeSkillId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Save pipeline state when navigating away from a skill
   const savePipelineState = useCallback(() => {
     if (activeSkillId) {
       setSkillPipelines(prev => ({
@@ -699,7 +425,6 @@ function CanvasInner() {
     }
   }, [activeSkillId, localPipeNodes, localPipeEdges]);
 
-  // Load existing definition if ?id= is present
   useEffect(() => {
     if (!defId) return;
     themApi.getAgentDefinition(defId).then(resp => {
@@ -715,7 +440,6 @@ function CanvasInner() {
   }, [defId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function loadDefinitionDoc(doc: AgentDefinitionDoc) {
-    // Build agent-level nodes
     const rootNode: Node = {
       id: 'agent-root',
       type: 'agentRoot',
@@ -748,7 +472,6 @@ function CanvasInner() {
     setAgentNodes([rootNode, ...skillNodes]);
     setAgentEdges(skillEdges);
 
-    // Build per-skill pipeline state
     const pipelines: Record<string, { nodes: Node[]; edges: Edge[] }> = {};
     for (const sk of doc.skills) {
       const stepNodes: Node[] = (sk.steps ?? []).map((step, si) => ({
@@ -765,7 +488,6 @@ function CanvasInner() {
             id: `${step.id}-to-${nextId}`,
             source: `step-${step.id}`,
             target: `step-${nextId}`,
-            // Branch next[0]=true path, next[1]=false path — wire to named handles.
             ...(isBranch ? { sourceHandle: idx === 0 ? 'source-true' : 'source-false' } : {}),
           });
         });
@@ -776,7 +498,6 @@ function CanvasInner() {
   }
 
   function buildDefinitionDoc(): AgentDefinitionDoc {
-    // Find the root node data
     const rootNodeData = agentNodes.find(n => n.id === 'agent-root')?.data as unknown as AgentRootData | undefined;
     const dn = rootNodeData?.display_name ?? displayName;
     const desc = rootNodeData?.description ?? description;
@@ -848,8 +569,6 @@ function CanvasInner() {
       try {
         const doc = JSON.parse(ev.target?.result as string) as AgentDefinitionDoc;
         if (!doc.agent_root || !Array.isArray(doc.skills)) throw new Error('Missing agent_root or skills array');
-        // Load into canvas — the existing debounced backend validator fires automatically
-        // 1200ms after canvas state changes and populates the error/warning badges in the header.
         setAgentSlug(doc.agent_slug ?? '');
         loadDefinitionDoc(doc);
         setDirty(true);
@@ -857,7 +576,6 @@ function CanvasInner() {
       } catch (err) {
         setSaveError(`Import failed: ${String(err)}`);
       }
-      // Reset so the same file can be re-imported if needed.
       e.target.value = '';
     };
     reader.readAsText(file);
@@ -1031,10 +749,6 @@ function CanvasInner() {
   }, [setAgentEdges]);
 
   // ── Context menu ──────────────────────────────────────────────────────────────
-  type CtxTarget =
-    | { kind: 'node'; node: Node }
-    | { kind: 'edge'; edge: Edge };
-
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; target: CtxTarget } | null>(null);
 
   const closeCtx = useCallback(() => setCtxMenu(null), []);
@@ -1087,12 +801,9 @@ function CanvasInner() {
   }, [ctxMenu, savePipelineState, closeCtx]);
 
   const onPipeConnect = useCallback((conn: Connection) => {
-    // Remove any existing incoming edge to the target before adding the new one.
-    // This allows re-routing (e.g. Input→Response replaced by LLM→Response).
     setLocalPipeEdges(prev => addEdge(conn, prev.filter(e => e.target !== conn.target)));
     setDirty(true);
 
-    // Auto-fill: read source output_var → suggest it in target input field (only if empty).
     setLocalPipeNodes(prev => {
       const sourceNode = prev.find(n => n.id === conn.source);
       const targetNode = prev.find(n => n.id === conn.target);
@@ -1101,18 +812,14 @@ function CanvasInner() {
       const srcData = sourceNode.data as unknown as StepData;
       const tgtData = targetNode.data as unknown as StepData;
 
-      // Resolve what variable name the source produces.
       const sourceVar: string =
         srcData.step_type === 'input'
           ? ((srcData.config?.bindings as Record<string, string>)?.text || 'input')
           : ((srcData.config?.output_var as string) || 'output');
 
-      // Find which field on the target to auto-fill.
       const targetField = getNodeDef(tgtData.step_type).input_field;
       if (!targetField) return prev;
 
-      // from_var always updates (it should reflect whatever is now connected upstream).
-      // Other fields only fill if currently empty — don't overwrite user-typed content.
       const currentValue = tgtData.config?.[targetField] as string | undefined;
       if (targetField !== 'from_var' && currentValue && currentValue.trim() !== '') return prev;
 
@@ -1127,7 +834,6 @@ function CanvasInner() {
   }, [setLocalPipeEdges, setLocalPipeNodes]);
 
   const isPipeConnectionValid = useCallback((conn: Connection | Edge) => {
-    // Reject self-loops
     if (conn.source === conn.target) return false;
 
     const srcNode = localPipeNodes.find(n => n.id === conn.source);
@@ -1135,8 +841,6 @@ function CanvasInner() {
 
     if (srcNode) {
       const srcType = (srcNode.data as unknown as StepData).step_type;
-      // Branch has 2 named handles (source-true / source-false) — count per handle,
-      // each allows exactly 1 outgoing edge.
       const currentOut = srcType === 'branch'
         ? localPipeEdges.filter(e => e.source === conn.source && e.sourceHandle === conn.sourceHandle).length
         : localPipeEdges.filter(e => e.source === conn.source).length;
@@ -1148,7 +852,6 @@ function CanvasInner() {
       if (!canAddIncoming(tgtType, currentIn)) return false;
     }
 
-    // Reject edges that would create a cycle
     const hypothetical = [...localPipeEdges, { id: '__test__', source: conn.source!, target: conn.target! }];
     if (topoSort(localPipeNodes, hypothetical) === null) return false;
 
@@ -1157,17 +860,14 @@ function CanvasInner() {
 
   // ── Debug helpers ─────────────────────────────────────────────────────────────
 
-  // Session storage helpers — secrets never go to the server.
   function ssKey(paramKey: string) { return `debug_param:${defId ?? 'new'}:${paramKey}`; }
   function ssGet(paramKey: string) { try { return sessionStorage.getItem(ssKey(paramKey)) ?? ''; } catch { return ''; } }
   function ssSet(paramKey: string, val: string) { try { sessionStorage.setItem(ssKey(paramKey), val); } catch { /* ignore */ } }
 
-  // Scan the current pipeline nodes and build the list of values needed for debug.
-  function buildDebugParamSpecs(nodes: Node[]): DebugParamSpec[] {
-    const specs: DebugParamSpec[] = [];
+  function buildDebugParamSpecs(nodes: Node[]) {
+    const specs: { key: string; label: string; description: string; isSecret: boolean; required: boolean; nodeLabel?: string }[] = [];
     const seenParamKeys = new Set<string>();
 
-    // Always need the test message.
     specs.push({
       key: '__test_input',
       label: 'Test message',
@@ -1187,7 +887,6 @@ function CanvasInner() {
       });
     }
 
-    // For each HTTP node that references an app_param_key, collect that param's metadata.
     for (const node of nodes) {
       const d = node.data as unknown as StepData;
       if (d.step_type !== 'http') continue;
@@ -1195,7 +894,6 @@ function CanvasInner() {
       if (!paramKey || seenParamKeys.has(paramKey)) continue;
       seenParamKeys.add(paramKey);
 
-      // Look up label/description from the node registry app_params declaration.
       const httpDef = getNodeDef('http');
       const decl = httpDef.app_params?.find(p => p.key === paramKey);
       specs.push({
@@ -1211,7 +909,6 @@ function CanvasInner() {
     return specs;
   }
 
-  // Load persisted non-secret debug values for the current agent.
   async function loadDebugPrefs(): Promise<{ testInput: string }> {
     try {
       const prefs = await getPreferences();
@@ -1220,7 +917,6 @@ function CanvasInner() {
     } catch { return { testInput: '' }; }
   }
 
-  // Save non-secret debug values to user preferences.
   async function saveDebugPrefs(testInput: string) {
     try {
       const prefs = await getPreferences();
@@ -1318,7 +1014,6 @@ function CanvasInner() {
         newVars[outKey] = val;
         output = val;
       }
-      // JSON extractions
       const extractions = (cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? [];
       for (const ext of extractions) {
         const raw = newVars[ext.from_var];
@@ -1352,7 +1047,6 @@ function CanvasInner() {
       let url = renderTemplate(urlTemplate, newVars);
       const headers: Record<string, string> = { 'Accept': 'application/json' };
 
-      // Inject app param (secret) if configured and available.
       if (appParamKey && debugParams[appParamKey]) {
         const paramVal = debugParams[appParamKey];
         if (injectMode === 'query') {
@@ -1372,8 +1066,6 @@ function CanvasInner() {
         proxyBody.body = renderTemplate(bodyTemplate, newVars);
         (headers as Record<string, string>)['Content-Type'] = 'application/json';
       }
-      // Route through the server-side debug proxy (Go bridge via Traefik) to avoid
-      // CORS restrictions when calling third-party APIs from the browser.
       const resp = await fetch('/api/v1/admin/debug-proxy', {
         method: 'POST',
         credentials: 'include',
@@ -1385,7 +1077,6 @@ function CanvasInner() {
         throw new Error(errText.slice(0, 120) || `HTTP ${resp.status}`);
       }
       const text = await resp.text();
-      // Try to parse as JSON and store as both the raw map and the string.
       try {
         const parsed = JSON.parse(text);
         newVars['http_response'] = parsed;
@@ -1424,7 +1115,6 @@ function CanvasInner() {
       return;
     }
     const specs = buildDebugParamSpecs(localPipeNodes);
-    // Pre-fill non-secret values from server prefs; secrets from sessionStorage.
     const prefs = await loadDebugPrefs();
     const params: Record<string, string> = {};
     for (const spec of specs) {
@@ -1448,7 +1138,6 @@ function CanvasInner() {
     if (hasLLM && !(debug.debugParams['__anthropic_key'] ?? '').trim()) {
       setDebug(prev => ({ ...prev, error: 'Anthropic API key is required for LLM steps.' })); return;
     }
-    // Persist non-secrets to server; secrets to sessionStorage.
     saveDebugPrefs(testInput);
     for (const spec of debug.paramSpecs) {
       if (spec.isSecret) ssSet(spec.key, debug.debugParams[spec.key] ?? '');
@@ -1568,14 +1257,12 @@ function CanvasInner() {
     }
   }
 
-  // Properties panel update
   function updateSelectedNodeField(field: string, value: string) {
     if (!selectedNode) return;
     if (activeView === 'agent') {
       setAgentNodes(prev => prev.map(n =>
         n.id === selectedNode.id ? { ...n, data: { ...n.data, [field]: value } } : n
       ));
-      // Auto-populate slug from display_name when slug hasn't been manually set
       if (field === 'display_name' && selectedNode.id === 'agent-root' && !defId) {
         const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
         setAgentSlug(slug);
@@ -1588,7 +1275,6 @@ function CanvasInner() {
     setDirty(true);
   }
 
-  // Update a single key inside a step node's config object.
   function updateStepConfig(key: string, value: unknown) {
     if (!selectedNode || activeView !== 'skill') return;
     setLocalPipeNodes(prev => prev.map(n =>
@@ -1599,7 +1285,6 @@ function CanvasInner() {
     setDirty(true);
   }
 
-  // Inject debug state into node data for StepNode rendering.
   const debugNodes = activeView === 'skill' && debug.active
     ? localPipeNodes.map(n => ({
         ...n,
@@ -1614,10 +1299,8 @@ function CanvasInner() {
       }))
     : localPipeNodes;
 
-  // Compute which node is currently running (for flowing edge highlight).
   const runningNodeId = Object.entries(debug.nodeStates).find(([, s]) => s === 'running')?.[0];
 
-  // Build debug edges with custom type + animated state.
   const debugEdges = activeView === 'skill' && debug.active
     ? localPipeEdges.map(e => {
         const hasDoneValue = !!debug.edgeValues[e.id];
@@ -1635,7 +1318,6 @@ function CanvasInner() {
       })
     : localPipeEdges;
 
-  // Build node_id → worst severity map from backend issues.
   const nodeValidationMap = (() => {
     const m: Record<string, 'error' | 'warning'> = {};
     for (const iss of validation.issues) {
@@ -1648,12 +1330,10 @@ function CanvasInner() {
     return m;
   })();
 
-  // Issues scoped to the currently-viewed skill pipeline.
   const pipelineIssues = activeSkillId
     ? validation.issues.filter(iss => iss.skill_id === activeSkillId || !iss.skill_id)
     : validation.issues;
 
-  // Inject validation and stub state into pipeline nodes for StepNode rendering.
   const validatedPipeNodes = localPipeNodes.map(n => {
     const stepId = (n.data as unknown as StepData).step_id;
     const stepType = (n.data as unknown as StepData).step_type;
@@ -1663,7 +1343,6 @@ function CanvasInner() {
     return { ...n, data: { ...n.data, _validation: valSeverity, _stub: isStub } };
   });
 
-  // Error and warning counts for the toolbar badge.
   const errorCount   = validation.issues.filter(iss => iss.severity === 'error').length;
   const warningCount = validation.issues.filter(iss => iss.severity === 'warning').length;
 
@@ -1836,112 +1515,15 @@ function CanvasInner() {
 
       {/* ── Debug bar (only in skill view when debug is active) ── */}
       {activeView === 'skill' && debug.active && (
-        <div style={{
-          flexShrink: 0, borderBottom: `1px solid ${C.amberBorder}`,
-          background: 'rgba(245,158,11,0.06)', padding: '10px 16px',
-        }}>
-          {/* ── Setup form — shown until user clicks Start ── */}
-          {!debug.setupComplete && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ color: C.amber, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em' }}>
-                  DEBUG SETUP
-                </span>
-                <span style={{ color: '#64748b', fontSize: '11px' }}>
-                  Fill in the values the pipeline needs, then click Start
-                </span>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
-                {debug.paramSpecs.map(spec => (
-                  <div key={spec.key} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    <label style={{ fontSize: '10px', color: spec.isSecret ? C.amber : C.textMuted, fontWeight: 700, letterSpacing: '0.06em' }}>
-                      {spec.label.toUpperCase()}
-                      {spec.isSecret && <span style={{ marginLeft: 4, color: '#f59e0b', fontSize: '9px' }}>🔒 session only</span>}
-                    </label>
-                    {spec.key === '__test_input' ? (
-                      <input
-                        value={debug.debugParams[spec.key] ?? ''}
-                        onChange={e => setDebug(prev => ({ ...prev, debugParams: { ...prev.debugParams, [spec.key]: e.target.value } }))}
-                        placeholder="Compare Rome and Barcelona for a kosher trip…"
-                        style={{ ...inputStyle, width: '300px', fontSize: '12px' }}
-                      />
-                    ) : (
-                      <input
-                        value={debug.debugParams[spec.key] ?? ''}
-                        onChange={e => setDebug(prev => ({ ...prev, debugParams: { ...prev.debugParams, [spec.key]: e.target.value } }))}
-                        placeholder={spec.isSecret ? '••••••••' : spec.label}
-                        type={spec.isSecret ? 'password' : 'text'}
-                        title={spec.description}
-                        style={{ ...inputStyle, width: '200px', fontSize: '12px' }}
-                      />
-                    )}
-                  </div>
-                ))}
-                <button onClick={debugCommitSetup} style={{
-                  background: 'rgba(74,222,128,0.12)', border: '1px solid rgba(74,222,128,0.5)',
-                  color: '#4ade80', padding: '6px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 700, alignSelf: 'flex-end',
-                }}>
-                  ▶ Start Debug
-                </button>
-              </div>
-              {debug.error && (
-                <span style={{ color: '#f87171', fontSize: '11px' }}>✗ {debug.error}</span>
-              )}
-              <span style={{ color: '#475569', fontSize: '10px' }}>
-                🔒 API keys and secrets are stored in your browser session only — never sent to the-M server. Test messages are saved to your profile.
-              </span>
-            </div>
-          )}
-
-          {/* ── Run controls — shown after setup ── */}
-          {debug.setupComplete && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-              <span style={{ color: C.amber, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}>
-                DEBUG
-                {debugRunning && (
-                  <>
-                    <style>{`@keyframes dbg-dot{0%,80%,100%{opacity:0.15}40%{opacity:1}}`}</style>
-                    {[0, 0.22, 0.44].map(delay => (
-                      <span key={delay} style={{ width: 5, height: 5, borderRadius: '50%', background: C.amber, display: 'inline-block', animation: `dbg-dot 1.1s ease-in-out ${delay}s infinite` }} />
-                    ))}
-                  </>
-                )}
-              </span>
-              <span style={{ color: '#64748b', fontSize: '11px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {debug.debugParams['__test_input']}
-              </span>
-              <button onClick={() => setDebug(prev => ({ ...prev, setupComplete: false }))} style={{
-                background: 'transparent', border: `1px solid ${C.outline}`, color: C.textMuted,
-                padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px',
-              }}>Edit inputs</button>
-              <button onClick={debugRunAll} disabled={debug.mode === 'run-all' && debug.currentStepIndex < debug.executionOrder.length && debug.currentStepIndex > 0} style={{
-                background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.4)',
-                color: '#4ade80', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
-              }}>▶ Run All</button>
-              <button onClick={debugStep} style={{
-                background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.4)',
-                color: '#60a5fa', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
-              }}>⏭ Step</button>
-              <button onClick={debugReset} style={{
-                background: 'transparent', border: `1px solid ${C.outline}`,
-                color: C.textMuted, padding: '5px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px',
-              }}>⏹ Reset</button>
-              {debug.error && (
-                <span style={{ color: '#f87171', fontSize: '11px', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  ✗ {debug.error}
-                </span>
-              )}
-              {!debug.error && debug.mode === 'run-all' && debug.currentStepIndex > 0 && debug.currentStepIndex >= debug.executionOrder.length && (
-                <span style={{ color: '#4ade80', fontSize: '11px' }}>✓ Complete — {debug.executionOrder.length} steps</span>
-              )}
-              {!debug.error && debug.mode === 'step' && debug.currentStepIndex > 0 && (
-                <span style={{ color: '#60a5fa', fontSize: '11px' }}>
-                  Step {Math.min(debug.currentStepIndex, debug.executionOrder.length)}/{debug.executionOrder.length}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
+        <DebugPanel
+          debug={debug}
+          setDebug={setDebug}
+          debugRunning={debugRunning}
+          debugCommitSetup={debugCommitSetup}
+          debugRunAll={debugRunAll}
+          debugStep={debugStep}
+          debugReset={debugReset}
+        />
       )}
 
       {/* ── Issues panel — shown when there are validation issues ── */}
@@ -1981,7 +1563,6 @@ function CanvasInner() {
           <div style={{ padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
             {activeView === 'agent' ? (
               <>
-                {/* Skill draggable card */}
                 <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>Skills</div>
                 <div
                   draggable
@@ -1999,11 +1580,9 @@ function CanvasInner() {
                     <div style={{ fontSize: 10, color: C.textMuted }}>Named capability</div>
                   </div>
                 </div>
-
               </>
             ) : (
               <>
-                {/* Step type cards — grouped */}
                 {[
                   { label: 'Data Flow',  items: ['input', 'response'] },
                   { label: 'Processing', items: ['llm', 'transform', 'http', 'branch'] },
@@ -2054,7 +1633,6 @@ function CanvasInner() {
 
         {/* Canvas */}
         <div style={{ flex: 1, position: 'relative' }}>
-          {/* Suppress ReactFlow's grab cursor; middle-mouse pan is handled via panOnDrag={[1]} */}
           <style>{`.react-flow__pane { cursor: default !important; } .react-flow__pane.dragging { cursor: default !important; } .react-flow__node.selected > div { box-shadow: 0 0 0 2px #00f0ff, 0 0 14px rgba(0,240,255,0.35) !important; } .palette-card { transition: filter 0.15s, box-shadow 0.15s; } .palette-card:hover { filter: brightness(1.7) saturate(1.2); box-shadow: 0 0 10px rgba(255,255,255,0.1), 0 2px 8px rgba(0,0,0,0.3); }`}</style>
 
           {/* Canvas toolbar — fit + auto-arrange */}
@@ -2083,36 +1661,13 @@ function CanvasInner() {
 
           {/* Context menu */}
           {ctxMenu && (
-            <div
-              onMouseLeave={closeCtx}
-              style={{
-                position: 'fixed', zIndex: 9999,
-                left: ctxMenu.x, top: ctxMenu.y,
-                background: '#1e293b', border: '1px solid #334155',
-                borderRadius: '8px', padding: '4px', minWidth: '160px',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-              }}
-            >
-              {ctxMenu.target.kind === 'node' && (
-                <>
-                  <div style={{ padding: '4px 8px', fontSize: '10px', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                    {ctxMenu.target.node.type === 'agentRoot' ? 'Agent' : ctxMenu.target.node.type === 'skill' ? 'Skill' : (ctxMenu.target.node.data as unknown as StepData).step_type}
-                  </div>
-                  <button onClick={() => { setSelectedNode(ctxMenu.target.kind === 'node' ? ctxMenu.target.node : null); closeCtx(); }} style={ctxItemStyle}>
-                    ✏️ Properties
-                  </button>
-                  {ctxMenu.target.node.type === 'skill' && (
-                    <button onClick={ctxEditPipeline} style={ctxItemStyle}>
-                      ⚡ Edit Pipeline
-                    </button>
-                  )}
-                  <div style={{ borderTop: '1px solid #334155', margin: '4px 0' }} />
-                </>
-              )}
-              <button onClick={ctxDelete} style={{ ...ctxItemStyle, color: '#f87171' }}>
-                🗑️ Delete
-              </button>
-            </div>
+            <NodeContextMenu
+              ctxMenu={ctxMenu}
+              closeCtx={closeCtx}
+              ctxDelete={ctxDelete}
+              ctxEditPipeline={ctxEditPipeline}
+              setSelectedNode={setSelectedNode}
+            />
           )}
 
           <CanvasLogo state={logoState} />
@@ -2195,815 +1750,27 @@ function CanvasInner() {
 
         {/* Properties panel */}
         {selectedNode && (
-          <div style={{
-            width: propertiesWidth, flexShrink: 0, borderLeft: `1px solid ${C.outline}`,
-            background: C.surface, padding: '16px', overflowY: 'auto', position: 'relative',
-          }} className="dark-scrollbar">
-            {/* Properties resize handle */}
-            <div
-              onMouseDown={e => { e.preventDefault(); resizingRef.current = { side: 'properties', startX: e.clientX, startW: propertiesWidth }; document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'; }}
-              style={{
-                position: 'absolute', top: 0, left: -3, width: 6, height: '100%',
-                cursor: 'col-resize', zIndex: 10,
-              }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-              <span style={{ color: C.text, fontWeight: 700, fontSize: '13px' }}>Properties</span>
-              <button onClick={() => setSelectedNode(null)} style={{ background: 'transparent', border: 'none', color: C.textMuted, cursor: 'pointer', fontSize: '16px' }}>x</button>
-            </div>
-
-            {selectedNode.type === 'agentRoot' && (() => {
-              const d = (agentNodes.find(n => n.id === selectedNode.id)?.data ?? selectedNode.data) as unknown as AgentRootData;
-              return (
-                <>
-                  <label style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>Display Name</label>
-                  <input
-                    value={d.display_name}
-                    onChange={e => updateSelectedNodeField('display_name', e.target.value)}
-                    style={{ width: '100%', background: 'transparent', border: `1px solid ${C.outline}`, color: '#fff', padding: '6px', borderRadius: '4px', fontSize: '13px', boxSizing: 'border-box' }}
-                  />
-                  <label style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, display: 'block', marginTop: '12px', marginBottom: '4px' }}>Description</label>
-                  <textarea
-                    value={d.description}
-                    onChange={e => updateSelectedNodeField('description', e.target.value)}
-                    rows={3}
-                    style={{ width: '100%', background: 'transparent', border: `1px solid ${C.outline}`, color: '#fff', padding: '6px', borderRadius: '4px', fontSize: '13px', resize: 'vertical', boxSizing: 'border-box' }}
-                  />
-                  <label style={{ color: C.textMuted, fontSize: '11px', fontWeight: 700, display: 'block', marginTop: '12px', marginBottom: '4px' }}>Version</label>
-                  <input
-                    value={d.version}
-                    onChange={e => updateSelectedNodeField('version', e.target.value)}
-                    style={{ width: '100%', background: 'transparent', border: `1px solid ${C.outline}`, color: '#fff', padding: '6px', borderRadius: '4px', fontSize: '13px', boxSizing: 'border-box' }}
-                  />
-                </>
-              );
-            })()}
-
-            {selectedNode.type === 'skill' && (() => {
-              const liveSkillNode = agentNodes.find(n => n.id === selectedNode.id);
-              const d = (liveSkillNode?.data ?? selectedNode.data) as unknown as SkillData;
-              const skillNodeId = selectedNode.id;
-              const MODES = ['text/plain', 'text/markdown', 'application/json', 'application/octet-stream'];
-              function updateSkillArray(field: keyof SkillData, arr: string[]) {
-                if (activeView === 'agent') {
-                  setAgentNodes(prev => prev.map(n =>
-                    n.id === skillNodeId ? { ...n, data: { ...n.data, [field]: arr } } : n
-                  ));
-                }
-                setDirty(true);
-              }
-              function toggleMode(field: 'input_modes' | 'output_modes', mode: string) {
-                const current = (d[field] ?? []) as string[];
-                const next = current.includes(mode) ? current.filter(m => m !== mode) : [...current, mode];
-                updateSkillArray(field, next.length ? next : [mode]);
-              }
-              return (
-                <>
-                  <label style={labelStyle}>Skill ID <span style={{ fontWeight: 400, color: '#475569' }}>(auto-generated)</span></label>
-                  <div style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '10px', color: '#475569', userSelect: 'all', cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {d.skill_id}
-                  </div>
-                  <div style={fieldGap}>
-                    <label style={labelStyle}>Name</label>
-                    <input
-                      value={d.name}
-                      onChange={e => updateSelectedNodeField('name', e.target.value)}
-                      style={inputStyle}
-                    />
-                  </div>
-                  <div style={fieldGap}>
-                    <label style={labelStyle}>Description</label>
-                    <textarea
-                      value={d.description}
-                      onChange={e => updateSelectedNodeField('description', e.target.value)}
-                      rows={2}
-                      style={textareaStyle}
-                    />
-                  </div>
-
-                  <div style={fieldGap}>
-                    <label style={labelStyle}>Input Modes</label>
-                    {MODES.map(m => (
-                      <label key={m} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, cursor: 'pointer', fontSize: '12px', color: '#ccc' }}>
-                        <input
-                          type="checkbox"
-                          checked={(d.input_modes ?? []).includes(m)}
-                          onChange={() => toggleMode('input_modes', m)}
-                          style={{ accentColor: C.cyan }}
-                        />
-                        {m}
-                      </label>
-                    ))}
-                  </div>
-
-                  <div style={fieldGap}>
-                    <label style={labelStyle}>Output Modes</label>
-                    {MODES.map(m => (
-                      <label key={m} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, cursor: 'pointer', fontSize: '12px', color: '#ccc' }}>
-                        <input
-                          type="checkbox"
-                          checked={(d.output_modes ?? []).includes(m)}
-                          onChange={() => toggleMode('output_modes', m)}
-                          style={{ accentColor: C.purple }}
-                        />
-                        {m}
-                      </label>
-                    ))}
-                  </div>
-
-                  <div style={fieldGap}>
-                    <label style={labelStyle}>Tags <span style={hint}>comma-separated</span></label>
-                    <input
-                      value={(d.tags ?? []).join(', ')}
-                      onChange={e => updateSkillArray('tags', e.target.value.split(',').map(t => t.trim()).filter(Boolean))}
-                      style={inputStyle}
-                      placeholder="search, nlp, ..."
-                    />
-                  </div>
-
-                  <div style={fieldGap}>
-                    <label style={labelStyle}>Examples</label>
-                    {(d.examples ?? []).map((ex, i) => (
-                      <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-                        <input
-                          value={ex}
-                          onChange={e => {
-                            const next = [...(d.examples ?? [])];
-                            next[i] = e.target.value;
-                            updateSkillArray('examples', next);
-                          }}
-                          style={{ ...inputStyle, flex: 1, fontSize: '12px' }}
-                          placeholder="e.g. Summarize this article"
-                        />
-                        <button
-                          onClick={() => updateSkillArray('examples', (d.examples ?? []).filter((_, j) => j !== i))}
-                          style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
-                        >×</button>
-                      </div>
-                    ))}
-                    <button
-                      onClick={() => updateSkillArray('examples', [...(d.examples ?? []), ''])}
-                      style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}
-                    >+ Add example</button>
-                  </div>
-
-                  <button onClick={() => {
-                    savePipelineState();
-                    setActiveSkillId(d.skill_id);
-                    setActiveView('skill');
-                    setSelectedNode(null);
-                  }} style={{
-                    marginTop: '16px', width: '100%', background: C.purpleBg,
-                    border: `1px solid ${C.purpleBorder}`, color: C.purple,
-                    padding: '8px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
-                  }}>
-                    Edit Pipeline
-                  </button>
-                </>
-              );
-            })()}
-
-            {selectedNode.type === 'step' && (() => {
-              const d = (localPipeNodes.find(n => n.id === selectedNode.id)?.data ?? selectedNode.data) as unknown as StepData;
-              const cfg = d.config ?? {};
-
-              // Issues for this specific node
-              const nodeIssues = validation.issues.filter(iss => iss.node_id === d.step_id);
-              // Map field name → worst severity for field highlighting
-              const fieldIssues: Record<string, 'error' | 'warning'> = {};
-              for (const iss of nodeIssues) {
-                if (!iss.field) continue;
-                if (!fieldIssues[iss.field] || (iss.severity === 'error' && fieldIssues[iss.field] === 'warning')) {
-                  fieldIssues[iss.field] = iss.severity;
-                }
-              }
-
-              function issueStyle(field: string): React.CSSProperties {
-                const sev = fieldIssues[field];
-                if (!sev) return {};
-                return {
-                  borderColor: sev === 'error' ? '#f87171' : '#f59e0b',
-                  boxShadow: sev === 'error' ? '0 0 0 1px rgba(248,113,113,0.4)' : '0 0 0 1px rgba(245,158,11,0.4)',
-                };
-              }
-
-              // Helper: get config value with fallback.
-              function cfgStr(key: string): string { return (cfg[key] as string) ?? ''; }
-              function cfgNum(key: string, def = 0): number { return (cfg[key] as number) ?? def; }
-
-              return (
-                <>
-                  {/* ── Node-level issues ── */}
-                  {nodeIssues.length > 0 && (
-                    <div style={{ marginBottom: '12px', padding: '8px 10px', borderRadius: '6px', background: nodeIssues.some(i => i.severity === 'error') ? 'rgba(248,113,113,0.08)' : 'rgba(245,158,11,0.08)', border: `1px solid ${nodeIssues.some(i => i.severity === 'error') ? 'rgba(248,113,113,0.3)' : 'rgba(245,158,11,0.3)'}` }}>
-                      {nodeIssues.map((iss, i) => (
-                        <div key={i} style={{ fontSize: '11px', color: iss.severity === 'error' ? '#f87171' : '#f59e0b', display: 'flex', gap: '6px', marginBottom: i < nodeIssues.length - 1 ? '4px' : 0 }}>
-                          <span style={{ flexShrink: 0 }}>{iss.severity === 'error' ? '✗' : '⚠'}</span>
-                          <span>{iss.message}{iss.field && <span style={{ color: '#64748b' }}> · <code style={{ color: iss.severity === 'error' ? '#f87171' : '#f59e0b' }}>{iss.field}</code></span>}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* ── Identity (always shown) ── */}
-                  <div style={{ marginBottom: '2px' }}>
-                    <label style={labelStyle}>Label</label>
-                    <input
-                      value={d.label}
-                      onChange={e => updateSelectedNodeField('label', e.target.value)}
-                      style={inputStyle}
-                    />
-                  </div>
-                  <div style={fieldGap}>
-                    <label style={labelStyle}>Step ID <span style={{ fontWeight: 400, color: '#475569' }}>(auto-generated)</span></label>
-                    <div style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '10px', color: '#475569', userSelect: 'all', cursor: 'text', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {d.step_id}
-                    </div>
-                  </div>
-                  <div style={{ ...fieldGap, marginBottom: '16px' }}>
-                    <label style={labelStyle}>Type</label>
-                    <div style={{ ...inputStyle, color: C.textMuted, cursor: 'default' }}>{d.step_type}</div>
-                  </div>
-
-                  {/* ── INPUTS: live incoming connections ── */}
-                  {d.step_type !== 'input' && (() => {
-                    const inEdges = localPipeEdges.filter(e => e.target === selectedNode.id);
-                    return (
-                      <div style={{ marginBottom: '16px' }}>
-                        <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: C.cyan, marginBottom: '6px' }}>
-                          INPUTS {inEdges.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400 }}>— nothing connected</span>}
-                        </div>
-                        {inEdges.map(e => {
-                          const src = localPipeNodes.find(n => n.id === e.source);
-                          const srcData = src?.data as unknown as StepData | undefined;
-                          const srcMeta = srcData ? stepMeta(srcData.step_type) : { emoji: '?', label: 'unknown' };
-                          const srcVar = srcData?.step_type === 'input'
-                            ? ((srcData.config?.bindings as Record<string,string>)?.text || 'input')
-                            : ((srcData?.config?.output_var as string) || 'output');
-                          return (
-                            <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', marginBottom: '4px', background: 'rgba(0,240,255,0.05)', border: '1px solid rgba(0,240,255,0.15)' }}>
-                              <span style={{ fontSize: '14px' }}>{srcMeta.emoji}</span>
-                              <span style={{ color: '#e2e8f0', fontSize: '11px', fontWeight: 600 }}>{srcData?.label || srcMeta.label}</span>
-                              <span style={{ color: C.textMuted, fontSize: '11px' }}>→</span>
-                              <code style={{ color: C.cyan, fontSize: '11px', fontFamily: 'monospace' }}>{`{{${srcVar}}}`}</code>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-
-                  {/* ── Config: input ── */}
-                  {d.step_type === 'input' && (
-                    <>
-                      <div style={{ color: C.cyan, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>INPUT CONFIG</div>
-                      <label style={labelStyle}>Bind text input to variable</label>
-                      <input
-                        value={cfgStr('text_var') || ((cfg.bindings as Record<string,string>)?.text ?? '')}
-                        onChange={e => updateStepConfig('bindings', { text: e.target.value })}
-                        style={inputStyle}
-                        placeholder="e.g. user_query"
-                      />
-                      <div style={{ marginTop: 6, fontSize: 11, color: '#64748b' }}>
-                        The caller's message text will be available as <code style={{ color: C.cyan }}>{'{{.' + (cfgStr('text_var') || ((cfg.bindings as Record<string,string>)?.text) || 'user_query') + '}}'}</code> in downstream steps.
-                      </div>
-                    </>
-                  )}
-
-                  {/* ── Config: llm ── */}
-                  {d.step_type === 'llm' && (
-                    <>
-                      <div style={{ color: C.purple, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>LLM CONFIG</div>
-
-                      <label style={labelStyle}>Model</label>
-                      <select
-                        value={cfgStr('model') || 'claude-haiku-4-5-20251001'}
-                        onChange={e => updateStepConfig('model', e.target.value)}
-                        style={selectStyle}
-                      >
-                        {LLM_MODELS.anthropic.map(m => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                      </select>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>Max Tokens</label>
-                        <input
-                          type="number" min={1} max={32000}
-                          value={cfgNum('max_tokens', 4096)}
-                          onChange={e => updateStepConfig('max_tokens', parseInt(e.target.value) || 4096)}
-                          style={inputStyle}
-                        />
-                      </div>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>System Prompt</label>
-                        <textarea
-                          rows={4}
-                          value={cfgStr('system_prompt')}
-                          onChange={e => updateStepConfig('system_prompt', e.target.value)}
-                          style={textareaStyle}
-                          placeholder="You are a helpful assistant..."
-                        />
-                      </div>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>
-                          User Prompt <span style={hint}>Go template · leave blank to pass caller input directly</span>
-                        </label>
-                        <textarea
-                          rows={3}
-                          value={cfgStr('user_prompt')}
-                          onChange={e => updateStepConfig('user_prompt', e.target.value)}
-                          style={textareaStyle}
-                          placeholder={'{{.user_query}}'}
-                        />
-                      </div>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>Output Variable <span style={hint}>default: output</span></label>
-                        <input
-                          value={cfgStr('output_var')}
-                          onChange={e => updateStepConfig('output_var', e.target.value)}
-                          style={inputStyle}
-                          placeholder="output"
-                        />
-                      </div>
-
-                    </>
-                  )}
-
-                  {/* ── Config: http ── */}
-                  {d.step_type === 'http' && (
-                    <>
-                      <div style={{ color: C.amber, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>HTTP CONFIG</div>
-
-                      <label style={labelStyle}>Method</label>
-                      <select
-                        value={cfgStr('method') || 'GET'}
-                        onChange={e => updateStepConfig('method', e.target.value)}
-                        style={selectStyle}
-                      >
-                        {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(m => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                      </select>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>URL <span style={hint}>Go template</span></label>
-                        <input
-                          value={cfgStr('url_template')}
-                          onChange={e => updateStepConfig('url_template', e.target.value)}
-                          style={inputStyle}
-                          placeholder="https://api.example.com/{{.resource}}"
-                        />
-                      </div>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>Body Template <span style={hint}>Go template · optional</span></label>
-                        <textarea
-                          rows={3}
-                          value={cfgStr('body_template')}
-                          onChange={e => updateStepConfig('body_template', e.target.value)}
-                          style={textareaStyle}
-                          placeholder={'{"query": "{{.user_query}}"}'}
-                        />
-                      </div>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>Timeout (seconds)</label>
-                        <input
-                          type="number" min={1} max={300}
-                          value={cfgNum('timeout_seconds', 30)}
-                          onChange={e => updateStepConfig('timeout_seconds', parseInt(e.target.value) || 30)}
-                          style={inputStyle}
-                        />
-                      </div>
-
-                      {/* App Param Auth */}
-                      {(() => {
-                        const httpDef = getNodeDef('http');
-                        const appParams = httpDef.app_params ?? [];
-                        if (appParams.length === 0) return null;
-                        const currentParamKey = cfgStr('app_param_key');
-                        const currentMode = cfgStr('inject_mode') || 'header';
-                        return (
-                          <div style={{ ...fieldGap, marginTop: '16px', padding: '10px 12px', borderRadius: '6px', background: 'rgba(251,146,60,0.05)', border: '1px solid rgba(251,146,60,0.15)' }}>
-                            <div style={{ fontSize: '10px', fontWeight: 700, color: C.amber, letterSpacing: '0.08em', marginBottom: '8px' }}>APP AUTH PARAM</div>
-                            <label style={labelStyle}>App Param Key <span style={hint}>optional — injects runtime param as auth</span></label>
-                            <select
-                              value={currentParamKey}
-                              onChange={e => updateStepConfig('app_param_key', e.target.value)}
-                              style={selectStyle}
-                            >
-                              <option value="">— none —</option>
-                              {appParams.map(p => (
-                                <option key={p.key} value={p.key}>{p.label} ({p.key})</option>
-                              ))}
-                            </select>
-                            {currentParamKey && (
-                              <>
-                                <div style={fieldGap}>
-                                  <label style={labelStyle}>Inject Mode</label>
-                                  <select
-                                    value={currentMode}
-                                    onChange={e => updateStepConfig('inject_mode', e.target.value)}
-                                    style={selectStyle}
-                                  >
-                                    <option value="header">Bearer (Authorization: Bearer)</option>
-                                    <option value="basic">Basic Auth (Authorization: Basic)</option>
-                                    <option value="query">Query Parameter</option>
-                                    <option value="custom_header">Custom Header</option>
-                                  </select>
-                                </div>
-                                {currentMode === 'custom_header' && (
-                                  <div style={fieldGap}>
-                                    <label style={labelStyle}>Header Name</label>
-                                    <input
-                                      value={cfgStr('inject_header_name')}
-                                      onChange={e => updateStepConfig('inject_header_name', e.target.value)}
-                                      style={inputStyle}
-                                      placeholder="X-Api-Key"
-                                    />
-                                  </div>
-                                )}
-                                {currentMode === 'query' && (
-                                  <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
-                                    The param key name will be used as the query parameter name.
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        );
-                      })()}
-
-                      {/* Response extractions */}
-                      <div style={{ ...fieldGap, marginTop: '16px' }}>
-                        <label style={labelStyle}>Response Extractions <span style={hint}>JSONPath → variable</span></label>
-                        {((cfg.extractions as {var: string; json_path: string}[]) ?? []).map((ex, i) => (
-                          <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-                            <input
-                              value={ex.json_path}
-                              onChange={e => {
-                                const next = [...((cfg.extractions as {var: string; json_path: string}[]) ?? [])];
-                                next[i] = { ...next[i], json_path: e.target.value };
-                                updateStepConfig('extractions', next);
-                              }}
-                              style={{ ...inputStyle, flex: 1, fontSize: '11px' }}
-                              placeholder="$.result"
-                            />
-                            <input
-                              value={ex.var}
-                              onChange={e => {
-                                const next = [...((cfg.extractions as {var: string; json_path: string}[]) ?? [])];
-                                next[i] = { ...next[i], var: e.target.value };
-                                updateStepConfig('extractions', next);
-                              }}
-                              style={{ ...inputStyle, flex: 1, fontSize: '11px' }}
-                              placeholder="var_name"
-                            />
-                            <button
-                              onClick={() => {
-                                const next = ((cfg.extractions as {var: string; json_path: string}[]) ?? []).filter((_, j) => j !== i);
-                                updateStepConfig('extractions', next);
-                              }}
-                              style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
-                            >×</button>
-                          </div>
-                        ))}
-                        <button
-                          onClick={() => {
-                            const next = [...((cfg.extractions as {var: string; json_path: string}[]) ?? []), { json_path: '$.', var: '' }];
-                            updateStepConfig('extractions', next);
-                          }}
-                          style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}
-                        >+ Add extraction</button>
-                      </div>
-                    </>
-                  )}
-
-                  {/* ── Config: transform ── */}
-                  {d.step_type === 'transform' && (
-                    <>
-                      <div style={{ color: C.indigo, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>TRANSFORM CONFIG</div>
-                      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>
-                        Each row maps an output variable name to a Go template expression.<br />
-                        Use <code style={{ color: C.cyan }}>{'{{.var_name}}'}</code> to reference upstream variables.
-                      </div>
-                      {Object.entries((cfg.expressions as Record<string, string>) ?? {}).map(([k, v], i) => (
-                        <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-                          <input
-                            value={k}
-                            onChange={e => {
-                              const entries = Object.entries((cfg.expressions as Record<string, string>) ?? {});
-                              entries[i] = [e.target.value, v];
-                              updateStepConfig('expressions', Object.fromEntries(entries));
-                            }}
-                            style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }}
-                            placeholder="output_var"
-                          />
-                          <input
-                            value={v}
-                            onChange={e => {
-                              const exprs = { ...((cfg.expressions as Record<string, string>) ?? {}), [k]: e.target.value };
-                              updateStepConfig('expressions', exprs);
-                            }}
-                            style={{ ...inputStyle, flex: 1, fontSize: '11px' }}
-                            placeholder={'Hello, {{.user_query}}!'}
-                          />
-                          <button
-                            onClick={() => {
-                              const exprs = { ...((cfg.expressions as Record<string, string>) ?? {}) };
-                              delete exprs[k];
-                              updateStepConfig('expressions', exprs);
-                            }}
-                            style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
-                          >×</button>
-                        </div>
-                      ))}
-                      <button
-                        onClick={() => {
-                          const exprs = { ...((cfg.expressions as Record<string, string>) ?? {}), '': '' };
-                          updateStepConfig('expressions', exprs);
-                        }}
-                        style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}
-                      >+ Add expression</button>
-
-                      {/* ── JSON Extractions ── */}
-                      <div style={{ fontSize: '10px', fontWeight: 700, color: C.indigo, letterSpacing: '0.08em', marginTop: '14px', marginBottom: '6px' }}>JSON EXTRACTIONS</div>
-                      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>
-                        Parse a JSON variable (e.g. LLM output or http_response) and extract fields by dot-path.
-                      </div>
-                      {((cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? []).map((ext, i) => {
-                        const exts = (cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? [];
-                        return (
-                          <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 6, alignItems: 'center' }}>
-                            <input
-                              value={ext.from_var}
-                              onChange={e => {
-                                const next = exts.map((x, j) => j === i ? { ...x, from_var: e.target.value } : x);
-                                updateStepConfig('extractions', next);
-                              }}
-                              style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }}
-                              placeholder="from_var"
-                              title="Source variable (must hold JSON)"
-                            />
-                            <input
-                              value={ext.json_path}
-                              onChange={e => {
-                                const next = exts.map((x, j) => j === i ? { ...x, json_path: e.target.value } : x);
-                                updateStepConfig('extractions', next);
-                              }}
-                              style={{ ...inputStyle, flex: 1, fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }}
-                              placeholder="field.sub_field"
-                              title="Dot-separated JSON path"
-                            />
-                            <span style={{ color: '#64748b', fontSize: '11px', flexShrink: 0 }}>→</span>
-                            <input
-                              value={ext.var}
-                              onChange={e => {
-                                const next = exts.map((x, j) => j === i ? { ...x, var: e.target.value } : x);
-                                updateStepConfig('extractions', next);
-                              }}
-                              style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }}
-                              placeholder="output_var"
-                              title="Variable name to assign"
-                            />
-                            <button
-                              onClick={() => {
-                                const next = exts.filter((_, j) => j !== i);
-                                updateStepConfig('extractions', next);
-                              }}
-                              style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
-                            >×</button>
-                          </div>
-                        );
-                      })}
-                      <button
-                        onClick={() => {
-                          const exts = (cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? [];
-                          updateStepConfig('extractions', [...exts, { from_var: '', json_path: '', var: '' }]);
-                        }}
-                        style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}
-                      >+ Add extraction</button>
-                    </>
-                  )}
-
-                  {/* ── Config: response ── */}
-                  {d.step_type === 'response' && (
-                    <>
-                      <div style={{ color: C.cyan, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>RESPONSE CONFIG</div>
-
-                      <label style={labelStyle}>From Variable <span style={hint}>pipeline var to return</span></label>
-                      <input
-                        value={cfgStr('from_var') || 'output'}
-                        onChange={e => updateStepConfig('from_var', e.target.value)}
-                        style={inputStyle}
-                        placeholder="output"
-                      />
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>Media Type</label>
-                        <select
-                          value={cfgStr('media_type') || 'text/plain'}
-                          onChange={e => updateStepConfig('media_type', e.target.value)}
-                          style={selectStyle}
-                        >
-                          <option value="text/plain">text/plain</option>
-                          <option value="text/html">text/html</option>
-                          <option value="text/markdown">text/markdown</option>
-                          <option value="application/json">application/json</option>
-                        </select>
-                      </div>
-                    </>
-                  )}
-
-                  {/* ── Config: branch ── */}
-                  {d.step_type === 'branch' && (
-                    <>
-                      <div style={{ color: '#f97316', fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>BRANCH CONFIG</div>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>Expression <span style={hint}>Go template</span></label>
-                        <input
-                          value={cfgStr('expression')}
-                          onChange={e => updateStepConfig('expression', e.target.value)}
-                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
-                          placeholder={'{{eq .status "ok"}}'}
-                        />
-                        <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
-                          Examples: <code style={{ color: '#94a3b8' }}>{'{{eq .x "yes"}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{gt .count 0}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{.my_var}}'}</code>
-                        </div>
-                      </div>
-
-                      <div style={{ marginTop: 12, padding: '10px', background: 'rgba(249,115,22,0.06)', border: '1px solid rgba(249,115,22,0.25)', borderRadius: 6, fontSize: 11, color: '#94a3b8', lineHeight: 1.7 }}>
-                        <strong style={{ color: '#f97316' }}>Exactly 2 output edges required:</strong><br />
-                        <span style={{ color: '#4ade80' }}>1st edge drawn</span> → taken when expression is <strong>truthy</strong><br />
-                        <span style={{ color: '#f87171' }}>2nd edge drawn</span> → taken when expression is <strong>falsy</strong><br />
-                        <span style={{ color: '#64748b', fontSize: 10 }}>
-                          Falsy values: empty string, <code style={{ color: '#94a3b8' }}>false</code>, <code style={{ color: '#94a3b8' }}>0</code>. Everything else is truthy.
-                        </span>
-                      </div>
-                    </>
-                  )}
-
-                  {/* ── Not yet implemented steps ── */}
-                  {!['input', 'llm', 'http', 'transform', 'response', 'branch'].includes(d.step_type) && (
-                    <div style={{ color: '#64748b', fontSize: '12px', padding: '12px', border: `1px dashed ${C.outline}`, borderRadius: '6px', textAlign: 'center' }}>
-                      Config for <strong style={{ color: C.text }}>{d.step_type}</strong> is not yet supported in the builder.
-                    </div>
-                  )}
-
-                  {/* ── OUTPUTS: live outgoing connections ── */}
-                  {d.step_type !== 'response' && (() => {
-                    const outVar = d.step_type === 'input'
-                      ? ((d.config?.bindings as Record<string,string>)?.text || 'input')
-                      : ((d.config?.output_var as string) || 'output');
-                    const outEdges = localPipeEdges.filter(e => e.source === selectedNode.id);
-                    return (
-                      <div style={{ marginTop: '16px' }}>
-                        <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: C.green, marginBottom: '6px' }}>
-                          OUTPUTS {outEdges.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400 }}>— nothing connected</span>}
-                        </div>
-                        {outEdges.map(e => {
-                          const tgt = localPipeNodes.find(n => n.id === e.target);
-                          const tgtData = tgt?.data as unknown as StepData | undefined;
-                          const tgtMeta = tgtData ? stepMeta(tgtData.step_type) : { emoji: '?', label: 'unknown' };
-                          return (
-                            <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', marginBottom: '4px', background: 'rgba(74,222,128,0.05)', border: '1px solid rgba(74,222,128,0.2)' }}>
-                              <code style={{ color: C.green, fontSize: '11px', fontFamily: 'monospace' }}>{`{{${outVar}}}`}</code>
-                              <span style={{ color: C.textMuted, fontSize: '11px' }}>→</span>
-                              <span style={{ fontSize: '14px' }}>{tgtMeta.emoji}</span>
-                              <span style={{ color: '#e2e8f0', fontSize: '11px', fontWeight: 600 }}>{tgtData?.label || tgtMeta.label}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-
-                  {/* ── Debug: output / override panel ── */}
-                  {debug.active && (() => {
-                    const nodeDebugState = debug.nodeStates[selectedNode.id];
-                    const nodeOutput = debug.nodeOutputs[selectedNode.id];
-                    const nodeError = debug.nodeErrors[selectedNode.id];
-                    const nodeInputVars = debug.nodeInputVars[selectedNode.id];
-
-                    // Step-through: show var overrides if this node is pending
-                    if (debug.mode === 'step' && nodeDebugState === 'pending') {
-                      const inEdges = localPipeEdges.filter(e => e.target === selectedNode.id);
-                      const pendingVars = inEdges.map(e => {
-                        const src = localPipeNodes.find(n => n.id === e.source);
-                        const srcData = src?.data as unknown as StepData | undefined;
-                        const varName = srcData?.step_type === 'input'
-                          ? ((srcData?.config?.bindings as Record<string,string>)?.text || 'input')
-                          : ((srcData?.config?.output_var as string) || 'output');
-                        return { varName, currentVal: String(debug.vars[varName] ?? '') };
-                      });
-                      if (pendingVars.length > 0) {
-                        return (
-                          <div style={{ marginTop: '16px', padding: '10px', background: 'rgba(245,158,11,0.08)', border: `1px solid ${C.amberBorder}`, borderRadius: '8px' }}>
-                            <div style={{ fontSize: '10px', fontWeight: 700, color: C.amber, marginBottom: '8px', letterSpacing: '0.08em' }}>
-                              STEP OVERRIDE — edit values before step runs
-                            </div>
-                            {pendingVars.map(({ varName, currentVal }) => (
-                              <div key={varName} style={{ marginBottom: '8px' }}>
-                                <label style={{ ...labelStyle, color: C.amber }}>{`{{${varName}}}`}</label>
-                                <textarea
-                                  rows={2}
-                                  value={debug.pendingVarOverrides[varName] ?? currentVal}
-                                  onChange={e => setDebug(prev => ({
-                                    ...prev,
-                                    pendingVarOverrides: { ...prev.pendingVarOverrides, [varName]: e.target.value },
-                                  }))}
-                                  style={{ ...textareaStyle, borderColor: C.amberBorder, fontSize: '11px' }}
-                                />
-                              </div>
-                            ))}
-                            <button onClick={debugStep} style={{
-                              width: '100%', background: 'rgba(96,165,250,0.1)', border: `1px solid rgba(96,165,250,0.4)`,
-                              color: '#60a5fa', padding: '6px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
-                            }}>
-                              ⏭ Execute this step
-                            </button>
-                          </div>
-                        );
-                      }
-                    }
-
-                    // Show input vars + output after step ran
-                    if (nodeDebugState === 'done' && nodeOutput !== undefined) {
-                      return (
-                        <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {nodeInputVars && Object.keys(nodeInputVars).length > 0 && (
-                            <details style={{ background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.25)', borderRadius: '8px', padding: '8px 10px' }}>
-                              <summary style={{ fontSize: '10px', fontWeight: 700, color: '#60a5fa', letterSpacing: '0.08em', cursor: 'pointer', userSelect: 'none' }}>
-                                VARS IN ({Object.keys(nodeInputVars).length})
-                              </summary>
-                              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {Object.entries(nodeInputVars).map(([k, v]) => {
-                                  const str = typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
-                                  const preview = str.length > 120 ? str.slice(0, 120) + '…' : str;
-                                  return (
-                                    <div key={k}>
-                                      <div style={{ fontSize: '10px', color: '#60a5fa', fontFamily: 'monospace', fontWeight: 600 }}>{`{{.${k}}}`}</div>
-                                      <pre style={{ color: '#94a3b8', fontSize: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, fontFamily: 'monospace' }}>{preview}</pre>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </details>
-                          )}
-                          <div style={{ padding: '10px', background: 'rgba(74,222,128,0.06)', border: `1px solid rgba(74,222,128,0.3)`, borderRadius: '8px' }}>
-                            <div style={{ fontSize: '10px', fontWeight: 700, color: C.green, marginBottom: '6px', letterSpacing: '0.08em' }}>OUTPUT</div>
-                            <pre style={{ color: '#e2e8f0', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>
-                              {nodeOutput || '(empty)'}
-                            </pre>
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    if (nodeDebugState === 'error' && nodeError) {
-                      return (
-                        <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {nodeInputVars && Object.keys(nodeInputVars).length > 0 && (
-                            <details style={{ background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.25)', borderRadius: '8px', padding: '8px 10px' }}>
-                              <summary style={{ fontSize: '10px', fontWeight: 700, color: '#60a5fa', letterSpacing: '0.08em', cursor: 'pointer', userSelect: 'none' }}>
-                                VARS IN ({Object.keys(nodeInputVars).length})
-                              </summary>
-                              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {Object.entries(nodeInputVars).map(([k, v]) => {
-                                  const str = typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
-                                  const preview = str.length > 120 ? str.slice(0, 120) + '…' : str;
-                                  return (
-                                    <div key={k}>
-                                      <div style={{ fontSize: '10px', color: '#60a5fa', fontFamily: 'monospace', fontWeight: 600 }}>{`{{.${k}}}`}</div>
-                                      <pre style={{ color: '#94a3b8', fontSize: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, fontFamily: 'monospace' }}>{preview}</pre>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </details>
-                          )}
-                          <div style={{ padding: '10px', background: 'rgba(248,113,113,0.06)', border: `1px solid rgba(248,113,113,0.3)`, borderRadius: '8px' }}>
-                            <div style={{ fontSize: '10px', fontWeight: 700, color: '#f87171', marginBottom: '6px', letterSpacing: '0.08em' }}>ERROR</div>
-                            <pre style={{ color: '#f87171', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>
-                              {nodeError}
-                            </pre>
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    return null;
-                  })()}
-
-                </>
-              );
-            })()}
-          </div>
+          <RightPanel
+            selectedNode={selectedNode}
+            setSelectedNode={setSelectedNode}
+            propertiesWidth={propertiesWidth}
+            onResizeStart={(e) => { e.preventDefault(); resizingRef.current = { side: 'properties', startX: e.clientX, startW: propertiesWidth }; document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'; }}
+            activeView={activeView}
+            agentNodes={agentNodes}
+            localPipeNodes={localPipeNodes}
+            localPipeEdges={localPipeEdges}
+            validationIssues={validation.issues}
+            debug={debug}
+            updateSelectedNodeField={updateSelectedNodeField}
+            updateStepConfig={updateStepConfig}
+            setAgentNodes={setAgentNodes}
+            setDirty={setDirty}
+            savePipelineState={savePipelineState}
+            setActiveSkillId={setActiveSkillId}
+            setActiveView={setActiveView}
+            setDebug={setDebug}
+            debugStep={debugStep}
+          />
         )}
       </div>
     </div>
