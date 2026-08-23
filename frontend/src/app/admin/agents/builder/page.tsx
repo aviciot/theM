@@ -789,19 +789,31 @@ function CanvasInner() {
     };
   }
 
+  const importFileRef = useRef<HTMLInputElement>(null);
+
   function handleImportJSON() {
-    const json = prompt('Paste agent definition JSON:');
-    if (!json) return;
-    try {
-      const doc = JSON.parse(json) as AgentDefinitionDoc;
-      if (!doc.agent_root || !Array.isArray(doc.skills)) throw new Error('Not a valid agent definition');
-      setAgentSlug(doc.agent_slug ?? '');
-      loadDefinitionDoc(doc);
-      setDirty(true);
-      setSaveError('');
-    } catch (e) {
-      setSaveError(`Import failed: ${String(e)}`);
-    }
+    importFileRef.current?.click();
+  }
+
+  function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const doc = JSON.parse(ev.target?.result as string) as AgentDefinitionDoc;
+        if (!doc.agent_root || !Array.isArray(doc.skills)) throw new Error('Not a valid agent definition');
+        setAgentSlug(doc.agent_slug ?? '');
+        loadDefinitionDoc(doc);
+        setDirty(true);
+        setSaveError('');
+      } catch (err) {
+        setSaveError(`Import failed: ${String(err)}`);
+      }
+      // Reset so the same file can be re-imported if needed.
+      e.target.value = '';
+    };
+    reader.readAsText(file);
   }
 
   async function handleSave() {
@@ -1712,12 +1724,21 @@ function CanvasInner() {
           </button>
         )}
         {activeView === 'agent' && !defId && (
-          <button onClick={handleImportJSON} style={{
-            background: 'rgba(99,102,241,0.12)', border: `1px solid rgba(99,102,241,0.5)`,
-            color: C.indigo, padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
-          }}>
-            ↓ Import JSON
-          </button>
+          <>
+            <input
+              ref={importFileRef}
+              type="file"
+              accept=".json,application/json"
+              style={{ display: 'none' }}
+              onChange={handleImportFileChange}
+            />
+            <button onClick={handleImportJSON} style={{
+              background: 'rgba(99,102,241,0.12)', border: `1px solid rgba(99,102,241,0.5)`,
+              color: C.indigo, padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
+            }}>
+              ↓ Import JSON
+            </button>
+          </>
         )}
         <button onClick={handleSave} disabled={saving} style={{
           background: dirty ? C.cyan : 'rgba(0,240,255,0.2)',
