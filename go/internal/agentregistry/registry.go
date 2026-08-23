@@ -305,7 +305,7 @@ type a2aConfiguration struct {
 }
 
 type a2aMessage struct {
-	Role      int       `json:"role"`       // 1 = user (A2A v1.1 proto enum)
+	Role      string    `json:"role"`       // "ROLE_USER" — protobuf-JSON enum string
 	Parts     []a2aPart `json:"parts"`
 	MessageID string    `json:"messageId"`
 	ContextID string    `json:"contextId,omitempty"`
@@ -398,7 +398,7 @@ func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.R
 		Method:  "SendMessage", // A2A v1.1 PascalCase gRPC method name
 		Params: a2aParams{
 			Message: a2aMessage{
-				Role:      1, // ROLE_USER in proto enum
+				Role:      "ROLE_USER", // ROLE_USER in proto enum
 				Parts:     []a2aPart{part},
 				MessageID: msgID,
 			},
@@ -450,8 +450,8 @@ func (r *Registry) invokeA2A(ctx context.Context, cfg *AgentConfig, input json.R
 // streamResponse mirrors the A2A v1.0 StreamResponse proto for JSON decoding.
 // Only the fields we act on are mapped; unknown fields are ignored.
 type streamResponse struct {
-	StatusUpdate   *streamStatusUpdate   `json:"status_update,omitempty"`
-	ArtifactUpdate *streamArtifactUpdate `json:"artifact_update,omitempty"`
+	StatusUpdate   *streamStatusUpdate   `json:"statusUpdate,omitempty"`
+	ArtifactUpdate *streamArtifactUpdate `json:"artifactUpdate,omitempty"`
 	Task           *a2aTask              `json:"task,omitempty"`
 }
 
@@ -462,7 +462,7 @@ type streamStatusUpdate struct {
 type streamArtifactUpdate struct {
 	Artifact  a2aArtifact `json:"artifact"`
 	Append    bool        `json:"append"`
-	LastChunk bool        `json:"last_chunk"`
+	LastChunk bool        `json:"lastChunk"`
 }
 
 // invokeA2AStreaming calls SendStreamingMessage on a streaming A2A agent.
@@ -479,7 +479,7 @@ func (r *Registry) invokeA2AStreaming(ctx context.Context, cfg *AgentConfig, inp
 		Method:  "SendStreamingMessage",
 		Params: a2aParams{
 			Message: a2aMessage{
-				Role:      1,
+				Role:      "ROLE_USER",
 				Parts:     []a2aPart{part},
 				MessageID: msgID,
 			},
@@ -762,7 +762,7 @@ func (r *Registry) InvokeWithMeta(ctx context.Context, tenantID, slug string, pa
 		Method:  "SendMessage",
 		Params: a2aParams{
 			Message: a2aMessage{
-				Role:      1,
+				Role:      "ROLE_USER",
 				Parts:     []a2aPart{part},
 				MessageID: msgID,
 			},

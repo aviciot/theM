@@ -466,7 +466,7 @@ func TestInvokeForRunStreaming_SingleArtifact_CallbackFired(t *testing.T) {
 	// Simulate a streaming A2A agent that sends one artifact_update SSE event
 	// followed by a terminal task event.
 	sseBody := strings.Join([]string{
-		`data: {"result":{"artifact_update":{"artifact":{"parts":[{"text":"<html/>","filename":"doc.html","mediaType":"text/html"}]},"append":false,"last_chunk":true}}}`,
+		`data: {"result":{"artifactUpdate":{"artifact":{"parts":[{"text":"<html/>","filename":"doc.html","mediaType":"text/html"}]},"append":false,"lastChunk":true}}}`,
 		`data: {"result":{"task":{"status":{"state":"TASK_STATE_COMPLETED"},"artifacts":[]}}}`,
 		"",
 	}, "\n")
