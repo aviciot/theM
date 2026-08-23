@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "agent_slug": "kosher-vacation-planner",
+  "agent_root": {
+    "display_name": "Kosher Vacation Planner",
+    "description": "Plans and compares two vacation destinations for kosher-observant travellers. Checks weather, kosher restaurant availability, Shabbat times, and currency — then recommends the best option with a full explanation.",
+    "version": "1.0.0",
+    "icon": "✈️",
+    "category": "travel"
+  },
+  "skills": [
+    {
+      "skill_id": "plan-vacation",
+      "name": "Plan Vacation",
+      "description": "Takes user preferences (two destinations, travel dates, budget currency) and returns a scored recommendation.",
+      "tags": ["travel", "kosher", "weather", "shabbat"],
+      "input_modes": ["text/plain"],
+      "output_modes": ["text/plain"],
+      "examples": [
+        "Compare Rome and Barcelona for a kosher trip in September with a budget in ILS"
+      ],
+      "input_schema": {},
+      "output_schema": {},
+      "steps": [
+        {
+          "id": "input",
+          "type": "input",
+          "config": { "bindings": { "text": "user_request" } },
+          "next": ["parse-prefs"],
+          "position": { "x": 160, "y": 40 }
+        },
+
+        {
+          "id": "parse-prefs",
+          "type": "llm",
+          "config": {
+            "provider": "anthropic",
+            "model": "claude-haiku-4-5-20251001",
+            "system_prompt": "You extract structured travel preferences from user input. Output ONLY valid JSON — no markdown, no explanation, no code fences. The JSON must have exactly these keys:\n{\n  \"city1\": \"Rome\",\n  \"city1_lat\": \"41.9028\",\n  \"city1_lon\": \"12.4964\",\n  \"city1_tz\": \"Europe/Rome\",\n  \"city2\": \"Barcelona\",\n  \"city2_lat\": \"41.3851\",\n  \"city2_lon\": \"2.1734\",\n  \"city2_tz\": \"Europe/Madrid\",\n  \"budget_currency\": \"ILS\"\n}\nAll lat/lon values must be decimal strings. Timezone must be a valid IANA timezone. Currency must be a 3-letter ISO 4217 code. If the user does not specify two cities, choose two well-known cities in the region they mention that are good for kosher travellers.",
+            "user_prompt": "{{.user_request}}",
+            "max_tokens": 300,
+            "output_var": "prefs_json"
+          },
+          "next": ["extract-prefs"],
+          "position": { "x": 160, "y": 160 }
+        },
+
+        {
+          "id": "extract-prefs",
+          "type": "transform",
+          "config": {
+            "expressions": {},
+            "extractions": [
+              { "from_var": "prefs_json", "json_path": "city1",          "var": "city1" },
+              { "from_var": "prefs_json", "json_path": "city1_lat",      "var": "city1_lat" },
+              { "from_var": "prefs_json", "json_path": "city1_lon",      "var": "city1_lon" },
+              { "from_var": "prefs_json", "json_path": "city1_tz",       "var": "city1_tz" },
+              { "from_var": "prefs_json", "json_path": "city2",          "var": "city2" },
+              { "from_var": "prefs_json", "json_path": "city2_lat",      "var": "city2_lat" },
+              { "from_var": "prefs_json", "json_path": "city2_lon",      "var": "city2_lon" },
+              { "from_var": "prefs_json", "json_path": "city2_tz",       "var": "city2_tz" },
+              { "from_var": "prefs_json", "json_path": "budget_currency","var": "budget_currency" }
+            ]
+          },
+          "next": ["weather-city1"],
+          "position": { "x": 160, "y": 280 }
+        },
+
+        {
+          "id": "weather-city1",
+          "type": "http",
+          "config": {
+            "method": "GET",
+            "url_template": "https://api.open-meteo.com/v1/forecast?latitude={{.city1_lat}}&longitude={{.city1_lon}}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&forecast_days=7",
+            "headers": { "Accept": "application/json" },
+            "extractions": [],
+            "timeout_seconds": 15
+          },
+          "next": ["store-weather1"],
+          "position": { "x": 160, "y": 400 }
+        },
+
+        {
+          "id": "store-weather1",
+          "type": "transform",
+          "config": {
+            "expressions": { "weather1_raw": "{{.http_response}}" },
+            "extractions": []
+          },
+          "next": ["shabbat-city1"],
+          "position": { "x": 160, "y": 500 }
+        },
+
+        {
+          "id": "shabbat-city1",
+          "type": "http",
+          "config": {
+            "method": "GET",
+            "url_template": "https://www.hebcal.com/shabbat?cfg=json&geo=pos&latitude={{.city1_lat}}&longitude={{.city1_lon}}&tzid={{.city1_tz}}&M=on",
+            "headers": { "Accept": "application/json" },
+            "extractions": [],
+            "timeout_seconds": 15
+          },
+          "next": ["store-shabbat1"],
+          "position": { "x": 160, "y": 600 }
+        },
+
+        {
+          "id": "store-shabbat1",
+          "type": "transform",
+          "config": {
+            "expressions": { "shabbat1_raw": "{{.http_response}}" },
+            "extractions": []
+          },
+          "next": ["weather-city2"],
+          "position": { "x": 160, "y": 700 }
+        },
+
+        {
+          "id": "weather-city2",
+          "type": "http",
+          "config": {
+            "method": "GET",
+            "url_template": "https://api.open-meteo.com/v1/forecast?latitude={{.city2_lat}}&longitude={{.city2_lon}}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&forecast_days=7",
+            "headers": { "Accept": "application/json" },
+            "extractions": [],
+            "timeout_seconds": 15
+          },
+          "next": ["store-weather2"],
+          "position": { "x": 160, "y": 800 }
+        },
+
+        {
+          "id": "store-weather2",
+          "type": "transform",
+          "config": {
+            "expressions": { "weather2_raw": "{{.http_response}}" },
+            "extractions": []
+          },
+          "next": ["shabbat-city2"],
+          "position": { "x": 160, "y": 900 }
+        },
+
+        {
+          "id": "shabbat-city2",
+          "type": "http",
+          "config": {
+            "method": "GET",
+            "url_template": "https://www.hebcal.com/shabbat?cfg=json&geo=pos&latitude={{.city2_lat}}&longitude={{.city2_lon}}&tzid={{.city2_tz}}&M=on",
+            "headers": { "Accept": "application/json" },
+            "extractions": [],
+            "timeout_seconds": 15
+          },
+          "next": ["store-shabbat2"],
+          "position": { "x": 160, "y": 1000 }
+        },
+
+        {
+          "id": "store-shabbat2",
+          "type": "transform",
+          "config": {
+            "expressions": { "shabbat2_raw": "{{.http_response}}" },
+            "extractions": []
+          },
+          "next": ["currency-rates"],
+          "position": { "x": 160, "y": 1100 }
+        },
+
+        {
+          "id": "currency-rates",
+          "type": "http",
+          "config": {
+            "method": "GET",
+            "url_template": "https://api.frankfurter.dev/v1/latest?base=EUR",
+            "headers": { "Accept": "application/json" },
+            "extractions": [],
+            "timeout_seconds": 10
+          },
+          "next": ["store-currency"],
+          "position": { "x": 160, "y": 1200 }
+        },
+
+        {
+          "id": "store-currency",
+          "type": "transform",
+          "config": {
+            "expressions": { "currency_raw": "{{.http_response}}" },
+            "extractions": []
+          },
+          "next": ["score-and-recommend"],
+          "position": { "x": 160, "y": 1300 }
+        },
+
+        {
+          "id": "score-and-recommend",
+          "type": "llm",
+          "config": {
+            "provider": "anthropic",
+            "model": "claude-haiku-4-5-20251001",
+            "system_prompt": "You are a travel advisor specialising in kosher-observant Jewish travellers. Analyse the weather, Shabbat times, and currency data for two cities and write a clear, helpful vacation recommendation.\n\nStructure your response exactly like this:\n\n🏆 Recommended: [WINNING CITY]\n\n📊 Score Comparison\n| Category | [City 1] | [City 2] |\n|---|---|---|\n| Weather (out of 10) | X | X |\n| Shabbat convenience (out of 10) | X | X |\n| Budget/value (out of 10) | X | X |\n| TOTAL | X | X |\n\n✅ Why [WINNING CITY] wins:\n• [specific reason 1 — cite actual data]\n• [specific reason 2]\n• [specific reason 3]\n\n⚠️ What to watch out for:\n• [one practical caution about the winner]\n\n🕯️ Shabbat info for [WINNING CITY]:\n• Candle lighting: [exact time from Hebcal data]\n• Havdalah: [exact time]\n\n💰 Budget note:\n• Daily estimate in [user's currency]: [range]\n• EUR exchange rate: [rate from Frankfurter]\n\nScoring guide — Weather: 22-28°C avg max = 10, 18-22°C = 8, <18°C or >32°C = 5, heavy rain = -2. Shabbat: candle lighting after 18:00 and before 20:30 = ideal (10), outside = lower. Budget: infer from EUR exchange rate — stronger local currency = more expensive for Euro-based tourists.",
+            "user_prompt": "User request: {{.user_request}}\n\nCity 1: {{.city1}} ({{.city1_lat}}, {{.city1_lon}})\nCity 1 weather forecast: {{.weather1_raw}}\nCity 1 Shabbat times: {{.shabbat1_raw}}\n\nCity 2: {{.city2}} ({{.city2_lat}}, {{.city2_lon}})\nCity 2 weather forecast: {{.weather2_raw}}\nCity 2 Shabbat times: {{.shabbat2_raw}}\n\nCurrency rates (EUR base): {{.currency_raw}}\nUser's preferred currency: {{.budget_currency}}",
+            "max_tokens": 1000,
+            "output_var": "recommendation"
+          },
+          "next": ["check-recommendation"],
+          "position": { "x": 160, "y": 1420 }
+        },
+
+        {
+          "id": "check-recommendation",
+          "type": "branch",
+          "config": {
+            "expression": "{{.recommendation}}",
+            "true_next": "final-response",
+            "false_next": "error-response"
+          },
+          "next": [],
+          "position": { "x": 160, "y": 1560 }
+        },
+
+        {
+          "id": "final-response",
+          "type": "response",
+          "config": {
+            "from_var": "recommendation",
+            "media_type": "text/plain"
+          },
+          "next": [],
+          "position": { "x": 60, "y": 1680 }
+        },
+
+        {
+          "id": "error-response",
+          "type": "response",
+          "config": {
+            "from_var": "prefs_json",
+            "media_type": "text/plain"
+          },
+          "next": [],
+          "position": { "x": 340, "y": 1680 }
+        }
+      ]
+    }
+  ]
+}

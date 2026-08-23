@@ -135,7 +135,15 @@ type JSONPathExtract struct {
 }
 
 type TransformStepConfig struct {
-	Expressions map[string]string `json:"expressions"` // output_var → Go template expression
+	Expressions map[string]string  `json:"expressions"`          // output_var → Go template expression
+	Extractions []TransformExtract `json:"extractions,omitempty"` // parse JSON from a var and extract fields
+}
+
+// TransformExtract pulls one value out of a JSON-string pipeline variable.
+type TransformExtract struct {
+	FromVar  string `json:"from_var"`  // variable holding a JSON string or map
+	JSONPath string `json:"json_path"` // dot-separated path e.g. "city1_lat"
+	Var      string `json:"var"`       // output variable name
 }
 
 type InputStepConfig struct {

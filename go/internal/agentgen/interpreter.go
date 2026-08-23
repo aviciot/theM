@@ -313,6 +313,27 @@ func (interp *Interpreter) execTransform(step *StepSpec, vars PipelineVars) erro
 		}
 		vars[outputVar] = val
 	}
+	// JSON extractions: parse a named var as JSON and extract field(s) by path.
+	for _, ext := range cfg.Extractions {
+		raw, ok := vars[ext.FromVar]
+		if !ok {
+			continue
+		}
+		var parsed map[string]any
+		switch v := raw.(type) {
+		case map[string]any:
+			parsed = v
+		case string:
+			if err := json.Unmarshal([]byte(v), &parsed); err != nil {
+				continue // silently skip unparseable
+			}
+		default:
+			continue
+		}
+		if val := extractJSONPath(parsed, ext.JSONPath); val != "" {
+			vars[ext.Var] = val
+		}
+	}
 	return nil
 }
 

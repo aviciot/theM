@@ -2411,6 +2411,64 @@ function CanvasInner() {
                         }}
                         style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}
                       >+ Add expression</button>
+
+                      {/* ── JSON Extractions ── */}
+                      <div style={{ fontSize: '10px', fontWeight: 700, color: C.indigo, letterSpacing: '0.08em', marginTop: '14px', marginBottom: '6px' }}>JSON EXTRACTIONS</div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>
+                        Parse a JSON variable (e.g. LLM output or http_response) and extract fields by dot-path.
+                      </div>
+                      {((cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? []).map((ext, i) => {
+                        const exts = (cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? [];
+                        return (
+                          <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 6, alignItems: 'center' }}>
+                            <input
+                              value={ext.from_var}
+                              onChange={e => {
+                                const next = exts.map((x, j) => j === i ? { ...x, from_var: e.target.value } : x);
+                                updateStepConfig('extractions', next);
+                              }}
+                              style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }}
+                              placeholder="from_var"
+                              title="Source variable (must hold JSON)"
+                            />
+                            <input
+                              value={ext.json_path}
+                              onChange={e => {
+                                const next = exts.map((x, j) => j === i ? { ...x, json_path: e.target.value } : x);
+                                updateStepConfig('extractions', next);
+                              }}
+                              style={{ ...inputStyle, flex: 1, fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }}
+                              placeholder="field.sub_field"
+                              title="Dot-separated JSON path"
+                            />
+                            <span style={{ color: '#64748b', fontSize: '11px', flexShrink: 0 }}>→</span>
+                            <input
+                              value={ext.var}
+                              onChange={e => {
+                                const next = exts.map((x, j) => j === i ? { ...x, var: e.target.value } : x);
+                                updateStepConfig('extractions', next);
+                              }}
+                              style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }}
+                              placeholder="output_var"
+                              title="Variable name to assign"
+                            />
+                            <button
+                              onClick={() => {
+                                const next = exts.filter((_, j) => j !== i);
+                                updateStepConfig('extractions', next);
+                              }}
+                              style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}
+                            >×</button>
+                          </div>
+                        );
+                      })}
+                      <button
+                        onClick={() => {
+                          const exts = (cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? [];
+                          updateStepConfig('extractions', [...exts, { from_var: '', json_path: '', var: '' }]);
+                        }}
+                        style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}
+                      >+ Add extraction</button>
                     </>
                   )}
 

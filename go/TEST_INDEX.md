@@ -1308,6 +1308,8 @@ via Condition and Branch step types. No external services required.
 | `TestInterpreter_ConditionStep_FailPath` | Condition step: falsy expression ("") → routes to FailNext |
 | `TestInterpreter_BranchStep_TruePath` | Branch step: `{{eq .x "yes"}}` with x=yes renders "true" → TrueNext |
 | `TestInterpreter_BranchStep_FalsePath` | Branch step: `{{eq .x "yes"}}` with x=no renders "false" → FalseNext |
+| `TestInterpreter_TransformStep_JSONExtractions` | Transform JSONPath extractions: parses a JSON string var (LLM output) and assigns fields to named pipeline vars |
+| `TestInterpreter_TransformStep_JSONExtract_FromMap` | Transform JSONPath extractions: parses a map[string]any (http_response) and extracts a field to a named var |
 
 **Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go) or `cmd/agent-runtime/main.go`
 

@@ -769,6 +769,112 @@ func TestInterpreter_BranchStep_FalsePath(t *testing.T) {
 	}
 }
 
+// TestInterpreter_TransformStep_JSONExtractions verifies that TransformExtract
+// correctly parses a JSON string variable and assigns sub-fields to new vars.
+func TestInterpreter_TransformStep_JSONExtractions(t *testing.T) {
+	interp := agentgen.NewInterpreter(nil, nil, "")
+	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "a1"}
+
+	// The input carries a JSON string as if output by an LLM.
+	prefs := `{"city":"Rome","lat":"41.9028","lon":"12.4964"}`
+
+	skill := &agentgen.SkillSpec{
+		ID: "s1",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:     "in",
+				Type:   agentgen.StepInput,
+				Config: mustJSON(agentgen.InputStepConfig{Bindings: map[string]string{"text": "prefs_json"}}),
+				Next:   []string{"extract"},
+			},
+			{
+				ID:   "extract",
+				Type: agentgen.StepTransform,
+				Config: mustJSON(agentgen.TransformStepConfig{
+					Expressions: map[string]string{},
+					Extractions: []agentgen.TransformExtract{
+						{FromVar: "prefs_json", JSONPath: "city", Var: "city"},
+						{FromVar: "prefs_json", JSONPath: "lat",  Var: "lat"},
+						{FromVar: "prefs_json", JSONPath: "lon",  Var: "lon"},
+					},
+				}),
+				Next: []string{"out"},
+			},
+			{
+				ID:     "out",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "city"}),
+			},
+		},
+	}
+
+	result, err := interp.Execute(context.Background(), ic, skill, prefs)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if result.Text != "Rome" {
+		t.Errorf("expected city=Rome, got %q", result.Text)
+	}
+}
+
+// TestInterpreter_TransformStep_JSONExtract_FromMap verifies extraction works when
+// the source var holds a map[string]any (e.g. already-decoded http_response).
+func TestInterpreter_TransformStep_JSONExtract_FromMap(t *testing.T) {
+	interp := agentgen.NewInterpreter(http.DefaultClient, nil, "")
+	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "a1"}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"country": "Italy", "code": "IT"}) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	skill := &agentgen.SkillSpec{
+		ID: "s1",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:     "in",
+				Type:   agentgen.StepInput,
+				Config: mustJSON(agentgen.InputStepConfig{Bindings: map[string]string{}}),
+				Next:   []string{"fetch"},
+			},
+			{
+				ID:   "fetch",
+				Type: agentgen.StepHTTP,
+				Config: mustJSON(agentgen.HTTPStepConfig{
+					Method:      "GET",
+					URLTemplate: server.URL,
+					Extractions: []agentgen.JSONPathExtract{},
+				}),
+				Next: []string{"extract"},
+			},
+			{
+				ID:   "extract",
+				Type: agentgen.StepTransform,
+				Config: mustJSON(agentgen.TransformStepConfig{
+					Expressions: map[string]string{},
+					Extractions: []agentgen.TransformExtract{
+						{FromVar: "http_response", JSONPath: "country", Var: "country_name"},
+					},
+				}),
+				Next: []string{"out"},
+			},
+			{
+				ID:     "out",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "country_name"}),
+			},
+		},
+	}
+
+	result, err := interp.Execute(context.Background(), ic, skill, "")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if result.Text != "Italy" {
+		t.Errorf("expected country_name=Italy, got %q", result.Text)
+	}
+}
+
 func mustJSON(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil {
