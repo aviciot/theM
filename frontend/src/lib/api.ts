@@ -559,6 +559,7 @@ export interface AgentStepDoc {
   type:
     | 'input' | 'llm' | 'http' | 'transform' | 'response'
     | 'branch' | 'loop' | 'parallel' | 'a2a_call' | 'human_wait' | 'stream_out';
+  label?: string;
   config: Record<string, unknown>;
   next: string[];
   position?: { x: number; y: number };

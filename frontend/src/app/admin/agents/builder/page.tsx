@@ -605,9 +605,11 @@ function CanvasInner() {
           const steps: AgentStepDoc[] = pipeline.nodes.map(sn => {
             const stepd = sn.data as unknown as StepData;
             const outEdges = pipeline.edges.filter(e => e.source === sn.id);
+            const defaultLabel = stepMeta(stepd.step_type).label;
             return {
               id: stepd.step_id,
               type: stepd.step_type as AgentStepDoc['type'],
+              label: (stepd.label && stepd.label !== defaultLabel) ? stepd.label : undefined,
               config: stepd.config ?? {},
               next: outEdges.map(e => (e.target as string).replace('step-', '')),
               position: sn.position,
@@ -725,7 +727,7 @@ function CanvasInner() {
         id: `step-${step.id}`,
         type: 'step',
         position: step.position ?? { x: 200, y: 80 + si * 120 },
-        data: { step_id: step.id, step_type: step.type, label: step.type, config: (step.config as Record<string, unknown>) ?? {} },
+        data: { step_id: step.id, step_type: step.type, label: (step as AgentStepDoc & { label?: string }).label || stepMeta(step.type).label, config: (step.config as Record<string, unknown>) ?? {} },
       }));
       const stepEdges: Edge[] = [];
       for (const step of (sk.steps ?? [])) {
@@ -753,9 +755,11 @@ function CanvasInner() {
         const steps: AgentStepDoc[] = pipeline.nodes.map(sn => {
           const stepd = sn.data as unknown as StepData;
           const outEdges = pipeline.edges.filter(e => e.source === sn.id);
+          const defaultLabel = stepMeta(stepd.step_type).label;
           return {
             id: stepd.step_id,
             type: stepd.step_type as AgentStepDoc['type'],
+            label: (stepd.label && stepd.label !== defaultLabel) ? stepd.label : undefined,
             config: stepd.config ?? {},
             next: outEdges.map(e => (e.target as string).replace('step-', '')),
             position: sn.position,
@@ -802,7 +806,9 @@ function CanvasInner() {
     reader.onload = (ev) => {
       try {
         const doc = JSON.parse(ev.target?.result as string) as AgentDefinitionDoc;
-        if (!doc.agent_root || !Array.isArray(doc.skills)) throw new Error('Not a valid agent definition');
+        if (!doc.agent_root || !Array.isArray(doc.skills)) throw new Error('Missing agent_root or skills array');
+        // Load into canvas — the existing debounced backend validator fires automatically
+        // 1200ms after canvas state changes and populates the error/warning badges in the header.
         setAgentSlug(doc.agent_slug ?? '');
         loadDefinitionDoc(doc);
         setDirty(true);
@@ -2759,10 +2765,13 @@ function CanvasInner() {
                         </div>
                       </div>
 
-                      <div style={{ marginTop: 12, padding: '10px', background: 'rgba(249,115,22,0.06)', border: '1px solid rgba(249,115,22,0.25)', borderRadius: 6, fontSize: 11, color: '#94a3b8', lineHeight: 1.6 }}>
-                        <strong style={{ color: '#f97316' }}>Connect 2 edges from this node:</strong><br />
-                        <span style={{ color: '#4ade80' }}>1st edge drawn</span> → <strong>True</strong> path (expression is truthy)<br />
-                        <span style={{ color: '#f87171' }}>2nd edge drawn</span> → <strong>False</strong> path (expression is falsy)
+                      <div style={{ marginTop: 12, padding: '10px', background: 'rgba(249,115,22,0.06)', border: '1px solid rgba(249,115,22,0.25)', borderRadius: 6, fontSize: 11, color: '#94a3b8', lineHeight: 1.7 }}>
+                        <strong style={{ color: '#f97316' }}>Exactly 2 output edges required:</strong><br />
+                        <span style={{ color: '#4ade80' }}>1st edge drawn</span> → taken when expression is <strong>truthy</strong><br />
+                        <span style={{ color: '#f87171' }}>2nd edge drawn</span> → taken when expression is <strong>falsy</strong><br />
+                        <span style={{ color: '#64748b', fontSize: 10 }}>
+                          Falsy values: empty string, <code style={{ color: '#94a3b8' }}>false</code>, <code style={{ color: '#94a3b8' }}>0</code>. Everything else is truthy.
+                        </span>
                       </div>
                     </>
                   )}

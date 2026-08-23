@@ -26,6 +26,7 @@
         {
           "id": "input",
           "type": "input",
+          "label": "User Request",
           "config": { "bindings": { "text": "user_request" } },
           "next": ["parse-prefs"],
           "position": { "x": 160, "y": 40 }
@@ -34,6 +35,7 @@
         {
           "id": "parse-prefs",
           "type": "llm",
+          "label": "Parse Destinations (LLM)",
           "config": {
             "provider": "anthropic",
             "model": "claude-haiku-4-5-20251001",
@@ -49,6 +51,7 @@
         {
           "id": "extract-prefs",
           "type": "transform",
+          "label": "Extract City Coordinates",
           "config": {
             "expressions": {},
             "extractions": [
@@ -70,6 +73,7 @@
         {
           "id": "weather-city1",
           "type": "http",
+          "label": "Weather — City 1 (Open-Meteo)",
           "config": {
             "method": "GET",
             "url_template": "https://api.open-meteo.com/v1/forecast?latitude={{.city1_lat}}&longitude={{.city1_lon}}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&forecast_days=7",
@@ -84,6 +88,7 @@
         {
           "id": "store-weather1",
           "type": "transform",
+          "label": "Store City 1 Weather",
           "config": {
             "expressions": { "weather1_raw": "{{.http_response}}" },
             "extractions": []
@@ -95,6 +100,7 @@
         {
           "id": "shabbat-city1",
           "type": "http",
+          "label": "Shabbat Times — City 1 (Hebcal)",
           "config": {
             "method": "GET",
             "url_template": "https://www.hebcal.com/shabbat?cfg=json&geo=pos&latitude={{.city1_lat}}&longitude={{.city1_lon}}&tzid={{.city1_tz}}&M=on",
@@ -109,6 +115,7 @@
         {
           "id": "store-shabbat1",
           "type": "transform",
+          "label": "Store City 1 Shabbat",
           "config": {
             "expressions": { "shabbat1_raw": "{{.http_response}}" },
             "extractions": []
@@ -120,6 +127,7 @@
         {
           "id": "kosher-city1",
           "type": "http",
+          "label": "Kosher Restaurants — City 1 (Geoapify)",
           "config": {
             "method": "GET",
             "url_template": "https://api.geoapify.com/v2/places?categories=catering.restaurant.kosher&filter=circle:{{.city1_lon}},{{.city1_lat}},5000&limit=10&format=json",
@@ -137,6 +145,7 @@
         {
           "id": "store-kosher1",
           "type": "transform",
+          "label": "Store City 1 Kosher Results",
           "config": {
             "expressions": { "kosher1_raw": "{{.http_response}}" },
             "extractions": []
@@ -148,6 +157,7 @@
         {
           "id": "weather-city2",
           "type": "http",
+          "label": "Weather — City 2 (Open-Meteo)",
           "config": {
             "method": "GET",
             "url_template": "https://api.open-meteo.com/v1/forecast?latitude={{.city2_lat}}&longitude={{.city2_lon}}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&forecast_days=7",
@@ -162,6 +172,7 @@
         {
           "id": "store-weather2",
           "type": "transform",
+          "label": "Store City 2 Weather",
           "config": {
             "expressions": { "weather2_raw": "{{.http_response}}" },
             "extractions": []
@@ -173,6 +184,7 @@
         {
           "id": "shabbat-city2",
           "type": "http",
+          "label": "Shabbat Times — City 2 (Hebcal)",
           "config": {
             "method": "GET",
             "url_template": "https://www.hebcal.com/shabbat?cfg=json&geo=pos&latitude={{.city2_lat}}&longitude={{.city2_lon}}&tzid={{.city2_tz}}&M=on",
@@ -187,6 +199,7 @@
         {
           "id": "store-shabbat2",
           "type": "transform",
+          "label": "Store City 2 Shabbat",
           "config": {
             "expressions": { "shabbat2_raw": "{{.http_response}}" },
             "extractions": []
@@ -198,6 +211,7 @@
         {
           "id": "kosher-city2",
           "type": "http",
+          "label": "Kosher Restaurants — City 2 (Geoapify)",
           "config": {
             "method": "GET",
             "url_template": "https://api.geoapify.com/v2/places?categories=catering.restaurant.kosher&filter=circle:{{.city2_lon}},{{.city2_lat}},5000&limit=10&format=json",
@@ -215,6 +229,7 @@
         {
           "id": "store-kosher2",
           "type": "transform",
+          "label": "Store City 2 Kosher Results",
           "config": {
             "expressions": { "kosher2_raw": "{{.http_response}}" },
             "extractions": []
@@ -226,6 +241,7 @@
         {
           "id": "currency-rates",
           "type": "http",
+          "label": "EUR Exchange Rates (Frankfurter)",
           "config": {
             "method": "GET",
             "url_template": "https://api.frankfurter.dev/v1/latest?base=EUR",
@@ -240,6 +256,7 @@
         {
           "id": "store-currency",
           "type": "transform",
+          "label": "Store Currency Rates",
           "config": {
             "expressions": { "currency_raw": "{{.http_response}}" },
             "extractions": []
@@ -251,6 +268,7 @@
         {
           "id": "score-and-recommend",
           "type": "llm",
+          "label": "Score & Recommend (LLM)",
           "config": {
             "provider": "anthropic",
             "model": "claude-haiku-4-5-20251001",
@@ -266,6 +284,7 @@
         {
           "id": "check-recommendation",
           "type": "branch",
+          "label": "Got Recommendation?",
           "config": {
             "expression": "{{.recommendation}}"
           },
@@ -276,6 +295,7 @@
         {
           "id": "final-response",
           "type": "response",
+          "label": "Send Recommendation",
           "config": {
             "from_var": "recommendation",
             "media_type": "text/plain"
@@ -287,6 +307,7 @@
         {
           "id": "error-response",
           "type": "response",
+          "label": "Send Error (raw prefs)",
           "config": {
             "from_var": "prefs_json",
             "media_type": "text/plain"
