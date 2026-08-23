@@ -447,12 +447,18 @@ function CanvasInner() {
   const [localPipeEdges, setLocalPipeEdges, onPipeEdgesChange] = useEdgesState<Edge>(pipelineEdges);
 
   // Fetch node type definitions from the backend on mount (single source of truth).
-  // setNodeTypesReady(true) triggers a re-render so nodes pick up real emoji/labels
-  // instead of the fallback icons that render before the fetch completes.
+  // After the fetch resolves we shallow-copy all existing nodes so ReactFlow sees
+  // new object references and re-renders StepNode/AgentRootNode with real emoji/labels
+  // instead of the fallback icons that show before the cache is populated.
   useEffect(() => {
     fetchNodeTypes()
-      .then(defs => { setCachedNodeTypes(defs); setNodeTypesReady(true); })
-      .catch(() => { setNodeTypesReady(true); }); // fallback defs still usable
+      .then(defs => {
+        setCachedNodeTypes(defs);
+        setAgentNodes(ns => ns.map(n => ({ ...n })));
+        setLocalPipeNodes(ns => ns.map(n => ({ ...n })));
+        setNodeTypesReady(true);
+      })
+      .catch(() => { setNodeTypesReady(true); });
   }, []);
 
   // Debounced backend validation — fires 1200ms after canvas content changes.
@@ -558,8 +564,8 @@ function CanvasInner() {
     if (!defId) return;
     themApi.getAgentDefinition(defId).then(resp => {
       const doc = resp.definition;
-      setAgentSlug(doc.agent_slug);
-      setDisplayName(doc.agent_root.display_name);
+      setAgentSlug(doc.agent_slug ?? '');
+      setDisplayName(doc.agent_root.display_name ?? '');
       setDescription(doc.agent_root.description ?? '');
       setVersion(doc.agent_root.version ?? '1.0.0');
       setCredentialSlots(doc.agent_root.credential_slots ?? []);
