@@ -560,6 +560,146 @@ func simpleLLMSkill(provider string) *agentgen.SkillSpec {
 	}
 }
 
+// ── AppParam inject mode tests ────────────────────────────────────────────────
+
+func buildHTTPSkillWithParam(serverURL, appParamKey, injectMode, injectHeaderName string) *agentgen.SkillSpec {
+	return &agentgen.SkillSpec{
+		ID: "skill-1",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:     "in",
+				Type:   agentgen.StepInput,
+				Config: mustJSON(agentgen.InputStepConfig{}),
+				Next:   []string{"http"},
+			},
+			{
+				ID:   "http",
+				Type: agentgen.StepHTTP,
+				Config: mustJSON(agentgen.HTTPStepConfig{
+					Method:           "GET",
+					URLTemplate:      serverURL,
+					TimeoutSeconds:   5,
+					AppParamKey:      appParamKey,
+					InjectMode:       injectMode,
+					InjectHeaderName: injectHeaderName,
+				}),
+				Next: []string{"out"},
+			},
+			{
+				ID:     "out",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "http_response"}),
+			},
+		},
+	}
+}
+
+func TestInterpreter_HTTPStep_InjectMode_Header(t *testing.T) {
+	var captured string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true}) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	interp := agentgen.NewInterpreter(&http.Client{}, nil, "")
+	ic := &agentgen.InvocationContext{
+		AgentParams: map[string]string{"bearer_token": "my-secret-token"},
+	}
+	_, err := interp.Execute(context.Background(), ic, buildHTTPSkillWithParam(srv.URL, "bearer_token", "header", ""), "")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if captured != "Bearer my-secret-token" {
+		t.Errorf("expected 'Bearer my-secret-token', got %q", captured)
+	}
+}
+
+func TestInterpreter_HTTPStep_InjectMode_Query(t *testing.T) {
+	var captured string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.URL.Query().Get("api_key")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true}) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	interp := agentgen.NewInterpreter(&http.Client{}, nil, "")
+	ic := &agentgen.InvocationContext{
+		AgentParams: map[string]string{"api_key": "qval"},
+	}
+	_, err := interp.Execute(context.Background(), ic, buildHTTPSkillWithParam(srv.URL, "api_key", "query", "api_key"), "")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if captured != "qval" {
+		t.Errorf("expected query param api_key=qval, got %q", captured)
+	}
+}
+
+func TestInterpreter_HTTPStep_InjectMode_CustomHeader(t *testing.T) {
+	var captured string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Header.Get("X-Api-Key")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true}) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	interp := agentgen.NewInterpreter(&http.Client{}, nil, "")
+	ic := &agentgen.InvocationContext{
+		AgentParams: map[string]string{"api_key": "custom-key"},
+	}
+	_, err := interp.Execute(context.Background(), ic, buildHTTPSkillWithParam(srv.URL, "api_key", "custom_header", "X-Api-Key"), "")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if captured != "custom-key" {
+		t.Errorf("expected X-Api-Key: custom-key, got %q", captured)
+	}
+}
+
+func TestInterpreter_HTTPStep_InjectMode_Basic(t *testing.T) {
+	var captured string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true}) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	interp := agentgen.NewInterpreter(&http.Client{}, nil, "")
+	ic := &agentgen.InvocationContext{
+		AgentParams: map[string]string{"bearer_token": "user:pass"},
+	}
+	_, err := interp.Execute(context.Background(), ic, buildHTTPSkillWithParam(srv.URL, "bearer_token", "basic", ""), "")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if captured == "" || captured[:5] != "Basic" {
+		t.Errorf("expected Basic auth header, got %q", captured)
+	}
+}
+
+func TestInterpreter_HTTPStep_NoInject_WhenParamEmpty(t *testing.T) {
+	var captured string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true}) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	interp := agentgen.NewInterpreter(&http.Client{}, nil, "")
+	ic := &agentgen.InvocationContext{
+		AgentParams: map[string]string{}, // param not set
+	}
+	// InjectMode is "" so missing param should silently skip, not error.
+	_, err := interp.Execute(context.Background(), ic, buildHTTPSkillWithParam(srv.URL, "bearer_token", "", ""), "")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if captured != "" {
+		t.Errorf("expected no Authorization header when param not set, got %q", captured)
+	}
+}
+
 func mustJSON(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil {

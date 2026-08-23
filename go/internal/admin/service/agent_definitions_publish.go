@@ -15,6 +15,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/agentgen"
+	"github.com/aviciot/them/internal/crypto"
 )
 
 // AgentCompileError is returned by ValidateAgentDefinition and PublishAgentDefinition
@@ -253,6 +254,127 @@ func (s *AgentDefinitionService) DeleteBinding(ctx context.Context, applicationI
 		return err
 	}
 	return nil
+}
+
+// ── Agent params ─────────────────────────────────────────────────────────────
+
+// AgentParamFillStatus is the safe view of one agent param for the GET response.
+// Plaintext secret values are NEVER returned; only is_set and hint are exposed.
+type AgentParamFillStatus struct {
+	agentgen.AgentParamSpec
+	IsSet bool   `json:"is_set"`
+	Hint  string `json:"hint,omitempty"` // last 4 chars of plaintext, for secrets only
+}
+
+// AgentParamsResponse is the GET response body.
+type AgentParamsResponse struct {
+	AgentID        string                 `json:"agent_id"`
+	AgentSlug      string                 `json:"agent_slug,omitempty"`
+	RequiredParams []AgentParamFillStatus `json:"required_params"`
+}
+
+// GetAgentParams returns param metadata + fill-status for one (app, agent) binding.
+// Returns ErrNotFound when the binding or published spec is absent.
+func (s *AgentDefinitionService) GetAgentParams(ctx context.Context, applicationID, agentID string) (*AgentParamsResponse, error) {
+	row, err := s.dal.GetAgentParamsForBinding(ctx, applicationID, agentID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	// Parse the stored agent_params JSONB to determine fill-status.
+	type secretEntry struct {
+		CT   string `json:"ct"`
+		Hint string `json:"hint"`
+	}
+	var stored map[string]json.RawMessage
+	if len(row.AgentParamsJSON) > 0 {
+		_ = json.Unmarshal(row.AgentParamsJSON, &stored)
+	}
+
+	statuses := make([]AgentParamFillStatus, 0, len(row.RequiredParams))
+	for _, param := range row.RequiredParams {
+		status := AgentParamFillStatus{AgentParamSpec: param}
+		if rawVal, ok := stored[param.Key]; ok {
+			if param.Type == "secret" {
+				var entry secretEntry
+				if json.Unmarshal(rawVal, &entry) == nil && entry.CT != "" {
+					status.IsSet = true
+					status.Hint = entry.Hint
+				}
+			} else {
+				var s string
+				if json.Unmarshal(rawVal, &s) == nil && s != "" {
+					status.IsSet = true
+				}
+			}
+		}
+		statuses = append(statuses, status)
+	}
+
+	return &AgentParamsResponse{
+		AgentID:        agentID,
+		RequiredParams: statuses,
+	}, nil
+}
+
+// AgentParamsUpsertInput is the request body for PUT .../params.
+type AgentParamsUpsertInput struct {
+	Params map[string]string `json:"params"` // param key → plaintext value; "" clears the key
+}
+
+// PutAgentParams encrypts secret params, merges the delta into agent_params,
+// and upserts the binding row (creating it if absent).
+// The RequiredParams from the published spec are used to determine which keys are secrets.
+func (s *AgentDefinitionService) PutAgentParams(ctx context.Context, applicationID, agentID string, input AgentParamsUpsertInput) error {
+	if len(input.Params) == 0 {
+		return nil
+	}
+
+	// Load required params from the published spec to know which types are secrets.
+	row, err := s.dal.GetAgentParamsForBinding(ctx, applicationID, agentID)
+	if err != nil && !dal.IsNoRows(err) {
+		return err
+	}
+	// Build type lookup.
+	paramTypes := make(map[string]string, len(row.RequiredParams))
+	for _, p := range row.RequiredParams {
+		paramTypes[p.Key] = p.Type
+	}
+
+	delta := make(map[string]any, len(input.Params))
+	for key, val := range input.Params {
+		if val == "" {
+			// Empty string clears the stored entry (JSONB merge with null deletes the key).
+			delta[key] = nil
+			continue
+		}
+		if paramTypes[key] == "secret" {
+			if len(s.fernetKey) == 0 {
+				return ErrEncryptionKeyMissing
+			}
+			ct, err := crypto.EncryptStored(s.fernetKey, val)
+			if err != nil {
+				return fmt.Errorf("encrypt param %q: %w", key, err)
+			}
+			// Compute hint: last 4 chars of plaintext.
+			hint := val
+			if len(hint) > 4 {
+				hint = hint[len(hint)-4:]
+			}
+			delta[key] = map[string]string{"ct": ct, "hint": hint}
+		} else {
+			delta[key] = val
+		}
+	}
+
+	deltaJSON, err := json.Marshal(delta)
+	if err != nil {
+		return fmt.Errorf("marshal params delta: %w", err)
+	}
+	return s.dal.UpsertAgentParams(ctx, applicationID, agentID, deltaJSON)
 }
 
 // ── AES-GCM encryption ────────────────────────────────────────────────────────

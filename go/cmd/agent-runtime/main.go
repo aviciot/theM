@@ -31,6 +31,12 @@ import (
 	"github.com/aviciot/them/internal/llm"
 )
 
+// agentParamEntry is the stored shape for a secret-type agent param.
+type agentParamEntry struct {
+	CT   string `json:"ct"`
+	Hint string `json:"hint"`
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
@@ -141,7 +147,7 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	ic.Spec = spec
 
-	binding, err := rt.loadBinding(r.Context(), ic.ApplicationID, ic.AgentID, ic.BindingID)
+	binding, agentParamsJSON, err := rt.loadBinding(r.Context(), ic.ApplicationID, ic.AgentID, ic.BindingID)
 	if err != nil {
 		writeJSONRPCError(w, nil, -32600, "binding not found", http.StatusNotFound)
 		return
@@ -159,6 +165,10 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 	// Load per-app provider keys so the interpreter can prefer them over the platform env key.
 	// Errors are non-fatal — the platform key fallback still works.
 	ic.AppAPIKey = rt.loadAppAPIKey(r.Context(), ic.ApplicationID)
+
+	// Resolve agent params from the binding (decrypt secrets, apply defaults).
+	// ic.AgentParams is never nil — steps can safely read from it without nil checks.
+	ic.AgentParams = rt.resolveAgentParams(agentParamsJSON, spec.RequiredParams)
 
 	// Build the SDK executor function. It is called by the SDK for each message/send
 	// or message/stream request. The closure captures the fully-resolved InvocationContext.
@@ -424,19 +434,21 @@ func (rt *Runtime) loadSpecBySlug(ctx context.Context, slug string) (*agentgen.A
 	return &spec, nil
 }
 
-func (rt *Runtime) loadBinding(ctx context.Context, appID, agentID, bindingID string) (*agentgen.AppAgentBinding, error) {
+func (rt *Runtime) loadBinding(ctx context.Context, appID, agentID, bindingID string) (*agentgen.AppAgentBinding, []byte, error) {
 	var (
 		query string
 		args  []any
 	)
 	if bindingID != "" {
 		query = `SELECT id, application_id, agent_id, definition_id,
-		          credential_bindings, config_overrides, policies
+		          credential_bindings, config_overrides, policies,
+		          COALESCE(agent_params, '{}')
 		          FROM them.app_agent_bindings WHERE id = $1::uuid`
 		args = []any{bindingID}
 	} else {
 		query = `SELECT id, application_id, agent_id, definition_id,
-		          credential_bindings, config_overrides, policies
+		          credential_bindings, config_overrides, policies,
+		          COALESCE(agent_params, '{}')
 		          FROM them.app_agent_bindings
 		          WHERE application_id = $1::uuid AND agent_id = $2::uuid`
 		args = []any{appID, agentID}
@@ -446,11 +458,12 @@ func (rt *Runtime) loadBinding(ctx context.Context, appID, agentID, bindingID st
 	var (
 		id, appIDDB, agentIDDB string
 		defID                  *string
-		credJSON               []byte // selected but unused — column retained for future use
+		credJSON               []byte // selected but unused — column retained for compat
 		cfgJSON, polJSON       []byte
+		agentParamsJSON        []byte
 	)
-	if err := row.Scan(&id, &appIDDB, &agentIDDB, &defID, &credJSON, &cfgJSON, &polJSON); err != nil {
-		return nil, fmt.Errorf("load binding: %w", err)
+	if err := row.Scan(&id, &appIDDB, &agentIDDB, &defID, &credJSON, &cfgJSON, &polJSON, &agentParamsJSON); err != nil {
+		return nil, nil, fmt.Errorf("load binding: %w", err)
 	}
 	_ = credJSON
 
@@ -460,13 +473,57 @@ func (rt *Runtime) loadBinding(ctx context.Context, appID, agentID, bindingID st
 	_ = json.Unmarshal(polJSON, &policies)
 
 	return &agentgen.AppAgentBinding{
-		ID:            id,
-		ApplicationID: appIDDB,
-		AgentID:       agentIDDB,
-		DefinitionID:  defID,
+		ID:              id,
+		ApplicationID:   appIDDB,
+		AgentID:         agentIDDB,
+		DefinitionID:    defID,
 		ConfigOverrides: overrides,
 		Policies:        policies,
-	}, nil
+	}, agentParamsJSON, nil
+}
+
+// resolveAgentParams decrypts secret-type params and returns a plaintext map.
+// Params absent from the stored JSON fall back to their declared default.
+// Decryption failures are logged at Warn (key name only) and the param is omitted.
+func (rt *Runtime) resolveAgentParams(raw []byte, decls []agentgen.AgentParamSpec) map[string]string {
+	out := make(map[string]string, len(decls))
+	if len(decls) == 0 {
+		return out
+	}
+
+	var stored map[string]json.RawMessage
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &stored)
+	}
+
+	for _, decl := range decls {
+		rawVal, exists := stored[decl.Key]
+		if !exists {
+			if decl.DefaultValue != "" {
+				out[decl.Key] = decl.DefaultValue
+			}
+			continue
+		}
+
+		if decl.Type == "secret" {
+			var entry agentParamEntry
+			if json.Unmarshal(rawVal, &entry) == nil && entry.CT != "" {
+				plain, err := crypto.DecryptStored(rt.cryptoKey, entry.CT)
+				if err != nil {
+					rt.logger.Warn("agent-runtime: agent param decryption failed",
+						"key", decl.Key)
+					continue
+				}
+				out[decl.Key] = plain
+			}
+		} else {
+			var s string
+			if json.Unmarshal(rawVal, &s) == nil {
+				out[decl.Key] = s
+			}
+		}
+	}
+	return out
 }
 
 // buildSDKAgentCard constructs a proper a2a.AgentCard from the AgentSpec.

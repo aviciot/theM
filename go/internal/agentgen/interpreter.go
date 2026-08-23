@@ -3,6 +3,7 @@ package agentgen
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -151,10 +152,18 @@ func (interp *Interpreter) execLLM(ctx context.Context, ic *InvocationContext, s
 		apiKey = appKey
 	}
 
+	// Agent param model override: if set, prefer the runtime param over the compiled model.
+	model := cfg.Model
+	if cfg.ModelOverrideParamKey != "" && ic.AgentParams != nil {
+		if override := ic.AgentParams[cfg.ModelOverrideParamKey]; override != "" {
+			model = override
+		}
+	}
+
 	if interp.llmFactory == nil {
 		return fmt.Errorf("no LLM factory configured")
 	}
-	provider, err := interp.llmFactory.NewProvider(cfg.Provider, cfg.Model, cfg.MaxTokens, apiKey)
+	provider, err := interp.llmFactory.NewProvider(cfg.Provider, model, cfg.MaxTokens, apiKey)
 	if err != nil {
 		return fmt.Errorf("create LLM provider: %w", err)
 	}
@@ -223,6 +232,42 @@ func (interp *Interpreter) execHTTP(ctx context.Context, ic *InvocationContext, 
 
 	for k, v := range cfg.Headers {
 		req.Header.Set(k, v)
+	}
+
+	// App param auth injection — runs after static headers so it can override them.
+	if cfg.AppParamKey != "" {
+		paramVal := ""
+		if ic.AgentParams != nil {
+			paramVal = ic.AgentParams[cfg.AppParamKey]
+		}
+		if paramVal == "" {
+			if cfg.InjectMode != "" {
+				return fmt.Errorf("step requires param %q for auth injection but param is not set in app binding", cfg.AppParamKey)
+			}
+			// InjectMode empty + no value: silently skip injection (param optional).
+		} else {
+			switch cfg.InjectMode {
+			case "header", "":
+				req.Header.Set("Authorization", "Bearer "+paramVal)
+			case "query":
+				q := req.URL.Query()
+				name := cfg.InjectHeaderName
+				if name == "" {
+					name = "api_key"
+				}
+				q.Set(name, paramVal)
+				req.URL.RawQuery = q.Encode()
+			case "basic":
+				req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(paramVal)))
+			case "custom_header":
+				if cfg.InjectHeaderName == "" {
+					return fmt.Errorf("inject_mode %q requires inject_header_name to be set", cfg.InjectMode)
+				}
+				req.Header.Set(cfg.InjectHeaderName, paramVal)
+			default:
+				return fmt.Errorf("unknown inject_mode %q", cfg.InjectMode)
+			}
+		}
 	}
 
 	if interp.httpClient == nil {

@@ -1276,31 +1276,35 @@ cancellation does not block or panic. Uses MockProvider, no real LLM calls.
 
 ### S1-48 · Agent runtime — `internal/agentgen/agentgen_test.go`
 
-**Purpose:** Phase 1 A2A Agent Runtime — proves the three security invariants (credential redaction,
-per-binding isolation, tenant ownership), core interpreter step execution (input binding,
-template transform, HTTP credential injection, data part variable injection), and the three-tier
-LLM key resolution (platform → per-app → per-binding slot). No external services required.
+**Purpose:** A2A Agent Runtime — proves security invariants (credential redaction, per-binding
+isolation, tenant ownership), core interpreter step execution (input binding, template transform,
+HTTP app-param injection in all 4 inject modes, data part variable injection), two-tier LLM key
+resolution (platform → per-app), and LLM model override via AgentParams. No external services required.
 
 | Test | What it proves |
 |---|---|
-| `TestInvocationContext_StringRedactsCredentials` | `InvocationContext.String()` never contains credential values — only slot count |
-| `TestAppAgentBinding_ResolveCredentials_TwoBindingsDifferentCreds` | Two `AppAgentBinding`s for the same agent but different apps resolve to DISTINCT credentials |
-| `TestRedisTaskStore_CrossTenantIsolation` | Cross-tenant task read returns `ErrTaskNotFound` (not 403); cross-app read also returns `ErrTaskNotFound` |
+| `TestInvocationContext_StringRedactsAppKey` | `InvocationContext.String()` never contains API key values |
+| `TestAppAgentBinding_TwoBindingsDifferentPolicies` | Two `AppAgentBinding`s for the same agent but different apps have independent policies |
+| `TestRedisTaskStore_CrossTenantIsolation` | Cross-tenant task read returns `ErrTaskNotFound`; cross-app read also returns `ErrTaskNotFound` |
 | `TestRedisTaskStore_GetNonExistent` | Non-existent task ID → `ErrTaskNotFound` |
 | `TestInterpreter_InputStep_BindsTextToVar` | Input step binds `text` part to named pipeline variable; response step reads it |
 | `TestInterpreter_TransformStep` | Transform step renders Go template expressions over pipeline vars |
-| `TestInterpreter_HTTPStep_InjectsCredential` | HTTP step resolves `CredentialSlot` from `InvocationContext.Credentials` and injects as `Authorization: Bearer {credential}` header |
-| `TestInterpreter_AgentCard_PathIsAgentCardJSON` | Documents A2A well-known path is `/.well-known/agent-card.json` (not `agent.json`) |
-| `TestInterpreter_LLMStep_FallsBackToInput` | LLM step with no `user_prompt` config falls back to `vars["input"]` (the user's message) |
+| `TestInterpreter_HTTPStep_StaticHeader` | HTTP step injects static header from `Headers` map |
+| `TestInterpreter_HTTPStep_InjectMode_Header` | HTTP step injects `Authorization: Bearer <token>` from `ic.AgentParams` when inject_mode="header" |
+| `TestInterpreter_HTTPStep_InjectMode_Query` | HTTP step appends query param from `ic.AgentParams` when inject_mode="query" |
+| `TestInterpreter_HTTPStep_InjectMode_CustomHeader` | HTTP step sets custom header from `ic.AgentParams` when inject_mode="custom_header" |
+| `TestInterpreter_HTTPStep_InjectMode_Basic` | HTTP step sets `Authorization: Basic ...` from `ic.AgentParams` when inject_mode="basic" |
+| `TestInterpreter_HTTPStep_NoInject_WhenParamEmpty` | No injection (and no error) when param key not set and inject_mode="" |
+| `TestInterpreter_AgentCard_PathIsAgentCardJSON` | Documents A2A well-known path is `/.well-known/agent-card.json` |
+| `TestInterpreter_LLMStep_FallsBackToInput` | LLM step with no `user_prompt` config falls back to `vars["input"]` |
 | `TestInterpreter_LLMStep_ExplicitUserPromptOverridesInput` | Explicit `user_prompt` template takes priority over `vars["input"]` |
-| `TestInterpreter_DataPartVars_AvailableInTemplate` | Phase C: data part fields passed as `extraVars` are available as pipeline vars; `{{.city}}` resolves correctly |
-| `TestInterpreter_DataPartVars_DoNotOverwriteExplicitInput` | Phase C: `vars["input"]` from text part set before data vars merged; extra keys don't clobber input |
-| `TestInterpreter_LLMStep_ThreeTier_PlatformKey` | No AppAPIKey, no slot → platform env key used |
-| `TestInterpreter_LLMStep_ThreeTier_AppKeyOverridesPlatform` | AppAPIKey["anthropic"] set → overrides platform key |
-| `TestInterpreter_LLMStep_ThreeTier_SlotOverridesAppKey` | Per-binding slot set → overrides both platform and per-app key |
-| `TestInterpreter_LLMStep_ThreeTier_EmptyAppKeyFallsBack` | AppAPIKey["anthropic"]="" (explicitly empty) → falls back to platform key |
+| `TestInterpreter_DataPartVars_AvailableInTemplate` | Data part fields passed as `extraVars` are available as pipeline vars |
+| `TestInterpreter_DataPartVars_DoNotOverwriteExplicitInput` | `vars["input"]` from text part set before data vars; extra keys don't clobber input |
+| `TestInterpreter_LLMStep_TwoTier_PlatformKey` | No AppAPIKey → platform env key used |
+| `TestInterpreter_LLMStep_TwoTier_AppKeyOverridesPlatform` | `AppAPIKey["anthropic"]` set → overrides platform key |
+| `TestInterpreter_LLMStep_TwoTier_EmptyAppKeyFallsBack` | `AppAPIKey["anthropic"]=""` → falls back to platform key |
 
-**Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go) or `cmd/agent-runtime/main.go` (data part parsing)
+**Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go) or `cmd/agent-runtime/main.go`
 
 ---
 
@@ -1354,21 +1358,24 @@ split (warning at validate / error at publish), and structured Issue fields (Ski
 | `TestCompile_MinimalValid` | minimal valid definition → non-nil spec with correct IDs |
 | `TestCompile_DefaultVersionFallback` | missing version → defaults to "1.0.0" |
 | `TestCompile_SlugSanitized` | hyphens in slug → sanitized to underscores (no error) |
-| `TestCompile_DuplicateSlotName` | two credential slots same name → DUPLICATE_SLOT |
+| `TestCompile_EmptyAgentRoot_NoSkills` | agent with no skills compiles cleanly |
 | `TestCompile_DuplicateSkillID` | two skills same skill_id → DUPLICATE_SKILL |
 | `TestCompile_DuplicateStepID` | two steps same id in one skill → DUPLICATE_STEP |
 | `TestCompile_UnknownStepType` | step with unknown type → UNKNOWN_STEP_TYPE |
-| `TestCompile_UndeclaredHTTPCredentialSlot` | http step refs undeclared slot → UNDECLARED_SLOT |
-| `TestCompile_UndeclaredLLMProviderKeySlot` | llm step refs undeclared provider_key_slot → UNDECLARED_SLOT |
+| `TestCompile_HTTPNode_AcceptsConfig` | http step without app_param_key compiles cleanly |
+| `TestCompile_LLMNode_AcceptsConfig` | llm step without model_override_param_key compiles cleanly |
+| `TestCompile_HTTPNode_AppParams` | http step with `app_param_key: "bearer_token"` → RequiredParams contains bearer_token with UsedByNodes |
+| `TestCompile_UndeclaredAppParam` | http step refs unknown app_param_key → UNDECLARED_APP_PARAM error |
+| `TestCompile_NoParams` | agent with no param-aware nodes → empty RequiredParams |
 | `TestCompile_DanglingNextRef` | step.next refs nonexistent step → DANGLING_NEXT |
 | `TestCompile_CycleDetected` | A→B→A cycle → CYCLE_DETECTED |
-| `TestCompile_ValidCredentialSlotRef` | http step refs declared slot → nil errors, slot in spec |
+| `TestCompile_SpecHasNoCredentialSlots` | compiled spec has no CredentialSlots (removed) |
 | `TestCompile_TopologicalOrder` | linear chain compiled in execution order |
 | `TestValidate_StubNodeIsWarning` | Validate(): stub node (branch) → NODE_NOT_EXECUTABLE severity=warning |
 | `TestValidate_StubNodeDoesNotBlockSpec` | Validate(): stub nodes present → spec still non-nil (canvas can render) |
 | `TestCompileForPublish_StubNodeIsError` | CompileForPublish(): stub node → NODE_NOT_EXECUTABLE severity=error |
 | `TestCompileForPublish_ImplementedOnlySucceeds` | CompileForPublish(): implemented-only graph → no errors, non-nil spec |
-| `TestIssue_StructuredFields` | UNDECLARED_SLOT issue carries skill_id, node_id, field populated correctly |
+| `TestIssue_StructuredFields` | UNKNOWN_STEP_TYPE issue carries skill_id and node_id populated correctly |
 
 **Trigger:** any change to `internal/agentgen/compiler.go` or `internal/agentgen/spec.go`
 

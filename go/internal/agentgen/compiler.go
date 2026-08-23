@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -339,6 +340,105 @@ func validateGraph(def *canvasDefinition) ([]Issue, map[string][]StepSpec) {
 	return issues, compiled
 }
 
+// ── Stage 3.5: AppParam collection and validation ────────────────────────────
+
+// collectAgentParams walks all steps across all skills, gathering AppParamDecl
+// entries from each step's NodeDef and validating AppParamKey references.
+// Returns the deduplicated, sorted list of AgentParamSpec and any issues found.
+func collectAgentParams(def *canvasDefinition) ([]AgentParamSpec, []Issue) {
+	var issues []Issue
+	paramMap := map[string]*AgentParamSpec{}
+	usedBy := map[string][]string{} // param key → step IDs that reference it
+
+	for _, cs := range def.Skills {
+		for _, step := range cs.Steps {
+			nd, ok := LookupNode(step.Type)
+			if !ok {
+				continue // unknown type already caught by validateNodes
+			}
+
+			for _, decl := range nd.AppParams {
+				existing, seen := paramMap[decl.Key]
+				if seen {
+					if existing.Type != decl.Type {
+						issues = append(issues, Issue{
+							Severity: "error",
+							Code:     "PARAM_TYPE_CONFLICT",
+							Message:  fmt.Sprintf("param %q declared as type %q by node %s but type %q by a prior node", decl.Key, decl.Type, step.ID, existing.Type),
+							SkillID:  cs.SkillID,
+							NodeID:   step.ID,
+							Field:    "app_param_key",
+						})
+					}
+					if decl.Required {
+						paramMap[decl.Key].Required = true
+					}
+				} else {
+					paramMap[decl.Key] = &AgentParamSpec{
+						Key:          decl.Key,
+						Label:        decl.Label,
+						Description:  decl.Description,
+						Type:         decl.Type,
+						Required:     decl.Required,
+						DefaultValue: decl.DefaultValue,
+					}
+				}
+			}
+
+			// Validate any AppParamKey references in the step config.
+			if key := extractAppParamKey(step); key != "" {
+				if _, declared := paramMap[key]; !declared {
+					issues = append(issues, Issue{
+						Severity: "error",
+						Code:     "UNDECLARED_APP_PARAM",
+						Message:  fmt.Sprintf("step references app_param_key %q but no node in this agent declares a param with that key", key),
+						SkillID:  cs.SkillID,
+						NodeID:   step.ID,
+						Field:    "app_param_key",
+					})
+				} else {
+					usedBy[key] = append(usedBy[key], step.ID)
+				}
+			}
+		}
+	}
+
+	// Stamp UsedByNodes onto collected specs.
+	for key, spec := range paramMap {
+		spec.UsedByNodes = usedBy[key]
+	}
+
+	// Stable ordering by key for deterministic spec serialization.
+	params := make([]AgentParamSpec, 0, len(paramMap))
+	for _, spec := range paramMap {
+		params = append(params, *spec)
+	}
+	sort.Slice(params, func(i, j int) bool { return params[i].Key < params[j].Key })
+	return params, issues
+}
+
+// extractAppParamKey reads the AppParamKey (or equivalent) from a step's config JSON.
+// Returns empty string for step types that don't use AppParamKey.
+func extractAppParamKey(step canvasStep) string {
+	switch step.Type {
+	case StepHTTP:
+		var cfg HTTPStepConfig
+		if len(step.Config) > 0 {
+			if json.Unmarshal(step.Config, &cfg) == nil {
+				return cfg.AppParamKey
+			}
+		}
+	case StepLLM:
+		var cfg LLMStepConfig
+		if len(step.Config) > 0 {
+			if json.Unmarshal(step.Config, &cfg) == nil {
+				return cfg.ModelOverrideParamKey
+			}
+		}
+	}
+	return ""
+}
+
 // ── Stage 4: executability ───────────────────────────────────────────────────
 
 // validateExecutability checks that every step type has a registered Execute
@@ -367,7 +467,7 @@ func validateExecutability(def *canvasDefinition, severity string) []Issue {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-// Validate runs structural + node + graph checks and returns all issues.
+// Validate runs structural + node + graph + param checks and returns all issues.
 // Stub nodes (Execute == nil) emit warnings — the user is still building.
 // Returns a non-nil *AgentSpec when parsing succeeds, even if issues exist,
 // so callers can inspect the parsed graph. Returns nil only on structural failure.
@@ -380,13 +480,17 @@ func Validate(agentID, tenantID, definitionID, agentSlug string, raw json.RawMes
 	issues = append(issues, validateNodes(def)...)
 	graphIssues, compiled := validateGraph(def)
 	issues = append(issues, graphIssues...)
+
+	params, paramIssues := collectAgentParams(def)
+	issues = append(issues, paramIssues...)
+
 	issues = append(issues, validateExecutability(def, "warning")...)
 
-	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled)
+	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params)
 	return spec, issues
 }
 
-// CompileForPublish runs all four stages. Stub nodes emit errors (not warnings).
+// CompileForPublish runs all stages. Stub nodes emit errors (not warnings).
 // Returns nil spec + issues if any error-severity issue exists.
 // Used exclusively by the publish handler.
 func CompileForPublish(agentID, tenantID, definitionID, agentSlug string, raw json.RawMessage) (*AgentSpec, []Issue) {
@@ -406,12 +510,18 @@ func CompileForPublish(agentID, tenantID, definitionID, agentSlug string, raw js
 		return nil, issues
 	}
 
+	params, paramIssues := collectAgentParams(def)
+	issues = append(issues, paramIssues...)
+	if hasErrors(issues) {
+		return nil, issues
+	}
+
 	issues = append(issues, validateExecutability(def, "error")...)
 	if hasErrors(issues) {
 		return nil, issues
 	}
 
-	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled)
+	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params)
 	return spec, issues
 }
 
@@ -425,7 +535,7 @@ func Compile(agentID, tenantID, definitionID, agentSlug string, raw json.RawMess
 
 // buildSpec assembles the AgentSpec from parsed components. Called after all
 // validation stages pass.
-func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefinition, compiled map[string][]StepSpec) *AgentSpec {
+func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefinition, compiled map[string][]StepSpec, params []AgentParamSpec) *AgentSpec {
 	specHash := computeSpecHash(agentID, tenantID, definitionID, slug)
 	_ = specHash
 
@@ -451,12 +561,17 @@ func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefiniti
 		})
 	}
 
+	var requiredParams []AgentParamSpec
+	if len(params) > 0 {
+		requiredParams = params
+	}
+
 	return &AgentSpec{
-		ID:           agentID,
-		DefinitionID: definitionID,
-		Slug:         slug,
-		TenantID:     tenantID,
-		DefaultModel: def.AgentRoot.DefaultModel,
+		ID:             agentID,
+		DefinitionID:   definitionID,
+		Slug:           slug,
+		TenantID:       tenantID,
+		DefaultModel:   def.AgentRoot.DefaultModel,
 		Card: CardSpec{
 			Name:         def.AgentRoot.DisplayName,
 			Description:  def.AgentRoot.Description,
@@ -465,7 +580,8 @@ func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefiniti
 			Category:     def.AgentRoot.Category,
 			Capabilities: def.AgentRoot.Capabilities,
 		},
-		Skills: skills,
+		Skills:         skills,
+		RequiredParams: requiredParams,
 	}
 }
 

@@ -4,13 +4,39 @@ import "encoding/json"
 
 // AgentSpec is the compiled, reusable form the runtime loads. Frozen at publish.
 type AgentSpec struct {
-	ID           string      `json:"id"`            // == agents.id == component_definitions.id
-	DefinitionID string      `json:"definition_id"` // which agent_definitions revision this came from
-	Slug         string      `json:"slug"`
-	TenantID     string      `json:"tenant_id"`
-	Card         CardSpec    `json:"card"`
-	Skills       []SkillSpec `json:"skills"`
-	DefaultModel string      `json:"default_model"`
+	ID             string           `json:"id"`              // == agents.id == component_definitions.id
+	DefinitionID   string           `json:"definition_id"`   // which agent_definitions revision this came from
+	Slug           string           `json:"slug"`
+	TenantID       string           `json:"tenant_id"`
+	Card           CardSpec         `json:"card"`
+	Skills         []SkillSpec      `json:"skills"`
+	DefaultModel   string           `json:"default_model"`
+	RequiredParams []AgentParamSpec `json:"required_params,omitempty"` // aggregated from all nodes at publish time
+}
+
+// AppParamDecl declares one runtime parameter that a node type can consume.
+// Declared statically on NodeDef — identical for every instance of that node type.
+// The per-instance config references a specific param by key via AppParamKey fields.
+type AppParamDecl struct {
+	Key          string `json:"key"`                     // identifier referenced in node instance configs
+	Label        string `json:"label"`                   // human-readable label for the UI form
+	Description  string `json:"description"`             // tooltip / help text
+	Type         string `json:"type"`                    // "secret" | "string" | "url" | "int" | "bool"
+	Required     bool   `json:"required"`
+	DefaultValue string `json:"default_value,omitempty"`
+}
+
+// AgentParamSpec is the published, immutable form of one required parameter.
+// Collected by the compiler from all AppParamDecl entries across all skills in an agent.
+// Stored as part of AgentSpec.RequiredParams in agent_runtime_specs.spec JSONB.
+type AgentParamSpec struct {
+	Key          string   `json:"key"`
+	Label        string   `json:"label"`
+	Description  string   `json:"description"`
+	Type         string   `json:"type"`                    // "secret" | "string" | "url" | "int" | "bool"
+	Required     bool     `json:"required"`
+	DefaultValue string   `json:"default_value,omitempty"`
+	UsedByNodes  []string `json:"used_by_nodes"` // step IDs that reference this key
 }
 
 type CardSpec struct {
@@ -77,6 +103,9 @@ type LLMStepConfig struct {
 	Effort       string `json:"effort,omitempty"`
 	OutputVar    string `json:"output_var"`
 	Stream       bool   `json:"stream"`
+	// ModelOverrideParamKey, if set, names the AgentParamSpec.Key whose value overrides
+	// the compiled model at runtime. The referenced param must be of type "string".
+	ModelOverrideParamKey string `json:"model_override_param_key,omitempty"`
 }
 
 // HTTPStepConfig configures one HTTP tool step.
@@ -85,8 +114,19 @@ type HTTPStepConfig struct {
 	URLTemplate    string            `json:"url_template"`
 	Headers        map[string]string `json:"headers,omitempty"`
 	BodyTemplate   string            `json:"body_template,omitempty"`
-	Extractions    []JSONPathExtract `json:"extractions"`
+	Extractions    []JSONPathExtract  `json:"extractions"`
 	TimeoutSeconds int               `json:"timeout_seconds"`
+	// AppParamKey names the AgentParamSpec.Key holding the auth credential to inject.
+	// Empty means no auth injection.
+	AppParamKey string `json:"app_param_key,omitempty"`
+	// InjectMode controls how the credential is injected:
+	// "header" (default) → Authorization: Bearer <value>
+	// "query"            → ?<InjectHeaderName>=<value>
+	// "basic"            → Authorization: Basic base64(<value>)
+	// "custom_header"    → <InjectHeaderName>: <value>
+	InjectMode string `json:"inject_mode,omitempty"`
+	// InjectHeaderName is the header or query param name for "query" and "custom_header" modes.
+	InjectHeaderName string `json:"inject_header_name,omitempty"`
 }
 
 type JSONPathExtract struct {

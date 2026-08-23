@@ -37,7 +37,16 @@ func init() {
 		SingleInput: true,
 		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
 		InputField: "user_prompt",
-		Validate:   nil,
+		AppParams: []AppParamDecl{
+			{
+				Key:         "model_override",
+				Label:       "Model Override",
+				Description: "Override the compiled model name at runtime. Must be a valid model identifier for the configured provider.",
+				Type:        "string",
+				Required:    false,
+			},
+		},
+		Validate: nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
 			return interp.execLLM(ctx, ic, step, vars)
@@ -48,7 +57,7 @@ func init() {
 		Type:        StepHTTP,
 		Version:     1,
 		Label:       "HTTP",
-		Description: "Make an HTTP request to an external API. Supports GET/POST with template variables and optional credential slot.",
+		Description: "Make an HTTP request to an external API. Supports GET/POST with template variables and optional app-level auth credential.",
 		Emoji:       "🌐",
 		OutputArity: "single",
 		IsSource:    false,
@@ -56,7 +65,23 @@ func init() {
 		SingleInput: false,
 		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
 		InputField: "url_template",
-		Validate:   nil,
+		AppParams: []AppParamDecl{
+			{
+				Key:         "bearer_token",
+				Label:       "Bearer Token",
+				Description: "Injected as Authorization: Bearer <value>. Leave unset for no auth.",
+				Type:        "secret",
+				Required:    false,
+			},
+			{
+				Key:         "api_key",
+				Label:       "API Key",
+				Description: "Generic API key. Use InjectMode on the step to control where it is injected (header/query/custom_header).",
+				Type:        "secret",
+				Required:    false,
+			},
+		},
+		Validate: nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
 			return interp.execHTTP(ctx, ic, step, vars)

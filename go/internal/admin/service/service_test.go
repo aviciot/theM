@@ -8,6 +8,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/session"
 )
 
@@ -376,6 +377,10 @@ func (f *fakeDal) ListAgentBindings(_ context.Context, _ string) ([]dal.AgentBin
 	return []dal.AgentBindingSlotStatus{}, nil
 }
 func (f *fakeDal) DeleteAgentBinding(_ context.Context, _, _ string) error { return nil }
+func (f *fakeDal) GetAgentParamsForBinding(_ context.Context, _, _ string) (dal.AgentParamsRow, error) {
+	return dal.AgentParamsRow{RequiredParams: []agentgen.AgentParamSpec{}}, nil
+}
+func (f *fakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error { return nil }
 
 // fakeCache implements service.Cache.
 type fakeCache struct {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/agentgen"
 )
 
 // ── agentDefFakeDal — focused fake for agent definition tests ─────────────────
@@ -274,6 +275,12 @@ func (f *agentDefFakeDal) ListAgentBindings(_ context.Context, _ string) ([]dal.
 	return []dal.AgentBindingSlotStatus{}, nil
 }
 func (f *agentDefFakeDal) DeleteAgentBinding(_ context.Context, _, _ string) error { return nil }
+func (f *agentDefFakeDal) GetAgentParamsForBinding(_ context.Context, _, _ string) (dal.AgentParamsRow, error) {
+	return dal.AgentParamsRow{RequiredParams: []agentgen.AgentParamSpec{}}, nil
+}
+func (f *agentDefFakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error {
+	return nil
+}
 
 // ── valid canvas JSON helpers ─────────────────────────────────────────────────
 

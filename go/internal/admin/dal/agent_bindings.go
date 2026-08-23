@@ -3,6 +3,8 @@ package dal
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/aviciot/them/internal/agentgen"
 )
 
 // AgentBindingRow is the persisted shape for UpsertAgentBinding.
@@ -190,4 +192,51 @@ func credentialSetFromJSON(raw []byte) map[string]bool {
 		result[k] = v != ""
 	}
 	return result
+}
+
+// AgentParamsRow is the result of GetAgentParamsForBinding.
+type AgentParamsRow struct {
+	AgentParamsJSON    []byte
+	RequiredParams     []agentgen.AgentParamSpec
+}
+
+// GetAgentParamsForBinding returns the agent_params JSON and the spec's RequiredParams
+// for one (applicationID, agentID) pair.
+// Returns pgx.ErrNoRows when the binding or runtime spec is absent.
+func (d *DB) GetAgentParamsForBinding(ctx context.Context, applicationID, agentID string) (AgentParamsRow, error) {
+	const q = `
+		SELECT COALESCE(b.agent_params, '{}'),
+		       COALESCE(s.spec->'required_params', '[]'::jsonb)
+		  FROM them.app_agent_bindings b
+		  JOIN them.agent_runtime_specs s ON s.agent_id = b.agent_id
+		 WHERE b.application_id = $1::uuid AND b.agent_id = $2::uuid`
+
+	var row AgentParamsRow
+	var requiredParamsJSON []byte
+	if err := d.q.QueryRow(ctx, q, applicationID, agentID).Scan(&row.AgentParamsJSON, &requiredParamsJSON); err != nil {
+		return row, err
+	}
+	if len(requiredParamsJSON) > 0 && string(requiredParamsJSON) != "null" {
+		_ = json.Unmarshal(requiredParamsJSON, &row.RequiredParams)
+	}
+	if row.RequiredParams == nil {
+		row.RequiredParams = []agentgen.AgentParamSpec{}
+	}
+	return row, nil
+}
+
+// UpsertAgentParams merges paramsDelta into agent_params for the binding,
+// creating the binding row if it does not exist.
+// paramsDelta is a JSONB object; keys with JSON null values are deleted from the stored object.
+func (d *DB) UpsertAgentParams(ctx context.Context, applicationID, agentID string, paramsDelta []byte) error {
+	if paramsDelta == nil {
+		paramsDelta = []byte("{}")
+	}
+	const q = `
+		INSERT INTO them.app_agent_bindings (application_id, agent_id, agent_params)
+		VALUES ($1::uuid, $2::uuid, $3::jsonb)
+		ON CONFLICT (application_id, agent_id) DO UPDATE
+		    SET agent_params = them.app_agent_bindings.agent_params || $3::jsonb,
+		        updated_at   = now()`
+	return d.q.Exec(ctx, q, applicationID, agentID, paramsDelta)
 }

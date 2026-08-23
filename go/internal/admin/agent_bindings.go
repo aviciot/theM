@@ -46,6 +46,9 @@ func (h *AgentBindingsHandler) MountOn(r chi.Router) {
 	r.Post("/agent-bindings/{agent_id}", h.Upsert)
 	r.Put("/agent-bindings/{agent_id}", h.Upsert)
 	r.Delete("/agent-bindings/{agent_id}", h.Delete)
+	// Agent runtime params — GET returns param metadata + fill status; PUT upserts values.
+	r.Get("/agents/{agent_id}/params", h.GetAgentParams)
+	r.Put("/agents/{agent_id}/params", h.PutAgentParams)
 }
 
 // List handles GET /api/v1/admin/applications/{app_id}/agent-bindings.
@@ -128,4 +131,51 @@ func (h *AgentBindingsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetAgentParams handles GET /api/v1/admin/applications/{app_id}/agents/{agent_id}/params.
+// Returns param metadata from the published spec and fill-status for each param.
+// Secret values are NEVER returned — only is_set and hint (last 4 chars).
+func (h *AgentBindingsHandler) GetAgentParams(w http.ResponseWriter, r *http.Request) {
+	appID := appIDParam(r)
+	agentID := chi.URLParam(r, "agent_id")
+	if appID == "" || agentID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or agent id")
+		return
+	}
+	result, err := h.svc.GetAgentParams(r.Context(), appID, agentID)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get agent params")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// PutAgentParams handles PUT /api/v1/admin/applications/{app_id}/agents/{agent_id}/params.
+// Body: {"params": {"key": "plaintext_value", ...}}
+// Keys with empty string value clear the stored entry.
+// Secrets are encrypted before storage — plaintext is never persisted.
+func (h *AgentBindingsHandler) PutAgentParams(w http.ResponseWriter, r *http.Request) {
+	appID := appIDParam(r)
+	agentID := chi.URLParam(r, "agent_id")
+	if appID == "" || agentID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or agent id")
+		return
+	}
+	var input service.AgentParamsUpsertInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if err := h.svc.PutAgentParams(r.Context(), appID, agentID, input); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "put agent params")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"application_id": appID, "agent_id": agentID, "updated": true})
 }

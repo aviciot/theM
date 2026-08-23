@@ -17,17 +17,21 @@ type EdgeRules struct {
 // the public canvas metadata exposed to the frontend via GET /api/v1/admin/node-types.
 type NodeDef struct {
 	// ── Canvas-public fields (serialised and sent to the frontend) ────────────
-	Type        StepType  `json:"type"`
-	Version     int       `json:"version"`      // schema version, default 1
-	Label       string    `json:"label"`        // human-readable name shown in the builder
-	Description string    `json:"description"`  // short tooltip shown on palette hover
-	Emoji       string    `json:"emoji"`        // icon character shown on the node card
-	OutputArity string    `json:"output_arity"` // "single" | "multi" | "none"
-	IsSource    bool      `json:"is_source"`    // valid pipeline start
-	IsSink      bool      `json:"is_sink"`      // terminates the pipeline
-	SingleInput bool      `json:"single_input"` // only one incoming edge allowed
-	Edges       EdgeRules `json:"edges"`        // data-driven in/out degree constraints
-	InputField  string    `json:"input_field,omitempty"` // config key used for auto-fill on connect
+	Type        StepType       `json:"type"`
+	Version     int            `json:"version"`      // schema version, default 1
+	Label       string         `json:"label"`        // human-readable name shown in the builder
+	Description string         `json:"description"`  // short tooltip shown on palette hover
+	Emoji       string         `json:"emoji"`        // icon character shown on the node card
+	OutputArity string         `json:"output_arity"` // "single" | "multi" | "none"
+	IsSource    bool           `json:"is_source"`    // valid pipeline start
+	IsSink      bool           `json:"is_sink"`      // terminates the pipeline
+	SingleInput bool           `json:"single_input"` // only one incoming edge allowed
+	Edges       EdgeRules      `json:"edges"`        // data-driven in/out degree constraints
+	InputField  string         `json:"input_field,omitempty"` // config key used for auto-fill on connect
+	// AppParams declares the runtime parameters this node type can consume.
+	// Populated for HTTP, LLM, and A2A Call nodes; empty for all others.
+	// The compiler aggregates these across all nodes into AgentSpec.RequiredParams.
+	AppParams []AppParamDecl `json:"app_params,omitempty"`
 	// Executable is NOT stored — computed from Execute != nil at serialisation time.
 
 	// ── Runtime-only fields (not serialised) ─────────────────────────────────
@@ -41,18 +45,19 @@ type NodeDef struct {
 // NodeTypeInfo is the JSON-serialisable view of a NodeDef sent to the frontend.
 // Executable is derived here so NodeDef itself never stores duplicated state.
 type NodeTypeInfo struct {
-	Type        StepType  `json:"type"`
-	Version     int       `json:"version"`
-	Label       string    `json:"label"`
-	Description string    `json:"description"`
-	Emoji       string    `json:"emoji"`
-	OutputArity string    `json:"output_arity"`
-	IsSource    bool      `json:"is_source"`
-	IsSink      bool      `json:"is_sink"`
-	SingleInput bool      `json:"single_input"`
-	Edges       EdgeRules `json:"edges"`
-	InputField  string    `json:"input_field,omitempty"`
-	Executable  bool      `json:"executable"`
+	Type        StepType       `json:"type"`
+	Version     int            `json:"version"`
+	Label       string         `json:"label"`
+	Description string         `json:"description"`
+	Emoji       string         `json:"emoji"`
+	OutputArity string         `json:"output_arity"`
+	IsSource    bool           `json:"is_source"`
+	IsSink      bool           `json:"is_sink"`
+	SingleInput bool           `json:"single_input"`
+	Edges       EdgeRules      `json:"edges"`
+	InputField  string         `json:"input_field,omitempty"`
+	AppParams   []AppParamDecl `json:"app_params,omitempty"`
+	Executable  bool           `json:"executable"`
 }
 
 // ToInfo converts a NodeDef to its public API representation.
@@ -69,6 +74,7 @@ func (d *NodeDef) ToInfo() NodeTypeInfo {
 		SingleInput: d.SingleInput,
 		Edges:       d.Edges,
 		InputField:  d.InputField,
+		AppParams:   d.AppParams,
 		Executable:  d.Execute != nil,
 	}
 }

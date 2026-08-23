@@ -110,6 +110,10 @@ type Dal interface {
 	ListAgentBindings(ctx context.Context, applicationID string) ([]dal.AgentBindingSlotStatus, error)
 	DeleteAgentBinding(ctx context.Context, applicationID, agentID string) error
 
+	// Agent runtime params — per-binding, secrets Fernet-encrypted
+	GetAgentParamsForBinding(ctx context.Context, applicationID, agentID string) (dal.AgentParamsRow, error)
+	UpsertAgentParams(ctx context.Context, applicationID, agentID string, paramsDelta []byte) error
+
 	// Publish pipeline — Phase C
 	PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string) (dal.PublishResult, error)
 	UpsertAppOrchestrator(ctx context.Context, row dal.AppOrchestratorRow) (string, error)

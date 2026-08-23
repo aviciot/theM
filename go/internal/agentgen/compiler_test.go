@@ -341,6 +341,82 @@ func TestCompileForPublish_ImplementedOnlySucceeds(t *testing.T) {
 	}
 }
 
+// ── collectAgentParams tests ──────────────────────────────────────────────────
+
+// TestCompile_HTTPNode_AppParams verifies that compiling an HTTP node that sets
+// app_param_key produces RequiredParams on the spec.
+func TestCompile_HTTPNode_AppParams(t *testing.T) {
+	// The HTTP node declares bearer_token and api_key; we reference bearer_token here.
+	spec := compileOK(t, `{
+		"agent_root": {"display_name": "X"},
+		"skills": [{"skill_id": "s1", "steps": [
+			{"id": "in",   "type": "input",    "config": {}, "next": ["step1"]},
+			{"id": "step1","type": "http",
+			 "config": {"method": "GET", "url_template": "http://x",
+			            "app_param_key": "bearer_token", "inject_mode": "header"},
+			 "next": ["out"]},
+			{"id": "out",  "type": "response", "config": {"from_var": "http_response"}}
+		]}]
+	}`)
+	if len(spec.RequiredParams) == 0 {
+		t.Fatal("expected RequiredParams from HTTP node, got none")
+	}
+	found := false
+	for _, p := range spec.RequiredParams {
+		if p.Key == "bearer_token" {
+			found = true
+			if p.Type != "secret" {
+				t.Errorf("bearer_token should be type 'secret', got %q", p.Type)
+			}
+			hasNode := false
+			for _, n := range p.UsedByNodes {
+				if n == "step1" {
+					hasNode = true
+				}
+			}
+			if !hasNode {
+				t.Errorf("bearer_token.UsedByNodes should include 'step1', got %v", p.UsedByNodes)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected bearer_token in RequiredParams, got %+v", spec.RequiredParams)
+	}
+}
+
+// TestCompile_UndeclaredAppParam verifies that referencing an undeclared app_param_key
+// causes UNDECLARED_APP_PARAM error.
+func TestCompile_UndeclaredAppParam(t *testing.T) {
+	errs := compileFail(t, `{
+		"agent_root": {"display_name": "X"},
+		"skills": [{"skill_id": "s1", "steps": [
+			{"id": "in",   "type": "input",    "config": {}, "next": ["step1"]},
+			{"id": "step1","type": "http",
+			 "config": {"method": "GET", "url_template": "http://x",
+			            "app_param_key": "nonexistent_key"},
+			 "next": ["out"]},
+			{"id": "out",  "type": "response", "config": {"from_var": "output"}}
+		]}]
+	}`)
+	if !hasCode(errs, "UNDECLARED_APP_PARAM") {
+		t.Errorf("expected UNDECLARED_APP_PARAM, got: %v", errs)
+	}
+}
+
+// TestCompile_NoParams verifies that agents with no param-aware nodes have nil RequiredParams.
+func TestCompile_NoParams(t *testing.T) {
+	spec := compileOK(t, `{
+		"agent_root": {"display_name": "X"},
+		"skills": [{"skill_id": "s1", "steps": [
+			{"id": "in",  "type": "input",    "config": {}, "next": ["out"]},
+			{"id": "out", "type": "response", "config": {"from_var": "input"}}
+		]}]
+	}`)
+	if len(spec.RequiredParams) != 0 {
+		t.Errorf("expected empty RequiredParams for plain agent, got %+v", spec.RequiredParams)
+	}
+}
+
 // TestIssue_StructuredFields verifies that issues returned by validateNodes
 // carry populated SkillID and NodeID fields.
 func TestIssue_StructuredFields(t *testing.T) {

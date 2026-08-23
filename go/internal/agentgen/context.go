@@ -15,6 +15,10 @@ type InvocationContext struct {
 	// AppAPIKey is the per-app LLM provider key decrypted from applications.provider_keys.
 	// NEVER logged or serialized — cleared after the request.
 	AppAPIKey map[string]string // provider → plaintext key (e.g. "anthropic" → "sk-ant-...")
+	// AgentParams holds resolved plaintext values for all declared agent parameters.
+	// Secrets are decrypted from app_agent_bindings.agent_params before this map is populated.
+	// NEVER logged or serialized — cleared after the request.
+	AgentParams map[string]string // param key → plaintext value
 }
 
 type InvocationPolicies struct {
