@@ -384,22 +384,31 @@ func TestCompile_HTTPNode_AppParams(t *testing.T) {
 	}
 }
 
-// TestCompile_UndeclaredAppParam verifies that referencing an undeclared app_param_key
-// causes UNDECLARED_APP_PARAM error.
-func TestCompile_UndeclaredAppParam(t *testing.T) {
-	errs := compileFail(t, `{
+// TestCompile_HTTPNode_FreeFormAppParamKey verifies that HTTP nodes accept any
+// free-form app_param_key value — the compiler auto-registers it as a secret param.
+func TestCompile_HTTPNode_FreeFormAppParamKey(t *testing.T) {
+	spec := compileOK(t, `{
 		"agent_root": {"display_name": "X"},
 		"skills": [{"skill_id": "s1", "steps": [
 			{"id": "in",   "type": "input",    "config": {}, "next": ["step1"]},
 			{"id": "step1","type": "http",
 			 "config": {"method": "GET", "url_template": "http://x",
-			            "app_param_key": "nonexistent_key"},
+			            "app_param_key": "geoapify_key", "inject_mode": "query", "inject_header_name": "apiKey"},
 			 "next": ["out"]},
-			{"id": "out",  "type": "response", "config": {"from_var": "output"}}
+			{"id": "out",  "type": "response", "config": {"from_var": "http_response"}}
 		]}]
 	}`)
-	if !hasCode(errs, "UNDECLARED_APP_PARAM") {
-		t.Errorf("expected UNDECLARED_APP_PARAM, got: %v", errs)
+	found := false
+	for _, p := range spec.RequiredParams {
+		if p.Key == "geoapify_key" {
+			found = true
+			if p.Type != "secret" {
+				t.Errorf("auto-registered param should be type 'secret', got %q", p.Type)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected geoapify_key auto-registered in RequiredParams, got %+v", spec.RequiredParams)
 	}
 }
 

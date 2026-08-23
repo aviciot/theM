@@ -386,19 +386,30 @@ func collectAgentParams(def *canvasDefinition) ([]AgentParamSpec, []Issue) {
 			}
 
 			// Validate any AppParamKey references in the step config.
+			// HTTP nodes accept any free-form key name chosen by the agent author —
+			// auto-register it as a secret param if not already declared by a node AppParams entry.
 			if key := extractAppParamKey(step); key != "" {
 				if _, declared := paramMap[key]; !declared {
-					issues = append(issues, Issue{
-						Severity: "error",
-						Code:     "UNDECLARED_APP_PARAM",
-						Message:  fmt.Sprintf("step references app_param_key %q but no node in this agent declares a param with that key", key),
-						SkillID:  cs.SkillID,
-						NodeID:   step.ID,
-						Field:    "app_param_key",
-					})
-				} else {
-					usedBy[key] = append(usedBy[key], step.ID)
+					if step.Type == StepHTTP {
+						paramMap[key] = &AgentParamSpec{
+							Key:         key,
+							Label:       key,
+							Description: fmt.Sprintf("API credential injected by HTTP step %q", step.ID),
+							Type:        "secret",
+							Required:    true,
+						}
+					} else {
+						issues = append(issues, Issue{
+							Severity: "error",
+							Code:     "UNDECLARED_APP_PARAM",
+							Message:  fmt.Sprintf("step references app_param_key %q but no node in this agent declares a param with that key", key),
+							SkillID:  cs.SkillID,
+							NodeID:   step.ID,
+							Field:    "app_param_key",
+						})
+					}
 				}
+				usedBy[key] = append(usedBy[key], step.ID)
 			}
 		}
 	}
