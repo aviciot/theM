@@ -937,8 +937,11 @@ function CanvasInner() {
       const srcType = (srcNode.data as unknown as StepData).step_type;
       if (outputArity(srcType) === 'none') return false;
     }
+    // Reject edges that would create a cycle — simulate adding the edge and topo-sort
+    const hypothetical = [...localPipeEdges, { id: '__test__', source: conn.source!, target: conn.target! }];
+    if (topoSort(localPipeNodes, hypothetical) === null) return false;
     return true;
-  }, [localPipeNodes]);
+  }, [localPipeNodes, localPipeEdges]);
 
   // ── Debug helpers ─────────────────────────────────────────────────────────────
 

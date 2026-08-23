@@ -267,6 +267,45 @@ func validateGraph(def *canvasDefinition) ([]Issue, map[string][]StepSpec) {
 			continue // skip topo-sort if edges are broken
 		}
 
+		// Build in-degree map to find roots (steps with no incoming edges).
+		inDegree := make(map[string]int, len(cs.Steps))
+		for _, step := range cs.Steps {
+			if !seenSteps[step.ID] {
+				continue
+			}
+			if _, ok := inDegree[step.ID]; !ok {
+				inDegree[step.ID] = 0
+			}
+			for _, nextID := range step.Next {
+				inDegree[nextID]++
+			}
+			for _, arm := range step.Branches {
+				for _, nextID := range arm.Next {
+					inDegree[nextID]++
+				}
+			}
+		}
+
+		// Collect root steps (in-degree 0). A valid skill has exactly one root
+		// (the source/input step). Multiple roots means disconnected subgraphs.
+		var roots []string
+		for id, deg := range inDegree {
+			if deg == 0 {
+				roots = append(roots, id)
+			}
+		}
+		if len(roots) > 1 {
+			for _, rootID := range roots {
+				issues = append(issues, Issue{
+					Severity: "warning",
+					Code:     "DISCONNECTED_NODE",
+					Message:  fmt.Sprintf("step %q is not connected to the pipeline", rootID),
+					SkillID:  cs.SkillID,
+					NodeID:   rootID,
+				})
+			}
+		}
+
 		ordered, cycleErrs := topoSort(cs.SkillID, cs.Steps, stepMap)
 		issues = append(issues, cycleErrs...)
 		if len(cycleErrs) == 0 {
