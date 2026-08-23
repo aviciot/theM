@@ -1611,6 +1611,8 @@ function CanvasInner() {
 
         {/* Canvas */}
         <div style={{ flex: 1, position: 'relative' }}>
+          {/* Suppress ReactFlow's grab cursor; middle-mouse pan is handled via panOnDrag={[1]} */}
+          <style>{`.react-flow__pane { cursor: default !important; } .react-flow__pane.dragging { cursor: default !important; }`}</style>
           {/* Context menu */}
           {ctxMenu && (
             <div
@@ -1658,6 +1660,7 @@ function CanvasInner() {
               onNodeDoubleClick={onAgentNodeDoubleClick}
               onPaneClick={() => { setSelectedNode(null); closeCtx(); }}
               nodeTypes={nodeTypes}
+              panOnDrag={[1]}
               onDragOver={(e: DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
               onDrop={(e: DragEvent) => {
                 e.preventDefault();
@@ -1693,6 +1696,7 @@ function CanvasInner() {
               onPaneClick={() => { setSelectedNode(null); closeCtx(); }}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
+              panOnDrag={[1]}
               onDragOver={(e: DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
               onDrop={(e: DragEvent) => {
                 e.preventDefault();
