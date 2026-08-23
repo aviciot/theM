@@ -184,7 +184,7 @@ def _markdown_to_pdf(title: str, markdown: str) -> bytes:
     if in_code and code_buf:
         flush_code(code_buf)
 
-    return pdf.output()
+    return bytes(pdf.output())
 
 
 def _extract_input(context: "RequestContext") -> tuple[str, str, str]:
@@ -262,11 +262,12 @@ class DocuWriterExecutor(AgentExecutor):
             part = artifact.parts.add()
 
             if fmt == "pdf":
-                # Convert Claude's markdown output to binary PDF
+                # Convert Claude's markdown output to binary PDF.
+                # Use part.raw (bytes field) — part.data is google.protobuf.Value (JSON only).
                 pdf_bytes = await asyncio.get_event_loop().run_in_executor(
                     None, _markdown_to_pdf, title, rendered
                 )
-                part.data = pdf_bytes
+                part.raw = pdf_bytes
                 part.filename = meta["filename"]
                 part.media_type = meta["media_type"]
             else:

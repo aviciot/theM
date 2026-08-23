@@ -279,18 +279,13 @@ type a2aMessage struct {
 	ContextID string    `json:"contextId,omitempty"`
 }
 
-type a2aInlineData struct {
-	Bytes    string `json:"bytes"`    // base64-encoded raw bytes (protobuf-JSON encoding)
-	MIMEType string `json:"mimeType"` // e.g. "application/pdf"
-}
-
 type a2aPart struct {
-	Text       string         `json:"text,omitempty"`
-	Kind       string         `json:"kind,omitempty"`       // kept for v0.3 compat probing
-	Data       map[string]any `json:"data,omitempty"`       // typed data part (A2A v1.1)
-	MediaType  string         `json:"mediaType,omitempty"`  // media type — both outbound data parts and inbound file parts
-	Filename   string         `json:"filename,omitempty"`   // present on inbound file parts
-	InlineData *a2aInlineData `json:"inlineData,omitempty"` // binary file part (protobuf-JSON encoding)
+	Text      string         `json:"text,omitempty"`
+	Kind      string         `json:"kind,omitempty"`      // kept for v0.3 compat probing
+	Data      map[string]any `json:"data,omitempty"`      // typed data part (structured JSON)
+	Raw       string         `json:"raw,omitempty"`       // binary file part — base64 in protobuf-JSON (part.raw bytes field)
+	MediaType string         `json:"mediaType,omitempty"` // media type for both data and raw parts
+	Filename  string         `json:"filename,omitempty"`  // present on file parts
 }
 
 type a2aResponse struct {
@@ -441,10 +436,10 @@ func extractA2AResult(result *a2aResult) (json.RawMessage, error) {
 			}
 			var encoded string
 			var contentType string
-			if part.InlineData != nil && part.InlineData.Bytes != "" {
-				// Binary part (e.g. PDF) — bytes already base64-encoded by protobuf-JSON.
-				encoded = part.InlineData.Bytes
-				contentType = part.InlineData.MIMEType
+			if part.Raw != "" {
+				// Binary part (e.g. PDF) — part.raw serializes as base64 in protobuf-JSON.
+				encoded = part.Raw
+				contentType = part.MediaType
 			} else if part.Text != "" {
 				// Text part (HTML, Markdown) — base64-encode the text.
 				encoded = base64.StdEncoding.EncodeToString([]byte(part.Text))
