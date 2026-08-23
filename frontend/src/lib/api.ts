@@ -645,6 +645,24 @@ export interface AgentBindingUpsertBody {
   policies?: Record<string, unknown>;
 }
 
+export interface AgentParamMeta {
+  key: string;
+  label: string;
+  description: string;
+  type: 'secret' | 'string' | 'url' | 'int' | 'bool';
+  required: boolean;
+  default_value?: string;
+  used_by_nodes: string[];
+  is_set: boolean;
+  hint: string;
+}
+
+export interface AgentParamsResponse {
+  agent_id: string;
+  agent_slug: string;
+  required_params: AgentParamMeta[];
+}
+
 export const themApi = {
   health: () => fetch(`${HEALTH_BASE}/health`)
     .then((r) => r.json())
@@ -831,4 +849,10 @@ export const themApi = {
     ),
   deleteAgentBinding: (appId: string, agentId: string) =>
     api.delete<void>(`/admin/applications/${appId}/agent-bindings/${agentId}`),
+
+  // Agent runtime params (Phase 1 — per-binding encrypted params)
+  getAgentParams: (appId: string, agentId: string) =>
+    api.get<AgentParamsResponse>(`/admin/applications/${appId}/agents/${agentId}/params`),
+  putAgentParams: (appId: string, agentId: string, params: Record<string, string>) =>
+    api.put<void>(`/admin/applications/${appId}/agents/${agentId}/params`, { params }),
 };

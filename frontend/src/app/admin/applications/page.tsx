@@ -5,7 +5,7 @@ const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 import Sidebar from '@/components/Sidebar';
 import ChromaGrid from '@/components/ChromaGrid';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Application, type Agent, type EntryPoint, type MiddlewareDef, type AppOrchestratorOut, type AppOrchestratorSummary, type SessionInfo, type MonitoringConfig, type AppDefinition, type AppDefinitionDoc, type ComponentDefinitionSummary, type ValidationReport } from '@/lib/api';
+import { themApi, type Application, type Agent, type EntryPoint, type MiddlewareDef, type AppOrchestratorOut, type AppOrchestratorSummary, type SessionInfo, type MonitoringConfig, type AppDefinition, type AppDefinitionDoc, type ComponentDefinitionSummary, type ValidationReport, type AgentParamsResponse } from '@/lib/api';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -5134,10 +5134,27 @@ function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; onBack: (
   const [orchSaving, setOrchSaving] = useState<string | null>(null);
   const [orchMsg, setOrchMsg] = useState<Record<string, string>>({});
 
+  // Agent params state (canvas agents bound to this app)
+  const [agentParamsList, setAgentParamsList] = useState<AgentParamsResponse[]>([]);
+  const [agentParamInputs, setAgentParamInputs] = useState<Record<string, Record<string, string>>>({});
+  const [agentParamSaving, setAgentParamSaving] = useState<string | null>(null);
+  const [agentParamMsg, setAgentParamMsg] = useState<Record<string, string>>({});
+
   useEffect(() => {
     themApi.getProviderKeys(app.id)
       .then(keys => setKeyStatuses(keys))
       .catch(() => {});
+  }, [app.id]);
+
+  useEffect(() => {
+    // Load agent params for all canvas agents bound to this app
+    themApi.listAgentBindings(app.id).then(bindings => {
+      Promise.all(
+        bindings.map(b => themApi.getAgentParams(app.id, b.agent_id).catch(() => null))
+      ).then(results => {
+        setAgentParamsList(results.filter((r): r is AgentParamsResponse => r !== null && r.required_params.length > 0));
+      });
+    }).catch(() => {});
   }, [app.id]);
 
   function getKeyStatus(provider: string): KeyStatus {
@@ -5210,6 +5227,26 @@ function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; onBack: (
       setOrchMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Failed' }));
     } finally {
       setOrchSaving(null);
+    }
+  }
+
+  async function handleSaveAgentParams(agentId: string) {
+    const inputs = agentParamInputs[agentId] ?? {};
+    const nonEmpty = Object.fromEntries(Object.entries(inputs).filter(([, v]) => v.trim() !== ''));
+    if (Object.keys(nonEmpty).length === 0) return;
+    setAgentParamSaving(agentId);
+    try {
+      await themApi.putAgentParams(app.id, agentId, nonEmpty);
+      // Refresh this agent's param statuses
+      const updated = await themApi.getAgentParams(app.id, agentId);
+      setAgentParamsList(prev => prev.map(a => a.agent_id === agentId ? updated : a));
+      setAgentParamInputs(prev => ({ ...prev, [agentId]: {} }));
+      setAgentParamMsg(m => ({ ...m, [agentId]: 'Saved' }));
+      setTimeout(() => setAgentParamMsg(m => ({ ...m, [agentId]: '' })), 2500);
+    } catch (e: unknown) {
+      setAgentParamMsg(m => ({ ...m, [agentId]: e instanceof Error ? e.message : 'Failed' }));
+    } finally {
+      setAgentParamSaving(null);
     }
   }
 
@@ -5437,6 +5474,72 @@ function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; onBack: (
                     </button>
                   </div>
                   {msg && <div style={{ marginTop: 6, fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Agent Parameters — canvas agents bound to this app */}
+        {agentParamsList.length > 0 && (
+          <div style={sectionStyle}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Agent Parameters</div>
+            <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
+              Runtime parameters required by canvas agents bound to this app. Secrets are stored encrypted and never displayed.
+            </div>
+            {agentParamsList.map(agentParams => {
+              const isBusy = agentParamSaving === agentParams.agent_id;
+              const msg = agentParamMsg[agentParams.agent_id] ?? '';
+              const isError = msg && msg !== 'Saved';
+              const inputs = agentParamInputs[agentParams.agent_id] ?? {};
+              const hasAnyInput = Object.values(inputs).some(v => v.trim() !== '');
+              return (
+                <div key={agentParams.agent_id} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.12)', marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+                    {agentParams.agent_slug}
+                  </div>
+                  {agentParams.required_params.map(param => {
+                    const isSecret = param.type === 'secret';
+                    const currentVal = inputs[param.key] ?? '';
+                    return (
+                      <div key={param.key} style={{ marginBottom: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <label style={{ ...labelStyle, marginBottom: 0, flex: 1 }}>{param.label}</label>
+                          {param.required && !param.is_set && (
+                            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20, background: 'rgba(248,113,113,0.12)', color: '#f87171', border: '1px solid rgba(248,113,113,0.3)' }}>required</span>
+                          )}
+                          {param.is_set && (
+                            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20, background: 'rgba(74,222,128,0.12)', color: C.green, border: '1px solid rgba(74,222,128,0.3)' }}>
+                              set ···{param.hint}
+                            </span>
+                          )}
+                        </div>
+                        {param.description && (
+                          <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>{param.description}</div>
+                        )}
+                        <input
+                          type={isSecret ? 'password' : 'text'}
+                          placeholder={param.is_set ? 'Enter new value to replace…' : (param.default_value ? `default: ${param.default_value}` : 'Enter value…')}
+                          value={currentVal}
+                          onChange={e => setAgentParamInputs(prev => ({
+                            ...prev,
+                            [agentParams.agent_id]: { ...(prev[agentParams.agent_id] ?? {}), [param.key]: e.target.value },
+                          }))}
+                          style={{ ...fieldStyle, fontFamily: isSecret ? 'monospace' : 'inherit', fontSize: 13 }}
+                        />
+                      </div>
+                    );
+                  })}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                    <button
+                      onClick={() => handleSaveAgentParams(agentParams.agent_id)}
+                      disabled={isBusy || !hasAnyInput}
+                      style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy || !hasAnyInput ? 0.5 : 1 }}
+                    >
+                      {isBusy ? '…' : 'Save Params'}
+                    </button>
+                    {msg && <span style={{ fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
+                  </div>
                 </div>
               );
             })}

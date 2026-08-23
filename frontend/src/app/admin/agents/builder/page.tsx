@@ -2106,6 +2106,64 @@ function CanvasInner() {
                         />
                       </div>
 
+                      {/* App Param Auth */}
+                      {(() => {
+                        const httpDef = getNodeDef('http');
+                        const appParams = httpDef.app_params ?? [];
+                        if (appParams.length === 0) return null;
+                        const currentParamKey = cfgStr('app_param_key');
+                        const currentMode = cfgStr('inject_mode') || 'header';
+                        return (
+                          <div style={{ ...fieldGap, marginTop: '16px', padding: '10px 12px', borderRadius: '6px', background: 'rgba(251,146,60,0.05)', border: '1px solid rgba(251,146,60,0.15)' }}>
+                            <div style={{ fontSize: '10px', fontWeight: 700, color: C.amber, letterSpacing: '0.08em', marginBottom: '8px' }}>APP AUTH PARAM</div>
+                            <label style={labelStyle}>App Param Key <span style={hint}>optional — injects runtime param as auth</span></label>
+                            <select
+                              value={currentParamKey}
+                              onChange={e => updateStepConfig('app_param_key', e.target.value)}
+                              style={selectStyle}
+                            >
+                              <option value="">— none —</option>
+                              {appParams.map(p => (
+                                <option key={p.key} value={p.key}>{p.label} ({p.key})</option>
+                              ))}
+                            </select>
+                            {currentParamKey && (
+                              <>
+                                <div style={fieldGap}>
+                                  <label style={labelStyle}>Inject Mode</label>
+                                  <select
+                                    value={currentMode}
+                                    onChange={e => updateStepConfig('inject_mode', e.target.value)}
+                                    style={selectStyle}
+                                  >
+                                    <option value="header">Bearer (Authorization: Bearer)</option>
+                                    <option value="basic">Basic Auth (Authorization: Basic)</option>
+                                    <option value="query">Query Parameter</option>
+                                    <option value="custom_header">Custom Header</option>
+                                  </select>
+                                </div>
+                                {currentMode === 'custom_header' && (
+                                  <div style={fieldGap}>
+                                    <label style={labelStyle}>Header Name</label>
+                                    <input
+                                      value={cfgStr('inject_header_name')}
+                                      onChange={e => updateStepConfig('inject_header_name', e.target.value)}
+                                      style={inputStyle}
+                                      placeholder="X-Api-Key"
+                                    />
+                                  </div>
+                                )}
+                                {currentMode === 'query' && (
+                                  <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
+                                    The param key name will be used as the query parameter name.
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       {/* Response extractions */}
                       <div style={{ ...fieldGap, marginTop: '16px' }}>
                         <label style={labelStyle}>Response Extractions <span style={hint}>JSONPath → variable</span></label>

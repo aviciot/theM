@@ -19,6 +19,15 @@ export interface EdgeRules {
   max_out: number; // 0 = unlimited
 }
 
+export interface AppParamDecl {
+  key: string;
+  label: string;
+  description: string;
+  type: 'secret' | 'string' | 'url' | 'int' | 'bool';
+  required: boolean;
+  default_value?: string;
+}
+
 export interface NodeTypeInfo {
   type: string;
   version: number;
@@ -32,6 +41,7 @@ export interface NodeTypeInfo {
   edges: EdgeRules;
   input_field?: string;
   executable: boolean;
+  app_params?: AppParamDecl[];
 }
 
 // ── Frontend-only UI supplement per type ─────────────────────────────────────
