@@ -2,7 +2,7 @@
 
 **Status:** Approved, pending implementation  
 **Last updated:** 2026-08-23  
-**Applies to:** `go/internal/agentgen/compiler.go`, `go/internal/agentgen/nodes.go`
+**Applies to:** `go/internal/agentgen/compiler.go`, `go/internal/agentgen/nodes.go`, `go/internal/agentgen/noderegistry.go`
 
 ---
 
@@ -34,150 +34,268 @@ type CompileError struct {
 
 The canvas builder cannot highlight a specific node or field from this. It needs `SkillID`, `NodeID`, and `Field` as first-class fields.
 
+**No real-time UX contract.** The frontend has no authoritative contract for what constitutes an immediate error vs. a pre-publish warning on any given node type. `NodeDef` in the registry is the right place to encode this, but it currently only holds a `Validate` function — not severity metadata per check.
+
 **Publish gate.** No code checks that every step type in the spec has `Execute != nil` before writing to `agent_runtime_specs`.
 
 ---
 
-## 2. Proposed Design
+## 2. Goals
 
-### 2.1 Enriched `Issue` type
-
-Replace `CompileError` with `Issue`:
-
-```go
-type Issue struct {
-    Severity string // "error" | "warning"
-    Code     string
-    Message  string
-    SkillID  string // empty = spec-level issue
-    NodeID   string // empty = skill-level issue
-    Field    string // empty = node-level issue (no specific field)
-}
-```
-
-**Migration note:** alias `CompileError = Issue` for one commit to keep existing tests and service-layer code (`AgentCompileError`) green, then remove the alias in a follow-up.
-
-`Severity` defaults to `"error"` on all existing callsites — no behavior change in commit 1.
-
-### 2.2 Four named stage functions (internal)
-
-Extract the implicit stages into named private functions:
-
-```go
-func validateStructural(spec *agentSpec) []Issue
-func validateNodes(spec *agentSpec) []Issue
-func validateGraph(spec *agentSpec) []Issue
-func validatePublishable(spec *agentSpec) []Issue
-```
-
-`Compile()` public signature stays **identical** — it delegates internally:
-
-```go
-func Compile(tenantID, agentID, displayName, slug string, raw json.RawMessage) (*AgentSpec, []Issue) {
-    spec, issues := validateStructural(...)
-    if hasErrors(issues) { return nil, issues }
-    issues = append(issues, validateNodes(spec)...)
-    if hasErrors(issues) { return nil, issues }
-    issues = append(issues, validateGraph(spec)...)
-    if hasErrors(issues) { return nil, issues }
-    return spec, nil
-}
-```
-
-Early-exit behavior is preserved: each stage only runs if the previous stage produced zero errors. (Warnings do not block later stages.)
-
-### 2.3 Publish gate — `validatePublishable`
-
-```go
-func validatePublishable(spec *agentSpec) []Issue {
-    var issues []Issue
-    for _, skill := range spec.Skills {
-        for _, step := range skill.Steps {
-            def, ok := LookupNode(step.Type)
-            if !ok { continue } // already caught by validateNodes
-            if def.Execute == nil {
-                issues = append(issues, Issue{
-                    Severity: "error",
-                    Code:     "NODE_NOT_EXECUTABLE",
-                    Message:  fmt.Sprintf("node type %q is not yet implemented and cannot be published", step.Type),
-                    SkillID:  skill.SkillID,
-                    NodeID:   step.ID,
-                })
-            }
-        }
-    }
-    return issues
-}
-```
-
-The **publish HTTP handler** runs all 4 stages (including `validatePublishable`).  
-The **validate HTTP handler** runs only stages 1–3 — it shows the user what's structurally wrong, not what's not-yet-implemented.
-
-### 2.4 `SkillID` stamping
-
-`compileSkillSteps` (and its callers) already receive `skillID`. Thread it into the stage functions so every `Issue` returned from node/graph validation has `SkillID` stamped automatically. Callers do not set it manually.
-
-`NodeID` is stamped at the point where a step is being validated: `def.Validate(step, knownSlots)` becomes the locus for `NodeID = step.ID`.
-
-### 2.5 `def.Validate` signature stays the same for now
-
-`NodeDef.Validate func(step canvasStep, knownSlots map[string]bool) []CompileError` (aliased to `[]Issue`) does not change in this refactor. Per-type validate functions already exist for `llm` and `http` (slot checks). They'll naturally gain `NodeID` from the wrapper that calls them.
+1. **Real-time canvas feedback** — the builder highlights nodes red/amber as the user edits, without a round-trip per keystroke.
+2. **Authoritative backend validation** — `/validate` and `/publish` always re-run the full pipeline; backend is source of truth.
+3. **Structured issues** — every issue carries `code`, `severity`, `skill_id`, `node_id`, `field`, `message` so the canvas can pinpoint exactly what is wrong.
+4. **Context-sensitive severity** — stub/non-executable nodes are a **warning** at validate time (user is still building) and a hard **error** at publish time.
+5. **Clean separation** — `NodeDef` owns node-level rules, `GraphValidator` owns graph-level rules, `Compile` / `Validate` / `CompileForPublish` are the public API.
+6. **No `forPublish bool`** — explicit public functions instead; call sites are self-documenting.
 
 ---
 
-## 3. What is deliberately excluded
+## 3. Design
+
+### 3.1 `Issue` type (replaces `CompileError`)
+
+```go
+// Issue is a structured validation finding returned by the BuildValidator.
+// Severity: "error" blocks save/publish; "warning" is advisory only.
+// SkillID/NodeID/Field are empty at higher scopes (spec-level, skill-level, node-level).
+type Issue struct {
+    Severity string `json:"severity"` // "error" | "warning"
+    Code     string `json:"code"`
+    Message  string `json:"message"`
+    SkillID  string `json:"skill_id,omitempty"`
+    NodeID   string `json:"node_id,omitempty"`
+    Field    string `json:"field,omitempty"`
+}
+```
+
+**Migration:** alias `type CompileError = Issue` for one commit so existing tests and `AgentCompileError` compile without changes. Remove the alias in a follow-up cleanup commit.
+
+`Severity = "error"` on all existing call sites in commit 1 — no behavior change.
+
+---
+
+### 3.2 `NodeDef` — node-level rules and capabilities
+
+`NodeDef` in `noderegistry.go` gains one more field:
+
+```go
+type NodeDef struct {
+    // ... existing fields (Type, Version, Label, Emoji, OutputArity, IsSource, IsSink, SingleInput, InputField) ...
+
+    // Validate checks node-specific config rules. Runs during both validate and publish.
+    // The wrapper in the BuildValidator stamps SkillID and NodeID on returned issues.
+    Validate func(step canvasStep, knownSlots map[string]bool) []Issue `json:"-"`
+
+    // Execute is the runtime handler. nil = stub node (not yet implemented).
+    // Derived: ToInfo().Executable = (Execute != nil).
+    Execute func(ctx context.Context, ...) error `json:"-"`
+}
+```
+
+No new fields on `NodeDef` for the stub/warning behaviour — that is fully derivable from `Execute == nil`. `NodeDef` does not need to know about validation modes; the BuildValidator applies the mode-specific severity when it reads `Execute`.
+
+**What the canvas gets from `NodeDef` metadata (via `GET /admin/node-types`):**
+
+- `executable: false` → show amber "not yet implemented" badge on the node
+- `output_arity: "none"` → block drawing outgoing edges from this node
+- `is_source: true` → block drawing incoming edges to this node
+- `single_input: true` → block a second incoming edge
+- `is_sink: true` → block outgoing edges
+
+These rules enable **instant local UX validation** without a backend round-trip.
+
+---
+
+### 3.3 Internal stage functions
+
+The implicit stages in `Compile()` become named private functions:
+
+```go
+func validateStructural(tenantID, agentID, displayName, slug string, raw json.RawMessage) (*agentSpec, []Issue)
+func validateNodes(spec *agentSpec) []Issue
+func validateGraph(spec *agentSpec) []Issue
+func validateExecutability(spec *agentSpec, severity string) []Issue
+```
+
+`validateExecutability` iterates all steps, and for each with `def.Execute == nil` emits an issue at the given severity. The severity is controlled by the caller — not by a bool or mode enum embedded in the function.
+
+`SkillID` and `NodeID` are stamped inside the stage functions (not by callers):
+- `validateNodes` wraps each `def.Validate()` call and stamps `SkillID = skill.SkillID`, `NodeID = step.ID` on every returned issue.
+- `validateGraph` stamps `SkillID` on every graph issue; `NodeID` where a specific step is implicated.
+
+---
+
+### 3.4 Public API — two explicit entry points
+
+```go
+// Validate runs structural + node + graph checks and returns all issues.
+// Stub nodes (Execute == nil) emit warnings, not errors — the user is still building.
+// Returns a non-nil *AgentSpec even when issues exist (so callers can inspect the parsed graph).
+// Returns nil spec only if structural parsing fails.
+func Validate(tenantID, agentID, displayName, slug string, raw json.RawMessage) (*AgentSpec, []Issue)
+
+// CompileForPublish runs all four stages. Stub nodes emit errors (not warnings).
+// Returns nil spec + issues if any error-severity issue exists.
+// Used exclusively by the publish HTTP handler.
+func CompileForPublish(tenantID, agentID, displayName, slug string, raw json.RawMessage) (*AgentSpec, []Issue)
+```
+
+Internal implementation:
+
+```go
+func Validate(tenantID, agentID, displayName, slug string, raw json.RawMessage) (*AgentSpec, []Issue) {
+    spec, issues := validateStructural(tenantID, agentID, displayName, slug, raw)
+    if hasErrors(issues) { return nil, issues }
+    issues = append(issues, validateNodes(spec)...)
+    issues = append(issues, validateGraph(spec)...)
+    issues = append(issues, validateExecutability(spec, "warning")...)
+    return spec, issues
+}
+
+func CompileForPublish(tenantID, agentID, displayName, slug string, raw json.RawMessage) (*AgentSpec, []Issue) {
+    spec, issues := validateStructural(tenantID, agentID, displayName, slug, raw)
+    if hasErrors(issues) { return nil, issues }
+    issues = append(issues, validateNodes(spec)...)
+    issues = append(issues, validateGraph(spec)...)
+    issues = append(issues, validateExecutability(spec, "error")...)
+    if hasErrors(issues) { return nil, issues }
+    return spec, issues
+}
+```
+
+Key differences:
+- `Validate` does **not** early-exit after node/graph stages — it returns all issues so the canvas can highlight everything at once.
+- `CompileForPublish` early-exits if any error exists after each stage — no point checking graph if nodes are broken.
+- Stub severity is the **only** difference between the two paths; shared logic lives in the internal stages.
+
+**`Compile()` is kept** as a thin wrapper over `CompileForPublish` for backward compatibility with the service layer, until callers are updated:
+
+```go
+// Compile is a backward-compatible alias for CompileForPublish.
+// Deprecated: call Validate or CompileForPublish directly.
+func Compile(...) (*AgentSpec, []Issue) { return CompileForPublish(...) }
+```
+
+---
+
+### 3.5 HTTP handler wiring
+
+| Handler | Calls | Blocks on warnings? |
+|---|---|---|
+| `POST /agent-definitions/{id}/validate` | `agentgen.Validate()` | No — returns 200 with all issues including warnings |
+| `POST /agent-definitions/{id}/publish` | `agentgen.CompileForPublish()` | Yes — 422 if any error-severity issue |
+
+Validate response:
+
+```json
+{
+  "valid": true,
+  "issues": [
+    {
+      "severity": "warning",
+      "code": "NODE_NOT_EXECUTABLE",
+      "message": "node type \"branch\" is not yet implemented",
+      "skill_id": "s1",
+      "node_id": "step_branch_1",
+      "field": ""
+    }
+  ]
+}
+```
+
+`"valid": true` even when warnings exist — the canvas uses this to allow saving drafts. The publish handler returns `"valid": false` + 422 when errors exist.
+
+---
+
+### 3.6 Canvas real-time validation contract
+
+The canvas builder does **not** call `/validate` on every keystroke. Instead it uses two sources:
+
+**Source 1 — Node metadata from `GET /admin/node-types` (fetched once on mount, cached).**
+
+The builder applies these rules instantly in the UI without any API call:
+- `executable: false` → amber "not yet implemented" warning badge on the node
+- `is_source` / `is_sink` / `single_input` / `output_arity` → block illegal edge draws in the canvas drag-and-drop logic
+- Unknown type → red "unknown node" error
+
+**Source 2 — Backend `/validate` call (debounced ~800ms after graph changes).**
+
+Returns structured issues that the builder maps to node highlight state:
+
+```ts
+interface Issue {
+  severity: 'error' | 'warning';
+  code: string;
+  message: string;
+  skill_id?: string;
+  node_id?: string;
+  field?: string;
+}
+```
+
+Builder logic per issue:
+- `node_id` present → highlight that node red (error) or amber (warning)
+- `field` present → highlight that field inside the node config panel
+- `skill_id` only → highlight at skill/tab level
+- No node_id → show in a global issues panel
+
+**Source of truth:** backend. The canvas local rules are UX sugar — the backend always re-validates on save and publish.
+
+---
+
+### 3.7 Connection validation
+
+The canvas blocks illegal edges **locally** using `NodeDef` metadata:
+
+| Rule | Source |
+|---|---|
+| No edge from a sink node | `is_sink: true` |
+| No edge into a source node | `is_source: true` (except the implicit input) |
+| Max one incoming edge | `single_input: true` |
+| Branch/parallel require labeled exits | `output_arity: "multi"` → canvas requires branch labels |
+
+The backend `validateGraph` stage validates the same rules authoritatively and returns `INVALID_CONNECTION`, `MISSING_BRANCH_LABEL`, etc. as error-severity issues.
+
+---
+
+## 4. What is deliberately excluded
 
 | Idea | Why excluded |
 |---|---|
-| Public `BuildValidator` struct | No runtime state to carry; package-level functions are simpler |
-| Warning severity at validate time for stubs | Warnings without actionability add noise. Stubs are hard errors at publish, invisible at validate |
-| `FieldErrors map[string][]Issue` | Premature. Flat `Field string` on `Issue` is sufficient for canvas highlighting and can be promoted later |
-| Separate public stage functions | Callers don't need partial pipelines; `Compile()` is the single entry point |
+| `forPublish bool` parameter on `Compile` | Makes call sites opaque; two named functions are clearer |
+| `ValidationMode` enum | Same problem as bool — one fewer type is simpler |
+| Public stage functions | Callers don't need partial pipelines |
+| `FieldErrors map[string][]Issue` | Premature; flat `Field string` is sufficient for highlighting |
+| Stub nodes as errors at validate time | Blocks saving a draft mid-build; counterproductive UX |
+| Real-time validation via polling | Debounced call to `/validate` is sufficient; no WebSocket needed |
 
 ---
 
-## 4. Migration Plan (3 commits, all additive)
+## 5. Migration Plan (3 commits, all additive)
 
-### Commit 1 — Enrich the error type
+### Commit 1 — Enrich the Issue type
 
-- Add `Severity`, `SkillID`, `NodeID`, `Field` to `CompileError`
-- Set `Severity = "error"` on all existing construction sites
-- Alias `CompileError = Issue` (or rename and update references)
+- Rename `CompileError` → `Issue`; add `Severity`, `SkillID`, `NodeID`, `Field`
+- Alias `type CompileError = Issue` for backward compat
+- Set `Severity = "error"` on all existing call sites
 - **No behavior change. All tests pass.**
 
-### Commit 2 — Extract stage functions
+### Commit 2 — Extract stage functions + two public entry points
 
-- Pull `validateStructural`, `validateNodes`, `validateGraph` out of `Compile()` / `compileSkillSteps`
-- `Compile()` signature unchanged — delegates to the three stage functions
-- Thread `SkillID` and `NodeID` through so issues are stamped automatically
-- **No behavior change. All tests pass.**
+- Extract `validateStructural`, `validateNodes`, `validateGraph`, `validateExecutability`
+- Add `Validate()` and `CompileForPublish()`; keep `Compile()` as deprecated alias
+- Thread `SkillID` and `NodeID` stamping through stage functions
+- Update `agent_definitions.go`: validate handler → `agentgen.Validate()`, publish handler → `agentgen.CompileForPublish()`
+- **Behavior change: stub nodes now return warnings from validate, errors from publish**
+- Add tests: stub node warning on validate, stub node error on publish
 
-### Commit 3 — Add publish gate
+### Commit 3 — Canvas frontend integration
 
-- Implement `validatePublishable` (executable check)
-- Wire into publish HTTP handler only (not validate)
-- Add test: publish an agent with a `branch` step → 422 with `NODE_NOT_EXECUTABLE`
-- **Behavior change at publish: previously-publishable stub-containing agents now return 422**
-
----
-
-## 5. Frontend impact
-
-No frontend changes are required until canvas node highlighting is built. When that work begins, the richer `Issue` fields (`SkillID`, `NodeID`, `Field`) are already present in the API response — the builder can map them directly to node highlight state.
-
-The `/validate` response shape changes from:
-
-```json
-{"valid": false, "errors": [{"code": "...", "message": "...", "context": "..."}]}
-```
-
-to:
-
-```json
-{"valid": false, "errors": [{"severity": "error", "code": "...", "message": "...", "skill_id": "...", "node_id": "...", "field": ""}]}
-```
-
-This is additive — new fields, old fields remain — so existing frontend code that reads `code`/`message` continues to work.
+- Update builder to read `node_id` / `field` / `severity` from validate response and apply highlight state
+- Use `executable` from cached node types for instant amber badge on stub nodes
+- Block illegal edge draws using `is_source` / `is_sink` / `single_input` / `output_arity`
+- **No backend changes in this commit**
 
 ---
 
@@ -185,10 +303,11 @@ This is additive — new fields, old fields remain — so existing frontend code
 
 | File | Change |
 |---|---|
-| `go/internal/agentgen/compiler.go` | Rename `CompileError` → `Issue`, add fields, extract stage functions, add publish gate call |
-| `go/internal/agentgen/nodes.go` | No change — `NodeDef.Validate` signature unchanged |
+| `go/internal/agentgen/compiler.go` | `CompileError → Issue`, add fields, extract stage functions, add `Validate()` + `CompileForPublish()`, keep `Compile()` alias |
+| `go/internal/agentgen/nodes.go` | Update `Validate` func signature to return `[]Issue` (via alias, no actual change needed in commit 1) |
 | `go/internal/agentgen/noderegistry.go` | No change |
-| `go/internal/admin/agent_definitions.go` | Publish handler calls `validatePublishable` (or `Compile` gains a `forPublish bool` param) |
-| `go/internal/admin/service/agent_definition_service.go` | Update `AgentCompileError` if `CompileError` type name changes |
-| `go/internal/agentgen/compiler_test.go` | Add `NODE_NOT_EXECUTABLE` test, update field references |
+| `go/internal/admin/agent_definitions.go` | validate handler → `agentgen.Validate()`, publish handler → `agentgen.CompileForPublish()` |
+| `go/internal/admin/service/agent_definition_service.go` | `AgentCompileError` — update if `CompileError` type name changes |
+| `go/internal/agentgen/compiler_test.go` | Add stub warning/error tests; update `CompileError` refs |
+| `frontend/src/app/admin/agents/builder/page.tsx` | Consume `node_id`/`field`/`severity` from validate response; block illegal edges using NodeDef metadata |
 | `go/TEST_INDEX.md` | Update coverage notes |
