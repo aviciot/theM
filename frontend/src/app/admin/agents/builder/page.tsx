@@ -388,7 +388,6 @@ const STEP_TYPES: { type: AgentStepDoc['type']; label: string }[] = [
   { type: 'http',       label: 'HTTP Tool' },
   { type: 'transform',  label: 'Transform' },
   { type: 'response',   label: 'Response' },
-  { type: 'condition',  label: 'Condition' },
   { type: 'branch',     label: 'Branch' },
   { type: 'loop',       label: 'Loop' },
   { type: 'parallel',   label: 'Parallel' },
@@ -1401,8 +1400,10 @@ function CanvasInner() {
   const errorCount   = validation.issues.filter(iss => iss.severity === 'error').length;
   const warningCount = validation.issues.filter(iss => iss.severity === 'warning').length;
 
+  const debugRunning = Object.values(debug.nodeStates).some(s => s === 'running');
+
   const logoState: LogoState = (() => {
-    if (saving || publishing || validation.loading) return 'thinking';
+    if (saving || publishing || validation.loading || debugRunning) return 'thinking';
     if (logoResult === 'invalid') return 'error';
     if (logoResult === 'warn')    return 'warning';
     if (logoResult === 'valid')   return 'success';
@@ -1556,7 +1557,17 @@ function CanvasInner() {
           background: 'rgba(245,158,11,0.06)', padding: '10px 16px',
           display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
         }}>
-          <span style={{ color: C.amber, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', flexShrink: 0 }}>DEBUG</span>
+          <span style={{ color: C.amber, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}>
+            DEBUG
+            {debugRunning && (
+              <>
+                <style>{`@keyframes dbg-dot{0%,80%,100%{opacity:0.15}40%{opacity:1}}`}</style>
+                {[0, 0.22, 0.44].map(delay => (
+                  <span key={delay} style={{ width: 5, height: 5, borderRadius: '50%', background: C.amber, display: 'inline-block', animation: `dbg-dot 1.1s ease-in-out ${delay}s infinite` }} />
+                ))}
+              </>
+            )}
+          </span>
 
           <input
             value={debug.testInput}
@@ -1676,7 +1687,7 @@ function CanvasInner() {
                 {/* Step type cards — grouped */}
                 {[
                   { label: 'Data Flow',  items: ['input', 'response'] },
-                  { label: 'Processing', items: ['llm', 'transform', 'http', 'condition', 'branch'] },
+                  { label: 'Processing', items: ['llm', 'transform', 'http', 'branch'] },
                   { label: 'Advanced',   items: ['loop', 'parallel', 'a2a_call', 'human_wait', 'stream_out'] },
                 ].map(group => (
                   <div key={group.label}>
@@ -2430,49 +2441,6 @@ function CanvasInner() {
                     </>
                   )}
 
-                  {/* ── Config: condition ── */}
-                  {d.step_type === 'condition' && (
-                    <>
-                      <div style={{ color: '#f97316', fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>CONDITION CONFIG</div>
-                      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>
-                        Go template expression. Routes to <strong style={{ color: '#4ade80' }}>Pass</strong> when the result is non-empty, non-zero, and not &quot;false&quot;. Routes to <strong style={{ color: '#f87171' }}>Fail</strong> otherwise.
-                      </div>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>Expression <span style={hint}>Go template</span></label>
-                        <input
-                          value={cfgStr('expression')}
-                          onChange={e => updateStepConfig('expression', e.target.value)}
-                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
-                          placeholder={'{{.definition}}'}
-                        />
-                        <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
-                          Examples: <code style={{ color: '#94a3b8' }}>{'{{.status}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{eq .code 200}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{ne .result ""}}'}</code>
-                        </div>
-                      </div>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>Pass → Step ID <span style={hint}>step to run when condition passes</span></label>
-                        <input
-                          value={cfgStr('pass_next')}
-                          onChange={e => updateStepConfig('pass_next', e.target.value)}
-                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
-                          placeholder="step-id-on-pass"
-                        />
-                      </div>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>Fail → Step ID <span style={hint}>step to run when condition fails</span></label>
-                        <input
-                          value={cfgStr('fail_next')}
-                          onChange={e => updateStepConfig('fail_next', e.target.value)}
-                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
-                          placeholder="step-id-on-fail"
-                        />
-                      </div>
-                    </>
-                  )}
-
                   {/* ── Config: branch ── */}
                   {d.step_type === 'branch' && (
                     <>
@@ -2517,7 +2485,7 @@ function CanvasInner() {
                   )}
 
                   {/* ── Not yet implemented steps ── */}
-                  {!['input', 'llm', 'http', 'transform', 'response', 'condition', 'branch'].includes(d.step_type) && (
+                  {!['input', 'llm', 'http', 'transform', 'response', 'branch'].includes(d.step_type) && (
                     <div style={{ color: '#64748b', fontSize: '12px', padding: '12px', border: `1px dashed ${C.outline}`, borderRadius: '6px', textAlign: 'center' }}>
                       Config for <strong style={{ color: C.text }}>{d.step_type}</strong> is not yet supported in the builder.
                     </div>
