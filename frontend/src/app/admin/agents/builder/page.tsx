@@ -388,6 +388,28 @@ function CanvasInner() {
   const [activeView, setActiveView] = useState<'agent' | 'skill'>('agent');
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
 
+  // Resizable panels
+  const [libraryWidth, setLibraryWidth] = useState(220);
+  const [propertiesWidth, setPropertiesWidth] = useState(300);
+  const resizingRef = useRef<{ side: 'library' | 'properties'; startX: number; startW: number } | null>(null);
+
+  useEffect(() => {
+    function onMouseMove(e: globalThis.MouseEvent) {
+      if (!resizingRef.current) return;
+      const { side, startX, startW } = resizingRef.current;
+      const delta = e.clientX - startX;
+      if (side === 'library') {
+        setLibraryWidth(Math.max(160, Math.min(480, startW + delta)));
+      } else {
+        setPropertiesWidth(Math.max(220, Math.min(600, startW - delta)));
+      }
+    }
+    function onMouseUp() { resizingRef.current = null; document.body.style.cursor = ''; document.body.style.userSelect = ''; }
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); };
+  }, []);
+
   // Agent-level nodes/edges — pre-seed AGENT ROOT for new drafts
   const initialAgentNodes: Node[] = defId ? [] : [{
     id: 'agent-root',
@@ -1507,9 +1529,10 @@ function CanvasInner() {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* ── Node Library (left panel) ── */}
         <div style={{
-          width: '220px', flexShrink: 0, borderRight: `1px solid ${C.outline}`,
+          width: libraryWidth, flexShrink: 0, borderRight: `1px solid ${C.outline}`,
           background: C.surface, overflowY: 'auto', display: 'flex', flexDirection: 'column',
-        }}>
+          position: 'relative',
+        }} className="dark-scrollbar">
           <div style={{ padding: '14px 14px 8px', fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', borderBottom: `1px solid ${C.outline}` }}>
             {activeView === 'agent' ? 'Node Library' : 'Step Library'}
           </div>
@@ -1575,6 +1598,15 @@ function CanvasInner() {
               </>
             )}
           </div>
+
+          {/* Library resize handle */}
+          <div
+            onMouseDown={e => { e.preventDefault(); resizingRef.current = { side: 'library', startX: e.clientX, startW: libraryWidth }; document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'; }}
+            style={{
+              position: 'absolute', top: 0, right: -3, width: 6, height: '100%',
+              cursor: 'col-resize', zIndex: 10,
+            }}
+          />
         </div>
 
         {/* Canvas */}
@@ -1686,9 +1718,17 @@ function CanvasInner() {
         {/* Properties panel */}
         {selectedNode && (
           <div style={{
-            width: '300px', flexShrink: 0, borderLeft: `1px solid ${C.outline}`,
-            background: C.surface, padding: '16px', overflowY: 'auto',
-          }}>
+            width: propertiesWidth, flexShrink: 0, borderLeft: `1px solid ${C.outline}`,
+            background: C.surface, padding: '16px', overflowY: 'auto', position: 'relative',
+          }} className="dark-scrollbar">
+            {/* Properties resize handle */}
+            <div
+              onMouseDown={e => { e.preventDefault(); resizingRef.current = { side: 'properties', startX: e.clientX, startW: propertiesWidth }; document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'; }}
+              style={{
+                position: 'absolute', top: 0, left: -3, width: 6, height: '100%',
+                cursor: 'col-resize', zIndex: 10,
+              }}
+            />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
               <span style={{ color: C.text, fontWeight: 700, fontSize: '13px' }}>Properties</span>
               <button onClick={() => setSelectedNode(null)} style={{ background: 'transparent', border: 'none', color: C.textMuted, cursor: 'pointer', fontSize: '16px' }}>x</button>
