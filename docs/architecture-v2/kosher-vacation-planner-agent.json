@@ -267,11 +267,9 @@
           "id": "check-recommendation",
           "type": "branch",
           "config": {
-            "expression": "{{.recommendation}}",
-            "true_next": "final-response",
-            "false_next": "error-response"
+            "expression": "{{.recommendation}}"
           },
-          "next": [],
+          "next": ["final-response", "error-response"],
           "position": { "x": 160, "y": 1960 }
         },
 

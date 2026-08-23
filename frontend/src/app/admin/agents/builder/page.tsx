@@ -2745,9 +2745,6 @@ function CanvasInner() {
                   {d.step_type === 'branch' && (
                     <>
                       <div style={{ color: '#f97316', fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>BRANCH CONFIG</div>
-                      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>
-                        Go template expression. Routes to <strong style={{ color: '#4ade80' }}>True</strong> path when the result is truthy, <strong style={{ color: '#f87171' }}>False</strong> path otherwise.
-                      </div>
 
                       <div style={fieldGap}>
                         <label style={labelStyle}>Expression <span style={hint}>Go template</span></label>
@@ -2758,28 +2755,14 @@ function CanvasInner() {
                           placeholder={'{{eq .status "ok"}}'}
                         />
                         <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
-                          Examples: <code style={{ color: '#94a3b8' }}>{'{{eq .x "yes"}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{gt .count 0}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{.flag}}'}</code>
+                          Examples: <code style={{ color: '#94a3b8' }}>{'{{eq .x "yes"}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{gt .count 0}}'}</code> · <code style={{ color: '#94a3b8' }}>{'{{.my_var}}'}</code>
                         </div>
                       </div>
 
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>True → Step ID</label>
-                        <input
-                          value={cfgStr('true_next')}
-                          onChange={e => updateStepConfig('true_next', e.target.value)}
-                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
-                          placeholder="step-id-when-true"
-                        />
-                      </div>
-
-                      <div style={fieldGap}>
-                        <label style={labelStyle}>False → Step ID</label>
-                        <input
-                          value={cfgStr('false_next')}
-                          onChange={e => updateStepConfig('false_next', e.target.value)}
-                          style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
-                          placeholder="step-id-when-false"
-                        />
+                      <div style={{ marginTop: 12, padding: '10px', background: 'rgba(249,115,22,0.06)', border: '1px solid rgba(249,115,22,0.25)', borderRadius: 6, fontSize: 11, color: '#94a3b8', lineHeight: 1.6 }}>
+                        <strong style={{ color: '#f97316' }}>Connect 2 edges from this node:</strong><br />
+                        <span style={{ color: '#4ade80' }}>1st edge drawn</span> → <strong>True</strong> path (expression is truthy)<br />
+                        <span style={{ color: '#f87171' }}>2nd edge drawn</span> → <strong>False</strong> path (expression is falsy)
                       </div>
                     </>
                   )}

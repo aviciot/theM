@@ -138,8 +138,9 @@ func init() {
 		IsSource:    false,
 		IsSink:      false,
 		SingleInput: true,
-		// Routing is config-driven (TrueNext/FalseNext in BranchStepConfig), not edge-driven.
-		Edges: EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 0, MaxOut: 0},
+		// Two outgoing edges: first = true path, second = false path.
+		// TrueNext/FalseNext in config override edge order when set.
+		Edges: EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 2, MaxOut: 2},
 		Validate: nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {

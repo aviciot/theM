@@ -769,6 +769,60 @@ func TestInterpreter_BranchStep_FalsePath(t *testing.T) {
 	}
 }
 
+// TestInterpreter_BranchStep_EdgeFallback verifies that when TrueNext/FalseNext
+// are empty, the interpreter falls back to step.Next[0]=true and step.Next[1]=false.
+func TestInterpreter_BranchStep_EdgeFallback(t *testing.T) {
+	interp := agentgen.NewInterpreter(nil, nil, "")
+	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "ag1"}
+
+	skill := &agentgen.SkillSpec{
+		ID: "skill-branch-edge",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:     "in",
+				Type:   agentgen.StepInput,
+				Config: mustJSON(agentgen.InputStepConfig{Bindings: map[string]string{"text": "x"}}),
+				Next:   []string{"branch"},
+			},
+			{
+				ID:   "branch",
+				Type: agentgen.StepBranch,
+				// TrueNext/FalseNext intentionally empty — routing via step.Next.
+				Config: mustJSON(agentgen.BranchStepConfig{Expression: `{{eq .x "yes"}}`}),
+				Next:   []string{"resp-true", "resp-false"}, // [0]=true, [1]=false
+			},
+			{
+				ID:     "resp-true",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "x"}),
+			},
+			{
+				ID:     "resp-false",
+				Type:   agentgen.StepResponse,
+				Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "x"}),
+			},
+		},
+	}
+
+	// True path: input="yes" → eq renders "true" → Next[0]=resp-true → returns "yes"
+	r, err := interp.Execute(context.Background(), ic, skill, "yes")
+	if err != nil {
+		t.Fatalf("true path: %v", err)
+	}
+	if r.Text != "yes" {
+		t.Errorf("true path: expected 'yes', got %q", r.Text)
+	}
+
+	// False path: input="no" → eq renders "false" → Next[1]=resp-false → returns "no"
+	r2, err := interp.Execute(context.Background(), ic, skill, "no")
+	if err != nil {
+		t.Fatalf("false path: %v", err)
+	}
+	if r2.Text != "no" {
+		t.Errorf("false path: expected 'no', got %q", r2.Text)
+	}
+}
+
 // TestInterpreter_TransformStep_JSONExtractions verifies that TransformExtract
 // correctly parses a JSON string variable and assigns sub-fields to new vars.
 func TestInterpreter_TransformStep_JSONExtractions(t *testing.T) {

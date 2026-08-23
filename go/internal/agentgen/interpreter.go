@@ -352,10 +352,22 @@ func (interp *Interpreter) execBranch(step *StepSpec, vars PipelineVars) error {
 	if err != nil {
 		return fmt.Errorf("render branch expression: %w", err)
 	}
+
+	// Resolve true/false targets: explicit config fields take priority over
+	// edge order. Edge order fallback: Next[0]=true path, Next[1]=false path.
+	trueNext := cfg.TrueNext
+	falseNext := cfg.FalseNext
+	if trueNext == "" && len(step.Next) > 0 {
+		trueNext = step.Next[0]
+	}
+	if falseNext == "" && len(step.Next) > 1 {
+		falseNext = step.Next[1]
+	}
+
 	if isTruthy(rendered) {
-		interp.nextStepOverride = cfg.TrueNext
+		interp.nextStepOverride = trueNext
 	} else {
-		interp.nextStepOverride = cfg.FalseNext
+		interp.nextStepOverride = falseNext
 	}
 	return nil
 }

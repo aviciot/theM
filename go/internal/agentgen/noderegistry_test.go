@@ -135,6 +135,13 @@ func TestNodeRegistry_BranchOutputArity(t *testing.T) {
 	if def.Execute == nil {
 		t.Error("branch Execute must be non-nil (implemented)")
 	}
+	// Exactly 2 outgoing edges: first=true path, second=false path.
+	if def.Edges.MinOut != 2 {
+		t.Errorf("branch MinOut: want 2, got %d", def.Edges.MinOut)
+	}
+	if def.Edges.MaxOut != 2 {
+		t.Errorf("branch MaxOut: want 2, got %d", def.Edges.MaxOut)
+	}
 }
 
 // TestNodeRegistry_StreamOutIsSink verifies stream_out terminates the pipeline.

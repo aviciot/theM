@@ -1310,8 +1310,9 @@ via Condition and Branch step types. No external services required.
 | `TestInterpreter_BranchStep_FalsePath` | Branch step: `{{eq .x "yes"}}` with x=no renders "false" → FalseNext |
 | `TestInterpreter_TransformStep_JSONExtractions` | Transform JSONPath extractions: parses a JSON string var (LLM output) and assigns fields to named pipeline vars |
 | `TestInterpreter_TransformStep_JSONExtract_FromMap` | Transform JSONPath extractions: parses a map[string]any (http_response) and extracts a field to a named var |
+| `TestInterpreter_BranchStep_EdgeFallback` | Branch step with empty TrueNext/FalseNext config routes via Next[0]=true, Next[1]=false edge order |
 
-**Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go) or `cmd/agent-runtime/main.go`
+**Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go, nodes.go) or `cmd/agent-runtime/main.go`
 
 ---
 
