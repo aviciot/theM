@@ -251,6 +251,9 @@ class DocuWriterExecutor(AgentExecutor):
                 messages=[{"role": "user", "content": _build_prompt(fmt, title, content)}],
             )
             rendered = response.content[0].text
+            # Strip markdown fences the model sometimes wraps around its output.
+            rendered = re.sub(r"^```[a-zA-Z]*\n?", "", rendered.strip())
+            rendered = re.sub(r"\n?```$", "", rendered.strip())
 
             artifact = Artifact()
             artifact.artifact_id = "docu-output"

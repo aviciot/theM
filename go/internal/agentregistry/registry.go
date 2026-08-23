@@ -339,9 +339,15 @@ func buildA2APart(input json.RawMessage) a2aPart {
 		// Not a JSON object — send raw as text.
 		return a2aPart{Text: string(input)}
 	}
-	// Unwrap simple {"input": "..."} wrapper → text part.
+	// Unwrap simple {"input": "..."} wrapper.
+	// If the value is itself a JSON object, treat it as a typed data part so
+	// agents like docu_writer receive structured fields (format, title, content).
 	if len(m) == 1 {
 		if s, ok := m["input"].(string); ok {
+			var inner map[string]any
+			if err := json.Unmarshal([]byte(s), &inner); err == nil && len(inner) > 0 {
+				return a2aPart{Data: inner, MediaType: "application/json"}
+			}
 			return a2aPart{Text: s}
 		}
 	}
