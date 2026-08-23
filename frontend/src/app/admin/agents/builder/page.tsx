@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent, type DragEve
 import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
+const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null); // eslint-disable-line @typescript-eslint/no-explicit-any
 import { getNodeDef, isSingleInput as _isSingleInput, fetchNodeTypes, setCachedNodeTypes, outputArity, canAddIncoming, canAddOutgoing } from '@/lib/nodeRegistry';
 import {
   themApi,
@@ -17,6 +18,7 @@ import {
   Background,
   BackgroundVariant,
   Controls,
+  SelectionMode,
   addEdge,
   useNodesState,
   useEdgesState,
@@ -382,7 +384,21 @@ function CanvasInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const defId = searchParams.get('id');
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, fitView } = useReactFlow();
+
+  function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
+    if (!dagre) return nodes;
+    const g = new dagre.graphlib.Graph();
+    g.setDefaultEdgeLabel(() => ({}));
+    g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
+    nodes.forEach(n => g.setNode(n.id, { width: 120, height: 80 }));
+    edges.forEach(e => g.setEdge(e.source, e.target));
+    dagre.layout(g);
+    return nodes.map(n => {
+      const pos = g.node(n.id);
+      return { ...n, position: { x: pos.x - 60, y: pos.y - 40 } };
+    });
+  }
 
   // View state: 'agent' = top-level, 'skill' = pipeline for a skill
   const [activeView, setActiveView] = useState<'agent' | 'skill'>('agent');
@@ -1613,6 +1629,31 @@ function CanvasInner() {
         <div style={{ flex: 1, position: 'relative' }}>
           {/* Suppress ReactFlow's grab cursor; middle-mouse pan is handled via panOnDrag={[1]} */}
           <style>{`.react-flow__pane { cursor: default !important; } .react-flow__pane.dragging { cursor: default !important; }`}</style>
+
+          {/* Canvas toolbar — fit + auto-arrange */}
+          <div style={{
+            position: 'absolute', top: 12, right: 12, zIndex: 10,
+            display: 'flex', gap: 6,
+          }}>
+            <button
+              onClick={() => fitView({ padding: 0.15 })}
+              title="Fit to screen"
+              style={{ background: C.surface, border: `1px solid ${C.outline}`, color: C.textMuted, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+            >⊡</button>
+            <button
+              onClick={() => {
+                if (activeView === 'agent') {
+                  setAgentNodes(ns => applyDagreLayout(ns, agentEdges));
+                } else {
+                  setLocalPipeNodes(ns => applyDagreLayout(ns, localPipeEdges));
+                }
+                setTimeout(() => fitView({ padding: 0.2 }), 50);
+              }}
+              title="Auto-arrange nodes"
+              style={{ background: C.surface, border: `1px solid ${C.outline}`, color: C.textMuted, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+            >⚏</button>
+          </div>
+
           {/* Context menu */}
           {ctxMenu && (
             <div
@@ -1661,6 +1702,8 @@ function CanvasInner() {
               onPaneClick={() => { setSelectedNode(null); closeCtx(); }}
               nodeTypes={nodeTypes}
               panOnDrag={[1]}
+              selectionMode={SelectionMode.Partial}
+              multiSelectionKeyCode={['Shift', 'Control']}
               onDragOver={(e: DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
               onDrop={(e: DragEvent) => {
                 e.preventDefault();
@@ -1697,6 +1740,8 @@ function CanvasInner() {
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               panOnDrag={[1]}
+              selectionMode={SelectionMode.Partial}
+              multiSelectionKeyCode={['Shift', 'Control']}
               onDragOver={(e: DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
               onDrop={(e: DragEvent) => {
                 e.preventDefault();
