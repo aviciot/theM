@@ -7,23 +7,20 @@
 ## HEAD
 
 Branch: `main`
-Commit: `a58287f` — feat(canvas): connect Canvas UI to BuildValidator — live validation, node/field highlighting
+Commit: `dd8d546` — feat(a2a): multi-artifact + streaming agent support
 
 Recent commits (newest first):
 ```
+dd8d546 feat(a2a): multi-artifact + streaming agent support
+f11c2f5 feat(a2a): full multi-artifact support — A2A spec compliant
+671f371 fix(builder): force node re-render after registry fetch + fix controlled input
+9da0f2b fix(builder): re-render nodes after node-type registry fetch resolves
+8b00ab2 chore(traefik): remove stale Python bridge routing labels
+2fe7858 docs(a2a): multi-artifact analysis + streaming gap investigation
+5eb0e30 fix(canvas): validate live definition, fix emoji 404, fix debounce data flow
+7155933 docs(current): update CURRENT.md — BuildValidator UI complete, new next task
 a58287f feat(canvas): connect Canvas UI to BuildValidator — live validation, node/field highlighting
 6ff1981 fix(docu-writer): fix format routing and markdown fence stripping
-bf5b536 docs(test-index) + fix(a2a): update TEST_INDEX for BuildValidator + fix /a2a Traefik routing
-b9a84d4 feat(agentgen): BuildValidator — Issue type, Validate/CompileForPublish, stub severity
-00ee278 docs(agentgen): update BuildValidator design — real-time UX, explicit Validate/CompileForPublish, stub severity
-74812b2 feat(agents): canvas-built badge + Edit in Builder for published agents
-01465eb fix(agent-runtime): fix 4 deferred code-review bugs in executeSkill / loadBinding
-02648fb docs: remove Python-specific docs, clean up INDEX.md
-e615767 fix(agent-runtime): remove global key fallback in anthropicLLMFactory
-938e9b4 fix(worker): remove global key fallback — missing app key fails run explicitly
-84a1855 fix(agentregistry): wrap canvas_a2a InvokeWithMeta in A2A JSON-RPC envelope
-ca607e4 fix(llm-config): fix 5 code review bugs in LLM config and provider key layer
-bba9590 feat(llm-config): move LLM provider/model config from canvas to App Runtime
 ```
 
 ---
@@ -153,11 +150,39 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — 38 packages, 0 failures
-S1 total:         706
-S2 total:          42
-go test ./... :   666
+go test ./...  — all packages, 0 failures (verified in Docker build dd8d546)
+S1-11 agentregistry: 17 tests (was 10; +4 multi-artifact, +2 streaming)
 ```
+
+---
+
+## A2A feature state
+
+### Playground + Artifacts tab
+- Artifacts tab renders all file types: `image/*` → `<img>`, `application/pdf` → iframe,
+  `text/html` → srcDoc iframe, `text/markdown`/text → `<pre>`, unknown → download
+- `ArtifactPart.data` (base64) added to Go DAL + frontend API types
+- Binary artifacts base64-encoded in `GetRunArtifacts` for transport to browser
+
+### Multi-artifact (A2A spec compliant)
+- `extractA2AResult` loops ALL artifact objects and ALL parts within each
+- Single file → backward-compat `{"artifact":{}}` shape
+- Multiple files → `{"artifacts":[...]}` plural shape
+- Orchestrator fans out each artifact to `emitArtifactEvent` independently
+- Strips both keys before LLM sees the result
+
+### Streaming (SendStreamingMessage / SSE)
+- `AgentConfig.SupportsStreaming` DB column + pgx scan
+- `invokeA2AStreaming`: `bufio.Scanner` SSE reader, `onArtifact` callback per artifact
+- `InvokeForRunStreaming` on `Registry` — signature matches `orchestrator.AgentInvoker`
+- Non-streaming agents fall through to `InvokeForRun` transparently
+- Orchestrator uses callback for progressive artifact recording/emission
+
+### docu-writer agent
+- Model: `claude-haiku-4-5-20251001` (async) — ~15-25s vs ~84s with sync Sonnet
+- Formats: `html`, `markdown`, `pdf` (fpdf2)
+- PDF: Claude → Markdown → fpdf2 → `bytes(pdf.output())` → `part.raw` (NOT `part.data`)
+- Markdown fence stripping applied before rendering
 
 ---
 
@@ -198,14 +223,44 @@ go test ./... :   666
 
 ## Next recommended task
 
-**End-to-end canvas agent verification:**
-1. Publish a canvas agent (Input→LLM→Response pipeline) — use the new validation UI to confirm it shows green before publish
-2. Bind it to an application with a valid API key
-3. Include it as a tool in an application definition, publish
-4. Trigger a real run through playground
-5. Verify `run_steps` shows the agent-runtime step recorded
+### Step 1 — Test multi-artifact + streaming end-to-end (new, highest priority)
 
-**After that**: `/a2a/` routing fix — redirect `them-a2a` Traefik router from `them-bridge-svc` to `them-go-bridge-svc` (one-line compose label change).
+The code is committed but the streaming path has not been exercised against a live agent yet.
+The docu-writer agent does NOT set `supports_streaming=true` — it is a sync A2A agent.
+To test streaming you need an agent with `supports_streaming=true` in the DB that actually uses SSE.
+
+**Testing checklist:**
+
+**A. Multi-artifact (docu-writer, no streaming):**
+1. Open playground → `doc-artifact-test` app
+2. Send: `"Generate both an HTML page and a PDF of a project summary"`
+3. Confirm Artifacts tab shows **two** entries — one `text/html`, one `application/pdf`
+4. Confirm both download correctly and render in their respective viewers
+5. Check run in admin → `/api/v1/runs/{id}/artifacts` returns 2 artifact objects
+
+**B. Streaming (requires a streaming-capable agent):**
+1. In DB: `UPDATE them.agents SET supports_streaming = true WHERE slug = '<your-a2a-agent>'`
+2. That agent must respond to `POST /` with `Content-Type: text/event-stream`
+3. Send a request through playground and observe artifacts arriving progressively
+4. Confirm `onArtifact` callback fires — check `them-go-bridge` logs for artifact events
+5. Verify each artifact is recorded in `them.artifacts` independently
+
+**B-alt: use the a2a-stream test agent (`--profile test-agents`):**
+```bash
+docker compose --project-name them_gateway \
+  -f docker-compose.yml -f docker-compose.dev.yml --profile test-agents up -d a2a-stream
+# Then register it in the agent store with supports_streaming=true
+# and point an EP at it
+```
+
+### Step 2 — E2E canvas agent run (after A2A testing)
+1. Publish a canvas agent (Input→LLM→Response) — validation UI should show green
+2. Bind to an app with a valid API key
+3. Include it as a tool in an app definition, publish
+4. Run through playground — verify `run_steps` shows agent-runtime step
+
+### Step 3 — After canvas run verified
+- Auth admin CRUD (users/roles/teams) — Go implementation to retire Python `them-auth-service`
 
 Do NOT begin multiple subsystems in the same session.
 
@@ -213,13 +268,13 @@ Do NOT begin multiple subsystems in the same session.
 
 ## Known blockers
 
-1. **`/a2a/*` routing broken** — `them-a2a` Traefik router points to `them-bridge-svc` (dead Python). Go handler exists. One-line fix in compose labels. **Priority: fix first before any A2A testing.**
+1. **Multi-artifact streaming not live-tested** — code committed and unit-tested, but no real streaming agent hit yet. See testing checklist above.
 
-2. **E2E canvas agent run not verified** — all infrastructure exists (agent-runtime running, InvokeForRun wired, A2A envelope fixed, credential decryption working) but no end-to-end run through a canvas agent has been confirmed on the live stack.
+2. **E2E canvas agent run not verified** — all infrastructure exists (agent-runtime, InvokeForRun, A2A envelope, credential decryption) but no end-to-end run confirmed on live stack.
 
-3. **Auth admin CRUD (users/roles/teams)** — `them-auth-service` (Python, port 8701) still serves user/role/team management. The frontend hits it directly. No Go proxy needed unless we want to retire the Python auth service binary entirely.
+3. **Auth admin CRUD (users/roles/teams)** — `them-auth-service` (Python, port 8701) still serves user/role/team management. Frontend hits it directly. No Go proxy until we decide to retire the Python binary.
 
-4. **Wave 9 tenant items** — session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims, live two-tenant verification. Not started.
+4. **Wave 9 tenant items** — session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims. Not started.
 
 ---
 

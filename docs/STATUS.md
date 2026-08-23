@@ -1,6 +1,6 @@
 # the-M — Current Status
-# Last updated: 2026-08-15
-# HEAD: ca29acd
+# Last updated: 2026-08-23
+# HEAD: dd8d546
 
 ---
 
@@ -18,34 +18,31 @@ UI: `http://<server-ip>:8088`
 | `them-postgres` | postgres:16 | 5432 (internal) | Running |
 | `them-redis` | redis:7 | 6379 (internal) | Running |
 | `them-auth-go` | `go/cmd/auth-server` | 8703 (internal) | Running — sole auth service |
-| `them-bridge` | `app/` (Python FastAPI) | 8001 (internal) | Running — remaining Python routes |
-| `them-frontend` | `frontend/` (Next.js, dev mode) | 3200 (internal) | Running |
-| `them-worker` | Python Temporal worker | — | Running |
-| `vision-agent` | `agents/vision_agent` | 9100 | Running |
+| `them-go-bridge` | `go/cmd/them` | 8002 (internal) | Running — all API routes |
+| `them-go-worker` | `go/cmd/worker` | — | Running — sole Temporal worker |
+| `them-agent-runtime` | `go/cmd/agent-runtime` (×2) | 9300 (internal) | Running — canvas A2A execution |
+| `them-frontend` | `frontend/` (Next.js) | 3200 (internal) | Running |
 | `temporal-frontend` | temporalio/auto-setup | 7233 (internal) | Running |
-| `temporal-ui` | temporalio/ui | via Traefik /temporal/ | Running |
+
+**Python is permanently retired:**
+- `them-bridge` (Python FastAPI) — behind `profiles: [legacy]`, NOT running
+- `them-worker` (Python Temporal) — behind `profiles: [legacy]`, NOT running
 
 **Optional profiles:**
-- `--profile go` — adds `them-go-bridge` (Go gateway, Waves 1-8 routes)
-- `--profile go-worker` — adds `them-go-worker` + `them-go-worker-2` (Go Temporal workers)
-- `--profile test-agents` — adds A2A echo/slow/stream test agents
-- `--profile security` — adds `them-security-agent`
-- `--profile debate` — adds debate stack agents
-
-**Removed:** `them-auth-service` (Python auth — removed August 2026, replaced by `them-auth-go`)
-
-**Note:** `them-go-bridge` runs in `--profile go`. Without it, Python bridge handles all routes.
-Add `--profile go` to enable Go routing (Waves 1-8 admin + WS/SSE ownership).
+- `--profile test-agents` — adds A2A echo/slow/stream test agents (ports 9200-9202)
+- `--profile security` — adds `them-security-agent` (port 9500)
+- `--profile agents` — adds `them-agent-runtime` replicas (port 9300)
 
 ---
 
-## Go vs Python route ownership
+## Go route ownership — all routes
 
-### Go-owned (through Traefik)
+All routes served by `them-go-bridge` (port 8002, behind Traefik on 8088):
 
 | Domain | Routes |
 |---|---|
 | Health | `GET /health/live`, `GET /health/ready` |
+| Auth | `/api/v1/auth/*` (login, me, refresh, logout) via `them-auth-go` |
 | Admin agents | Full CRUD + discover + test + security-scan |
 | Admin orchestrators | Full CRUD |
 | Admin applications | Full CRUD + entry-points + runtime + bulk-delete + sub-routes |
@@ -53,37 +50,53 @@ Add `--profile go` to enable Go routing (Waves 1-8 admin + WS/SSE ownership).
 | Admin sessions | List + disconnect |
 | Admin LLM providers | Full CRUD + routing/config |
 | Admin monitoring-config | GET + PUT |
-| Runs | `GET /api/v1/runs`, `GET /api/v1/runs/stats`, `GET /api/v1/runs/{id}`, `GET /api/v1/runs/{id}/tasks`, `GET /api/v1/runs/{id}/artifacts`, `POST /api/v1/runs/{id}/signal`, `PATCH /api/v1/runs/{id}/cancel`, `DELETE /api/v1/runs/{id}`, `POST /api/v1/runs/bulk-delete` |
-| WS/SSE | `/apps/{slug}/ws`, `/apps/{slug}/sse`, `/ws/orchestrate/{app}/{ep}`, `/sse/orchestrate/{app}/{ep}` |
-| Auth | `/api/v1/auth/*` (login, me, refresh, logout) |
+| Admin component-definitions | Full ownership |
+| Admin agent-definitions | Full ownership |
+| Admin system-agents | Full ownership |
+| Runs | All: list, stats, detail, tasks, artifacts, signal, cancel, delete, bulk-delete |
+| WS/SSE | `/apps/{slug}/ws`, `/apps/{slug}/sse` + legacy two-segment paths |
+| Dashboard | `GET /ws/dashboard` |
+| A2A server | `/a2a/*` — Go handler in `internal/a2a/`, wired via Traefik |
 
-### Python-owned (still on them-bridge)
-
-| Domain | Routes |
-|---|---|
-| Runs (low-priority) | context/{ctx}/artifacts (not used by admin UI) |
-| Applications (remaining) | export, import, restore, middleware-wirings, orchestrator test-llm/tts/voice |
-| A2A server | `/a2a/*` |
-| Health (bare) | `GET /health` |
-| Legacy WS | `/ws/orchestrate/{name}` (single-segment, deprecated) |
+**Not in Go (no handler needed):**
+- `GET /api/v1/admin/users`, `/roles`, `/teams` — auth CRUD (served by `them-auth-service` on 8701 directly)
+- Applications export/import/restore — not migrated; no active use
 
 ---
 
-## Current migration target
+## Current feature state
 
-**Runs WRITE slice** — complete as of a6b9953, live Python-OFF verified 2026-08-15.
+### Multi-artifact (dd8d546)
+- A2A agents can return multiple files per response — `task.artifacts[]` is fully iterated
+- Single file → `{"artifact":{}}` (backward compat); multiple → `{"artifacts":[...]}`
+- Orchestrator records and emits each artifact independently
 
-All Runs routes Go-owned (both READ and WRITE): `/runs`, `/runs/stats`, `/runs/{id}`, `/runs/{id}/tasks`, `/runs/{id}/artifacts`, `/runs/{id}/signal`, `/runs/{id}/cancel`, `DELETE /runs/{id}`, `/runs/bulk-delete`.
+### Streaming (dd8d546)
+- `AgentConfig.SupportsStreaming` DB column controls routing
+- `InvokeForRunStreaming` sends `SendStreamingMessage` → SSE, fires `onArtifact` per artifact
+- Non-streaming agents fall through to `InvokeForRun` transparently
 
-Next: Applications export/import/restore + middleware-wirings (Wave 8).
+### Playground Artifacts tab
+- Renders: `image/*` → `<img>`, `application/pdf` → iframe, `text/html` → srcDoc iframe,
+  `text/markdown`/text → `<pre>`, unknown → download button
+
+### docu-writer agent
+- Haiku 4.5 (async), formats: html / markdown / pdf
+- PDF via fpdf2: `part.raw` (bytes), NOT `part.data` (protobuf JSON Value)
+
+### Canvas A2A Agent Builder
+- All phases complete: builder UI, compiler, publish pipeline, runtime wiring, BuildValidator
+- LLM keys per-app in `applications.provider_keys` (AES-GCM), no global fallback
 
 ---
 
-## Known blockers / issues
+## Known issues / blockers
 
-- Python Temporal worker (`them-worker`) is still the primary orchestration engine. Go worker (`them-go-worker`) is registered but Python handles the main queue.
-- Auth admin CRUD (users/roles/teams/permissions) is not exposed — was in Python `them-auth-service` which is removed. Needs Go implementation before user management is available again.
-- `them-auth-service` source code remains in `auth_service/` but is not deployed.
+1. **Multi-artifact streaming not live-tested** — unit tests pass; no real streaming agent exercised yet. Need an agent with `supports_streaming=true` that responds with `text/event-stream`.
+
+2. **E2E canvas agent run not verified** — infrastructure complete but no confirmed end-to-end run through a canvas agent on the live stack.
+
+3. **Auth admin CRUD** — `them-auth-service` (Python, 8701) still serves users/roles/teams for the frontend. No Go implementation yet.
 
 ---
 
