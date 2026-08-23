@@ -175,6 +175,14 @@ func BuildRouter(
 		})
 	})
 
+	// Debug proxy — authenticated, forwards HTTP requests server-side to avoid
+	// CORS restrictions when the browser debugs an agent pipeline directly.
+	if jwtMiddleware != nil {
+		r.With(jwtMiddleware, RequireSuperAdmin(logger)).Post("/admin/debug-proxy", DebugProxyHandler{}.ServeHTTP)
+	} else {
+		r.Post("/admin/debug-proxy", DebugProxyHandler{}.ServeHTTP)
+	}
+
 	// Public routes — no auth required.
 	// /admin/node-types: static canvas node metadata, no tenant data.
 	r.Get("/admin/node-types", NodeTypesHandler{}.ServeHTTP)

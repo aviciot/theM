@@ -1366,13 +1366,23 @@ function CanvasInner() {
         }
       }
 
-      const fetchOpts: RequestInit = { method, headers };
+      const proxyBody: Record<string, unknown> = { method, url, headers };
       if (bodyTemplate && method !== 'GET') {
-        fetchOpts.body = renderTemplate(bodyTemplate, newVars);
-        (fetchOpts.headers as Record<string, string>)['Content-Type'] = 'application/json';
+        proxyBody.body = renderTemplate(bodyTemplate, newVars);
+        (headers as Record<string, string>)['Content-Type'] = 'application/json';
       }
-      const resp = await fetch(url, fetchOpts);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status} from ${url.replace(/\?.*/, '')}`);
+      // Route through the server-side debug proxy to avoid CORS restrictions
+      // when calling third-party APIs directly from the browser.
+      const resp = await fetch('/api/v1/admin/debug-proxy', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(proxyBody),
+      });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(errText.slice(0, 120) || `HTTP ${resp.status}`);
+      }
       const text = await resp.text();
       // Try to parse as JSON and store as both the raw map and the string.
       try {
