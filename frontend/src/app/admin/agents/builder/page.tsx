@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent, type DragEve
 import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { getNodeDef, isSingleInput as _isSingleInput, fetchNodeTypes, setCachedNodeTypes, outputArity } from '@/lib/nodeRegistry';
+import { getNodeDef, isSingleInput as _isSingleInput, fetchNodeTypes, setCachedNodeTypes, outputArity, canAddIncoming, canAddOutgoing } from '@/lib/nodeRegistry';
 import {
   themApi,
   type AgentDefinitionDoc,
@@ -931,15 +931,25 @@ function CanvasInner() {
   const isPipeConnectionValid = useCallback((conn: Connection | Edge) => {
     // Reject self-loops
     if (conn.source === conn.target) return false;
-    // Source node must have output (output_arity !== 'none')
+
     const srcNode = localPipeNodes.find(n => n.id === conn.source);
+    const tgtNode = localPipeNodes.find(n => n.id === conn.target);
+
     if (srcNode) {
       const srcType = (srcNode.data as unknown as StepData).step_type;
-      if (outputArity(srcType) === 'none') return false;
+      const currentOut = localPipeEdges.filter(e => e.source === conn.source).length;
+      if (!canAddOutgoing(srcType, currentOut)) return false;
     }
-    // Reject edges that would create a cycle — simulate adding the edge and topo-sort
+    if (tgtNode) {
+      const tgtType = (tgtNode.data as unknown as StepData).step_type;
+      const currentIn = localPipeEdges.filter(e => e.target === conn.target).length;
+      if (!canAddIncoming(tgtType, currentIn)) return false;
+    }
+
+    // Reject edges that would create a cycle
     const hypothetical = [...localPipeEdges, { id: '__test__', source: conn.source!, target: conn.target! }];
     if (topoSort(localPipeNodes, hypothetical) === null) return false;
+
     return true;
   }, [localPipeNodes, localPipeEdges]);
 

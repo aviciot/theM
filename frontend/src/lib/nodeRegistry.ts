@@ -12,6 +12,13 @@
 
 // ── Types returned by GET /api/v1/admin/node-types ───────────────────────────
 
+export interface EdgeRules {
+  min_in:  number; // 0 = none required; 0+0 on a source = no incoming allowed
+  max_in:  number; // 0 = unlimited
+  min_out: number; // 0 = none required
+  max_out: number; // 0 = unlimited
+}
+
 export interface NodeTypeInfo {
   type: string;
   version: number;
@@ -21,6 +28,7 @@ export interface NodeTypeInfo {
   is_source: boolean;
   is_sink: boolean;
   single_input: boolean;
+  edges: EdgeRules;
   input_field?: string;
   executable: boolean;
 }
@@ -127,10 +135,12 @@ export function getCachedNodeTypes(): NodeDef[] {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+const FALLBACK_EDGES: EdgeRules = { min_in: 0, max_in: 0, min_out: 0, max_out: 0 };
+
 const FALLBACK_DEF = (type: string): NodeDef => ({
   type, version: 1, label: type, emoji: '🔧',
   output_arity: 'single', is_source: false, is_sink: false,
-  single_input: false, executable: false,
+  single_input: false, edges: FALLBACK_EDGES, executable: false,
   ...FALLBACK_SUPP,
 });
 
@@ -143,4 +153,22 @@ export function isSource(type: string): boolean        { return getNodeDef(type)
 export function isSink(type: string): boolean          { return getNodeDef(type).is_sink; }
 export function outputArity(type: string): 'single' | 'multi' | 'none' {
   return getNodeDef(type).output_arity;
+}
+
+// canAddIncoming returns true if adding one more incoming edge to a node of
+// this type is allowed by its EdgeRules. currentInCount = edges already present.
+export function canAddIncoming(type: string, currentInCount: number): boolean {
+  const { edges } = getNodeDef(type);
+  if (edges.min_in === 0 && edges.max_in === 0) return false; // source node
+  if (edges.max_in > 0 && currentInCount >= edges.max_in) return false;
+  return true;
+}
+
+// canAddOutgoing returns true if adding one more outgoing edge from a node of
+// this type is allowed by its EdgeRules. currentOutCount = edges already present.
+export function canAddOutgoing(type: string, currentOutCount: number): boolean {
+  const { edges } = getNodeDef(type);
+  if (edges.max_out > 0 && currentOutCount >= edges.max_out) return false;
+  if (edges.min_in === 0 && edges.max_in === 0 && edges.min_out === 0 && edges.max_out === 0) return false; // no-op fallback
+  return true;
 }

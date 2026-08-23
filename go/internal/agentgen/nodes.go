@@ -18,6 +18,7 @@ func init() {
 		IsSource:    true,
 		IsSink:      false,
 		SingleInput: false,
+		Edges:       EdgeRules{MinIn: 0, MaxIn: 0, MinOut: 1, MaxOut: 1},
 		Validate:    nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
@@ -34,6 +35,7 @@ func init() {
 		IsSource:    false,
 		IsSink:      false,
 		SingleInput: true,
+		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
 		InputField:  "user_prompt",
 		Validate: func(step canvasStep, knownSlots map[string]bool) []Issue {
 			if len(step.Config) == 0 {
@@ -68,6 +70,7 @@ func init() {
 		IsSource:    false,
 		IsSink:      false,
 		SingleInput: false,
+		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
 		InputField:  "url_template",
 		Validate: func(step canvasStep, knownSlots map[string]bool) []Issue {
 			if len(step.Config) == 0 {
@@ -102,6 +105,7 @@ func init() {
 		IsSource:    false,
 		IsSink:      false,
 		SingleInput: true,
+		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
 		InputField:  "expression",
 		Validate:    nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
@@ -119,6 +123,7 @@ func init() {
 		IsSource:    false,
 		IsSink:      true,
 		SingleInput: true,
+		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 0, MaxOut: 0},
 		InputField:  "from_var",
 		Validate:    nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
@@ -138,6 +143,7 @@ func init() {
 		IsSource:    false,
 		IsSink:      false,
 		SingleInput: false,
+		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 2, MaxOut: 0},
 		Validate:    nil,
 		Execute:     nil,
 	})
@@ -151,6 +157,7 @@ func init() {
 		IsSource:    false,
 		IsSink:      false,
 		SingleInput: false,
+		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
 		Validate:    nil,
 		Execute:     nil,
 	})
@@ -164,6 +171,7 @@ func init() {
 		IsSource:    false,
 		IsSink:      false,
 		SingleInput: false,
+		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 2, MaxOut: 0},
 		Validate:    nil,
 		Execute:     nil,
 	})
@@ -177,6 +185,7 @@ func init() {
 		IsSource:    false,
 		IsSink:      false,
 		SingleInput: false,
+		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
 		Validate:    nil,
 		Execute:     nil,
 	})
@@ -190,6 +199,7 @@ func init() {
 		IsSource:    false,
 		IsSink:      false,
 		SingleInput: false,
+		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
 		Validate:    nil,
 		Execute:     nil,
 	})
@@ -203,6 +213,7 @@ func init() {
 		IsSource:    false,
 		IsSink:      true,
 		SingleInput: false,
+		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 0, MaxOut: 0},
 		Validate:    nil,
 		Execute:     nil,
 	})

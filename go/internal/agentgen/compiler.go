@@ -267,41 +267,86 @@ func validateGraph(def *canvasDefinition) ([]Issue, map[string][]StepSpec) {
 			continue // skip topo-sort if edges are broken
 		}
 
-		// Build in-degree map to find roots (steps with no incoming edges).
-		inDegree := make(map[string]int, len(cs.Steps))
+		// Build in/out degree maps, then apply EdgeRules from the node registry.
+		inDegree  := make(map[string]int, len(cs.Steps))
+		outDegree := make(map[string]int, len(cs.Steps))
 		for _, step := range cs.Steps {
 			if !seenSteps[step.ID] {
 				continue
 			}
 			if _, ok := inDegree[step.ID]; !ok {
 				inDegree[step.ID] = 0
+				outDegree[step.ID] = 0
 			}
 			for _, nextID := range step.Next {
 				inDegree[nextID]++
+				outDegree[step.ID]++
 			}
 			for _, arm := range step.Branches {
 				for _, nextID := range arm.Next {
 					inDegree[nextID]++
+					outDegree[step.ID]++
 				}
 			}
 		}
 
-		// Collect root steps (in-degree 0). A valid skill has exactly one root
-		// (the source/input step). Multiple roots means disconnected subgraphs.
-		var roots []string
-		for id, deg := range inDegree {
-			if deg == 0 {
-				roots = append(roots, id)
+		// Apply EdgeRules declared on each node type — single source of truth.
+		for _, step := range cs.Steps {
+			if !seenSteps[step.ID] {
+				continue
 			}
-		}
-		if len(roots) > 1 {
-			for _, rootID := range roots {
+			nd, ok := LookupNode(step.Type)
+			if !ok {
+				continue // unknown type already caught in validateNodes
+			}
+			r := nd.Edges
+			in  := inDegree[step.ID]
+			out := outDegree[step.ID]
+
+			if r.MinIn > 0 && in < r.MinIn {
 				issues = append(issues, Issue{
 					Severity: "warning",
-					Code:     "DISCONNECTED_NODE",
-					Message:  fmt.Sprintf("step %q is not connected to the pipeline", rootID),
+					Code:     "MISSING_INPUT_EDGE",
+					Message:  fmt.Sprintf("%s node requires at least %d incoming edge(s), has %d", nd.Label, r.MinIn, in),
 					SkillID:  cs.SkillID,
-					NodeID:   rootID,
+					NodeID:   step.ID,
+				})
+			}
+			if r.MaxIn > 0 && in > r.MaxIn {
+				issues = append(issues, Issue{
+					Severity: "error",
+					Code:     "TOO_MANY_INPUT_EDGES",
+					Message:  fmt.Sprintf("%s node allows at most %d incoming edge(s), has %d", nd.Label, r.MaxIn, in),
+					SkillID:  cs.SkillID,
+					NodeID:   step.ID,
+				})
+			}
+			if r.MaxIn == 0 && r.MinIn == 0 && in > 0 {
+				// MaxIn=0 && MinIn=0 means no incoming edges allowed (source node)
+				issues = append(issues, Issue{
+					Severity: "error",
+					Code:     "SOURCE_HAS_INPUT",
+					Message:  fmt.Sprintf("%s is a source node and must not have incoming edges", nd.Label),
+					SkillID:  cs.SkillID,
+					NodeID:   step.ID,
+				})
+			}
+			if r.MinOut > 0 && out < r.MinOut {
+				issues = append(issues, Issue{
+					Severity: "warning",
+					Code:     "MISSING_OUTPUT_EDGE",
+					Message:  fmt.Sprintf("%s node requires at least %d outgoing edge(s), has %d", nd.Label, r.MinOut, out),
+					SkillID:  cs.SkillID,
+					NodeID:   step.ID,
+				})
+			}
+			if r.MaxOut > 0 && out > r.MaxOut {
+				issues = append(issues, Issue{
+					Severity: "error",
+					Code:     "TOO_MANY_OUTPUT_EDGES",
+					Message:  fmt.Sprintf("%s node allows at most %d outgoing edge(s), has %d", nd.Label, r.MaxOut, out),
+					SkillID:  cs.SkillID,
+					NodeID:   step.ID,
 				})
 			}
 		}

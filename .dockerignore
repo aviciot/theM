@@ -1,6 +1,7 @@
 data/
 theM_gateway/
 .git/
+go/internal/agentgen.bak/
 frontend/node_modules/
 frontend/.next/
 __pycache__/
