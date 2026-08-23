@@ -198,9 +198,30 @@ function StepNode({ data }: { data: StepNodeData; id: string }) {
       transition: 'border-color 0.2s, box-shadow 0.2s',
     }}>
       <Handle type="target" position={Position.Top} style={{ background: meta.border }} />
-      <Handle type="source" position={Position.Bottom} style={{ background: meta.border }} />
+      {data.step_type === 'branch' ? (
+        <>
+          {/* True path handle — left side of bottom */}
+          <Handle
+            id="source-true"
+            type="source"
+            position={Position.Bottom}
+            style={{ background: '#4ade80', left: '30%', bottom: -6, width: 10, height: 10 }}
+          />
+          <div style={{ position: 'absolute', bottom: -18, left: 'calc(30% - 6px)', fontSize: 9, color: '#4ade80', fontWeight: 700, pointerEvents: 'none' }}>T</div>
+          {/* False path handle — right side of bottom */}
+          <Handle
+            id="source-false"
+            type="source"
+            position={Position.Bottom}
+            style={{ background: '#f87171', left: '70%', bottom: -6, width: 10, height: 10 }}
+          />
+          <div style={{ position: 'absolute', bottom: -18, left: 'calc(70% - 6px)', fontSize: 9, color: '#f87171', fontWeight: 700, pointerEvents: 'none' }}>F</div>
+        </>
+      ) : (
+        <Handle type="source" position={Position.Bottom} style={{ background: meta.border }} />
+      )}
       <div style={{ fontSize: '32px', lineHeight: 1 }}>{meta.emoji}</div>
-      <div style={{ color: '#fff', fontWeight: 700, fontSize: '11px', marginTop: '5px' }}>{meta.label}</div>
+      <div style={{ color: '#fff', fontWeight: 700, fontSize: '11px', marginTop: '5px' }}>{data.label || meta.label}</div>
       {sub && <div style={{ fontSize: '10px', color: meta.border, opacity: 0.9, marginTop: 2 }}>{sub}</div>}
       {/* Stub badge */}
       {data._stub && state === 'idle' && (
@@ -606,12 +627,18 @@ function CanvasInner() {
             const stepd = sn.data as unknown as StepData;
             const outEdges = pipeline.edges.filter(e => e.source === sn.id);
             const defaultLabel = stepMeta(stepd.step_type).label;
+            const next = stepd.step_type === 'branch'
+              ? [
+                  outEdges.find(e => e.sourceHandle === 'source-true')?.target?.replace('step-', '') ?? '',
+                  outEdges.find(e => e.sourceHandle === 'source-false')?.target?.replace('step-', '') ?? '',
+                ].filter(Boolean)
+              : outEdges.map(e => (e.target as string).replace('step-', ''));
             return {
               id: stepd.step_id,
               type: stepd.step_type as AgentStepDoc['type'],
               label: (stepd.label && stepd.label !== defaultLabel) ? stepd.label : undefined,
               config: stepd.config ?? {},
-              next: outEdges.map(e => (e.target as string).replace('step-', '')),
+              next,
               position: sn.position,
             };
           });
@@ -731,9 +758,16 @@ function CanvasInner() {
       }));
       const stepEdges: Edge[] = [];
       for (const step of (sk.steps ?? [])) {
-        for (const nextId of (step.next ?? [])) {
-          stepEdges.push({ id: `${step.id}-to-${nextId}`, source: `step-${step.id}`, target: `step-${nextId}` });
-        }
+        (step.next ?? []).forEach((nextId, idx) => {
+          const isBranch = step.type === 'branch';
+          stepEdges.push({
+            id: `${step.id}-to-${nextId}`,
+            source: `step-${step.id}`,
+            target: `step-${nextId}`,
+            // Branch next[0]=true path, next[1]=false path — wire to named handles.
+            ...(isBranch ? { sourceHandle: idx === 0 ? 'source-true' : 'source-false' } : {}),
+          });
+        });
       }
       pipelines[sk.skill_id] = { nodes: stepNodes, edges: stepEdges };
     }
@@ -756,12 +790,18 @@ function CanvasInner() {
           const stepd = sn.data as unknown as StepData;
           const outEdges = pipeline.edges.filter(e => e.source === sn.id);
           const defaultLabel = stepMeta(stepd.step_type).label;
+          const next = stepd.step_type === 'branch'
+            ? [
+                outEdges.find(e => e.sourceHandle === 'source-true')?.target?.replace('step-', '') ?? '',
+                outEdges.find(e => e.sourceHandle === 'source-false')?.target?.replace('step-', '') ?? '',
+              ].filter(Boolean)
+            : outEdges.map(e => (e.target as string).replace('step-', ''));
           return {
             id: stepd.step_id,
             type: stepd.step_type as AgentStepDoc['type'],
             label: (stepd.label && stepd.label !== defaultLabel) ? stepd.label : undefined,
             config: stepd.config ?? {},
-            next: outEdges.map(e => (e.target as string).replace('step-', '')),
+            next,
             position: sn.position,
           };
         });
@@ -1094,7 +1134,11 @@ function CanvasInner() {
 
     if (srcNode) {
       const srcType = (srcNode.data as unknown as StepData).step_type;
-      const currentOut = localPipeEdges.filter(e => e.source === conn.source).length;
+      // Branch has 2 named handles (source-true / source-false) — count per handle,
+      // each allows exactly 1 outgoing edge.
+      const currentOut = srcType === 'branch'
+        ? localPipeEdges.filter(e => e.source === conn.source && e.sourceHandle === conn.sourceHandle).length
+        : localPipeEdges.filter(e => e.source === conn.source).length;
       if (!canAddOutgoing(srcType, currentOut)) return false;
     }
     if (tgtNode) {
