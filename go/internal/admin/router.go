@@ -155,6 +155,7 @@ func BuildRouter(
 			// Platform-global sub-group: llm-providers, monitoring-config,
 			// llm-routing, system-agents, sessions. No tenant scoping — these
 			// resources are platform-wide and apply to all tenants.
+			a.Get("/node-types", NodeTypesHandler{}.ServeHTTP)
 			monitoring.Routes(a)
 			llmRouting.Routes(a)
 			llmProviders.Routes(a)

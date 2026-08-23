@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState, type MouseEvent, type DragEvent } fro
 import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { getNodeDef, isSingleInput as _isSingleInput } from '@/lib/nodeRegistry';
+import { getNodeDef, isSingleInput as _isSingleInput, fetchNodeTypes, setCachedNodeTypes } from '@/lib/nodeRegistry';
 import {
   themApi,
   type AgentDefinitionDoc,
@@ -410,6 +410,11 @@ function CanvasInner() {
   const [localPipeNodes, setLocalPipeNodes, onPipeNodesChange] = useNodesState<Node>(pipelineNodes);
   const [localPipeEdges, setLocalPipeEdges, onPipeEdgesChange] = useEdgesState<Edge>(pipelineEdges);
 
+  // Fetch node type definitions from the backend on mount (single source of truth).
+  useEffect(() => {
+    fetchNodeTypes().then(setCachedNodeTypes).catch(() => {/* use fallback defs */});
+  }, []);
+
   // Sync pipeline state when switching skills
   useEffect(() => {
     if (activeSkillId) {
@@ -775,7 +780,7 @@ function CanvasInner() {
           : ((srcData.config?.output_var as string) || 'output');
 
       // Find which field on the target to auto-fill.
-      const targetField = getNodeDef(tgtData.step_type).inputField;
+      const targetField = getNodeDef(tgtData.step_type).input_field;
       if (!targetField) return prev;
 
       // from_var always updates (it should reflect whatever is now connected upstream).

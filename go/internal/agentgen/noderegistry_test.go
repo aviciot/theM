@@ -59,6 +59,48 @@ func TestNodeRegistry_InputProperties(t *testing.T) {
 	if def.Execute == nil {
 		t.Error("input node Execute must be non-nil (implemented)")
 	}
+	if def.Label == "" {
+		t.Error("input node must have a non-empty Label")
+	}
+	if def.Version < 1 {
+		t.Errorf("input node Version must be >= 1, got %d", def.Version)
+	}
+}
+
+// TestNodeRegistry_ToInfo verifies that ToInfo correctly derives Executable from Execute.
+func TestNodeRegistry_ToInfo(t *testing.T) {
+	inputDef, _ := agentgen.LookupNode(agentgen.StepInput)
+	info := inputDef.ToInfo()
+	if !info.Executable {
+		t.Error("ToInfo: input node must have Executable=true")
+	}
+	if info.Label != inputDef.Label {
+		t.Errorf("ToInfo: Label mismatch: got %q, want %q", info.Label, inputDef.Label)
+	}
+	if info.Version != inputDef.Version {
+		t.Errorf("ToInfo: Version mismatch: got %d, want %d", info.Version, inputDef.Version)
+	}
+
+	branchDef, _ := agentgen.LookupNode(agentgen.StepBranch)
+	branchInfo := branchDef.ToInfo()
+	if branchInfo.Executable {
+		t.Error("ToInfo: branch node must have Executable=false (Execute is nil)")
+	}
+}
+
+// TestNodeRegistry_AllNodesHaveLabelAndVersion verifies every registered node has required canvas metadata.
+func TestNodeRegistry_AllNodesHaveLabelAndVersion(t *testing.T) {
+	for _, info := range agentgen.AllNodeTypeInfos() {
+		if info.Label == "" {
+			t.Errorf("node type %q has empty Label", info.Type)
+		}
+		if info.Version < 1 {
+			t.Errorf("node type %q has Version < 1 (%d)", info.Type, info.Version)
+		}
+		if info.OutputArity != "single" && info.OutputArity != "multi" && info.OutputArity != "none" {
+			t.Errorf("node type %q has invalid OutputArity %q", info.Type, info.OutputArity)
+		}
+	}
 }
 
 // TestNodeRegistry_ResponseProperties verifies the response node's metadata.
