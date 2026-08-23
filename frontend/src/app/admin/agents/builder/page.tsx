@@ -1584,34 +1584,22 @@ function CanvasInner() {
               <>
                 {/* Step type cards — grouped */}
                 {[
-                  { label: 'Data Flow', items: [
-                    { type: 'input',    desc: 'Bind caller input' },
-                    { type: 'response', desc: 'Return result' },
-                  ]},
-                  { label: 'Processing', items: [
-                    { type: 'llm',       desc: 'Call an LLM' },
-                    { type: 'transform', desc: 'Template expressions' },
-                    { type: 'http',      desc: 'HTTP tool call' },
-                  ]},
-                  { label: 'Advanced', items: [
-                    { type: 'branch',     desc: 'Conditional branch' },
-                    { type: 'loop',       desc: 'Repeat steps' },
-                    { type: 'parallel',   desc: 'Run in parallel' },
-                    { type: 'a2a_call',   desc: 'Call another agent' },
-                    { type: 'human_wait', desc: 'Wait for human' },
-                    { type: 'stream_out', desc: 'Stream output' },
-                  ]},
+                  { label: 'Data Flow',  items: ['input', 'response'] },
+                  { label: 'Processing', items: ['llm', 'transform', 'http'] },
+                  { label: 'Advanced',   items: ['branch', 'loop', 'parallel', 'a2a_call', 'human_wait', 'stream_out'] },
                 ].map(group => (
                   <div key={group.label}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', margin: '8px 0 4px' }}>{group.label}</div>
-                    {group.items.map(st => {
-                      const meta = stepMeta(st.type);
+                    {group.items.map(type => {
+                      const def  = getNodeDef(type);
+                      const meta = stepMeta(type);
                       return (
                         <div
-                          key={st.type}
+                          key={type}
                           draggable
-                          onDragStart={e => { e.dataTransfer.setData('nodeType', 'step'); e.dataTransfer.setData('stepType', st.type); e.dataTransfer.effectAllowed = 'move'; }}
-                          onClick={() => addStepToActivePipeline(st.type as AgentStepDoc['type'])}
+                          title={def.description}
+                          onDragStart={e => { e.dataTransfer.setData('nodeType', 'step'); e.dataTransfer.setData('stepType', type); e.dataTransfer.effectAllowed = 'move'; }}
+                          onClick={() => addStepToActivePipeline(type as AgentStepDoc['type'])}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
                             borderRadius: 7, cursor: 'grab', userSelect: 'none', marginBottom: 3,
@@ -1621,7 +1609,7 @@ function CanvasInner() {
                           <span style={{ fontSize: 18, width: 22, textAlign: 'center', flexShrink: 0 }}>{meta.emoji}</span>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: 12, fontWeight: 600, color: meta.border }}>{meta.label}</div>
-                            <div style={{ fontSize: 10, color: C.textMuted }}>{st.desc}</div>
+                            <div style={{ fontSize: 10, color: C.textMuted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{def.description}</div>
                           </div>
                         </div>
                       );

@@ -23,6 +23,7 @@ export interface NodeTypeInfo {
   type: string;
   version: number;
   label: string;
+  description: string;
   emoji: string;
   output_arity: 'single' | 'multi' | 'none';
   is_source: boolean;
@@ -138,7 +139,7 @@ export function getCachedNodeTypes(): NodeDef[] {
 const FALLBACK_EDGES: EdgeRules = { min_in: 0, max_in: 0, min_out: 0, max_out: 0 };
 
 const FALLBACK_DEF = (type: string): NodeDef => ({
-  type, version: 1, label: type, emoji: '🔧',
+  type, version: 1, label: type, description: '', emoji: '🔧',
   output_arity: 'single', is_source: false, is_sink: false,
   single_input: false, edges: FALLBACK_EDGES, executable: false,
   ...FALLBACK_SUPP,

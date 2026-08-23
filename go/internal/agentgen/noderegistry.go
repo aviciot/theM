@@ -20,6 +20,7 @@ type NodeDef struct {
 	Type        StepType  `json:"type"`
 	Version     int       `json:"version"`      // schema version, default 1
 	Label       string    `json:"label"`        // human-readable name shown in the builder
+	Description string    `json:"description"`  // short tooltip shown on palette hover
 	Emoji       string    `json:"emoji"`        // icon character shown on the node card
 	OutputArity string    `json:"output_arity"` // "single" | "multi" | "none"
 	IsSource    bool      `json:"is_source"`    // valid pipeline start
@@ -43,6 +44,7 @@ type NodeTypeInfo struct {
 	Type        StepType  `json:"type"`
 	Version     int       `json:"version"`
 	Label       string    `json:"label"`
+	Description string    `json:"description"`
 	Emoji       string    `json:"emoji"`
 	OutputArity string    `json:"output_arity"`
 	IsSource    bool      `json:"is_source"`
@@ -59,6 +61,7 @@ func (d *NodeDef) ToInfo() NodeTypeInfo {
 		Type:        d.Type,
 		Version:     d.Version,
 		Label:       d.Label,
+		Description: d.Description,
 		Emoji:       d.Emoji,
 		OutputArity: d.OutputArity,
 		IsSource:    d.IsSource,
