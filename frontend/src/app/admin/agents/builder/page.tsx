@@ -1668,6 +1668,7 @@ function CanvasInner() {
                 <div
                   draggable
                   onDragStart={e => { e.dataTransfer.setData('nodeType', 'skill'); e.dataTransfer.effectAllowed = 'move'; }}
+                  className="palette-card"
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
                     borderRadius: 8, cursor: 'grab', userSelect: 'none',
@@ -1702,6 +1703,7 @@ function CanvasInner() {
                           title={def.description}
                           onDragStart={e => { e.dataTransfer.setData('nodeType', 'step'); e.dataTransfer.setData('stepType', type); e.dataTransfer.effectAllowed = 'move'; }}
                           onClick={() => addStepToActivePipeline(type as AgentStepDoc['type'])}
+                          className="palette-card"
                           style={{
                             display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
                             borderRadius: 7, cursor: 'grab', userSelect: 'none', marginBottom: 3,
@@ -1735,7 +1737,7 @@ function CanvasInner() {
         {/* Canvas */}
         <div style={{ flex: 1, position: 'relative' }}>
           {/* Suppress ReactFlow's grab cursor; middle-mouse pan is handled via panOnDrag={[1]} */}
-          <style>{`.react-flow__pane { cursor: default !important; } .react-flow__pane.dragging { cursor: default !important; } .react-flow__node.selected > div { box-shadow: 0 0 0 2px #00f0ff, 0 0 14px rgba(0,240,255,0.35) !important; }`}</style>
+          <style>{`.react-flow__pane { cursor: default !important; } .react-flow__pane.dragging { cursor: default !important; } .react-flow__node.selected > div { box-shadow: 0 0 0 2px #00f0ff, 0 0 14px rgba(0,240,255,0.35) !important; } .palette-card { transition: background 0.15s, box-shadow 0.15s, border-color 0.15s; } .palette-card:hover { filter: brightness(1.35); box-shadow: 0 0 8px rgba(255,255,255,0.06); }`}</style>
 
           {/* Canvas toolbar — fit + auto-arrange */}
           <div style={{
