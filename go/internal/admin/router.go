@@ -155,7 +155,8 @@ func BuildRouter(
 			// Platform-global sub-group: llm-providers, monitoring-config,
 			// llm-routing, system-agents, sessions. No tenant scoping — these
 			// resources are platform-wide and apply to all tenants.
-			a.Get("/node-types", NodeTypesHandler{}.ServeHTTP)
+			// /node-types is mounted here for route grouping but moved to the
+			// public group below — it needs no auth (static canvas metadata).
 			monitoring.Routes(a)
 			llmRouting.Routes(a)
 			llmProviders.Routes(a)
@@ -173,6 +174,10 @@ func BuildRouter(
 			runs.Routes(runsGroup)
 		})
 	})
+
+	// Public routes — no auth required.
+	// /admin/node-types: static canvas node metadata, no tenant data.
+	r.Get("/admin/node-types", NodeTypesHandler{}.ServeHTTP)
 
 	return r
 }
