@@ -1628,7 +1628,7 @@ function CanvasInner() {
         {/* Canvas */}
         <div style={{ flex: 1, position: 'relative' }}>
           {/* Suppress ReactFlow's grab cursor; middle-mouse pan is handled via panOnDrag={[1]} */}
-          <style>{`.react-flow__pane { cursor: default !important; } .react-flow__pane.dragging { cursor: default !important; }`}</style>
+          <style>{`.react-flow__pane { cursor: default !important; } .react-flow__pane.dragging { cursor: default !important; } .react-flow__node.selected > div { box-shadow: 0 0 0 2px #00f0ff, 0 0 14px rgba(0,240,255,0.35) !important; }`}</style>
 
           {/* Canvas toolbar — fit + auto-arrange */}
           <div style={{
