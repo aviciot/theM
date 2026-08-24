@@ -61,10 +61,6 @@ const sectionTitle = (color: string): React.CSSProperties => ({
   marginBottom: '8px', marginTop: '14px',
 });
 
-const rowStyle: React.CSSProperties = {
-  display: 'flex', gap: 4, marginBottom: 6, alignItems: 'flex-start',
-};
-
 // Selects need explicit dark background so option text is readable on all OSes/browsers.
 const selectStyle: React.CSSProperties = {
   ...inputStyle,
@@ -216,9 +212,6 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
   const [aiOpen, setAiOpen] = useState(false);
 
   const functions: FunctionStep[] = (cfg.functions as FunctionStep[]) ?? [];
-  const expressions: Record<string, string> = (cfg.expressions as Record<string, string>) ?? {};
-  const extractions: Array<{ from_var: string; json_path: string; var: string }> =
-    (cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? [];
 
   useEffect(() => {
     fetchCatalog().then(setCatalog).catch(e => setCatalogError(e.message));
@@ -342,43 +335,6 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
         {testRunning ? 'Running…' : '▶ Run Test'}
       </button>
       {functions.length === 0 && <div style={{ fontSize: '11px', color: C.textMuted, textAlign: 'center', marginBottom: 10 }}>Add function steps above first.</div>}
-
-      {/* ── Legacy: expressions + extractions ── */}
-      <details style={{ marginBottom: 8 }}>
-        <summary style={{ ...sectionTitle('#64748b'), cursor: 'pointer', listStyle: 'none', marginTop: 4 }}>
-          ▸ TEMPLATE EXPRESSIONS (legacy)
-        </summary>
-        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, marginTop: 6 }}>
-          Output var → Go template. Use <code style={{ color: C.cyan }}>{'{{.var}}'}</code>.
-        </div>
-        {Object.entries(expressions).map(([k, v], i) => (
-          <div key={i} style={rowStyle}>
-            <input value={k} onChange={e => { const ent = Object.entries(expressions); ent[i] = [e.target.value, v]; updateStepConfig('expressions', Object.fromEntries(ent)); }} style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', ...monoStyle }} placeholder="output_var" />
-            <input value={v} onChange={e => updateStepConfig('expressions', { ...expressions, [k]: e.target.value })} style={{ ...inputStyle, flex: 1, fontSize: '11px' }} placeholder="Hello, {{.user_query}}!" />
-            <button onClick={() => { const ex = { ...expressions }; delete ex[k]; updateStepConfig('expressions', ex); }} style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px' }}>×</button>
-          </div>
-        ))}
-        <button onClick={() => updateStepConfig('expressions', { ...expressions, '': '' })} style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}>+ Add expression</button>
-      </details>
-
-      <details style={{ marginBottom: 8 }}>
-        <summary style={{ ...sectionTitle('#64748b'), cursor: 'pointer', listStyle: 'none', marginTop: 4 }}>
-          ▸ JSON EXTRACTIONS (legacy)
-        </summary>
-        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, marginTop: 6 }}>
-          Parse a JSON var and extract fields by dot-path.
-        </div>
-        {extractions.map((ext, i) => (
-          <div key={i} style={{ ...rowStyle, alignItems: 'center' }}>
-            <input value={ext.from_var} onChange={e => { const next = extractions.map((x, j) => j === i ? { ...x, from_var: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: '0 0 80px', fontSize: '11px', ...monoStyle }} placeholder="from_var" />
-            <input value={ext.json_path} onChange={e => { const next = extractions.map((x, j) => j === i ? { ...x, json_path: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: 1, fontSize: '11px', ...monoStyle }} placeholder="$.field" />
-            <span style={{ color: '#64748b', fontSize: '11px' }}>→</span>
-            <input value={ext.var} onChange={e => { const next = extractions.map((x, j) => j === i ? { ...x, var: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: '0 0 80px', fontSize: '11px', ...monoStyle }} placeholder="out_var" />
-            <button onClick={() => updateStepConfig('extractions', extractions.filter((_, j) => j !== i))} style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px' }}>×</button>
-          </div>
-        ))}
-        <button onClick={() => updateStepConfig('extractions', [...extractions, { from_var: '', json_path: '', var: '' }])} style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}>+ Add extraction</button>
-      </details>
 
       {/* ── AI Assist (stub, collapsed) ── */}
       <details open={aiOpen} onToggle={e => setAiOpen((e.currentTarget as HTMLDetailsElement).open)} style={{ marginBottom: 8 }}>

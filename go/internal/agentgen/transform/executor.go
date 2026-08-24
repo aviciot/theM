@@ -1,6 +1,7 @@
 package transform
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -53,7 +54,12 @@ func Execute(chain []FunctionStep, vars Vars) (*TraceResult, error) {
 			case string:
 				inputVal = s
 			default:
-				inputVal = fmt.Sprintf("%v", v)
+				// JSON-marshal maps/slices so downstream functions like json_path get valid JSON.
+				if b, err := json.Marshal(s); err == nil {
+					inputVal = string(b)
+				} else {
+					inputVal = fmt.Sprintf("%v", s)
+				}
 			}
 		}
 

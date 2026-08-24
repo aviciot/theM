@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aviciot/them/internal/agentgen"
+	"github.com/aviciot/them/internal/agentgen/transform"
 )
 
 // --- InvocationContext redaction test ---
@@ -183,8 +184,8 @@ func TestInterpreter_TransformStep(t *testing.T) {
 				ID:   "step-transform",
 				Type: agentgen.StepTransform,
 				Config: mustJSON(agentgen.TransformStepConfig{
-					Expressions: map[string]string{
-						"greeting": "Hello, {{.raw}}!",
+					Functions: []transform.FunctionStep{
+						{Fn: "concat", InputVar: "raw", OutputVar: "greeting", Args: map[string]string{"prefix": "Hello, ", "suffix": "!"}},
 					},
 				}),
 				Next: []string{"step-response"},
@@ -823,13 +824,12 @@ func TestInterpreter_BranchStep_EdgeFallback(t *testing.T) {
 	}
 }
 
-// TestInterpreter_TransformStep_JSONExtractions verifies that TransformExtract
+// TestInterpreter_TransformStep_JSONExtractions verifies that json_path function
 // correctly parses a JSON string variable and assigns sub-fields to new vars.
 func TestInterpreter_TransformStep_JSONExtractions(t *testing.T) {
 	interp := agentgen.NewInterpreter(nil, nil, "")
 	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "a1"}
 
-	// The input carries a JSON string as if output by an LLM.
 	prefs := `{"city":"Rome","lat":"41.9028","lon":"12.4964"}`
 
 	skill := &agentgen.SkillSpec{
@@ -845,11 +845,10 @@ func TestInterpreter_TransformStep_JSONExtractions(t *testing.T) {
 				ID:   "extract",
 				Type: agentgen.StepTransform,
 				Config: mustJSON(agentgen.TransformStepConfig{
-					Expressions: map[string]string{},
-					Extractions: []agentgen.TransformExtract{
-						{FromVar: "prefs_json", JSONPath: "city", Var: "city"},
-						{FromVar: "prefs_json", JSONPath: "lat",  Var: "lat"},
-						{FromVar: "prefs_json", JSONPath: "lon",  Var: "lon"},
+					Functions: []transform.FunctionStep{
+						{Fn: "json_path", InputVar: "prefs_json", OutputVar: "city", Args: map[string]string{"path": "$.city"}},
+						{Fn: "json_path", InputVar: "prefs_json", OutputVar: "lat",  Args: map[string]string{"path": "$.lat"}},
+						{Fn: "json_path", InputVar: "prefs_json", OutputVar: "lon",  Args: map[string]string{"path": "$.lon"}},
 					},
 				}),
 				Next: []string{"out"},
@@ -905,9 +904,8 @@ func TestInterpreter_TransformStep_JSONExtract_FromMap(t *testing.T) {
 				ID:   "extract",
 				Type: agentgen.StepTransform,
 				Config: mustJSON(agentgen.TransformStepConfig{
-					Expressions: map[string]string{},
-					Extractions: []agentgen.TransformExtract{
-						{FromVar: "http_response", JSONPath: "country", Var: "country_name"},
+					Functions: []transform.FunctionStep{
+						{Fn: "json_path", InputVar: "http_response", OutputVar: "country_name", Args: map[string]string{"path": "$.country"}},
 					},
 				}),
 				Next: []string{"out"},

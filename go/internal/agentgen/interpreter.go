@@ -309,38 +309,6 @@ func (interp *Interpreter) execTransform(step *StepSpec, vars PipelineVars) erro
 		return fmt.Errorf("parse transform config: %w", err)
 	}
 
-	// Phase 1: Go template expressions (legacy, kept for backward compat).
-	for outputVar, expr := range cfg.Expressions {
-		val, err := renderTemplate(expr, vars)
-		if err != nil {
-			return fmt.Errorf("transform expression for %q: %w", outputVar, err)
-		}
-		vars[outputVar] = val
-	}
-
-	// Phase 2: JSON path extractions (legacy, kept for backward compat).
-	for _, ext := range cfg.Extractions {
-		raw, ok := vars[ext.FromVar]
-		if !ok {
-			continue
-		}
-		var parsed map[string]any
-		switch v := raw.(type) {
-		case map[string]any:
-			parsed = v
-		case string:
-			if err := json.Unmarshal([]byte(v), &parsed); err != nil {
-				continue // silently skip unparseable
-			}
-		default:
-			continue
-		}
-		if val := extractJSONPath(parsed, ext.JSONPath); val != "" {
-			vars[ext.Var] = val
-		}
-	}
-
-	// Phase 3: function chain — runs after expressions and extractions.
 	if len(cfg.Functions) > 0 {
 		tvars := make(transform.Vars, len(vars))
 		for k, v := range vars {
