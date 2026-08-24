@@ -3,8 +3,8 @@
 Status: design proposal  
 Date: 2026-08-24  
 Author: Chaya Friedman  
-Scope: end-to-end MCP (Model Context Protocol) support in the-M — service layer, admin registry,
-canvas visual builder integration, and runtime credential injection.
+Scope: end-to-end MCP (Model Context Protocol) support in the-M — dedicated MCP service, admin
+registry, canvas visual builder integration, and runtime credential injection.
 
 ---
 
@@ -12,18 +12,24 @@ canvas visual builder integration, and runtime credential injection.
 
 We introduce a first-class **MCP Store** into the-M: a managed registry of MCP servers that the
 platform discovers, health-checks, and makes available as draggable nodes in the canvas agent builder.
-At runtime, MCP credentials are resolved from per-application configuration — the same pattern already
-established for LLM provider keys — so the canvas definition stays secret-free and portable.
+
+**`them-mcp-service` is a dedicated Go binary and container**, separate from `them-go-bridge`. It
+owns the health-check loop, tool discovery, and credential-aware tool execution. It can be
+built, tested, deployed, and restarted without touching any existing service.
+
+At runtime, MCP credentials are resolved from per-application configuration — the same pattern
+already established for LLM provider keys (`them.llm_providers`) — so the canvas definition stays
+secret-free and portable.
 
 The feature has five independent layers, each deliverable in isolation:
 
-| Layer | What it is | New Go package |
+| Layer | What it is | Where it lives |
 |---|---|---|
-| **MCP Registry** | DB + CRUD admin API for MCP server records | `internal/admin/dal/mcp_servers.go` |
-| **MCP Service** | Health-check, connectivity probe, capability discovery | `internal/mcp/` (new service) |
-| **App Credentials** | Per-app MCP token/auth config (mirrors `llm_providers` pattern) | `db/040_mcp_app_credentials.sql` |
-| **Canvas Nodes** | `mcp_server` and `mcp_tool` node types in the visual builder | frontend + node-type registry |
-| **Runtime Binding** | Go runtime resolves MCP credentials and calls tools during orchestration | `internal/mcp/client.go` |
+| **MCP Registry** | DB tables + CRUD admin API for MCP server records | `them-go-bridge` (`internal/admin/`) |
+| **MCP Service** | Health-check loop, connectivity probe, tool discovery, tool execution | **`them-mcp-service`** (new binary + container) |
+| **App Credentials** | Per-app MCP token/auth config (mirrors `llm_providers` pattern) | `them-go-bridge` (`internal/admin/`) |
+| **Canvas Nodes** | `mcp_server` node type in the visual builder | frontend + `them-go-bridge` node-type registry |
+| **Runtime Binding** | Orchestrator calls MCP Service to execute tools during a run | `them-go-bridge` → HTTP → `them-mcp-service` |
 
 ---
 
@@ -31,37 +37,162 @@ The feature has five independent layers, each deliverable in isolation:
 
 | Term | Meaning in this doc |
 |---|---|
-| **MCP Server** | An HTTP or stdio MCP-protocol server exposing a set of tools |
+| **MCP Server** | An HTTP or SSE MCP-protocol server exposing a set of tools |
 | **MCP Tool** | A single callable function exposed by an MCP Server |
 | **MCP Registry** | The `them.mcp_servers` table — one row per registered server |
 | **App MCP Credential** | A `them.app_mcp_credentials` row: per-application auth token/secret for a server |
 | **Canvas MCP Node** | A `mcp_server` node on the canvas — represents one server and its selected tools |
+| **MCP Service** | `them-mcp-service` container — the dedicated Go service that manages all MCP interaction |
 
 ---
 
-## 2. Data Model
+## 2. Service Architecture
 
-### 2.1 `them.mcp_servers` — platform-level registry
+### 2.1 New container: `them-mcp-service`
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  them-go-bridge  :8002                                   │
+│                                                          │
+│  Admin API  ──────────────── mcp-servers CRUD            │
+│  Orchestrator ─────────────► POST /internal/execute      │
+│                              (tool call dispatch)        │
+└──────────────────────────────────┬──────────────────────┘
+                                   │ HTTP (internal network)
+                              :8010 ▼
+┌─────────────────────────────────────────────────────────┐
+│  them-mcp-service  :8010                                 │
+│                                                          │
+│  /health/live, /health/ready                             │
+│  /internal/probe/{server_id}   — on-demand health probe  │
+│  /internal/execute             — tool call execution     │
+│                                                          │
+│  Background: health-check loop (all enabled servers)     │
+│  Background: tool discovery loop (writes tools_manifest) │
+└──────────────────────────────────┬──────────────────────┘
+                                   │
+                    ┌──────────────┴──────────────┐
+                    │                             │
+               them-postgres                 them-redis
+               (reads mcp_servers,           (manifest cache,
+                writes health/manifest)       pub/sub invalidation)
+```
+
+Key properties:
+- `them-mcp-service` is **not** behind Traefik. It is an internal service only, reachable at
+  `http://them-mcp-service:8010` on `them-network`. No public-facing routes.
+- `them-go-bridge` calls it over the internal network for on-demand probes and tool execution.
+- `them-mcp-service` writes health state and `tools_manifest` directly to the DB. The admin API
+  in `them-go-bridge` reads them back on `GET /api/v1/admin/mcp-servers`.
+- They share the same Postgres and Redis, but `them-mcp-service` never touches any table other
+  than `them.mcp_servers` and `them.app_mcp_credentials`.
+
+### 2.2 Source layout
+
+```
+go/cmd/mcp-service/
+  main.go            — wire DB, Redis, HTTP server, start background loops
+
+go/internal/mcp/
+  client.go          — HTTP/SSE MCP protocol client (initialize, tools/list, tools/call)
+  registry.go        — in-process cache of mcp_servers rows (TTL + Redis pub/sub invalidation)
+  health.go          — background health-check loop
+  discovery.go       — tools/list probe → writes tools_manifest back to DB
+  resolver.go        — resolves (slug, application_id) → (url, authed http.Client)
+  executor.go        — handles POST /internal/execute (called by orchestrator)
+  server.go          — chi HTTP router: /health/*, /internal/*
+```
+
+New Dockerfile: `Dockerfile.mcp-service` (mirrors `Dockerfile.auth-go` pattern):
+
+```dockerfile
+FROM golang:1.25-alpine AS builder
+WORKDIR /build
+RUN apk add --no-cache git
+COPY go/go.mod ./
+RUN go mod tidy
+COPY go/ ./
+RUN go mod tidy && \
+    go test ./internal/mcp/... && \
+    CGO_ENABLED=0 GOOS=linux go build -o /mcp-service ./cmd/mcp-service/
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates curl
+WORKDIR /app
+COPY --from=builder /mcp-service ./mcp-service
+EXPOSE 8010
+CMD ["./mcp-service"]
+```
+
+### 2.3 docker-compose entry
+
+```yaml
+them-mcp-service:
+  build:
+    context: .
+    dockerfile: Dockerfile.mcp-service
+  container_name: them-mcp-service
+  environment:
+    - APP_PORT=8010
+    - DATABASE_HOST=them-postgres
+    - DATABASE_PORT=5432
+    - DATABASE_NAME=them
+    - DATABASE_USER=${THE_M_DB_USER:-them}
+    - DATABASE_PASSWORD=${THE_M_DB_PASSWORD:-them_secret}
+    - REDIS_HOST=them-redis
+    - REDIS_PORT=6379
+    - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
+    - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-secret-key}   # for Fernet decrypt
+    - MCP_HEALTH_INTERVAL_SECONDS=60
+    - LOG_FORMAT=json
+  networks:
+    - them-network
+  depends_on:
+    - them-postgres
+    - them-redis
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8010/health/live"]
+    interval: 15s
+    timeout: 5s
+    retries: 3
+  labels:
+    - "traefik.enable=false"   # internal only — never exposed through Traefik
+```
+
+`them-go-bridge` adds `them-mcp-service` to its `depends_on` so the orchestrator can call it
+at runtime. The bridge also gets a new env var:
+
+```yaml
+MCP_SERVICE_URL: "http://them-mcp-service:8010"
+```
+
+---
+
+## 3. Data Model
+
+### 3.1 `them.mcp_servers` — platform-level registry
 
 ```sql
+-- db/040_mcp_registry.sql
 CREATE TABLE IF NOT EXISTS them.mcp_servers (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID        NOT NULL,                          -- tenant boundary
-    name            TEXT        NOT NULL,                          -- display name
-    slug            TEXT        NOT NULL,                          -- identifier used in canvas docs + runtime
+    tenant_id       UUID        NOT NULL,
+    name            TEXT        NOT NULL,
+    slug            TEXT        NOT NULL,   -- stable canvas/runtime key
     description     TEXT,
-    transport       TEXT        NOT NULL CHECK (transport IN ('http', 'sse', 'stdio')),
-    url             TEXT,                                          -- NULL for stdio
+    transport       TEXT        NOT NULL CHECK (transport IN ('http', 'sse', 'stdio'))
+                                DEFAULT 'http',
+    url             TEXT,                   -- NULL for stdio (future)
     auth_type       TEXT        NOT NULL CHECK (auth_type IN ('none', 'bearer', 'header', 'oauth2'))
                                 DEFAULT 'none',
-    -- health state (updated by MCP service, never by admin API writes)
+    -- written by them-mcp-service only; never by admin API writes
     health_status   TEXT        NOT NULL DEFAULT 'unknown'
                                 CHECK (health_status IN ('unknown', 'healthy', 'degraded', 'unreachable')),
     last_checked_at TIMESTAMPTZ,
     last_error      TEXT,
-    -- discovered capabilities (written by MCP service after tool discovery probe)
-    tools_manifest  JSONB       NOT NULL DEFAULT '[]',             -- [{name, description, inputSchema}]
-    capabilities    JSONB       NOT NULL DEFAULT '{}',             -- server-level MCP capabilities block
+    tools_manifest  JSONB       NOT NULL DEFAULT '[]',   -- [{name, description, inputSchema}]
+    capabilities    JSONB       NOT NULL DEFAULT '{}',   -- MCP server capabilities block
     enabled         BOOLEAN     NOT NULL DEFAULT true,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -69,45 +200,36 @@ CREATE TABLE IF NOT EXISTS them.mcp_servers (
 );
 ```
 
-Key design decisions:
-- `slug` is the stable identifier used in canvas docs and runtime resolution; `id` is internal.
-- `tools_manifest` is written by the MCP Service (health loop), never by the admin API.
-- Auth type declares what credential shape is expected. Actual secrets **never** live here.
-- `transport` supports future stdio-tunnel support; initial implementation is `http` and `sse` only.
-
-### 2.2 `them.app_mcp_credentials` — per-application credentials
+### 3.2 `them.app_mcp_credentials` — per-application secrets
 
 ```sql
+-- db/041_mcp_app_credentials.sql
 CREATE TABLE IF NOT EXISTS them.app_mcp_credentials (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    application_id  UUID        NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
-    mcp_server_id   UUID        NOT NULL REFERENCES them.mcp_servers(id) ON DELETE CASCADE,
-    -- encrypted credential blob (Fernet, same scheme as llm_providers.api_key_encrypted)
-    credential_encrypted TEXT,
-    -- header name for 'header' auth type; ignored for 'bearer'
-    auth_header_name     TEXT    DEFAULT 'Authorization',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id       UUID NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
+    mcp_server_id        UUID NOT NULL REFERENCES them.mcp_servers(id) ON DELETE CASCADE,
+    credential_encrypted TEXT,                          -- Fernet, same scheme as llm_providers
+    auth_header_name     TEXT DEFAULT 'Authorization',  -- only for auth_type='header'
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (application_id, mcp_server_id)
 );
 ```
 
-This mirrors `them.llm_providers` for LLM keys:
-- Admins enter credentials once per (application, MCP server) pair in the App settings UI.
-- Credentials are Fernet-encrypted at rest, never logged, never in canvas JSON.
-- If a server has `auth_type = 'none'`, no credential row is required.
+Mirrors `them.llm_providers` credential pattern:
+- Admins enter credentials once per (application, MCP server) pair.
+- Fernet-encrypted at rest, never logged, never in canvas JSON.
+- `auth_type = 'none'` → no credential row required.
 
-### 2.3 Canvas doc schema — `mcp_server` node
-
-Inside `them.agent_definitions.definition` (JSONB canvas doc), an MCP node looks like:
+### 3.3 Canvas doc — `mcp_server` node
 
 ```jsonc
 {
   "id": "node-abc123",
   "type": "mcp_server",
   "data": {
-    "mcp_server_slug": "github-mcp",          // resolves via mcp_servers.slug at publish
-    "selected_tools": ["create_issue", "list_prs"],  // [] = expose all tools
+    "mcp_server_slug": "github-mcp",
+    "selected_tools": ["create_issue", "list_prs"],
     "expose_all_tools": false,
     "label": "GitHub MCP"
   }
@@ -115,145 +237,142 @@ Inside `them.agent_definitions.definition` (JSONB canvas doc), an MCP node looks
 ```
 
 Rules:
-- `mcp_server_slug` is the only reference; no ID or URL in the canvas doc.
-- `selected_tools` empty array + `expose_all_tools: true` → LLM sees all tools from `tools_manifest`.
-- `selected_tools` non-empty → LLM sees only those tools (subset filtering enforced at runtime).
-- No credentials, no tokens, no URLs in the canvas doc. Fully exportable/importable.
+- Only `mcp_server_slug` in the doc — no ID, URL, or credential ever serialised here.
+- `expose_all_tools: true` + empty `selected_tools` → LLM sees all tools from `tools_manifest`.
+- Non-empty `selected_tools` → LLM sees only those (subset enforced at runtime by MCP Service).
+- Fully exportable/importable — no secrets.
 
-### 2.4 Canvas doc — manual credential override (test-time)
+### 3.4 Test credential (canvas only)
 
-For developers testing in the canvas before an application credential exists, the properties panel
-provides a "Test credential" field that is:
-- stored only in React state / `sessionStorage` — never persisted to the definition
-- sent as `test_mcp_credentials: { [slug]: "token" }` in the validate/test API call body
-- discarded by the backend after the session ends
-
-This satisfies the requirement for "insert manually to test" without ever serialising secrets.
+For testing in the canvas before an application credential exists:
+- Properties panel shows a collapsible "Test credential" field.
+- Value lives in React state only — never persisted to the definition.
+- Sent as `test_mcp_credentials: { [slug]: "token" }` in validate/test API call body.
+- MCP Service uses it for the duration of that request only; discards immediately after.
 
 ---
 
-## 3. MCP Service (`internal/mcp/`)
+## 4. MCP Service Internals
 
-This is a **new Go package** providing three capabilities: health checks, tool discovery, and
-MCP tool execution at runtime.
+### 4.1 Health-check loop (`health.go`)
 
-### 3.1 Package layout
-
-```
-go/internal/mcp/
-  client.go          — HTTP/SSE MCP client (initialize, tools/list, tools/call)
-  registry.go        — in-process cache of mcp_servers rows (TTL + pub/sub invalidation)
-  health.go          — background health-check loop
-  discovery.go       — tools/list probe → writes tools_manifest back to DB
-  resolver.go        — resolves (slug, application_id) → (url, authed http.Client)
-  executor.go        — called by orchestrator to invoke an MCP tool during a run
-  health_api.go      — exposes /internal/mcp/health (used by admin API)
-```
-
-### 3.2 Health-check loop (`health.go`)
-
-A goroutine started at server boot performs periodic health checks:
+Runs in a goroutine started at `them-mcp-service` boot. Iterates over all `enabled=true` servers
+every `MCP_HEALTH_INTERVAL_SECONDS` (default 60s):
 
 ```
-interval: 60s per server (configurable via them.config key 'mcp_health_interval_seconds')
-probe:     GET {url}/  (or MCP initialize handshake for strict mode)
-on success → UPDATE them.mcp_servers SET health_status='healthy', last_checked_at=now(), last_error=NULL
-on failure → UPDATE ... SET health_status='unreachable', last_error='<message>'
+probe:     MCP initialize handshake to {url}
+success  → health_status='healthy',    last_checked_at=now(), last_error=NULL
+timeout  → health_status='unreachable', last_error='timeout after 10s'
+error    → health_status='unreachable', last_error='<http error>'
 ```
 
-Health state transitions:
+Health state machine:
 
 ```
-unknown  →  healthy    (first successful probe)
-unknown  →  unreachable
-healthy  →  degraded   (tools/list returns but tool count decreased >20% vs last manifest)
-healthy  →  unreachable
-degraded →  healthy    (tools/list stable again)
-unreachable → healthy  (probe succeeds)
+unknown     → healthy      (first successful probe)
+unknown     → unreachable  (first failed probe)
+healthy     → degraded     (probe OK but tool count dropped >20% vs last manifest)
+healthy     → unreachable  (probe failed)
+degraded    → healthy      (tool count stable again)
+degraded    → unreachable  (probe failed)
+unreachable → healthy      (probe succeeds)
 ```
 
-The health loop also triggers `discovery.go` on every successful probe cycle to keep `tools_manifest`
-current.
+After each successful probe the loop calls `discovery.go` if `tools_manifest` is stale (> 5 min).
 
-### 3.3 Tool discovery (`discovery.go`)
+### 4.2 Tool discovery (`discovery.go`)
 
-On successful health probe, if manifest is stale (> 5 min since last discovery):
-1. Issue MCP `initialize` request.
-2. Issue MCP `tools/list` request.
-3. Write result JSON to `them.mcp_servers.tools_manifest`.
-4. Publish `them:mcp:manifest:changed:{server_slug}` to Redis so running sessions can invalidate
-   their cached tool list.
+1. MCP `initialize` request.
+2. MCP `tools/list` request.
+3. Write manifest to `them.mcp_servers.tools_manifest`.
+4. Publish `them:mcp:manifest:changed:{slug}` to Redis → bridge caches invalidated.
 
-### 3.4 Runtime execution (`executor.go`)
+### 4.3 On-demand probe (`POST /internal/probe/{server_id}`)
 
-During orchestration, when the LLM emits a tool call whose name matches `mcp__{slug}__{tool_name}`:
+Called by `them-go-bridge` when the admin clicks "Test connection" in the properties panel or
+settings UI. Runs the full health + discovery cycle synchronously and returns the result inline.
+Responds in < 15s (hard timeout); returns `{ health_status, tools_count, last_error }`.
 
-1. Look up `mcp_servers` by slug (from in-process cache).
-2. Call `resolver.go` with `(slug, application_id)` → returns `(url, authedClient)`.
-3. Credential resolution precedence:
-   ```
-   1. app_mcp_credentials WHERE application_id=? AND mcp_server_id=?  → decrypt + inject header
-   2. if auth_type='none' → no credential needed
-   3. if required but missing → reject with a clear runtime error (never silently proceed)
-   ```
-4. Issue MCP `tools/call` with the LLM-provided arguments.
-5. Return result as a tool response back into the LLM context.
-6. Emit a `run_step` event so the run recorder captures it.
+### 4.4 Tool execution (`POST /internal/execute`)
 
-Tool call name format: `mcp__{slug}__{tool_name}` — consistent with the existing `agent__<slug>`
-and `orch__<name>` naming scheme used by the orchestrator.
+Called by `them-go-bridge` orchestrator when the LLM emits a tool call matching `mcp__{slug}__{tool}`.
+
+Request body:
+
+```json
+{
+  "application_id": "uuid",
+  "mcp_server_slug": "github-mcp",
+  "tool_name": "create_issue",
+  "arguments": { "title": "Bug", "body": "..." },
+  "test_credential": null
+}
+```
+
+Execution steps:
+1. Resolve `mcp_servers` by `(tenant_id, slug)` — tenant derived from `application_id`.
+2. Resolve credential from `app_mcp_credentials` → Fernet-decrypt → inject auth header.
+   - If `test_credential` is present (canvas test only): use it instead of DB credential.
+   - If `auth_type != 'none'` and no credential: return 422 with clear error (fail-closed).
+3. Issue MCP `tools/call`.
+4. Return `{ result, error }` to orchestrator.
+
+Response used by orchestrator to inject the tool result into the LLM message context.
 
 ---
 
-## 4. Admin API
+## 5. Admin API (in `them-go-bridge`)
 
-### 4.1 New routes (all under `/api/v1/admin/`)
+### 5.1 New routes
 
 ```
-POST   /mcp-servers              Create MCP server record
-GET    /mcp-servers              List all (tenant-scoped), includes health_status + tool count
-GET    /mcp-servers/{id}         Get single (includes full tools_manifest)
-PUT    /mcp-servers/{id}         Update (name, url, auth_type, enabled — NOT tools_manifest)
-DELETE /mcp-servers/{id}         Delete
+POST   /api/v1/admin/mcp-servers                              Create
+GET    /api/v1/admin/mcp-servers                              List (tenant-scoped, includes health_status + tool count)
+GET    /api/v1/admin/mcp-servers/{id}                         Get single (full tools_manifest)
+PUT    /api/v1/admin/mcp-servers/{id}                         Update (name/url/auth_type/enabled — NOT tools_manifest)
+DELETE /api/v1/admin/mcp-servers/{id}                         Delete (blocked if slug in published definition)
 
-POST   /mcp-servers/{id}/probe   Trigger immediate health + discovery probe (returns result inline)
-GET    /mcp-servers/{id}/tools   Returns tools_manifest (cached from last discovery)
+POST   /api/v1/admin/mcp-servers/{id}/probe                   On-demand probe (proxies to MCP Service)
+GET    /api/v1/admin/mcp-servers/{id}/tools                   Returns tools_manifest
 
--- Per-application credentials (nested under applications)
-PUT    /applications/{app_id}/mcp-credentials/{server_id}    Set/update credential (encrypted)
-DELETE /applications/{app_id}/mcp-credentials/{server_id}    Remove credential
-GET    /applications/{app_id}/mcp-credentials                List (returns server slug + auth status, NEVER the decrypted value)
+PUT    /api/v1/admin/applications/{app_id}/mcp-credentials/{server_id}   Set/update credential
+DELETE /api/v1/admin/applications/{app_id}/mcp-credentials/{server_id}   Remove credential
+GET    /api/v1/admin/applications/{app_id}/mcp-credentials               List (slug + key_set bool, NEVER decrypted value)
 ```
 
-Go files added:
+Go files in `them-go-bridge`:
 - `go/internal/admin/mcp_servers.go` — handler
 - `go/internal/admin/dal/mcp_servers.go` — DAL
 - `go/internal/admin/service/mcp_servers.go` — service
-- `go/internal/admin/mcp_app_credentials.go` — credential handler (piggybacks applications handler)
+- `go/internal/admin/mcp_app_credentials.go` — credential handler
 
-### 4.2 Traefik routing
+### 5.2 Traefik routing
 
-Two new Traefik router entries at priority 115 (admin writes) and 110 (admin reads):
+New Traefik labels on `them-go-bridge`:
 
 ```yaml
-them-go-admin-mcp-write:
-  rule: "PathPrefix(`/api/v1/admin/mcp-servers`) && Method(`POST`,`PUT`,`DELETE`)"
-  priority: 115
-  service: them-go-bridge
+# MCP admin writes (priority 115)
+- "traefik.http.routers.them-go-mcp-write.rule=PathPrefix(`/api/v1/admin/mcp-servers`) && (Method(`POST`) || Method(`PUT`) || Method(`DELETE`))"
+- "traefik.http.routers.them-go-mcp-write.entrypoints=web"
+- "traefik.http.routers.them-go-mcp-write.priority=115"
+- "traefik.http.routers.them-go-mcp-write.service=them-go-bridge-svc"
 
-them-go-admin-mcp-read:
-  rule: "PathPrefix(`/api/v1/admin/mcp-servers`)"
-  priority: 110
-  service: them-go-bridge
+# MCP admin reads (priority 110)
+- "traefik.http.routers.them-go-mcp-read.rule=PathPrefix(`/api/v1/admin/mcp-servers`)"
+- "traefik.http.routers.them-go-mcp-read.entrypoints=web"
+- "traefik.http.routers.them-go-mcp-read.priority=110"
+- "traefik.http.routers.them-go-mcp-read.service=them-go-bridge-svc"
 ```
+
+`them-mcp-service` is NOT added to Traefik — it is internal-only.
 
 ---
 
-## 5. Canvas Visual Builder Integration
+## 6. Canvas Visual Builder Integration
 
-### 5.1 New node type: `mcp_server`
+### 6.1 New node type: `mcp_server`
 
-Registered in `go/internal/admin/node_types.go` (existing NodeTypeRegistry pattern):
+Registered in `go/internal/admin/node_types.go`:
 
 ```json
 {
@@ -264,194 +383,202 @@ Registered in `go/internal/admin/node_types.go` (existing NodeTypeRegistry patte
   "inputs": ["control_flow"],
   "outputs": ["control_flow"],
   "config_schema": {
-    "mcp_server_slug": { "type": "string", "required": true },
-    "selected_tools":  { "type": "array",  "items": { "type": "string" } },
-    "expose_all_tools":{ "type": "boolean","default": false }
+    "mcp_server_slug":  { "type": "string",  "required": true },
+    "selected_tools":   { "type": "array",   "items": { "type": "string" } },
+    "expose_all_tools": { "type": "boolean", "default": false }
   }
 }
 ```
 
-### 5.2 Properties panel
-
-When an `mcp_server` node is selected in the canvas:
+### 6.2 Properties panel
 
 ```
 ┌─ MCP Server ──────────────────────────────────────────┐
-│ Server  [dropdown: GitHub MCP ▼]  ● healthy            │
-│                                                         │
-│ Tools                                                   │
-│  ◉ All tools (expose full manifest to LLM)             │
-│  ○ Selected tools only                                  │
-│   ☑ create_issue   ☑ list_prs   ☐ delete_issue         │
-│                                                         │
-│ ▼ Test credential (canvas session only, not saved)      │
-│   [Bearer token ________________]                       │
-│   [Test connection]                                     │
+│ Server  [GitHub MCP ▼]           ● healthy             │
+│                                                        │
+│ Tools                                                  │
+│  ◉ All tools (LLM sees full manifest)                  │
+│  ○ Selected tools only                                 │
+│   ☑ create_issue   ☑ list_prs   ☐ delete_issue        │
+│                                                        │
+│ ▼ Test credential  (canvas session only — not saved)   │
+│   Bearer token [_______________________________]       │
+│   [Test connection ▶]                                  │
 └────────────────────────────────────────────────────────┘
 ```
 
-- Server dropdown is populated from `GET /api/v1/admin/mcp-servers` (only `enabled` + `healthy`/`degraded`).
-- Health badge (`● healthy`, `⚠ degraded`, `✕ unreachable`) reflects live `health_status`.
-- Tool checklist is populated from `tools_manifest` fetched via `GET /mcp-servers/{id}/tools`.
-- Test credential field: React state only — never serialised; cleared on node deselect.
-- "Test connection" triggers `POST /mcp-servers/{id}/probe` and shows inline result.
+- Server dropdown from `GET /api/v1/admin/mcp-servers` (enabled rows only).
+- Health badge reflects `health_status` from the last MCP Service probe.
+- Tool checklist from `GET /api/v1/admin/mcp-servers/{id}/tools` (live `tools_manifest`).
+- "Test connection" → `POST /api/v1/admin/mcp-servers/{id}/probe` → inline result.
+- Test credential: React state only, never serialised.
 
-### 5.3 Runtime application settings UI
+### 6.3 Application settings — MCP Credentials tab
 
-In the **Application settings → MCP Credentials** tab (new tab, modelled after the existing
-LLM Providers tab):
+New tab in App settings (mirrors LLM Providers tab):
 
 ```
 ┌─ MCP Credentials ─────────────────────────────────────┐
-│ GitHub MCP          auth: bearer   [key set ●]  [Edit] │
-│ Slack MCP           auth: header   [no key  ○]  [Set]  │
-│ Internal Tools MCP  auth: none     [n/a]               │
+│ GitHub MCP          bearer    [key set ●]   [Edit]     │
+│ Slack MCP           header    [no key  ○]   [Set]      │
+│ Internal Tools      none      [n/a    ]                │
 └────────────────────────────────────────────────────────┘
 ```
 
-- Shows all `mcp_servers` with `enabled=true`.
-- Edit/Set opens a modal: single credential field (masked), confirm, saves to
-  `PUT /applications/{app_id}/mcp-credentials/{server_id}`.
-- Credential value never rendered after save — only shows `key set` / `no key` badge.
+- Edit/Set → modal with masked input → `PUT .../mcp-credentials/{server_id}`.
+- Credential never shown after save — badge only.
 
 ---
 
-## 6. Publish-time Validation
+## 7. Publish-time Validation
 
-The agent definition publish pipeline (`service/agent_definitions_publish.go`) gains an MCP
-validation phase:
+`service/agent_definitions_publish.go` gains an MCP phase:
 
-1. For every `mcp_server` node in the canvas doc, resolve `mcp_server_slug` → `mcp_servers` row.
-2. If server does not exist or is disabled: **validation error** (block publish).
-3. If server has `auth_type != 'none'` and no `app_mcp_credentials` row exists for
-   `(application_id, server_id)`: **validation warning** (allow publish, warn on deploy).
-4. Verify each `selected_tools` entry exists in the current `tools_manifest`:
-   **validation warning** (tools may have been removed; allow publish, warn).
-5. Add validation results to the existing `ValidationResult` struct alongside A2A/schema checks.
+1. For each `mcp_server` node: resolve `mcp_server_slug` → `them.mcp_servers`.
+2. Server not found or disabled → **validation error** (block publish).
+3. `auth_type != 'none'` and no `app_mcp_credentials` row → **validation warning** (publish allowed, runtime will fail).
+4. `selected_tools` entries not in current `tools_manifest` → **validation warning** (tools may have been removed).
+5. Results added to `ValidationResult` alongside existing A2A/schema checks.
 
 ---
 
-## 7. Redis Keys
+## 8. Redis Keys
 
-New keys (added to `docs/REDIS.md`):
+New keys (add to `docs/REDIS.md`):
 
 | Key pattern | Type | TTL | Purpose |
 |---|---|---|---|
-| `them:mcp:manifest:{slug}` | JSON string | 5 min | In-process manifest cache (backup; primary is DB) |
-| `them:mcp:health:{slug}` | JSON string | 90 s | Last health probe result (for dashboard display) |
-| `them:mcp:manifest:changed` | Pub/Sub channel | — | Invalidation signal after discovery probe |
+| `them:mcp:manifest:{slug}` | JSON string | 5 min | Manifest cache in MCP Service (avoids DB on every execution) |
+| `them:mcp:health:{slug}` | JSON string | 90 s | Last health probe result |
+| `them:mcp:manifest:changed` | Pub/Sub channel | — | Broadcast after discovery → bridge invalidates tool-list cache |
 
 ---
 
-## 8. Migration Files
+## 9. Migration Files
 
 ```
 db/040_mcp_registry.sql          — CREATE TABLE them.mcp_servers
 db/041_mcp_app_credentials.sql   — CREATE TABLE them.app_mcp_credentials
 ```
 
-No changes to existing tables. Both migrations are safe to apply to a running stack
-(no locks on existing tables, no data movement).
+No changes to existing tables. Safe to apply to a running stack.
 
 ---
 
-## 9. Implementation Phases
+## 10. Implementation Phases
 
-Each phase is independently deployable and backward-compatible.
+Each phase is independently deployable and does not break existing services.
 
 ### Phase MCP-1 — Registry + Admin CRUD (1–2 sessions)
 
+Work entirely in `them-go-bridge`. `them-mcp-service` does not exist yet.
+
 Deliverables:
 - `db/040_mcp_registry.sql` + `db/041_mcp_app_credentials.sql`
-- Go: DAL, service, handlers for `/api/v1/admin/mcp-servers`
-- Go: app credentials endpoints under `/api/v1/admin/applications/{id}/mcp-credentials`
-- Frontend: Settings → MCP Servers list page (list, create, delete; no canvas yet)
-- Tests: DAL integration tests, service unit tests, handler tests (mirror agent_definitions pattern)
+- `go/internal/admin/` — DAL, service, handlers for mcp-servers and app credentials
+- Frontend: Settings → MCP Servers page (list, create, edit, delete)
+- Tests: DAL integration tests, service unit tests, handler tests
 
-No canvas changes. No runtime changes. Provides the data foundation.
+Health status shows `unknown` for all servers (MCP Service not running yet). Probe endpoint
+returns 503 with "MCP Service not configured" until Phase MCP-2.
 
-### Phase MCP-2 — MCP Service + Health Loop (1 session)
+### Phase MCP-2 — MCP Service binary + health/discovery loop (1 session)
+
+Build the new service in complete isolation — no changes to `them-go-bridge`.
 
 Deliverables:
-- `go/internal/mcp/client.go`, `health.go`, `discovery.go`
-- Background goroutine in `go/cmd/them/main.go`
-- `POST /mcp-servers/{id}/probe` endpoint
-- `GET /mcp-servers/{id}/tools` endpoint
-- Health status badge visible in frontend MCP Servers list
-- Tests: mock MCP server in tests, health transition tests
+- `go/cmd/mcp-service/main.go`
+- `go/internal/mcp/client.go`, `health.go`, `discovery.go`, `server.go`
+- `Dockerfile.mcp-service`
+- `docker-compose.yml` — new `them-mcp-service` service entry
+- `/health/live`, `/health/ready` endpoints
+- `/internal/probe/{server_id}` endpoint
+- Background loop writing health + manifest to DB
+- Frontend: health badge now live in MCP Servers list
+- Tests: mock MCP server, health-transition unit tests
 
-No canvas changes. No runtime changes. Provides health/discovery.
+No changes to `them-go-bridge`. No canvas changes. No runtime changes.
 
 ### Phase MCP-3 — Canvas Node + Properties Panel (1–2 sessions)
 
 Deliverables:
-- `mcp_server` node type registration in node_types.go
-- Frontend canvas: draggable MCP node, properties panel, tool checklist
+- `mcp_server` node type in `go/internal/admin/node_types.go`
+- Frontend canvas: draggable node, properties panel, tool checklist, test credential field
 - Frontend: App Settings → MCP Credentials tab
-- Publish-time validation phase for MCP nodes
+- Publish-time validation for MCP nodes
+- `them-go-bridge` wires `MCP_SERVICE_URL` env var; probe endpoint proxies to MCP Service
 - Tests: node type tests, publish validation tests
 
-No runtime execution yet — a published agent with MCP nodes will fail gracefully with
-"MCP execution not yet implemented".
+No runtime execution — a run with an MCP node fails gracefully: "MCP execution not yet enabled".
 
-### Phase MCP-4 — Runtime Execution (1–2 sessions)
+### Phase MCP-4 — Runtime Tool Execution (1–2 sessions)
 
 Deliverables:
 - `go/internal/mcp/resolver.go`, `executor.go`
-- Integration with Go orchestrator: tool-call dispatch for `mcp__*__*` names
-- Run recorder captures MCP tool calls as `run_steps`
-- End-to-end test: canvas agent with GitHub MCP node calling `list_repos`
-- Tests: executor unit tests with mock MCP client, integration test with real MCP echo server
+- `/internal/execute` endpoint in `them-mcp-service`
+- `them-go-bridge` orchestrator: dispatch `mcp__{slug}__{tool}` calls to MCP Service
+- Run recorder captures MCP tool calls as `run_step` events
+- End-to-end test: canvas agent using a real MCP server (or test echo MCP agent)
+- Tests: executor unit tests with mock MCP client
 
 ---
 
-## 10. Security Constraints
+## 11. Container Map Update
 
-- Credentials stored as Fernet-encrypted TEXT (same scheme as `llm_providers.api_key_encrypted`).
-- No credential value ever in canvas JSONB, logs, error messages, or API responses.
-- `GET /mcp-servers` and `GET /applications/{id}/mcp-credentials` never return decrypted values —
-  only `key_set: true/false`.
-- MCP server `url` must be HTTPS in production (validated at create/update time).
-- Tool call arguments from LLM are passed verbatim to MCP server — no server-side arg validation
-  beyond JSON schema (MCP server is responsible for its own input validation).
-- Each MCP tool call is tenant-scoped: resolver always checks `mcp_server.tenant_id == application.tenant_id`.
-- Stdio transport is disabled by default; requires explicit feature flag (`mcp_allow_stdio=true` in
-  `them.config`).
+| Container | Role | Port | Source |
+|---|---|---|---|
+| `them-mcp-service` | MCP health/discovery loop + tool execution engine | 8010 (internal only) | `go/cmd/mcp-service/` |
+
+This row will be added to the Container Map in `CLAUDE.md` when Phase MCP-2 ships.
 
 ---
 
-## 11. What We Are NOT Building (in scope of this design)
+## 12. Security Constraints
 
-- **MCP Server hosting**: the-M does not host MCP servers; it connects to external ones.
-- **OAuth2 flow UI**: OAuth2 `auth_type` is reserved for future; Phase 1–4 implement `none`,
-  `bearer`, and `header` only.
-- **Per-tool access control**: all selected tools are available to the LLM; no per-tool ACL.
-- **Streaming MCP responses**: MCP `tools/call` is request-response; streaming tool results are
-  out of scope.
-- **MCP Server marketplace**: Phase 1 is bring-your-own-URL; a curated catalog of well-known
-  servers (GitHub, Slack, Linear) is a future UX layer, not a backend concern.
+- Credentials Fernet-encrypted at rest (same key and scheme as `llm_providers.api_key_encrypted`).
+- No credential value ever in canvas JSON, logs, error messages, or API responses.
+- `GET` endpoints return `key_set: bool` only — never the decrypted value.
+- MCP server `url` validated to be HTTPS at create/update time (HTTP allowed only if
+  `MCP_ALLOW_HTTP=true` env var is set, for local dev).
+- `them-mcp-service` is not on Traefik — unreachable from outside `them-network`.
+- Tool call arguments from LLM passed verbatim to MCP server — argument validation is the MCP
+  server's responsibility.
+- Tenant isolation enforced in `resolver.go`: `mcp_server.tenant_id` must equal the
+  application's `tenant_id` before any credential lookup or tool call proceeds.
+- Stdio transport disabled by default; requires `MCP_ALLOW_STDIO=true` env var.
 
 ---
 
-## 12. Open Questions
+## 13. What We Are NOT Building
+
+- **MCP Server hosting** — the-M connects to external MCP servers; it does not host them.
+- **OAuth2 flow UI** — `auth_type='oauth2'` reserved in schema; Phase 1–4 implement `none`,
+  `bearer`, `header` only.
+- **Per-tool ACL** — all selected tools are available to the LLM once a node is wired up.
+- **Streaming MCP responses** — `tools/call` is request-response only in this design.
+- **Curated server catalog** — Phase 1 is bring-your-own-URL; a marketplace UI is a later layer.
+
+---
+
+## 14. Open Questions
 
 | # | Question | Recommendation |
 |---|---|---|
-| Q1 | Should `mcp_servers` be global (platform-level) or per-tenant? | Per-tenant (`tenant_id` column) — consistent with all other the-M resources |
-| Q2 | Should health check interval be per-server or global? | Global config key `mcp_health_interval_seconds` with per-server `override_interval_seconds` column added in a later migration |
+| Q1 | Health check interval: per-server or global? | Global env var `MCP_HEALTH_INTERVAL_SECONDS` with optional per-server `override_interval_seconds` column added later |
+| Q2 | What happens when a referenced MCP server is deleted? | Block hard delete if any published definition references the slug; disable (soft-delete) is the safe default |
 | Q3 | Should test credentials persist across canvas sessions? | No — React state only, cleared on node deselect or page reload |
-| Q4 | What happens when an MCP server is deleted that is referenced by a published definition? | Block delete if any published definition references the slug; soft-delete (disable) is the safe path |
-| Q5 | How do we handle MCP servers that require per-user OAuth? | Out of scope for now; `auth_type='oauth2'` placeholder in schema, not implemented |
+| Q4 | MCP servers that require per-user OAuth? | Out of scope; `auth_type='oauth2'` placeholder exists for later |
+| Q5 | Should `them-mcp-service` expose a status page for admins? | Add `GET /status` returning all server health summaries — useful for ops, no auth required on internal port |
 
 ---
 
-## 13. Doc Updates Required (when implementing)
+## 15. Doc Updates Required (when implementing)
 
 | Doc | What to add |
 |---|---|
+| `CLAUDE.md` container map | `them-mcp-service` row |
+| `CLAUDE.md` trigger map | `go/internal/mcp/`, `go/cmd/mcp-service/` → run `go test ./internal/mcp/...` |
 | `docs/SCHEMA.md` | `them.mcp_servers`, `them.app_mcp_credentials` |
-| `docs/REDIS.md` | New `them:mcp:*` keys |
-| `docs/ARCHITECTURE.md` | MCP Service goroutine, tool-call dispatch path |
-| `go/TEST_INDEX.md` | MCP DAL, service, executor test files |
-| `scripts/tests/INDEX.md` | Any new Python integration tests (unlikely; Go-only feature) |
-| `CLAUDE.md` trigger map | Add MCP files to the "changed → run tests" table |
+| `docs/REDIS.md` | `them:mcp:*` keys |
+| `docs/ARCHITECTURE.md` | MCP Service as separate container, tool-call dispatch path |
+| `go/TEST_INDEX.md` | MCP client, health, executor test files |
