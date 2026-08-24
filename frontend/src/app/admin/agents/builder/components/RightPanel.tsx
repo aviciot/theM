@@ -4,6 +4,7 @@ import type { AgentRootData, SkillData, StepData, DebugState } from '../types';
 import type { AgentIssue } from '@/lib/api';
 import { C, labelStyle, inputStyle, textareaStyle, selectStyle, fieldGap, hint, LLM_MODELS } from '../constants';
 import { stepMeta } from './StepNode';
+import { TransformPanel } from './TransformPanel';
 
 interface RightPanelProps {
   selectedNode: Node;
@@ -389,40 +390,38 @@ export function RightPanel({
               </>
             )}
 
-            {d.step_type === 'transform' && (
-              <>
-                <div style={{ color: C.indigo, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>TRANSFORM CONFIG</div>
-                <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>
-                  Each row maps an output variable name to a Go template expression.<br />
-                  Use <code style={{ color: C.cyan }}>{'{{.var_name}}'}</code> to reference upstream variables.
-                </div>
-                {Object.entries((cfg.expressions as Record<string, string>) ?? {}).map(([k, v], i) => (
-                  <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-                    <input value={k} onChange={e => { const entries = Object.entries((cfg.expressions as Record<string, string>) ?? {}); entries[i] = [e.target.value, v]; updateStepConfig('expressions', Object.fromEntries(entries)); }} style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }} placeholder="output_var" />
-                    <input value={v} onChange={e => { const exprs = { ...((cfg.expressions as Record<string, string>) ?? {}), [k]: e.target.value }; updateStepConfig('expressions', exprs); }} style={{ ...inputStyle, flex: 1, fontSize: '11px' }} placeholder={'Hello, {{.user_query}}!'} />
-                    <button onClick={() => { const exprs = { ...((cfg.expressions as Record<string, string>) ?? {}) }; delete exprs[k]; updateStepConfig('expressions', exprs); }} style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}>×</button>
-                  </div>
-                ))}
-                <button onClick={() => { const exprs = { ...((cfg.expressions as Record<string, string>) ?? {}), '': '' }; updateStepConfig('expressions', exprs); }} style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}>+ Add expression</button>
-                <div style={{ fontSize: '10px', fontWeight: 700, color: C.indigo, letterSpacing: '0.08em', marginTop: '14px', marginBottom: '6px' }}>JSON EXTRACTIONS</div>
-                <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>
-                  Parse a JSON variable (e.g. LLM output or http_response) and extract fields by dot-path.
-                </div>
-                {((cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? []).map((ext, i) => {
-                  const exts = (cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? [];
-                  return (
-                    <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 6, alignItems: 'center' }}>
-                      <input value={ext.from_var} onChange={e => { const next = exts.map((x, j) => j === i ? { ...x, from_var: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }} placeholder="from_var" title="Source variable (must hold JSON)" />
-                      <input value={ext.json_path} onChange={e => { const next = exts.map((x, j) => j === i ? { ...x, json_path: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: 1, fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }} placeholder="field.sub_field" title="Dot-separated JSON path" />
-                      <span style={{ color: '#64748b', fontSize: '11px', flexShrink: 0 }}>→</span>
-                      <input value={ext.var} onChange={e => { const next = exts.map((x, j) => j === i ? { ...x, var: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace' }} placeholder="output_var" title="Variable name to assign" />
-                      <button onClick={() => { const next = exts.filter((_, j) => j !== i); updateStepConfig('extractions', next); }} style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 4px' }}>×</button>
-                    </div>
-                  );
-                })}
-                <button onClick={() => { const exts = (cfg.extractions as Array<{ from_var: string; json_path: string; var: string }>) ?? []; updateStepConfig('extractions', [...exts, { from_var: '', json_path: '', var: '' }]); }} style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}>+ Add extraction</button>
-              </>
-            )}
+            {d.step_type === 'transform' && (() => {
+              // Collect vars visible at this node: 'input' always present +
+              // output_var from every upstream step (steps that have an edge into this one, recursively).
+              const thisNodeId = selectedNode.id;
+              const upstreamVars: string[] = ['input'];
+              const visited = new Set<string>();
+              const queue = [thisNodeId];
+              while (queue.length) {
+                const curr = queue.shift()!;
+                if (visited.has(curr)) continue;
+                visited.add(curr);
+                for (const edge of localPipeEdges) {
+                  if (edge.target === curr) {
+                    const srcNode = localPipeNodes.find(n => n.id === edge.source);
+                    if (srcNode) {
+                      const srcCfg = (srcNode.data as unknown as { config?: Record<string, unknown> }).config ?? {};
+                      if (srcCfg.output_var) upstreamVars.push(String(srcCfg.output_var));
+                      if (srcCfg.var) upstreamVars.push(String(srcCfg.var));
+                      queue.push(edge.source);
+                    }
+                  }
+                }
+              }
+              const availableVars = Array.from(new Set(upstreamVars));
+              return (
+                <TransformPanel
+                  cfg={cfg}
+                  updateStepConfig={updateStepConfig}
+                  availableVars={availableVars}
+                />
+              );
+            })()}
 
             {d.step_type === 'response' && (
               <>
