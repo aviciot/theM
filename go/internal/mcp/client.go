@@ -1,12 +1,14 @@
 package mcp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -40,6 +42,7 @@ type Client struct {
 	serverURL  string
 	authHeader string // e.g. "Bearer <token>" or "<header>: <value>"
 	headerName string // header name for injection (default: Authorization)
+	sessionID  string // Mcp-Session-Id issued by streamable-http servers on initialize
 }
 
 // NewClient creates a Client for the given MCP server URL with optional auth.
@@ -110,7 +113,12 @@ func (c *Client) Discover(ctx context.Context) (*DiscoveryResult, error) {
 }
 
 // Call invokes a single MCP tool and returns the raw result content.
+// It runs initialize first (required by the MCP spec) to obtain a session ID.
 func (c *Client) Call(ctx context.Context, toolName string, arguments map[string]any) (*CallResult, error) {
+	if _, err := c.Probe(ctx); err != nil {
+		return nil, fmt.Errorf("mcp call %s: initialize: %w", toolName, err)
+	}
+
 	body := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      3,
@@ -148,6 +156,9 @@ func (c *Client) call(ctx context.Context, body any) (json.RawMessage, error) {
 	if c.authHeader != "" {
 		req.Header.Set(c.headerName, c.authHeader)
 	}
+	if c.sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -155,9 +166,38 @@ func (c *Client) call(ctx context.Context, body any) (json.RawMessage, error) {
 	}
 	defer resp.Body.Close()
 
+	// Capture session ID issued by streamable-http servers on initialize.
+	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
+		c.sessionID = sid
+	}
+
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, fmt.Errorf("mcp: server returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Streamable-http servers respond with text/event-stream (SSE) format.
+	// Plain JSON responses are also accepted for compatibility.
+	ct := resp.Header.Get("Content-Type")
+	var jsonBody []byte
+	if strings.Contains(ct, "text/event-stream") {
+		// Parse SSE: find the first "data: ..." line and use it as the JSON body.
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "data:") {
+				jsonBody = []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+				break
+			}
+		}
+		if len(jsonBody) == 0 {
+			return nil, fmt.Errorf("mcp: empty SSE response")
+		}
+	} else {
+		jsonBody, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("mcp: read response: %w", err)
+		}
 	}
 
 	var envelope struct {
@@ -167,7 +207,7 @@ func (c *Client) call(ctx context.Context, body any) (json.RawMessage, error) {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+	if err := json.Unmarshal(jsonBody, &envelope); err != nil {
 		return nil, fmt.Errorf("mcp: decode response: %w", err)
 	}
 	if envelope.Error != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -92,19 +93,18 @@ func (w *worker) probe(ctx context.Context) {
 	probeCtx, cancel := context.WithTimeout(ctx, w.maxProbeTimeout)
 	defer cancel()
 
-	// auth-less client for probe — reachability check only.
 	client := NewClient(w.server.URL, "", "")
 
-	_, err := client.Probe(probeCtx)
-	if err != nil {
-		w.setStatus(ctx, "unreachable", err.Error())
-		return
-	}
-
-	// Reachable — run discovery.
+	// Discover runs initialize then tools/list on the same client instance,
+	// so the Mcp-Session-Id from initialize is forwarded to tools/list.
 	result, err := client.Discover(probeCtx)
 	if err != nil {
-		w.setStatus(ctx, "degraded", err.Error())
+		// initialize failure → server unreachable; tools/list failure → degraded.
+		status := "degraded"
+		if strings.Contains(err.Error(), "mcp discover: initialize:") {
+			status = "unreachable"
+		}
+		w.setStatus(ctx, status, err.Error())
 		return
 	}
 
