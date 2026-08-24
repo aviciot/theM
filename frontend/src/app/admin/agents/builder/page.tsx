@@ -91,9 +91,13 @@ function DebugEdge({
 }: EdgeProps) {
   const d = (data ?? {}) as DebugEdgeData;
   const [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const [hovered, setHovered] = useState(false);
 
   const isFlowing = d.debugState === 'flowing';
   const isDone    = d.debugState === 'done';
+
+  // Full value to show in tooltip — strip surrounding quotes added by the label formatter.
+  const fullValue = d.label ? d.label.replace(/^"|"$/g, '') : '';
 
   return (
     <>
@@ -122,8 +126,10 @@ function DebugEdge({
       {/* Value label when done */}
       {isDone && d.label && (
         <EdgeLabelRenderer>
+          {/* Chip */}
           <div
-            title={d.label}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
@@ -140,10 +146,56 @@ function DebugEdge({
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               cursor: 'default',
+              zIndex: 10,
             }}
           >
             {d.label}
           </div>
+
+          {/* Hover tooltip — full value */}
+          {hovered && fullValue && (
+            <div
+              onMouseEnter={() => setHovered(true)}
+              onMouseLeave={() => setHovered(false)}
+              style={{
+                position: 'absolute',
+                transform: `translate(-50%, 0) translate(${labelX}px, ${labelY + 16}px)`,
+                pointerEvents: 'all',
+                zIndex: 9999,
+                background: 'rgba(0, 8, 20, 0.97)',
+                border: '1px solid #00f0ff',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                maxWidth: '480px',
+                minWidth: '200px',
+                boxShadow: '0 0 24px rgba(0,240,255,0.2)',
+              }}
+            >
+              <div style={{
+                fontSize: '10px',
+                fontWeight: 700,
+                color: 'rgba(0,240,255,0.5)',
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                marginBottom: '6px',
+                fontFamily: 'sans-serif',
+              }}>
+                Edge value
+              </div>
+              <div style={{
+                fontFamily: 'monospace',
+                fontSize: '12px',
+                color: '#00f0ff',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                maxHeight: '320px',
+                overflowY: 'auto',
+                lineHeight: 1.6,
+              }}>
+                {fullValue}
+              </div>
+            </div>
+          )}
         </EdgeLabelRenderer>
       )}
     </>
