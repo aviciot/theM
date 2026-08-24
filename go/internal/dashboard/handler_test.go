@@ -28,10 +28,14 @@ type fakeRedis struct {
 	mu        sync.Mutex
 	msgs      []rueidis.PubSubMessage
 	hgetalls  map[string]map[string]string // key → field map for HGetAll
+	gets      map[string]string            // key → value for Get
 }
 
 func newFakeRedis() *fakeRedis {
-	return &fakeRedis{hgetalls: make(map[string]map[string]string)}
+	return &fakeRedis{
+		hgetalls: make(map[string]map[string]string),
+		gets:     make(map[string]string),
+	}
 }
 
 func (f *fakeRedis) Subscribe(ctx context.Context, _ []string, fn func(rueidis.PubSubMessage)) error {
@@ -53,6 +57,12 @@ func (f *fakeRedis) HGetAll(_ context.Context, key string) (map[string]string, e
 	return f.hgetalls[key], nil
 }
 
+func (f *fakeRedis) Get(_ context.Context, key string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gets[key], nil
+}
+
 func (f *fakeRedis) queueMessage(channel, payload string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -66,6 +76,12 @@ func (f *fakeRedis) setHash(key string, fields map[string]string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.hgetalls[key] = fields
+}
+
+func (f *fakeRedis) setString(key, val string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gets[key] = val
 }
 
 // ── JWT helper ────────────────────────────────────────────────────────────────
@@ -287,4 +303,24 @@ func TestDashboard_CleanShutdownOnDisconnect(t *testing.T) {
 	// Close the client — server goroutines must exit without panic.
 	conn.Close()
 	time.Sleep(50 * time.Millisecond) // give goroutines a moment to exit
+}
+
+func TestDashboard_AppsSnapshot(t *testing.T) {
+	rc := newFakeRedis()
+	cached := `{"my-app":{"reachable":true,"latency_ms":12}}`
+	rc.setString("them:dash:app_status_cache", cached)
+
+	srv, secret := newTestServer(t, rc)
+	token := makeHS256JWT(secret, "1")
+	conn := dialWS(t, srv, token)
+	subscribe(t, conn, []string{"apps"})
+
+	readJSON(t, conn) // drain ack
+
+	// Next message should be the cached apps snapshot.
+	msg := readJSON(t, conn)
+	assert.Equal(t, "apps", msg["channel"])
+	event, ok := msg["event"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "app_status", event["type"])
 }

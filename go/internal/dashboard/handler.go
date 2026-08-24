@@ -35,11 +35,12 @@ import (
 )
 
 const (
-	pingInterval       = 30 * time.Second
-	subscribeDeadline  = 10 * time.Second
-	dashPrefix         = "them:dash:"
-	scanStatePrefix    = "them:scan:state:"
-	sessionStatePrefix = "them:dash:sessions:state:"
+	pingInterval        = 30 * time.Second
+	subscribeDeadline   = 10 * time.Second
+	dashPrefix          = "them:dash:"
+	scanStatePrefix     = "them:scan:state:"
+	sessionStatePrefix  = "them:dash:sessions:state:"
+	appStatusCacheKey   = "them:dash:app_status_cache"
 )
 
 // dashRedis is the minimal Redis surface needed by the dashboard handler.
@@ -49,6 +50,8 @@ type dashRedis interface {
 	Subscribe(ctx context.Context, channels []string, fn func(rueidis.PubSubMessage)) error
 	// HGetAll returns all fields of the hash at key, or nil if not found.
 	HGetAll(ctx context.Context, key string) (map[string]string, error)
+	// Get returns the string value at key, or "" if not found.
+	Get(ctx context.Context, key string) (string, error)
 }
 
 // Handler is the /ws/dashboard WebSocket handler.
@@ -80,6 +83,17 @@ func (a *rueidisAdapter) HGetAll(ctx context.Context, key string) (map[string]st
 		return nil, err
 	}
 	return res.AsStrMap()
+}
+
+func (a *rueidisAdapter) Get(ctx context.Context, key string) (string, error) {
+	res := a.client.Do(ctx, a.client.B().Get().Key(key).Build())
+	if err := res.Error(); err != nil {
+		if rueidis.IsRedisNil(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return res.ToString()
 }
 
 // New creates a Handler wrapping a rueidis.Client.
@@ -224,6 +238,8 @@ func (h *Handler) subscribeRedis(ctx context.Context, cw *connWriter, redisChann
 func (h *Handler) sendSnapshots(ctx context.Context, cw *connWriter, channels []string) {
 	for _, ch := range channels {
 		switch {
+		case ch == "apps":
+			h.sendAppsSnapshot(ctx, cw)
 		case strings.HasPrefix(ch, "agent:"):
 			agentID := ch[len("agent:"):]
 			h.sendAgentSnapshot(ctx, cw, ch, agentID)
@@ -232,6 +248,23 @@ func (h *Handler) sendSnapshots(ctx context.Context, cw *connWriter, channels []
 			h.sendSessionsSnapshot(ctx, cw, ch, appID)
 		}
 	}
+}
+
+// sendAppsSnapshot delivers the last known app liveness statuses from the
+// Python bridge cache key (them:dash:app_status_cache). This lets new WS
+// subscribers see "live/unreachable" immediately instead of waiting up to 30s
+// for the next liveness probe publish.
+func (h *Handler) sendAppsSnapshot(ctx context.Context, cw *connWriter) {
+	raw, err := h.redis.Get(ctx, appStatusCacheKey)
+	if err != nil || raw == "" {
+		return
+	}
+	event := map[string]any{
+		"type":     "app_status",
+		"statuses": json.RawMessage(raw),
+	}
+	eventJSON, _ := json.Marshal(event)
+	_ = cw.writeJSON(map[string]any{"channel": "apps", "event": json.RawMessage(eventJSON)})
 }
 
 // sendAgentSnapshot delivers the current scan state for an agent channel.

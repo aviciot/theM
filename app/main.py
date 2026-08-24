@@ -50,8 +50,8 @@ async def _app_liveness_loop() -> None:
 
     try:
         while True:
-            await asyncio.sleep(_INTERVAL)
             if db_module.AsyncSessionLocal is None:
+                await asyncio.sleep(_INTERVAL)
                 continue
             try:
                 async with db_module.AsyncSessionLocal() as db:
@@ -82,6 +82,7 @@ async def _app_liveness_loop() -> None:
                     logger.debug("app_liveness: probed apps", count=len(statuses))
             except Exception as exc:
                 logger.error("app_liveness: iteration error", error=str(exc))
+            await asyncio.sleep(_INTERVAL)
     except asyncio.CancelledError:
         pass
 
