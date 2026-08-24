@@ -50,7 +50,7 @@ export function RightPanel({
   debugStep,
 }: RightPanelProps) {
   return (
-    <div style={{
+    <div onKeyDown={e => e.stopPropagation()} style={{
       width: propertiesWidth, flexShrink: 0, borderLeft: `1px solid ${C.outline}`,
       background: C.surface, padding: '16px', overflowY: 'auto', position: 'relative',
     }} className="dark-scrollbar">

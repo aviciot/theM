@@ -103,7 +103,7 @@ export function PropertiesPanel({
   const fieldWrap: React.CSSProperties = { marginBottom: 14 };
 
   return (
-    <div style={{
+    <div onKeyDown={e => e.stopPropagation()} style={{
       width: 320, flexShrink: 0, height: '100%', overflowY: 'auto',
       ...glass, borderLeft: `1px solid ${C.glassBorder}`, padding: '16px 14px',
       display: 'flex', flexDirection: 'column',
