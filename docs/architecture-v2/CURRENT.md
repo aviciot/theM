@@ -7,16 +7,16 @@
 ## HEAD
 
 Branch: `main`
-Commit: `900b8d4` — feat(mcp): UI-2 — Application Settings → MCP Credentials view
+Commit: `9bf1328` — feat(mcp): UI-3 — mcp_call canvas node + RightPanel properties panel
 
 Recent commits (newest first):
 ```
+9bf1328 feat(mcp): UI-3 — mcp_call canvas node + RightPanel properties panel
 900b8d4 feat(mcp): UI-2 — Application Settings → MCP Credentials view
 901dc36 feat(mcp): MCP-2 probe endpoint — POST /admin/mcp-servers/{id}/probe
 8f7159b feat(mcp-store): add streamable-http transport, drop stdio, show auth info
 7c0ec59 feat(mcp): MCP Store admin page — UI-1
 2e5bba4 feat(builder): show per-variable debug output for transform nodes in right panel
-a7b4ce7 feat(builder): TB/LR layout direction toggle for agent + application canvas
 ```
 
 ---
@@ -289,9 +289,16 @@ What is pending (Phase 1 frontend):
 - `AppCard.tsx`: MCP button added (indigo, `electrical_services` icon)
 - `ListView.tsx` + `page.tsx`: `mcp-credentials` view state + `openMCPCredentials` handler
 
-**What's NOT done yet (UI-3, MCP-3 onward):**
-- UI-3: Canvas `mcp_server` node + RightPanel properties panel
-- MCP-3: runtime executor wired into agent-runtime tool calls
+**What's done (UI-3 — commit 9bf1328):**
+- `go/internal/agentgen/spec.go`: `StepMCPCall = "mcp_call"` constant added
+- `go/internal/agentgen/nodes.go`: `mcp_call` stub NodeDef registered (label "MCP Tool", 🔌, single-input/output, Execute=nil)
+- `go/internal/agentgen/noderegistry_test.go`: allStepTypes 11→12; KnownStepTypesCount 11→12; mcp_call in StubTypesHaveNilExecute
+- `frontend/src/lib/nodeRegistry.ts`: `mcp_call` UI supplement (indigo accent, server/tool summary)
+- `frontend/src/app/admin/agents/builder/components/RightPanel.tsx`: `mcp_call` properties panel — server dropdown, tool dropdown/input, args template, output var, credentials info banner
+- `them-go-bridge` rebuilt and restarted — `mcp_call` now appears in `GET /admin/node-types`
+
+**What's NOT done yet (MCP-3 onward):**
+- MCP-3: runtime executor wired into agent-runtime tool calls (StepMCPCall Execute function)
 - `them-mcp-service` not yet started in production (needs `--profile mcp` in compose)
 
 ---
