@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 )
 
 // worker manages the health+discovery lifecycle for a single MCP server.
 // Each worker runs in its own goroutine with its own probe ticker and
 // independent exponential backoff. A panic in one worker never affects others.
+//
+// The worker holds a single persistent Client for its server. The MCP spec
+// (2025-03-26) requires initialize to be a one-time session handshake, not
+// a per-request step. The client is initialized once and reused across probe
+// cycles; it re-initializes on session expiry (HTTP 404).
 type worker struct {
 	server          Server
 	dal             *DAL
@@ -19,6 +23,7 @@ type worker struct {
 	baseInterval    time.Duration
 	maxProbeTimeout time.Duration
 	log             *slog.Logger
+	client          *Client // persistent; initialized once per session
 }
 
 func newWorker(server Server, dal *DAL, registry *Registry, baseInterval, maxProbeTimeout time.Duration, log *slog.Logger) *worker {
@@ -93,18 +98,27 @@ func (w *worker) probe(ctx context.Context) {
 	probeCtx, cancel := context.WithTimeout(ctx, w.maxProbeTimeout)
 	defer cancel()
 
-	client := NewClient(w.server.URL, "", "")
-
-	// Discover runs initialize then tools/list on the same client instance,
-	// so the Mcp-Session-Id from initialize is forwarded to tools/list.
-	result, err := client.Discover(probeCtx)
-	if err != nil {
-		// initialize failure → server unreachable; tools/list failure → degraded.
-		status := "degraded"
-		if strings.Contains(err.Error(), "mcp discover: initialize:") {
-			status = "unreachable"
+	// Ensure we have an initialized session. On first probe, or after session
+	// expiry (HTTP 404), create a fresh client and initialize.
+	if w.client == nil {
+		w.client = NewClient(w.server.URL, "", "")
+	}
+	if !w.client.initialized {
+		if err := w.client.Initialize(probeCtx); err != nil {
+			w.client = nil // discard; will retry next cycle
+			w.setStatus(ctx, "unreachable", err.Error())
+			return
 		}
-		w.setStatus(ctx, status, err.Error())
+	}
+
+	result, err := w.client.Discover(probeCtx)
+	if err != nil {
+		if IsSessionExpired(err) {
+			// Session expired — discard client, re-initialize next cycle.
+			w.log.Info("session expired, will re-initialize on next probe")
+			w.client = nil
+		}
+		w.setStatus(ctx, "degraded", err.Error())
 		return
 	}
 

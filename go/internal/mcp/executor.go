@@ -74,7 +74,13 @@ func (e *Executor) Execute(ctx context.Context, req ExecuteRequest) ExecuteRespo
 	}
 
 	// 5. Call the MCP tool.
+	// Per MCP spec, initialize is a required one-time handshake before any other
+	// request. For tool execution we create a new client per call (stateless executor
+	// design) and initialize it before calling the tool.
 	client := NewClient(server.URL, authHeaderName, authValue)
+	if err := client.Initialize(ctx); err != nil {
+		return ExecuteResponse{Error: fmt.Sprintf("mcp initialize failed: %v", err)}
+	}
 	result, err := client.Call(ctx, req.ToolName, req.Arguments)
 	if err != nil {
 		return ExecuteResponse{Error: fmt.Sprintf("mcp call failed: %v", err)}

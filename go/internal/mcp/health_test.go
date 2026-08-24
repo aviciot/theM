@@ -18,25 +18,41 @@ import (
 // --- mock MCP server helpers -------------------------------------------------
 
 type mockMCPBehavior struct {
-	failProbe  bool
-	tools      []mcp.Tool
-	probeCount atomic.Int32
+	failInitialize bool
+	tools          []mcp.Tool
+	requestCount   atomic.Int32 // all POST requests
+	sessionID      string       // non-empty → stateful server, issues Mcp-Session-Id
 }
 
+// newMockMCPServer creates a spec-compliant mock MCP server supporting the
+// initialize + notifications/initialized + tools/list sequence.
 func newMockMCPServer(t *testing.T, b *mockMCPBehavior) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b.probeCount.Add(1)
-		if b.failProbe {
+		b.requestCount.Add(1)
+
+		var req struct {
+			Method string `json:"method"`
+			ID     any    `json:"id"` // notifications have no id
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+
+		// notifications/initialized has no id — respond 202, no body.
+		if req.Method == "notifications/initialized" {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+
+		if b.failInitialize {
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		var req struct {
-			Method string `json:"method"`
-			ID     int    `json:"id"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
+
 		w.Header().Set("Content-Type", "application/json")
+		if b.sessionID != "" && req.Method == "initialize" {
+			w.Header().Set("Mcp-Session-Id", b.sessionID)
+		}
+
 		switch req.Method {
 		case "initialize":
 			json.NewEncoder(w).Encode(map[string]any{
@@ -59,31 +75,31 @@ func newMockMCPServer(t *testing.T, b *mockMCPBehavior) *httptest.Server {
 
 // --- MCP client tests --------------------------------------------------------
 
-func TestClient_Probe_Healthy(t *testing.T) {
+func TestClient_Initialize_Healthy(t *testing.T) {
 	b := &mockMCPBehavior{}
 	srv := newMockMCPServer(t, b)
 	defer srv.Close()
 
 	client := mcp.NewClient(srv.URL, "", "")
-	raw, err := client.Probe(context.Background())
+	err := client.Initialize(context.Background())
 	require.NoError(t, err)
-	assert.NotNil(t, raw)
-	assert.EqualValues(t, 1, b.probeCount.Load())
+	// Two requests: initialize + notifications/initialized.
+	assert.EqualValues(t, 2, b.requestCount.Load())
 }
 
-func TestClient_Probe_Unreachable(t *testing.T) {
+func TestClient_Initialize_Unreachable(t *testing.T) {
 	client := mcp.NewClient("http://127.0.0.1:19999", "", "")
-	_, err := client.Probe(context.Background())
+	err := client.Initialize(context.Background())
 	assert.Error(t, err)
 }
 
-func TestClient_Probe_ServerError(t *testing.T) {
-	b := &mockMCPBehavior{failProbe: true}
+func TestClient_Initialize_ServerError(t *testing.T) {
+	b := &mockMCPBehavior{failInitialize: true}
 	srv := newMockMCPServer(t, b)
 	defer srv.Close()
 
 	client := mcp.NewClient(srv.URL, "", "")
-	_, err := client.Probe(context.Background())
+	err := client.Initialize(context.Background())
 	assert.Error(t, err)
 }
 
@@ -96,6 +112,8 @@ func TestClient_Discover_ReturnsTools(t *testing.T) {
 	defer srv.Close()
 
 	client := mcp.NewClient(srv.URL, "", "")
+	require.NoError(t, client.Initialize(context.Background()))
+
 	result, err := client.Discover(context.Background())
 	require.NoError(t, err)
 	require.Len(t, result.Tools, 2)
@@ -109,19 +127,79 @@ func TestClient_Discover_EmptyManifest(t *testing.T) {
 	defer srv.Close()
 
 	client := mcp.NewClient(srv.URL, "", "")
+	require.NoError(t, client.Initialize(context.Background()))
+
 	result, err := client.Discover(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, result.Tools)
 }
 
-func TestClient_Discover_ProbeFailure(t *testing.T) {
-	b := &mockMCPBehavior{failProbe: true}
+func TestClient_Discover_RequiresInitialize(t *testing.T) {
+	b := &mockMCPBehavior{tools: []mcp.Tool{}}
+	srv := newMockMCPServer(t, b)
+	defer srv.Close()
+
+	// Calling Discover without Initialize must fail.
+	client := mcp.NewClient(srv.URL, "", "")
+	_, err := client.Discover(context.Background())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not initialized")
+}
+
+func TestClient_Discover_InitializeFailure(t *testing.T) {
+	b := &mockMCPBehavior{failInitialize: true}
 	srv := newMockMCPServer(t, b)
 	defer srv.Close()
 
 	client := mcp.NewClient(srv.URL, "", "")
-	_, err := client.Discover(context.Background())
+	err := client.Initialize(context.Background())
 	assert.Error(t, err)
+}
+
+func TestClient_SessionID_ForwardedOnSubsequentRequests(t *testing.T) {
+	const wantSessionID = "test-session-abc123"
+	var gotSessionIDs []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSessionIDs = append(gotSessionIDs, r.Header.Get("Mcp-Session-Id"))
+
+		var req struct {
+			Method string `json:"method"`
+			ID     any    `json:"id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+
+		if req.Method == "notifications/initialized" {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if req.Method == "initialize" {
+			w.Header().Set("Mcp-Session-Id", wantSessionID)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": req.ID,
+			"result": map[string]any{
+				"protocolVersion": "2024-11-05",
+				"tools":           []any{},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := mcp.NewClient(srv.URL, "", "")
+	require.NoError(t, client.Initialize(context.Background()))
+	_, err := client.Discover(context.Background())
+	require.NoError(t, err)
+
+	// initialize: no session ID yet (first request)
+	// notifications/initialized: session ID must be forwarded
+	// tools/list: session ID must be forwarded
+	require.Len(t, gotSessionIDs, 3)
+	assert.Empty(t, gotSessionIDs[0], "initialize request should not have session ID")
+	assert.Equal(t, wantSessionID, gotSessionIDs[1], "notifications/initialized must carry session ID")
+	assert.Equal(t, wantSessionID, gotSessionIDs[2], "tools/list must carry session ID")
 }
 
 func TestClient_RespectsBearerAuth(t *testing.T) {
@@ -130,9 +208,14 @@ func TestClient_RespectsBearerAuth(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		var req struct {
 			Method string `json:"method"`
-			ID     int    `json:"id"`
+			ID     any    `json:"id"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
+
+		if req.Method == "notifications/initialized" {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0", "id": req.ID,
@@ -142,18 +225,34 @@ func TestClient_RespectsBearerAuth(t *testing.T) {
 	defer srv.Close()
 
 	client := mcp.NewClient(srv.URL, "Authorization", "Bearer test-token-123")
-	_, err := client.Probe(context.Background())
+	err := client.Initialize(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer test-token-123", gotAuth)
 }
 
-// --- worker integration test (no DB/Redis — uses stub) -----------------------
+// TestClient_InitializeOnce verifies that a persistent client initializes once
+// and reuses the session for multiple Discover calls.
+func TestClient_InitializeOnce(t *testing.T) {
+	b := &mockMCPBehavior{tools: []mcp.Tool{{Name: "tool_a"}}}
+	srv := newMockMCPServer(t, b)
+	defer srv.Close()
 
-// workerProbeIntegration tests that a worker correctly transitions health
-// states by directly calling probe on a minimal worker setup. We bypass
-// the supervisor and DB writes to keep this a pure unit test.
-func TestWorker_ProbesConcurrently(t *testing.T) {
-	// Spin up 5 independent mock MCP servers.
+	client := mcp.NewClient(srv.URL, "", "")
+	require.NoError(t, client.Initialize(context.Background()))
+
+	// Two Discover calls — should not trigger additional initialize calls.
+	_, err := client.Discover(context.Background())
+	require.NoError(t, err)
+	_, err = client.Discover(context.Background())
+	require.NoError(t, err)
+
+	// Requests: initialize(1) + notifications/initialized(1) + tools/list(2) = 4
+	assert.EqualValues(t, 4, b.requestCount.Load())
+}
+
+// --- worker concurrency test (client-level) ----------------------------------
+
+func TestClient_ConcurrentDiscovery(t *testing.T) {
 	const n = 5
 	behaviors := make([]*mockMCPBehavior, n)
 	servers := make([]*httptest.Server, n)
@@ -163,7 +262,6 @@ func TestWorker_ProbesConcurrently(t *testing.T) {
 		defer servers[i].Close()
 	}
 
-	// Each client independently reaches its own server.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -172,6 +270,7 @@ func TestWorker_ProbesConcurrently(t *testing.T) {
 		i := i
 		go func() {
 			client := mcp.NewClient(servers[i].URL, "", "")
+			require.NoError(t, client.Initialize(ctx))
 			_, err := client.Discover(ctx)
 			assert.NoError(t, err, "server %d", i)
 			done <- struct{}{}
@@ -186,9 +285,9 @@ func TestWorker_ProbesConcurrently(t *testing.T) {
 		}
 	}
 
-	// All servers should have received exactly 2 calls (initialize + tools/list).
+	// Each server: initialize(1) + notifications/initialized(1) + tools/list(1) = 3 requests.
 	for i, b := range behaviors {
-		assert.EqualValues(t, 2, b.probeCount.Load(), "server %d probe count", i)
+		assert.EqualValues(t, 3, b.requestCount.Load(), "server %d request count", i)
 	}
 }
 

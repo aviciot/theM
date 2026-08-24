@@ -36,13 +36,25 @@ type CallResult struct {
 	IsError bool              `json:"isError,omitempty"`
 }
 
-// Client is a minimal MCP HTTP client covering initialize, tools/list, and tools/call.
+// Client is a spec-compliant MCP streamable-http client.
+//
+// Session lifecycle (per MCP 2025-03-26 spec):
+//   - initialize is a one-time handshake per session, not per request.
+//   - If the server returns Mcp-Session-Id, the client MUST include it on all
+//     subsequent requests.
+//   - On HTTP 404 (expired/unknown session), the client MUST re-initialize.
+//   - The client MUST send notifications/initialized after initialize before
+//     issuing any other requests.
+//
+// Hold one Client per server and call Initialize once; reuse for all
+// Discover and Call operations. The worker in health.go owns the Client.
 type Client struct {
-	httpClient *http.Client
-	serverURL  string
-	authHeader string // e.g. "Bearer <token>" or "<header>: <value>"
-	headerName string // header name for injection (default: Authorization)
-	sessionID  string // Mcp-Session-Id issued by streamable-http servers on initialize
+	httpClient  *http.Client
+	serverURL   string
+	authHeader  string // e.g. "Bearer <token>"
+	headerName  string // header name (default: Authorization)
+	sessionID   string // Mcp-Session-Id, empty for stateless servers
+	initialized bool   // true after a successful Initialize+notifications/initialized
 }
 
 // NewClient creates a Client for the given MCP server URL with optional auth.
@@ -60,10 +72,14 @@ func NewClient(serverURL, authHeaderName, authValue string) *Client {
 	}
 }
 
-// Probe issues an MCP initialize request to confirm the server is reachable.
-// Returns the raw server info block on success.
-func (c *Client) Probe(ctx context.Context) (json.RawMessage, error) {
-	body := map[string]any{
+// Initialize performs the MCP handshake: initialize + notifications/initialized.
+// Must be called once before Discover or Call. Safe to call again to re-initialize
+// (e.g. after a 404 session-expired response).
+func (c *Client) Initialize(ctx context.Context) error {
+	c.sessionID = ""
+	c.initialized = false
+
+	_, err := c.post(ctx, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
@@ -72,28 +88,36 @@ func (c *Client) Probe(ctx context.Context) (json.RawMessage, error) {
 			"clientInfo":      map[string]string{"name": "them-mcp-service", "version": "1.0"},
 			"capabilities":    map[string]any{},
 		},
-	}
-	resp, err := c.call(ctx, body)
+	})
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("mcp initialize: %w", err)
 	}
-	return resp, nil
+
+	// Send notifications/initialized (fire-and-forget notification — server responds 202, no body).
+	if err := c.notify(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "notifications/initialized",
+	}); err != nil {
+		return fmt.Errorf("mcp notifications/initialized: %w", err)
+	}
+
+	c.initialized = true
+	return nil
 }
 
 // Discover calls tools/list and returns the full manifest.
+// Requires a prior successful Initialize call.
 func (c *Client) Discover(ctx context.Context) (*DiscoveryResult, error) {
-	// initialize first (required by MCP spec before any other method)
-	if _, err := c.Probe(ctx); err != nil {
-		return nil, fmt.Errorf("mcp discover: initialize: %w", err)
+	if !c.initialized {
+		return nil, fmt.Errorf("mcp discover: client not initialized — call Initialize first")
 	}
 
-	body := map[string]any{
+	raw, err := c.post(ctx, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      2,
 		"method":  "tools/list",
 		"params":  map[string]any{},
-	}
-	raw, err := c.call(ctx, body)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("mcp discover: tools/list: %w", err)
 	}
@@ -113,13 +137,13 @@ func (c *Client) Discover(ctx context.Context) (*DiscoveryResult, error) {
 }
 
 // Call invokes a single MCP tool and returns the raw result content.
-// It runs initialize first (required by the MCP spec) to obtain a session ID.
+// Requires a prior successful Initialize call.
 func (c *Client) Call(ctx context.Context, toolName string, arguments map[string]any) (*CallResult, error) {
-	if _, err := c.Probe(ctx); err != nil {
-		return nil, fmt.Errorf("mcp call %s: initialize: %w", toolName, err)
+	if !c.initialized {
+		return nil, fmt.Errorf("mcp call %s: client not initialized — call Initialize first", toolName)
 	}
 
-	body := map[string]any{
+	raw, err := c.post(ctx, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      3,
 		"method":  "tools/call",
@@ -127,8 +151,7 @@ func (c *Client) Call(ctx context.Context, toolName string, arguments map[string
 			"name":      toolName,
 			"arguments": arguments,
 		},
-	}
-	raw, err := c.call(ctx, body)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("mcp call %s: %w", toolName, err)
 	}
@@ -140,8 +163,39 @@ func (c *Client) Call(ctx context.Context, toolName string, arguments map[string
 	return &result, nil
 }
 
-// call sends a JSON-RPC request and returns the `result` field of the response.
-func (c *Client) call(ctx context.Context, body any) (json.RawMessage, error) {
+// IsSessionExpired reports whether an error from Discover or Call indicates the
+// server session has expired (HTTP 404). The caller should re-Initialize.
+func IsSessionExpired(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "mcp: server returned 404:")
+}
+
+// notify sends a JSON-RPC notification (no id field, server responds 202 with no body).
+func (c *Client) notify(ctx context.Context, body any) error {
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.serverURL, bytes.NewReader(encoded))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// post sends a JSON-RPC request and returns the `result` field of the response.
+func (c *Client) post(ctx context.Context, body any) (json.RawMessage, error) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("mcp: marshal request: %w", err)
@@ -151,14 +205,7 @@ func (c *Client) call(ctx context.Context, body any) (json.RawMessage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mcp: build request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	if c.authHeader != "" {
-		req.Header.Set(c.headerName, c.authHeader)
-	}
-	if c.sessionID != "" {
-		req.Header.Set("Mcp-Session-Id", c.sessionID)
-	}
+	c.setHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -166,14 +213,14 @@ func (c *Client) call(ctx context.Context, body any) (json.RawMessage, error) {
 	}
 	defer resp.Body.Close()
 
-	// Capture session ID issued by streamable-http servers on initialize.
+	// Capture Mcp-Session-Id when issued by a stateful server.
 	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
 		c.sessionID = sid
 	}
 
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("mcp: server returned %d: %s", resp.StatusCode, string(body))
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("mcp: server returned %d: %s", resp.StatusCode, string(errBody))
 	}
 
 	// Streamable-http servers respond with text/event-stream (SSE) format.
@@ -181,7 +228,7 @@ func (c *Client) call(ctx context.Context, body any) (json.RawMessage, error) {
 	ct := resp.Header.Get("Content-Type")
 	var jsonBody []byte
 	if strings.Contains(ct, "text/event-stream") {
-		// Parse SSE: find the first "data: ..." line and use it as the JSON body.
+		// Extract the JSON payload from the first "data: ..." SSE line.
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -214,4 +261,15 @@ func (c *Client) call(ctx context.Context, body any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("mcp: rpc error %d: %s", envelope.Error.Code, envelope.Error.Message)
 	}
 	return envelope.Result, nil
+}
+
+func (c *Client) setHeaders(req *http.Request) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if c.authHeader != "" {
+		req.Header.Set(c.headerName, c.authHeader)
+	}
+	if c.sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
 }
