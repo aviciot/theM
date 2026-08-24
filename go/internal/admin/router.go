@@ -183,17 +183,16 @@ func BuildRouter(
 		r.Post("/admin/debug-proxy", DebugProxyHandler{}.ServeHTTP)
 	}
 
-	// Transform function endpoints — authenticated.
-	// GET  /admin/transform-functions  — self-describing function catalog
-	// POST /admin/transform-test       — run a chain, return step-by-step trace
-	// POST /admin/transform-assist     — AI chain suggestion (501 stub)
+	// Transform function endpoints.
+	// GET /admin/transform-functions — public (static catalog, no tenant data, same as node-types)
+	// POST /admin/transform-test     — authenticated (runs user-supplied chain server-side)
+	// POST /admin/transform-assist   — authenticated (AI stub)
 	tf := TransformHandler{}
+	r.Get("/admin/transform-functions", tf.Catalog) // public — static data, no auth needed
 	if jwtMiddleware != nil {
-		r.With(jwtMiddleware, RequireSuperAdmin(logger)).Get("/admin/transform-functions", tf.Catalog)
 		r.With(jwtMiddleware, RequireSuperAdmin(logger)).Post("/admin/transform-test", tf.Test)
 		r.With(jwtMiddleware, RequireSuperAdmin(logger)).Post("/admin/transform-assist", tf.Assist)
 	} else {
-		r.Get("/admin/transform-functions", tf.Catalog)
 		r.Post("/admin/transform-test", tf.Test)
 		r.Post("/admin/transform-assist", tf.Assist)
 	}

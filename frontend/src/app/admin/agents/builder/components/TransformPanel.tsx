@@ -74,6 +74,13 @@ const rowStyle: React.CSSProperties = {
   display: 'flex', gap: 4, marginBottom: 6, alignItems: 'flex-start',
 };
 
+// Selects need explicit dark background so option text is readable on all OSes/browsers.
+const selectStyle: React.CSSProperties = {
+  ...inputStyle,
+  background: '#1e293b',
+  color: '#f1f5f9',
+};
+
 const stepCard = (ok: boolean | null): React.CSSProperties => ({
   background: ok === null ? 'rgba(99,102,241,0.06)' : ok ? 'rgba(74,222,128,0.06)' : 'rgba(248,113,113,0.06)',
   border: `1px solid ${ok === null ? 'rgba(99,102,241,0.25)' : ok ? 'rgba(74,222,128,0.25)' : 'rgba(248,113,113,0.35)'}`,
@@ -107,7 +114,7 @@ function FunctionRow({
         <select
           value={step.fn}
           onChange={e => onChange({ ...step, fn: e.target.value, args: {} })}
-          style={{ ...inputStyle, flex: 1, fontSize: '11px' }}
+          style={{ ...selectStyle, flex: 1, fontSize: '11px' }}
         >
           <option value="">— pick function —</option>
           {catalog && Object.entries(catalog.by_category).map(([cat, fns]) => (
@@ -128,7 +135,7 @@ function FunctionRow({
         <select
           value={step.input_var}
           onChange={e => onChange({ ...step, input_var: e.target.value })}
-          style={{ ...inputStyle, flex: 1, fontSize: '11px', ...monoStyle }}
+          style={{ ...selectStyle, flex: 1, fontSize: '11px', ...monoStyle }}
         >
           <option value="">— pick var —</option>
           {availableVars.map(v => <option key={v} value={v}>{v}</option>)}
