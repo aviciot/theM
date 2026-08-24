@@ -8,6 +8,7 @@ import (
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
@@ -41,8 +42,18 @@ func (h *AgentDefinitionsHandler) Routes(r chi.Router) {
 	r.Get("/agent-definitions/{id}", h.Get)
 	r.Put("/agent-definitions/{id}", h.Update)
 	r.Delete("/agent-definitions/{id}", h.Delete)
+	r.Post("/agent-definitions/{id}/clone", h.Clone)
 	r.Post("/agent-definitions/{id}/validate", h.Validate)
 	r.Post("/agent-definitions/{id}/publish", h.Publish)
+}
+
+// claimsUserID extracts the integer user ID from JWT claims in the context.
+// Returns 0 when claims are absent (bearer-token-authenticated requests have no user claims).
+func claimsUserID(r *http.Request) int {
+	if claims, ok := auth.ClaimsFromCtx(r.Context()); ok {
+		return int(claims.UserID)
+	}
+	return 0
 }
 
 // Create handles POST /api/v1/admin/agent-definitions.
@@ -61,7 +72,7 @@ func (h *AgentDefinitionsHandler) Create(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	id, rev, err := h.svc.CreateDraft(r.Context(), tenantID, input.AgentSlug, input.Definition)
+	id, rev, err := h.svc.CreateDraft(r.Context(), tenantID, input.AgentSlug, input.Definition, claimsUserID(r))
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -145,6 +156,34 @@ func (h *AgentDefinitionsHandler) Delete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// cloneInput is the optional request body for the Clone endpoint.
+type cloneInput struct {
+	AgentSlug string `json:"agent_slug,omitempty"` // optional new slug; defaults to "{src}_copy"
+}
+
+// Clone handles POST /api/v1/admin/agent-definitions/{id}/clone.
+// Creates a new draft by duplicating an existing definition.
+func (h *AgentDefinitionsHandler) Clone(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid agent definition id")
+		return
+	}
+	var input cloneInput
+	_ = json.NewDecoder(r.Body).Decode(&input)
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	newID, rev, err := h.svc.CloneDraft(r.Context(), tenantID, id, input.AgentSlug, claimsUserID(r))
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "clone agent definition")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": newID, "revision": rev})
 }
 
 // validateInput is the optional request body for the Validate endpoint.

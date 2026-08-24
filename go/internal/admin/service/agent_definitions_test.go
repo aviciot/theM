@@ -39,7 +39,7 @@ type agentDefFakeDal struct {
 func (f *agentDefFakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) {
 	return f.nextRev, nil
 }
-func (f *agentDefFakeDal) CreateAgentDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string) (string, error) {
+func (f *agentDefFakeDal) CreateAgentDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string, _ int) (string, error) {
 	f.createAgentDefCalls++
 	return f.createdAgentID, f.createAgentDefErr
 }
@@ -309,7 +309,7 @@ func newAgentDefSvc(f *agentDefFakeDal) *service.AgentDefinitionService {
 func TestCreateDraft_Valid(t *testing.T) {
 	f := &agentDefFakeDal{nextRev: 1, createdAgentID: "def-uuid-1"}
 	svc := newAgentDefSvc(f)
-	id, rev, err := svc.CreateDraft(context.Background(), "t1", "my-agent", validAgentDef(t))
+	id, rev, err := svc.CreateDraft(context.Background(), "t1", "my-agent", validAgentDef(t), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestCreateDraft_Valid(t *testing.T) {
 func TestCreateDraft_MissingSlug(t *testing.T) {
 	f := &agentDefFakeDal{}
 	svc := newAgentDefSvc(f)
-	_, _, err := svc.CreateDraft(context.Background(), "t1", "", validAgentDef(t))
+	_, _, err := svc.CreateDraft(context.Background(), "t1", "", validAgentDef(t), 0)
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation, got %v", err)
 	}
@@ -339,7 +339,7 @@ func TestCreateDraft_MissingSlug(t *testing.T) {
 func TestCreateDraft_EmptyDefinitionObject(t *testing.T) {
 	f := &agentDefFakeDal{}
 	svc := newAgentDefSvc(f)
-	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", json.RawMessage(`[]`))
+	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", json.RawMessage(`[]`), 0)
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation for array input, got %v", err)
 	}
@@ -352,7 +352,7 @@ func TestCreateDraft_RejectsSecretValueKey(t *testing.T) {
 		"agent_root": {"display_name": "X", "secret_value": "oops"},
 		"skills": []
 	}`)
-	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", bad)
+	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", bad, 0)
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation for secret_value key, got %v", err)
 	}
@@ -370,7 +370,7 @@ func TestCreateDraft_RejectsSecretValue(t *testing.T) {
 		"skills": [],
 		"secret_value": "should-be-rejected"
 	}`)
-	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", bad)
+	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", bad, 0)
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation for secret_value key, got %v", err)
 	}
@@ -380,7 +380,7 @@ func TestCreateDraft_ValidMinimalDefinition(t *testing.T) {
 	f := &agentDefFakeDal{}
 	svc := newAgentDefSvc(f)
 	good := json.RawMessage(`{"agent_root": {"display_name": "Minimal"}, "skills": []}`)
-	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", good)
+	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", good, 0)
 	if err != nil {
 		t.Errorf("want no error for minimal valid definition, got %v", err)
 	}
@@ -396,7 +396,7 @@ func TestCreateDraft_DuplicateSkillId(t *testing.T) {
 			{"skill_id": "s1", "name": "Skill B"}
 		]
 	}`)
-	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", bad)
+	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", bad, 0)
 	if !errors.Is(err, service.ErrUnprocessable) {
 		t.Errorf("want ErrUnprocessable for duplicate skill_id, got %v", err)
 	}
@@ -416,7 +416,7 @@ func TestCreateDraft_DuplicateStepId(t *testing.T) {
 			]
 		}]
 	}`)
-	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", bad)
+	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", bad, 0)
 	if !errors.Is(err, service.ErrUnprocessable) {
 		t.Errorf("want ErrUnprocessable for duplicate step id, got %v", err)
 	}
@@ -425,7 +425,7 @@ func TestCreateDraft_DuplicateStepId(t *testing.T) {
 func TestCreateDraft_RevisionIncrements(t *testing.T) {
 	f := &agentDefFakeDal{nextRev: 2, createdAgentID: "def-uuid-2"}
 	svc := newAgentDefSvc(f)
-	_, rev, err := svc.CreateDraft(context.Background(), "t1", "my-agent", validAgentDef(t))
+	_, rev, err := svc.CreateDraft(context.Background(), "t1", "my-agent", validAgentDef(t), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestCreateDraft_UniqueViolation_MapsConflict(t *testing.T) {
 		createAgentDefErr: pgErr,
 	}
 	svc := newAgentDefSvc(f)
-	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", validAgentDef(t))
+	_, _, err := svc.CreateDraft(context.Background(), "t1", "my-agent", validAgentDef(t), 0)
 	if !errors.Is(err, service.ErrConflict) {
 		t.Errorf("want ErrConflict for unique violation, got %v", err)
 	}

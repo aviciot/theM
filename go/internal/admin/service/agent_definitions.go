@@ -124,8 +124,9 @@ func validateAgentDefinition(raw json.RawMessage) error {
 }
 
 // CreateDraft validates, gets next revision, hashes, and inserts a draft agent definition.
-// Returns the new definition UUID and revision.
-func (s *AgentDefinitionService) CreateDraft(ctx context.Context, tenantID, agentSlug string, defRaw json.RawMessage) (string, int, error) {
+// Returns the new definition UUID and revision. ownerID is the auth_service user id
+// extracted from the JWT; pass 0 when not available (stored as NULL).
+func (s *AgentDefinitionService) CreateDraft(ctx context.Context, tenantID, agentSlug string, defRaw json.RawMessage, ownerID int) (string, int, error) {
 	if agentSlug == "" {
 		return "", 0, validation("agent_slug is required")
 	}
@@ -140,7 +141,7 @@ func (s *AgentDefinitionService) CreateDraft(ctx context.Context, tenantID, agen
 	if err != nil {
 		return "", 0, validation("definition is not valid JSON")
 	}
-	id, err := s.dal.CreateAgentDefinition(ctx, tenantID, agentSlug, rev, []byte(defRaw), hash)
+	id, err := s.dal.CreateAgentDefinition(ctx, tenantID, agentSlug, rev, []byte(defRaw), hash, ownerID)
 	if err != nil {
 		if dal.IsUniqueViolation(err) {
 			return "", 0, ErrConflict
@@ -148,6 +149,23 @@ func (s *AgentDefinitionService) CreateDraft(ctx context.Context, tenantID, agen
 		return "", 0, err
 	}
 	return id, rev, nil
+}
+
+// CloneDraft creates a new draft by copying an existing definition, optionally
+// updating the agent_slug. The cloned draft is owned by ownerID.
+func (s *AgentDefinitionService) CloneDraft(ctx context.Context, tenantID, srcID, newSlug string, ownerID int) (string, int, error) {
+	src, err := s.dal.GetAgentDefinition(ctx, tenantID, srcID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			return "", 0, ErrNotFound
+		}
+		return "", 0, err
+	}
+	slug := newSlug
+	if slug == "" {
+		slug = src.AgentSlug + "_copy"
+	}
+	return s.CreateDraft(ctx, tenantID, slug, src.Definition, ownerID)
 }
 
 // GetDefinition fetches a single agent definition scoped to tenant.

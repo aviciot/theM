@@ -591,10 +591,13 @@ export interface AgentDefinition {
   id: string;
   tenant_id: string;
   agent_slug: string;
+  display_name: string;
   revision: number;
   status: 'draft' | 'published';
-  definition: AgentDefinitionDoc;
+  definition: AgentDefinitionDoc | null;
   definition_hash: string;
+  owner_id: number | null;
+  owner_username: string;
   created_at: string;
   updated_at: string;
 }
@@ -803,6 +806,8 @@ export const themApi = {
     api.put<{ id: string; updated: boolean }>(`/admin/agent-definitions/${id}`, body),
   deleteAgentDefinition: (id: string) =>
     api.delete<void>(`/admin/agent-definitions/${id}`),
+  cloneAgentDefinition: (id: string, agentSlug?: string) =>
+    api.post<{ id: string; revision: number }>(`/admin/agent-definitions/${id}/clone`, { agent_slug: agentSlug ?? '' }),
 
   // Phase 3: validate + publish
   // Always resolves (never throws). Accepts an optional AbortSignal and an

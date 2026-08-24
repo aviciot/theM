@@ -349,7 +349,7 @@ func (f *fakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.C
 
 // Agent definition stubs.
 func (f *fakeDal) GetNextAgentRevision(_ context.Context, _, _ string) (int, error) { return 1, nil }
-func (f *fakeDal) CreateAgentDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string) (string, error) {
+func (f *fakeDal) CreateAgentDefinition(_ context.Context, _, _ string, _ int, _ []byte, _ string, _ int) (string, error) {
 	return f.createdID, nil
 }
 func (f *fakeDal) GetAgentDefinition(_ context.Context, _, _ string) (dal.AgentDefinition, error) {

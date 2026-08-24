@@ -93,7 +93,7 @@ type Dal interface {
 
 	// Agent definitions (Canvas A2A Builder, Phase 2) — tenant-scoped, design-time only
 	GetNextAgentRevision(ctx context.Context, tenantID, agentSlug string) (int, error)
-	CreateAgentDefinition(ctx context.Context, tenantID, agentSlug string, rev int, defJSON []byte, hash string) (string, error)
+	CreateAgentDefinition(ctx context.Context, tenantID, agentSlug string, rev int, defJSON []byte, hash string, ownerID int) (string, error)
 	GetAgentDefinition(ctx context.Context, tenantID, id string) (dal.AgentDefinition, error)
 	ListAgentDefinitions(ctx context.Context, tenantID string) ([]dal.AgentDefinition, error)
 	UpdateDraftAgentDefinition(ctx context.Context, tenantID, id string, defJSON []byte, hash string) error
