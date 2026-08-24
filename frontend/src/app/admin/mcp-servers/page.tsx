@@ -35,7 +35,7 @@ const HEALTH_COLORS: Record<HealthStatus, { dot: string; bg: string; border: str
   healthy:     { dot: '#34d399', bg: 'rgba(16,185,129,0.12)',  border: 'rgba(16,185,129,0.28)',  label: 'Healthy' },
   degraded:    { dot: '#fbbf24', bg: 'rgba(251,191,36,0.12)',  border: 'rgba(251,191,36,0.28)',  label: 'Degraded' },
   unreachable: { dot: '#f87171', bg: 'rgba(220,38,38,0.12)',   border: 'rgba(220,38,38,0.25)',   label: 'Unreachable' },
-  unknown:     { dot: '#64748b', bg: 'rgba(100,116,139,0.12)', border: 'rgba(100,116,139,0.22)', label: 'Unknown' },
+  unknown:     { dot: '#64748b', bg: 'rgba(100,116,139,0.12)', border: 'rgba(100,116,139,0.22)', label: 'Not probed' },
 };
 
 function HealthBadge({ status, pulse }: { status: HealthStatus; pulse?: boolean }) {
@@ -58,8 +58,9 @@ function HealthBadge({ status, pulse }: { status: HealthStatus; pulse?: boolean 
 
 // ── transport / auth badges ───────────────────────────────────────────────────
 
-function TransportBadge({ t }: { t: string }) {
-  const color = t === 'http' ? '#38bdf8' : t === 'sse' ? '#a78bfa' : '#94a3b8';
+function TransportBadge({ t }: { t: string | undefined }) {
+  if (!t) return null;
+  const color = t === 'streamable-http' ? '#818cf8' : t === 'http' ? '#38bdf8' : t === 'sse' ? '#a78bfa' : '#94a3b8';
   return (
     <span style={{
       fontSize: '9px', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
@@ -434,8 +435,11 @@ function PropertiesPanel({
           <button key={t} onClick={() => setTab(t)} style={{
             padding: '6px 14px', borderRadius: '8px 8px 0 0', fontSize: '12px', fontWeight: tab === t ? 700 : 400,
             background: tab === t ? `${ACCENT}18` : 'transparent',
-            border: `1px solid ${tab === t ? ACCENT_BORDER : 'transparent'}`,
-            borderBottom: 'none', color: tab === t ? ACCENT : 'var(--tm-card-text-muted)', cursor: 'pointer',
+            borderTop: `1px solid ${tab === t ? ACCENT_BORDER : 'transparent'}`,
+            borderLeft: `1px solid ${tab === t ? ACCENT_BORDER : 'transparent'}`,
+            borderRight: `1px solid ${tab === t ? ACCENT_BORDER : 'transparent'}`,
+            borderBottom: 'none',
+            color: tab === t ? ACCENT : 'var(--tm-card-text-muted)', cursor: 'pointer',
             textTransform: 'capitalize',
           }}>{t === 'general' ? 'General' : 'Status & Tools'}</button>
         ))}
