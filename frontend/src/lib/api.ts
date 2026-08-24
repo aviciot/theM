@@ -670,6 +670,42 @@ export interface AgentParamsResponse {
   required_params: AgentParamMeta[];
 }
 
+// ── MCP Store ──────────────────────────────────────────────────────────────
+
+export interface MCPTool {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface MCPServer {
+  id: string;
+  tenant_id: string;
+  name: string;
+  slug: string;
+  description: string;
+  transport: 'http' | 'sse' | 'stdio';
+  url: string;
+  auth_type: 'none' | 'bearer' | 'header' | 'oauth2';
+  health_status: 'unknown' | 'healthy' | 'degraded' | 'unreachable';
+  last_checked_at: string | null;
+  last_error: string;
+  tools_manifest: MCPTool[];
+  tools_count: number;
+  capabilities: Record<string, unknown>;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MCPCredentialMeta {
+  mcp_server_id: string;
+  slug: string;
+  name: string;
+  credential_set: boolean;
+  auth_header_name: string;
+}
+
 export const themApi = {
   health: () => fetch(`${HEALTH_BASE}/health`)
     .then((r) => r.json())
@@ -864,4 +900,25 @@ export const themApi = {
     api.get<AgentParamsResponse>(`/admin/applications/${appId}/agents/${agentId}/params`),
   putAgentParams: (appId: string, agentId: string, params: Record<string, string>) =>
     api.put<void>(`/admin/applications/${appId}/agents/${agentId}/params`, { params }),
+
+  // MCP Store — server registry + app credentials
+  listMCPServers: () =>
+    api.get<MCPServer[]>('/admin/mcp-servers'),
+  createMCPServer: (body: unknown) =>
+    api.post<MCPServer>('/admin/mcp-servers', body),
+  getMCPServer: (id: string) =>
+    api.get<MCPServer>(`/admin/mcp-servers/${id}`),
+  updateMCPServer: (id: string, body: unknown) =>
+    api.patch<MCPServer>(`/admin/mcp-servers/${id}`, body),
+  deleteMCPServer: (id: string) =>
+    api.delete<void>(`/admin/mcp-servers/${id}`),
+  probeMCPServer: (id: string) =>
+    api.post<{ health_status: string; tools_count: number; last_error?: string }>(`/admin/mcp-servers/${id}/probe`, {}),
+
+  listAppMCPCredentials: (appId: string) =>
+    api.get<MCPCredentialMeta[]>(`/admin/applications/${appId}/mcp-credentials`),
+  setAppMCPCredential: (appId: string, serverId: string, body: { credential: string; auth_header_name?: string }) =>
+    api.put<void>(`/admin/applications/${appId}/mcp-credentials/${serverId}`, body),
+  deleteAppMCPCredential: (appId: string, serverId: string) =>
+    api.delete<void>(`/admin/applications/${appId}/mcp-credentials/${serverId}`),
 };

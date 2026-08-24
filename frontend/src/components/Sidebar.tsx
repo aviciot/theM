@@ -10,8 +10,9 @@ const NAV = [
 ];
 
 const ADMIN_NAV = [
-  { href: '/admin/agents',        icon: 'smart_toy',    label: 'Agents' },
-  { href: '/admin/applications',  icon: 'apps',          label: 'Applications' },
+  { href: '/admin/agents',        icon: 'smart_toy',         label: 'Agents' },
+  { href: '/admin/mcp-servers',   icon: 'electrical_services', label: 'MCP Store' },
+  { href: '/admin/applications',  icon: 'apps',               label: 'Applications' },
   { href: '/admin/tokens',        icon: 'key',           label: 'Access Tokens' },
   { href: '/admin/playground',    icon: 'science',       label: 'Playground' },
   { href: '/admin/settings',      icon: 'settings',      label: 'Settings' },
