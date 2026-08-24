@@ -158,6 +158,7 @@ them-mcp-service:
     retries: 3
   labels:
     - "traefik.enable=false"   # internal only — never exposed through Traefik
+  # Redis is required: manifest cache (hot path), health cache, pub/sub invalidation, leader election
 ```
 
 `them-go-bridge` adds `them-mcp-service` to its `depends_on` so the orchestrator can call it
@@ -444,13 +445,43 @@ New tab in App settings (mirrors LLM Providers tab):
 
 ## 8. Redis Keys
 
+Redis is used for three distinct purposes: removing Postgres from the hot execution path,
+decoupling health display from DB write latency, and enabling horizontal scale via leader election.
+Postgres remains the authoritative store — Redis is a performance and coordination layer only.
+
 New keys (add to `docs/REDIS.md`):
 
 | Key pattern | Type | TTL | Purpose |
 |---|---|---|---|
-| `them:mcp:manifest:{slug}` | JSON string | 5 min | Manifest cache in MCP Service (avoids DB on every execution) |
-| `them:mcp:health:{slug}` | JSON string | 90 s | Last health probe result |
-| `them:mcp:manifest:changed` | Pub/Sub channel | — | Broadcast after discovery → bridge invalidates tool-list cache |
+| `them:mcp:manifest:{slug}` | JSON string | 5 min | Manifest cache — avoids a DB read on every tool call in the execution hot path |
+| `them:mcp:health:{slug}` | JSON string | 90 s | Last health probe result — decouples dashboard display from Postgres write latency; enables live health indicators without DB polling |
+| `them:mcp:manifest:changed` | Pub/Sub channel | — | Broadcast after discovery → all `them-go-bridge` replicas invalidate their in-process tool-list cache instantly, no polling |
+| `them:mcp:leader` | String (SET NX PX) | 30 s | Leader election — only the replica holding this lock runs the health/discovery loop; others are pure stateless executors; lock auto-expires so a crashed leader is replaced within one TTL window |
+
+### Why each key earns its place
+
+**`them:mcp:manifest:{slug}`** — `POST /internal/execute` is called on every LLM tool invocation
+during a run. Without this cache every tool call hits Postgres to read `tools_manifest` for subset
+filtering. Manifests change rarely (only when an MCP server adds/removes tools), so a 5-min cache
+is almost always a hit. Result: Postgres is only consulted on cache miss.
+
+**`them:mcp:health:{slug}`** — health state is written to Postgres by the loop, but if you want a
+live health indicator in the dashboard (short-interval polling or WebSocket push) you cannot afford
+a Postgres read every few seconds per server. Health results land in Redis first; Postgres is
+updated async. Also means health state survives a brief Postgres hiccup without the UI showing
+everything as `unknown`.
+
+**`them:mcp:manifest:changed`** — `them-go-bridge` holds an in-process cache of tool manifests to
+avoid a Redis read on every orchestrator message. Without pub/sub there is no way to tell bridge
+replicas a manifest changed without polling. This channel lets the MCP Service broadcast a targeted
+invalidation after each discovery run so all bridge replicas stay coherent instantly.
+
+**`them:mcp:leader`** — without leader election every replica runs its own health loop, producing
+N redundant probes to every external MCP server and N concurrent writes to the same DB rows.
+With a `SET NX PX 30000` lock, only one replica runs the loop at a time. The rest handle
+`POST /internal/execute` as pure stateless HTTP servers. On crash or restart the lock expires
+within 30s and another replica takes over automatically. This is what makes the service safely
+horizontally scalable.
 
 ---
 
