@@ -1138,6 +1138,15 @@ services:
       - "traefik.http.routers.them-go-a2a.entrypoints=web"
       - "traefik.http.routers.them-go-a2a.priority=120"
       - "traefik.http.routers.them-go-a2a.service=them-go-bridge-svc"
+      # ── MCP Store: mcp-servers CRUD + app credentials ─────────────────────
+      - "traefik.http.routers.them-go-mcp-servers.rule=PathPrefix(`/api/v1/admin/mcp-servers`)"
+      - "traefik.http.routers.them-go-mcp-servers.entrypoints=web"
+      - "traefik.http.routers.them-go-mcp-servers.priority=115"
+      - "traefik.http.routers.them-go-mcp-servers.service=them-go-bridge-svc"
+      - "traefik.http.routers.them-go-mcp-credentials.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/mcp-credentials(/[^/]+)?$$`)"
+      - "traefik.http.routers.them-go-mcp-credentials.entrypoints=web"
+      - "traefik.http.routers.them-go-mcp-credentials.priority=116"
+      - "traefik.http.routers.them-go-mcp-credentials.service=them-go-bridge-svc"
     restart: unless-stopped
     logging:
       driver: "json-file"
