@@ -9,7 +9,7 @@ Rules:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -60,6 +60,7 @@ class OrchestratorConfig:
     # pricing (str to avoid Decimal on wire)
     price_in: str              # per-token USD as str
     price_out: str
+    mcp_servers: List[Dict[str, Any]] = field(default_factory=list)  # [{slug, tools[]}]
 
 
 @dataclass
@@ -200,3 +201,14 @@ class FinalizeRunInput:
     total_cost_usd: str        # Decimal as str
     error: Optional[str]
     user_id: int
+
+
+@dataclass
+class InvokeMCPToolInput:
+    run_id: str
+    application_id: str
+    mcp_server_slug: str
+    tool_name: str
+    arguments: Dict[str, Any]
+    tool_call_id: str
+    iteration: int

@@ -5,12 +5,15 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -57,6 +60,15 @@ type RunContext struct {
 	SessionID     string
 }
 
+// MCPServerAttachment is one entry in the orchestrator's mcp_servers list.
+// Slug must match a row in them.mcp_servers.tools_manifest is pre-fetched at
+// run start and stored on ToolDefs; Tools is an allowlist (empty = all tools).
+type MCPServerAttachment struct {
+	Slug     string   `json:"slug"`
+	Tools    []string `json:"tools,omitempty"` // allowlist; empty = all
+	ToolDefs []llm.ToolDef                     // populated at run-start from DB manifest
+}
+
 // Config holds the orchestrator configuration loaded from DB.
 type Config struct {
 	Name          string
@@ -79,6 +91,14 @@ type Config struct {
 	MemoryEnabled        bool
 	SummarizeEveryNCalls int
 	MemoryRawFallbackN   int
+
+	// MCPServers lists MCP server attachments for this orchestrator.
+	// Tool definitions are pre-fetched and stored in MCPServerAttachment.ToolDefs.
+	MCPServers []MCPServerAttachment
+
+	// MCPServiceURL is the base URL of them-mcp-service (e.g. "http://them-mcp-service:8010").
+	// Required to dispatch mcp__* tool calls. Empty disables MCP tool dispatch.
+	MCPServiceURL string
 }
 
 // AgentInvoker is the interface the orchestrator uses to call agents.
@@ -427,7 +447,9 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 		}
 
 		// Execute tool calls and append results.
-		if len(toolCalls) > 0 && o.agents != nil {
+		// Call executeTools when agents or MCP servers are available; otherwise end the loop.
+		hasMCPServers := len(o.cfg.MCPServers) > 0 || o.cfg.MCPServiceURL != ""
+		if len(toolCalls) > 0 && (o.agents != nil || hasMCPServers) {
 			toolResults := o.executeTools(ctx, contextID, runID, iter, toolCalls, rctx)
 			toolResultMsg := buildToolResultMessage(toolResults)
 
@@ -440,7 +462,7 @@ func (o *Orchestrator) Run(ctx context.Context, runID, contextID string, userMsg
 
 			messages = append(messages, toolResultMsg)
 		} else if len(toolCalls) > 0 {
-			// No agent invoker — treat as end of loop.
+			// No agent invoker and no MCP — treat as end of loop.
 			break
 		}
 	}
@@ -500,39 +522,49 @@ func (o *Orchestrator) buildMessages(history []domain.Message, userMsg domain.Me
 	return msgs
 }
 
-// buildTools converts allowed agent slugs to LLM tool definitions.
-// When agents is nil or AllowedAgents is empty, returns nil (no tools).
+// buildTools converts allowed agent slugs and MCP server attachments to LLM tool definitions.
+// When agents is nil or AllowedAgents is empty and no MCP servers are attached, returns nil.
 // If a CardDiscoverer is wired, enriches descriptions from agent cards.
 func (o *Orchestrator) buildTools(ctx context.Context) []llm.ToolDef {
-	if o.agents == nil || len(o.cfg.AllowedAgents) == 0 {
-		return nil
-	}
-	tools := make([]llm.ToolDef, 0, len(o.cfg.AllowedAgents))
-	for _, slug := range o.cfg.AllowedAgents {
-		desc := "Invoke the " + slug + " agent."
+	var tools []llm.ToolDef
 
-		// Enrich description from agent card if discoverer is available.
-		if o.cardDiscoverer != nil {
-			card, err := o.cardDiscoverer.GetCard(ctx, slug)
-			if err != nil {
-				o.logger.Warn("orchestrator: card discovery failed — using static description",
-					"slug", slug, "error", err)
-			} else if card.Description != "" {
-				desc = card.Description
+	// Agent tools.
+	if o.agents != nil && len(o.cfg.AllowedAgents) > 0 {
+		for _, slug := range o.cfg.AllowedAgents {
+			desc := "Invoke the " + slug + " agent."
+
+			// Enrich description from agent card if discoverer is available.
+			if o.cardDiscoverer != nil {
+				card, err := o.cardDiscoverer.GetCard(ctx, slug)
+				if err != nil {
+					o.logger.Warn("orchestrator: card discovery failed — using static description",
+						"slug", slug, "error", err)
+				} else if card.Description != "" {
+					desc = card.Description
+				}
 			}
-		}
 
-		tools = append(tools, llm.ToolDef{
-			Name:        "agent__" + slug,
-			Description: desc,
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"input": map[string]any{"type": "string", "description": "The input to pass to the agent"},
+			tools = append(tools, llm.ToolDef{
+				Name:        "agent__" + slug,
+				Description: desc,
+				InputSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"input": map[string]any{"type": "string", "description": "The input to pass to the agent"},
+					},
+					"required": []string{"input"},
 				},
-				"required": []string{"input"},
-			},
-		})
+			})
+		}
+	}
+
+	// MCP tools — pre-fetched ToolDefs stored on each attachment.
+	for i := range o.cfg.MCPServers {
+		tools = append(tools, o.cfg.MCPServers[i].ToolDefs...)
+	}
+
+	if len(tools) == 0 {
+		return nil
 	}
 	return tools
 }
@@ -645,10 +677,38 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 				defer sem.Release(1)
 			}
 
+			// Route mcp__<server>__<tool> calls to them-mcp-service.
+			if len(tc.Name) > 5 && tc.Name[:5] == "mcp__" {
+				out, err := o.invokeMCPTool(ctx, rctx.ApplicationID, tc.Name, tc.Input)
+				results[i] = toolResult{callID: tc.ID, name: tc.Name, output: out, err: err}
+				if err != nil {
+					o.publishJSON(ctx, contextID, runID, "tool_result", map[string]any{
+						"name":  tc.Name,
+						"error": err.Error(),
+					})
+				} else {
+					o.publishJSON(ctx, contextID, runID, "tool_result", map[string]any{
+						"name":   tc.Name,
+						"output": string(out),
+					})
+				}
+				return
+			}
+
 			slug := tc.Name
 			// Strip "agent__" prefix.
 			if len(slug) > 7 && slug[:7] == "agent__" {
 				slug = slug[7:]
+			}
+
+			// Guard: if agents invoker is nil, fail gracefully.
+			if o.agents == nil {
+				results[i] = toolResult{callID: tc.ID, name: tc.Name, err: fmt.Errorf("no agent invoker configured for tool %q", tc.Name)}
+				o.publishJSON(ctx, contextID, runID, "tool_result", map[string]any{
+					"name":  tc.Name,
+					"error": results[i].err.Error(),
+				})
+				return
 			}
 
 			// Create child task row (non-fatal).
@@ -740,6 +800,65 @@ func (o *Orchestrator) executeTools(ctx context.Context, contextID, runID string
 
 	wg.Wait()
 	return results
+}
+
+// invokeMCPTool dispatches a mcp__<server>__<tool> call to them-mcp-service.
+// toolName must be in the form "mcp__<slug>__<tool>".
+func (o *Orchestrator) invokeMCPTool(ctx context.Context, applicationID, toolName string, input map[string]any) (json.RawMessage, error) {
+	if o.cfg.MCPServiceURL == "" {
+		return nil, fmt.Errorf("MCP tool %q called but MCPServiceURL is not configured", toolName)
+	}
+
+	// Parse mcp__<slug>__<tool>.
+	parts := splitMCPToolName(toolName)
+	if parts == nil {
+		return nil, fmt.Errorf("invalid MCP tool name %q: expected mcp__<server>__<tool>", toolName)
+	}
+	serverSlug, mcpToolName := parts[0], parts[1]
+
+	reqBody, _ := json.Marshal(map[string]any{
+		"application_id":  applicationID,
+		"mcp_server_slug": serverSlug,
+		"tool_name":       mcpToolName,
+		"arguments":       input,
+	})
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		o.cfg.MCPServiceURL+"/internal/execute", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("mcp tool %q: build request: %w", toolName, err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("mcp tool %q: http: %w", toolName, err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("mcp tool %q: server returned %d: %s", toolName, resp.StatusCode, string(body))
+	}
+
+	// them-mcp-service returns {"result": <any>}; forward the full body as the tool result.
+	return json.RawMessage(body), nil
+}
+
+// splitMCPToolName parses "mcp__<server>__<tool>" → ["<server>", "<tool>"].
+// Returns nil when the format is wrong.
+func splitMCPToolName(name string) []string {
+	// Must start with "mcp__" and contain at least one more "__" after that.
+	if len(name) <= 5 || name[:5] != "mcp__" {
+		return nil
+	}
+	rest := name[5:]
+	for i := 0; i < len(rest)-1; i++ {
+		if rest[i] == '_' && rest[i+1] == '_' {
+			return []string{rest[:i], rest[i+2:]}
+		}
+	}
+	return nil
 }
 
 // buildAssistantMessage builds an assistant message containing text and/or tool_use parts.

@@ -321,6 +321,7 @@ CREATE TABLE IF NOT EXISTS them.app_orchestrators (
     edges                           TEXT[]      NOT NULL DEFAULT '{websocket}',
     history_window                  INTEGER     NOT NULL DEFAULT 20,
     budget_tokens                   INTEGER,
+    mcp_servers                     JSONB       NOT NULL DEFAULT '[]',
     enabled                         BOOLEAN     NOT NULL DEFAULT TRUE,
     -- ── Timestamps ───────────────────────────────────────────────────────────
     created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),

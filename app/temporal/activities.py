@@ -38,6 +38,7 @@ from app.temporal.shared import (
     InitRunResult,
     InvokeAgentInput,
     InvokeAgentResult,
+    InvokeMCPToolInput,
     LoadContextResult,
     OrchestratorConfig,
     OrchestrationInput,
@@ -107,6 +108,10 @@ async def load_orchestration_context_activity(
 
         agent_configs = [agent_to_config(a) for a in agents]
         tools = build_tools_for_agents(agent_configs)
+
+        # Append MCP tools from servers attached to this orchestrator's LLM node.
+        mcp_tools = await _build_mcp_tools(getattr(orch, "mcp_servers", []) or [], db)
+        tools = tools + mcp_tools
 
         price_in, price_out = await load_model_pricing(
             getattr(orch, "llm_provider", "anthropic") or "anthropic",
@@ -253,6 +258,54 @@ async def _load_context_history(provider, context_id: str, current_task_id: str,
         return []
     history = provider.deserialize_history(all_rows)
     return _sanitize_history(history)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MCP tool manifest helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _build_mcp_tools(mcp_server_attachments: list, db) -> list:
+    """Build LLM-visible tool defs from MCP servers attached to the orchestrator.
+
+    Each tool is named  mcp__<server-slug>__<tool-name>.
+    An empty attachment.tools list means all tools in the manifest are visible.
+    A non-empty list acts as an allowlist.
+    """
+    if not mcp_server_attachments:
+        return []
+    slugs = [s["slug"] for s in mcp_server_attachments if s.get("slug")]
+    if not slugs:
+        return []
+
+    from sqlalchemy import select as _select
+    from app.models import MCPServer
+
+    rows = list((await db.execute(
+        _select(MCPServer).where(MCPServer.slug.in_(slugs), MCPServer.enabled == True)
+    )).scalars().all())
+
+    slug_to_row = {r.slug: r for r in rows}
+    tools = []
+    for attachment in mcp_server_attachments:
+        slug = attachment.get("slug", "")
+        allowed: list = attachment.get("tools") or []
+        row = slug_to_row.get(slug)
+        if not row or not row.tools_manifest:
+            continue
+        manifest = row.tools_manifest if isinstance(row.tools_manifest, list) else []
+        for t in manifest:
+            name = t.get("name", "")
+            if not name:
+                continue
+            if allowed and name not in allowed:
+                continue
+            schema = t.get("inputSchema") or {"type": "object", "properties": {}, "required": []}
+            tools.append({
+                "name": f"mcp__{slug}__{name}",
+                "description": t.get("description") or name,
+                "schema": schema,
+            })
+    return tools
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -923,6 +976,56 @@ async def finalize_run_activity(inp: FinalizeRunInput) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Activity: invoke_mcp_tool
+# ─────────────────────────────────────────────────────────────────────────────
+
+@activity.defn(name="invoke_mcp_tool")
+async def invoke_mcp_tool_activity(inp: InvokeMCPToolInput) -> InvokeAgentResult:
+    """Call an MCP tool via them-mcp-service POST /internal/execute."""
+    import time
+    import httpx
+
+    t0 = time.monotonic()
+    tool_label = f"mcp__{inp.mcp_server_slug}__{inp.tool_name}"
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "http://them-mcp-service:8010/internal/execute",
+                json={
+                    "application_id": inp.application_id,
+                    "mcp_server_slug": inp.mcp_server_slug,
+                    "tool_name": inp.tool_name,
+                    "arguments": inp.arguments,
+                },
+            )
+        latency_ms = int((time.monotonic() - t0) * 1000)
+
+        if resp.status_code >= 400:
+            err = f"[MCP {tool_label} HTTP {resp.status_code}: {resp.text[:300]}]"
+            return InvokeAgentResult(status="failed", result_text=err, file_parts=[], latency_ms=latency_ms, error=err)
+
+        data = resp.json()
+        if data.get("error"):
+            err = f"[MCP error: {data['error']}]"
+            return InvokeAgentResult(status="failed", result_text=err, file_parts=[], latency_ms=latency_ms, error=err)
+
+        raw = data.get("result", {})
+        result_text = json.dumps(raw) if isinstance(raw, (dict, list)) else str(raw)
+
+        await _publish_dash(inp.run_id, {
+            "type": "tool_done",
+            "tool": tool_label,
+            "latency_ms": latency_ms,
+        })
+        return InvokeAgentResult(status="completed", result_text=result_text, file_parts=[], latency_ms=latency_ms)
+
+    except Exception as exc:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        err = f"[MCP call failed: {exc}]"
+        return InvokeAgentResult(status="failed", result_text=err, file_parts=[], latency_ms=latency_ms, error=err)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -938,6 +1041,7 @@ ALL_ACTIVITIES = [
     init_run_activity,
     plan_turn_activity,
     invoke_agent_activity,
+    invoke_mcp_tool_activity,
     record_tool_results_activity,
     summarize_context_activity,
     finalize_run_activity,

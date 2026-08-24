@@ -143,6 +143,7 @@ func run() error {
 		bus:            bus,
 		historyStore:   historyStore,
 		logger:         log,
+		mcpServiceURL:  cfg.MCPServiceURL,
 	}
 
 	// ── 12b. Phase 3 — forward bus events to Redis Streams ───────────────────
@@ -219,6 +220,7 @@ type runOrchestratorFactory struct {
 	bus            event.Bus
 	historyStore   *history.Store
 	logger         *slog.Logger
+	mcpServiceURL  string
 }
 
 // Build creates a per-run orchestrator from the loaded RunConfig.
@@ -234,6 +236,8 @@ func (f *runOrchestratorFactory) Build(cfg workerconfig.RunConfig) (temporal.Orc
 	if cfg.LLMProvider != "" {
 		cfg.OrchestratorConfig.LLMProvider = cfg.LLMProvider
 	}
+	// Inject MCP service URL so the orchestrator can dispatch mcp__* tool calls.
+	cfg.OrchestratorConfig.MCPServiceURL = f.mcpServiceURL
 	orch := orchestrator.New(cfg.OrchestratorConfig, provider, f.registry, f.recorder, f.bus, f.logger).
 		WithHistoryLoader(f.historyStore).
 		WithCheckpointer(f.historyStore).

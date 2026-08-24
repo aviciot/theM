@@ -22,6 +22,7 @@ from app.temporal.activities import (
     finalize_run_activity,
     init_run_activity,
     invoke_agent_activity,
+    invoke_mcp_tool_activity,
     load_orchestration_context_activity,
     plan_turn_activity,
     record_tool_results_activity,
@@ -38,6 +39,7 @@ from app.temporal.shared import (
     FinalizeRunInput,
     InvokeAgentInput,
     InvokeAgentResult,
+    InvokeMCPToolInput,
     OrchestrationInput,
     PlanTurnInput,
     SummarizeContextInput,
@@ -228,6 +230,34 @@ class OrchestrationWorkflow:
 
                 # Fan out agent invocations in parallel (bounded by max_parallel_tools)
                 async def _invoke_one(tc_dict: dict, agent_dict: dict) -> InvokeAgentResult:
+                    # MCP tool call — routed directly to invoke_mcp_tool_activity
+                    if tc_dict["name"].startswith("mcp__"):
+                        parts = tc_dict["name"].split("__", 2)
+                        if len(parts) == 3:
+                            _, mcp_slug, mcp_tool = parts
+                            async with parallel_sem:
+                                return await workflow.execute_activity(
+                                    invoke_mcp_tool_activity,
+                                    InvokeMCPToolInput(
+                                        run_id=run_id,
+                                        application_id=application_id or "",
+                                        mcp_server_slug=mcp_slug,
+                                        tool_name=mcp_tool,
+                                        arguments=tc_dict["input"],
+                                        tool_call_id=tc_dict["id"],
+                                        iteration=self.iteration,
+                                    ),
+                                    schedule_to_close_timeout=timedelta(seconds=60),
+                                    retry_policy=RetryPolicy(maximum_attempts=2),
+                                )
+                        return InvokeAgentResult(
+                            status="failed",
+                            result_text=f"[malformed MCP tool name: {tc_dict['name']}]",
+                            file_parts=[],
+                            latency_ms=0,
+                            error="malformed MCP tool name",
+                        )
+
                     slug = tc_dict["name"].removeprefix("agent__")
                     if agent_dict is None:
                         return InvokeAgentResult(

@@ -321,6 +321,7 @@ async def compile_graph(
                 delegatable=is_delegatable,
                 kind=d.get("kind") or "standard",
                 budget_tokens=d.get("budgetTokens") or d.get("budget_tokens"),
+                mcp_servers=d.get("mcpServers") or d.get("mcp_servers") or [],
                 allowed_agent_ids=[str(a) for a in derived_agent_ids],
                 enabled=True,
                 transcription_provider=_transcription_provider,
@@ -503,6 +504,9 @@ def _apply_orch_data(ao: AppOrchestrator, d: Dict[str, Any], derived_agent_ids: 
     bt = _get("budgetTokens", "budget_tokens")
     if bt is not None:
         ao.budget_tokens = int(bt)
+    mcp_srv = _get("mcpServers", "mcp_servers")
+    if mcp_srv is not None:
+        ao.mcp_servers = mcp_srv
     api_key = _get("llmApiKey", "llm_api_key")
     if api_key:
         ao.llm_api_key_encrypted = encrypt_value(api_key)
@@ -584,6 +588,7 @@ def export_graph(
                 "delegatable": ao.delegatable,
                 "kind": ao.kind,
                 "budgetTokens": ao.budget_tokens,
+                "mcpServers": ao.mcp_servers or [],
                 "name": ao.name,
                 "transcriptionProvider": ao.transcription_provider,
                 "transcriptionModel": ao.transcription_model,

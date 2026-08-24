@@ -1500,8 +1500,8 @@ No Postgres or Redis required; interpreter uses a stub or direct `StepResponse`.
 ### S1-28 · Orchestrator — `internal/orchestrator/orchestrator_test.go`
 
 **Purpose:** Agentic loop feature parity — history loading, checkpoint/crash recovery, token budget
-enforcement, parallel agent fan-out with semaphore, nil-safety of optional interfaces, and
-file artifact detection/recording (Phase R-3).
+enforcement, parallel agent fan-out with semaphore, nil-safety of optional interfaces,
+file artifact detection/recording (Phase R-3), and MCP tool dispatch.
 
 | Test | What it proves |
 |---|---|
@@ -1517,6 +1517,9 @@ file artifact detection/recording (Phase R-3).
 | `TestOrchestrator_ArtifactTooLarge_ErrorEvent` | ErrArtifactTooLarge from recorder → "error" event published, run continues (no panic) |
 | `TestOrchestrator_ArtifactExactBoundaryEncoded` | base64 string at exactly artifactMaxBase64Bytes → accepted, RecordArtifact called |
 | `TestOrchestrator_ArtifactOversizedEncodedInput` | base64 string exceeding max length → rejected before decode, error event, RecordArtifact NOT called |
+| `TestOrchestrator_MCPTool_DispatchedToService` | `mcp__<server>__<tool>` call → POST to MCPServiceURL/internal/execute with correct body |
+| `TestOrchestrator_MCPTool_NoServiceURL` | `mcp__*` call with empty MCPServiceURL → tool error, run completes without panic |
+| `TestOrchestrator_MCPTools_InBuildTools` | MCPServerAttachment.ToolDefs appear in tools list passed to LLM |
 
 **Trigger:** any change to `internal/orchestrator/orchestrator.go` or `internal/orchestrator/summary.go`
 

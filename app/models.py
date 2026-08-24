@@ -165,6 +165,7 @@ class AppOrchestrator(Base):
     edges: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     history_window: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
     budget_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    mcp_servers: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # ── Timestamps ────────────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -455,4 +456,25 @@ class MiddlewareWiring(Base):
         foreign_keys=[application_id],
     )
 
+
+class MCPServer(Base):
+    __tablename__ = "mcp_servers"
+    __table_args__ = {"schema": "them"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    transport: Mapped[str] = mapped_column(Text, nullable=False, default="http")
+    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    auth_type: Mapped[str] = mapped_column(Text, nullable=False, default="none")
+    health_status: Mapped[str] = mapped_column(Text, nullable=False, default="unknown")
+    last_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tools_manifest: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    capabilities: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

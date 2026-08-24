@@ -97,6 +97,8 @@ def _make_proxy(data: dict):
     """Reconstruct a typed proxy from Redis cache dict."""
     from dataclasses import dataclass
 
+    from dataclasses import field as _field
+
     @dataclass
     class _OrchestratorProxy:
         id: uuid.UUID
@@ -123,6 +125,7 @@ def _make_proxy(data: dict):
         history_window: int = 20
         budget_tokens: Optional[int] = None
         application_id: Optional[str] = None
+        mcp_servers: list = _field(default_factory=list)
 
     return _OrchestratorProxy(
         id=uuid.UUID(data["id"]),
@@ -149,6 +152,7 @@ def _make_proxy(data: dict):
         history_window=data.get("history_window", 20),
         budget_tokens=data.get("budget_tokens"),
         application_id=data.get("application_id"),
+        mcp_servers=data.get("mcp_servers") or [],
     )
 
 
@@ -178,6 +182,7 @@ def _orchestrator_to_cache_dict(row) -> dict:
         "history_window": getattr(row, "history_window", 20),
         "budget_tokens": getattr(row, "budget_tokens", None),
         "application_id": str(row.application_id) if isinstance(row, AppOrchestrator) else None,
+        "mcp_servers": getattr(row, "mcp_servers", []) or [],
     }
 
 
@@ -416,4 +421,5 @@ def orch_to_config(orch, price_in: str, price_out: str) -> OrchestratorConfig:
         budget_tokens=getattr(orch, "budget_tokens", None),
         price_in=price_in,
         price_out=price_out,
+        mcp_servers=getattr(orch, "mcp_servers", []) or [],
     )

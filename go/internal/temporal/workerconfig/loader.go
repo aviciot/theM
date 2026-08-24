@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aviciot/them/internal/crypto"
+	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/orchestrator"
 )
 
@@ -40,6 +41,10 @@ type RunConfig struct {
 	SummarizerProvider string
 	SummarizerModel    string
 	SummarizerAPIKey   string // plaintext, decrypted from provider_keys
+
+	// MCPServiceURL is the internal base URL of them-mcp-service, injected by the
+	// worker at build time (not stored in DB). Empty → MCP tool dispatch disabled.
+	MCPServiceURL string
 }
 
 // Loader resolves per-run orchestrator config from persistent storage.
@@ -76,7 +81,8 @@ SELECT
     ao.max_iterations,
     ao.max_parallel_tools,
     ao.budget_tokens,
-    ao.allowed_agent_ids
+    ao.allowed_agent_ids,
+    COALESCE(ao.mcp_servers, '[]'::jsonb)
 FROM them.app_orchestrators ao
 JOIN them.applications a ON a.id = ao.application_id
 WHERE ao.id = $1::uuid
@@ -86,13 +92,14 @@ WHERE ao.id = $1::uuid
 	row := l.pool.QueryRow(ctx, orchQ, appOrchestratorID, applicationID)
 
 	var (
-		systemPrompt    *string
-		llmProvider     *string
-		llmModel        *string
-		maxIterations   int
+		systemPrompt     *string
+		llmProvider      *string
+		llmModel         *string
+		maxIterations    int
 		maxParallelTools int
-		budgetTokens    *int
-		allowedAgentIDs []string
+		budgetTokens     *int
+		allowedAgentIDs  []string
+		mcpServersRaw    []byte
 	)
 
 	if err := row.Scan(
@@ -103,6 +110,7 @@ WHERE ao.id = $1::uuid
 		&maxParallelTools,
 		&budgetTokens,
 		&allowedAgentIDs,
+		&mcpServersRaw,
 	); err != nil {
 		return RunConfig{}, fmt.Errorf("workerconfig: load orchestrator %s: %w", appOrchestratorID, err)
 	}
@@ -147,6 +155,15 @@ WHERE ep.id = $1::uuid`
 		slugs = nil
 	}
 
+	// Resolve MCP server attachments: parse mcp_servers JSONB, fetch manifests from DB.
+	mcpAttachments, err := l.resolveMCPServers(ctx, mcpServersRaw)
+	if err != nil {
+		// Non-fatal: log and proceed without MCP tools.
+		slog.Warn("workerconfig: failed to resolve MCP servers — MCP tools disabled for run",
+			"app_orchestrator_id", appOrchestratorID, "error", err)
+		mcpAttachments = nil
+	}
+
 	cfg := orchestrator.Config{
 		MaxIterations:        maxIterations,
 		MaxParallelTools:     maxParallelTools,
@@ -155,6 +172,7 @@ WHERE ep.id = $1::uuid`
 		MemoryEnabled:        memoryEnabled,
 		SummarizeEveryNCalls: summarizeEveryN,
 		MemoryRawFallbackN:   rawFallbackN,
+		MCPServers:           mcpAttachments,
 	}
 	if systemPrompt != nil {
 		cfg.SystemPrompt = *systemPrompt
@@ -208,6 +226,99 @@ WHERE ep.id = $1::uuid`
 		SummarizerModel:    sumModel,
 		SummarizerAPIKey:   sumAPIKey,
 	}, nil
+}
+
+// mcpServerEntry is one item in the app_orchestrators.mcp_servers JSONB array.
+type mcpServerEntry struct {
+	Slug  string   `json:"slug"`
+	Tools []string `json:"tools,omitempty"`
+}
+
+// mcpManifestTool matches the structure of each entry in them.mcp_servers.tools_manifest.
+type mcpManifestTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
+}
+
+// resolveMCPServers parses the mcp_servers JSONB array and fetches tool manifests
+// from the DB for each attached server, building orchestrator.MCPServerAttachment values.
+func (l *PgxLoader) resolveMCPServers(ctx context.Context, raw []byte) ([]orchestrator.MCPServerAttachment, error) {
+	if len(raw) == 0 || string(raw) == "[]" || string(raw) == "null" {
+		return nil, nil
+	}
+	var entries []mcpServerEntry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, fmt.Errorf("parse mcp_servers: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+
+	var attachments []orchestrator.MCPServerAttachment
+	for _, entry := range entries {
+		if entry.Slug == "" {
+			continue
+		}
+		manifest, err := l.fetchMCPManifest(ctx, entry.Slug)
+		if err != nil {
+			slog.Warn("workerconfig: failed to fetch MCP manifest — server skipped",
+				"slug", entry.Slug, "error", err)
+			continue
+		}
+
+		toolDefs := buildMCPToolDefs(entry.Slug, entry.Tools, manifest)
+		attachments = append(attachments, orchestrator.MCPServerAttachment{
+			Slug:     entry.Slug,
+			Tools:    entry.Tools,
+			ToolDefs: toolDefs,
+		})
+	}
+	return attachments, nil
+}
+
+// fetchMCPManifest retrieves the tools_manifest JSON for a server by slug.
+func (l *PgxLoader) fetchMCPManifest(ctx context.Context, slug string) ([]mcpManifestTool, error) {
+	const q = `SELECT COALESCE(tools_manifest, '[]'::jsonb) FROM them.mcp_servers WHERE slug = $1 AND enabled = true`
+	var raw []byte
+	if err := l.pool.QueryRow(ctx, q, slug).Scan(&raw); err != nil {
+		return nil, fmt.Errorf("fetch manifest for %s: %w", slug, err)
+	}
+	var tools []mcpManifestTool
+	if err := json.Unmarshal(raw, &tools); err != nil {
+		return nil, fmt.Errorf("parse manifest for %s: %w", slug, err)
+	}
+	return tools, nil
+}
+
+// buildMCPToolDefs converts a manifest tool list to llm.ToolDef slice.
+// Applies the allowlist (empty = all tools).
+func buildMCPToolDefs(serverSlug string, allowlist []string, tools []mcpManifestTool) []llm.ToolDef {
+	allowed := make(map[string]bool, len(allowlist))
+	for _, t := range allowlist {
+		allowed[t] = true
+	}
+
+	var defs []llm.ToolDef
+	for _, t := range tools {
+		if len(allowlist) > 0 && !allowed[t.Name] {
+			continue
+		}
+		// Unmarshal inputSchema JSON into map[string]any for llm.ToolDef.
+		var schema map[string]any
+		if len(t.InputSchema) > 0 {
+			_ = json.Unmarshal(t.InputSchema, &schema)
+		}
+		if schema == nil {
+			schema = map[string]any{"type": "object", "properties": map[string]any{}}
+		}
+		defs = append(defs, llm.ToolDef{
+			Name:        "mcp__" + serverSlug + "__" + t.Name,
+			Description: t.Description,
+			InputSchema: schema,
+		})
+	}
+	return defs
 }
 
 // resolveAgentSlugs converts component_definition UUIDs → agent slugs.

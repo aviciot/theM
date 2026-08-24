@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -850,6 +853,162 @@ func TestOrchestrator_ArtifactOversizedEncodedInput(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "an error event mentioning the size limit must be published")
+}
+
+// ── MCP tool dispatch tests ───────────────────────────────────────────────────
+
+// TestOrchestrator_MCPTool_DispatchedToService verifies that mcp__<server>__<tool> calls
+// are routed to the configured MCPServiceURL and the result is returned as the tool output.
+func TestOrchestrator_MCPTool_DispatchedToService(t *testing.T) {
+	// Start a fake MCP service.
+	var receivedBody []byte
+	mcpSvc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/internal/execute", r.URL.Path)
+		require.Equal(t, http.MethodPost, r.Method)
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":"payment-anomaly-detected"}`))
+	}))
+	defer mcpSvc.Close()
+
+	bus := event.New()
+	mock := newMultiCallMockProvider(
+		[]llm.StreamEvent{
+			{
+				Type: "tool_calls",
+				ToolCalls: []llm.ToolCall{{
+					ID:    "mcp-tc-1",
+					Name:  "mcp__anomaly-detector__analyze_transactions",
+					Input: map[string]any{"threshold": 0.95},
+				}},
+				StopReason: "tool_use",
+			},
+		},
+		[]llm.StreamEvent{
+			{Type: "stop", StopReason: "end_turn"},
+		},
+	)
+
+	cfg := orchestrator.Config{
+		MaxIterations: 3,
+		MCPServers: []orchestrator.MCPServerAttachment{
+			{
+				Slug: "anomaly-detector",
+				ToolDefs: []llm.ToolDef{{
+					Name:        "mcp__anomaly-detector__analyze_transactions",
+					Description: "Analyze transactions for anomalies",
+					InputSchema: map[string]any{"type": "object"},
+				}},
+			},
+		},
+		MCPServiceURL: mcpSvc.URL,
+	}
+	orch := orchestrator.New(cfg, mock, nil, newRecorder(), bus, nil)
+
+	ctx := context.Background()
+	_, err := orch.Run(ctx, "run-mcp", "ctx-mcp", domain.TextMessage(domain.RoleUser, "check transactions"), nil,
+		orchestrator.RunContext{ApplicationID: "app-123"})
+	require.NoError(t, err)
+
+	// Verify the MCP service received the correct request body.
+	var req map[string]any
+	require.NoError(t, json.Unmarshal(receivedBody, &req))
+	assert.Equal(t, "app-123", req["application_id"])
+	assert.Equal(t, "anomaly-detector", req["mcp_server_slug"])
+	assert.Equal(t, "analyze_transactions", req["tool_name"])
+}
+
+// TestOrchestrator_MCPTool_NoServiceURL verifies that mcp__* calls fail gracefully
+// when MCPServiceURL is not configured.
+func TestOrchestrator_MCPTool_NoServiceURL(t *testing.T) {
+	bus := event.New()
+
+	// LLM requests an MCP tool but no service URL is set.
+	mock := newMultiCallMockProvider(
+		[]llm.StreamEvent{
+			{
+				Type: "tool_calls",
+				ToolCalls: []llm.ToolCall{{
+					ID:    "mcp-tc-2",
+					Name:  "mcp__some-server__some_tool",
+					Input: map[string]any{},
+				}},
+				StopReason: "tool_use",
+			},
+		},
+		[]llm.StreamEvent{
+			{Type: "stop", StopReason: "end_turn"},
+		},
+	)
+
+	cfg := orchestrator.Config{
+		MaxIterations: 2,
+		MCPServiceURL: "", // not configured
+	}
+	orch := orchestrator.New(cfg, mock, nil, newRecorder(), bus, nil)
+
+	// Run should complete without panicking; the tool result carries an error.
+	ctx := context.Background()
+	_, err := orch.Run(ctx, "run-mcp-nourl", "ctx-mcp-nourl", domain.TextMessage(domain.RoleUser, "go"), nil)
+	// The orchestrator surfaces tool errors as tool_result payloads, not as a fatal error.
+	require.NoError(t, err)
+}
+
+// TestOrchestrator_MCPTools_InBuildTools verifies that MCPServerAttachment.ToolDefs are
+// included in the tool list passed to the LLM.
+func TestOrchestrator_MCPTools_InBuildTools(t *testing.T) {
+	bus := event.New()
+	var capturedTools []llm.ToolDef
+	var mu sync.Mutex
+
+	capturingMock := &toolCapturingProvider{
+		stop: []llm.StreamEvent{{Type: "stop", StopReason: "end_turn"}},
+		capture: func(tools []llm.ToolDef) {
+			mu.Lock()
+			capturedTools = tools
+			mu.Unlock()
+		},
+	}
+
+	cfg := orchestrator.Config{
+		MaxIterations: 1,
+		MCPServers: []orchestrator.MCPServerAttachment{
+			{
+				Slug: "smoke-mcp",
+				ToolDefs: []llm.ToolDef{
+					{Name: "mcp__smoke-mcp__create_smoke_session", Description: "Create a smoke session", InputSchema: map[string]any{"type": "object"}},
+				},
+			},
+		},
+	}
+	orch := orchestrator.New(cfg, capturingMock, nil, newRecorder(), bus, nil)
+
+	ctx := context.Background()
+	_, err := orch.Run(ctx, "run-mcp-tools", "ctx-mcp-tools", domain.TextMessage(domain.RoleUser, "hi"), nil)
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, capturedTools, 1)
+	assert.Equal(t, "mcp__smoke-mcp__create_smoke_session", capturedTools[0].Name)
+}
+
+// toolCapturingProvider is an LLM provider that captures the tools list on each call.
+type toolCapturingProvider struct {
+	stop    []llm.StreamEvent
+	capture func([]llm.ToolDef)
+}
+
+func (p *toolCapturingProvider) Stream(ctx context.Context, messages []domain.Message, tools []llm.ToolDef, opts llm.Options) (<-chan llm.StreamEvent, error) {
+	if p.capture != nil {
+		p.capture(tools)
+	}
+	ch := make(chan llm.StreamEvent, len(p.stop))
+	for _, ev := range p.stop {
+		ch <- ev
+	}
+	close(ch)
+	return ch, nil
 }
 
 // rawBase64AgentInvoker is like artifactAgentInvoker but accepts a pre-built
