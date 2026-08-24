@@ -65,12 +65,12 @@ func run() error {
 	dal := mcp.NewDAL(database.Pool())
 	registry := mcp.NewRegistry(redisCache.Client())
 	leader := mcp.NewLeaderLock(redisCache.Client(), cfg.InstanceID)
-	loop := mcp.NewHealthLoop(dal, registry, leader, cfg.HealthIntervalSeconds, log)
+	supervisor := mcp.NewSupervisor(dal, registry, leader, cfg.HealthIntervalSeconds, log)
 	executor := mcp.NewExecutor(dal, registry, cfg.SecretKey)
 
 	// ── 7. HTTP server ────────────────────────────────────────────────────────
 	healthHandler := health.New(cfg.InstanceID, database, redisCache)
-	router := mcp.NewRouter(healthHandler, loop, executor, "1.0.0")
+	router := mcp.NewRouter(healthHandler, supervisor, executor, "1.0.0")
 
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
@@ -78,9 +78,9 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	// ── 8. Background health loop ─────────────────────────────────────────────
-	go loop.Run(runCtx)
-	log.Info("health loop goroutine started")
+	// ── 8. Supervisor (per-server worker goroutines, leader-elected) ──────────
+	go supervisor.Run(runCtx)
+	log.Info("supervisor started")
 
 	// ── 9. Serve with graceful shutdown ───────────────────────────────────────
 	serverErr := make(chan error, 1)

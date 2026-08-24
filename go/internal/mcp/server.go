@@ -20,7 +20,7 @@ import (
 //	POST /internal/execute            — tool call (called by them-go-bridge)
 func NewRouter(
 	healthHandler *health.Handler,
-	loop *HealthLoop,
+	supervisor *Supervisor,
 	executor *Executor,
 	version string,
 ) http.Handler {
@@ -28,13 +28,12 @@ func NewRouter(
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
 
-	// Health
 	r.Get("/health/live", healthHandler.Live)
 	r.Get("/health/ready", healthHandler.Ready)
 
-	// Internal API — only reachable on them-network, never via Traefik
+	// Internal API — only reachable on them-network, never via Traefik.
 	r.Route("/internal", func(r chi.Router) {
-		r.Post("/probe/{server_id}", makeProbeHandler(loop))
+		r.Post("/probe/{server_id}", makeProbeHandler(supervisor))
 		r.Post("/execute", makeExecuteHandler(executor))
 	})
 
@@ -48,7 +47,7 @@ type ProbeResponse struct {
 	LastError    string `json:"last_error,omitempty"`
 }
 
-func makeProbeHandler(loop *HealthLoop) http.HandlerFunc {
+func makeProbeHandler(supervisor *Supervisor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		serverID := chi.URLParam(r, "server_id")
 		if serverID == "" {
@@ -56,7 +55,7 @@ func makeProbeHandler(loop *HealthLoop) http.HandlerFunc {
 			return
 		}
 
-		updated, err := loop.ProbeServer(r.Context(), serverID)
+		updated, err := supervisor.ProbeNow(r.Context(), serverID)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "server not found: "+err.Error())
 			return
