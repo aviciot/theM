@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { C, inputStyle, labelStyle } from '../constants';
+import { api } from '@/lib/api';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -49,9 +50,7 @@ let catalogCache: { functions: FunctionDef[]; by_category: Record<string, Functi
 
 async function fetchCatalog() {
   if (catalogCache) return catalogCache;
-  const resp = await fetch('/api/v1/admin/transform-functions', { credentials: 'include' });
-  if (!resp.ok) throw new Error('Failed to load transform catalog');
-  catalogCache = await resp.json();
+  catalogCache = await api.get<{ functions: FunctionDef[]; by_category: Record<string, FunctionDef[]> }>('/admin/transform-functions');
   return catalogCache!;
 }
 
@@ -213,13 +212,7 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
       for (const [k, v] of Object.entries(testVars)) {
         if (k) vars[k] = v;
       }
-      const resp = await fetch('/api/v1/admin/transform-test', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ functions, vars }),
-      });
-      const data = await resp.json();
+      const data = await api.post<{ steps: StepResult[] }>('/admin/transform-test', { functions, vars });
       setTestResults(data.steps ?? []);
     } catch (e: unknown) {
       setTestError(e instanceof Error ? e.message : String(e));
