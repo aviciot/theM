@@ -108,6 +108,17 @@ const UI_SUPPS: Record<string, NodeUISupp> = {
   a2a_call:   { bg: cyanBg,    border: cyanBorder,    summary: () => '' },
   human_wait: { bg: greenBg,   border: greenBorder,   summary: () => '' },
   stream_out: { bg: cyanBg,    border: cyanBorder,    summary: () => '' },
+  mcp_call:   {
+    bg: 'rgba(129,140,248,0.08)', border: 'rgba(129,140,248,0.4)',
+    summary: (cfg) => {
+      const slug = cfg.server_slug as string | undefined;
+      const tool = cfg.tool_name as string | undefined;
+      if (slug && tool) return `${slug} · ${tool}`;
+      if (slug) return slug;
+      if (tool) return tool;
+      return 'select server';
+    },
+  },
 };
 
 const FALLBACK_SUPP: NodeUISupp = {

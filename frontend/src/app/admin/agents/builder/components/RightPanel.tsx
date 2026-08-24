@@ -1,7 +1,9 @@
+import { useState, useEffect } from 'react';
 import type { Node, Edge } from '@xyflow/react';
 import { getNodeDef } from '@/lib/nodeRegistry';
 import type { AgentRootData, SkillData, StepData, DebugState } from '../types';
-import type { AgentIssue } from '@/lib/api';
+import type { AgentIssue, MCPServer } from '@/lib/api';
+import { themApi } from '@/lib/api';
 import { C, labelStyle, inputStyle, textareaStyle, selectStyle, fieldGap, hint, LLM_MODELS } from '../constants';
 import { stepMeta } from './StepNode';
 import { TransformPanel } from './TransformPanel';
@@ -49,6 +51,11 @@ export function RightPanel({
   setDebug,
   debugStep,
 }: RightPanelProps) {
+  const [mcpServers, setMcpServers] = useState<MCPServer[]>([]);
+  useEffect(() => {
+    themApi.listMCPServers().then(s => setMcpServers(s ?? [])).catch(() => {});
+  }, []);
+
   return (
     <div onKeyDown={e => e.stopPropagation()} style={{
       width: propertiesWidth, flexShrink: 0, borderLeft: `1px solid ${C.outline}`,
@@ -459,7 +466,92 @@ export function RightPanel({
               </>
             )}
 
-            {!['input', 'llm', 'http', 'transform', 'response', 'branch'].includes(d.step_type) && (
+            {d.step_type === 'mcp_call' && (() => {
+              const MCP_ACCENT = '#818cf8';
+              const MCP_BG = 'rgba(129,140,248,0.08)';
+              const MCP_BORDER = 'rgba(129,140,248,0.25)';
+              const selectedServer = mcpServers.find(s => s.slug === cfgStr('server_slug'));
+              const toolNames = (selectedServer?.tools_manifest ?? []).map((t: MCPServer['tools_manifest'][number]) => t.name);
+              return (
+                <>
+                  <div style={{ color: MCP_ACCENT, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>MCP TOOL CONFIG</div>
+                  <label style={labelStyle}>MCP Server</label>
+                  <select
+                    value={cfgStr('server_slug')}
+                    onChange={e => {
+                      updateStepConfig('server_slug', e.target.value);
+                      updateStepConfig('tool_name', '');
+                    }}
+                    style={{ ...selectStyle, borderColor: cfgStr('server_slug') ? MCP_ACCENT + '80' : undefined }}
+                  >
+                    <option value="">— select server —</option>
+                    {mcpServers.map(s => (
+                      <option key={s.id} value={s.slug}>{s.name} ({s.slug})</option>
+                    ))}
+                  </select>
+                  {selectedServer && (
+                    <div style={{ marginTop: 4, fontSize: 11, color: '#64748b', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {selectedServer.url}
+                    </div>
+                  )}
+
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Tool Name</label>
+                    {toolNames.length > 0 ? (
+                      <select
+                        value={cfgStr('tool_name')}
+                        onChange={e => updateStepConfig('tool_name', e.target.value)}
+                        style={{ ...selectStyle, borderColor: cfgStr('tool_name') ? MCP_ACCENT + '80' : undefined }}
+                      >
+                        <option value="">— select tool —</option>
+                        {toolNames.map((n: string) => (<option key={n} value={n}>{n}</option>))}
+                      </select>
+                    ) : (
+                      <input
+                        value={cfgStr('tool_name')}
+                        onChange={e => updateStepConfig('tool_name', e.target.value)}
+                        style={inputStyle}
+                        placeholder={selectedServer ? 'probe server to load tools, or type name' : 'select a server first'}
+                      />
+                    )}
+                  </div>
+
+                  {cfgStr('tool_name') && selectedServer?.tools_manifest?.find((t: MCPServer['tools_manifest'][number]) => t.name === cfgStr('tool_name'))?.description && (
+                    <div style={{ marginTop: 2, fontSize: 11, color: '#64748b', lineHeight: 1.5 }}>
+                      {selectedServer?.tools_manifest?.find((t: MCPServer['tools_manifest'][number]) => t.name === cfgStr('tool_name'))?.description}
+                    </div>
+                  )}
+
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Arguments Template <span style={hint}>JSON — Go template vars allowed</span></label>
+                    <textarea
+                      rows={3}
+                      value={cfgStr('args_template')}
+                      onChange={e => updateStepConfig('args_template', e.target.value)}
+                      style={{ ...textareaStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
+                      placeholder={'{"query": "{{.user_query}}"}'}
+                    />
+                  </div>
+
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Output Variable <span style={hint}>default: mcp_result</span></label>
+                    <input
+                      value={cfgStr('output_var')}
+                      onChange={e => updateStepConfig('output_var', e.target.value)}
+                      style={inputStyle}
+                      placeholder="mcp_result"
+                    />
+                  </div>
+
+                  <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: '6px', background: MCP_BG, border: `1px solid ${MCP_BORDER}`, fontSize: 11, color: '#64748b', lineHeight: 1.7 }}>
+                    <strong style={{ color: MCP_ACCENT }}>Runtime:</strong> credentials are resolved per-application from MCP Credentials settings.
+                    The tool result is stored in <code style={{ color: MCP_ACCENT }}>{`{{.${cfgStr('output_var') || 'mcp_result'}}}`}</code>.
+                  </div>
+                </>
+              );
+            })()}
+
+            {!['input', 'llm', 'http', 'transform', 'response', 'branch', 'mcp_call'].includes(d.step_type) && (
               <div style={{ color: '#64748b', fontSize: '12px', padding: '12px', border: `1px dashed ${C.outline}`, borderRadius: '6px', textAlign: 'center' }}>
                 Config for <strong style={{ color: C.text }}>{d.step_type}</strong> is not yet supported in the builder.
               </div>

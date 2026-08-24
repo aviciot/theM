@@ -20,6 +20,7 @@ var allStepTypes = []agentgen.StepType{
 	agentgen.StepA2ACall,
 	agentgen.StepHumanWait,
 	agentgen.StepStreamOut,
+	agentgen.StepMCPCall,
 }
 
 // TestNodeRegistry_AllTypesRegistered verifies that every StepType constant has
@@ -33,11 +34,11 @@ func TestNodeRegistry_AllTypesRegistered(t *testing.T) {
 	}
 }
 
-// TestNodeRegistry_KnownStepTypesCount verifies KnownStepTypes returns all 11 types.
+// TestNodeRegistry_KnownStepTypesCount verifies KnownStepTypes returns all 12 types.
 func TestNodeRegistry_KnownStepTypesCount(t *testing.T) {
 	known := agentgen.KnownStepTypes()
-	if len(known) != 11 {
-		t.Errorf("expected 11 registered node types, got %d: %v", len(known), known)
+	if len(known) != 12 {
+		t.Errorf("expected 12 registered node types, got %d: %v", len(known), known)
 	}
 }
 
@@ -215,6 +216,7 @@ func TestNodeRegistry_StubTypesHaveNilExecute(t *testing.T) {
 		agentgen.StepA2ACall,
 		agentgen.StepHumanWait,
 		agentgen.StepStreamOut,
+		agentgen.StepMCPCall,
 	}
 	for _, st := range stubs {
 		def, ok := agentgen.LookupNode(st)

@@ -1419,9 +1419,9 @@ PublishAgentDefinition uses `agentgen.CompileForPublish()` (stubs→errors).
 ### S1-54 · Node Definition Registry — `internal/agentgen/noderegistry_test.go`
 
 **Purpose:** Validates the `NodeDef` registry is the single source of truth for all 12 canvas node
-types. Covers registration completeness, metadata correctness (IsSource/IsSink/OutputArity/Version),
-`ToInfo()` deriving `Executable` from `Execute != nil`, per-type `Validate` functions, and compiler
-integration via `LookupNode`.
+types (including `mcp_call` stub). Covers registration completeness, metadata correctness
+(IsSource/IsSink/OutputArity/Version), `ToInfo()` deriving `Executable` from `Execute != nil`,
+per-type `Validate` functions, and compiler integration via `LookupNode`.
 
 | Test | What it proves |
 |---|---|
@@ -1437,7 +1437,7 @@ integration via `LookupNode`.
 | `TestNodeRegistry_UnknownTypeReturnsFalse` | LookupNode("banana") → ok=false |
 | `TestNodeRegistry_CompilerRejectsUnknownStepType` | compiler returns UNKNOWN_STEP_TYPE for unregistered type |
 | `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response/branch/condition all have Execute≠nil |
-| `TestNodeRegistry_StubTypesHaveNilExecute` | loop/parallel/a2a_call/human_wait/stream_out all have Execute=nil |
+| `TestNodeRegistry_StubTypesHaveNilExecute` | loop/parallel/a2a_call/human_wait/stream_out/mcp_call all have Execute=nil |
 | `TestNodeRegistry_LLMValidate_UndeclaredSlot` | llm Validate(): undeclared provider_key_slot → UNDECLARED_SLOT |
 | `TestNodeRegistry_HTTPValidate_UndeclaredSlot` | http Validate(): undeclared credential_slot → UNDECLARED_SLOT |
 | `TestNodeRegistry_ParallelOutputArity` | parallel: OutputArity=multi |
