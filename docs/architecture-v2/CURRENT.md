@@ -7,17 +7,16 @@
 ## HEAD
 
 Branch: `main`
-Commit: `7c0ec59` — feat(mcp): MCP Store admin page — UI-1
+Commit: `900b8d4` — feat(mcp): UI-2 — Application Settings → MCP Credentials view
 
 Recent commits (newest first):
 ```
+900b8d4 feat(mcp): UI-2 — Application Settings → MCP Credentials view
+901dc36 feat(mcp): MCP-2 probe endpoint — POST /admin/mcp-servers/{id}/probe
+8f7159b feat(mcp-store): add streamable-http transport, drop stdio, show auth info
 7c0ec59 feat(mcp): MCP Store admin page — UI-1
 2e5bba4 feat(builder): show per-variable debug output for transform nodes in right panel
 a7b4ce7 feat(builder): TB/LR layout direction toggle for agent + application canvas
-f229eb3 feat(mcp): Traefik routing for MCP admin API + UI design plan
-6be45b6 feat(mcp): MCP-1 admin CRUD API + DB migrations
-2f29cd3 feat(agentgen): Phase 1 app-level agent params — decrypt-at-runtime injection
-4cb2dd9 feat(a2a-stream): emit two file artifacts (HTML + zip) for multi-file streaming test
 ```
 
 ---
@@ -271,14 +270,26 @@ What is pending (Phase 1 frontend):
 - 11 new unit tests: `go/internal/admin/service/mcp_servers_test.go`
 - Docs updated: REDIS.md, SCHEMA.md, CLAUDE.md (trigger map + container map), TEST_INDEX.md (S1-62), CURRENT.md
 
-**What's done in this session (UI-1 — commit 7c0ec59):**
+**What's done (UI-1 — commit 7c0ec59):**
 - `frontend/src/lib/api.ts`: MCPServer, MCPTool, MCPCredentialMeta types + 9 themApi methods
 - `frontend/src/components/Sidebar.tsx`: MCP Store nav entry after Agents
-- `frontend/src/app/admin/mcp-servers/page.tsx`: full card grid + slide-in properties panel (General + Status & Tools tabs) + tool manifest viewer + ProbeButton + CreateModal
+- `frontend/src/app/admin/mcp-servers/page.tsx`: full card grid + centered modal properties panel (General + Status & Tools tabs) + tool manifest viewer + ProbeButton + CreateModal + Sidebar
 
-**What's NOT done yet (MCP-2 onward):**
-- `POST /admin/mcp-servers/{id}/probe` proxy endpoint in go-bridge (MCP-2) — probe button shows graceful 503 until this exists
-- UI-2: Application Settings → MCP Credentials tab
+**What's done (MCP-2 — commit 901dc36):**
+- DB: `db/043_mcp_streamable.sql` — constraint updated to include `streamable-http`, drop `stdio`
+- `go/internal/config/config.go`: `MCPServiceURL` field read from `MCP_SERVICE_URL` env
+- `go/internal/admin/mcp_servers.go`: `Probe` handler proxies to `them-mcp-service /internal/probe/{id}`
+- `go/internal/admin/router.go`: `BuildRouter` gains `mcpServiceURL` param
+- `docker-compose.yml`: `MCP_SERVICE_URL=http://them-mcp-service:8010` added to `them-go-bridge`
+- Frontend: transport list updated (`streamable-http` default, `http`/`sse` legacy, `stdio` removed)
+- Frontend: auth info banner in Create modal explains per-app credential flow
+
+**What's done (UI-2 — commit 900b8d4):**
+- `frontend/src/app/admin/applications/components/MCPCredentialsView.tsx`: new — per-application MCP credential management (key-set badge, Save/Update/Remove, flash feedback)
+- `AppCard.tsx`: MCP button added (indigo, `electrical_services` icon)
+- `ListView.tsx` + `page.tsx`: `mcp-credentials` view state + `openMCPCredentials` handler
+
+**What's NOT done yet (UI-3, MCP-3 onward):**
 - UI-3: Canvas `mcp_server` node + RightPanel properties panel
 - MCP-3: runtime executor wired into agent-runtime tool calls
 - `them-mcp-service` not yet started in production (needs `--profile mcp` in compose)
