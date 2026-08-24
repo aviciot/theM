@@ -1,13 +1,20 @@
 {
-  "id": "transform-demo",
-  "slug": "transform-demo",
-  "display_name": "Transform Demo Agent",
-  "description": "Demonstrates the Transform node function chain: LLM returns fenced JSON, Transform strips fences and extracts fields.",
-  "version": "1.0.0",
+  "schema_version": 1,
+  "agent_slug": "transform-demo",
+  "agent_root": {
+    "display_name": "Transform Demo Agent",
+    "description": "Demonstrates the Transform node: LLM returns fenced JSON, Transform strips fences and extracts fields.",
+    "version": "1.0.0",
+    "capabilities": { "streaming": false, "push_notifications": false }
+  },
   "skills": [
     {
-      "id": "main",
-      "label": "Main",
+      "skill_id": "main",
+      "name": "Extract City Info",
+      "description": "Ask LLM to return city data as JSON, then extract fields using Transform.",
+      "input_modes": ["text/plain"],
+      "output_modes": ["text/plain"],
+      "position": { "x": 300, "y": 260 },
       "steps": [
         {
           "id": "input",
@@ -17,22 +24,22 @@
             "bindings": { "text": "user_query" }
           },
           "next": ["ask-llm"],
-          "position": { "x": 400, "y": 80 }
+          "position": { "x": 300, "y": 80 }
         },
         {
           "id": "ask-llm",
           "type": "llm",
-          "label": "Ask LLM (returns JSON)",
+          "label": "Ask LLM — returns JSON",
           "config": {
             "provider": "anthropic",
             "model": "claude-haiku-4-5-20251001",
-            "max_tokens": 300,
-            "system_prompt": "You are a data extractor. Always respond with raw JSON only — no markdown, no explanation. Extract the city name, population and country from the user message.",
-            "prompt_template": "Extract from: {{.user_query}}\n\nRespond with exactly this JSON structure:\n{\"city\": \"<name>\", \"population\": \"<number>\", \"country\": \"<name>\"}",
+            "max_tokens": 200,
+            "system_prompt": "You are a data extractor. Always respond with raw JSON only — no markdown fences, no explanation.",
+            "prompt_template": "Extract from this text: {{.user_query}}\n\nReturn exactly this JSON:\n{\"city\": \"<name>\", \"population\": \"<number>\", \"country\": \"<name>\"}",
             "output_var": "llm_raw"
           },
           "next": ["extract-fields"],
-          "position": { "x": 400, "y": 220 }
+          "position": { "x": 300, "y": 220 }
         },
         {
           "id": "extract-fields",
@@ -79,7 +86,7 @@
             ]
           },
           "next": ["respond"],
-          "position": { "x": 400, "y": 380 }
+          "position": { "x": 300, "y": 380 }
         },
         {
           "id": "respond",
@@ -90,7 +97,7 @@
             "media_type": "text/plain"
           },
           "next": [],
-          "position": { "x": 400, "y": 540 }
+          "position": { "x": 300, "y": 540 }
         }
       ]
     }
