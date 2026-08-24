@@ -7,21 +7,17 @@
 ## HEAD
 
 Branch: `main`
-Commit: `6be45b6` — feat(mcp): MCP-1 admin CRUD API + DB migrations
+Commit: `7c0ec59` — feat(mcp): MCP Store admin page — UI-1
 
 Recent commits (newest first):
 ```
+7c0ec59 feat(mcp): MCP Store admin page — UI-1
+2e5bba4 feat(builder): show per-variable debug output for transform nodes in right panel
+a7b4ce7 feat(builder): TB/LR layout direction toggle for agent + application canvas
+f229eb3 feat(mcp): Traefik routing for MCP admin API + UI design plan
 6be45b6 feat(mcp): MCP-1 admin CRUD API + DB migrations
 2f29cd3 feat(agentgen): Phase 1 app-level agent params — decrypt-at-runtime injection
 4cb2dd9 feat(a2a-stream): emit two file artifacts (HTML + zip) for multi-file streaming test
-78be532 feat(agentgen): add Description to NodeDef + palette tooltips
-1f7e229 fix(agentgen): correct EdgeRules for Input + clean up is_source/is_sink convention
-a1ca8a3 fix(a2a-stream): fix SSE field names + role enum for streaming
-d09a93f feat(agentgen): data-driven edge rules (Option A)
-ccb9d40 feat(a2a-stream): add zip file artifact to streaming response for testing
-134dc48 fix(validation): detect disconnected nodes + reject cycle edges
-51e78c0 fix(admin): make /admin/node-types public — no auth required
-dd8d546 feat(a2a): multi-artifact + streaming agent support
 ```
 
 ---
@@ -275,10 +271,15 @@ What is pending (Phase 1 frontend):
 - 11 new unit tests: `go/internal/admin/service/mcp_servers_test.go`
 - Docs updated: REDIS.md, SCHEMA.md, CLAUDE.md (trigger map + container map), TEST_INDEX.md (S1-62), CURRENT.md
 
+**What's done in this session (UI-1 — commit 7c0ec59):**
+- `frontend/src/lib/api.ts`: MCPServer, MCPTool, MCPCredentialMeta types + 9 themApi methods
+- `frontend/src/components/Sidebar.tsx`: MCP Store nav entry after Agents
+- `frontend/src/app/admin/mcp-servers/page.tsx`: full card grid + slide-in properties panel (General + Status & Tools tabs) + tool manifest viewer + ProbeButton + CreateModal
+
 **What's NOT done yet (MCP-2 onward):**
-- Traefik labels for `/api/v1/admin/mcp-servers` on `them-go-bridge` — routes exist in Go but not yet Traefik-exposed
-- Frontend UI for MCP server management
-- MCP-2: canvas node type for MCP tool calls
+- `POST /admin/mcp-servers/{id}/probe` proxy endpoint in go-bridge (MCP-2) — probe button shows graceful 503 until this exists
+- UI-2: Application Settings → MCP Credentials tab
+- UI-3: Canvas `mcp_server` node + RightPanel properties panel
 - MCP-3: runtime executor wired into agent-runtime tool calls
 - `them-mcp-service` not yet started in production (needs `--profile mcp` in compose)
 
