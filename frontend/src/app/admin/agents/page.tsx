@@ -1243,14 +1243,42 @@ export default function AdminAgentsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents]);
 
-  const [draftDefinitions, setDraftDefinitions] = useState<AgentDefinition[]>([]);
+  const [allDefinitions, setAllDefinitions] = useState<AgentDefinition[]>([]);
+  const [defSearch, setDefSearch] = useState('');
+  const [defConfirmDelete, setDefConfirmDelete] = useState<string | null>(null);
+  const [defCloning, setDefCloning] = useState<string | null>(null);
+  const [defActionErr, setDefActionErr] = useState('');
+
+  const handleDefClone = async (def: AgentDefinition) => {
+    setDefCloning(def.id);
+    setDefActionErr('');
+    try {
+      const result = await themApi.cloneAgentDefinition(def.id);
+      router.push(`/admin/agents/builder?id=${result.id}`);
+    } catch (e: unknown) {
+      setDefActionErr(e instanceof Error ? e.message : 'Clone failed');
+      setDefCloning(null);
+    }
+  };
+
+  const handleDefDelete = async (id: string) => {
+    setDefActionErr('');
+    try {
+      await themApi.deleteAgentDefinition(id);
+      setDefConfirmDelete(null);
+      setAllDefinitions(prev => prev.filter(d => d.id !== id));
+    } catch (e: unknown) {
+      setDefActionErr(e instanceof Error ? e.message : 'Delete failed');
+      setDefConfirmDelete(null);
+    }
+  };
 
   const reload = () => {
     Promise.all([themApi.agents(), themApi.orchestrators(), themApi.listAgentDefinitions()])
       .then(([a, o, defs]) => {
         setAgents(a);
         setOrchestrators(o);
-        setDraftDefinitions(defs.filter(d => d.status === 'draft'));
+        setAllDefinitions(defs ?? []);
         setScanResults((prev) => {
           const next = { ...prev };
           for (const agent of a) {
@@ -1938,38 +1966,137 @@ export default function AdminAgentsPage() {
             </div>
           </div>
 
-          {/* Draft definitions section */}
-          {draftDefinitions.length > 0 && (
+          {/* Canvas agent definitions section */}
+          {allDefinitions.length > 0 && (
             <div style={{ padding: '0 32px 28px' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-card-text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '12px' }}>
-                Drafts in builder
+              {/* Header row */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--tm-card-text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                  Canvas Agents
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    placeholder="Search…"
+                    value={defSearch}
+                    onChange={e => setDefSearch(e.target.value)}
+                    style={{
+                      padding: '4px 10px', borderRadius: '6px', fontSize: '12px',
+                      background: 'var(--tm-inset-deep)', border: '1px solid var(--tm-card-border)',
+                      color: 'var(--tm-card-text)', outline: 'none', width: '160px',
+                    }}
+                  />
+                  <button
+                    onClick={() => router.push('/admin/agents/builder')}
+                    style={{
+                      background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)',
+                      color: '#a5b4fc', borderRadius: '6px', padding: '5px 12px',
+                      fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                    }}
+                  >
+                    + New Agent
+                  </button>
+                </div>
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-                {draftDefinitions.map(d => (
-                  <div key={d.id} style={{
-                    display: 'flex', alignItems: 'center', gap: '12px',
-                    background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.25)',
-                    borderRadius: '10px', padding: '10px 16px',
-                  }}>
-                    <span style={{ fontSize: '24px' }}>🤖</span>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ color: '#fff', fontWeight: 600, fontSize: '13px' }}>
-                        {d.definition?.agent_root?.display_name || d.agent_slug}
-                      </div>
-                      <div style={{ color: 'var(--tm-card-text-muted)', fontSize: '11px' }}>{d.agent_slug} · rev {d.revision}</div>
-                    </div>
-                    <button
-                      onClick={() => router.push(`/admin/agents/builder?id=${d.id}`)}
-                      style={{
-                        background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)',
-                        color: '#a5b4fc', borderRadius: '6px', padding: '5px 12px',
-                        fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-                      }}
-                    >
-                      Open Builder
-                    </button>
-                  </div>
-                ))}
+
+              {defActionErr && (
+                <div style={{ marginBottom: '10px', padding: '8px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', color: '#fca5a5', fontSize: '12px' }}>
+                  {defActionErr}
+                </div>
+              )}
+
+              {/* Table */}
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--tm-card-border)' }}>
+                      {['Name', 'Slug', 'Status', 'Rev', 'Owner', 'Updated', ''].map(h => (
+                        <th key={h} style={{ textAlign: 'left', padding: '6px 10px 8px', fontSize: '11px', fontWeight: 600, color: 'var(--tm-card-text-muted)', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allDefinitions
+                      .filter(d => {
+                        const q = defSearch.toLowerCase();
+                        return !q || (d.display_name || d.agent_slug).toLowerCase().includes(q) || d.agent_slug.toLowerCase().includes(q) || (d.owner_username || '').toLowerCase().includes(q);
+                      })
+                      .map(d => {
+                        const name = d.display_name || d.agent_slug;
+                        const isPublished = d.status === 'published';
+                        return (
+                          <tr key={d.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                            <td style={{ padding: '8px 10px' }}>
+                              <button
+                                onClick={() => router.push(`/admin/agents/builder?id=${d.id}`)}
+                                style={{ background: 'none', border: 'none', color: '#a5b4fc', fontWeight: 600, cursor: 'pointer', padding: 0, fontSize: '13px', textAlign: 'left' }}
+                              >
+                                {name}
+                              </button>
+                            </td>
+                            <td style={{ padding: '8px 10px', color: 'var(--tm-card-text-muted)', fontFamily: 'monospace', fontSize: '11px' }}>{d.agent_slug}</td>
+                            <td style={{ padding: '8px 10px' }}>
+                              <span style={{
+                                display: 'inline-block', fontSize: '11px', padding: '2px 8px', borderRadius: '999px', fontWeight: 500,
+                                background: isPublished ? 'rgba(34,197,94,0.1)' : 'rgba(234,179,8,0.1)',
+                                color: isPublished ? '#86efac' : '#fde047',
+                                border: `1px solid ${isPublished ? 'rgba(34,197,94,0.3)' : 'rgba(234,179,8,0.3)'}`,
+                              }}>
+                                {d.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: '8px 10px', color: 'var(--tm-card-text-muted)', fontSize: '12px' }}>r{d.revision}</td>
+                            <td style={{ padding: '8px 10px', color: 'var(--tm-card-text-muted)', fontSize: '12px' }}>{d.owner_username || '—'}</td>
+                            <td style={{ padding: '8px 10px', color: 'var(--tm-card-text-muted)', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                              {d.updated_at ? new Date(d.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                            </td>
+                            <td style={{ padding: '8px 10px' }}>
+                              <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                                <button
+                                  onClick={() => router.push(`/admin/agents/builder?id=${d.id}`)}
+                                  style={{ background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.3)', color: '#a5b4fc', borderRadius: '5px', padding: '3px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}
+                                >
+                                  Open
+                                </button>
+                                <button
+                                  onClick={() => handleDefClone(d)}
+                                  disabled={defCloning === d.id}
+                                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--tm-card-text-muted)', borderRadius: '5px', padding: '3px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', opacity: defCloning === d.id ? 0.5 : 1 }}
+                                >
+                                  {defCloning === d.id ? '…' : 'Clone'}
+                                </button>
+                                {!isPublished && (
+                                  <button
+                                    onClick={() => setDefConfirmDelete(d.id)}
+                                    style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5', borderRadius: '5px', padding: '3px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Delete confirmation modal */}
+          {defConfirmDelete && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}>
+              <div style={{ background: 'var(--tm-card-bg)', border: '1px solid var(--tm-card-border)', borderRadius: '12px', padding: '24px', maxWidth: '360px', width: '100%', margin: '0 16px' }}>
+                <div style={{ fontWeight: 600, fontSize: '15px', color: '#fff', marginBottom: '8px' }}>Delete agent definition?</div>
+                <div style={{ color: 'var(--tm-card-text-muted)', fontSize: '13px', marginBottom: '20px' }}>
+                  This permanently removes the draft. Published agents are protected.
+                </div>
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                  <button onClick={() => setDefConfirmDelete(null)} style={{ background: 'none', border: 'none', color: 'var(--tm-card-text-muted)', cursor: 'pointer', fontSize: '13px', padding: '6px 12px' }}>Cancel</button>
+                  <button onClick={() => handleDefDelete(defConfirmDelete)} style={{ background: '#dc2626', border: 'none', color: '#fff', borderRadius: '7px', padding: '6px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>Delete</button>
+                </div>
               </div>
             </div>
           )}
