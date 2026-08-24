@@ -113,14 +113,13 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
                 <span style={{
                   position: 'absolute',
                   top: `calc(${pct}% - 5px)`,
-                  left: '100%',
-                  marginLeft: 10,
+                  right: 8,
                   fontSize: 8,
                   color: meta.border,
                   fontFamily: 'JetBrains Mono, monospace',
                   pointerEvents: 'none',
                   whiteSpace: 'nowrap',
-                  textAlign: 'left',
+                  textAlign: 'right',
                   lineHeight: 1,
                 }}>{varName}</span>
               </span>
