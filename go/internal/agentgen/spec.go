@@ -90,7 +90,6 @@ const (
 	StepA2ACall   StepType = "a2a_call"
 	StepHumanWait StepType = "human_wait"
 	StepStreamOut StepType = "stream_out"
-	StepMCPCall   StepType = "mcp_call"
 )
 
 type BranchArm struct {

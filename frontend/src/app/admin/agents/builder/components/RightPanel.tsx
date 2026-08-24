@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import type { Node, Edge } from '@xyflow/react';
 import { getNodeDef } from '@/lib/nodeRegistry';
 import type { AgentRootData, SkillData, StepData, DebugState } from '../types';
-import type { AgentIssue, MCPServer } from '@/lib/api';
+import type { AgentIssue, MCPServer, MCPTool } from '@/lib/api';
 import { themApi } from '@/lib/api';
 import { C, labelStyle, inputStyle, textareaStyle, selectStyle, fieldGap, hint, LLM_MODELS } from '../constants';
 import { stepMeta } from './StepNode';
@@ -297,31 +297,156 @@ export function RightPanel({
               </>
             )}
 
-            {d.step_type === 'llm' && (
-              <>
-                <div style={{ color: C.purple, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>LLM CONFIG</div>
-                <label style={labelStyle}>Model</label>
-                <select value={cfgStr('model') || 'claude-haiku-4-5-20251001'} onChange={e => updateStepConfig('model', e.target.value)} style={selectStyle}>
-                  {LLM_MODELS.anthropic.map(m => (<option key={m} value={m}>{m}</option>))}
-                </select>
-                <div style={fieldGap}>
-                  <label style={labelStyle}>Max Tokens</label>
-                  <input type="number" min={1} max={32000} value={cfgNum('max_tokens', 4096)} onChange={e => updateStepConfig('max_tokens', parseInt(e.target.value) || 4096)} style={inputStyle} />
-                </div>
-                <div style={fieldGap}>
-                  <label style={labelStyle}>System Prompt</label>
-                  <textarea rows={4} value={cfgStr('system_prompt')} onChange={e => updateStepConfig('system_prompt', e.target.value)} style={textareaStyle} placeholder="You are a helpful assistant..." />
-                </div>
-                <div style={fieldGap}>
-                  <label style={labelStyle}>User Prompt <span style={hint}>Go template · leave blank to pass caller input directly</span></label>
-                  <textarea rows={3} value={cfgStr('user_prompt')} onChange={e => updateStepConfig('user_prompt', e.target.value)} style={textareaStyle} placeholder={'{{.user_query}}'} />
-                </div>
-                <div style={fieldGap}>
-                  <label style={labelStyle}>Output Variable <span style={hint}>default: output</span></label>
-                  <input value={cfgStr('output_var')} onChange={e => updateStepConfig('output_var', e.target.value)} style={inputStyle} placeholder="output" />
-                </div>
-              </>
-            )}
+            {d.step_type === 'llm' && (() => {
+              const MCP_ACCENT = '#818cf8';
+              const MCP_BG = 'rgba(129,140,248,0.06)';
+              const MCP_BORDER = 'rgba(129,140,248,0.25)';
+
+              // mcp_servers config: array of { slug, tools: string[] }
+              type MCPAttachment = { slug: string; tools: string[] };
+              const mcpAttachments: MCPAttachment[] = (cfg.mcp_servers as MCPAttachment[] | undefined) ?? [];
+
+              function setMCPAttachments(next: MCPAttachment[]) {
+                updateStepConfig('mcp_servers', next);
+              }
+              function addMCPServer(slug: string) {
+                if (!slug || mcpAttachments.some(a => a.slug === slug)) return;
+                setMCPAttachments([...mcpAttachments, { slug, tools: [] }]);
+              }
+              function removeMCPServer(slug: string) {
+                setMCPAttachments(mcpAttachments.filter(a => a.slug !== slug));
+              }
+              function toggleTool(slug: string, tool: string) {
+                setMCPAttachments(mcpAttachments.map(a => {
+                  if (a.slug !== slug) return a;
+                  const has = a.tools.includes(tool);
+                  return { ...a, tools: has ? a.tools.filter(t => t !== tool) : [...a.tools, tool] };
+                }));
+              }
+
+              const attachedSlugs = new Set(mcpAttachments.map(a => a.slug));
+              const availableToAdd = mcpServers.filter(s => !attachedSlugs.has(s.slug));
+
+              return (
+                <>
+                  <div style={{ color: C.purple, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>LLM CONFIG</div>
+                  <label style={labelStyle}>Model</label>
+                  <select value={cfgStr('model') || 'claude-haiku-4-5-20251001'} onChange={e => updateStepConfig('model', e.target.value)} style={selectStyle}>
+                    {LLM_MODELS.anthropic.map(m => (<option key={m} value={m}>{m}</option>))}
+                  </select>
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Max Tokens</label>
+                    <input type="number" min={1} max={32000} value={cfgNum('max_tokens', 4096)} onChange={e => updateStepConfig('max_tokens', parseInt(e.target.value) || 4096)} style={inputStyle} />
+                  </div>
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>System Prompt</label>
+                    <textarea rows={4} value={cfgStr('system_prompt')} onChange={e => updateStepConfig('system_prompt', e.target.value)} style={textareaStyle} placeholder="You are a helpful assistant..." />
+                  </div>
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>User Prompt <span style={hint}>Go template · leave blank to pass caller input directly</span></label>
+                    <textarea rows={3} value={cfgStr('user_prompt')} onChange={e => updateStepConfig('user_prompt', e.target.value)} style={textareaStyle} placeholder={'{{.user_query}}'} />
+                  </div>
+                  <div style={fieldGap}>
+                    <label style={labelStyle}>Output Variable <span style={hint}>default: output</span></label>
+                    <input value={cfgStr('output_var')} onChange={e => updateStepConfig('output_var', e.target.value)} style={inputStyle} placeholder="output" />
+                  </div>
+
+                  {/* ── MCP Servers ─────────────────────────────────────────── */}
+                  <div style={{ marginTop: 20, borderTop: `1px solid rgba(255,255,255,0.07)`, paddingTop: 14 }}>
+                    <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: MCP_ACCENT, marginBottom: 8 }}>
+                      MCP SERVERS
+                      <span style={{ marginLeft: 6, fontWeight: 400, color: '#475569', textTransform: 'none', letterSpacing: 0 }}>
+                        — tools the LLM can call during reasoning
+                      </span>
+                    </div>
+
+                    {/* Attached servers */}
+                    {mcpAttachments.map(att => {
+                      const srv = mcpServers.find(s => s.slug === att.slug);
+                      const manifest: MCPTool[] = srv?.tools_manifest ?? [];
+                      return (
+                        <div key={att.slug} style={{ marginBottom: 8, borderRadius: 8, border: `1px solid ${MCP_BORDER}`, background: MCP_BG, overflow: 'hidden' }}>
+                          {/* Server header */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px' }}>
+                            <span style={{ fontSize: 13 }}>🔌</span>
+                            <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: MCP_ACCENT }}>{srv?.name ?? att.slug}</span>
+                            {att.tools.length > 0 && (
+                              <span style={{ fontSize: 10, color: '#64748b' }}>{att.tools.length} tool{att.tools.length !== 1 ? 's' : ''} selected</span>
+                            )}
+                            <button onClick={() => removeMCPServer(att.slug)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1 }} title="Remove">×</button>
+                          </div>
+
+                          {/* Tool filter — only shown when server has been probed */}
+                          {manifest.length > 0 && (
+                            <details style={{ borderTop: `1px solid ${MCP_BORDER}` }}>
+                              <summary style={{ padding: '5px 10px', fontSize: 10, color: '#64748b', cursor: 'pointer', userSelect: 'none', listStyle: 'none' }}>
+                                {att.tools.length === 0
+                                  ? `▸ All ${manifest.length} tools visible · restrict?`
+                                  : `▾ ${att.tools.length} of ${manifest.length} tools selected`
+                                }
+                              </summary>
+                              <div style={{ padding: '6px 10px 8px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {manifest.map(t => (
+                                  <label key={t.name} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={att.tools.length === 0 || att.tools.includes(t.name)}
+                                      onChange={() => {
+                                        // If currently "all", clicking one tool means "restrict to all except this one"
+                                        if (att.tools.length === 0) {
+                                          const allExcept = manifest.map(m => m.name).filter(n => n !== t.name);
+                                          setMCPAttachments(mcpAttachments.map(a => a.slug === att.slug ? { ...a, tools: allExcept } : a));
+                                        } else {
+                                          toggleTool(att.slug, t.name);
+                                        }
+                                      }}
+                                      style={{ accentColor: MCP_ACCENT, marginTop: 2, flexShrink: 0 }}
+                                    />
+                                    <div>
+                                      <div style={{ fontSize: 11, fontWeight: 600, color: '#e2e8f0', fontFamily: 'monospace' }}>{t.name}</div>
+                                      {t.description && <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.4 }}>{t.description}</div>}
+                                    </div>
+                                  </label>
+                                ))}
+                                {att.tools.length > 0 && att.tools.length < manifest.length && (
+                                  <button onClick={() => setMCPAttachments(mcpAttachments.map(a => a.slug === att.slug ? { ...a, tools: [] } : a))} style={{ marginTop: 4, background: 'none', border: `1px dashed ${MCP_BORDER}`, color: '#64748b', padding: '3px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 10 }}>
+                                    Reset — show all tools
+                                  </button>
+                                )}
+                              </div>
+                            </details>
+                          )}
+                          {manifest.length === 0 && (
+                            <div style={{ padding: '4px 10px 7px', fontSize: 10, color: '#475569' }}>
+                              Probe this server in MCP Store to see its tools
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Add server dropdown */}
+                    {availableToAdd.length > 0 && (
+                      <select
+                        value=""
+                        onChange={e => { addMCPServer(e.target.value); e.target.value = ''; }}
+                        style={{ ...selectStyle, borderColor: MCP_BORDER, color: '#64748b', marginTop: mcpAttachments.length ? 4 : 0 }}
+                      >
+                        <option value="">+ Attach MCP server…</option>
+                        {availableToAdd.map(s => (
+                          <option key={s.id} value={s.slug}>{s.name} ({s.slug})</option>
+                        ))}
+                      </select>
+                    )}
+                    {mcpServers.length === 0 && (
+                      <div style={{ fontSize: 11, color: '#475569', padding: '6px 0' }}>
+                        No MCP servers registered — add servers in <strong style={{ color: MCP_ACCENT }}>MCP Store</strong> first.
+                      </div>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
 
             {d.step_type === 'http' && (
               <>
@@ -466,92 +591,7 @@ export function RightPanel({
               </>
             )}
 
-            {d.step_type === 'mcp_call' && (() => {
-              const MCP_ACCENT = '#818cf8';
-              const MCP_BG = 'rgba(129,140,248,0.08)';
-              const MCP_BORDER = 'rgba(129,140,248,0.25)';
-              const selectedServer = mcpServers.find(s => s.slug === cfgStr('server_slug'));
-              const toolNames = (selectedServer?.tools_manifest ?? []).map((t: MCPServer['tools_manifest'][number]) => t.name);
-              return (
-                <>
-                  <div style={{ color: MCP_ACCENT, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>MCP TOOL CONFIG</div>
-                  <label style={labelStyle}>MCP Server</label>
-                  <select
-                    value={cfgStr('server_slug')}
-                    onChange={e => {
-                      updateStepConfig('server_slug', e.target.value);
-                      updateStepConfig('tool_name', '');
-                    }}
-                    style={{ ...selectStyle, borderColor: cfgStr('server_slug') ? MCP_ACCENT + '80' : undefined }}
-                  >
-                    <option value="">— select server —</option>
-                    {mcpServers.map(s => (
-                      <option key={s.id} value={s.slug}>{s.name} ({s.slug})</option>
-                    ))}
-                  </select>
-                  {selectedServer && (
-                    <div style={{ marginTop: 4, fontSize: 11, color: '#64748b', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {selectedServer.url}
-                    </div>
-                  )}
-
-                  <div style={fieldGap}>
-                    <label style={labelStyle}>Tool Name</label>
-                    {toolNames.length > 0 ? (
-                      <select
-                        value={cfgStr('tool_name')}
-                        onChange={e => updateStepConfig('tool_name', e.target.value)}
-                        style={{ ...selectStyle, borderColor: cfgStr('tool_name') ? MCP_ACCENT + '80' : undefined }}
-                      >
-                        <option value="">— select tool —</option>
-                        {toolNames.map((n: string) => (<option key={n} value={n}>{n}</option>))}
-                      </select>
-                    ) : (
-                      <input
-                        value={cfgStr('tool_name')}
-                        onChange={e => updateStepConfig('tool_name', e.target.value)}
-                        style={inputStyle}
-                        placeholder={selectedServer ? 'probe server to load tools, or type name' : 'select a server first'}
-                      />
-                    )}
-                  </div>
-
-                  {cfgStr('tool_name') && selectedServer?.tools_manifest?.find((t: MCPServer['tools_manifest'][number]) => t.name === cfgStr('tool_name'))?.description && (
-                    <div style={{ marginTop: 2, fontSize: 11, color: '#64748b', lineHeight: 1.5 }}>
-                      {selectedServer?.tools_manifest?.find((t: MCPServer['tools_manifest'][number]) => t.name === cfgStr('tool_name'))?.description}
-                    </div>
-                  )}
-
-                  <div style={fieldGap}>
-                    <label style={labelStyle}>Arguments Template <span style={hint}>JSON — Go template vars allowed</span></label>
-                    <textarea
-                      rows={3}
-                      value={cfgStr('args_template')}
-                      onChange={e => updateStepConfig('args_template', e.target.value)}
-                      style={{ ...textareaStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
-                      placeholder={'{"query": "{{.user_query}}"}'}
-                    />
-                  </div>
-
-                  <div style={fieldGap}>
-                    <label style={labelStyle}>Output Variable <span style={hint}>default: mcp_result</span></label>
-                    <input
-                      value={cfgStr('output_var')}
-                      onChange={e => updateStepConfig('output_var', e.target.value)}
-                      style={inputStyle}
-                      placeholder="mcp_result"
-                    />
-                  </div>
-
-                  <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: '6px', background: MCP_BG, border: `1px solid ${MCP_BORDER}`, fontSize: 11, color: '#64748b', lineHeight: 1.7 }}>
-                    <strong style={{ color: MCP_ACCENT }}>Runtime:</strong> credentials are resolved per-application from MCP Credentials settings.
-                    The tool result is stored in <code style={{ color: MCP_ACCENT }}>{`{{.${cfgStr('output_var') || 'mcp_result'}}}`}</code>.
-                  </div>
-                </>
-              );
-            })()}
-
-            {!['input', 'llm', 'http', 'transform', 'response', 'branch', 'mcp_call'].includes(d.step_type) && (
+            {!['input', 'llm', 'http', 'transform', 'response', 'branch'].includes(d.step_type) && (
               <div style={{ color: '#64748b', fontSize: '12px', padding: '12px', border: `1px dashed ${C.outline}`, borderRadius: '6px', textAlign: 'center' }}>
                 Config for <strong style={{ color: C.text }}>{d.step_type}</strong> is not yet supported in the builder.
               </div>

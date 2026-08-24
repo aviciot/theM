@@ -1779,7 +1779,6 @@ function CanvasInner() {
                 {[
                   { label: 'Data Flow',  items: ['input', 'response'] },
                   { label: 'Processing', items: ['llm', 'transform', 'http', 'branch'] },
-                  { label: 'Integrations', items: ['mcp_call'] },
                   { label: 'Advanced',   items: ['loop', 'parallel', 'a2a_call', 'human_wait', 'stream_out'] },
                 ].map(group => (
                   <div key={group.label}>

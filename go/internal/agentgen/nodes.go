@@ -225,18 +225,4 @@ func init() {
 		Execute:     nil,
 	})
 
-	RegisterNode(NodeDef{
-		Type:        StepMCPCall,
-		Version:     1,
-		Label:       "MCP Tool",
-		Description: "Call a specific tool on a registered MCP server. Passes pipeline variables as arguments and stores the result. (stub)",
-		Emoji:       "🔌",
-		OutputArity: "single",
-		IsSource:    false,
-		IsSink:      false,
-		SingleInput: true,
-		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
-		Validate:    nil,
-		Execute:     nil,
-	})
 }

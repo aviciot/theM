@@ -1418,15 +1418,15 @@ PublishAgentDefinition uses `agentgen.CompileForPublish()` (stubs→errors).
 
 ### S1-54 · Node Definition Registry — `internal/agentgen/noderegistry_test.go`
 
-**Purpose:** Validates the `NodeDef` registry is the single source of truth for all 12 canvas node
-types (including `mcp_call` stub). Covers registration completeness, metadata correctness
-(IsSource/IsSink/OutputArity/Version), `ToInfo()` deriving `Executable` from `Execute != nil`,
-per-type `Validate` functions, and compiler integration via `LookupNode`.
+**Purpose:** Validates the `NodeDef` registry is the single source of truth for all 11 canvas node
+types. Covers registration completeness, metadata correctness (IsSource/IsSink/OutputArity/Version),
+`ToInfo()` deriving `Executable` from `Execute != nil`, per-type `Validate` functions, and compiler
+integration via `LookupNode`.
 
 | Test | What it proves |
 |---|---|
-| `TestNodeRegistry_AllTypesRegistered` | all 12 StepType constants have a NodeDef in the registry |
-| `TestNodeRegistry_KnownStepTypesCount` | KnownStepTypes() returns exactly 12 |
+| `TestNodeRegistry_AllTypesRegistered` | all 11 StepType constants have a NodeDef in the registry |
+| `TestNodeRegistry_KnownStepTypesCount` | KnownStepTypes() returns exactly 11 |
 | `TestNodeRegistry_InputProperties` | input: IsSource=true, IsSink=false, OutputArity=single, Execute≠nil, Version≥1 |
 | `TestNodeRegistry_ToInfo` | ToInfo(): Executable=true for input (Execute≠nil), Executable=true for branch (now implemented) |
 | `TestNodeRegistry_AllNodesHaveLabelAndVersion` | every registered node has non-empty Label and Version≥1 and valid OutputArity |
@@ -1437,7 +1437,7 @@ per-type `Validate` functions, and compiler integration via `LookupNode`.
 | `TestNodeRegistry_UnknownTypeReturnsFalse` | LookupNode("banana") → ok=false |
 | `TestNodeRegistry_CompilerRejectsUnknownStepType` | compiler returns UNKNOWN_STEP_TYPE for unregistered type |
 | `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response/branch/condition all have Execute≠nil |
-| `TestNodeRegistry_StubTypesHaveNilExecute` | loop/parallel/a2a_call/human_wait/stream_out/mcp_call all have Execute=nil |
+| `TestNodeRegistry_StubTypesHaveNilExecute` | loop/parallel/a2a_call/human_wait/stream_out all have Execute=nil |
 | `TestNodeRegistry_LLMValidate_UndeclaredSlot` | llm Validate(): undeclared provider_key_slot → UNDECLARED_SLOT |
 | `TestNodeRegistry_HTTPValidate_UndeclaredSlot` | http Validate(): undeclared credential_slot → UNDECLARED_SLOT |
 | `TestNodeRegistry_ParallelOutputArity` | parallel: OutputArity=multi |
