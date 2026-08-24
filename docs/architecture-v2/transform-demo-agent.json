@@ -46,6 +46,7 @@
           "type": "transform",
           "label": "Extract Fields",
           "config": {
+            "exposed_vars": ["city_label"],
             "functions": [
               {
                 "fn": "strip_fences",
