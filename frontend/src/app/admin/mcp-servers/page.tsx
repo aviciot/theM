@@ -387,16 +387,26 @@ function PropertiesPanel({
   const tools: MCPTool[] = server.tools_manifest ?? [];
 
   return (
-    <aside style={{
-      position: 'fixed', top: 0, right: 0, width: '420px', height: '100vh', zIndex: 300,
-      borderLeft: '1px solid rgba(255,255,255,0.06)',
-      background: 'var(--tm-panel)', display: 'flex', flexDirection: 'column',
-      overflowY: 'auto',
-    }}>
-      {/* Panel header */}
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 300,
+      background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }} onClick={onClose}>
+    <div style={{
+      position: 'relative',
+      background: 'var(--tm-panel)',
+      border: '1px solid var(--tm-modal-border)',
+      borderRadius: '18px',
+      width: '600px',
+      maxHeight: '90vh',
+      display: 'flex', flexDirection: 'column',
+      boxShadow: '0 24px 64px rgba(0,0,0,.55), 0 6px 18px rgba(0,0,0,0.3)',
+    }} onClick={e => e.stopPropagation()}>
+
+      {/* Modal header */}
       <div style={{
-        padding: '20px 20px 0 20px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-        borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '16px', marginBottom: '0',
+        padding: '24px 24px 0 24px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+        borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '16px',
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
@@ -419,7 +429,7 @@ function PropertiesPanel({
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '4px', padding: '12px 20px 0 20px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+      <div style={{ display: 'flex', gap: '4px', padding: '12px 24px 0 24px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         {(['general', 'status'] as PanelTab[]).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
             padding: '6px 14px', borderRadius: '8px 8px 0 0', fontSize: '12px', fontWeight: tab === t ? 700 : 400,
@@ -432,7 +442,7 @@ function PropertiesPanel({
       </div>
 
       {/* Tab content */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px 24px 20px' }} className="custom-scrollbar">
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px 24px 24px' }} className="custom-scrollbar">
 
         {tab === 'general' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -597,7 +607,8 @@ function PropertiesPanel({
           </div>
         )}
       </div>
-    </aside>
+    </div>
+    </div>
   );
 }
 
@@ -868,9 +879,7 @@ export default function MCPServersPage() {
       </header>
 
       {/* Content area */}
-      <div style={{ flex: 1, overflow: 'hidden' }}>
-        {/* Card grid — always full width; panel overlays via position:fixed */}
-        <div style={{ height: '100%', overflowY: 'auto', padding: '24px 32px', paddingRight: selected ? '452px' : '32px', transition: 'padding-right 200ms ease' }} className="custom-scrollbar">
+      <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }} className="custom-scrollbar">
           {loading && (
             <div style={{ textAlign: 'center', padding: '80px 0', color: 'var(--tm-card-text-muted)' }}>
               <span className="material-symbols-outlined spin" style={{ fontSize: '32px', display: 'block', marginBottom: '12px', color: ACCENT }}>sync</span>
@@ -918,10 +927,9 @@ export default function MCPServersPage() {
               ))}
             </div>
           )}
-        </div>
       </div>
 
-      {/* Properties panel — fixed overlay on the right */}
+      {/* Properties modal */}
       {selected && (
         <PropertiesPanel
           server={selected}
