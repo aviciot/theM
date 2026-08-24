@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { themApi, MCPServer, MCPTool } from '@/lib/api';
+import Sidebar from '@/components/Sidebar';
 
 // ── accent / theme ────────────────────────────────────────────────────────────
 const ACCENT = '#818cf8';
@@ -806,6 +807,8 @@ export default function MCPServersPage() {
   ];
 
   return (
+    <>
+    <Sidebar />
     <main style={{ marginLeft: '260px', height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--tm-bg)' }}>
       {/* Header */}
       <header style={{
@@ -944,5 +947,6 @@ export default function MCPServersPage() {
         <CreateModal onClose={() => setShowCreate(false)} onCreated={handleCreated} />
       )}
     </main>
+    </>
   );
 }
