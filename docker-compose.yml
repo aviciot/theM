@@ -871,6 +871,59 @@ services:
 
   # ── Go Bridge — active API gateway (Python permanently retired) ──────────────
   # Go serves all routes. Python bridge is behind profiles: [legacy] and must not start.
+  # ============================================================
+  # them-mcp-service — dedicated MCP Store service
+  # Manages MCP server health checks, tool discovery, and tool
+  # execution. Internal only — not exposed through Traefik.
+  # Horizontally scalable: leader election (Redis SET NX) ensures
+  # only one replica runs the health loop; all replicas handle
+  # POST /internal/execute as stateless HTTP servers.
+  # ============================================================
+  them-mcp-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp-service
+    container_name: them-mcp-service
+    ports: []
+    environment:
+      - APP_PORT=8010
+      - APP_ENV=development
+      - THE_M_INSTANCE_ID=mcp-service-1
+      - DATABASE_HOST=them-postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=them
+      - DATABASE_USER=${THE_M_DB_USER:-them}
+      - DATABASE_PASSWORD=${THE_M_DB_PASSWORD:-them_secret}
+      - REDIS_HOST=them-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
+      - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-secret-key}
+      - MCP_HEALTH_INTERVAL_SECONDS=60
+      - MCP_ALLOW_HTTP=true
+      - MCP_ALLOW_STDIO=false
+      - LOG_FORMAT=json
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=false"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
   them-go-bridge:
     build:
       context: .
