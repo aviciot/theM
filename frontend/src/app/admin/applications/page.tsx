@@ -7,6 +7,7 @@ import { C } from './constants';
 import { CanvasBuilderView } from './components/CanvasBuilderView';
 import { RuntimeView } from './components/RuntimeView';
 import { SessionsView } from './components/SessionsView';
+import { MCPCredentialsView } from './components/MCPCredentialsView';
 import { ListView } from './components/ListView';
 
 // ── Page root ─────────────────────────────────────────────────────────────────
@@ -14,10 +15,11 @@ export default function ApplicationsPage() {
   const [list, setList] = useState<Application[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'list' | 'definition' | 'sessions' | 'runtime'>('list');
+  const [view, setView] = useState<'list' | 'definition' | 'sessions' | 'runtime' | 'mcp-credentials'>('list');
   const [definitionApp, setDefinitionApp] = useState<Application | null>(null);
   const [sessionsApp, setSessionsApp] = useState<Application | null>(null);
   const [runtimeApp, setRuntimeApp] = useState<Application | null>(null);
+  const [mcpApp, setMcpApp] = useState<Application | null>(null);
   const [token, setToken] = useState<string | null>(null);
   useEffect(() => {
     fetch('/api/auth/token').then(r => r.ok ? r.json() : null).then(d => { if (d?.token) setToken(d.token); }).catch(() => {});
@@ -99,6 +101,12 @@ export default function ApplicationsPage() {
     setDefinitionApp(null);
     setSessionsApp(null);
     setRuntimeApp(null);
+    setMcpApp(null);
+  }
+
+  function openMCPCredentials(app: Application) {
+    setMcpApp(app);
+    setView('mcp-credentials');
   }
 
   function openSessions(app: Application) {
@@ -109,6 +117,19 @@ export default function ApplicationsPage() {
   function openRuntime(app: Application) {
     setRuntimeApp(app);
     setView('runtime');
+  }
+
+  if (view === 'mcp-credentials' && mcpApp) {
+    return (
+      <AuthGuard>
+        <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
+          <Sidebar />
+          <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+            <MCPCredentialsView app={mcpApp} onBack={backToList} />
+          </div>
+        </div>
+      </AuthGuard>
+    );
   }
 
   if (view === 'runtime' && runtimeApp) {
@@ -194,6 +215,7 @@ export default function ApplicationsPage() {
           onEdit={(app) => openDefinition(app)}
           onSessions={openSessions}
           onRuntime={openRuntime}
+          onMCPCredentials={openMCPCredentials}
           onToggle={handleToggle}
           onDelete={handleDelete}
           onReload={load}

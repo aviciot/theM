@@ -27,6 +27,7 @@ export function AppCard({
   onEdit,
   onSessions,
   onRuntime,
+  onMCPCredentials,
   onToggle,
   onDelete,
   onRename,
@@ -39,6 +40,7 @@ export function AppCard({
   onEdit: (a: Application) => void;
   onSessions: (a: Application) => void;
   onRuntime: (a: Application) => void;
+  onMCPCredentials: (a: Application) => void;
   onToggle: (a: Application) => void;
   onDelete: (a: Application) => void;
   onRename: (a: Application) => void;
@@ -329,6 +331,23 @@ export function AppCard({
         >
           <span className="material-symbols-outlined" style={{ fontSize: 14 }}>tune</span>
           Runtime
+        </button>
+
+        {/* MCP Credentials */}
+        <button
+          className="app-card-btn"
+          onClick={() => onMCPCredentials(app)}
+          title="MCP Credentials"
+          style={{
+            flex: '1 1 60px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+            background: 'rgba(255,255,255,0.03)', color: C.textMuted,
+            border: '1px solid rgba(255,255,255,0.1)',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(129,140,248,0.1)'; e.currentTarget.style.color = '#818cf8'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = C.textMuted; }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>electrical_services</span>
+          MCP
         </button>
 
         {/* Enable / Disable toggle with feedback */}

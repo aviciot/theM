@@ -1,4 +1,5 @@
 'use client';
+import '@xyflow/react/dist/style.css';
 import { useState, useEffect, useMemo, type DragEvent } from 'react';
 import {
   ReactFlowProvider,
@@ -967,7 +968,7 @@ export function CanvasBuilderView({
             onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(0,209,255,0.35)'; }}
             onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.06)'; }}
           />
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', background: 'rgba(0,0,0,0.15)' }}>
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', background: 'rgba(0,0,0,0.15)' }} onKeyDown={e => e.stopPropagation()}>
             <div style={{ padding: '14px 16px 8px', fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: '0.08em', textTransform: 'uppercase', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>Properties</div>
             {renderPropertiesPanel()}
           </div>
