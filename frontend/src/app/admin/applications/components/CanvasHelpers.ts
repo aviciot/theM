@@ -1,7 +1,7 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
 const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 
-import type { Node, Edge } from '@xyflow/react';
+import { Position, type Node, type Edge } from '@xyflow/react';
 import type {
   AppDefinitionDoc,
   ComponentInstance,
@@ -76,19 +76,21 @@ export function agentIconForLibrary(a: { slug?: string; icon?: string | null }):
 }
 
 // ── Dagre auto-layout ─────────────────────────────────────────────────────────
-export function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
+export function applyDagreLayout(nodes: Node[], edges: Edge[], dir: 'TB' | 'LR' = 'TB'): Node[] {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
+  g.setGraph({ rankdir: dir, nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
 
   nodes.forEach(n => g.setNode(n.id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
   edges.forEach(e => g.setEdge(e.source, e.target));
 
   dagre.layout(g);
 
+  const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
+  const targetPos = dir === 'LR' ? Position.Left  : Position.Top;
   return nodes.map(n => {
     const pos = g.node(n.id);
-    return { ...n, position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 } };
+    return { ...n, position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 }, sourcePosition: sourcePos, targetPosition: targetPos };
   });
 }
 

@@ -3,6 +3,7 @@ import { Handle, Position, useReactFlow, type NodeTypes } from '@xyflow/react';
 import type { EntryPointData, OrchestratorData, AgentData, MiddlewareData } from '../types';
 import { C } from '../constants';
 import { agentIconForLibrary } from './CanvasHelpers';
+import { useAppLayoutDir } from '../AppLayoutContext';
 
 // ── Tiny the-M logo badge for internal nodes ──────────────────────────────────
 function InternalMBadge() {
@@ -36,6 +37,8 @@ function InternalMBadge() {
 // ── EntryPointNode ─────────────────────────────────────────────────────────────
 export function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
   const { deleteElements } = useReactFlow();
+  const dir = useAppLayoutDir();
+  const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
   const epKind = data.epType || (data as unknown as Record<string, unknown>).protocol as string | undefined;
   const slugMissing = !data.slug;
   const hasError = data._error || data._shake;
@@ -83,7 +86,7 @@ export function EntryPointNode({ id, data, selected }: { id: string; data: Entry
           <div style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600, marginTop: 1 }}>⚠ slug required</div>
         )}
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: C.cyan, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <Handle type="source" position={sourcePos} style={{ background: C.cyan, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
     </div>
   );
 }
@@ -93,6 +96,9 @@ const INTERNAL_ORCHESTRATOR_NAMES = new Set(['workflow_advisor']);
 // ── OrchestratorNode ──────────────────────────────────────────────────────────
 export function OrchestratorNode({ id, data, selected }: { id: string; data: OrchestratorData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
   const { deleteElements } = useReactFlow();
+  const dir = useAppLayoutDir();
+  const targetPos = dir === 'LR' ? Position.Left  : Position.Top;
+  const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
   const isInternal = INTERNAL_ORCHESTRATOR_NAMES.has(data.name);
   const hasError = data._error || data._shake;
   const accent = hasError ? '#f87171' : isInternal ? '#a0f0d0' : C.purple;
@@ -116,7 +122,7 @@ export function OrchestratorNode({ id, data, selected }: { id: string; data: Orc
           title="Delete node (or press Delete key)"
         >✕</button>
       )}
-      <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <Handle type="target" position={targetPos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
       <div
         className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
         style={{
@@ -134,7 +140,7 @@ export function OrchestratorNode({ id, data, selected }: { id: string; data: Orc
           {data.displayName}
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <Handle type="source" position={sourcePos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
     </div>
   );
 }
@@ -142,6 +148,8 @@ export function OrchestratorNode({ id, data, selected }: { id: string; data: Orc
 // ── AgentNode ─────────────────────────────────────────────────────────────────
 export function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
   const { deleteElements } = useReactFlow();
+  const dir = useAppLayoutDir();
+  const targetPos = dir === 'LR' ? Position.Left : Position.Top;
   const isInternal = data.tags?.includes('internal') ?? false;
   const hasError = data._error || data._shake;
   const accent = hasError ? '#f87171' : isInternal ? '#a0f0d0' : C.green;
@@ -167,7 +175,7 @@ export function AgentNode({ id, data, selected }: { id: string; data: AgentData 
           title="Delete node (or press Delete key)"
         >✕</button>
       )}
-      <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <Handle type="target" position={targetPos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
       <div
         className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
         style={{
@@ -192,6 +200,9 @@ export function AgentNode({ id, data, selected }: { id: string; data: AgentData 
 // ── MiddlewareNode ────────────────────────────────────────────────────────────
 export function MiddlewareNode({ id, data, selected }: { id: string; data: MiddlewareData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
   const { deleteElements } = useReactFlow();
+  const dir = useAppLayoutDir();
+  const targetPos = dir === 'LR' ? Position.Left  : Position.Top;
+  const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
   const hasError = data._error || data._shake;
   const accent = hasError ? '#f87171' : C.amber;
   const selGlow = 'rgba(245,158,11,0.35)';
@@ -215,7 +226,7 @@ export function MiddlewareNode({ id, data, selected }: { id: string; data: Middl
           title="Delete node (or press Delete key)"
         >✕</button>
       )}
-      <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <Handle type="target" position={targetPos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
       <div
         className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
         style={{
@@ -236,7 +247,7 @@ export function MiddlewareNode({ id, data, selected }: { id: string; data: Middl
           {data.kind}
         </div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <Handle type="source" position={sourcePos} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
     </div>
   );
 }

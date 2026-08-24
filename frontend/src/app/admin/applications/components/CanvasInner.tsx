@@ -11,6 +11,7 @@ import {
   type Edge,
   type Connection,
 } from '@xyflow/react';
+import { AppLayoutDirContext } from '../AppLayoutContext';
 import type {
   OrchestratorData,
   EntryPointData,
@@ -181,7 +182,7 @@ export function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPicke
 
 // ── CanvasInner ───────────────────────────────────────────────────────────────
 export function CanvasInner({
-  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, onNodesDelete, logoState, advisorOpen, onAdvisorOpen,
+  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, onToggleLayout, layoutDir, onNodesDelete, logoState, advisorOpen, onAdvisorOpen,
 }: {
   nodes: Node[];
   edges: Edge[];
@@ -195,6 +196,8 @@ export function CanvasInner({
   onUpdateNode: (id: string, data: Record<string, unknown>) => void;
   onDeleteEdge: (edgeId: string) => void;
   onAutoLayout: () => void;
+  onToggleLayout?: () => void;
+  layoutDir?: 'TB' | 'LR';
   onNodesDelete?: () => void;
   logoState: LogoState;
   advisorOpen: boolean;
@@ -224,6 +227,7 @@ export function CanvasInner({
   };
 
   return (
+    <AppLayoutDirContext.Provider value={layoutDir ?? 'TB'}>
     <div style={{ flex: 1, position: 'relative', height: '100%' }}>
       <style>{CANVAS_STYLES}</style>
       {/* Canvas toolbar */}
@@ -296,6 +300,17 @@ export function CanvasInner({
             <line x1="19" y1="9" x2="19" y2="21"/>
           </svg>
         </button>
+        {onToggleLayout && (
+          <button
+            onClick={() => { onToggleLayout(); setTimeout(() => fitView({ padding: 0.2 }), 50); }}
+            title={layoutDir === 'LR' ? 'Switch to vertical layout' : 'Switch to horizontal layout'}
+            style={{ ...iconBtn, fontSize: 14, fontWeight: 700 }}
+            onMouseEnter={e => (e.currentTarget.style.color = C.cyan)}
+            onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+          >
+            {layoutDir === 'LR' ? '⇅' : '⇆'}
+          </button>
+        )}
         <div style={{ width: 1, height: 18, background: C.outlineVariant, margin: '0 4px' }} />
         <button
           onClick={onAdvisorOpen}
@@ -345,6 +360,7 @@ export function CanvasInner({
         />
       </ReactFlow>
     </div>
+    </AppLayoutDirContext.Provider>
   );
 }
 

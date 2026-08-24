@@ -102,6 +102,7 @@ export function CanvasBuilderView({
   // Canvas state
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [layoutDir, setLayoutDir] = useState<'TB' | 'LR'>('TB');
 
 
   useEffect(() => {
@@ -931,7 +932,13 @@ export function CanvasBuilderView({
                 setSelectedNode={setSelectedNode}
                 onUpdateNode={(id, patch) => { setNodes(ns => ns.map(n => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)); setIsDirty(true); setLogoResult('none'); }}
                 onDeleteEdge={edgeId => { setEdges(es => es.filter(e => e.id !== edgeId)); setIsDirty(true); }}
-                onAutoLayout={() => { setNodes(ns => applyDagreLayout([...ns], edges)); }}
+                onAutoLayout={() => { setNodes(ns => applyDagreLayout([...ns], edges, layoutDir)); }}
+                onToggleLayout={() => {
+                  const next: 'TB' | 'LR' = layoutDir === 'TB' ? 'LR' : 'TB';
+                  setLayoutDir(next);
+                  setNodes(ns => applyDagreLayout([...ns], edges, next));
+                }}
+                layoutDir={layoutDir}
                 onNodesDelete={() => { setIsDirty(true); setLogoResult('none'); setSelectedNode(null); }}
                 logoState={logoState}
                 advisorOpen={false}

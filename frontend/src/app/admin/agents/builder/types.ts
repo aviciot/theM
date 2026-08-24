@@ -69,3 +69,5 @@ export interface ValidationState {
 }
 
 export type LogoState = 'idle' | 'dirty' | 'error' | 'success' | 'thinking' | 'warning';
+
+export type LayoutDir = 'TB' | 'LR';

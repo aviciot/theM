@@ -38,19 +38,21 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { C, inputStyle, INITIAL_DEBUG, INITIAL_VALIDATION, genUUID } from './constants';
-import type { AgentRootData, SkillData, StepData, DebugNodeState, DebugState, ValidationState, LogoState } from './types';
+import type { AgentRootData, SkillData, StepData, DebugNodeState, DebugState, ValidationState, LogoState, LayoutDir } from './types';
 import { StepNode, stepMeta } from './components/StepNode';
 import { DebugPanel } from './components/DebugPanel';
 import { NodeContextMenu } from './components/NodeContextMenu';
 import type { CtxTarget } from './components/NodeContextMenu';
 import { RightPanel } from './components/RightPanel';
+import { LayoutDirContext, useLayoutDir } from './LayoutContext';
 
 // ── Node components (must be outside the render component) ───────────────────
 
 function AgentRootNode({ data }: { data: AgentRootData; id: string }) {
+  const layoutDir = useLayoutDir();
   return (
     <div style={{ background: 'transparent', border: 'none', padding: '8px', minWidth: '120px', textAlign: 'center' }}>
-      <Handle type="source" position={Position.Bottom} style={{ background: C.cyan }} />
+      <Handle type="source" position={layoutDir === 'LR' ? Position.Right : Position.Bottom} style={{ background: C.cyan }} />
       <div style={{ fontSize: '42px', textAlign: 'center', lineHeight: 1 }}>🤖</div>
       <div style={{ color: '#fff', fontWeight: 700, fontSize: '13px', textAlign: 'center', marginTop: '6px' }}>{data.display_name || 'Unnamed Agent'}</div>
     </div>
@@ -58,10 +60,11 @@ function AgentRootNode({ data }: { data: AgentRootData; id: string }) {
 }
 
 function SkillNode({ data }: { data: SkillData; id: string }) {
+  const layoutDir = useLayoutDir();
   return (
     <div style={{ background: 'transparent', border: 'none', padding: '8px', minWidth: '100px', textAlign: 'center' }}>
-      <Handle type="target" position={Position.Top} style={{ background: C.purple }} />
-      <Handle type="source" position={Position.Bottom} style={{ background: C.purple }} />
+      <Handle type="target" position={layoutDir === 'LR' ? Position.Left  : Position.Top}    style={{ background: C.purple }} />
+      <Handle type="source" position={layoutDir === 'LR' ? Position.Right : Position.Bottom} style={{ background: C.purple }} />
       <div style={{ fontSize: '36px', lineHeight: 1 }}>⚡</div>
       <div style={{ color: '#fff', fontWeight: 700, fontSize: '12px', marginTop: '6px' }}>{data.name || 'Skill'}</div>
     </div>
@@ -287,22 +290,25 @@ function CanvasInner() {
   const defId = searchParams.get('id');
   const { screenToFlowPosition, fitView } = useReactFlow();
 
-  function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
+  function applyDagreLayout(nodes: Node[], edges: Edge[], dir: LayoutDir = 'TB'): Node[] {
     if (!dagre) return nodes;
     const g = new dagre.graphlib.Graph();
     g.setDefaultEdgeLabel(() => ({}));
-    g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
+    g.setGraph({ rankdir: dir, nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
     nodes.forEach(n => g.setNode(n.id, { width: 120, height: 80 }));
     edges.forEach(e => g.setEdge(e.source, e.target));
     dagre.layout(g);
+    const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
+    const targetPos = dir === 'LR' ? Position.Left  : Position.Top;
     return nodes.map(n => {
       const pos = g.node(n.id);
-      return { ...n, position: { x: pos.x - 60, y: pos.y - 40 } };
+      return { ...n, position: { x: pos.x - 60, y: pos.y - 40 }, sourcePosition: sourcePos, targetPosition: targetPos };
     });
   }
 
   // View state: 'agent' = top-level, 'skill' = pipeline for a skill
   const [activeView, setActiveView] = useState<'agent' | 'skill'>('agent');
+  const [layoutDir, setLayoutDir] = useState<LayoutDir>('TB');
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
 
   // Resizable panels
@@ -537,6 +543,7 @@ function CanvasInner() {
     if (!defId) return;
     themApi.getAgentDefinition(defId).then(resp => {
       const doc = resp.definition;
+      if (!doc) return;
       setAgentSlug(doc.agent_slug ?? '');
       setDisplayName(doc.agent_root.display_name ?? '');
       setDescription(doc.agent_root.description ?? '');
@@ -1137,11 +1144,38 @@ function CanvasInner() {
       const text = json.content?.find(c => c.type === 'text')?.text ?? '';
       newVars[outVar] = text;
       output = text;
-      for (const e of outEdgesForNode) edgeValues[e.id] = text.length > 50 ? text.slice(0, 50) + '…' : text;
+      for (const e of outEdgesForNode) edgeValues[e.id] = text;
     } else if (d.step_type === 'response') {
       const fromVar = (cfg.from_var as string) || 'output';
       output = String(newVars[fromVar] ?? '');
     } else if (d.step_type === 'transform') {
+      // Server-side function pipeline (fn/input_var/output_var format)
+      const functions = (cfg.functions as Array<{ fn: string; args?: Record<string, unknown>; input_var: string; output_var: string }>) ?? [];
+      for (const f of functions) {
+        const raw = newVars[f.input_var];
+        const rawStr = raw === undefined ? '' : typeof raw === 'string' ? raw : JSON.stringify(raw);
+        let result: unknown = rawStr;
+        if (f.fn === 'strip_fences') {
+          // Strip markdown code fences: ```json ... ``` or ``` ... ```
+          result = rawStr.replace(/^```[a-z]*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+        } else if (f.fn === 'json_path') {
+          const path = String((f.args?.path as string) ?? '');
+          let parsed: unknown = null;
+          if (typeof raw === 'object' && raw !== null) parsed = raw;
+          else { try { parsed = JSON.parse(rawStr); } catch { parsed = null; } }
+          if (parsed !== null) {
+            const parts = path.replace(/^\$\.?/, '').split('.').filter(Boolean);
+            let cur: unknown = parsed;
+            for (const p of parts) { if (typeof cur === 'object' && cur !== null) cur = (cur as Record<string, unknown>)[p]; else { cur = undefined; break; } }
+            result = cur !== undefined ? cur : '';
+          }
+        } else if (f.fn === 'template') {
+          result = renderTemplate(rawStr, newVars);
+        }
+        newVars[f.output_var] = result;
+        output = typeof result === 'string' ? result : JSON.stringify(result);
+      }
+      // Legacy expression/extraction format
       const exprs = (cfg.expressions as Record<string, string>) ?? {};
       for (const [outKey, tmpl] of Object.entries(exprs)) {
         const val = renderTemplate(tmpl, newVars);
@@ -1161,7 +1195,15 @@ function CanvasInner() {
         for (const p of parts) { if (typeof cur === 'object' && cur !== null) cur = (cur as Record<string, unknown>)[p]; else { cur = undefined; break; } }
         if (cur !== undefined) { newVars[ext.var] = String(cur); output = String(cur); }
       }
-      for (const e of outEdgesForNode) edgeValues[e.id] = output.length > 50 ? output.slice(0, 50) + '…' : output;
+      // Edge label: show a summary of all vars written by this transform
+      const exposedVars = (cfg.exposed_vars as string[]) ?? [];
+      if (exposedVars.length > 0) {
+        const summary = exposedVars
+          .map(v => `${v}: ${String(newVars[v] ?? '').slice(0, 40)}`)
+          .join('\n');
+        output = output || summary;
+      }
+      for (const e of outEdgesForNode) edgeValues[e.id] = output;
     } else if (d.step_type === 'branch') {
       const expr = (cfg.expression as string) || '';
       const trueNext = (cfg.true_next as string) || '';
@@ -1218,7 +1260,7 @@ function CanvasInner() {
         newVars['http_response'] = text;
       }
       output = text;
-      for (const e of outEdgesForNode) edgeValues[e.id] = text.length > 50 ? text.slice(0, 50) + '…' : text;
+      for (const e of outEdgesForNode) edgeValues[e.id] = text;
     } else {
       output = `[${d.step_type} not supported in debug mode]`;
     }
@@ -1497,6 +1539,7 @@ function CanvasInner() {
   const currentEdges = activeView === 'agent' ? agentEdges : (debug.active ? debugEdges : localPipeEdges);
 
   return (
+    <LayoutDirContext.Provider value={layoutDir}>
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg }}>
       {/* Toolbar */}
       <div style={{
@@ -1798,15 +1841,29 @@ function CanvasInner() {
             <button
               onClick={() => {
                 if (activeView === 'agent') {
-                  setAgentNodes(ns => applyDagreLayout(ns, agentEdges));
+                  setAgentNodes(ns => applyDagreLayout(ns, agentEdges, layoutDir));
                 } else {
-                  setLocalPipeNodes(ns => applyDagreLayout(ns, localPipeEdges));
+                  setLocalPipeNodes(ns => applyDagreLayout(ns, localPipeEdges, layoutDir));
                 }
                 setTimeout(() => fitView({ padding: 0.2 }), 50);
               }}
               title="Auto-arrange nodes"
               style={{ background: C.surface, border: `1px solid ${C.outline}`, color: C.textMuted, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
             >⚏</button>
+            <button
+              onClick={() => {
+                const next: LayoutDir = layoutDir === 'TB' ? 'LR' : 'TB';
+                setLayoutDir(next);
+                if (activeView === 'agent') {
+                  setAgentNodes(ns => applyDagreLayout(ns, agentEdges, next));
+                } else {
+                  setLocalPipeNodes(ns => applyDagreLayout(ns, localPipeEdges, next));
+                }
+                setTimeout(() => fitView({ padding: 0.2 }), 50);
+              }}
+              title={layoutDir === 'TB' ? 'Switch to horizontal layout' : 'Switch to vertical layout'}
+              style={{ background: C.surface, border: `1px solid ${C.outline}`, color: C.textMuted, borderRadius: 6, padding: '5px 10px', cursor: 'pointer', fontSize: 14, lineHeight: 1, fontWeight: 600 }}
+            >{layoutDir === 'TB' ? '⇆' : '⇅'}</button>
           </div>
 
           {/* Context menu */}
@@ -1924,6 +1981,7 @@ function CanvasInner() {
         )}
       </div>
     </div>
+    </LayoutDirContext.Provider>
   );
 }
 

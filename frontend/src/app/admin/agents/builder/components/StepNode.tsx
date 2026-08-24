@@ -1,6 +1,7 @@
 import { Handle, Position } from '@xyflow/react';
 import { getNodeDef } from '@/lib/nodeRegistry';
 import type { StepNodeData, DebugNodeState } from '../types';
+import { useLayoutDir } from '../LayoutContext';
 
 
 function stepMetaFromType(type: string): { bg: string; border: string; emoji: string; label: string } {
@@ -42,6 +43,9 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
   const nodeDef = getNodeDef(data.step_type);
   const meta = { bg: nodeDef.bg, border: nodeDef.border, emoji: nodeDef.emoji, label: nodeDef.label };
   const cfg = data.config ?? {};
+  const layoutDir = useLayoutDir();
+  const targetPos = layoutDir === 'LR' ? Position.Left  : Position.Top;
+  const sourcePos = layoutDir === 'LR' ? Position.Right : Position.Bottom;
   const dbg = data._debug;
   const sub = nodeDef.summary(cfg);
 
@@ -83,23 +87,23 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
       paddingRight: isTransform && transformOutputs.length > 0 ? '72px' : '8px',
       ...(transformMinHeight > 0 ? { minHeight: transformMinHeight } : {}),
     }}>
-      <Handle type="target" position={Position.Top} style={{ background: meta.border }} />
+      <Handle type="target" position={targetPos} style={{ background: meta.border }} />
       {data.step_type === 'branch' ? (
         <>
           <Handle
             id="source-true"
             type="source"
-            position={Position.Bottom}
-            style={{ background: '#4ade80', left: '30%', bottom: -6, width: 10, height: 10 }}
+            position={sourcePos}
+            style={{ background: '#4ade80', width: 10, height: 10, ...(layoutDir === 'LR' ? { top: '30%', right: -6 } : { left: '30%', bottom: -6 }) }}
           />
-          <div style={{ position: 'absolute', bottom: -18, left: 'calc(30% - 6px)', fontSize: 9, color: '#4ade80', fontWeight: 700, pointerEvents: 'none' }}>T</div>
+          <div style={{ position: 'absolute', fontSize: 9, color: '#4ade80', fontWeight: 700, pointerEvents: 'none', ...(layoutDir === 'LR' ? { right: -18, top: 'calc(30% - 6px)' } : { bottom: -18, left: 'calc(30% - 6px)' }) }}>T</div>
           <Handle
             id="source-false"
             type="source"
-            position={Position.Bottom}
-            style={{ background: '#f87171', left: '70%', bottom: -6, width: 10, height: 10 }}
+            position={sourcePos}
+            style={{ background: '#f87171', width: 10, height: 10, ...(layoutDir === 'LR' ? { top: '70%', right: -6 } : { left: '70%', bottom: -6 }) }}
           />
-          <div style={{ position: 'absolute', bottom: -18, left: 'calc(70% - 6px)', fontSize: 9, color: '#f87171', fontWeight: 700, pointerEvents: 'none' }}>F</div>
+          <div style={{ position: 'absolute', fontSize: 9, color: '#f87171', fontWeight: 700, pointerEvents: 'none', ...(layoutDir === 'LR' ? { right: -18, top: 'calc(70% - 6px)' } : { bottom: -18, left: 'calc(70% - 6px)' }) }}>F</div>
         </>
       ) : isTransform && transformOutputs.length > 0 ? (
         // Dynamic named output handles — fixed 18px per row, node grows to fit
@@ -138,7 +142,7 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
           })}
         </>
       ) : (
-        <Handle type="source" position={Position.Bottom} style={{ background: meta.border }} />
+        <Handle type="source" position={sourcePos} style={{ background: meta.border }} />
       )}
       <div style={{ fontSize: '32px', lineHeight: 1 }}>{meta.emoji}</div>
       <div style={{ color: '#fff', fontWeight: 700, fontSize: '11px', marginTop: '5px' }}>{data.label || meta.label}</div>
@@ -160,7 +164,7 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
         <div style={{ marginTop: 4, fontSize: '9px', color: '#60a5fa' }}>running…</div>
       )}
       {dbg?.state === 'pending' && (
-        <div style={{ marginTop: 4, fontSize: '9px', color: '#f59e0b' }}>next ↓</div>
+        <div style={{ marginTop: 4, fontSize: '9px', color: '#f59e0b' }}>{layoutDir === 'LR' ? 'next →' : 'next ↓'}</div>
       )}
     </div>
   );
