@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `2f29cd3` — feat(agentgen): Phase 1 app-level agent params — decrypt-at-runtime injection
+Commit: `6be45b6` — feat(mcp): MCP-1 admin CRUD API + DB migrations
 
 Recent commits (newest first):
 ```
+6be45b6 feat(mcp): MCP-1 admin CRUD API + DB migrations
 2f29cd3 feat(agentgen): Phase 1 app-level agent params — decrypt-at-runtime injection
 4cb2dd9 feat(a2a-stream): emit two file artifacts (HTML + zip) for multi-file streaming test
 78be532 feat(agentgen): add Description to NodeDef + palette tooltips
