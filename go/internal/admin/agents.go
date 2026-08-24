@@ -83,6 +83,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	input.CreatedBy = claimsUserID(r)
 	id, err := h.svc.Create(r.Context(), tenantID, input)
 	if err != nil {
 		if writeServiceError(w, err) {

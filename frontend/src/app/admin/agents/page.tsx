@@ -689,6 +689,20 @@ function AgentCard({
             <p style={{ fontSize: '9px', color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>last sync</p>
           </div>
         </div>
+        {/* Created by tile */}
+        <div style={{
+          padding: '10px 12px', borderRadius: '10px',
+          background: 'var(--tm-inset-deep)', border: '1px solid var(--tm-divider)',
+          display: 'flex', alignItems: 'center', gap: '8px',
+        }}>
+          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: 'var(--tm-card-text-muted)', flexShrink: 0 }}>person</span>
+          <div>
+            <p style={{ fontSize: '13px', fontWeight: 700, color: 'var(--tm-card-text)', margin: 0, lineHeight: 1, whiteSpace: 'nowrap' }}>
+              {agent.created_by_username || '—'}
+            </p>
+            <p style={{ fontSize: '9px', color: 'var(--tm-card-text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.08em', margin: '2px 0 0 0' }}>created by</p>
+          </div>
+        </div>
       </div>
 
       {/* ── Endpoint field ── */}

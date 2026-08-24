@@ -14,9 +14,12 @@ const agentSelectCols = `
 	       a.enabled, COALESCE(a.tags, '{}'), a.agent_card, a.agent_card_url,
 	       a.skills, a.supports_streaming, a.supports_push, a.icon, a.category,
 	       a.card_fetched_at::text, a.last_scan_at::text, a.last_scan_result,
-	       ars.definition_id::text
+	       ars.definition_id::text,
+	       a.created_by, COALESCE(u.username, ''),
+	       to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 	FROM them.agents a
-	LEFT JOIN them.agent_runtime_specs ars ON ars.agent_id = a.id`
+	LEFT JOIN them.agent_runtime_specs ars ON ars.agent_id = a.id
+	LEFT JOIN auth_service.users u ON u.id = a.created_by`
 
 // scanAgent scans one agent row from r into an Agent value.
 // r must have been positioned by a preceding Next() call (multi-row) or
@@ -35,6 +38,7 @@ func scanAgent(r RowScanner) (Agent, error) {
 		&skills, &a.SupportsStreaming, &a.SupportsPush, &a.Icon, &a.Category,
 		&cardFetchedAt, &lastScanAt, &lastScanResult,
 		&definitionID,
+		&a.CreatedBy, &a.CreatedByUsername, &a.CreatedAt,
 	); err != nil {
 		return a, err
 	}
@@ -121,9 +125,9 @@ func (d *DB) CreateAgent(ctx context.Context, tenantID string, in AgentInput, en
 		  (id, tenant_id, slug, display_name, description, transport, endpoint_url,
 		   max_concurrency, max_retries, timeout_seconds, enabled,
 		   supports_streaming, supports_push, icon, category,
-		   namespace)
+		   namespace, created_by)
 		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-		        $16)`
+		        $16, NULLIF($17, 0))`
 
 	if err := d.q.Exec(ctx, agentQ,
 		id, tenantID,
@@ -132,7 +136,7 @@ func (d *DB) CreateAgent(ctx context.Context, tenantID string, in AgentInput, en
 		in.TimeoutSeconds, enabled,
 		in.SupportsStreaming, in.SupportsPush,
 		in.Icon, in.Category,
-		namespace,
+		namespace, in.CreatedBy,
 	); err != nil {
 		return "", err
 	}

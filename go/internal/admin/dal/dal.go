@@ -93,6 +93,9 @@ type Agent struct {
 	LastScanAt           *string  `json:"last_scan_at"`
 	LastScanResult       any      `json:"last_scan_result"`
 	RuntimeDefinitionID  *string  `json:"runtime_definition_id,omitempty"`
+	CreatedBy            *int     `json:"created_by,omitempty"`
+	CreatedByUsername    string   `json:"created_by_username,omitempty"`
+	CreatedAt            string   `json:"created_at,omitempty"`
 }
 
 // AgentInput is the request body for agent create/update.
@@ -116,6 +119,8 @@ type AgentInput struct {
 	AgentCard    any     `json:"agent_card,omitempty"`
 	AgentCardURL *string `json:"agent_card_url,omitempty"`
 	Skills       any     `json:"skills,omitempty"`
+	// CreatedBy is set by the handler from JWT claims on create.
+	CreatedBy    int     `json:"-"`
 }
 
 // ── Orchestrator types ────────────────────────────────────────────────────────
