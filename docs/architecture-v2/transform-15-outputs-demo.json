@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "agent_slug": "transform-15-outputs",
+  "agent_root": {
+    "display_name": "Transform 15 Outputs Demo",
+    "description": "Demonstrates a transform node with 15 exposed output ports.",
+    "version": "1.0.0",
+    "capabilities": { "streaming": false, "push_notifications": false }
+  },
+  "skills": [
+    {
+      "skill_id": "main",
+      "name": "Parse Employee Record",
+      "description": "LLM returns a JSON employee record; transform extracts 15 fields.",
+      "input_modes": ["text/plain"],
+      "output_modes": ["text/plain"],
+      "position": { "x": 300, "y": 260 },
+      "steps": [
+        {
+          "id": "input",
+          "type": "input",
+          "label": "User Input",
+          "config": { "bindings": { "text": "user_query" } },
+          "next": ["ask-llm"],
+          "position": { "x": 300, "y": 80 }
+        },
+        {
+          "id": "ask-llm",
+          "type": "llm",
+          "label": "Ask LLM",
+          "config": {
+            "provider": "anthropic",
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 400,
+            "system_prompt": "You are a data generator. Always respond with raw JSON only — no markdown fences.",
+            "prompt_template": "Generate a realistic employee record JSON with exactly these fields: id, first_name, last_name, email, phone, department, title, salary, hire_date, manager, office, city, country, status, notes.\n\nRespond with only the JSON object.",
+            "output_var": "llm_raw"
+          },
+          "next": ["extract-fields"],
+          "position": { "x": 300, "y": 220 }
+        },
+        {
+          "id": "extract-fields",
+          "type": "transform",
+          "label": "Extract 15 Fields",
+          "config": {
+            "exposed_vars": ["id", "first_name", "last_name", "email", "phone", "department", "title", "salary", "hire_date", "manager", "office", "city", "country", "status", "notes"],
+            "functions": [
+              { "fn": "strip_fences", "input_var": "llm_raw", "output_var": "clean_json", "args": {} },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "id",          "args": { "path": "$.id" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "first_name",  "args": { "path": "$.first_name" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "last_name",   "args": { "path": "$.last_name" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "email",       "args": { "path": "$.email" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "phone",       "args": { "path": "$.phone" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "department",  "args": { "path": "$.department" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "title",       "args": { "path": "$.title" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "salary",      "args": { "path": "$.salary" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "hire_date",   "args": { "path": "$.hire_date" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "manager",     "args": { "path": "$.manager" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "office",      "args": { "path": "$.office" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "city",        "args": { "path": "$.city" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "country",     "args": { "path": "$.country" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "status",      "args": { "path": "$.status" } },
+              { "fn": "json_path", "input_var": "clean_json", "output_var": "notes",       "args": { "path": "$.notes" } }
+            ]
+          },
+          "next": ["respond"],
+          "position": { "x": 300, "y": 380 }
+        },
+        {
+          "id": "respond",
+          "type": "response",
+          "label": "Response",
+          "config": { "from_var": "email", "media_type": "text/plain" },
+          "next": [],
+          "position": { "x": 300, "y": 580 }
+        }
+      ]
+    }
+  ]
+}

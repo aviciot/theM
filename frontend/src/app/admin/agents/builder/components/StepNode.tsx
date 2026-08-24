@@ -67,6 +67,13 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
         : computeFinalOutputs((cfg.functions as FunctionStep[] | undefined) ?? []))
     : [];
 
+  // Each output row needs 18px; header (emoji + label) needs ~70px minimum.
+  const PX_PER_ROW = 18;
+  const HEADER_PX = 70;
+  const transformMinHeight = isTransform && transformOutputs.length > 0
+    ? Math.max(HEADER_PX, transformOutputs.length * PX_PER_ROW + 16)
+    : 0;
+
   return (
     <div style={{
       background: 'transparent', padding: '8px', minWidth: '80px', textAlign: 'center',
@@ -74,6 +81,7 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
       transition: 'border-color 0.2s, box-shadow 0.2s',
       position: 'relative',
       paddingRight: isTransform && transformOutputs.length > 0 ? '72px' : '8px',
+      ...(transformMinHeight > 0 ? { minHeight: transformMinHeight } : {}),
     }}>
       <Handle type="target" position={Position.Top} style={{ background: meta.border }} />
       {data.step_type === 'branch' ? (
@@ -94,12 +102,11 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
           <div style={{ position: 'absolute', bottom: -18, left: 'calc(70% - 6px)', fontSize: 9, color: '#f87171', fontWeight: 700, pointerEvents: 'none' }}>F</div>
         </>
       ) : isTransform && transformOutputs.length > 0 ? (
-        // Dynamic named output handles — one per final output variable, Informatica-style right ports
+        // Dynamic named output handles — fixed 18px per row, node grows to fit
         <>
           {transformOutputs.map((varName, idx) => {
-            const pct = transformOutputs.length === 1
-              ? 50
-              : Math.round(10 + (idx / (transformOutputs.length - 1)) * 80);
+            // Place handles at fixed pixel intervals from the top, centred in the usable height.
+            const topPx = 8 + idx * PX_PER_ROW + PX_PER_ROW / 2;
             return (
               <span key={varName}>
                 <Handle
@@ -108,7 +115,7 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
                   position={Position.Right}
                   style={{
                     background: meta.border,
-                    top: `${pct}%`,
+                    top: topPx,
                     right: -6,
                     width: 9,
                     height: 9,
@@ -116,7 +123,7 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
                 />
                 <span style={{
                   position: 'absolute',
-                  top: `calc(${pct}% - 5px)`,
+                  top: topPx - 5,
                   right: 8,
                   fontSize: 8,
                   color: meta.border,
