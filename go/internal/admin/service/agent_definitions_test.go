@@ -282,6 +282,31 @@ func (f *agentDefFakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []
 	return nil
 }
 
+// MCP server stubs for agentDefFakeDal.
+func (f *agentDefFakeDal) ListMCPServers(_ context.Context, _ string) ([]dal.MCPServer, error) {
+	return []dal.MCPServer{}, nil
+}
+func (f *agentDefFakeDal) GetMCPServer(_ context.Context, _, _ string) (dal.MCPServer, error) {
+	return dal.MCPServer{}, nil
+}
+func (f *agentDefFakeDal) CreateMCPServer(_ context.Context, _ dal.MCPServerInput) (dal.MCPServer, error) {
+	return dal.MCPServer{}, nil
+}
+func (f *agentDefFakeDal) UpdateMCPServer(_ context.Context, _, _ string, _ dal.MCPServerInput) (dal.MCPServer, error) {
+	return dal.MCPServer{}, nil
+}
+func (f *agentDefFakeDal) DeleteMCPServer(_ context.Context, _, _ string) error { return nil }
+func (f *agentDefFakeDal) GetAppMCPCredential(_ context.Context, _, _ string) (dal.AppMCPCredential, error) {
+	return dal.AppMCPCredential{}, nil
+}
+func (f *agentDefFakeDal) ListAppMCPCredentials(_ context.Context, _ string) ([]dal.AppMCPCredentialMeta, error) {
+	return []dal.AppMCPCredentialMeta{}, nil
+}
+func (f *agentDefFakeDal) UpsertAppMCPCredential(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+func (f *agentDefFakeDal) DeleteAppMCPCredential(_ context.Context, _, _ string) error { return nil }
+
 // ── valid canvas JSON helpers ─────────────────────────────────────────────────
 
 func validAgentDef(t *testing.T) json.RawMessage {

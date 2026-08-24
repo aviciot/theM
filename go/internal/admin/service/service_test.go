@@ -110,6 +110,20 @@ type fakeDal struct {
 	getTokenErr       error
 	createTokenCalls  []dal.TokenCreateRow
 	updateTokenCalls  []dal.TokenPatchRow
+
+	// MCP server fields
+	mcpServer          dal.MCPServer
+	mcpServers         []dal.MCPServer
+	mcpCreated         dal.MCPServer
+	mcpUpdated         dal.MCPServer
+	getMCPErr          error
+	createMCPErr       error
+	updateMCPErr       error
+	deleteMCPErr       error
+	upsertCredErr      error
+	deleteCredErr      error
+	upsertCredCalled   bool
+	upsertCredHeader   string
 }
 
 func (f *fakeDal) ListAgents(_ context.Context, _ string) ([]dal.Agent, error) {
@@ -381,6 +395,38 @@ func (f *fakeDal) GetAgentParamsForBinding(_ context.Context, _, _ string) (dal.
 	return dal.AgentParamsRow{RequiredParams: []agentgen.AgentParamSpec{}}, nil
 }
 func (f *fakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error { return nil }
+
+// MCP server stubs — satisfy Dal interface, use controllable fields.
+func (f *fakeDal) ListMCPServers(_ context.Context, _ string) ([]dal.MCPServer, error) {
+	if f.mcpServers != nil {
+		return f.mcpServers, nil
+	}
+	return []dal.MCPServer{}, nil
+}
+func (f *fakeDal) GetMCPServer(_ context.Context, _, _ string) (dal.MCPServer, error) {
+	return f.mcpServer, f.getMCPErr
+}
+func (f *fakeDal) CreateMCPServer(_ context.Context, _ dal.MCPServerInput) (dal.MCPServer, error) {
+	return f.mcpCreated, f.createMCPErr
+}
+func (f *fakeDal) UpdateMCPServer(_ context.Context, _, _ string, _ dal.MCPServerInput) (dal.MCPServer, error) {
+	return f.mcpUpdated, f.updateMCPErr
+}
+func (f *fakeDal) DeleteMCPServer(_ context.Context, _, _ string) error { return f.deleteMCPErr }
+func (f *fakeDal) GetAppMCPCredential(_ context.Context, _, _ string) (dal.AppMCPCredential, error) {
+	return dal.AppMCPCredential{}, nil
+}
+func (f *fakeDal) ListAppMCPCredentials(_ context.Context, _ string) ([]dal.AppMCPCredentialMeta, error) {
+	return []dal.AppMCPCredentialMeta{}, nil
+}
+func (f *fakeDal) UpsertAppMCPCredential(_ context.Context, _, _, _ string, headerName string) error {
+	f.upsertCredCalled = true
+	f.upsertCredHeader = headerName
+	return f.upsertCredErr
+}
+func (f *fakeDal) DeleteAppMCPCredential(_ context.Context, _, _ string) error {
+	return f.deleteCredErr
+}
 
 // fakeCache implements service.Cache.
 type fakeCache struct {

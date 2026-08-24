@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-23
+# Last updated: 2026-08-24
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -258,6 +258,28 @@ What is pending (Phase 1 frontend):
 1. `frontend/src/lib/api.ts`: Add `AgentParamMeta`, `AgentParamsResponse` types + `getAgentParams`/`putAgentParams`
 2. `frontend/src/app/admin/applications/page.tsx` `RuntimeView`: Add "Agent Parameters" section per bound agent
 3. `frontend/src/app/admin/agents/builder/page.tsx`: Add `app_param_key`/`inject_mode`/`inject_header_name` fields to HTTP step panel
+
+---
+
+## MCP-1 Migration Status
+
+**Completed in this session:**
+- `them-mcp-service` binary — `go/cmd/mcp-service/main.go` + `go/internal/mcp/` (all files: config, dal, client, registry, leader, supervisor, health, executor, server, health_test)
+- `Dockerfile.mcp-service` + `docker-compose.yml` service entry (port 8010, Traefik disabled)
+- DB migrations applied: `db/041_mcp_servers.sql` (them.mcp_servers) + `db/042_mcp_app_credentials.sql` (them.app_mcp_credentials)
+- Admin CRUD API: `go/internal/admin/dal/mcp_servers.go`, `go/internal/admin/service/mcp_servers.go`, `go/internal/admin/mcp_servers.go`
+- Service added to router: `go/internal/admin/router.go` (tenantScoped group)
+- Dal interface updated: `go/internal/admin/service/service.go`
+- All fake Dal structs updated: `service_test.go`, `agent_definitions_test.go`, `definitions_publish_test.go`, `tenant_isolation_test.go`
+- 11 new unit tests: `go/internal/admin/service/mcp_servers_test.go`
+- Docs updated: REDIS.md, SCHEMA.md, CLAUDE.md (trigger map + container map), TEST_INDEX.md (S1-62), CURRENT.md
+
+**What's NOT done yet (MCP-2 onward):**
+- Traefik labels for `/api/v1/admin/mcp-servers` on `them-go-bridge` — routes exist in Go but not yet Traefik-exposed
+- Frontend UI for MCP server management
+- MCP-2: canvas node type for MCP tool calls
+- MCP-3: runtime executor wired into agent-runtime tool calls
+- `them-mcp-service` not yet started in production (needs `--profile mcp` in compose)
 
 ---
 

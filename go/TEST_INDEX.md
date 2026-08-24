@@ -1563,6 +1563,29 @@ sub-handler. Method enforcement (405) is delegated to the chi sub-handler, not t
 
 ---
 
+### S1-62 · MCP server admin service — `internal/admin/service/mcp_servers_test.go`
+
+**Purpose:** Unit tests for the MCP server admin service layer. Verifies validation, defaults,
+not-found mapping, and credential encryption — all using the shared `fakeDal`, no real DB or crypto stack.
+
+| Test | What it proves |
+|---|---|
+| `TestMCPServerService_Create_MissingName` | S1-MCP-01: missing name → `ErrValidation` |
+| `TestMCPServerService_Create_MissingSlug` | S1-MCP-02: missing slug → `ErrValidation` |
+| `TestMCPServerService_Create_InvalidTransport` | S1-MCP-03: transport="grpc" → `ErrUnprocessable` |
+| `TestMCPServerService_Create_InvalidAuthType` | S1-MCP-04: auth_type="api_key" → `ErrUnprocessable` |
+| `TestMCPServerService_Create_DefaultsApplied` | S1-MCP-05: omitted transport/auth_type → defaults http/none; enabled=true |
+| `TestMCPServerService_Update_NotFound` | S1-MCP-06: GetMCPServer returns pgx.ErrNoRows → `ErrNotFound` |
+| `TestMCPServerService_Update_AppliesPatch` | S1-MCP-07: patch name+transport; slug unchanged |
+| `TestMCPServerService_Delete_NotFound` | S1-MCP-08: DeleteMCPServer returns pgx.ErrNoRows → `ErrNotFound` |
+| `TestMCPServerService_SetCredential_Empty` | S1-MCP-09: empty credential → `ErrValidation` |
+| `TestMCPServerService_SetCredential_EncryptsAndUpserts` | S1-MCP-10: valid credential → UpsertAppMCPCredential called |
+| `TestMCPServerService_SetCredential_DefaultsHeaderName` | S1-MCP-11: empty auth_header_name → defaults to "Authorization" |
+
+**Trigger:** any change to `internal/admin/service/mcp_servers.go` or `internal/admin/dal/mcp_servers.go` or `internal/admin/mcp_servers.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.

@@ -255,6 +255,31 @@ func (f *publishFakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []b
 	return nil
 }
 
+// MCP server stubs for publishFakeDal.
+func (f *publishFakeDal) ListMCPServers(_ context.Context, _ string) ([]dal.MCPServer, error) {
+	return []dal.MCPServer{}, nil
+}
+func (f *publishFakeDal) GetMCPServer(_ context.Context, _, _ string) (dal.MCPServer, error) {
+	return dal.MCPServer{}, nil
+}
+func (f *publishFakeDal) CreateMCPServer(_ context.Context, _ dal.MCPServerInput) (dal.MCPServer, error) {
+	return dal.MCPServer{}, nil
+}
+func (f *publishFakeDal) UpdateMCPServer(_ context.Context, _, _ string, _ dal.MCPServerInput) (dal.MCPServer, error) {
+	return dal.MCPServer{}, nil
+}
+func (f *publishFakeDal) DeleteMCPServer(_ context.Context, _, _ string) error { return nil }
+func (f *publishFakeDal) GetAppMCPCredential(_ context.Context, _, _ string) (dal.AppMCPCredential, error) {
+	return dal.AppMCPCredential{}, nil
+}
+func (f *publishFakeDal) ListAppMCPCredentials(_ context.Context, _ string) ([]dal.AppMCPCredentialMeta, error) {
+	return []dal.AppMCPCredentialMeta{}, nil
+}
+func (f *publishFakeDal) UpsertAppMCPCredential(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+func (f *publishFakeDal) DeleteAppMCPCredential(_ context.Context, _, _ string) error { return nil }
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func orchRef() registry.DefinitionRef {

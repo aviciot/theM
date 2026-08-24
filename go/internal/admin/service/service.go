@@ -134,6 +134,19 @@ type Dal interface {
 	CreateProvider(ctx context.Context, in dal.LLMProviderInput) (dal.LLMProvider, error)
 	UpdateProvider(ctx context.Context, id int64, in dal.LLMProviderInput) (dal.LLMProvider, error)
 	DeleteProvider(ctx context.Context, id int64) error
+
+	// MCP servers — tenant-scoped
+	ListMCPServers(ctx context.Context, tenantID string) ([]dal.MCPServer, error)
+	GetMCPServer(ctx context.Context, id, tenantID string) (dal.MCPServer, error)
+	CreateMCPServer(ctx context.Context, in dal.MCPServerInput) (dal.MCPServer, error)
+	UpdateMCPServer(ctx context.Context, id, tenantID string, in dal.MCPServerInput) (dal.MCPServer, error)
+	DeleteMCPServer(ctx context.Context, id, tenantID string) error
+
+	// MCP app credentials — per-application, Fernet-encrypted
+	GetAppMCPCredential(ctx context.Context, applicationID, serverID string) (dal.AppMCPCredential, error)
+	ListAppMCPCredentials(ctx context.Context, applicationID string) ([]dal.AppMCPCredentialMeta, error)
+	UpsertAppMCPCredential(ctx context.Context, applicationID, serverID, encryptedCred, headerName string) error
+	DeleteAppMCPCredential(ctx context.Context, applicationID, serverID string) error
 }
 
 // Cache invalidates Redis caches on mutations.

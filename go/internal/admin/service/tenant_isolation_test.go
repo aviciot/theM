@@ -475,6 +475,32 @@ func (f *isolationFakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ [
 	return nil
 }
 
+// ── MCP server stubs (satisfy Dal interface) ──────────────────────────────────
+
+func (f *isolationFakeDal) ListMCPServers(_ context.Context, _ string) ([]dal.MCPServer, error) {
+	return []dal.MCPServer{}, nil
+}
+func (f *isolationFakeDal) GetMCPServer(_ context.Context, _, _ string) (dal.MCPServer, error) {
+	return dal.MCPServer{}, nil
+}
+func (f *isolationFakeDal) CreateMCPServer(_ context.Context, _ dal.MCPServerInput) (dal.MCPServer, error) {
+	return dal.MCPServer{}, nil
+}
+func (f *isolationFakeDal) UpdateMCPServer(_ context.Context, _, _ string, _ dal.MCPServerInput) (dal.MCPServer, error) {
+	return dal.MCPServer{}, nil
+}
+func (f *isolationFakeDal) DeleteMCPServer(_ context.Context, _, _ string) error { return nil }
+func (f *isolationFakeDal) GetAppMCPCredential(_ context.Context, _, _ string) (dal.AppMCPCredential, error) {
+	return dal.AppMCPCredential{}, nil
+}
+func (f *isolationFakeDal) ListAppMCPCredentials(_ context.Context, _ string) ([]dal.AppMCPCredentialMeta, error) {
+	return []dal.AppMCPCredentialMeta{}, nil
+}
+func (f *isolationFakeDal) UpsertAppMCPCredential(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+func (f *isolationFakeDal) DeleteAppMCPCredential(_ context.Context, _, _ string) error { return nil }
+
 // ── pgxUniqueViolation stub ───────────────────────────────────────────────────
 //
 // dal.IsUniqueViolation checks for pgconn.PgError with Code "23505".

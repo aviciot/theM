@@ -394,6 +394,46 @@ Unique constraint: `(application_id, agent_id)`.
 
 ---
 
+## them.mcp_servers
+MCP (Model Context Protocol) server registry. Tenant-scoped. Health and manifest fields are owned by `them-mcp-service` — admin CRUD owns name/slug/transport/url/auth_type/enabled only. Migration: `db/041_mcp_servers.sql`.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| tenant_id | UUID NOT NULL | Tenant isolation boundary |
+| name | TEXT NOT NULL | Human display name |
+| slug | TEXT NOT NULL | Unique per-tenant identifier |
+| description | TEXT | Optional human description |
+| transport | TEXT NOT NULL DEFAULT 'http' | `'http'` \| `'sse'` \| `'stdio'` |
+| url | TEXT | Server endpoint URL |
+| auth_type | TEXT NOT NULL DEFAULT 'none' | `'none'` \| `'bearer'` \| `'header'` \| `'oauth2'` |
+| health_status | TEXT NOT NULL DEFAULT 'unknown' | `'unknown'` \| `'healthy'` \| `'degraded'` \| `'unreachable'` — written by `them-mcp-service` only |
+| last_checked_at | TIMESTAMPTZ | Timestamp of last health probe — written by `them-mcp-service` only |
+| last_error | TEXT | Last probe error message — written by `them-mcp-service` only |
+| tools_manifest | JSONB NOT NULL DEFAULT '[]' | Tool list from last successful discovery — written by `them-mcp-service` only |
+| capabilities | JSONB NOT NULL DEFAULT '{}' | Server capability block — written by `them-mcp-service` only |
+| enabled | BOOL NOT NULL DEFAULT true | Admin toggle |
+
+Unique constraint: `(tenant_id, slug)`.
+
+---
+
+## them.app_mcp_credentials
+Per-application encrypted credentials for MCP servers. One row per (application, mcp_server) pair. Credential value is Fernet-encrypted using the same scheme as `llm_providers.api_key_encrypted`. Migration: `db/042_mcp_app_credentials.sql`.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| application_id | UUID FK→them.applications | ON DELETE CASCADE |
+| mcp_server_id | UUID FK→them.mcp_servers | ON DELETE CASCADE |
+| credential_encrypted | TEXT | `enc:` Fernet ciphertext — never returned to clients |
+| auth_header_name | TEXT NOT NULL DEFAULT 'Authorization' | HTTP header for credential injection |
+
+Unique constraint: `(application_id, mcp_server_id)`.
+**Security:** `GET` credential endpoints return `credential_set: bool` only — never the decrypted value.
+
+---
+
 ## auth_service schema (read-only reference)
 Owned by `them-auth-service`. **Never query directly from the bridge** — use `app/services/auth_client.py`.
 
@@ -422,3 +462,5 @@ Key relationships:
 | `db/035_agent_definitions.sql` | `them.agent_definitions` table (canvas agent design-time store) |
 | `db/036_canvas_a2a_runtime.sql` | `them.agent_runtime_specs` + `them.app_agent_bindings` tables |
 | `db/037_agents_transport_canvas.sql` | Extend `agents_transport_check` to include `'canvas_a2a'` transport |
+| `db/041_mcp_servers.sql` | `them.mcp_servers` table (MCP-1 registry) |
+| `db/042_mcp_app_credentials.sql` | `them.app_mcp_credentials` table (per-app encrypted credentials) |

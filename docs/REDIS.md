@@ -25,6 +25,9 @@
 | `them:scan:state:{agent_id}` | none | go/internal/admin/ security-scan goroutine | Yes | Agent security scan result Hash (type, score, risk, summary, findings, scanned_at). Written on scan_complete. Read by Go dashboard WS on connect to deliver snapshot to newly subscribed clients. |
 | `them:ctx:{context_id}:heads` | 300s | context_service.py | Yes | Hot cache of recent artifacts for a context (Phase 5) |
 | `them:ctx:{context_id}:summary` | 3600s | memory_service.py | Yes | Latest context summary text for injecting into agent messages (Phase 8.4) |
+| `them:mcp:manifest:{slug}` | 300s | go/internal/mcp/registry.go | Yes | Cached MCP tool manifest JSON for one server (by slug). Written by supervisor on discovery; read by executor on tool call. |
+| `them:mcp:health:{slug}` | 90s | go/internal/mcp/registry.go | Yes | Latest health probe result JSON for one server. Short TTL — absence implies server is unknown/unreachable. |
+| `them:mcp:leader` | 30s | go/internal/mcp/leader.go | No | Leader election lock for `them-mcp-service` supervisor. SET NX PX 30000; renewed every 20s by the current leader. Only one pod runs the reconciler/supervisor at a time. |
 
 ## Pub/Sub Channels
 
@@ -42,6 +45,7 @@
 | `them:tasks:{task_id}:events` | task_store.py on every state transition | ws_orchestrator.py subscribers | Task lifecycle events (created, state, artifact) |
 | `them:dash:sessions:{app_id}` | dashboard_broadcaster.py publish_session_event | go/internal/dashboard (channel: sessions:\<app_id\>) | Per-app session_start / session_end events; snapshot from `them:dash:sessions:state:{app_id}` delivered on connect |
 | `them:sess:control:{session_id}` | runtime_manager.py signal_disconnect (via admin_sessions router) | apps.py + ws_orchestrator.py per-session `_control_listener` | Cross-replica admin session termination. One message closes the WS with code 4000. Best-effort pub/sub — no persistence, no TTL. |
+| `them:mcp:manifest:changed` | go/internal/mcp/registry.go `PublishManifestChanged` | (reserved — future Go bridge real-time update) | Signals that a server's tool manifest was updated. Payload is server slug. |
 
 ## Naming Rules
 - All keys MUST start with `them:` or `rl:them:`

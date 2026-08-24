@@ -229,6 +229,8 @@ Skips are legitimate env gaps — not failures:
 | `app/routers/runs.py` (signal endpoint) | 12 + `scripts/test_temporal_phase5.py` |
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.dev.yml` | 20 (Traefik routing + multi-replica) |
 | `go/internal/authserver/`, `go/cmd/auth-server/`, `Dockerfile.auth-go`, `docker-compose.yml` (them-auth-go / THE_M_AUTH_URL / AUTH_SERVICE_URL), `frontend/src/app/api/auth/*` | `go test ./internal/authserver/...` (in `go/`) + 15 (compose health) + live login/me/refresh/logout smoke through them-auth-go |
+| `go/internal/mcp/` (any file), `go/cmd/mcp-service/main.go`, `Dockerfile.mcp-service` | `go test ./internal/mcp/...` (in `go/`) |
+| `go/internal/admin/mcp_servers.go`, `go/internal/admin/dal/mcp_servers.go`, `go/internal/admin/service/mcp_servers.go` | `go test ./internal/admin/...` (in `go/`) |
 | Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) + MT + `scripts/test_temporal_workflow.py` |
 
 ### E2E test (14) — needs a JWT
@@ -267,6 +269,7 @@ docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 | `them-bridge` | Python orchestrator API + WS (replica 1) | 8001 (internal) | `app/` |
 | `them-bridge-2` | Python replica 2 (`profiles: [replica]`) | 8001 (internal) | `app/` |
 | `them-go-bridge` | Go gateway (routes progressively migrated from Python) | 8002 (internal) | `go/` |
+| `them-mcp-service` | Go MCP server supervisor + executor (internal only — Traefik disabled) | 8010 (internal, no external exposure) | `go/cmd/mcp-service/`, `go/internal/mcp/` |
 | `them-frontend` | Next.js dashboard | 3200 (internal) | `frontend/` |
 | `vision-agent` | Vision/maps agent | 9100 (internal) | `agents/vision_agent/` |
 | `them-security-agent` | Security scanner A2A agent (`profiles: [security]`) | 9500 (internal) | `agents/security_scanner/` |

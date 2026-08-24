@@ -150,6 +150,9 @@ func BuildRouter(
 				// sub-tree so they share the same chi node and don't shadow the flat DELETE /{id}.
 				bindings := NewAgentBindingsHandler(agentDefs.Svc())
 				apps.Routes(tenantScoped, bindings)
+
+				mcpServers := NewMCPServersHandler(db, secretKey)
+				mcpServers.Routes(tenantScoped)
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,
