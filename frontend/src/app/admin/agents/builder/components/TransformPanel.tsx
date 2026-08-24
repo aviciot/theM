@@ -85,13 +85,15 @@ const monoStyle: React.CSSProperties = {
 // ── FunctionRow ───────────────────────────────────────────────────────────────
 
 function FunctionRow({
-  step, index, catalog, availableVars, result, onChange, onRemove, onMoveUp, onMoveDown,
+  step, index, catalog, availableVars, result, exposed, onExposedChange, onChange, onRemove, onMoveUp, onMoveDown,
 }: {
   step: FunctionStep;
   index: number;
   catalog: { functions: FunctionDef[]; by_category: Record<string, FunctionDef[]> } | null;
   availableVars: string[];
   result?: StepResult;
+  exposed: boolean;
+  onExposedChange: (v: boolean) => void;
   onChange: (step: FunctionStep) => void;
   onRemove: () => void;
   onMoveUp: () => void;
@@ -129,6 +131,14 @@ function FunctionRow({
         <button onClick={onRemove} title="Remove" style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 2px' }}>×</button>
       </div>
 
+      {/* fn description */}
+      {def && (
+        <div style={{ fontSize: '10px', color: '#475569', marginBottom: 6, fontStyle: 'italic' }}>
+          {def.description}
+        </div>
+      )}
+
+      {/* in: */}
       <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
         <span style={{ fontSize: '10px', color: C.textMuted, minWidth: 42 }}>in:</span>
         <select
@@ -141,16 +151,7 @@ function FunctionRow({
         </select>
       </div>
 
-      <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
-        <span style={{ fontSize: '10px', color: C.textMuted, minWidth: 42 }}>out:</span>
-        <input
-          value={step.output_var}
-          onChange={e => onChange({ ...step, output_var: e.target.value })}
-          style={{ ...inputStyle, flex: 1, fontSize: '11px', ...monoStyle }}
-          placeholder="output_var_name"
-        />
-      </div>
-
+      {/* args — between in and out */}
       {def?.args.map(arg => (
         <div key={arg.key} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
           <span style={{ fontSize: '10px', color: C.textMuted, minWidth: 42 }} title={arg.description}>
@@ -165,11 +166,25 @@ function FunctionRow({
         </div>
       ))}
 
-      {def && (
-        <div style={{ fontSize: '10px', color: '#475569', marginTop: 4, fontStyle: 'italic' }}>
-          {def.description}
-        </div>
-      )}
+      {/* out: always last, with expose checkbox */}
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
+        <span style={{ fontSize: '10px', color: C.textMuted, minWidth: 42 }}>out:</span>
+        <input
+          value={step.output_var}
+          onChange={e => onChange({ ...step, output_var: e.target.value })}
+          style={{ ...inputStyle, flex: 1, fontSize: '11px', ...monoStyle }}
+          placeholder="output_var_name"
+        />
+        <label title="Expose as output port" style={{ display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <input
+            type="checkbox"
+            checked={exposed}
+            onChange={e => onExposedChange(e.target.checked)}
+            style={{ accentColor: C.indigo, width: 12, height: 12 }}
+          />
+          <span style={{ fontSize: '9px', color: exposed ? C.indigo : C.textMuted, fontWeight: exposed ? 700 : 400 }}>expose</span>
+        </label>
+      </div>
 
       {/* Inline result output */}
       {result && result.ok && result.out !== undefined && (
@@ -209,10 +224,25 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
     fetchCatalog().then(setCatalog).catch(e => setCatalogError(e.message));
   }, []);
 
-  // External input vars: input_vars that aren't produced by earlier steps in the chain.
+  const exposedVars: string[] = (cfg.exposed_vars as string[]) ?? [];
+
+  const updateExposedVars = useCallback((vars: string[]) => {
+    updateStepConfig('exposed_vars', vars);
+  }, [updateStepConfig]);
+
+  const toggleExposed = useCallback((varName: string, on: boolean) => {
+    if (on) {
+      updateExposedVars(Array.from(new Set([...exposedVars, varName])));
+    } else {
+      updateExposedVars(exposedVars.filter(v => v !== varName));
+    }
+  }, [exposedVars, updateExposedVars]);
+
+  // Input vars for test: only vars the chain actually reads from outside (not produced by earlier steps).
   const chainOutputs = new Set(functions.map(s => s.output_var).filter(Boolean));
-  const externalInputs = functions.map(s => s.input_var).filter(v => v && !chainOutputs.has(v));
-  const testInputVars = Array.from(new Set([...availableVars, ...externalInputs]));
+  const testInputVars = Array.from(new Set(
+    functions.map(s => s.input_var).filter(v => v && !chainOutputs.has(v))
+  ));
 
   const updateFunctions = useCallback((next: FunctionStep[]) => {
     updateStepConfig('functions', next);
@@ -261,25 +291,20 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
       {/* ── Input vars with test value fields ── */}
       {testInputVars.length > 0 && (
         <>
-          <div style={sectionTitle(C.cyan)}>INPUT VARS</div>
+          <div style={sectionTitle(C.cyan)}>INPUT VARS — test values</div>
           {testInputVars.map(varName => (
             <div key={varName} style={{ marginBottom: 8 }}>
               <label style={{ ...labelStyle, marginBottom: 2 }}>
                 <code style={{ color: C.cyan, fontSize: '11px' }}>{varName}</code>
-                <span style={{ color: '#475569', fontSize: '10px', marginLeft: 6 }}>test value</span>
               </label>
               <textarea
                 value={testVars[varName] ?? ''}
                 onChange={e => setTestVars(prev => ({ ...prev, [varName]: e.target.value }))}
                 style={{ width: '100%', minHeight: 48, background: '#0f172a', border: `1px solid ${C.outline}`, borderRadius: 4, color: C.text, padding: '6px 8px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace', resize: 'vertical', boxSizing: 'border-box' }}
-                placeholder={`Value for ${varName}…`}
+                placeholder={`Paste test value for ${varName}…`}
               />
             </div>
           ))}
-          <button
-            onClick={() => { const name = prompt('Variable name:'); if (name?.trim()) setTestVars(prev => ({ ...prev, [name.trim()]: '' })); }}
-            style={{ background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontSize: '11px', marginBottom: 8 }}
-          >+ Add var</button>
         </>
       )}
 
@@ -294,6 +319,8 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
           catalog={catalog}
           availableVars={[...availableVars, ...functions.slice(0, i).map(s => s.output_var).filter(Boolean)]}
           result={resultByIndex(i)}
+          exposed={!!step.output_var && exposedVars.includes(step.output_var)}
+          onExposedChange={on => step.output_var && toggleExposed(step.output_var, on)}
           onChange={s => { const next = functions.map((x, j) => j === i ? s : x); updateFunctions(next); }}
           onRemove={() => { updateFunctions(functions.filter((_, j) => j !== i)); setTestResults(null); }}
           onMoveUp={() => { const next = [...functions]; if (i > 0) { [next[i-1], next[i]] = [next[i], next[i-1]]; updateFunctions(next); } }}
@@ -315,9 +342,6 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
         {testRunning ? 'Running…' : '▶ Run Test'}
       </button>
       {functions.length === 0 && <div style={{ fontSize: '11px', color: C.textMuted, textAlign: 'center', marginBottom: 10 }}>Add function steps above first.</div>}
-      {testInputVars.length === 0 && functions.length > 0 && (
-        <div style={{ fontSize: '11px', color: '#64748b', textAlign: 'center', marginBottom: 10 }}>No external input vars — all inputs are produced within the chain.</div>
-      )}
 
       {/* ── Legacy: expressions + extractions ── */}
       <details style={{ marginBottom: 8 }}>
