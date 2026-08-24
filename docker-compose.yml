@@ -11,6 +11,9 @@ networks:
     driver: bridge
   proxy-network:
     external: true
+  omni-network:
+    external: true
+    name: omni-network
 
 # No named volumes — all data uses bind-mount folders under ./volumes/
 # This ensures data survives container rebuilds and is visible on the host.
@@ -904,6 +907,7 @@ services:
       - LOG_FORMAT=json
     networks:
       - them-network
+      - omni-network
     depends_on:
       them-postgres:
         condition: service_healthy
