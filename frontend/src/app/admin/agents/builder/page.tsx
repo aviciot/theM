@@ -1047,8 +1047,12 @@ function CanvasInner() {
       const userPrompt = renderTemplate(userPromptTemplate, newVars);
       const outVar = (cfg.output_var as string) || 'output';
 
+      // Fall back to the raw test input when the template renders empty
+      // (e.g. variable name mismatch between input node binding and LLM template).
+      const effectivePrompt = userPrompt || String(vars[Object.keys(vars)[0]] ?? '') || '';
       const messages: { role: string; content: string }[] = [];
-      if (userPrompt) messages.push({ role: 'user', content: userPrompt });
+      if (effectivePrompt) messages.push({ role: 'user', content: effectivePrompt });
+      if (messages.length === 0) throw new Error('LLM step: user prompt is empty — check the user_prompt template and input variable names.');
 
       const resp = await fetch('/api/debug/llm', {
         method: 'POST',
