@@ -10,6 +10,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/aviciot/them/internal/agentgen/transform"
 )
 
 // HTTPDoer is the interface for making outbound HTTP calls (injectable for tests).
@@ -306,6 +308,8 @@ func (interp *Interpreter) execTransform(step *StepSpec, vars PipelineVars) erro
 	if err := json.Unmarshal(step.Config, &cfg); err != nil {
 		return fmt.Errorf("parse transform config: %w", err)
 	}
+
+	// Phase 1: Go template expressions (legacy, kept for backward compat).
 	for outputVar, expr := range cfg.Expressions {
 		val, err := renderTemplate(expr, vars)
 		if err != nil {
@@ -313,7 +317,8 @@ func (interp *Interpreter) execTransform(step *StepSpec, vars PipelineVars) erro
 		}
 		vars[outputVar] = val
 	}
-	// JSON extractions: parse a named var as JSON and extract field(s) by path.
+
+	// Phase 2: JSON path extractions (legacy, kept for backward compat).
 	for _, ext := range cfg.Extractions {
 		raw, ok := vars[ext.FromVar]
 		if !ok {
@@ -334,6 +339,23 @@ func (interp *Interpreter) execTransform(step *StepSpec, vars PipelineVars) erro
 			vars[ext.Var] = val
 		}
 	}
+
+	// Phase 3: function chain — runs after expressions and extractions.
+	if len(cfg.Functions) > 0 {
+		tvars := make(transform.Vars, len(vars))
+		for k, v := range vars {
+			tvars[k] = v
+		}
+		_, err := transform.Execute(cfg.Functions, tvars)
+		if err != nil {
+			return fmt.Errorf("transform function chain: %w", err)
+		}
+		// Write outputs back to pipeline vars.
+		for k, v := range tvars {
+			vars[k] = v
+		}
+	}
+
 	return nil
 }
 

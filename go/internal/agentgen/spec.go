@@ -1,6 +1,10 @@
 package agentgen
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/aviciot/them/internal/agentgen/transform"
+)
 
 // AgentSpec is the compiled, reusable form the runtime loads. Frozen at publish.
 type AgentSpec struct {
@@ -135,8 +139,9 @@ type JSONPathExtract struct {
 }
 
 type TransformStepConfig struct {
-	Expressions map[string]string  `json:"expressions"`          // output_var → Go template expression
-	Extractions []TransformExtract `json:"extractions,omitempty"` // parse JSON from a var and extract fields
+	Expressions map[string]string        `json:"expressions"`          // output_var → Go template expression
+	Extractions []TransformExtract       `json:"extractions,omitempty"` // parse JSON from a var and extract fields
+	Functions   []transform.FunctionStep `json:"functions,omitempty"`   // ordered function chain (Phase 1+)
 }
 
 // TransformExtract pulls one value out of a JSON-string pipeline variable.

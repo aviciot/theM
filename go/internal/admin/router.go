@@ -183,6 +183,21 @@ func BuildRouter(
 		r.Post("/admin/debug-proxy", DebugProxyHandler{}.ServeHTTP)
 	}
 
+	// Transform function endpoints — authenticated.
+	// GET  /admin/transform-functions  — self-describing function catalog
+	// POST /admin/transform-test       — run a chain, return step-by-step trace
+	// POST /admin/transform-assist     — AI chain suggestion (501 stub)
+	tf := TransformHandler{}
+	if jwtMiddleware != nil {
+		r.With(jwtMiddleware, RequireSuperAdmin(logger)).Get("/admin/transform-functions", tf.Catalog)
+		r.With(jwtMiddleware, RequireSuperAdmin(logger)).Post("/admin/transform-test", tf.Test)
+		r.With(jwtMiddleware, RequireSuperAdmin(logger)).Post("/admin/transform-assist", tf.Assist)
+	} else {
+		r.Get("/admin/transform-functions", tf.Catalog)
+		r.Post("/admin/transform-test", tf.Test)
+		r.Post("/admin/transform-assist", tf.Assist)
+	}
+
 	// Public routes — no auth required.
 	// /admin/node-types: static canvas node metadata, no tenant data.
 	r.Get("/admin/node-types", NodeTypesHandler{}.ServeHTTP)

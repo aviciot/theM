@@ -1060,6 +1060,11 @@ services:
       - "traefik.http.routers.them-go-debug-proxy.entrypoints=web"
       - "traefik.http.routers.them-go-debug-proxy.priority=121"
       - "traefik.http.routers.them-go-debug-proxy.service=them-go-bridge-svc"
+      # ── Transform: /api/v1/admin/transform-* — function catalog, test runner, AI assist stub ──
+      - "traefik.http.routers.them-go-transform.rule=PathPrefix(`/api/v1/admin/transform-`)"
+      - "traefik.http.routers.them-go-transform.entrypoints=web"
+      - "traefik.http.routers.them-go-transform.priority=121"
+      - "traefik.http.routers.them-go-transform.service=them-go-bridge-svc"
       # ── Phase D: /api/v1/admin/component-definitions — registry read ──────────
       - "traefik.http.routers.them-go-component-defs.rule=PathPrefix(`/api/v1/admin/component-definitions`)"
       - "traefik.http.routers.them-go-component-defs.entrypoints=web"
