@@ -57,13 +57,10 @@ func (h TransformHandler) Test(w http.ResponseWriter, r *http.Request) {
 		vars = transform.Vars{}
 	}
 
-	trace, err := transform.Execute(req.Functions, vars)
-	// Always return the trace — even on error the partial trace is useful.
-	// The error is surfaced in the last step's Error field.
+	trace, _ := transform.Execute(req.Functions, vars)
+	// Always return 200 with the trace — step failures are visible in each step's
+	// ok/error fields. The caller never needs to distinguish HTTP status here.
 	w.Header().Set("Content-Type", "application/json")
-	if err != nil {
-		w.WriteHeader(http.StatusUnprocessableEntity)
-	}
 	json.NewEncoder(w).Encode(trace) //nolint:errcheck
 }
 

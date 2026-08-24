@@ -212,8 +212,24 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
       for (const [k, v] of Object.entries(testVars)) {
         if (k) vars[k] = v;
       }
-      const data = await api.post<{ steps: StepResult[] }>('/admin/transform-test', { functions, vars });
-      setTestResults(data.steps ?? []);
+      // Use raw fetch so we can read the body on 422 (api helper throws and discards it).
+      const resp = await fetch('/api/them/admin/transform-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ functions, vars }),
+      });
+      const text = await resp.text();
+      let data: { steps?: StepResult[] } = {};
+      try { data = JSON.parse(text); } catch { /* not JSON */ }
+      // Show trace even on 422 — step failures are shown inline per step.
+      if (data.steps) {
+        setTestResults(data.steps);
+        if (!resp.ok && !data.steps.some(s => !s.ok)) {
+          setTestError(`Server error ${resp.status}: ${text.trim()}`);
+        }
+      } else if (!resp.ok) {
+        setTestError(`Error ${resp.status}: ${text.trim()}`);
+      }
     } catch (e: unknown) {
       setTestError(e instanceof Error ? e.message : String(e));
     } finally {
