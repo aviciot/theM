@@ -144,6 +144,7 @@ func (c *Client) call(ctx context.Context, body any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("mcp: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	if c.authHeader != "" {
 		req.Header.Set(c.headerName, c.authHeader)
 	}
