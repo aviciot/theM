@@ -388,9 +388,10 @@ function PropertiesPanel({
 
   return (
     <aside style={{
-      width: '420px', flexShrink: 0, borderLeft: '1px solid rgba(255,255,255,0.06)',
+      position: 'fixed', top: 0, right: 0, width: '420px', height: '100vh', zIndex: 300,
+      borderLeft: '1px solid rgba(255,255,255,0.06)',
       background: 'var(--tm-panel)', display: 'flex', flexDirection: 'column',
-      height: '100%', overflowY: 'auto',
+      overflowY: 'auto',
     }}>
       {/* Panel header */}
       <div style={{
@@ -867,9 +868,9 @@ export default function MCPServersPage() {
       </header>
 
       {/* Content area */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Card grid */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }} className="custom-scrollbar">
+      <div style={{ flex: 1, overflow: 'hidden' }}>
+        {/* Card grid — always full width; panel overlays via position:fixed */}
+        <div style={{ height: '100%', overflowY: 'auto', padding: '24px 32px', paddingRight: selected ? '452px' : '32px', transition: 'padding-right 200ms ease' }} className="custom-scrollbar">
           {loading && (
             <div style={{ textAlign: 'center', padding: '80px 0', color: 'var(--tm-card-text-muted)' }}>
               <span className="material-symbols-outlined spin" style={{ fontSize: '32px', display: 'block', marginBottom: '12px', color: ACCENT }}>sync</span>
@@ -903,7 +904,7 @@ export default function MCPServersPage() {
           {!loading && !error && filtered.length > 0 && (
             <div style={{
               display: 'grid',
-              gridTemplateColumns: selected ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
               gap: '16px',
               alignContent: 'start',
             }}>
@@ -918,17 +919,17 @@ export default function MCPServersPage() {
             </div>
           )}
         </div>
-
-        {/* Properties panel */}
-        {selected && (
-          <PropertiesPanel
-            server={selected}
-            onClose={() => setSelected(null)}
-            onSaved={handleSaved}
-            onDeleted={handleDeleted}
-          />
-        )}
       </div>
+
+      {/* Properties panel — fixed overlay on the right */}
+      {selected && (
+        <PropertiesPanel
+          server={selected}
+          onClose={() => setSelected(null)}
+          onSaved={handleSaved}
+          onDeleted={handleDeleted}
+        />
+      )}
 
       {/* Create modal */}
       {showCreate && (
