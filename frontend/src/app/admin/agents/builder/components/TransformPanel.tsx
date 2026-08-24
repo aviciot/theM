@@ -194,9 +194,13 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
     fetchCatalog().then(setCatalog).catch(e => setCatalogError(e.message));
   }, []);
 
+  // Input vars for the Test tab = upstream pipeline vars + any input_var that isn't
+  // produced by an earlier step in this chain (i.e. it must come from outside).
+  const chainOutputs = new Set(functions.map(s => s.output_var).filter(Boolean));
+  const externalInputs = functions.map(s => s.input_var).filter(v => v && !chainOutputs.has(v));
   const testInputVars = Array.from(new Set([
     ...availableVars,
-    ...functions.map(s => s.output_var).filter(Boolean),
+    ...externalInputs,
   ]));
 
   const updateFunctions = useCallback((next: FunctionStep[]) => {
