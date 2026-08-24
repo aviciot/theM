@@ -394,7 +394,8 @@ export function CanvasBuilderView({
 
     // ── orchestrator ─────────────────────────────────────────────────────────
     if (selectedNode.type === 'orchestrator') {
-      const d = selectedNode.data as unknown as OrchNodeData;
+      const liveOrchNode = nodes.find(n => n.id === selectedNode.id);
+      const d = (liveOrchNode?.data ?? selectedNode.data) as unknown as OrchNodeData;
       const cfg = d.config ?? {};
       const epLlm = (cfg.ep_llm ?? {}) as Record<string, { provider?: string; model?: string }>;
       const connectedEps = edges
@@ -556,7 +557,8 @@ export function CanvasBuilderView({
 
     // ── agent ────────────────────────────────────────────────────────────────
     if (selectedNode.type === 'agent') {
-      const d = selectedNode.data as unknown as AgentNodeData;
+      const liveAgentNode = nodes.find(n => n.id === selectedNode.id);
+      const d = (liveAgentNode?.data ?? selectedNode.data) as unknown as AgentNodeData;
       return (
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.green, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Agent</div>
@@ -739,7 +741,8 @@ export function CanvasBuilderView({
 
     // ── middleware ───────────────────────────────────────────────────────────
     if (selectedNode.type === 'middleware') {
-      const d = selectedNode.data as unknown as MwNodeData;
+      const liveMwNode = nodes.find(n => n.id === selectedNode.id);
+      const d = (liveMwNode?.data ?? selectedNode.data) as unknown as MwNodeData;
       return (
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.amber, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Middleware</div>
