@@ -316,6 +316,30 @@ func (s *AgentDefinitionService) GetAgentParams(ctx context.Context, application
 
 	return &AgentParamsResponse{
 		AgentID:        agentID,
+		AgentSlug:      row.AgentSlug,
+		RequiredParams: statuses,
+	}, nil
+}
+
+// GetDefinitionParams returns the required_params declared by a published agent,
+// without any app-binding fill-status. Used by the canvas debugger to know what
+// secrets/params a definition needs before any application is configured.
+// Returns ErrNotFound when no published runtime spec exists for the agent.
+func (s *AgentDefinitionService) GetDefinitionParams(ctx context.Context, agentID string) (*AgentParamsResponse, error) {
+	row, err := s.dal.GetRequiredParamsForAgent(ctx, agentID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	statuses := make([]AgentParamFillStatus, 0, len(row.RequiredParams))
+	for _, param := range row.RequiredParams {
+		statuses = append(statuses, AgentParamFillStatus{AgentParamSpec: param})
+	}
+	return &AgentParamsResponse{
+		AgentID:        agentID,
+		AgentSlug:      row.AgentSlug,
 		RequiredParams: statuses,
 	}, nil
 }

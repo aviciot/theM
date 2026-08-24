@@ -112,6 +112,7 @@ type Dal interface {
 
 	// Agent runtime params — per-binding, secrets Fernet-encrypted
 	GetAgentParamsForBinding(ctx context.Context, applicationID, agentID string) (dal.AgentParamsRow, error)
+	GetRequiredParamsForAgent(ctx context.Context, agentID string) (dal.AgentParamsRow, error)
 	UpsertAgentParams(ctx context.Context, applicationID, agentID string, paramsDelta []byte) error
 
 	// Publish pipeline — Phase C

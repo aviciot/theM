@@ -881,6 +881,8 @@ export const themApi = {
   },
   publishAgentDefinition: (id: string) =>
     api.post<AgentPublishResult>(`/admin/agent-definitions/${id}/publish`, {}),
+  getDefinitionParams: (id: string) =>
+    api.get<AgentParamsResponse>(`/admin/agent-definitions/${id}/params`),
 
   // Phase 3: application agent bindings
   listAgentBindings: (appId: string) =>

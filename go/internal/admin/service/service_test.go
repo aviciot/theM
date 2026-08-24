@@ -394,6 +394,9 @@ func (f *fakeDal) DeleteAgentBinding(_ context.Context, _, _ string) error { ret
 func (f *fakeDal) GetAgentParamsForBinding(_ context.Context, _, _ string) (dal.AgentParamsRow, error) {
 	return dal.AgentParamsRow{RequiredParams: []agentgen.AgentParamSpec{}}, nil
 }
+func (f *fakeDal) GetRequiredParamsForAgent(_ context.Context, _ string) (dal.AgentParamsRow, error) {
+	return dal.AgentParamsRow{}, nil
+}
 func (f *fakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error { return nil }
 
 // MCP server stubs — satisfy Dal interface, use controllable fields.

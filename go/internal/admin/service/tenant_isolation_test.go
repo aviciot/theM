@@ -471,6 +471,9 @@ func (f *isolationFakeDal) DeleteAgentBinding(_ context.Context, _, _ string) er
 func (f *isolationFakeDal) GetAgentParamsForBinding(_ context.Context, _, _ string) (dal.AgentParamsRow, error) {
 	return dal.AgentParamsRow{RequiredParams: []agentgen.AgentParamSpec{}}, nil
 }
+func (f *isolationFakeDal) GetRequiredParamsForAgent(_ context.Context, _ string) (dal.AgentParamsRow, error) {
+	return dal.AgentParamsRow{}, nil
+}
 func (f *isolationFakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }

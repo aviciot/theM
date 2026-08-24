@@ -45,6 +45,7 @@ func (h *AgentDefinitionsHandler) Routes(r chi.Router) {
 	r.Post("/agent-definitions/{id}/clone", h.Clone)
 	r.Post("/agent-definitions/{id}/validate", h.Validate)
 	r.Post("/agent-definitions/{id}/publish", h.Publish)
+	r.Get("/agent-definitions/{id}/params", h.GetParams)
 }
 
 // claimsUserID extracts the integer user ID from JWT claims in the context.
@@ -252,6 +253,22 @@ func (h *AgentDefinitionsHandler) Publish(w http.ResponseWriter, r *http.Request
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "publish agent definition")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// GetParams handles GET /api/v1/admin/agent-definitions/{id}/params.
+// Returns the required_params declared by the published agent — no app binding needed.
+// Used by the canvas debugger to show what secrets/params the agent needs.
+func (h *AgentDefinitionsHandler) GetParams(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	result, err := h.svc.GetDefinitionParams(r.Context(), id)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get definition params")
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

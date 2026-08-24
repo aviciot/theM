@@ -1290,10 +1290,43 @@ function CanvasInner() {
       }));
       return;
     }
-    const specs = buildDebugParamSpecs(localPipeNodes);
+
+    // Build the test-input + Anthropic key specs (always present for LLM agents).
+    const baseSpecs = buildDebugParamSpecs(localPipeNodes).filter(
+      s => s.key === '__test_input' || s.key === '__anthropic_key',
+    );
+
+    // For published agents, fetch required params from the API (canonical, same source
+    // as application runtime settings). Fall back to raw node scan for unpublished drafts.
+    let apiSpecs: import('@/lib/api').AgentParamMeta[] = [];
+    if (defId) {
+      try {
+        const resp = await themApi.getDefinitionParams(defId);
+        apiSpecs = resp.required_params ?? [];
+      } catch {
+        // Draft not yet published — fall back to raw node scan below.
+      }
+    }
+
+    let paramSpecs: import('./types').DebugParamSpec[];
+    if (apiSpecs.length > 0) {
+      // Use API params — authoritative, matches what runtime injection expects.
+      const extraSpecs: import('./types').DebugParamSpec[] = apiSpecs.map(p => ({
+        key: p.key,
+        label: p.label,
+        description: p.description,
+        isSecret: p.type === 'secret',
+        required: p.required,
+      }));
+      paramSpecs = [...baseSpecs, ...extraSpecs];
+    } else {
+      // Fallback: raw node scan (draft or no published spec yet).
+      paramSpecs = buildDebugParamSpecs(localPipeNodes);
+    }
+
     const prefs = await loadDebugPrefs();
     const params: Record<string, string> = {};
-    for (const spec of specs) {
+    for (const spec of paramSpecs) {
       if (spec.key === '__test_input') params[spec.key] = prefs.testInput;
       else params[spec.key] = ssGet(spec.key);
     }
@@ -1301,7 +1334,7 @@ function CanvasInner() {
       ...prev,
       active: true,
       setupComplete: false,
-      paramSpecs: specs,
+      paramSpecs,
       debugParams: params,
       error: null,
     }));

@@ -196,24 +196,56 @@ func credentialSetFromJSON(raw []byte) map[string]bool {
 
 // AgentParamsRow is the result of GetAgentParamsForBinding.
 type AgentParamsRow struct {
-	AgentParamsJSON    []byte
-	RequiredParams     []agentgen.AgentParamSpec
+	AgentParamsJSON []byte
+	RequiredParams  []agentgen.AgentParamSpec
+	AgentSlug       string
 }
 
-// GetAgentParamsForBinding returns the agent_params JSON and the spec's RequiredParams
-// for one (applicationID, agentID) pair.
-// Returns pgx.ErrNoRows when the binding or runtime spec is absent.
+// GetAgentParamsForBinding returns the agent_params JSON, the spec's RequiredParams,
+// and the agent slug for one (applicationID, agentID) pair.
+// When no binding row exists yet, returns an empty AgentParamsJSON with the spec's
+// required_params so callers can display what the agent needs before any values are set.
+// Returns pgx.ErrNoRows only when no published runtime spec exists for the agent.
 func (d *DB) GetAgentParamsForBinding(ctx context.Context, applicationID, agentID string) (AgentParamsRow, error) {
 	const q = `
 		SELECT COALESCE(b.agent_params, '{}'),
-		       COALESCE(s.spec->'required_params', '[]'::jsonb)
-		  FROM them.app_agent_bindings b
-		  JOIN them.agent_runtime_specs s ON s.agent_id = b.agent_id
-		 WHERE b.application_id = $1::uuid AND b.agent_id = $2::uuid`
+		       COALESCE(s.spec->'required_params', '[]'::jsonb),
+		       a.slug
+		  FROM them.agent_runtime_specs s
+		  JOIN them.agents a ON a.id = s.agent_id
+		  LEFT JOIN them.app_agent_bindings b
+		         ON b.application_id = $1::uuid AND b.agent_id = $2::uuid
+		 WHERE s.agent_id = $2::uuid`
 
 	var row AgentParamsRow
 	var requiredParamsJSON []byte
-	if err := d.q.QueryRow(ctx, q, applicationID, agentID).Scan(&row.AgentParamsJSON, &requiredParamsJSON); err != nil {
+	if err := d.q.QueryRow(ctx, q, applicationID, agentID).Scan(&row.AgentParamsJSON, &requiredParamsJSON, &row.AgentSlug); err != nil {
+		return row, err
+	}
+	if len(requiredParamsJSON) > 0 && string(requiredParamsJSON) != "null" {
+		_ = json.Unmarshal(requiredParamsJSON, &row.RequiredParams)
+	}
+	if row.RequiredParams == nil {
+		row.RequiredParams = []agentgen.AgentParamSpec{}
+	}
+	return row, nil
+}
+
+// GetRequiredParamsForAgent returns the required_params from the published runtime spec
+// for the given agent ID, plus the agent slug. No app binding is needed.
+// Returns pgx.ErrNoRows when no published spec exists for the agent.
+func (d *DB) GetRequiredParamsForAgent(ctx context.Context, agentID string) (AgentParamsRow, error) {
+	const q = `
+		SELECT '{}',
+		       COALESCE(s.spec->'required_params', '[]'::jsonb),
+		       a.slug
+		  FROM them.agent_runtime_specs s
+		  JOIN them.agents a ON a.id = s.agent_id
+		 WHERE s.agent_id = $1::uuid`
+
+	var row AgentParamsRow
+	var requiredParamsJSON []byte
+	if err := d.q.QueryRow(ctx, q, agentID).Scan(&row.AgentParamsJSON, &requiredParamsJSON, &row.AgentSlug); err != nil {
 		return row, err
 	}
 	if len(requiredParamsJSON) > 0 && string(requiredParamsJSON) != "null" {

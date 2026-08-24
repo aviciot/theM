@@ -251,6 +251,9 @@ func (f *publishFakeDal) DeleteAgentBinding(_ context.Context, _, _ string) erro
 func (f *publishFakeDal) GetAgentParamsForBinding(_ context.Context, _, _ string) (dal.AgentParamsRow, error) {
 	return dal.AgentParamsRow{RequiredParams: []agentgen.AgentParamSpec{}}, nil
 }
+func (f *publishFakeDal) GetRequiredParamsForAgent(_ context.Context, _ string) (dal.AgentParamsRow, error) {
+	return dal.AgentParamsRow{}, nil
+}
 func (f *publishFakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }

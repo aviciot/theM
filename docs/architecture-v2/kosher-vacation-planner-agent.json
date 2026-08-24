@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "agent_slug": "kosher-vacation-planner",
+  "agent_slug": "kosher-vacation-planner-v2",
   "agent_root": {
     "display_name": "Kosher Vacation Planner",
     "description": "Plans and compares two vacation destinations for kosher-observant travellers. Checks weather, kosher restaurant availability via Geoapify, Shabbat times, and currency — then recommends the best option with a scored explanation.",
@@ -53,17 +53,19 @@
           "type": "transform",
           "label": "Extract City Coordinates",
           "config": {
-            "expressions": {},
-            "extractions": [
-              { "from_var": "prefs_json", "json_path": "city1",           "var": "city1" },
-              { "from_var": "prefs_json", "json_path": "city1_lat",       "var": "city1_lat" },
-              { "from_var": "prefs_json", "json_path": "city1_lon",       "var": "city1_lon" },
-              { "from_var": "prefs_json", "json_path": "city1_tz",        "var": "city1_tz" },
-              { "from_var": "prefs_json", "json_path": "city2",           "var": "city2" },
-              { "from_var": "prefs_json", "json_path": "city2_lat",       "var": "city2_lat" },
-              { "from_var": "prefs_json", "json_path": "city2_lon",       "var": "city2_lon" },
-              { "from_var": "prefs_json", "json_path": "city2_tz",        "var": "city2_tz" },
-              { "from_var": "prefs_json", "json_path": "budget_currency", "var": "budget_currency" }
+            "exposed_vars": ["city1", "city1_lat", "city1_lon", "city1_tz", "city2", "city2_lat", "city2_lon", "city2_tz", "budget_currency"],
+            "functions": [
+              { "fn": "strip_fences",  "input_var": "prefs_json",  "output_var": "prefs_json", "args": {} },
+              { "fn": "assert_json",   "input_var": "prefs_json",  "output_var": "prefs_json", "args": {} },
+              { "fn": "json_path",     "input_var": "prefs_json",  "output_var": "city1",           "args": { "path": "$.city1" } },
+              { "fn": "json_path",     "input_var": "prefs_json",  "output_var": "city1_lat",       "args": { "path": "$.city1_lat" } },
+              { "fn": "json_path",     "input_var": "prefs_json",  "output_var": "city1_lon",       "args": { "path": "$.city1_lon" } },
+              { "fn": "json_path",     "input_var": "prefs_json",  "output_var": "city1_tz",        "args": { "path": "$.city1_tz" } },
+              { "fn": "json_path",     "input_var": "prefs_json",  "output_var": "city2",           "args": { "path": "$.city2" } },
+              { "fn": "json_path",     "input_var": "prefs_json",  "output_var": "city2_lat",       "args": { "path": "$.city2_lat" } },
+              { "fn": "json_path",     "input_var": "prefs_json",  "output_var": "city2_lon",       "args": { "path": "$.city2_lon" } },
+              { "fn": "json_path",     "input_var": "prefs_json",  "output_var": "city2_tz",        "args": { "path": "$.city2_tz" } },
+              { "fn": "json_path",     "input_var": "prefs_json",  "output_var": "budget_currency", "args": { "path": "$.budget_currency" } }
             ]
           },
           "next": ["weather-city1"],
@@ -77,8 +79,6 @@
           "config": {
             "method": "GET",
             "url_template": "https://api.open-meteo.com/v1/forecast?latitude={{.city1_lat}}&longitude={{.city1_lon}}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&forecast_days=7",
-            "headers": { "Accept": "application/json" },
-            "extractions": [],
             "timeout_seconds": 15
           },
           "next": ["store-weather1"],
@@ -90,8 +90,10 @@
           "type": "transform",
           "label": "Store City 1 Weather",
           "config": {
-            "expressions": { "weather1_raw": "{{.http_response}}" },
-            "extractions": []
+            "exposed_vars": ["weather1_raw"],
+            "functions": [
+              { "fn": "to_string", "input_var": "http_response", "output_var": "weather1_raw", "args": {} }
+            ]
           },
           "next": ["shabbat-city1"],
           "position": { "x": 160, "y": 500 }
@@ -104,8 +106,6 @@
           "config": {
             "method": "GET",
             "url_template": "https://www.hebcal.com/shabbat?cfg=json&geo=pos&latitude={{.city1_lat}}&longitude={{.city1_lon}}&tzid={{.city1_tz}}&M=on",
-            "headers": { "Accept": "application/json" },
-            "extractions": [],
             "timeout_seconds": 15
           },
           "next": ["store-shabbat1"],
@@ -117,8 +117,10 @@
           "type": "transform",
           "label": "Store City 1 Shabbat",
           "config": {
-            "expressions": { "shabbat1_raw": "{{.http_response}}" },
-            "extractions": []
+            "exposed_vars": ["shabbat1_raw"],
+            "functions": [
+              { "fn": "to_string", "input_var": "http_response", "output_var": "shabbat1_raw", "args": {} }
+            ]
           },
           "next": ["kosher-city1"],
           "position": { "x": 160, "y": 700 }
@@ -131,10 +133,8 @@
           "config": {
             "method": "GET",
             "url_template": "https://api.geoapify.com/v2/places?categories=catering.restaurant.kosher&filter=circle:{{.city1_lon}},{{.city1_lat}},5000&limit=10&format=json",
-            "headers": { "Accept": "application/json" },
-            "extractions": [],
             "timeout_seconds": 15,
-            "app_param_key": "geoapify_key",
+            "app_param_key": "api_key",
             "inject_mode": "query",
             "inject_header_name": "apiKey"
           },
@@ -147,8 +147,10 @@
           "type": "transform",
           "label": "Store City 1 Kosher Results",
           "config": {
-            "expressions": { "kosher1_raw": "{{.http_response}}" },
-            "extractions": []
+            "exposed_vars": ["kosher1_raw"],
+            "functions": [
+              { "fn": "to_string", "input_var": "http_response", "output_var": "kosher1_raw", "args": {} }
+            ]
           },
           "next": ["weather-city2"],
           "position": { "x": 160, "y": 900 }
@@ -161,8 +163,6 @@
           "config": {
             "method": "GET",
             "url_template": "https://api.open-meteo.com/v1/forecast?latitude={{.city2_lat}}&longitude={{.city2_lon}}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&forecast_days=7",
-            "headers": { "Accept": "application/json" },
-            "extractions": [],
             "timeout_seconds": 15
           },
           "next": ["store-weather2"],
@@ -174,8 +174,10 @@
           "type": "transform",
           "label": "Store City 2 Weather",
           "config": {
-            "expressions": { "weather2_raw": "{{.http_response}}" },
-            "extractions": []
+            "exposed_vars": ["weather2_raw"],
+            "functions": [
+              { "fn": "to_string", "input_var": "http_response", "output_var": "weather2_raw", "args": {} }
+            ]
           },
           "next": ["shabbat-city2"],
           "position": { "x": 160, "y": 1100 }
@@ -188,8 +190,6 @@
           "config": {
             "method": "GET",
             "url_template": "https://www.hebcal.com/shabbat?cfg=json&geo=pos&latitude={{.city2_lat}}&longitude={{.city2_lon}}&tzid={{.city2_tz}}&M=on",
-            "headers": { "Accept": "application/json" },
-            "extractions": [],
             "timeout_seconds": 15
           },
           "next": ["store-shabbat2"],
@@ -201,8 +201,10 @@
           "type": "transform",
           "label": "Store City 2 Shabbat",
           "config": {
-            "expressions": { "shabbat2_raw": "{{.http_response}}" },
-            "extractions": []
+            "exposed_vars": ["shabbat2_raw"],
+            "functions": [
+              { "fn": "to_string", "input_var": "http_response", "output_var": "shabbat2_raw", "args": {} }
+            ]
           },
           "next": ["kosher-city2"],
           "position": { "x": 160, "y": 1300 }
@@ -215,10 +217,8 @@
           "config": {
             "method": "GET",
             "url_template": "https://api.geoapify.com/v2/places?categories=catering.restaurant.kosher&filter=circle:{{.city2_lon}},{{.city2_lat}},5000&limit=10&format=json",
-            "headers": { "Accept": "application/json" },
-            "extractions": [],
             "timeout_seconds": 15,
-            "app_param_key": "geoapify_key",
+            "app_param_key": "api_key",
             "inject_mode": "query",
             "inject_header_name": "apiKey"
           },
@@ -231,8 +231,10 @@
           "type": "transform",
           "label": "Store City 2 Kosher Results",
           "config": {
-            "expressions": { "kosher2_raw": "{{.http_response}}" },
-            "extractions": []
+            "exposed_vars": ["kosher2_raw"],
+            "functions": [
+              { "fn": "to_string", "input_var": "http_response", "output_var": "kosher2_raw", "args": {} }
+            ]
           },
           "next": ["currency-rates"],
           "position": { "x": 160, "y": 1500 }
@@ -245,8 +247,6 @@
           "config": {
             "method": "GET",
             "url_template": "https://api.frankfurter.dev/v1/latest?base=EUR",
-            "headers": { "Accept": "application/json" },
-            "extractions": [],
             "timeout_seconds": 10
           },
           "next": ["store-currency"],
@@ -258,8 +258,10 @@
           "type": "transform",
           "label": "Store Currency Rates",
           "config": {
-            "expressions": { "currency_raw": "{{.http_response}}" },
-            "extractions": []
+            "exposed_vars": ["currency_raw"],
+            "functions": [
+              { "fn": "to_string", "input_var": "http_response", "output_var": "currency_raw", "args": {} }
+            ]
           },
           "next": ["score-and-recommend"],
           "position": { "x": 160, "y": 1700 }
