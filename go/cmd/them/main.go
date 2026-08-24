@@ -17,8 +17,9 @@ import (
 	"time"
 
 	"github.com/aviciot/them/internal/a2a"
-	"github.com/aviciot/them/internal/dashboard"
 	"github.com/aviciot/them/internal/admin"
+	"github.com/aviciot/them/internal/appliveness"
+	"github.com/aviciot/them/internal/dashboard"
 	"github.com/aviciot/them/internal/agentregistry"
 	"github.com/aviciot/them/internal/artifacts"
 	"github.com/aviciot/them/internal/auth"
@@ -275,6 +276,13 @@ func run() error {
 		}
 	}()
 	log.Info("pod heartbeat loop started", "interval", "15s")
+
+	// ── 17c. Start app liveness loop ─────────────────────────────────────────
+	// Probes all enabled entry points immediately on startup then every 30s.
+	// Publishes to them:dash:apps (live push) and caches at
+	// them:dash:app_status_cache (snapshot for new WS subscribers).
+	go appliveness.Loop(runCtx, database.Pool(), redisCache.Client(), cfg.AppPort, log)
+	log.Info("app liveness loop started", "interval", "30s")
 
 	// Register runCancel as the pre-drain hook so all subscriber goroutines
 	// (token revocation, epconfig invalidation, agent registry, heartbeat,
