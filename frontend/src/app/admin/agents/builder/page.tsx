@@ -122,22 +122,26 @@ function DebugEdge({
       {/* Value label when done */}
       {isDone && d.label && (
         <EdgeLabelRenderer>
-          <div style={{
-            position: 'absolute',
-            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-            pointerEvents: 'none',
-            background: 'rgba(0,15,30,0.85)',
-            border: '1px solid #00f0ff',
-            borderRadius: '4px',
-            padding: '2px 6px',
-            fontSize: '10px',
-            fontFamily: 'monospace',
-            color: '#00f0ff',
-            whiteSpace: 'nowrap',
-            maxWidth: '140px',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}>
+          <div
+            title={d.label}
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              pointerEvents: 'all',
+              background: 'rgba(0,15,30,0.85)',
+              border: '1px solid #00f0ff',
+              borderRadius: '4px',
+              padding: '2px 6px',
+              fontSize: '10px',
+              fontFamily: 'monospace',
+              color: '#00f0ff',
+              whiteSpace: 'nowrap',
+              maxWidth: '140px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              cursor: 'default',
+            }}
+          >
             {d.label}
           </div>
         </EdgeLabelRenderer>
