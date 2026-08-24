@@ -2,6 +2,7 @@ import { Handle, Position } from '@xyflow/react';
 import { getNodeDef } from '@/lib/nodeRegistry';
 import type { StepNodeData, DebugNodeState } from '../types';
 
+
 function stepMetaFromType(type: string): { bg: string; border: string; emoji: string; label: string } {
   const def = getNodeDef(type);
   return { bg: def.bg, border: def.border, emoji: def.emoji, label: def.label };
@@ -21,6 +22,21 @@ const debugGlow: Record<DebugNodeState, string> = {
   done: '0 0 8px 2px rgba(74,222,128,0.4)',
   error: '0 0 8px 2px rgba(248,113,113,0.5)',
 };
+
+interface FunctionStep { fn: string; input_var: string; output_var: string; }
+
+function computeFinalOutputs(fns: FunctionStep[]): string[] {
+  const consumed = new Set(fns.map(s => s.input_var).filter(Boolean));
+  const seen = new Set<string>();
+  const finals: string[] = [];
+  for (const s of fns) {
+    if (s.output_var && !consumed.has(s.output_var) && !seen.has(s.output_var)) {
+      seen.add(s.output_var);
+      finals.push(s.output_var);
+    }
+  }
+  return finals;
+}
 
 export function StepNode({ data }: { data: StepNodeData; id: string }) {
   const nodeDef = getNodeDef(data.step_type);
@@ -43,11 +59,17 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
     }
   }
 
+  const isTransform = data.step_type === 'transform';
+  const transformOutputs = isTransform
+    ? computeFinalOutputs((cfg.functions as FunctionStep[] | undefined) ?? [])
+    : [];
+
   return (
     <div style={{
       background: 'transparent', padding: '8px', minWidth: '80px', textAlign: 'center',
       border: `2px solid ${borderColor}`, borderRadius: '10px', boxShadow,
       transition: 'border-color 0.2s, box-shadow 0.2s',
+      position: 'relative',
     }}>
       <Handle type="target" position={Position.Top} style={{ background: meta.border }} />
       {data.step_type === 'branch' ? (
@@ -66,6 +88,43 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
             style={{ background: '#f87171', left: '70%', bottom: -6, width: 10, height: 10 }}
           />
           <div style={{ position: 'absolute', bottom: -18, left: 'calc(70% - 6px)', fontSize: 9, color: '#f87171', fontWeight: 700, pointerEvents: 'none' }}>F</div>
+        </>
+      ) : isTransform && transformOutputs.length > 0 ? (
+        // Dynamic named output handles — one per final output variable, Informatica-style right ports
+        <>
+          {transformOutputs.map((varName, idx) => {
+            const pct = transformOutputs.length === 1
+              ? 50
+              : Math.round(10 + (idx / (transformOutputs.length - 1)) * 80);
+            return (
+              <span key={varName}>
+                <Handle
+                  id={`out-${varName}`}
+                  type="source"
+                  position={Position.Right}
+                  style={{
+                    background: meta.border,
+                    top: `${pct}%`,
+                    right: -6,
+                    width: 9,
+                    height: 9,
+                  }}
+                />
+                <span style={{
+                  position: 'absolute',
+                  top: `calc(${pct}% - 5px)`,
+                  right: 8,
+                  fontSize: 8,
+                  color: meta.border,
+                  fontFamily: 'JetBrains Mono, monospace',
+                  pointerEvents: 'none',
+                  whiteSpace: 'nowrap',
+                  textAlign: 'right',
+                  lineHeight: 1,
+                }}>{varName}</span>
+              </span>
+            );
+          })}
         </>
       ) : (
         <Handle type="source" position={Position.Bottom} style={{ background: meta.border }} />

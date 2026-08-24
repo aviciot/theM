@@ -61,14 +61,6 @@ const sectionTitle = (color: string): React.CSSProperties => ({
   marginBottom: '8px', marginTop: '14px',
 });
 
-const tabBtn = (active: boolean): React.CSSProperties => ({
-  flex: 1, padding: '6px 0', fontSize: '11px', fontWeight: 700,
-  background: active ? C.indigo : 'transparent',
-  color: active ? '#fff' : C.textMuted,
-  border: `1px solid ${active ? C.indigo : C.outline}`,
-  borderRadius: '4px', cursor: 'pointer',
-});
-
 const rowStyle: React.CSSProperties = {
   display: 'flex', gap: 4, marginBottom: 6, alignItems: 'flex-start',
 };
@@ -93,21 +85,24 @@ const monoStyle: React.CSSProperties = {
 // ── FunctionRow ───────────────────────────────────────────────────────────────
 
 function FunctionRow({
-  step, index, catalog, availableVars, onChange, onRemove, onMoveUp, onMoveDown,
+  step, index, catalog, availableVars, result, onChange, onRemove, onMoveUp, onMoveDown,
 }: {
   step: FunctionStep;
   index: number;
   catalog: { functions: FunctionDef[]; by_category: Record<string, FunctionDef[]> } | null;
   availableVars: string[];
+  result?: StepResult;
   onChange: (step: FunctionStep) => void;
   onRemove: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
 }) {
   const def = catalog?.functions.find(f => f.name === step.fn);
+  const ok = result ? result.ok : null;
 
   return (
-    <div style={stepCard(null)}>
+    <div style={stepCard(ok)}>
+      {/* Header: index, fn picker, move, remove — and result badge */}
       <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 6 }}>
         <span style={{ fontSize: '10px', color: C.textMuted, minWidth: 18 }}>{index + 1}.</span>
         <select
@@ -124,6 +119,11 @@ function FunctionRow({
             </optgroup>
           ))}
         </select>
+        {result && (
+          <span style={{ fontSize: '10px', fontWeight: 700, color: result.ok ? '#4ade80' : '#f87171', whiteSpace: 'nowrap' }}>
+            {result.ok ? '✓' : '✗'} {(result.duration_ns / 1_000_000).toFixed(2)}ms
+          </span>
+        )}
         <button onClick={onMoveUp} title="Move up" style={{ background: 'transparent', border: 'none', color: C.textMuted, cursor: 'pointer', fontSize: '12px', padding: '0 2px' }}>↑</button>
         <button onClick={onMoveDown} title="Move down" style={{ background: 'transparent', border: 'none', color: C.textMuted, cursor: 'pointer', fontSize: '12px', padding: '0 2px' }}>↓</button>
         <button onClick={onRemove} title="Remove" style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px', padding: '0 2px' }}>×</button>
@@ -170,6 +170,21 @@ function FunctionRow({
           {def.description}
         </div>
       )}
+
+      {/* Inline result output */}
+      {result && result.ok && result.out !== undefined && (
+        <div style={{ marginTop: 6, borderTop: '1px solid rgba(74,222,128,0.2)', paddingTop: 4 }}>
+          <div style={{ fontSize: '9px', color: '#4ade80', marginBottom: 2 }}>→ {result.output_var}</div>
+          <pre style={{ margin: 0, fontSize: '10px', color: '#4ade80', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 80, overflow: 'auto' }}>
+            {result.out.length > 200 ? result.out.slice(0, 200) + '…' : result.out}
+          </pre>
+        </div>
+      )}
+      {result && !result.ok && result.error && (
+        <div style={{ marginTop: 6, borderTop: '1px solid rgba(248,113,113,0.2)', paddingTop: 4 }}>
+          <div style={{ fontSize: '10px', color: '#f87171' }}>✗ {result.error}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -177,13 +192,13 @@ function FunctionRow({
 // ── TransformPanel ────────────────────────────────────────────────────────────
 
 export function TransformPanel({ cfg, updateStepConfig, availableVars }: TransformPanelProps) {
-  const [tab, setTab] = useState<'build' | 'test' | 'ai'>('build');
   const [catalog, setCatalog] = useState<{ functions: FunctionDef[]; by_category: Record<string, FunctionDef[]> } | null>(null);
   const [catalogError, setCatalogError] = useState('');
   const [testVars, setTestVars] = useState<Record<string, string>>({});
   const [testResults, setTestResults] = useState<StepResult[] | null>(null);
   const [testRunning, setTestRunning] = useState(false);
   const [testError, setTestError] = useState('');
+  const [aiOpen, setAiOpen] = useState(false);
 
   const functions: FunctionStep[] = (cfg.functions as FunctionStep[]) ?? [];
   const expressions: Record<string, string> = (cfg.expressions as Record<string, string>) ?? {};
@@ -194,14 +209,10 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
     fetchCatalog().then(setCatalog).catch(e => setCatalogError(e.message));
   }, []);
 
-  // Input vars for the Test tab = upstream pipeline vars + any input_var that isn't
-  // produced by an earlier step in this chain (i.e. it must come from outside).
+  // External input vars: input_vars that aren't produced by earlier steps in the chain.
   const chainOutputs = new Set(functions.map(s => s.output_var).filter(Boolean));
   const externalInputs = functions.map(s => s.input_var).filter(v => v && !chainOutputs.has(v));
-  const testInputVars = Array.from(new Set([
-    ...availableVars,
-    ...externalInputs,
-  ]));
+  const testInputVars = Array.from(new Set([...availableVars, ...externalInputs]));
 
   const updateFunctions = useCallback((next: FunctionStep[]) => {
     updateStepConfig('functions', next);
@@ -216,7 +227,6 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
       for (const [k, v] of Object.entries(testVars)) {
         if (k) vars[k] = v;
       }
-      // Use raw fetch so we can read the body on 422 (api helper throws and discards it).
       const resp = await fetch('/api/them/admin/transform-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -225,7 +235,6 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
       const text = await resp.text();
       let data: { steps?: StepResult[] } = {};
       try { data = JSON.parse(text); } catch { /* not JSON */ }
-      // Show trace even on 422 — step failures are shown inline per step.
       if (data.steps) {
         setTestResults(data.steps);
         if (!resp.ok && !data.steps.some(s => !s.ok)) {
@@ -241,168 +250,126 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
     }
   };
 
+  const resultByIndex = (i: number): StepResult | undefined => testResults?.[i];
+
   return (
     <>
       <div style={{ color: C.indigo, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>
         TRANSFORM CONFIG
       </div>
 
-      <div style={{ display: 'flex', gap: 4, marginBottom: '14px' }}>
-        <button style={tabBtn(tab === 'build')} onClick={() => setTab('build')}>Build</button>
-        <button style={tabBtn(tab === 'test')} onClick={() => setTab('test')}>Test</button>
-        <button style={tabBtn(tab === 'ai')} onClick={() => setTab('ai')}>AI Assist</button>
-      </div>
-
-      {/* BUILD TAB */}
-      {tab === 'build' && (
+      {/* ── Input vars with test value fields ── */}
+      {testInputVars.length > 0 && (
         <>
-          <div style={sectionTitle(C.indigo)}>FUNCTION CHAIN</div>
-          {catalogError && <div style={{ fontSize: '11px', color: '#f87171', marginBottom: 8 }}>Could not load function catalog: {catalogError}</div>}
-          {functions.map((step, i) => (
-            <FunctionRow
-              key={i}
-              step={step}
-              index={i}
-              catalog={catalog}
-              availableVars={[...availableVars, ...functions.slice(0, i).map(s => s.output_var).filter(Boolean)]}
-              onChange={s => { const next = functions.map((x, j) => j === i ? s : x); updateFunctions(next); }}
-              onRemove={() => updateFunctions(functions.filter((_, j) => j !== i))}
-              onMoveUp={() => { const next = [...functions]; if (i > 0) { [next[i-1], next[i]] = [next[i], next[i-1]]; updateFunctions(next); } }}
-              onMoveDown={() => { const next = [...functions]; if (i < next.length-1) { [next[i], next[i+1]] = [next[i+1], next[i]]; updateFunctions(next); } }}
-            />
-          ))}
-          <button onClick={() => updateFunctions([...functions, { fn: '', input_var: '', output_var: '', args: {} }])}
-            style={{ background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%', marginBottom: 16 }}>
-            + Add function step
-          </button>
-
-          <details style={{ marginBottom: 8 }}>
-            <summary style={{ ...sectionTitle('#64748b'), cursor: 'pointer', listStyle: 'none' }}>
-              ▸ TEMPLATE EXPRESSIONS (legacy)
-            </summary>
-            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, marginTop: 6 }}>
-              Output var → Go template. Use <code style={{ color: C.cyan }}>{'{{.var}}'}</code>.
-            </div>
-            {Object.entries(expressions).map(([k, v], i) => (
-              <div key={i} style={rowStyle}>
-                <input value={k} onChange={e => { const ent = Object.entries(expressions); ent[i] = [e.target.value, v]; updateStepConfig('expressions', Object.fromEntries(ent)); }} style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', ...monoStyle }} placeholder="output_var" />
-                <input value={v} onChange={e => updateStepConfig('expressions', { ...expressions, [k]: e.target.value })} style={{ ...inputStyle, flex: 1, fontSize: '11px' }} placeholder="Hello, {{.user_query}}!" />
-                <button onClick={() => { const ex = { ...expressions }; delete ex[k]; updateStepConfig('expressions', ex); }} style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px' }}>×</button>
-              </div>
-            ))}
-            <button onClick={() => updateStepConfig('expressions', { ...expressions, '': '' })} style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}>+ Add expression</button>
-          </details>
-
-          <details>
-            <summary style={{ ...sectionTitle('#64748b'), cursor: 'pointer', listStyle: 'none' }}>
-              ▸ JSON EXTRACTIONS (legacy)
-            </summary>
-            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, marginTop: 6 }}>
-              Parse a JSON var and extract fields by dot-path.
-            </div>
-            {extractions.map((ext, i) => (
-              <div key={i} style={{ ...rowStyle, alignItems: 'center' }}>
-                <input value={ext.from_var} onChange={e => { const next = extractions.map((x, j) => j === i ? { ...x, from_var: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: '0 0 80px', fontSize: '11px', ...monoStyle }} placeholder="from_var" />
-                <input value={ext.json_path} onChange={e => { const next = extractions.map((x, j) => j === i ? { ...x, json_path: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: 1, fontSize: '11px', ...monoStyle }} placeholder="$.field" />
-                <span style={{ color: '#64748b', fontSize: '11px' }}>→</span>
-                <input value={ext.var} onChange={e => { const next = extractions.map((x, j) => j === i ? { ...x, var: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: '0 0 80px', fontSize: '11px', ...monoStyle }} placeholder="out_var" />
-                <button onClick={() => updateStepConfig('extractions', extractions.filter((_, j) => j !== i))} style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px' }}>×</button>
-              </div>
-            ))}
-            <button onClick={() => updateStepConfig('extractions', [...extractions, { from_var: '', json_path: '', var: '' }])} style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}>+ Add extraction</button>
-          </details>
-        </>
-      )}
-
-      {/* TEST TAB */}
-      {tab === 'test' && (
-        <>
-          <div style={{ fontSize: '11px', color: '#64748b', marginBottom: 10, padding: '8px', background: 'rgba(99,102,241,0.06)', borderRadius: 6, border: `1px solid ${C.outline}` }}>
-            Runs the exact same Go code used in production. Paste input var values, then click Run.
-          </div>
-
-          <div style={sectionTitle(C.indigo)}>INPUT VARS</div>
-          {testInputVars.length === 0 && (
-            <div style={{ fontSize: '11px', color: C.textMuted, marginBottom: 8 }}>No vars detected — add function steps in Build tab first.</div>
-          )}
+          <div style={sectionTitle(C.cyan)}>INPUT VARS</div>
           {testInputVars.map(varName => (
             <div key={varName} style={{ marginBottom: 8 }}>
               <label style={{ ...labelStyle, marginBottom: 2 }}>
-                <code style={{ color: C.cyan, fontSize: '11px' }}>{`{{.${varName}}}`}</code>
+                <code style={{ color: C.cyan, fontSize: '11px' }}>{varName}</code>
+                <span style={{ color: '#475569', fontSize: '10px', marginLeft: 6 }}>test value</span>
               </label>
               <textarea
                 value={testVars[varName] ?? ''}
                 onChange={e => setTestVars(prev => ({ ...prev, [varName]: e.target.value }))}
-                style={{ width: '100%', minHeight: 60, background: '#0f172a', border: `1px solid ${C.outline}`, borderRadius: 4, color: C.text, padding: '6px 8px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace', resize: 'vertical', boxSizing: 'border-box' }}
+                style={{ width: '100%', minHeight: 48, background: '#0f172a', border: `1px solid ${C.outline}`, borderRadius: 4, color: C.text, padding: '6px 8px', fontSize: '11px', fontFamily: 'JetBrains Mono, monospace', resize: 'vertical', boxSizing: 'border-box' }}
                 placeholder={`Value for ${varName}…`}
               />
             </div>
           ))}
           <button
             onClick={() => { const name = prompt('Variable name:'); if (name?.trim()) setTestVars(prev => ({ ...prev, [name.trim()]: '' })); }}
-            style={{ background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontSize: '11px', marginBottom: 12 }}
+            style={{ background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontSize: '11px', marginBottom: 8 }}
           >+ Add var</button>
-
-          <button
-            onClick={runTest}
-            disabled={testRunning || functions.length === 0}
-            style={{ width: '100%', padding: '8px', borderRadius: 6, border: 'none', background: functions.length === 0 ? '#334155' : C.indigo, color: '#fff', fontWeight: 700, fontSize: '12px', cursor: functions.length === 0 ? 'not-allowed' : 'pointer', marginBottom: 14 }}
-          >
-            {testRunning ? 'Running…' : '▶ Run Test'}
-          </button>
-          {functions.length === 0 && <div style={{ fontSize: '11px', color: C.textMuted, textAlign: 'center', marginBottom: 10 }}>Add function steps in the Build tab first.</div>}
-          {testError && <div style={{ fontSize: '11px', color: '#f87171', marginBottom: 8 }}>{testError}</div>}
-
-          {testResults && (
-            <>
-              <div style={sectionTitle(C.indigo)}>STEP RESULTS</div>
-              {testResults.map((step, i) => (
-                <div key={i} style={stepCard(step.ok)}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                    <span style={{ fontSize: '11px', fontWeight: 700, color: step.ok ? '#4ade80' : '#f87171' }}>
-                      {i + 1}. {step.fn}
-                    </span>
-                    <span style={{ fontSize: '10px', color: C.textMuted }}>
-                      {step.ok ? '✓' : '✗'} {(step.duration_ns / 1_000_000).toFixed(2)}ms
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '10px', color: '#64748b', marginBottom: 2 }}>
-                    <code style={{ color: '#94a3b8', ...monoStyle }}>{step.input_var}</code>
-                    {' → '}
-                    <code style={{ color: '#94a3b8', ...monoStyle }}>{step.output_var}</code>
-                  </div>
-                  <pre style={{ margin: 0, fontSize: '10px', color: '#94a3b8', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
-                    {step.in?.length > 200 ? step.in.slice(0, 200) + '…' : step.in}
-                  </pre>
-                  {step.ok && step.out !== undefined && (
-                    <>
-                      <div style={{ fontSize: '10px', color: '#4ade80', margin: '4px 0 2px' }}>→</div>
-                      <pre style={{ margin: 0, fontSize: '10px', color: '#4ade80', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
-                        {step.out.length > 200 ? step.out.slice(0, 200) + '…' : step.out}
-                      </pre>
-                    </>
-                  )}
-                  {!step.ok && step.error && (
-                    <div style={{ fontSize: '10px', color: '#f87171', marginTop: 4 }}>✗ {step.error}</div>
-                  )}
-                </div>
-              ))}
-            </>
-          )}
         </>
       )}
 
-      {/* AI ASSIST TAB */}
-      {tab === 'ai' && (
-        <div style={{ textAlign: 'center', padding: '32px 16px', border: `1px dashed ${C.outline}`, borderRadius: 8 }}>
-          <div style={{ fontSize: '24px', marginBottom: 8 }}>🤖</div>
-          <div style={{ fontSize: '13px', fontWeight: 700, color: C.text, marginBottom: 6 }}>AI Transform Assistant</div>
+      {/* ── Function chain ── */}
+      <div style={sectionTitle(C.indigo)}>FUNCTION CHAIN</div>
+      {catalogError && <div style={{ fontSize: '11px', color: '#f87171', marginBottom: 8 }}>Could not load function catalog: {catalogError}</div>}
+      {functions.map((step, i) => (
+        <FunctionRow
+          key={i}
+          step={step}
+          index={i}
+          catalog={catalog}
+          availableVars={[...availableVars, ...functions.slice(0, i).map(s => s.output_var).filter(Boolean)]}
+          result={resultByIndex(i)}
+          onChange={s => { const next = functions.map((x, j) => j === i ? s : x); updateFunctions(next); }}
+          onRemove={() => { updateFunctions(functions.filter((_, j) => j !== i)); setTestResults(null); }}
+          onMoveUp={() => { const next = [...functions]; if (i > 0) { [next[i-1], next[i]] = [next[i], next[i-1]]; updateFunctions(next); } }}
+          onMoveDown={() => { const next = [...functions]; if (i < next.length-1) { [next[i], next[i+1]] = [next[i+1], next[i]]; updateFunctions(next); } }}
+        />
+      ))}
+      <button onClick={() => updateFunctions([...functions, { fn: '', input_var: '', output_var: '', args: {} }])}
+        style={{ background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%', marginBottom: 10 }}>
+        + Add function step
+      </button>
+
+      {/* ── Run Test button ── */}
+      {testError && <div style={{ fontSize: '11px', color: '#f87171', marginBottom: 6 }}>{testError}</div>}
+      <button
+        onClick={runTest}
+        disabled={testRunning || functions.length === 0}
+        style={{ width: '100%', padding: '8px', borderRadius: 6, border: 'none', background: functions.length === 0 ? '#334155' : C.indigo, color: '#fff', fontWeight: 700, fontSize: '12px', cursor: functions.length === 0 ? 'not-allowed' : 'pointer', marginBottom: 14 }}
+      >
+        {testRunning ? 'Running…' : '▶ Run Test'}
+      </button>
+      {functions.length === 0 && <div style={{ fontSize: '11px', color: C.textMuted, textAlign: 'center', marginBottom: 10 }}>Add function steps above first.</div>}
+      {testInputVars.length === 0 && functions.length > 0 && (
+        <div style={{ fontSize: '11px', color: '#64748b', textAlign: 'center', marginBottom: 10 }}>No external input vars — all inputs are produced within the chain.</div>
+      )}
+
+      {/* ── Legacy: expressions + extractions ── */}
+      <details style={{ marginBottom: 8 }}>
+        <summary style={{ ...sectionTitle('#64748b'), cursor: 'pointer', listStyle: 'none', marginTop: 4 }}>
+          ▸ TEMPLATE EXPRESSIONS (legacy)
+        </summary>
+        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, marginTop: 6 }}>
+          Output var → Go template. Use <code style={{ color: C.cyan }}>{'{{.var}}'}</code>.
+        </div>
+        {Object.entries(expressions).map(([k, v], i) => (
+          <div key={i} style={rowStyle}>
+            <input value={k} onChange={e => { const ent = Object.entries(expressions); ent[i] = [e.target.value, v]; updateStepConfig('expressions', Object.fromEntries(ent)); }} style={{ ...inputStyle, flex: '0 0 90px', fontSize: '11px', ...monoStyle }} placeholder="output_var" />
+            <input value={v} onChange={e => updateStepConfig('expressions', { ...expressions, [k]: e.target.value })} style={{ ...inputStyle, flex: 1, fontSize: '11px' }} placeholder="Hello, {{.user_query}}!" />
+            <button onClick={() => { const ex = { ...expressions }; delete ex[k]; updateStepConfig('expressions', ex); }} style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px' }}>×</button>
+          </div>
+        ))}
+        <button onClick={() => updateStepConfig('expressions', { ...expressions, '': '' })} style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}>+ Add expression</button>
+      </details>
+
+      <details style={{ marginBottom: 8 }}>
+        <summary style={{ ...sectionTitle('#64748b'), cursor: 'pointer', listStyle: 'none', marginTop: 4 }}>
+          ▸ JSON EXTRACTIONS (legacy)
+        </summary>
+        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, marginTop: 6 }}>
+          Parse a JSON var and extract fields by dot-path.
+        </div>
+        {extractions.map((ext, i) => (
+          <div key={i} style={{ ...rowStyle, alignItems: 'center' }}>
+            <input value={ext.from_var} onChange={e => { const next = extractions.map((x, j) => j === i ? { ...x, from_var: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: '0 0 80px', fontSize: '11px', ...monoStyle }} placeholder="from_var" />
+            <input value={ext.json_path} onChange={e => { const next = extractions.map((x, j) => j === i ? { ...x, json_path: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: 1, fontSize: '11px', ...monoStyle }} placeholder="$.field" />
+            <span style={{ color: '#64748b', fontSize: '11px' }}>→</span>
+            <input value={ext.var} onChange={e => { const next = extractions.map((x, j) => j === i ? { ...x, var: e.target.value } : x); updateStepConfig('extractions', next); }} style={{ ...inputStyle, flex: '0 0 80px', fontSize: '11px', ...monoStyle }} placeholder="out_var" />
+            <button onClick={() => updateStepConfig('extractions', extractions.filter((_, j) => j !== i))} style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '14px' }}>×</button>
+          </div>
+        ))}
+        <button onClick={() => updateStepConfig('extractions', [...extractions, { from_var: '', json_path: '', var: '' }])} style={{ marginTop: 4, background: 'transparent', border: `1px dashed ${C.outline}`, color: C.textMuted, padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', width: '100%' }}>+ Add extraction</button>
+      </details>
+
+      {/* ── AI Assist (stub, collapsed) ── */}
+      <details open={aiOpen} onToggle={e => setAiOpen((e.currentTarget as HTMLDetailsElement).open)} style={{ marginBottom: 8 }}>
+        <summary style={{ ...sectionTitle('#64748b'), cursor: 'pointer', listStyle: 'none', marginTop: 4 }}>
+          ▸ AI TRANSFORM ASSISTANT
+        </summary>
+        <div style={{ textAlign: 'center', padding: '20px 12px', border: `1px dashed ${C.outline}`, borderRadius: 8, marginTop: 8 }}>
+          <div style={{ fontSize: '22px', marginBottom: 6 }}>🤖</div>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: C.text, marginBottom: 4 }}>AI Transform Assistant</div>
           <div style={{ fontSize: '11px', color: C.textMuted, lineHeight: 1.6 }}>
             Describe what you want to do and the assistant will suggest a function chain.<br />
             <span style={{ color: '#475569' }}>Coming soon.</span>
           </div>
         </div>
-      )}
+      </details>
     </>
   );
 }

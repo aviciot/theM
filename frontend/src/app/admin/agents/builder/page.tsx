@@ -484,11 +484,14 @@ function CanvasInner() {
       for (const step of (sk.steps ?? [])) {
         (step.next ?? []).forEach((nextId, idx) => {
           const isBranch = step.type === 'branch';
+          const isTransform = step.type === 'transform';
+          const sh = step.next_handles?.[idx];
           stepEdges.push({
             id: `${step.id}-to-${nextId}`,
             source: `step-${step.id}`,
             target: `step-${nextId}`,
-            ...(isBranch ? { sourceHandle: idx === 0 ? 'source-true' : 'source-false' } : {}),
+            ...(isBranch ? { sourceHandle: idx === 0 ? 'source-true' : 'source-false' } :
+               isTransform && sh ? { sourceHandle: sh } : {}),
           });
         });
       }
@@ -512,18 +515,26 @@ function CanvasInner() {
           const stepd = sn.data as unknown as StepData;
           const outEdges = pipeline.edges.filter(e => e.source === sn.id);
           const defaultLabel = stepMeta(stepd.step_type).label;
-          const next = stepd.step_type === 'branch'
-            ? [
-                outEdges.find(e => e.sourceHandle === 'source-true')?.target?.replace('step-', '') ?? '',
-                outEdges.find(e => e.sourceHandle === 'source-false')?.target?.replace('step-', '') ?? '',
-              ].filter(Boolean)
-            : outEdges.map(e => (e.target as string).replace('step-', ''));
+          let next: string[];
+          let next_handles: string[] | undefined;
+          if (stepd.step_type === 'branch') {
+            next = [
+              outEdges.find(e => e.sourceHandle === 'source-true')?.target?.replace('step-', '') ?? '',
+              outEdges.find(e => e.sourceHandle === 'source-false')?.target?.replace('step-', '') ?? '',
+            ].filter(Boolean);
+          } else if (stepd.step_type === 'transform' && outEdges.some(e => e.sourceHandle)) {
+            next = outEdges.map(e => (e.target as string).replace('step-', ''));
+            next_handles = outEdges.map(e => e.sourceHandle as string ?? '');
+          } else {
+            next = outEdges.map(e => (e.target as string).replace('step-', ''));
+          }
           return {
             id: stepd.step_id,
             type: stepd.step_type as AgentStepDoc['type'],
             label: (stepd.label && stepd.label !== defaultLabel) ? stepd.label : undefined,
             config: stepd.config ?? {},
             next,
+            ...(next_handles ? { next_handles } : {}),
             position: sn.position,
           };
         });
@@ -841,7 +852,8 @@ function CanvasInner() {
 
     if (srcNode) {
       const srcType = (srcNode.data as unknown as StepData).step_type;
-      const currentOut = srcType === 'branch'
+      // branch: one edge per named handle; transform: one edge per named output handle; others: total count
+      const currentOut = (srcType === 'branch' || srcType === 'transform')
         ? localPipeEdges.filter(e => e.source === conn.source && e.sourceHandle === conn.sourceHandle).length
         : localPipeEdges.filter(e => e.source === conn.source).length;
       if (!canAddOutgoing(srcType, currentOut)) return false;

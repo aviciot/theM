@@ -562,6 +562,7 @@ export interface AgentStepDoc {
   label?: string;
   config: Record<string, unknown>;
   next: string[];
+  next_handles?: string[]; // parallel to next — named sourceHandle per outgoing edge (transform, branch)
   position?: { x: number; y: number };
 }
 
