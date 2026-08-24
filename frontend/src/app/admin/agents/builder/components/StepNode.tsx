@@ -70,6 +70,7 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
       border: `2px solid ${borderColor}`, borderRadius: '10px', boxShadow,
       transition: 'border-color 0.2s, box-shadow 0.2s',
       position: 'relative',
+      paddingRight: isTransform && transformOutputs.length > 0 ? '72px' : '8px',
     }}>
       <Handle type="target" position={Position.Top} style={{ background: meta.border }} />
       {data.step_type === 'branch' ? (
