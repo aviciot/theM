@@ -471,10 +471,10 @@ function PropertiesPanel({
               <label style={labelStyle}>Transport</label>
               <select value={transport} onChange={e => setTransport(e.target.value as MCPServer['transport'])}
                 style={{ ...inputStyle }}>
-                <option value="http">http</option>
-                <option value="sse">sse</option>
-                <option value="stdio" disabled>stdio (not supported in this deployment)</option>
-              </select>
+                <option value="streamable-http">streamable-http (recommended)</option>
+                <option value="http">http (legacy)</option>
+                <option value="sse">sse (legacy)</option>
+                </select>
             </div>
             {/* URL */}
             <div>
@@ -488,8 +488,8 @@ function PropertiesPanel({
               <select value={authType} onChange={e => setAuthType(e.target.value as MCPServer['auth_type'])}
                 style={{ ...inputStyle }}>
                 <option value="none">none</option>
-                <option value="bearer">bearer</option>
-                <option value="header">header</option>
+                <option value="bearer">bearer token</option>
+                <option value="header">custom header</option>
                 <option value="oauth2" disabled>oauth2 (coming soon)</option>
               </select>
             </div>
@@ -626,7 +626,7 @@ function CreateModal({
   const [slug, setSlug] = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
   const [description, setDescription] = useState('');
-  const [transport, setTransport] = useState<MCPServer['transport']>('http');
+  const [transport, setTransport] = useState<MCPServer['transport']>('streamable-http');
   const [url, setUrl] = useState('');
   const [authType, setAuthType] = useState<MCPServer['auth_type']>('none');
   const [saving, setSaving] = useState(false);
@@ -691,17 +691,17 @@ function CreateModal({
           <div>
             <label style={labelStyle}>Transport</label>
             <select value={transport} onChange={e => setTransport(e.target.value as MCPServer['transport'])} style={{ ...inputStyle }}>
-              <option value="http">http</option>
-              <option value="sse">sse</option>
-              <option value="stdio" disabled>stdio (unsupported)</option>
+              <option value="streamable-http">streamable-http (recommended)</option>
+              <option value="http">http (legacy)</option>
+              <option value="sse">sse (legacy)</option>
             </select>
           </div>
           <div>
             <label style={labelStyle}>Auth type</label>
             <select value={authType} onChange={e => setAuthType(e.target.value as MCPServer['auth_type'])} style={{ ...inputStyle }}>
               <option value="none">none</option>
-              <option value="bearer">bearer</option>
-              <option value="header">header</option>
+              <option value="bearer">bearer token</option>
+              <option value="header">custom header</option>
               <option value="oauth2" disabled>oauth2 (soon)</option>
             </select>
           </div>
@@ -712,6 +712,20 @@ function CreateModal({
           <input value={url} onChange={e => setUrl(e.target.value)} style={inputStyle}
             placeholder="https://my-mcp-server.example.com" />
         </div>
+
+        {authType !== 'none' && (
+          <div style={{
+            padding: '10px 12px', borderRadius: '8px',
+            background: `${ACCENT}0d`, border: `1px solid ${ACCENT_BORDER}`,
+            fontSize: '12px', color: 'var(--tm-card-text-muted)', display: 'flex', gap: '8px', alignItems: 'flex-start',
+          }}>
+            <span className="material-symbols-outlined" style={{ fontSize: '15px', color: ACCENT, flexShrink: 0, marginTop: '1px' }}>info</span>
+            <span>
+              Credentials are set per-application in <strong style={{ color: 'var(--tm-card-text)' }}>Applications → MCP Credentials</strong>.
+              After adding this server, open the application and set the {authType === 'bearer' ? 'bearer token' : 'header value'} there.
+            </span>
+          </div>
+        )}
 
         {error && (
           <div style={{ fontSize: '11px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.2)', color: '#f87171' }}>

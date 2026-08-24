@@ -73,7 +73,7 @@ func NewMCPServerService(d Dal, secretKey string) *MCPServerService {
 	}
 }
 
-var validMCPTransports = map[string]bool{"http": true, "sse": true, "stdio": true}
+var validMCPTransports = map[string]bool{"http": true, "sse": true, "streamable-http": true}
 var validMCPAuthTypes = map[string]bool{"none": true, "bearer": true, "header": true, "oauth2": true}
 
 // List returns all MCP servers for the tenant.

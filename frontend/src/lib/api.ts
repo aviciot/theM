@@ -684,7 +684,7 @@ export interface MCPServer {
   name: string;
   slug: string;
   description: string;
-  transport: 'http' | 'sse' | 'stdio';
+  transport: 'http' | 'sse' | 'streamable-http';
   url: string;
   auth_type: 'none' | 'bearer' | 'header' | 'oauth2';
   health_status: 'unknown' | 'healthy' | 'degraded' | 'unreachable';
