@@ -118,6 +118,9 @@ func init() {
 		if path == "" {
 			return "", fmt.Errorf("json_path: path arg is required")
 		}
+		// Trim surrounding whitespace — LLMs often add a trailing newline even
+		// after strip_fences, and json.Unmarshal rejects literal \n in strings.
+		input = strings.TrimSpace(input)
 		var v map[string]any
 		if err := json.Unmarshal([]byte(input), &v); err != nil {
 			return "", fmt.Errorf("json_path: input is not a JSON object: %w", err)
