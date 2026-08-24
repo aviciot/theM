@@ -2,6 +2,8 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -15,13 +17,17 @@ import (
 // All mcp-server routes are tenant-scoped: each server belongs to exactly one tenant.
 // Credential values are never returned — only credential_set bool.
 type MCPServersHandler struct {
-	svc *service.MCPServerService
+	svc           *service.MCPServerService
+	mcpServiceURL string // base URL of them-mcp-service; empty → probe returns 503
 }
 
 // NewMCPServersHandler creates an MCPServersHandler.
-func NewMCPServersHandler(db DBQuerier, secretKey string) *MCPServersHandler {
+// mcpServiceURL is the internal base URL of them-mcp-service (e.g. "http://them-mcp-service:8010").
+// Pass empty string when the service is not deployed — the probe endpoint will return 503.
+func NewMCPServersHandler(db DBQuerier, secretKey, mcpServiceURL string) *MCPServersHandler {
 	return &MCPServersHandler{
-		svc: service.NewMCPServerService(dal.NewDB(db), secretKey),
+		svc:           service.NewMCPServerService(dal.NewDB(db), secretKey),
+		mcpServiceURL: mcpServiceURL,
 	}
 }
 
@@ -32,6 +38,7 @@ func NewMCPServersHandler(db DBQuerier, secretKey string) *MCPServersHandler {
 //	GET    /mcp-servers/{id}                                         — get single
 //	PATCH  /mcp-servers/{id}                                         — update
 //	DELETE /mcp-servers/{id}                                         — delete
+//	POST   /mcp-servers/{id}/probe                                   — on-demand probe (proxied to mcp-service)
 //	GET    /applications/{app_id}/mcp-credentials                    — list (meta only, no plaintext)
 //	PUT    /applications/{app_id}/mcp-credentials/{server_id}        — set/update credential
 //	DELETE /applications/{app_id}/mcp-credentials/{server_id}        — remove credential
@@ -41,6 +48,7 @@ func (h *MCPServersHandler) Routes(r chi.Router) {
 	r.Get("/mcp-servers/{id}", h.Get)
 	r.Patch("/mcp-servers/{id}", h.Update)
 	r.Delete("/mcp-servers/{id}", h.Delete)
+	r.Post("/mcp-servers/{id}/probe", h.Probe)
 
 	r.Get("/applications/{app_id}/mcp-credentials", h.ListCredentials)
 	r.Put("/applications/{app_id}/mcp-credentials/{server_id}", h.SetCredential)
@@ -180,4 +188,34 @@ func (h *MCPServersHandler) DeleteCredential(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Probe handles POST /api/v1/admin/mcp-servers/{id}/probe.
+// It proxies the request to them-mcp-service POST /internal/probe/{id} and streams
+// the response back. Returns 503 when MCP_SERVICE_URL is not configured.
+func (h *MCPServersHandler) Probe(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	if h.mcpServiceURL == "" {
+		writeError(w, http.StatusServiceUnavailable, "MCP service not configured (MCP_SERVICE_URL not set)")
+		return
+	}
+
+	target := fmt.Sprintf("%s/internal/probe/%s", h.mcpServiceURL, id)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, http.NoBody)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "MCP service unreachable")
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }

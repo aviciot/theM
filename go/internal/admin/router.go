@@ -108,6 +108,7 @@ func BuildRouter(
 	secretKey string,
 	redis rueidis.Client,
 	fernetKey []byte,
+	mcpServiceURL string,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -151,7 +152,7 @@ func BuildRouter(
 				bindings := NewAgentBindingsHandler(agentDefs.Svc())
 				apps.Routes(tenantScoped, bindings)
 
-				mcpServers := NewMCPServersHandler(db, secretKey)
+				mcpServers := NewMCPServersHandler(db, secretKey, mcpServiceURL)
 				mcpServers.Routes(tenantScoped)
 			})
 

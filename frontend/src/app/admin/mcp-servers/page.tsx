@@ -272,13 +272,12 @@ function ProbeButton({ serverId, onDone }: { serverId: string; onDone?: (s: MCPS
       const res = await themApi.probeMCPServer(serverId);
       setMsg(`${res.health_status} · ${res.tools_count} tools`);
       setState('ok');
-    } catch (e) {
-      const err = e as Error;
-      if (err.message.includes('404') || err.message.includes('501') || err.message.includes('503')) {
-        setMsg('Probe endpoint not yet available — coming in MCP-2');
-      } else {
-        setMsg(err.message || 'Probe failed');
+      if (onDone) {
+        const refreshed = await themApi.getMCPServer(serverId);
+        onDone(refreshed);
       }
+    } catch (e) {
+      setMsg((e as Error).message || 'Probe failed');
       setState('err');
     }
   }
@@ -572,7 +571,7 @@ function PropertiesPanel({
             {/* Probe */}
             <div>
               <p style={sectionLabel}>Test connection</p>
-              <ProbeButton serverId={server.id} />
+              <ProbeButton serverId={server.id} onDone={onSaved} />
             </div>
 
             {/* Capabilities */}

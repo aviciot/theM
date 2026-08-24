@@ -68,6 +68,10 @@ type Config struct {
 	// Default: "them-orchestration-go" (separate from Python's "them-orchestration").
 	WorkerTaskQueue string
 
+	// MCPServiceURL is the internal base URL of them-mcp-service (e.g. http://them-mcp-service:8010).
+	// When empty the probe proxy endpoint returns 503 — mcp-service is not deployed.
+	MCPServiceURL string
+
 	// Reconciler
 	// ReconcilerDryRun controls whether the run reconciler writes to the DB.
 	// Default is true (safe). Set RECONCILER_DRY_RUN=false to enable writes.
@@ -118,6 +122,8 @@ func Load() (*Config, error) {
 		TemporalEnabled:  getEnvBool("TEMPORAL_ENABLED", false),
 		TemporalHostPort: getEnv("TEMPORAL_HOST_PORT", "localhost:7233"),
 		WorkerTaskQueue:  getEnv("WORKER_TASK_QUEUE", "them-orchestration-go"),
+
+		MCPServiceURL: getEnv("MCP_SERVICE_URL", ""),
 
 		ReconcilerDryRun: getEnvBoolSafe("RECONCILER_DRY_RUN", true),
 
