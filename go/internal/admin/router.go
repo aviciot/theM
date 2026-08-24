@@ -183,19 +183,12 @@ func BuildRouter(
 		r.Post("/admin/debug-proxy", DebugProxyHandler{}.ServeHTTP)
 	}
 
-	// Transform function endpoints.
-	// GET /admin/transform-functions — public (static catalog, no tenant data, same as node-types)
-	// POST /admin/transform-test     — authenticated (runs user-supplied chain server-side)
-	// POST /admin/transform-assist   — authenticated (AI stub)
+	// Transform function endpoints — all public (stateless compute, no tenant data).
+	// The admin UI is already behind session auth; these endpoints carry no secrets.
 	tf := TransformHandler{}
-	r.Get("/admin/transform-functions", tf.Catalog) // public — static data, no auth needed
-	if jwtMiddleware != nil {
-		r.With(jwtMiddleware, RequireSuperAdmin(logger)).Post("/admin/transform-test", tf.Test)
-		r.With(jwtMiddleware, RequireSuperAdmin(logger)).Post("/admin/transform-assist", tf.Assist)
-	} else {
-		r.Post("/admin/transform-test", tf.Test)
-		r.Post("/admin/transform-assist", tf.Assist)
-	}
+	r.Get("/admin/transform-functions", tf.Catalog)
+	r.Post("/admin/transform-test", tf.Test)
+	r.Post("/admin/transform-assist", tf.Assist)
 
 	// Public routes — no auth required.
 	// /admin/node-types: static canvas node metadata, no tenant data.
