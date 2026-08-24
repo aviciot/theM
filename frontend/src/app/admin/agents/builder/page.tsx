@@ -1038,23 +1038,31 @@ function CanvasInner() {
 
     if (d.step_type === 'input') {
       const bindVar = (cfg.bindings as Record<string,string>)?.text || 'input';
-      output = String(newVars[bindVar] ?? '');
+      newVars[bindVar] = newVars[bindVar] ?? '';   // ensure it's in vars for downstream nodes
+      output = String(newVars[bindVar]);
       for (const e of outEdgesForNode) edgeValues[e.id] = output;
     } else if (d.step_type === 'llm') {
       const model = (cfg.model as string) || 'claude-haiku-4-5-20251001';
       const maxTokens = (cfg.max_tokens as number) || 4096;
       const systemPrompt = (cfg.system_prompt as string) || '';
       const userPromptTemplate = (cfg.user_prompt as string) || '';
-      // When user_prompt is blank, pass the first pipeline variable as the message
-      // (covers the common case of a direct Input → LLM connection with no template).
+
+      // Find the variable carried by the incoming edge (what the upstream node produced).
+      const inEdge = edges.find(e => e.target === nodeId);
+      const inSourceNode = inEdge ? nodes.find(n => n.id === inEdge.source) : undefined;
+      const inBindVar = inSourceNode
+        ? ((inSourceNode.data as unknown as StepData).config?.bindings as Record<string,string>)?.text || 'input'
+        : 'input';
+
+      // Use user_prompt template if set, otherwise pass the incoming variable directly.
       const userPrompt = userPromptTemplate
         ? renderTemplate(userPromptTemplate, newVars)
-        : String(newVars[Object.keys(newVars)[0]] ?? '');
+        : String(newVars[inBindVar] ?? '');
       const outVar = (cfg.output_var as string) || 'output';
 
       const messages: { role: string; content: string }[] = [];
       if (userPrompt) messages.push({ role: 'user', content: userPrompt });
-      if (messages.length === 0) throw new Error('LLM step: user prompt is empty — add a user_prompt template or connect an Input node.');
+      if (messages.length === 0) throw new Error('LLM step: user prompt is empty — connect an Input node or set the user_prompt template.');
 
       const resp = await fetch('/api/debug/llm', {
         method: 'POST',
