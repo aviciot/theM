@@ -302,6 +302,12 @@ function CanvasInner() {
   const [dirty, setDirty] = useState(false);
   const [logoResult, setLogoResult] = useState<'none' | 'valid' | 'invalid' | 'warn'>('none');
 
+  // Undo/redo — stack of serialised AgentDefinitionDoc snapshots
+  const undoStack = useRef<string[]>([]);
+  const redoStack = useRef<string[]>([]);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
   // Debug mode
   const [debug, setDebug] = useState<DebugState>(INITIAL_DEBUG);
 
@@ -415,6 +421,52 @@ function CanvasInner() {
       setLocalPipeEdges(state.edges);
     }
   }, [activeSkillId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pushHistory = useCallback((snapshot: string) => {
+    undoStack.current.push(snapshot);
+    if (undoStack.current.length > 100) undoStack.current.shift();
+    redoStack.current = [];
+    setCanUndo(true);
+    setCanRedo(false);
+  }, []);
+
+  const markDirty = useCallback(() => {
+    // Snapshot current doc before the change lands in state.
+    // buildDefinitionDoc() reads current state so this captures the BEFORE state.
+    try { pushHistory(JSON.stringify(buildDefinitionDoc())); } catch { /* ignore */ }
+    setDirty(true);
+  }, [pushHistory]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleUndo() {
+    const snap = undoStack.current.pop();
+    if (!snap) return;
+    // Push current state to redo before restoring
+    try { redoStack.current.push(JSON.stringify(buildDefinitionDoc())); } catch { /* ignore */ }
+    setCanRedo(true);
+    setCanUndo(undoStack.current.length > 0);
+    try { loadDefinitionDoc(JSON.parse(snap) as AgentDefinitionDoc); setDirty(true); } catch { /* ignore */ }
+  }
+
+  function handleRedo() {
+    const snap = redoStack.current.pop();
+    if (!snap) return;
+    try { undoStack.current.push(JSON.stringify(buildDefinitionDoc())); } catch { /* ignore */ }
+    setCanUndo(true);
+    setCanRedo(redoStack.current.length > 0);
+    try { loadDefinitionDoc(JSON.parse(snap) as AgentDefinitionDoc); setDirty(true); } catch { /* ignore */ }
+  }
+
+  function handleExport() {
+    savePipelineState();
+    const doc = buildDefinitionDoc();
+    const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${agentSlug || 'agent'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   const savePipelineState = useCallback(() => {
     if (activeSkillId) {
@@ -582,7 +634,7 @@ function CanvasInner() {
         if (!doc.agent_root || !Array.isArray(doc.skills)) throw new Error('Missing agent_root or skills array');
         setAgentSlug(doc.agent_slug ?? '');
         loadDefinitionDoc(doc);
-        setDirty(true);
+        markDirty();
         setSaveError('');
       } catch (err) {
         setSaveError(`Import failed: ${String(err)}`);
@@ -722,7 +774,7 @@ function CanvasInner() {
       setAgentEdges(prev => [...prev, { id: `root-to-${sid}`, source: 'agent-root', target: `skill-${sid}` }]);
     }
     setSkillPipelines(prev => ({ ...prev, [sid]: makeDefaultPipeline() }));
-    setDirty(true);
+    markDirty();
   }
 
   function addStepToActivePipeline(type: AgentStepDoc['type']) {
@@ -735,7 +787,7 @@ function CanvasInner() {
       data: { step_id: stepId, step_type: type, label: type, config: {} },
     };
     setLocalPipeNodes(prev => [...prev, newNode]);
-    setDirty(true);
+    markDirty();
   }
 
   function onAgentNodeDoubleClick(_: MouseEvent, node: Node) {
@@ -756,7 +808,7 @@ function CanvasInner() {
 
   const onAgentConnect = useCallback((conn: Connection) => {
     setAgentEdges(prev => addEdge(conn, prev));
-    setDirty(true);
+    markDirty();
   }, [setAgentEdges]);
 
   // ── Context menu ──────────────────────────────────────────────────────────────
@@ -794,7 +846,7 @@ function CanvasInner() {
         setLocalPipeEdges(prev => prev.filter(e => e.id !== id));
       }
     }
-    setDirty(true);
+    markDirty();
     closeCtx();
   }, [ctxMenu, activeView, setAgentNodes, setAgentEdges, setLocalPipeNodes, setLocalPipeEdges, closeCtx]);
 
@@ -813,7 +865,7 @@ function CanvasInner() {
 
   const onPipeConnect = useCallback((conn: Connection) => {
     setLocalPipeEdges(prev => addEdge(conn, prev.filter(e => e.target !== conn.target)));
-    setDirty(true);
+    markDirty();
 
     setLocalPipeNodes(prev => {
       const sourceNode = prev.find(n => n.id === conn.source);
@@ -1284,7 +1336,7 @@ function CanvasInner() {
         n.id === selectedNode.id ? { ...n, data: { ...n.data, [field]: value } } : n
       ));
     }
-    setDirty(true);
+    markDirty();
   }
 
   function updateStepConfig(key: string, value: unknown) {
@@ -1294,7 +1346,7 @@ function CanvasInner() {
         ? { ...n, data: { ...n.data, config: { ...(n.data.config as Record<string, unknown>), [key]: value } } }
         : n
     ));
-    setDirty(true);
+    markDirty();
   }
 
   const debugNodes = activeView === 'skill' && debug.active
@@ -1394,7 +1446,7 @@ function CanvasInner() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <input
                 value={agentSlug}
-                onChange={e => { setAgentSlug(e.target.value); setDirty(true); }}
+                onChange={e => { setAgentSlug(e.target.value); markDirty(); }}
                 placeholder="agent-slug (kebab-case)"
                 style={{
                   background: 'transparent', border: `1px solid ${C.outline}`, color: '#fff',
@@ -1509,6 +1561,22 @@ function CanvasInner() {
             </button>
           </>
         )}
+        {/* Undo / Redo */}
+        <button onClick={handleUndo} disabled={!canUndo} title="Undo" style={{
+          background: 'transparent', border: `1px solid ${canUndo ? C.outline : 'transparent'}`,
+          color: canUndo ? '#cbd5e1' : '#334155', padding: '6px 10px', borderRadius: '6px',
+          cursor: canUndo ? 'pointer' : 'default', fontSize: '14px',
+        }}>↩</button>
+        <button onClick={handleRedo} disabled={!canRedo} title="Redo" style={{
+          background: 'transparent', border: `1px solid ${canRedo ? C.outline : 'transparent'}`,
+          color: canRedo ? '#cbd5e1' : '#334155', padding: '6px 10px', borderRadius: '6px',
+          cursor: canRedo ? 'pointer' : 'default', fontSize: '14px',
+        }}>↪</button>
+        {/* Export */}
+        <button onClick={handleExport} title="Export as JSON file" style={{
+          background: 'rgba(99,102,241,0.12)', border: `1px solid rgba(99,102,241,0.5)`,
+          color: C.indigo, padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
+        }}>↑ Export JSON</button>
         <button onClick={handleSave} disabled={saving} style={{
           background: dirty ? C.cyan : 'rgba(0,240,255,0.2)',
           border: 'none', color: '#000', fontWeight: 700,
@@ -1712,7 +1780,7 @@ function CanvasInner() {
                   setAgentNodes(prev => [...prev, newNode]);
                   setAgentEdges(prev => [...prev, { id: `root-to-${sid}`, source: 'agent-root', target: `skill-${sid}` }]);
                   setSkillPipelines(prev => ({ ...prev, [sid]: makeDefaultPipeline() }));
-                  setDirty(true);
+                  markDirty();
                 }
               }}
               fitView
@@ -1749,7 +1817,7 @@ function CanvasInner() {
                   const stepId = genUUID();
                   const newNode: Node = { id: `step-${stepId}`, type: 'step', position: pos, data: { step_id: stepId, step_type: stepType, label: stepType.replace('_', ' '), config: {} } };
                   setLocalPipeNodes(prev => [...prev, newNode]);
-                  setDirty(true);
+                  markDirty();
                 }
               }}
               fitView
