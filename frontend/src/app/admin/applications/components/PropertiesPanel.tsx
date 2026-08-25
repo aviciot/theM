@@ -51,6 +51,7 @@ export function PropertiesPanel({
   const [ttsTestState,  setTtsTestState]  = useState<{ loading?: boolean; ok?: boolean; latency?: number; error?: string }>({});
   const [availableMCPServers, setAvailableMCPServers] = useState<MCPServer[]>([]);
   const [mcpSaving, setMcpSaving] = useState(false);
+  const [mcpExpanded, setMcpExpanded] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     themApi.listMCPServers().then(setAvailableMCPServers).catch(() => {});
@@ -481,7 +482,7 @@ export function PropertiesPanel({
                     <span style={{ fontSize: 11, fontWeight: 700, color: C.purple, textTransform: 'uppercase', letterSpacing: '0.5px' }}>MCP Servers</span>
                     {mcpSaving && <span style={{ fontSize: 10, color: C.textMuted }}>saving…</span>}
                   </div>
-                  {availableMCPServers.length === 0 ? (
+                  {availableMCPServers.filter(s => s.enabled).length === 0 ? (
                     <div style={{ fontSize: 11, color: C.textMuted, padding: '6px 10px', borderRadius: 6, background: C.surfaceLow, border: `1px solid ${C.outlineVariant}` }}>
                       No MCP servers configured — add one in MCP Store
                     </div>
@@ -491,29 +492,85 @@ export function PropertiesPanel({
                         const d2 = selectedNode.data as OrchestratorData;
                         const attached = (d2.mcpServers ?? []).find(a => a.slug === server.slug);
                         const isAttached = !!attached;
+                        const expanded = !!mcpExpanded[server.slug];
+                        const allTools = server.tools_manifest ?? [];
+                        const allowlist = attached?.tools ?? [];
+                        const activeCount = allowlist.length === 0 ? allTools.length : allowlist.length;
                         const statusColor = server.health_status === 'healthy' ? '#4ade80' : server.health_status === 'degraded' ? C.amber : server.health_status === 'unreachable' ? '#f87171' : C.textMuted;
                         return (
                           <div key={server.slug} style={{ borderRadius: 6, border: `1px solid ${isAttached ? 'rgba(208,188,255,0.3)' : C.outlineVariant}`, background: isAttached ? 'rgba(208,188,255,0.06)' : C.surfaceLow, overflow: 'hidden' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', cursor: 'pointer' }}
-                              onClick={() => {
-                                const current = d2.mcpServers ?? [];
-                                const next: MCPServerAttachment[] = isAttached
-                                  ? current.filter(a => a.slug !== server.slug)
-                                  : [...current, { slug: server.slug, tools: [] }];
-                                saveMCPServers(d2, next);
-                              }}>
-                              <div style={{ width: 14, height: 14, borderRadius: 3, border: `1.5px solid ${isAttached ? C.purple : C.outlineVariant}`, background: isAttached ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            {/* Header row */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px' }}>
+                              {/* Checkbox — toggles attachment */}
+                              <div
+                                style={{ width: 14, height: 14, borderRadius: 3, border: `1.5px solid ${isAttached ? C.purple : C.outlineVariant}`, background: isAttached ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer' }}
+                                onClick={() => {
+                                  const current = d2.mcpServers ?? [];
+                                  const next: MCPServerAttachment[] = isAttached
+                                    ? current.filter(a => a.slug !== server.slug)
+                                    : [...current, { slug: server.slug, tools: [] }];
+                                  if (!isAttached) setMcpExpanded(prev => ({ ...prev, [server.slug]: true }));
+                                  saveMCPServers(d2, next);
+                                }}>
                                 {isAttached && <span className="material-symbols-outlined" style={{ fontSize: 10, color: '#fff', fontWeight: 700 }}>check</span>}
                               </div>
-                              <div style={{ flex: 1, minWidth: 0 }}>
+                              {/* Name + slug — clicking expands */}
+                              <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setMcpExpanded(prev => ({ ...prev, [server.slug]: !prev[server.slug] }))}>
                                 <div style={{ fontSize: 12, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.name}</div>
                                 <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{server.slug}</div>
                               </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                              {/* Right side: health dot + tool count + chevron */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                                 <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} title={server.health_status} />
-                                <span style={{ fontSize: 10, color: C.textMuted }}>{server.tools_manifest?.length ?? 0} tools</span>
+                                {isAttached && allTools.length > 0 ? (
+                                  <span style={{ fontSize: 10, color: allowlist.length > 0 ? C.amber : C.textMuted }}>
+                                    {activeCount}/{allTools.length}
+                                  </span>
+                                ) : (
+                                  <span style={{ fontSize: 10, color: C.textMuted }}>{allTools.length}</span>
+                                )}
+                                {allTools.length > 0 && (
+                                  <span
+                                    className="material-symbols-outlined"
+                                    style={{ fontSize: 14, color: C.textMuted, cursor: 'pointer', transition: 'transform 150ms', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                                    onClick={() => setMcpExpanded(prev => ({ ...prev, [server.slug]: !prev[server.slug] }))}>
+                                    expand_more
+                                  </span>
+                                )}
                               </div>
                             </div>
+                            {/* Collapsible tool list */}
+                            {expanded && allTools.length > 0 && (
+                              <div style={{ borderTop: `1px solid ${C.outlineVariant}`, padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 3, background: 'rgba(0,0,0,0.15)' }}>
+                                {allTools.map(tool => {
+                                  const toolEnabled = !isAttached ? false : allowlist.length === 0 || allowlist.includes(tool.name);
+                                  return (
+                                    <div
+                                      key={tool.name}
+                                      onClick={() => {
+                                        if (!isAttached) return;
+                                        const current = d2.mcpServers ?? [];
+                                        const base = allowlist.length === 0 ? allTools.map(t => t.name) : allowlist;
+                                        const nextTools = base.includes(tool.name)
+                                          ? base.filter(t => t !== tool.name)
+                                          : [...base, tool.name];
+                                        const collapsed = nextTools.length === allTools.length ? [] : nextTools;
+                                        const next = current.map(a => a.slug === server.slug ? { ...a, tools: collapsed } : a);
+                                        saveMCPServers(d2, next);
+                                      }}
+                                      style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 2px', borderRadius: 4, cursor: isAttached ? 'pointer' : 'default', opacity: isAttached ? 1 : 0.45 }}>
+                                      <div style={{ width: 11, height: 11, marginTop: 1, borderRadius: 2, border: `1.5px solid ${toolEnabled ? C.purple : 'rgba(255,255,255,0.2)'}`, background: toolEnabled ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                        {toolEnabled && <span className="material-symbols-outlined" style={{ fontSize: 8, color: '#fff' }}>check</span>}
+                                      </div>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 11, color: toolEnabled ? C.text : C.textMuted, fontFamily: 'JetBrains Mono, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tool.name}</div>
+                                        {tool.description && <div style={{ fontSize: 10, color: C.textMuted, lineHeight: 1.3, marginTop: 1 }}>{tool.description}</div>}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         );
                       })}

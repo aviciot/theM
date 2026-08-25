@@ -58,6 +58,7 @@ export function CanvasBuilderView({
   const [compPanelWidth, setCompPanelWidth] = useState(260);
   const [showRepublishModal, setShowRepublishModal] = useState(false);
   const [availableMCPServers, setAvailableMCPServers] = useState<MCPServer[]>([]);
+  const [mcpExpanded, setMcpExpanded] = useState<Record<string, boolean>>({});
 
   function startCompPanelResize(e: React.MouseEvent) {
     e.preventDefault();
@@ -603,40 +604,54 @@ export function CanvasBuilderView({
                       const allTools = server.tools_manifest ?? [];
                       const statusColor = server.health_status === 'healthy' ? '#4ade80' : server.health_status === 'degraded' ? C.amber : server.health_status === 'unreachable' ? '#f87171' : C.textMuted;
                       const activeCount = allowlist.length === 0 ? allTools.length : allowlist.length;
+                      const expanded = !!mcpExpanded[server.slug];
                       return (
                         <div key={server.slug} style={{ borderRadius: 7, border: `1px solid ${isAttached ? 'rgba(208,188,255,0.25)' : 'rgba(255,255,255,0.08)'}`, overflow: 'hidden' }}>
                           {/* Server header row */}
-                          <div
-                            onClick={() => toggleServer(server.slug)}
-                            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', cursor: 'pointer', background: isAttached ? 'rgba(208,188,255,0.07)' : 'transparent' }}>
-                            <div style={{ width: 13, height: 13, borderRadius: 3, border: `1.5px solid ${isAttached ? C.purple : 'rgba(255,255,255,0.3)'}`, background: isAttached ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', background: isAttached ? 'rgba(208,188,255,0.07)' : 'transparent' }}>
+                            {/* Checkbox — toggles attachment */}
+                            <div
+                              onClick={() => {
+                                if (!isAttached) setMcpExpanded(prev => ({ ...prev, [server.slug]: true }));
+                                toggleServer(server.slug);
+                              }}
+                              style={{ width: 13, height: 13, borderRadius: 3, border: `1.5px solid ${isAttached ? C.purple : 'rgba(255,255,255,0.3)'}`, background: isAttached ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer' }}>
                               {isAttached && <span className="material-symbols-outlined" style={{ fontSize: 9, color: '#fff' }}>check</span>}
                             </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
+                            {/* Name + slug — clicking expands */}
+                            <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setMcpExpanded(prev => ({ ...prev, [server.slug]: !prev[server.slug] }))}>
                               <div style={{ fontSize: 12, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.name}</div>
                               <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{server.slug}</div>
                             </div>
+                            {/* Right side: health dot + tool count + chevron */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                               <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} title={server.health_status} />
-                              {isAttached && allTools.length > 0 && (
+                              {isAttached && allTools.length > 0 ? (
                                 <span style={{ fontSize: 10, color: allowlist.length > 0 ? C.amber : C.textMuted }}>
                                   {activeCount}/{allTools.length}
                                 </span>
-                              )}
-                              {(!isAttached || allTools.length === 0) && (
+                              ) : (
                                 <span style={{ fontSize: 10, color: C.textMuted }}>{allTools.length}</span>
+                              )}
+                              {allTools.length > 0 && (
+                                <span
+                                  className="material-symbols-outlined"
+                                  style={{ fontSize: 14, color: C.textMuted, cursor: 'pointer', transition: 'transform 150ms', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                                  onClick={() => setMcpExpanded(prev => ({ ...prev, [server.slug]: !prev[server.slug] }))}>
+                                  expand_more
+                                </span>
                               )}
                             </div>
                           </div>
-                          {/* Tool list — shown when attached and server has tools */}
-                          {isAttached && allTools.length > 0 && (
+                          {/* Collapsible tool list */}
+                          {expanded && allTools.length > 0 && (
                             <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '6px 9px', display: 'flex', flexDirection: 'column', gap: 3, background: 'rgba(0,0,0,0.15)' }}>
                               {allTools.map(tool => {
                                 const toolEnabled = allowlist.length === 0 || allowlist.includes(tool.name);
                                 return (
                                   <div key={tool.name}
-                                    onClick={e => { e.stopPropagation(); toggleTool(server.slug, tool.name); }}
-                                    style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 2px', cursor: 'pointer', borderRadius: 4 }}>
+                                    onClick={e => { e.stopPropagation(); if (isAttached) toggleTool(server.slug, tool.name); }}
+                                    style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 2px', cursor: isAttached ? 'pointer' : 'default', borderRadius: 4, opacity: isAttached ? 1 : 0.45 }}>
                                     <div style={{ width: 11, height: 11, marginTop: 1, borderRadius: 2, border: `1.5px solid ${toolEnabled ? C.purple : 'rgba(255,255,255,0.2)'}`, background: toolEnabled ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                       {toolEnabled && <span className="material-symbols-outlined" style={{ fontSize: 8, color: '#fff' }}>check</span>}
                                     </div>
