@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-24
+# Last updated: 2026-08-25
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,16 +7,17 @@
 ## HEAD
 
 Branch: `main`
-Commit: `9bf1328` — feat(mcp): UI-3 — mcp_call canvas node + RightPanel properties panel
+Commit: `1e5c76c` — test(app-params): Phase 4 — handler + runtime tests; fix plain: decryption
 
 Recent commits (newest first):
 ```
-9bf1328 feat(mcp): UI-3 — mcp_call canvas node + RightPanel properties panel
-900b8d4 feat(mcp): UI-2 — Application Settings → MCP Credentials view
-901dc36 feat(mcp): MCP-2 probe endpoint — POST /admin/mcp-servers/{id}/probe
-8f7159b feat(mcp-store): add streamable-http transport, drop stdio, show auth info
-7c0ec59 feat(mcp): MCP Store admin page — UI-1
-2e5bba4 feat(builder): show per-variable debug output for transform nodes in right panel
+1e5c76c test(app-params): Phase 4 — handler + runtime tests; fix plain: decryption
+b308e84 feat(app-params): Phase 3 — frontend UI for app global params
+5328fb6 feat(app-params): Phase 2 — compiler/interpreter/runtime for app_param_ref
+d2c4283 feat(app-params): Phase 1 — app-level global named parameters (DB + backend)
+0554688 fix(builder): replace border shorthand with explicit properties in fieldStyle
+4103fb8 fix(worker): add MCP_SERVICE_URL to go-worker and go-worker-2
+646adc3 feat(builder): per-tool selection for MCP server attachments
 ```
 
 ---
@@ -141,19 +142,26 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 | `db/036_canvas_a2a_runtime.sql` | ✅ applied — `agent_runtime_specs` + `app_agent_bindings` exist |
 | `db/037_agents_transport_canvas.sql` | ✅ applied — `agents_transport_check` includes `'canvas_a2a'` |
 | `db/038_app_agent_params.sql` | ✅ applied — `app_agent_bindings.agent_params` JSONB column |
+| `db/045_app_global_params.sql` | ⚠️ written, NOT YET applied — apply before rebuilding containers |
 
 ---
 
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-23, commit 2f29cd3)
-S1-11 agentregistry: 17 tests (was 10; +4 multi-artifact, +2 streaming)
-S1-48 agentgen (interpreter): +5 inject-mode tests (header/query/basic/custom_header/no-inject)
-S1-50 agentgen (compiler): +3 AppParam tests (populate/undeclared/empty)
+go test ./...  — all packages, 0 failures (verified 2026-08-25, commit 1e5c76c)
+S1 total: 772 tests (was 751; +21 from app_params phases 1-4)
+  S1-62: AGP-1..8 (service layer — 8 tests)
+  S1-63: CMP-10..14 (compiler — 5 tests)
+  S1-64: INT-10..14 (interpreter — 5 tests)
+  S1-65: RT-20..24 (runtime decodeAppGlobalParams — 5 tests)
+  S1-66: HTTP-20..25+ (handler layer — 11 tests)
+go test ./... total: 793
+
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
   - run 5691b24a: streaming two files (HTML + zip) via a2a-stream ✅
+App global params: not yet e2e validated (containers not rebuilt)
 ```
 
 ---
@@ -236,24 +244,40 @@ Live e2e confirmed 2026-08-23:
 
 ---
 
-## App-level agent params — Phase 1 complete (2026-08-23)
+## App-level agent params — fully complete (2026-08-23)
 
-**Backend Go implementation fully done (commit 2f29cd3). DB migration applied.**
+Backend + frontend + tests all done. See commits around 2f29cd3.
+
+---
+
+## App-level global named parameters — fully complete (2026-08-25)
+
+**All 4 phases shipped (commits d2c4283..1e5c76c). DB migration applied.**
 
 What was built:
-- `AppParamDecl` on `NodeDef` — node types declare what runtime params they accept
-- `AgentParamSpec` collected by compiler (stage 3.5), stored in `agent_runtime_specs.spec` as `required_params`
-- `app_agent_bindings.agent_params` JSONB — encrypted storage (Fernet for secrets, plaintext for others)
-- `GET/PUT /admin/applications/{app_id}/agents/{agent_id}/params` — admin API (hint-only, no plaintext)
-- `InvocationContext.AgentParams` — decrypted per-request in agent-runtime, never logged
-- HTTP node: `bearer_token`/`api_key` params; inject modes: header/query/basic/custom_header
-- LLM node: `model_override` param — overrides compiled model at runtime
-- **Frontend (Phase 1) NOT yet done** — see next task below
+- `db/045_app_global_params.sql` — `applications.app_params` JSONB column (AES-GCM secrets / plaintext non-secrets)
+- DAL: `GetAppParams`, `SetAppParam`, `DeleteAppParam` on `*DB`
+- Service: `GetAppParams`, `SetAppParam`, `DeleteAppParam`, `GetPlaintextAppParams`
+- REST: `GET/PUT/DELETE /admin/applications/{id}/app-params[/{name}]`
+- Compiler: `collectAppParamRefs` → `AgentSpec.AppParamRefs`; `AppParamRef` on `HTTPStepConfig`; `ModelOverrideParamRef` on `LLMStepConfig`
+- Interpreter: `AppParamRef` (global) takes precedence over `AppParamKey` (per-binding); `injectAuthParam` helper; `ModelOverrideParamRef` takes precedence over `ModelOverrideParamKey`
+- Runtime: `decodeAppGlobalParams` pure helper (testable); `loadAppGlobalParams` wired into `handle()` after `AgentParams`; fixed `plain:` prefix check (was dead code in error branch)
+- Frontend (`api.ts`): `AppGlobalParam` interface + `getAppParams`/`setAppParam`/`deleteAppParam`
+- Frontend (`RuntimeView.tsx`): "App Global Parameters" section — add/update/remove; type selector; secret masking
+- Frontend (`RightPanel.tsx`): HTTP node → toggle Per-binding / App-global source; LLM node → `model_override_param_ref` free-text field
+- Tests: S1-62 (AGP-1..8 service), S1-63 (CMP-10..14 compiler), S1-64 (INT-10..14 interpreter), S1-65 (RT-20..24 runtime), S1-66 (HTTP-20..25+ handler) — 34 new tests
 
-What is pending (Phase 1 frontend):
-1. `frontend/src/lib/api.ts`: Add `AgentParamMeta`, `AgentParamsResponse` types + `getAgentParams`/`putAgentParams`
-2. `frontend/src/app/admin/applications/page.tsx` `RuntimeView`: Add "Agent Parameters" section per bound agent
-3. `frontend/src/app/admin/agents/builder/page.tsx`: Add `app_param_key`/`inject_mode`/`inject_header_name` fields to HTTP step panel
+**DB migration must be applied before deploying:**
+```bash
+docker cp db/045_app_global_params.sql them-postgres:/tmp/045.sql
+docker exec them-postgres psql -U them -d them -f /tmp/045.sql
+```
+
+**Containers to rebuild after deploying:**
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-go-bridge them-agent-runtime
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge them-agent-runtime
+```
 
 ---
 
@@ -305,30 +329,46 @@ What is pending (Phase 1 frontend):
 
 ## Next recommended task
 
-### Step 1 — Phase 1 frontend for agent params (immediate)
+### Step 1 — Deploy app_params and E2E validate (immediate)
 
-Implement the frontend side of the agent params system (see design doc `docs/architecture-v2/APP_AGENT_PARAMS_DESIGN.md`, section "Phase 1 Frontend"):
-1. `api.ts`: `getAgentParams(appId, agentId)` → `GET /admin/applications/{appId}/agents/{agentId}/params`; `putAgentParams(appId, agentId, params)` → `PUT` same route
-2. `applications/page.tsx` RuntimeView: for each bound canvas agent, show its `required_params` with fill status + input fields for secrets/strings (hint shown when set)
-3. `agents/builder/page.tsx` HTTP step panel: add `App Param Key` dropdown (from node's `AppParams` declarations) + `Inject Mode` select + conditional `Header Name` field
+The app global params feature is fully coded and tested but containers have not been rebuilt yet. Do this before starting any new feature:
 
-### Step 3 — E2E canvas agent run (after frontend done)
+```bash
+# 1. Apply DB migration (if not already done)
+docker cp db/045_app_global_params.sql them-postgres:/tmp/045.sql
+docker exec them-postgres psql -U them -d them -f /tmp/045.sql
 
-Streaming and multi-artifact are confirmed working. Next unverified path:
-1. Publish a canvas agent (Input→LLM→Response) — BuildValidator should show green
-2. Bind to an app with a valid API key in Runtime tab; set any required agent params
-3. Add the canvas agent as a tool in an app EP, publish
-4. Run through playground — verify `run_steps` shows agent-runtime step
-5. Confirm credentials + agent params flow: binding → `InvocationContext` → agent-runtime → Anthropic
+# 2. Rebuild and restart
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-go-bridge them-agent-runtime
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge them-agent-runtime
 
-### Step 4 — Auth admin CRUD Go proxy (lower priority)
+# 3. Smoke test
+curl -s -H "Authorization: Bearer $JWT" http://localhost:8088/api/v1/admin/applications/<app_id>/app-params | jq .
+```
+
+E2E validation path:
+1. Open app → Runtime tab → "App Global Parameters" section visible
+2. Add a `string` param (e.g. `target_city: "Tel Aviv"`) → appears in list with value
+3. Add a `secret` param (e.g. `api_key`) → appears masked with hint
+4. In agent builder HTTP node → toggle to "App global param" → type param name → publish
+5. Invoke the agent via playground → confirm the param value reaches the HTTP step
+
+### Step 2 — MCP-3: StepMCPCall runtime executor
+
+The `mcp_call` canvas node type is registered with `Execute: nil`. Implement the executor in `go/internal/agentgen/` that:
+- Reads `mcp_server_slug`, `tool_name`, `args_template` from step config
+- Looks up the MCP server via `them-mcp-service` HTTP internal API
+- Calls the tool, returns result as pipeline var
+- Uses per-app MCP credential from `app_mcp_credentials` (already stored)
+
+### Step 3 — Auth admin CRUD Go proxy (lower priority)
 - `them-auth-service` (Python, port 8701) still serves user/role/team management
 - Frontend hits it directly via its own Traefik routes
 - When ready: implement Go proxy at `go/internal/authadmin/` + Traefik redirect
 
-### Step 5 — Wave 9 tenant items
+### Step 4 — Wave 9 tenant items
 - Session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims
-- Not started — begin only after Steps 1–3 are complete
+- Not started — begin only after Steps 1–2 are complete
 
 Do NOT begin multiple subsystems in the same session.
 
@@ -336,11 +376,13 @@ Do NOT begin multiple subsystems in the same session.
 
 ## Known blockers
 
-1. **E2E canvas agent run not verified** — all infrastructure exists (agent-runtime, InvokeForRun, A2A envelope, credential decryption) but no end-to-end run confirmed on live stack.
+1. **App global params containers not rebuilt** — code is committed and tested but `them-go-bridge` and `them-agent-runtime` have not been rebuilt since the feature was added. Apply `db/045_app_global_params.sql` and rebuild before using the feature.
 
-2. **Auth admin CRUD (users/roles/teams)** — `them-auth-service` (Python, port 8701) still serves user/role/team management. Frontend hits it directly. No Go proxy until we decide to retire the Python binary.
+2. **MCP-3 not implemented** — `mcp_call` canvas step has `Execute: nil`. The runtime stub is registered but will return "not yet implemented" if invoked. MCP execution via `them-mcp-service` not yet wired.
 
-3. **Wave 9 tenant items** — session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims. Not started.
+3. **Auth admin CRUD (users/roles/teams)** — `them-auth-service` (Python, port 8701) still serves user/role/team management. Frontend hits it directly. No Go proxy until we decide to retire the Python binary.
+
+4. **Wave 9 tenant items** — session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims. Not started.
 
 ---
 
