@@ -119,7 +119,8 @@ export function CanvasBuilderView({
 
   const fieldStyle: React.CSSProperties = {
     width: '100%', padding: '10px 12px', borderRadius: 8,
-    border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)',
+    borderWidth: '1px', borderStyle: 'solid', borderColor: 'rgba(255,255,255,0.12)',
+    background: 'rgba(255,255,255,0.05)',
     color: C.text, fontSize: 14, outline: 'none', boxSizing: 'border-box',
   };
 
