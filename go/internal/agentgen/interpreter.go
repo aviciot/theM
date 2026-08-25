@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"text/template"
@@ -314,6 +315,14 @@ func (interp *Interpreter) execHTTP(ctx context.Context, ic *InvocationContext, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		detail := strings.TrimSpace(string(body))
+		if len(detail) > 200 {
+			detail = detail[:200]
+		}
+		if detail != "" {
+			return fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, urlStr, detail)
+		}
 		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, urlStr)
 	}
 

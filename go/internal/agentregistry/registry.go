@@ -339,7 +339,8 @@ type a2aTask struct {
 }
 
 type a2aStatus struct {
-	State string `json:"state"`
+	State   string      `json:"state"`
+	Message *a2aMessage `json:"message,omitempty"`
 }
 
 type a2aArtifact struct {
@@ -616,12 +617,30 @@ func (r *Registry) invokeA2AStreaming(ctx context.Context, cfg *AgentConfig, inp
 // multiple files → {"artifacts":[...]}. Plain text is returned as
 // {"output":"..."} when no file parts are present.
 func extractA2AResult(result *a2aResult) (json.RawMessage, error) {
+	// Check for task failure — surface the error text so the LLM can react.
+	var task *a2aTask
+	if result.Task != nil {
+		task = result.Task
+	} else if result.Message != nil {
+		task = result.Message
+	}
+	if task != nil && task.Status.State == "TASK_STATE_FAILED" {
+		errText := "canvas agent pipeline failed"
+		if task.Status.Message != nil {
+			for _, p := range task.Status.Message.Parts {
+				if p.Text != "" {
+					errText = p.Text
+					break
+				}
+			}
+		}
+		return nil, fmt.Errorf("agentregistry: %s", errText)
+	}
+
 	// Extract artifacts from task or message wrapper.
 	var artifacts []a2aArtifact
-	if result.Task != nil {
-		artifacts = result.Task.Artifacts
-	} else if result.Message != nil {
-		artifacts = result.Message.Artifacts
+	if task != nil {
+		artifacts = task.Artifacts
 	}
 
 	// Collect all file parts across all artifacts.
