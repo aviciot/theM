@@ -103,6 +103,7 @@ type Dal interface {
 	GetAgentDefinition(ctx context.Context, tenantID, id string) (dal.AgentDefinition, error)
 	ListAgentDefinitions(ctx context.Context, tenantID string) ([]dal.AgentDefinition, error)
 	UpdateDraftAgentDefinition(ctx context.Context, tenantID, id string, defJSON []byte, hash string) error
+	RevertPublishedToDraft(ctx context.Context, tenantID, id string, defJSON []byte, hash string) error
 	DeleteDraftAgentDefinition(ctx context.Context, tenantID, id string) error
 
 	// Canvas agent publish pipeline (Phase 3) — tenant-scoped

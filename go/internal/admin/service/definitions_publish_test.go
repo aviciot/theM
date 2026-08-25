@@ -228,6 +228,9 @@ func (f *publishFakeDal) ListAgentDefinitions(_ context.Context, _ string) ([]da
 func (f *publishFakeDal) UpdateDraftAgentDefinition(_ context.Context, _, _ string, _ []byte, _ string) error {
 	return nil
 }
+func (f *publishFakeDal) RevertPublishedToDraft(_ context.Context, _, _ string, _ []byte, _ string) error {
+	return nil
+}
 func (f *publishFakeDal) DeleteDraftAgentDefinition(_ context.Context, _, _ string) error { return nil }
 
 // Phase 3 stubs.

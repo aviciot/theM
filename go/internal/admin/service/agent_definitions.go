@@ -214,7 +214,9 @@ func (s *AgentDefinitionService) UpdateDraft(ctx context.Context, tenantID, id s
 		return ErrNotFound
 	}
 	if existing.Status == "published" {
-		return ErrConflict
+		// Agent was published — revert to draft with the new content so the
+		// user can iterate and re-publish.
+		return s.dal.RevertPublishedToDraft(ctx, tenantID, id, []byte(defRaw), hash)
 	}
 	return ErrNotFound
 }

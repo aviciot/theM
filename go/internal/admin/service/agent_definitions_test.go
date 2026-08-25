@@ -54,6 +54,9 @@ func (f *agentDefFakeDal) UpdateDraftAgentDefinition(_ context.Context, _, _ str
 	f.lastUpdateHash = hash
 	return f.updateAgentDefErr
 }
+func (f *agentDefFakeDal) RevertPublishedToDraft(_ context.Context, _, _ string, _ []byte, _ string) error {
+	return nil
+}
 func (f *agentDefFakeDal) DeleteDraftAgentDefinition(_ context.Context, _, _ string) error {
 	f.deleteAgentDefCalls++
 	return f.deleteAgentDefErr
@@ -551,15 +554,17 @@ func TestUpdateDraft_NotFound(t *testing.T) {
 	}
 }
 
-func TestUpdateDraft_Published_Conflict(t *testing.T) {
+func TestUpdateDraft_Published_RevertsToEditableDraft(t *testing.T) {
+	// Editing a published agent reverts it to draft so the user can iterate
+	// and re-publish without getting a 409 conflict.
 	f := &agentDefFakeDal{
 		updateAgentDefErr: pgx.ErrNoRows,
 		agentDef:          dal.AgentDefinition{ID: "def-1", Status: "published"},
 	}
 	svc := newAgentDefSvc(f)
 	err := svc.UpdateDraft(context.Background(), "t1", "def-1", validAgentDef(t))
-	if !errors.Is(err, service.ErrConflict) {
-		t.Errorf("want ErrConflict for published definition, got %v", err)
+	if err != nil {
+		t.Errorf("want nil for published definition (revert to draft), got %v", err)
 	}
 }
 

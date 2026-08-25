@@ -147,6 +147,19 @@ func (d *DB) UpdateDraftAgentDefinition(ctx context.Context, tenantID, id string
 	return d.q.ExecReturning(ctx, q, tenantID, id, defJSON, hash).Scan(&retID)
 }
 
+// RevertPublishedToDraft resets a published agent definition back to draft status
+// and replaces its content. Used when the user edits an already-published agent.
+func (d *DB) RevertPublishedToDraft(ctx context.Context, tenantID, id string, defJSON []byte, hash string) error {
+	const q = `
+		UPDATE them.agent_definitions
+		   SET definition=$3::jsonb, definition_hash=$4, status='draft', updated_at=now()
+		 WHERE id=$2::uuid AND tenant_id=$1::uuid AND status='published'
+		 RETURNING id::text`
+
+	var retID string
+	return d.q.ExecReturning(ctx, q, tenantID, id, defJSON, hash).Scan(&retID)
+}
+
 // DeleteDraftAgentDefinition hard-deletes a draft agent definition row scoped
 // to tenant. Returns pgx.ErrNoRows if the row is not found, does not belong
 // to the tenant, or is not a draft (status != 'draft').
