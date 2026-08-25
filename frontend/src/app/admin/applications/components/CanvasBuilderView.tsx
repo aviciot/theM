@@ -611,7 +611,8 @@ export function CanvasBuilderView({
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', background: isAttached ? 'rgba(208,188,255,0.07)' : 'transparent' }}>
                             {/* Checkbox — toggles attachment */}
                             <div
-                              onClick={() => {
+                              onClick={e => {
+                                e.stopPropagation();
                                 if (!isAttached) setMcpExpanded(prev => ({ ...prev, [server.slug]: true }));
                                 toggleServer(server.slug);
                               }}
@@ -637,7 +638,7 @@ export function CanvasBuilderView({
                                 <span
                                   className="material-symbols-outlined"
                                   style={{ fontSize: 14, color: C.textMuted, cursor: 'pointer', transition: 'transform 150ms', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
-                                  onClick={() => setMcpExpanded(prev => ({ ...prev, [server.slug]: !prev[server.slug] }))}>
+                                  onClick={e => { e.stopPropagation(); setMcpExpanded(prev => ({ ...prev, [server.slug]: !prev[server.slug] })); }}>
                                   expand_more
                                 </span>
                               )}

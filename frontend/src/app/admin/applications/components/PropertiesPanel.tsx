@@ -489,8 +489,10 @@ export function PropertiesPanel({
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {availableMCPServers.filter(s => s.enabled).map(server => {
-                        const d2 = selectedNode.data as OrchestratorData;
-                        const attached = (d2.mcpServers ?? []).find(a => a.slug === server.slug);
+                        // Read fresh from selectedNode.data every render — avoids stale closure on rapid clicks.
+                        const liveData = (selectedNode.data as OrchestratorData);
+                        const liveServers = liveData.mcpServers ?? [];
+                        const attached = liveServers.find(a => a.slug === server.slug);
                         const isAttached = !!attached;
                         const expanded = !!mcpExpanded[server.slug];
                         const allTools = server.tools_manifest ?? [];
@@ -501,16 +503,17 @@ export function PropertiesPanel({
                           <div key={server.slug} style={{ borderRadius: 6, border: `1px solid ${isAttached ? 'rgba(208,188,255,0.3)' : C.outlineVariant}`, background: isAttached ? 'rgba(208,188,255,0.06)' : C.surfaceLow, overflow: 'hidden' }}>
                             {/* Header row */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px' }}>
-                              {/* Checkbox — toggles attachment */}
+                              {/* Checkbox — toggles attachment only */}
                               <div
                                 style={{ width: 14, height: 14, borderRadius: 3, border: `1.5px solid ${isAttached ? C.purple : C.outlineVariant}`, background: isAttached ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer' }}
-                                onClick={() => {
-                                  const current = d2.mcpServers ?? [];
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  const current = (selectedNode.data as OrchestratorData).mcpServers ?? [];
                                   const next: MCPServerAttachment[] = isAttached
                                     ? current.filter(a => a.slug !== server.slug)
                                     : [...current, { slug: server.slug, tools: [] }];
                                   if (!isAttached) setMcpExpanded(prev => ({ ...prev, [server.slug]: true }));
-                                  saveMCPServers(d2, next);
+                                  saveMCPServers(selectedNode.data as OrchestratorData, next);
                                 }}>
                                 {isAttached && <span className="material-symbols-outlined" style={{ fontSize: 10, color: '#fff', fontWeight: 700 }}>check</span>}
                               </div>
@@ -547,16 +550,21 @@ export function PropertiesPanel({
                                   return (
                                     <div
                                       key={tool.name}
-                                      onClick={() => {
+                                      onClick={e => {
+                                        e.stopPropagation();
                                         if (!isAttached) return;
-                                        const current = d2.mcpServers ?? [];
-                                        const base = allowlist.length === 0 ? allTools.map(t => t.name) : allowlist;
+                                        // Read fresh data at click time, not from render-time closure.
+                                        const freshData = selectedNode.data as OrchestratorData;
+                                        const freshServers = freshData.mcpServers ?? [];
+                                        const freshAttached = freshServers.find(a => a.slug === server.slug);
+                                        const freshAllowlist = freshAttached?.tools ?? [];
+                                        const base = freshAllowlist.length === 0 ? allTools.map(t => t.name) : freshAllowlist;
                                         const nextTools = base.includes(tool.name)
                                           ? base.filter(t => t !== tool.name)
                                           : [...base, tool.name];
                                         const collapsed = nextTools.length === allTools.length ? [] : nextTools;
-                                        const next = current.map(a => a.slug === server.slug ? { ...a, tools: collapsed } : a);
-                                        saveMCPServers(d2, next);
+                                        const next = freshServers.map(a => a.slug === server.slug ? { ...a, tools: collapsed } : a);
+                                        saveMCPServers(freshData, next);
                                       }}
                                       style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 2px', borderRadius: 4, cursor: isAttached ? 'pointer' : 'default', opacity: isAttached ? 1 : 0.45 }}>
                                       <div style={{ width: 11, height: 11, marginTop: 1, borderRadius: 2, border: `1.5px solid ${toolEnabled ? C.purple : 'rgba(255,255,255,0.2)'}`, background: toolEnabled ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
