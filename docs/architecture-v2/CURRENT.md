@@ -7,16 +7,16 @@
 ## HEAD
 
 Branch: `main`
-Commit: `e6cebde` — fix(proxy): add /agents/{id}/llm-nodes pattern to Go bridge routing
+Commit: `9f75a5e` — fix(publish): surface FK violation as clear user error + propagate error messages to toasts
 
 Recent commits (newest first):
 ```
+9f75a5e fix(publish): surface FK violation as clear user error + propagate error messages to toasts
 e6cebde fix(proxy): add /agents/{id}/llm-nodes pattern to Go bridge routing
 f4b58bd feat(canvas-llm): per-node LLM provider+model overrides in RuntimeView + debug panel
 1e5c76c test(app-params): Phase 4 — handler + runtime tests; fix plain: decryption
 b308e84 feat(app-params): Phase 3 — frontend UI for app global params
 5328fb6 feat(app-params): Phase 2 — compiler/interpreter/runtime for app_param_ref
-d2c4283 feat(app-params): Phase 1 — app-level global named parameters (DB + backend)
 ```
 
 ---
@@ -148,7 +148,7 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-25, commit f4b58bd)
+go test ./...  — all packages, 0 failures (verified 2026-08-25, commit 9f75a5e)
 S1 total: 772 tests (unchanged — CMP/INT tests rewritten not added)
   S1-63: CMP-10..14 (compiler LLM node collection — 5 tests, rewrote from AppParamRefs)
   S1-64: INT-10..14 (interpreter AppParamRef HTTP + NodeLLMOverride — 5 tests, INT-14 rewritten)
