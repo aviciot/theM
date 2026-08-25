@@ -18,6 +18,7 @@ const GO_ONLY_PREFIXES = [
 const GO_ONLY_PATTERNS = [
   /\/agent-bindings/,
   /\/agents\/[^/]+\/params/,
+  /\/agents\/[^/]+\/llm-nodes/,
   /\/provider-keys/,
   /\/test-llm/,
   /\/orchestrators\/[^/]+\/llm/,
