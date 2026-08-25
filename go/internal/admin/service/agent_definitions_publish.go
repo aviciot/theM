@@ -103,7 +103,8 @@ func (s *AgentDefinitionService) PublishAgentDefinition(ctx context.Context, ten
 	agentID := id
 
 	spec, issues := agentgen.CompileForPublish(agentID, tenantID, id, def.AgentSlug, def.Definition)
-	if len(issues) > 0 {
+	if spec == nil {
+		// CompileForPublish returns nil spec only when error-severity issues exist.
 		return nil, &AgentCompileError{Errors: issues}
 	}
 

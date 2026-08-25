@@ -72,7 +72,7 @@ func main() {
 		logger:    logger,
 		interp: agentgen.NewInterpreter(
 			&http.Client{Timeout: 60 * time.Second},
-			&anthropicLLMFactory{platformKey: cfg.AnthropicAPIKey},
+			&multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
 			cfg.AnthropicAPIKey,
 		),
 	}
@@ -661,17 +661,23 @@ func writeJSONRPCError(w http.ResponseWriter, id any, code int, message string, 
 	json.NewEncoder(w).Encode(resp) //nolint:errcheck
 }
 
-// anthropicLLMFactory creates AnthropicProviders from internal/llm.
-type anthropicLLMFactory struct {
+// multiLLMFactory routes to the correct provider implementation.
+// Currently only "anthropic" is fully implemented; other providers return a clear error.
+type multiLLMFactory struct {
 	platformKey string
 }
 
-func (f *anthropicLLMFactory) NewProvider(provider, model string, maxTokens int, apiKey string) (agentgen.LLMProvider, error) {
+func (f *multiLLMFactory) NewProvider(provider, model string, maxTokens int, apiKey string) (agentgen.LLMProvider, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("no API key configured for provider %q — set a key in App Runtime", provider)
 	}
-	p := llm.NewAnthropicProvider(apiKey, model, maxTokens)
-	return &anthropicProviderAdapter{p: p}, nil
+	switch provider {
+	case "anthropic", "":
+		p := llm.NewAnthropicProvider(apiKey, model, maxTokens)
+		return &anthropicProviderAdapter{p: p}, nil
+	default:
+		return nil, fmt.Errorf("provider %q is not yet supported in the agent runtime; only 'anthropic' is available", provider)
+	}
 }
 
 // anthropicProviderAdapter adapts llm.AnthropicProvider to agentgen.LLMProvider.
@@ -705,7 +711,7 @@ func (a *anthropicProviderAdapter) Complete(ctx context.Context, systemPrompt, u
 }
 
 var _ agentgen.LLMProvider = (*anthropicProviderAdapter)(nil)
-var _ agentgen.LLMFactory = (*anthropicLLMFactory)(nil)
+var _ agentgen.LLMFactory = (*multiLLMFactory)(nil)
 
 // Ensure uuid is referenced (used in tests, kept for backward compat with generated IDs).
 var _ = uuid.NewString

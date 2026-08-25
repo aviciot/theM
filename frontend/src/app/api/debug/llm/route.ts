@@ -52,8 +52,8 @@ const PROVIDERS: Record<string, ProviderConfig> = {
     },
   },
   gemini: {
-    url: '',  // built dynamically — model is in the URL
-    buildHeaders: () => ({ 'Content-Type': 'application/json' }),
+    url: '',  // built dynamically — model is in the URL; key goes in x-goog-api-key header (not URL)
+    buildHeaders: (apiKey) => ({ 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }),
     buildBody: (body) => {
       const b = body as Record<string, unknown>;
       const messages = b.messages as { role: string; content: string }[] ?? [];
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
   let upstreamUrl = cfg.url;
   if (provider === 'gemini') {
     const model = (body as Record<string, unknown>).model as string ?? 'gemini-2.0-flash';
-    upstreamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    upstreamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   }
 
   let upstream: Response;
