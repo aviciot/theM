@@ -357,9 +357,9 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 	// 5b. Upsert app_agent_bindings for every canvas agent in this definition.
 	// This ensures RuntimeView can discover required params for internal (canvas_a2a) agents.
 	//
-	// NOTE: cd.ID is the component_definitions.id. Due to the way PublishCanvasAgent
-	// resolves slug conflicts via ON CONFLICT, the agents.id may differ from cd.ID.
-	// We resolve the real agents.id via GetAgentIDByComponentDef before binding.
+	// cd.ID is the component_definitions.id which is also agents.id when the agent was
+	// properly created/published (both tables share the UUID). We check existence first
+	// so the error is clear rather than relying on a FK violation.
 	for _, comp := range doc.Components {
 		if comp.DefinitionRef.Kind != registry.KindAgent {
 			continue
@@ -368,16 +368,16 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 		if !ok {
 			continue
 		}
-		agentID, resolveErr := s.dal.GetAgentIDByComponentDef(ctx, cd.ID)
-		if resolveErr != nil {
-			if dal.IsNoRows(resolveErr) {
-				return nil, validation(fmt.Sprintf("canvas agent %q (%s) is not published yet — publish it from the Agents builder first", comp.InstanceID, cd.Name))
-			}
-			return nil, fmt.Errorf("resolve agent id for %q: %w", comp.InstanceID, resolveErr)
+		exists, checkErr := s.dal.AgentExists(ctx, cd.ID)
+		if checkErr != nil {
+			return nil, fmt.Errorf("check agent %q: %w", comp.InstanceID, checkErr)
+		}
+		if !exists {
+			return nil, validation(fmt.Sprintf("canvas agent %q (%s) is not published yet — publish it from the Agents builder first", comp.InstanceID, cd.Name))
 		}
 		if bindErr := s.dal.UpsertAgentBinding(ctx, dal.AgentBindingRow{
 			ApplicationID: appID,
-			AgentID:       agentID,
+			AgentID:       cd.ID,
 		}); bindErr != nil {
 			return nil, fmt.Errorf("upsert agent binding %q: %w", comp.InstanceID, bindErr)
 		}

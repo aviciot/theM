@@ -99,45 +99,50 @@ func (d *DB) GetAgent(ctx context.Context, tenantID, id string) (Agent, error) {
 	return scanAgent(&singleToRow{s: row})
 }
 
-// CreateAgent inserts a new agent row for the given tenant and returns the new UUID.
-// agents.id is a FK into component_definitions, so we insert a component_definitions
-// row first to obtain the UUID, then insert agents with that same id.
+// CreateAgent atomically inserts both the component_definitions and agents rows using
+// a single CTE, so a failure on either statement rolls back both — no orphaned CD rows.
 func (d *DB) CreateAgent(ctx context.Context, tenantID string, in AgentInput, enabled bool) (string, error) {
 	namespace := "them.tenant." + tenantID
 
-	const cdQ = `
-		INSERT INTO them.component_definitions
-		  (kind, namespace, name, version, display_name, description,
-		   implementation_type, scope, tenant_id, status, content_hash)
-		VALUES ('agent', $1, $2, 1, $3, $4, $5, 'tenant', $6::uuid, 'published', '')
-		RETURNING id::text`
+	const q = `
+WITH cd AS (
+    INSERT INTO them.component_definitions
+      (kind, namespace, name, version, display_name, description,
+       implementation_type, scope, tenant_id, status, content_hash)
+    VALUES ('agent', $1, $2, 1, $3, $4, $5, 'tenant', $6::uuid, 'published', '')
+    RETURNING id
+)
+INSERT INTO them.agents
+  (id, tenant_id, slug, display_name, description, transport, endpoint_url,
+   max_concurrency, max_retries, timeout_seconds, enabled,
+   supports_streaming, supports_push, icon, category,
+   namespace, created_by)
+SELECT
+    (SELECT id FROM cd), $6::uuid,
+    $2, $3, $4, $5, $7,
+    $8, $9, $10, $11, $12, $13, $14, $15,
+    $1, NULLIF($16, 0)
+RETURNING id::text`
 
 	var id string
-	if err := d.q.ExecReturning(ctx, cdQ,
-		namespace, in.Slug, in.DisplayName, in.Description,
-		in.Transport, tenantID,
+	if err := d.q.ExecReturning(ctx, q,
+		namespace,          // $1 — namespace (also used for cd.namespace and agents.namespace)
+		in.Slug,            // $2 — name in CD, slug in agents
+		in.DisplayName,     // $3
+		in.Description,     // $4
+		in.Transport,       // $5 — implementation_type in CD, transport in agents
+		tenantID,           // $6
+		in.EndpointURL,     // $7
+		in.MaxConcurrency,  // $8
+		in.MaxRetries,      // $9
+		in.TimeoutSeconds,  // $10
+		enabled,            // $11
+		in.SupportsStreaming, // $12
+		in.SupportsPush,    // $13
+		in.Icon,            // $14
+		in.Category,        // $15
+		in.CreatedBy,       // $16
 	).Scan(&id); err != nil {
-		return "", err
-	}
-
-	const agentQ = `
-		INSERT INTO them.agents
-		  (id, tenant_id, slug, display_name, description, transport, endpoint_url,
-		   max_concurrency, max_retries, timeout_seconds, enabled,
-		   supports_streaming, supports_push, icon, category,
-		   namespace, created_by)
-		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-		        $16, NULLIF($17, 0))`
-
-	if err := d.q.Exec(ctx, agentQ,
-		id, tenantID,
-		in.Slug, in.DisplayName, in.Description, in.Transport,
-		in.EndpointURL, in.MaxConcurrency, in.MaxRetries,
-		in.TimeoutSeconds, enabled,
-		in.SupportsStreaming, in.SupportsPush,
-		in.Icon, in.Category,
-		namespace, in.CreatedBy,
-	); err != nil {
 		return "", err
 	}
 	return id, nil
@@ -209,32 +214,15 @@ func (d *DB) DeleteAgent(ctx context.Context, tenantID, id string) error {
 		id)
 }
 
-// GetAgentIDByComponentDef resolves the agents.id for a canvas_a2a agent given its
-// component_definitions.id. Canvas agents are published via a CTE that may cause
-// agents.id to diverge from component_definitions.id when a slug conflict causes the
-// ON CONFLICT branch to fire. This query walks agents → agent_runtime_specs to find
-// the canonical agents.id regardless of how publish resolved the slug.
-// Returns pgx.ErrNoRows if no published agents row matches.
-func (d *DB) GetAgentIDByComponentDef(ctx context.Context, componentDefID string) (string, error) {
-	const q = `
-		SELECT a.id::text
-		  FROM them.agents a
-		  JOIN them.agent_runtime_specs ars ON ars.agent_id = a.id
-		  JOIN them.component_definitions cd ON cd.id = ars.definition_id
-		 WHERE cd.id = $1::uuid
-		   AND a.transport = 'canvas_a2a'
-		 LIMIT 1`
-	var id string
-	err := d.q.QueryRow(ctx, q, componentDefID).Scan(&id)
-	if err != nil {
-		// Fallback: try direct id match (works when CTE produced matching ids).
-		const q2 = `SELECT id::text FROM them.agents WHERE id = $1::uuid AND transport = 'canvas_a2a'`
-		err2 := d.q.QueryRow(ctx, q2, componentDefID).Scan(&id)
-		if err2 != nil {
-			return "", err // return original error
-		}
-	}
-	return id, nil
+// AgentExists reports whether an agents row with the given id exists.
+// Used by publish.go to give a clear error before attempting a binding that would
+// fail with a FK violation.
+func (d *DB) AgentExists(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := d.q.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM them.agents WHERE id = $1::uuid)`, id,
+	).Scan(&exists)
+	return exists, err
 }
 
 // GetAgentBySlug returns a single agent by slug (platform-global, not tenant-scoped).

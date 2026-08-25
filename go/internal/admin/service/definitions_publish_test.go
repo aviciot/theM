@@ -153,9 +153,7 @@ func (f *publishFakeDal) GetAgent(_ context.Context, _, _ string) (dal.Agent, er
 func (f *publishFakeDal) CreateAgent(_ context.Context, _ string, _ dal.AgentInput, _ bool) (string, error) { return "", nil }
 func (f *publishFakeDal) UpdateAgent(_ context.Context, _, _ string, _ dal.AgentInput, _ bool) error { return nil }
 func (f *publishFakeDal) DeleteAgent(_ context.Context, _, _ string) error              { return nil }
-func (f *publishFakeDal) GetAgentIDByComponentDef(_ context.Context, id string) (string, error) {
-	return id, nil
-}
+func (f *publishFakeDal) AgentExists(_ context.Context, _ string) (bool, error) { return true, nil }
 func (f *publishFakeDal) GetAgentBySlug(_ context.Context, _ string) (dal.Agent, error) { return dal.Agent{}, nil }
 func (f *publishFakeDal) UpdateAgentScanResult(_ context.Context, _ string, _ []byte) error { return nil }
 func (f *publishFakeDal) GetAgentByID(_ context.Context, _ string) (dal.Agent, error)  { return dal.Agent{}, nil }

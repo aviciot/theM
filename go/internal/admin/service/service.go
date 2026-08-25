@@ -24,7 +24,7 @@ type Dal interface {
 	UpdateAgent(ctx context.Context, tenantID, id string, in dal.AgentInput, enabled bool) error
 	DeleteAgent(ctx context.Context, tenantID, id string) error
 	// Agent actions — platform-global (no tenant scope)
-	GetAgentIDByComponentDef(ctx context.Context, componentDefID string) (string, error)
+	AgentExists(ctx context.Context, id string) (bool, error)
 	GetAgentBySlug(ctx context.Context, slug string) (dal.Agent, error)
 	UpdateAgentScanResult(ctx context.Context, agentID string, result []byte) error
 	GetAgentByID(ctx context.Context, id string) (dal.Agent, error)
