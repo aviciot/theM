@@ -1114,6 +1114,44 @@ decryption roundtrip via `GetPlaintextAppParams`.
 
 ---
 
+### S1-65 · Agent-runtime decodeAppGlobalParams — `cmd/agent-runtime/main_test.go`
+
+**Purpose:** Unit tests for the pure `decodeAppGlobalParams` helper extracted from `loadAppGlobalParams`. Verifies decryption of secret entries (plain: test mode prefix), plain string pass-through, graceful handling of bad JSON and empty objects, and mixed blobs.
+
+| Test | What it proves |
+|---|---|
+| `TestDecodeAppGlobalParams_SecretPlainPrefix` | RT-20: secret entry with `"ct":"plain:..."` → plaintext stripped and returned |
+| `TestDecodeAppGlobalParams_PlainString` | RT-21: non-secret string entry → returned verbatim |
+| `TestDecodeAppGlobalParams_BadJSON` | RT-22: malformed raw JSON → empty map, no panic |
+| `TestDecodeAppGlobalParams_EmptyObject` | RT-23: empty `{}` → empty map |
+| `TestDecodeAppGlobalParams_MixedEntries` | RT-24: secret + plain string in same blob → both decoded correctly |
+
+**Trigger:** any change to `cmd/agent-runtime/main.go` (`decodeAppGlobalParams`, `loadAppGlobalParams`)
+
+---
+
+### S1-66 · Admin handler app params — `internal/admin/app_params_handler_test.go`
+
+**Purpose:** HTTP handler-layer tests for `GET/PUT/DELETE /admin/applications/{id}/app-params[/{name}]`. Uses `bytesQueryFakeDB` and `fakeDB` to simulate DB responses without integration. Verifies status codes, response shapes, validation errors, and secret masking.
+
+| Test | What it proves |
+|---|---|
+| `TestGetAppParams_Handler_200_Empty` | HTTP-20: GET returns 200 + empty array when no params stored |
+| `TestGetAppParams_Handler_200_SecretParam` | HTTP-21a: secret param appears with is_set+value_hint; plaintext absent |
+| `TestGetAppParams_Handler_200_StringParam` | HTTP-21b: non-secret param appears with value field |
+| `TestSetAppParam_Handler_200_Secret` | HTTP-22a: PUT secret → 200 {name, updated: true} |
+| `TestSetAppParam_Handler_200_String` | HTTP-22b: PUT string → 200 |
+| `TestSetAppParam_Handler_400_BadName` | HTTP-23a: uppercase name → 400 validation |
+| `TestSetAppParam_Handler_422_BadType` | HTTP-23b: unsupported type → 422 |
+| `TestSetAppParam_Handler_400_BadJSON` | HTTP-23c: bad JSON body → 400 |
+| `TestSetAppParam_Handler_400_EmptyValue` | HTTP-23d: empty value → 400 |
+| `TestDeleteAppParam_Handler_200` | HTTP-24: DELETE → 200 {name, deleted: true} |
+| `TestGetAppParams_Handler_404_AppMissing` | HTTP-25: pgx.ErrNoRows → 404 |
+
+**Trigger:** any change to `internal/admin/applications.go` (GetAppParams, SetAppParam, DeleteAppParam handlers) or `internal/admin/service/applications.go` (app param service methods)
+
+---
+
 ### S1-33 · Tenant isolation — `internal/admin/service/tenant_isolation_test.go`
 
 **Purpose:** R-4c1 service-layer tenant isolation contracts. Each tenant-owned entity (agents,
@@ -1893,8 +1931,9 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/agentgen/interpreter.go` | S1-48 + S1-64 |
 | `internal/agentgen/spec.go` | S1-50 + S1-63 |
 | `internal/agentgen/context.go` | S1-48 + S1-64 |
-| `cmd/agent-runtime/main.go` | S1-60 + S1-62 |
+| `cmd/agent-runtime/main.go` | S1-60 + S1-62 + S1-65 |
 | `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1 (full suite) |
+| `internal/admin/applications.go` (GetAppParams/SetAppParam/DeleteAppParam handlers) | S1-66 |
 | `internal/admin/system_agents.go` | S1-15 + S1 (full suite) |
 | `internal/dashboard/handler.go` | S1-52 |
 | `internal/ws/handler.go` | S1-12 |
@@ -2024,7 +2063,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-62 | admin/service app global params (AGP-1..8) | 8 |
 | S1-63 | agentgen compiler app_param_ref (CMP-10..14) | 5 |
 | S1-64 | agentgen interpreter app_param_ref (INT-10..14) | 5 |
-| **S1 total** | | **751** |
+| S1-65 | agent-runtime decodeAppGlobalParams (RT-20..24) | 5 |
+| S1-66 | admin handler app params (HTTP-20..25+) | 11 |
+| **S1 total** | | **772** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2033,4 +2074,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **666** |
+| **`go test ./...` total** | | **793** |

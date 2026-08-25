@@ -450,3 +450,57 @@ func TestSpecCache_IsolatedKeys(t *testing.T) {
 		t.Errorf("id-2: want agent-two, got %v", got2)
 	}
 }
+
+// ── decodeAppGlobalParams unit tests (RT-20..22) ───────────────────────────────
+
+// RT-20: secret entry with "plain:" prefix (test mode) → plaintext returned.
+func TestDecodeAppGlobalParams_SecretPlainPrefix(t *testing.T) {
+	raw := []byte(`{"my_key":{"ct":"plain:supersecret","hint":"cret"}}`)
+	out := decodeAppGlobalParams(raw, nil, "app-1")
+	if got := out["my_key"]; got != "supersecret" {
+		t.Errorf("expected 'supersecret', got %q", got)
+	}
+}
+
+// RT-21: non-secret plain string entry → returned verbatim.
+func TestDecodeAppGlobalParams_PlainString(t *testing.T) {
+	raw := []byte(`{"city":"Tel Aviv","score":"42"}`)
+	out := decodeAppGlobalParams(raw, nil, "app-1")
+	if got := out["city"]; got != "Tel Aviv" {
+		t.Errorf("city: expected 'Tel Aviv', got %q", got)
+	}
+	if got := out["score"]; got != "42" {
+		t.Errorf("score: expected '42', got %q", got)
+	}
+}
+
+// RT-22: DB error (empty raw / bad JSON) → empty map returned, no panic.
+func TestDecodeAppGlobalParams_BadJSON(t *testing.T) {
+	out := decodeAppGlobalParams([]byte("not-json"), nil, "app-1")
+	if out == nil {
+		t.Fatal("expected non-nil empty map on bad JSON")
+	}
+	if len(out) != 0 {
+		t.Errorf("expected empty map on bad JSON, got %v", out)
+	}
+}
+
+// RT-23: empty JSONB '{}' → empty map with no error.
+func TestDecodeAppGlobalParams_EmptyObject(t *testing.T) {
+	out := decodeAppGlobalParams([]byte(`{}`), nil, "app-1")
+	if len(out) != 0 {
+		t.Errorf("expected empty map, got %v", out)
+	}
+}
+
+// RT-24: mixed secret + plain in same blob → both decoded correctly.
+func TestDecodeAppGlobalParams_MixedEntries(t *testing.T) {
+	raw := []byte(`{"api_key":{"ct":"plain:my-api-key","hint":"_key"},"target":"prod"}`)
+	out := decodeAppGlobalParams(raw, nil, "app-1")
+	if got := out["api_key"]; got != "my-api-key" {
+		t.Errorf("api_key: expected 'my-api-key', got %q", got)
+	}
+	if got := out["target"]; got != "prod" {
+		t.Errorf("target: expected 'prod', got %q", got)
+	}
+}

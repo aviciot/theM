@@ -428,7 +428,12 @@ func (rt *Runtime) loadAppGlobalParams(ctx context.Context, appID string) map[st
 	if err := row.Scan(&raw); err != nil {
 		return map[string]string{}
 	}
+	return decodeAppGlobalParams(raw, rt.cryptoKey, appID)
+}
 
+// decodeAppGlobalParams parses and decrypts the raw app_params JSONB blob.
+// Exported for testing. Returns an empty map (never nil) on any decode error.
+func decodeAppGlobalParams(raw []byte, cryptoKey []byte, appID string) map[string]string {
 	type secretEntry struct {
 		CT   string `json:"ct"`
 		Hint string `json:"hint"`
@@ -442,13 +447,13 @@ func (rt *Runtime) loadAppGlobalParams(ctx context.Context, appID string) map[st
 	for name, valRaw := range top {
 		var entry secretEntry
 		if json.Unmarshal(valRaw, &entry) == nil && entry.CT != "" {
-			plain, err := crypto.DecryptStored(rt.cryptoKey, entry.CT)
+			// Test/dev mode: service stores "plain:<plaintext>" when no crypto key is configured.
+			if len(entry.CT) > 6 && entry.CT[:6] == "plain:" {
+				out[name] = entry.CT[6:]
+				continue
+			}
+			plain, err := crypto.DecryptStored(cryptoKey, entry.CT)
 			if err != nil {
-				// plain: prefix = test/dev mode without a real crypto key
-				if len(entry.CT) > 6 && entry.CT[:6] == "plain:" {
-					out[name] = entry.CT[6:]
-					continue
-				}
 				slog.Warn("agent-runtime: app global param decryption failed",
 					"app_id", appID, "name", name)
 				continue
