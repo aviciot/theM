@@ -250,6 +250,7 @@ export function buildNodesFromApp(
               maxParallelTools: ao.max_parallel_tools,
               systemPrompt: ao.system_prompt,
               allowedAgentIds: ao.allowed_agent_ids,
+              mcpServers: ao.mcp_servers ?? [],
               llmProvider: ao.llm_provider,
               llmModel: ao.llm_model,
               maxIterations: ao.max_iterations,

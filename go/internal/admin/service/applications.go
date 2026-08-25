@@ -440,6 +440,22 @@ func (s *AppService) SetOrchestratorLLM(ctx context.Context, tenantID, appID, or
 	return nil
 }
 
+// SetOrchestratorMCPServers writes the mcp_servers list for one app_orchestrators row.
+// Validates tenant ownership via appID. An empty slice is valid (clears all servers).
+func (s *AppService) SetOrchestratorMCPServers(ctx context.Context, tenantID, appID, orchID string, servers []dal.MCPServerAttachment) error {
+	// Verify the app belongs to the tenant.
+	if _, err := s.dal.GetApplication(ctx, tenantID, appID); err != nil {
+		return ErrNotFound
+	}
+	if servers == nil {
+		servers = []dal.MCPServerAttachment{}
+	}
+	if err := s.dal.SetOrchestratorMCPServers(ctx, appID, orchID, servers); err != nil {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteProviderKey removes the key for one provider from the application.
 func (s *AppService) DeleteProviderKey(ctx context.Context, tenantID, appID, provider string) error {
 	if _, ok := validProviders[provider]; !ok {

@@ -53,6 +53,7 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Delete("/provider-keys/{provider}", h.DeleteProviderKey)
 		app.Post("/test-llm", h.TestLLM)
 		app.Patch("/orchestrators/{orch_id}/llm", h.PatchOrchestratorLLM)
+		app.Patch("/orchestrators/{orch_id}/mcp-servers", h.PatchOrchestratorMCPServers)
 		app.Post("/entry-points", h.CreateEntryPoint)
 		app.Put("/entry-points/{ep_id}", h.UpdateEntryPoint)
 		app.Patch("/entry-points/{ep_id}", h.UpdateEntryPoint) // Python sends PATCH
@@ -399,6 +400,37 @@ func (h *ApplicationsHandler) PatchOrchestratorLLM(w http.ResponseWriter, r *htt
 		"app_id":       id,
 		"llm_provider": body.Provider,
 		"llm_model":    body.Model,
+	})
+}
+
+// PatchOrchestratorMCPServers handles PATCH /api/v1/admin/applications/{id}/orchestrators/{orch_id}/mcp-servers.
+// Body: {"mcp_servers": [{"slug": "smoke-mcp", "tools": []}, ...]}
+// An empty array clears all attached servers.
+func (h *ApplicationsHandler) PatchOrchestratorMCPServers(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orchID := chi.URLParam(r, "orch_id")
+	if id == "" || orchID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or orchestrator id")
+		return
+	}
+
+	var body struct {
+		MCPServers []dal.MCPServerAttachment `json:"mcp_servers"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if err := h.svc.SetOrchestratorMCPServers(r.Context(), tenantID, id, orchID, body.MCPServers); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":          orchID,
+		"app_id":      id,
+		"mcp_servers": body.MCPServers,
 	})
 }
 

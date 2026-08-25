@@ -2,6 +2,7 @@ package dal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -34,7 +35,8 @@ func scanApplication(rows SingleRowScanner) (Application, error) {
 // app_orchestrators has no tenant_id — tenant safety is through application_id FK.
 func (d *DB) listAppOrchSummaries(ctx context.Context, appID string) []AppOrchestratorSummary {
 	const q = `
-SELECT id::text, name, COALESCE(display_name,''), llm_provider, llm_model
+SELECT id::text, name, COALESCE(display_name,''), llm_provider, llm_model,
+       COALESCE(mcp_servers, '[]'::jsonb)
 FROM them.app_orchestrators
 WHERE application_id = $1::uuid AND enabled = true
 ORDER BY created_at`
@@ -48,8 +50,15 @@ ORDER BY created_at`
 	var out []AppOrchestratorSummary
 	for rows.Next() {
 		var s AppOrchestratorSummary
-		if err := rows.Scan(&s.ID, &s.Name, &s.DisplayName, &s.LLMProvider, &s.LLMModel); err != nil {
+		var mcpRaw []byte
+		if err := rows.Scan(&s.ID, &s.Name, &s.DisplayName, &s.LLMProvider, &s.LLMModel, &mcpRaw); err != nil {
 			break
+		}
+		if len(mcpRaw) > 0 && string(mcpRaw) != "null" {
+			_ = json.Unmarshal(mcpRaw, &s.MCPServers)
+		}
+		if s.MCPServers == nil {
+			s.MCPServers = []MCPServerAttachment{}
 		}
 		out = append(out, s)
 	}
@@ -57,6 +66,22 @@ ORDER BY created_at`
 		out = []AppOrchestratorSummary{}
 	}
 	return out
+}
+
+// SetOrchestratorMCPServers writes the mcp_servers JSONB array for one app_orchestrators row.
+// Scoped to appID so a caller cannot modify an orchestrator belonging to another application.
+func (d *DB) SetOrchestratorMCPServers(ctx context.Context, appID, orchID string, servers []MCPServerAttachment) error {
+	raw, err := json.Marshal(servers)
+	if err != nil {
+		return err
+	}
+	const q = `
+		UPDATE them.app_orchestrators
+		SET mcp_servers = $3::jsonb, updated_at = now()
+		WHERE id = $1::uuid AND application_id = $2::uuid
+		RETURNING id`
+	var id string
+	return d.q.ExecReturning(ctx, q, orchID, appID, raw).Scan(&id)
 }
 
 // ListApplications returns all applications for the given tenant, ordered by creation date.

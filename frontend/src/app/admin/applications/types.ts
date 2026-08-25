@@ -13,6 +13,7 @@ export type {
   MiddlewareDef,
   AppOrchestratorOut,
   AppOrchestratorSummary,
+  MCPServerAttachment,
 } from '@/lib/api';
 
 // ── Local types ──────────────────────────────────────────────────────────────
@@ -43,6 +44,7 @@ export interface OrchestratorData {
   appOrchestratorId: string | null;
   systemPrompt: string | null;
   allowedAgentIds: string[];
+  mcpServers: MCPServerAttachment[];
   llmProvider: string | null;
   llmModel: string | null;
   llmApiKey: string | null;

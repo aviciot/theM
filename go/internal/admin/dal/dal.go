@@ -175,15 +175,22 @@ type OrchestratorInput struct {
 
 // ── Application types ─────────────────────────────────────────────────────────
 
+// MCPServerAttachment is one entry in the app_orchestrators.mcp_servers JSONB array.
+type MCPServerAttachment struct {
+	Slug  string   `json:"slug"`
+	Tools []string `json:"tools,omitempty"` // allowlist; empty = all tools
+}
+
 // AppOrchestratorSummary is the lightweight orchestrator summary returned with
 // the application list / get responses so the card UI can display name + model
 // without a separate API call.
 type AppOrchestratorSummary struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	DisplayName string  `json:"display_name"`
-	LLMProvider *string `json:"llm_provider,omitempty"`
-	LLMModel    *string `json:"llm_model,omitempty"`
+	ID          string                `json:"id"`
+	Name        string                `json:"name"`
+	DisplayName string                `json:"display_name"`
+	LLMProvider *string               `json:"llm_provider,omitempty"`
+	LLMModel    *string               `json:"llm_model,omitempty"`
+	MCPServers  []MCPServerAttachment `json:"mcp_servers"`
 }
 
 // Application is the JSON representation of a them.applications row.

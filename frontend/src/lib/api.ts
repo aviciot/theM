@@ -282,6 +282,7 @@ export interface AppOrchestratorSummary {
   display_name: string;
   llm_provider?: string | null;
   llm_model?: string | null;
+  mcp_servers?: MCPServerAttachment[];
 }
 
 export interface Application {
@@ -300,6 +301,11 @@ export interface Application {
   updated_at: string;
 }
 
+export interface MCPServerAttachment {
+  slug: string;
+  tools?: string[]; // allowlist; empty/absent = all tools
+}
+
 export interface AppOrchestratorOut {
   id: string;
   application_id: string;
@@ -316,6 +322,7 @@ export interface AppOrchestratorOut {
   kind: string;
   budget_tokens: number | null;
   allowed_agent_ids: string[];
+  mcp_servers: MCPServerAttachment[];
   transcription_provider: string | null;
   transcription_model: string | null;
   tts_provider: string | null;
@@ -803,6 +810,7 @@ export const themApi = {
   deleteProviderKey: (appId: string, provider: string) => api.delete<{ provider: string; deleted: boolean }>(`/admin/applications/${appId}/provider-keys/${provider}`),
   testAppLlm: (appId: string, provider: string, model: string) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/test-llm`, { provider, model }),
   patchOrchestratorLLM: (appId: string, orchId: string, provider: string, model: string) => api.patch<{ id: string; llm_provider: string; llm_model: string }>(`/admin/applications/${appId}/orchestrators/${orchId}/llm`, { provider, model }),
+  patchOrchestratorMCPServers: (appId: string, orchId: string, mcpServers: MCPServerAttachment[]) => api.patch<{ id: string; mcp_servers: MCPServerAttachment[] }>(`/admin/applications/${appId}/orchestrators/${orchId}/mcp-servers`, { mcp_servers: mcpServers }),
   getMonitoringConfig: () => api.get<MonitoringConfig>('/admin/monitoring-config'),
   putMonitoringConfig: (body: MonitoringConfig) => api.put<MonitoringConfig>('/admin/monitoring-config', body),
   // Live reachability check for a deployed application slug
