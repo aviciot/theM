@@ -139,6 +139,7 @@ services:
       - TEMPORAL_ENABLED=true
       - TEMPORAL_HOST_PORT=temporal-frontend:7233
       - WORKER_TASK_QUEUE=them-orchestration-go
+      - MCP_SERVICE_URL=http://them-mcp-service:8010
     networks:
       - them-network
     restart: unless-stopped
@@ -174,6 +175,7 @@ services:
       - TEMPORAL_ENABLED=true
       - TEMPORAL_HOST_PORT=temporal-frontend:7233
       - WORKER_TASK_QUEUE=them-orchestration-go
+      - MCP_SERVICE_URL=http://them-mcp-service:8010
     networks:
       - them-network
     restart: unless-stopped
