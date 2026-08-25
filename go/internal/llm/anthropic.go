@@ -252,6 +252,9 @@ func (p *AnthropicProvider) handleSSEData(
 			tc := toolCallAccum[ev.Index]
 			var input map[string]any
 			_ = json.Unmarshal(buf.Bytes(), &input)
+			if input == nil {
+				input = map[string]any{} // Anthropic requires an object, never null
+			}
 			tc.Input = input
 			toolCallAccum[ev.Index] = tc
 		}
@@ -310,11 +313,15 @@ func domainPartsToAnthropicContent(parts []domain.ContentPart) (json.RawMessage,
 			}
 			blocks = append(blocks, textBlock{Type: "text", Text: p.Text})
 		case "tool_use":
+			inp := p.ToolInput
+			if len(inp) == 0 || string(inp) == "null" {
+				inp = json.RawMessage(`{}`)
+			}
 			blocks = append(blocks, toolUseBlock{
 				Type:  "tool_use",
 				ID:    p.ToolUseID,
 				Name:  p.ToolName,
-				Input: p.ToolInput,
+				Input: inp,
 			})
 		case "tool_result":
 			var content string

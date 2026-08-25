@@ -682,3 +682,14 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 ```
 
 **Watch for:** Any code change to `go/` that affects worker behavior — always rebuild both worker replicas simultaneously. Verify container start timestamps with `docker ps` to confirm both are fresh.
+
+---
+
+## 2026-08-25 — Anthropic 400: tool_use.input must be an object (not null)
+
+**Symptom:** All runs using MCP tools (or any tool with no parameters) fail with `messages.N.content.1.tool_use.input: Input should be an object` from the Anthropic API.
+**Root cause:** Two bugs in `go/internal/llm/anthropic.go`:
+1. At stream parse time, `json.Unmarshal(buf.Bytes(), &input)` on an empty or `{}` JSON buffer leaves `input` as a nil map. A nil map marshals to `null`, not `{}`.
+2. At history round-trip time, if `ToolInput` in a stored `ContentPart` is nil or the literal JSON `null`, it is forwarded verbatim to Anthropic — which rejects anything that is not a JSON object.
+**Fix:** At parse time, set `input = map[string]any{}` when unmarshal leaves a nil map. At serialization time in `domainPartsToAnthropicContent`, replace nil/`"null"` `ToolInput` with `json.RawMessage("{}")`.
+**Watch for:** Any tool that takes zero parameters will trigger this. The fix is purely in the LLM layer; no changes to tool definitions or agent code are needed.
