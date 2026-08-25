@@ -934,3 +934,197 @@ func mustJSON(v any) json.RawMessage {
 	}
 	return b
 }
+
+// ── App-global param ref interpreter tests (INT-10..14) ──────────────────────
+
+func makeHTTPSkillWithRef(serverURL, appParamRef, injectMode string) *agentgen.SkillSpec {
+	return &agentgen.SkillSpec{
+		ID: "skill-1",
+		Steps: []agentgen.StepSpec{
+			{ID: "in", Type: agentgen.StepInput, Config: mustJSON(agentgen.InputStepConfig{}), Next: []string{"step-http"}},
+			{
+				ID:   "step-http",
+				Type: agentgen.StepHTTP,
+				Config: mustJSON(agentgen.HTTPStepConfig{
+					Method:         "GET",
+					URLTemplate:    serverURL,
+					TimeoutSeconds: 5,
+					AppParamRef:    appParamRef,
+					InjectMode:     injectMode,
+				}),
+				Next: []string{"step-resp"},
+			},
+			{ID: "step-resp", Type: agentgen.StepResponse, Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "http_response"})},
+		},
+	}
+}
+
+// INT-10: AppParamRef present + matching AppGlobalParams → Authorization: Bearer injected.
+func TestInterpreter_HTTPStep_AppParamRef_Injected(t *testing.T) {
+	var capturedAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAuth = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true}) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	interp := agentgen.NewInterpreter(&http.Client{}, nil, "")
+	ic := &agentgen.InvocationContext{
+		TenantID:        "t1",
+		ApplicationID:   "a1",
+		AgentID:         "agent-1",
+		AppGlobalParams: map[string]string{"geoapify_key": "my-secret-key"},
+	}
+	_, err := interp.Execute(context.Background(), ic, makeHTTPSkillWithRef(server.URL, "geoapify_key", "header"), "")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if capturedAuth != "Bearer my-secret-key" {
+		t.Errorf("want Authorization: Bearer my-secret-key, got %q", capturedAuth)
+	}
+}
+
+// INT-11: AppParamRef + absent entry + non-empty inject_mode → error.
+func TestInterpreter_HTTPStep_AppParamRef_AbsentRequired(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"ok": true}) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	interp := agentgen.NewInterpreter(&http.Client{}, nil, "")
+	ic := &agentgen.InvocationContext{
+		TenantID:        "t1",
+		ApplicationID:   "a1",
+		AgentID:         "agent-1",
+		AppGlobalParams: map[string]string{}, // key not present
+	}
+	_, err := interp.Execute(context.Background(), ic, makeHTTPSkillWithRef(server.URL, "geoapify_key", "header"), "")
+	if err == nil {
+		t.Fatal("expected error when required app_param_ref is absent")
+	}
+}
+
+// INT-12: AppParamRef + absent entry + empty inject_mode → silently skips, no error.
+func TestInterpreter_HTTPStep_AppParamRef_AbsentOptional(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"ok": true}) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	interp := agentgen.NewInterpreter(&http.Client{}, nil, "")
+	ic := &agentgen.InvocationContext{
+		TenantID:        "t1",
+		ApplicationID:   "a1",
+		AgentID:         "agent-1",
+		AppGlobalParams: map[string]string{},
+	}
+	// inject_mode is "" → absent param is optional
+	_, err := interp.Execute(context.Background(), ic, makeHTTPSkillWithRef(server.URL, "geoapify_key", ""), "")
+	if err != nil {
+		t.Fatalf("expected no error for optional absent app_param_ref, got: %v", err)
+	}
+}
+
+// INT-13: AppParamRef takes precedence over AppParamKey when both are set.
+func TestInterpreter_HTTPStep_AppParamRef_TakesPrecedenceOverKey(t *testing.T) {
+	var capturedAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAuth = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true}) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	interp := agentgen.NewInterpreter(&http.Client{}, nil, "")
+	ic := &agentgen.InvocationContext{
+		TenantID:        "t1",
+		ApplicationID:   "a1",
+		AgentID:         "agent-1",
+		AgentParams:     map[string]string{"step-http:api_key": "per-binding-value"},
+		AppGlobalParams: map[string]string{"global_key": "global-value"},
+	}
+	skill := &agentgen.SkillSpec{
+		ID: "skill-1",
+		Steps: []agentgen.StepSpec{
+			{ID: "in", Type: agentgen.StepInput, Config: mustJSON(agentgen.InputStepConfig{}), Next: []string{"step-http"}},
+			{
+				ID:   "step-http",
+				Type: agentgen.StepHTTP,
+				Config: mustJSON(agentgen.HTTPStepConfig{
+					Method:         "GET",
+					URLTemplate:    server.URL,
+					TimeoutSeconds: 5,
+					AppParamKey:    "api_key",  // per-binding
+					AppParamRef:    "global_key", // global — must win
+					InjectMode:     "header",
+				}),
+				Next: []string{"step-resp"},
+			},
+			{ID: "step-resp", Type: agentgen.StepResponse, Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "http_response"})},
+		},
+	}
+	_, err := interp.Execute(context.Background(), ic, skill, "")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if capturedAuth != "Bearer global-value" {
+		t.Errorf("want global-value to win, got %q", capturedAuth)
+	}
+}
+
+// INT-14: LLM step with model_override_param_ref + matching AppGlobalParams → override applied.
+func TestInterpreter_LLMStep_ModelOverrideParamRef(t *testing.T) {
+	var capturedModel string
+	factory := &modelCapturingFactory{
+		onModel: func(m string) { capturedModel = m },
+		llm:     &fakeLLM{reply: "done"},
+	}
+
+	interp := agentgen.NewInterpreter(nil, factory, "platform-key")
+	ic := &agentgen.InvocationContext{
+		TenantID:        "t1",
+		ApplicationID:   "a1",
+		AgentID:         "agent-1",
+		AppAPIKey:       map[string]string{"anthropic": "sk-test"},
+		AppGlobalParams: map[string]string{"chat_model": "claude-opus-4-8"},
+	}
+
+	skill := &agentgen.SkillSpec{
+		ID: "skill-1",
+		Steps: []agentgen.StepSpec{
+			{ID: "in", Type: agentgen.StepInput, Config: mustJSON(agentgen.InputStepConfig{}), Next: []string{"llm1"}},
+			{
+				ID:   "llm1",
+				Type: agentgen.StepLLM,
+				Config: mustJSON(agentgen.LLMStepConfig{
+					Provider:              "anthropic",
+					Model:                 "claude-haiku-4-5-20251001", // compiled default
+					SystemPrompt:          "hi",
+					ModelOverrideParamRef: "chat_model", // should override to claude-opus-4-8
+				}),
+				Next: []string{"out"},
+			},
+			{ID: "out", Type: agentgen.StepResponse, Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "output"})},
+		},
+	}
+
+	_, err := interp.Execute(context.Background(), ic, skill, "hello")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if capturedModel != "claude-opus-4-8" {
+		t.Errorf("want model claude-opus-4-8, got %q", capturedModel)
+	}
+}
+
+// modelCapturingFactory captures the model passed to NewProvider (for INT-14).
+type modelCapturingFactory struct {
+	onModel func(model string)
+	llm     *fakeLLM
+}
+
+func (f *modelCapturingFactory) NewProvider(_, model string, _ int, _ string) (agentgen.LLMProvider, error) {
+	if f.onModel != nil {
+		f.onModel(model)
+	}
+	return f.llm, nil
+}

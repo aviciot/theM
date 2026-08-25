@@ -170,6 +170,10 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 	// ic.AgentParams is never nil — steps can safely read from it without nil checks.
 	ic.AgentParams = rt.resolveAgentParams(agentParamsJSON, spec.RequiredParams)
 
+	// Load app-level global params — decrypted from applications.app_params.
+	// Non-fatal: empty map on any error; steps fall back to per-binding params.
+	ic.AppGlobalParams = rt.loadAppGlobalParams(r.Context(), ic.ApplicationID)
+
 	// Build the SDK executor function. It is called by the SDK for each message/send
 	// or message/stream request. The closure captures the fully-resolved InvocationContext.
 	executor := a2asrv.AgentExecutorFunc(func(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
@@ -409,6 +413,52 @@ func (rt *Runtime) loadAppAPIKey(ctx context.Context, appID string) map[string]s
 	for provider, v := range flat {
 		if v != "" {
 			out[provider] = v
+		}
+	}
+	return out
+}
+
+// loadAppGlobalParams fetches and decrypts app_params for the given application.
+// Returns a name→plaintext map. Non-fatal: returns an empty map on any error.
+// The decrypted values are never logged.
+func (rt *Runtime) loadAppGlobalParams(ctx context.Context, appID string) map[string]string {
+	row := rt.pool.QueryRow(ctx,
+		`SELECT COALESCE(app_params, '{}') FROM them.applications WHERE id = $1::uuid`, appID)
+	var raw []byte
+	if err := row.Scan(&raw); err != nil {
+		return map[string]string{}
+	}
+
+	type secretEntry struct {
+		CT   string `json:"ct"`
+		Hint string `json:"hint"`
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return map[string]string{}
+	}
+
+	out := make(map[string]string, len(top))
+	for name, valRaw := range top {
+		var entry secretEntry
+		if json.Unmarshal(valRaw, &entry) == nil && entry.CT != "" {
+			plain, err := crypto.DecryptStored(rt.cryptoKey, entry.CT)
+			if err != nil {
+				// plain: prefix = test/dev mode without a real crypto key
+				if len(entry.CT) > 6 && entry.CT[:6] == "plain:" {
+					out[name] = entry.CT[6:]
+					continue
+				}
+				slog.Warn("agent-runtime: app global param decryption failed",
+					"app_id", appID, "name", name)
+				continue
+			}
+			out[name] = plain
+			continue
+		}
+		var s string
+		if json.Unmarshal(valRaw, &s) == nil && s != "" {
+			out[name] = s
 		}
 	}
 	return out

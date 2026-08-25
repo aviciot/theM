@@ -1082,6 +1082,38 @@ decryption roundtrip via `GetPlaintextAppParams`.
 
 ---
 
+### S1-63 · Compiler app_param_ref — `internal/agentgen/compiler_test.go`
+
+**Purpose:** Verifies that `collectAppParamRefs` correctly emits `AgentAppParamRef` entries for HTTP steps with `app_param_ref` and LLM steps with `model_override_param_ref`. Also verifies additive behavior alongside `RequiredParams` and correct deduplication within a step.
+
+| Test | What it proves |
+|---|---|
+| `TestCompile_HTTPNode_AppParamRef` | CMP-10: HTTP step with `app_param_ref` → `AppParamRefs` contains `{step1, geoapify_key}` |
+| `TestCompile_LLMNode_ModelOverrideParamRef` | CMP-11: LLM step with `model_override_param_ref` → entry in `AppParamRefs` |
+| `TestCompile_HTTPNode_BothKeyAndRef` | CMP-12: both `app_param_key` and `app_param_ref` → both `RequiredParams` and `AppParamRefs` populated |
+| `TestCompile_NoAppParamRef` | CMP-13: no `app_param_ref` on any step → `AppParamRefs` is nil |
+| `TestCompile_DuplicateParamRefAcrossSteps` | CMP-14: same `app_param_ref` name on two steps → two entries (one per step) |
+
+**Trigger:** any change to `internal/agentgen/compiler.go` (`collectAppParamRefs`, `buildSpec`), `internal/agentgen/spec.go` (`AgentAppParamRef`, `AppParamRef` field)
+
+---
+
+### S1-64 · Interpreter app_param_ref — `internal/agentgen/agentgen_test.go`
+
+**Purpose:** Verifies runtime resolution of `app_param_ref` and `model_override_param_ref` from `InvocationContext.AppGlobalParams`. Covers precedence, required vs optional, and model override.
+
+| Test | What it proves |
+|---|---|
+| `TestInterpreter_HTTPStep_AppParamRef_Injected` | INT-10: `app_param_ref` + matching `AppGlobalParams` → `Authorization: Bearer` injected |
+| `TestInterpreter_HTTPStep_AppParamRef_AbsentRequired` | INT-11: `app_param_ref` absent + non-empty `inject_mode` → error |
+| `TestInterpreter_HTTPStep_AppParamRef_AbsentOptional` | INT-12: `app_param_ref` absent + empty `inject_mode` → silently skips |
+| `TestInterpreter_HTTPStep_AppParamRef_TakesPrecedenceOverKey` | INT-13: `app_param_ref` takes precedence over `app_param_key` when both set |
+| `TestInterpreter_LLMStep_ModelOverrideParamRef` | INT-14: `model_override_param_ref` + matching `AppGlobalParams` → model override applied |
+
+**Trigger:** any change to `internal/agentgen/interpreter.go` (`execHTTP` AppParamRef block, `execLLM` ModelOverrideParamRef block, `injectAuthParam`)
+
+---
+
 ### S1-33 · Tenant isolation — `internal/admin/service/tenant_isolation_test.go`
 
 **Purpose:** R-4c1 service-layer tenant isolation contracts. Each tenant-owned entity (agents,
@@ -1857,7 +1889,11 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 |
-| `internal/agentgen/compiler.go` | S1-50 + S1-54 |
+| `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 |
+| `internal/agentgen/interpreter.go` | S1-48 + S1-64 |
+| `internal/agentgen/spec.go` | S1-50 + S1-63 |
+| `internal/agentgen/context.go` | S1-48 + S1-64 |
+| `cmd/agent-runtime/main.go` | S1-60 + S1-62 |
 | `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1 (full suite) |
 | `internal/admin/system_agents.go` | S1-15 + S1 (full suite) |
 | `internal/dashboard/handler.go` | S1-52 |
@@ -1986,7 +2022,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-60 | admin/service provider key encryption | 9 |
 | S1-61 | temporal/workerconfig loader contracts | 2 |
 | S1-62 | admin/service app global params (AGP-1..8) | 8 |
-| **S1 total** | | **741** |
+| S1-63 | agentgen compiler app_param_ref (CMP-10..14) | 5 |
+| S1-64 | agentgen interpreter app_param_ref (INT-10..14) | 5 |
+| **S1 total** | | **751** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

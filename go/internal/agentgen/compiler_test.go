@@ -361,9 +361,10 @@ func TestCompile_HTTPNode_AppParams(t *testing.T) {
 	if len(spec.RequiredParams) == 0 {
 		t.Fatal("expected RequiredParams from HTTP node, got none")
 	}
+	// New format: composite key "step1:bearer_token"
 	found := false
 	for _, p := range spec.RequiredParams {
-		if p.Key == "bearer_token" {
+		if p.Key == "step1:bearer_token" {
 			found = true
 			if p.Type != "secret" {
 				t.Errorf("bearer_token should be type 'secret', got %q", p.Type)
@@ -375,12 +376,12 @@ func TestCompile_HTTPNode_AppParams(t *testing.T) {
 				}
 			}
 			if !hasNode {
-				t.Errorf("bearer_token.UsedByNodes should include 'step1', got %v", p.UsedByNodes)
+				t.Errorf("step1:bearer_token.UsedByNodes should include 'step1', got %v", p.UsedByNodes)
 			}
 		}
 	}
 	if !found {
-		t.Errorf("expected bearer_token in RequiredParams, got %+v", spec.RequiredParams)
+		t.Errorf("expected step1:bearer_token in RequiredParams, got %+v", spec.RequiredParams)
 	}
 }
 
@@ -398,9 +399,10 @@ func TestCompile_HTTPNode_FreeFormAppParamKey(t *testing.T) {
 			{"id": "out",  "type": "response", "config": {"from_var": "http_response"}}
 		]}]
 	}`)
+	// New format: composite key "step1:geoapify_key"
 	found := false
 	for _, p := range spec.RequiredParams {
-		if p.Key == "geoapify_key" {
+		if p.Key == "step1:geoapify_key" {
 			found = true
 			if p.Type != "secret" {
 				t.Errorf("auto-registered param should be type 'secret', got %q", p.Type)
@@ -408,7 +410,7 @@ func TestCompile_HTTPNode_FreeFormAppParamKey(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("expected geoapify_key auto-registered in RequiredParams, got %+v", spec.RequiredParams)
+		t.Errorf("expected step1:geoapify_key in RequiredParams, got %+v", spec.RequiredParams)
 	}
 }
 
@@ -451,5 +453,116 @@ func TestIssue_StructuredFields(t *testing.T) {
 	}
 	if found.NodeID != "node_xyz" {
 		t.Errorf("NodeID: want %q, got %q", "node_xyz", found.NodeID)
+	}
+}
+
+// ── App-global param ref (CMP-10..14) ────────────────────────────────────────
+
+// CMP-10: HTTP step with app_param_ref → AppParamRefs contains the entry.
+func TestCompile_HTTPNode_AppParamRef(t *testing.T) {
+	spec := compileOK(t, `{
+		"agent_root": {"display_name": "X"},
+		"skills": [{"skill_id": "s1", "steps": [
+			{"id": "in",    "type": "input",    "config": {}, "next": ["step1"]},
+			{"id": "step1", "type": "http",
+			 "config": {"method": "GET", "url_template": "http://x",
+			            "app_param_ref": "geoapify_key", "inject_mode": "query", "inject_header_name": "apiKey"},
+			 "next": ["out"]},
+			{"id": "out",   "type": "response", "config": {"from_var": "http_response"}}
+		]}]
+	}`)
+	if len(spec.AppParamRefs) == 0 {
+		t.Fatal("expected AppParamRefs from HTTP node with app_param_ref, got none")
+	}
+	found := false
+	for _, ref := range spec.AppParamRefs {
+		if ref.StepID == "step1" && ref.ParamName == "geoapify_key" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected {step1, geoapify_key} in AppParamRefs, got %+v", spec.AppParamRefs)
+	}
+}
+
+// CMP-11: LLM step with model_override_param_ref → AppParamRefs contains the entry.
+func TestCompile_LLMNode_ModelOverrideParamRef(t *testing.T) {
+	spec := compileOK(t, `{
+		"agent_root": {"display_name": "X"},
+		"skills": [{"skill_id": "s1", "steps": [
+			{"id": "in",    "type": "input", "config": {}, "next": ["llm1"]},
+			{"id": "llm1",  "type": "llm",
+			 "config": {"provider": "anthropic", "model": "claude-haiku-4-5-20251001",
+			            "system_prompt": "hi", "model_override_param_ref": "chat_model"},
+			 "next": ["out"]},
+			{"id": "out",   "type": "response", "config": {"from_var": "output"}}
+		]}]
+	}`)
+	found := false
+	for _, ref := range spec.AppParamRefs {
+		if ref.StepID == "llm1" && ref.ParamName == "chat_model" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected {llm1, chat_model} in AppParamRefs, got %+v", spec.AppParamRefs)
+	}
+}
+
+// CMP-12: Both app_param_key and app_param_ref on same step → both RequiredParams and AppParamRefs populated.
+func TestCompile_HTTPNode_BothKeyAndRef(t *testing.T) {
+	spec := compileOK(t, `{
+		"agent_root": {"display_name": "X"},
+		"skills": [{"skill_id": "s1", "steps": [
+			{"id": "in",    "type": "input", "config": {}, "next": ["step1"]},
+			{"id": "step1", "type": "http",
+			 "config": {"method": "GET", "url_template": "http://x",
+			            "app_param_key": "api_key", "app_param_ref": "global_key",
+			            "inject_mode": "query", "inject_header_name": "apiKey"},
+			 "next": ["out"]},
+			{"id": "out",   "type": "response", "config": {"from_var": "http_response"}}
+		]}]
+	}`)
+	if len(spec.RequiredParams) == 0 {
+		t.Error("expected RequiredParams (from app_param_key)")
+	}
+	if len(spec.AppParamRefs) == 0 {
+		t.Error("expected AppParamRefs (from app_param_ref)")
+	}
+}
+
+// CMP-13: No app_param_ref on any step → AppParamRefs is nil (omitted from JSON).
+func TestCompile_NoAppParamRef(t *testing.T) {
+	spec := compileOK(t, `{
+		"agent_root": {"display_name": "X"},
+		"skills": [{"skill_id": "s1", "steps": [
+			{"id": "in",  "type": "input",    "config": {}, "next": ["out"]},
+			{"id": "out", "type": "response", "config": {"from_var": "input"}}
+		]}]
+	}`)
+	if len(spec.AppParamRefs) != 0 {
+		t.Errorf("expected nil AppParamRefs for plain agent, got %+v", spec.AppParamRefs)
+	}
+}
+
+// CMP-14: Same app_param_ref name on two different steps → two entries in AppParamRefs.
+func TestCompile_DuplicateParamRefAcrossSteps(t *testing.T) {
+	spec := compileOK(t, `{
+		"agent_root": {"display_name": "X"},
+		"skills": [{"skill_id": "s1", "steps": [
+			{"id": "in",    "type": "input", "config": {}, "next": ["step1"]},
+			{"id": "step1", "type": "http",
+			 "config": {"method": "GET", "url_template": "http://x",
+			            "app_param_ref": "geoapify_key", "inject_mode": "query", "inject_header_name": "apiKey"},
+			 "next": ["step2"]},
+			{"id": "step2", "type": "http",
+			 "config": {"method": "GET", "url_template": "http://y",
+			            "app_param_ref": "geoapify_key", "inject_mode": "query", "inject_header_name": "apiKey"},
+			 "next": ["out"]},
+			{"id": "out",   "type": "response", "config": {"from_var": "http_response"}}
+		]}]
+	}`)
+	if len(spec.AppParamRefs) != 2 {
+		t.Errorf("expected 2 AppParamRefs (one per step), got %d: %+v", len(spec.AppParamRefs), spec.AppParamRefs)
 	}
 }

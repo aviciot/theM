@@ -19,6 +19,10 @@ type InvocationContext struct {
 	// Secrets are decrypted from app_agent_bindings.agent_params before this map is populated.
 	// NEVER logged or serialized — cleared after the request.
 	AgentParams map[string]string // param key → plaintext value
+	// AppGlobalParams holds decrypted values for all app-level named params referenced by
+	// this agent's compiled spec (via AppParamRefs). Loaded from applications.app_params.
+	// NEVER logged or serialized — cleared after the request.
+	AppGlobalParams map[string]string // param name → plaintext value
 }
 
 type InvocationPolicies struct {

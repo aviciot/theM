@@ -8,14 +8,23 @@ import (
 
 // AgentSpec is the compiled, reusable form the runtime loads. Frozen at publish.
 type AgentSpec struct {
-	ID             string           `json:"id"`              // == agents.id == component_definitions.id
-	DefinitionID   string           `json:"definition_id"`   // which agent_definitions revision this came from
-	Slug           string           `json:"slug"`
-	TenantID       string           `json:"tenant_id"`
-	Card           CardSpec         `json:"card"`
-	Skills         []SkillSpec      `json:"skills"`
-	DefaultModel   string           `json:"default_model"`
-	RequiredParams []AgentParamSpec `json:"required_params,omitempty"` // aggregated from all nodes at publish time
+	ID               string                `json:"id"`              // == agents.id == component_definitions.id
+	DefinitionID     string                `json:"definition_id"`   // which agent_definitions revision this came from
+	Slug             string                `json:"slug"`
+	TenantID         string                `json:"tenant_id"`
+	Card             CardSpec              `json:"card"`
+	Skills           []SkillSpec           `json:"skills"`
+	DefaultModel     string                `json:"default_model"`
+	RequiredParams   []AgentParamSpec      `json:"required_params,omitempty"`    // per-binding params (composite key per node instance)
+	AppParamRefs     []AgentAppParamRef    `json:"app_param_refs,omitempty"`     // app-global param references
+}
+
+// AgentAppParamRef records that one step in this agent references a named
+// app-global param. The runtime uses this to populate AppGlobalParams before
+// execution. Emitted by the compiler from app_param_ref / model_override_param_ref fields.
+type AgentAppParamRef struct {
+	StepID    string `json:"step_id"`
+	ParamName string `json:"param_name"`
 }
 
 // AppParamDecl declares one runtime parameter that a node type can consume.
@@ -110,6 +119,9 @@ type LLMStepConfig struct {
 	// ModelOverrideParamKey, if set, names the AgentParamSpec.Key whose value overrides
 	// the compiled model at runtime. The referenced param must be of type "string".
 	ModelOverrideParamKey string `json:"model_override_param_key,omitempty"`
+	// ModelOverrideParamRef names an app-global param (from AppGlobalParams) whose value
+	// overrides the compiled model. Takes precedence over ModelOverrideParamKey.
+	ModelOverrideParamRef string `json:"model_override_param_ref,omitempty"`
 }
 
 // HTTPStepConfig configures one HTTP tool step.
@@ -123,6 +135,9 @@ type HTTPStepConfig struct {
 	// AppParamKey names the AgentParamSpec.Key holding the auth credential to inject.
 	// Empty means no auth injection.
 	AppParamKey string `json:"app_param_key,omitempty"`
+	// AppParamRef names an app-global param (from AppGlobalParams) whose value provides
+	// the auth credential. Takes precedence over AppParamKey when both are set.
+	AppParamRef string `json:"app_param_ref,omitempty"`
 	// InjectMode controls how the credential is injected:
 	// "header" (default) → Authorization: Bearer <value>
 	// "query"            → ?<InjectHeaderName>=<value>

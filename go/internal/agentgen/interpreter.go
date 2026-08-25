@@ -160,10 +160,18 @@ func (interp *Interpreter) execLLM(ctx context.Context, ic *InvocationContext, s
 		apiKey = appKey
 	}
 
-	// Agent param model override: if set, prefer the runtime param over the compiled model.
+	// Model resolution priority (highest wins):
+	// 1. ModelOverrideParamRef → app-global param (AppGlobalParams)
+	// 2. ModelOverrideParamKey → per-binding agent param (AgentParams)
+	// 3. compiled model from canvas config
 	model := cfg.Model
 	if cfg.ModelOverrideParamKey != "" && ic.AgentParams != nil {
 		if override := ic.AgentParams[cfg.ModelOverrideParamKey]; override != "" {
+			model = override
+		}
+	}
+	if cfg.ModelOverrideParamRef != "" && ic.AppGlobalParams != nil {
+		if override := ic.AppGlobalParams[cfg.ModelOverrideParamRef]; override != "" {
 			model = override
 		}
 	}
@@ -200,6 +208,33 @@ func (interp *Interpreter) execLLM(ctx context.Context, ic *InvocationContext, s
 		vars[cfg.OutputVar] = out
 	} else {
 		vars["output"] = out
+	}
+	return nil
+}
+
+// injectAuthParam injects paramVal into req using the specified inject mode.
+// mode "" defaults to "header" (Authorization: Bearer).
+func injectAuthParam(req *http.Request, mode, headerName, paramVal string) error {
+	switch mode {
+	case "header", "":
+		req.Header.Set("Authorization", "Bearer "+paramVal)
+	case "query":
+		q := req.URL.Query()
+		name := headerName
+		if name == "" {
+			name = "api_key"
+		}
+		q.Set(name, paramVal)
+		req.URL.RawQuery = q.Encode()
+	case "basic":
+		req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(paramVal)))
+	case "custom_header":
+		if headerName == "" {
+			return fmt.Errorf("inject_mode %q requires inject_header_name to be set", mode)
+		}
+		req.Header.Set(headerName, paramVal)
+	default:
+		return fmt.Errorf("unknown inject_mode %q", mode)
 	}
 	return nil
 }
@@ -243,39 +278,39 @@ func (interp *Interpreter) execHTTP(ctx context.Context, ic *InvocationContext, 
 	}
 
 	// App param auth injection — runs after static headers so it can override them.
-	if cfg.AppParamKey != "" {
+	// AppParamRef (app-global param) takes precedence over AppParamKey (per-binding param).
+	if cfg.AppParamRef != "" {
+		paramVal := ""
+		if ic.AppGlobalParams != nil {
+			paramVal = ic.AppGlobalParams[cfg.AppParamRef]
+		}
+		if paramVal != "" {
+			if err := injectAuthParam(req, cfg.InjectMode, cfg.InjectHeaderName, paramVal); err != nil {
+				return err
+			}
+		} else if cfg.InjectMode != "" {
+			return fmt.Errorf("step requires app param %q (app_param_ref) but param is not set in app params", cfg.AppParamRef)
+		}
+		// InjectMode empty + no value: silently skip injection (param optional).
+	} else if cfg.AppParamKey != "" {
 		paramVal := ""
 		if ic.AgentParams != nil {
-			paramVal = ic.AgentParams[cfg.AppParamKey]
-		}
-		if paramVal == "" {
-			if cfg.InjectMode != "" {
-				return fmt.Errorf("step requires param %q for auth injection but param is not set in app binding", cfg.AppParamKey)
-			}
-			// InjectMode empty + no value: silently skip injection (param optional).
-		} else {
-			switch cfg.InjectMode {
-			case "header", "":
-				req.Header.Set("Authorization", "Bearer "+paramVal)
-			case "query":
-				q := req.URL.Query()
-				name := cfg.InjectHeaderName
-				if name == "" {
-					name = "api_key"
-				}
-				q.Set(name, paramVal)
-				req.URL.RawQuery = q.Encode()
-			case "basic":
-				req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(paramVal)))
-			case "custom_header":
-				if cfg.InjectHeaderName == "" {
-					return fmt.Errorf("inject_mode %q requires inject_header_name to be set", cfg.InjectMode)
-				}
-				req.Header.Set(cfg.InjectHeaderName, paramVal)
-			default:
-				return fmt.Errorf("unknown inject_mode %q", cfg.InjectMode)
+			// Look up by composite key "{stepID}:{paramKey}" (new per-instance format).
+			// Fall back to plain "{paramKey}" for agents published before this change.
+			if v := ic.AgentParams[step.ID+":"+cfg.AppParamKey]; v != "" {
+				paramVal = v
+			} else {
+				paramVal = ic.AgentParams[cfg.AppParamKey]
 			}
 		}
+		if paramVal != "" {
+			if err := injectAuthParam(req, cfg.InjectMode, cfg.InjectHeaderName, paramVal); err != nil {
+				return err
+			}
+		} else if cfg.InjectMode != "" {
+			return fmt.Errorf("step requires param %q for auth injection but param is not set in app binding", cfg.AppParamKey)
+		}
+		// InjectMode empty + no value: silently skip injection (param optional).
 	}
 
 	if interp.httpClient == nil {

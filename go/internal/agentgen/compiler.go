@@ -78,6 +78,7 @@ type canvasSkill struct {
 
 type canvasStep struct {
 	ID       string          `json:"id"`
+	Label    string          `json:"label"`
 	Type     StepType        `json:"type"`
 	Config   json.RawMessage `json:"config"`
 	Next     []string        `json:"next"`
@@ -346,86 +347,60 @@ func validateGraph(def *canvasDefinition) ([]Issue, map[string][]StepSpec) {
 // entries from each step's NodeDef and validating AppParamKey references.
 // Returns the deduplicated, sorted list of AgentParamSpec and any issues found.
 func collectAgentParams(def *canvasDefinition) ([]AgentParamSpec, []Issue) {
-	var issues []Issue
-	paramMap := map[string]*AgentParamSpec{}
-	usedBy := map[string][]string{} // param key → step IDs that reference it
+	var params []AgentParamSpec
 
 	for _, cs := range def.Skills {
 		for _, step := range cs.Steps {
-			nd, ok := LookupNode(step.Type)
-			if !ok {
-				continue // unknown type already caught by validateNodes
+			key := extractAppParamKey(step)
+			if key == "" {
+				continue
 			}
 
-			for _, decl := range nd.AppParams {
-				existing, seen := paramMap[decl.Key]
-				if seen {
-					if existing.Type != decl.Type {
-						issues = append(issues, Issue{
-							Severity: "error",
-							Code:     "PARAM_TYPE_CONFLICT",
-							Message:  fmt.Sprintf("param %q declared as type %q by node %s but type %q by a prior node", decl.Key, decl.Type, step.ID, existing.Type),
-							SkillID:  cs.SkillID,
-							NodeID:   step.ID,
-							Field:    "app_param_key",
-						})
-					}
-					if decl.Required {
-						paramMap[decl.Key].Required = true
-					}
-				} else {
-					paramMap[decl.Key] = &AgentParamSpec{
-						Key:          decl.Key,
-						Label:        decl.Label,
-						Description:  decl.Description,
-						Type:         decl.Type,
-						Required:     decl.Required,
-						DefaultValue: decl.DefaultValue,
-					}
+			// Look up the param declaration from the node type to get label/description/type.
+			nd, _ := LookupNode(step.Type)
+			var decl *AppParamDecl
+			for i := range nd.AppParams {
+				if nd.AppParams[i].Key == key {
+					decl = &nd.AppParams[i]
+					break
 				}
 			}
 
-			// Validate any AppParamKey references in the step config.
-			// HTTP nodes accept any free-form key name chosen by the agent author —
-			// auto-register it as a secret param if not already declared by a node AppParams entry.
-			if key := extractAppParamKey(step); key != "" {
-				if _, declared := paramMap[key]; !declared {
-					if step.Type == StepHTTP {
-						paramMap[key] = &AgentParamSpec{
-							Key:         key,
-							Label:       key,
-							Description: fmt.Sprintf("API credential injected by HTTP step %q", step.ID),
-							Type:        "secret",
-							Required:    true,
-						}
-					} else {
-						issues = append(issues, Issue{
-							Severity: "error",
-							Code:     "UNDECLARED_APP_PARAM",
-							Message:  fmt.Sprintf("step references app_param_key %q but no node in this agent declares a param with that key", key),
-							SkillID:  cs.SkillID,
-							NodeID:   step.ID,
-							Field:    "app_param_key",
-						})
-					}
-				}
-				usedBy[key] = append(usedBy[key], step.ID)
+			// Build the per-instance composite key: "{stepID}:{paramKey}"
+			instanceKey := step.ID + ":" + key
+
+			// Human label: "{step label or ID} — {param label}"
+			nodeLabel := step.Label
+			if nodeLabel == "" {
+				nodeLabel = step.ID
 			}
+			paramLabel := key
+			if decl != nil {
+				paramLabel = decl.Label
+			}
+			label := nodeLabel + " — " + paramLabel
+
+			spec := AgentParamSpec{
+				Key:         instanceKey,
+				Label:       label,
+				Type:        "secret",
+				Required:    false,
+				UsedByNodes: []string{step.ID},
+			}
+			if decl != nil {
+				spec.Type = decl.Type
+				spec.Required = decl.Required
+				spec.Description = decl.Description
+				spec.DefaultValue = decl.DefaultValue
+			}
+
+			params = append(params, spec)
 		}
 	}
 
-	// Stamp UsedByNodes onto collected specs.
-	for key, spec := range paramMap {
-		spec.UsedByNodes = usedBy[key]
-	}
-
-	// Stable ordering by key for deterministic spec serialization.
-	params := make([]AgentParamSpec, 0, len(paramMap))
-	for _, spec := range paramMap {
-		params = append(params, *spec)
-	}
+	// Stable ordering for deterministic spec serialization.
 	sort.Slice(params, func(i, j int) bool { return params[i].Key < params[j].Key })
-	return params, issues
+	return params, nil
 }
 
 // extractAppParamKey reads the AppParamKey (or equivalent) from a step's config JSON.
@@ -448,6 +423,47 @@ func extractAppParamKey(step canvasStep) string {
 		}
 	}
 	return ""
+}
+
+// collectAppParamRefs walks all steps and gathers app_param_ref /
+// model_override_param_ref references, emitting one AgentAppParamRef per
+// (step, param-name) pair. Duplicates across the same step are deduplicated.
+func collectAppParamRefs(def *canvasDefinition) []AgentAppParamRef {
+	seen := make(map[string]bool)
+	var refs []AgentAppParamRef
+
+	for _, cs := range def.Skills {
+		for _, step := range cs.Steps {
+			switch step.Type {
+			case StepHTTP:
+				var cfg HTTPStepConfig
+				if len(step.Config) > 0 && json.Unmarshal(step.Config, &cfg) == nil && cfg.AppParamRef != "" {
+					k := step.ID + ":http:" + cfg.AppParamRef
+					if !seen[k] {
+						seen[k] = true
+						refs = append(refs, AgentAppParamRef{StepID: step.ID, ParamName: cfg.AppParamRef})
+					}
+				}
+			case StepLLM:
+				var cfg LLMStepConfig
+				if len(step.Config) > 0 && json.Unmarshal(step.Config, &cfg) == nil && cfg.ModelOverrideParamRef != "" {
+					k := step.ID + ":llm:" + cfg.ModelOverrideParamRef
+					if !seen[k] {
+						seen[k] = true
+						refs = append(refs, AgentAppParamRef{StepID: step.ID, ParamName: cfg.ModelOverrideParamRef})
+					}
+				}
+			}
+		}
+	}
+
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].StepID != refs[j].StepID {
+			return refs[i].StepID < refs[j].StepID
+		}
+		return refs[i].ParamName < refs[j].ParamName
+	})
+	return refs
 }
 
 // ── Stage 4: executability ───────────────────────────────────────────────────
@@ -495,9 +511,11 @@ func Validate(agentID, tenantID, definitionID, agentSlug string, raw json.RawMes
 	params, paramIssues := collectAgentParams(def)
 	issues = append(issues, paramIssues...)
 
+	appParamRefs := collectAppParamRefs(def)
+
 	issues = append(issues, validateExecutability(def, "warning")...)
 
-	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params)
+	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params, appParamRefs)
 	return spec, issues
 }
 
@@ -527,12 +545,14 @@ func CompileForPublish(agentID, tenantID, definitionID, agentSlug string, raw js
 		return nil, issues
 	}
 
+	appParamRefs := collectAppParamRefs(def)
+
 	issues = append(issues, validateExecutability(def, "error")...)
 	if hasErrors(issues) {
 		return nil, issues
 	}
 
-	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params)
+	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params, appParamRefs)
 	return spec, issues
 }
 
@@ -546,7 +566,7 @@ func Compile(agentID, tenantID, definitionID, agentSlug string, raw json.RawMess
 
 // buildSpec assembles the AgentSpec from parsed components. Called after all
 // validation stages pass.
-func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefinition, compiled map[string][]StepSpec, params []AgentParamSpec) *AgentSpec {
+func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefinition, compiled map[string][]StepSpec, params []AgentParamSpec, appParamRefs []AgentAppParamRef) *AgentSpec {
 	specHash := computeSpecHash(agentID, tenantID, definitionID, slug)
 	_ = specHash
 
@@ -577,12 +597,17 @@ func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefiniti
 		requiredParams = params
 	}
 
+	var appRefs []AgentAppParamRef
+	if len(appParamRefs) > 0 {
+		appRefs = appParamRefs
+	}
+
 	return &AgentSpec{
-		ID:             agentID,
-		DefinitionID:   definitionID,
-		Slug:           slug,
-		TenantID:       tenantID,
-		DefaultModel:   def.AgentRoot.DefaultModel,
+		ID:           agentID,
+		DefinitionID: definitionID,
+		Slug:         slug,
+		TenantID:     tenantID,
+		DefaultModel: def.AgentRoot.DefaultModel,
 		Card: CardSpec{
 			Name:         def.AgentRoot.DisplayName,
 			Description:  def.AgentRoot.Description,
@@ -593,6 +618,7 @@ func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefiniti
 		},
 		Skills:         skills,
 		RequiredParams: requiredParams,
+		AppParamRefs:   appRefs,
 	}
 }
 
