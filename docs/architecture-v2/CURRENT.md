@@ -142,7 +142,7 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 | `db/036_canvas_a2a_runtime.sql` | ✅ applied — `agent_runtime_specs` + `app_agent_bindings` exist |
 | `db/037_agents_transport_canvas.sql` | ✅ applied — `agents_transport_check` includes `'canvas_a2a'` |
 | `db/038_app_agent_params.sql` | ✅ applied — `app_agent_bindings.agent_params` JSONB column |
-| `db/045_app_global_params.sql` | ⚠️ written, NOT YET applied — apply before rebuilding containers |
+| `db/045_app_global_params.sql` | ✅ applied — `applications.app_params` JSONB column |
 
 ---
 
@@ -161,7 +161,7 @@ go test ./... total: 793
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
   - run 5691b24a: streaming two files (HTML + zip) via a2a-stream ✅
-App global params: not yet e2e validated (containers not rebuilt)
+App global params: e2e validated 2026-08-25 — GET/PUT/DELETE live ✅
 ```
 
 ---
@@ -376,7 +376,7 @@ Do NOT begin multiple subsystems in the same session.
 
 ## Known blockers
 
-1. **App global params containers not rebuilt** — code is committed and tested but `them-go-bridge` and `them-agent-runtime` have not been rebuilt since the feature was added. Apply `db/045_app_global_params.sql` and rebuild before using the feature.
+1. **MCP-3 not implemented** (moved from #2) — see below.
 
 2. **MCP-3 not implemented** — `mcp_call` canvas step has `Execute: nil`. The runtime stub is registered but will return "not yet implemented" if invoked. MCP execution via `them-mcp-service` not yet wired.
 
