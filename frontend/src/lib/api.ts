@@ -701,8 +701,29 @@ export interface MCPServer {
   tools_count: number;
   capabilities: Record<string, unknown>;
   enabled: boolean;
+  probe_credential_set: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface MCPServerPatch {
+  name?: string;
+  description?: string;
+  transport?: MCPServer['transport'];
+  url?: string;
+  auth_type?: MCPServer['auth_type'];
+  enabled?: boolean;
+  probe_token?: string;
+}
+
+export interface MCPServerCreate {
+  name: string;
+  slug: string;
+  description?: string;
+  transport?: MCPServer['transport'];
+  url: string;
+  auth_type?: MCPServer['auth_type'];
+  probe_token?: string;
 }
 
 export interface MCPCredentialMeta {
@@ -925,11 +946,11 @@ export const themApi = {
   // MCP Store — server registry + app credentials
   listMCPServers: () =>
     api.get<MCPServer[]>('/admin/mcp-servers'),
-  createMCPServer: (body: unknown) =>
+  createMCPServer: (body: MCPServerCreate) =>
     api.post<MCPServer>('/admin/mcp-servers', body),
   getMCPServer: (id: string) =>
     api.get<MCPServer>(`/admin/mcp-servers/${id}`),
-  updateMCPServer: (id: string, body: unknown) =>
+  updateMCPServer: (id: string, body: MCPServerPatch) =>
     api.patch<MCPServer>(`/admin/mcp-servers/${id}`, body),
   deleteMCPServer: (id: string) =>
     api.delete<void>(`/admin/mcp-servers/${id}`),

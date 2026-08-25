@@ -343,6 +343,7 @@ function PropertiesPanel({
   const [url, setUrl] = useState(server.url);
   const [authType, setAuthType] = useState(server.auth_type);
   const [enabled, setEnabled] = useState(server.enabled);
+  const [probeToken, setProbeToken] = useState('');
 
   // Reset when server changes
   useEffect(() => {
@@ -352,6 +353,7 @@ function PropertiesPanel({
     setUrl(server.url);
     setAuthType(server.auth_type);
     setEnabled(server.enabled);
+    setProbeToken('');
     setError('');
     setConfirmDel(false);
     setSaving(false);
@@ -361,10 +363,13 @@ function PropertiesPanel({
     setSaving(true);
     setError('');
     try {
-      const updated = await themApi.updateMCPServer(server.id, {
+      const patch: Parameters<typeof themApi.updateMCPServer>[1] = {
         name, description, transport, url, auth_type: authType, enabled,
-      });
+      };
+      if (probeToken !== '') patch.probe_token = probeToken;
+      const updated = await themApi.updateMCPServer(server.id, patch);
       onSaved(updated);
+      setProbeToken('');
     } catch (e) {
       setError((e as Error).message || 'Save failed');
     } finally {
@@ -496,6 +501,33 @@ function PropertiesPanel({
                 <option value="oauth2" disabled>oauth2 (coming soon)</option>
               </select>
             </div>
+            {/* Probe token — only shown when auth is required */}
+            {authType !== 'none' && (
+              <div>
+                <label style={labelStyle}>
+                  Probe token
+                  {server.probe_credential_set && (
+                    <span style={{
+                      marginLeft: '8px', fontSize: '10px', padding: '2px 7px', borderRadius: '4px',
+                      background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)',
+                      color: '#34d399', fontWeight: 500,
+                    }}>set</span>
+                  )}
+                </label>
+                <input
+                  type="password"
+                  value={probeToken}
+                  onChange={e => setProbeToken(e.target.value)}
+                  style={inputStyle}
+                  placeholder={server.probe_credential_set ? '••••••••  (leave blank to keep current)' : 'Bearer token for health probe'}
+                  autoComplete="new-password"
+                />
+                <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'var(--tm-card-text-muted)' }}>
+                  Used by the platform health worker to authenticate when probing this server.
+                  Not shared with application-level credentials.
+                </p>
+              </div>
+            )}
             {/* Enabled */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <label style={{ ...labelStyle, margin: 0, cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -632,6 +664,7 @@ function CreateModal({
   const [transport, setTransport] = useState<MCPServer['transport']>('streamable-http');
   const [url, setUrl] = useState('');
   const [authType, setAuthType] = useState<MCPServer['auth_type']>('none');
+  const [probeToken, setProbeToken] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -644,7 +677,12 @@ function CreateModal({
     setSaving(true);
     setError('');
     try {
-      const created = await themApi.createMCPServer({ name: name.trim(), slug: slug.trim() || slugify(name), description, transport, url: url.trim(), auth_type: authType });
+      const body: Parameters<typeof themApi.createMCPServer>[0] = {
+        name: name.trim(), slug: slug.trim() || slugify(name),
+        description, transport, url: url.trim(), auth_type: authType,
+      };
+      if (probeToken) body.probe_token = probeToken;
+      const created = await themApi.createMCPServer(body);
       onCreated(created);
     } catch (e) {
       setError((e as Error).message || 'Create failed');
@@ -717,16 +755,31 @@ function CreateModal({
         </div>
 
         {authType !== 'none' && (
-          <div style={{
-            padding: '10px 12px', borderRadius: '8px',
-            background: `${ACCENT}0d`, border: `1px solid ${ACCENT_BORDER}`,
-            fontSize: '12px', color: 'var(--tm-card-text-muted)', display: 'flex', gap: '8px', alignItems: 'flex-start',
-          }}>
-            <span className="material-symbols-outlined" style={{ fontSize: '15px', color: ACCENT, flexShrink: 0, marginTop: '1px' }}>info</span>
-            <span>
-              Credentials are set per-application in <strong style={{ color: 'var(--tm-card-text)' }}>Applications → MCP Credentials</strong>.
-              After adding this server, open the application and set the {authType === 'bearer' ? 'bearer token' : 'header value'} there.
-            </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div>
+              <label style={labelStyle}>Probe token <span style={{ opacity: 0.55, fontWeight: 400 }}>(optional)</span></label>
+              <input
+                type="password"
+                value={probeToken}
+                onChange={e => setProbeToken(e.target.value)}
+                style={inputStyle}
+                placeholder={authType === 'bearer' ? 'Bearer token for health probe' : 'Auth header value for health probe'}
+                autoComplete="new-password"
+              />
+              <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'var(--tm-card-text-muted)' }}>
+                Used by the platform health worker to probe this server. Encrypted at rest.
+              </p>
+            </div>
+            <div style={{
+              padding: '10px 12px', borderRadius: '8px',
+              background: `${ACCENT}0d`, border: `1px solid ${ACCENT_BORDER}`,
+              fontSize: '12px', color: 'var(--tm-card-text-muted)', display: 'flex', gap: '8px', alignItems: 'flex-start',
+            }}>
+              <span className="material-symbols-outlined" style={{ fontSize: '15px', color: ACCENT, flexShrink: 0, marginTop: '1px' }}>info</span>
+              <span>
+                Application-level credentials are set separately in <strong style={{ color: 'var(--tm-card-text)' }}>Applications → MCP Credentials</strong>.
+              </span>
+            </div>
           </div>
         )}
 
