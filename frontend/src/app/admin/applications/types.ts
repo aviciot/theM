@@ -1,3 +1,5 @@
+import type { MCPServerAttachment } from '@/lib/api';
+
 // Re-export API types
 export type {
   Application,

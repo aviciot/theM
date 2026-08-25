@@ -467,54 +467,55 @@ export function PropertiesPanel({
                         {connectedAgentCount} agent{connectedAgentCount !== 1 ? 's' : ''} — connect via canvas
                       </div>
                     </div>
-
-                    {/* MCP Servers */}
-                    <div style={{ marginTop: 4, borderTop: `1px solid ${C.outlineVariant}`, paddingTop: 12 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 15, color: C.purple }}>lan</span>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: C.purple, textTransform: 'uppercase', letterSpacing: '0.5px' }}>MCP Servers</span>
-                        {mcpSaving && <span style={{ fontSize: 10, color: C.textMuted }}>saving…</span>}
-                      </div>
-                      {availableMCPServers.length === 0 ? (
-                        <div style={{ fontSize: 11, color: C.textMuted, padding: '6px 10px', borderRadius: 6, background: C.surfaceLow, border: `1px solid ${C.outlineVariant}` }}>
-                          No MCP servers configured — add one in MCP Store
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          {availableMCPServers.filter(s => s.enabled).map(server => {
-                            const attached = (d.mcpServers ?? []).find(a => a.slug === server.slug);
-                            const isAttached = !!attached;
-                            const statusColor = server.health_status === 'healthy' ? '#4ade80' : server.health_status === 'degraded' ? C.amber : server.health_status === 'unreachable' ? '#f87171' : C.textMuted;
-                            return (
-                              <div key={server.slug} style={{ borderRadius: 6, border: `1px solid ${isAttached ? 'rgba(208,188,255,0.3)' : C.outlineVariant}`, background: isAttached ? 'rgba(208,188,255,0.06)' : C.surfaceLow, overflow: 'hidden' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', cursor: 'pointer' }}
-                                  onClick={() => {
-                                    const current = d.mcpServers ?? [];
-                                    const next: MCPServerAttachment[] = isAttached
-                                      ? current.filter(a => a.slug !== server.slug)
-                                      : [...current, { slug: server.slug, tools: [] }];
-                                    saveMCPServers(d, next);
-                                  }}>
-                                  <div style={{ width: 14, height: 14, borderRadius: 3, border: `1.5px solid ${isAttached ? C.purple : C.outlineVariant}`, background: isAttached ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                    {isAttached && <span className="material-symbols-outlined" style={{ fontSize: 10, color: '#fff', fontWeight: 700 }}>check</span>}
-                                  </div>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.name}</div>
-                                    <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{server.slug}</div>
-                                  </div>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} title={server.health_status} />
-                                    <span style={{ fontSize: 10, color: C.textMuted }}>{server.tools_manifest?.length ?? 0} tools</span>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
                   </>
                 )}
+
+                {/* MCP Servers — always visible when an orchestrator is selected */}
+                <div style={{ marginTop: 4, borderTop: `1px solid ${C.outlineVariant}`, paddingTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span className="material-symbols-outlined" style={{ fontSize: 15, color: C.purple }}>lan</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: C.purple, textTransform: 'uppercase', letterSpacing: '0.5px' }}>MCP Servers</span>
+                    {mcpSaving && <span style={{ fontSize: 10, color: C.textMuted }}>saving…</span>}
+                  </div>
+                  {availableMCPServers.length === 0 ? (
+                    <div style={{ fontSize: 11, color: C.textMuted, padding: '6px 10px', borderRadius: 6, background: C.surfaceLow, border: `1px solid ${C.outlineVariant}` }}>
+                      No MCP servers configured — add one in MCP Store
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {availableMCPServers.filter(s => s.enabled).map(server => {
+                        const d2 = selectedNode.data as OrchestratorData;
+                        const attached = (d2.mcpServers ?? []).find(a => a.slug === server.slug);
+                        const isAttached = !!attached;
+                        const statusColor = server.health_status === 'healthy' ? '#4ade80' : server.health_status === 'degraded' ? C.amber : server.health_status === 'unreachable' ? '#f87171' : C.textMuted;
+                        return (
+                          <div key={server.slug} style={{ borderRadius: 6, border: `1px solid ${isAttached ? 'rgba(208,188,255,0.3)' : C.outlineVariant}`, background: isAttached ? 'rgba(208,188,255,0.06)' : C.surfaceLow, overflow: 'hidden' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', cursor: 'pointer' }}
+                              onClick={() => {
+                                const current = d2.mcpServers ?? [];
+                                const next: MCPServerAttachment[] = isAttached
+                                  ? current.filter(a => a.slug !== server.slug)
+                                  : [...current, { slug: server.slug, tools: [] }];
+                                saveMCPServers(d2, next);
+                              }}>
+                              <div style={{ width: 14, height: 14, borderRadius: 3, border: `1.5px solid ${isAttached ? C.purple : C.outlineVariant}`, background: isAttached ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                {isAttached && <span className="material-symbols-outlined" style={{ fontSize: 10, color: '#fff', fontWeight: 700 }}>check</span>}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.name}</div>
+                                <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{server.slug}</div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                                <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} title={server.health_status} />
+                                <span style={{ fontSize: 10, color: C.textMuted }}>{server.tools_manifest?.length ?? 0} tools</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
 
                 {/* STT section — voice EP only */}
                 {hasVoice && (
