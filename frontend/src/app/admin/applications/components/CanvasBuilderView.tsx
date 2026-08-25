@@ -11,7 +11,7 @@ import {
   type Edge,
   type Connection,
 } from '@xyflow/react';
-import { themApi, type Application, type Agent, type AppDefinition, type AppDefinitionDoc, type ComponentDefinitionSummary, type ValidationReport } from '@/lib/api';
+import { themApi, type Application, type Agent, type AppDefinition, type AppDefinitionDoc, type ComponentDefinitionSummary, type ValidationReport, type MCPServer, type MCPServerAttachment } from '@/lib/api';
 import type { OrchNodeData, AgentNodeData, MwNodeData, EpNodeData, LogoState } from '../types';
 import { C, EP_META, MODELS_BY_PROVIDER } from '../constants';
 import { agentIconForLibrary, applyDagreLayout, canvasToDoc, docToCanvas, genInstanceId } from './CanvasHelpers';
@@ -57,6 +57,8 @@ export function CanvasBuilderView({
   const [propsPanelWidth, setPropsPanelWidth] = useState(280);
   const [compPanelWidth, setCompPanelWidth] = useState(260);
   const [showRepublishModal, setShowRepublishModal] = useState(false);
+  const [availableMCPServers, setAvailableMCPServers] = useState<MCPServer[]>([]);
+  const [mcpSaving, setMcpSaving] = useState(false);
 
   function startCompPanelResize(e: React.MouseEvent) {
     e.preventDefault();
@@ -99,6 +101,7 @@ export function CanvasBuilderView({
       .catch(() => {});
   };
   useEffect(() => { refreshProviderKeys(); }, [app.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { themApi.listMCPServers().then(setAvailableMCPServers).catch(() => {}); }, []);
 
   // Canvas state
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -551,6 +554,68 @@ export function CanvasBuilderView({
               )}
             </div>
           )}
+
+          {/* MCP Servers */}
+          {(() => {
+            const appOrch = app.app_orchestrators.find(ao => ao.name === d.instance_id);
+            const currentAttachments: MCPServerAttachment[] = appOrch?.mcp_servers ?? [];
+            const enabledServers = availableMCPServers.filter(s => s.enabled);
+            async function saveMCP(next: MCPServerAttachment[]) {
+              if (!appOrch) return;
+              setMcpSaving(true);
+              try {
+                await themApi.patchOrchestratorMCPServers(app.id, appOrch.id, next);
+                appOrch.mcp_servers = next;
+              } catch { /* non-fatal */ } finally {
+                setMcpSaving(false);
+              }
+            }
+            return (
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: appOrch ? 8 : 6 }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.purple }}>lan</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: C.purple, textTransform: 'uppercase', letterSpacing: '0.5px', flex: 1 }}>MCP Servers</span>
+                  {mcpSaving && <span style={{ fontSize: 10, color: C.textMuted }}>saving…</span>}
+                </div>
+                {!appOrch && (
+                  <div style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic' }}>Publish the canvas first to attach MCP servers</div>
+                )}
+                {appOrch && enabledServers.length === 0 && (
+                  <div style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic' }}>No MCP servers configured — add one in MCP Store</div>
+                )}
+                {appOrch && enabledServers.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {enabledServers.map(server => {
+                      const isAttached = currentAttachments.some(a => a.slug === server.slug);
+                      const statusColor = server.health_status === 'healthy' ? '#4ade80' : server.health_status === 'degraded' ? C.amber : server.health_status === 'unreachable' ? '#f87171' : C.textMuted;
+                      return (
+                        <div key={server.slug}
+                          onClick={() => {
+                            const next = isAttached
+                              ? currentAttachments.filter(a => a.slug !== server.slug)
+                              : [...currentAttachments, { slug: server.slug }];
+                            saveMCP(next);
+                          }}
+                          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${isAttached ? 'rgba(208,188,255,0.3)' : 'rgba(255,255,255,0.08)'}`, background: isAttached ? 'rgba(208,188,255,0.07)' : 'transparent' }}>
+                          <div style={{ width: 13, height: 13, borderRadius: 3, border: `1.5px solid ${isAttached ? C.purple : 'rgba(255,255,255,0.3)'}`, background: isAttached ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            {isAttached && <span className="material-symbols-outlined" style={{ fontSize: 9, color: '#fff' }}>check</span>}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.name}</div>
+                            <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{server.slug}</div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                            <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} title={server.health_status} />
+                            <span style={{ fontSize: 10, color: C.textMuted }}>{server.tools_manifest?.length ?? 0}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       );
     }
