@@ -3,108 +3,158 @@ import { useState, useEffect } from 'react';
 import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus } from '@/lib/api';
 import { C, glass, PROVIDER_LIST, RUNTIME_MODELS } from '../constants';
 
+// ── Collapsible section wrapper ───────────────────────────────────────────────
+function Section({ title, subtitle, icon, children, defaultOpen = true, accent }: {
+  title: string; subtitle?: string; icon: string; children: React.ReactNode;
+  defaultOpen?: boolean; accent?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ ...glass, borderRadius: 12, marginBottom: 16, overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 12,
+          padding: '14px 20px', background: 'none', border: 'none', cursor: 'pointer',
+          borderBottom: open ? '1px solid rgba(255,255,255,0.06)' : 'none',
+        }}
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: 18, color: accent ?? C.purple, flexShrink: 0 }}>{icon}</span>
+        <div style={{ flex: 1, textAlign: 'left' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{title}</div>
+          {subtitle && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{subtitle}</div>}
+        </div>
+        <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.textMuted, transition: 'transform 0.15s', transform: open ? 'rotate(180deg)' : 'none' }}>
+          expand_more
+        </span>
+      </button>
+      {open && <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>{children}</div>}
+    </div>
+  );
+}
+
+// ── Agent section wrapper (accent border left) ────────────────────────────────
+function AgentSection({ slug, children, defaultOpen = true }: { slug: string; children: React.ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ borderRadius: 10, border: '1px solid rgba(208,188,255,0.18)', marginBottom: 12, overflow: 'hidden', background: 'rgba(208,188,255,0.03)' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'none', border: 'none', cursor: 'pointer', borderBottom: open ? '1px solid rgba(208,188,255,0.1)' : 'none' }}
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: 15, color: C.purple }}>smart_toy</span>
+        <span style={{ flex: 1, textAlign: 'left', fontSize: 12, fontWeight: 700, color: C.text, fontFamily: 'JetBrains Mono, monospace' }}>{slug}</span>
+        <span className="material-symbols-outlined" style={{ fontSize: 16, color: C.textMuted, transition: 'transform 0.15s', transform: open ? 'rotate(180deg)' : 'none' }}>expand_more</span>
+      </button>
+      {open && <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>{children}</div>}
+    </div>
+  );
+}
+
+// ── Sub-section label inside an agent card ────────────────────────────────────
+function AgentSubLabel({ icon, label }: { icon: string; label: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+      <span className="material-symbols-outlined" style={{ fontSize: 13, color: C.textMuted }}>{icon}</span>
+      <span style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{label}</span>
+    </div>
+  );
+}
+
 // ── RuntimeView ───────────────────────────────────────────────────────────────
-export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; onBack: () => void; onOrchSaved?: (orchId: string, provider: string, model: string) => void }) {
+export function RuntimeView({ app, onBack, onOrchSaved }: {
+  app: Application; onBack: () => void;
+  onOrchSaved?: (orchId: string, provider: string, model: string) => void;
+}) {
   const emptyRuntime = { max_concurrent_sessions: null, rate_limit_rpm: null, blocked_tokens: [], blocked_user_ids: [], session_timeout_minutes: null };
-  const [cfg, setCfg] = useState<import('@/lib/api').AppRuntimeConfig>(app.runtime_config ?? emptyRuntime);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Tag input helpers
+  const [cfg, setCfg]     = useState<import('@/lib/api').AppRuntimeConfig>(app.runtime_config ?? emptyRuntime);
+  const [saving, setSaving]   = useState(false);
+  const [saved, setSaved]     = useState(false);
+  const [error, setError]     = useState<string | null>(null);
   const [tokensInput, setTokensInput] = useState((app.runtime_config?.blocked_tokens ?? []).join('\n'));
-  const [usersInput, setUsersInput] = useState((app.runtime_config?.blocked_user_ids ?? []).join(', '));
+  const [usersInput,  setUsersInput]  = useState((app.runtime_config?.blocked_user_ids ?? []).join(', '));
 
-  // Provider keys state
+  // Provider keys
   type KeyStatus = { provider: string; key_set: boolean; key_hint?: string };
   const [keyStatuses, setKeyStatuses] = useState<KeyStatus[]>([]);
-  const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
-  const [keySaving, setKeySaving] = useState<string | null>(null);
-  const [keyMsg, setKeyMsg] = useState<Record<string, string>>({});
-  const [keyTestMsg, setKeyTestMsg] = useState<Record<string, string>>({});
-  const [keyTesting, setKeyTesting] = useState<string | null>(null);
+  const [keyInputs,   setKeyInputs]   = useState<Record<string, string>>({});
+  const [keySaving,   setKeySaving]   = useState<string | null>(null);
+  const [keyMsg,      setKeyMsg]      = useState<Record<string, string>>({});
+  const [keyTestMsg,  setKeyTestMsg]  = useState<Record<string, string>>({});
+  const [keyTesting,  setKeyTesting]  = useState<string | null>(null);
 
-  // LLM objects state (per-orchestrator provider+model assignment)
+  // Orchestrator LLM
   type OrchLLM = { id: string; name: string; displayName: string; provider: string; model: string };
-  const [orchLLMs, setOrchLLMs] = useState<OrchLLM[]>(
+  const [orchLLMs,  setOrchLLMs]  = useState<OrchLLM[]>(
     (app.app_orchestrators ?? []).map(o => ({
-      id: o.id,
-      name: o.name,
-      displayName: o.display_name || o.name,
-      provider: o.llm_provider ?? '',
-      model: o.llm_model ?? '',
+      id: o.id, name: o.name, displayName: o.display_name || o.name,
+      provider: o.llm_provider ?? '', model: o.llm_model ?? '',
     }))
   );
   const [orchSaving, setOrchSaving] = useState<string | null>(null);
-  const [orchMsg, setOrchMsg] = useState<Record<string, string>>({});
+  const [orchMsg,    setOrchMsg]    = useState<Record<string, string>>({});
 
-  // Agent params state (canvas agents bound to this app)
-  const [agentParamsList, setAgentParamsList] = useState<AgentParamsResponse[]>([]);
-  const [agentParamInputs, setAgentParamInputs] = useState<Record<string, Record<string, string>>>({});
-  const [agentParamSaving, setAgentParamSaving] = useState<string | null>(null);
-  const [agentParamMsg, setAgentParamMsg] = useState<Record<string, string>>({});
+  // Canvas agent params
+  const [agentParamsList,   setAgentParamsList]   = useState<AgentParamsResponse[]>([]);
+  const [agentParamInputs,  setAgentParamInputs]  = useState<Record<string, Record<string, string>>>({});
+  const [agentParamSaving,  setAgentParamSaving]  = useState<string | null>(null);
+  const [agentParamMsg,     setAgentParamMsg]     = useState<Record<string, string>>({});
 
   // Canvas agent LLM node overrides
-  const [agentLLMNodes, setAgentLLMNodes] = useState<AgentLLMNodeStatus[]>([]);
+  const [agentLLMNodes,  setAgentLLMNodes]  = useState<AgentLLMNodeStatus[]>([]);
   type NodeLLMDraft = { provider: string; model: string };
-  const [nodeLLMDrafts, setNodeLLMDrafts] = useState<Record<string, NodeLLMDraft>>({});
-  const [nodeLLMSaving, setNodeLLMSaving] = useState<string | null>(null);
-  const [nodeLLMMsg, setNodeLLMMsg] = useState<Record<string, string>>({});
+  const [nodeLLMDrafts,  setNodeLLMDrafts]  = useState<Record<string, NodeLLMDraft>>({});
+  const [nodeLLMSaving,  setNodeLLMSaving]  = useState<string | null>(null);
+  const [nodeLLMMsg,     setNodeLLMMsg]     = useState<Record<string, string>>({});
 
-  // App global parameters state
-  const [appParams, setAppParams] = useState<AppGlobalParam[]>([]);
-  const [newParamName, setNewParamName] = useState('');
-  const [newParamType, setNewParamType] = useState('string');
-  const [newParamValue, setNewParamValue] = useState('');
-  const [editParamInputs, setEditParamInputs] = useState<Record<string, string>>({});
-  const [paramSaving, setParamSaving] = useState<string | null>(null);
-  const [paramMsg, setParamMsg] = useState<Record<string, string>>({});
-  const [addingParam, setAddingParam] = useState(false);
-  const [addParamSaving, setAddParamSaving] = useState(false);
-  const [addParamMsg, setAddParamMsg] = useState('');
+  // App global parameters
+  const [appParams,        setAppParams]        = useState<AppGlobalParam[]>([]);
+  const [newParamName,     setNewParamName]     = useState('');
+  const [newParamType,     setNewParamType]     = useState('string');
+  const [newParamValue,    setNewParamValue]    = useState('');
+  const [editParamInputs,  setEditParamInputs]  = useState<Record<string, string>>({});
+  const [paramSaving,      setParamSaving]      = useState<string | null>(null);
+  const [paramMsg,         setParamMsg]         = useState<Record<string, string>>({});
+  const [addingParam,      setAddingParam]      = useState(false);
+  const [addParamSaving,   setAddParamSaving]   = useState(false);
+  const [addParamMsg,      setAddParamMsg]      = useState('');
 
   useEffect(() => {
-    themApi.getProviderKeys(app.id)
-      .then(keys => setKeyStatuses(keys))
-      .catch(() => {});
+    themApi.getProviderKeys(app.id).then(setKeyStatuses).catch(() => {});
   }, [app.id]);
 
   useEffect(() => {
-    themApi.getAppParams(app.id)
-      .then(params => setAppParams(params ?? []))
-      .catch(() => {});
+    themApi.getAppParams(app.id).then(p => setAppParams(p ?? [])).catch(() => {});
   }, [app.id]);
 
   useEffect(() => {
-    // Load agent params and LLM nodes for all canvas agents bound to this app
     themApi.listAgentBindings(app.id).then(bindings => {
-      Promise.all(
-        bindings.map(b => themApi.getAgentParams(app.id, b.agent_id).catch(() => null))
-      ).then(results => {
-        setAgentParamsList(results.filter((r): r is AgentParamsResponse => r !== null && r.required_params.length > 0));
-      });
-      Promise.all(
-        bindings.map(b => themApi.getAgentLLMNodes(app.id, b.agent_id).catch(() => null))
-      ).then(results => {
-        const nodes = results.flatMap(r => r ?? []);
-        setAgentLLMNodes(nodes);
-        const drafts: Record<string, NodeLLMDraft> = {};
-        nodes.forEach(n => {
-          drafts[n.node_id] = {
-            provider: n.override_provider ?? n.compiled_provider ?? '',
-            model: n.override_model ?? n.compiled_model ?? '',
-          };
+      Promise.all(bindings.map(b => themApi.getAgentParams(app.id, b.agent_id).catch(() => null)))
+        .then(results => setAgentParamsList(results.filter((r): r is AgentParamsResponse => r !== null && r.required_params.length > 0)));
+      Promise.all(bindings.map(b => themApi.getAgentLLMNodes(app.id, b.agent_id).catch(() => null)))
+        .then(results => {
+          const nodes = results.flatMap(r => r ?? []);
+          setAgentLLMNodes(nodes);
+          const drafts: Record<string, NodeLLMDraft> = {};
+          nodes.forEach(n => { drafts[n.node_id] = { provider: n.override_provider ?? n.compiled_provider ?? '', model: n.override_model ?? n.compiled_model ?? '' }; });
+          setNodeLLMDrafts(drafts);
         });
-        setNodeLLMDrafts(drafts);
-      });
     }).catch(() => {});
   }, [app.id]);
+
+  // Derived: providers with a key set
+  const setProviders = keyStatuses.filter(k => k.key_set).map(k => k.provider);
 
   function getKeyStatus(provider: string): KeyStatus {
     return keyStatuses.find(k => k.provider === provider) ?? { provider, key_set: false };
   }
 
-  const setProviders = keyStatuses.filter(k => k.key_set).map(k => k.provider);
+  // Group agent LLM nodes and params by agent
+  const agentIds = [...new Set(agentLLMNodes.map(n => n.agent_id))];
+  // Also include agents that have params but no LLM nodes
+  agentParamsList.forEach(a => { if (!agentIds.includes(a.agent_id)) agentIds.push(a.agent_id); });
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
 
   async function handleSaveKey(provider: string) {
     const key = (keyInputs[provider] ?? '').trim();
@@ -119,9 +169,7 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
       setTimeout(() => setKeyMsg(m => ({ ...m, [provider]: '' })), 2500);
     } catch (e: unknown) {
       setKeyMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Failed' }));
-    } finally {
-      setKeySaving(null);
-    }
+    } finally { setKeySaving(null); }
   }
 
   async function handleDeleteKey(provider: string) {
@@ -134,9 +182,7 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
       setTimeout(() => setKeyMsg(m => ({ ...m, [provider]: '' })), 2500);
     } catch (e: unknown) {
       setKeyMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Failed' }));
-    } finally {
-      setKeySaving(null);
-    }
+    } finally { setKeySaving(null); }
   }
 
   async function handleTestKey(provider: string) {
@@ -145,21 +191,15 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
     try {
       const model = RUNTIME_MODELS[provider]?.[0] ?? 'unknown';
       const res = await themApi.testAppLlm(app.id, provider, model);
-      if (res.ok) {
-        setKeyTestMsg(m => ({ ...m, [provider]: `✓ ${res.latency_ms}ms` }));
-      } else {
-        setKeyTestMsg(m => ({ ...m, [provider]: res.error ?? 'Failed' }));
-      }
+      setKeyTestMsg(m => ({ ...m, [provider]: res.ok ? `✓ ${res.latency_ms}ms` : (res.error ?? 'Failed') }));
     } catch (e: unknown) {
       setKeyTestMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Error' }));
-    } finally {
-      setKeyTesting(null);
-    }
+    } finally { setKeyTesting(null); }
   }
 
   async function handleSaveOrchLLM(orchId: string) {
     const orch = orchLLMs.find(o => o.id === orchId);
-    if (!orch || !orch.provider || !orch.model) return;
+    if (!orch?.provider || !orch?.model) return;
     setOrchSaving(orchId);
     try {
       await themApi.patchOrchestratorLLM(app.id, orchId, orch.provider, orch.model);
@@ -168,9 +208,7 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
       onOrchSaved?.(orchId, orch.provider, orch.model);
     } catch (e: unknown) {
       setOrchMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Failed' }));
-    } finally {
-      setOrchSaving(null);
-    }
+    } finally { setOrchSaving(null); }
   }
 
   async function handleSaveAgentParams(agentId: string) {
@@ -180,7 +218,6 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
     setAgentParamSaving(agentId);
     try {
       await themApi.putAgentParams(app.id, agentId, nonEmpty);
-      // Refresh this agent's param statuses
       const updated = await themApi.getAgentParams(app.id, agentId);
       setAgentParamsList(prev => prev.map(a => a.agent_id === agentId ? updated : a));
       setAgentParamInputs(prev => ({ ...prev, [agentId]: {} }));
@@ -188,9 +225,7 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
       setTimeout(() => setAgentParamMsg(m => ({ ...m, [agentId]: '' })), 2500);
     } catch (e: unknown) {
       setAgentParamMsg(m => ({ ...m, [agentId]: e instanceof Error ? e.message : 'Failed' }));
-    } finally {
-      setAgentParamSaving(null);
-    }
+    } finally { setAgentParamSaving(null); }
   }
 
   async function handleSaveNodeLLM(agentId: string, nodeId: string) {
@@ -200,16 +235,12 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
     setNodeLLMSaving(key);
     try {
       await themApi.putNodeLLMOverride(app.id, agentId, nodeId, draft.provider, draft.model);
-      setAgentLLMNodes(prev => prev.map(n =>
-        n.node_id === nodeId ? { ...n, override_provider: draft.provider, override_model: draft.model } : n
-      ));
+      setAgentLLMNodes(prev => prev.map(n => n.node_id === nodeId ? { ...n, override_provider: draft.provider, override_model: draft.model } : n));
       setNodeLLMMsg(m => ({ ...m, [nodeId]: 'Saved' }));
       setTimeout(() => setNodeLLMMsg(m => ({ ...m, [nodeId]: '' })), 2500);
     } catch (e: unknown) {
       setNodeLLMMsg(m => ({ ...m, [nodeId]: e instanceof Error ? e.message : 'Failed' }));
-    } finally {
-      setNodeLLMSaving(null);
-    }
+    } finally { setNodeLLMSaving(null); }
   }
 
   async function handleAddAppParam() {
@@ -219,18 +250,12 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
     setAddParamSaving(true);
     try {
       await themApi.setAppParam(app.id, name, value, newParamType);
-      const params = await themApi.getAppParams(app.id);
-      setAppParams(params ?? []);
-      setNewParamName('');
-      setNewParamValue('');
-      setNewParamType('string');
-      setAddingParam(false);
-      setAddParamMsg('');
+      setAppParams(await themApi.getAppParams(app.id) ?? []);
+      setNewParamName(''); setNewParamValue(''); setNewParamType('string');
+      setAddingParam(false); setAddParamMsg('');
     } catch (e: unknown) {
       setAddParamMsg(e instanceof Error ? e.message : 'Failed');
-    } finally {
-      setAddParamSaving(false);
-    }
+    } finally { setAddParamSaving(false); }
   }
 
   async function handleUpdateAppParam(name: string) {
@@ -241,131 +266,88 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
     setParamSaving(name);
     try {
       await themApi.setAppParam(app.id, name, value, param.type);
-      const params = await themApi.getAppParams(app.id);
-      setAppParams(params ?? []);
+      setAppParams(await themApi.getAppParams(app.id) ?? []);
       setEditParamInputs(prev => ({ ...prev, [name]: '' }));
       setParamMsg(m => ({ ...m, [name]: 'Saved' }));
       setTimeout(() => setParamMsg(m => ({ ...m, [name]: '' })), 2500);
     } catch (e: unknown) {
       setParamMsg(m => ({ ...m, [name]: e instanceof Error ? e.message : 'Failed' }));
-    } finally {
-      setParamSaving(null);
-    }
+    } finally { setParamSaving(null); }
   }
 
   async function handleDeleteAppParam(name: string) {
     setParamSaving(name);
     try {
       await themApi.deleteAppParam(app.id, name);
-      const params = await themApi.getAppParams(app.id);
-      setAppParams(params ?? []);
-      setParamMsg(m => ({ ...m, [name]: '' }));
+      setAppParams(await themApi.getAppParams(app.id) ?? []);
     } catch (e: unknown) {
       setParamMsg(m => ({ ...m, [name]: e instanceof Error ? e.message : 'Failed' }));
-    } finally {
-      setParamSaving(null);
-    }
+    } finally { setParamSaving(null); }
   }
 
   async function handleSave() {
-    setSaving(true);
-    setError(null);
+    setSaving(true); setError(null);
     try {
-      const parsedUsers = usersInput.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n));
+      const parsedUsers  = usersInput.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n));
       const parsedTokens = tokensInput.split(/\n/).map(s => s.trim()).filter(Boolean);
       const payload = { ...cfg, blocked_tokens: parsedTokens, blocked_user_ids: parsedUsers };
       await themApi.putAppRuntime(app.id, payload);
-      setCfg(payload);
-      setSaved(true);
+      setCfg(payload); setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Save failed');
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   }
 
-  const fieldStyle: React.CSSProperties = {
-    width: '100%', padding: '10px 12px', borderRadius: 8,
-    border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)',
-    color: C.text, fontSize: 14, outline: 'none', boxSizing: 'border-box',
+  // ── Shared styles ─────────────────────────────────────────────────────────
+
+  const field: React.CSSProperties = {
+    width: '100%', padding: '9px 12px', borderRadius: 7,
+    border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)',
+    color: C.text, fontSize: 13, outline: 'none', boxSizing: 'border-box',
   };
-  const labelStyle: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: C.textMuted, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6, display: 'block' };
-  const sectionStyle: React.CSSProperties = { ...glass, borderRadius: 12, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 };
+  const lbl: React.CSSProperties = {
+    fontSize: 11, fontWeight: 600, color: C.textMuted, letterSpacing: '0.06em',
+    textTransform: 'uppercase', marginBottom: 5, display: 'block',
+  };
+  const badge = (color: string, bg: string, border: string, text: string) => (
+    <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: bg, color, border: `1px solid ${border}` }}>{text}</span>
+  );
+  const saveBtn = (onClick: () => void, busy: boolean, disabled: boolean, label = 'Save') => (
+    <button onClick={onClick} disabled={busy || disabled} style={{ padding: '8px 14px', borderRadius: 7, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0, opacity: busy || disabled ? 0.45 : 1 }}>
+      {busy ? '…' : label}
+    </button>
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '40px 40px 60px', background: C.bg }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 32 }}>
-        <button onClick={onBack} style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
+    <div style={{ flex: 1, overflowY: 'auto', padding: '36px 40px 64px', background: C.bg }}>
+
+      {/* Breadcrumb */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 17 }}>arrow_back</span>
           Applications
         </button>
-        <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 18 }}>/</span>
+        <span style={{ color: 'rgba(255,255,255,0.18)', fontSize: 16 }}>/</span>
         <span style={{ fontSize: 14, color: C.text, fontWeight: 600 }}>{app.name}</span>
-        <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 18 }}>/</span>
-        <span style={{ fontSize: 14, color: '#fb923c', fontWeight: 700 }}>Runtime Policy</span>
+        <span style={{ color: 'rgba(255,255,255,0.18)', fontSize: 16 }}>/</span>
+        <span style={{ fontSize: 14, color: '#fb923c', fontWeight: 700 }}>Runtime</span>
       </div>
 
-      <div style={{ maxWidth: 640 }}>
-        {/* Session Limits */}
-        <div style={sectionStyle}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Session Limits</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-            <div>
-              <label style={labelStyle}>Max Concurrent Sessions</label>
-              <input type="number" min={1} placeholder="Unlimited"
-                value={cfg.max_concurrent_sessions ?? ''} style={fieldStyle}
-                onChange={e => setCfg(c => ({ ...c, max_concurrent_sessions: e.target.value === '' ? null : parseInt(e.target.value) }))} />
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>App-wide soft cap. Empty = unlimited.</div>
-            </div>
-            <div>
-              <label style={labelStyle}>Session Timeout (minutes)</label>
-              <input type="number" min={1} placeholder="No timeout"
-                value={cfg.session_timeout_minutes ?? ''} style={fieldStyle}
-                onChange={e => setCfg(c => ({ ...c, session_timeout_minutes: e.target.value === '' ? null : parseInt(e.target.value) }))} />
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Advisory. Empty = no timeout.</div>
-            </div>
-          </div>
+      <div style={{ maxWidth: 680 }}>
+
+        {/* ── 1. GLOBAL ──────────────────────────────────────────────────── */}
+        <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8, paddingLeft: 4 }}>
+          Global
         </div>
 
-        {/* Rate Limiting */}
-        <div style={sectionStyle}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Rate Limiting</div>
-          <div>
-            <label style={labelStyle}>App Rate Limit (requests per minute)</label>
-            <input type="number" min={1} placeholder="Unlimited"
-              value={cfg.rate_limit_rpm ?? ''} style={fieldStyle}
-              onChange={e => setCfg(c => ({ ...c, rate_limit_rpm: e.target.value === '' ? null : parseInt(e.target.value) }))} />
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Applied across all entry points of this app. Separate from per-orchestrator rate limits.</div>
-          </div>
-        </div>
-
-        {/* Access Control */}
-        <div style={sectionStyle}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Access Control</div>
-          <div>
-            <label style={labelStyle}>Blocked User IDs (comma-separated)</label>
-            <input type="text" placeholder="e.g. 42, 107, 889"
-              value={usersInput} style={fieldStyle}
-              onChange={e => setUsersInput(e.target.value)} />
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Connections from these user IDs are rejected before any processing.</div>
-          </div>
-          <div>
-            <label style={labelStyle}>Blocked Token Hashes (one per line)</label>
-            <textarea placeholder="sha256 hash of each blocked access token"
-              value={tokensInput} rows={4}
-              style={{ ...fieldStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
-              onChange={e => setTokensInput(e.target.value)} />
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Paste the SHA-256 hash of the token (not the raw token). One hash per line.</div>
-          </div>
-        </div>
-
-        {/* Provider Keys */}
-        <div style={sectionStyle}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>LLM Provider Keys</div>
-          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
-            One API key per provider. Keys are AES-GCM encrypted at rest. Use Test to verify the key works.
+        {/* LLM Provider Keys */}
+        <Section title="LLM Provider Keys" icon="key" accent="#fb923c"
+          subtitle={setProviders.length > 0 ? `${setProviders.length} of ${PROVIDER_LIST.length} providers configured` : 'No providers configured yet'}>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: -4 }}>
+            API keys are AES-GCM encrypted at rest. Configured providers are available for selection in orchestrators and canvas agents below.
           </div>
           {PROVIDER_LIST.map(provider => {
             const status = getKeyStatus(provider);
@@ -373,406 +355,382 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
             const isTesting = keyTesting === provider;
             const msg = keyMsg[provider] ?? '';
             const testMsg = keyTestMsg[provider] ?? '';
-            const isError = msg && msg !== 'Saved' && msg !== 'Removed';
-            const isTestError = testMsg && !testMsg.startsWith('✓');
+            const isErr = msg && msg !== 'Saved' && msg !== 'Removed';
+            const isTestErr = testMsg && !testMsg.startsWith('✓');
             return (
-              <div key={provider} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div key={provider} style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${status.key_set ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.07)'}` }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  {/* Provider label + key-set badge */}
-                  <div style={{ width: 90, flexShrink: 0 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{provider}</span>
-                    <span style={{
-                      marginLeft: 8, fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20,
-                      background: status.key_set ? 'rgba(74,222,128,0.12)' : 'rgba(251,146,60,0.12)',
-                      color: status.key_set ? C.green : '#fb923c',
-                      border: `1px solid ${status.key_set ? 'rgba(74,222,128,0.3)' : 'rgba(251,146,60,0.3)'}`,
-                    }}>
-                      {status.key_set ? `set ···${status.key_hint ?? ''}` : 'not set'}
-                    </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 130, flexShrink: 0 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{provider}</span>
+                    {status.key_set
+                      ? badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', `set ···${status.key_hint ?? ''}`)
+                      : badge('#fb923c', 'rgba(251,146,60,0.1)', 'rgba(251,146,60,0.3)', 'not set')}
                   </div>
-                  {/* Key input */}
                   <input
                     type="password"
-                    placeholder={status.key_set ? 'Enter new key to replace…' : 'Paste API key…'}
+                    placeholder={status.key_set ? 'Replace key…' : 'Paste API key…'}
                     value={keyInputs[provider] ?? ''}
                     onChange={e => setKeyInputs(ki => ({ ...ki, [provider]: e.target.value }))}
-                    style={{ ...fieldStyle, flex: 1, minWidth: 180, fontSize: 13 }}
                     onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }}
+                    style={{ ...field, flex: 1, minWidth: 160 }}
                   />
-                  {/* Save key button */}
-                  <button
-                    onClick={() => handleSaveKey(provider)}
-                    disabled={isBusy || !(keyInputs[provider] ?? '').trim()}
-                    style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', opacity: isBusy || !(keyInputs[provider] ?? '').trim() ? 0.5 : 1 }}
-                  >
-                    {isBusy ? '…' : 'Save'}
-                  </button>
-                  {/* Test button — only when key is set */}
+                  {saveBtn(() => handleSaveKey(provider), isBusy, !(keyInputs[provider] ?? '').trim())}
                   {status.key_set && (
-                    <button
-                      onClick={() => handleTestKey(provider)}
-                      disabled={isBusy || isTesting}
-                      style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy || isTesting ? 0.5 : 1 }}
-                    >
+                    <button onClick={() => handleTestKey(provider)} disabled={isBusy || isTesting}
+                      style={{ padding: '8px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy || isTesting ? 0.5 : 1 }}>
                       {isTesting ? '…' : 'Test'}
                     </button>
                   )}
-                  {/* Remove button — only shown when a key is set */}
                   {status.key_set && (
-                    <button
-                      onClick={() => handleDeleteKey(provider)}
-                      disabled={isBusy}
-                      style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.07)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}
-                    >
+                    <button onClick={() => handleDeleteKey(provider)} disabled={isBusy}
+                      style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}>
                       Remove
                     </button>
                   )}
-                  {msg && <span style={{ fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
+                  {msg && <span style={{ fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
                 </div>
-                {testMsg && (
-                  <div style={{ fontSize: 12, color: isTestError ? C.error : C.green, fontWeight: 600, paddingLeft: 98 }}>{testMsg}</div>
-                )}
+                {testMsg && <div style={{ marginTop: 6, fontSize: 12, color: isTestErr ? C.error : C.green, fontWeight: 600, paddingLeft: 138 }}>{testMsg}</div>}
               </div>
             );
           })}
-        </div>
+        </Section>
 
         {/* App Global Parameters */}
-        <div style={sectionStyle}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>App Global Parameters</div>
-          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
-            Named parameters available to all canvas agents in this app. Canvas agent HTTP and LLM nodes can reference these by name using <code style={{ fontFamily: 'monospace', fontSize: 11, background: 'rgba(255,255,255,0.07)', padding: '1px 4px', borderRadius: 4 }}>app_param_ref</code>.
-            Secrets are stored encrypted and never displayed in full.
+        <Section title="Global Parameters" icon="variable_insert" accent="#fb923c"
+          subtitle={appParams.length > 0 ? `${appParams.length} parameter${appParams.length !== 1 ? 's' : ''} — referenced by canvas agent nodes` : 'Shared named values for canvas agent HTTP and LLM nodes'}>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: -4 }}>
+            Values here are referenced by name in canvas agent nodes via <code style={{ fontFamily: 'monospace', fontSize: 11, background: 'rgba(255,255,255,0.07)', padding: '1px 5px', borderRadius: 4 }}>app_param_ref</code>. Secrets are encrypted and never shown in full.
           </div>
 
-          {/* Existing params */}
           {appParams.map(param => {
             const isBusy = paramSaving === param.name;
             const msg = paramMsg[param.name] ?? '';
-            const isError = msg && msg !== 'Saved';
+            const isErr = msg && msg !== 'Saved';
             const isSecret = param.type === 'secret';
             const editVal = editParamInputs[param.name] ?? '';
             return (
-              <div key={param.name} style={{ marginBottom: 10, padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.12)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div key={param.name} style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.1)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
                   <code style={{ fontSize: 12, fontWeight: 700, color: C.text, fontFamily: 'JetBrains Mono, monospace', flex: 1 }}>{param.name}</code>
-                  <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 20, background: 'rgba(132,158,190,0.12)', color: C.textMuted, border: '1px solid rgba(132,158,190,0.2)' }}>{param.type}</span>
-                  {param.is_set && (
-                    <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20, background: 'rgba(74,222,128,0.12)', color: C.green, border: '1px solid rgba(74,222,128,0.3)' }}>
-                      {isSecret ? `set ···${param.value_hint ?? ''}` : 'set'}
-                    </span>
-                  )}
+                  <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 20, background: 'rgba(132,158,190,0.1)', color: C.textMuted, border: '1px solid rgba(132,158,190,0.18)' }}>{param.type}</span>
+                  {param.is_set && badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', isSecret ? `set ···${param.value_hint ?? ''}` : 'set')}
                 </div>
                 {!isSecret && param.is_set && param.value && (
-                  <div style={{ fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, marginBottom: 6, wordBreak: 'break-all' }}>{param.value}</div>
+                  <div style={{ fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, marginBottom: 7, wordBreak: 'break-all' }}>{param.value}</div>
                 )}
                 <div style={{ display: 'flex', gap: 6 }}>
                   <input
                     type={isSecret ? 'password' : 'text'}
-                    placeholder={param.is_set ? 'Enter new value to replace…' : 'Enter value…'}
+                    placeholder={param.is_set ? 'Replace value…' : 'Enter value…'}
                     value={editVal}
                     onChange={e => setEditParamInputs(prev => ({ ...prev, [param.name]: e.target.value }))}
-                    style={{ ...fieldStyle, flex: 1, minWidth: 0, fontSize: 13 }}
                     onKeyDown={e => { if (e.key === 'Enter') handleUpdateAppParam(param.name); }}
+                    style={{ ...field, flex: 1, minWidth: 0 }}
                   />
-                  <button
-                    onClick={() => handleUpdateAppParam(param.name)}
-                    disabled={isBusy || !editVal.trim()}
-                    style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', opacity: isBusy || !editVal.trim() ? 0.5 : 1 }}
-                  >
-                    {isBusy ? '…' : 'Update'}
-                  </button>
-                  <button
-                    onClick={() => handleDeleteAppParam(param.name)}
-                    disabled={isBusy}
-                    style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.07)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}
-                  >
+                  {saveBtn(() => handleUpdateAppParam(param.name), isBusy, !editVal.trim(), 'Update')}
+                  <button onClick={() => handleDeleteAppParam(param.name)} disabled={isBusy}
+                    style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}>
                     Remove
                   </button>
                 </div>
-                {msg && <div style={{ marginTop: 4, fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
+                {msg && <div style={{ marginTop: 5, fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
               </div>
             );
           })}
 
-          {/* Add new param */}
           {!addingParam ? (
-            <button
-              onClick={() => setAddingParam(true)}
-              style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: `1px dashed ${C.outline}`, background: 'transparent', color: C.textMuted, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
-            >
+            <button onClick={() => setAddingParam(true)}
+              style={{ width: '100%', padding: '8px 0', borderRadius: 7, border: `1px dashed ${C.outline}`, background: 'transparent', color: C.textMuted, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
               + Add parameter
             </button>
           ) : (
-            <div style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.18)' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>New Parameter</div>
+            <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.18)' }}>
+              <div style={{ ...lbl, marginBottom: 10 }}>New Parameter</div>
               <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-                <input
-                  placeholder="name (a-z0-9_)"
-                  value={newParamName}
+                <input placeholder="name (a-z0-9_)" value={newParamName}
                   onChange={e => setNewParamName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
-                  style={{ ...fieldStyle, flex: 2, fontSize: 13, fontFamily: 'JetBrains Mono, monospace' }}
-                />
-                <select
-                  value={newParamType}
-                  onChange={e => setNewParamType(e.target.value)}
-                  style={{ ...fieldStyle, flex: 1, fontSize: 13 }}
-                >
-                  <option value="string">string</option>
-                  <option value="secret">secret</option>
-                  <option value="url">url</option>
-                  <option value="int">int</option>
-                  <option value="bool">bool</option>
+                  style={{ ...field, flex: 2, fontFamily: 'JetBrains Mono, monospace' }} />
+                <select value={newParamType} onChange={e => setNewParamType(e.target.value)}
+                  style={{ ...field, flex: 1 }}>
+                  {['string', 'secret', 'url', 'int', 'bool'].map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
               <input
                 type={newParamType === 'secret' ? 'password' : 'text'}
-                placeholder="Value…"
-                value={newParamValue}
+                placeholder="Value…" value={newParamValue}
                 onChange={e => setNewParamValue(e.target.value)}
-                style={{ ...fieldStyle, fontSize: 13, marginBottom: 8 }}
-              />
+                style={{ ...field, marginBottom: 8 }} />
               {addParamMsg && <div style={{ fontSize: 12, color: C.error, fontWeight: 600, marginBottom: 6 }}>{addParamMsg}</div>}
               <div style={{ display: 'flex', gap: 6 }}>
-                <button
-                  onClick={handleAddAppParam}
-                  disabled={addParamSaving || !newParamName.trim() || !newParamValue.trim()}
-                  style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: addParamSaving || !newParamName.trim() || !newParamValue.trim() ? 0.5 : 1 }}
-                >
-                  {addParamSaving ? '…' : 'Save'}
-                </button>
-                <button
-                  onClick={() => { setAddingParam(false); setNewParamName(''); setNewParamValue(''); setNewParamType('string'); setAddParamMsg(''); }}
-                  style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.outline}`, background: 'transparent', color: C.textMuted, cursor: 'pointer', fontSize: 12 }}
-                >
+                {saveBtn(handleAddAppParam, addParamSaving, !newParamName.trim() || !newParamValue.trim())}
+                <button onClick={() => { setAddingParam(false); setNewParamName(''); setNewParamValue(''); setNewParamType('string'); setAddParamMsg(''); }}
+                  style={{ padding: '8px 14px', borderRadius: 7, border: `1px solid ${C.outline}`, background: 'transparent', color: C.textMuted, cursor: 'pointer', fontSize: 12 }}>
                   Cancel
                 </button>
               </div>
             </div>
           )}
-        </div>
+        </Section>
 
-        {/* LLM Objects — assign provider+model per orchestrator */}
+        {/* ── 2. ORCHESTRATORS ───────────────────────────────────────────── */}
         {orchLLMs.length > 0 && (
-          <div style={sectionStyle}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>LLM Configuration</div>
-            <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
-              Assign a provider and model to each orchestrator. Providers with a saved key are marked ✓.
+          <>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', margin: '24px 0 8px', paddingLeft: 4 }}>
+              Orchestrators
             </div>
-            {orchLLMs.map(orch => {
-              const isBusy = orchSaving === orch.id;
-              const msg = orchMsg[orch.id] ?? '';
-              const isError = msg && msg !== 'Saved';
-              const canSave = orch.provider && orch.model;
-              return (
-                <div key={orch.id} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.12)', marginBottom: 8 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
-                    {orch.displayName || orch.name}
+            <Section title="LLM Assignment" icon="hub"
+              subtitle="Select which provider and model each orchestrator uses. Only providers with a saved key are available.">
+              {orchLLMs.map(orch => {
+                const isBusy = orchSaving === orch.id;
+                const msg = orchMsg[orch.id] ?? '';
+                const isErr = msg && msg !== 'Saved';
+                const canSave = orch.provider && orch.model;
+                return (
+                  <div key={orch.id} style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.1)' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                      {orch.displayName || orch.name}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <select value={orch.provider}
+                        onChange={e => {
+                          const p = e.target.value;
+                          setOrchLLMs(prev => prev.map(o => {
+                            if (o.id !== orch.id) return o;
+                            const models = RUNTIME_MODELS[p] ?? [];
+                            return { ...o, provider: p, model: models.includes(o.model) ? o.model : (models[0] ?? '') };
+                          }));
+                        }}
+                        style={{ ...field, width: 160, flexShrink: 0 }}>
+                        <option value="">— provider —</option>
+                        {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                      <select value={orch.model} disabled={!orch.provider}
+                        onChange={e => setOrchLLMs(prev => prev.map(o => o.id === orch.id ? { ...o, model: e.target.value } : o))}
+                        style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+                        <option value="">— model —</option>
+                        {(RUNTIME_MODELS[orch.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                      {saveBtn(() => handleSaveOrchLLM(orch.id), isBusy, !canSave)}
+                    </div>
+                    {msg && <div style={{ marginTop: 6, fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {/* Provider — only shows providers with a saved key */}
-                    <select
-                      value={orch.provider}
-                      onChange={e => {
-                        const p = e.target.value;
-                        setOrchLLMs(prev => prev.map(o => {
-                          if (o.id !== orch.id) return o;
-                          const models = RUNTIME_MODELS[p] ?? [];
-                          const model = models.includes(o.model) ? o.model : (models[0] ?? '');
-                          return { ...o, provider: p, model };
-                        }));
-                      }}
-                      style={{ ...fieldStyle, width: 160, fontSize: 13, flexShrink: 0 }}
-                    >
-                      <option value="">— select provider —</option>
-                      {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
-                    </select>
-                    {/* Model — dropdown of known models for the chosen provider */}
-                    <select
-                      value={orch.model}
-                      onChange={e => setOrchLLMs(prev => prev.map(o => o.id === orch.id ? { ...o, model: e.target.value } : o))}
-                      style={{ ...fieldStyle, flex: 1, fontSize: 12, fontFamily: 'JetBrains Mono, monospace', flexShrink: 1 }}
-                      disabled={!orch.provider}
-                    >
-                      <option value="">— select model —</option>
-                      {(RUNTIME_MODELS[orch.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                    <button
-                      onClick={() => handleSaveOrchLLM(orch.id)}
-                      disabled={isBusy || !canSave}
-                      style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0, opacity: isBusy || !canSave ? 0.5 : 1 }}
-                    >
-                      {isBusy ? '…' : 'Save'}
-                    </button>
-                  </div>
-                  {msg && <div style={{ marginTop: 6, fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </Section>
+          </>
         )}
 
-        {/* Canvas Agent LLM Nodes */}
-        {agentLLMNodes.length > 0 && (
-          <div style={sectionStyle}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Canvas Agent LLM Nodes</div>
-            <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
-              Override the provider and model for each LLM node in your canvas agents.
-              The compiled defaults are shown; leave as-is to use them, or pick a different provider/model.
-              Providers with a saved key are available in the dropdown.
+        {/* ── 3. CANVAS AGENTS ───────────────────────────────────────────── */}
+        {agentIds.length > 0 && (
+          <>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', margin: '24px 0 8px', paddingLeft: 4 }}>
+              Canvas Agents
             </div>
-            {agentLLMNodes.map(node => {
-              const agentId = node.agent_id;
-              const key = `${agentId}::${node.node_id}`;
-              const isBusy = nodeLLMSaving === key;
-              const msg = nodeLLMMsg[node.node_id] ?? '';
-              const isError = msg && msg !== 'Saved';
-              const draft = nodeLLMDrafts[node.node_id] ?? { provider: '', model: '' };
-              const canSave = draft.provider && draft.model;
-              const isOverridden = node.override_provider && node.override_model;
-              const allProviders = PROVIDER_LIST;
-              return (
-                <div key={node.node_id} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.12)', marginBottom: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', flex: 1 }}>
-                      {node.label || node.node_id}
-                    </span>
-                    <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
-                      default: {node.compiled_provider}/{node.compiled_model}
-                    </span>
-                    {isOverridden && (
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20, background: 'rgba(251,146,60,0.12)', color: '#fb923c', border: '1px solid rgba(251,146,60,0.3)' }}>
-                        overridden
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <select
-                      value={draft.provider}
-                      onChange={e => {
-                        const p = e.target.value;
-                        setNodeLLMDrafts(prev => {
-                          const models = RUNTIME_MODELS[p] ?? [];
-                          const prevModel = prev[node.node_id]?.model ?? '';
-                          const model = models.includes(prevModel) ? prevModel : (models[0] ?? '');
-                          return { ...prev, [node.node_id]: { provider: p, model } };
-                        });
-                      }}
-                      style={{ ...fieldStyle, width: 160, fontSize: 13, flexShrink: 0 }}
-                    >
-                      <option value="">— provider —</option>
-                      {allProviders.map(p => (
-                        <option key={p} value={p}>
-                          {p}{setProviders.includes(p) ? ' ✓' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={draft.model}
-                      onChange={e => setNodeLLMDrafts(prev => ({ ...prev, [node.node_id]: { ...draft, model: e.target.value } }))}
-                      style={{ ...fieldStyle, flex: 1, fontSize: 12, fontFamily: 'JetBrains Mono, monospace' }}
-                      disabled={!draft.provider}
-                    >
-                      <option value="">— model —</option>
-                      {(RUNTIME_MODELS[draft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                    <button
-                      onClick={() => handleSaveNodeLLM(agentId, node.node_id)}
-                      disabled={isBusy || !canSave}
-                      style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0, opacity: isBusy || !canSave ? 0.5 : 1 }}
-                    >
-                      {isBusy ? '…' : 'Save'}
-                    </button>
-                  </div>
-                  {msg && <div style={{ marginTop: 6, fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
-                </div>
-              );
-            })}
-          </div>
-        )}
 
-        {/* Agent Parameters — canvas agents bound to this app */}
-        {agentParamsList.length > 0 && (
-          <div style={sectionStyle}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Agent Parameters</div>
-            <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
-              Runtime parameters required by canvas agents bound to this app. Secrets are stored encrypted and never displayed.
-            </div>
-            {agentParamsList.map(agentParams => {
-              const isBusy = agentParamSaving === agentParams.agent_id;
-              const msg = agentParamMsg[agentParams.agent_id] ?? '';
-              const isError = msg && msg !== 'Saved';
-              const inputs = agentParamInputs[agentParams.agent_id] ?? {};
-              const hasAnyInput = Object.values(inputs).some(v => v.trim() !== '');
+            {agentIds.map(agentId => {
+              const nodes = agentLLMNodes.filter(n => n.agent_id === agentId);
+              const agentParams = agentParamsList.find(a => a.agent_id === agentId);
+              const slug = nodes[0]?.agent_slug ?? agentParams?.agent_slug ?? agentId;
+              const paramsBusy = agentParamSaving === agentId;
+              const paramsMsg = agentParamMsg[agentId] ?? '';
+              const paramsErr = paramsMsg && paramsMsg !== 'Saved';
+              const paramInputs = agentParamInputs[agentId] ?? {};
+              const hasParamInput = Object.values(paramInputs).some(v => v.trim() !== '');
+
+              // Classify params: HTTP-relevant (url/string used by http nodes) vs other
+              const httpParams = agentParams?.required_params.filter(p =>
+                p.used_by_nodes?.some(n => n.toLowerCase().includes('http')) ||
+                p.type === 'url'
+              ) ?? [];
+              const otherParams = agentParams?.required_params.filter(p => !httpParams.includes(p)) ?? [];
+
               return (
-                <div key={agentParams.agent_id} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.12)', marginBottom: 8 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
-                    {agentParams.agent_slug}
-                  </div>
-                  {agentParams.required_params.map(param => {
-                    const isSecret = param.type === 'secret';
-                    const currentVal = inputs[param.key] ?? '';
-                    return (
-                      <div key={param.key} style={{ marginBottom: 10 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                          <label style={{ ...labelStyle, marginBottom: 0, flex: 1 }}>{param.label}</label>
-                          {param.required && !param.is_set && (
-                            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20, background: 'rgba(248,113,113,0.12)', color: '#f87171', border: '1px solid rgba(248,113,113,0.3)' }}>required</span>
-                          )}
-                          {param.is_set && (
-                            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20, background: 'rgba(74,222,128,0.12)', color: C.green, border: '1px solid rgba(74,222,128,0.3)' }}>
-                              set ···{param.hint}
-                            </span>
-                          )}
-                        </div>
-                        {param.description && (
-                          <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>{param.description}</div>
-                        )}
-                        <input
-                          type={isSecret ? 'password' : 'text'}
-                          placeholder={param.is_set ? 'Enter new value to replace…' : (param.default_value ? `default: ${param.default_value}` : 'Enter value…')}
-                          value={currentVal}
-                          onChange={e => setAgentParamInputs(prev => ({
-                            ...prev,
-                            [agentParams.agent_id]: { ...(prev[agentParams.agent_id] ?? {}), [param.key]: e.target.value },
-                          }))}
-                          style={{ ...fieldStyle, fontFamily: isSecret ? 'monospace' : 'inherit', fontSize: 13 }}
-                        />
+                <AgentSection key={agentId} slug={slug}>
+
+                  {/* LLM Nodes */}
+                  {nodes.length > 0 && (
+                    <div>
+                      <AgentSubLabel icon="psychology" label="LLM Nodes" />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {nodes.map(node => {
+                          const key = `${agentId}::${node.node_id}`;
+                          const isBusy = nodeLLMSaving === key;
+                          const msg = nodeLLMMsg[node.node_id] ?? '';
+                          const isErr = msg && msg !== 'Saved';
+                          const draft = nodeLLMDrafts[node.node_id] ?? { provider: '', model: '' };
+                          const canSave = draft.provider && draft.model;
+                          const isOverridden = !!(node.override_provider && node.override_model);
+                          return (
+                            <div key={node.node_id} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${isOverridden ? 'rgba(251,146,60,0.2)' : 'rgba(255,255,255,0.07)'}` }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                                <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: C.text }}>{node.label || node.node_id}</span>
+                                <span style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
+                                  default: {node.compiled_provider}/{node.compiled_model}
+                                </span>
+                                {isOverridden && badge('#fb923c', 'rgba(251,146,60,0.1)', 'rgba(251,146,60,0.3)', 'overridden')}
+                              </div>
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                {/* Only configured providers shown */}
+                                <select value={draft.provider}
+                                  onChange={e => {
+                                    const p = e.target.value;
+                                    setNodeLLMDrafts(prev => {
+                                      const models = RUNTIME_MODELS[p] ?? [];
+                                      const prevModel = prev[node.node_id]?.model ?? '';
+                                      return { ...prev, [node.node_id]: { provider: p, model: models.includes(prevModel) ? prevModel : (models[0] ?? '') } };
+                                    });
+                                  }}
+                                  style={{ ...field, width: 150, flexShrink: 0 }}>
+                                  <option value="">— provider —</option>
+                                  {setProviders.length > 0
+                                    ? setProviders.map(p => <option key={p} value={p}>{p}</option>)
+                                    : PROVIDER_LIST.map(p => <option key={p} value={p}>{p}</option>)
+                                  }
+                                </select>
+                                <select value={draft.model} disabled={!draft.provider}
+                                  onChange={e => setNodeLLMDrafts(prev => ({ ...prev, [node.node_id]: { ...draft, model: e.target.value } }))}
+                                  style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+                                  <option value="">— model —</option>
+                                  {(RUNTIME_MODELS[draft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
+                                {saveBtn(() => handleSaveNodeLLM(agentId, node.node_id), isBusy, !canSave)}
+                              </div>
+                              {msg && <div style={{ marginTop: 6, fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                    <button
-                      onClick={() => handleSaveAgentParams(agentParams.agent_id)}
-                      disabled={isBusy || !hasAnyInput}
-                      style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy || !hasAnyInput ? 0.5 : 1 }}
-                    >
-                      {isBusy ? '…' : 'Save Params'}
-                    </button>
-                    {msg && <span style={{ fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
-                  </div>
-                </div>
+                    </div>
+                  )}
+
+                  {/* HTTP Params */}
+                  {httpParams.length > 0 && (
+                    <div>
+                      <AgentSubLabel icon="http" label="HTTP Nodes" />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {httpParams.map(param => {
+                          const isSecret = param.type === 'secret';
+                          const currentVal = paramInputs[param.key] ?? '';
+                          return (
+                            <div key={param.key} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                <label style={{ ...lbl, marginBottom: 0, flex: 1 }}>{param.label}</label>
+                                {param.required && !param.is_set && badge('#f87171', 'rgba(248,113,113,0.1)', 'rgba(248,113,113,0.3)', 'required')}
+                                {param.is_set && badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', `set ···${param.hint}`)}
+                              </div>
+                              {param.description && <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>{param.description}</div>}
+                              <input
+                                type={isSecret ? 'password' : 'text'}
+                                placeholder={param.is_set ? 'Replace…' : (param.default_value ? `default: ${param.default_value}` : 'Enter value…')}
+                                value={currentVal}
+                                onChange={e => setAgentParamInputs(prev => ({ ...prev, [agentId]: { ...(prev[agentId] ?? {}), [param.key]: e.target.value } }))}
+                                style={{ ...field }}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Other Params */}
+                  {otherParams.length > 0 && (
+                    <div>
+                      <AgentSubLabel icon="tune" label="Parameters" />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {otherParams.map(param => {
+                          const isSecret = param.type === 'secret';
+                          const currentVal = paramInputs[param.key] ?? '';
+                          return (
+                            <div key={param.key} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                <label style={{ ...lbl, marginBottom: 0, flex: 1 }}>{param.label}</label>
+                                {param.required && !param.is_set && badge('#f87171', 'rgba(248,113,113,0.1)', 'rgba(248,113,113,0.3)', 'required')}
+                                {param.is_set && badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', `set ···${param.hint}`)}
+                              </div>
+                              {param.description && <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>{param.description}</div>}
+                              <input
+                                type={isSecret ? 'password' : 'text'}
+                                placeholder={param.is_set ? 'Replace…' : (param.default_value ? `default: ${param.default_value}` : 'Enter value…')}
+                                value={currentVal}
+                                onChange={e => setAgentParamInputs(prev => ({ ...prev, [agentId]: { ...(prev[agentId] ?? {}), [param.key]: e.target.value } }))}
+                                style={{ ...field }}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Save params button — spans all param types */}
+                  {agentParams && agentParams.required_params.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {saveBtn(() => handleSaveAgentParams(agentId), paramsBusy, !hasParamInput, 'Save Parameters')}
+                      {paramsMsg && <span style={{ fontSize: 12, color: paramsErr ? C.error : C.green, fontWeight: 600 }}>{paramsMsg}</span>}
+                    </div>
+                  )}
+                </AgentSection>
               );
             })}
-          </div>
+          </>
         )}
 
-        {/* Save */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            style={{
-              padding: '11px 28px', borderRadius: 8, border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
-              background: '#fb923c', color: '#000', fontSize: 14, fontWeight: 700,
-              opacity: saving ? 0.6 : 1,
-            }}
-          >
-            {saving ? 'Saving…' : 'Save Runtime Config'}
-          </button>
-          {saved && <span style={{ fontSize: 13, color: C.green }}>Saved</span>}
-          {error && <span style={{ fontSize: 13, color: C.error }}>{error}</span>}
+        {/* ── 4. POLICY ──────────────────────────────────────────────────── */}
+        <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', margin: '24px 0 8px', paddingLeft: 4 }}>
+          Policy
         </div>
+
+        <Section title="Session Limits" icon="timer" defaultOpen={false}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div>
+              <label style={lbl}>Max Concurrent Sessions</label>
+              <input type="number" min={1} placeholder="Unlimited" value={cfg.max_concurrent_sessions ?? ''} style={field}
+                onChange={e => setCfg(c => ({ ...c, max_concurrent_sessions: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>App-wide soft cap. Empty = unlimited.</div>
+            </div>
+            <div>
+              <label style={lbl}>Session Timeout (min)</label>
+              <input type="number" min={1} placeholder="No timeout" value={cfg.session_timeout_minutes ?? ''} style={field}
+                onChange={e => setCfg(c => ({ ...c, session_timeout_minutes: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Advisory. Empty = no timeout.</div>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Rate Limiting" icon="speed" defaultOpen={false}>
+          <label style={lbl}>Requests per minute</label>
+          <input type="number" min={1} placeholder="Unlimited" value={cfg.rate_limit_rpm ?? ''} style={field}
+            onChange={e => setCfg(c => ({ ...c, rate_limit_rpm: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: -8 }}>Applied across all entry points of this app.</div>
+        </Section>
+
+        <Section title="Access Control" icon="block" defaultOpen={false}>
+          <div>
+            <label style={lbl}>Blocked User IDs (comma-separated)</label>
+            <input type="text" placeholder="e.g. 42, 107, 889" value={usersInput} style={field}
+              onChange={e => setUsersInput(e.target.value)} />
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Connections from these user IDs are rejected immediately.</div>
+          </div>
+          <div>
+            <label style={lbl}>Blocked Token Hashes (one per line)</label>
+            <textarea placeholder="SHA-256 hash of each blocked token" value={tokensInput} rows={3}
+              style={{ ...field, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
+              onChange={e => setTokensInput(e.target.value)} />
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Paste the SHA-256 hash of the token — not the raw token. One per line.</div>
+          </div>
+        </Section>
+
+        {/* Save policy */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+          <button onClick={handleSave} disabled={saving}
+            style={{ padding: '11px 28px', borderRadius: 8, border: 'none', cursor: saving ? 'not-allowed' : 'pointer', background: '#fb923c', color: '#000', fontSize: 14, fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
+            {saving ? 'Saving…' : 'Save Policy'}
+          </button>
+          {saved  && <span style={{ fontSize: 13, color: C.green }}>Saved</span>}
+          {error  && <span style={{ fontSize: 13, color: C.error }}>{error}</span>}
+        </div>
+
       </div>
     </div>
   );
