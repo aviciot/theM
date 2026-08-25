@@ -380,6 +380,9 @@ func (f *isolationFakeDal) BulkDeleteRuns(_ context.Context, _ string, ids []str
 }
 
 // Agent action stubs — platform-global, no tenant scope.
+func (f *isolationFakeDal) GetAgentIDByComponentDef(_ context.Context, id string) (string, error) {
+	return id, nil
+}
 func (f *isolationFakeDal) GetAgentBySlug(_ context.Context, _ string) (dal.Agent, error) {
 	return dal.Agent{}, nil
 }

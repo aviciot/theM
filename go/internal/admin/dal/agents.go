@@ -209,6 +209,34 @@ func (d *DB) DeleteAgent(ctx context.Context, tenantID, id string) error {
 		id)
 }
 
+// GetAgentIDByComponentDef resolves the agents.id for a canvas_a2a agent given its
+// component_definitions.id. Canvas agents are published via a CTE that may cause
+// agents.id to diverge from component_definitions.id when a slug conflict causes the
+// ON CONFLICT branch to fire. This query walks agents → agent_runtime_specs to find
+// the canonical agents.id regardless of how publish resolved the slug.
+// Returns pgx.ErrNoRows if no published agents row matches.
+func (d *DB) GetAgentIDByComponentDef(ctx context.Context, componentDefID string) (string, error) {
+	const q = `
+		SELECT a.id::text
+		  FROM them.agents a
+		  JOIN them.agent_runtime_specs ars ON ars.agent_id = a.id
+		  JOIN them.component_definitions cd ON cd.id = ars.definition_id
+		 WHERE cd.id = $1::uuid
+		   AND a.transport = 'canvas_a2a'
+		 LIMIT 1`
+	var id string
+	err := d.q.QueryRow(ctx, q, componentDefID).Scan(&id)
+	if err != nil {
+		// Fallback: try direct id match (works when CTE produced matching ids).
+		const q2 = `SELECT id::text FROM them.agents WHERE id = $1::uuid AND transport = 'canvas_a2a'`
+		err2 := d.q.QueryRow(ctx, q2, componentDefID).Scan(&id)
+		if err2 != nil {
+			return "", err // return original error
+		}
+	}
+	return id, nil
+}
+
 // GetAgentBySlug returns a single agent by slug (platform-global, not tenant-scoped).
 // Used for discovering the security_scanner agent which is a platform-level resource.
 // Returns pgx.ErrNoRows when the agent does not exist.

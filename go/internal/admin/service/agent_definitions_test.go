@@ -73,6 +73,9 @@ func (f *agentDefFakeDal) UpdateAgent(_ context.Context, _, _ string, _ dal.Agen
 	return nil
 }
 func (f *agentDefFakeDal) DeleteAgent(_ context.Context, _, _ string) error { return nil }
+func (f *agentDefFakeDal) GetAgentIDByComponentDef(_ context.Context, id string) (string, error) {
+	return id, nil
+}
 func (f *agentDefFakeDal) GetAgentBySlug(_ context.Context, _ string) (dal.Agent, error) {
 	return dal.Agent{}, nil
 }

@@ -331,6 +331,9 @@ func (f *fakeDal) UpsertConfig(_ context.Context, key string, value []byte) erro
 }
 
 // Agent action stubs (platform-global, no tenant scope).
+func (f *fakeDal) GetAgentIDByComponentDef(_ context.Context, id string) (string, error) {
+	return id, nil
+}
 func (f *fakeDal) GetAgentBySlug(_ context.Context, _ string) (dal.Agent, error) {
 	return f.agent, f.getAgentErr
 }
