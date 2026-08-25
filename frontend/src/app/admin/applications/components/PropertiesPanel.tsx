@@ -69,11 +69,15 @@ export function PropertiesPanel({
 
   async function saveMCPServers(d: OrchestratorData, servers: MCPServerAttachment[]) {
     if (!d.appOrchestratorId || !app) return;
+    // Optimistic update first so rapid clicks on multiple MCPs see the correct current list.
+    onUpdateNode(selectedNode!.id, { mcpServers: servers });
     setMcpSaving(true);
     try {
       await themApi.patchOrchestratorMCPServers(app.id, d.appOrchestratorId, servers);
-      onUpdateNode(selectedNode!.id, { mcpServers: servers });
-    } catch { /* non-fatal */ } finally {
+    } catch {
+      // Revert optimistic update on failure.
+      onUpdateNode(selectedNode!.id, { mcpServers: d.mcpServers ?? [] });
+    } finally {
       setMcpSaving(false);
     }
   }
