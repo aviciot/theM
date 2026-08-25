@@ -52,6 +52,9 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Put("/provider-keys/{provider}", h.SetProviderKey)
 		app.Delete("/provider-keys/{provider}", h.DeleteProviderKey)
 		app.Post("/test-llm", h.TestLLM)
+		app.Get("/app-params", h.GetAppParams)
+		app.Put("/app-params/{name}", h.SetAppParam)
+		app.Delete("/app-params/{name}", h.DeleteAppParam)
 		app.Patch("/orchestrators/{orch_id}/llm", h.PatchOrchestratorLLM)
 		app.Patch("/orchestrators/{orch_id}/mcp-servers", h.PatchOrchestratorMCPServers)
 		app.Post("/entry-points", h.CreateEntryPoint)
@@ -320,6 +323,70 @@ func (h *ApplicationsHandler) DeleteProviderKey(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"provider": provider, "deleted": true})
+}
+
+// GetAppParams handles GET /api/v1/admin/applications/{id}/app-params.
+// Returns name, type, is_set, value_hint per param. Never returns ciphertext or plaintext secrets.
+func (h *ApplicationsHandler) GetAppParams(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	params, err := h.svc.GetAppParams(r.Context(), tenantID, id)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get app params")
+		return
+	}
+	writeJSON(w, http.StatusOK, params)
+}
+
+// SetAppParam handles PUT /api/v1/admin/applications/{id}/app-params/{name}.
+// Body: {"value": "<plaintext>", "type": "secret"|"string"|"url"|"int"|"bool"}
+func (h *ApplicationsHandler) SetAppParam(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
+	if id == "" || name == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id or param name")
+		return
+	}
+	var body service.AppGlobalParamUpsertInput
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if err := h.svc.SetAppParam(r.Context(), tenantID, id, name, body); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "set app param")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "updated": true})
+}
+
+// DeleteAppParam handles DELETE /api/v1/admin/applications/{id}/app-params/{name}.
+func (h *ApplicationsHandler) DeleteAppParam(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
+	if id == "" || name == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id or param name")
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if err := h.svc.DeleteAppParam(r.Context(), tenantID, id, name); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "delete app param")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "deleted": true})
 }
 
 // TestLLM handles POST /api/v1/admin/applications/{id}/test-llm.

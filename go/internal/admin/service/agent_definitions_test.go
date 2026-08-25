@@ -285,6 +285,13 @@ func (f *agentDefFakeDal) GetRequiredParamsForAgent(_ context.Context, _ string)
 func (f *agentDefFakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }
+func (f *agentDefFakeDal) GetAppParams(_ context.Context, _, _ string) ([]byte, error) {
+	return []byte(`{}`), nil
+}
+func (f *agentDefFakeDal) SetAppParam(_ context.Context, _, _, _ string, _ []byte) error {
+	return nil
+}
+func (f *agentDefFakeDal) DeleteAppParam(_ context.Context, _, _, _ string) error { return nil }
 
 // MCP server stubs for agentDefFakeDal.
 func (f *agentDefFakeDal) ListMCPServers(_ context.Context, _ string) ([]dal.MCPServer, error) {

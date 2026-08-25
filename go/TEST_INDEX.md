@@ -1061,6 +1061,27 @@ is reached indirectly. Includes regression tests for the empty-CT fall-through b
 
 ---
 
+### S1-62 · App global params — `internal/admin/service/app_global_params_test.go`
+
+**Purpose:** Unit tests for app-level global named parameter CRUD: encryption of secrets, plaintext
+storage of non-secrets, validation of name format and param type, masking on read, and plaintext
+decryption roundtrip via `GetPlaintextAppParams`.
+
+| Test | What it proves |
+|---|---|
+| `TestAppParam_SecretRoundtrip` | AGP-1: `SetAppParam` secret stores `{"ct":"...","hint":"XXXX"}`; `GetPlaintextAppParams` decrypts correctly |
+| `TestAppParam_NonSecretStoredAsString` | AGP-2: non-secret stored as plain JSON string |
+| `TestAppParam_BadName` | AGP-3: name with invalid chars → `ErrValidation` |
+| `TestAppParam_BadType` | AGP-4: unsupported type → `ErrUnprocessable` |
+| `TestAppParam_GetSecretMasked` | AGP-5: `GetAppParams` returns `IsSet=true`, `ValueHint` set, `Value` empty for secrets |
+| `TestAppParam_GetNonSecretValue` | AGP-6: `GetAppParams` returns `Value` populated for non-secrets, no `ValueHint` |
+| `TestAppParam_Delete` | AGP-7: `DeleteAppParam` calls DAL correctly |
+| `TestAppParam_NilCryptoKey_Roundtrip` | AGP-8: nil crypto key → `plain:` prefix roundtrip works (test-mode) |
+
+**Trigger:** any change to `internal/admin/service/applications.go` (app global param methods), `go/internal/admin/dal/applications.go` (GetAppParams/SetAppParam/DeleteAppParam), OR `db/045_app_global_params.sql`
+
+---
+
 ### S1-33 · Tenant isolation — `internal/admin/service/tenant_isolation_test.go`
 
 **Purpose:** R-4c1 service-layer tenant isolation contracts. Each tenant-owned entity (agents,
@@ -1372,8 +1393,8 @@ split (warning at validate / error at publish), and structured Issue fields (Ski
 | `TestCompile_UnknownStepType` | step with unknown type → UNKNOWN_STEP_TYPE |
 | `TestCompile_HTTPNode_AcceptsConfig` | http step without app_param_key compiles cleanly |
 | `TestCompile_LLMNode_AcceptsConfig` | llm step without model_override_param_key compiles cleanly |
-| `TestCompile_HTTPNode_AppParams` | http step with `app_param_key: "bearer_token"` → RequiredParams contains bearer_token with UsedByNodes |
-| `TestCompile_UndeclaredAppParam` | http step refs unknown app_param_key → UNDECLARED_APP_PARAM error |
+| `TestCompile_HTTPNode_AppParams` | http step with `app_param_key: "bearer_token"` → RequiredParams contains composite key `step1:bearer_token` with UsedByNodes |
+| `TestCompile_HTTPNode_FreeFormAppParamKey` | http step with free-form `app_param_key: "geoapify_key"` → RequiredParams contains composite key `step1:geoapify_key` |
 | `TestCompile_NoParams` | agent with no param-aware nodes → empty RequiredParams |
 | `TestCompile_DanglingNextRef` | step.next refs nonexistent step → DANGLING_NEXT |
 | `TestCompile_CycleDetected` | A→B→A cycle → CYCLE_DETECTED |
@@ -1859,7 +1880,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/dal/llm_providers.go` | S1-25 + S2-05 (integration) |
 | `internal/admin/dal/agent_definitions.go` | S1-49 |
 | `internal/admin/service/applications.go` | S1-25 + S1-33 + S1-60 |
-| `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 + S1-49 + S1-51 + S1-60 |
+| `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 + S1-49 + S1-51 + S1-60 + S1-62 |
 | `internal/admin/service/agent_definitions_publish.go` | S1-51 + S1-54 |
 | `internal/agentgen/noderegistry.go` | S1-54 + S1-50 |
 | `internal/agentgen/nodes.go` | S1-54 + S1-50 |
@@ -1964,7 +1985,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-54 | node definition registry (all 12 types, metadata, Validate, ToInfo) | 17 |
 | S1-60 | admin/service provider key encryption | 9 |
 | S1-61 | temporal/workerconfig loader contracts | 2 |
-| **S1 total** | | **733** |
+| S1-62 | admin/service app global params (AGP-1..8) | 8 |
+| **S1 total** | | **741** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

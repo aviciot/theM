@@ -258,6 +258,13 @@ func (f *publishFakeDal) GetRequiredParamsForAgent(_ context.Context, _ string) 
 func (f *publishFakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }
+func (f *publishFakeDal) GetAppParams(_ context.Context, _, _ string) ([]byte, error) {
+	return []byte(`{}`), nil
+}
+func (f *publishFakeDal) SetAppParam(_ context.Context, _, _, _ string, _ []byte) error {
+	return nil
+}
+func (f *publishFakeDal) DeleteAppParam(_ context.Context, _, _, _ string) error { return nil }
 
 // MCP server stubs for publishFakeDal.
 func (f *publishFakeDal) ListMCPServers(_ context.Context, _ string) ([]dal.MCPServer, error) {

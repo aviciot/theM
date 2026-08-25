@@ -72,7 +72,11 @@ type fakeDal struct {
 
 	// provider key fields
 	setProviderKeyValue []byte // last raw JSON written by SetProviderKey
-	providerKeysRaw     []byte // what GetProviderKeys returns (nil → "{}")
+	providerKeysRaw     []byte // what GetProviderKeys and GetAppParams return (nil → "{}")
+
+	// app global param fields
+	setAppParamValue     []byte // last raw JSON written by SetAppParam
+	deleteAppParamCalled bool
 
 	// config fields
 	configRow         *dal.ConfigRow
@@ -399,6 +403,22 @@ func (f *fakeDal) GetRequiredParamsForAgent(_ context.Context, _ string) (dal.Ag
 	return dal.AgentParamsRow{}, nil
 }
 func (f *fakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error { return nil }
+
+// App global params stubs — satisfy Dal interface.
+func (f *fakeDal) GetAppParams(_ context.Context, _, _ string) ([]byte, error) {
+	if f.providerKeysRaw != nil {
+		return f.providerKeysRaw, nil
+	}
+	return []byte(`{}`), nil
+}
+func (f *fakeDal) SetAppParam(_ context.Context, _, _, _ string, value []byte) error {
+	f.setAppParamValue = value
+	return nil
+}
+func (f *fakeDal) DeleteAppParam(_ context.Context, _, _, _ string) error {
+	f.deleteAppParamCalled = true
+	return nil
+}
 
 // MCP server stubs — satisfy Dal interface, use controllable fields.
 func (f *fakeDal) ListMCPServers(_ context.Context, _ string) ([]dal.MCPServer, error) {

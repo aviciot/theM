@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"sort"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/crypto"
@@ -407,6 +409,144 @@ func parseProviderKeys(raw []byte) (map[string]providerKeyEntry, error) {
 		// Store the plaintext in CT so GetPlaintextProviderKey can return it.
 		// Callers should re-encrypt on next SetProviderKey call.
 		out[p] = providerKeyEntry{CT: v, Hint: hint}
+	}
+	return out, nil
+}
+
+// appParamNameRe is the validation pattern for user-defined app param names.
+var appParamNameRe = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+
+// validAppParamTypes is the set of supported param types.
+var validAppParamTypes = map[string]struct{}{
+	"secret": {}, "string": {}, "url": {}, "int": {}, "bool": {},
+}
+
+// AppGlobalParamUpsertInput is the request body for PUT /app-params/{name}.
+type AppGlobalParamUpsertInput struct {
+	Value string `json:"value"`
+	Type  string `json:"type"` // "secret" | "string" | "url" | "int" | "bool"
+}
+
+// GetAppParams returns metadata + fill-status for all app-level named params.
+// Secret values are never returned; only is_set and value_hint are exposed.
+func (s *AppService) GetAppParams(ctx context.Context, tenantID, appID string) ([]dal.AppGlobalParam, error) {
+	raw, err := s.dal.GetAppParams(ctx, tenantID, appID)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return parseAppParams(raw)
+}
+
+// SetAppParam encrypts secret params and persists the value.
+func (s *AppService) SetAppParam(ctx context.Context, tenantID, appID, name string, input AppGlobalParamUpsertInput) error {
+	if !appParamNameRe.MatchString(name) {
+		return validation("app param name must match ^[a-z0-9_]{1,64}$")
+	}
+	if _, ok := validAppParamTypes[input.Type]; !ok {
+		return unprocessable("unsupported param type: " + input.Type)
+	}
+	if input.Value == "" {
+		return validation("value must not be empty")
+	}
+	var valueJSON []byte
+	if input.Type == "secret" {
+		hint := input.Value
+		if len(hint) > 4 {
+			hint = hint[len(hint)-4:]
+		}
+		ct, err := s.encryptKey(input.Value)
+		if err != nil {
+			return fmt.Errorf("encrypt app param: %w", err)
+		}
+		entry := providerKeyEntry{CT: ct, Hint: hint}
+		valueJSON, err = json.Marshal(entry)
+		if err != nil {
+			return err
+		}
+	} else {
+		var err error
+		valueJSON, err = json.Marshal(input.Value)
+		if err != nil {
+			return err
+		}
+	}
+	return s.dal.SetAppParam(ctx, tenantID, appID, name, valueJSON)
+}
+
+// DeleteAppParam removes one named param.
+func (s *AppService) DeleteAppParam(ctx context.Context, tenantID, appID, name string) error {
+	if !appParamNameRe.MatchString(name) {
+		return validation("invalid app param name")
+	}
+	return s.dal.DeleteAppParam(ctx, tenantID, appID, name)
+}
+
+// GetPlaintextAppParams decrypts all app-level params and returns a name→plaintext map.
+// Used by the runtime loader only — never exposed via HTTP.
+func (s *AppService) GetPlaintextAppParams(ctx context.Context, tenantID, appID string) (map[string]string, error) {
+	raw, err := s.dal.GetAppParams(ctx, tenantID, appID)
+	if err != nil {
+		return nil, err
+	}
+	return decryptAppParams(raw, s.decryptKey)
+}
+
+// parseAppParams decodes the app_params JSONB blob into []dal.AppGlobalParam.
+func parseAppParams(raw []byte) ([]dal.AppGlobalParam, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return nil, fmt.Errorf("parse app_params: %w", err)
+	}
+	out := make([]dal.AppGlobalParam, 0, len(top))
+	for name, valRaw := range top {
+		var entry providerKeyEntry
+		if json.Unmarshal(valRaw, &entry) == nil && (entry.CT != "" || entry.Hint != "") {
+			out = append(out, dal.AppGlobalParam{
+				Name:      name,
+				Type:      "secret",
+				IsSet:     entry.CT != "",
+				ValueHint: entry.Hint,
+			})
+			continue
+		}
+		var s string
+		if json.Unmarshal(valRaw, &s) == nil {
+			out = append(out, dal.AppGlobalParam{
+				Name:  name,
+				Type:  "string",
+				IsSet: s != "",
+				Value: s,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// decryptAppParams returns the plaintext map for all stored params.
+func decryptAppParams(raw []byte, decryptFn func(string) (string, error)) (map[string]string, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return map[string]string{}, nil
+	}
+	out := make(map[string]string, len(top))
+	for name, valRaw := range top {
+		var entry providerKeyEntry
+		if json.Unmarshal(valRaw, &entry) == nil && entry.CT != "" {
+			plain, err := decryptFn(entry.CT)
+			if err != nil {
+				continue
+			}
+			out[name] = plain
+			continue
+		}
+		var s string
+		if json.Unmarshal(valRaw, &s) == nil {
+			out[name] = s
+		}
 	}
 	return out, nil
 }

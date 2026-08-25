@@ -333,6 +333,49 @@ func (d *DB) DeleteProviderKey(ctx context.Context, tenantID, appID, provider st
 	return d.q.Exec(ctx, q, appID, tenantID, provider)
 }
 
+// GetAppParams returns the app_params JSONB blob for the application.
+// Returns an empty JSON object when the field is null or not set.
+func (d *DB) GetAppParams(ctx context.Context, tenantID, appID string) ([]byte, error) {
+	const q = `SELECT COALESCE(app_params, '{}') FROM them.applications WHERE id=$1::uuid AND tenant_id=$2::uuid`
+	var raw []byte
+	if err := d.q.QueryRow(ctx, q, appID, tenantID).Scan(&raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+// SetAppParam stores one named app param in the app_params JSONB column.
+// Uses jsonb_set so other params are preserved.
+func (d *DB) SetAppParam(ctx context.Context, tenantID, appID, name string, valueJSON []byte) error {
+	const q = `
+		UPDATE them.applications
+		SET app_params = jsonb_set(COALESCE(app_params,'{}'), $3::text[], $4::jsonb, true),
+		    updated_at = now()
+		WHERE id=$1::uuid AND tenant_id=$2::uuid`
+	return d.q.Exec(ctx, q, appID, tenantID, "{"+name+"}", valueJSON)
+}
+
+// DeleteAppParam removes one named param from app_params.
+func (d *DB) DeleteAppParam(ctx context.Context, tenantID, appID, name string) error {
+	const q = `
+		UPDATE them.applications
+		SET app_params = app_params - $3,
+		    updated_at = now()
+		WHERE id=$1::uuid AND tenant_id=$2::uuid`
+	return d.q.Exec(ctx, q, appID, tenantID, name)
+}
+
+// AppGlobalParam is one entry in applications.app_params JSONB as returned to callers.
+// For secrets, Value is always empty and ValueHint holds the last 4 chars of the plaintext.
+// For non-secrets, Value holds the plaintext and ValueHint is empty.
+type AppGlobalParam struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`                  // "secret" | "string" | "url" | "int" | "bool"
+	IsSet     bool   `json:"is_set"`
+	ValueHint string `json:"value_hint,omitempty"` // last 4 chars; secrets only
+	Value     string `json:"value,omitempty"`       // non-secrets only
+}
+
 // SetOrchestratorLLM updates llm_provider and llm_model on one app_orchestrators row.
 // Scoped to appID so a caller cannot modify an orchestrator belonging to another application.
 func (d *DB) SetOrchestratorLLM(ctx context.Context, appID, orchID, provider, model string) error {
