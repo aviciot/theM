@@ -30,6 +30,7 @@ type AppOrchestratorRow struct {
 	HistoryWindow         int
 	BudgetTokens          *int
 	AllowedAgentIDs       []string
+	MCPServers            []byte   // JSONB — nil means do not overwrite existing value
 	ComponentDefinitionID *string
 	ComponentVersion      *int
 	SourceDefinitionID    string
@@ -118,7 +119,7 @@ func (d *DB) UpsertAppOrchestrator(ctx context.Context, row AppOrchestratorRow) 
 			(application_id, name, node_id, kind, delegatable,
 			 llm_provider, llm_model, system_prompt,
 			 max_iterations, max_parallel_tools, history_window, budget_tokens,
-			 allowed_agent_ids,
+			 allowed_agent_ids, mcp_servers,
 			 component_definition_id, component_version,
 			 source_definition_id, source_definition_hash,
 			 enabled)
@@ -126,9 +127,9 @@ func (d *DB) UpsertAppOrchestrator(ctx context.Context, row AppOrchestratorRow) 
 			($1::uuid, $2, $3, $4, $5,
 			 $6, $7, $8,
 			 $9, $10, $11, $12,
-			 $13::uuid[],
-			 $14::uuid, $15,
-			 $16::uuid, $17,
+			 $13::uuid[], COALESCE($14::jsonb, '[]'::jsonb),
+			 $15::uuid, $16,
+			 $17::uuid, $18,
 			 true)
 		ON CONFLICT (application_id, name) DO UPDATE SET
 			node_id               = EXCLUDED.node_id,
@@ -142,6 +143,7 @@ func (d *DB) UpsertAppOrchestrator(ctx context.Context, row AppOrchestratorRow) 
 			history_window        = EXCLUDED.history_window,
 			budget_tokens         = EXCLUDED.budget_tokens,
 			allowed_agent_ids     = EXCLUDED.allowed_agent_ids,
+			mcp_servers           = COALESCE(EXCLUDED.mcp_servers, them.app_orchestrators.mcp_servers, '[]'::jsonb),
 			component_definition_id = EXCLUDED.component_definition_id,
 			component_version     = EXCLUDED.component_version,
 			source_definition_id  = EXCLUDED.source_definition_id,
@@ -167,7 +169,8 @@ func (d *DB) UpsertAppOrchestrator(ctx context.Context, row AppOrchestratorRow) 
 		row.MaxParallelTools,
 		row.HistoryWindow,
 		row.BudgetTokens,
-		agentIDs, // allowed_agent_ids — text[] cast done in SQL
+		agentIDs,      // allowed_agent_ids — text[] cast done in SQL
+		row.MCPServers, // mcp_servers — nil → COALESCE keeps existing
 		row.ComponentDefinitionID,
 		row.ComponentVersion,
 		row.SourceDefinitionID,

@@ -318,6 +318,11 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 					row.BudgetTokens = &n
 				}
 			}
+			if v, ok := comp.Config["mcp_servers"]; ok {
+				if b, err := json.Marshal(v); err == nil {
+					row.MCPServers = b
+				}
+			}
 		} else {
 			row.MaxIterations = 10
 			row.MaxParallelTools = 5
@@ -347,6 +352,24 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 			return nil, fmt.Errorf("upsert orchestrator %q: %w", comp.InstanceID, upsertErr)
 		}
 		orchUUIDs[comp.InstanceID] = orchID
+	}
+
+	// 5b. Upsert app_agent_bindings for every canvas agent in this definition.
+	// This ensures RuntimeView can discover required params for internal (canvas_a2a) agents.
+	for _, comp := range doc.Components {
+		if comp.DefinitionRef.Kind != registry.KindAgent {
+			continue
+		}
+		cd, ok := resolved[comp.InstanceID]
+		if !ok {
+			continue
+		}
+		if bindErr := s.dal.UpsertAgentBinding(ctx, dal.AgentBindingRow{
+			ApplicationID: appID,
+			AgentID:       cd.ID,
+		}); bindErr != nil {
+			return nil, fmt.Errorf("upsert agent binding %q: %w", comp.InstanceID, bindErr)
+		}
 	}
 
 	// 6. Compile entry_points.

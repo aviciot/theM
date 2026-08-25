@@ -58,7 +58,6 @@ export function CanvasBuilderView({
   const [compPanelWidth, setCompPanelWidth] = useState(260);
   const [showRepublishModal, setShowRepublishModal] = useState(false);
   const [availableMCPServers, setAvailableMCPServers] = useState<MCPServer[]>([]);
-  const [mcpSaving, setMcpSaving] = useState(false);
 
   function startCompPanelResize(e: React.MouseEvent) {
     e.preventDefault();
@@ -555,35 +554,19 @@ export function CanvasBuilderView({
             </div>
           )}
 
-          {/* MCP Servers */}
+          {/* MCP Servers — design-time config, saved to canvas on publish */}
           {(() => {
-            const appOrch = app.app_orchestrators.find(ao => ao.name === d.instance_id);
-            const currentAttachments: MCPServerAttachment[] = appOrch?.mcp_servers ?? [];
+            const currentAttachments: MCPServerAttachment[] = (cfg.mcp_servers as MCPServerAttachment[] | undefined) ?? [];
             const enabledServers = availableMCPServers.filter(s => s.enabled);
-            async function saveMCP(next: MCPServerAttachment[]) {
-              if (!appOrch) return;
-              setMcpSaving(true);
-              try {
-                await themApi.patchOrchestratorMCPServers(app.id, appOrch.id, next);
-                appOrch.mcp_servers = next;
-              } catch { /* non-fatal */ } finally {
-                setMcpSaving(false);
-              }
-            }
             return (
               <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: appOrch ? 8 : 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                   <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.purple }}>lan</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: C.purple, textTransform: 'uppercase', letterSpacing: '0.5px', flex: 1 }}>MCP Servers</span>
-                  {mcpSaving && <span style={{ fontSize: 10, color: C.textMuted }}>saving…</span>}
+                  <span style={{ fontSize: 11, fontWeight: 700, color: C.purple, textTransform: 'uppercase', letterSpacing: '0.5px' }}>MCP Servers</span>
                 </div>
-                {!appOrch && (
-                  <div style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic' }}>Publish the canvas first to attach MCP servers</div>
-                )}
-                {appOrch && enabledServers.length === 0 && (
+                {enabledServers.length === 0 ? (
                   <div style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic' }}>No MCP servers configured — add one in MCP Store</div>
-                )}
-                {appOrch && enabledServers.length > 0 && (
+                ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {enabledServers.map(server => {
                       const isAttached = currentAttachments.some(a => a.slug === server.slug);
@@ -591,10 +574,10 @@ export function CanvasBuilderView({
                       return (
                         <div key={server.slug}
                           onClick={() => {
-                            const next = isAttached
+                            const next: MCPServerAttachment[] = isAttached
                               ? currentAttachments.filter(a => a.slug !== server.slug)
                               : [...currentAttachments, { slug: server.slug }];
-                            saveMCP(next);
+                            setOrchConfig({ mcp_servers: next });
                           }}
                           style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${isAttached ? 'rgba(208,188,255,0.3)' : 'rgba(255,255,255,0.08)'}`, background: isAttached ? 'rgba(208,188,255,0.07)' : 'transparent' }}>
                           <div style={{ width: 13, height: 13, borderRadius: 3, border: `1.5px solid ${isAttached ? C.purple : 'rgba(255,255,255,0.3)'}`, background: isAttached ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
