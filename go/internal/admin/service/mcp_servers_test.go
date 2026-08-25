@@ -14,6 +14,10 @@ package service_test
 //   S1-MCP-09  SetCredential — empty credential → ErrValidation
 //   S1-MCP-10  SetCredential — encrypts and upserts
 //   S1-MCP-11  SetCredential — empty auth_header_name defaults to "Authorization"
+//   S1-MCP-12  Create — probe_token encrypted before DAL write
+//   S1-MCP-13  Create — no probe_token → DAL receives nil (no column write)
+//   S1-MCP-14  Update — probe_token="" → DAL receives pointer-to-"" (clear)
+//   S1-MCP-15  Update — probe_token absent → DAL receives nil (no change)
 
 import (
 	"context"
@@ -197,6 +201,78 @@ func TestMCPServerService_SetCredential_EncryptsAndUpserts(t *testing.T) {
 	}
 	if !d.upsertCredCalled {
 		t.Error("want UpsertAppMCPCredential to be called")
+	}
+}
+
+// ── Probe token ───────────────────────────────────────────────────────────────
+
+func TestMCPServerService_Create_ProbeTokenEncrypted(t *testing.T) {
+	// S1-MCP-12: Create with probe_token → DAL receives non-empty encrypted value.
+	d := &fakeDal{mcpCreated: dal.MCPServer{ID: "srv-1", Name: "S", Slug: "s", AuthType: "bearer", Transport: "http", HealthStatus: "unknown", Enabled: true}}
+	svc := newMCPSvc(d)
+	_, err := svc.Create(context.Background(), "tenant-1", service.MCPServerCreate{
+		Name:       "S",
+		Slug:       "s",
+		AuthType:   "bearer",
+		ProbeToken: "my-probe-token",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.lastCreateMCPInput.ProbeCredentialEncrypted == nil {
+		t.Fatal("want ProbeCredentialEncrypted to be set in DAL input")
+	}
+	if *d.lastCreateMCPInput.ProbeCredentialEncrypted == "" {
+		t.Error("want non-empty encrypted probe credential in DAL input")
+	}
+	if *d.lastCreateMCPInput.ProbeCredentialEncrypted == "my-probe-token" {
+		t.Error("probe token must be encrypted, not stored as plaintext")
+	}
+}
+
+func TestMCPServerService_Create_NoProbeToken_NilInput(t *testing.T) {
+	// S1-MCP-13: Create without probe_token → DAL receives nil (no column write).
+	d := &fakeDal{mcpCreated: dal.MCPServer{ID: "srv-1", Name: "S", Slug: "s", Transport: "http", HealthStatus: "unknown", Enabled: true}}
+	svc := newMCPSvc(d)
+	_, err := svc.Create(context.Background(), "tenant-1", service.MCPServerCreate{Name: "S", Slug: "s"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.lastCreateMCPInput.ProbeCredentialEncrypted != nil {
+		t.Error("want ProbeCredentialEncrypted nil when no probe_token provided")
+	}
+}
+
+func TestMCPServerService_Update_ProbeTokenCleared(t *testing.T) {
+	// S1-MCP-14: PATCH with probe_token="" → DAL receives pointer to "" (clear).
+	original := dal.MCPServer{ID: "srv-1", TenantID: "t1", Name: "S", Slug: "s", Transport: "http", AuthType: "bearer", Enabled: true}
+	d := &fakeDal{mcpServer: original, mcpUpdated: original}
+	svc := newMCPSvc(d)
+	empty := ""
+	_, err := svc.Update(context.Background(), "srv-1", "t1", service.MCPServerPatch{ProbeToken: &empty})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.lastUpdateMCPInput.ProbeCredentialEncrypted == nil {
+		t.Fatal("want ProbeCredentialEncrypted to be non-nil (clear signal)")
+	}
+	if *d.lastUpdateMCPInput.ProbeCredentialEncrypted != "" {
+		t.Errorf("want empty string for clear, got %q", *d.lastUpdateMCPInput.ProbeCredentialEncrypted)
+	}
+}
+
+func TestMCPServerService_Update_ProbeTokenAbsent_NilInput(t *testing.T) {
+	// S1-MCP-15: PATCH without probe_token field → DAL receives nil (no change).
+	original := dal.MCPServer{ID: "srv-1", TenantID: "t1", Name: "S", Slug: "s", Transport: "http", AuthType: "bearer", Enabled: true}
+	d := &fakeDal{mcpServer: original, mcpUpdated: original}
+	svc := newMCPSvc(d)
+	newName := "New Name"
+	_, err := svc.Update(context.Background(), "srv-1", "t1", service.MCPServerPatch{Name: &newName})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.lastUpdateMCPInput.ProbeCredentialEncrypted != nil {
+		t.Error("want ProbeCredentialEncrypted nil when probe_token not in patch")
 	}
 }
 

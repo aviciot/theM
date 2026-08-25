@@ -65,7 +65,7 @@ func run() error {
 	dal := mcp.NewDAL(database.Pool())
 	registry := mcp.NewRegistry(redisCache.Client())
 	leader := mcp.NewLeaderLock(redisCache.Client(), cfg.InstanceID)
-	supervisor := mcp.NewSupervisor(dal, registry, leader, cfg.HealthIntervalSeconds, log)
+	supervisor := mcp.NewSupervisor(dal, registry, leader, cfg.HealthIntervalSeconds, cfg.SecretKey, log)
 	executor := mcp.NewExecutor(dal, registry, cfg.SecretKey)
 
 	// ── 7. HTTP server ────────────────────────────────────────────────────────

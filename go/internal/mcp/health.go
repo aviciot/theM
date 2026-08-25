@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/aviciot/them/internal/crypto"
 )
 
 // worker manages the health+discovery lifecycle for a single MCP server.
@@ -22,17 +24,19 @@ type worker struct {
 	registry        *Registry
 	baseInterval    time.Duration
 	maxProbeTimeout time.Duration
+	fernetKey       []byte
 	log             *slog.Logger
 	client          *Client // persistent; initialized once per session
 }
 
-func newWorker(server Server, dal *DAL, registry *Registry, baseInterval, maxProbeTimeout time.Duration, log *slog.Logger) *worker {
+func newWorker(server Server, dal *DAL, registry *Registry, baseInterval, maxProbeTimeout time.Duration, fernetKey []byte, log *slog.Logger) *worker {
 	return &worker{
 		server:          server,
 		dal:             dal,
 		registry:        registry,
 		baseInterval:    baseInterval,
 		maxProbeTimeout: maxProbeTimeout,
+		fernetKey:       fernetKey,
 		log:             log.With("slug", server.Slug, "server_id", server.ID),
 	}
 }
@@ -99,9 +103,10 @@ func (w *worker) probe(ctx context.Context) {
 	defer cancel()
 
 	// Ensure we have an initialized session. On first probe, or after session
-	// expiry (HTTP 404), create a fresh client and initialize.
+	// expiry (HTTP 404), create a fresh client with the probe credential and initialize.
 	if w.client == nil {
-		w.client = NewClient(w.server.URL, "", "")
+		headerName, authValue := w.resolveProbeAuth()
+		w.client = NewClient(w.server.URL, headerName, authValue)
 	}
 	if !w.client.initialized {
 		if err := w.client.Initialize(probeCtx); err != nil {
@@ -192,4 +197,29 @@ func (w *worker) isToolCountDrop(newTools []Tool) bool {
 		return false // no baseline — can't determine a drop
 	}
 	return len(newTools) > 0 && len(newTools) < int(float64(prev)*0.8)
+}
+
+// resolveProbeAuth decrypts probe_credential_encrypted and returns the
+// header name + value to use when building the probe Client.
+// Returns ("", "") when no probe credential is configured (auth_type=none or no stored token).
+func (w *worker) resolveProbeAuth() (headerName, authValue string) {
+	if w.server.AuthType == "none" || w.server.ProbeCredentialEncrypted == "" {
+		return "", ""
+	}
+	plain, err := crypto.DecryptStored(w.fernetKey, w.server.ProbeCredentialEncrypted)
+	if err != nil {
+		w.log.Warn("probe: failed to decrypt probe credential — probing without auth",
+			"error", err)
+		return "", ""
+	}
+	switch w.server.AuthType {
+	case "bearer":
+		return "Authorization", "Bearer " + plain
+	case "header":
+		// For custom header auth, the header name is not stored at server level
+		// (it lives on app_mcp_credentials per-app). Default to Authorization.
+		return "Authorization", plain
+	default:
+		return "Authorization", plain
+	}
 }

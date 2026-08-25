@@ -12,20 +12,21 @@ import (
 
 // Server is a row from them.mcp_servers.
 type Server struct {
-	ID             string
-	TenantID       string
-	Name           string
-	Slug           string
-	Description    string
-	Transport      string
-	URL            string
-	AuthType       string
-	HealthStatus   string
-	LastCheckedAt  *time.Time
-	LastError      string
-	ToolsManifest  json.RawMessage
-	Capabilities   json.RawMessage
-	Enabled        bool
+	ID                        string
+	TenantID                  string
+	Name                      string
+	Slug                      string
+	Description               string
+	Transport                 string
+	URL                       string
+	AuthType                  string
+	HealthStatus              string
+	LastCheckedAt             *time.Time
+	LastError                 string
+	ToolsManifest             json.RawMessage
+	Capabilities              json.RawMessage
+	Enabled                   bool
+	ProbeCredentialEncrypted  string // Fernet-encrypted; empty = no probe auth
 }
 
 // AppCredential is a row from them.app_mcp_credentials.
@@ -54,7 +55,8 @@ func (d *DAL) ListEnabledServers(ctx context.Context) ([]Server, error) {
 		       health_status,
 		       last_checked_at,
 		       COALESCE(last_error,''),
-		       tools_manifest, capabilities, enabled
+		       tools_manifest, capabilities, enabled,
+		       COALESCE(probe_credential_encrypted,'')
 		FROM them.mcp_servers
 		WHERE enabled = true
 		ORDER BY created_at ASC`
@@ -84,7 +86,8 @@ func (d *DAL) GetServerByID(ctx context.Context, id string) (Server, error) {
 		       health_status,
 		       last_checked_at,
 		       COALESCE(last_error,''),
-		       tools_manifest, capabilities, enabled
+		       tools_manifest, capabilities, enabled,
+		       COALESCE(probe_credential_encrypted,'')
 		FROM them.mcp_servers
 		WHERE id = $1::uuid`
 
@@ -101,7 +104,8 @@ func (d *DAL) GetServerBySlugAndTenant(ctx context.Context, slug, tenantID strin
 		       health_status,
 		       last_checked_at,
 		       COALESCE(last_error,''),
-		       tools_manifest, capabilities, enabled
+		       tools_manifest, capabilities, enabled,
+		       COALESCE(probe_credential_encrypted,'')
 		FROM them.mcp_servers
 		WHERE slug = $1 AND tenant_id = $2::uuid AND enabled = true`
 
@@ -187,6 +191,7 @@ func scanServer(r rowScanner) (Server, error) {
 		&s.Description, &s.Transport, &s.URL, &s.AuthType,
 		&s.HealthStatus, &s.LastCheckedAt, &s.LastError,
 		&tm, &caps, &s.Enabled,
+		&s.ProbeCredentialEncrypted,
 	)
 	if err != nil {
 		return s, fmt.Errorf("dal: scan server: %w", err)

@@ -203,6 +203,7 @@ func (c *Config) SafeString() string {
 			"log_level=%s log_format=%s otel_enabled=%v secret_key=*** "+
 			"jwt_middleware=%s anthropic_api_key=%s "+
 			"temporal_enabled=%v temporal_host_port=%s worker_task_queue=%s "+
+			"mcp_service_url=%s "+
 			"reconciler_dry_run=%v "+
 			"shutdown_drain_seconds=%d",
 		c.AppEnv, c.AppHost, c.AppPort, c.InstanceID,
@@ -211,6 +212,7 @@ func (c *Config) SafeString() string {
 		c.LogLevel, c.LogFormat, c.OtelEnabled,
 		jwtMode, anthropicMode,
 		c.TemporalEnabled, c.TemporalHostPort, c.WorkerTaskQueue,
+		c.MCPServiceURL,
 		c.ReconcilerDryRun,
 		c.ShutdownDrainSeconds,
 	)

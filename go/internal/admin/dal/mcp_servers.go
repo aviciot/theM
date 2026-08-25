@@ -8,34 +8,36 @@ import (
 
 // MCPServer is the DB row representation of them.mcp_servers.
 type MCPServer struct {
-	ID            string
-	TenantID      string
-	Name          string
-	Slug          string
-	Description   string
-	Transport     string
-	URL           string
-	AuthType      string
-	HealthStatus  string
-	LastCheckedAt *time.Time
-	LastError     string
-	ToolsManifest json.RawMessage
-	Capabilities  json.RawMessage
-	Enabled       bool
-	CreatedAt     string
-	UpdatedAt     string
+	ID                  string
+	TenantID            string
+	Name                string
+	Slug                string
+	Description         string
+	Transport           string
+	URL                 string
+	AuthType            string
+	HealthStatus        string
+	LastCheckedAt       *time.Time
+	LastError           string
+	ToolsManifest       json.RawMessage
+	Capabilities        json.RawMessage
+	Enabled             bool
+	CreatedAt           string
+	UpdatedAt           string
+	ProbeCredentialSet  bool // true when probe_credential_encrypted is non-empty
 }
 
 // MCPServerInput is used for CREATE and UPDATE.
 type MCPServerInput struct {
-	TenantID    string
-	Name        string
-	Slug        string
-	Description string
-	Transport   string
-	URL         string
-	AuthType    string
-	Enabled     bool
+	TenantID                string
+	Name                    string
+	Slug                    string
+	Description             string
+	Transport               string
+	URL                     string
+	AuthType                string
+	Enabled                 bool
+	ProbeCredentialEncrypted *string // nil = do not change existing value; "" = clear it
 }
 
 // AppMCPCredential is a row from them.app_mcp_credentials.
@@ -62,7 +64,8 @@ const mcpServerSelectCols = `
 	       health_status, last_checked_at, COALESCE(last_error,''),
 	       tools_manifest, capabilities, enabled,
 	       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-	       to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+	       to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	       probe_credential_encrypted IS NOT NULL AND probe_credential_encrypted <> ''
 	FROM them.mcp_servers`
 
 func scanMCPServer(r RowScanner) (MCPServer, error) {
@@ -74,6 +77,7 @@ func scanMCPServer(r RowScanner) (MCPServer, error) {
 		&s.HealthStatus, &s.LastCheckedAt, &s.LastError,
 		&tm, &caps, &s.Enabled,
 		&s.CreatedAt, &s.UpdatedAt,
+		&s.ProbeCredentialSet,
 	)
 	if err != nil {
 		return s, err
@@ -120,37 +124,53 @@ func (d *DB) GetMCPServer(ctx context.Context, id, tenantID string) (MCPServer, 
 func (d *DB) CreateMCPServer(ctx context.Context, in MCPServerInput) (MCPServer, error) {
 	const q = `
 		INSERT INTO them.mcp_servers
-		  (tenant_id, name, slug, description, transport, url, auth_type, enabled)
-		VALUES ($1::uuid, $2, $3, NULLIF($4,''), $5, NULLIF($6,''), $7, $8)
+		  (tenant_id, name, slug, description, transport, url, auth_type, enabled, probe_credential_encrypted)
+		VALUES ($1::uuid, $2, $3, NULLIF($4,''), $5, NULLIF($6,''), $7, $8, NULLIF($9,''))
 		RETURNING id::text, tenant_id::text, name, slug,
 		          COALESCE(description,''), transport, COALESCE(url,''), auth_type,
 		          health_status, last_checked_at, COALESCE(last_error,''),
 		          tools_manifest, capabilities, enabled,
 		          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-		          to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+		          to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		          probe_credential_encrypted IS NOT NULL AND probe_credential_encrypted <> ''`
+	probeEnc := ""
+	if in.ProbeCredentialEncrypted != nil {
+		probeEnc = *in.ProbeCredentialEncrypted
+	}
 	row := d.q.ExecReturning(ctx, q,
 		in.TenantID, in.Name, in.Slug, in.Description,
-		in.Transport, in.URL, in.AuthType, in.Enabled,
+		in.Transport, in.URL, in.AuthType, in.Enabled, probeEnc,
 	)
 	return scanMCPServer(&singleToRow{s: row})
 }
 
 // UpdateMCPServer updates admin-owned fields (NOT health/manifest — those are owned by mcp-service).
+// When ProbeCredentialEncrypted is nil the probe credential is left unchanged;
+// when it is a pointer to "" the credential is cleared.
 func (d *DB) UpdateMCPServer(ctx context.Context, id, tenantID string, in MCPServerInput) (MCPServer, error) {
 	const q = `
 		UPDATE them.mcp_servers
 		SET name=$3, slug=$4, description=NULLIF($5,''), transport=$6,
-		    url=NULLIF($7,''), auth_type=$8, enabled=$9, updated_at=now()
+		    url=NULLIF($7,''), auth_type=$8, enabled=$9,
+		    probe_credential_encrypted = CASE WHEN $10::boolean THEN NULLIF($11,'') ELSE probe_credential_encrypted END,
+		    updated_at=now()
 		WHERE id=$1::uuid AND tenant_id=$2::uuid
 		RETURNING id::text, tenant_id::text, name, slug,
 		          COALESCE(description,''), transport, COALESCE(url,''), auth_type,
 		          health_status, last_checked_at, COALESCE(last_error,''),
 		          tools_manifest, capabilities, enabled,
 		          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-		          to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+		          to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		          probe_credential_encrypted IS NOT NULL AND probe_credential_encrypted <> ''`
+	updateProbe := in.ProbeCredentialEncrypted != nil
+	probeEnc := ""
+	if in.ProbeCredentialEncrypted != nil {
+		probeEnc = *in.ProbeCredentialEncrypted
+	}
 	row := d.q.ExecReturning(ctx, q,
 		id, tenantID, in.Name, in.Slug, in.Description,
 		in.Transport, in.URL, in.AuthType, in.Enabled,
+		updateProbe, probeEnc,
 	)
 	return scanMCPServer(&singleToRow{s: row})
 }

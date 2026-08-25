@@ -116,18 +116,20 @@ type fakeDal struct {
 	updateTokenCalls  []dal.TokenPatchRow
 
 	// MCP server fields
-	mcpServer          dal.MCPServer
-	mcpServers         []dal.MCPServer
-	mcpCreated         dal.MCPServer
-	mcpUpdated         dal.MCPServer
-	getMCPErr          error
-	createMCPErr       error
-	updateMCPErr       error
-	deleteMCPErr       error
-	upsertCredErr      error
-	deleteCredErr      error
-	upsertCredCalled   bool
-	upsertCredHeader   string
+	mcpServer           dal.MCPServer
+	mcpServers          []dal.MCPServer
+	mcpCreated          dal.MCPServer
+	mcpUpdated          dal.MCPServer
+	getMCPErr           error
+	createMCPErr        error
+	updateMCPErr        error
+	deleteMCPErr        error
+	upsertCredErr       error
+	deleteCredErr       error
+	upsertCredCalled    bool
+	upsertCredHeader    string
+	lastCreateMCPInput  dal.MCPServerInput
+	lastUpdateMCPInput  dal.MCPServerInput
 }
 
 func (f *fakeDal) ListAgents(_ context.Context, _ string) ([]dal.Agent, error) {
@@ -430,10 +432,12 @@ func (f *fakeDal) ListMCPServers(_ context.Context, _ string) ([]dal.MCPServer, 
 func (f *fakeDal) GetMCPServer(_ context.Context, _, _ string) (dal.MCPServer, error) {
 	return f.mcpServer, f.getMCPErr
 }
-func (f *fakeDal) CreateMCPServer(_ context.Context, _ dal.MCPServerInput) (dal.MCPServer, error) {
+func (f *fakeDal) CreateMCPServer(_ context.Context, in dal.MCPServerInput) (dal.MCPServer, error) {
+	f.lastCreateMCPInput = in
 	return f.mcpCreated, f.createMCPErr
 }
-func (f *fakeDal) UpdateMCPServer(_ context.Context, _, _ string, _ dal.MCPServerInput) (dal.MCPServer, error) {
+func (f *fakeDal) UpdateMCPServer(_ context.Context, _, _ string, in dal.MCPServerInput) (dal.MCPServer, error) {
+	f.lastUpdateMCPInput = in
 	return f.mcpUpdated, f.updateMCPErr
 }
 func (f *fakeDal) DeleteMCPServer(_ context.Context, _, _ string) error { return f.deleteMCPErr }

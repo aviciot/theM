@@ -10,25 +10,26 @@ import (
 )
 
 // MCPServerOut is the HTTP response shape for MCP server endpoints.
-// Credential values are NEVER included — only credential_set bool.
+// Credential values are NEVER included — only credential_set bools.
 type MCPServerOut struct {
-	ID            string          `json:"id"`
-	TenantID      string          `json:"tenant_id"`
-	Name          string          `json:"name"`
-	Slug          string          `json:"slug"`
-	Description   string          `json:"description"`
-	Transport     string          `json:"transport"`
-	URL           string          `json:"url"`
-	AuthType      string          `json:"auth_type"`
-	HealthStatus  string          `json:"health_status"`
-	LastCheckedAt *string         `json:"last_checked_at"`
-	LastError     string          `json:"last_error,omitempty"`
-	ToolsManifest json.RawMessage `json:"tools_manifest"`
-	ToolsCount    int             `json:"tools_count"`
-	Capabilities  json.RawMessage `json:"capabilities"`
-	Enabled       bool            `json:"enabled"`
-	CreatedAt     string          `json:"created_at"`
-	UpdatedAt     string          `json:"updated_at"`
+	ID                  string          `json:"id"`
+	TenantID            string          `json:"tenant_id"`
+	Name                string          `json:"name"`
+	Slug                string          `json:"slug"`
+	Description         string          `json:"description"`
+	Transport           string          `json:"transport"`
+	URL                 string          `json:"url"`
+	AuthType            string          `json:"auth_type"`
+	HealthStatus        string          `json:"health_status"`
+	LastCheckedAt       *string         `json:"last_checked_at"`
+	LastError           string          `json:"last_error,omitempty"`
+	ToolsManifest       json.RawMessage `json:"tools_manifest"`
+	ToolsCount          int             `json:"tools_count"`
+	Capabilities        json.RawMessage `json:"capabilities"`
+	Enabled             bool            `json:"enabled"`
+	ProbeCredentialSet  bool            `json:"probe_credential_set"`
+	CreatedAt           string          `json:"created_at"`
+	UpdatedAt           string          `json:"updated_at"`
 }
 
 // MCPServerCreate is the request body for POST /admin/mcp-servers.
@@ -40,6 +41,7 @@ type MCPServerCreate struct {
 	URL         string `json:"url"`
 	AuthType    string `json:"auth_type"`
 	Enabled     *bool  `json:"enabled"`
+	ProbeToken  string `json:"probe_token,omitempty"` // plaintext; encrypted before storage
 }
 
 // MCPServerPatch is the PATCH request body. Nil pointer = field absent.
@@ -51,6 +53,7 @@ type MCPServerPatch struct {
 	URL         *string `json:"url"`
 	AuthType    *string `json:"auth_type"`
 	Enabled     *bool   `json:"enabled"`
+	ProbeToken  *string `json:"probe_token"` // nil = unchanged; "" = clear; non-empty = update
 }
 
 // MCPCredentialSet is the request body for PUT .../mcp-credentials/{server_id}.
@@ -124,15 +127,24 @@ func (s *MCPServerService) Create(ctx context.Context, tenantID string, body MCP
 		return MCPServerOut{}, unprocessable("auth_type must be one of: none, bearer, header, oauth2")
 	}
 
+	var probeEnc *string
+	if body.ProbeToken != "" {
+		enc, err := crypto.EncryptStored(s.fernetKey, body.ProbeToken)
+		if err != nil {
+			return MCPServerOut{}, errors.New("failed to encrypt probe token")
+		}
+		probeEnc = &enc
+	}
 	in := dal.MCPServerInput{
-		TenantID:    tenantID,
-		Name:        body.Name,
-		Slug:        body.Slug,
-		Description: body.Description,
-		Transport:   transport,
-		URL:         body.URL,
-		AuthType:    authType,
-		Enabled:     enabledOrDefault(body.Enabled),
+		TenantID:                tenantID,
+		Name:                    body.Name,
+		Slug:                    body.Slug,
+		Description:             body.Description,
+		Transport:               transport,
+		URL:                     body.URL,
+		AuthType:                authType,
+		Enabled:                 enabledOrDefault(body.Enabled),
+		ProbeCredentialEncrypted: probeEnc,
 	}
 	row, err := s.dal.CreateMCPServer(ctx, in)
 	if err != nil {
@@ -182,15 +194,31 @@ func (s *MCPServerService) Update(ctx context.Context, id, tenantID string, patc
 		row.Enabled = *patch.Enabled
 	}
 
+	// Encrypt probe token if present in patch (nil = no change, "" = clear, non-empty = update).
+	var probeEnc *string
+	if patch.ProbeToken != nil {
+		if *patch.ProbeToken == "" {
+			empty := ""
+			probeEnc = &empty // clear
+		} else {
+			enc, err := crypto.EncryptStored(s.fernetKey, *patch.ProbeToken)
+			if err != nil {
+				return MCPServerOut{}, errors.New("failed to encrypt probe token")
+			}
+			probeEnc = &enc
+		}
+	}
+
 	updated, err := s.dal.UpdateMCPServer(ctx, id, tenantID, dal.MCPServerInput{
-		TenantID:    row.TenantID,
-		Name:        row.Name,
-		Slug:        row.Slug,
-		Description: row.Description,
-		Transport:   row.Transport,
-		URL:         row.URL,
-		AuthType:    row.AuthType,
-		Enabled:     row.Enabled,
+		TenantID:                row.TenantID,
+		Name:                    row.Name,
+		Slug:                    row.Slug,
+		Description:             row.Description,
+		Transport:               row.Transport,
+		URL:                     row.URL,
+		AuthType:                row.AuthType,
+		Enabled:                 row.Enabled,
+		ProbeCredentialEncrypted: probeEnc,
 	})
 	if err != nil {
 		if dal.IsNoRows(err) {
@@ -273,22 +301,23 @@ func toMCPServerOut(r dal.MCPServer) MCPServerOut {
 		caps = json.RawMessage("{}")
 	}
 	return MCPServerOut{
-		ID:            r.ID,
-		TenantID:      r.TenantID,
-		Name:          r.Name,
-		Slug:          r.Slug,
-		Description:   r.Description,
-		Transport:     r.Transport,
-		URL:           r.URL,
-		AuthType:      r.AuthType,
-		HealthStatus:  r.HealthStatus,
-		LastCheckedAt: lastChecked,
-		LastError:     r.LastError,
-		ToolsManifest: tm,
-		ToolsCount:    toolsCount,
-		Capabilities:  caps,
-		Enabled:       r.Enabled,
-		CreatedAt:     r.CreatedAt,
-		UpdatedAt:     r.UpdatedAt,
+		ID:                 r.ID,
+		TenantID:           r.TenantID,
+		Name:               r.Name,
+		Slug:               r.Slug,
+		Description:        r.Description,
+		Transport:          r.Transport,
+		URL:                r.URL,
+		AuthType:           r.AuthType,
+		HealthStatus:       r.HealthStatus,
+		LastCheckedAt:      lastChecked,
+		LastError:          r.LastError,
+		ToolsManifest:      tm,
+		ToolsCount:         toolsCount,
+		Capabilities:       caps,
+		Enabled:            r.Enabled,
+		ProbeCredentialSet: r.ProbeCredentialSet,
+		CreatedAt:          r.CreatedAt,
+		UpdatedAt:          r.UpdatedAt,
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/aviciot/them/internal/crypto"
 )
 
 // Supervisor manages one independent worker goroutine per MCP server.
@@ -18,6 +20,7 @@ type Supervisor struct {
 	dal               *DAL
 	registry          *Registry
 	leader            *LeaderLock
+	fernetKey         []byte // for decrypting probe_credential_encrypted
 	probeInterval     time.Duration
 	reconcileInterval time.Duration
 	maxProbeTimeout   time.Duration
@@ -30,11 +33,14 @@ type Supervisor struct {
 // NewSupervisor creates a Supervisor. probeIntervalSeconds controls how often
 // each worker probes its server. reconcileInterval is how often the supervisor
 // checks the DB for new or removed servers (always 30s — not configurable).
-func NewSupervisor(dal *DAL, registry *Registry, leader *LeaderLock, probeIntervalSeconds int, log *slog.Logger) *Supervisor {
+// secretKey is the platform secret used to derive the Fernet key for decrypting
+// probe credentials stored in mcp_servers.probe_credential_encrypted.
+func NewSupervisor(dal *DAL, registry *Registry, leader *LeaderLock, probeIntervalSeconds int, secretKey string, log *slog.Logger) *Supervisor {
 	return &Supervisor{
 		dal:               dal,
 		registry:          registry,
 		leader:            leader,
+		fernetKey:         crypto.DeriveKey(secretKey),
 		probeInterval:     time.Duration(probeIntervalSeconds) * time.Second,
 		reconcileInterval: 30 * time.Second,
 		maxProbeTimeout:   15 * time.Second,
@@ -73,7 +79,7 @@ func (s *Supervisor) ProbeNow(ctx context.Context, serverID string) (Server, err
 	if err != nil {
 		return Server{}, err
 	}
-	w := newWorker(srv, s.dal, s.registry, s.probeInterval, s.maxProbeTimeout, s.log)
+	w := newWorker(srv, s.dal, s.registry, s.probeInterval, s.maxProbeTimeout, s.fernetKey, s.log)
 	w.probe(ctx)
 	return s.dal.GetServerByID(ctx, serverID)
 }
@@ -127,7 +133,7 @@ func (s *Supervisor) reconcile(ctx context.Context) {
 		srv := srv // capture for goroutine
 		workerCtx, cancel := context.WithCancel(ctx)
 		s.workers[srv.ID] = cancel
-		w := newWorker(srv, s.dal, s.registry, s.probeInterval, s.maxProbeTimeout, s.log)
+		w := newWorker(srv, s.dal, s.registry, s.probeInterval, s.maxProbeTimeout, s.fernetKey, s.log)
 		go w.run(workerCtx)
 		s.log.Info("supervisor: started worker", "slug", srv.Slug, "server_id", srv.ID)
 	}

@@ -163,6 +163,14 @@ WHERE ep.id = $1::uuid`
 			"app_orchestrator_id", appOrchestratorID, "error", err)
 		mcpAttachments = nil
 	}
+	totalMCPTools := 0
+	for _, a := range mcpAttachments {
+		totalMCPTools += len(a.ToolDefs)
+	}
+	slog.Info("workerconfig: MCP servers resolved",
+		"app_orchestrator_id", appOrchestratorID,
+		"server_count", len(mcpAttachments),
+		"total_tools", totalMCPTools)
 
 	cfg := orchestrator.Config{
 		MaxIterations:        maxIterations,
