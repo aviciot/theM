@@ -7,17 +7,16 @@
 ## HEAD
 
 Branch: `main`
-Commit: `1e5c76c` — test(app-params): Phase 4 — handler + runtime tests; fix plain: decryption
+Commit: `e6cebde` — fix(proxy): add /agents/{id}/llm-nodes pattern to Go bridge routing
 
 Recent commits (newest first):
 ```
+e6cebde fix(proxy): add /agents/{id}/llm-nodes pattern to Go bridge routing
+f4b58bd feat(canvas-llm): per-node LLM provider+model overrides in RuntimeView + debug panel
 1e5c76c test(app-params): Phase 4 — handler + runtime tests; fix plain: decryption
 b308e84 feat(app-params): Phase 3 — frontend UI for app global params
 5328fb6 feat(app-params): Phase 2 — compiler/interpreter/runtime for app_param_ref
 d2c4283 feat(app-params): Phase 1 — app-level global named parameters (DB + backend)
-0554688 fix(builder): replace border shorthand with explicit properties in fieldStyle
-4103fb8 fix(worker): add MCP_SERVICE_URL to go-worker and go-worker-2
-646adc3 feat(builder): per-tool selection for MCP server attachments
 ```
 
 ---
@@ -149,13 +148,13 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-25, commit 1e5c76c)
-S1 total: 772 tests (was 751; +21 from app_params phases 1-4)
-  S1-62: AGP-1..8 (service layer — 8 tests)
-  S1-63: CMP-10..14 (compiler — 5 tests)
-  S1-64: INT-10..14 (interpreter — 5 tests)
+go test ./...  — all packages, 0 failures (verified 2026-08-25, commit f4b58bd)
+S1 total: 772 tests (unchanged — CMP/INT tests rewritten not added)
+  S1-63: CMP-10..14 (compiler LLM node collection — 5 tests, rewrote from AppParamRefs)
+  S1-64: INT-10..14 (interpreter AppParamRef HTTP + NodeLLMOverride — 5 tests, INT-14 rewritten)
   S1-65: RT-20..24 (runtime decodeAppGlobalParams — 5 tests)
   S1-66: HTTP-20..25+ (handler layer — 11 tests)
+  fake DAL stubs updated in all 4 test files for GetAgentLLMNodes/UpsertNodeLLMOverride
 go test ./... total: 793
 
 Live e2e confirmed 2026-08-23:
@@ -221,7 +220,7 @@ App global params: e2e validated 2026-08-25 — GET/PUT/DELETE live ✅
 | Publish | `go/internal/admin/service/agent_definitions_publish.go` — compile + 3-table atomic CTE | ✅ |
 | Binding UI | `AgentCredentialPanel` in applications page — per-slot credential entry | ✅ |
 | Runtime wiring | `InvokeForRun` in `agentregistry` + `GetBindingID` | ✅ |
-| Debug mode | Browser-side pipeline step-through with Anthropic API key | ✅ |
+| Debug mode | Browser-side pipeline step-through with per-session provider+model+key (all 4 providers) | ✅ |
 | Bug fixes | polJSON unmarshal, AllowedSkillIDs enforcement, skill selection by ID, slug cache | ✅ |
 | BuildValidator UI | Debounced backend validation, node/field highlighting, issues panel, Publish gate | ✅ |
 
@@ -278,6 +277,28 @@ docker exec them-postgres psql -U them -d them -f /tmp/045.sql
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-go-bridge them-agent-runtime
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge them-agent-runtime
 ```
+
+---
+
+## Canvas Agent LLM Node Overrides — fully complete (2026-08-25)
+
+**Removes old `model_override_param_ref`/`model_override_param_key` mechanism entirely.**
+**No DB migration needed — uses existing `app_agent_bindings.config_overrides` JSONB column.**
+
+What was built:
+- `AgentSpec.LLMNodes []AgentLLMNodeSpec` — compiler collects all LLM steps (provider+model from canvas config) via `collectLLMNodes`; old `AppParamRefs`/`AgentAppParamRef` removed
+- `InvocationContext.NodeLLMOverrides map[string]NodeLLMOverride` — per-node override map; loaded from `config_overrides["llm_nodes"][nodeID]` in agent-runtime via `extractNodeLLMOverrides`
+- Interpreter `execLLM` reads `NodeLLMOverrides[step.ID]` before falling back to compiled provider+model
+- DAL: `GetAgentLLMNodes` (reads spec `llm_nodes` + binding override map) + `UpsertNodeLLMOverride` (jsonb_set into `config_overrides["llm_nodes"][nodeID]`)
+- Service: `GetAgentLLMNodes` + `PutNodeLLMOverride` (validates non-empty)
+- REST: `GET /admin/applications/{id}/agents/{agent_id}/llm-nodes` + `PUT /agents/{id}/llm-nodes/{node_id}`
+- Frontend proxy routing: added `/agents/[^/]+/llm-nodes` pattern to Go bridge
+- RuntimeView: "Canvas Agent LLM Nodes" section — one card per LLM node, provider+model dropdowns (all 4 providers; ✓ marks those with saved key), Save per node
+- RightPanel: removed MODEL OVERRIDE (APP GLOBAL PARAM) panel from LLM canvas node config
+- Debug panel: replaced hardcoded `__anthropic_key` with `__debug_provider` (dropdown) + `__debug_model` (dropdown) + `__debug_api_key` (password) for session-level override
+- Debug proxy (`/api/debug/llm`): now supports anthropic, openai, groq, gemini; normalizes all responses to Anthropic `content[{type,text}]` format for frontend consumption
+
+**Action required after deploy:** Re-publish any canvas agents to get `llm_nodes` populated in the spec.
 
 ---
 
