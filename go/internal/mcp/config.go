@@ -57,7 +57,7 @@ func LoadConfig() (*Config, error) {
 		RedisPassword:         getEnv("REDIS_PASSWORD", ""),
 		RedisDB:               getEnvInt("REDIS_DB", 0),
 		SecretKey:             getEnv("SECRET_KEY", ""),
-		HealthIntervalSeconds: getEnvInt("MCP_HEALTH_INTERVAL_SECONDS", 60),
+		HealthIntervalSeconds: getEnvInt("MCP_HEALTH_INTERVAL_SECONDS", 30),
 		AllowHTTP:             getEnvBool("MCP_ALLOW_HTTP", false),
 		AllowStdio:            getEnvBool("MCP_ALLOW_STDIO", false),
 	}

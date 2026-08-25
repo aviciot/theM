@@ -347,6 +347,6 @@ func TestConfig_Defaults(t *testing.T) {
 	cfg, err := mcp.LoadConfig()
 	require.NoError(t, err)
 	assert.Equal(t, 8010, cfg.AppPort)
-	assert.Equal(t, 60, cfg.HealthIntervalSeconds)
+	assert.Equal(t, 30, cfg.HealthIntervalSeconds)
 	assert.False(t, cfg.AllowStdio)
 }
