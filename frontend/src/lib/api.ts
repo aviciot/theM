@@ -713,6 +713,14 @@ export interface MCPCredentialMeta {
   auth_header_name: string;
 }
 
+export interface AppGlobalParam {
+  name: string;
+  type: string;
+  is_set: boolean;
+  value_hint?: string;
+  value?: string;
+}
+
 export const themApi = {
   health: () => fetch(`${HEALTH_BASE}/health`)
     .then((r) => r.json())
@@ -808,6 +816,9 @@ export const themApi = {
   getProviderKeys: (appId: string) => api.get<{ provider: string; key_set: boolean; key_hint?: string }[]>(`/admin/applications/${appId}/provider-keys`),
   setProviderKey: (appId: string, provider: string, key: string) => api.put<{ provider: string; updated: boolean }>(`/admin/applications/${appId}/provider-keys/${provider}`, { key }),
   deleteProviderKey: (appId: string, provider: string) => api.delete<{ provider: string; deleted: boolean }>(`/admin/applications/${appId}/provider-keys/${provider}`),
+  getAppParams: (appId: string) => api.get<AppGlobalParam[]>(`/admin/applications/${appId}/app-params`),
+  setAppParam: (appId: string, name: string, value: string, type: string) => api.put<{ name: string; updated: boolean }>(`/admin/applications/${appId}/app-params/${name}`, { value, type }),
+  deleteAppParam: (appId: string, name: string) => api.delete<{ name: string; deleted: boolean }>(`/admin/applications/${appId}/app-params/${name}`),
   testAppLlm: (appId: string, provider: string, model: string) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/test-llm`, { provider, model }),
   patchOrchestratorLLM: (appId: string, orchId: string, provider: string, model: string) => api.patch<{ id: string; llm_provider: string; llm_model: string }>(`/admin/applications/${appId}/orchestrators/${orchId}/llm`, { provider, model }),
   patchOrchestratorMCPServers: (appId: string, orchId: string, mcpServers: MCPServerAttachment[]) => api.patch<{ id: string; mcp_servers: MCPServerAttachment[] }>(`/admin/applications/${appId}/orchestrators/${orchId}/mcp-servers`, { mcp_servers: mcpServers }),

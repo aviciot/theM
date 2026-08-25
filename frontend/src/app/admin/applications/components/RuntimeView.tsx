@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { themApi, type Application, type AgentParamsResponse } from '@/lib/api';
+import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam } from '@/lib/api';
 import { C, glass, PROVIDER_LIST, RUNTIME_MODELS } from '../constants';
 
 // ── RuntimeView ───────────────────────────────────────────────────────────────
@@ -44,9 +44,27 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
   const [agentParamSaving, setAgentParamSaving] = useState<string | null>(null);
   const [agentParamMsg, setAgentParamMsg] = useState<Record<string, string>>({});
 
+  // App global parameters state
+  const [appParams, setAppParams] = useState<AppGlobalParam[]>([]);
+  const [newParamName, setNewParamName] = useState('');
+  const [newParamType, setNewParamType] = useState('string');
+  const [newParamValue, setNewParamValue] = useState('');
+  const [editParamInputs, setEditParamInputs] = useState<Record<string, string>>({});
+  const [paramSaving, setParamSaving] = useState<string | null>(null);
+  const [paramMsg, setParamMsg] = useState<Record<string, string>>({});
+  const [addingParam, setAddingParam] = useState(false);
+  const [addParamSaving, setAddParamSaving] = useState(false);
+  const [addParamMsg, setAddParamMsg] = useState('');
+
   useEffect(() => {
     themApi.getProviderKeys(app.id)
       .then(keys => setKeyStatuses(keys))
+      .catch(() => {});
+  }, [app.id]);
+
+  useEffect(() => {
+    themApi.getAppParams(app.id)
+      .then(params => setAppParams(params ?? []))
       .catch(() => {});
   }, [app.id]);
 
@@ -151,6 +169,61 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
       setAgentParamMsg(m => ({ ...m, [agentId]: e instanceof Error ? e.message : 'Failed' }));
     } finally {
       setAgentParamSaving(null);
+    }
+  }
+
+  async function handleAddAppParam() {
+    const name = newParamName.trim();
+    const value = newParamValue.trim();
+    if (!name || !value) return;
+    setAddParamSaving(true);
+    try {
+      await themApi.setAppParam(app.id, name, value, newParamType);
+      const params = await themApi.getAppParams(app.id);
+      setAppParams(params ?? []);
+      setNewParamName('');
+      setNewParamValue('');
+      setNewParamType('string');
+      setAddingParam(false);
+      setAddParamMsg('');
+    } catch (e: unknown) {
+      setAddParamMsg(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setAddParamSaving(false);
+    }
+  }
+
+  async function handleUpdateAppParam(name: string) {
+    const value = (editParamInputs[name] ?? '').trim();
+    if (!value) return;
+    const param = appParams.find(p => p.name === name);
+    if (!param) return;
+    setParamSaving(name);
+    try {
+      await themApi.setAppParam(app.id, name, value, param.type);
+      const params = await themApi.getAppParams(app.id);
+      setAppParams(params ?? []);
+      setEditParamInputs(prev => ({ ...prev, [name]: '' }));
+      setParamMsg(m => ({ ...m, [name]: 'Saved' }));
+      setTimeout(() => setParamMsg(m => ({ ...m, [name]: '' })), 2500);
+    } catch (e: unknown) {
+      setParamMsg(m => ({ ...m, [name]: e instanceof Error ? e.message : 'Failed' }));
+    } finally {
+      setParamSaving(null);
+    }
+  }
+
+  async function handleDeleteAppParam(name: string) {
+    setParamSaving(name);
+    try {
+      await themApi.deleteAppParam(app.id, name);
+      const params = await themApi.getAppParams(app.id);
+      setAppParams(params ?? []);
+      setParamMsg(m => ({ ...m, [name]: '' }));
+    } catch (e: unknown) {
+      setParamMsg(m => ({ ...m, [name]: e instanceof Error ? e.message : 'Failed' }));
+    } finally {
+      setParamSaving(null);
     }
   }
 
@@ -322,6 +395,121 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
               </div>
             );
           })}
+        </div>
+
+        {/* App Global Parameters */}
+        <div style={sectionStyle}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>App Global Parameters</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
+            Named parameters available to all canvas agents in this app. Canvas agent HTTP and LLM nodes can reference these by name using <code style={{ fontFamily: 'monospace', fontSize: 11, background: 'rgba(255,255,255,0.07)', padding: '1px 4px', borderRadius: 4 }}>app_param_ref</code>.
+            Secrets are stored encrypted and never displayed in full.
+          </div>
+
+          {/* Existing params */}
+          {appParams.map(param => {
+            const isBusy = paramSaving === param.name;
+            const msg = paramMsg[param.name] ?? '';
+            const isError = msg && msg !== 'Saved';
+            const isSecret = param.type === 'secret';
+            const editVal = editParamInputs[param.name] ?? '';
+            return (
+              <div key={param.name} style={{ marginBottom: 10, padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.12)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <code style={{ fontSize: 12, fontWeight: 700, color: C.text, fontFamily: 'JetBrains Mono, monospace', flex: 1 }}>{param.name}</code>
+                  <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 20, background: 'rgba(132,158,190,0.12)', color: C.textMuted, border: '1px solid rgba(132,158,190,0.2)' }}>{param.type}</span>
+                  {param.is_set && (
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20, background: 'rgba(74,222,128,0.12)', color: C.green, border: '1px solid rgba(74,222,128,0.3)' }}>
+                      {isSecret ? `set ···${param.value_hint ?? ''}` : 'set'}
+                    </span>
+                  )}
+                </div>
+                {!isSecret && param.is_set && param.value && (
+                  <div style={{ fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, marginBottom: 6, wordBreak: 'break-all' }}>{param.value}</div>
+                )}
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    type={isSecret ? 'password' : 'text'}
+                    placeholder={param.is_set ? 'Enter new value to replace…' : 'Enter value…'}
+                    value={editVal}
+                    onChange={e => setEditParamInputs(prev => ({ ...prev, [param.name]: e.target.value }))}
+                    style={{ ...fieldStyle, flex: 1, minWidth: 0, fontSize: 13 }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleUpdateAppParam(param.name); }}
+                  />
+                  <button
+                    onClick={() => handleUpdateAppParam(param.name)}
+                    disabled={isBusy || !editVal.trim()}
+                    style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', opacity: isBusy || !editVal.trim() ? 0.5 : 1 }}
+                  >
+                    {isBusy ? '…' : 'Update'}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteAppParam(param.name)}
+                    disabled={isBusy}
+                    style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.07)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}
+                  >
+                    Remove
+                  </button>
+                </div>
+                {msg && <div style={{ marginTop: 4, fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
+              </div>
+            );
+          })}
+
+          {/* Add new param */}
+          {!addingParam ? (
+            <button
+              onClick={() => setAddingParam(true)}
+              style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: `1px dashed ${C.outline}`, background: 'transparent', color: C.textMuted, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+            >
+              + Add parameter
+            </button>
+          ) : (
+            <div style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.18)' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>New Parameter</div>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                <input
+                  placeholder="name (a-z0-9_)"
+                  value={newParamName}
+                  onChange={e => setNewParamName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                  style={{ ...fieldStyle, flex: 2, fontSize: 13, fontFamily: 'JetBrains Mono, monospace' }}
+                />
+                <select
+                  value={newParamType}
+                  onChange={e => setNewParamType(e.target.value)}
+                  style={{ ...fieldStyle, flex: 1, fontSize: 13 }}
+                >
+                  <option value="string">string</option>
+                  <option value="secret">secret</option>
+                  <option value="url">url</option>
+                  <option value="int">int</option>
+                  <option value="bool">bool</option>
+                </select>
+              </div>
+              <input
+                type={newParamType === 'secret' ? 'password' : 'text'}
+                placeholder="Value…"
+                value={newParamValue}
+                onChange={e => setNewParamValue(e.target.value)}
+                style={{ ...fieldStyle, fontSize: 13, marginBottom: 8 }}
+              />
+              {addParamMsg && <div style={{ fontSize: 12, color: C.error, fontWeight: 600, marginBottom: 6 }}>{addParamMsg}</div>}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={handleAddAppParam}
+                  disabled={addParamSaving || !newParamName.trim() || !newParamValue.trim()}
+                  style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: addParamSaving || !newParamName.trim() || !newParamValue.trim() ? 0.5 : 1 }}
+                >
+                  {addParamSaving ? '…' : 'Save'}
+                </button>
+                <button
+                  onClick={() => { setAddingParam(false); setNewParamName(''); setNewParamValue(''); setNewParamType('string'); setAddParamMsg(''); }}
+                  style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.outline}`, background: 'transparent', color: C.textMuted, cursor: 'pointer', fontSize: 12 }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* LLM Objects — assign provider+model per orchestrator */}

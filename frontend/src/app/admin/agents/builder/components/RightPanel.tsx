@@ -28,6 +28,7 @@ interface RightPanelProps {
   setActiveView: (view: 'agent' | 'skill') => void;
   setDebug: React.Dispatch<React.SetStateAction<DebugState>>;
   debugStep: () => void;
+  nodeTypesReady?: boolean;
 }
 
 export function RightPanel({
@@ -50,6 +51,7 @@ export function RightPanel({
   setActiveView,
   setDebug,
   debugStep,
+  nodeTypesReady,
 }: RightPanelProps) {
   const [mcpServers, setMcpServers] = useState<MCPServer[]>([]);
   useEffect(() => {
@@ -351,6 +353,21 @@ export function RightPanel({
                     <input value={cfgStr('output_var')} onChange={e => updateStepConfig('output_var', e.target.value)} style={inputStyle} placeholder="output" />
                   </div>
 
+                  {/* ── Model override from app global params ──────────────── */}
+                  <div style={{ ...fieldGap, marginTop: '16px', padding: '10px 12px', borderRadius: '6px', background: 'rgba(208,188,255,0.04)', border: '1px solid rgba(208,188,255,0.15)' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 700, color: '#a78bfa', letterSpacing: '0.08em', marginBottom: '8px' }}>MODEL OVERRIDE (APP GLOBAL PARAM)</div>
+                    <label style={labelStyle}>Global Param Name <span style={hint}>optional — overrides model at runtime</span></label>
+                    <input
+                      value={cfgStr('model_override_param_ref')}
+                      onChange={e => updateStepConfig('model_override_param_ref', e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                      style={inputStyle}
+                      placeholder="e.g. llm_model"
+                    />
+                    <div style={{ marginTop: 6, fontSize: 10, color: '#64748b' }}>
+                      When set, the app-global param value replaces the canvas model at runtime. Takes precedence over the per-binding model override key.
+                    </div>
+                  </div>
+
                   {/* ── MCP Servers ─────────────────────────────────────────── */}
                   <div style={{ marginTop: 20, borderTop: `1px solid rgba(255,255,255,0.07)`, paddingTop: 14 }}>
                     <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: MCP_ACCENT, marginBottom: 8 }}>
@@ -470,39 +487,106 @@ export function RightPanel({
                 {(() => {
                   const httpDef = getNodeDef('http');
                   const appParams = httpDef.app_params ?? [];
-                  if (appParams.length === 0) return null;
+                  // Always render the APP AUTH PARAM section for http nodes —
+                  // if node-types haven't loaded yet, show a placeholder so the
+                  // user sees the field exists. nodeTypesReady triggers a re-render
+                  // once the fetch completes and populates _byType.
                   const currentParamKey = cfgStr('app_param_key');
+                  const currentParamRef = cfgStr('app_param_ref');
                   const currentMode = cfgStr('inject_mode') || 'header';
+                  // Source mode: 'global' = app-global param ref, 'binding' = per-binding agent param key
+                  const sourceMode = currentParamRef ? 'global' : 'binding';
                   return (
                     <div style={{ ...fieldGap, marginTop: '16px', padding: '10px 12px', borderRadius: '6px', background: 'rgba(251,146,60,0.05)', border: '1px solid rgba(251,146,60,0.15)' }}>
                       <div style={{ fontSize: '10px', fontWeight: 700, color: C.amber, letterSpacing: '0.08em', marginBottom: '8px' }}>APP AUTH PARAM</div>
-                      <label style={labelStyle}>App Param Key <span style={hint}>optional — injects runtime param as auth</span></label>
-                      <select value={currentParamKey} onChange={e => updateStepConfig('app_param_key', e.target.value)} style={selectStyle}>
-                        <option value="">— none —</option>
-                        {appParams.map(p => (<option key={p.key} value={p.key}>{p.label} ({p.key})</option>))}
-                      </select>
-                      {currentParamKey && (
+
+                      {/* Source mode toggle */}
+                      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+                        <button
+                          onClick={() => { updateStepConfig('app_param_ref', ''); }}
+                          style={{ flex: 1, padding: '4px 0', borderRadius: 4, border: `1px solid ${sourceMode === 'binding' ? C.amber : 'rgba(251,146,60,0.3)'}`, background: sourceMode === 'binding' ? 'rgba(251,146,60,0.15)' : 'transparent', color: sourceMode === 'binding' ? C.amber : '#64748b', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}
+                        >
+                          Per-binding param
+                        </button>
+                        <button
+                          onClick={() => { updateStepConfig('app_param_key', ''); }}
+                          style={{ flex: 1, padding: '4px 0', borderRadius: 4, border: `1px solid ${sourceMode === 'global' ? C.amber : 'rgba(251,146,60,0.3)'}`, background: sourceMode === 'global' ? 'rgba(251,146,60,0.15)' : 'transparent', color: sourceMode === 'global' ? C.amber : '#64748b', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}
+                        >
+                          App global param
+                        </button>
+                      </div>
+
+                      {sourceMode === 'binding' ? (
                         <>
-                          <div style={fieldGap}>
-                            <label style={labelStyle}>Inject Mode</label>
-                            <select value={currentMode} onChange={e => updateStepConfig('inject_mode', e.target.value)} style={selectStyle}>
-                              <option value="header">Bearer (Authorization: Bearer)</option>
-                              <option value="basic">Basic Auth (Authorization: Basic)</option>
-                              <option value="query">Query Parameter</option>
-                              <option value="custom_header">Custom Header</option>
-                            </select>
+                          <label style={labelStyle}>App Param Key <span style={hint}>optional — injects runtime param as auth</span></label>
+                          <select value={currentParamKey} onChange={e => updateStepConfig('app_param_key', e.target.value)} style={selectStyle}>
+                            <option value="">— none —</option>
+                            {appParams.map(p => (<option key={p.key} value={p.key}>{p.label} ({p.key})</option>))}
+                            {currentParamKey && !appParams.find(p => p.key === currentParamKey) && (
+                              <option value={currentParamKey}>{currentParamKey}</option>
+                            )}
+                          </select>
+                          {currentParamKey && (
+                            <>
+                              <div style={fieldGap}>
+                                <label style={labelStyle}>Inject Mode</label>
+                                <select value={currentMode} onChange={e => updateStepConfig('inject_mode', e.target.value)} style={selectStyle}>
+                                  <option value="header">Bearer (Authorization: Bearer)</option>
+                                  <option value="basic">Basic Auth (Authorization: Basic)</option>
+                                  <option value="query">Query Parameter</option>
+                                  <option value="custom_header">Custom Header</option>
+                                </select>
+                              </div>
+                              {currentMode === 'custom_header' && (
+                                <div style={fieldGap}>
+                                  <label style={labelStyle}>Header Name</label>
+                                  <input value={cfgStr('inject_header_name')} onChange={e => updateStepConfig('inject_header_name', e.target.value)} style={inputStyle} placeholder="X-Api-Key" />
+                                </div>
+                              )}
+                              {currentMode === 'query' && (
+                                <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
+                                  The param key name will be used as the query parameter name.
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <label style={labelStyle}>Global Param Name <span style={hint}>name from App Global Parameters</span></label>
+                          <input
+                            value={currentParamRef}
+                            onChange={e => updateStepConfig('app_param_ref', e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                            style={inputStyle}
+                            placeholder="e.g. my_api_key"
+                          />
+                          {currentParamRef && (
+                            <>
+                              <div style={fieldGap}>
+                                <label style={labelStyle}>Inject Mode</label>
+                                <select value={currentMode} onChange={e => updateStepConfig('inject_mode', e.target.value)} style={selectStyle}>
+                                  <option value="header">Bearer (Authorization: Bearer)</option>
+                                  <option value="basic">Basic Auth (Authorization: Basic)</option>
+                                  <option value="query">Query Parameter</option>
+                                  <option value="custom_header">Custom Header</option>
+                                </select>
+                              </div>
+                              {currentMode === 'custom_header' && (
+                                <div style={fieldGap}>
+                                  <label style={labelStyle}>Header Name</label>
+                                  <input value={cfgStr('inject_header_name')} onChange={e => updateStepConfig('inject_header_name', e.target.value)} style={inputStyle} placeholder="X-Api-Key" />
+                                </div>
+                              )}
+                              {currentMode === 'query' && (
+                                <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
+                                  The param key name will be used as the query parameter name.
+                                </div>
+                              )}
+                            </>
+                          )}
+                          <div style={{ marginTop: 6, fontSize: 10, color: '#64748b' }}>
+                            Takes precedence over per-binding param. Param must exist under App Global Parameters in the app runtime settings.
                           </div>
-                          {currentMode === 'custom_header' && (
-                            <div style={fieldGap}>
-                              <label style={labelStyle}>Header Name</label>
-                              <input value={cfgStr('inject_header_name')} onChange={e => updateStepConfig('inject_header_name', e.target.value)} style={inputStyle} placeholder="X-Api-Key" />
-                            </div>
-                          )}
-                          {currentMode === 'query' && (
-                            <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
-                              The param key name will be used as the query parameter name.
-                            </div>
-                          )}
                         </>
                       )}
                     </div>
