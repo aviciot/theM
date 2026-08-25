@@ -558,6 +558,33 @@ export function CanvasBuilderView({
           {(() => {
             const currentAttachments: MCPServerAttachment[] = (cfg.mcp_servers as MCPServerAttachment[] | undefined) ?? [];
             const enabledServers = availableMCPServers.filter(s => s.enabled);
+
+            function toggleServer(slug: string) {
+              const isAttached = currentAttachments.some(a => a.slug === slug);
+              const next: MCPServerAttachment[] = isAttached
+                ? currentAttachments.filter(a => a.slug !== slug)
+                : [...currentAttachments, { slug, tools: [] }]; // empty = all tools
+              setOrchConfig({ mcp_servers: next });
+            }
+
+            function toggleTool(slug: string, toolName: string) {
+              const attachment = currentAttachments.find(a => a.slug === slug);
+              if (!attachment) return;
+              const current = attachment.tools ?? [];
+              // empty means "all" — switching to explicit list when user first unchecks
+              const allTools = availableMCPServers.find(s => s.slug === slug)?.tools_manifest?.map(t => t.name) ?? [];
+              const base = current.length === 0 ? allTools : current;
+              const next = base.includes(toolName)
+                ? base.filter(t => t !== toolName)
+                : [...base, toolName];
+              // if user re-selected all tools, collapse back to empty (= all)
+              const nextTools = next.length === allTools.length ? [] : next;
+              const nextAttachments = currentAttachments.map(a =>
+                a.slug === slug ? { ...a, tools: nextTools } : a
+              );
+              setOrchConfig({ mcp_servers: nextAttachments });
+            }
+
             return (
               <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -567,30 +594,60 @@ export function CanvasBuilderView({
                 {enabledServers.length === 0 ? (
                   <div style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic' }}>No MCP servers configured — add one in MCP Store</div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {enabledServers.map(server => {
-                      const isAttached = currentAttachments.some(a => a.slug === server.slug);
+                      const attachment = currentAttachments.find(a => a.slug === server.slug);
+                      const isAttached = !!attachment;
+                      const allowlist = attachment?.tools ?? [];
+                      const allTools = server.tools_manifest ?? [];
                       const statusColor = server.health_status === 'healthy' ? '#4ade80' : server.health_status === 'degraded' ? C.amber : server.health_status === 'unreachable' ? '#f87171' : C.textMuted;
+                      const activeCount = allowlist.length === 0 ? allTools.length : allowlist.length;
                       return (
-                        <div key={server.slug}
-                          onClick={() => {
-                            const next: MCPServerAttachment[] = isAttached
-                              ? currentAttachments.filter(a => a.slug !== server.slug)
-                              : [...currentAttachments, { slug: server.slug }];
-                            setOrchConfig({ mcp_servers: next });
-                          }}
-                          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', border: `1px solid ${isAttached ? 'rgba(208,188,255,0.3)' : 'rgba(255,255,255,0.08)'}`, background: isAttached ? 'rgba(208,188,255,0.07)' : 'transparent' }}>
-                          <div style={{ width: 13, height: 13, borderRadius: 3, border: `1.5px solid ${isAttached ? C.purple : 'rgba(255,255,255,0.3)'}`, background: isAttached ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            {isAttached && <span className="material-symbols-outlined" style={{ fontSize: 9, color: '#fff' }}>check</span>}
+                        <div key={server.slug} style={{ borderRadius: 7, border: `1px solid ${isAttached ? 'rgba(208,188,255,0.25)' : 'rgba(255,255,255,0.08)'}`, overflow: 'hidden' }}>
+                          {/* Server header row */}
+                          <div
+                            onClick={() => toggleServer(server.slug)}
+                            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 9px', cursor: 'pointer', background: isAttached ? 'rgba(208,188,255,0.07)' : 'transparent' }}>
+                            <div style={{ width: 13, height: 13, borderRadius: 3, border: `1.5px solid ${isAttached ? C.purple : 'rgba(255,255,255,0.3)'}`, background: isAttached ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              {isAttached && <span className="material-symbols-outlined" style={{ fontSize: 9, color: '#fff' }}>check</span>}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.name}</div>
+                              <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{server.slug}</div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                              <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} title={server.health_status} />
+                              {isAttached && allTools.length > 0 && (
+                                <span style={{ fontSize: 10, color: allowlist.length > 0 ? C.amber : C.textMuted }}>
+                                  {activeCount}/{allTools.length}
+                                </span>
+                              )}
+                              {(!isAttached || allTools.length === 0) && (
+                                <span style={{ fontSize: 10, color: C.textMuted }}>{allTools.length}</span>
+                              )}
+                            </div>
                           </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.name}</div>
-                            <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{server.slug}</div>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                            <div style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} title={server.health_status} />
-                            <span style={{ fontSize: 10, color: C.textMuted }}>{server.tools_manifest?.length ?? 0}</span>
-                          </div>
+                          {/* Tool list — shown when attached and server has tools */}
+                          {isAttached && allTools.length > 0 && (
+                            <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '6px 9px', display: 'flex', flexDirection: 'column', gap: 3, background: 'rgba(0,0,0,0.15)' }}>
+                              {allTools.map(tool => {
+                                const toolEnabled = allowlist.length === 0 || allowlist.includes(tool.name);
+                                return (
+                                  <div key={tool.name}
+                                    onClick={e => { e.stopPropagation(); toggleTool(server.slug, tool.name); }}
+                                    style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 2px', cursor: 'pointer', borderRadius: 4 }}>
+                                    <div style={{ width: 11, height: 11, marginTop: 1, borderRadius: 2, border: `1.5px solid ${toolEnabled ? C.purple : 'rgba(255,255,255,0.2)'}`, background: toolEnabled ? C.purple : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                      {toolEnabled && <span className="material-symbols-outlined" style={{ fontSize: 8, color: '#fff' }}>check</span>}
+                                    </div>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ fontSize: 11, color: toolEnabled ? C.text : C.textMuted, fontFamily: 'JetBrains Mono, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tool.name}</div>
+                                      {tool.description && <div style={{ fontSize: 10, color: C.textMuted, lineHeight: 1.3, marginTop: 1 }}>{tool.description}</div>}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
