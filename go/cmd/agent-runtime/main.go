@@ -170,9 +170,11 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 	// ic.AgentParams is never nil — steps can safely read from it without nil checks.
 	ic.AgentParams = rt.resolveAgentParams(agentParamsJSON, spec.RequiredParams)
 
-	// Load app-level global params — decrypted from applications.app_params.
-	// Non-fatal: empty map on any error; steps fall back to per-binding params.
+	// Load app-level global params for HTTP app_param_ref injection.
 	ic.AppGlobalParams = rt.loadAppGlobalParams(r.Context(), ic.ApplicationID)
+
+	// Extract per-node LLM overrides from config_overrides["llm_nodes"].
+	ic.NodeLLMOverrides = extractNodeLLMOverrides(binding.ConfigOverrides)
 
 	// Build the SDK executor function. It is called by the SDK for each message/send
 	// or message/stream request. The closure captures the fully-resolved InvocationContext.
@@ -487,6 +489,35 @@ func (rt *Runtime) loadSpecBySlug(ctx context.Context, slug string) (*agentgen.A
 		rt.specCache.set(spec.ID, &spec)
 	}
 	return &spec, nil
+}
+
+// extractNodeLLMOverrides reads the llm_nodes sub-map from config_overrides and
+// returns a map of node_id → NodeLLMOverride. Safe to call with a nil map.
+func extractNodeLLMOverrides(overrides map[string]any) map[string]agentgen.NodeLLMOverride {
+	out := make(map[string]agentgen.NodeLLMOverride)
+	if overrides == nil {
+		return out
+	}
+	raw, ok := overrides["llm_nodes"]
+	if !ok {
+		return out
+	}
+	nodes, ok := raw.(map[string]any)
+	if !ok {
+		return out
+	}
+	for nodeID, v := range nodes {
+		m, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		provider, _ := m["provider"].(string)
+		model, _ := m["model"].(string)
+		if provider != "" || model != "" {
+			out[nodeID] = agentgen.NodeLLMOverride{Provider: provider, Model: model}
+		}
+	}
+	return out
 }
 
 func (rt *Runtime) loadBinding(ctx context.Context, appID, agentID, bindingID string) (*agentgen.AppAgentBinding, []byte, error) {

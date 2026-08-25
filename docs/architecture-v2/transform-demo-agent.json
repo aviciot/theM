@@ -33,7 +33,7 @@
           "config": {
             "provider": "anthropic",
             "model": "claude-haiku-4-5-20251001",
-            "max_tokens": 200,
+            "max_tokens": 400,
             "system_prompt": "You are a data extractor. Always respond with raw JSON only — no markdown fences, no explanation.",
             "prompt_template": "Extract from this text: {{.user_query}}\n\nReturn exactly this JSON:\n{\"city\": \"<name>\", \"population\": \"<number>\", \"country\": \"<name>\"}",
             "output_var": "llm_raw"
@@ -46,11 +46,17 @@
           "type": "transform",
           "label": "Extract Fields",
           "config": {
-            "exposed_vars": ["city_label"],
+            "exposed_vars": ["city", "population", "country", "city_label"],
             "functions": [
               {
                 "fn": "strip_fences",
                 "input_var": "llm_raw",
+                "output_var": "clean_json",
+                "args": {}
+              },
+              {
+                "fn": "assert_json",
+                "input_var": "clean_json",
                 "output_var": "clean_json",
                 "args": {}
               },
@@ -61,16 +67,34 @@
                 "args": { "path": "$.city" }
               },
               {
+                "fn": "coalesce",
+                "input_var": "city",
+                "output_var": "city",
+                "args": { "default": "Unknown City" }
+              },
+              {
                 "fn": "json_path",
                 "input_var": "clean_json",
                 "output_var": "population",
                 "args": { "path": "$.population" }
               },
               {
+                "fn": "coalesce",
+                "input_var": "population",
+                "output_var": "population",
+                "args": { "default": "N/A" }
+              },
+              {
                 "fn": "json_path",
                 "input_var": "clean_json",
                 "output_var": "country",
                 "args": { "path": "$.country" }
+              },
+              {
+                "fn": "coalesce",
+                "input_var": "country",
+                "output_var": "country",
+                "args": { "default": "Unknown Country" }
               },
               {
                 "fn": "upper",

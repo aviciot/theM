@@ -285,6 +285,12 @@ func (f *agentDefFakeDal) GetRequiredParamsForAgent(_ context.Context, _ string)
 func (f *agentDefFakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }
+func (f *agentDefFakeDal) GetAgentLLMNodes(_ context.Context, _, _ string) ([]byte, []byte, string, error) {
+	return []byte("[]"), []byte("{}"), "", nil
+}
+func (f *agentDefFakeDal) UpsertNodeLLMOverride(_ context.Context, _, _, _, _, _ string) error {
+	return nil
+}
 func (f *agentDefFakeDal) GetAppParams(_ context.Context, _, _ string) ([]byte, error) {
 	return []byte(`{}`), nil
 }

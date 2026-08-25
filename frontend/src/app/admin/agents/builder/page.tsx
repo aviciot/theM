@@ -38,6 +38,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { C, inputStyle, INITIAL_DEBUG, INITIAL_VALIDATION, genUUID } from './constants';
+import { PROVIDER_LIST, RUNTIME_MODELS } from '../../applications/constants';
 import type { AgentRootData, SkillData, StepData, DebugNodeState, DebugState, ValidationState, LogoState, LayoutDir } from './types';
 import { StepNode, stepMeta } from './components/StepNode';
 import { DebugPanel } from './components/DebugPanel';
@@ -992,7 +993,7 @@ function CanvasInner() {
   function ssSet(paramKey: string, val: string) { try { sessionStorage.setItem(ssKey(paramKey), val); } catch { /* ignore */ } }
 
   function buildDebugParamSpecs(nodes: Node[]) {
-    const specs: { key: string; label: string; description: string; isSecret: boolean; required: boolean; nodeLabel?: string }[] = [];
+    const specs: import('./types').DebugParamSpec[] = [];
     const seenParamKeys = new Set<string>();
 
     specs.push({
@@ -1006,9 +1007,25 @@ function CanvasInner() {
     const hasLLM = nodes.some(n => (n.data as unknown as StepData).step_type === 'llm');
     if (hasLLM) {
       specs.push({
-        key: '__anthropic_key',
-        label: 'Anthropic API key',
-        description: 'Used only in browser for debug calls — never sent to the-M server',
+        key: '__debug_provider',
+        label: 'LLM Provider',
+        description: 'Provider to use for all LLM nodes in this debug run',
+        isSecret: false,
+        required: true,
+        options: [...PROVIDER_LIST],
+      });
+      specs.push({
+        key: '__debug_model',
+        label: 'Model',
+        description: 'Model to use (must be valid for the chosen provider)',
+        isSecret: false,
+        required: true,
+        options: Object.values(RUNTIME_MODELS).flat(),
+      });
+      specs.push({
+        key: '__debug_api_key',
+        label: 'API Key',
+        description: 'API key for the chosen provider — stored in browser session only, never sent to the-M server',
         isSecret: true,
         required: true,
       });
@@ -1123,14 +1140,18 @@ function CanvasInner() {
       if (userPrompt) messages.push({ role: 'user', content: userPrompt });
       if (messages.length === 0) throw new Error('LLM step: user prompt is empty — connect an Input node or set the user_prompt template.');
 
+      // Use debug-session provider/model/key — overrides the node's compiled values
+      const debugProvider = debugParams['__debug_provider'] ?? 'anthropic';
+      const debugModel = debugParams['__debug_model'] || model;
       const resp = await fetch('/api/debug/llm', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-debug-api-key': debugParams['__anthropic_key'] ?? '',
+          'x-debug-provider': debugProvider,
+          'x-debug-api-key': debugParams['__debug_api_key'] ?? '',
         },
         body: JSON.stringify({
-          model,
+          model: debugModel,
           max_tokens: maxTokens,
           ...(systemPrompt ? { system: systemPrompt } : {}),
           messages,
@@ -1291,9 +1312,9 @@ function CanvasInner() {
       return;
     }
 
-    // Build the test-input + Anthropic key specs (always present for LLM agents).
+    // Build the test-input + LLM provider/model/key specs (always present for LLM agents).
     const baseSpecs = buildDebugParamSpecs(localPipeNodes).filter(
-      s => s.key === '__test_input' || s.key === '__anthropic_key',
+      s => s.key === '__test_input' || s.key === '__debug_provider' || s.key === '__debug_model' || s.key === '__debug_api_key',
     );
 
     // For published agents, fetch required params from the API (canonical, same source
@@ -1343,9 +1364,17 @@ function CanvasInner() {
   async function debugCommitSetup() {
     const testInput = debug.debugParams['__test_input'] ?? '';
     if (!testInput.trim()) { setDebug(prev => ({ ...prev, error: 'Test message is required.' })); return; }
-    const hasLLM = debug.paramSpecs.some(s => s.key === '__anthropic_key');
-    if (hasLLM && !(debug.debugParams['__anthropic_key'] ?? '').trim()) {
-      setDebug(prev => ({ ...prev, error: 'Anthropic API key is required for LLM steps.' })); return;
+    const hasLLM = debug.paramSpecs.some(s => s.key === '__debug_provider');
+    if (hasLLM) {
+      if (!(debug.debugParams['__debug_provider'] ?? '').trim()) {
+        setDebug(prev => ({ ...prev, error: 'Select an LLM provider for debug.' })); return;
+      }
+      if (!(debug.debugParams['__debug_model'] ?? '').trim()) {
+        setDebug(prev => ({ ...prev, error: 'Select a model for debug.' })); return;
+      }
+      if (!(debug.debugParams['__debug_api_key'] ?? '').trim()) {
+        setDebug(prev => ({ ...prev, error: 'Enter an API key for the chosen provider.' })); return;
+      }
     }
     saveDebugPrefs(testInput);
     for (const spec of debug.paramSpecs) {
@@ -2010,6 +2039,7 @@ function CanvasInner() {
             setActiveView={setActiveView}
             setDebug={setDebug}
             debugStep={debugStep}
+            nodeTypesReady={nodeTypesReady}
           />
         )}
       </div>

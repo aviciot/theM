@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -188,6 +189,7 @@ func init() {
 		for k := range v {
 			keys = append(keys, k)
 		}
+		sort.Strings(keys)
 		b, _ := json.Marshal(keys)
 		return string(b), nil
 	})

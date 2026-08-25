@@ -49,6 +49,9 @@ func (h *AgentBindingsHandler) MountOn(r chi.Router) {
 	// Agent runtime params — GET returns param metadata + fill status; PUT upserts values.
 	r.Get("/agents/{agent_id}/params", h.GetAgentParams)
 	r.Put("/agents/{agent_id}/params", h.PutAgentParams)
+	// Canvas agent LLM node overrides — GET lists nodes+overrides; PUT sets provider+model.
+	r.Get("/agents/{agent_id}/llm-nodes", h.GetAgentLLMNodes)
+	r.Put("/agents/{agent_id}/llm-nodes/{node_id}", h.PutNodeLLMOverride)
 }
 
 // List handles GET /api/v1/admin/applications/{app_id}/agent-bindings.
@@ -178,4 +181,52 @@ func (h *AgentBindingsHandler) PutAgentParams(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"application_id": appID, "agent_id": agentID, "updated": true})
+}
+
+// GetAgentLLMNodes handles GET /api/v1/admin/applications/{app_id}/agents/{agent_id}/llm-nodes.
+// Returns LLM nodes from the published spec with current per-binding overrides.
+func (h *AgentBindingsHandler) GetAgentLLMNodes(w http.ResponseWriter, r *http.Request) {
+	appID := appIDParam(r)
+	agentID := chi.URLParam(r, "agent_id")
+	if appID == "" || agentID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or agent id")
+		return
+	}
+	nodes, err := h.svc.GetAgentLLMNodes(r.Context(), appID, agentID)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get agent llm nodes")
+		return
+	}
+	writeJSON(w, http.StatusOK, nodes)
+}
+
+// PutNodeLLMOverride handles PUT /api/v1/admin/applications/{app_id}/agents/{agent_id}/llm-nodes/{node_id}.
+// Body: {"provider": "anthropic", "model": "claude-haiku-4-5-20251001"}
+func (h *AgentBindingsHandler) PutNodeLLMOverride(w http.ResponseWriter, r *http.Request) {
+	appID := appIDParam(r)
+	agentID := chi.URLParam(r, "agent_id")
+	nodeID := chi.URLParam(r, "node_id")
+	if appID == "" || agentID == "" || nodeID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application, agent, or node id")
+		return
+	}
+	var body struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if err := h.svc.PutNodeLLMOverride(r.Context(), appID, agentID, nodeID, body.Provider, body.Model); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "put node llm override")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"node_id": nodeID, "updated": true})
 }

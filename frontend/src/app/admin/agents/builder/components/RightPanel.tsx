@@ -353,21 +353,6 @@ export function RightPanel({
                     <input value={cfgStr('output_var')} onChange={e => updateStepConfig('output_var', e.target.value)} style={inputStyle} placeholder="output" />
                   </div>
 
-                  {/* ── Model override from app global params ──────────────── */}
-                  <div style={{ ...fieldGap, marginTop: '16px', padding: '10px 12px', borderRadius: '6px', background: 'rgba(208,188,255,0.04)', border: '1px solid rgba(208,188,255,0.15)' }}>
-                    <div style={{ fontSize: '10px', fontWeight: 700, color: '#a78bfa', letterSpacing: '0.08em', marginBottom: '8px' }}>MODEL OVERRIDE (APP GLOBAL PARAM)</div>
-                    <label style={labelStyle}>Global Param Name <span style={hint}>optional — overrides model at runtime</span></label>
-                    <input
-                      value={cfgStr('model_override_param_ref')}
-                      onChange={e => updateStepConfig('model_override_param_ref', e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
-                      style={inputStyle}
-                      placeholder="e.g. llm_model"
-                    />
-                    <div style={{ marginTop: 6, fontSize: 10, color: '#64748b' }}>
-                      When set, the app-global param value replaces the canvas model at runtime. Takes precedence over the per-binding model override key.
-                    </div>
-                  </div>
-
                   {/* ── MCP Servers ─────────────────────────────────────────── */}
                   <div style={{ marginTop: 20, borderTop: `1px solid rgba(255,255,255,0.07)`, paddingTop: 14 }}>
                     <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: MCP_ACCENT, marginBottom: 8 }}>

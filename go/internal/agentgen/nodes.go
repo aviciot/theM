@@ -37,15 +37,6 @@ func init() {
 		SingleInput: true,
 		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
 		InputField: "user_prompt",
-		AppParams: []AppParamDecl{
-			{
-				Key:         "model_override",
-				Label:       "Model Override",
-				Description: "Override the compiled model name at runtime. Must be a valid model identifier for the configured provider.",
-				Type:        "string",
-				Required:    false,
-			},
-		},
 		Validate: nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {

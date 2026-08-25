@@ -148,38 +148,29 @@ func (interp *Interpreter) execLLM(ctx context.Context, ic *InvocationContext, s
 		return fmt.Errorf("parse llm config: %w", err)
 	}
 
-	// Two-tier key resolution (most specific wins):
-	// 1. per-app key from applications.provider_keys (ic.AppAPIKey)
-	// 2. platform ANTHROPIC_API_KEY env var (interp.platformAPIKey)
+	// Node-level override (set via RuntimeView) takes precedence over compiled values.
 	providerName := cfg.Provider
+	model := cfg.Model
+	if ov, ok := ic.NodeLLMOverrides[step.ID]; ok && ov.Provider != "" {
+		providerName = ov.Provider
+		if ov.Model != "" {
+			model = ov.Model
+		}
+	}
 	if providerName == "" {
 		providerName = "anthropic"
 	}
+
+	// API key: per-app key wins over platform fallback.
 	apiKey := interp.platformAPIKey
 	if appKey, ok := ic.AppAPIKey[providerName]; ok && appKey != "" {
 		apiKey = appKey
 	}
 
-	// Model resolution priority (highest wins):
-	// 1. ModelOverrideParamRef → app-global param (AppGlobalParams)
-	// 2. ModelOverrideParamKey → per-binding agent param (AgentParams)
-	// 3. compiled model from canvas config
-	model := cfg.Model
-	if cfg.ModelOverrideParamKey != "" && ic.AgentParams != nil {
-		if override := ic.AgentParams[cfg.ModelOverrideParamKey]; override != "" {
-			model = override
-		}
-	}
-	if cfg.ModelOverrideParamRef != "" && ic.AppGlobalParams != nil {
-		if override := ic.AppGlobalParams[cfg.ModelOverrideParamRef]; override != "" {
-			model = override
-		}
-	}
-
 	if interp.llmFactory == nil {
 		return fmt.Errorf("no LLM factory configured")
 	}
-	provider, err := interp.llmFactory.NewProvider(cfg.Provider, model, cfg.MaxTokens, apiKey)
+	provider, err := interp.llmFactory.NewProvider(providerName, model, cfg.MaxTokens, apiKey)
 	if err != nil {
 		return fmt.Errorf("create LLM provider: %w", err)
 	}

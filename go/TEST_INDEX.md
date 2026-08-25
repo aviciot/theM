@@ -1082,25 +1082,25 @@ decryption roundtrip via `GetPlaintextAppParams`.
 
 ---
 
-### S1-63 · Compiler app_param_ref — `internal/agentgen/compiler_test.go`
+### S1-63 · Compiler LLM nodes — `internal/agentgen/compiler_test.go`
 
-**Purpose:** Verifies that `collectAppParamRefs` correctly emits `AgentAppParamRef` entries for HTTP steps with `app_param_ref` and LLM steps with `model_override_param_ref`. Also verifies additive behavior alongside `RequiredParams` and correct deduplication within a step.
+**Purpose:** Verifies that `collectLLMNodes` correctly walks all skills and emits `AgentLLMNodeSpec` entries for LLM steps. Replaces old `collectAppParamRefs` / `AppParamRefs` tests (removed with the model_override_param_ref mechanism).
 
 | Test | What it proves |
 |---|---|
-| `TestCompile_HTTPNode_AppParamRef` | CMP-10: HTTP step with `app_param_ref` → `AppParamRefs` contains `{step1, geoapify_key}` |
-| `TestCompile_LLMNode_ModelOverrideParamRef` | CMP-11: LLM step with `model_override_param_ref` → entry in `AppParamRefs` |
-| `TestCompile_HTTPNode_BothKeyAndRef` | CMP-12: both `app_param_key` and `app_param_ref` → both `RequiredParams` and `AppParamRefs` populated |
-| `TestCompile_NoAppParamRef` | CMP-13: no `app_param_ref` on any step → `AppParamRefs` is nil |
-| `TestCompile_DuplicateParamRefAcrossSteps` | CMP-14: same `app_param_ref` name on two steps → two entries (one per step) |
+| `TestCompile_LLMNode_CollectedInSpec` | CMP-10: single LLM step → `LLMNodes` has one entry with correct provider/model |
+| `TestCompile_MultipleLLMNodes` | CMP-11: two LLM steps across two skills → two entries in `LLMNodes` |
+| `TestCompile_HTTPNode_BothKeyAndRef` | CMP-12: HTTP with both `app_param_key` and `app_param_ref` → `RequiredParams` still populated |
+| `TestCompile_NoLLMNodes` | CMP-13: no LLM steps → `LLMNodes` is nil |
+| `TestCompile_LLMNode_LabelFallback` | CMP-14: LLM step with no label field → `Label` falls back to node ID |
 
-**Trigger:** any change to `internal/agentgen/compiler.go` (`collectAppParamRefs`, `buildSpec`), `internal/agentgen/spec.go` (`AgentAppParamRef`, `AppParamRef` field)
+**Trigger:** any change to `internal/agentgen/compiler.go` (`collectLLMNodes`, `buildSpec`), `internal/agentgen/spec.go` (`AgentLLMNodeSpec`, `LLMNodes` field)
 
 ---
 
-### S1-64 · Interpreter app_param_ref — `internal/agentgen/agentgen_test.go`
+### S1-64 · Interpreter app_param_ref and NodeLLMOverride — `internal/agentgen/agentgen_test.go`
 
-**Purpose:** Verifies runtime resolution of `app_param_ref` and `model_override_param_ref` from `InvocationContext.AppGlobalParams`. Covers precedence, required vs optional, and model override.
+**Purpose:** Verifies runtime resolution of `app_param_ref` from `InvocationContext.AppGlobalParams` (HTTP path) and per-node LLM provider+model override from `InvocationContext.NodeLLMOverrides`.
 
 | Test | What it proves |
 |---|---|
@@ -1108,9 +1108,9 @@ decryption roundtrip via `GetPlaintextAppParams`.
 | `TestInterpreter_HTTPStep_AppParamRef_AbsentRequired` | INT-11: `app_param_ref` absent + non-empty `inject_mode` → error |
 | `TestInterpreter_HTTPStep_AppParamRef_AbsentOptional` | INT-12: `app_param_ref` absent + empty `inject_mode` → silently skips |
 | `TestInterpreter_HTTPStep_AppParamRef_TakesPrecedenceOverKey` | INT-13: `app_param_ref` takes precedence over `app_param_key` when both set |
-| `TestInterpreter_LLMStep_ModelOverrideParamRef` | INT-14: `model_override_param_ref` + matching `AppGlobalParams` → model override applied |
+| `TestInterpreter_LLMStep_NodeLLMOverride` | INT-14: `NodeLLMOverrides[nodeID]` → overrides compiled provider and model at execution |
 
-**Trigger:** any change to `internal/agentgen/interpreter.go` (`execHTTP` AppParamRef block, `execLLM` ModelOverrideParamRef block, `injectAuthParam`)
+**Trigger:** any change to `internal/agentgen/interpreter.go` (`execHTTP` AppParamRef block, `execLLM` NodeLLMOverrides block, `injectAuthParam`)
 
 ---
 
@@ -1462,7 +1462,7 @@ split (warning at validate / error at publish), and structured Issue fields (Ski
 | `TestCompile_DuplicateStepID` | two steps same id in one skill → DUPLICATE_STEP |
 | `TestCompile_UnknownStepType` | step with unknown type → UNKNOWN_STEP_TYPE |
 | `TestCompile_HTTPNode_AcceptsConfig` | http step without app_param_key compiles cleanly |
-| `TestCompile_LLMNode_AcceptsConfig` | llm step without model_override_param_key compiles cleanly |
+| `TestCompile_LLMNode_AcceptsConfig` | llm step compiles cleanly and is collected into LLMNodes |
 | `TestCompile_HTTPNode_AppParams` | http step with `app_param_key: "bearer_token"` → RequiredParams contains composite key `step1:bearer_token` with UsedByNodes |
 | `TestCompile_HTTPNode_FreeFormAppParamKey` | http step with free-form `app_param_key: "geoapify_key"` → RequiredParams contains composite key `step1:geoapify_key` |
 | `TestCompile_NoParams` | agent with no param-aware nodes → empty RequiredParams |
@@ -1502,8 +1502,11 @@ PublishAgentDefinition uses `agentgen.CompileForPublish()` (stubs→errors).
 | `TestUpsertBinding_WithKey` | credentials + 32-byte key → nil (encrypted transparently) |
 | `TestGetBindingStatus_NotFound` | DAL no-rows → ErrNotFound |
 | `TestListBindings_Empty` | no bindings → [] not nil |
+| `GetAgentLLMNodes` stub tests (in fake DAL implementations) | new DAL interface methods present in all 4 fake DAL structs |
 
-**Trigger:** any change to `internal/admin/service/agent_definitions_publish.go`, `internal/admin/service/agent_definitions.go`, or `internal/admin/dal/agent_definitions_publish.go`
+**New methods:** `GetAgentLLMNodes` (merges spec `llm_nodes` with `config_overrides["llm_nodes"]` overrides) and `PutNodeLLMOverride` (validates non-empty + calls DAL) added to `agent_definitions_publish.go`. HTTP handlers added in `internal/admin/agent_bindings.go`: `GET /agents/{id}/llm-nodes` and `PUT /agents/{id}/llm-nodes/{node_id}`.
+
+**Trigger:** any change to `internal/admin/service/agent_definitions_publish.go`, `internal/admin/service/agent_definitions.go`, `internal/admin/dal/agent_definitions_publish.go`, or `internal/admin/dal/agent_bindings.go`
 
 ---
 

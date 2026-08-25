@@ -22,15 +22,15 @@ type AgentBindingRow struct {
 // ListAgentBindings. CredentialSet maps slot_name → true if ciphertext is
 // present. NEVER returns the ciphertext or plaintext values.
 type AgentBindingSlotStatus struct {
-	ID            string
-	ApplicationID string
-	AgentID       string
-	DefinitionID  *string
-	CredentialSet map[string]bool
-	ConfigOverrides json.RawMessage
-	Policies        json.RawMessage
-	CreatedAt       string
-	UpdatedAt       string
+	ID              string          `json:"id"`
+	ApplicationID   string          `json:"application_id"`
+	AgentID         string          `json:"agent_id"`
+	DefinitionID    *string         `json:"definition_id,omitempty"`
+	CredentialSet   map[string]bool `json:"credential_set"`
+	ConfigOverrides json.RawMessage `json:"config_overrides,omitempty"`
+	Policies        json.RawMessage `json:"policies,omitempty"`
+	CreatedAt       string          `json:"created_at"`
+	UpdatedAt       string          `json:"updated_at"`
 }
 
 // UpsertAgentBinding inserts or updates an app↔agent binding.
@@ -68,10 +68,9 @@ func (d *DB) UpsertAgentBinding(ctx context.Context, row AgentBindingRow) error 
 			(application_id, agent_id, credential_bindings, config_overrides, policies)
 		VALUES ($1::uuid, $2::uuid, $3::jsonb, $4::jsonb, $5::jsonb)
 		ON CONFLICT (application_id, agent_id) DO UPDATE
-			SET credential_bindings = EXCLUDED.credential_bindings,
-			    config_overrides    = EXCLUDED.config_overrides,
-			    policies            = EXCLUDED.policies,
-			    updated_at          = now()`
+			SET updated_at = now()`
+	// On conflict, do NOT overwrite credential_bindings / config_overrides / policies —
+	// the user may have already saved secrets there; re-publish must not wipe them.
 	return d.q.Exec(ctx, q, row.ApplicationID, row.AgentID, credJSON, cfgJSON, polJSON)
 }
 
@@ -271,4 +270,40 @@ func (d *DB) UpsertAgentParams(ctx context.Context, applicationID, agentID strin
 		    SET agent_params = them.app_agent_bindings.agent_params || $3::jsonb,
 		        updated_at   = now()`
 	return d.q.Exec(ctx, q, applicationID, agentID, paramsDelta)
+}
+
+// GetAgentLLMNodes returns the LLM node list from the published spec and the
+// current llm_nodes overrides from config_overrides for one binding.
+// Returns pgx.ErrNoRows when no published spec exists for the agent.
+func (d *DB) GetAgentLLMNodes(ctx context.Context, applicationID, agentID string) (llmNodesJSON []byte, configOverridesJSON []byte, agentSlug string, err error) {
+	const q = `
+		SELECT COALESCE(s.spec->'llm_nodes', '[]'::jsonb),
+		       COALESCE(b.config_overrides->'llm_nodes', '{}'::jsonb),
+		       a.slug
+		  FROM them.agent_runtime_specs s
+		  JOIN them.agents a ON a.id = s.agent_id
+		  LEFT JOIN them.app_agent_bindings b
+		         ON b.application_id = $1::uuid AND b.agent_id = $2::uuid
+		 WHERE s.agent_id = $2::uuid`
+	err = d.q.QueryRow(ctx, q, applicationID, agentID).Scan(&llmNodesJSON, &configOverridesJSON, &agentSlug)
+	return
+}
+
+// UpsertNodeLLMOverride sets (or clears) the provider+model override for one LLM node
+// in config_overrides["llm_nodes"][nodeID]. A null provider clears the entry.
+func (d *DB) UpsertNodeLLMOverride(ctx context.Context, applicationID, agentID, nodeID, provider, model string) error {
+	overrideJSON, _ := json.Marshal(map[string]string{"provider": provider, "model": model})
+	// jsonb_set path must be a text array; we build config_overrides.llm_nodes.<nodeID>
+	const q = `
+		INSERT INTO them.app_agent_bindings (application_id, agent_id, config_overrides)
+		VALUES ($1::uuid, $2::uuid, jsonb_build_object('llm_nodes', jsonb_build_object($3::text, $4::jsonb)))
+		ON CONFLICT (application_id, agent_id) DO UPDATE
+		    SET config_overrides = jsonb_set(
+		            COALESCE(them.app_agent_bindings.config_overrides, '{}'),
+		            ARRAY['llm_nodes', $3::text],
+		            $4::jsonb,
+		            true
+		        ),
+		        updated_at = now()`
+	return d.q.Exec(ctx, q, applicationID, agentID, nodeID, overrideJSON)
 }

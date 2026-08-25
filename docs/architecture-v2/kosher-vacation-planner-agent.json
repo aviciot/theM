@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "agent_slug": "kosher-vacation-planner-v2",
+  "agent_slug": "kosher-vacation-planner",
   "agent_root": {
     "display_name": "Kosher Vacation Planner",
     "description": "Plans and compares two vacation destinations for kosher-observant travellers. Checks weather, kosher restaurant availability via Geoapify, Shabbat times, and currency — then recommends the best option with a scored explanation.",

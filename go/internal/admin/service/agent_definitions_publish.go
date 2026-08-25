@@ -401,6 +401,65 @@ func (s *AgentDefinitionService) PutAgentParams(ctx context.Context, application
 	return s.dal.UpsertAgentParams(ctx, applicationID, agentID, deltaJSON)
 }
 
+// ── Canvas agent LLM node overrides ──────────────────────────────────────────
+
+// AgentLLMNodeStatus describes one LLM node and its current runtime override.
+type AgentLLMNodeStatus struct {
+	AgentID          string `json:"agent_id"`
+	AgentSlug        string `json:"agent_slug"`
+	NodeID           string `json:"node_id"`
+	Label            string `json:"label"`
+	CompiledProvider string `json:"compiled_provider"`
+	CompiledModel    string `json:"compiled_model"`
+	OverrideProvider string `json:"override_provider,omitempty"`
+	OverrideModel    string `json:"override_model,omitempty"`
+}
+
+// GetAgentLLMNodes returns the LLM nodes from the published spec merged with
+// any per-binding overrides stored in config_overrides["llm_nodes"].
+func (s *AgentDefinitionService) GetAgentLLMNodes(ctx context.Context, applicationID, agentID string) ([]AgentLLMNodeStatus, error) {
+	llmJSON, overridesJSON, slug, err := s.dal.GetAgentLLMNodes(ctx, applicationID, agentID)
+	if err != nil {
+		return nil, err
+	}
+
+	var nodes []agentgen.AgentLLMNodeSpec
+	_ = json.Unmarshal(llmJSON, &nodes)
+
+	var overrides map[string]struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+	}
+	_ = json.Unmarshal(overridesJSON, &overrides)
+
+	result := make([]AgentLLMNodeStatus, 0, len(nodes))
+	for _, n := range nodes {
+		st := AgentLLMNodeStatus{
+			AgentID:          agentID,
+			AgentSlug:        slug,
+			NodeID:           n.NodeID,
+			Label:            n.Label,
+			CompiledProvider: n.CompiledProvider,
+			CompiledModel:    n.CompiledModel,
+		}
+		if ov, ok := overrides[n.NodeID]; ok {
+			st.OverrideProvider = ov.Provider
+			st.OverrideModel = ov.Model
+		}
+		result = append(result, st)
+	}
+	return result, nil
+}
+
+// PutNodeLLMOverride saves a provider+model override for one LLM node in a binding.
+// provider and model must both be non-empty.
+func (s *AgentDefinitionService) PutNodeLLMOverride(ctx context.Context, applicationID, agentID, nodeID, provider, model string) error {
+	if provider == "" || model == "" {
+		return validation("provider and model are required")
+	}
+	return s.dal.UpsertNodeLLMOverride(ctx, applicationID, agentID, nodeID, provider, model)
+}
+
 // ── AES-GCM encryption ────────────────────────────────────────────────────────
 
 // encryptAESGCM encrypts plaintext with a 32-byte key using AES-256-GCM.

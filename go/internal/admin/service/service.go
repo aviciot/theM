@@ -120,6 +120,10 @@ type Dal interface {
 	GetRequiredParamsForAgent(ctx context.Context, agentID string) (dal.AgentParamsRow, error)
 	UpsertAgentParams(ctx context.Context, applicationID, agentID string, paramsDelta []byte) error
 
+	// Canvas agent LLM node overrides — provider+model per node, stored in config_overrides
+	GetAgentLLMNodes(ctx context.Context, applicationID, agentID string) ([]byte, []byte, string, error)
+	UpsertNodeLLMOverride(ctx context.Context, applicationID, agentID, nodeID, provider, model string) error
+
 	// Publish pipeline — Phase C
 	PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string) (dal.PublishResult, error)
 	UpsertAppOrchestrator(ctx context.Context, row dal.AppOrchestratorRow) (string, error)

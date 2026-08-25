@@ -1071,21 +1071,24 @@ func TestInterpreter_HTTPStep_AppParamRef_TakesPrecedenceOverKey(t *testing.T) {
 	}
 }
 
-// INT-14: LLM step with model_override_param_ref + matching AppGlobalParams → override applied.
-func TestInterpreter_LLMStep_ModelOverrideParamRef(t *testing.T) {
-	var capturedModel string
+// INT-14: LLM step with NodeLLMOverrides → override provider+model applied at runtime.
+func TestInterpreter_LLMStep_NodeLLMOverride(t *testing.T) {
+	var capturedProvider, capturedModel string
 	factory := &modelCapturingFactory{
-		onModel: func(m string) { capturedModel = m },
-		llm:     &fakeLLM{reply: "done"},
+		onModel:    func(m string) { capturedModel = m },
+		onProvider: func(p string) { capturedProvider = p },
+		llm:        &fakeLLM{reply: "done"},
 	}
 
 	interp := agentgen.NewInterpreter(nil, factory, "platform-key")
 	ic := &agentgen.InvocationContext{
-		TenantID:        "t1",
-		ApplicationID:   "a1",
-		AgentID:         "agent-1",
-		AppAPIKey:       map[string]string{"anthropic": "sk-test"},
-		AppGlobalParams: map[string]string{"chat_model": "claude-opus-4-8"},
+		TenantID:      "t1",
+		ApplicationID: "a1",
+		AgentID:       "agent-1",
+		AppAPIKey:     map[string]string{"openai": "sk-openai"},
+		NodeLLMOverrides: map[string]agentgen.NodeLLMOverride{
+			"llm1": {Provider: "openai", Model: "gpt-4o"},
+		},
 	}
 
 	skill := &agentgen.SkillSpec{
@@ -1096,10 +1099,9 @@ func TestInterpreter_LLMStep_ModelOverrideParamRef(t *testing.T) {
 				ID:   "llm1",
 				Type: agentgen.StepLLM,
 				Config: mustJSON(agentgen.LLMStepConfig{
-					Provider:              "anthropic",
-					Model:                 "claude-haiku-4-5-20251001", // compiled default
-					SystemPrompt:          "hi",
-					ModelOverrideParamRef: "chat_model", // should override to claude-opus-4-8
+					Provider:     "anthropic",
+					Model:        "claude-haiku-4-5-20251001", // compiled default; should be overridden
+					SystemPrompt: "hi",
 				}),
 				Next: []string{"out"},
 			},
@@ -1111,18 +1113,25 @@ func TestInterpreter_LLMStep_ModelOverrideParamRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if capturedModel != "claude-opus-4-8" {
-		t.Errorf("want model claude-opus-4-8, got %q", capturedModel)
+	if capturedProvider != "openai" {
+		t.Errorf("want provider openai, got %q", capturedProvider)
+	}
+	if capturedModel != "gpt-4o" {
+		t.Errorf("want model gpt-4o, got %q", capturedModel)
 	}
 }
 
-// modelCapturingFactory captures the model passed to NewProvider (for INT-14).
+// modelCapturingFactory captures the provider and model passed to NewProvider (for INT-14).
 type modelCapturingFactory struct {
-	onModel func(model string)
-	llm     *fakeLLM
+	onProvider func(provider string)
+	onModel    func(model string)
+	llm        *fakeLLM
 }
 
-func (f *modelCapturingFactory) NewProvider(_, model string, _ int, _ string) (agentgen.LLMProvider, error) {
+func (f *modelCapturingFactory) NewProvider(provider, model string, _ int, _ string) (agentgen.LLMProvider, error) {
+	if f.onProvider != nil {
+		f.onProvider(provider)
+	}
 	if f.onModel != nil {
 		f.onModel(model)
 	}

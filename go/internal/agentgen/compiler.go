@@ -403,67 +403,46 @@ func collectAgentParams(def *canvasDefinition) ([]AgentParamSpec, []Issue) {
 	return params, nil
 }
 
-// extractAppParamKey reads the AppParamKey (or equivalent) from a step's config JSON.
-// Returns empty string for step types that don't use AppParamKey.
+// extractAppParamKey reads the AppParamKey from an HTTP step's config JSON.
+// Returns empty string for non-HTTP steps or steps with no AppParamKey.
 func extractAppParamKey(step canvasStep) string {
-	switch step.Type {
-	case StepHTTP:
-		var cfg HTTPStepConfig
-		if len(step.Config) > 0 {
-			if json.Unmarshal(step.Config, &cfg) == nil {
-				return cfg.AppParamKey
-			}
-		}
-	case StepLLM:
-		var cfg LLMStepConfig
-		if len(step.Config) > 0 {
-			if json.Unmarshal(step.Config, &cfg) == nil {
-				return cfg.ModelOverrideParamKey
-			}
-		}
+	if step.Type != StepHTTP {
+		return ""
+	}
+	var cfg HTTPStepConfig
+	if len(step.Config) > 0 && json.Unmarshal(step.Config, &cfg) == nil {
+		return cfg.AppParamKey
 	}
 	return ""
 }
 
-// collectAppParamRefs walks all steps and gathers app_param_ref /
-// model_override_param_ref references, emitting one AgentAppParamRef per
-// (step, param-name) pair. Duplicates across the same step are deduplicated.
-func collectAppParamRefs(def *canvasDefinition) []AgentAppParamRef {
-	seen := make(map[string]bool)
-	var refs []AgentAppParamRef
-
+// collectLLMNodes walks all steps across all skills and returns one AgentLLMNodeSpec
+// per LLM step, recording its node ID, label, and compiled provider/model.
+func collectLLMNodes(def *canvasDefinition) []AgentLLMNodeSpec {
+	var nodes []AgentLLMNodeSpec
 	for _, cs := range def.Skills {
 		for _, step := range cs.Steps {
-			switch step.Type {
-			case StepHTTP:
-				var cfg HTTPStepConfig
-				if len(step.Config) > 0 && json.Unmarshal(step.Config, &cfg) == nil && cfg.AppParamRef != "" {
-					k := step.ID + ":http:" + cfg.AppParamRef
-					if !seen[k] {
-						seen[k] = true
-						refs = append(refs, AgentAppParamRef{StepID: step.ID, ParamName: cfg.AppParamRef})
-					}
-				}
-			case StepLLM:
-				var cfg LLMStepConfig
-				if len(step.Config) > 0 && json.Unmarshal(step.Config, &cfg) == nil && cfg.ModelOverrideParamRef != "" {
-					k := step.ID + ":llm:" + cfg.ModelOverrideParamRef
-					if !seen[k] {
-						seen[k] = true
-						refs = append(refs, AgentAppParamRef{StepID: step.ID, ParamName: cfg.ModelOverrideParamRef})
-					}
-				}
+			if step.Type != StepLLM {
+				continue
 			}
+			var cfg LLMStepConfig
+			if len(step.Config) > 0 {
+				_ = json.Unmarshal(step.Config, &cfg)
+			}
+			label := step.Label
+			if label == "" {
+				label = step.ID
+			}
+			nodes = append(nodes, AgentLLMNodeSpec{
+				NodeID:           step.ID,
+				Label:            label,
+				CompiledProvider: cfg.Provider,
+				CompiledModel:    cfg.Model,
+			})
 		}
 	}
-
-	sort.Slice(refs, func(i, j int) bool {
-		if refs[i].StepID != refs[j].StepID {
-			return refs[i].StepID < refs[j].StepID
-		}
-		return refs[i].ParamName < refs[j].ParamName
-	})
-	return refs
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].NodeID < nodes[j].NodeID })
+	return nodes
 }
 
 // ── Stage 4: executability ───────────────────────────────────────────────────
@@ -511,11 +490,11 @@ func Validate(agentID, tenantID, definitionID, agentSlug string, raw json.RawMes
 	params, paramIssues := collectAgentParams(def)
 	issues = append(issues, paramIssues...)
 
-	appParamRefs := collectAppParamRefs(def)
+	llmNodes := collectLLMNodes(def)
 
 	issues = append(issues, validateExecutability(def, "warning")...)
 
-	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params, appParamRefs)
+	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params, llmNodes)
 	return spec, issues
 }
 
@@ -545,14 +524,14 @@ func CompileForPublish(agentID, tenantID, definitionID, agentSlug string, raw js
 		return nil, issues
 	}
 
-	appParamRefs := collectAppParamRefs(def)
+	llmNodes := collectLLMNodes(def)
 
 	issues = append(issues, validateExecutability(def, "error")...)
 	if hasErrors(issues) {
 		return nil, issues
 	}
 
-	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params, appParamRefs)
+	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params, llmNodes)
 	return spec, issues
 }
 
@@ -566,7 +545,7 @@ func Compile(agentID, tenantID, definitionID, agentSlug string, raw json.RawMess
 
 // buildSpec assembles the AgentSpec from parsed components. Called after all
 // validation stages pass.
-func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefinition, compiled map[string][]StepSpec, params []AgentParamSpec, appParamRefs []AgentAppParamRef) *AgentSpec {
+func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefinition, compiled map[string][]StepSpec, params []AgentParamSpec, llmNodes []AgentLLMNodeSpec) *AgentSpec {
 	specHash := computeSpecHash(agentID, tenantID, definitionID, slug)
 	_ = specHash
 
@@ -597,17 +576,17 @@ func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefiniti
 		requiredParams = params
 	}
 
-	var appRefs []AgentAppParamRef
-	if len(appParamRefs) > 0 {
-		appRefs = appParamRefs
+	var llmNodeList []AgentLLMNodeSpec
+	if len(llmNodes) > 0 {
+		llmNodeList = llmNodes
 	}
 
 	return &AgentSpec{
-		ID:           agentID,
-		DefinitionID: definitionID,
-		Slug:         slug,
-		TenantID:     tenantID,
-		DefaultModel: def.AgentRoot.DefaultModel,
+		ID:             agentID,
+		DefinitionID:   definitionID,
+		Slug:           slug,
+		TenantID:       tenantID,
+		DefaultModel:   def.AgentRoot.DefaultModel,
 		Card: CardSpec{
 			Name:         def.AgentRoot.DisplayName,
 			Description:  def.AgentRoot.Description,
@@ -618,7 +597,7 @@ func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefiniti
 		},
 		Skills:         skills,
 		RequiredParams: requiredParams,
-		AppParamRefs:   appRefs,
+		LLMNodes:       llmNodeList,
 	}
 }
 

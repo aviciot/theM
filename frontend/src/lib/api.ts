@@ -677,6 +677,17 @@ export interface AgentParamsResponse {
   required_params: AgentParamMeta[];
 }
 
+export interface AgentLLMNodeStatus {
+  agent_id: string;
+  agent_slug: string;
+  node_id: string;
+  label: string;
+  compiled_provider: string;
+  compiled_model: string;
+  override_provider?: string;
+  override_model?: string;
+}
+
 // ── MCP Store ──────────────────────────────────────────────────────────────
 
 export interface MCPTool {
@@ -942,6 +953,10 @@ export const themApi = {
     api.get<AgentParamsResponse>(`/admin/applications/${appId}/agents/${agentId}/params`),
   putAgentParams: (appId: string, agentId: string, params: Record<string, string>) =>
     api.put<void>(`/admin/applications/${appId}/agents/${agentId}/params`, { params }),
+  getAgentLLMNodes: (appId: string, agentId: string) =>
+    api.get<AgentLLMNodeStatus[]>(`/admin/applications/${appId}/agents/${agentId}/llm-nodes`),
+  putNodeLLMOverride: (appId: string, agentId: string, nodeId: string, provider: string, model: string) =>
+    api.put<{ node_id: string; updated: boolean }>(`/admin/applications/${appId}/agents/${agentId}/llm-nodes/${nodeId}`, { provider, model }),
 
   // MCP Store — server registry + app credentials
   listMCPServers: () =>

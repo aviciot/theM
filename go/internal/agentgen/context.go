@@ -19,10 +19,19 @@ type InvocationContext struct {
 	// Secrets are decrypted from app_agent_bindings.agent_params before this map is populated.
 	// NEVER logged or serialized — cleared after the request.
 	AgentParams map[string]string // param key → plaintext value
-	// AppGlobalParams holds decrypted values for all app-level named params referenced by
-	// this agent's compiled spec (via AppParamRefs). Loaded from applications.app_params.
-	// NEVER logged or serialized — cleared after the request.
+	// AppGlobalParams holds decrypted app-level named params (used by HTTP app_param_ref).
+	// Loaded from applications.app_params. NEVER logged or serialized.
 	AppGlobalParams map[string]string // param name → plaintext value
+	// NodeLLMOverrides holds per-node provider+model overrides set via RuntimeView.
+	// Loaded from app_agent_bindings.config_overrides["llm_nodes"][node_id].
+	// NEVER logged or serialized — cleared after the request.
+	NodeLLMOverrides map[string]NodeLLMOverride // node_id → override
+}
+
+// NodeLLMOverride is the runtime provider+model override for one LLM canvas node.
+type NodeLLMOverride struct {
+	Provider string
+	Model    string
 }
 
 type InvocationPolicies struct {

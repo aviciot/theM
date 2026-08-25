@@ -42,6 +42,7 @@ export interface DebugParamSpec {
   isSecret: boolean;
   required: boolean;
   nodeLabel?: string;
+  options?: string[];  // when set, renders a <select> instead of <input>
 }
 
 export interface DebugState {

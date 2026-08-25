@@ -8,24 +8,26 @@ import (
 
 // AgentSpec is the compiled, reusable form the runtime loads. Frozen at publish.
 type AgentSpec struct {
-	ID               string                `json:"id"`              // == agents.id == component_definitions.id
-	DefinitionID     string                `json:"definition_id"`   // which agent_definitions revision this came from
-	Slug             string                `json:"slug"`
-	TenantID         string                `json:"tenant_id"`
-	Card             CardSpec              `json:"card"`
-	Skills           []SkillSpec           `json:"skills"`
-	DefaultModel     string                `json:"default_model"`
-	RequiredParams   []AgentParamSpec      `json:"required_params,omitempty"`    // per-binding params (composite key per node instance)
-	AppParamRefs     []AgentAppParamRef    `json:"app_param_refs,omitempty"`     // app-global param references
+	ID             string             `json:"id"`            // == agents.id == component_definitions.id
+	DefinitionID   string             `json:"definition_id"` // which agent_definitions revision this came from
+	Slug           string             `json:"slug"`
+	TenantID       string             `json:"tenant_id"`
+	Card           CardSpec           `json:"card"`
+	Skills         []SkillSpec        `json:"skills"`
+	DefaultModel   string             `json:"default_model"`
+	RequiredParams []AgentParamSpec   `json:"required_params,omitempty"` // per-binding params (HTTP api_key / bearer_token)
+	LLMNodes       []AgentLLMNodeSpec `json:"llm_nodes,omitempty"`       // LLM nodes whose provider+model can be overridden at runtime
 }
 
-// AgentAppParamRef records that one step in this agent references a named
-// app-global param. The runtime uses this to populate AppGlobalParams before
-// execution. Emitted by the compiler from app_param_ref / model_override_param_ref fields.
-type AgentAppParamRef struct {
-	StepID    string `json:"step_id"`
-	ParamName string `json:"param_name"`
+// AgentLLMNodeSpec describes one LLM node in a published agent.
+// The runtime uses this list to populate NodeLLMOverrides from app_agent_bindings.config_overrides.
+type AgentLLMNodeSpec struct {
+	NodeID          string `json:"node_id"`          // step ID in the canvas
+	Label           string `json:"label"`            // human-readable label (node label or step ID)
+	CompiledProvider string `json:"compiled_provider"` // provider baked in at publish
+	CompiledModel   string `json:"compiled_model"`   // model baked in at publish
 }
+
 
 // AppParamDecl declares one runtime parameter that a node type can consume.
 // Declared statically on NodeDef — identical for every instance of that node type.
@@ -116,12 +118,6 @@ type LLMStepConfig struct {
 	Effort       string `json:"effort,omitempty"`
 	OutputVar    string `json:"output_var"`
 	Stream       bool   `json:"stream"`
-	// ModelOverrideParamKey, if set, names the AgentParamSpec.Key whose value overrides
-	// the compiled model at runtime. The referenced param must be of type "string".
-	ModelOverrideParamKey string `json:"model_override_param_key,omitempty"`
-	// ModelOverrideParamRef names an app-global param (from AppGlobalParams) whose value
-	// overrides the compiled model. Takes precedence over ModelOverrideParamKey.
-	ModelOverrideParamRef string `json:"model_override_param_ref,omitempty"`
 }
 
 // HTTPStepConfig configures one HTTP tool step.

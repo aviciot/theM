@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam } from '@/lib/api';
+import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus } from '@/lib/api';
 import { C, glass, PROVIDER_LIST, RUNTIME_MODELS } from '../constants';
 
 // ── RuntimeView ───────────────────────────────────────────────────────────────
@@ -44,6 +44,13 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
   const [agentParamSaving, setAgentParamSaving] = useState<string | null>(null);
   const [agentParamMsg, setAgentParamMsg] = useState<Record<string, string>>({});
 
+  // Canvas agent LLM node overrides
+  const [agentLLMNodes, setAgentLLMNodes] = useState<AgentLLMNodeStatus[]>([]);
+  type NodeLLMDraft = { provider: string; model: string };
+  const [nodeLLMDrafts, setNodeLLMDrafts] = useState<Record<string, NodeLLMDraft>>({});
+  const [nodeLLMSaving, setNodeLLMSaving] = useState<string | null>(null);
+  const [nodeLLMMsg, setNodeLLMMsg] = useState<Record<string, string>>({});
+
   // App global parameters state
   const [appParams, setAppParams] = useState<AppGlobalParam[]>([]);
   const [newParamName, setNewParamName] = useState('');
@@ -69,12 +76,26 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
   }, [app.id]);
 
   useEffect(() => {
-    // Load agent params for all canvas agents bound to this app
+    // Load agent params and LLM nodes for all canvas agents bound to this app
     themApi.listAgentBindings(app.id).then(bindings => {
       Promise.all(
         bindings.map(b => themApi.getAgentParams(app.id, b.agent_id).catch(() => null))
       ).then(results => {
         setAgentParamsList(results.filter((r): r is AgentParamsResponse => r !== null && r.required_params.length > 0));
+      });
+      Promise.all(
+        bindings.map(b => themApi.getAgentLLMNodes(app.id, b.agent_id).catch(() => null))
+      ).then(results => {
+        const nodes = results.flatMap(r => r ?? []);
+        setAgentLLMNodes(nodes);
+        const drafts: Record<string, NodeLLMDraft> = {};
+        nodes.forEach(n => {
+          drafts[n.node_id] = {
+            provider: n.override_provider ?? n.compiled_provider ?? '',
+            model: n.override_model ?? n.compiled_model ?? '',
+          };
+        });
+        setNodeLLMDrafts(drafts);
       });
     }).catch(() => {});
   }, [app.id]);
@@ -169,6 +190,25 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
       setAgentParamMsg(m => ({ ...m, [agentId]: e instanceof Error ? e.message : 'Failed' }));
     } finally {
       setAgentParamSaving(null);
+    }
+  }
+
+  async function handleSaveNodeLLM(agentId: string, nodeId: string) {
+    const draft = nodeLLMDrafts[nodeId];
+    if (!draft?.provider || !draft?.model) return;
+    const key = `${agentId}::${nodeId}`;
+    setNodeLLMSaving(key);
+    try {
+      await themApi.putNodeLLMOverride(app.id, agentId, nodeId, draft.provider, draft.model);
+      setAgentLLMNodes(prev => prev.map(n =>
+        n.node_id === nodeId ? { ...n, override_provider: draft.provider, override_model: draft.model } : n
+      ));
+      setNodeLLMMsg(m => ({ ...m, [nodeId]: 'Saved' }));
+      setTimeout(() => setNodeLLMMsg(m => ({ ...m, [nodeId]: '' })), 2500);
+    } catch (e: unknown) {
+      setNodeLLMMsg(m => ({ ...m, [nodeId]: e instanceof Error ? e.message : 'Failed' }));
+    } finally {
+      setNodeLLMSaving(null);
     }
   }
 
@@ -559,6 +599,85 @@ export function RuntimeView({ app, onBack, onOrchSaved }: { app: Application; on
                     </select>
                     <button
                       onClick={() => handleSaveOrchLLM(orch.id)}
+                      disabled={isBusy || !canSave}
+                      style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0, opacity: isBusy || !canSave ? 0.5 : 1 }}
+                    >
+                      {isBusy ? '…' : 'Save'}
+                    </button>
+                  </div>
+                  {msg && <div style={{ marginTop: 6, fontSize: 12, color: isError ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Canvas Agent LLM Nodes */}
+        {agentLLMNodes.length > 0 && (
+          <div style={sectionStyle}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Canvas Agent LLM Nodes</div>
+            <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>
+              Override the provider and model for each LLM node in your canvas agents.
+              The compiled defaults are shown; leave as-is to use them, or pick a different provider/model.
+              Providers with a saved key are available in the dropdown.
+            </div>
+            {agentLLMNodes.map(node => {
+              const agentId = node.agent_id;
+              const key = `${agentId}::${node.node_id}`;
+              const isBusy = nodeLLMSaving === key;
+              const msg = nodeLLMMsg[node.node_id] ?? '';
+              const isError = msg && msg !== 'Saved';
+              const draft = nodeLLMDrafts[node.node_id] ?? { provider: '', model: '' };
+              const canSave = draft.provider && draft.model;
+              const isOverridden = node.override_provider && node.override_model;
+              const allProviders = PROVIDER_LIST;
+              return (
+                <div key={node.node_id} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.12)', marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', flex: 1 }}>
+                      {node.label || node.node_id}
+                    </span>
+                    <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
+                      default: {node.compiled_provider}/{node.compiled_model}
+                    </span>
+                    {isOverridden && (
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 20, background: 'rgba(251,146,60,0.12)', color: '#fb923c', border: '1px solid rgba(251,146,60,0.3)' }}>
+                        overridden
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <select
+                      value={draft.provider}
+                      onChange={e => {
+                        const p = e.target.value;
+                        setNodeLLMDrafts(prev => {
+                          const models = RUNTIME_MODELS[p] ?? [];
+                          const prevModel = prev[node.node_id]?.model ?? '';
+                          const model = models.includes(prevModel) ? prevModel : (models[0] ?? '');
+                          return { ...prev, [node.node_id]: { provider: p, model } };
+                        });
+                      }}
+                      style={{ ...fieldStyle, width: 160, fontSize: 13, flexShrink: 0 }}
+                    >
+                      <option value="">— provider —</option>
+                      {allProviders.map(p => (
+                        <option key={p} value={p}>
+                          {p}{setProviders.includes(p) ? ' ✓' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={draft.model}
+                      onChange={e => setNodeLLMDrafts(prev => ({ ...prev, [node.node_id]: { ...draft, model: e.target.value } }))}
+                      style={{ ...fieldStyle, flex: 1, fontSize: 12, fontFamily: 'JetBrains Mono, monospace' }}
+                      disabled={!draft.provider}
+                    >
+                      <option value="">— model —</option>
+                      {(RUNTIME_MODELS[draft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <button
+                      onClick={() => handleSaveNodeLLM(agentId, node.node_id)}
                       disabled={isBusy || !canSave}
                       style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0, opacity: isBusy || !canSave ? 0.5 : 1 }}
                     >

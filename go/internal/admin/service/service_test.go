@@ -405,6 +405,10 @@ func (f *fakeDal) GetRequiredParamsForAgent(_ context.Context, _ string) (dal.Ag
 	return dal.AgentParamsRow{}, nil
 }
 func (f *fakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error { return nil }
+func (f *fakeDal) GetAgentLLMNodes(_ context.Context, _, _ string) ([]byte, []byte, string, error) {
+	return []byte("[]"), []byte("{}"), "", nil
+}
+func (f *fakeDal) UpsertNodeLLMOverride(_ context.Context, _, _, _, _, _ string) error { return nil }
 
 // App global params stubs — satisfy Dal interface.
 func (f *fakeDal) GetAppParams(_ context.Context, _, _ string) ([]byte, error) {

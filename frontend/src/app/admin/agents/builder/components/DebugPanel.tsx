@@ -49,6 +49,16 @@ export function DebugPanel({
                     placeholder="Compare Rome and Barcelona for a kosher trip…"
                     style={{ ...inputStyle, width: '300px', fontSize: '12px' }}
                   />
+                ) : spec.options ? (
+                  <select
+                    value={debug.debugParams[spec.key] ?? ''}
+                    onChange={e => setDebug(prev => ({ ...prev, debugParams: { ...prev.debugParams, [spec.key]: e.target.value } }))}
+                    title={spec.description}
+                    style={{ ...inputStyle, width: '160px', fontSize: '12px' }}
+                  >
+                    <option value="">— {spec.label} —</option>
+                    {spec.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
                 ) : (
                   <input
                     value={debug.debugParams[spec.key] ?? ''}

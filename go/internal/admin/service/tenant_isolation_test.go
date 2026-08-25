@@ -478,6 +478,12 @@ func (f *isolationFakeDal) GetRequiredParamsForAgent(_ context.Context, _ string
 func (f *isolationFakeDal) UpsertAgentParams(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }
+func (f *isolationFakeDal) GetAgentLLMNodes(_ context.Context, _, _ string) ([]byte, []byte, string, error) {
+	return []byte("[]"), []byte("{}"), "", nil
+}
+func (f *isolationFakeDal) UpsertNodeLLMOverride(_ context.Context, _, _, _, _, _ string) error {
+	return nil
+}
 func (f *isolationFakeDal) GetAppParams(_ context.Context, _, _ string) ([]byte, error) {
 	return []byte(`{}`), nil
 }
