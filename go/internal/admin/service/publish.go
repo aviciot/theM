@@ -368,6 +368,9 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 			ApplicationID: appID,
 			AgentID:       cd.ID,
 		}); bindErr != nil {
+			if dal.IsForeignKeyViolation(bindErr) {
+				return nil, validation(fmt.Sprintf("canvas agent %q (%s) is not published yet — publish it from the Agents builder first", comp.InstanceID, cd.Name))
+			}
 			return nil, fmt.Errorf("upsert agent binding %q: %w", comp.InstanceID, bindErr)
 		}
 	}

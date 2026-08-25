@@ -287,8 +287,9 @@ export function CanvasBuilderView({
         const freshApp = await themApi.getApplication(app.id);
         onAppUpdated?.(freshApp);
       } catch { onAppUpdated?.({ ...app }); }
-    } catch {
-      showToast('Publish failed', false);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Publish failed';
+      showToast(msg, false);
     } finally {
       setPublishing(false);
     }
