@@ -63,13 +63,14 @@ export function AppCard({
   const ep = epIconColor(firstEp?.entry_point_type ?? 'websocket');
 
   // Liveness derived from multiplexed WS push (no per-card polling)
-  const reachable = app.enabled ? (liveness?.reachable ?? null) : false;
+  const hasEPs = (app.entry_points ?? []).length > 0;
+  const reachable = !app.enabled ? false : !hasEPs ? false : (liveness?.reachable ?? null);
   const latencyMs = liveness?.latency_ms ?? null;
 
-  const statusColor  = !app.enabled ? C.error : reachable === null ? C.textMuted : reachable ? C.green : '#f59e0b';
-  const statusLabel  = !app.enabled ? 'disabled' : reachable === null ? 'checking…' : reachable ? 'live' : 'unreachable';
-  const statusBg     = !app.enabled ? 'rgba(255,180,171,0.1)' : reachable === null ? 'rgba(255,255,255,0.04)' : reachable ? 'rgba(74,222,128,0.08)' : 'rgba(245,158,11,0.08)';
-  const statusBorder = !app.enabled ? 'rgba(255,180,171,0.3)' : reachable === null ? 'rgba(255,255,255,0.1)' : reachable ? C.greenBorder : 'rgba(245,158,11,0.4)';
+  const statusColor  = !app.enabled ? C.error : !hasEPs ? C.textMuted : reachable === null ? C.textMuted : reachable ? C.green : '#f59e0b';
+  const statusLabel  = !app.enabled ? 'disabled' : !hasEPs ? 'no entry points' : reachable === null ? 'checking…' : reachable ? 'live' : 'unreachable';
+  const statusBg     = !app.enabled ? 'rgba(255,180,171,0.1)' : !hasEPs ? 'rgba(255,255,255,0.04)' : reachable === null ? 'rgba(255,255,255,0.04)' : reachable ? 'rgba(74,222,128,0.08)' : 'rgba(245,158,11,0.08)';
+  const statusBorder = !app.enabled ? 'rgba(255,180,171,0.3)' : !hasEPs ? 'rgba(255,255,255,0.1)' : reachable === null ? 'rgba(255,255,255,0.1)' : reachable ? C.greenBorder : 'rgba(245,158,11,0.4)';
 
   const chromaAccent = !app.enabled ? '#64748b' : reachable === false ? '#f59e0b' : '#6366f1';
   const chromaGrad   = `linear-gradient(145deg, ${chromaAccent}1a 0%, ${chromaAccent}08 40%, #07090f 100%)`;
