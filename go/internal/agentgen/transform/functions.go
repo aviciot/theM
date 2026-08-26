@@ -30,11 +30,13 @@ func init() {
 		},
 	}, func(input string, _ map[string]string) (string, error) {
 		s := strings.TrimSpace(input)
-		// Remove opening fence: ```json, ```javascript, ```text, ``` (with optional language tag)
-		s = regexp.MustCompile(`(?i)^` + "```" + `[a-z]*\s*\n?`).ReplaceAllString(s, "")
-		// Remove closing fence
-		s = regexp.MustCompile("\n?" + "```" + `\s*$`).ReplaceAllString(s, "")
-		return strings.TrimSpace(s), nil
+		// Extract the first fenced block anywhere in the string (LLMs often add preamble text).
+		blockRe := regexp.MustCompile("(?is)" + "```" + `[a-z]*\s*\n?([\s\S]*?)\n?` + "```")
+		if m := blockRe.FindStringSubmatch(s); len(m) >= 2 {
+			return strings.TrimSpace(m[1]), nil
+		}
+		// No fences found — return as-is.
+		return s, nil
 	})
 
 	register(FunctionDef{
