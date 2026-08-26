@@ -580,8 +580,8 @@ func (s *AppService) SetOrchestratorLLM(ctx context.Context, tenantID, appID, or
 	return nil
 }
 
-// SetOrchestratorSummarizer updates summarizer settings for one app_orchestrators row.
-func (s *AppService) SetOrchestratorSummarizer(ctx context.Context, tenantID, appID, orchID string, enabled bool, everyN, fallbackN int, provider, model *string) error {
+// SetEntryPointSummarizer updates summarizer settings on one entry_points row.
+func (s *AppService) SetEntryPointSummarizer(ctx context.Context, tenantID, appID, epID string, enabled bool, everyN, fallbackN int, provider, model *string) error {
 	if everyN < 1 {
 		return validation("summarize_every_n_calls must be ≥ 1")
 	}
@@ -593,7 +593,7 @@ func (s *AppService) SetOrchestratorSummarizer(ctx context.Context, tenantID, ap
 			return unprocessable("unsupported summarizer provider: " + *provider)
 		}
 	}
-	if err := s.dal.SetOrchestratorSummarizer(ctx, appID, orchID, enabled, everyN, fallbackN, provider, model); err != nil {
+	if err := s.dal.SetEntryPointSummarizer(ctx, appID, epID, enabled, everyN, fallbackN, provider, model); err != nil {
 		return ErrNotFound
 	}
 	return nil

@@ -370,7 +370,7 @@ func (f *isolationFakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]by
 func (f *isolationFakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []byte) error     { return nil }
 func (f *isolationFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error            { return nil }
 func (f *isolationFakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error        { return nil }
-func (f *isolationFakeDal) SetOrchestratorSummarizer(_ context.Context, _, _ string, _ bool, _, _ int, _, _ *string) error { return nil }
+func (f *isolationFakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _ int, _, _ *string) error { return nil }
 func (f *isolationFakeDal) SetOrchestratorMCPServers(_ context.Context, _, _ string, _ []dal.MCPServerAttachment) error { return nil }
 func (f *isolationFakeDal) CancelRun(_ context.Context, _, _ string) (dal.Run, error) {
 	return dal.Run{}, nil

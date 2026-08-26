@@ -56,8 +56,8 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Put("/app-params/{name}", h.SetAppParam)
 		app.Delete("/app-params/{name}", h.DeleteAppParam)
 		app.Patch("/orchestrators/{orch_id}/llm", h.PatchOrchestratorLLM)
-		app.Patch("/orchestrators/{orch_id}/summarizer", h.PatchOrchestratorSummarizer)
 		app.Patch("/orchestrators/{orch_id}/mcp-servers", h.PatchOrchestratorMCPServers)
+		app.Patch("/entry-points/{ep_id}/summarizer", h.PatchEntryPointSummarizer)
 		app.Post("/entry-points", h.CreateEntryPoint)
 		app.Put("/entry-points/{ep_id}", h.UpdateEntryPoint)
 		app.Patch("/entry-points/{ep_id}", h.UpdateEntryPoint) // Python sends PATCH
@@ -471,13 +471,13 @@ func (h *ApplicationsHandler) PatchOrchestratorLLM(w http.ResponseWriter, r *htt
 	})
 }
 
-// PatchOrchestratorSummarizer handles PATCH /api/v1/admin/applications/{id}/orchestrators/{orch_id}/summarizer.
+// PatchEntryPointSummarizer handles PATCH /api/v1/admin/applications/{id}/entry-points/{ep_id}/summarizer.
 // Body: {"memory_enabled":true,"summarize_every_n_calls":10,"memory_raw_fallback_n":3,"summarizer_provider":"anthropic","summarizer_model":"claude-haiku-4-5-20251001"}
-func (h *ApplicationsHandler) PatchOrchestratorSummarizer(w http.ResponseWriter, r *http.Request) {
+func (h *ApplicationsHandler) PatchEntryPointSummarizer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	orchID := chi.URLParam(r, "orch_id")
-	if id == "" || orchID == "" {
-		writeError(w, http.StatusBadRequest, "invalid application or orchestrator id")
+	epID := chi.URLParam(r, "ep_id")
+	if id == "" || epID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or entry point id")
 		return
 	}
 
@@ -497,7 +497,7 @@ func (h *ApplicationsHandler) PatchOrchestratorSummarizer(w http.ResponseWriter,
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.SetOrchestratorSummarizer(r.Context(), tenantID, id, orchID,
+	if err := h.svc.SetEntryPointSummarizer(r.Context(), tenantID, id, epID,
 		body.MemoryEnabled, body.SummarizeEveryNCalls, body.MemoryRawFallbackN,
 		body.SummarizerProvider, body.SummarizerModel,
 	); err != nil {
@@ -505,7 +505,7 @@ func (h *ApplicationsHandler) PatchOrchestratorSummarizer(w http.ResponseWriter,
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":                      orchID,
+		"id":                      epID,
 		"app_id":                  id,
 		"memory_enabled":          body.MemoryEnabled,
 		"summarize_every_n_calls": body.SummarizeEveryNCalls,

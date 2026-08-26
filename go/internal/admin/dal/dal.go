@@ -192,17 +192,12 @@ type MCPServerAttachment struct {
 // the application list / get responses so the card UI can display name + model
 // without a separate API call.
 type AppOrchestratorSummary struct {
-	ID                   string                `json:"id"`
-	Name                 string                `json:"name"`
-	DisplayName          string                `json:"display_name"`
-	LLMProvider          *string               `json:"llm_provider,omitempty"`
-	LLMModel             *string               `json:"llm_model,omitempty"`
-	MCPServers           []MCPServerAttachment `json:"mcp_servers"`
-	MemoryEnabled        bool                  `json:"memory_enabled"`
-	SummarizeEveryNCalls int                   `json:"summarize_every_n_calls"`
-	MemoryRawFallbackN   int                   `json:"memory_raw_fallback_n"`
-	SummarizerProvider   *string               `json:"summarizer_provider,omitempty"`
-	SummarizerModel      *string               `json:"summarizer_model,omitempty"`
+	ID          string                `json:"id"`
+	Name        string                `json:"name"`
+	DisplayName string                `json:"display_name"`
+	LLMProvider *string               `json:"llm_provider,omitempty"`
+	LLMModel    *string               `json:"llm_model,omitempty"`
+	MCPServers  []MCPServerAttachment `json:"mcp_servers"`
 }
 
 // Application is the JSON representation of a them.applications row.
@@ -218,11 +213,17 @@ type Application struct {
 
 // EntryPoint is one access door for an application.
 type EntryPoint struct {
-	ID             string `json:"id"`
-	ApplicationID  string `json:"application_id"`
-	Slug           string `json:"slug"`
-	EntryPointType string `json:"entry_point_type"`
-	Enabled        bool   `json:"enabled"`
+	ID                   string  `json:"id"`
+	ApplicationID        string  `json:"application_id"`
+	AppOrchestratorID    *string `json:"app_orchestrator_id,omitempty"`
+	Slug                 string  `json:"slug"`
+	EntryPointType       string  `json:"entry_point_type"`
+	Enabled              bool    `json:"enabled"`
+	MemoryEnabled        bool    `json:"memory_enabled"`
+	SummarizeEveryNCalls int     `json:"summarize_every_n_calls"`
+	MemoryRawFallbackN   int     `json:"memory_raw_fallback_n"`
+	SummarizerProvider   *string `json:"summarizer_provider,omitempty"`
+	SummarizerModel      *string `json:"summarizer_model,omitempty"`
 }
 
 // ApplicationInput is the request body for application create/update.
