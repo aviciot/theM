@@ -101,6 +101,7 @@ func (d *DB) ListApplications(ctx context.Context, tenantID string) ([]Applicati
 			return nil, err
 		}
 		a.AppOrchestrators = d.listAppOrchSummaries(ctx, a.ID)
+		a.EntryPoints = d.ListEntryPoints(ctx, a.ID)
 		apps = append(apps, a)
 	}
 	return apps, nil
@@ -116,6 +117,7 @@ func (d *DB) GetApplication(ctx context.Context, tenantID, id string) (Applicati
 		return Application{}, err
 	}
 	a.AppOrchestrators = d.listAppOrchSummaries(ctx, a.ID)
+	a.EntryPoints = d.ListEntryPoints(ctx, a.ID)
 	return a, nil
 }
 
