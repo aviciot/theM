@@ -114,9 +114,14 @@ export default function ApplicationsPage() {
     setView('sessions');
   }
 
-  function openRuntime(app: Application) {
+  async function openRuntime(app: Application) {
     setRuntimeApp(app);
     setView('runtime');
+    // Re-fetch to get full entry_points with app_orchestrator_id + summarizer fields
+    try {
+      const fresh = await themApi.getApplication(app.id);
+      setRuntimeApp(fresh);
+    } catch { /* keep stale if fetch fails */ }
   }
 
   if (view === 'mcp-credentials' && mcpApp) {
