@@ -94,6 +94,25 @@ export function RuntimeView({ app, onBack, onOrchSaved }: {
   const [orchSaving, setOrchSaving] = useState<string | null>(null);
   const [orchMsg,    setOrchMsg]    = useState<Record<string, string>>({});
 
+  // Orchestrator Summarizer
+  type OrchSummarizer = {
+    id: string; name: string; displayName: string;
+    memoryEnabled: boolean; summarizeEveryN: number; fallbackN: number;
+    provider: string; model: string;
+  };
+  const [orchSummarizers, setOrchSummarizers] = useState<OrchSummarizer[]>(
+    (app.app_orchestrators ?? []).map(o => ({
+      id: o.id, name: o.name, displayName: o.display_name || o.name,
+      memoryEnabled: o.memory_enabled ?? false,
+      summarizeEveryN: o.summarize_every_n_calls ?? 10,
+      fallbackN: o.memory_raw_fallback_n ?? 3,
+      provider: o.summarizer_provider ?? '',
+      model: o.summarizer_model ?? '',
+    }))
+  );
+  const [sumSaving, setSumSaving] = useState<string | null>(null);
+  const [sumMsg,    setSumMsg]    = useState<Record<string, string>>({});
+
   // Canvas agent params
   const [agentParamsList,   setAgentParamsList]   = useState<AgentParamsResponse[]>([]);
   const [agentParamInputs,  setAgentParamInputs]  = useState<Record<string, Record<string, string>>>({});
@@ -209,6 +228,25 @@ export function RuntimeView({ app, onBack, onOrchSaved }: {
     } catch (e: unknown) {
       setOrchMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Failed' }));
     } finally { setOrchSaving(null); }
+  }
+
+  async function handleSaveOrchSummarizer(orchId: string) {
+    const s = orchSummarizers.find(o => o.id === orchId);
+    if (!s) return;
+    setSumSaving(orchId);
+    try {
+      await themApi.patchOrchestratorSummarizer(app.id, orchId, {
+        memory_enabled: s.memoryEnabled,
+        summarize_every_n_calls: s.summarizeEveryN,
+        memory_raw_fallback_n: s.fallbackN,
+        summarizer_provider: s.provider || null,
+        summarizer_model: s.model || null,
+      });
+      setSumMsg(m => ({ ...m, [orchId]: 'Saved' }));
+      setTimeout(() => setSumMsg(m => ({ ...m, [orchId]: '' })), 2500);
+    } catch (e: unknown) {
+      setSumMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Failed' }));
+    } finally { setSumSaving(null); }
   }
 
   async function handleSaveAgentParams(agentId: string) {
@@ -511,6 +549,74 @@ export function RuntimeView({ app, onBack, onOrchSaved }: {
                         {(RUNTIME_MODELS[orch.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
                       {saveBtn(() => handleSaveOrchLLM(orch.id), isBusy, !canSave)}
+                    </div>
+                    {msg && <div style={{ marginTop: 6, fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
+                  </div>
+                );
+              })}
+            </Section>
+
+            <Section title="Memory & Summarizer" icon="memory" defaultOpen={false}
+              subtitle="Per-orchestrator context summarization. Enable to compress long conversations; configure which model summarizes.">
+              {orchSummarizers.map(s => {
+                const isBusy = sumSaving === s.id;
+                const msg = sumMsg[s.id] ?? '';
+                const isErr = msg && msg !== 'Saved';
+                return (
+                  <div key={s.id} style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.1)' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+                      {s.displayName || s.name}
+                    </div>
+
+                    {/* Enable toggle */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={s.memoryEnabled}
+                          onChange={e => setOrchSummarizers(prev => prev.map(o => o.id === s.id ? { ...o, memoryEnabled: e.target.checked } : o))}
+                          style={{ accentColor: C.purple, width: 14, height: 14 }} />
+                        <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>Enable summarization</span>
+                      </label>
+                    </div>
+
+                    {/* Numeric settings */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10, opacity: s.memoryEnabled ? 1 : 0.45 }}>
+                      <div>
+                        <label style={lbl}>Summarize every N turns</label>
+                        <input type="number" min={1} value={s.summarizeEveryN} disabled={!s.memoryEnabled} style={field}
+                          onChange={e => setOrchSummarizers(prev => prev.map(o => o.id === s.id ? { ...o, summarizeEveryN: parseInt(e.target.value) || 10 } : o))} />
+                      </div>
+                      <div>
+                        <label style={lbl}>Keep last N verbatim</label>
+                        <input type="number" min={0} value={s.fallbackN} disabled={!s.memoryEnabled} style={field}
+                          onChange={e => setOrchSummarizers(prev => prev.map(o => o.id === s.id ? { ...o, fallbackN: parseInt(e.target.value) || 0 } : o))} />
+                      </div>
+                    </div>
+
+                    {/* Summarizer LLM — same provider/model pattern */}
+                    <div style={{ opacity: s.memoryEnabled ? 1 : 0.45 }}>
+                      <label style={lbl}>Summarizer model (optional — defaults to orchestrator LLM)</label>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <select value={s.provider} disabled={!s.memoryEnabled}
+                          onChange={e => {
+                            const p = e.target.value;
+                            setOrchSummarizers(prev => prev.map(o => {
+                              if (o.id !== s.id) return o;
+                              const models = RUNTIME_MODELS[p] ?? [];
+                              return { ...o, provider: p, model: models.includes(o.model) ? o.model : (models[0] ?? '') };
+                            }));
+                          }}
+                          style={{ ...field, width: 160, flexShrink: 0 }}>
+                          <option value="">— same as orchestrator —</option>
+                          {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                        <select value={s.model} disabled={!s.memoryEnabled || !s.provider}
+                          onChange={e => setOrchSummarizers(prev => prev.map(o => o.id === s.id ? { ...o, model: e.target.value } : o))}
+                          style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+                          <option value="">— model —</option>
+                          {(RUNTIME_MODELS[s.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        {saveBtn(() => handleSaveOrchSummarizer(s.id), isBusy, false)}
+                      </div>
                     </div>
                     {msg && <div style={{ marginTop: 6, fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
                   </div>

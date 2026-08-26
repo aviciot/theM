@@ -283,6 +283,11 @@ export interface AppOrchestratorSummary {
   llm_provider?: string | null;
   llm_model?: string | null;
   mcp_servers?: MCPServerAttachment[];
+  memory_enabled?: boolean;
+  summarize_every_n_calls?: number;
+  memory_raw_fallback_n?: number;
+  summarizer_provider?: string | null;
+  summarizer_model?: string | null;
 }
 
 export interface Application {
@@ -853,6 +858,7 @@ export const themApi = {
   deleteAppParam: (appId: string, name: string) => api.delete<{ name: string; deleted: boolean }>(`/admin/applications/${appId}/app-params/${name}`),
   testAppLlm: (appId: string, provider: string, model: string) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/test-llm`, { provider, model }),
   patchOrchestratorLLM: (appId: string, orchId: string, provider: string, model: string) => api.patch<{ id: string; llm_provider: string; llm_model: string }>(`/admin/applications/${appId}/orchestrators/${orchId}/llm`, { provider, model }),
+  patchOrchestratorSummarizer: (appId: string, orchId: string, payload: { memory_enabled: boolean; summarize_every_n_calls: number; memory_raw_fallback_n: number; summarizer_provider: string | null; summarizer_model: string | null }) => api.patch<{ id: string }>(`/admin/applications/${appId}/orchestrators/${orchId}/summarizer`, payload),
   patchOrchestratorMCPServers: (appId: string, orchId: string, mcpServers: MCPServerAttachment[]) => api.patch<{ id: string; mcp_servers: MCPServerAttachment[] }>(`/admin/applications/${appId}/orchestrators/${orchId}/mcp-servers`, { mcp_servers: mcpServers }),
   getMonitoringConfig: () => api.get<MonitoringConfig>('/admin/monitoring-config'),
   putMonitoringConfig: (body: MonitoringConfig) => api.put<MonitoringConfig>('/admin/monitoring-config', body),

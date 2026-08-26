@@ -56,6 +56,7 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Put("/app-params/{name}", h.SetAppParam)
 		app.Delete("/app-params/{name}", h.DeleteAppParam)
 		app.Patch("/orchestrators/{orch_id}/llm", h.PatchOrchestratorLLM)
+		app.Patch("/orchestrators/{orch_id}/summarizer", h.PatchOrchestratorSummarizer)
 		app.Patch("/orchestrators/{orch_id}/mcp-servers", h.PatchOrchestratorMCPServers)
 		app.Post("/entry-points", h.CreateEntryPoint)
 		app.Put("/entry-points/{ep_id}", h.UpdateEntryPoint)
@@ -467,6 +468,50 @@ func (h *ApplicationsHandler) PatchOrchestratorLLM(w http.ResponseWriter, r *htt
 		"app_id":       id,
 		"llm_provider": body.Provider,
 		"llm_model":    body.Model,
+	})
+}
+
+// PatchOrchestratorSummarizer handles PATCH /api/v1/admin/applications/{id}/orchestrators/{orch_id}/summarizer.
+// Body: {"memory_enabled":true,"summarize_every_n_calls":10,"memory_raw_fallback_n":3,"summarizer_provider":"anthropic","summarizer_model":"claude-haiku-4-5-20251001"}
+func (h *ApplicationsHandler) PatchOrchestratorSummarizer(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orchID := chi.URLParam(r, "orch_id")
+	if id == "" || orchID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or orchestrator id")
+		return
+	}
+
+	var body struct {
+		MemoryEnabled        bool    `json:"memory_enabled"`
+		SummarizeEveryNCalls int     `json:"summarize_every_n_calls"`
+		MemoryRawFallbackN   int     `json:"memory_raw_fallback_n"`
+		SummarizerProvider   *string `json:"summarizer_provider"`
+		SummarizerModel      *string `json:"summarizer_model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if body.SummarizeEveryNCalls == 0 {
+		body.SummarizeEveryNCalls = 10
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if err := h.svc.SetOrchestratorSummarizer(r.Context(), tenantID, id, orchID,
+		body.MemoryEnabled, body.SummarizeEveryNCalls, body.MemoryRawFallbackN,
+		body.SummarizerProvider, body.SummarizerModel,
+	); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":                      orchID,
+		"app_id":                  id,
+		"memory_enabled":          body.MemoryEnabled,
+		"summarize_every_n_calls": body.SummarizeEveryNCalls,
+		"memory_raw_fallback_n":   body.MemoryRawFallbackN,
+		"summarizer_provider":     body.SummarizerProvider,
+		"summarizer_model":        body.SummarizerModel,
 	})
 }
 

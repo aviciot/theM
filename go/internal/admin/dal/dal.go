@@ -192,12 +192,17 @@ type MCPServerAttachment struct {
 // the application list / get responses so the card UI can display name + model
 // without a separate API call.
 type AppOrchestratorSummary struct {
-	ID          string                `json:"id"`
-	Name        string                `json:"name"`
-	DisplayName string                `json:"display_name"`
-	LLMProvider *string               `json:"llm_provider,omitempty"`
-	LLMModel    *string               `json:"llm_model,omitempty"`
-	MCPServers  []MCPServerAttachment `json:"mcp_servers"`
+	ID                   string                `json:"id"`
+	Name                 string                `json:"name"`
+	DisplayName          string                `json:"display_name"`
+	LLMProvider          *string               `json:"llm_provider,omitempty"`
+	LLMModel             *string               `json:"llm_model,omitempty"`
+	MCPServers           []MCPServerAttachment `json:"mcp_servers"`
+	MemoryEnabled        bool                  `json:"memory_enabled"`
+	SummarizeEveryNCalls int                   `json:"summarize_every_n_calls"`
+	MemoryRawFallbackN   int                   `json:"memory_raw_fallback_n"`
+	SummarizerProvider   *string               `json:"summarizer_provider,omitempty"`
+	SummarizerModel      *string               `json:"summarizer_model,omitempty"`
 }
 
 // Application is the JSON representation of a them.applications row.

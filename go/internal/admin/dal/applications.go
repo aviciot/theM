@@ -36,7 +36,11 @@ func scanApplication(rows SingleRowScanner) (Application, error) {
 func (d *DB) listAppOrchSummaries(ctx context.Context, appID string) []AppOrchestratorSummary {
 	const q = `
 SELECT id::text, name, COALESCE(display_name,''), llm_provider, llm_model,
-       COALESCE(mcp_servers, '[]'::jsonb)
+       COALESCE(mcp_servers, '[]'::jsonb),
+       COALESCE(memory_enabled, false),
+       COALESCE(summarize_every_n_calls, 10),
+       COALESCE(memory_raw_fallback_n, 3),
+       summarizer_provider, summarizer_model
 FROM them.app_orchestrators
 WHERE application_id = $1::uuid AND enabled = true
 ORDER BY created_at`
@@ -51,7 +55,11 @@ ORDER BY created_at`
 	for rows.Next() {
 		var s AppOrchestratorSummary
 		var mcpRaw []byte
-		if err := rows.Scan(&s.ID, &s.Name, &s.DisplayName, &s.LLMProvider, &s.LLMModel, &mcpRaw); err != nil {
+		if err := rows.Scan(
+			&s.ID, &s.Name, &s.DisplayName, &s.LLMProvider, &s.LLMModel, &mcpRaw,
+			&s.MemoryEnabled, &s.SummarizeEveryNCalls, &s.MemoryRawFallbackN,
+			&s.SummarizerProvider, &s.SummarizerModel,
+		); err != nil {
 			break
 		}
 		if len(mcpRaw) > 0 && string(mcpRaw) != "null" {
@@ -386,6 +394,22 @@ func (d *DB) SetOrchestratorLLM(ctx context.Context, appID, orchID, provider, mo
 		RETURNING id`
 	var id string
 	return d.q.ExecReturning(ctx, q, orchID, appID, provider, model).Scan(&id)
+}
+
+// SetOrchestratorSummarizer updates summarizer settings on one app_orchestrators row.
+func (d *DB) SetOrchestratorSummarizer(ctx context.Context, appID, orchID string, enabled bool, everyN, fallbackN int, provider, model *string) error {
+	const q = `
+		UPDATE them.app_orchestrators
+		SET memory_enabled           = $3,
+		    summarize_every_n_calls  = $4,
+		    memory_raw_fallback_n    = $5,
+		    summarizer_provider      = $6,
+		    summarizer_model         = $7,
+		    updated_at               = now()
+		WHERE id = $1::uuid AND application_id = $2::uuid
+		RETURNING id`
+	var id string
+	return d.q.ExecReturning(ctx, q, orchID, appID, enabled, everyN, fallbackN, provider, model).Scan(&id)
 }
 
 // BulkDeleteApplications hard-deletes applications matching the provided UUID list,

@@ -580,6 +580,25 @@ func (s *AppService) SetOrchestratorLLM(ctx context.Context, tenantID, appID, or
 	return nil
 }
 
+// SetOrchestratorSummarizer updates summarizer settings for one app_orchestrators row.
+func (s *AppService) SetOrchestratorSummarizer(ctx context.Context, tenantID, appID, orchID string, enabled bool, everyN, fallbackN int, provider, model *string) error {
+	if everyN < 1 {
+		return validation("summarize_every_n_calls must be ≥ 1")
+	}
+	if fallbackN < 0 {
+		return validation("memory_raw_fallback_n must be ≥ 0")
+	}
+	if provider != nil && *provider != "" {
+		if _, ok := validProviders[*provider]; !ok {
+			return unprocessable("unsupported summarizer provider: " + *provider)
+		}
+	}
+	if err := s.dal.SetOrchestratorSummarizer(ctx, appID, orchID, enabled, everyN, fallbackN, provider, model); err != nil {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetOrchestratorMCPServers writes the mcp_servers list for one app_orchestrators row.
 // Validates tenant ownership via appID. An empty slice is valid (clears all servers).
 func (s *AppService) SetOrchestratorMCPServers(ctx context.Context, tenantID, appID, orchID string, servers []dal.MCPServerAttachment) error {
