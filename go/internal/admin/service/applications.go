@@ -111,6 +111,10 @@ func (s *AppService) Delete(ctx context.Context, tenantID, id string) error {
 // CreateEntryPoint validates the EP type, persists, and returns the new EP ID.
 // Entry points are scoped through their parent application; no additional tenant param needed here.
 // No cache invalidation on create (nothing to evict for a new EP).
+func (s *AppService) ListEntryPoints(ctx context.Context, appID string) []dal.EntryPoint {
+	return s.dal.ListEntryPoints(ctx, appID)
+}
+
 func (s *AppService) CreateEntryPoint(ctx context.Context, appID, slug, epType string, enabled *bool) (string, error) {
 	if slug == "" || epType == "" {
 		return "", validation("slug and entry_point_type are required")

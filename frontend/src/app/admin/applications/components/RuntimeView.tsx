@@ -94,24 +94,15 @@ export function RuntimeView({ app, onBack, onOrchSaved }: {
   const [orchSaving, setOrchSaving] = useState<string | null>(null);
   const [orchMsg,    setOrchMsg]    = useState<Record<string, string>>({});
 
-  // Per-EP summarizer drafts — keyed by EP id
+  // Entry points — fetched on mount so we always have app_orchestrator_id + summarizer fields
   type EPSummarizerDraft = {
     memoryEnabled: boolean; summarizeEveryN: number; fallbackN: number;
     provider: string; model: string;
   };
-  const [epSumDrafts, setEPSumDrafts] = useState<Record<string, EPSummarizerDraft>>(
-    Object.fromEntries(
-      (app.entry_points ?? []).map(ep => [ep.id, {
-        memoryEnabled: ep.memory_enabled ?? false,
-        summarizeEveryN: ep.summarize_every_n_calls ?? 10,
-        fallbackN: ep.memory_raw_fallback_n ?? 3,
-        provider: ep.summarizer_provider ?? '',
-        model: ep.summarizer_model ?? '',
-      }])
-    )
-  );
-  const [epSumSaving, setEPSumSaving] = useState<string | null>(null);
-  const [epSumMsg,    setEPSumMsg]    = useState<Record<string, string>>({});
+  const [entryPoints,  setEntryPoints]  = useState<import('@/lib/api').EntryPoint[]>([]);
+  const [epSumDrafts,  setEPSumDrafts]  = useState<Record<string, EPSummarizerDraft>>({});
+  const [epSumSaving,  setEPSumSaving]  = useState<string | null>(null);
+  const [epSumMsg,     setEPSumMsg]     = useState<Record<string, string>>({});
 
   // Canvas agent params
   const [agentParamsList,   setAgentParamsList]   = useState<AgentParamsResponse[]>([]);
@@ -140,6 +131,23 @@ export function RuntimeView({ app, onBack, onOrchSaved }: {
 
   useEffect(() => {
     themApi.getProviderKeys(app.id).then(setKeyStatuses).catch(() => {});
+  }, [app.id]);
+
+  useEffect(() => {
+    themApi.listEntryPoints(app.id).then(eps => {
+      setEntryPoints(eps);
+      const drafts: Record<string, EPSummarizerDraft> = {};
+      eps.forEach(ep => {
+        drafts[ep.id] = {
+          memoryEnabled: ep.memory_enabled ?? false,
+          summarizeEveryN: ep.summarize_every_n_calls ?? 10,
+          fallbackN: ep.memory_raw_fallback_n ?? 3,
+          provider: ep.summarizer_provider ?? '',
+          model: ep.summarizer_model ?? '',
+        };
+      });
+      setEPSumDrafts(drafts);
+    }).catch(() => {});
   }, [app.id]);
 
   useEffect(() => {
@@ -524,7 +532,7 @@ export function RuntimeView({ app, onBack, onOrchSaved }: {
                 const isErr = msg && msg !== 'Saved';
                 const canSave = orch.provider && orch.model;
                 // EPs linked to this orchestrator
-                const orchEPs = (app.entry_points ?? []).filter(ep => ep.app_orchestrator_id === orch.id);
+                const orchEPs = entryPoints.filter(ep => ep.app_orchestrator_id === orch.id);
                 return (
                   <div key={orch.id} style={{ borderRadius: 10, border: '1px solid rgba(132,158,190,0.18)', overflow: 'hidden', background: 'rgba(132,158,190,0.02)' }}>
                     {/* Orchestrator header */}

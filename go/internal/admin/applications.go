@@ -57,6 +57,7 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Delete("/app-params/{name}", h.DeleteAppParam)
 		app.Patch("/orchestrators/{orch_id}/llm", h.PatchOrchestratorLLM)
 		app.Patch("/orchestrators/{orch_id}/mcp-servers", h.PatchOrchestratorMCPServers)
+		app.Get("/entry-points", h.ListEntryPoints)
 		app.Patch("/entry-points/{ep_id}/summarizer", h.PatchEntryPointSummarizer)
 		app.Post("/entry-points", h.CreateEntryPoint)
 		app.Put("/entry-points/{ep_id}", h.UpdateEntryPoint)
@@ -161,6 +162,17 @@ func (h *ApplicationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
+}
+
+// ListEntryPoints handles GET /api/v1/admin/applications/{id}/entry-points.
+func (h *ApplicationsHandler) ListEntryPoints(w http.ResponseWriter, r *http.Request) {
+	appID := chi.URLParam(r, "id")
+	if appID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+	eps := h.svc.ListEntryPoints(r.Context(), appID)
+	writeJSON(w, http.StatusOK, eps)
 }
 
 // CreateEntryPoint handles POST /api/v1/admin/applications/{id}/entry-points.

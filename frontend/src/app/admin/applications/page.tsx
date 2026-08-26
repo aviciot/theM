@@ -114,15 +114,8 @@ export default function ApplicationsPage() {
     setView('sessions');
   }
 
-  async function openRuntime(app: Application) {
-    // Fetch fresh copy first so entry_points + summarizer fields are populated
-    // before RuntimeView mounts (useState initializes only once from the prop).
-    try {
-      const fresh = await themApi.getApplication(app.id);
-      setRuntimeApp(fresh);
-    } catch {
-      setRuntimeApp(app);
-    }
+  function openRuntime(app: Application) {
+    setRuntimeApp(app);
     setView('runtime');
   }
 
