@@ -3,6 +3,7 @@ package agentgen_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -259,6 +260,52 @@ func TestInterpreter_HTTPStep_StaticHeader(t *testing.T) {
 	}
 	if capturedCustom != "static-value" {
 		t.Errorf("expected X-Custom: static-value, got %q", capturedCustom)
+	}
+}
+
+func TestInterpreter_HTTPStep_FormKey_URLEncodes(t *testing.T) {
+	var capturedBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		capturedBody = string(b)
+		json.NewEncoder(w).Encode(map[string]any{"elements": []any{}}) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	interp := agentgen.NewInterpreter(&http.Client{}, nil, "")
+	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "a1"}
+	skill := &agentgen.SkillSpec{
+		ID: "skill-1",
+		Steps: []agentgen.StepSpec{
+			{ID: "step-input", Type: agentgen.StepInput, Config: mustJSON(agentgen.InputStepConfig{}), Next: []string{"step-http"}},
+			{
+				ID:   "step-http",
+				Type: agentgen.StepHTTP,
+				Config: mustJSON(agentgen.HTTPStepConfig{
+					Method:         "POST",
+					URLTemplate:    server.URL,
+					Headers:        map[string]string{"Content-Type": "application/x-www-form-urlencoded"},
+					BodyTemplate:   "[out:json];node[diet:kosher=yes](around:1000,0,0);out 1;",
+					FormKey:        "data",
+					TimeoutSeconds: 5,
+				}),
+				Next: []string{"step-response"},
+			},
+			{ID: "step-response", Type: agentgen.StepResponse, Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "http_response"})},
+		},
+	}
+
+	_, err := interp.Execute(context.Background(), ic, skill, "")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	// The body must be form-encoded: "data=" followed by percent-encoded QL.
+	// Brackets, colons, semicolons, and equals signs must all be encoded.
+	if !strings.HasPrefix(capturedBody, "data=%5B") {
+		t.Errorf("expected body to start with 'data=%%5B' (URL-encoded '['), got %q", capturedBody)
+	}
+	if strings.Contains(capturedBody, "diet:kosher") {
+		t.Errorf("body must not contain raw colon in tag name: %q", capturedBody)
 	}
 }
 

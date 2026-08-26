@@ -1402,6 +1402,7 @@ via Condition and Branch step types. No external services required.
 | `TestInterpreter_TransformStep_JSONExtractions` | Transform JSONPath extractions: parses a JSON string var (LLM output) and assigns fields to named pipeline vars |
 | `TestInterpreter_TransformStep_JSONExtract_FromMap` | Transform JSONPath extractions: parses a map[string]any (http_response) and extracts a field to a named var |
 | `TestInterpreter_BranchStep_EdgeFallback` | Branch step with empty TrueNext/FalseNext config routes via Next[0]=true, Next[1]=false edge order |
+| `TestInterpreter_HTTPStep_FormKey_URLEncodes` | When `form_key` is set, body_template is percent-encoded and sent as `{key}={encoded}` (required for Overpass QL with colon tags like `diet:kosher`) |
 
 **Trigger:** any change to `internal/agentgen/` (spec.go, context.go, binding.go, redistaskstore.go, interpreter.go, nodes.go) or `cmd/agent-runtime/main.go`
 

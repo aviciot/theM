@@ -575,7 +575,8 @@ export function CanvasBuilderView({
               if (!attachment) return;
               const current = attachment.tools ?? [];
               // empty means "all" — switching to explicit list when user first unchecks
-              const allTools = availableMCPServers.find(s => s.slug === slug)?.tools_manifest?.map(t => t.name) ?? [];
+              const server = enabledServers.find(s => s.slug === slug);
+              const allTools = server?.tools_manifest?.map(t => t.name) ?? [];
               const base = current.length === 0 ? allTools : current;
               const next = base.includes(toolName)
                 ? base.filter(t => t !== toolName)

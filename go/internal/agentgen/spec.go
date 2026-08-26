@@ -142,6 +142,11 @@ type HTTPStepConfig struct {
 	InjectMode string `json:"inject_mode,omitempty"`
 	// InjectHeaderName is the header or query param name for "query" and "custom_header" modes.
 	InjectHeaderName string `json:"inject_header_name,omitempty"`
+	// FormKey, when set, treats body_template as a raw form value. The rendered template is
+	// percent-encoded and sent as "{FormKey}={encoded}" with Content-Type application/x-www-form-urlencoded.
+	// This is required when the raw body contains characters like ":" or "[" that Apache/nginx
+	// reject if left unencoded in a form POST.
+	FormKey string `json:"form_key,omitempty"`
 }
 
 type JSONPathExtract struct {

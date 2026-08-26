@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"text/template"
 	"time"
@@ -247,6 +248,11 @@ func (interp *Interpreter) execHTTP(ctx context.Context, ic *InvocationContext, 
 		bodyStr, err := renderTemplate(cfg.BodyTemplate, vars)
 		if err != nil {
 			return fmt.Errorf("render body: %w", err)
+		}
+		if cfg.FormKey != "" {
+			// Percent-encode the rendered body as a form value so characters like ":" and "["
+			// in Overpass QL (and similar APIs) are not misinterpreted by upstream servers.
+			bodyStr = cfg.FormKey + "=" + url.QueryEscape(bodyStr)
 		}
 		bodyReader = bytes.NewReader([]byte(bodyStr))
 	} else {
