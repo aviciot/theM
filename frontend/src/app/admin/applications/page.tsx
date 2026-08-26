@@ -115,13 +115,15 @@ export default function ApplicationsPage() {
   }
 
   async function openRuntime(app: Application) {
-    setRuntimeApp(app);
-    setView('runtime');
-    // Re-fetch to get full entry_points with app_orchestrator_id + summarizer fields
+    // Fetch fresh copy first so entry_points + summarizer fields are populated
+    // before RuntimeView mounts (useState initializes only once from the prop).
     try {
       const fresh = await themApi.getApplication(app.id);
       setRuntimeApp(fresh);
-    } catch { /* keep stale if fetch fails */ }
+    } catch {
+      setRuntimeApp(app);
+    }
+    setView('runtime');
   }
 
   if (view === 'mcp-credentials' && mcpApp) {
