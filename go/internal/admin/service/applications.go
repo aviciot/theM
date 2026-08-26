@@ -603,6 +603,20 @@ func (s *AppService) SetEntryPointSummarizer(ctx context.Context, tenantID, appI
 	return nil
 }
 
+// SetEntryPointLLM assigns a provider+model to one entry_points row.
+// Either both provider and model must be non-nil/non-empty, or both must be nil/empty (to clear).
+func (s *AppService) SetEntryPointLLM(ctx context.Context, tenantID, appID, epID string, provider, model *string) error {
+	if provider != nil && *provider != "" {
+		if _, ok := validProviders[*provider]; !ok {
+			return unprocessable("unsupported provider: " + *provider)
+		}
+	}
+	if err := s.dal.SetEntryPointLLM(ctx, appID, epID, provider, model); err != nil {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetOrchestratorMCPServers writes the mcp_servers list for one app_orchestrators row.
 // Validates tenant ownership via appID. An empty slice is valid (clears all servers).
 func (s *AppService) SetOrchestratorMCPServers(ctx context.Context, tenantID, appID, orchID string, servers []dal.MCPServerAttachment) error {

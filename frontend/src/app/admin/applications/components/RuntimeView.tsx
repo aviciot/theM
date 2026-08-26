@@ -62,9 +62,8 @@ function AgentSubLabel({ icon, label }: { icon: string; label: string }) {
 }
 
 // ── RuntimeView ───────────────────────────────────────────────────────────────
-export function RuntimeView({ app, onBack, onOrchSaved }: {
+export function RuntimeView({ app, onBack }: {
   app: Application; onBack: () => void;
-  onOrchSaved?: (orchId: string, provider: string, model: string) => void;
 }) {
   const emptyRuntime = { max_concurrent_sessions: null, rate_limit_rpm: null, blocked_tokens: [], blocked_user_ids: [], session_timeout_minutes: null };
   const [cfg, setCfg]     = useState<import('@/lib/api').AppRuntimeConfig>(app.runtime_config ?? emptyRuntime);
@@ -83,16 +82,17 @@ export function RuntimeView({ app, onBack, onOrchSaved }: {
   const [keyTestMsg,  setKeyTestMsg]  = useState<Record<string, string>>({});
   const [keyTesting,  setKeyTesting]  = useState<string | null>(null);
 
-  // Orchestrator LLM
-  type OrchLLM = { id: string; name: string; displayName: string; provider: string; model: string };
-  const [orchLLMs,  setOrchLLMs]  = useState<OrchLLM[]>(
-    (app.app_orchestrators ?? []).map(o => ({
-      id: o.id, name: o.name, displayName: o.display_name || o.name,
-      provider: o.llm_provider ?? '', model: o.llm_model ?? '',
-    }))
-  );
-  const [orchSaving, setOrchSaving] = useState<string | null>(null);
-  const [orchMsg,    setOrchMsg]    = useState<Record<string, string>>({});
+  // Orchestrator metadata (name/display only — LLM now per-EP)
+  type OrchMeta = { id: string; name: string; displayName: string };
+  const orchMetas: OrchMeta[] = (app.app_orchestrators ?? []).map(o => ({
+    id: o.id, name: o.name, displayName: o.display_name || o.name,
+  }));
+
+  // Per-EP LLM draft (stored on entry_points.llm_provider / llm_model)
+  type EPLLMDraft = { provider: string; model: string };
+  const [epLLMDrafts,  setEPLLMDrafts]  = useState<Record<string, EPLLMDraft>>({});
+  const [epLLMSaving,  setEPLLMSaving]  = useState<string | null>(null);
+  const [epLLMMsg,     setEPLLMMsg]     = useState<Record<string, string>>({});
 
   // Entry points — fetched on mount so we always have app_orchestrator_id + summarizer fields
   type EPSummarizerDraft = {
@@ -136,17 +136,23 @@ export function RuntimeView({ app, onBack, onOrchSaved }: {
   useEffect(() => {
     themApi.listEntryPoints(app.id).then(eps => {
       setEntryPoints(eps);
-      const drafts: Record<string, EPSummarizerDraft> = {};
+      const sumDrafts: Record<string, EPSummarizerDraft> = {};
+      const llmDrafts: Record<string, EPLLMDraft> = {};
       eps.forEach(ep => {
-        drafts[ep.id] = {
+        sumDrafts[ep.id] = {
           memoryEnabled: ep.memory_enabled ?? false,
           summarizeEveryN: ep.summarize_every_n_calls ?? 10,
           fallbackN: ep.memory_raw_fallback_n ?? 3,
           provider: ep.summarizer_provider ?? '',
           model: ep.summarizer_model ?? '',
         };
+        llmDrafts[ep.id] = {
+          provider: ep.llm_provider ?? '',
+          model: ep.llm_model ?? '',
+        };
       });
-      setEPSumDrafts(drafts);
+      setEPSumDrafts(sumDrafts);
+      setEPLLMDrafts(llmDrafts);
     }).catch(() => {});
   }, [app.id]);
 
@@ -224,18 +230,20 @@ export function RuntimeView({ app, onBack, onOrchSaved }: {
     } finally { setKeyTesting(null); }
   }
 
-  async function handleSaveOrchLLM(orchId: string) {
-    const orch = orchLLMs.find(o => o.id === orchId);
-    if (!orch?.provider || !orch?.model) return;
-    setOrchSaving(orchId);
+  async function handleSaveEPLLM(epId: string) {
+    const draft = epLLMDrafts[epId];
+    if (!draft) return;
+    setEPLLMSaving(epId);
     try {
-      await themApi.patchOrchestratorLLM(app.id, orchId, orch.provider, orch.model);
-      setOrchMsg(m => ({ ...m, [orchId]: 'Saved' }));
-      setTimeout(() => setOrchMsg(m => ({ ...m, [orchId]: '' })), 2500);
-      onOrchSaved?.(orchId, orch.provider, orch.model);
+      await themApi.patchEntryPointLLM(app.id, epId, {
+        llm_provider: draft.provider || null,
+        llm_model: draft.model || null,
+      });
+      setEPLLMMsg(m => ({ ...m, [epId]: 'Saved' }));
+      setTimeout(() => setEPLLMMsg(m => ({ ...m, [epId]: '' })), 2500);
     } catch (e: unknown) {
-      setOrchMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Failed' }));
-    } finally { setOrchSaving(null); }
+      setEPLLMMsg(m => ({ ...m, [epId]: e instanceof Error ? e.message : 'Failed' }));
+    } finally { setEPLLMSaving(null); }
   }
 
   async function handleSaveEPSummarizer(epId: string) {
@@ -519,19 +527,14 @@ export function RuntimeView({ app, onBack, onOrchSaved }: {
         </Section>
 
         {/* ── 2. ORCHESTRATORS ───────────────────────────────────────────── */}
-        {orchLLMs.length > 0 && (
+        {orchMetas.length > 0 && (
           <>
             <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', margin: '24px 0 8px', paddingLeft: 4 }}>
               Orchestrators
             </div>
             <Section title="LLM & Memory" icon="hub"
-              subtitle="Configure the conversation LLM and per-entry-point context summarization for each orchestrator.">
-              {orchLLMs.map(orch => {
-                const isBusy = orchSaving === orch.id;
-                const msg = orchMsg[orch.id] ?? '';
-                const isErr = msg && msg !== 'Saved';
-                const canSave = orch.provider && orch.model;
-                // EPs linked to this orchestrator
+              subtitle="Configure conversation LLM and memory summarizer per entry point.">
+              {orchMetas.map(orch => {
                 const orchEPs = entryPoints.filter(ep => ep.app_orchestrator_id === orch.id);
                 return (
                   <div key={orch.id} style={{ borderRadius: 10, border: '1px solid rgba(132,158,190,0.18)', overflow: 'hidden', background: 'rgba(132,158,190,0.02)' }}>
@@ -541,112 +544,110 @@ export function RuntimeView({ app, onBack, onOrchSaved }: {
                       <span style={{ fontSize: 12, fontWeight: 700, color: C.text, flex: 1 }}>{orch.displayName || orch.name}</span>
                     </div>
 
-                    <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-                      {/* LLM assignment row */}
-                      <div>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>psychology</span>
-                          Conversation LLM
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <select value={orch.provider}
-                            onChange={e => {
-                              const p = e.target.value;
-                              setOrchLLMs(prev => prev.map(o => {
-                                if (o.id !== orch.id) return o;
-                                const models = RUNTIME_MODELS[p] ?? [];
-                                return { ...o, provider: p, model: models.includes(o.model) ? o.model : (models[0] ?? '') };
-                              }));
-                            }}
-                            style={{ ...field, width: 150, flexShrink: 0 }}>
-                            <option value="">— provider —</option>
-                            {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
-                          </select>
-                          <select value={orch.model} disabled={!orch.provider}
-                            onChange={e => setOrchLLMs(prev => prev.map(o => o.id === orch.id ? { ...o, model: e.target.value } : o))}
-                            style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
-                            <option value="">— model —</option>
-                            {(RUNTIME_MODELS[orch.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
-                          </select>
-                          {saveBtn(() => handleSaveOrchLLM(orch.id), isBusy, !canSave)}
-                        </div>
-                        {msg && <div style={{ marginTop: 5, fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
-                      </div>
+                    <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {orchEPs.length === 0 && (
+                        <div style={{ fontSize: 12, color: C.textMuted }}>No entry points connected to this orchestrator.</div>
+                      )}
+                      {orchEPs.map(ep => {
+                        const llmDraft = epLLMDrafts[ep.id] ?? { provider: '', model: '' };
+                        const sumDraft = epSumDrafts[ep.id] ?? { memoryEnabled: false, summarizeEveryN: 10, fallbackN: 3, provider: '', model: '' };
+                        const llmBusy = epLLMSaving === ep.id;
+                        const sumBusy = epSumSaving === ep.id;
+                        const llmMsg = epLLMMsg[ep.id] ?? '';
+                        const sumMsg = epSumMsg[ep.id] ?? '';
+                        const epTypeIcon = ep.entry_point_type === 'websocket' ? 'cable' : ep.entry_point_type === 'sse' ? 'stream' : ep.entry_point_type === 'voice' ? 'mic' : 'link';
+                        return (
+                          <div key={ep.id} style={{ borderRadius: 8, border: `1px solid ${sumDraft.memoryEnabled ? 'rgba(208,188,255,0.2)' : 'rgba(132,158,190,0.14)'}`, overflow: 'hidden', background: 'rgba(255,255,255,0.02)' }}>
+                            {/* EP header */}
+                            <div style={{ padding: '9px 12px', borderBottom: '1px solid rgba(132,158,190,0.1)', display: 'flex', alignItems: 'center', gap: 7 }}>
+                              <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted }}>{epTypeIcon}</span>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: C.text, fontFamily: 'JetBrains Mono, monospace', flex: 1 }}>{ep.slug}</span>
+                              <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 20, background: 'rgba(132,158,190,0.1)', color: C.textMuted, border: '1px solid rgba(132,158,190,0.18)', fontWeight: 600 }}>{ep.entry_point_type}</span>
+                            </div>
 
-                      {/* Entry points — each with summarizer config */}
-                      {orchEPs.length > 0 && (
-                        <div>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
-                            <span className="material-symbols-outlined" style={{ fontSize: 13 }}>memory</span>
-                            Memory & Summarizer — per entry point
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {orchEPs.map(ep => {
-                              const draft = epSumDrafts[ep.id] ?? { memoryEnabled: false, summarizeEveryN: 10, fallbackN: 3, provider: '', model: '' };
-                              const epBusy = epSumSaving === ep.id;
-                              const epMsg = epSumMsg[ep.id] ?? '';
-                              const epErr = epMsg && epMsg !== 'Saved';
-                              const epTypeIcon = ep.entry_point_type === 'websocket' ? 'cable' : ep.entry_point_type === 'sse' ? 'stream' : 'link';
-                              return (
-                                <div key={ep.id} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${draft.memoryEnabled ? 'rgba(208,188,255,0.2)' : 'rgba(255,255,255,0.07)'}` }}>
-                                  {/* EP header */}
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
-                                    <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted }}>{epTypeIcon}</span>
-                                    <span style={{ fontSize: 12, fontWeight: 700, color: C.text, fontFamily: 'JetBrains Mono, monospace', flex: 1 }}>{ep.slug}</span>
-                                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 20, background: 'rgba(132,158,190,0.1)', color: C.textMuted, border: '1px solid rgba(132,158,190,0.18)', fontWeight: 600 }}>{ep.entry_point_type}</span>
-                                    {/* Enable toggle inline */}
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginLeft: 8 }}>
-                                      <input type="checkbox" checked={draft.memoryEnabled}
-                                        onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...draft, memoryEnabled: e.target.checked } }))}
-                                        style={{ accentColor: C.purple, width: 13, height: 13 }} />
-                                      <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600 }}>Enable</span>
-                                    </label>
-                                  </div>
+                            <div style={{ padding: '12px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                              {/* Conversation LLM */}
+                              <div>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>psychology</span>
+                                  Conversation LLM
+                                </div>
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                  <select value={llmDraft.provider}
+                                    onChange={e => {
+                                      const p = e.target.value;
+                                      const models = RUNTIME_MODELS[p] ?? [];
+                                      setEPLLMDrafts(prev => ({ ...prev, [ep.id]: { provider: p, model: models.includes(llmDraft.model) ? llmDraft.model : (models[0] ?? '') } }));
+                                    }}
+                                    style={{ ...field, width: 150, flexShrink: 0 }}>
+                                    <option value="">— provider —</option>
+                                    {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
+                                  </select>
+                                  <select value={llmDraft.model} disabled={!llmDraft.provider}
+                                    onChange={e => setEPLLMDrafts(prev => ({ ...prev, [ep.id]: { ...llmDraft, model: e.target.value } }))}
+                                    style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+                                    <option value="">— model —</option>
+                                    {(RUNTIME_MODELS[llmDraft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
+                                  </select>
+                                  {saveBtn(() => handleSaveEPLLM(ep.id), llmBusy, !llmDraft.provider || !llmDraft.model)}
+                                </div>
+                                {llmMsg && <div style={{ marginTop: 5, fontSize: 12, color: llmMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{llmMsg}</div>}
+                              </div>
 
-                                  {/* Summarizer settings — always rendered, dimmed when disabled */}
-                                  <div style={{ opacity: draft.memoryEnabled ? 1 : 0.45, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                                      <div>
-                                        <label style={lbl}>Every N turns</label>
-                                        <input type="number" min={1} value={draft.summarizeEveryN} disabled={!draft.memoryEnabled} style={field}
-                                          onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...draft, summarizeEveryN: parseInt(e.target.value) || 10 } }))} />
-                                      </div>
-                                      <div>
-                                        <label style={lbl}>Keep last N verbatim</label>
-                                        <input type="number" min={0} value={draft.fallbackN} disabled={!draft.memoryEnabled} style={field}
-                                          onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...draft, fallbackN: parseInt(e.target.value) || 0 } }))} />
-                                      </div>
+                              {/* Memory & Summarizer */}
+                              <div style={{ borderTop: '1px solid rgba(132,158,190,0.1)', paddingTop: 12 }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>memory</span>
+                                  Memory & Summarizer
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', marginLeft: 'auto', fontWeight: 600, textTransform: 'none', letterSpacing: 0 }}>
+                                    <input type="checkbox" checked={sumDraft.memoryEnabled}
+                                      onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, memoryEnabled: e.target.checked } }))}
+                                      style={{ accentColor: C.purple, width: 13, height: 13 }} />
+                                    <span style={{ fontSize: 11, color: C.textMuted }}>Enable</span>
+                                  </label>
+                                </div>
+                                <div style={{ opacity: sumDraft.memoryEnabled ? 1 : 0.45, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                    <div>
+                                      <label style={lbl}>Every N turns</label>
+                                      <input type="number" min={1} value={sumDraft.summarizeEveryN} disabled={!sumDraft.memoryEnabled} style={field}
+                                        onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, summarizeEveryN: parseInt(e.target.value) || 10 } }))} />
                                     </div>
                                     <div>
-                                      <label style={lbl}>Summarizer model (optional — defaults to conversation LLM)</label>
-                                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                        <select value={draft.provider} disabled={!draft.memoryEnabled}
-                                          onChange={e => {
-                                            const p = e.target.value;
-                                            const models = RUNTIME_MODELS[p] ?? [];
-                                            setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...draft, provider: p, model: models.includes(draft.model) ? draft.model : (models[0] ?? '') } }));
-                                          }}
-                                          style={{ ...field, width: 150, flexShrink: 0 }}>
-                                          <option value="">— same as LLM —</option>
-                                          {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
-                                        </select>
-                                        <select value={draft.model} disabled={!draft.memoryEnabled || !draft.provider}
-                                          onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...draft, model: e.target.value } }))}
-                                          style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
-                                          <option value="">— model —</option>
-                                          {(RUNTIME_MODELS[draft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
-                                        </select>
-                                        {saveBtn(() => handleSaveEPSummarizer(ep.id), epBusy, false)}
-                                      </div>
+                                      <label style={lbl}>Keep last N verbatim</label>
+                                      <input type="number" min={0} value={sumDraft.fallbackN} disabled={!sumDraft.memoryEnabled} style={field}
+                                        onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, fallbackN: parseInt(e.target.value) || 0 } }))} />
                                     </div>
                                   </div>
-                                  {epMsg && <div style={{ marginTop: 6, fontSize: 12, color: epErr ? C.error : C.green, fontWeight: 600 }}>{epMsg}</div>}
+                                  <div>
+                                    <label style={lbl}>Summarizer model (optional — defaults to conversation LLM)</label>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                      <select value={sumDraft.provider} disabled={!sumDraft.memoryEnabled}
+                                        onChange={e => {
+                                          const p = e.target.value;
+                                          const models = RUNTIME_MODELS[p] ?? [];
+                                          setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, provider: p, model: models.includes(sumDraft.model) ? sumDraft.model : (models[0] ?? '') } }));
+                                        }}
+                                        style={{ ...field, width: 150, flexShrink: 0 }}>
+                                        <option value="">— same as LLM —</option>
+                                        {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
+                                      </select>
+                                      <select value={sumDraft.model} disabled={!sumDraft.memoryEnabled || !sumDraft.provider}
+                                        onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, model: e.target.value } }))}
+                                        style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+                                        <option value="">— model —</option>
+                                        {(RUNTIME_MODELS[sumDraft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
+                                      </select>
+                                      {saveBtn(() => handleSaveEPSummarizer(ep.id), sumBusy, false)}
+                                    </div>
+                                  </div>
                                 </div>
-                              );
-                            })}
+                                {sumMsg && <div style={{ marginTop: 6, fontSize: 12, color: sumMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{sumMsg}</div>}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        );
+                      })}
                     </div>
                   </div>
                 );

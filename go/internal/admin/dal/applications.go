@@ -154,7 +154,8 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 		       COALESCE(memory_enabled, false),
 		       COALESCE(summarize_every_n_calls, 10),
 		       COALESCE(memory_raw_fallback_n, 3),
-		       summarizer_provider, summarizer_model
+		       summarizer_provider, summarizer_model,
+		       llm_provider, llm_model
 		FROM them.entry_points WHERE application_id=$1::uuid ORDER BY created_at`
 
 	rows, err := d.q.Query(ctx, q, appID)
@@ -171,12 +172,26 @@ func (d *DB) ListEntryPoints(ctx context.Context, appID string) []EntryPoint {
 			&ep.Slug, &ep.EntryPointType, &ep.Enabled,
 			&ep.MemoryEnabled, &ep.SummarizeEveryNCalls, &ep.MemoryRawFallbackN,
 			&ep.SummarizerProvider, &ep.SummarizerModel,
+			&ep.LLMProvider, &ep.LLMModel,
 		); err != nil {
 			break
 		}
 		eps = append(eps, ep)
 	}
 	return eps
+}
+
+// SetEntryPointLLM updates llm_provider and llm_model on one entry_points row.
+func (d *DB) SetEntryPointLLM(ctx context.Context, appID, epID string, provider, model *string) error {
+	const q = `
+		UPDATE them.entry_points
+		SET llm_provider = $3,
+		    llm_model    = $4,
+		    updated_at   = now()
+		WHERE id = $1::uuid AND application_id = $2::uuid
+		RETURNING id`
+	var id string
+	return d.q.ExecReturning(ctx, q, epID, appID, provider, model).Scan(&id)
 }
 
 // SetEntryPointSummarizer updates summarizer settings on one entry_points row.

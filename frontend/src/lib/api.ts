@@ -265,6 +265,8 @@ export interface EntryPoint {
   memory_raw_fallback_n?: number;
   summarizer_provider?: string | null;
   summarizer_model?: string | null;
+  llm_provider?: string | null;
+  llm_model?: string | null;
 }
 
 export interface CanvasLayout {
@@ -860,6 +862,7 @@ export const themApi = {
   patchOrchestratorLLM: (appId: string, orchId: string, provider: string, model: string) => api.patch<{ id: string; llm_provider: string; llm_model: string }>(`/admin/applications/${appId}/orchestrators/${orchId}/llm`, { provider, model }),
   listEntryPoints: (appId: string) => api.get<EntryPoint[]>(`/admin/applications/${appId}/entry-points`),
   patchEntryPointSummarizer: (appId: string, epId: string, payload: { memory_enabled: boolean; summarize_every_n_calls: number; memory_raw_fallback_n: number; summarizer_provider: string | null; summarizer_model: string | null }) => api.patch<{ id: string }>(`/admin/applications/${appId}/entry-points/${epId}/summarizer`, payload),
+  patchEntryPointLLM: (appId: string, epId: string, payload: { llm_provider: string | null; llm_model: string | null }) => api.patch<{ id: string }>(`/admin/applications/${appId}/entry-points/${epId}/llm`, payload),
   patchOrchestratorMCPServers: (appId: string, orchId: string, mcpServers: MCPServerAttachment[]) => api.patch<{ id: string; mcp_servers: MCPServerAttachment[] }>(`/admin/applications/${appId}/orchestrators/${orchId}/mcp-servers`, { mcp_servers: mcpServers }),
   getMonitoringConfig: () => api.get<MonitoringConfig>('/admin/monitoring-config'),
   putMonitoringConfig: (body: MonitoringConfig) => api.put<MonitoringConfig>('/admin/monitoring-config', body),

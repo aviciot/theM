@@ -141,17 +141,6 @@ export default function ApplicationsPage() {
             <RuntimeView
               app={runtimeApp}
               onBack={backToList}
-              onOrchSaved={(orchId, provider, model) => {
-                setRuntimeApp(prev => {
-                  if (!prev) return prev;
-                  return {
-                    ...prev,
-                    app_orchestrators: (prev.app_orchestrators ?? []).map(o =>
-                      o.id === orchId ? { ...o, llm_provider: provider, llm_model: model } : o
-                    ),
-                  };
-                });
-              }}
             />
           </div>
         </div>

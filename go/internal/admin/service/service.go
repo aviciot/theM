@@ -61,6 +61,7 @@ type Dal interface {
 	DeleteProviderKey(ctx context.Context, tenantID, appID, provider string) error
 	SetOrchestratorLLM(ctx context.Context, appID, orchID, provider, model string) error
 	SetEntryPointSummarizer(ctx context.Context, appID, epID string, enabled bool, everyN, fallbackN int, provider, model *string) error
+	SetEntryPointLLM(ctx context.Context, appID, epID string, provider, model *string) error
 	// App global params — app-scoped, secrets AES-GCM encrypted
 	GetAppParams(ctx context.Context, tenantID, appID string) ([]byte, error)
 	SetAppParam(ctx context.Context, tenantID, appID, name string, valueJSON []byte) error

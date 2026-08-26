@@ -224,6 +224,8 @@ type EntryPoint struct {
 	MemoryRawFallbackN   int     `json:"memory_raw_fallback_n"`
 	SummarizerProvider   *string `json:"summarizer_provider,omitempty"`
 	SummarizerModel      *string `json:"summarizer_model,omitempty"`
+	LLMProvider          *string `json:"llm_provider,omitempty"`
+	LLMModel             *string `json:"llm_model,omitempty"`
 }
 
 // ApplicationInput is the request body for application create/update.

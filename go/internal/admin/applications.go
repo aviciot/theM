@@ -59,6 +59,7 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Patch("/orchestrators/{orch_id}/mcp-servers", h.PatchOrchestratorMCPServers)
 		app.Get("/entry-points", h.ListEntryPoints)
 		app.Patch("/entry-points/{ep_id}/summarizer", h.PatchEntryPointSummarizer)
+		app.Patch("/entry-points/{ep_id}/llm", h.PatchEntryPointLLM)
 		app.Post("/entry-points", h.CreateEntryPoint)
 		app.Put("/entry-points/{ep_id}", h.UpdateEntryPoint)
 		app.Patch("/entry-points/{ep_id}", h.UpdateEntryPoint) // Python sends PATCH
@@ -524,6 +525,38 @@ func (h *ApplicationsHandler) PatchEntryPointSummarizer(w http.ResponseWriter, r
 		"memory_raw_fallback_n":   body.MemoryRawFallbackN,
 		"summarizer_provider":     body.SummarizerProvider,
 		"summarizer_model":        body.SummarizerModel,
+	})
+}
+
+// PatchEntryPointLLM handles PATCH /api/v1/admin/applications/{id}/entry-points/{ep_id}/llm.
+// Body: {"llm_provider":"anthropic","llm_model":"claude-haiku-4-5-20251001"}
+func (h *ApplicationsHandler) PatchEntryPointLLM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	epID := chi.URLParam(r, "ep_id")
+	if id == "" || epID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or entry point id")
+		return
+	}
+
+	var body struct {
+		LLMProvider *string `json:"llm_provider"`
+		LLMModel    *string `json:"llm_model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if err := h.svc.SetEntryPointLLM(r.Context(), tenantID, id, epID, body.LLMProvider, body.LLMModel); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":           epID,
+		"app_id":       id,
+		"llm_provider": body.LLMProvider,
+		"llm_model":    body.LLMModel,
 	})
 }
 
