@@ -50,9 +50,9 @@ export default function ApplicationsPage() {
 
   async function handleToggle(app: Application) {
     try {
-      await themApi.updateApplication(app.id, { name: app.name, enabled: !app.enabled });
-      await load();
-    } catch {/* ignore — AppCard shows toggling state, failure resets on next load */}
+      const updated = await themApi.updateApplication(app.id, { name: app.name, enabled: !app.enabled });
+      setList(prev => prev.map(a => a.id === app.id ? { ...a, ...updated, enabled: !app.enabled } : a));
+    } catch {/* ignore — AppCard shows toggling state */}
   }
 
   async function handleDelete(app: Application) {
