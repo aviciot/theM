@@ -1041,7 +1041,7 @@ services:
       - "traefik.http.routers.them-go-apps-update.entrypoints=web"
       - "traefik.http.routers.them-go-apps-update.priority=115"
       - "traefik.http.routers.them-go-apps-update.service=them-go-bridge-svc"
-      - "traefik.http.routers.them-go-eps-writes.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/entry-points(/[^/]+)?$$`) && (Method(`POST`) || Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
+      - "traefik.http.routers.them-go-eps-writes.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/entry-points(/[^/]+)?$$`) && (Method(`GET`) || Method(`POST`) || Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
       - "traefik.http.routers.them-go-eps-writes.entrypoints=web"
       - "traefik.http.routers.them-go-eps-writes.priority=115"
       - "traefik.http.routers.them-go-eps-writes.service=them-go-bridge-svc"

@@ -452,60 +452,28 @@ export function CanvasBuilderView({
 
           {/* LLM per-EP config */}
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
-            <SectionHeader id="orch-llm" label="LLM" defaultOpen={true} />
+            <SectionHeader id="orch-llm" label="Entry Points" defaultOpen={true} />
             {isSectionOpen('orch-llm', true) && connectedEps.length === 0 && (
-              <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic', marginTop: 6 }}>Connect an entry point to configure LLM</div>
+              <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic', marginTop: 6 }}>No entry points connected</div>
             )}
-            {isSectionOpen('orch-llm', true) && connectedEps.map(epNode => {
-              if (!epNode) return null;
-              const ep = epNode.data as unknown as EpNodeData;
-              const epCfg = epLlm[ep.instance_id] ?? {};
-              const currentProvider = (epCfg.provider as string) ?? '';
-              const currentModel = (epCfg.model as string) ?? '';
-              const testKey = ep.instance_id;
-              const testState = llmTestState[testKey] ?? {};
-              const availableModels = currentProvider ? (MODELS_BY_PROVIDER[currentProvider] ?? []) : [];
-              const keySet = providerKeyStatuses[currentProvider] ?? false;
-              return (
-                <div key={ep.instance_id} style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(0,240,255,0.12)', background: 'rgba(0,240,255,0.03)' }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.cyan, marginBottom: 6 }}>{ep.slug || ep.instance_id} ({ep.protocol})</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <div>
-                      <label style={{ fontSize: 10, color: C.textMuted, display: 'block', marginBottom: 3 }}>Provider</label>
-                      <select style={{ ...selectStyle, fontSize: 12 }} value={currentProvider} onChange={e => { const p = e.target.value; const models = MODELS_BY_PROVIDER[p] ?? []; setEpLlm(ep.instance_id, { provider: p, model: models[0] ?? '' }); }}>
-                        <option value="">— select —</option>
-                        {Object.keys(MODELS_BY_PROVIDER).map(p => (
-                          <option key={p} value={p}>{p}{providerKeyStatuses[p] ? ' ✓' : ''}</option>
-                        ))}
-                      </select>
+            {isSectionOpen('orch-llm', true) && connectedEps.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+                {connectedEps.map(epNode => {
+                  if (!epNode) return null;
+                  const ep = epNode.data as unknown as EpNodeData;
+                  return (
+                    <div key={ep.instance_id} style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid rgba(0,240,255,0.12)', background: 'rgba(0,240,255,0.03)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 13, color: C.cyan }}>⬡</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: C.text, fontFamily: 'JetBrains Mono, monospace' }}>{ep.slug || ep.instance_id}</span>
+                      <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 'auto' }}>{ep.protocol}</span>
                     </div>
-                    {currentProvider && (
-                      <div>
-                        <label style={{ fontSize: 10, color: C.textMuted, display: 'block', marginBottom: 3 }}>Model</label>
-                        <select style={{ ...selectStyle, fontSize: 12, fontFamily: 'JetBrains Mono, monospace' }} value={currentModel} onChange={e => setEpLlm(ep.instance_id, { model: e.target.value })}>
-                          <option value="">— select —</option>
-                          {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                      </div>
-                    )}
-                    {currentProvider && currentModel && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        {!keySet && <span style={{ fontSize: 10, color: C.amber }}>⚠ No key set for {currentProvider}</span>}
-                        <button
-                          disabled={testState.loading}
-                          onClick={() => testOrchLlm(testKey, currentProvider, currentModel)}
-                          style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.05)', color: C.green, cursor: 'pointer', fontSize: 11, fontWeight: 600, opacity: testState.loading ? 0.5 : 1 }}
-                        >
-                          {testState.loading ? '…' : 'Test'}
-                        </button>
-                        {testState.ok === true && <span style={{ fontSize: 11, color: C.green }}>✓ {testState.latency}ms</span>}
-                        {testState.ok === false && <span style={{ fontSize: 11, color: C.error }}>{testState.error ?? 'Failed'}</span>}
-                      </div>
-                    )}
-                  </div>
+                  );
+                })}
+                <div style={{ fontSize: 11, color: C.textMuted, fontStyle: 'italic', marginTop: 2 }}>
+                  LLM &amp; summarizer configured per entry point in Application Runtime.
                 </div>
-              );
-            })}
+              </div>
+            )}
           </div>
 
           {/* Advanced settings */}
@@ -521,6 +489,37 @@ export function CanvasBuilderView({
                   <input type="number" style={fieldStyle} value={(cfg.max_parallel_tools as number) ?? 5} onChange={e => setOrchConfig({ max_parallel_tools: Number(e.target.value) || null })} /></div>
                 <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Budget Tokens</label>
                   <input type="number" style={fieldStyle} value={(cfg.budget_tokens as number) ?? ''} placeholder="none" onChange={e => setOrchConfig({ budget_tokens: e.target.value === '' ? null : Number(e.target.value) })} /></div>
+              </div>
+            )}
+          </div>
+
+          {/* Memory & Summarizer */}
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
+            <SectionHeader id="orch-memory" label="Memory & Summarizer" defaultOpen={false} />
+            {isSectionOpen('orch-memory', false) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={{ fontSize: 11, color: C.textMuted }}>Enable Summarizer</label>
+                  <div onClick={() => setOrchConfig({ memory_enabled: !(cfg.memory_enabled as boolean) })}
+                    style={{ width: 32, height: 18, borderRadius: 9, background: (cfg.memory_enabled as boolean) ? C.purple : 'rgba(255,255,255,0.12)', cursor: 'pointer', position: 'relative', transition: 'background 150ms' }}>
+                    <div style={{ position: 'absolute', top: 2, left: (cfg.memory_enabled as boolean) ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left 150ms' }} />
+                  </div>
+                </div>
+                <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Summarize Every N Turns</label>
+                  <input type="number" style={fieldStyle} value={(cfg.summarize_every_n_calls as number) ?? 3} onChange={e => setOrchConfig({ summarize_every_n_calls: Number(e.target.value) || 3 })} /></div>
+                <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Keep Last N Turns Verbatim</label>
+                  <input type="number" style={fieldStyle} value={(cfg.memory_raw_fallback_n as number) ?? 5} onChange={e => setOrchConfig({ memory_raw_fallback_n: Number(e.target.value) || 5 })} /></div>
+                <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Summarizer Provider</label>
+                  <select style={selectStyle} value={(cfg.summarizer_provider as string) ?? ''} onChange={e => setOrchConfig({ summarizer_provider: e.target.value || null })}>
+                    <option value="">same as orchestrator</option>
+                    <option value="anthropic">anthropic</option>
+                    <option value="openai">openai</option>
+                    <option value="groq">groq</option>
+                    <option value="gemini">gemini</option>
+                  </select>
+                </div>
+                <div><label style={{ fontSize: 11, color: C.textMuted, display: 'block', marginBottom: 4 }}>Summarizer Model</label>
+                  <input style={fieldStyle} value={(cfg.summarizer_model as string) ?? ''} onChange={e => setOrchConfig({ summarizer_model: e.target.value || null })} placeholder="e.g. claude-haiku-4-5-20251001" /></div>
               </div>
             )}
           </div>
