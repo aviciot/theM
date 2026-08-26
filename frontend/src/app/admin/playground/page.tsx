@@ -1090,6 +1090,85 @@ function Spinner() {
   );
 }
 
+// ── MsgBubble ──────────────────────────────────────────────────────────────
+
+function copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  // http fallback via execCommand
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    ok ? resolve() : reject(new Error('execCommand failed'));
+  });
+}
+
+function MsgBubble({ msg, color }: { msg: ChatMsg; color: string }) {
+  const [copied, setCopied] = useState(false);
+  const [hovered, setHovered] = useState(false);
+
+  function handleCopy() {
+    copyToClipboard(msg.text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
+  }
+
+  const isUser = msg.role === 'user';
+
+  return (
+    <div
+      style={{ position: 'relative', maxWidth: '78%' }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div style={{ padding: '9px 13px', borderRadius: isUser ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background: isUser ? color : 'var(--tm-surface)', color: isUser ? '#fff' : 'var(--tm-text)', fontSize: 13, lineHeight: 1.5, wordBreak: 'break-word' }}>
+        {msg.pending && !msg.text ? <span style={{ opacity: 0.5 }}>thinking…</span> : isUser ? <span dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</span> : <div dir="auto"><MarkdownText text={msg.text} /></div>}
+      </div>
+      {hovered && msg.text && !msg.pending && (
+        <button
+          onClick={handleCopy}
+          title={copied ? 'Copied!' : 'Copy'}
+          style={{
+            position: 'absolute',
+            top: 4,
+            [isUser ? 'left' : 'right']: -28,
+            width: 22,
+            height: 22,
+            border: 'none',
+            borderRadius: 5,
+            background: 'var(--tm-surface)',
+            color: copied ? '#10b981' : 'var(--tm-text-muted)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
+            boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+            transition: 'color 0.15s',
+          }}
+        >
+          {copied ? (
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          ) : (
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="4" y="1" width="7" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2"/>
+              <path d="M1 4h2v6a1 1 0 001 1h5v1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+            </svg>
+          )}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── ChatColumn ─────────────────────────────────────────────────────────────
 // A fully self-contained chat column. Each tab in the multi-EP playground
 // mounts exactly one ChatColumn. The column manages its own WS state machine.
@@ -1611,9 +1690,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
                 {m.file.media_type === 'text/markdown' && <pre style={{ margin: 0, padding: '10px 12px', fontSize: 11, fontFamily: 'monospace', color: 'var(--tm-text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 260, overflowY: 'auto' }}>{m.file.text}</pre>}
               </div>
             ) : (
-              <div style={{ maxWidth: '78%', padding: '9px 13px', borderRadius: m.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background: m.role === 'user' ? color : 'var(--tm-surface)', color: m.role === 'user' ? '#fff' : 'var(--tm-text)', fontSize: 13, lineHeight: 1.5, wordBreak: 'break-word' }}>
-                {m.pending && !m.text ? <span style={{ opacity: 0.5 }}>thinking…</span> : m.role === 'assistant' ? <div dir="auto"><MarkdownText text={m.text} /></div> : <span dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{m.text}</span>}
-              </div>
+              <MsgBubble msg={m} color={color} />
             )}
           </div>
         ))}
