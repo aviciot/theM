@@ -1120,51 +1120,51 @@ function MsgBubble({ msg, color }: { msg: ChatMsg; color: string }) {
   }
 
   const isUser = msg.role === 'user';
+  const showActions = hovered && msg.text && !msg.pending;
 
   return (
     <div
-      style={{ position: 'relative', maxWidth: '78%' }}
+      style={{ maxWidth: '78%', display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start' }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
       <div style={{ padding: '9px 13px', borderRadius: isUser ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background: isUser ? color : 'var(--tm-surface)', color: isUser ? '#fff' : 'var(--tm-text)', fontSize: 13, lineHeight: 1.5, wordBreak: 'break-word' }}>
         {msg.pending && !msg.text ? <span style={{ opacity: 0.5 }}>thinking…</span> : isUser ? <span dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</span> : <div dir="auto"><MarkdownText text={msg.text} /></div>}
       </div>
-      {hovered && msg.text && !msg.pending && (
+      {/* Action row — always reserves height to prevent layout jump; fades in on hover */}
+      <div style={{ height: 24, display: 'flex', alignItems: 'center', paddingTop: 2, opacity: showActions ? 1 : 0, transition: 'opacity 0.12s', pointerEvents: showActions ? 'auto' : 'none' }}>
         <button
           onClick={handleCopy}
           title={copied ? 'Copied!' : 'Copy'}
           style={{
-            position: 'absolute',
-            top: 4,
-            [isUser ? 'left' : 'right']: -28,
-            width: 22,
-            height: 22,
+            width: 24,
+            height: 24,
             border: 'none',
-            borderRadius: 5,
-            background: 'var(--tm-surface)',
+            borderRadius: 6,
+            background: 'transparent',
             color: copied ? '#10b981' : 'var(--tm-text-muted)',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             padding: 0,
-            boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-            transition: 'color 0.15s',
+            transition: 'color 0.15s, background 0.15s',
           }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--tm-surface)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
         >
           {copied ? (
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <svg width="13" height="13" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           ) : (
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <svg width="13" height="13" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
               <rect x="4" y="1" width="7" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.2"/>
               <path d="M1 4h2v6a1 1 0 001 1h5v1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
             </svg>
           )}
         </button>
-      )}
+      </div>
     </div>
   );
 }
