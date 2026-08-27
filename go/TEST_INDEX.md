@@ -1517,6 +1517,9 @@ Inputs/Outputs for each node type, that missing upstream writers emit the right 
 | `TestDataFlow_Stage5_LLMTemplateVarUnresolved` | LLM template var with no upstream writer → UNRESOLVED_INPUT warning |
 | `TestDataFlow_Stage5_InputVarAlwaysAvailable` | "input" is pre-seeded — never causes UNRESOLVED_INPUT |
 | `TestDataFlow_Stage5_FullPipeline_NoIssues` | Correct full pipeline (input→LLM→response) has no data-flow issues |
+| `TestDataFlow_Stage5_PreBranchVar_AvailableOnBothArms` | Var written before branch is guaranteed on both arms (path-sensitive) |
+| `TestDataFlow_Stage5_Branch_UnwrittenVarOnArm_PublishFails` | Unwritten var read on branch arm → UNRESOLVED_INPUT error at publish |
+| `TestDataFlow_Stage5_Branch_ArmInternalFlow_NoIssue` | Var written within arm, read by successor on same arm → no issue |
 
 **Trigger:** any change to `internal/agentgen/compiler.go`, `internal/agentgen/nodes.go`,
 `internal/agentgen/noderegistry.go`, or `internal/agentgen/spec.go`

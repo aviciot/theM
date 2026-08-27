@@ -527,3 +527,76 @@ func TestDataFlow_Stage5_FullPipeline_NoIssues(t *testing.T) {
 		t.Error("full pipeline publish: expected non-nil spec")
 	}
 }
+
+// ─── Stage 5 — path-sensitive branch analysis ────────────────────────────────
+//
+// The canvas schema enforces MaxIn: 1 on all node types, so true diamond-joins
+// (two paths converging on one node) are structurally prevented by the edge
+// validator. Path-sensitivity in this model means: each branch arm is an
+// independent linear sub-graph; vars written before the branch are guaranteed
+// on every arm; vars written within one arm are not visible to the other.
+//
+// The available-definitions lattice (intersection over predecessors) is correct
+// for this topology and remains correct if MaxIn is ever relaxed.
+
+// DF-27: var written before the branch is guaranteed on all arms after the fork.
+//
+//	input → llm (writes x) → branch → [arm-a reads x] and [arm-b reads x] — no issue.
+func TestDataFlow_Stage5_PreBranchVar_AvailableOnBothArms(t *testing.T) {
+	canvas := minimalCanvas(`[
+		{"id": "in",   "type": "input",    "config": {}, "next": ["llm"]},
+		{"id": "llm",  "type": "llm",      "config": {"output_var": "x"}, "next": ["br"]},
+		{"id": "br",   "type": "branch",   "config": {"expression": "{{.input}}"}, "next": ["a", "b"]},
+		{"id": "a",    "type": "a2a_call", "config": {"input_var": "x", "output_var": "ra"}},
+		{"id": "b",    "type": "a2a_call", "config": {"input_var": "x", "output_var": "rb"}}
+	]`)
+	issues := publishFail(t, canvas)
+	for _, iss := range issues {
+		if iss.Code == "UNRESOLVED_INPUT" && iss.Field == "x" {
+			t.Errorf("pre-branch var x should be guaranteed on both arms, got issue: %v", iss)
+		}
+	}
+}
+
+// DF-28: response on one branch arm reads a var never written → error at publish.
+//
+//	input → branch → [arm-a: response reads x (Required, never written)]
+//	                └[arm-b: response reads input (fine)]
+func TestDataFlow_Stage5_Branch_UnwrittenVarOnArm_PublishFails(t *testing.T) {
+	canvas := minimalCanvas(`[
+		{"id": "in",   "type": "input",    "config": {}, "next": ["br"]},
+		{"id": "br",   "type": "branch",   "config": {"expression": "{{.input}}"}, "next": ["out1", "out2"]},
+		{"id": "out1", "type": "response", "config": {"from_var": "x"}},
+		{"id": "out2", "type": "response", "config": {"from_var": "input"}}
+	]`)
+	issues := publishFail(t, canvas)
+	hasUnresolved := false
+	for _, iss := range issues {
+		if iss.Code == "UNRESOLVED_INPUT" && iss.Field == "x" && iss.NodeID == "out1" {
+			hasUnresolved = true
+		}
+	}
+	if !hasUnresolved {
+		t.Errorf("expected UNRESOLVED_INPUT for x on arm-a (never written), got: %v", issues)
+	}
+}
+
+// DF-29: linear chain through branch arm reads var written by predecessor on same arm.
+//
+//	input → branch → arm: [llm writes x → response reads x] — no issue.
+func TestDataFlow_Stage5_Branch_ArmInternalFlow_NoIssue(t *testing.T) {
+	// Both arms valid: one reads x (written by llm), other reads input (always available).
+	canvas := minimalCanvas(`[
+		{"id": "in",   "type": "input",    "config": {}, "next": ["br"]},
+		{"id": "br",   "type": "branch",   "config": {"expression": "{{.input}}"}, "next": ["llm", "out2"]},
+		{"id": "llm",  "type": "llm",      "config": {"output_var": "x"}, "next": ["out1"]},
+		{"id": "out1", "type": "response", "config": {"from_var": "x"}},
+		{"id": "out2", "type": "response", "config": {"from_var": "input"}}
+	]`)
+	_, issues := agentgen.CompileForPublish("agent-1", "tenant-1", "def-1", "my_agent", json.RawMessage(canvas))
+	for _, iss := range issues {
+		if iss.Code == "UNRESOLVED_INPUT" {
+			t.Errorf("branch arm internal flow: unexpected UNRESOLVED_INPUT: %v", iss)
+		}
+	}
+}

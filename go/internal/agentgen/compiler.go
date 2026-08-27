@@ -624,10 +624,20 @@ func deriveStepVars(step canvasStep) (inputs, outputs []VarRef) {
 	return inputs, outputs
 }
 
-// validateDataFlow runs data-flow analysis on the topo-sorted compiled steps for each skill.
-// It walks steps in execution order, accumulates a map of known writers, and checks that
-// each step's Required inputs have a reachable upstream writer.
-// severity controls whether UNRESOLVED_INPUT issues are "error" (publish) or "warning" (validate).
+// validateDataFlow runs path-sensitive data-flow analysis on each compiled skill.
+//
+// "Path-sensitive" means a variable is considered guaranteed at step S only when
+// every execution path from the pipeline source to S writes it. This correctly
+// handles branch convergence: if the true-path writes x but the false-path does
+// not, x is not guaranteed at the join point, so a Required read of x there is
+// flagged. The analysis uses a standard available-definitions lattice:
+//
+//	guaranteed[step] = {"input"} ∪ step.Outputs
+//	                   ∪ intersection(guaranteed[pred] for each predecessor of step)
+//
+// Steps with no predecessors (the source) start with only {"input"}.
+// severity controls whether UNRESOLVED_INPUT issues are "error" (publish) or
+// "warning" (validate).
 func validateDataFlow(def *canvasDefinition, compiled map[string][]StepSpec, severity string) []Issue {
 	var issues []Issue
 	for _, cs := range def.Skills {
@@ -635,14 +645,64 @@ func validateDataFlow(def *canvasDefinition, compiled map[string][]StepSpec, sev
 		if !ok {
 			continue // graph had errors; skip data-flow check
 		}
-		// writers maps varName → stepID of last writer seen so far in topo order.
-		// Pre-seed "input" — it is always available at pipeline start from the
-		// invocation context (user message). Every pipeline implicitly has this var.
-		writers := map[string]string{"input": "__invocation__"}
-		for _, step := range steps {
-			// Check this step's inputs against known writers.
+
+		// Build a predecessor map from the forward Next edges on compiled steps.
+		// compiled[cs.SkillID] is already in topological execution order.
+		preds := make(map[string][]string, len(steps))
+		for i := range steps {
+			preds[steps[i].ID] = nil // ensure every step has an entry
+		}
+		for i := range steps {
+			s := &steps[i]
+			for _, nxt := range s.Next {
+				preds[nxt] = append(preds[nxt], s.ID)
+			}
+			for _, arm := range s.Branches {
+				for _, nxt := range arm.Next {
+					preds[nxt] = append(preds[nxt], s.ID)
+				}
+			}
+		}
+
+		// guaranteed[stepID] = set of var names guaranteed on every path to this step.
+		guaranteed := make(map[string]map[string]bool, len(steps))
+
+		for i := range steps {
+			step := &steps[i]
+
+			// Compute the intersection of all predecessors' guaranteed sets.
+			// A step with no predecessors is the pipeline source — only "input" is guaranteed.
+			var incoming map[string]bool
+			for _, predID := range preds[step.ID] {
+				g, ok := guaranteed[predID]
+				if !ok {
+					continue
+				}
+				if incoming == nil {
+					// First predecessor: copy its set.
+					incoming = make(map[string]bool, len(g))
+					for v := range g {
+						incoming[v] = true
+					}
+				} else {
+					// Subsequent predecessors: intersect.
+					for v := range incoming {
+						if !g[v] {
+							delete(incoming, v)
+						}
+					}
+				}
+			}
+			if incoming == nil {
+				incoming = map[string]bool{}
+			}
+
+			// "input" is always pre-seeded from the invocation context.
+			incoming["input"] = true
+
+			// Check this step's inputs against guaranteed vars from predecessors.
 			for _, inp := range step.Inputs {
-				if _, written := writers[inp.Name]; !written {
+				if !incoming[inp.Name] {
 					sev := "warning"
 					if inp.Required {
 						sev = severity
@@ -650,17 +710,23 @@ func validateDataFlow(def *canvasDefinition, compiled map[string][]StepSpec, sev
 					issues = append(issues, Issue{
 						Severity: sev,
 						Code:     "UNRESOLVED_INPUT",
-						Message:  fmt.Sprintf("step %q reads %q but no upstream step writes it", step.ID, inp.Name),
+						Message:  fmt.Sprintf("step %q reads %q but it is not guaranteed on all incoming paths", step.ID, inp.Name),
 						SkillID:  cs.SkillID,
 						NodeID:   step.ID,
 						Field:    inp.Name,
 					})
 				}
 			}
-			// Register this step's outputs as known writers.
-			for _, out := range step.Outputs {
-				writers[out.Name] = step.ID
+
+			// Build this step's guaranteed set: predecessor intersection ∪ own outputs.
+			g := make(map[string]bool, len(incoming)+len(step.Outputs))
+			for v := range incoming {
+				g[v] = true
 			}
+			for _, out := range step.Outputs {
+				g[out.Name] = true
+			}
+			guaranteed[step.ID] = g
 		}
 	}
 	return issues
