@@ -128,6 +128,58 @@ func (interp *Interpreter) executeStep(ctx context.Context, ic *InvocationContex
 	if def.Execute == nil {
 		return fmt.Errorf("step type %q not yet implemented", step.Type)
 	}
+
+	// ── Stage 6: scoped input resolution ────────────────────────────────────────
+	// When the compiled spec carries declared Inputs/Outputs, enforce the contract:
+	//   1. Build a scoped PipelineVars from only the declared input keys.
+	//   2. Check Required inputs — absent → ErrContractViolation.
+	//   3. Call Execute with the scoped map (nodes cannot read undeclared vars).
+	//   4. Promote only declared output keys back to global state.
+	//
+	// Steps with empty Inputs and Outputs (stub nodes or specs compiled before
+	// Stage 6) fall through with the full global vars, preserving backward
+	// compatibility for any uncompiled or partially-compiled skills.
+	//
+	// Immutability contract: Execute functions MUST NOT mutate values retrieved
+	// from scoped inputs (map[string]any / []any values are shared references).
+	// Deep-copy is intentionally omitted — sequential execution makes concurrent
+	// mutation impossible. This will need revisiting when StepParallel is implemented.
+	if len(step.Inputs) > 0 || len(step.Outputs) > 0 {
+		// Check required inputs before building the scoped map.
+		for _, ref := range step.Inputs {
+			if ref.Required {
+				if _, present := vars[ref.Name]; !present {
+					return &ErrContractViolation{
+						StepID:  step.ID,
+						VarName: ref.Name,
+						Kind:    "missing_required_input",
+					}
+				}
+			}
+		}
+
+		// Build scoped map: only declared input keys (absent optional vars are omitted).
+		scopedVars := make(PipelineVars, len(step.Inputs))
+		for _, ref := range step.Inputs {
+			if v, present := vars[ref.Name]; present {
+				scopedVars[ref.Name] = v
+			}
+		}
+
+		if err := def.Execute(ctx, interp, ic, step, scopedVars, result); err != nil {
+			return err
+		}
+
+		// Promote only declared output keys back to global state.
+		for _, ref := range step.Outputs {
+			if v, present := scopedVars[ref.Name]; present {
+				vars[ref.Name] = v
+			}
+		}
+		return nil
+	}
+
+	// Fallback: no compiled contract — pass global vars directly (legacy path).
 	return def.Execute(ctx, interp, ic, step, vars, result)
 }
 
@@ -350,21 +402,19 @@ func (interp *Interpreter) execTransform(step *StepSpec, vars PipelineVars) erro
 		return fmt.Errorf("parse transform config: %w", err)
 	}
 
-	if len(cfg.Functions) > 0 {
-		tvars := make(transform.Vars, len(vars))
-		for k, v := range vars {
-			tvars[k] = v
-		}
-		_, err := transform.Execute(cfg.Functions, tvars)
-		if err != nil {
-			return fmt.Errorf("transform function chain: %w", err)
-		}
-		// Write outputs back to pipeline vars.
-		for k, v := range tvars {
-			vars[k] = v
-		}
+	if len(cfg.Functions) == 0 {
+		return nil
 	}
 
+	// Cast vars to transform.Vars (same underlying type) and execute in-place.
+	// When called via the scoped path (Stage 6), vars is already the scoped map;
+	// the interpreter promotes only declared outputs back to global state after
+	// this function returns. When called via the legacy path, vars is global and
+	// all writes are immediately visible downstream — same behaviour as before.
+	tvars := transform.Vars(vars)
+	if _, err := transform.Execute(cfg.Functions, tvars); err != nil {
+		return fmt.Errorf("transform function chain: %w", err)
+	}
 	return nil
 }
 

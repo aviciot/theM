@@ -1410,6 +1410,34 @@ via Condition and Branch step types. No external services required.
 
 ---
 
+### S1-67 · Stage 6 runtime contract enforcement — `internal/agentgen/interpreter_contracts_test.go`
+
+**Purpose:** Verifies Stage 6 scoped input resolution and output-only promotion in the interpreter.
+Proves that nodes receive only their declared Inputs, undeclared global vars are invisible,
+undeclared output writes are dropped, Required missing inputs return ErrContractViolation (unwrappable
+via errors.As), optional missing inputs are silently tolerated, fan-out (multiple steps reading
+the same upstream output) works correctly, legacy steps without compiled contracts fall through
+to the global-vars path unchanged, and transform outputs are derived from functions[].output_var only.
+
+| Test | What it proves |
+|---|---|
+| `TestInterpreter_Contract_EndToEnd` (CONT-1) | Fully compiled pipeline with scoped contracts produces correct result end-to-end |
+| `TestInterpreter_Contract_ScopedInput_UndeclaredVarNotVisible` (CONT-2) | Globally present var absent from step.Inputs is not visible to the node |
+| `TestInterpreter_Contract_OutputPromotion_UndeclaredWriteDropped` (CONT-3) | Var written by node but absent from step.Outputs is not promoted to global state |
+| `TestInterpreter_Contract_MissingRequiredInput_Error` (CONT-4) | Required input absent at runtime → ErrContractViolation with correct StepID/VarName/Kind |
+| `TestInterpreter_Contract_MissingOptionalInput_NoError` (CONT-5) | Optional input absent at runtime → no error; step executes normally |
+| `TestInterpreter_Contract_FanOut_TwoStepsReadSameVar` (CONT-6) | Two sequential steps both reading same upstream-promoted var each receive the value correctly |
+| `TestInterpreter_Contract_LegacyFallback_NoContractPassesGlobalVars` (CONT-7) | Steps with no Inputs/Outputs use full global vars (backward-compatible legacy path) |
+| `TestInterpreter_Contract_ErrorIsUnwrappable` (CONT-8) | ErrContractViolation is unwrappable via errors.As even when wrapped by step error context |
+| `TestInterpreter_Contract_Transform_OutputsFromFunctionOutputVar` (CONT-9) | Transform outputs come from functions[].output_var only; no exposed_vars or parallel mechanism |
+| `TestInterpreter_Contract_BranchStep_ScopedInputRoutes` (CONT-10) | Branch step with scoped Inputs still routes correctly via nextStepOverride (true and false paths) |
+| `TestInterpreter_Contract_ScopedRebuildPerStep` (CONT-11) | Scoped vars rebuilt from current global state per step; upstream promotions visible to next step |
+| `TestErrContractViolation_ErrorString` (CONT-12) | ErrContractViolation.Error() contains StepID, VarName, and Kind |
+
+**Trigger:** any change to `internal/agentgen/interpreter.go`, `internal/agentgen/spec.go`, or `internal/agentgen/nodes.go`
+
+---
+
 ### S1-49 · Agent definitions — `internal/admin/service/agent_definitions_test.go`
 
 **Purpose:** Phase 2 Canvas A2A Builder — agent definition draft CRUD with validation. Verifies
@@ -1978,8 +2006,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 |
 | `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 |
-| `internal/agentgen/interpreter.go` | S1-48 + S1-64 |
-| `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 |
+| `internal/agentgen/interpreter.go` | S1-48 + S1-64 + S1-67 |
+| `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 + S1-67 |
 | `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 |
 | `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 |
 | `internal/agentgen/context.go` | S1-48 + S1-64 |
@@ -2117,7 +2145,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-64 | agentgen interpreter app_param_ref (INT-10..14) | 5 |
 | S1-65 | agent-runtime decodeAppGlobalParams (RT-20..24) | 5 |
 | S1-66 | admin handler app params (HTTP-20..25+) | 11 |
-| **S1 total** | | **772** |
+| S1-67 | Stage 6 runtime contract enforcement (CONT-1..12) | 12 |
+| **S1 total** | | **784** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2126,4 +2155,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **793** |
+| **`go test ./...` total** | | **805** |

@@ -81,11 +81,37 @@ type SkillSpec struct {
 // VarRef describes one variable a step reads from or writes to PipelineVars.
 // Computed by NodeDef.DeriveInputs / DeriveOutputs from instance config.
 // Stored in StepSpec after compilation. Not present in canvas JSON (only in compiled AgentSpec).
-// This is a heuristic contract — the runtime still uses the shared PipelineVars store.
-// VarRef.Required: if true, a missing upstream writer emits a publish error; false = warning.
+//
+// Stage 6 runtime enforcement: the interpreter resolves step.Inputs into a scoped
+// PipelineVars before calling Execute, so nodes can only read declared inputs.
+// After Execute, only declared step.Outputs are promoted back to global state.
+// Required=true: a missing upstream writer is a publish error AND a runtime
+// ErrContractViolation. Required=false: missing at compile time is a warning;
+// missing at runtime is silently treated as zero/absent (same as today's template
+// "missingkey=zero" behaviour).
+//
+// Immutability contract (sequential enforcement only): Execute functions MUST NOT
+// mutate values retrieved from their scoped input vars. Values of type map[string]any
+// or []any are shared references — deep-copy is not done automatically because the
+// sequential execution model makes concurrent mutation impossible today. When
+// StepParallel is implemented, deep-copy will be required at that boundary.
 type VarRef struct {
 	Name     string `json:"name"`     // PipelineVars key
 	Required bool   `json:"required"` // missing upstream writer → error (true) vs warning (false)
+}
+
+// ErrContractViolation is returned by the interpreter at runtime when a step's
+// declared data-flow contract is violated. Kind is one of:
+//   - "missing_required_input": step.Inputs contains a Required var that is absent
+//     from global PipelineVars at the moment the step is about to execute.
+type ErrContractViolation struct {
+	StepID  string
+	VarName string
+	Kind    string // "missing_required_input"
+}
+
+func (e *ErrContractViolation) Error() string {
+	return "contract violation at step " + e.StepID + ": " + e.Kind + " (var: " + e.VarName + ")"
 }
 
 // StepSpec is one pipeline node, compiled from the canvas.
@@ -97,6 +123,13 @@ type StepSpec struct {
 	Branches []BranchArm     `json:"branches,omitempty"` // for branch/loop steps
 	// Inputs and Outputs are derived by the compiler from NodeDef.DeriveInputs/DeriveOutputs.
 	// Absent from canvas JSON; present only in compiled AgentSpec persisted to agent_runtime_specs.
+	//
+	// Runtime enforcement (Stage 6): the interpreter resolves Inputs into a scoped
+	// PipelineVars before calling Execute (nodes cannot read undeclared vars), and
+	// promotes only Outputs back to global state after Execute returns (undeclared
+	// writes are dropped). Required Inputs that are absent at runtime produce
+	// ErrContractViolation. Steps with empty Inputs/Outputs (stub or uncompiled
+	// specs) pass through with the full global vars, preserving backward compatibility.
 	Inputs  []VarRef `json:"inputs,omitempty"`
 	Outputs []VarRef `json:"outputs,omitempty"`
 }
