@@ -35,6 +35,10 @@ export interface StepNodeData extends StepData {
   };
   _validation?: 'error' | 'warning' | null;
   _stub?: boolean;
+  /** Set during a data-out drag to show ghost port + highlight on this node. */
+  _draggingVar?: string;
+  /** 'accept' = green ring + ghost port, 'reject' = red ring, undefined = normal. */
+  _dragAccept?: 'accept' | 'reject';
 }
 
 export interface DebugParamSpec {

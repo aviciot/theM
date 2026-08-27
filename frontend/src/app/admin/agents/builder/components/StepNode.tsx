@@ -82,23 +82,37 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
   const inputPorts: PortDef[] = nodeDef.input_ports ?? [];
   const outputPorts: PortDef[] = nodeDef.output_ports ?? [];
 
-  // Dynamic input ports — created when user drags a data-out handle onto this node body.
-  // Stored in data.inputs as { portID: { from_step, from_port } }.
+  // Dynamic input ports — committed bindings stored in data.inputs.
   const dynamicInputPorts: string[] = data.inputs ? Object.keys(data.inputs) : [];
   const hasDataPorts = inputPorts.length > 0 || outputPorts.length > 0;
+
+  // Ghost port — shown during drag of a data-out handle over this node.
+  const ghostVar = data._draggingVar;
+  const dragAccept = data._dragAccept;
+
+  // Drag highlight overrides border/shadow.
+  let dragBorderColor = borderColor;
+  let dragBoxShadow = boxShadow;
+  if (dragAccept === 'accept') {
+    dragBorderColor = '#4ade80';
+    dragBoxShadow = '0 0 0 3px rgba(74,222,128,0.5), 0 0 16px 4px rgba(74,222,128,0.3)';
+  } else if (dragAccept === 'reject') {
+    dragBorderColor = '#f87171';
+    dragBoxShadow = '0 0 0 3px rgba(248,113,113,0.5), 0 0 12px 3px rgba(248,113,113,0.3)';
+  }
 
   // Data-port handle style — small square, distinct color
   const dataInStyle  = { background: '#f97316', width: 7, height: 7, borderRadius: 2, border: '1px solid rgba(0,0,0,0.4)' };
   const dataOutStyle = { background: '#818cf8', width: 7, height: 7, borderRadius: 2, border: '1px solid rgba(0,0,0,0.4)' };
 
-  // Drop-zone offset: left side (LR layout) or top side (TB layout) where drag-to-create lands.
-  const dropZoneOffset = dynamicInputPorts.length * 16 + (inputPorts.length > 0 ? inputPorts.length * 16 + 8 : 0);
+  // All input ports (committed dynamic + static) — ghost goes after them.
+  const totalInputCount = dynamicInputPorts.length + inputPorts.length;
 
   return (
     <div style={{
       background: 'transparent', padding: '8px', minWidth: '80px', textAlign: 'center',
-      border: `2px solid ${borderColor}`, borderRadius: '10px', boxShadow,
-      transition: 'border-color 0.2s, box-shadow 0.2s',
+      border: `2px solid ${dragBorderColor}`, borderRadius: '10px', boxShadow: dragBoxShadow,
+      transition: 'border-color 0.15s, box-shadow 0.15s',
       position: 'relative',
       paddingRight: isTransform && transformOutputs.length > 0 ? '72px' : '8px',
       paddingLeft: hasDataPorts && inputPorts.length > 0 ? '8px' : '8px',
@@ -106,26 +120,7 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
     }}>
       {/* Control target handle — execution flow in */}
       <Handle type="target" position={targetPos} style={{ background: meta.border }} />
-      {/* Drop-zone handle — invisible, wide target that catches data-out drags onto the node body.
-          Positioned below existing dynamic+static input ports so it doesn't overlap them. */}
-      <Handle
-        id="data-drop-zone"
-        type="target"
-        position={targetPos}
-        style={{
-          background: 'transparent',
-          border: '2px dashed rgba(249,115,22,0.4)',
-          width: layoutDir === 'LR' ? 10 : 40,
-          height: layoutDir === 'LR' ? 40 : 10,
-          borderRadius: 4,
-          opacity: 0,
-          ...(layoutDir === 'LR'
-            ? { top: `calc(25% + ${dropZoneOffset}px)`, left: -6 }
-            : { left: `calc(25% + ${dropZoneOffset}px)`, top: -6 }),
-        }}
-        title="Drop variable here to create input port"
-      />
-      {/* Dynamic input port handles — created when user drags a data-out onto this node */}
+      {/* Dynamic input port handles — committed ports from data.inputs */}
       {dynamicInputPorts.map((portID, idx) => {
         const posStyle: React.CSSProperties = layoutDir === 'LR'
           ? { top: `calc(25% + ${idx * 16}px)`, left: -5 }
@@ -169,6 +164,32 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
           </span>
         );
       })}
+      {/* Ghost input port — shown during a data-out drag over this node (accept state only).
+          It's a real Handle so ReactFlow can connect to it. After onConnect commits it,
+          onConnectEnd clears _draggingVar and the port persists via data.inputs. */}
+      {ghostVar && dragAccept === 'accept' && (() => {
+        const idx = totalInputCount;
+        const posStyle: React.CSSProperties = layoutDir === 'LR'
+          ? { top: `calc(25% + ${idx * 16}px)`, left: -5 }
+          : { left: `calc(25% + ${idx * 16}px)`, top: -5 };
+        return (
+          <span key={`ghost-${ghostVar}`}>
+            <Handle
+              id={`data-in-${ghostVar}`}
+              type="target"
+              position={targetPos}
+              style={{ ...dataInStyle, opacity: 0.6, ...posStyle }}
+              title={ghostVar}
+            />
+            <span style={{
+              position: 'absolute', fontSize: 7, color: '#fb923c',
+              fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap',
+              opacity: 0.7,
+              ...(layoutDir === 'LR' ? { left: 6, top: `calc(25% + ${idx * 16}px - 4px)` } : { top: 6, left: `calc(25% + ${idx * 16}px)` }),
+            }}>{ghostVar}</span>
+          </span>
+        );
+      })()}
       {data.step_type === 'branch' ? (
         <>
           <Handle

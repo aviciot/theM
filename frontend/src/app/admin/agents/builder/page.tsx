@@ -983,41 +983,17 @@ function CanvasInner() {
     const isDataSrc = conn.sourceHandle?.startsWith('data-out-');
     const isData = isDataSrc && conn.targetHandle?.startsWith('data-in-');
 
-    // Dynamic port creation: data-out dragged onto the drop-zone handle.
-    // Auto-create a data-in-{varName} port on the target node and wire it.
-    if (isDataSrc && conn.targetHandle === 'data-drop-zone') {
-      const varName = conn.sourceHandle!.replace('data-out-', '');
-      const syntheticHandle = `data-in-${varName}`;
-      // Add the port to the target node's data.inputs
+    if (isData) {
+      // The ghost port handle (data-in-{ghostVar}) is already rendered by StepNode during drag.
+      // Commit the binding into data.inputs so it persists after drag state is cleared.
+      const portID = conn.targetHandle!.replace('data-in-', '');
+      const fromPort = conn.sourceHandle!.replace('data-out-', '');
+      const srcStepID = (conn.source as string).replace('step-', '');
       setLocalPipeNodes(prev => prev.map(n => {
         if (n.id !== conn.target) return n;
-        const existing = ((n.data as unknown as import('./types').StepData).inputs) ?? {};
-        const srcStepID = (conn.source as string).replace('step-', '');
-        return {
-          ...n,
-          data: {
-            ...n.data,
-            inputs: { ...existing, [varName]: { from_step: srcStepID, from_port: varName } },
-          },
-        };
+        const existing = (n.data as unknown as StepData).inputs ?? {};
+        return { ...n, data: { ...n.data, inputs: { ...existing, [portID]: { from_step: srcStepID, from_port: fromPort } } } };
       }));
-      // Add the data edge using the synthetic handle
-      setLocalPipeEdges(prev => {
-        const kept = prev.filter(e => !(isDataEdge(e) && e.target === conn.target && e.targetHandle === syntheticHandle));
-        return addEdge({
-          ...conn,
-          targetHandle: syntheticHandle,
-          type: 'dataEdge',
-          data: { kind: 'data' },
-        }, kept);
-      });
-      markDirty();
-      return;
-    }
-
-    if (isData) {
-      // Allow multiple data edges to the same target port — React Flow deduplicates by id.
-      // Replace any existing binding for the same targetHandle to keep one binding per port.
       setLocalPipeEdges(prev => {
         const kept = prev.filter(e => !(isDataEdge(e) && e.target === conn.target && e.targetHandle === conn.targetHandle));
         return addEdge({ ...conn, type: 'dataEdge', data: { kind: 'data' } }, kept);
@@ -1074,14 +1050,49 @@ function CanvasInner() {
     markDirty();
   }, [setLocalPipeNodes, setLocalPipeEdges, markDirty]);
 
+  // Nodes that cannot accept dynamic data inputs.
+  const DATA_INPUT_REJECT = new Set(['input', 'transform', 'branch']);
+
+  // Tracks whether onConnect fired during the current drag (to detect drop-on-nothing).
+  const connectFiredRef = useRef(false);
+
+  const onPipeConnectStart = useCallback((_: MouseEvent | TouchEvent, params: { nodeId: string | null; handleId: string | null; handleType: string | null }) => {
+    if (!params.handleId?.startsWith('data-out-')) return;
+    const varName = params.handleId.replace('data-out-', '');
+    connectFiredRef.current = false;
+    // Inject _draggingVar + _dragAccept into every other step node so StepNode can show highlight + ghost port.
+    setLocalPipeNodes(prev => prev.map(n => {
+      if (n.type !== 'step' || n.id === params.nodeId) return n;
+      const stepType = (n.data as unknown as StepData).step_type;
+      const existingInputs = (n.data as unknown as StepData).inputs ?? {};
+      const accept = !DATA_INPUT_REJECT.has(stepType);
+      // Deduplicate port name: if varName already exists, try varName_2, _3, etc.
+      let ghostVar = varName;
+      if (accept && ghostVar in existingInputs) {
+        let i = 2;
+        while (`${varName}_${i}` in existingInputs) i++;
+        ghostVar = `${varName}_${i}`;
+      }
+      return { ...n, data: { ...n.data, _draggingVar: accept ? ghostVar : varName, _dragAccept: accept ? 'accept' : 'reject' } };
+    }));
+  }, [setLocalPipeNodes]);
+
+  const onPipeConnectEnd = useCallback(() => {
+    // Clear all drag highlight state regardless of whether onConnect fired.
+    setLocalPipeNodes(prev => prev.map(n => {
+      if (n.type !== 'step') return n;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { _draggingVar, _dragAccept, ...rest } = n.data as unknown as StepNodeData;
+      return { ...n, data: rest };
+    }));
+  }, [setLocalPipeNodes]);
+
   const isPipeConnectionValid = useCallback((conn: Connection | Edge) => {
     if (conn.source === conn.target) return false;
 
     // Data edges skip degree and cycle checks — they carry no execution order.
-    // Also allow data-out dragged onto the drop-zone handle — dynamic port creation.
     const connIsData = (conn as Edge).data?.kind === 'data'
-      || ((conn as Connection).sourceHandle?.startsWith('data-out-') && (conn as Connection).targetHandle?.startsWith('data-in-'))
-      || ((conn as Connection).sourceHandle?.startsWith('data-out-') && (conn as Connection).targetHandle === 'data-drop-zone');
+      || ((conn as Connection).sourceHandle?.startsWith('data-out-') && (conn as Connection).targetHandle?.startsWith('data-in-'));
     if (connIsData) return true;
 
     const srcNode = localPipeNodes.find(n => n.id === conn.source);
@@ -2117,6 +2128,8 @@ function CanvasInner() {
               onNodesChange={onPipeNodesChange}
               onEdgesChange={onPipeEdgesChange}
               onConnect={onPipeConnect}
+              onConnectStart={onPipeConnectStart}
+              onConnectEnd={onPipeConnectEnd}
               isValidConnection={isPipeConnectionValid}
               onNodeContextMenu={onNodeCtx}
               onEdgeContextMenu={onEdgeCtx}
