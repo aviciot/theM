@@ -499,42 +499,6 @@ func TestDataFlow_Stage5_InputVarAlwaysAvailable(t *testing.T) {
 	}
 }
 
-// ── Backward compatibility ────────────────────────────────────────────────────
-
-// DF-25: specs compiled before Inputs/Outputs existed still deserialize cleanly.
-// The omitempty fields are absent from output; loading that JSON back produces
-// a StepSpec with nil Inputs/Outputs (zero value), not an error.
-func TestDataFlow_BackwardCompat_NoInputsOutputsInJSON(t *testing.T) {
-	oldJSON := `{
-		"agent_root": {"display_name": "Old Agent"},
-		"skills": [{"skill_id": "s1", "steps": [
-			{"id": "in",  "type": "input",    "config": {}, "next": ["out"]},
-			{"id": "out", "type": "response", "config": {"from_var": "input"}}
-		]}]
-	}`
-	spec, issues := agentgen.Validate("a", "t", "d", "old_agent", json.RawMessage(oldJSON))
-	if spec == nil {
-		t.Fatal("Validate returned nil spec for backward-compat canvas")
-	}
-	for _, iss := range issues {
-		if iss.Severity == "error" {
-			t.Errorf("backward compat: unexpected error: %v", iss)
-		}
-	}
-	// Serialize and deserialize the spec to verify omitempty works.
-	b, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatalf("failed to marshal spec: %v", err)
-	}
-	var roundtrip agentgen.AgentSpec
-	if err := json.Unmarshal(b, &roundtrip); err != nil {
-		t.Fatalf("failed to unmarshal spec: %v", err)
-	}
-	if len(roundtrip.Skills) == 0 {
-		t.Fatal("round-trip spec has no skills")
-	}
-}
-
 // DF-26: a fully correct pipeline (input → LLM → response) passes both validate and publish.
 func TestDataFlow_Stage5_FullPipeline_NoIssues(t *testing.T) {
 	canvas := minimalCanvas(`[

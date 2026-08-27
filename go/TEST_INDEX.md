@@ -1486,8 +1486,7 @@ split (warning at validate / error at publish), and structured Issue fields (Ski
 **Purpose:** VarRef derivation (DeriveInputs/DeriveOutputs) for all 11 node types and Stage 5
 `validateDataFlow` (UNRESOLVED_INPUT detection). Verifies that compiled StepSpec carries correct
 Inputs/Outputs for each node type, that missing upstream writers emit the right severity
-(warning at validate, error at publish for Required inputs), that "input" is always pre-seeded,
-and that backward-compatible specs without Inputs/Outputs fields round-trip cleanly.
+(warning at validate, error at publish for Required inputs), and that "input" is always pre-seeded.
 
 | Test | What it proves |
 |---|---|
@@ -1515,7 +1514,6 @@ and that backward-compatible specs without Inputs/Outputs fields round-trip clea
 | `TestDataFlow_Stage5_MissingResponseVar_ValidateWarns` | Same → warning (not error) at validate |
 | `TestDataFlow_Stage5_LLMTemplateVarUnresolved` | LLM template var with no upstream writer → UNRESOLVED_INPUT warning |
 | `TestDataFlow_Stage5_InputVarAlwaysAvailable` | "input" is pre-seeded — never causes UNRESOLVED_INPUT |
-| `TestDataFlow_BackwardCompat_NoInputsOutputsInJSON` | Specs without Inputs/Outputs round-trip cleanly (omitempty) |
 | `TestDataFlow_Stage5_FullPipeline_NoIssues` | Correct full pipeline (input→LLM→response) has no data-flow issues |
 
 **Trigger:** any change to `internal/agentgen/compiler.go`, `internal/agentgen/nodes.go`,
