@@ -6,6 +6,7 @@ import type { AgentIssue, MCPServer, MCPTool } from '@/lib/api';
 import { themApi } from '@/lib/api';
 import { C, labelStyle, inputStyle, textareaStyle, selectStyle, fieldGap, hint, LLM_MODELS } from '../constants';
 import { stepMeta } from './StepNode';
+import { extractNodeVars } from '../nodeVars';
 import { TransformPanel } from './TransformPanel';
 
 interface RightPanelProps {
@@ -256,29 +257,68 @@ export function RightPanel({
               <div style={{ ...inputStyle, color: C.textMuted, cursor: 'default' }}>{d.step_type}</div>
             </div>
 
-            {d.step_type !== 'input' && (() => {
+            {(() => {
+              const thisNode = localPipeNodes.find(n => n.id === selectedNode.id);
+              if (!thisNode) return null;
+              const { reads, writes } = extractNodeVars(thisNode);
               const inEdges = localPipeEdges.filter(e => e.target === selectedNode.id);
+              const outEdges = localPipeEdges.filter(e => e.source === selectedNode.id);
+
+              // Build a map: var name → source node that writes it
+              const varSource: Record<string, { label: string; step_type: string }> = {};
+              for (const e of inEdges) {
+                const src = localPipeNodes.find(n => n.id === e.source);
+                if (!src) continue;
+                const { writes: srcWrites } = extractNodeVars(src);
+                const srcData = src.data as unknown as StepData;
+                for (const v of srcWrites) {
+                  varSource[v] = { label: srcData.label || stepMeta(srcData.step_type).label, step_type: srcData.step_type };
+                }
+              }
+
               return (
-                <div style={{ marginBottom: '16px' }}>
-                  <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: C.cyan, marginBottom: '6px' }}>
-                    INPUTS {inEdges.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400 }}>— nothing connected</span>}
+                <div style={{ marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {/* INPUTS */}
+                  <div>
+                    <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: C.cyan, marginBottom: '6px' }}>
+                      READS {reads.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400 }}>— no variables consumed</span>}
+                    </div>
+                    {reads.map(v => {
+                      const src = varSource[v];
+                      const missing = !src && inEdges.length > 0;
+                      return (
+                        <div key={v} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 8px', borderRadius: '6px', marginBottom: '4px', background: missing ? 'rgba(248,113,113,0.06)' : 'rgba(0,240,255,0.05)', border: `1px solid ${missing ? 'rgba(248,113,113,0.3)' : 'rgba(0,240,255,0.15)'}` }}>
+                          <code style={{ color: missing ? '#f87171' : C.cyan, fontSize: '11px', fontFamily: 'monospace', flexShrink: 0 }}>{`{{.${v}}}`}</code>
+                          {src && <><span style={{ color: C.textMuted, fontSize: '10px' }}>from</span><span style={{ color: '#94a3b8', fontSize: '10px' }}>{stepMeta(src.step_type).emoji} {src.label}</span></>}
+                          {missing && <span style={{ color: '#f87171', fontSize: '10px' }}>— not connected</span>}
+                        </div>
+                      );
+                    })}
+                    {reads.length === 0 && inEdges.length === 0 && d.step_type !== 'input' && (
+                      <div style={{ fontSize: '11px', color: C.textMuted }}>Nothing connected yet.</div>
+                    )}
                   </div>
-                  {inEdges.map(e => {
-                    const src = localPipeNodes.find(n => n.id === e.source);
-                    const srcData = src?.data as unknown as StepData | undefined;
-                    const srcMeta = srcData ? stepMeta(srcData.step_type) : { emoji: '?', label: 'unknown' };
-                    const srcVar = srcData?.step_type === 'input'
-                      ? ((srcData.config?.bindings as Record<string,string>)?.text || 'input')
-                      : ((srcData?.config?.output_var as string) || 'output');
-                    return (
-                      <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', marginBottom: '4px', background: 'rgba(0,240,255,0.05)', border: '1px solid rgba(0,240,255,0.15)' }}>
-                        <span style={{ fontSize: '14px' }}>{srcMeta.emoji}</span>
-                        <span style={{ color: '#e2e8f0', fontSize: '11px', fontWeight: 600 }}>{srcData?.label || srcMeta.label}</span>
-                        <span style={{ color: C.textMuted, fontSize: '11px' }}>→</span>
-                        <code style={{ color: C.cyan, fontSize: '11px', fontFamily: 'monospace' }}>{`{{${srcVar}}}`}</code>
-                      </div>
-                    );
-                  })}
+
+                  {/* OUTPUTS */}
+                  <div>
+                    <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: '#a78bfa', marginBottom: '6px' }}>
+                      WRITES {writes.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400 }}>— no variables produced</span>}
+                    </div>
+                    {writes.map(v => {
+                      const consumed = outEdges.some(e => {
+                        const tgt = localPipeNodes.find(n => n.id === e.target);
+                        if (!tgt) return false;
+                        const { reads: tgtReads } = extractNodeVars(tgt);
+                        return tgtReads.includes(v) || tgtReads.length === 0;
+                      });
+                      return (
+                        <div key={v} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 8px', borderRadius: '6px', marginBottom: '4px', background: 'rgba(167,139,250,0.05)', border: '1px solid rgba(167,139,250,0.2)' }}>
+                          <code style={{ color: '#a78bfa', fontSize: '11px', fontFamily: 'monospace', flexShrink: 0 }}>{`{{.${v}}}`}</code>
+                          {outEdges.length > 0 && !consumed && <span style={{ color: C.textMuted, fontSize: '10px' }}>— not read downstream</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })()}

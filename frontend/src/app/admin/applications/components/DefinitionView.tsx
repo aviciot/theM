@@ -557,6 +557,42 @@ export function DefinitionView({
                       </div>
                     ))}
                   </div>
+                  <div style={{ marginTop: 10, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 10 }}>
+                    <label style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 8 }}>Memory & Summarizer</label>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <label style={{ fontSize: 11, color: C.textMuted }}>Enable Summarizer</label>
+                      <div onClick={() => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, memory_enabled: !(selectedComp.config as any)?.memory_enabled } })}
+                        style={{ width: 32, height: 18, borderRadius: 9, background: (selectedComp.config as any)?.memory_enabled ? C.purple : 'rgba(255,255,255,0.12)', cursor: 'pointer', position: 'relative', transition: 'background 150ms' }}>
+                        <div style={{ position: 'absolute', top: 2, left: (selectedComp.config as any)?.memory_enabled ? 16 : 2, width: 14, height: 14, borderRadius: '50%', background: '#fff', transition: 'left 150ms' }} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      {([['summarize_every_n_calls', 'Summarize Every N'], ['memory_raw_fallback_n', 'Keep Last N']] as const).map(([field, label]) => (
+                        <div key={field}>
+                          <label style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 4 }}>{label}</label>
+                          <input type="number" style={fieldStyle} value={(selectedComp.config as any)?.[field] ?? ''}
+                            onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, [field]: e.target.value === '' ? null : Number(e.target.value) } })} />
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
+                      <div>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 4 }}>Summarizer Provider</label>
+                        <select style={fieldStyle as any} value={(selectedComp.config as any)?.summarizer_provider ?? ''} onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, summarizer_provider: e.target.value || null } })}>
+                          <option value="">same as orch</option>
+                          <option value="anthropic">anthropic</option>
+                          <option value="openai">openai</option>
+                          <option value="groq">groq</option>
+                          <option value="gemini">gemini</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 4 }}>Summarizer Model</label>
+                        <input style={fieldStyle} value={(selectedComp.config as any)?.summarizer_model ?? ''} placeholder="e.g. claude-haiku-4-5"
+                          onChange={e => updateComponent(selectedComp.instance_id, { config: { ...selectedComp.config, summarizer_model: e.target.value || null } })} />
+                      </div>
+                    </div>
+                  </div>
                 </>
               )}
               {selectedComp.definition_ref.kind !== 'orchestrator' && (

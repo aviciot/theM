@@ -46,6 +46,7 @@ import { NodeContextMenu } from './components/NodeContextMenu';
 import type { CtxTarget } from './components/NodeContextMenu';
 import { RightPanel } from './components/RightPanel';
 import { LayoutDirContext, useLayoutDir } from './LayoutContext';
+import { edgeRelevantVars } from './nodeVars';
 
 // ── Node components (must be outside the render component) ───────────────────
 
@@ -1284,6 +1285,17 @@ function CanvasInner() {
       for (const e of outEdgesForNode) edgeValues[e.id] = text;
     } else {
       output = `[${d.step_type} not supported in debug mode]`;
+    }
+
+    // Rewrite edge labels: show only vars the target node actually reads (∩ source writes).
+    for (const e of outEdgesForNode) {
+      const targetNode = nodes.find(n => n.id === e.target);
+      if (!targetNode) continue;
+      const relevant = edgeRelevantVars(node, targetNode);
+      edgeValues[e.id] = relevant
+        .map(v => `${v}: ${String(newVars[v] ?? '').slice(0, 60)}`)
+        .filter(s => !s.endsWith(': '))
+        .join('\n') || edgeValues[e.id] || output;
     }
 
     return { vars: newVars, output, edgeValues };

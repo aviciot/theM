@@ -143,7 +143,7 @@ function FunctionRow({
           style={{ ...selectStyle, flex: 1, fontSize: '11px', ...monoStyle }}
         >
           <option value="">— pick var —</option>
-          {availableVars.map(v => <option key={v} value={v}>{v}</option>)}
+          {[...new Set(availableVars)].map(v => <option key={v} value={v}>{v}</option>)}
         </select>
       </div>
 
@@ -310,7 +310,7 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
           step={step}
           index={i}
           catalog={catalog}
-          availableVars={[...availableVars, ...functions.slice(0, i).map(s => s.output_var).filter(Boolean)]}
+          availableVars={[...new Set([...availableVars, ...functions.slice(0, i).map(s => s.output_var).filter(Boolean)])]}
           result={resultByIndex(i)}
           exposed={!!step.output_var && exposedVars.includes(step.output_var)}
           onExposedChange={on => step.output_var && toggleExposed(step.output_var, on)}
