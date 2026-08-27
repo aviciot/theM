@@ -151,6 +151,7 @@ const (
 	StepA2ACall   StepType = "a2a_call"
 	StepHumanWait StepType = "human_wait"
 	StepStreamOut StepType = "stream_out"
+	StepMCPCall   StepType = "mcp_call"
 )
 
 type BranchArm struct {
@@ -255,4 +256,12 @@ type BranchStepConfig struct {
 	Expression string `json:"expression"` // Go template; "true"/"false"
 	TrueNext   string `json:"true_next"`  // step ID when true
 	FalseNext  string `json:"false_next"` // step ID when false
+}
+
+// MCPCallConfig configures an mcp_call canvas step.
+type MCPCallConfig struct {
+	MCPServerSlug string `json:"mcp_server_slug"` // slug of the MCP server registered in the admin UI
+	ToolName      string `json:"tool_name"`        // tool to invoke (must be in the server's manifest)
+	ArgsTemplate  string `json:"args_template"`    // JSON Go template for the args object
+	OutputVar     string `json:"output_var"`       // pipeline var to write the tool result into
 }

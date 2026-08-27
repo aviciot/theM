@@ -3,7 +3,10 @@ package agentgen
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"regexp"
+	"strings"
+	"text/template"
 )
 
 // tmplKeywords is the set of Go template control keywords that are not variable names.
@@ -495,4 +498,125 @@ func init() {
 		},
 	})
 
+	// ── MCP call ─────────────────────────────────────────────────────────────
+
+	RegisterNode(NodeDef{
+		Type:        StepMCPCall,
+		Version:     1,
+		Label:       "MCP Tool",
+		Description: "Call a tool on an MCP server registered in the admin UI. Credential is resolved per-application.",
+		Emoji:       "🔌",
+		OutputArity: "single",
+		IsSource:    false,
+		IsSink:      false,
+		SingleInput: true,
+		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
+		Validate: func(step canvasStep) []Issue {
+			var c MCPCallConfig
+			if len(step.Config) > 0 {
+				if err := json.Unmarshal(step.Config, &c); err != nil {
+					return []Issue{{Code: "INVALID_CONFIG", Severity: "error", Message: "invalid mcp_call config: " + err.Error()}}
+				}
+			}
+			var issues []Issue
+			if c.MCPServerSlug == "" {
+				issues = append(issues, Issue{Code: "INVALID_CONFIG", Severity: "error", Message: "mcp_server_slug is required"})
+			}
+			if c.ToolName == "" {
+				issues = append(issues, Issue{Code: "INVALID_CONFIG", Severity: "error", Message: "tool_name is required"})
+			}
+			if c.OutputVar == "" {
+				issues = append(issues, Issue{Code: "INVALID_CONFIG", Severity: "error", Message: "output_var is required"})
+			}
+			return issues
+		},
+		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
+			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
+			return execMCP(ctx, interp, ic, step, vars)
+		},
+		DeriveInputs: func(cfg json.RawMessage) []VarRef {
+			var c MCPCallConfig
+			if len(cfg) > 0 {
+				_ = json.Unmarshal(cfg, &c)
+			}
+			// Extract template variable references from the args template.
+			return varRefsFromTemplate(extractTmplVars(c.ArgsTemplate))
+		},
+		DeriveOutputs: func(cfg json.RawMessage) []VarRef {
+			var c MCPCallConfig
+			if len(cfg) > 0 {
+				_ = json.Unmarshal(cfg, &c)
+			}
+			if c.OutputVar != "" {
+				return []VarRef{{Name: c.OutputVar, Required: false}}
+			}
+			return nil
+		},
+	})
+
+}
+
+// varRefsFromTemplate converts a list of variable names into VarRef values.
+func varRefsFromTemplate(names []string) []VarRef {
+	if len(names) == 0 {
+		return nil
+	}
+	refs := make([]VarRef, len(names))
+	for i, n := range names {
+		refs[i] = VarRef{Name: n, Required: false}
+	}
+	return refs
+}
+
+// execMCP is the Execute function for StepMCPCall.
+func execMCP(ctx context.Context, interp *Interpreter, ic *InvocationContext, step *StepSpec, vars PipelineVars) error {
+	if interp.mcpCaller == nil {
+		return fmt.Errorf("mcp_call step %q: MCP service not configured (MCP_SERVICE_URL is unset)", step.ID)
+	}
+
+	var cfg MCPCallConfig
+	if err := json.Unmarshal(step.Config, &cfg); err != nil {
+		return fmt.Errorf("mcp_call step %q: invalid config: %w", step.ID, err)
+	}
+	if cfg.MCPServerSlug == "" || cfg.ToolName == "" {
+		return fmt.Errorf("mcp_call step %q: mcp_server_slug and tool_name are required", step.ID)
+	}
+
+	// Render the args template against current pipeline vars.
+	args, err := renderMCPArgs(cfg.ArgsTemplate, vars)
+	if err != nil {
+		return fmt.Errorf("mcp_call step %q: args_template render failed: %w", step.ID, err)
+	}
+
+	result, err := interp.mcpCaller.Call(ctx, ic.ApplicationID, cfg.MCPServerSlug, cfg.ToolName, args)
+	if err != nil {
+		return fmt.Errorf("mcp_call step %q (%s/%s): %w", step.ID, cfg.MCPServerSlug, cfg.ToolName, err)
+	}
+
+	if cfg.OutputVar != "" {
+		// Store the raw JSON as a string so downstream template steps can reference it.
+		vars[cfg.OutputVar] = string(result)
+	}
+	return nil
+}
+
+// renderMCPArgs renders the args_template (a JSON object Go template) against
+// pipeline vars and parses it into a map. Empty template → empty args map.
+func renderMCPArgs(tmplStr string, vars PipelineVars) (map[string]any, error) {
+	if strings.TrimSpace(tmplStr) == "" {
+		return map[string]any{}, nil
+	}
+	tmpl, err := template.New("mcp_args").Parse(tmplStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+	var buf strings.Builder
+	if err := tmpl.Execute(&buf, vars); err != nil {
+		return nil, fmt.Errorf("execute: %w", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(buf.String()), &out); err != nil {
+		return nil, fmt.Errorf("args must be a JSON object, got: %w", err)
+	}
+	return out, nil
 }

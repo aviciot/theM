@@ -64,17 +64,22 @@ func main() {
 	taskRedis := cache.NewAuthRedisClient(redisCache.Client())
 	cryptoKey := crypto.DeriveKey(cfg.SecretKey)
 
+	interpBase := agentgen.NewInterpreter(
+		&http.Client{Timeout: 60 * time.Second},
+		&multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
+		cfg.AnthropicAPIKey,
+	)
+	if cfg.MCPServiceURL != "" {
+		interpBase.WithMCPCaller(agentgen.NewHTTPMCPCaller(cfg.MCPServiceURL, &http.Client{Timeout: 30 * time.Second}))
+	}
+
 	rt := &Runtime{
 		pool:      database.Pool(),
 		cryptoKey: cryptoKey,
 		taskStore: agentgen.NewRedisTaskStore(taskRedis),
 		specCache: &specCache{entries: make(map[string]*cachedSpec)},
 		logger:    logger,
-		interp: agentgen.NewInterpreter(
-			&http.Client{Timeout: 60 * time.Second},
-			&multiLLMFactory{platformKey: cfg.AnthropicAPIKey},
-			cfg.AnthropicAPIKey,
-		),
+		interp:    interpBase,
 	}
 
 	port := "9300"

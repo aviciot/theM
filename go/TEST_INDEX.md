@@ -1462,6 +1462,27 @@ and Response node types, and backward compatibility for canvas JSON with no `inp
 
 ---
 
+### S1-69 · MCP call node and executor — `internal/agentgen/mcp_test.go`
+
+**Purpose:** Verifies the `mcp_call` canvas step: node registration, validation, DeriveInputs/DeriveOutputs, runtime execution via MCPCaller, error propagation, args template rendering, and full pipeline compilation.
+
+| Test | What it proves |
+|---|---|
+| `TestMCP_NodeRegistered` (MCP-1) | StepMCPCall is registered with non-nil Execute |
+| `TestMCP_Validate_MissingFields` (MCP-2) | Empty mcp_call config → INVALID_CONFIG errors for mcp_server_slug, tool_name, output_var |
+| `TestMCP_Validate_ValidConfig` (MCP-3) | Complete config → no validation errors from compiler |
+| `TestMCP_DeriveOutputs` (MCP-4) | DeriveOutputs returns VarRef for output_var |
+| `TestMCP_DeriveInputs_Template` (MCP-5) | DeriveInputs extracts template var references from args_template |
+| `TestMCP_Execute_NoCaller` (MCP-6) | Execute without MCPCaller → error (MCP_SERVICE_URL unset) |
+| `TestMCP_Execute_CallsCallerAndSetsVar` (MCP-7) | Execute with stub MCPCaller → result stored in pipeline var; correct appID/slug/tool passed |
+| `TestMCP_Execute_CallerError` (MCP-8) | MCPCaller error propagates through Execute |
+| `TestMCP_Execute_ArgsTemplateRendered` (MCP-9) | args_template renders pipeline vars into JSON args |
+| `TestMCP_Compiles_InPipeline` (MCP-10) | Full canvas pipeline with mcp_call compiles without errors |
+
+**Trigger:** any change to `internal/agentgen/nodes.go`, `internal/agentgen/mcp_caller.go`, `internal/agentgen/interpreter.go`, or `internal/agentgen/spec.go`
+
+---
+
 ### S1-49 · Agent definitions — `internal/admin/service/agent_definitions_test.go`
 
 **Purpose:** Phase 2 Canvas A2A Builder — agent definition draft CRUD with validation. Verifies
@@ -2030,10 +2051,11 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 |
 | `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 |
-| `internal/agentgen/interpreter.go` | S1-48 + S1-64 + S1-67 |
-| `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 + S1-67 |
-| `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 |
-| `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 |
+| `internal/agentgen/interpreter.go` | S1-48 + S1-64 + S1-67 + S1-69 |
+| `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 + S1-67 + S1-69 |
+| `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 + S1-69 |
+| `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 + S1-69 |
+| `internal/agentgen/mcp_caller.go` | S1-69 |
 | `internal/agentgen/context.go` | S1-48 + S1-64 |
 | `cmd/agent-runtime/main.go` | S1-60 + S1-62 + S1-65 |
 | `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1 (full suite) |
@@ -2172,7 +2194,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-66 | admin handler app params (HTTP-20..25+) | 11 |
 | S1-67 | Stage 6 runtime contract enforcement (CONT-1..12) | 12 |
 | S1-68 | explicit canvas data bindings (BND-1..10) | 10 |
-| **S1 total** | | **794** |
+| S1-69 | MCP call node + executor (MCP-1..10) | 10 |
+| **S1 total** | | **804** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2181,4 +2204,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **815** |
+| **`go test ./...` total** | | **825** |

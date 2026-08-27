@@ -31,6 +31,13 @@ type LLMFactory interface {
 	NewProvider(provider, model string, maxTokens int, apiKey string) (LLMProvider, error)
 }
 
+// MCPCaller calls an MCP tool via them-mcp-service. Nil means MCP is not configured.
+type MCPCaller interface {
+	// Call invokes a tool on the named MCP server for the given application.
+	// Returns the JSON-encoded tool result or a non-nil error.
+	Call(ctx context.Context, applicationID, mcpServerSlug, toolName string, args map[string]any) (json.RawMessage, error)
+}
+
 // PipelineVars holds variables scoped to one pipeline execution.
 type PipelineVars map[string]any
 
@@ -38,8 +45,9 @@ type PipelineVars map[string]any
 type Interpreter struct {
 	httpClient       HTTPDoer
 	llmFactory       LLMFactory
-	platformAPIKey   string // fallback LLM key when no app key is set
-	nextStepOverride string // set by condition/branch steps; read and cleared by the Execute loop
+	mcpCaller        MCPCaller // nil when MCP_SERVICE_URL is not configured
+	platformAPIKey   string    // fallback LLM key when no app key is set
+	nextStepOverride string    // set by condition/branch steps; read and cleared by the Execute loop
 }
 
 // NewInterpreter creates an Interpreter.
@@ -49,6 +57,12 @@ func NewInterpreter(httpClient HTTPDoer, llmFactory LLMFactory, platformAPIKey s
 		llmFactory:     llmFactory,
 		platformAPIKey: platformAPIKey,
 	}
+}
+
+// WithMCPCaller sets the MCP caller used for mcp_call steps.
+func (interp *Interpreter) WithMCPCaller(mc MCPCaller) *Interpreter {
+	interp.mcpCaller = mc
+	return interp
 }
 
 // ExecutionResult is the output of a successful pipeline execution.
