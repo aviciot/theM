@@ -307,7 +307,7 @@ export const PROVIDER_LIST = ['anthropic', 'openai', 'groq', 'gemini', 'elevenla
 export const RUNTIME_MODELS: Record<string, string[]> = {
   anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
   openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
-  groq:      ['llama3-70b-8192', 'llama3-8b-8192', 'mixtral-8x7b-32768'],
+  groq:      ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it'],
   gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'],
 };
 
