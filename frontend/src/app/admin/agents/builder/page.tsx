@@ -1288,14 +1288,20 @@ function CanvasInner() {
     }
 
     // Rewrite edge labels: show only vars the target node actually reads (∩ source writes).
+    // Empty intersection → keep prior fallback value rather than showing all source writes.
     for (const e of outEdgesForNode) {
       const targetNode = nodes.find(n => n.id === e.target);
       if (!targetNode) continue;
       const relevant = edgeRelevantVars(node, targetNode);
-      edgeValues[e.id] = relevant
+      if (relevant.length === 0) {
+        // No statically matched vars — keep whatever the step set as its generic output
+        continue;
+      }
+      const label = relevant
         .map(v => `${v}: ${String(newVars[v] ?? '').slice(0, 60)}`)
         .filter(s => !s.endsWith(': '))
-        .join('\n') || edgeValues[e.id] || output;
+        .join('\n');
+      if (label) edgeValues[e.id] = label;
     }
 
     return { vars: newVars, output, edgeValues };
