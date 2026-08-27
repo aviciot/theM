@@ -82,11 +82,20 @@ export function RuntimeView({ app, onBack }: {
   const [keyTestMsg,  setKeyTestMsg]  = useState<Record<string, string>>({});
   const [keyTesting,  setKeyTesting]  = useState<string | null>(null);
 
-  // Orchestrator metadata (name/display only — LLM now per-EP)
+  // Orchestrator metadata — fetched fresh on mount so we always reflect the
+  // latest publish (app prop can be stale from the list-page snapshot).
   type OrchMeta = { id: string; name: string; displayName: string };
-  const orchMetas: OrchMeta[] = (app.app_orchestrators ?? []).map(o => ({
-    id: o.id, name: o.name, displayName: o.display_name || o.name,
-  }));
+  const [orchMetas, setOrchMetas] = useState<OrchMeta[]>(
+    (app.app_orchestrators ?? []).map(o => ({ id: o.id, name: o.name, displayName: o.display_name || o.name }))
+  );
+
+  useEffect(() => {
+    themApi.getApplication(app.id).then(fresh => {
+      setOrchMetas((fresh.app_orchestrators ?? []).map(o => ({
+        id: o.id, name: o.name, displayName: o.display_name || o.name,
+      })));
+    }).catch(() => {});
+  }, [app.id]);
 
   // Per-EP LLM draft (stored on entry_points.llm_provider / llm_model)
   type EPLLMDraft = { provider: string; model: string };
