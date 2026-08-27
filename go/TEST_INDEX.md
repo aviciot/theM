@@ -1481,6 +1481,48 @@ split (warning at validate / error at publish), and structured Issue fields (Ski
 
 ---
 
+### S1-65 · Data-flow derivation and Stage 5 validation — `internal/agentgen/dataflow_test.go`
+
+**Purpose:** VarRef derivation (DeriveInputs/DeriveOutputs) for all 11 node types and Stage 5
+`validateDataFlow` (UNRESOLVED_INPUT detection). Verifies that compiled StepSpec carries correct
+Inputs/Outputs for each node type, that missing upstream writers emit the right severity
+(warning at validate, error at publish for Required inputs), that "input" is always pre-seeded,
+and that backward-compatible specs without Inputs/Outputs fields round-trip cleanly.
+
+| Test | What it proves |
+|---|---|
+| `TestDataFlow_Input_DefaultOutput` | input node outputs "input" by default |
+| `TestDataFlow_Input_BindingOutput` | input node outputs binding name when bindings.text is set |
+| `TestDataFlow_Input_ImplicitInput` | input node DeriveInputs includes "input" as non-required |
+| `TestDataFlow_LLM_UserPromptTemplateVars` | LLM extracts template vars from user_prompt |
+| `TestDataFlow_LLM_EmptyUserPromptIncludesInput` | LLM with no user_prompt includes "input" in Inputs |
+| `TestDataFlow_LLM_SetUserPromptExcludesInput` | LLM with user_prompt set does NOT include "input" |
+| `TestDataFlow_LLM_DefaultOutput` | LLM output defaults to "output" when output_var unset |
+| `TestDataFlow_LLM_ConfiguredOutput` | LLM output uses configured output_var |
+| `TestDataFlow_HTTP_TemplateVarInputs` | HTTP inputs = template vars from url_template + body_template (deduped) |
+| `TestDataFlow_HTTP_AlwaysOutputsHTTPResponse` | HTTP always outputs "http_response" |
+| `TestDataFlow_HTTP_ExtractionOutputs` | HTTP outputs extraction var names |
+| `TestDataFlow_Transform_InputsAndOutputs` | Transform inputs = unique input_vars; outputs = unique output_vars |
+| `TestDataFlow_Response_InputRequired` | Response inputs from_var with Required=true; empty outputs |
+| `TestDataFlow_Response_DefaultFromVar` | Response defaults from_var to "output" |
+| `TestDataFlow_Branch_ExpressionVars` | Branch inputs = template vars from expression (incl. nested .var in actions) |
+| `TestDataFlow_Loop_AccumVar` | Loop outputs accum_var; inputs = condition template vars |
+| `TestDataFlow_Parallel_MergeVar` | Parallel outputs merge_var when set |
+| `TestDataFlow_A2ACall_InputsAndOutputs` | A2A Call input_var (Required=true), output_var |
+| `TestDataFlow_HumanWait_ReplyVar` | HumanWait outputs reply_var |
+| `TestDataFlow_Stage5_ResolvedFlow` | Fully resolved pipeline (LLM writes → response reads) → no UNRESOLVED_INPUT |
+| `TestDataFlow_Stage5_MissingResponseVar_PublishFails` | Response reading unwritten var → UNRESOLVED_INPUT error at publish |
+| `TestDataFlow_Stage5_MissingResponseVar_ValidateWarns` | Same → warning (not error) at validate |
+| `TestDataFlow_Stage5_LLMTemplateVarUnresolved` | LLM template var with no upstream writer → UNRESOLVED_INPUT warning |
+| `TestDataFlow_Stage5_InputVarAlwaysAvailable` | "input" is pre-seeded — never causes UNRESOLVED_INPUT |
+| `TestDataFlow_BackwardCompat_NoInputsOutputsInJSON` | Specs without Inputs/Outputs round-trip cleanly (omitempty) |
+| `TestDataFlow_Stage5_FullPipeline_NoIssues` | Correct full pipeline (input→LLM→response) has no data-flow issues |
+
+**Trigger:** any change to `internal/agentgen/compiler.go`, `internal/agentgen/nodes.go`,
+`internal/agentgen/noderegistry.go`, or `internal/agentgen/spec.go`
+
+---
+
 ### S1-51 · Agent definition publish service — `internal/admin/service/agent_definitions_publish_test.go`
 
 **Purpose:** Canvas A2A Builder validate/publish service layer. Verifies DAL delegation,
@@ -1930,10 +1972,12 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/temporal/workerconfig/loader.go` | S1-61 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
-| `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 |
-| `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 |
+| `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 |
+| `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 |
 | `internal/agentgen/interpreter.go` | S1-48 + S1-64 |
-| `internal/agentgen/spec.go` | S1-50 + S1-63 |
+| `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 |
+| `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 |
+| `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 |
 | `internal/agentgen/context.go` | S1-48 + S1-64 |
 | `cmd/agent-runtime/main.go` | S1-60 + S1-62 + S1-65 |
 | `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1 (full suite) |
@@ -1961,8 +2005,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/service/applications.go` | S1-25 + S1-33 + S1-60 |
 | `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 + S1-49 + S1-51 + S1-60 + S1-62 |
 | `internal/admin/service/agent_definitions_publish.go` | S1-51 + S1-54 |
-| `internal/agentgen/noderegistry.go` | S1-54 + S1-50 |
-| `internal/agentgen/nodes.go` | S1-54 + S1-50 |
+| `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 |
+| `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 |
 | `internal/admin/service/definitions.go` | S1-42 + S1-43 + S1-44 |
 | `internal/admin/service/publish.go` | S1-43 + S1-44 |
 | `internal/admin/dal/publish.go` | S1-43 + S1-44 |

@@ -175,6 +175,7 @@ func TestCompile_UnknownStepType(t *testing.T) {
 
 func TestCompile_HTTPNode_AcceptsConfig(t *testing.T) {
 	// HTTP node config without credential slot is valid.
+	// response reads "http_response" which the HTTP step always writes.
 	_ = compileOK(t, `{
 		"agent_root": {"display_name": "X"},
 		"skills": [{
@@ -182,7 +183,7 @@ func TestCompile_HTTPNode_AcceptsConfig(t *testing.T) {
 			"steps": [
 				{"id": "in",   "type": "input",    "config": {}, "next": ["step1"]},
 				{"id": "step1","type": "http",     "config": {"method": "GET", "url_template": "http://x"}, "next": ["out"]},
-				{"id": "out",  "type": "response", "config": {"from_var": "output"}}
+				{"id": "out",  "type": "response", "config": {"from_var": "http_response"}}
 			]
 		}]
 	}`)
@@ -246,6 +247,7 @@ func TestCompile_SpecHasNoCredentialSlots(t *testing.T) {
 
 func TestCompile_TopologicalOrder(t *testing.T) {
 	// input → transform → response (linear chain)
+	// Transform writes "x" via a function; response reads "x".
 	spec := compileOK(t, `{
 		"agent_root": {"display_name": "X"},
 		"skills": [{
@@ -253,7 +255,7 @@ func TestCompile_TopologicalOrder(t *testing.T) {
 			"steps": [
 				{"id": "step-response", "type": "response", "config": {"from_var": "x"}},
 				{"id": "step-input", "type": "input", "config": {}, "next": ["step-transform"]},
-				{"id": "step-transform", "type": "transform", "config": {"expressions": {}}, "next": ["step-response"]}
+				{"id": "step-transform", "type": "transform", "config": {"functions": [{"name": "to_string", "input_var": "input", "output_var": "x"}]}, "next": ["step-response"]}
 			]
 		}]
 	}`)
@@ -322,13 +324,14 @@ func TestCompileForPublish_StubNodeIsError(t *testing.T) {
 
 // TestCompileForPublish_ImplementedOnlySucceeds verifies that a graph with only
 // implemented node types publishes cleanly.
+// response reads "input" which is always available from the invocation context.
 func TestCompileForPublish_ImplementedOnlySucceeds(t *testing.T) {
 	spec, issues := agentgen.CompileForPublish("agent-1", "tenant-1", "def-1", "my_agent",
 		json.RawMessage(`{
 			"agent_root": {"display_name": "X"},
 			"skills": [{"skill_id": "s1", "steps": [
 				{"id": "in", "type": "input", "next": ["out"]},
-				{"id": "out", "type": "response", "config": {"from_var": "x"}}
+				{"id": "out", "type": "response", "config": {"from_var": "input"}}
 			]}]
 		}`))
 	for _, iss := range issues {

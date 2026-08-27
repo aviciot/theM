@@ -1,6 +1,9 @@
 package agentgen
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // EdgeRules declares the allowed incoming/outgoing edge counts for a node type.
 // Zero means "no constraint". These are the single source of truth for both
@@ -40,6 +43,14 @@ type NodeDef struct {
 	// Execute runs the step. nil means the type is not yet implemented.
 	Execute func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 		step *StepSpec, vars PipelineVars, result *ExecutionResult) error `json:"-"`
+	// DeriveInputs returns the variables this step instance reads from PipelineVars.
+	// Called by the compiler with the step's raw config JSON.
+	// nil means "no static derivation for this type" — treated as empty inputs.
+	DeriveInputs func(cfg json.RawMessage) []VarRef `json:"-"`
+	// DeriveOutputs returns the variables this step instance writes to PipelineVars.
+	// Called by the compiler with the step's raw config JSON.
+	// nil means "no static derivation for this type" — treated as empty outputs.
+	DeriveOutputs func(cfg json.RawMessage) []VarRef `json:"-"`
 }
 
 // NodeTypeInfo is the JSON-serialisable view of a NodeDef sent to the frontend.

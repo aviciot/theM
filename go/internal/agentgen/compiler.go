@@ -494,6 +494,8 @@ func Validate(agentID, tenantID, definitionID, agentSlug string, raw json.RawMes
 
 	issues = append(issues, validateExecutability(def, "warning")...)
 
+	issues = append(issues, validateDataFlow(def, compiled, "warning")...)
+
 	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params, llmNodes)
 	return spec, issues
 }
@@ -527,6 +529,11 @@ func CompileForPublish(agentID, tenantID, definitionID, agentSlug string, raw js
 	llmNodes := collectLLMNodes(def)
 
 	issues = append(issues, validateExecutability(def, "error")...)
+	if hasErrors(issues) {
+		return nil, issues
+	}
+
+	issues = append(issues, validateDataFlow(def, compiled, "error")...)
 	if hasErrors(issues) {
 		return nil, issues
 	}
@@ -601,6 +608,64 @@ func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefiniti
 	}
 }
 
+// deriveStepVars calls the NodeDef DeriveInputs/DeriveOutputs hooks for a step
+// and returns the result. Returns empty slices when hooks are nil.
+func deriveStepVars(step canvasStep) (inputs, outputs []VarRef) {
+	nd, ok := LookupNode(step.Type)
+	if !ok {
+		return nil, nil
+	}
+	if nd.DeriveInputs != nil {
+		inputs = nd.DeriveInputs(step.Config)
+	}
+	if nd.DeriveOutputs != nil {
+		outputs = nd.DeriveOutputs(step.Config)
+	}
+	return inputs, outputs
+}
+
+// validateDataFlow runs data-flow analysis on the topo-sorted compiled steps for each skill.
+// It walks steps in execution order, accumulates a map of known writers, and checks that
+// each step's Required inputs have a reachable upstream writer.
+// severity controls whether UNRESOLVED_INPUT issues are "error" (publish) or "warning" (validate).
+func validateDataFlow(def *canvasDefinition, compiled map[string][]StepSpec, severity string) []Issue {
+	var issues []Issue
+	for _, cs := range def.Skills {
+		steps, ok := compiled[cs.SkillID]
+		if !ok {
+			continue // graph had errors; skip data-flow check
+		}
+		// writers maps varName → stepID of last writer seen so far in topo order.
+		// Pre-seed "input" — it is always available at pipeline start from the
+		// invocation context (user message). Every pipeline implicitly has this var.
+		writers := map[string]string{"input": "__invocation__"}
+		for _, step := range steps {
+			// Check this step's inputs against known writers.
+			for _, inp := range step.Inputs {
+				if _, written := writers[inp.Name]; !written {
+					sev := "warning"
+					if inp.Required {
+						sev = severity
+					}
+					issues = append(issues, Issue{
+						Severity: sev,
+						Code:     "UNRESOLVED_INPUT",
+						Message:  fmt.Sprintf("step %q reads %q but no upstream step writes it", step.ID, inp.Name),
+						SkillID:  cs.SkillID,
+						NodeID:   step.ID,
+						Field:    inp.Name,
+					})
+				}
+			}
+			// Register this step's outputs as known writers.
+			for _, out := range step.Outputs {
+				writers[out.Name] = step.ID
+			}
+		}
+	}
+	return issues
+}
+
 // topoSort performs DFS-based topological sort and cycle detection.
 func topoSort(skillID string, steps []canvasStep, stepMap map[string]canvasStep) ([]StepSpec, []Issue) {
 	const (
@@ -638,12 +703,15 @@ func topoSort(skillID string, steps []canvasStep, stepMap map[string]canvasStep)
 			}
 		}
 		color[id] = black
+		ins, outs := deriveStepVars(step)
 		result = append(result, StepSpec{
 			ID:       step.ID,
 			Type:     step.Type,
 			Config:   step.Config,
 			Next:     step.Next,
 			Branches: step.Branches,
+			Inputs:   ins,
+			Outputs:  outs,
 		})
 	}
 

@@ -78,6 +78,16 @@ type SkillSpec struct {
 	Steps       []StepSpec `json:"steps"` // topologically ordered by compiler
 }
 
+// VarRef describes one variable a step reads from or writes to PipelineVars.
+// Computed by NodeDef.DeriveInputs / DeriveOutputs from instance config.
+// Stored in StepSpec after compilation. Not present in canvas JSON (only in compiled AgentSpec).
+// This is a heuristic contract — the runtime still uses the shared PipelineVars store.
+// VarRef.Required: if true, a missing upstream writer emits a publish error; false = warning.
+type VarRef struct {
+	Name     string `json:"name"`     // PipelineVars key
+	Required bool   `json:"required"` // missing upstream writer → error (true) vs warning (false)
+}
+
 // StepSpec is one pipeline node, compiled from the canvas.
 type StepSpec struct {
 	ID       string          `json:"id"`
@@ -85,6 +95,10 @@ type StepSpec struct {
 	Config   json.RawMessage `json:"config"`
 	Next     []string        `json:"next"`               // step IDs to run after this one
 	Branches []BranchArm     `json:"branches,omitempty"` // for branch/loop steps
+	// Inputs and Outputs are derived by the compiler from NodeDef.DeriveInputs/DeriveOutputs.
+	// Absent from canvas JSON; present only in compiled AgentSpec persisted to agent_runtime_specs.
+	Inputs  []VarRef `json:"inputs,omitempty"`
+	Outputs []VarRef `json:"outputs,omitempty"`
 }
 
 type StepType string
