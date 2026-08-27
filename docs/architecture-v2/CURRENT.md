@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `cf882d8` — feat(agentgen): MCP-3 — mcp_call canvas step executor
+Commit: `e6f9660` — feat(agent-runtime): wire MCP_SERVICE_URL to them-mcp-service for mcp_call steps
 
 Recent commits (newest first):
 ```
+e6f9660 feat(agent-runtime): wire MCP_SERVICE_URL to them-mcp-service for mcp_call steps
 cf882d8 feat(agentgen): MCP-3 — mcp_call canvas step executor
 dd76ea6 docs(current): update HEAD to a80bba8 — explicit bindings Stages A/B/C complete
 a80bba8 feat(canvas): Stage C — data-binding port handles and edge wiring
 afa4a9f docs(canvas): explicit bindings design review (7 questions, GO verdict)
-6b29bcc feat(agentgen): Stage A explicit bindings — PortDef, VarRef extension, resolveBindings, validateBindings, BROKEN_BINDING (10 BND tests)
 ```
 
 ---
@@ -361,9 +361,14 @@ What was built:
 - `cmd/agent-runtime/main.go`: wires MCPServiceURL from config into HTTPMCPCaller; nil when URL unset
 - 10 new tests MCP-1..10; go test ./... 815→825
 
-**What's NOT done yet:**
-- `them-mcp-service` not yet started in production (needs `--profile mcp` in compose)
-- E2E: publish a canvas agent with mcp_call step and invoke it end-to-end
+**What's done (MCP-3 E2E — commit e6f9660):**
+- `docker-compose.yml`: `MCP_SERVICE_URL=http://them-mcp-service:8010` + `depends_on: them-mcp-service` in agent-runtime
+- Full E2E validated 2026-08-27: create → validate → publish → bind → A2A `SendMessage` → agent-runtime → them-mcp-service `/internal/execute` → `get_latest_session` tool → result written to `session_data` var → artifact in A2A response
+- Failure paths: unknown tool → 422, unknown server slug → 422
+- `them-mcp-service` already runs without a profile (default service)
+- A2A SDK v2.5: method is `SendMessage` (not `message/send`), params.message must have `messageId`
+
+**MCP-3 is FULLY COMPLETE and live-verified.**
 
 ---
 
@@ -393,63 +398,12 @@ What was built:
 
 ## Next recommended task
 
-### Step 0 — Rebuild containers after this session (immediate)
-
-Stage C changes are in `frontend/src/app/admin/agents/builder/`. MCP-3 changes are in `go/internal/agentgen/` and `go/cmd/agent-runtime/`. Rebuild all three:
-
-```bash
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-frontend them-go-bridge them-agent-runtime
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-frontend them-go-bridge them-agent-runtime
-```
-
-E2E validation path for Stage C:
-1. Open a canvas agent with an LLM + Response step
-2. LLM node should show an indigo data-output handle (port `output`) below the control source
-3. Response node should show an orange data-input handle (port `from_var`) above the control target
-4. Drag from LLM indigo handle to Response orange handle → dashed indigo wire appears
-5. Save → inspect payload: `step.inputs = {"from_var": {"from_step": "llm1", "from_port": "output"}}`
-6. Reload → dashed wire reappears (reconstructed from step.inputs)
-7. Delete the wire → step.inputs absent on next save
-8. Open a legacy canvas (no inputs) → renders and works unchanged
-
-### Step 1 — Deploy app_params and E2E validate
-
-The app global params feature is fully coded and tested but containers have not been rebuilt yet. Do this before starting any new feature:
-
-```bash
-# 1. Apply DB migration (if not already done)
-docker cp db/045_app_global_params.sql them-postgres:/tmp/045.sql
-docker exec them-postgres psql -U them -d them -f /tmp/045.sql
-
-# 2. Rebuild and restart
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-go-bridge them-agent-runtime
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge them-agent-runtime
-
-# 3. Smoke test
-curl -s -H "Authorization: Bearer $JWT" http://localhost:8088/api/v1/admin/applications/<app_id>/app-params | jq .
-```
-
-E2E validation path:
-1. Open app → Runtime tab → "App Global Parameters" section visible
-2. Add a `string` param (e.g. `target_city: "Tel Aviv"`) → appears in list with value
-3. Add a `secret` param (e.g. `api_key`) → appears masked with hint
-4. In agent builder HTTP node → toggle to "App global param" → type param name → publish
-5. Invoke the agent via playground → confirm the param value reaches the HTTP step
-
-### Step 2 — MCP-3: StepMCPCall runtime executor
-
-The `mcp_call` canvas node type is registered with `Execute: nil`. Implement the executor in `go/internal/agentgen/` that:
-- Reads `mcp_server_slug`, `tool_name`, `args_template` from step config
-- Looks up the MCP server via `them-mcp-service` HTTP internal API
-- Calls the tool, returns result as pipeline var
-- Uses per-app MCP credential from `app_mcp_credentials` (already stored)
-
-### Step 3 — Auth admin CRUD Go proxy (lower priority)
+### Step 1 — Auth admin CRUD Go proxy (lower priority)
 - `them-auth-service` (Python, port 8701) still serves user/role/team management
 - Frontend hits it directly via its own Traefik routes
 - When ready: implement Go proxy at `go/internal/authadmin/` + Traefik redirect
 
-### Step 4 — Wave 9 tenant items
+### Step 2 — Wave 9 tenant items
 - Session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims
 - Not started — begin only after Steps 1–2 are complete
 
@@ -459,13 +413,9 @@ Do NOT begin multiple subsystems in the same session.
 
 ## Known blockers
 
-1. **MCP-3 not implemented** (moved from #2) — see below.
+1. **Auth admin CRUD (users/roles/teams)** — `them-auth-service` (Python, port 8701) still serves user/role/team management. Frontend hits it directly. No Go proxy until we decide to retire the Python binary.
 
-2. **MCP-3 not implemented** — `mcp_call` canvas step has `Execute: nil`. The runtime stub is registered but will return "not yet implemented" if invoked. MCP execution via `them-mcp-service` not yet wired.
-
-3. **Auth admin CRUD (users/roles/teams)** — `them-auth-service` (Python, port 8701) still serves user/role/team management. Frontend hits it directly. No Go proxy until we decide to retire the Python binary.
-
-4. **Wave 9 tenant items** — session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims. Not started.
+2. **Wave 9 tenant items** — session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims. Not started.
 
 ---
 
