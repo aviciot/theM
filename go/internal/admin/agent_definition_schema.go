@@ -1,12 +1,15 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/agentgen"
@@ -272,6 +275,92 @@ func extractJSON(raw string) (string, error) {
 
 	return "", fmt.Errorf("no valid JSON object found in LLM response")
 }
+
+// ── Anthropic completer ───────────────────────────────────────────────────────
+
+// anthropicCompleter implements generateLLMCaller against the Anthropic Messages API
+// using a non-streaming synchronous call (no SSE/stream:true).
+type anthropicCompleter struct {
+	apiKey string
+	client *http.Client
+}
+
+func newAnthropicCompleter(apiKey string) *anthropicCompleter {
+	return &anthropicCompleter{
+		apiKey: apiKey,
+		client: &http.Client{Timeout: 120 * time.Second},
+	}
+}
+
+type anthropicRequest struct {
+	Model     string             `json:"model"`
+	MaxTokens int                `json:"max_tokens"`
+	System    string             `json:"system"`
+	Messages  []anthropicMessage `json:"messages"`
+}
+
+type anthropicMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type anthropicResponse struct {
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+func (a *anthropicCompleter) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	body := anthropicRequest{
+		Model:     "claude-sonnet-4-5",
+		MaxTokens: 4096,
+		System:    systemPrompt,
+		Messages:  []anthropicMessage{{Role: "user", Content: userPrompt}},
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", a.apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("anthropic API call: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+
+	var ar anthropicResponse
+	if err := json.Unmarshal(respBytes, &ar); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+	if ar.Error != nil {
+		return "", fmt.Errorf("anthropic error: %s", ar.Error.Message)
+	}
+	for _, block := range ar.Content {
+		if block.Type == "text" {
+			return block.Text, nil
+		}
+	}
+	return "", fmt.Errorf("no text content in anthropic response")
+}
+
+// ── validateDefinition ────────────────────────────────────────────────────────
 
 // validateDefinition parses and validates an agent definition JSON using the agentgen compiler.
 // Returns a slice of issues and true when no error-severity issues are found.

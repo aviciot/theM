@@ -109,6 +109,7 @@ func BuildRouter(
 	redis rueidis.Client,
 	fernetKey []byte,
 	mcpServiceURL string,
+	anthropicAPIKey string,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -147,7 +148,11 @@ func BuildRouter(
 
 				// Schema + Generate must be registered BEFORE agentDefs.Routes so
 				// chi does not interpret "schema" and "generate" as {id} path params.
-				schemaHandler := NewAgentDefinitionSchemaHandler(db, nil)
+				var llmCaller generateLLMCaller
+				if anthropicAPIKey != "" {
+					llmCaller = newAnthropicCompleter(anthropicAPIKey)
+				}
+				schemaHandler := NewAgentDefinitionSchemaHandler(db, llmCaller)
 				tenantScoped.Get("/agent-definitions/schema", schemaHandler.Schema)
 				tenantScoped.Post("/agent-definitions/generate", schemaHandler.Generate)
 
