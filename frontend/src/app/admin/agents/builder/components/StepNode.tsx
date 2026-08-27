@@ -150,20 +150,14 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
 
   return (
     <div style={{
-      background: 'transparent', padding: '8px', minWidth: '80px', textAlign: 'center',
+      background: 'transparent', minWidth: '80px', textAlign: 'center',
+      paddingTop:    isLR ? 8 : (inputPortPad  > 0 ? inputPortPad  : 8),
+      paddingBottom: isLR ? 8 : ((transformRightPad || outputPortPad) > 0 ? Math.max(transformRightPad, outputPortPad) : 8),
+      paddingLeft:   isLR ? (inputPortPad > 0 ? inputPortPad : 8) : 8,
+      paddingRight:  isLR ? ((transformRightPad || outputPortPad) > 0 ? Math.max(transformRightPad, outputPortPad) : 8) : 8,
       border: `2px solid ${borderColor}`, borderRadius: '10px', boxShadow,
       transition: 'border-color 0.15s, box-shadow 0.15s',
       position: 'relative',
-      ...(isLR
-        ? {
-            paddingLeft:  inputPortPad  > 0 ? inputPortPad  : '8px',
-            paddingRight: (transformRightPad || outputPortPad) > 0 ? Math.max(transformRightPad, outputPortPad) : '8px',
-          }
-        : {
-            paddingTop:    inputPortPad  > 0 ? inputPortPad  : '8px',
-            paddingBottom: (transformRightPad || outputPortPad) > 0 ? Math.max(transformRightPad, outputPortPad) : '8px',
-          }
-      ),
       ...(transformMinHeight > 0 ? { minHeight: transformMinHeight } : {}),
     }}>
       {/* Control target handle — execution flow in */}
