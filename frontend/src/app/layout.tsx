@@ -4,6 +4,7 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'the-M — Orchestration Platform',
   description: 'Multi-agent orchestration platform',
+  icons: [{ rel: 'icon', url: '/favicon.svg', type: 'image/svg+xml' }],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
