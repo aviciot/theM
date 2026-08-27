@@ -31,12 +31,16 @@ function resolveBase(path: string): string {
   return BRIDGE_BASE;
 }
 
+// Go routes mounted at root (no /api/v1 prefix) — matched after resolveBase picks Go.
+const GO_ROOT_PATTERNS = [/^apps\/[^/]+\/voice\//];
+
 async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
   const token = req.cookies.get('them_access_token')?.value;
   const { path: segments } = await params;
   const path = segments.join('/');
   const base = resolveBase(path);
-  const url = `${base}/api/v1/${path}${req.nextUrl.search}`;
+  const isGoRoot = base === GO_BRIDGE_BASE && GO_ROOT_PATTERNS.some(p => p.test(path));
+  const url = `${base}${isGoRoot ? '' : '/api/v1'}/${path}${req.nextUrl.search}`;
 
   const contentType = req.headers.get('content-type') || '';
   const isMultipart = contentType.includes('multipart/form-data');
