@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `a80bba8` — feat(canvas): Stage C — data-binding port handles and edge wiring
+Commit: `cf882d8` — feat(agentgen): MCP-3 — mcp_call canvas step executor
 
 Recent commits (newest first):
 ```
+cf882d8 feat(agentgen): MCP-3 — mcp_call canvas step executor
+dd76ea6 docs(current): update HEAD to a80bba8 — explicit bindings Stages A/B/C complete
 a80bba8 feat(canvas): Stage C — data-binding port handles and edge wiring
 afa4a9f docs(canvas): explicit bindings design review (7 questions, GO verdict)
 6b29bcc feat(agentgen): Stage A explicit bindings — PortDef, VarRef extension, resolveBindings, validateBindings, BROKEN_BINDING (10 BND tests)
-4f98949 feat(canvas): Stage B explicit bindings — TypeScript types (api.ts, nodeRegistry.ts, types.ts, page.tsx)
-0edcf2a feat(agentgen): Stage 6 runtime contract enforcement — scoped inputs + output promotion
 ```
 
 ---
@@ -353,9 +353,17 @@ What was built:
 - `frontend/src/app/admin/agents/builder/components/RightPanel.tsx`: `mcp_call` properties panel — server dropdown, tool dropdown/input, args template, output var, credentials info banner
 - `them-go-bridge` rebuilt and restarted — `mcp_call` now appears in `GET /admin/node-types`
 
-**What's NOT done yet (MCP-3 onward):**
-- MCP-3: runtime executor wired into agent-runtime tool calls (StepMCPCall Execute function)
+**What's done (MCP-3 — commit cf882d8):**
+- `spec.go`: StepMCPCall constant + MCPCallConfig struct
+- `nodes.go`: mcp_call node registered with Validate, Execute, DeriveInputs, DeriveOutputs; 11→12 types
+- `interpreter.go`: MCPCaller interface + WithMCPCaller; execMCP + renderMCPArgs
+- `mcp_caller.go`: HTTPMCPCaller — POST /internal/execute on them-mcp-service (stateless per call)
+- `cmd/agent-runtime/main.go`: wires MCPServiceURL from config into HTTPMCPCaller; nil when URL unset
+- 10 new tests MCP-1..10; go test ./... 815→825
+
+**What's NOT done yet:**
 - `them-mcp-service` not yet started in production (needs `--profile mcp` in compose)
+- E2E: publish a canvas agent with mcp_call step and invoke it end-to-end
 
 ---
 
@@ -385,13 +393,13 @@ What was built:
 
 ## Next recommended task
 
-### Step 0 — Rebuild frontend after Stage C (immediate)
+### Step 0 — Rebuild containers after this session (immediate)
 
-Stage C changes are in `frontend/src/app/admin/agents/builder/`. The Next.js dev server (hot-reload) picks these up automatically; production requires a rebuild:
+Stage C changes are in `frontend/src/app/admin/agents/builder/`. MCP-3 changes are in `go/internal/agentgen/` and `go/cmd/agent-runtime/`. Rebuild all three:
 
 ```bash
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-frontend
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-frontend
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-frontend them-go-bridge them-agent-runtime
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-frontend them-go-bridge them-agent-runtime
 ```
 
 E2E validation path for Stage C:
