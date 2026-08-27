@@ -338,7 +338,8 @@ func run() error {
 	// adminDB and adminFernetKey — so it must be wired here, after section 19.
 	voiceLoader := voice.NewPgxLoader(database.Pool())
 	voiceAppsSvc := admin.NewApplicationsHandler(adminDB, adminCache, adminFernetKey).Svc()
-	voiceHandler := voice.NewHandler(voiceLoader, voiceAppsSvc, authenticator, execLifecycle, bus, tenantctx.BootstrapTenantID, log)
+	voiceRunLoader := voice.NewWorkerConfigLoader(database.Pool(), adminFernetKey)
+	voiceHandler := voice.NewHandler(voiceLoader, voiceAppsSvc, authenticator, voiceRunLoader, recorder, bus, tenantctx.BootstrapTenantID, log)
 	srv.MountApps(appsDispatcher(wsHandler.AppsWSRoute(), sseHandler.AppsSSERoute(), voiceHandler.Routes()))
 	log.Info("apps WS+SSE+voice mounted", "prefix", "/apps")
 

@@ -7,7 +7,16 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/aviciot/them/internal/temporal/workerconfig"
 )
+
+// NewWorkerConfigLoader returns a workerconfig.Loader backed by the given pool
+// and Fernet key. Voice uses this to load orchestrator config per-run without
+// going through Temporal.
+func NewWorkerConfigLoader(pool *pgxpool.Pool, fernetKey []byte) workerconfig.Loader {
+	return workerconfig.NewPgxLoader(pool, fernetKey)
+}
 
 // PgxLoader implements ConfigLoader against a live pgxpool.Pool.
 type PgxLoader struct {

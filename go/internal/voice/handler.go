@@ -3,7 +3,6 @@ package voice
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,11 +11,14 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/event"
-	"github.com/aviciot/them/internal/execution"
-	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/llm"
+	"github.com/aviciot/them/internal/orchestrator"
+	"github.com/aviciot/them/internal/runrecorder"
+	"github.com/aviciot/them/internal/temporal/workerconfig"
 	"github.com/aviciot/them/internal/transport"
 )
 
@@ -63,13 +65,14 @@ type Authenticator = transport.Authenticator
 //   - POST /apps/{slug}/voice/transcribe — standalone STT (audio → text)
 //   - POST /apps/{slug}/voice/tts        — standalone TTS (text → audio)
 type Handler struct {
-	loader   ConfigLoader
-	keys     KeyResolver
-	auth     Authenticator
-	lc       *execution.Lifecycle
-	bus      event.Bus
-	tenantID string // bootstrap tenant ID (single-tenant deployment)
-	logger   *slog.Logger
+	loader    ConfigLoader
+	keys      KeyResolver
+	auth      Authenticator
+	runLoader workerconfig.Loader
+	recorder  *runrecorder.Recorder
+	bus       event.Bus
+	tenantID  string // bootstrap tenant ID (single-tenant deployment)
+	logger    *slog.Logger
 }
 
 // NewHandler constructs a voice Handler.
@@ -77,7 +80,8 @@ func NewHandler(
 	loader ConfigLoader,
 	keys KeyResolver,
 	auth Authenticator,
-	lc *execution.Lifecycle,
+	runLoader workerconfig.Loader,
+	recorder *runrecorder.Recorder,
 	bus event.Bus,
 	bootstrapTenantID string,
 	logger *slog.Logger,
@@ -86,13 +90,14 @@ func NewHandler(
 		logger = slog.Default()
 	}
 	return &Handler{
-		loader:   loader,
-		keys:     keys,
-		auth:     auth,
-		lc:       lc,
-		bus:      bus,
-		tenantID: bootstrapTenantID,
-		logger:   logger,
+		loader:    loader,
+		keys:      keys,
+		auth:      auth,
+		runLoader: runLoader,
+		recorder:  recorder,
+		bus:       bus,
+		tenantID:  bootstrapTenantID,
+		logger:    logger,
 	}
 }
 
@@ -160,47 +165,52 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── 4. Lifecycle.Admit — same admission pipeline as WS/SSE ───────────────
-	rawToken := extractRawToken(r)
-	admitReq := execution.ExecutionRequest{
-		EPSlug:   slug,
-		TenantID: h.tenantID,
-		RawToken: rawToken,
-		UserMessage: domain.Message{
-			Role:  "user",
-			Parts: []domain.ContentPart{{Type: "text", Text: transcript}},
-		},
-	}
-	handle, admitErr := h.lc.Admit(ctx, admitReq)
-	if admitErr != nil {
-		writeAdmitError(w, admitErr)
-		return
-	}
-	defer h.lc.Release(handle)
-
-	// ── 5. Subscribe to event bus BEFORE Start (ordering invariant) ───────────
-	evCh, termCh, unsub := h.bus.Subscribe(ctx, handle.ContextID, 64)
-	defer unsub()
-
-	// ── 6. Lifecycle.Start → orchestrator ─────────────────────────────────────
-	orchName := ""
-	if handle.EPConfig != nil {
-		orchName = handle.EPConfig.OrchestratorName
-	}
-	input := temporal.WorkflowInput{
-		OrchestratorName:  orchName,
-		AppOrchestratorID: handle.EPConfig.AppOrchestratorID,
-		EntryPointID:      handle.EPConfig.EPID,
-		UserMessage:       admitReq.UserMessage,
-	}
-	if _, err := h.lc.Start(ctx, handle, input); err != nil {
-		h.logger.Warn("voice: lifecycle start failed", "ep_slug", slug, "run_id", handle.RunID, "error", err)
-		http.Error(w, `{"error":"orchestrator failed to start"}`, http.StatusInternalServerError)
+	// ── 4. Load orchestrator config + build Go orchestrator (no Temporal) ───────
+	runCfg, cfgErr := h.runLoader.LoadRunConfig(ctx, cfg.OrchestratorID, cfg.AppID, "")
+	if cfgErr != nil {
+		h.logger.Warn("voice: load run config failed", "ep_slug", slug, "orch_id", cfg.OrchestratorID, "error", cfgErr)
+		http.Error(w, `{"error":"orchestrator configuration unavailable"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// ── 7. Collect LLM reply from event bus ───────────────────────────────────
-	replyText := collectReply(ctx, evCh, termCh)
+	provider, provErr := h.buildProvider(runCfg)
+	if provErr != nil {
+		h.logger.Warn("voice: build LLM provider failed", "ep_slug", slug, "provider", runCfg.LLMProvider, "error", provErr)
+		http.Error(w, `{"error":"LLM provider not configured — set an API key in Runtime settings"}`, http.StatusBadRequest)
+		return
+	}
+
+	// ── 5. Create run record ─────────────────────────────────────────────────
+	runID := uuid.New().String()
+	contextID := uuid.New().String()
+	if h.recorder != nil {
+		run := domain.Run{
+			ID:             runID,
+			TenantID:       h.tenantID,
+			EntryPointSlug: slug,
+			Goal:           transcript,
+			Status:         domain.RunRunning,
+			StartedAt:      time.Now().UTC(),
+		}
+		if err := h.recorder.CreateRun(ctx, run); err != nil {
+			h.logger.Warn("voice: create run failed (non-fatal)", "ep_slug", slug, "error", err)
+		}
+	}
+
+	// ── 6. Run Go orchestrator directly ──────────────────────────────────────
+	userMsg := domain.Message{
+		Role:  domain.RoleUser,
+		Parts: []domain.ContentPart{{Type: "text", Text: transcript}},
+	}
+	orch := orchestrator.New(runCfg.OrchestratorConfig, provider, nil, h.recorder, h.bus, h.logger)
+	replyText, orchErr := orch.Run(ctx, runID, contextID, userMsg, nil,
+		orchestrator.RunContext{TenantID: h.tenantID, ApplicationID: cfg.AppID},
+	)
+	if orchErr != nil {
+		h.logger.Warn("voice: orchestrator run failed", "ep_slug", slug, "run_id", runID, "error", orchErr)
+		http.Error(w, `{"error":"orchestrator error"}`, http.StatusBadGateway)
+		return
+	}
 	if replyText == "" {
 		http.Error(w, `{"error":"empty reply from orchestrator"}`, http.StatusBadGateway)
 		return
@@ -223,44 +233,17 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// collectReply drains the event bus until a terminal event or context cancellation,
-// concatenating all "token" event text payloads into the LLM reply.
-func collectReply(ctx context.Context, evCh, termCh <-chan event.Event) string {
-	var sb strings.Builder
-	for {
-		select {
-		case <-ctx.Done():
-			return sb.String()
-		case ev, ok := <-termCh:
-			if !ok {
-				return sb.String()
-			}
-			_ = ev
-			return sb.String()
-		case ev, ok := <-evCh:
-			if !ok {
-				return sb.String()
-			}
-			if ev.Type == "token" {
-				var tok struct {
-					Text string `json:"text"`
-				}
-				if json.Unmarshal(ev.Payload, &tok) == nil {
-					sb.WriteString(tok.Text)
-				}
-			}
-		}
+// buildProvider constructs the LLM provider for a run from its loaded config.
+func (h *Handler) buildProvider(cfg workerconfig.RunConfig) (llm.Provider, error) {
+	if cfg.LLMAPIKey == "" {
+		return nil, fmt.Errorf("no API key configured for provider %q", cfg.LLMProvider)
 	}
-}
-
-// writeAdmitError maps *execution.AdmitError to the appropriate HTTP status.
-func writeAdmitError(w http.ResponseWriter, err error) {
-	var ae *execution.AdmitError
-	if !errors.As(err, &ae) {
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
-		return
+	switch cfg.LLMProvider {
+	case "anthropic", "":
+		return llm.NewAnthropicProvider(cfg.LLMAPIKey, cfg.OrchestratorConfig.Model, 0), nil
+	default:
+		return nil, fmt.Errorf("provider %q is not yet supported for voice", cfg.LLMProvider)
 	}
-	http.Error(w, `{"error":"`+ae.Error()+`"}`, ae.HTTPStatus)
 }
 
 // Transcribe handles POST /apps/{slug}/voice/transcribe.
