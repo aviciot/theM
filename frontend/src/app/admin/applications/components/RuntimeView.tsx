@@ -91,7 +91,22 @@ export function RuntimeView({ app, onBack }: {
   );
 
   // Per-orchestrator voice config draft (STT + TTS)
-  const [voiceDrafts,  setVoiceDrafts]  = useState<Record<string, VoiceDraft>>({});
+  // Initialized synchronously from the app prop so checkboxes are correct on first render.
+  const [voiceDrafts,  setVoiceDrafts]  = useState<Record<string, VoiceDraft>>(() => {
+    const init: Record<string, VoiceDraft> = {};
+    (app.app_orchestrators ?? []).forEach(o => {
+      init[o.id] = {
+        stt_provider:  o.transcription_provider ?? '',
+        stt_model:     o.transcription_model    ?? '',
+        tts_provider:  o.tts_provider           ?? '',
+        tts_voice:     o.tts_voice              ?? '',
+        tts_model:     'tts-1',
+        voice_enabled: o.voice_enabled          ?? false,
+        tts_enabled:   o.tts_enabled            ?? false,
+      };
+    });
+    return init;
+  });
   const [voiceSaving,  setVoiceSaving]  = useState<string | null>(null);
   const [voiceMsg,     setVoiceMsg]     = useState<Record<string, string>>({});
   const [voiceTesting, setVoiceTesting] = useState<string | null>(null);

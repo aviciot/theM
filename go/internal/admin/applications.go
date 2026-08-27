@@ -3,6 +3,7 @@ package admin
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -789,24 +790,10 @@ func (h *ApplicationsHandler) TestOrchestratorTTS(w http.ResponseWriter, r *http
 }
 
 // probeSTT sends a minimal audio request to validate the STT API key.
-// Uses a 1-second silent WAV (44 bytes) so the upload is near-instant.
+// Builds a 0.2-second silent WAV (16-bit mono 44100 Hz) — OpenAI and Groq
+// both reject clips shorter than 0.1 s, so we need actual audio samples.
 func probeSTT(ctx context.Context, provider, model, apiKey string) (bool, string) {
-	// Minimal 44-byte WAV: RIFF header + fmt chunk + data chunk, 0 audio bytes.
-	// Whisper accepts this without error as long as the key is valid.
-	silentWAV := []byte{
-		0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, // "RIFF" + file size
-		0x57, 0x41, 0x56, 0x45, // "WAVE"
-		0x66, 0x6d, 0x74, 0x20, // "fmt "
-		0x10, 0x00, 0x00, 0x00, // chunk size = 16
-		0x01, 0x00, // PCM
-		0x01, 0x00, // mono
-		0x44, 0xAC, 0x00, 0x00, // 44100 Hz
-		0x88, 0x58, 0x01, 0x00, // byte rate
-		0x02, 0x00, // block align
-		0x10, 0x00, // bits per sample = 16
-		0x64, 0x61, 0x74, 0x61, // "data"
-		0x00, 0x00, 0x00, 0x00, // 0 bytes of audio
-	}
+	silentWAV := buildSilentWAV(44100, 1, 16, 200*time.Millisecond)
 	ctx2, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	_, err := probeSTTCall(ctx2, provider, model, apiKey, silentWAV)
@@ -814,6 +801,31 @@ func probeSTT(ctx context.Context, provider, model, apiKey string) (bool, string
 		return false, err.Error()
 	}
 	return true, ""
+}
+
+// buildSilentWAV returns a valid PCM WAV file with the requested duration of silence.
+func buildSilentWAV(sampleRate, channels, bitsPerSample int, dur time.Duration) []byte {
+	numSamples := int(float64(sampleRate) * dur.Seconds())
+	dataSize := numSamples * channels * (bitsPerSample / 8)
+	// Total file = 44-byte header + dataSize
+	buf := make([]byte, 44+dataSize)
+	le := binary.LittleEndian
+	copy(buf[0:4], "RIFF")
+	le.PutUint32(buf[4:8], uint32(36+dataSize))
+	copy(buf[8:12], "WAVE")
+	copy(buf[12:16], "fmt ")
+	le.PutUint32(buf[16:20], 16) // fmt chunk size
+	le.PutUint16(buf[20:22], 1)  // PCM
+	le.PutUint16(buf[22:24], uint16(channels))
+	le.PutUint32(buf[24:28], uint32(sampleRate))
+	byteRate := sampleRate * channels * bitsPerSample / 8
+	le.PutUint32(buf[28:32], uint32(byteRate))
+	le.PutUint16(buf[32:34], uint16(channels*bitsPerSample/8))
+	le.PutUint16(buf[34:36], uint16(bitsPerSample))
+	copy(buf[36:40], "data")
+	le.PutUint32(buf[40:44], uint32(dataSize))
+	// remaining bytes are zero (silence)
+	return buf
 }
 
 func probeSTTCall(ctx context.Context, provider, model, apiKey string, audio []byte) (string, error) {
