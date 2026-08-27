@@ -41,6 +41,7 @@ SELECT
     COALESCE(ao.id::text, ''),
     COALESCE(ao.transcription_provider, ''),
     COALESCE(ao.transcription_model, ''),
+    COALESCE(ao.tts_enabled, false),
     COALESCE(ao.tts_provider, ''),
     COALESCE(ao.tts_voice, ''),
     COALESCE(ao.llm_model, '')
@@ -70,6 +71,7 @@ func (q *PgxLoader) LoadVoiceConfig(ctx context.Context, tenantID, epSlug string
 		&cfg.OrchestratorID,
 		&cfg.STTProvider,
 		&cfg.STTModel,
+		&cfg.TTSEnabled,
 		&cfg.TTSProvider,
 		&cfg.TTSVoice,
 		&ttsModelProxy,

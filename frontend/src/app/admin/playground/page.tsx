@@ -1642,12 +1642,14 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
               let assistantAdded = false;
               let fullReply = '';
               for await (const ev of themApi.voiceStream(target.slug, blob, fetchAbort.signal)) {
-                if (ev.type === 'transcript') {
+                const evType = ev.type as string;
+                if (evType === 'transcript') {
                   // Show user text immediately — don't wait for LLM
-                  if (ev.text) setMessages(prev => [...prev, { role: 'user', text: ev.text }]);
+                  const txt = ev.text as string;
+                  if (txt) setMessages(prev => [...prev, { role: 'user', text: txt }]);
                   setStatus('Thinking…');
-                } else if (ev.type === 'token') {
-                  fullReply += ev.content ?? '';
+                } else if (evType === 'token') {
+                  fullReply += (ev.content as string) ?? '';
                   if (!assistantAdded) {
                     setMessages(prev => [...prev, { role: 'assistant', text: fullReply, pending: true }]);
                     assistantAdded = true;
@@ -1659,7 +1661,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
                       return copy;
                     });
                   }
-                } else if (ev.type === 'done') {
+                } else if (evType === 'done') {
                   // Mark assistant bubble complete
                   setMessages(prev => {
                     const copy = [...prev];
@@ -1667,9 +1669,9 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
                     if (last?.role === 'assistant' && last.pending) copy[copy.length - 1] = { ...last, pending: false };
                     return copy;
                   });
-                  // Kick off TTS with the full reply — don't await it (audio plays async)
-                  const replyText = ev.text || fullReply;
-                  if (replyText) {
+                  // Kick off TTS only if TTS is enabled on this EP
+                  const replyText = (ev.text as string) || fullReply;
+                  if (replyText && ev.tts_enabled !== false) {
                     setStatus('Speaking…');
                     themApi.voiceTTS(target.slug, replyText, fetchAbort.signal)
                       .then(audioBlob => {
@@ -1691,8 +1693,8 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
                       .catch(() => { setStatus(''); });
                   }
                   setStatus('Done');
-                } else if (ev.type === 'error') {
-                  throw new Error(ev.message ?? 'voice stream error');
+                } else if (evType === 'error') {
+                  throw new Error((ev.message as string) ?? 'voice stream error');
                 }
               }
             } finally {

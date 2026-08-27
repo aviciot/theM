@@ -874,7 +874,7 @@ export const themApi = {
   //   { type: 'token', content: string }
   //   { type: 'done', text: string }      — full reply
   //   { type: 'error', message: string }
-  voiceStream: async function* (slug: string, audio: Blob, signal?: AbortSignal): AsyncGenerator<Record<string, string>> {
+  voiceStream: async function* (slug: string, audio: Blob, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
     const form = new FormData();
     form.append('audio', audio, 'recording.webm');
     const timeoutCtrl = new AbortController();

@@ -35,6 +35,7 @@ type EPVoiceConfig struct {
 	STTModel    string // e.g. "whisper-1"
 
 	// TTS
+	TTSEnabled  bool   // false = text-only mode, skip TTS entirely
 	TTSProvider string // "openai" | "elevenlabs"
 	TTSVoice    string // voice name (openai) or voice ID (elevenlabs)
 	TTSModel    string // model for openai TTS (e.g. "tts-1")
@@ -384,8 +385,13 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 				sseErr(p["message"])
 				return
 			}
-			// "done" — emit final event with full reply text
-			if b, err := json.Marshal(map[string]string{"type": "done", "text": fullReply.String()}); err == nil {
+			// "done" — emit final event with full reply and tts_enabled flag
+			donePayload := map[string]any{
+				"type":        "done",
+				"text":        fullReply.String(),
+				"tts_enabled": cfg.TTSEnabled,
+			}
+			if b, err := json.Marshal(donePayload); err == nil {
 				sseWrite("done", string(b))
 			}
 			return
