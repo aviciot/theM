@@ -456,6 +456,51 @@ These are the tools the LLM can call. Names are lowercase_snake_case following M
 }
 ```
 
+**Dry-run / synthetic data tools (no session required — operate on canvas JSON directly)**
+
+| Tool | Input | Output | Description |
+|---|---|---|---|
+| `test_pipeline` | `{definition_id?, definition_json?, skill_id, seed_input: string, fixtures: {step_id: {var_name: value}}, strict?: bool}` | `PipelineDryRunResult` with per-step trace | Runs the full pipeline with synthetic fixtures. Steps with fixtures short-circuit; steps without fixtures run normally (or error if `strict=true`) |
+| `test_step` | `{definition_id?, definition_json?, skill_id, step_id, input_vars: {var_name: value}}` | `StepDryRunResult` — outputs produced, duration | Runs a single step in isolation with explicit input vars |
+
+The `fixtures` map in `test_pipeline` has step IDs as keys and mock output vars as values. Example: if the `http` step would normally call `api.example.com`, pass `{ "step-http-1": { "http_response": {"temperature": 12.3} } }` to inject the mocked response. The interpreter uses the fixture instead of making the real call and continues downstream steps normally.
+
+`test_step` runs a single step with caller-supplied input vars — useful for validating a transform chain or LLM prompt template without running the whole pipeline.
+
+The LLM uses these to verify that:
+- Variable references (`{{.temperature}}`) resolve to expected values
+- Extractions (`json_path`) pick the right field
+- Branch conditions (`{{ gt .score 0.9 }}`) fire the expected branch
+- LLM prompts render correctly with test data
+- The response step produces the shape the caller needs
+
+**Example Copilot conversation using dry-run:**
+
+```
+User: "Can you test the weather pipeline to make sure everything connects correctly?"
+
+Assistant thinks:
+  → test_pipeline({
+      definition_id: "def-abc",
+      skill_id: "main",
+      seed_input: "Weather check",
+      fixtures: {
+        "step-http-1": { "http_response": { "current_weather": { "temperature": 12.3, "weathercode": 1 } } },
+        "step-llm-1":  { "output": "It's a mild 12.3°C with clear skies." }
+      }
+    })
+
+"I tested the pipeline with mock data:
+ • Input node received 'Weather check' ✓
+ • HTTP node skipped (using fixture: temperature=12.3) ✓
+ • Transform extracted temperature → 12.3 ✓
+ • LLM node skipped (using fixture: 'It's a mild 12.3°C with clear skies.') ✓
+ • Response returned the LLM output ✓
+
+ To test against the real weather API, remove the HTTP fixture and I'll make a live call.
+ To test with the real LLM, remove the LLM fixture."
+```
+
 **Every mutation tool response includes:**
 ```json
 {
@@ -961,6 +1006,21 @@ Without Phase 0, the LLM must hardcode node schemas, which will drift. Phase 0 i
 **Success criterion:** The example conversation in Section 1 works end-to-end with a real LLM, a real canvas, and real SSE-pushed updates.
 
 **Estimate: 1–2 weeks.**
+
+### Phase 1.5 — Pipeline dry-run (synthetic data testing)
+
+**Goal:** The Copilot can inject synthetic data into any step and validate that the pipeline produces the expected output — before the user clicks Publish.
+
+This phase can ship concurrently with Phase 2 because it reuses the interpreter directly and requires no canvas state mutations.
+
+1. Add `DryRunFixture` field to `StepSpec` and `DryRun` / `StrictDryRun` flags to `InvocationContext` (Foundation component — see `AI_PLATFORM_FOUNDATION.md` Section 12)
+2. `POST /api/v1/admin/agent-definitions/{id}/dry-run` endpoint — accepts canvas definition + fixtures + seed input
+3. Canvas MCP tools: `test_pipeline`, `test_step` (Section 7.3 below)
+4. Run trace rendering: frontend displays per-step fixture results on each node using existing `_debug` hooks
+
+**Success criterion:** The Copilot can say "I tested the pipeline with `lat=51.5` and `lon=-0.1` — the HTTP node returned `{ temperature: 12.3 }`, the transform extracted it correctly, and the LLM produced `'It's a cool 12.3°C in London today'`. Pipeline looks correct."
+
+**Estimate: 3–5 days** (after Phase 1 Foundation is in place).
 
 ### Phase 2 — Full mutation set and undo
 
