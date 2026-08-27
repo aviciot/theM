@@ -206,14 +206,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if admitErr != nil {
 		var ae *execution.AdmitError
 		if errors.As(admitErr, &ae) {
-			if ae.Kind == execution.AdmitErrNotImplemented {
-				http.Error(w, `{"error":"voice entry points are not yet implemented"}`, ae.HTTPStatus)
-			} else {
-				http.Error(w, `{"error":"`+ae.Error()+`"}`, ae.HTTPStatus)
-			}
+			http.Error(w, `{"error":"`+ae.Error()+`"}`, ae.HTTPStatus)
 		} else {
 			http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		}
+		return
+	}
+
+	// Voice EPs are served by POST /apps/{slug}/voice/chat — not WS.
+	if handle.EPConfig != nil && handle.EPConfig.EPType == "voice" {
+		h.lc.Release(handle)
+		http.Error(w, `{"error":"voice entry points use POST /apps/{slug}/voice/chat"}`, http.StatusBadRequest)
 		return
 	}
 

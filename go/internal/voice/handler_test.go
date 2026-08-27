@@ -52,7 +52,7 @@ func (f *fakeAuth) Validate(_ context.Context, _ string) (*auth.TokenInfo, error
 func buildHandler(cfg *voice.EPVoiceConfig, key string, authn voice.Authenticator) http.Handler {
 	loader := &fakeLoader{cfg: cfg}
 	keys := &fakeKeyResolver{key: key}
-	h := voice.NewHandler(loader, keys, authn, "00000000-0000-0000-0000-000000000001", nil)
+	h := voice.NewHandler(loader, keys, authn, nil, nil, "00000000-0000-0000-0000-000000000001", nil)
 	return h.Routes()
 }
 
@@ -75,7 +75,7 @@ func buildMultipart(t *testing.T, audioData []byte) (*bytes.Buffer, string) {
 
 // 1. EP not found → 404.
 func TestTranscribe_EPNotFound(t *testing.T) {
-	h := voice.NewHandler(&fakeLoader{err: io.EOF}, &fakeKeyResolver{}, nil, "tenant-1", nil)
+	h := voice.NewHandler(&fakeLoader{err: io.EOF}, &fakeKeyResolver{}, nil, nil, nil, "tenant-1", nil)
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -101,7 +101,7 @@ func TestTranscribe_TokenEPNoAuth(t *testing.T) {
 		STTProvider: "openai",
 		AppID:       "app-1",
 	}
-	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: "sk-test"}, nil, "tenant-1", nil)
+	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: "sk-test"}, nil, nil, nil, "tenant-1", nil)
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -127,7 +127,7 @@ func TestTranscribe_EPDisabled(t *testing.T) {
 		STTProvider: "openai",
 		AppID:       "app-1",
 	}
-	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: "sk-test"}, nil, "tenant-1", nil)
+	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: "sk-test"}, nil, nil, nil, "tenant-1", nil)
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -153,7 +153,7 @@ func TestTranscribe_NoSTTProvider(t *testing.T) {
 		AppID:      "app-1",
 		// STTProvider is empty
 	}
-	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: "sk-test"}, nil, "tenant-1", nil)
+	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: "sk-test"}, nil, nil, nil, "tenant-1", nil)
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -179,7 +179,7 @@ func TestTranscribe_NoAPIKey(t *testing.T) {
 		STTProvider: "openai",
 		AppID:       "app-1",
 	}
-	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: ""}, nil, "tenant-1", nil)
+	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: ""}, nil, nil, nil, "tenant-1", nil)
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -210,7 +210,7 @@ func TestTTS_MissingText(t *testing.T) {
 		TTSVoice:    "alloy",
 		AppID:       "app-1",
 	}
-	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: "sk-test"}, nil, "tenant-1", nil)
+	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: "sk-test"}, nil, nil, nil, "tenant-1", nil)
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 
@@ -236,7 +236,7 @@ func TestTTS_TokenEPNoAuth(t *testing.T) {
 		TTSProvider: "openai",
 		AppID:       "app-1",
 	}
-	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: "sk-test"}, nil, "tenant-1", nil)
+	h := voice.NewHandler(&fakeLoader{cfg: cfg}, &fakeKeyResolver{key: "sk-test"}, nil, nil, nil, "tenant-1", nil)
 	srv := httptest.NewServer(h.Routes())
 	defer srv.Close()
 

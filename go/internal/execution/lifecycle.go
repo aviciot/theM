@@ -153,14 +153,6 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		return nil, admitErr(AdmitErrDBUnavailable)
 	}
 
-	// ── 3. EP type routing guard ─────────────────────────────────────────────
-	// Voice EPs are served by the HTTP voice handler (POST /apps/{slug}/voice/*),
-	// not the WS/SSE/A2A execution lifecycle. Reject any voice EP reaching here
-	// with 404 so clients get a clear signal that they are using the wrong transport.
-	if resolvedCfg.EPType == "voice" {
-		return nil, admitErr(AdmitErrNotFound)
-	}
-
 	// ── 4. Access mode enforcement ────────────────────────────────────────────
 	// Token EP + no token presented → 401.
 	if resolvedCfg.AccessMode == epconfig.AccessModeToken && req.RawToken == "" {

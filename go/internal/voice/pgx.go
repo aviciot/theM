@@ -29,6 +29,7 @@ SELECT
     COALESCE(ep.access_policy->>'mode', 'token'),
     a.id::text,
     a.tenant_id::text,
+    COALESCE(ao.id::text, ''),
     COALESCE(ao.transcription_provider, ''),
     COALESCE(ao.transcription_model, ''),
     COALESCE(ao.tts_provider, ''),
@@ -49,10 +50,6 @@ LIMIT 1`
 // is not of type "voice".
 func (q *PgxLoader) LoadVoiceConfig(ctx context.Context, tenantID, epSlug string) (*EPVoiceConfig, error) {
 	var cfg EPVoiceConfig
-	// llmModel is a proxy for the tts model on openai (we store it as llm_model in some
-	// deployments, but voice has its own tts_model column in the future; for now map from
-	// ao.llm_model which holds "tts-1" when the orch kind is "voice").
-	// We reuse the column for now; a dedicated column can be added without breaking this query.
 	var ttsModelProxy string
 
 	err := q.pool.QueryRow(ctx, voiceConfigQuery, tenantID, epSlug).Scan(
@@ -61,6 +58,7 @@ func (q *PgxLoader) LoadVoiceConfig(ctx context.Context, tenantID, epSlug string
 		&cfg.AccessMode,
 		&cfg.AppID,
 		&cfg.TenantID,
+		&cfg.OrchestratorID,
 		&cfg.STTProvider,
 		&cfg.STTModel,
 		&cfg.TTSProvider,
@@ -73,8 +71,6 @@ func (q *PgxLoader) LoadVoiceConfig(ctx context.Context, tenantID, epSlug string
 		}
 		return nil, fmt.Errorf("voice: db query: %w", err)
 	}
-	// Use llm_model as TTS model proxy (openai TTS model, e.g. "tts-1").
-	// Falls back to "tts-1" default in service.go when empty.
 	cfg.TTSModel = ttsModelProxy
 	return &cfg, nil
 }

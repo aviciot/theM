@@ -315,7 +315,7 @@ export const RUNTIME_MODELS: Record<string, string[]> = {
 export const STT_PROVIDERS = ['openai', 'groq'] as const;
 export const STT_MODELS: Record<string, string[]> = {
   openai: ['whisper-1'],
-  groq:   ['whisper-large-v3', 'whisper-large-v3-turbo'],
+  groq:   ['whisper-large-v3-turbo', 'whisper-large-v3', 'distil-whisper-large-v3-en'],
 };
 
 export const TTS_PROVIDERS = ['openai', 'elevenlabs'] as const;

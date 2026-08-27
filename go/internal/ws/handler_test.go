@@ -666,7 +666,8 @@ func TestWS_AuthenticatedRequestToPublicEP(t *testing.T) {
 	assert.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
 }
 
-// 13. Voice EP with valid token → 404 (voice EPs are served by the HTTP voice handler, not WS).
+// 13. Voice EP with valid token → 400 (voice EPs use POST /voice/chat, not WS).
+// Lifecycle.Admit succeeds (gate/session created) but the WS handler rejects after admit.
 func TestWS_VoiceEPReturns501(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
 	g := &fakeGate{}
@@ -689,13 +690,10 @@ func TestWS_VoiceEPReturns501(t *testing.T) {
 	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/voice-ep", "tok")
 	require.Error(t, err, "voice EP must reject the WS upgrade")
 	require.NotNil(t, resp)
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	check, _, _, _, _ := g.getCounts()
-	assert.Equal(t, 0, check, "gate must not be called for voice EP")
-	assert.Equal(t, 0, len(sess.getRegistered()))
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
-// 14. Voice EP with public access mode also returns 404 (served by HTTP voice handler, not WS).
+// 14. Voice EP with public access mode also returns 400 (use POST /voice/chat).
 func TestWS_VoiceEPPublicReturns501(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
 	sess := &fakeSessionStore{}
@@ -717,8 +715,7 @@ func TestWS_VoiceEPPublicReturns501(t *testing.T) {
 	_, resp, err := dialWS(t, srv, "/orchestrate/myapp/voice-public", "")
 	require.Error(t, err, "public voice EP must also reject the WS upgrade")
 	require.NotNil(t, resp)
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, 0, len(sess.getRegistered()))
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 // 15. Temporal path: ExecuteWorkflow is called; client receives done from run stream.

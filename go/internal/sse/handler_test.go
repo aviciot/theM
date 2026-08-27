@@ -651,6 +651,8 @@ func TestSSEAuthenticatedRequestToPublicEP(t *testing.T) {
 }
 
 // 12. Voice EP with valid token returns 501 — must never enter the text orchestration path.
+// Voice EP on SSE path → 400 (voice EPs use POST /voice/chat, not SSE).
+// Lifecycle.Admit succeeds but SSE handler rejects after admit.
 func TestSSEVoiceEPReturns501(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
 	g := &fakeGate{}
@@ -681,14 +683,10 @@ func TestSSEVoiceEPReturns501(t *testing.T) {
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "voice EP must return 404 on SSE (served by HTTP voice handler)")
-	check, _, _, _, _ := g.getCounts()
-	assert.Equal(t, 0, check, "gate must not be called for voice EP")
-	assert.Equal(t, int64(0), sess.getLastSession().UserID,
-		"session must not be registered for voice EP")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "voice EP must return 400 on SSE — use POST /voice/chat")
 }
 
-// 13. Voice EP with public access mode also returns 501.
+// Public voice EP on SSE path → 400.
 func TestSSEVoiceEPPublicReturns501(t *testing.T) {
 	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
 	sess := &fakeSessionStore{}
@@ -714,9 +712,7 @@ func TestSSEVoiceEPPublicReturns501(t *testing.T) {
 	resp, err := http.Get(srv.URL + "/orchestrate/app/voice-public?message=hi")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "public voice EP must return 404 on SSE (served by HTTP voice handler)")
-	assert.Equal(t, int64(0), sess.getLastSession().UserID,
-		"session must not be registered for public voice EP")
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "public voice EP must return 400 on SSE — use POST /voice/chat")
 }
 
 // 14. Temporal path: ExecuteWorkflow is called; client receives events from run stream.
