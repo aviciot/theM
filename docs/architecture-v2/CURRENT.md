@@ -235,6 +235,7 @@ App global params: e2e validated 2026-08-25 — GET/PUT/DELETE live ✅
 | Data-flow contracts | `VarRef`, `DeriveInputs/DeriveOutputs` on all 11 nodes, Stage 5 path-sensitive `validateDataFlow` | ✅ |
 | Frontend spec consumer | `AgentValidationReport.StepContracts`; RightPanel READS/WRITES from compiled contract post-validate | ✅ |
 | Explicit bindings Stage A | `PortDef`, `VarRef.SourceStep/SourcePort`, `Binding`/`canvasStep.Inputs`, `resolveBindings`, `validateBindings`, `BROKEN_BINDING`; backward-compat | ✅ |
+| Explicit bindings Stage B | `api.ts` Binding/VarRef/AgentStepDoc.inputs; `nodeRegistry.ts` PortDef/input_ports/output_ports; `types.ts` StepData.inputs; `page.tsx` save/load round-trip | ✅ |
 
 ### Key security constraints (always in force)
 - Credentials decrypted per-request, held only in `InvocationContext.Credentials`, never logged/persisted
