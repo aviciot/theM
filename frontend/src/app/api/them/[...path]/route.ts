@@ -65,6 +65,13 @@ async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
     if (xReply) audioHeaders['X-Reply'] = xReply;
     return new NextResponse(upstream.body, { status: upstream.status, headers: audioHeaders });
   }
+  // Stream SSE directly — do NOT buffer into JSON
+  if (upstreamType.includes('text/event-stream')) {
+    return new NextResponse(upstream.body, {
+      status: upstream.status,
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' },
+    });
+  }
   const data = await upstream.json().catch(() => ({}));
   return NextResponse.json(data, { status: upstream.status });
 }

@@ -830,16 +830,20 @@ export const themApi = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
-  voiceChat: async (slug: string, audio: Blob): Promise<{ transcript: string; reply: string; audioBlob: Blob }> => {
+  voiceChat: async (slug: string, audio: Blob, signal?: AbortSignal): Promise<{ transcript: string; reply: string; audioBlob: Blob }> => {
     const form = new FormData();
     form.append('audio', audio, 'recording.webm');
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30000);
+    const timeoutCtrl = new AbortController();
+    const timer = setTimeout(() => timeoutCtrl.abort(), 30000);
+    // Combine the caller's abort signal with the internal 30s timeout signal
+    const combined = signal
+      ? AbortSignal.any([signal, timeoutCtrl.signal])
+      : timeoutCtrl.signal;
     try {
       const res = await fetch(`/api/them/apps/${slug}/voice/chat`, {
         method: 'POST',
         body: form,
-        signal: controller.signal,
+        signal: combined,
       });
       if (!res.ok) {
         const errText = await res.text().catch(() => `HTTP ${res.status}`);
@@ -849,6 +853,58 @@ export const themApi = {
       const reply = res.headers.get('X-Reply') ?? '';
       const audioBlob = await res.blob();
       return { transcript, reply, audioBlob };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+  // voiceTTS POSTs text to the voice EP's TTS endpoint and returns the audio Blob.
+  voiceTTS: async (slug: string, text: string, signal?: AbortSignal): Promise<Blob> => {
+    const combined = signal ?? undefined;
+    const res = await fetch(`/api/them/apps/${slug}/voice/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      signal: combined,
+    });
+    if (!res.ok) throw new Error(`TTS failed: HTTP ${res.status}`);
+    return res.blob();
+  },
+  // voiceStream POSTs audio and returns an async iterator of parsed SSE events:
+  //   { type: 'transcript', text: string }
+  //   { type: 'token', content: string }
+  //   { type: 'done', text: string }      — full reply
+  //   { type: 'error', message: string }
+  voiceStream: async function* (slug: string, audio: Blob, signal?: AbortSignal): AsyncGenerator<Record<string, string>> {
+    const form = new FormData();
+    form.append('audio', audio, 'recording.webm');
+    const timeoutCtrl = new AbortController();
+    const timer = setTimeout(() => timeoutCtrl.abort(), 90000);
+    const combined = signal ? AbortSignal.any([signal, timeoutCtrl.signal]) : timeoutCtrl.signal;
+    try {
+      const res = await fetch(`/api/them/apps/${slug}/voice/stream`, {
+        method: 'POST',
+        body: form,
+        signal: combined,
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => `HTTP ${res.status}`);
+        throw new Error(errText);
+      }
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop() ?? '';
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith('data:')) continue;
+          try { yield JSON.parse(line.slice(5).trim()); } catch { /* skip malformed */ }
+        }
+      }
     } finally {
       clearTimeout(timer);
     }

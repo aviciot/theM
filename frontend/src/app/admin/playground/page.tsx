@@ -1198,6 +1198,8 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   const setRecState = (s: RecordingState) => { recordingStateRef.current = s; setRecordingState(s); };
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceFetchAbortRef = useRef<AbortController | null>(null);
+  const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
   const [debugTab, setDebugTab] = useState<DebugTab>('trace');
   const [contextId, setContextId] = useState<string | null>(null);
   const [restoredSession, setRestoredSession] = useState<ContextSession | null>(null);
@@ -1634,28 +1636,84 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
         try {
           if (isVoiceEP && target.kind === 'entrypoint') {
             setStatus('Sending…');
-            const { transcript, reply, audioBlob } = await themApi.voiceChat(target.slug, blob);
-            if (transcript) setMessages(prev => [...prev, { role: 'user', text: transcript }]);
-            if (reply) setMessages(prev => [...prev, { role: 'assistant', text: reply }]);
-            if (audioBlob.size > 0) {
-              setSpeaking(true);
-              const url = URL.createObjectURL(audioBlob);
-              const audio = new Audio(url);
-              audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
-              audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
-              audio.play().catch(() => setSpeaking(false));
+            const fetchAbort = new AbortController();
+            voiceFetchAbortRef.current = fetchAbort;
+            try {
+              let assistantAdded = false;
+              let fullReply = '';
+              for await (const ev of themApi.voiceStream(target.slug, blob, fetchAbort.signal)) {
+                if (ev.type === 'transcript') {
+                  // Show user text immediately — don't wait for LLM
+                  if (ev.text) setMessages(prev => [...prev, { role: 'user', text: ev.text }]);
+                  setStatus('Thinking…');
+                } else if (ev.type === 'token') {
+                  fullReply += ev.content ?? '';
+                  if (!assistantAdded) {
+                    setMessages(prev => [...prev, { role: 'assistant', text: fullReply, pending: true }]);
+                    assistantAdded = true;
+                  } else {
+                    setMessages(prev => {
+                      const copy = [...prev];
+                      const last = copy[copy.length - 1];
+                      if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, text: fullReply };
+                      return copy;
+                    });
+                  }
+                } else if (ev.type === 'done') {
+                  // Mark assistant bubble complete
+                  setMessages(prev => {
+                    const copy = [...prev];
+                    const last = copy[copy.length - 1];
+                    if (last?.role === 'assistant' && last.pending) copy[copy.length - 1] = { ...last, pending: false };
+                    return copy;
+                  });
+                  // Kick off TTS with the full reply — don't await it (audio plays async)
+                  const replyText = ev.text || fullReply;
+                  if (replyText) {
+                    setStatus('Speaking…');
+                    themApi.voiceTTS(target.slug, replyText, fetchAbort.signal)
+                      .then(audioBlob => {
+                        if (!audioBlob || audioBlob.size === 0) return;
+                        setSpeaking(true);
+                        const url = URL.createObjectURL(audioBlob);
+                        const audio = new Audio(url);
+                        voiceAudioRef.current = audio;
+                        const cleanup = () => {
+                          if (voiceAudioRef.current === audio) voiceAudioRef.current = null;
+                          setSpeaking(false);
+                          URL.revokeObjectURL(url);
+                          setStatus('');
+                        };
+                        audio.onended = cleanup;
+                        audio.onerror = cleanup;
+                        audio.play().catch(cleanup);
+                      })
+                      .catch(() => { setStatus(''); });
+                  }
+                  setStatus('Done');
+                } else if (ev.type === 'error') {
+                  throw new Error(ev.message ?? 'voice stream error');
+                }
+              }
+            } finally {
+              if (voiceFetchAbortRef.current === fetchAbort) voiceFetchAbortRef.current = null;
             }
-            setStatus('Done');
           } else {
             const result = await themApi.transcribe(orchName, blob);
             if (result.text) await sendText(result.text, contextId);
           }
         } catch (e) {
-          setStatus(`Voice error: ${(e as Error).message}`);
-          setTimeout(() => setStatus(''), 4000);
-          setBusy(false); busyRef.current = false;
+          // AbortError = user interrupted intentionally — not an error
+          if ((e as Error).name !== 'AbortError') {
+            setStatus(`Voice error: ${(e as Error).message}`);
+            setTimeout(() => setStatus(''), 4000);
+            setBusy(false); busyRef.current = false;
+          }
         }
-        finally { setRecState('idle'); }
+        finally {
+          // Only reset to idle if interruptVoice hasn't already done so
+          if (recordingStateRef.current === 'transcribing') setRecState('idle');
+        }
       };
       recorder.start(250); // collect chunks every 250ms
       mediaRecorderRef.current = recorder;
@@ -1690,14 +1748,31 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
     if (rec.state === 'inactive') setRecState('idle');
   };
 
+  const interruptVoice = () => {
+    // Stop any playing audio immediately
+    if (voiceAudioRef.current) {
+      voiceAudioRef.current.pause();
+      voiceAudioRef.current = null;
+    }
+    // Cancel any in-flight voice/chat fetch
+    if (voiceFetchAbortRef.current) {
+      voiceFetchAbortRef.current.abort();
+      voiceFetchAbortRef.current = null;
+    }
+    setSpeaking(false);
+    setRecState('idle');
+  };
+
   const toggleRecording = () => {
-    if (recordingStateRef.current === 'recording') stopRecording();
-    else startRecording();
+    const state = recordingStateRef.current;
+    if (state === 'recording') { stopRecording(); return; }
+    if (state === 'transcribing') { interruptVoice(); return; }
+    startRecording();
   };
 
   const micBtnStyle = (): React.CSSProperties => {
     if (recordingState === 'recording') return { padding: '10px 14px', borderRadius: 12, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center', outline: '2px solid #f87171' };
-    if (recordingState === 'transcribing') return { padding: '10px 14px', borderRadius: 12, border: 'none', background: 'var(--tm-surface)', color: 'var(--tm-text-muted)', cursor: 'not-allowed', alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center' };
+    if (recordingState === 'transcribing') return { padding: '10px 14px', borderRadius: 12, border: 'none', background: '#7c3aed', color: '#fff', cursor: 'pointer', alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center', outline: '2px solid #a78bfa' };
     return { padding: '10px 14px', borderRadius: 12, border: 'none', background: 'var(--tm-surface-2)', color: 'var(--tm-text-muted)', cursor: 'pointer', alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center' };
   };
 
@@ -1795,15 +1870,14 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
               <button
                 style={micBtnStyle()}
                 onClick={(e) => { e.stopPropagation(); toggleRecording(); }}
-                disabled={recordingState === 'transcribing'}
-                title={recordingState === 'recording' ? 'Click to stop & send' : 'Click to start recording'}
+                title={recordingState === 'recording' ? 'Click to stop & send' : recordingState === 'transcribing' ? 'Click to interrupt' : 'Click to start recording'}
               >
                 {recordingState === 'transcribing' ? <Spinner /> : <MicIcon />}
               </button>
             )}
             {isVoiceEP ? (
               <div style={{ flex: 1, padding: '9px 12px', borderRadius: 10, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', fontStyle: 'italic' }}>
-                {recordingState === 'recording' ? '🔴 Recording… click mic to stop' : recordingState === 'transcribing' ? '⏳ Processing…' : 'Click the mic to start speaking'}
+                {recordingState === 'recording' ? '🔴 Recording… click mic to stop' : recordingState === 'transcribing' ? '⏳ Processing… click mic to interrupt' : 'Click the mic to start speaking'}
               </div>
             ) : (
               <>

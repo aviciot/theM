@@ -106,6 +106,7 @@ func NewHandler(
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Post("/{slug}/voice/chat", h.Chat)
+	r.Post("/{slug}/voice/stream", h.Stream)
 	r.Post("/{slug}/voice/transcribe", h.Transcribe)
 	r.Post("/{slug}/voice/tts", h.TTS)
 	return r
@@ -230,6 +231,184 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Reply", replyText)
 	if _, err := StreamTTS(ctx, w, cfg.TTSProvider, cfg.TTSVoice, cfg.TTSModel, ttsKey, replyText); err != nil {
 		h.logger.Warn("voice: tts stream failed", "ep_slug", slug, "error", err)
+	}
+}
+
+// Stream handles POST /apps/{slug}/voice/stream.
+// Streaming pipeline: audio → STT → SSE stream (transcript + LLM tokens) → done.
+// The caller is expected to separately call /voice/tts with the full reply text
+// to play back audio, enabling the user to read the reply as it streams in.
+//
+// SSE event format:
+//
+//	data: {"type":"transcript","text":"..."}\n\n
+//	data: {"type":"token","content":"..."}\n\n   (one per LLM token)
+//	data: {"type":"done","text":"..."}\n\n        (full reply text)
+//	data: {"type":"error","message":"..."}\n\n
+func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
+	const streamTimeout = 90 * time.Second
+	ctx, cancel := context.WithTimeout(r.Context(), streamTimeout)
+	defer cancel()
+
+	slug := chi.URLParam(r, "slug")
+
+	// ── 1. Parse audio ────────────────────────────────────────────────────────
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		http.Error(w, `{"error":"invalid multipart form"}`, http.StatusBadRequest)
+		return
+	}
+	f, header, err := r.FormFile("audio")
+	if err != nil {
+		http.Error(w, `{"error":"audio field required"}`, http.StatusBadRequest)
+		return
+	}
+	defer f.Close()
+	audioBytes, err := io.ReadAll(f)
+	if err != nil {
+		http.Error(w, `{"error":"read error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// ── 2. Load voice config + auth ───────────────────────────────────────────
+	cfg, sttKey, err := h.resolveAndAuth(r, slug, "stt")
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	if cfg.OrchestratorID == "" {
+		http.Error(w, `{"error":"voice entry point has no orchestrator connected"}`, http.StatusBadRequest)
+		return
+	}
+
+	// ── 3. STT ────────────────────────────────────────────────────────────────
+	ct := header.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "audio/webm"
+	}
+	transcript, err := Transcribe(ctx, cfg.STTProvider, cfg.STTModel, sttKey, audioBytes, header.Filename, ct)
+	if err != nil {
+		h.logger.Warn("voice/stream: transcribe failed", "ep_slug", slug, "error", err)
+		http.Error(w, `{"error":"transcription failed"}`, http.StatusBadGateway)
+		return
+	}
+	if transcript == "" {
+		http.Error(w, `{"error":"empty transcript — no speech detected"}`, http.StatusBadRequest)
+		return
+	}
+
+	// ── 4. Load orchestrator config + build provider ──────────────────────────
+	runCfg, cfgErr := h.runLoader.LoadRunConfig(ctx, cfg.OrchestratorID, cfg.AppID, "")
+	if cfgErr != nil {
+		h.logger.Warn("voice/stream: load run config failed", "ep_slug", slug, "error", cfgErr)
+		http.Error(w, `{"error":"orchestrator configuration unavailable"}`, http.StatusInternalServerError)
+		return
+	}
+	provider, provErr := h.buildProvider(runCfg)
+	if provErr != nil {
+		http.Error(w, `{"error":"LLM provider not configured — set an API key in Runtime settings"}`, http.StatusBadRequest)
+		return
+	}
+
+	// ── 5. Open SSE stream (all pre-stream errors must happen before this) ────
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // disable nginx/traefik buffering
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, `{"error":"streaming not supported"}`, http.StatusInternalServerError)
+		return
+	}
+
+	sseWrite := func(eventType, jsonPayload string) {
+		fmt.Fprintf(w, "data: %s\n\n", jsonPayload)
+		flusher.Flush()
+	}
+	sseErr := func(msg string) {
+		b, _ := json.Marshal(map[string]string{"type": "error", "message": msg})
+		sseWrite("error", string(b))
+	}
+
+	// ── 6. Emit transcript immediately ────────────────────────────────────────
+	if b, err := json.Marshal(map[string]string{"type": "transcript", "text": transcript}); err == nil {
+		sseWrite("transcript", string(b))
+	}
+
+	// ── 7. Subscribe to bus BEFORE starting orchestrator ─────────────────────
+	runID := uuid.New().String()
+	contextID := uuid.New().String()
+	evCh, termCh, unsub := h.bus.Subscribe(ctx, contextID, 256)
+	defer unsub()
+
+	// ── 8. Record run (non-fatal) ─────────────────────────────────────────────
+	if h.recorder != nil {
+		run := domain.Run{
+			ID:             runID,
+			TenantID:       h.tenantID,
+			EntryPointSlug: slug,
+			Goal:           transcript,
+			Status:         domain.RunRunning,
+			StartedAt:      time.Now().UTC(),
+		}
+		if err := h.recorder.CreateRun(ctx, run); err != nil {
+			h.logger.Warn("voice/stream: create run failed (non-fatal)", "ep_slug", slug, "error", err)
+		}
+	}
+
+	// ── 9. Run orchestrator in background goroutine ───────────────────────────
+	userMsg := domain.Message{
+		Role:  domain.RoleUser,
+		Parts: []domain.ContentPart{{Type: "text", Text: transcript}},
+	}
+	go func() {
+		orch := orchestrator.New(runCfg.OrchestratorConfig, provider, nil, h.recorder, h.bus, h.logger)
+		_, _ = orch.Run(ctx, runID, contextID, userMsg, nil,
+			orchestrator.RunContext{TenantID: h.tenantID, ApplicationID: cfg.AppID},
+		)
+	}()
+
+	// ── 10. Forward bus events to SSE stream ──────────────────────────────────
+	var fullReply strings.Builder
+	for {
+		select {
+		case <-ctx.Done():
+			sseErr("request timeout")
+			return
+		case ev, ok := <-termCh:
+			if !ok {
+				return
+			}
+			if ev.Type == "error" {
+				var p map[string]string
+				_ = json.Unmarshal(ev.Payload, &p)
+				sseErr(p["message"])
+				return
+			}
+			// "done" — emit final event with full reply text
+			if b, err := json.Marshal(map[string]string{"type": "done", "text": fullReply.String()}); err == nil {
+				sseWrite("done", string(b))
+			}
+			return
+		case ev, ok := <-evCh:
+			if !ok {
+				continue
+			}
+			if ev.Type != "token" {
+				continue
+			}
+			var p map[string]string
+			if err := json.Unmarshal(ev.Payload, &p); err != nil {
+				continue
+			}
+			tok := p["content"]
+			if tok == "" {
+				continue
+			}
+			fullReply.WriteString(tok)
+			if b, err := json.Marshal(map[string]string{"type": "token", "content": tok}); err == nil {
+				sseWrite("token", string(b))
+			}
+		}
 	}
 }
 
