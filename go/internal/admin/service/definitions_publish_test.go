@@ -183,6 +183,7 @@ func (f *publishFakeDal) GetProviderKeys(_ context.Context, _, _ string) ([]byte
 func (f *publishFakeDal) SetProviderKey(_ context.Context, _, _, _ string, _ []byte) error      { return nil }
 func (f *publishFakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error              { return nil }
 func (f *publishFakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error          { return nil }
+func (f *publishFakeDal) SetOrchestratorVoice(_ context.Context, _, _ string, _ dal.OrchestratorVoiceInput) error { return nil }
 func (f *publishFakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _ int, _, _ *string) error { return nil }
 func (f *publishFakeDal) SetEntryPointLLM(_ context.Context, _, _ string, _, _ *string) error      { return nil }
 func (f *publishFakeDal) SetOrchestratorMCPServers(_ context.Context, _, _ string, _ []dal.MCPServerAttachment) error { return nil }

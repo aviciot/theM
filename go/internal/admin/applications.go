@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"time"
 
@@ -15,6 +16,9 @@ import (
 	"github.com/aviciot/them/internal/admin/service"
 	"github.com/aviciot/them/internal/tenantctx"
 )
+
+// newMultipartWriter wraps multipart.NewWriter so callers can use it by value.
+func newMultipartWriter(buf *bytes.Buffer) *multipart.Writer { return multipart.NewWriter(buf) }
 
 // ApplicationsHandler handles /api/v1/admin/applications routes.
 type ApplicationsHandler struct {
@@ -26,6 +30,10 @@ type ApplicationsHandler struct {
 func NewApplicationsHandler(db DBQuerier, cache CacheInvalidator, fernetKey []byte) *ApplicationsHandler {
 	return &ApplicationsHandler{svc: service.NewAppService(dal.NewDB(db), cache, fernetKey)}
 }
+
+// Svc returns the underlying AppService so callers (e.g. the voice handler)
+// can reuse it without constructing a second service instance.
+func (h *ApplicationsHandler) Svc() *service.AppService { return h.svc }
 
 // RuntimeConfigInput mirrors Python's AppRuntimeConfig schema.
 type RuntimeConfigInput = service.AppRuntimeConfig
@@ -56,6 +64,9 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Put("/app-params/{name}", h.SetAppParam)
 		app.Delete("/app-params/{name}", h.DeleteAppParam)
 		app.Patch("/orchestrators/{orch_id}/llm", h.PatchOrchestratorLLM)
+		app.Patch("/orchestrators/{orch_id}/voice", h.PatchOrchestratorVoice)
+		app.Post("/orchestrators/{orch_id}/test-voice", h.TestOrchestratorVoice)
+		app.Post("/orchestrators/{orch_id}/test-tts", h.TestOrchestratorTTS)
 		app.Patch("/orchestrators/{orch_id}/mcp-servers", h.PatchOrchestratorMCPServers)
 		app.Get("/entry-points", h.ListEntryPoints)
 		app.Patch("/entry-points/{ep_id}/summarizer", h.PatchEntryPointSummarizer)
@@ -673,6 +684,247 @@ func doProbe(req *http.Request) (bool, string) {
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	return false, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body))
+}
+
+// PatchOrchestratorVoice handles PATCH /api/v1/admin/applications/{id}/orchestrators/{orch_id}/voice.
+// Body: {"stt_provider":"openai","stt_model":"whisper-1","tts_provider":"openai","tts_voice":"alloy","voice_enabled":true,"tts_enabled":true}
+// Sets voice/STT/TTS configuration on the app_orchestrators row.
+func (h *ApplicationsHandler) PatchOrchestratorVoice(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orchID := chi.URLParam(r, "orch_id")
+	if id == "" || orchID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or orchestrator id")
+		return
+	}
+	var body struct {
+		STTProvider  string `json:"stt_provider"`
+		STTModel     string `json:"stt_model"`
+		TTSProvider  string `json:"tts_provider"`
+		TTSVoice     string `json:"tts_voice"`
+		VoiceEnabled bool   `json:"voice_enabled"`
+		TTSEnabled   bool   `json:"tts_enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	if err := h.svc.SetOrchestratorVoice(r.Context(), tenantID, id, orchID, service.VoiceConfig{
+		STTProvider:  body.STTProvider,
+		STTModel:     body.STTModel,
+		TTSProvider:  body.TTSProvider,
+		TTSVoice:     body.TTSVoice,
+		VoiceEnabled: body.VoiceEnabled,
+		TTSEnabled:   body.TTSEnabled,
+	}); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":            orchID,
+		"app_id":        id,
+		"stt_provider":  body.STTProvider,
+		"stt_model":     body.STTModel,
+		"tts_provider":  body.TTSProvider,
+		"tts_voice":     body.TTSVoice,
+		"voice_enabled": body.VoiceEnabled,
+		"tts_enabled":   body.TTSEnabled,
+	})
+}
+
+// TestOrchestratorVoice handles POST /api/v1/admin/applications/{id}/orchestrators/{orch_id}/test-voice.
+// Body: {"provider":"openai","model":"whisper-1"}
+// Sends a tiny silent WAV to the STT API to verify the key works.
+func (h *ApplicationsHandler) TestOrchestratorVoice(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orchID := chi.URLParam(r, "orch_id")
+	if id == "" || orchID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or orchestrator id")
+		return
+	}
+	var body struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	apiKey, err := h.svc.GetPlaintextProviderKey(r.Context(), tenantID, id, body.Provider)
+	if err != nil || apiKey == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "no API key stored for provider " + body.Provider})
+		return
+	}
+	ok, errStr := probeSTT(r.Context(), body.Provider, body.Model, apiKey)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "error": errStr})
+}
+
+// TestOrchestratorTTS handles POST /api/v1/admin/applications/{id}/orchestrators/{orch_id}/test-tts.
+// Body: {"provider":"openai","voice":"alloy"}
+// Sends a minimal TTS request to verify the key works.
+func (h *ApplicationsHandler) TestOrchestratorTTS(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	orchID := chi.URLParam(r, "orch_id")
+	if id == "" || orchID == "" {
+		writeError(w, http.StatusBadRequest, "invalid application or orchestrator id")
+		return
+	}
+	var body struct {
+		Provider string `json:"provider"`
+		Voice    string `json:"voice"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	apiKey, err := h.svc.GetPlaintextProviderKey(r.Context(), tenantID, id, body.Provider)
+	if err != nil || apiKey == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "no API key stored for provider " + body.Provider})
+		return
+	}
+	ok, errStr := probeTTS(r.Context(), body.Provider, body.Voice, apiKey)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "error": errStr})
+}
+
+// probeSTT sends a minimal audio request to validate the STT API key.
+// Uses a 1-second silent WAV (44 bytes) so the upload is near-instant.
+func probeSTT(ctx context.Context, provider, model, apiKey string) (bool, string) {
+	// Minimal 44-byte WAV: RIFF header + fmt chunk + data chunk, 0 audio bytes.
+	// Whisper accepts this without error as long as the key is valid.
+	silentWAV := []byte{
+		0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, // "RIFF" + file size
+		0x57, 0x41, 0x56, 0x45, // "WAVE"
+		0x66, 0x6d, 0x74, 0x20, // "fmt "
+		0x10, 0x00, 0x00, 0x00, // chunk size = 16
+		0x01, 0x00, // PCM
+		0x01, 0x00, // mono
+		0x44, 0xAC, 0x00, 0x00, // 44100 Hz
+		0x88, 0x58, 0x01, 0x00, // byte rate
+		0x02, 0x00, // block align
+		0x10, 0x00, // bits per sample = 16
+		0x64, 0x61, 0x74, 0x61, // "data"
+		0x00, 0x00, 0x00, 0x00, // 0 bytes of audio
+	}
+	ctx2, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	_, err := probeSTTCall(ctx2, provider, model, apiKey, silentWAV)
+	if err != nil {
+		return false, err.Error()
+	}
+	return true, ""
+}
+
+func probeSTTCall(ctx context.Context, provider, model, apiKey string, audio []byte) (string, error) {
+	var (
+		url   string
+		mname string
+	)
+	switch provider {
+	case "openai":
+		url = "https://api.openai.com/v1/audio/transcriptions"
+		mname = model
+		if mname == "" {
+			mname = "whisper-1"
+		}
+	case "groq":
+		url = "https://api.groq.com/openai/v1/audio/transcriptions"
+		mname = model
+		if mname == "" {
+			mname = "whisper-large-v3"
+		}
+	default:
+		return "", fmt.Errorf("unsupported STT provider: %s", provider)
+	}
+
+	var buf bytes.Buffer
+	mw := newMultipartForm(&buf, audio, "probe.wav", mname)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", mw)
+	c := &http.Client{Timeout: 20 * time.Second}
+	resp, err := c.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return "", nil
+	}
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+	return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+}
+
+// newMultipartForm builds a multipart form for the audio file and returns the Content-Type.
+func newMultipartForm(buf *bytes.Buffer, audio []byte, filename, model string) string {
+	mw := newMultipartWriter(buf)
+	if fw, err := mw.CreateFormFile("file", filename); err == nil {
+		_, _ = fw.Write(audio)
+	}
+	_ = mw.WriteField("model", model)
+	mw.Close()
+	return mw.FormDataContentType()
+}
+
+// probeTTS sends a minimal TTS request to validate the key.
+func probeTTS(ctx context.Context, provider, voice, apiKey string) (bool, string) {
+	ctx2, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	var w bytes.Buffer
+	_, err := probeVoiceTTS(ctx2, &w, provider, voice, apiKey)
+	if err != nil {
+		return false, err.Error()
+	}
+	return true, ""
+}
+
+func probeVoiceTTS(ctx context.Context, w *bytes.Buffer, provider, voice, apiKey string) (string, error) {
+	switch provider {
+	case "openai":
+		payload, _ := json.Marshal(map[string]string{
+			"model": "tts-1", "input": "test", "voice": voice, "response_format": "mp3",
+		})
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/audio/speech", bytes.NewReader(payload))
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+			return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+		}
+		_, _ = io.Copy(w, resp.Body)
+		return "audio/mpeg", nil
+	case "elevenlabs":
+		if voice == "" {
+			return "", fmt.Errorf("voice ID required for ElevenLabs")
+		}
+		payload, _ := json.Marshal(map[string]any{"text": "test", "model_id": "eleven_monolingual_v1"})
+		url := "https://api.elevenlabs.io/v1/text-to-speech/" + voice + "/stream"
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		req.Header.Set("xi-api-key", apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+			return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+		}
+		_, _ = io.Copy(w, resp.Body)
+		return "audio/mpeg", nil
+	default:
+		return "", fmt.Errorf("unsupported TTS provider: %s", provider)
+	}
 }
 
 // BulkDelete handles POST /api/v1/admin/applications/bulk-delete.

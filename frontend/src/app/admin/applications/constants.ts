@@ -302,7 +302,7 @@ export const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream
 export const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC', a2a: 'A2A' };
 
 // ── RuntimeView provider list ─────────────────────────────────────────────────
-export const PROVIDER_LIST = ['anthropic', 'openai', 'groq', 'gemini'] as const;
+export const PROVIDER_LIST = ['anthropic', 'openai', 'groq', 'gemini', 'elevenlabs'] as const;
 
 export const RUNTIME_MODELS: Record<string, string[]> = {
   anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
@@ -310,6 +310,17 @@ export const RUNTIME_MODELS: Record<string, string[]> = {
   groq:      ['llama3-70b-8192', 'llama3-8b-8192', 'mixtral-8x7b-32768'],
   gemini:    ['gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'],
 };
+
+// Voice (STT / TTS) constants
+export const STT_PROVIDERS = ['openai', 'groq'] as const;
+export const STT_MODELS: Record<string, string[]> = {
+  openai: ['whisper-1'],
+  groq:   ['whisper-large-v3', 'whisper-large-v3-turbo'],
+};
+
+export const TTS_PROVIDERS = ['openai', 'elevenlabs'] as const;
+export const TTS_VOICES_OPENAI = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'] as const;
+export const TTS_MODELS_OPENAI = ['tts-1', 'tts-1-hd'] as const;
 
 // ── Sessions styles ───────────────────────────────────────────────────────────
 export const SESSIONS_STYLES = `

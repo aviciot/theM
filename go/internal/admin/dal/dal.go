@@ -190,14 +190,20 @@ type MCPServerAttachment struct {
 
 // AppOrchestratorSummary is the lightweight orchestrator summary returned with
 // the application list / get responses so the card UI can display name + model
-// without a separate API call.
+// and voice config without a separate API call.
 type AppOrchestratorSummary struct {
-	ID          string                `json:"id"`
-	Name        string                `json:"name"`
-	DisplayName string                `json:"display_name"`
-	LLMProvider *string               `json:"llm_provider,omitempty"`
-	LLMModel    *string               `json:"llm_model,omitempty"`
-	MCPServers  []MCPServerAttachment `json:"mcp_servers"`
+	ID                     string                `json:"id"`
+	Name                   string                `json:"name"`
+	DisplayName            string                `json:"display_name"`
+	LLMProvider            *string               `json:"llm_provider,omitempty"`
+	LLMModel               *string               `json:"llm_model,omitempty"`
+	MCPServers             []MCPServerAttachment `json:"mcp_servers"`
+	TranscriptionProvider  *string               `json:"transcription_provider,omitempty"`
+	TranscriptionModel     *string               `json:"transcription_model,omitempty"`
+	TTSProvider            *string               `json:"tts_provider,omitempty"`
+	TTSVoice               *string               `json:"tts_voice,omitempty"`
+	VoiceEnabled           bool                  `json:"voice_enabled"`
+	TTSEnabled             bool                  `json:"tts_enabled"`
 }
 
 // Application is the JSON representation of a them.applications row.

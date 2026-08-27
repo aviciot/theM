@@ -36,7 +36,10 @@ func scanApplication(rows SingleRowScanner) (Application, error) {
 func (d *DB) listAppOrchSummaries(ctx context.Context, appID string) []AppOrchestratorSummary {
 	const q = `
 SELECT id::text, name, COALESCE(display_name,''), llm_provider, llm_model,
-       COALESCE(mcp_servers, '[]'::jsonb)
+       COALESCE(mcp_servers, '[]'::jsonb),
+       transcription_provider, transcription_model,
+       tts_provider, tts_voice,
+       COALESCE(voice_enabled, false), COALESCE(tts_enabled, false)
 FROM them.app_orchestrators
 WHERE application_id = $1::uuid AND enabled = true
 ORDER BY created_at`
@@ -51,7 +54,12 @@ ORDER BY created_at`
 	for rows.Next() {
 		var s AppOrchestratorSummary
 		var mcpRaw []byte
-		if err := rows.Scan(&s.ID, &s.Name, &s.DisplayName, &s.LLMProvider, &s.LLMModel, &mcpRaw); err != nil {
+		if err := rows.Scan(
+			&s.ID, &s.Name, &s.DisplayName, &s.LLMProvider, &s.LLMModel, &mcpRaw,
+			&s.TranscriptionProvider, &s.TranscriptionModel,
+			&s.TTSProvider, &s.TTSVoice,
+			&s.VoiceEnabled, &s.TTSEnabled,
+		); err != nil {
 			break
 		}
 		if len(mcpRaw) > 0 && string(mcpRaw) != "null" {
@@ -429,6 +437,36 @@ func (d *DB) SetOrchestratorLLM(ctx context.Context, appID, orchID, provider, mo
 		RETURNING id`
 	var id string
 	return d.q.ExecReturning(ctx, q, orchID, appID, provider, model).Scan(&id)
+}
+
+// OrchestratorVoiceInput carries STT/TTS configuration for SetOrchestratorVoice.
+type OrchestratorVoiceInput struct {
+	STTProvider  string
+	STTModel     string
+	TTSProvider  string
+	TTSVoice     string
+	VoiceEnabled bool
+	TTSEnabled   bool
+}
+
+// SetOrchestratorVoice writes STT/TTS configuration to one app_orchestrators row.
+// Scoped to appID so a caller cannot modify an orchestrator belonging to another application.
+func (d *DB) SetOrchestratorVoice(ctx context.Context, appID, orchID string, in OrchestratorVoiceInput) error {
+	const q = `
+		UPDATE them.app_orchestrators
+		SET transcription_provider = NULLIF($3, ''),
+		    transcription_model     = NULLIF($4, ''),
+		    tts_provider            = NULLIF($5, ''),
+		    tts_voice               = NULLIF($6, ''),
+		    voice_enabled           = $7,
+		    tts_enabled             = $8,
+		    updated_at              = now()
+		WHERE id = $1::uuid AND application_id = $2::uuid
+		RETURNING id`
+	var id string
+	return d.q.ExecReturning(ctx, q, orchID, appID,
+		in.STTProvider, in.STTModel, in.TTSProvider, in.TTSVoice, in.VoiceEnabled, in.TTSEnabled,
+	).Scan(&id)
 }
 
 // BulkDeleteApplications hard-deletes applications matching the provided UUID list,

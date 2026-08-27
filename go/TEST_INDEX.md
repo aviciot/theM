@@ -480,8 +480,8 @@ Release marks run "failed" when Start never ran (orphan-run prevention).
 | `TestWS_AnonymousSessionGateTokenHashEmpty` | Anonymous session passes `TokenHash=""` to gate — no shared per-token rate-limit bucket |
 | `TestWS_AnonymousSessionUserIDIsZero` | Anonymous session stores `UserID=0` in SessionInfo |
 | `TestWS_AuthenticatedRequestToPublicEP` | Authenticated request to public EP succeeds |
-| `TestWS_VoiceEPReturns501` | Voice EP → 501 via AdmitErrNotImplemented (pre-upgrade); gate and session never called |
-| `TestWS_VoiceEPPublicReturns501` | Public voice EP → 501 before gate or session |
+| `TestWS_VoiceEPReturns501` | Voice EP on WS path → 404 (voice served by HTTP handler, not WS/SSE lifecycle); gate and session never called |
+| `TestWS_VoiceEPPublicReturns501` | Public voice EP on WS path → 404 before gate or session |
 | `TestWS_TemporalPathUsedWhenEnabled` | `ExecuteWorkflow` called via Lifecycle.Start; client receives done event from run stream |
 | `TestWS_ReplayUnavailableForwardedToClient` | `replay_unavailable` event forwarded to WS client (Phase 11c-C fix) |
 | `TestWS_NoTemporalReturnsErrorEvent` | Temporal nil → Lifecycle.Start returns StartError → WS error event sent after upgrade |
@@ -516,8 +516,8 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestSSEAnonymousSessionGateTokenHashEmpty` | Anonymous session passes `TokenHash=""` to gate — no shared per-token rate-limit bucket |
 | `TestSSEAnonymousSessionUserIDIsZero` | Anonymous session stores `UserID=0` in SessionInfo |
 | `TestSSEAuthenticatedRequestToPublicEP` | Authenticated request to public EP succeeds |
-| `TestSSEVoiceEPReturns501` | Voice EP → 501 via AdmitErrNotImplemented; gate and session never called |
-| `TestSSEVoiceEPPublicReturns501` | Public voice EP → 501 before gate or session |
+| `TestSSEVoiceEPReturns501` | Voice EP on SSE path → 404 (voice served by HTTP handler, not WS/SSE lifecycle); gate and session never called |
+| `TestSSEVoiceEPPublicReturns501` | Public voice EP on SSE path → 404 before gate or session |
 | `TestSSETemporalPathUsedWhenEnabled` | `ExecuteWorkflow` called via Lifecycle.Start; client receives done event from run stream |
 | `TestSSEReplayUnavailableForwardedToClient` | `replay_unavailable` event forwarded as SSE (Phase 11c-C fix) |
 | `TestSSENoTemporalReturns503` | Temporal nil → Lifecycle.Start returns error → SSE error event (headers already sent) |
@@ -1765,8 +1765,8 @@ Route: GET /api/v1/runs/{run_id}/artifacts/{artifact_id}
 ### S1-24 · Apps dispatcher — `cmd/them/dispatcher_test.go`
 
 **Purpose:** Verify that `appsDispatcher` routes `/ws` paths to the WS handler, `/sse` paths to
-the SSE handler, and returns 404 for everything else — without leaking unknown paths to either
-sub-handler. Method enforcement (405) is delegated to the chi sub-handler, not the dispatcher.
+the SSE handler, `/voice/*` paths to the voice handler, and returns 404 for everything else.
+Method enforcement (405) is delegated to the chi sub-handler, not the dispatcher.
 
 | Test | What it proves |
 |---|---|
@@ -1775,6 +1775,8 @@ sub-handler. Method enforcement (405) is delegated to the chi sub-handler, not t
 | `TestAppsDispatcher_SSEPath_POST` | `POST /{slug}/sse` → SSE handler called; WS handler not called |
 | `TestAppsDispatcher_UnknownPath_Returns404` | Unknown paths (`/grpc`, `/`, etc.) → 404; neither handler called |
 | `TestAppsDispatcher_UnsupportedMethod_WS` | `POST /{slug}/ws` forwarded to WS handler (returns 405 from chi); SSE not called |
+| `TestAppsDispatcher_VoicePath` | `POST /{slug}/voice/transcribe` and `/voice/tts` → voice handler called; WS/SSE not called |
+| `TestAppsDispatcher_VoiceNilHandler` | Voice path with nil voice handler → 404 |
 
 **Trigger:** any change to `cmd/them/main.go` (`appsDispatcher` function)
 
@@ -1800,6 +1802,26 @@ not-found mapping, and credential encryption — all using the shared `fakeDal`,
 | `TestMCPServerService_SetCredential_DefaultsHeaderName` | S1-MCP-11: empty auth_header_name → defaults to "Authorization" |
 
 **Trigger:** any change to `internal/admin/service/mcp_servers.go` or `internal/admin/dal/mcp_servers.go` or `internal/admin/mcp_servers.go`
+
+---
+
+### S1-70 · Voice handler — `internal/voice/handler_test.go`
+
+**Purpose:** Unit tests for the Go voice HTTP handler. Verifies auth gating, EP config resolution,
+provider validation, and error responses for both STT (transcribe) and TTS endpoints — using fake
+ConfigLoader, KeyResolver, and Authenticator to avoid real provider calls.
+
+| Test | What it proves |
+|---|---|
+| `TestTranscribe_EPNotFound` | ConfigLoader returns error → 404 (slug not a voice EP) |
+| `TestTranscribe_TokenEPNoAuth` | Token EP + no Bearer header → 401 |
+| `TestTranscribe_EPDisabled` | EP disabled flag → 403 |
+| `TestTranscribe_NoSTTProvider` | STT provider not configured → 400 |
+| `TestTranscribe_NoAPIKey` | Provider key empty → 400 |
+| `TestTTS_MissingText` | Empty `text` body → 400 |
+| `TestTTS_TokenEPNoAuth` | Token EP + no Bearer on TTS → 401 |
+
+**Trigger:** any change to `internal/voice/handler.go`, `internal/voice/service.go`, or `internal/voice/pgx.go`
 
 ---
 

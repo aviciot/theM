@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus } from '@/lib/api';
-import { C, glass, PROVIDER_LIST, RUNTIME_MODELS } from '../constants';
+import { C, glass, PROVIDER_LIST, RUNTIME_MODELS, STT_PROVIDERS, STT_MODELS, TTS_PROVIDERS, TTS_VOICES_OPENAI, TTS_MODELS_OPENAI } from '../constants';
 
 // ── Collapsible section wrapper ───────────────────────────────────────────────
 function Section({ title, subtitle, icon, children, defaultOpen = true, accent }: {
@@ -85,15 +85,39 @@ export function RuntimeView({ app, onBack }: {
   // Orchestrator metadata — fetched fresh on mount so we always reflect the
   // latest publish (app prop can be stale from the list-page snapshot).
   type OrchMeta = { id: string; name: string; displayName: string };
+  type VoiceDraft = { stt_provider: string; stt_model: string; tts_provider: string; tts_voice: string; tts_model: string; voice_enabled: boolean; tts_enabled: boolean };
   const [orchMetas, setOrchMetas] = useState<OrchMeta[]>(
     (app.app_orchestrators ?? []).map(o => ({ id: o.id, name: o.name, displayName: o.display_name || o.name }))
   );
+
+  // Per-orchestrator voice config draft (STT + TTS)
+  const [voiceDrafts,  setVoiceDrafts]  = useState<Record<string, VoiceDraft>>({});
+  const [voiceSaving,  setVoiceSaving]  = useState<string | null>(null);
+  const [voiceMsg,     setVoiceMsg]     = useState<Record<string, string>>({});
+  const [voiceTesting, setVoiceTesting] = useState<string | null>(null);
+  const [voiceTestMsg, setVoiceTestMsg] = useState<Record<string, string>>({});
+  const [ttsTesting,   setTtsTesting]   = useState<string | null>(null);
+  const [ttsTestMsg,   setTtsTestMsg]   = useState<Record<string, string>>({});
 
   useEffect(() => {
     themApi.getApplication(app.id).then(fresh => {
       setOrchMetas((fresh.app_orchestrators ?? []).map(o => ({
         id: o.id, name: o.name, displayName: o.display_name || o.name,
       })));
+      // Populate voice drafts from app_orchestrators
+      const drafts: Record<string, VoiceDraft> = {};
+      (fresh.app_orchestrators ?? []).forEach(o => {
+        drafts[o.id] = {
+          stt_provider: o.transcription_provider ?? '',
+          stt_model:    o.transcription_model    ?? '',
+          tts_provider: o.tts_provider           ?? '',
+          tts_voice:    o.tts_voice              ?? '',
+          tts_model:    'tts-1',
+          voice_enabled: o.voice_enabled  ?? false,
+          tts_enabled:   o.tts_enabled    ?? false,
+        };
+      });
+      setVoiceDrafts(drafts);
     }).catch(() => {});
   }, [app.id]);
 
@@ -231,7 +255,12 @@ export function RuntimeView({ app, onBack }: {
     setKeyTesting(provider);
     setKeyTestMsg(m => ({ ...m, [provider]: '' }));
     try {
-      const model = RUNTIME_MODELS[provider]?.[0] ?? 'unknown';
+      if (!RUNTIME_MODELS[provider]) {
+        // Non-LLM provider (e.g. elevenlabs) — key validation only, no model test
+        setKeyTestMsg(m => ({ ...m, [provider]: 'Key saved — test via an orchestrator voice panel' }));
+        return;
+      }
+      const model = RUNTIME_MODELS[provider][0];
       const res = await themApi.testAppLlm(app.id, provider, model);
       setKeyTestMsg(m => ({ ...m, [provider]: res.ok ? `✓ ${res.latency_ms}ms` : (res.error ?? 'Failed') }));
     } catch (e: unknown) {
@@ -362,6 +391,52 @@ export function RuntimeView({ app, onBack }: {
     } finally { setSaving(false); }
   }
 
+  async function handleSaveVoice(orchId: string) {
+    const draft = voiceDrafts[orchId];
+    if (!draft) return;
+    setVoiceSaving(orchId);
+    try {
+      await themApi.patchOrchestratorVoice(app.id, orchId, {
+        stt_provider:  draft.stt_provider,
+        stt_model:     draft.stt_model,
+        tts_provider:  draft.tts_provider,
+        tts_voice:     draft.tts_voice,
+        voice_enabled: draft.voice_enabled,
+        tts_enabled:   draft.tts_enabled,
+      });
+      setVoiceMsg(m => ({ ...m, [orchId]: 'Saved' }));
+      setTimeout(() => setVoiceMsg(m => ({ ...m, [orchId]: '' })), 2500);
+    } catch (e: unknown) {
+      setVoiceMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Failed' }));
+    } finally { setVoiceSaving(null); }
+  }
+
+  async function handleTestSTT(orchId: string) {
+    const draft = voiceDrafts[orchId];
+    if (!draft?.stt_provider) return;
+    setVoiceTesting(orchId);
+    setVoiceTestMsg(m => ({ ...m, [orchId]: '' }));
+    try {
+      const res = await themApi.testAppOrchVoice(app.id, orchId, { provider: draft.stt_provider, model: draft.stt_model });
+      setVoiceTestMsg(m => ({ ...m, [orchId]: res.ok ? `✓ STT ${res.latency_ms}ms` : (res.error ?? 'Failed') }));
+    } catch (e: unknown) {
+      setVoiceTestMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Error' }));
+    } finally { setVoiceTesting(null); }
+  }
+
+  async function handleTestTTS(orchId: string) {
+    const draft = voiceDrafts[orchId];
+    if (!draft?.tts_provider) return;
+    setTtsTesting(orchId);
+    setTtsTestMsg(m => ({ ...m, [orchId]: '' }));
+    try {
+      const res = await themApi.testAppOrchTts(app.id, orchId, { provider: draft.tts_provider, voice: draft.tts_voice });
+      setTtsTestMsg(m => ({ ...m, [orchId]: res.ok ? `✓ TTS ${res.latency_ms}ms` : (res.error ?? 'Failed') }));
+    } catch (e: unknown) {
+      setTtsTestMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Error' }));
+    } finally { setTtsTesting(null); }
+  }
+
   // ── Shared styles ─────────────────────────────────────────────────────────
 
   const field: React.CSSProperties = {
@@ -406,11 +481,11 @@ export function RuntimeView({ app, onBack }: {
           Global
         </div>
 
-        {/* LLM Provider Keys */}
-        <Section title="LLM Provider Keys" icon="key" accent="#fb923c"
+        {/* Provider Keys */}
+        <Section title="Provider Keys" icon="key" accent="#fb923c"
           subtitle={setProviders.length > 0 ? `${setProviders.length} of ${PROVIDER_LIST.length} providers configured` : 'No providers configured yet'}>
           <div style={{ fontSize: 12, color: C.textMuted, marginTop: -4 }}>
-            API keys are AES-GCM encrypted at rest. Configured providers are available for selection in orchestrators and canvas agents below.
+            API keys are AES-GCM encrypted at rest. LLM keys are available in orchestrators and canvas agents. Voice keys (openai, groq, elevenlabs) are used by voice entry points.
           </div>
           {PROVIDER_LIST.map(provider => {
             const status = getKeyStatus(provider);
@@ -574,7 +649,133 @@ export function RuntimeView({ app, onBack }: {
                               <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 20, background: 'rgba(132,158,190,0.1)', color: C.textMuted, border: '1px solid rgba(132,158,190,0.18)', fontWeight: 600 }}>{ep.entry_point_type}</span>
                             </div>
 
-                            <div style={{ padding: '12px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            {ep.entry_point_type === 'voice' ? (
+                              /* ── Voice Config Panel ─────────────────────────── */
+                              (() => {
+                                const vd = voiceDrafts[orch.id] ?? { stt_provider: '', stt_model: '', tts_provider: '', tts_voice: '', tts_model: 'tts-1', voice_enabled: false, tts_enabled: false };
+                                const vBusy   = voiceSaving === orch.id;
+                                const vTest   = voiceTesting === orch.id;
+                                const tTest   = ttsTesting === orch.id;
+                                const vMsg    = voiceMsg[orch.id] ?? '';
+                                const vtMsg   = voiceTestMsg[orch.id] ?? '';
+                                const ttMsg   = ttsTestMsg[orch.id] ?? '';
+                                const setVd = (patch: Partial<typeof vd>) =>
+                                  setVoiceDrafts(prev => ({ ...prev, [orch.id]: { ...vd, ...patch } }));
+                                return (
+                                  <div style={{ padding: '12px 12px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                                    {/* STT */}
+                                    <div>
+                                      <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>mic</span>
+                                        Speech-to-Text (STT)
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', marginLeft: 'auto', fontWeight: 600, textTransform: 'none', letterSpacing: 0 }}>
+                                          <input type="checkbox" checked={vd.voice_enabled}
+                                            onChange={e => setVd({ voice_enabled: e.target.checked })}
+                                            style={{ accentColor: C.purple, width: 13, height: 13 }} />
+                                          <span style={{ fontSize: 11, color: C.textMuted }}>Enable</span>
+                                        </label>
+                                      </div>
+                                      <div style={{ opacity: vd.voice_enabled ? 1 : 0.45, display: 'flex', gap: 8, alignItems: 'center' }}>
+                                        <select value={vd.stt_provider} disabled={!vd.voice_enabled}
+                                          onChange={e => {
+                                            const p = e.target.value;
+                                            const models = STT_MODELS[p] ?? [];
+                                            setVd({ stt_provider: p, stt_model: models[0] ?? '' });
+                                          }}
+                                          style={{ ...field, width: 140, flexShrink: 0 }}>
+                                          <option value="">— provider —</option>
+                                          {(STT_PROVIDERS as readonly string[]).map(p => <option key={p} value={p}>{p}</option>)}
+                                        </select>
+                                        <select value={vd.stt_model} disabled={!vd.voice_enabled || !vd.stt_provider}
+                                          onChange={e => setVd({ stt_model: e.target.value })}
+                                          style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+                                          <option value="">— model —</option>
+                                          {(STT_MODELS[vd.stt_provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
+                                        </select>
+                                        <button onClick={() => handleTestSTT(orch.id)} disabled={vBusy || vTest || !vd.stt_provider}
+                                          style={{ padding: '8px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: (vBusy || vTest || !vd.stt_provider) ? 0.45 : 1, flexShrink: 0 }}>
+                                          {vTest ? '…' : 'Test'}
+                                        </button>
+                                      </div>
+                                      {vtMsg && <div style={{ marginTop: 5, fontSize: 12, color: vtMsg.startsWith('✓') ? C.green : C.error, fontWeight: 600 }}>{vtMsg}</div>}
+                                    </div>
+
+                                    {/* TTS */}
+                                    <div style={{ borderTop: '1px solid rgba(132,158,190,0.1)', paddingTop: 12 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>volume_up</span>
+                                        Text-to-Speech (TTS)
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', marginLeft: 'auto', fontWeight: 600, textTransform: 'none', letterSpacing: 0 }}>
+                                          <input type="checkbox" checked={vd.tts_enabled}
+                                            onChange={e => setVd({ tts_enabled: e.target.checked })}
+                                            style={{ accentColor: C.purple, width: 13, height: 13 }} />
+                                          <span style={{ fontSize: 11, color: C.textMuted }}>Enable</span>
+                                        </label>
+                                      </div>
+                                      <div style={{ opacity: vd.tts_enabled ? 1 : 0.45, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                        <div style={{ display: 'flex', gap: 8 }}>
+                                          <select value={vd.tts_provider} disabled={!vd.tts_enabled}
+                                            onChange={e => {
+                                              const p = e.target.value;
+                                              setVd({ tts_provider: p, tts_voice: p === 'openai' ? 'alloy' : '', tts_model: p === 'openai' ? 'tts-1' : '' });
+                                            }}
+                                            style={{ ...field, width: 140, flexShrink: 0 }}>
+                                            <option value="">— provider —</option>
+                                            {(TTS_PROVIDERS as readonly string[]).map(p => <option key={p} value={p}>{p}</option>)}
+                                          </select>
+                                          {vd.tts_provider === 'openai' && (
+                                            <select value={vd.tts_model} disabled={!vd.tts_enabled}
+                                              onChange={e => setVd({ tts_model: e.target.value })}
+                                              style={{ ...field, width: 130, flexShrink: 0, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+                                              {(TTS_MODELS_OPENAI as readonly string[]).map(m => <option key={m} value={m}>{m}</option>)}
+                                            </select>
+                                          )}
+                                        </div>
+                                        {vd.tts_provider === 'openai' && (
+                                          <div>
+                                            <label style={lbl}>Voice</label>
+                                            <select value={vd.tts_voice} disabled={!vd.tts_enabled}
+                                              onChange={e => setVd({ tts_voice: e.target.value })}
+                                              style={{ ...field, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
+                                              <option value="">— voice —</option>
+                                              {(TTS_VOICES_OPENAI as readonly string[]).map(v => <option key={v} value={v}>{v}</option>)}
+                                            </select>
+                                          </div>
+                                        )}
+                                        {vd.tts_provider === 'elevenlabs' && (
+                                          <div>
+                                            <label style={lbl}>Voice ID (from ElevenLabs dashboard)</label>
+                                            <input
+                                              type="text"
+                                              placeholder="e.g. 21m00Tcm4TlvDq8ikWAM"
+                                              value={vd.tts_voice}
+                                              disabled={!vd.tts_enabled}
+                                              onChange={e => setVd({ tts_voice: e.target.value })}
+                                              style={{ ...field, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}
+                                            />
+                                          </div>
+                                        )}
+                                        <div style={{ display: 'flex', gap: 8 }}>
+                                          <button onClick={() => handleTestTTS(orch.id)} disabled={vBusy || tTest || !vd.tts_provider || !vd.tts_voice}
+                                            style={{ padding: '8px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: (vBusy || tTest || !vd.tts_provider || !vd.tts_voice) ? 0.45 : 1 }}>
+                                            {tTest ? '…' : 'Test TTS'}
+                                          </button>
+                                        </div>
+                                        {ttMsg && <div style={{ marginTop: 4, fontSize: 12, color: ttMsg.startsWith('✓') ? C.green : C.error, fontWeight: 600 }}>{ttMsg}</div>}
+                                      </div>
+                                    </div>
+
+                                    {/* Save row */}
+                                    <div style={{ borderTop: '1px solid rgba(132,158,190,0.1)', paddingTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+                                      {saveBtn(() => handleSaveVoice(orch.id), vBusy, false, 'Save Voice Config')}
+                                      {vMsg && <span style={{ fontSize: 12, color: vMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{vMsg}</span>}
+                                    </div>
+                                  </div>
+                                );
+                              })()
+                            ) : (
+                              <div style={{ padding: '12px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
                               {/* Conversation LLM */}
                               <div>
                                 <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -654,6 +855,7 @@ export function RuntimeView({ app, onBack }: {
                                 {sumMsg && <div style={{ marginTop: 6, fontSize: 12, color: sumMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{sumMsg}</div>}
                               </div>
                             </div>
+                            )}
                           </div>
                         );
                       })}

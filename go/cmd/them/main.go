@@ -40,7 +40,9 @@ import (
 	"github.com/aviciot/them/internal/sse"
 	"github.com/aviciot/them/internal/telemetry"
 	"github.com/aviciot/them/internal/temporal"
+	"github.com/aviciot/them/internal/tenantctx"
 	"github.com/aviciot/them/internal/transport"
+	"github.com/aviciot/them/internal/voice"
 	"github.com/aviciot/them/internal/ws"
 )
 
@@ -290,11 +292,8 @@ func run() error {
 	// (R-0 L-3 fix). runCancel is idempotent; defer above is a safety net.
 	srv.WithPreDrainHook(runCancel)
 
-	// ── 17c. Mount /apps/{slug}/ws and /apps/{slug}/sse aliases ─────────────
-	// These are the app entry-point URLs used by the frontend.
-	// MountApps("/apps") strips the prefix, so sub-routes are /{slug}/ws etc.
-	srv.MountApps(appsDispatcher(wsHandler.AppsWSRoute(), sseHandler.AppsSSERoute()))
-	log.Info("apps WS+SSE aliases mounted", "prefix", "/apps")
+	// /apps/* mounting is deferred to section 19 once adminDB and adminFernetKey
+	// are available (voice handler requires the AppService for provider-key decryption).
 
 	// ── 17b. Wire A2A server (/a2a/*, /.well-known/*) ────────────────────────
 	// Uses the shared execLifecycle (constructed in section 16).
@@ -334,6 +333,15 @@ func run() error {
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
 
+	// ── 19b. Mount /apps/* (WS + SSE + voice) ────────────────────────────────
+	// Voice handler needs AppService (for provider-key decryption), which requires
+	// adminDB and adminFernetKey — so it must be wired here, after section 19.
+	voiceLoader := voice.NewPgxLoader(database.Pool())
+	voiceAppsSvc := admin.NewApplicationsHandler(adminDB, adminCache, adminFernetKey).Svc()
+	voiceHandler := voice.NewHandler(voiceLoader, voiceAppsSvc, authenticator, tenantctx.BootstrapTenantID, log)
+	srv.MountApps(appsDispatcher(wsHandler.AppsWSRoute(), sseHandler.AppsSSERoute(), voiceHandler.Routes()))
+	log.Info("apps WS+SSE+voice mounted", "prefix", "/apps")
+
 	log.Info("shutdown drain configured", "drain_seconds", cfg.ShutdownDrainSeconds)
 	log.Info("starting server", "addr", addr, "env", cfg.AppEnv)
 
@@ -341,15 +349,18 @@ func run() error {
 }
 
 // appsDispatcher routes /apps/{slug}/ws to wsApps, /apps/{slug}/sse to sseApps,
-// and returns 404 for anything else. Each sub-handler owns its own chi router and
-// URL param remapping; this function only decides which one receives the request.
-func appsDispatcher(wsApps, sseApps http.Handler) http.Handler {
+// /apps/{slug}/voice/* to voiceApps, and returns 404 for anything else.
+// Each sub-handler owns its own chi router; this function only dispatches.
+// voiceApps may be nil (voice is disabled/not wired).
+func appsDispatcher(wsApps, sseApps, voiceApps http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/ws"):
 			wsApps.ServeHTTP(w, r)
 		case strings.HasSuffix(r.URL.Path, "/sse"):
 			sseApps.ServeHTTP(w, r)
+		case strings.Contains(r.URL.Path, "/voice/") && voiceApps != nil:
+			voiceApps.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}

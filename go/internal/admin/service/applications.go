@@ -225,12 +225,14 @@ func (s *AppService) PutRuntime(ctx context.Context, tenantID, appID string, cfg
 	return cfg, nil
 }
 
-// validProviders is the set of supported LLM provider names.
+// validProviders is the set of supported provider names for API key storage.
+// Covers both LLM providers and voice providers (STT/TTS).
 var validProviders = map[string]struct{}{
-	"anthropic": {},
-	"openai":    {},
-	"groq":      {},
-	"gemini":    {},
+	"anthropic":  {},
+	"openai":     {},
+	"groq":       {},
+	"gemini":     {},
+	"elevenlabs": {},
 }
 
 // ProviderKeyOut is returned by GET /provider-keys — keys are masked, never plaintext.
@@ -579,6 +581,46 @@ func (s *AppService) SetOrchestratorLLM(ctx context.Context, tenantID, appID, or
 		return unprocessable("no API key stored for provider " + provider + " — save one in Runtime settings first")
 	}
 	if err := s.dal.SetOrchestratorLLM(ctx, appID, orchID, provider, model); err != nil {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// VoiceConfig is the input to SetOrchestratorVoice.
+type VoiceConfig struct {
+	STTProvider  string // "openai" | "groq"
+	STTModel     string // whisper model; empty = provider default
+	TTSProvider  string // "openai" | "elevenlabs"
+	TTSVoice     string // voice name (openai) or voice ID (elevenlabs)
+	VoiceEnabled bool
+	TTSEnabled   bool
+}
+
+// SetOrchestratorVoice writes voice (STT + TTS) configuration to one app_orchestrators row.
+// Does not validate that a provider key exists — the user may save config before the key.
+func (s *AppService) SetOrchestratorVoice(ctx context.Context, tenantID, appID, orchID string, cfg VoiceConfig) error {
+	if cfg.STTProvider != "" {
+		switch cfg.STTProvider {
+		case "openai", "groq":
+		default:
+			return unprocessable("unsupported STT provider: " + cfg.STTProvider)
+		}
+	}
+	if cfg.TTSProvider != "" {
+		switch cfg.TTSProvider {
+		case "openai", "elevenlabs":
+		default:
+			return unprocessable("unsupported TTS provider: " + cfg.TTSProvider)
+		}
+	}
+	if err := s.dal.SetOrchestratorVoice(ctx, appID, orchID, dal.OrchestratorVoiceInput{
+		STTProvider:  cfg.STTProvider,
+		STTModel:     cfg.STTModel,
+		TTSProvider:  cfg.TTSProvider,
+		TTSVoice:     cfg.TTSVoice,
+		VoiceEnabled: cfg.VoiceEnabled,
+		TTSEnabled:   cfg.TTSEnabled,
+	}); err != nil {
 		return ErrNotFound
 	}
 	return nil

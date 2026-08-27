@@ -222,6 +222,7 @@ func (f *fakeDal) SetProviderKey(_ context.Context, _, _, _ string, value []byte
 }
 func (f *fakeDal) DeleteProviderKey(_ context.Context, _, _, _ string) error { return nil }
 func (f *fakeDal) SetOrchestratorLLM(_ context.Context, _, _, _, _ string) error { return nil }
+func (f *fakeDal) SetOrchestratorVoice(_ context.Context, _, _ string, _ dal.OrchestratorVoiceInput) error { return nil }
 func (f *fakeDal) SetEntryPointSummarizer(_ context.Context, _, _ string, _ bool, _, _ int, _, _ *string) error { return nil }
 func (f *fakeDal) SetEntryPointLLM(_ context.Context, _, _ string, _, _ *string) error             { return nil }
 func (f *fakeDal) SetOrchestratorMCPServers(_ context.Context, _, _ string, _ []dal.MCPServerAttachment) error { return nil }

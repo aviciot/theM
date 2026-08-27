@@ -681,7 +681,7 @@ func TestSSEVoiceEPReturns501(t *testing.T) {
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "voice EP must return 501")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "voice EP must return 404 on SSE (served by HTTP voice handler)")
 	check, _, _, _, _ := g.getCounts()
 	assert.Equal(t, 0, check, "gate must not be called for voice EP")
 	assert.Equal(t, int64(0), sess.getLastSession().UserID,
@@ -714,7 +714,7 @@ func TestSSEVoiceEPPublicReturns501(t *testing.T) {
 	resp, err := http.Get(srv.URL + "/orchestrate/app/voice-public?message=hi")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusNotImplemented, resp.StatusCode, "public voice EP must return 501")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "public voice EP must return 404 on SSE (served by HTTP voice handler)")
 	assert.Equal(t, int64(0), sess.getLastSession().UserID,
 		"session must not be registered for public voice EP")
 }

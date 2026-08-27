@@ -153,11 +153,12 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		return nil, admitErr(AdmitErrDBUnavailable)
 	}
 
-	// ── 3. Voice EP check ────────────────────────────────────────────────────
-	// Voice EPs require STT/TTS providers not available in the text orchestration
-	// path. Return 501 before any gate or session resources are allocated.
+	// ── 3. EP type routing guard ─────────────────────────────────────────────
+	// Voice EPs are served by the HTTP voice handler (POST /apps/{slug}/voice/*),
+	// not the WS/SSE/A2A execution lifecycle. Reject any voice EP reaching here
+	// with 404 so clients get a clear signal that they are using the wrong transport.
 	if resolvedCfg.EPType == "voice" {
-		return nil, admitErr(AdmitErrNotImplemented)
+		return nil, admitErr(AdmitErrNotFound)
 	}
 
 	// ── 4. Access mode enforcement ────────────────────────────────────────────

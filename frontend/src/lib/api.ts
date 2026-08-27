@@ -249,7 +249,7 @@ export interface EntryPoint {
   id: string;
   application_id: string;
   slug: string;
-  entry_point_type: 'websocket' | 'sse' | 'webrtc' | 'a2a';
+  entry_point_type: 'websocket' | 'sse' | 'webrtc' | 'a2a' | 'voice';
   access_policy: Record<string, unknown>;
   conversation_token_limit: number | null;
   max_concurrent_sessions: number | null;
@@ -290,6 +290,12 @@ export interface AppOrchestratorSummary {
   llm_provider?: string | null;
   llm_model?: string | null;
   mcp_servers?: MCPServerAttachment[];
+  transcription_provider?: string | null;
+  transcription_model?: string | null;
+  tts_provider?: string | null;
+  tts_voice?: string | null;
+  voice_enabled?: boolean;
+  tts_enabled?: boolean;
 }
 
 export interface Application {
@@ -867,6 +873,8 @@ export const themApi = {
     api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/orchestrators/${aoId}/test-voice`, body),
   testAppOrchTts: (appId: string, aoId: string, body: { provider: string; voice: string }) =>
     api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/orchestrators/${aoId}/test-tts`, body),
+  patchOrchestratorVoice: (appId: string, aoId: string, body: { stt_provider: string; stt_model: string; tts_provider: string; tts_voice: string; voice_enabled: boolean; tts_enabled: boolean }) =>
+    api.patch<{ id: string }>(`/admin/applications/${appId}/orchestrators/${aoId}/voice`, body),
   deleteRun: (runId: string) => api.delete<void>(`/runs/${runId}`),
   bulkDeleteRuns: (runIds: string[]) => api.post<{ deleted: number }>('/runs/bulk-delete', { run_ids: runIds }),
   bulkDeleteApplications: (appIds: string[]) => api.post<{ deleted: number }>('/admin/applications/bulk-delete', { app_ids: appIds }),
