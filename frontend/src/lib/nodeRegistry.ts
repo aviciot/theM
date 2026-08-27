@@ -28,6 +28,15 @@ export interface AppParamDecl {
   default_value?: string;
 }
 
+/** One named data port on a node type. Port IDs are permanent stable identifiers. */
+export interface PortDef {
+  id: string;        // stable binding handle (e.g. "output", "from_var")
+  label: string;     // human-readable name for canvas UX
+  required?: boolean;
+  multi?: boolean;   // accepts multiple bindings (fan-in)
+  type_hint?: string; // loose tag: "text" | "json" | "any"
+}
+
 export interface NodeTypeInfo {
   type: string;
   version: number;
@@ -42,6 +51,10 @@ export interface NodeTypeInfo {
   input_field?: string;
   executable: boolean;
   app_params?: AppParamDecl[];
+  /** Static input data ports. Absent for types with dynamic inputs (transform, http) or no data inputs. */
+  input_ports?: PortDef[];
+  /** Static output data ports. Absent for types with dynamic outputs (transform, http) or no data outputs. */
+  output_ports?: PortDef[];
 }
 
 // ── Frontend-only UI supplement per type ─────────────────────────────────────
@@ -156,6 +169,7 @@ const FALLBACK_DEF = (type: string): NodeDef => ({
   type, version: 1, label: type, description: '', emoji: '🔧',
   output_arity: 'single', is_source: false, is_sink: false,
   single_input: false, edges: FALLBACK_EDGES, executable: false,
+  input_ports: undefined, output_ports: undefined,
   ...FALLBACK_SUPP,
 });
 

@@ -574,11 +574,13 @@ export interface AgentStepDoc {
   id: string;
   type:
     | 'input' | 'llm' | 'http' | 'transform' | 'response'
-    | 'branch' | 'loop' | 'parallel' | 'a2a_call' | 'human_wait' | 'stream_out';
+    | 'branch' | 'loop' | 'parallel' | 'a2a_call' | 'human_wait' | 'stream_out' | 'mcp_call';
   label?: string;
   config: Record<string, unknown>;
   next: string[];
   next_handles?: string[]; // parallel to next — named sourceHandle per outgoing edge (transform, branch)
+  /** Explicit data bindings: input port ID → {from_step, from_port}. Absent means heuristic path. */
+  inputs?: Record<string, Binding>;
   position?: { x: number; y: number };
 }
 
@@ -637,6 +639,15 @@ export interface AgentCompileError {
 export interface VarRef {
   name: string;
   required: boolean;
+  port_id?: string;    // stable port handle; empty on heuristic path
+  source_step?: string; // step ID that produces this value (from explicit binding)
+  source_port?: string; // output port on the source step
+}
+
+/** One explicit data binding declared on a canvas step's input port. */
+export interface Binding {
+  from_step: string; // step ID of the producing step
+  from_port: string; // output port ID on that step
 }
 
 export interface StepContract {

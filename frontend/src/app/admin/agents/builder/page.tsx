@@ -438,6 +438,7 @@ function CanvasInner() {
               label: (stepd.label && stepd.label !== defaultLabel) ? stepd.label : undefined,
               config: stepd.config ?? {},
               next,
+              ...(stepd.inputs ? { inputs: stepd.inputs } : {}),
               position: sn.position,
             };
           });
@@ -595,7 +596,7 @@ function CanvasInner() {
         id: `step-${step.id}`,
         type: 'step',
         position: step.position ?? { x: 200, y: 80 + si * 120 },
-        data: { step_id: step.id, step_type: step.type, label: (step as AgentStepDoc & { label?: string }).label || stepMeta(step.type).label, config: (step.config as Record<string, unknown>) ?? {} },
+        data: { step_id: step.id, step_type: step.type, label: (step as AgentStepDoc & { label?: string }).label || stepMeta(step.type).label, config: (step.config as Record<string, unknown>) ?? {}, ...(step.inputs ? { inputs: step.inputs } : {}) },
       }));
       const stepEdges: Edge[] = [];
       for (const step of (sk.steps ?? [])) {
@@ -652,6 +653,7 @@ function CanvasInner() {
             config: stepd.config ?? {},
             next,
             ...(next_handles ? { next_handles } : {}),
+            ...(stepd.inputs ? { inputs: stepd.inputs } : {}),
             position: sn.position,
           };
         });

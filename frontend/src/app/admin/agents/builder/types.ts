@@ -23,6 +23,8 @@ export interface StepData {
   step_type: string;
   label: string;
   config: Record<string, unknown>;
+  /** Explicit data bindings: input port ID → {from_step, from_port}. Absent means heuristic path. */
+  inputs?: Record<string, { from_step: string; from_port: string }>;
 }
 
 export interface StepNodeData extends StepData {
