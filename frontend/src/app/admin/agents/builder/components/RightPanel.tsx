@@ -303,7 +303,7 @@ export function RightPanel({
                     <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: C.cyan, marginBottom: '6px' }}>
                       READS {reads.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400 }}>— no variables consumed</span>}
                     </div>
-                    {reads.map(v => {
+                    {[...new Set(reads)].map(v => {
                       const unresolved = isAuthoritative
                         ? unresolvedFromCompiler.has(v)
                         : !varSrcMap?.get(v);
