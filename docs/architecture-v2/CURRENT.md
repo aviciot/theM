@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `fa879b7` — refactor(agentgen): remove ExposedVars from TransformStepConfig (Step 6)
+Commit: `0edcf2a` — feat(agentgen): Stage 6 runtime contract enforcement — scoped inputs + output promotion
 
 Recent commits (newest first):
 ```
+0edcf2a feat(agentgen): Stage 6 runtime contract enforcement — scoped inputs + output promotion
+705be39 docs(agentgen): Stage 6 runtime enforcement architecture review
+e36f68c docs(current): update HEAD to fa879b7 — Step 6 ExposedVars removal complete
 fa879b7 refactor(agentgen): remove ExposedVars from TransformStepConfig (Step 6)
 2c64517 feat(agentgen+canvas): expose compiled step contracts to frontend debugger
-4417870 fix(agentgen): path-sensitive Stage 5 data-flow analysis + branch tests
-0670a6a fix(publish): EP access_mode from canvas config applied to entry_point row
-a1fc402 test(agentgen): remove backward-compat round-trip test (DF-25)
 ```
 
 ---
@@ -147,8 +147,8 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-27, commit 2c64517)
-S1 total: 772 tests (unchanged — CMP/INT tests rewritten not added)
+go test ./...  — all packages, 0 failures (verified 2026-08-27, commit 0edcf2a)
+S1 total: 784 tests (+12 CONT-1..12 in interpreter_contracts_test.go)
   S1-63: CMP-10..14 (compiler LLM node collection — 5 tests, rewrote from AppParamRefs)
   S1-64: INT-10..14 (interpreter AppParamRef HTTP + NodeLLMOverride — 5 tests, INT-14 rewritten)
   S1-65: RT-20..24 (runtime decodeAppGlobalParams — 5 tests)
@@ -373,8 +373,9 @@ What was built:
 
 ### What remains (per DATAFLOW_EXPLICIT_FEASIBILITY.md)
 - Step 6: **COMPLETE** (fa879b7) — ExposedVars removed from TransformStepConfig; DB data-migrated; frontend cleaned up
-- Stage 6 (next): runtime enforcement — agent-runtime reads `Inputs`/`Outputs` from AgentSpec; emit structured trace events per var read/write
+- Stage 6: **COMPLETE** (0edcf2a) — Scoped input resolution + output-only promotion in interpreter.executeStep; ErrContractViolation type; execTransform simplified; 12 new CONT tests
 - Explicit bindings (wiring vars between steps with explicit edges) — not yet
+- Structured per-var trace events — not yet (requires trace sink design)
 - Temporal/ADK integration — not yet
 
 ---
