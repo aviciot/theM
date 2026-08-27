@@ -1621,7 +1621,6 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
         throw new Error('Microphone requires HTTPS or localhost');
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Pick the best supported mimeType — Firefox uses ogg/opus, Chrome/Safari prefer webm
       const mimeType = ['audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', ''].find(
         m => !m || MediaRecorder.isTypeSupported(m)
       ) ?? '';
@@ -1634,7 +1633,6 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
         setRecState('transcribing');
         try {
           if (isVoiceEP && target.kind === 'entrypoint') {
-            // Voice EP: full pipeline — STT → orchestrator → LLM → TTS in one call
             setBusy(true); busyRef.current = true;
             setTrace([]);
             const res = await themApi.voiceChat(target.slug, blob);
@@ -1642,7 +1640,6 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
             const reply = res.headers.get('X-Reply') ?? '';
             if (transcript) setMessages(prev => [...prev, { role: 'user', text: transcript }]);
             if (reply) setMessages(prev => [...prev, { role: 'assistant', text: reply }]);
-            // Play back audio/mpeg response
             setSpeaking(true);
             const audioBlob = await res.blob();
             const url = URL.createObjectURL(audioBlob);
@@ -1653,7 +1650,6 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
             setBusy(false); busyRef.current = false;
             setStatus('Done');
           } else {
-            // WS/SSE EP or orchestrator: STT only → send transcript over WS
             const result = await themApi.transcribe(orchName, blob);
             if (result.text) await sendText(result.text, contextId);
           }

@@ -1088,6 +1088,11 @@ services:
       - "traefik.http.routers.them-go-apps-sse.entrypoints=web"
       - "traefik.http.routers.them-go-apps-sse.priority=120"
       - "traefik.http.routers.them-go-apps-sse.service=them-go-bridge-svc"
+      # ── Wave 4e: /apps/{slug}/voice/* → Go voice handler ─────────────────────
+      - "traefik.http.routers.them-go-apps-voice.rule=PathRegexp(`^/apps/[^/]+/voice/`) && Method(`POST`)"
+      - "traefik.http.routers.them-go-apps-voice.entrypoints=web"
+      - "traefik.http.routers.them-go-apps-voice.priority=120"
+      - "traefik.http.routers.them-go-apps-voice.service=them-go-bridge-svc"
       # ── Wave 4c: /ws/orchestrate/{app}/{ep} (two-segment) → Go ───────────────
       - "traefik.http.routers.them-go-ws-two-seg.rule=PathRegexp(`^/ws/orchestrate/[^/]+/[^/]+$$`) && Method(`GET`)"
       - "traefik.http.routers.them-go-ws-two-seg.entrypoints=web"
