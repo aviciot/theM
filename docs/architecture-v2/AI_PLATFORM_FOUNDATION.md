@@ -343,227 +343,88 @@ Returns agents, MCP tools, and sub-orchestrators reachable from an orchestrator 
 
 ---
 
-## 10. Component 4: Pipeline Dry-Run / Synthetic Data Testing (Phase 1.5)
+## 10. Component 4: Pipeline Test-Run / Step-Level Trace (Phase 1.5)
 
 ### Problem
 
-The Copilot can build a syntactically valid pipeline but cannot verify logical correctness before publishing. An HTTP step may be configured correctly but point to a URL that requires a live credential. An LLM step may have a well-formed prompt but the template reference `{{.temperature}}` might not resolve if the upstream transform uses a different output variable name. The user cannot know any of this until they publish and run — which wastes a real execution, costs tokens, and may fail against production systems.
+The Copilot can build a syntactically valid pipeline but cannot verify logical correctness before publishing. Variable references may not resolve, extractions may pick the wrong path, LLM prompts may render incorrectly. The user has no way to know until they publish and run against production.
 
-The Copilot needs to be able to validate pipeline **logic** before publish by injecting synthetic test data at any step and tracing what flows through.
+### Approach: run it, trace it
 
-### Existing infrastructure
+The interpreter already executes the full pipeline. The only thing missing is a **per-step variable snapshot** so the Copilot can show what each step produced.
 
-The interpreter in `go/internal/agentgen/interpreter.go` already supports dependency injection for all side-effecting interfaces:
+No new interpreter concepts. No mock flags. No fixture injection. Real calls go out — this tests actual wiring against real services. The Copilot runs the pipeline exactly as the runtime would, with a test input, and reads back the per-step trace.
 
-| Interface | Purpose | How mocked today |
-|---|---|---|
-| `HTTPDoer` | Makes HTTP calls | `httptest.NewServer` in tests |
-| `LLMFactory` | Creates LLM providers | `fakeLLMFactory` in tests |
-| `MCPCaller` | Calls MCP tool | `stubMCPCaller` in tests |
+The transform test endpoint (`POST /api/v1/admin/transform-test` → `TraceResult`) already demonstrates this pattern for one node type. Component 4 extends it to the full pipeline.
 
-These interfaces exist because the test suite already needs them. The production code path creates real clients; the test code path injects fakes. **There is no runtime mechanism to activate mock/fixture mode per-step.** This is what Component 4 adds.
-
-The transform pipeline already has its own test endpoint (`POST /api/v1/admin/transform-test`) that accepts a function chain and input vars and returns a `TraceResult` — this is the model for Component 4's step-level testing.
-
-### Design: DryRunFixture per step
-
-**Step 1: Add `DryRunFixture` to `StepSpec`**
+### New field: `Steps []StepTrace` on `ExecutionResult`
 
 ```go
-// In go/internal/agentgen/spec.go, added to StepSpec:
-type DryRunFixture struct {
-    // MockOutputVars replaces the step's real execution outputs.
-    // Keys are pipeline variable names; values are the mock values to inject.
-    // Any vars NOT listed here that the step would normally write are left unchanged.
-    MockOutputVars map[string]any `json:"mock_output_vars,omitempty"`
-}
-
-// On StepSpec:
-DryRunFixture *DryRunFixture `json:"dry_run_fixture,omitempty"`
-```
-
-`DryRunFixture` is **not stored in the published `AgentSpec`** — it is stripped by `CompileForPublish`. It is valid only in the input to `Validate()` and the dry-run endpoint. This keeps production specs clean and prevents accidental synthetic data in production runs.
-
-**Step 2: Add dry-run mode to `InvocationContext`**
-
-```go
-// In go/internal/agentgen/interpreter.go, added to InvocationContext:
-DryRun     bool `json:"dry_run,omitempty"`     // if true, steps with DryRunFixture short-circuit
-StrictDryRun bool `json:"strict_dry_run,omitempty"` // if true, steps WITHOUT a fixture that would make a real call error instead
-```
-
-**Step 3: Interpreter short-circuit logic**
-
-In `executeStep`, before calling `def.Execute`:
-
-```go
-if ic.DryRun && step.DryRunFixture != nil {
-    // Short-circuit: inject mock output vars directly into PipelineVars
-    for k, v := range step.DryRunFixture.MockOutputVars {
-        vars[k] = v
-    }
-    // Record the step in the trace with status="fixture"
-    return nil
-}
-if ic.StrictDryRun {
-    // Steps without fixtures that would make real network calls must error
-    switch step.Type {
-    case StepHTTP, StepLLM, StepMCPCall, StepA2ACall:
-        return fmt.Errorf("step %q (%s) has no dry-run fixture — cannot make real calls in StrictDryRun mode", step.ID, step.Type)
-    }
-}
-```
-
-`transform` and `branch` steps always execute for real — they are pure computation with no side effects, no credentials, and no network calls. There is no reason to mock them; their logic is what the user most needs to verify.
-
-**Step 4: `DryRunStepTrace` in results**
-
-Extend `ExecutionResult` with per-step trace entries:
-
-```go
-type DryRunStepResult struct {
+// In go/internal/agentgen/interpreter.go:
+type StepTrace struct {
     StepID     string         `json:"step_id"`
     StepType   string         `json:"step_type"`
-    Status     string         `json:"status"`    // "fixture" | "executed" | "skipped" | "error"
-    InputVars  map[string]any `json:"input_vars,omitempty"`  // vars available at step entry (credentials excluded)
-    OutputVars map[string]any `json:"output_vars,omitempty"` // vars written by step
+    Status     string         `json:"status"`    // "completed" | "failed" | "skipped"
+    InputVars  map[string]any `json:"input_vars,omitempty"`   // vars at step entry (credentials excluded)
+    OutputVars map[string]any `json:"output_vars,omitempty"`  // vars written by this step
     Error      string         `json:"error,omitempty"`
     DurationMs int64          `json:"duration_ms"`
 }
 ```
 
-When `DryRun=true`, every step appends a `DryRunStepResult` to the trace — whether it ran real, used a fixture, or was skipped.
+`executeStep` snapshots `PipelineVars` before and after execution. The diff (keys written by this step) becomes `OutputVars`. No interpreter flags, no mode switching — `Steps` is always populated; callers that don't need it ignore it.
 
-### New endpoint: POST /api/v1/admin/agent-definitions/{id}/dry-run
+**Credential safety:** any key matching `AgentParamSpec.Key` in the invocation context is excluded from `InputVars` and `OutputVars` before writing to the trace.
 
-Auth: Admin JWT (same as validate).
+### New endpoint: POST /api/v1/admin/agent-definitions/{id}/test-run
+
+Auth: Admin JWT (same as validate). Accepts the current draft by `{id}`, or an inline `definition_json` body field for testing unsaved canvas state.
 
 **Request:**
-
 ```json
 {
   "skill_id": "main",
-  "seed_input": "Weather check for London",
-  "fixtures": {
-    "step-http-1": {
-      "mock_output_vars": {
-        "http_response": { "current_weather": { "temperature": 12.3, "weathercode": 1 } }
-      }
-    },
-    "step-llm-1": {
-      "mock_output_vars": {
-        "output": "It's a mild 12.3°C with clear skies over London."
-      }
-    }
-  },
-  "strict": false
+  "seed_input": "Weather check for London"
 }
 ```
 
-The `{id}` is the agent definition ID. The endpoint loads the current draft definition, injects the fixtures into the relevant `StepSpec.DryRunFixture` fields (in-memory, not persisted), creates a minimal `InvocationContext` with `DryRun=true`, and runs the interpreter.
-
-Alternatively, the request body may include `definition_json` directly (the full canvas JSON) instead of relying on the stored draft — allowing the Copilot to test a definition that has not been saved yet.
-
-**Response (`PipelineDryRunResult`):**
-
+**Response:**
 ```json
 {
   "ok": true,
-  "final_output": "It's a mild 12.3°C with clear skies over London.",
+  "final_output": "It's a mild 12.3 with clear skies over London.",
   "steps": [
-    {
-      "step_id": "step-input-1",   "step_type": "input",     "status": "executed",
-      "output_vars": { "input": "Weather check for London" },        "duration_ms": 0
-    },
-    {
-      "step_id": "step-http-1",    "step_type": "http",      "status": "fixture",
-      "output_vars": { "http_response": { "current_weather": { "temperature": 12.3 } } }, "duration_ms": 0
-    },
-    {
-      "step_id": "step-transform-1","step_type": "transform", "status": "executed",
+    { "step_id": "step-input-1",    "step_type": "input",     "status": "completed",
+      "output_vars": { "input": "Weather check for London" },              "duration_ms": 0 },
+    { "step_id": "step-http-1",     "step_type": "http",      "status": "completed",
+      "output_vars": { "http_response": { "current_weather": { "temperature": 12.3 } } }, "duration_ms": 241 },
+    { "step_id": "step-transform-1","step_type": "transform",  "status": "completed",
       "input_vars":  { "http_response": { "current_weather": { "temperature": 12.3 } } },
-      "output_vars": { "temperature": 12.3 },                        "duration_ms": 1
-    },
-    {
-      "step_id": "step-llm-1",     "step_type": "llm",       "status": "fixture",
-      "output_vars": { "output": "It's a mild 12.3°C..." },          "duration_ms": 0
-    },
-    {
-      "step_id": "step-response-1","step_type": "response",  "status": "executed",
-      "input_vars": { "output": "It's a mild 12.3°C..." },
-      "output_vars": { "response": "It's a mild 12.3°C..." },        "duration_ms": 0
-    }
-  ],
-  "variable_state": {
-    "input": "Weather check for London",
-    "http_response": { "current_weather": { "temperature": 12.3, "weathercode": 1 } },
-    "temperature": 12.3,
-    "output": "It's a mild 12.3°C with clear skies over London."
-  }
+      "output_vars": { "temperature": 12.3 },                              "duration_ms": 1 },
+    { "step_id": "step-llm-1",      "step_type": "llm",       "status": "completed",
+      "output_vars": { "output": "It's a mild 12.3 with clear skies." }, "duration_ms": 890 },
+    { "step_id": "step-response-1", "step_type": "response",  "status": "completed",
+      "output_vars": { "response": "It's a mild 12.3 with clear skies." }, "duration_ms": 0 }
+  ]
 }
 ```
 
-`variable_state` is the final `PipelineVars` state after all steps — the complete view of what was computed.
+The Copilot calls this tool, reads the trace, and narrates: *"Transform extracted `temperature=12.3` correctly. LLM rendered the prompt and returned a one-sentence summary. Pipeline end-to-end looks correct."*
 
-### Single-step test endpoint
+If a step fails, `status="failed"` and `error` carries the message. The Copilot diagnoses it and proposes a fix.
 
-For testing one step in isolation (useful during construction, before the pipeline is connected end-to-end):
-
-**`POST /api/v1/admin/agent-definitions/{id}/dry-run-step`**
-
-```json
-{
-  "skill_id": "main",
-  "step_id": "step-transform-1",
-  "input_vars": {
-    "http_response": { "current_weather": { "temperature": 12.3, "weathercode": 1 } }
-  }
-}
-```
-
-The endpoint creates a minimal `PipelineVars` from `input_vars`, finds the step in the definition, and calls `def.Execute` directly (no interpreter loop — no `input` step needed, no `next` step). Returns a single `DryRunStepResult`.
-
-This mirrors `POST /admin/transform-test` but works for all node types, not just transform chains.
-
-### Per-node fixture support by node type
-
-| Node type | Fixture semantics | Notes |
-|---|---|---|
-| `input` | N/A — always executes (populates `vars["input"]` from `seed_input`) | No fixture needed |
-| `http` | Fixture replaces the HTTP response body. `mock_output_vars["http_response"]` is the parsed response. | Real call skipped |
-| `transform` | Always executes real transform logic. Fixture not applicable — transform is pure computation. | Use `test_step` to verify with specific input vars |
-| `llm` | Fixture replaces LLM completion. `mock_output_vars["output"]` (or `output_var`) is the mock text. | Real LLM call skipped |
-| `branch` | Always executes real template evaluation. No fixture needed — branch logic is deterministic given input vars. | |
-| `mcp_call` | Fixture replaces the MCP tool response. `mock_output_vars["<output_var>"]` is the mock JSON result. | |
-| `a2a_call` | Fixture replaces the A2A agent response. `mock_output_vars["<output_var>"]` is the mock. | |
-| `response` | Always executes — just reads a var. Fixture not needed. | |
-| `loop`, `parallel`, `human_wait` | Stub nodes — fixture may be useful to skip the stub and continue the pipeline. | |
-
-### Why transform and branch always run real
-
-`transform` is the node the Copilot most needs to verify — it is the most likely place for a logic error (wrong JSONPath, wrong function chain, wrong output variable name). Running the real transform with injected input vars from an HTTP fixture is exactly the right test: the real extract-and-reshape logic runs against plausible data.
-
-`branch` evaluates a Go template expression (`{{ gt .score 0.9 }}`). This is deterministic given the input vars and must be verified to ensure the right branch fires. There is no value in mocking a branch — the whole point is to check its logic.
-
-### Credential safety in dry-run
-
-The same credential exclusion rule from Component 5 (Section 11, credential safety) applies to dry-run output. Any variable matching `AgentParamSpec.Key` in the spec's `RequiredParams` is excluded from `DryRunStepResult.InputVars` and `OutputVars`. The dry-run trace must not leak secrets even in the authoring path.
-
-### Implementation files
+### Implementation
 
 ```
-go/internal/agentgen/spec.go         — add DryRunFixture struct, DryRunFixture *DryRunFixture on StepSpec
-go/internal/agentgen/interpreter.go  — add DryRun/StrictDryRun to InvocationContext; short-circuit in executeStep
-go/internal/agentgen/compiler.go     — strip DryRunFixture in CompileForPublish
-go/internal/admin/agent_definitions.go — add dry-run and dry-run-step handlers
-go/internal/agentgen/spec.go         — add DryRunStepResult, PipelineDryRunResult
+go/internal/agentgen/interpreter.go    — add StepTrace, populate Steps in executeStep (no flag, always on)
+go/internal/admin/agent_definitions.go — add test-run handler (load draft, build InvocationContext, Execute, return Steps)
 ```
+
+No changes to `spec.go`, `compiler.go`, or `InvocationContext`. Two files only.
 
 ---
 
 ## 11. Component 5: Run Execution Trace (Phase 2 — requires DB migration)
-
-*(Previously numbered Component 4 — renumbered to make room for Component 4: Pipeline Dry-Run above)*
 
 New table `them.run_pipeline_steps` — one row per canvas-agent step execution:
 
@@ -624,16 +485,13 @@ All steps use existing endpoints. No new write endpoints needed for the debugger
 | 1.4 | Application graph summary endpoint | `go/internal/admin/applications.go` |
 | 1.5 | Structured errors from `compile_graph` | `app/services/app_compiler.py` + frontend |
 
-### Phase 1.5 — Pipeline dry-run / synthetic data testing (no DB migrations)
+### Phase 1.5 — Pipeline test-run / step trace (no DB migrations)
 
 | # | What | Files |
 |---|---|---|
-| 1.5.1 | `DryRunFixture` struct; add `DryRunFixture *DryRunFixture` to `StepSpec`; add `DryRun`/`StrictDryRun` to `InvocationContext` | `go/internal/agentgen/spec.go`, `go/internal/agentgen/interpreter.go` |
-| 1.5.2 | `executeStep` short-circuit logic for fixture mode; `DryRunStepResult` trace accumulation | `go/internal/agentgen/interpreter.go` |
-| 1.5.3 | Strip `DryRunFixture` in `CompileForPublish` (publish safety) | `go/internal/agentgen/compiler.go` |
-| 1.5.4 | `POST /api/v1/admin/agent-definitions/{id}/dry-run` endpoint | `go/internal/admin/agent_definitions.go` |
-| 1.5.5 | `POST /api/v1/admin/agent-definitions/{id}/dry-run-step` endpoint | `go/internal/admin/agent_definitions.go` |
-| 1.5.6 | `test_pipeline` and `test_step` MCP tools in Canvas MCP Server | `go/internal/canvas/mcp_server.go` (new) |
+| 1.5.1 | `StepTrace` struct; populate `Steps []StepTrace` in `executeStep` (always on, no flag) | `go/internal/agentgen/interpreter.go` |
+| 1.5.2 | `POST /api/v1/admin/agent-definitions/{id}/test-run` endpoint | `go/internal/admin/agent_definitions.go` |
+| 1.5.3 | `test_pipeline` MCP tool in Canvas MCP Server | `go/internal/canvas/mcp_server.go` (new) |
 
 ### Phase 2 — Run trace and debugger (DB migration required)
 
@@ -661,8 +519,8 @@ Application graph snapshot table, run-to-version link, graph-diff endpoint.
 - Component 1.5 (application validation issues): Breaking API change — 422 body shape changes. Frontend and any external callers must be updated in the same PR.
 - Component 2.1 (pipeline step trace): Interpreter instrumentation adds per-step DB writes. Benchmark write overhead before committing to synchronous persistence; consider batching if needed.
 
-**High confidence — dry-run (Component 4):**
-The dependency injection interfaces (`HTTPDoer`, `LLMFactory`, `MCPCaller`) already exist on the interpreter specifically because the test suite needed them. The dry-run feature reuses this established pattern at the request level rather than the test level. `DryRunFixture` on `StepSpec` is purely additive — no existing field changes. Stripping fixtures in `CompileForPublish` is a single-line filter. The biggest implementation risk is the `StrictDryRun` path — deciding which node types count as "real call" nodes requires a list that must stay in sync with new node types as they are added (a `HasSideEffects() bool` field on `NodeDef` is the clean way to express this).
+**High confidence — test-run (Component 4):**
+`StepTrace` is a pure addition to `ExecutionResult` — no interpreter flags, no new concepts, no spec changes. The interpreter already executes the full pipeline; capturing a before/after var snapshot per step is a small mechanical addition to `executeStep`. The test-run endpoint is a thin handler that calls existing interpreter code. Two files, no migrations, no new abstractions.
 
 **Key risk — enrichment maintenance discipline:**
 `ConfigFields` on `NodeDef` are human-authored. When a developer changes a config struct field name, they must also update the `ConfigFieldDoc` entry. This is one file (`nodes.go`), co-located, but still a human step. Mitigation: a test that cross-checks `ConfigFieldDoc.Field` values against the JSON keys present in an example config for each node type — catches missing or misspelled field names at CI.

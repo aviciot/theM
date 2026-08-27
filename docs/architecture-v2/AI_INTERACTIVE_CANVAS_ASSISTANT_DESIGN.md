@@ -456,50 +456,32 @@ These are the tools the LLM can call. Names are lowercase_snake_case following M
 }
 ```
 
-**Dry-run / synthetic data tools (no session required — operate on canvas JSON directly)**
+**Test-run tool (no session required — operates on the saved draft or inline canvas JSON)**
 
 | Tool | Input | Output | Description |
 |---|---|---|---|
-| `test_pipeline` | `{definition_id?, definition_json?, skill_id, seed_input: string, fixtures: {step_id: {var_name: value}}, strict?: bool}` | `PipelineDryRunResult` with per-step trace | Runs the full pipeline with synthetic fixtures. Steps with fixtures short-circuit; steps without fixtures run normally (or error if `strict=true`) |
-| `test_step` | `{definition_id?, definition_json?, skill_id, step_id, input_vars: {var_name: value}}` | `StepDryRunResult` — outputs produced, duration | Runs a single step in isolation with explicit input vars |
+| `test_pipeline` | `{definition_id, skill_id, seed_input: string}` | Per-step trace with input/output vars, status, duration | Runs the full pipeline with real calls and returns what each step produced |
 
-The `fixtures` map in `test_pipeline` has step IDs as keys and mock output vars as values. Example: if the `http` step would normally call `api.example.com`, pass `{ "step-http-1": { "http_response": {"temperature": 12.3} } }` to inject the mocked response. The interpreter uses the fixture instead of making the real call and continues downstream steps normally.
+Real calls go out — HTTP hits the real URL, LLM calls the real provider. This is the point: you are verifying actual wiring, not a simulation. The trace shows the variable state entering and leaving each step, making misconfigurations immediately visible (wrong JSONPath, unresolved template variable, wrong output var name).
 
-`test_step` runs a single step with caller-supplied input vars — useful for validating a transform chain or LLM prompt template without running the whole pipeline.
-
-The LLM uses these to verify that:
-- Variable references (`{{.temperature}}`) resolve to expected values
-- Extractions (`json_path`) pick the right field
-- Branch conditions (`{{ gt .score 0.9 }}`) fire the expected branch
-- LLM prompts render correctly with test data
-- The response step produces the shape the caller needs
-
-**Example Copilot conversation using dry-run:**
+**Example Copilot conversation using test_pipeline:**
 
 ```
 User: "Can you test the weather pipeline to make sure everything connects correctly?"
 
 Assistant thinks:
-  → test_pipeline({
-      definition_id: "def-abc",
-      skill_id: "main",
-      seed_input: "Weather check",
-      fixtures: {
-        "step-http-1": { "http_response": { "current_weather": { "temperature": 12.3, "weathercode": 1 } } },
-        "step-llm-1":  { "output": "It's a mild 12.3°C with clear skies." }
-      }
-    })
+  → test_pipeline({ definition_id: "def-abc", skill_id: "main", seed_input: "Weather check" })
 
-"I tested the pipeline with mock data:
- • Input node received 'Weather check' ✓
- • HTTP node skipped (using fixture: temperature=12.3) ✓
- • Transform extracted temperature → 12.3 ✓
- • LLM node skipped (using fixture: 'It's a mild 12.3°C with clear skies.') ✓
+"I ran the pipeline:
+ • HTTP node called the weather API — got temperature=12.3 ✓
+ • Transform extracted temperature from current_weather.temperature ✓
+ • LLM rendered the prompt and returned 'It's a mild 12.3°C with clear skies.' ✓
  • Response returned the LLM output ✓
 
- To test against the real weather API, remove the HTTP fixture and I'll make a live call.
- To test with the real LLM, remove the LLM fixture."
+ Pipeline looks correct end-to-end."
 ```
+
+If the transform had the wrong JSONPath (`temperature` instead of `current_weather.temperature`), the trace would show `temperature=null` at the transform output, and the Copilot would say: *"The transform extracted null — the JSON path `temperature` doesn't exist at the top level of the response. The correct path is `current_weather.temperature`."* It then calls `update_node` to fix it.
 
 **Every mutation tool response includes:**
 ```json
@@ -1013,14 +995,14 @@ Without Phase 0, the LLM must hardcode node schemas, which will drift. Phase 0 i
 
 This phase can ship concurrently with Phase 2 because it reuses the interpreter directly and requires no canvas state mutations.
 
-1. Add `DryRunFixture` field to `StepSpec` and `DryRun` / `StrictDryRun` flags to `InvocationContext` (Foundation component — see `AI_PLATFORM_FOUNDATION.md` Section 12)
-2. `POST /api/v1/admin/agent-definitions/{id}/dry-run` endpoint — accepts canvas definition + fixtures + seed input
-3. Canvas MCP tools: `test_pipeline`, `test_step` (Section 7.3 below)
-4. Run trace rendering: frontend displays per-step fixture results on each node using existing `_debug` hooks
+1. `StepTrace` added to interpreter `ExecutionResult` — captures input/output vars per step (Foundation component — see `AI_PLATFORM_FOUNDATION.md` Section 10)
+2. `POST /api/v1/admin/agent-definitions/{id}/test-run` endpoint — runs the pipeline with a seed input
+3. Canvas MCP tool: `test_pipeline` (Section 7.3 below)
+4. Frontend: per-step trace results shown on nodes using existing `_debug` and `_validation` hooks
 
-**Success criterion:** The Copilot can say "I tested the pipeline with `lat=51.5` and `lon=-0.1` — the HTTP node returned `{ temperature: 12.3 }`, the transform extracted it correctly, and the LLM produced `'It's a cool 12.3°C in London today'`. Pipeline looks correct."
+**Success criterion:** The Copilot can say "I ran the pipeline with `seed_input='Weather check'` — the HTTP node returned `{ temperature: 12.3 }`, the transform extracted it correctly, and the LLM produced `'It's a cool 12.3°C in London today'`. Pipeline looks correct."
 
-**Estimate: 3–5 days** (after Phase 1 Foundation is in place).
+**Estimate: 2–3 days** (after Phase 1 Foundation is in place).
 
 ### Phase 2 — Full mutation set and undo
 
