@@ -830,15 +830,28 @@ export const themApi = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
-  voiceChat: async (slug: string, audio: Blob): Promise<Response> => {
+  voiceChat: async (slug: string, audio: Blob): Promise<{ transcript: string; reply: string; audioBlob: Blob }> => {
     const form = new FormData();
     form.append('audio', audio, 'recording.webm');
-    const res = await fetch(`/api/them/apps/${slug}/voice/chat`, {
-      method: 'POST',
-      body: form,
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
+    try {
+      const res = await fetch(`/api/them/apps/${slug}/voice/chat`, {
+        method: 'POST',
+        body: form,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => `HTTP ${res.status}`);
+        throw new Error(errText);
+      }
+      const transcript = res.headers.get('X-Transcript') ?? '';
+      const reply = res.headers.get('X-Reply') ?? '';
+      const audioBlob = await res.blob();
+      return { transcript, reply, audioBlob };
+    } finally {
+      clearTimeout(timer);
+    }
   },
   applications: () => api.get<Application[]>('/admin/applications'),
   getApplication: (id: string) => api.get<Application>(`/admin/applications/${id}`),

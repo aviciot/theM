@@ -1633,21 +1633,18 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
         setRecState('transcribing');
         try {
           if (isVoiceEP && target.kind === 'entrypoint') {
-            setBusy(true); busyRef.current = true;
-            setTrace([]);
-            const res = await themApi.voiceChat(target.slug, blob);
-            const transcript = res.headers.get('X-Transcript') ?? '';
-            const reply = res.headers.get('X-Reply') ?? '';
+            setStatus('Sending…');
+            const { transcript, reply, audioBlob } = await themApi.voiceChat(target.slug, blob);
             if (transcript) setMessages(prev => [...prev, { role: 'user', text: transcript }]);
             if (reply) setMessages(prev => [...prev, { role: 'assistant', text: reply }]);
-            setSpeaking(true);
-            const audioBlob = await res.blob();
-            const url = URL.createObjectURL(audioBlob);
-            const audio = new Audio(url);
-            audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
-            audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
-            audio.play().catch(() => setSpeaking(false));
-            setBusy(false); busyRef.current = false;
+            if (audioBlob.size > 0) {
+              setSpeaking(true);
+              const url = URL.createObjectURL(audioBlob);
+              const audio = new Audio(url);
+              audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+              audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+              audio.play().catch(() => setSpeaking(false));
+            }
             setStatus('Done');
           } else {
             const result = await themApi.transcribe(orchName, blob);
@@ -1777,9 +1774,9 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
       {/* Input — hidden in Compare mode (parent owns the composer) */}
       {sharedInput === undefined && (
         <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-          {/* Input drag handle */}
+          {/* Input drag handle — hidden for voice EPs (no textarea to resize) */}
           <div
-            onMouseDown={onInputDragStart}
+            onMouseDown={isVoiceEP ? undefined : onInputDragStart}
             style={{
               height: 10, cursor: 'ns-resize', flexShrink: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1793,15 +1790,20 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
               {[0,1,2].map(i => <div key={i} style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--tm-border)' }} />)}
             </div>
           </div>
-          <div style={{ padding: '6px 14px 10px', display: 'flex', gap: 8 }}>
+          <div style={{ padding: '6px 14px 10px', display: 'flex', gap: 8, alignItems: 'center' }}>
             {(voiceEnabled || isVoiceEP) && (
-              <button style={micBtnStyle()} onClick={toggleRecording} disabled={recordingState === 'transcribing' || busy} title={isVoiceEP ? (recordingState === 'recording' ? 'Click to send' : 'Click to speak') : (recordingState === 'recording' ? 'Click to stop & transcribe' : 'Click to record')}>
+              <button
+                style={micBtnStyle()}
+                onClick={(e) => { e.stopPropagation(); toggleRecording(); }}
+                disabled={recordingState === 'transcribing'}
+                title={recordingState === 'recording' ? 'Click to stop & send' : 'Click to start recording'}
+              >
                 {recordingState === 'transcribing' ? <Spinner /> : <MicIcon />}
               </button>
             )}
             {isVoiceEP ? (
-              <div style={{ flex: 1, height: inputHeight, padding: '9px 12px', borderRadius: 10, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', fontStyle: 'italic' }}>
-                Hold the mic button to speak — voice EP uses audio only
+              <div style={{ flex: 1, padding: '9px 12px', borderRadius: 10, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', fontStyle: 'italic' }}>
+                {recordingState === 'recording' ? '🔴 Recording… click mic to stop' : recordingState === 'transcribing' ? '⏳ Processing…' : 'Click the mic to start speaking'}
               </div>
             ) : (
               <>
