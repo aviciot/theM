@@ -325,7 +325,7 @@ function CanvasInner() {
 
   // View state: 'agent' = top-level, 'skill' = pipeline for a skill
   const [activeView, setActiveView] = useState<'agent' | 'skill'>('agent');
-  const [layoutDir, setLayoutDir] = useState<LayoutDir>('TB');
+  const [layoutDir, setLayoutDir] = useState<LayoutDir>('LR');
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
 
   // Resizable panels
@@ -505,8 +505,10 @@ function CanvasInner() {
   useEffect(() => {
     if (activeSkillId) {
       const state = skillPipelines[activeSkillId] ?? { nodes: [], edges: [] };
-      setLocalPipeNodes(state.nodes);
+      const arranged = applyDagreLayout(state.nodes, state.edges, 'LR');
+      setLocalPipeNodes(arranged);
       setLocalPipeEdges(state.edges);
+      setTimeout(() => fitView({ padding: 0.2 }), 50);
     }
   }, [activeSkillId]); // eslint-disable-line react-hooks/exhaustive-deps
 
