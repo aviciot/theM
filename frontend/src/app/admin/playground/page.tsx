@@ -1660,10 +1660,17 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
         }
         finally { setRecState('idle'); }
       };
-      recorder.start();
+      recorder.start(250); // collect chunks every 250ms
       mediaRecorderRef.current = recorder;
       setMediaRecorder(recorder);
       setRecState('recording');
+      // Safety auto-stop after 60s
+      setTimeout(() => {
+        if (mediaRecorderRef.current === recorder) {
+          try { if (recorder.state !== 'inactive') recorder.stop(); } catch { /* ok */ }
+          mediaRecorderRef.current = null;
+        }
+      }, 60000);
     } catch (e) {
       const msg = (e as Error).message || '';
       const friendly = msg.includes('HTTPS') || msg.includes('localhost')
@@ -1678,11 +1685,12 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
 
   const stopRecording = () => {
     const rec = mediaRecorderRef.current;
-    if (rec && rec.state === 'recording') {
-      rec.stop();
-      mediaRecorderRef.current = null;
-      setMediaRecorder(null);
-    }
+    if (!rec) { setRecState('idle'); return; }
+    try { if (rec.state !== 'inactive') rec.stop(); } catch { /* already stopped */ }
+    mediaRecorderRef.current = null;
+    setMediaRecorder(null);
+    // If state is already inactive onstop won't fire — reset manually
+    if (rec.state === 'inactive') setRecState('idle');
   };
 
   const toggleRecording = () => {
