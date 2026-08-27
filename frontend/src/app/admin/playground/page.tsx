@@ -1676,6 +1676,11 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
 
   const stopRecording = () => { if (mediaRecorder && recordingState === 'recording') { mediaRecorder.stop(); setMediaRecorder(null); } };
 
+  const toggleRecording = () => {
+    if (recordingState === 'recording') stopRecording();
+    else startRecording();
+  };
+
   const micBtnStyle = (): React.CSSProperties => {
     if (recordingState === 'recording') return { padding: '10px 14px', borderRadius: 12, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center', outline: '2px solid #f87171' };
     if (recordingState === 'transcribing') return { padding: '10px 14px', borderRadius: 12, border: 'none', background: 'var(--tm-surface)', color: 'var(--tm-text-muted)', cursor: 'not-allowed', alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center' };
@@ -1773,7 +1778,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
           </div>
           <div style={{ padding: '6px 14px 10px', display: 'flex', gap: 8 }}>
             {(voiceEnabled || isVoiceEP) && (
-              <button style={micBtnStyle()} onMouseDown={startRecording} onMouseUp={stopRecording} onTouchStart={startRecording} onTouchEnd={stopRecording} disabled={recordingState === 'transcribing' || busy} title={isVoiceEP ? (recordingState === 'recording' ? 'Release to send' : 'Hold to speak') : (recordingState === 'recording' ? 'Release to transcribe' : 'Hold to record')}>
+              <button style={micBtnStyle()} onClick={toggleRecording} disabled={recordingState === 'transcribing' || busy} title={isVoiceEP ? (recordingState === 'recording' ? 'Click to send' : 'Click to speak') : (recordingState === 'recording' ? 'Click to stop & transcribe' : 'Click to record')}>
                 {recordingState === 'transcribing' ? <Spinner /> : <MicIcon />}
               </button>
             )}
