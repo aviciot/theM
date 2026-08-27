@@ -1,5 +1,7 @@
+import React from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { getNodeDef } from '@/lib/nodeRegistry';
+import type { PortDef } from '@/lib/nodeRegistry';
 import type { StepNodeData, DebugNodeState } from '../types';
 import { useLayoutDir } from '../LayoutContext';
 
@@ -75,6 +77,15 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
     ? Math.max(HEADER_PX, transformOutputs.length * PX_PER_ROW + 16)
     : 0;
 
+  // Static data ports from the node registry (LLM input/output, Response input).
+  // Transform and HTTP have dynamic ports — not rendered here.
+  const inputPorts: PortDef[] = nodeDef.input_ports ?? [];
+  const outputPorts: PortDef[] = nodeDef.output_ports ?? [];
+  const hasDataPorts = inputPorts.length > 0 || outputPorts.length > 0;
+
+  // Data-port handle style — small square, distinct color
+  const dataInStyle  = { background: '#f97316', width: 7, height: 7, borderRadius: 2, border: '1px solid rgba(0,0,0,0.4)' };
+  const dataOutStyle = { background: '#818cf8', width: 7, height: 7, borderRadius: 2, border: '1px solid rgba(0,0,0,0.4)' };
   return (
     <div style={{
       background: 'transparent', padding: '8px', minWidth: '80px', textAlign: 'center',
@@ -82,9 +93,33 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
       transition: 'border-color 0.2s, box-shadow 0.2s',
       position: 'relative',
       paddingRight: isTransform && transformOutputs.length > 0 ? '72px' : '8px',
+      paddingLeft: hasDataPorts && inputPorts.length > 0 ? '8px' : '8px',
       ...(transformMinHeight > 0 ? { minHeight: transformMinHeight } : {}),
     }}>
+      {/* Control target handle — execution flow in */}
       <Handle type="target" position={targetPos} style={{ background: meta.border }} />
+      {/* Data input port handles — one per static input port */}
+      {inputPorts.map((port, idx) => {
+        const posStyle: React.CSSProperties = layoutDir === 'LR'
+          ? { top: `calc(30% + ${idx * 16}px)`, left: -5 }
+          : { left: `calc(30% + ${idx * 16}px)`, top: -5 };
+        return (
+          <span key={port.id}>
+            <Handle
+              id={`data-in-${port.id}`}
+              type="target"
+              position={targetPos}
+              style={{ ...dataInStyle, ...posStyle }}
+              title={port.label}
+            />
+            <span style={{
+              position: 'absolute', fontSize: 7, color: '#f97316',
+              fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap',
+              ...(layoutDir === 'LR' ? { left: 6, top: `calc(30% + ${idx * 16}px - 4px)` } : { top: 6, left: `calc(30% + ${idx * 16}px)` }),
+            }}>{port.id}</span>
+          </span>
+        );
+      })}
       {data.step_type === 'branch' ? (
         <>
           <Handle
@@ -141,6 +176,28 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
       ) : (
         <Handle type="source" position={sourcePos} style={{ background: meta.border }} />
       )}
+      {/* Data output port handles — one per static output port */}
+      {outputPorts.map((port, idx) => {
+        const posStyle: React.CSSProperties = layoutDir === 'LR'
+          ? { top: `calc(70% + ${idx * 16}px)`, right: -5 }
+          : { right: `calc(30% + ${idx * 16}px)`, bottom: -5 };
+        return (
+          <span key={port.id}>
+            <Handle
+              id={`data-out-${port.id}`}
+              type="source"
+              position={sourcePos}
+              style={{ ...dataOutStyle, ...posStyle }}
+              title={port.label}
+            />
+            <span style={{
+              position: 'absolute', fontSize: 7, color: '#818cf8',
+              fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap',
+              ...(layoutDir === 'LR' ? { right: 6, top: `calc(70% + ${idx * 16}px - 4px)` } : { bottom: 6, right: `calc(30% + ${idx * 16}px)` }),
+            }}>{port.id}</span>
+          </span>
+        );
+      })}
       <div style={{ fontSize: '32px', lineHeight: 1 }}>{meta.emoji}</div>
       <div style={{ color: '#fff', fontWeight: 700, fontSize: '11px', marginTop: '5px' }}>{data.label || meta.label}</div>
       {sub && <div style={{ fontSize: '10px', color: meta.border, opacity: 0.9, marginTop: 2 }}>{sub}</div>}

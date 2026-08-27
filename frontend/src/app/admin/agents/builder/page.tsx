@@ -207,6 +207,18 @@ function DebugEdge({
   );
 }
 
+// DataEdge — rendered for data bindings (kind:'data'). Dashed indigo wire.
+function DataEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }: EdgeProps) {
+  const [edgePath] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  return (
+    <BaseEdge
+      id={id}
+      path={edgePath}
+      style={{ stroke: '#818cf8', strokeWidth: 1.5, strokeDasharray: '5 3', opacity: 0.8 }}
+    />
+  );
+}
+
 // nodeTypes MUST be defined outside the component for stable references.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const nodeTypes: NodeTypes = {
@@ -216,7 +228,10 @@ const nodeTypes: NodeTypes = {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const edgeTypes: EdgeTypes = { debugEdge: DebugEdge as any };
+const edgeTypes: EdgeTypes = { debugEdge: DebugEdge as any, dataEdge: DataEdge as any };
+
+// Returns true for data-binding edges (kind:'data'). False for control edges.
+function isDataEdge(e: Edge): boolean { return (e.data as Record<string, unknown> | undefined)?.kind === 'data'; }
 
 // ── Canvas Logo (copied from applications/page.tsx) ───────────────────────────
 type LogoStateDef = { opacity: number; filter: string; animation: string; }
@@ -424,21 +439,29 @@ function CanvasInner() {
             : skillPipelines[sd.skill_id]) ?? { nodes: [], edges: [] };
           const steps: AgentStepDoc[] = pipeline.nodes.map(sn => {
             const stepd = sn.data as unknown as StepData;
-            const outEdges = pipeline.edges.filter(e => e.source === sn.id);
+            const ctrlOut = pipeline.edges.filter(e => e.source === sn.id && !isDataEdge(e));
             const defaultLabel = stepMeta(stepd.step_type).label;
             const next = stepd.step_type === 'branch'
               ? [
-                  outEdges.find(e => e.sourceHandle === 'source-true')?.target?.replace('step-', '') ?? '',
-                  outEdges.find(e => e.sourceHandle === 'source-false')?.target?.replace('step-', '') ?? '',
+                  ctrlOut.find(e => e.sourceHandle === 'source-true')?.target?.replace('step-', '') ?? '',
+                  ctrlOut.find(e => e.sourceHandle === 'source-false')?.target?.replace('step-', '') ?? '',
                 ].filter(Boolean)
-              : outEdges.map(e => (e.target as string).replace('step-', ''));
+              : ctrlOut.map(e => (e.target as string).replace('step-', ''));
+            const dataIn = pipeline.edges.filter(e => e.target === sn.id && isDataEdge(e));
+            const inputs: Record<string, { from_step: string; from_port: string }> = {};
+            for (const de of dataIn) {
+              const portID = de.targetHandle?.replace('data-in-', '');
+              const fromPort = de.sourceHandle?.replace('data-out-', '');
+              const fromStepID = (de.source as string).replace('step-', '');
+              if (portID && fromPort && fromStepID) inputs[portID] = { from_step: fromStepID, from_port: fromPort };
+            }
             return {
               id: stepd.step_id,
               type: stepd.step_type as AgentStepDoc['type'],
               label: (stepd.label && stepd.label !== defaultLabel) ? stepd.label : undefined,
               config: stepd.config ?? {},
               next,
-              ...(stepd.inputs ? { inputs: stepd.inputs } : {}),
+              ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
               position: sn.position,
             };
           });
@@ -596,10 +619,11 @@ function CanvasInner() {
         id: `step-${step.id}`,
         type: 'step',
         position: step.position ?? { x: 200, y: 80 + si * 120 },
-        data: { step_id: step.id, step_type: step.type, label: (step as AgentStepDoc & { label?: string }).label || stepMeta(step.type).label, config: (step.config as Record<string, unknown>) ?? {}, ...(step.inputs ? { inputs: step.inputs } : {}) },
+        data: { step_id: step.id, step_type: step.type, label: (step as AgentStepDoc & { label?: string }).label || stepMeta(step.type).label, config: (step.config as Record<string, unknown>) ?? {} },
       }));
       const stepEdges: Edge[] = [];
       for (const step of (sk.steps ?? [])) {
+        // Control edges from step.next
         (step.next ?? []).forEach((nextId, idx) => {
           const isBranch = step.type === 'branch';
           const isTransform = step.type === 'transform';
@@ -612,6 +636,20 @@ function CanvasInner() {
                isTransform && sh ? { sourceHandle: sh } : {}),
           });
         });
+        // Data binding edges from step.inputs
+        if (step.inputs) {
+          for (const [portID, binding] of Object.entries(step.inputs)) {
+            stepEdges.push({
+              id: `data-${binding.from_step}-${binding.from_port}-to-${step.id}-${portID}`,
+              source: `step-${binding.from_step}`,
+              target: `step-${step.id}`,
+              sourceHandle: `data-out-${binding.from_port}`,
+              targetHandle: `data-in-${portID}`,
+              type: 'dataEdge',
+              data: { kind: 'data' },
+            });
+          }
+        }
       }
       pipelines[sk.skill_id] = { nodes: stepNodes, edges: stepEdges };
     }
@@ -631,20 +669,30 @@ function CanvasInner() {
         const pipeline = skillPipelines[sd.skill_id] ?? { nodes: [], edges: [] };
         const steps: AgentStepDoc[] = pipeline.nodes.map(sn => {
           const stepd = sn.data as unknown as StepData;
-          const outEdges = pipeline.edges.filter(e => e.source === sn.id);
+          // Control edges only — data edges (kind:'data') carry no execution order.
+          const ctrlOut = pipeline.edges.filter(e => e.source === sn.id && !isDataEdge(e));
           const defaultLabel = stepMeta(stepd.step_type).label;
           let next: string[];
           let next_handles: string[] | undefined;
           if (stepd.step_type === 'branch') {
             next = [
-              outEdges.find(e => e.sourceHandle === 'source-true')?.target?.replace('step-', '') ?? '',
-              outEdges.find(e => e.sourceHandle === 'source-false')?.target?.replace('step-', '') ?? '',
+              ctrlOut.find(e => e.sourceHandle === 'source-true')?.target?.replace('step-', '') ?? '',
+              ctrlOut.find(e => e.sourceHandle === 'source-false')?.target?.replace('step-', '') ?? '',
             ].filter(Boolean);
-          } else if (stepd.step_type === 'transform' && outEdges.some(e => e.sourceHandle)) {
-            next = outEdges.map(e => (e.target as string).replace('step-', ''));
-            next_handles = outEdges.map(e => e.sourceHandle as string ?? '');
+          } else if (stepd.step_type === 'transform' && ctrlOut.some(e => e.sourceHandle)) {
+            next = ctrlOut.map(e => (e.target as string).replace('step-', ''));
+            next_handles = ctrlOut.map(e => e.sourceHandle as string ?? '');
           } else {
-            next = outEdges.map(e => (e.target as string).replace('step-', ''));
+            next = ctrlOut.map(e => (e.target as string).replace('step-', ''));
+          }
+          // Derive inputs from incoming data edges — source of truth for bindings.
+          const dataIn = pipeline.edges.filter(e => e.target === sn.id && isDataEdge(e));
+          const inputs: Record<string, { from_step: string; from_port: string }> = {};
+          for (const de of dataIn) {
+            const portID = de.targetHandle?.replace('data-in-', '');
+            const fromPort = de.sourceHandle?.replace('data-out-', '');
+            const fromStepID = (de.source as string).replace('step-', '');
+            if (portID && fromPort && fromStepID) inputs[portID] = { from_step: fromStepID, from_port: fromPort };
           }
           return {
             id: stepd.step_id,
@@ -653,7 +701,7 @@ function CanvasInner() {
             config: stepd.config ?? {},
             next,
             ...(next_handles ? { next_handles } : {}),
-            ...(stepd.inputs ? { inputs: stepd.inputs } : {}),
+            ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
             position: sn.position,
           };
         });
@@ -931,9 +979,24 @@ function CanvasInner() {
   }, [ctxMenu, savePipelineState, closeCtx]);
 
   const onPipeConnect = useCallback((conn: Connection) => {
-    setLocalPipeEdges(prev => addEdge(conn, prev.filter(e => e.target !== conn.target)));
+    // Data binding connection — sourceHandle starts with 'data-out-'
+    const isData = conn.sourceHandle?.startsWith('data-out-') && conn.targetHandle?.startsWith('data-in-');
+    if (isData) {
+      // Allow multiple data edges to the same target port — React Flow deduplicates by id.
+      // Replace any existing binding for the same targetHandle to keep one binding per port.
+      setLocalPipeEdges(prev => {
+        const kept = prev.filter(e => !(isDataEdge(e) && e.target === conn.target && e.targetHandle === conn.targetHandle));
+        return addEdge({ ...conn, type: 'dataEdge', data: { kind: 'data' } }, kept);
+      });
+      markDirty();
+      return;
+    }
+
+    // Control edge — existing behavior. Single-incoming guard applies per targetHandle for branch.
+    setLocalPipeEdges(prev => addEdge(conn, prev.filter(e => e.target !== conn.target || isDataEdge(e))));
     markDirty();
 
+    // Auto-fill input_field on target node (heuristic, control edges only)
     setLocalPipeNodes(prev => {
       const sourceNode = prev.find(n => n.id === conn.source);
       const targetNode = prev.find(n => n.id === conn.target);
@@ -961,29 +1024,37 @@ function CanvasInner() {
           : n
       );
     });
-  }, [setLocalPipeEdges, setLocalPipeNodes]);
+  }, [setLocalPipeEdges, setLocalPipeNodes, markDirty]);
 
   const isPipeConnectionValid = useCallback((conn: Connection | Edge) => {
     if (conn.source === conn.target) return false;
 
+    // Data edges skip degree and cycle checks — they carry no execution order.
+    const connIsData = (conn as Edge).data?.kind === 'data'
+      || ((conn as Connection).sourceHandle?.startsWith('data-out-') && (conn as Connection).targetHandle?.startsWith('data-in-'));
+    if (connIsData) return true;
+
     const srcNode = localPipeNodes.find(n => n.id === conn.source);
     const tgtNode = localPipeNodes.find(n => n.id === conn.target);
 
+    // Degree checks apply to control edges only.
+    const ctrlEdges = localPipeEdges.filter(e => !isDataEdge(e));
+
     if (srcNode) {
       const srcType = (srcNode.data as unknown as StepData).step_type;
-      // branch: one edge per named handle; transform: one edge per named output handle; others: total count
       const currentOut = (srcType === 'branch' || srcType === 'transform')
-        ? localPipeEdges.filter(e => e.source === conn.source && e.sourceHandle === conn.sourceHandle).length
-        : localPipeEdges.filter(e => e.source === conn.source).length;
+        ? ctrlEdges.filter(e => e.source === conn.source && e.sourceHandle === conn.sourceHandle).length
+        : ctrlEdges.filter(e => e.source === conn.source).length;
       if (!canAddOutgoing(srcType, currentOut)) return false;
     }
     if (tgtNode) {
       const tgtType = (tgtNode.data as unknown as StepData).step_type;
-      const currentIn = localPipeEdges.filter(e => e.target === conn.target).length;
+      const currentIn = ctrlEdges.filter(e => e.target === conn.target).length;
       if (!canAddIncoming(tgtType, currentIn)) return false;
     }
 
-    const hypothetical = [...localPipeEdges, { id: '__test__', source: conn.source!, target: conn.target! }];
+    // Cycle check over control edges only.
+    const hypothetical = [...ctrlEdges, { id: '__test__', source: conn.source!, target: conn.target! }];
     if (topoSort(localPipeNodes, hypothetical) === null) return false;
 
     return true;
