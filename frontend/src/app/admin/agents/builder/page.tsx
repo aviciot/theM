@@ -980,7 +980,41 @@ function CanvasInner() {
 
   const onPipeConnect = useCallback((conn: Connection) => {
     // Data binding connection — sourceHandle starts with 'data-out-'
-    const isData = conn.sourceHandle?.startsWith('data-out-') && conn.targetHandle?.startsWith('data-in-');
+    const isDataSrc = conn.sourceHandle?.startsWith('data-out-');
+    const isData = isDataSrc && conn.targetHandle?.startsWith('data-in-');
+
+    // Dynamic port creation: data-out dragged onto a node body (no targetHandle).
+    // Auto-create a data-in-{varName} port on the target node and wire it.
+    if (isDataSrc && !conn.targetHandle) {
+      const varName = conn.sourceHandle!.replace('data-out-', '');
+      const syntheticHandle = `data-in-${varName}`;
+      // Add the port to the target node's data.inputs
+      setLocalPipeNodes(prev => prev.map(n => {
+        if (n.id !== conn.target) return n;
+        const existing = ((n.data as unknown as import('./types').StepData).inputs) ?? {};
+        const srcStepID = (conn.source as string).replace('step-', '');
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            inputs: { ...existing, [varName]: { from_step: srcStepID, from_port: varName } },
+          },
+        };
+      }));
+      // Add the data edge using the synthetic handle
+      setLocalPipeEdges(prev => {
+        const kept = prev.filter(e => !(isDataEdge(e) && e.target === conn.target && e.targetHandle === syntheticHandle));
+        return addEdge({
+          ...conn,
+          targetHandle: syntheticHandle,
+          type: 'dataEdge',
+          data: { kind: 'data' },
+        }, kept);
+      });
+      markDirty();
+      return;
+    }
+
     if (isData) {
       // Allow multiple data edges to the same target port — React Flow deduplicates by id.
       // Replace any existing binding for the same targetHandle to keep one binding per port.
@@ -1030,8 +1064,10 @@ function CanvasInner() {
     if (conn.source === conn.target) return false;
 
     // Data edges skip degree and cycle checks — they carry no execution order.
+    // Also allow data-out dragged onto a node body (no targetHandle) — dynamic port creation.
     const connIsData = (conn as Edge).data?.kind === 'data'
-      || ((conn as Connection).sourceHandle?.startsWith('data-out-') && (conn as Connection).targetHandle?.startsWith('data-in-'));
+      || ((conn as Connection).sourceHandle?.startsWith('data-out-') && (conn as Connection).targetHandle?.startsWith('data-in-'))
+      || ((conn as Connection).sourceHandle?.startsWith('data-out-') && !(conn as Connection).targetHandle);
     if (connIsData) return true;
 
     const srcNode = localPipeNodes.find(n => n.id === conn.source);

@@ -81,6 +81,10 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
   // Transform and HTTP have dynamic ports — not rendered here.
   const inputPorts: PortDef[] = nodeDef.input_ports ?? [];
   const outputPorts: PortDef[] = nodeDef.output_ports ?? [];
+
+  // Dynamic input ports — created when user drags a data-out handle onto this node body.
+  // Stored in data.inputs as { portID: { from_step, from_port } }.
+  const dynamicInputPorts: string[] = data.inputs ? Object.keys(data.inputs) : [];
   const hasDataPorts = inputPorts.length > 0 || outputPorts.length > 0;
 
   // Data-port handle style — small square, distinct color
@@ -98,6 +102,28 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
     }}>
       {/* Control target handle — execution flow in */}
       <Handle type="target" position={targetPos} style={{ background: meta.border }} />
+      {/* Dynamic input port handles — created when user drags a data-out onto this node */}
+      {dynamicInputPorts.map((portID, idx) => {
+        const posStyle: React.CSSProperties = layoutDir === 'LR'
+          ? { top: `calc(25% + ${idx * 16}px)`, left: -5 }
+          : { left: `calc(25% + ${idx * 16}px)`, top: -5 };
+        return (
+          <span key={`dyn-${portID}`}>
+            <Handle
+              id={`data-in-${portID}`}
+              type="target"
+              position={targetPos}
+              style={{ ...dataInStyle, ...posStyle }}
+              title={portID}
+            />
+            <span style={{
+              position: 'absolute', fontSize: 7, color: '#f97316',
+              fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap',
+              ...(layoutDir === 'LR' ? { left: 6, top: `calc(25% + ${idx * 16}px - 4px)` } : { top: 6, left: `calc(25% + ${idx * 16}px)` }),
+            }}>{portID}</span>
+          </span>
+        );
+      })}
       {/* Data input port handles — one per static input port */}
       {inputPorts.map((port, idx) => {
         const posStyle: React.CSSProperties = layoutDir === 'LR'
@@ -139,35 +165,24 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
         </>
       ) : isTransform && transformOutputs.length > 0 ? (
         // Dynamic named output handles — fixed 18px per row, node grows to fit
+        // Use data-out- prefix so onPipeConnect recognises them as data edges
         <>
           {transformOutputs.map((varName, idx) => {
-            // Place handles at fixed pixel intervals from the top, centred in the usable height.
             const topPx = 8 + idx * PX_PER_ROW + PX_PER_ROW / 2;
             return (
               <span key={varName}>
                 <Handle
-                  id={`out-${varName}`}
+                  id={`data-out-${varName}`}
                   type="source"
                   position={Position.Right}
-                  style={{
-                    background: meta.border,
-                    top: topPx,
-                    right: -6,
-                    width: 9,
-                    height: 9,
-                  }}
+                  style={{ ...dataOutStyle, top: topPx, right: -5, width: 9, height: 9 }}
+                  title={varName}
                 />
                 <span style={{
-                  position: 'absolute',
-                  top: topPx - 5,
-                  right: 8,
-                  fontSize: 8,
-                  color: meta.border,
+                  position: 'absolute', top: topPx - 5, right: 8,
+                  fontSize: 8, color: '#818cf8',
                   fontFamily: 'JetBrains Mono, monospace',
-                  pointerEvents: 'none',
-                  whiteSpace: 'nowrap',
-                  textAlign: 'right',
-                  lineHeight: 1,
+                  pointerEvents: 'none', whiteSpace: 'nowrap', textAlign: 'right', lineHeight: 1,
                 }}>{varName}</span>
               </span>
             );
