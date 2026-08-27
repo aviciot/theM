@@ -37,7 +37,6 @@ export function extractTemplateVars(tmpl: string): string[] {
  * Matches Go interpreter semantics (interpreter.go execHTTP / execLLM /
  * execTransform). Dead config fields that the interpreter ignores are excluded:
  *   - transform: `expressions`, `extractions` — not in Go TransformStepConfig
- *   - transform: `exposed_vars`               — declared but never read by execTransform
  *   - llm: `effort`, `stream`                 — declared but never read by execLLM
  */
 export function extractNodeVars(node: Node): NodeVars {

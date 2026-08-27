@@ -169,8 +169,7 @@ type JSONPathExtract struct {
 }
 
 type TransformStepConfig struct {
-	Functions   []transform.FunctionStep `json:"functions,omitempty"`
-	ExposedVars []string                 `json:"exposed_vars,omitempty"`
+	Functions []transform.FunctionStep `json:"functions,omitempty"`
 }
 
 type InputStepConfig struct {

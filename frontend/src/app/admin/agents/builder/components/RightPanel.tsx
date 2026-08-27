@@ -813,40 +813,12 @@ export function RightPanel({
                         </div>
                       </details>
                     )}
-                    {(() => {
-                      // Transform nodes produce many vars — show them individually
-                      const exposedVars = (d.config?.exposed_vars as string[] | undefined) ?? [];
-                      if (d.step_type === 'transform' && exposedVars.length > 0) {
-                        return (
-                          <div style={{ padding: '10px', background: 'rgba(74,222,128,0.06)', border: `1px solid rgba(74,222,128,0.3)`, borderRadius: '8px' }}>
-                            <div style={{ fontSize: '10px', fontWeight: 700, color: C.green, marginBottom: '8px', letterSpacing: '0.08em' }}>
-                              EXTRACTED VARS ({exposedVars.length})
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              {exposedVars.map(v => {
-                                const val = debug.vars[v];
-                                const str = val === undefined ? '(missing)' : typeof val === 'object' ? JSON.stringify(val) : String(val);
-                                const missing = val === undefined || str === '';
-                                return (
-                                  <div key={v} style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
-                                    <span style={{ fontFamily: 'monospace', fontSize: '10px', color: missing ? '#f87171' : '#60a5fa', flexShrink: 0, minWidth: 100 }}>{`{{.${v}}}`}</span>
-                                    <span style={{ fontFamily: 'monospace', fontSize: '10px', color: missing ? '#f87171' : '#e2e8f0', wordBreak: 'break-all' }}>{str || '(empty)'}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      }
-                      return (
-                        <div style={{ padding: '10px', background: 'rgba(74,222,128,0.06)', border: `1px solid rgba(74,222,128,0.3)`, borderRadius: '8px' }}>
-                          <div style={{ fontSize: '10px', fontWeight: 700, color: C.green, marginBottom: '6px', letterSpacing: '0.08em' }}>OUTPUT</div>
-                          <pre style={{ color: '#e2e8f0', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>
-                            {nodeOutput || '(empty)'}
-                          </pre>
-                        </div>
-                      );
-                    })()}
+                    <div style={{ padding: '10px', background: 'rgba(74,222,128,0.06)', border: `1px solid rgba(74,222,128,0.3)`, borderRadius: '8px' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 700, color: C.green, marginBottom: '6px', letterSpacing: '0.08em' }}>OUTPUT</div>
+                      <pre style={{ color: '#e2e8f0', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>
+                        {nodeOutput || '(empty)'}
+                      </pre>
+                    </div>
                   </div>
                 );
               }

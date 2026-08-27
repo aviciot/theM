@@ -64,11 +64,8 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
   }
 
   const isTransform = data.step_type === 'transform';
-  const exposedVars = (cfg.exposed_vars as string[] | undefined) ?? [];
   const transformOutputs = isTransform
-    ? (exposedVars.length > 0
-        ? exposedVars
-        : computeFinalOutputs((cfg.functions as FunctionStep[] | undefined) ?? []))
+    ? computeFinalOutputs((cfg.functions as FunctionStep[] | undefined) ?? [])
     : [];
 
   // Each output row needs 18px; header (emoji + label) needs ~70px minimum.

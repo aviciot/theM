@@ -1217,14 +1217,6 @@ function CanvasInner() {
         for (const p of parts) { if (typeof cur === 'object' && cur !== null) cur = (cur as Record<string, unknown>)[p]; else { cur = undefined; break; } }
         if (cur !== undefined) { newVars[ext.var] = String(cur); output = String(cur); }
       }
-      // Edge label: show a summary of all vars written by this transform
-      const exposedVars = (cfg.exposed_vars as string[]) ?? [];
-      if (exposedVars.length > 0) {
-        const summary = exposedVars
-          .map(v => `${v}: ${String(newVars[v] ?? '').slice(0, 40)}`)
-          .join('\n');
-        output = output || summary;
-      }
       for (const e of outEdgesForNode) edgeValues[e.id] = output;
     } else if (d.step_type === 'branch') {
       const expr = (cfg.expression as string) || '';

@@ -81,15 +81,13 @@ const monoStyle: React.CSSProperties = {
 // ── FunctionRow ───────────────────────────────────────────────────────────────
 
 function FunctionRow({
-  step, index, catalog, availableVars, result, exposed, onExposedChange, onChange, onRemove, onMoveUp, onMoveDown,
+  step, index, catalog, availableVars, result, onChange, onRemove, onMoveUp, onMoveDown,
 }: {
   step: FunctionStep;
   index: number;
   catalog: { functions: FunctionDef[]; by_category: Record<string, FunctionDef[]> } | null;
   availableVars: string[];
   result?: StepResult;
-  exposed: boolean;
-  onExposedChange: (v: boolean) => void;
   onChange: (step: FunctionStep) => void;
   onRemove: () => void;
   onMoveUp: () => void;
@@ -162,7 +160,7 @@ function FunctionRow({
         </div>
       ))}
 
-      {/* out: always last, with expose checkbox */}
+      {/* out: */}
       <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
         <span style={{ fontSize: '10px', color: C.textMuted, minWidth: 42 }}>out:</span>
         <input
@@ -171,15 +169,6 @@ function FunctionRow({
           style={{ ...inputStyle, flex: 1, fontSize: '11px', ...monoStyle }}
           placeholder="output_var_name"
         />
-        <label title="Expose as output port" style={{ display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-          <input
-            type="checkbox"
-            checked={exposed}
-            onChange={e => onExposedChange(e.target.checked)}
-            style={{ accentColor: C.indigo, width: 12, height: 12 }}
-          />
-          <span style={{ fontSize: '9px', color: exposed ? C.indigo : C.textMuted, fontWeight: exposed ? 700 : 400 }}>expose</span>
-        </label>
       </div>
 
       {/* Inline result output */}
@@ -216,20 +205,6 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
   useEffect(() => {
     fetchCatalog().then(setCatalog).catch(e => setCatalogError(e.message));
   }, []);
-
-  const exposedVars: string[] = (cfg.exposed_vars as string[]) ?? [];
-
-  const updateExposedVars = useCallback((vars: string[]) => {
-    updateStepConfig('exposed_vars', vars);
-  }, [updateStepConfig]);
-
-  const toggleExposed = useCallback((varName: string, on: boolean) => {
-    if (on) {
-      updateExposedVars(Array.from(new Set([...exposedVars, varName])));
-    } else {
-      updateExposedVars(exposedVars.filter(v => v !== varName));
-    }
-  }, [exposedVars, updateExposedVars]);
 
   // Input vars for test: only vars the chain actually reads from outside (not produced by earlier steps).
   const chainOutputs = new Set(functions.map(s => s.output_var).filter(Boolean));
@@ -312,8 +287,6 @@ export function TransformPanel({ cfg, updateStepConfig, availableVars }: Transfo
           catalog={catalog}
           availableVars={[...new Set([...availableVars, ...functions.slice(0, i).map(s => s.output_var).filter(Boolean)])]}
           result={resultByIndex(i)}
-          exposed={!!step.output_var && exposedVars.includes(step.output_var)}
-          onExposedChange={on => step.output_var && toggleExposed(step.output_var, on)}
           onChange={s => { const next = functions.map((x, j) => j === i ? s : x); updateFunctions(next); }}
           onRemove={() => { updateFunctions(functions.filter((_, j) => j !== i)); setTestResults(null); }}
           onMoveUp={() => { const next = [...functions]; if (i > 0) { [next[i-1], next[i]] = [next[i], next[i-1]]; updateFunctions(next); } }}
