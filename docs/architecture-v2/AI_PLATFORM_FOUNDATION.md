@@ -2,937 +2,872 @@
 
 **Status:** Design / Pre-implementation  
 **Scope:** Platform infrastructure only — no AI features, no user-facing assistant  
-**Enables later:** AI Agent Builder, AI Run Debugger  
+**Enables later:** AI Canvas Agent Builder, AI Run Debugger  
 **Last updated:** 2026-08-27
 
 ---
 
-## Executive Summary
+## 1. Executive Summary
 
-The-M can orchestrate complex multi-agent workflows, but an LLM trying to work with the platform has no way to discover its own structure. Node types live as Python constants. Validation errors are raw strings. A failing run produces a single error field with no causal chain. The platform is opaque to machines.
+Two distinct authoring schemas coexist in the-M. The majority of this foundation addresses the **Canvas Agent system**, not the application topology. The distinction matters because they serve different concerns.
 
-This document designs the **eight infrastructure components** needed to make the-M self-describing. The goal is not to build an AI assistant — it is to ensure that when one is built, it reads the platform's actual authoritative state rather than stale documentation or hallucinated schemas.
+**Canvas Agent (primary scope).** An agent definition is a typed pipeline of steps: `input → http → transform → llm → mcp_call → response`. The Go `agentgen` package owns the `NodeDef` registry, the typed config structs, the 7-stage compiler, and the interpreter runtime. This is what an AI Agent Builder must understand to construct, validate, and debug pipelines.
 
-Every component described here derives its data from the same definitions used by the compiler and runtime. No separate AI-specific schemas are introduced that could drift.
+**Application topology (secondary scope).** The Python `compile_graph()` function wires `entryPoint → orchestrator → agent` together. This is platform composition — connecting existing agents into a deployed application — not agent authoring. An LLM building agents does not need to understand it at authoring time; it only matters when deploying.
 
-**What this unlocks:**
+### What already exists
 
-- An AI Agent Builder that can list available resources, construct a valid graph, submit it, and self-correct from structured validation errors — without any pre-loaded knowledge of the platform.
-- An AI Run Debugger that can explain why a run failed in structured terms and propose concrete configuration changes to fix it.
+The platform has more foundation than is commonly understood:
 
-**Confidence summary:**
+- `GET /api/v1/admin/node-types` — already exists (`NodeTypesHandler`, public, no auth). Returns `[]NodeTypeInfo` with type, label, description, emoji, output_arity, is_source, is_sink, single_input, edges (min/max in/out), input_ports, output_ports, app_params, executable.
+- `POST /api/v1/admin/agent-definitions/{id}/validate` — already returns `AgentValidationReport` with `Issues []Issue` (machine-readable: Severity, Code, Message, SkillID, NodeID, Field) and `StepContracts` (per-step VarRef input/output contracts).
+- `GET /api/v1/admin/transform-functions` — returns the transform function catalog (`FunctionDef` includes `Examples []Example`).
+- `POST /api/v1/admin/transform-test` — tests a transform chain against sample input, returns `TraceResult`.
+- The validate endpoint accepts live canvas JSON directly via request body — no prior DB write required.
 
-- High confidence: Components 1 (node type registry), 2 (graph summary), 3 (tool manifest), 4 (structured validation). These are pure reads or minor refactors of existing logic.
-- Medium confidence: Component 5 (run failure analysis), Component 6 (graph versioning). The failure classifier will handle ~70% of real cases; the long tail is difficult. Graph versioning needs careful benchmarking of snapshot size before committing to JSONB storage.
-- Lower confidence: Component 8 (per-EP agent card). The A2A spec does not explicitly endorse per-skill sub-cards at sub-path URLs — interoperability with third-party A2A clients is uncertain.
+### What is missing
+
+1. `GET /api/v1/admin/node-types` does not include the typed config struct schema for each step type. An LLM cannot construct a valid `LLMStepConfig` or `HTTPStepConfig` without knowing the field names, required fields, and enum values.
+2. No endpoint returns the canvas definition wire format (the `canvasDefinition` struct is internal to the compiler). An LLM must guess at `{agent_root, skills[{skill_id, name, steps[{id, type, config, next, branches, inputs}]}]}`.
+3. No run execution trace for canvas-agent pipeline steps. The interpreter walks `StepSpec` slices and enforces VarRef contracts but records nothing at the step level.
+4. No `diagnose → preview patch → validate → user approval → apply` debugger workflow.
+5. The Application topology compiler (`compile_graph`) returns raw 422 strings, not structured Issue objects — unlike agentgen.
+
+### Confidence summary
+
+Components building on agentgen's existing infrastructure (Phases 1.1–1.3) are high confidence — they are additive changes to already-working code. The run debugger (Phase 2) requires new interpreter instrumentation and a DB migration; the complexity of that change is medium.
 
 ---
 
-## Design Principles
+## 2. Design Principles
 
-**1. Single source of truth — always.**  
-Node type definitions are read from `app/services/app_compiler.py` constants and `frontend/src/app/admin/applications/constants.ts` rules. They are never re-declared in a separate AI metadata store. If the compiler changes, the meta endpoint changes automatically.
+**1. NodeDef registry is the authoritative source.**  
+The Go `NodeDef` struct in `noderegistry.go` drives validation (`nd.Validate`), execution (`nd.Execute`), and data-flow analysis (`nd.DeriveInputs`, `nd.DeriveOutputs`). Typed config schemas exposed to an LLM must be co-located with the NodeDef registration in `nodes.go`, not maintained in a separate store. If a NodeDef changes, the schema changes.
 
 **2. No drift by construction.**  
-Every new endpoint in this design reads directly from the same DB columns, Go structs, or compiler constants that govern runtime behavior. If an approach requires maintaining a parallel representation, it is rejected.
+Every piece of metadata the LLM receives is generated from the same Go structs used at runtime. Parallel representations that require manual synchronization are rejected.
 
-**3. Read-first, write-never.**  
-This foundation adds only GET endpoints and one structured validation response format. It does not add tables, columns, or new write paths — except Component 6 (graph versioning), which is explicitly deferred to Phase 3 precisely because it requires a DB migration.
+**3. Build on what exists.**  
+The validate endpoint already returns machine-readable `Issue` structs and `StepContracts`. The node-types endpoint already exists. The roadmap extends these, it does not replace them.
 
-**4. Structured errors are a first-class output.**  
-Every validation path must return `{rule, path, message, suggestion, severity}` tuples. Raw strings are not acceptable outputs for machine consumers.
+**4. Structured errors everywhere.**  
+`agentgen.Issue` (Severity, Code, Message, SkillID, NodeID, Field) is the standard. The Application topology compiler (`compile_graph`) must be brought to the same standard — its raw 422 strings are a gap, not a model.
 
-**5. Auth parity.**  
-New endpoints follow the same auth rules as their nearest existing neighbor. Metadata endpoints under `/api/v1/meta/` are admin-JWT-gated. Run analysis endpoints follow the same rules as `/api/v1/runs/{id}`.
+**5. Debugger works from the exact spec used by the run.**  
+A failed canvas-agent run executed against a specific `DefinitionID` and a published `AgentSpec`. The debugger reads that spec snapshot from `agent_runtime_specs.spec_json`, not the current draft. Debugging against the wrong definition is worse than no debugger.
 
 ---
 
-## Component 1: Node Type Schema Registry
+## 3. What an LLM Needs to Build a Canvas Agent
 
-### Problem
+This section maps each step in the agent-building workflow to the endpoint that serves it, and identifies where the gap is.
 
-The four node types (`entryPoint`, `orchestrator`, `agent`, `middleware`), their required fields, valid edge targets, and validation rules exist only in:
+**Step 1 — Discover node types (EXISTS)**
 
-- Python: `_VALID_NODE_TYPES` set and `validate_graph()` in `app/services/app_compiler.py`
-- TypeScript: `CANVAS_RULES` constant in `frontend/src/app/admin/applications/constants.ts`
+`GET /api/v1/admin/node-types` → `[]NodeTypeInfo`
 
-No endpoint exposes this as machine-readable data. An LLM building a graph must hallucinate the schema.
+Returns: type, label, description, emoji, output_arity, is_source, is_sink, single_input, edges (min/max in/out), input_ports, output_ports, app_params, executable.
 
-### Design
+Gap: does not include the typed config struct schema for each node type. An LLM reading this response knows that an `llm` step exists and has one input port and one output port, but cannot determine that the config requires `provider`, `model`, `user_prompt`, and `output_var`, or that `inject_mode` on `http` accepts `"header"`, `"query"`, `"basic"`, or `"custom_header"`.
 
-**`GET /api/v1/meta/node-types`**
+**Step 2 — Discover transform functions (EXISTS)**
 
-Auth: Admin JWT  
-Implementation location: Go, new handler in `go/internal/admin/` — reads from Go constants that mirror the Python compiler definitions. Constants are the authoritative source; the handler is a thin serializer.
+`GET /api/v1/admin/transform-functions` → `[]FunctionDef`
 
-**Response schema:**
+`FunctionDef` includes `Name`, `Category`, `Description`, `Args []ArgDef`, `Examples []Example`. The catalog is the effective config schema for the `transform` node because a transform step's config is a chain of `{fn, input_var, output_var, args}` entries drawn from this catalog.
 
+Gap assessment: `Catalog()` returns `[]FunctionDef` directly, so Examples should be present. Verify this before Phase 1.2 work begins. If the HTTP handler serializes a different shape, fix it.
+
+**Step 3 — Learn the canvas definition wire format (MISSING)**
+
+No endpoint describes the shape of the JSON submitted as an agent definition. The `canvasDefinition` struct is internal to `agentgen/compiler.go`. An LLM must guess at the format.
+
+This is addressed by Component 2 below.
+
+**Step 4 — Validate while building (EXISTS)**
+
+`POST /api/v1/admin/agent-definitions/{id}/validate`  
+Body: `{"definition": <raw canvas definition JSON>}`
+
+Returns `AgentValidationReport`:
 ```json
 {
-  "node_types": [
+  "valid": false,
+  "issues": [
     {
-      "type": "entryPoint",
-      "label": "Entry Point",
-      "description": "Protocol gateway. Every application must have at least one. Connects to exactly one orchestrator.",
-      "fields": [
-        {
-          "name": "slug",
-          "type": "string",
-          "required": true,
-          "constraints": { "pattern": "^[a-z0-9_-]{1,64}$", "unique_within_graph": true },
-          "description": "URL-safe identifier for the entry point. Used in WebSocket and SSE paths."
-        },
-        {
-          "name": "epType",
-          "type": "enum",
-          "required": true,
-          "enum_values": ["websocket", "sse", "webrtc", "a2a", "voice"],
-          "description": "Protocol this entry point accepts."
-        },
-        {
-          "name": "accessMode",
-          "type": "enum",
-          "required": true,
-          "enum_values": ["token", "public"],
-          "description": "Authentication requirement for callers."
-        },
-        {
-          "name": "convTokenLimit",
-          "type": "integer",
-          "required": false,
-          "default": null,
-          "constraints": { "minimum": 1 },
-          "description": "Maximum conversation token budget. Null means unlimited."
-        },
-        {
-          "name": "maxConcurrentSessions",
-          "type": "integer",
-          "required": false,
-          "default": null,
-          "constraints": { "minimum": 1 },
-          "description": "Session cap for this entry point. Null means no cap."
-        },
-        {
-          "name": "queueTimeout",
-          "type": "integer",
-          "required": false,
-          "default": null,
-          "description": "Seconds a caller waits when at capacity before being rejected. Null disables queuing."
-        },
-        {
-          "name": "queueMessage",
-          "type": "string",
-          "required": false,
-          "default": null,
-          "description": "Message sent to callers while they wait in the queue."
-        }
-      ],
-      "valid_source_for_edge_targets": [],
-      "valid_target_for_edge_sources": [],
-      "valid_edge_targets": ["orchestrator"],
-      "validation_rules": [
-        { "rule": "AT_LEAST_ONE_EP", "severity": "error", "message": "The application must have at least one entry point." },
-        { "rule": "EP_SLUG_NONEMPTY", "severity": "error", "message": "Entry point slug must not be empty." },
-        { "rule": "EP_SLUG_FORMAT", "severity": "error", "message": "Slug must match ^[a-z0-9_-]{1,64}$." },
-        { "rule": "EP_SLUG_UNIQUE", "severity": "error", "message": "Slug must be unique within the graph and across other applications." },
-        { "rule": "EP_HAS_ORCH", "severity": "error", "message": "Each entry point must have exactly one outgoing edge to an orchestrator." },
-        { "rule": "VOICE_EP_NEEDS_STT_TTS", "severity": "warning", "message": "Voice entry points should connect to an orchestrator with STT and TTS configured." }
-      ]
-    },
-    {
-      "type": "orchestrator",
-      "label": "Orchestrator",
-      "description": "LLM planning loop. Receives goals from an entry point, calls agents and MCP tools, and returns results.",
-      "fields": [
-        {
-          "name": "displayName",
-          "type": "string",
-          "required": true,
-          "description": "Human-readable name used in run logs and the agent card."
-        },
-        {
-          "name": "llmProvider",
-          "type": "string",
-          "required": true,
-          "description": "Slug of an enabled LLM provider from them.llm_providers."
-        },
-        {
-          "name": "llmModel",
-          "type": "string",
-          "required": true,
-          "description": "Model identifier for the chosen provider."
-        },
-        {
-          "name": "systemPrompt",
-          "type": "string",
-          "required": false,
-          "default": null,
-          "description": "Instruction prepended to every conversation. Never exposed externally."
-        },
-        {
-          "name": "kind",
-          "type": "enum",
-          "required": false,
-          "default": "standard",
-          "enum_values": ["standard", "router", "voice"],
-          "description": "Orchestrator variant. 'router' delegates without executing. 'voice' enables STT/TTS."
-        },
-        {
-          "name": "maxIterations",
-          "type": "integer",
-          "required": false,
-          "default": 10,
-          "constraints": { "minimum": 1, "maximum": 100 }
-        },
-        {
-          "name": "maxParallelTools",
-          "type": "integer",
-          "required": false,
-          "default": 1,
-          "constraints": { "minimum": 1 }
-        },
-        {
-          "name": "historyWindow",
-          "type": "integer",
-          "required": false,
-          "default": 20,
-          "description": "Number of prior conversation turns kept in context."
-        },
-        {
-          "name": "delegatable",
-          "type": "boolean",
-          "required": false,
-          "default": false,
-          "description": "If true, this orchestrator can be invoked as a sub-orchestrator from another orchestrator."
-        },
-        {
-          "name": "budgetTokens",
-          "type": "integer",
-          "required": false,
-          "default": null,
-          "description": "Token budget for the entire run. Null means unlimited."
-        },
-        {
-          "name": "mcpServers",
-          "type": "array",
-          "required": false,
-          "default": [],
-          "description": "List of MCP server slugs (and optional tool allowlists) this orchestrator may call."
-        },
-        {
-          "name": "transcriptionProvider",
-          "type": "string",
-          "required": false,
-          "description": "Required when kind=voice. STT provider slug."
-        },
-        {
-          "name": "ttsProvider",
-          "type": "string",
-          "required": false,
-          "description": "Required when kind=voice. TTS provider slug."
-        },
-        {
-          "name": "ttsVoice",
-          "type": "string",
-          "required": false,
-          "description": "Voice identifier for TTS."
-        }
-      ],
-      "valid_edge_targets": ["agent", "middleware", "orchestrator"],
-      "validation_rules": [
-        { "rule": "ORCH_HAS_AGENT", "severity": "warning", "message": "Orchestrator has no connected agents or MCP tools. It can only use its base LLM." },
-        { "rule": "VOICE_EP_NEEDS_STT_TTS", "severity": "warning", "message": "Orchestrator connected to a voice entry point should have transcriptionProvider and ttsProvider set." }
-      ],
-      "notes": [
-        "allowed_agent_ids is always derived from graph edges — never set directly in node data.",
-        "An orchestrator connected to another orchestrator (Orch→Orch edge) is treated as a delegatable sub-orchestrator. The target must have delegatable=true."
-      ]
-    },
-    {
-      "type": "agent",
-      "label": "Agent",
-      "description": "External A2A agent invocation node. All configuration lives in the agents table — this node is a reference.",
-      "fields": [
-        {
-          "name": "agentId",
-          "type": "uuid",
-          "required": true,
-          "description": "FK to them.agents. The agent must exist and be enabled."
-        }
-      ],
-      "valid_edge_targets": [],
-      "valid_edge_sources": ["orchestrator", "middleware"],
-      "validation_rules": [
-        { "rule": "AGENT_EXISTS", "severity": "error", "message": "Referenced agent UUID must exist in them.agents." },
-        { "rule": "AGENT_ENABLED", "severity": "error", "message": "Referenced agent must be enabled." }
-      ]
-    },
-    {
-      "type": "middleware",
-      "label": "Middleware",
-      "description": "Guard or cache layer inserted between orchestrator and agent. Middleware chains are supported.",
-      "fields": [
-        {
-          "name": "defId",
-          "type": "uuid",
-          "required": true,
-          "description": "FK to them.middleware_defs."
-        },
-        {
-          "name": "configOverride",
-          "type": "object",
-          "required": false,
-          "default": {},
-          "description": "Per-instance override of the middleware definition's default configuration."
-        }
-      ],
-      "valid_edge_targets": ["agent", "middleware"],
-      "valid_edge_sources": ["orchestrator", "middleware"],
-      "middleware_kinds": [
-        { "kind": "guard", "description": "Blocks or allows agent calls based on policy." },
-        { "kind": "cache", "description": "Returns cached agent responses for identical inputs." }
-      ]
+      "severity": "error",
+      "code": "UNRESOLVED_INPUT",
+      "skill_id": "main",
+      "node_id": "step-3",
+      "field": "",
+      "message": "variable 'customer_id' is not guaranteed on all paths reaching this step"
     }
   ],
-  "edge_rules": [
-    { "source": "entryPoint", "target": "orchestrator", "required": true, "cardinality": "one-to-one" },
-    { "source": "orchestrator", "target": "orchestrator", "required": false, "description": "Delegation — target must have delegatable=true." },
-    { "source": "orchestrator", "target": "agent", "required": false },
-    { "source": "orchestrator", "target": "middleware", "required": false },
-    { "source": "middleware", "target": "agent", "required": false },
-    { "source": "middleware", "target": "middleware", "required": false, "description": "Chains of middleware are allowed." }
-  ],
-  "tool_naming": {
-    "agent": "agent__{slug}",
-    "mcp_tool": "mcp__{server_slug}__{tool_name}",
-    "sub_orchestrator": "orch__{orchestrator_name}"
+  "step_contracts": {
+    "step-3": {
+      "inputs":  [{ "name": "customer_id", "required": true, "port_id": "input" }],
+      "outputs": [{ "name": "llm_result",  "required": false, "port_id": "output" }]
+    }
   }
 }
 ```
 
-### Implementation note
+The validate endpoint accepts the live definition in the request body — no prior DB write is needed. An LLM can iterate through validate → correct → validate without touching the database, as long as it has an existing agent-definition ID to use as the path parameter.
 
-The Go handler at `go/internal/admin/meta.go` (new file) returns this structure as a compile-time constant. It does not query the DB. When the Python compiler's `_VALID_NODE_TYPES` or `CANVAS_RULES` change, the corresponding Go constant must be updated in the same commit — enforced by a linter check that diffs the two files' enum lists.
+**Step 5 — Self-correct from Issues (EXISTS once Step 4 works)**
+
+Each Issue carries `Code`, `NodeID`, `Field`, and `Message`. An LLM can map each code to a corrective action. The full code set is defined in the compiler and documented in Component 2.
+
+**Step 6 — Publish (EXISTS)**
+
+`POST /api/v1/admin/agent-definitions/{id}/publish`  
+Returns `AgentPublishResult`:
+```json
+{
+  "agent_id": "...",
+  "definition_id": "...",
+  "revision": 3,
+  "spec_hash": "a3f4b2c1..."
+}
+```
+
+**Primary gap:** Step 3 (wire format) and the node-type config schemas (Step 1 gap). Everything else exists or is a minor fix.
+
+**Flow constraint:** Step 4–6 require an existing agent-definition ID. For a purely generative flow (no prior draft), the LLM must first `POST /api/v1/admin/agent-definitions` to create a draft, then use that ID.
 
 ---
 
-## Component 2: Application Graph Summary
+## 4. Component 1: Node Type Config Schemas (Phase 1)
 
 ### Problem
 
-`GET /api/v1/admin/applications/{id}/export` exists but is designed for human import/restore, not LLM consumption. It returns a ReactFlow node/edge graph that an LLM must interpret structurally. There is no flat, semantic summary of "what this application does and what it can call."
+`GET /api/v1/admin/node-types` returns `NodeTypeInfo` which describes graph topology — ports, edges, arity — but not the typed config struct required in each step's `config` field. The `config` field is `json.RawMessage` at the wire level; its shape is entirely determined by step type.
 
 ### Design
+
+Add a `config_schema` field (JSON Schema object) to `NodeTypeInfo`. The schema is a literal `json.RawMessage` constant defined alongside the NodeDef registration in `nodes.go`. It is part of the NodeDef, serialized by `ToInfo()`, and returned by the existing `/node-types` handler with no other changes.
+
+This is backward compatible — existing clients receive an additional field and ignore it.
+
+**Alternative rejected:** generating schema via reflection from the typed struct. Reflection produces field names and Go types but loses descriptions, enum values, inter-field constraints (`inject_header_name` required when `inject_mode=custom_header`), and template semantics. Literal schemas are more accurate.
+
+### Config schema examples per step type
+
+**`llm`**
+```json
+{
+  "type": "object",
+  "required": ["provider", "model", "user_prompt", "output_var"],
+  "properties": {
+    "provider":      { "type": "string", "description": "LLM provider slug (e.g. anthropic, openai, groq)." },
+    "model":         { "type": "string", "description": "Model identifier for the chosen provider." },
+    "system_prompt": { "type": "string" },
+    "user_prompt":   { "type": "string", "description": "Go template. PipelineVars are available as {{.var_name}}." },
+    "max_tokens":    { "type": "integer", "default": 1024 },
+    "effort":        { "type": "string", "enum": ["low", "medium", "high"], "description": "Reasoning effort hint. Provider-dependent." },
+    "output_var":    { "type": "string", "description": "PipelineVars key written with the LLM response text." },
+    "stream":        { "type": "boolean", "default": false }
+  }
+}
+```
+
+**`http`**
+```json
+{
+  "type": "object",
+  "required": ["method", "url_template"],
+  "properties": {
+    "method":            { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+    "url_template":      { "type": "string", "description": "Go template. PipelineVars available as {{.var_name}}." },
+    "headers":           { "type": "object", "additionalProperties": { "type": "string" } },
+    "body_template":     { "type": "string", "description": "Go template for request body." },
+    "extractions": {
+      "type": "array",
+      "description": "JSONPath extractions from the response body into PipelineVars.",
+      "items": {
+        "type": "object",
+        "required": ["var", "json_path"],
+        "properties": {
+          "var":       { "type": "string", "description": "PipelineVars key to write." },
+          "json_path": { "type": "string", "description": "Dot-separated path into JSON response body." }
+        }
+      }
+    },
+    "timeout_seconds":    { "type": "integer", "default": 30 },
+    "app_param_key":      { "type": "string", "description": "AppParamDecl key whose value is injected as a credential." },
+    "inject_mode":        { "type": "string", "enum": ["header", "query", "basic", "custom_header"], "description": "How the credential is injected. Default: Authorization Bearer header." },
+    "inject_header_name": { "type": "string", "description": "Required when inject_mode=custom_header." }
+  }
+}
+```
+
+**`transform`**
+```json
+{
+  "type": "object",
+  "required": ["functions"],
+  "properties": {
+    "functions": {
+      "type": "array",
+      "description": "Ordered chain of transform functions. Each step reads input_var and writes output_var.",
+      "items": {
+        "type": "object",
+        "required": ["fn", "input_var", "output_var"],
+        "properties": {
+          "fn":         { "type": "string", "description": "Function name from GET /api/v1/admin/transform-functions." },
+          "input_var":  { "type": "string", "description": "PipelineVars key to read." },
+          "output_var": { "type": "string", "description": "PipelineVars key to write." },
+          "args":       { "type": "object", "additionalProperties": { "type": "string" }, "description": "Function arguments. See ArgDef in catalog." }
+        }
+      }
+    }
+  }
+}
+```
+
+**`branch`**
+```json
+{
+  "type": "object",
+  "required": ["expression", "true_next", "false_next"],
+  "properties": {
+    "expression": { "type": "string", "description": "Go template evaluated against PipelineVars. Truthy values: non-empty, not 'false', not '0'." },
+    "true_next":  { "type": "string", "description": "Step ID to go to when expression is truthy." },
+    "false_next": { "type": "string", "description": "Step ID to go to when expression is falsy." }
+  }
+}
+```
+
+**`mcp_call`**
+```json
+{
+  "type": "object",
+  "required": ["mcp_server_slug", "tool_name", "output_var"],
+  "properties": {
+    "mcp_server_slug": { "type": "string", "description": "Slug of an MCP server configured for this application." },
+    "tool_name":       { "type": "string", "description": "Tool name from the MCP server's tools_manifest." },
+    "args_template":   { "type": "string", "description": "JSON Go template rendered into MCP tool arguments." },
+    "output_var":      { "type": "string", "description": "PipelineVars key written with the MCP tool result." }
+  }
+}
+```
+
+**`response`**
+```json
+{
+  "type": "object",
+  "required": ["from_var"],
+  "properties": {
+    "from_var":   { "type": "string", "description": "PipelineVars key whose value is sent as the agent response." },
+    "media_type": { "type": "string", "default": "text/plain", "description": "MIME type of the response." }
+  }
+}
+```
+
+**`input`**
+```json
+{
+  "type": "object",
+  "properties": {
+    "bindings": {
+      "type": "object",
+      "description": "Maps incoming message part types to PipelineVars keys. Default: {\"text\": \"input\"}.",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}
+```
+
+### Implementation
+
+1. Add `ConfigSchema json.RawMessage \`json:"config_schema,omitempty"\`` to `NodeDef` and `NodeTypeInfo` in `noderegistry.go`.
+2. Update `ToInfo()` to copy `ConfigSchema`.
+3. For each `RegisterNode(NodeDef{...})` call in `nodes.go`, add a `ConfigSchema: json.RawMessage(\`{...}\`)` literal.
+4. No handler changes — the existing `/node-types` handler calls `AllNodeTypeInfos()` which calls `ToInfo()`.
+
+---
+
+## 5. Component 2: Canvas Definition Wire Format Schema (Phase 1)
+
+### Problem
+
+The `canvasDefinition` struct is internal to `agentgen/compiler.go`. No endpoint documents the shape of the JSON an LLM must submit as a definition. Without this, an LLM building an agent must reverse-engineer the format from validation errors.
+
+### Design
+
+**`GET /api/v1/admin/agent-definitions/schema`**
+
+Auth: Admin JWT (consistent with neighbor endpoints under `/agent-definitions`)  
+Implementation: static Go constant in a new handler in `go/internal/admin/`. No DB query.
+
+This endpoint returns two coupled documents: the wire format schema and the validation issue code reference. They belong together because an LLM needs both to build a definition and understand why validation rejected it.
+
+**Response:**
+
+```json
+{
+  "canvas_definition_schema": {
+    "type": "object",
+    "required": ["agent_root", "skills"],
+    "properties": {
+      "agent_root": {
+        "type": "object",
+        "required": ["display_name"],
+        "properties": {
+          "display_name": { "type": "string" },
+          "description":  { "type": "string" },
+          "version":      { "type": "string", "default": "1.0.0" },
+          "icon":         { "type": "string" },
+          "category":     { "type": "string" },
+          "default_model":{ "type": "string", "description": "Default LLM model identifier for LLM steps that omit provider/model." },
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "streaming":          { "type": "boolean", "default": false },
+              "push_notifications": { "type": "boolean", "default": false }
+            }
+          }
+        }
+      },
+      "skills": {
+        "type": "array",
+        "minItems": 1,
+        "description": "Each skill is an independently callable pipeline within this agent.",
+        "items": {
+          "type": "object",
+          "required": ["skill_id", "name", "steps"],
+          "properties": {
+            "skill_id":    { "type": "string", "description": "Unique within this definition. Becomes SkillSpec.ID." },
+            "name":        { "type": "string" },
+            "description": { "type": "string" },
+            "tags":        { "type": "array", "items": { "type": "string" } },
+            "input_modes": { "type": "array", "items": { "type": "string" }, "default": ["text/plain"] },
+            "output_modes":{ "type": "array", "items": { "type": "string" }, "default": ["text/plain"] },
+            "steps": {
+              "type": "array",
+              "description": "Unordered step list. Execution order is determined by next/branch references via topological sort.",
+              "items": {
+                "type": "object",
+                "required": ["id", "type"],
+                "properties": {
+                  "id":    { "type": "string", "description": "Unique within this skill. Referenced by next and branch entries." },
+                  "label": { "type": "string" },
+                  "type":  { "type": "string", "description": "Registered StepType. See GET /api/v1/admin/node-types." },
+                  "config":{ "type": "object", "description": "Typed config. Shape defined by NodeTypeInfo.config_schema for this type." },
+                  "next":  { "type": "array", "items": { "type": "string" }, "description": "Step IDs to execute after this step. Must satisfy EdgeRules.MaxOut for this type." },
+                  "branches": {
+                    "type": "array",
+                    "description": "Used by branch nodes. Overrides next when condition is met.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "condition": { "type": "string" },
+                        "next":      { "type": "array", "items": { "type": "string" } }
+                      }
+                    }
+                  },
+                  "inputs": {
+                    "type": "object",
+                    "description": "Explicit port bindings. Key = port ID from NodeTypeInfo.input_ports[].id. Optional: compiler infers bindings when omitted.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "required": ["from_step", "from_port"],
+                      "properties": {
+                        "from_step": { "type": "string" },
+                        "from_port": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "validation_issue_codes": [
+    { "code": "INVALID_JSON",          "severity": "error",   "meaning": "Definition is not valid JSON." },
+    { "code": "MISSING_FIELD",         "severity": "error",   "meaning": "Required field absent (display_name, skill_id)." },
+    { "code": "DUPLICATE_SKILL",       "severity": "error",   "meaning": "Two skills share the same skill_id." },
+    { "code": "INVALID_SLUG",          "severity": "error",   "meaning": "agent_slug does not match ^[a-z][a-z0-9_-]{0,47}$." },
+    { "code": "DUPLICATE_STEP",        "severity": "error",   "meaning": "Two steps in a skill share the same id." },
+    { "code": "UNKNOWN_STEP_TYPE",     "severity": "error",   "meaning": "type is not in the node registry. Check GET /api/v1/admin/node-types." },
+    { "code": "DANGLING_NEXT",         "severity": "error",   "meaning": "A next entry references a step id that does not exist in this skill." },
+    { "code": "DANGLING_BRANCH",       "severity": "error",   "meaning": "A branch next entry references a step id that does not exist." },
+    { "code": "MISSING_INPUT_EDGE",    "severity": "error",   "meaning": "A non-source step has fewer incoming edges than EdgeRules.MinIn for its type." },
+    { "code": "TOO_MANY_INPUT_EDGES",  "severity": "error",   "meaning": "A step has more incoming edges than EdgeRules.MaxIn for its type." },
+    { "code": "SOURCE_HAS_INPUT",      "severity": "error",   "meaning": "A node with is_source=true has incoming edges. Source nodes must have no predecessors." },
+    { "code": "MISSING_OUTPUT_EDGE",   "severity": "error",   "meaning": "A non-sink step has fewer outgoing next entries than EdgeRules.MinOut." },
+    { "code": "SINK_HAS_OUTPUT",       "severity": "error",   "meaning": "A node with is_sink=true has outgoing next entries. Sink nodes must terminate." },
+    { "code": "TOO_MANY_OUTPUT_EDGES", "severity": "error",   "meaning": "A step has more next entries than EdgeRules.MaxOut (0 = unlimited)." },
+    { "code": "CYCLE_DETECTED",        "severity": "error",   "meaning": "The step graph contains a cycle. Pipelines must be DAGs (loop nodes excluded)." },
+    { "code": "NODE_NOT_EXECUTABLE",   "severity": "error",   "meaning": "Step type is registered but Execute=nil (stub node). Cannot publish. Use Validate (not publish) to test draft definitions with stubs." },
+    { "code": "UNRESOLVED_INPUT",      "severity": "error",   "meaning": "A required input variable is not guaranteed to be defined on all execution paths reaching this step. Add a step that writes the variable on the missing path, or make the input optional." },
+    { "code": "BROKEN_BINDING",        "severity": "error",   "meaning": "An explicit inputs binding references a from_step or from_port that does not exist." },
+    { "code": "INVALID_CONFIG",        "severity": "error",   "meaning": "Per-node Validate func rejected the config. See message for specifics (e.g. mcp_call: mcp_server_slug is required)." }
+  ]
+}
+```
+
+### Implementation
+
+New file `go/internal/admin/agent_definition_schema.go` with a single handler returning the above constant. Route registered in `BuildRouter` alongside the existing agent-definitions routes:
+
+```go
+r.Get("/agent-definitions/schema", agentDefSchemaHandler)
+```
+
+Must be registered before the `{id}` parameter routes to avoid routing ambiguity.
+
+---
+
+## 6. Component 3: Transform Function Catalog with Examples (Phase 1 — verify first)
+
+### Status assessment
+
+`GET /api/v1/admin/transform-functions` calls `transform.Catalog()` which returns `[]FunctionDef`. `FunctionDef` already contains `Examples []Example`. If the HTTP handler serializes the full struct (no field omission), this component is already complete.
+
+**Verify before implementing anything:** call the endpoint and confirm `examples` is present in the response. If it is absent (e.g. the handler uses a projection struct), add the `examples` field.
+
+### Why examples matter for LLM use
+
+The transform node's `config` is a chain of `{fn, input_var, output_var, args}` entries. An LLM cannot construct this chain without knowing what `strip_fences`, `json_path`, or `extract_code_block` do and what arguments they accept. The `FunctionDef.Examples` field — with `In`, `Args`, and `Out` — is the only way to convey function behavior without natural language documentation.
+
+### Transform test endpoint
+
+`POST /api/v1/admin/transform-test` already accepts a chain and sample input and returns `TraceResult` (per-step: fn, input_var, output_var, in, out, error, ok, duration_ns). An LLM building a transform chain can use this to verify behavior before embedding the chain in an agent definition.
+
+---
+
+## 7. LLM Workflow — Canvas Agent Builder
+
+The complete endpoint sequence for an LLM building a canvas agent from scratch:
+
+```
+1. GET /api/v1/admin/node-types
+   → Receives []NodeTypeInfo, each with config_schema (after Component 1).
+   → Learns: which step types exist, edge constraints (min/max in/out),
+     which are stubs (executable=false), what config fields each type requires.
+
+2. GET /api/v1/admin/agent-definitions/schema
+   → Receives canvas definition wire format JSON Schema + validation issue code reference.
+   → Learns: exact shape of {agent_root, skills[{skill_id, name, steps[{id, type, config, next}]}]}.
+
+3. GET /api/v1/admin/transform-functions
+   → Receives []FunctionDef with examples.
+   → Learns: how to construct TransformStepConfig.Functions[].
+
+4. GET /api/v1/admin/agents?enabled=true        (for a2a_call steps)
+   GET /api/v1/admin/mcp-servers                 (for mcp_call steps)
+   → Learns: which a2a_call targets and mcp_call server slugs/tool names are valid.
+
+5. POST /api/v1/admin/agent-definitions
+   Body: {"agent_slug": "my-agent", "definition": null}
+   → Creates draft. Response: {id: "<draft-id>", ...}
+
+6. Construct canvas definition JSON following the wire format schema.
+
+7. POST /api/v1/admin/agent-definitions/{draft-id}/validate
+   Body: {"definition": <constructed JSON>}
+   → Receives AgentValidationReport: {valid, issues[{severity, code, node_id, field, message}], step_contracts}
+   → If valid=false:
+       For each issue: read code from validation_issue_codes (from step 2), apply correction.
+       Loop back to step 6.
+   → step_contracts: verify VarRef inputs/outputs are satisfied between steps.
+
+8. POST /api/v1/admin/agent-definitions/{draft-id}/publish
+   → Receives AgentPublishResult: {agent_id, definition_id, revision, spec_hash}
+   → Agent is now available as adapter_type=canvas_a2a in the agent registry.
+```
+
+Note on step 7: the validate body is optional — when `definition` is provided in the body, the endpoint validates that JSON directly without reading the DB-stored draft. The LLM can call validate before even saving the definition. The draft ID in the URL path is still required (for tenant auth), but the body definition takes precedence.
+
+---
+
+## 8. Component 4: Run Execution Trace (Phase 2 — requires new instrumentation)
+
+### Problem
+
+When a canvas-agent run fails, the current recording captures:
+- `them.run_steps`: agent-level invocations (agent slug, input JSON, output, latency, status)
+- `them.runs.error`: a raw error string
+
+Canvas agents execute typed pipeline steps (`input → http → llm → response`). Individual step execution — which PipelineVars were available, what each step read and wrote, which step failed and why — is not recorded. The interpreter's `Execute` loop enforces VarRef contracts at runtime but persists nothing.
+
+This gap makes the AI Debugger impossible without new instrumentation.
+
+### Design
+
+New DB table:
+
+```sql
+CREATE TABLE them.run_pipeline_steps (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id          UUID NOT NULL REFERENCES them.runs(id) ON DELETE CASCADE,
+    step_id         TEXT NOT NULL,
+    step_type       TEXT NOT NULL,
+    skill_id        TEXT NOT NULL,
+    seq             INT  NOT NULL,
+    started_at      TIMESTAMPTZ NOT NULL,
+    completed_at    TIMESTAMPTZ,
+    duration_ms     INT,
+    status          TEXT NOT NULL,  -- "completed" | "failed" | "skipped"
+    config_snapshot JSONB,          -- step config at execution time (credentials excluded)
+    inputs          JSONB,          -- PipelineVars read by this step (credentials excluded)
+    outputs         JSONB,          -- PipelineVars written by this step (credentials excluded)
+    error           TEXT
+);
+CREATE INDEX ON them.run_pipeline_steps(run_id, seq);
+```
+
+**New endpoint:**
+
+`GET /api/v1/runs/{id}/trace`
+
+For canvas-agent runs (identifiable by the presence of `run_pipeline_steps` rows for this run_id):
+
+```json
+{
+  "run_id": "770e8400-e29b-41d4-a716-446655440000",
+  "agent_id": "...",
+  "definition_id": "...",
+  "skill_id": "main",
+  "status": "failed",
+  "pipeline_steps": [
+    {
+      "step_id": "step-1",
+      "type": "input",
+      "seq": 1,
+      "started_at": "2026-08-27T10:00:00.000Z",
+      "completed_at": "2026-08-27T10:00:00.001Z",
+      "duration_ms": 0,
+      "status": "completed",
+      "outputs": { "input": "what is the refund policy?" }
+    },
+    {
+      "step_id": "step-2",
+      "type": "http",
+      "seq": 2,
+      "started_at": "2026-08-27T10:00:00.002Z",
+      "completed_at": "2026-08-27T10:00:01.240Z",
+      "duration_ms": 1238,
+      "status": "completed",
+      "config_snapshot": { "method": "GET", "url_template": "https://api.example.com/kb" },
+      "outputs": { "kb_response": "{\"articles\": [...]}" }
+    },
+    {
+      "step_id": "step-3",
+      "type": "llm",
+      "seq": 3,
+      "started_at": "2026-08-27T10:00:01.241Z",
+      "completed_at": "2026-08-27T10:00:04.441Z",
+      "duration_ms": 3200,
+      "status": "failed",
+      "config_snapshot": { "provider": "anthropic", "model": "claude-sonnet-5" },
+      "inputs": { "input": "what is the refund policy?", "kb_response": "(truncated for display)" },
+      "error": "context length exceeded: 128000 tokens"
+    }
+  ],
+  "failed_step_id": "step-3",
+  "error": "context length exceeded: 128000 tokens"
+}
+```
+
+For non-canvas runs (Application topology runs using `them.run_steps`), the existing response format is returned unchanged.
+
+### Credential safety (non-negotiable)
+
+`InvocationContext.AgentParams` and `AppAPIKey` are already marked `// NEVER logged` in the interpreter. The trace persistence must enforce the same rule at the write layer:
+
+- Before writing `inputs` or `outputs` JSONB, remove any key whose name matches a registered `AppParamDecl.Key` for this agent's spec.
+- The `AgentSpec.RequiredParams` list is available in the `InvocationContext.Spec`. Use it to build a blocklist before persisting.
+- This rule must be covered by an explicit test that verifies credential keys do not appear in `run_pipeline_steps` rows even when they are present in `PipelineVars` at execution time.
+
+### Implementation
+
+The interpreter's `Execute` loop in `interpreter.go` must emit step-level records. Preferred approach: pass a `StepRecorder` interface (similar to `runrecorder.Recorder`) into the `Interpreter` via a constructor option. When nil (default), no persistence occurs — existing behavior is unchanged. When set (production canvas-agent runs), each step writes a row.
+
+The `InvocationContext` already carries `RunID` implicitly via the caller — this needs to be made explicit as a field if it is not already.
+
+---
+
+## 9. Component 5: AI Debugger Workflow (Phase 2)
+
+### Design principle
+
+The debugger reads the **exact AgentSpec used by the failing run**, not the current draft. The published AgentSpec is stored in `agent_runtime_specs.spec_json`. `AgentSpec.DefinitionID` links back to the `agent_definitions` row. Both are available without any new schema.
+
+### Workflow: diagnose → preview patch → validate → user approval → apply
+
+**Step 1 — Diagnose**
+
+Inputs:
+- `GET /api/v1/runs/{id}/trace` → `pipeline_steps`, `failed_step_id`, `error`
+- Published AgentSpec from `agent_runtime_specs` (via `agents.id` on the run)
+- `GET /api/v1/admin/agent-definitions/{definition_id}/params` → parameter fill status
+
+Cross-reference `failed_step_id` against the AgentSpec's compiled `StepSpec` to get the step's `Type` and compiled `Config`. Cross-reference `config_snapshot` from the trace against `NodeTypeInfo.config_schema` to identify misconfigured fields.
+
+Rule-based classifier output:
+
+```json
+{
+  "run_id": "...",
+  "failed_step": {
+    "step_id": "step-3",
+    "type": "llm",
+    "error": "context length exceeded: 128000 tokens"
+  },
+  "classification": {
+    "code": "context_overflow",
+    "is_transient": false,
+    "description": "The LLM step received more input tokens than the model context window allows."
+  },
+  "contributing_factors": [
+    {
+      "factor": "large_upstream_output",
+      "description": "The http step at step-2 wrote a response of ~95000 characters to kb_response without truncation.",
+      "evidence": "run_pipeline_steps.outputs[kb_response] length: 95000 characters"
+    }
+  ]
+}
+```
+
+Classification codes for canvas-agent runs:
+
+| Code | Trigger |
+|---|---|
+| `step_not_executable` | step type is a stub (`NODE_NOT_EXECUTABLE` in published spec) |
+| `context_overflow` | LLM step error contains "context length" or "context window" |
+| `http_timeout` | HTTP step error contains "timeout", or `duration_ms >= timeout_seconds * 1000` |
+| `http_error_response` | HTTP step received 4xx or 5xx status code |
+| `mcp_unavailable` | MCP step error contains "connection refused" or "no route to host" |
+| `unresolved_variable` | step error indicates a required PipelineVars key was missing at runtime |
+| `invalid_config` | step error from per-node Validate func |
+| `llm_refusal` | LLM step error contains "content policy" or "safety" |
+| `unknown` | fallback for all other patterns |
+
+The classifier is rule-based. It does not call an LLM. Ambiguous patterns default to `unknown` rather than producing a confident wrong classification.
+
+**Step 2 — Preview patch**
+
+The debugger generates structured patches against the definition JSON. Patches are presented for user review, not applied automatically.
+
+```json
+{
+  "proposed_patches": [
+    {
+      "patch_id": "p1",
+      "description": "Insert a transform step after step-2 to truncate kb_response before passing it to the LLM step.",
+      "action": "insert_step_after",
+      "after_step_id": "step-2",
+      "new_step": {
+        "id": "step-2b",
+        "type": "transform",
+        "config": {
+          "functions": [
+            {
+              "fn": "substring",
+              "input_var": "kb_response",
+              "output_var": "kb_response",
+              "args": { "end": "8000" }
+            }
+          ]
+        },
+        "next": ["step-3"]
+      },
+      "also_update": [
+        { "step_id": "step-2", "field": "next", "new_value": ["step-2b"] }
+      ]
+    },
+    {
+      "patch_id": "p2",
+      "description": "Switch the LLM step to a model with a larger context window.",
+      "action": "update_config_field",
+      "target_step_id": "step-3",
+      "field_path": "model",
+      "current_value": "claude-sonnet-5",
+      "suggested_value": "claude-opus-4-8"
+    }
+  ]
+}
+```
+
+**Step 3 — Validate patch**
+
+Apply selected patches to the definition JSON (in memory) and submit for validation:
+
+```
+POST /api/v1/admin/agent-definitions/{id}/validate
+Body: {"definition": <patched definition JSON>}
+```
+
+If `valid=false`, present the Issues to the user before proceeding. An LLM proposing a patch that introduces new structural errors must correct the patch before asking for approval.
+
+**Step 4 — User approval (explicit, not automated)**
+
+The debugger presents:
+1. The original failure trace with `failed_step_id` and `error`.
+2. Each proposed patch with its description.
+3. The validation result (valid or issues).
+
+It does not apply any change until the user explicitly confirms. This is a hard requirement: no automated writes to production agent definitions.
+
+**Step 5 — Apply**
+
+```
+PUT /api/v1/admin/agent-definitions/{id}
+Body: {"agent_slug": "...", "definition": <patched definition JSON>}
+```
+
+Optionally followed by:
+```
+POST /api/v1/admin/agent-definitions/{id}/publish
+```
+
+The apply step uses only existing endpoints. No new write endpoints are required for the debugger.
+
+### Why this order matters
+
+Validate before apply: prevents a patch from introducing new structural errors. User approval before apply: prevents silent automated changes to production agents. Reading the exact spec used by the run: prevents debugging the wrong definition.
+
+---
+
+## 10. Application Topology Layer (Secondary — Phase 1)
+
+This layer addresses platform composition (wiring agents into applications), not agent authoring. It is a lower priority than the canvas-agent foundation above. Brief designs follow; full detail is in the previous document version in git history.
+
+### A. Application Graph Summary
 
 **`GET /api/v1/admin/applications/{id}/ai-summary`**
 
-Auth: Admin JWT  
-ETag: SHA-256 of `application.updated_at.UnixNano()` as hex — lets callers cache and detect staleness.
+Returns a flat, LLM-readable view:
+- `entry_points[]`: slug, type, access_mode, conversation_token_limit, orchestrator_name
+- `orchestrators[]`: id, name, kind, llm_provider, llm_model, max_iterations, and for each:
+  - `reachable_agents[]`: slug, tool_name (`agent__{slug}`), description, input_schema, skills (canvas agents include their published AgentSpec summary)
+  - `reachable_mcp_tools[]`: tool_name (`mcp__{server}__{tool}`), server_slug, description, input_schema
+  - `sub_orchestrators[]`: slug, tool_name (`orch__{name}`), description
+- `canvas_warnings[]`: CANVAS_RULES violations with severity and node reference
 
-**Response:**
+ETag: SHA-256 hex of `application.updated_at.UnixNano()`. Lets callers detect staleness without re-reading the full summary.
 
-```json
-{
-  "application_id": "550e8400-e29b-41d4-a716-446655440000",
-  "name": "Customer Support Bot",
-  "enabled": true,
-  "graph_etag": "a3f4b2c1d0e9f8a7",
-  "entry_points": [
-    {
-      "slug": "support-ws",
-      "type": "websocket",
-      "access_mode": "token",
-      "conversation_token_limit": 50000,
-      "max_concurrent_sessions": 100,
-      "orchestrator_name": "Support Orchestrator"
-    }
-  ],
-  "orchestrators": [
-    {
-      "id": "660e8400-e29b-41d4-a716-446655440001",
-      "name": "Support Orchestrator",
-      "kind": "standard",
-      "llm_provider": "anthropic",
-      "llm_model": "claude-sonnet-5",
-      "max_iterations": 15,
-      "delegatable": false,
-      "reachable_agents": [
-        {
-          "slug": "crm-lookup",
-          "tool_name": "agent__crm-lookup",
-          "display_name": "CRM Lookup",
-          "description": "Retrieves customer records by email or account ID.",
-          "input_schema": {
-            "type": "object",
-            "properties": {
-              "query": { "type": "string", "description": "Email address or account ID." }
-            },
-            "required": ["query"]
-          },
-          "output_schema": null,
-          "skills": [
-            { "id": "lookup", "name": "Customer Lookup", "description": "Find a customer record." }
-          ]
-        }
-      ],
-      "reachable_mcp_tools": [
-        {
-          "tool_name": "mcp__zendesk__create_ticket",
-          "server_slug": "zendesk",
-          "description": "Create a new support ticket in Zendesk.",
-          "input_schema": {
-            "type": "object",
-            "properties": {
-              "subject": { "type": "string" },
-              "body": { "type": "string" },
-              "priority": { "type": "string", "enum": ["low", "normal", "high", "urgent"] }
-            },
-            "required": ["subject", "body"]
-          }
-        }
-      ],
-      "sub_orchestrators": []
-    }
-  ],
-  "canvas_warnings": [
-    {
-      "rule": "ORCH_HAS_AGENT",
-      "severity": "warning",
-      "node_id": "orch-2",
-      "message": "Orchestrator 'Router' has no connected agents."
-    }
-  ]
-}
-```
+Implementation: join across `app_orchestrators`, `entry_points`, `agents` (via `allowed_agent_ids`), `mcp_servers.tools_manifest` (via `app_orchestrators.mcp_servers` JSONB). No new DB columns.
 
-### Implementation
+Canvas agents appearing as `AdapterType=canvas_a2a` in the agent registry are listed with their AgentSpec's `card.description` and `skills` summary.
 
-Reads from: `them.entry_points` → `them.app_orchestrators` → `them.agents` (via `allowed_agent_ids`) → `them.mcp_servers.tools_manifest` (via `app_orchestrators.mcp_servers` JSONB join).
+### B. Structured Application Validation
 
-All joins are in one SQL query plus one Redis lookup for MCP manifests. No new DB columns required.
-
----
-
-## Component 3: Unified Tool Manifest per Orchestrator
-
-### Problem
-
-An LLM cannot ask "what tools does orchestrator X have access to?" in a single call. Answering requires joining `app_orchestrators.allowed_agent_ids` → `agents` and `app_orchestrators.mcp_servers` → `mcp_servers.tools_manifest` — a multi-table join that no current endpoint performs.
-
-### Design
-
-**`GET /api/v1/admin/orchestrators/{id}/tools`**
-
-Auth: Admin JWT
-
-**Response:**
-
-```json
-{
-  "orchestrator_id": "660e8400-e29b-41d4-a716-446655440001",
-  "orchestrator_name": "Support Orchestrator",
-  "agents": [
-    {
-      "slug": "crm-lookup",
-      "tool_name": "agent__crm-lookup",
-      "display_name": "CRM Lookup",
-      "description": "Retrieves customer records.",
-      "input_schema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] },
-      "output_schema": null,
-      "skills": [{ "id": "lookup", "name": "Customer Lookup", "tags": ["crm", "read"] }],
-      "capabilities": { "streaming": false, "push_notifications": false },
-      "enabled": true
-    }
-  ],
-  "mcp_tools": [
-    {
-      "tool_name": "mcp__zendesk__create_ticket",
-      "server_slug": "zendesk",
-      "server_name": "Zendesk",
-      "description": "Create a new support ticket.",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "subject": { "type": "string" },
-          "body": { "type": "string" }
-        },
-        "required": ["subject", "body"]
-      }
-    }
-  ],
-  "sub_orchestrators": [
-    {
-      "slug": "billing-orch",
-      "tool_name": "orch__billing-orch",
-      "display_name": "Billing Orchestrator",
-      "description": "Handles billing inquiries and refunds."
-    }
-  ]
-}
-```
-
-### Implementation
-
-- `agents`: `SELECT * FROM them.agents WHERE id = ANY($1::uuid[])` where `$1` is `app_orchestrators.allowed_agent_ids`.
-- `mcp_tools`: parse `app_orchestrators.mcp_servers` JSONB → for each entry, read `them.mcp_servers.tools_manifest` where `slug = entry.slug` and `application_id = orchestrator.application_id`. Flatten all tool entries. Apply per-orchestrator tool allowlist if present in the JSONB.
-- `sub_orchestrators`: `SELECT * FROM them.app_orchestrators WHERE application_id = $1 AND delegatable = true AND id IN (SELECT target_orch_id FROM them.orch_delegations WHERE source_orch_id = $2)`.
-
-No new DB columns required. All data exists; this endpoint assembles it.
-
----
-
-## Component 4: Structured Validation Responses
-
-### Problem
-
-`compile_graph()` and `validate_graph()` raise `HTTPException(status_code=422, detail="<string>")`. An LLM receiving this cannot determine which rule fired, which node or field is at fault, or what to change. It can only see a human-readable sentence.
-
-### Design
-
-**`ValidationResult` schema** — replaces raw 422 strings everywhere validation occurs:
+`compile_graph()` currently raises `HTTPException(status_code=422, detail="<string>")`. This must produce the same structured Issue shape as agentgen:
 
 ```json
 {
   "valid": false,
   "errors": [
     {
-      "rule": "EP_SLUG_FORMAT",
+      "code": "EP_HAS_ORCH",
       "severity": "error",
-      "path": "nodes[0].data.slug",
-      "message": "Slug 'My Entry Point' contains spaces and uppercase letters.",
-      "suggestion": "Use only lowercase letters, digits, hyphens, and underscores. Example: 'my-entry-point'.",
-      "current_value": "My Entry Point"
-    },
-    {
-      "rule": "EP_HAS_ORCH",
-      "severity": "error",
-      "path": "nodes[2]",
+      "path": "nodes[0]",
       "message": "Entry point 'support-ws' has no outgoing edge to an orchestrator.",
-      "suggestion": "Add an edge from node 'ep-support-ws' to an orchestrator node.",
-      "current_value": null
+      "suggestion": "Add an edge from this entry point node to an orchestrator node."
     }
   ],
-  "warnings": [
-    {
-      "rule": "ORCH_HAS_AGENT",
-      "severity": "warning",
-      "path": "nodes[1]",
-      "message": "Orchestrator 'Router' has no connected agents or MCP tools.",
-      "suggestion": "Connect at least one agent or MCP server, or configure MCP tools on the orchestrator.",
-      "current_value": null
-    }
-  ]
+  "warnings": [...]
 }
 ```
 
-**`ValidationError` object fields:**
+Application CANVAS_RULES as issue codes: `AT_LEAST_ONE_EP`, `EP_SLUG_NONEMPTY`, `EP_SLUG_UNIQUE`, `EP_SLUG_FORMAT`, `EP_HAS_ORCH`, `ORCH_HAS_AGENT`, `VOICE_EP_NEEDS_STT_TTS`.
 
-| Field | Type | Description |
-|---|---|---|
-| `rule` | string | Machine-readable rule ID from `CANVAS_RULES` or compiler |
-| `severity` | `"error"` or `"warning"` | Errors block save; warnings allow save |
-| `path` | string | JSONPath into the submitted `{nodes, edges}` graph |
-| `message` | string | Human-readable description of what is wrong |
-| `suggestion` | string | Concrete corrective action |
-| `current_value` | any | The value that triggered the error, if applicable |
+This is a Python change. The 422 body shape changes from `{"detail": "string"}` to the structured format above. The frontend currently parses `error.response.data.detail` — the frontend change must ship in the same PR.
 
-**Where applied:**
+A dry-run validate endpoint (`POST /api/v1/admin/applications/{id}/validate`) should also be added, returning 200 always with the ValidationResult body (even when `valid=false`), matching the agentgen pattern.
 
-1. `POST /api/v1/admin/applications` and `PATCH /api/v1/admin/applications/{id}` — currently returns 422 with string; replace with `ValidationResult` body (HTTP 422 status preserved).
-2. `POST /api/v1/admin/applications/{id}/validate` — new endpoint, dry-run only, always returns `ValidationResult` (200 even when `valid=false`).
-3. `POST /api/v1/admin/agent-definitions/{id}/validate` — same pattern.
+### C. Unified Tool Manifest
 
-**Breaking change notice:** The 422 body shape changes from `{"detail": "string"}` to `{"valid": false, "errors": [...], "warnings": [...]}`. Any existing client parsing the detail string must be updated. The frontend currently parses compile errors as `error.response.data.detail` — this must be updated before the Python side is changed. Coordinate Python and frontend in the same PR.
+**`GET /api/v1/admin/orchestrators/{id}/tools`**
+
+Returns in one call what an orchestrator can invoke:
+- `agents[]`: slug, tool_name, display_name, description, input_schema, output_schema, skills, capabilities
+- `mcp_tools[]`: tool_name, server_slug, server_name, description, input_schema
+- `sub_orchestrators[]`: slug, tool_name, display_name, description
+
+Implementation: `allowed_agent_ids` → agents table; `mcp_servers` JSONB → `mcp_servers.tools_manifest`; delegatable app_orchestrators reachable from this one. No new DB columns.
 
 ---
 
-## Component 5: Run Failure Analysis Endpoint
+## 11. Components Deferred or Removed
 
-### Problem
+**Removed: Per-Entry-Point Agent Card** (`GET /.well-known/agent-card/{ep-slug}.json`)
 
-When a run fails, `them.runs.error` contains a raw exception string. `them.run_steps` records individual agent call failures. There is no endpoint that aggregates this into a causal chain, classifies the failure type, or suggests a corrective action.
+The A2A 1.0 specification defines agent discovery at `/.well-known/agent-card.json` (singular). Sub-path cards are non-standard. Third-party A2A clients that hardcode the root discovery path will not find sub-path cards. This endpoint adds complexity without clear interoperability benefit and is not needed for the Canvas Agent Builder or Debugger.
 
-### Design
+**Deferred to Phase 3: Graph Version Tracking**
 
-**`GET /api/v1/runs/{id}/analysis`**
+Persisting application graph snapshots (new `them.application_graph_versions` table, SHA-256 hash, run-to-version link, graph-diff endpoint) requires a DB migration and changes to both `compile_graph()` and the run creation path. Useful for the debugger's "graph changed since this run" question, but not a blocker for Phase 1 or 2. Full design in git history (`AI_PLATFORM_FOUNDATION.md` before this revision).
 
-Auth: same as `GET /api/v1/runs/{id}`
+**Deferred: Agent Schema Endpoint** (`GET /api/v1/admin/agents/{id}/schema`)
 
-**Response:**
-
-```json
-{
-  "run_id": "770e8400-e29b-41d4-a716-446655440000",
-  "run_summary": {
-    "goal": "Look up account and create a refund ticket",
-    "status": "failed",
-    "iterations_completed": 3,
-    "total_tokens_used": 12450,
-    "duration_seconds": 18.4
-  },
-  "failure_point": {
-    "type": "agent_step",
-    "step_id": "880e8400-e29b-41d4-a716-446655440002",
-    "iteration": 3,
-    "agent_slug": "crm-lookup",
-    "error": "Request timeout after 30s"
-  },
-  "error_classification": {
-    "code": "agent_timeout",
-    "description": "An agent did not respond within its configured timeout.",
-    "is_transient": true
-  },
-  "contributing_factors": [
-    {
-      "factor": "low_timeout",
-      "description": "Agent crm-lookup has timeout_seconds=30. The upstream CRM API has a documented P95 latency of 25s.",
-      "evidence": "run_step latency_ms=30012"
-    },
-    {
-      "factor": "no_retry",
-      "description": "Agent crm-lookup has max_retries=0. A single timeout caused immediate failure.",
-      "evidence": "them.agents.max_retries=0"
-    }
-  ],
-  "suggested_fixes": [
-    {
-      "target_type": "agent",
-      "target_id": "990e8400-e29b-41d4-a716-446655440003",
-      "target_name": "crm-lookup",
-      "field": "timeout_seconds",
-      "current_value": 30,
-      "suggested_value": 60,
-      "reason": "Increase to exceed P95 upstream latency."
-    },
-    {
-      "target_type": "agent",
-      "target_id": "990e8400-e29b-41d4-a716-446655440003",
-      "target_name": "crm-lookup",
-      "field": "max_retries",
-      "current_value": 0,
-      "suggested_value": 2,
-      "reason": "Allow retries for transient timeouts."
-    }
-  ],
-  "graph_version": null
-}
-```
-
-**`error_classification.code` enum:**
-
-| Code | Trigger condition |
-|---|---|
-| `agent_timeout` | `run_steps.status = 'error'` and error contains "timeout" |
-| `agent_unreachable` | error contains "connection refused" or "no route to host" |
-| `llm_refusal` | error contains "content policy" or "safety" |
-| `context_overflow` | error contains "context length" or `total_tokens_in > 0.95 * convTokenLimit` |
-| `budget_exceeded` | `run.total_tokens_in + total_tokens_out >= budget_tokens` |
-| `invalid_tool_call` | `run_steps.error` contains "invalid arguments" or "schema validation" |
-| `max_iterations_reached` | `run.iterations >= orchestrator.max_iterations` at failure time |
-| `agent_error` | Agent returned a non-transient error response |
-| `orchestrator_error` | Error in the LLM planning loop itself |
-| `unknown` | Does not match any above pattern |
-
-The classifier is **rule-based, not LLM-generated.** It runs purely against the DB record. Pattern matching on error strings is deliberately kept simple; false classifications default to `unknown` rather than producing confident wrong answers.
-
-**`GET /api/v1/runs/{id}/trace`**
-
-Returns the full ordered event timeline for a run:
-
-```json
-{
-  "run_id": "770e8400-e29b-41d4-a716-446655440000",
-  "events": [
-    { "seq": 1, "type": "run_start", "timestamp": "2026-08-27T10:00:00.000Z", "data": { "goal": "Look up account..." } },
-    { "seq": 2, "type": "llm_call", "timestamp": "2026-08-27T10:00:01.200Z", "data": { "tokens_in": 1200, "tokens_out": 45 } },
-    { "seq": 3, "type": "tool_call", "timestamp": "2026-08-27T10:00:01.800Z", "data": { "tool": "agent__crm-lookup", "input": { "query": "test@example.com" } } },
-    { "seq": 4, "type": "tool_error", "timestamp": "2026-08-27T10:00:31.900Z", "data": { "tool": "agent__crm-lookup", "error": "Request timeout after 30s", "latency_ms": 30012 } },
-    { "seq": 5, "type": "run_failed", "timestamp": "2026-08-27T10:00:32.100Z", "data": { "error": "Agent invocation failed: timeout" } }
-  ]
-}
-```
-
-Trace events are assembled from `them.run_steps` + `them.run_usage` + `them.tasks` ordered by timestamp. No new columns required for Phase 2; `graph_version` in the analysis response remains null until Component 6 is implemented.
+Partially covered by `GET /api/v1/admin/agent-definitions/{id}/params` (for canvas agents). Full schema endpoint is useful but not blocking Phase 1 or 2.
 
 ---
 
-## Component 6: Graph Version Tracking
+## 12. Implementation Roadmap
 
-### Problem
+### Phase 1 — Canvas Agent Self-Description (no DB migrations required)
 
-`them.runs.definition_id` exists in the schema but is never populated. An LLM analyzing a failed run cannot know which graph revision was active at the time — the current graph may have already been updated since the run.
+| # | Component | What changes | File(s) |
+|---|---|---|---|
+| 1.1 | Node Type Config Schemas | Add `ConfigSchema json.RawMessage` to `NodeDef` + `NodeTypeInfo`; add literal schema per step in `nodes.go` `init()` | `go/internal/agentgen/noderegistry.go`, `go/internal/agentgen/nodes.go` |
+| 1.2 | Canvas Definition Wire Format | New static `GET /api/v1/admin/agent-definitions/schema` handler | `go/internal/admin/agent_definition_schema.go` (new) |
+| 1.3 | Transform Catalog Verification | Verify Examples in `/transform-functions` response; fix handler if absent | `go/internal/admin/transform*.go` |
+| 1.4 | Application Graph Summary | New `GET /api/v1/admin/applications/{id}/ai-summary` handler | `go/internal/admin/applications.go` or new file |
+| 1.5 | Application Validation Issues | Structured Issue-equivalent from `compile_graph`; add dry-run validate endpoint | `app/services/app_compiler.py`, `app/routers/admin_applications.py`, frontend |
 
-### Design
+Phase 1 alone is sufficient to support an AI Canvas Agent Builder prototype.
 
-**New table: `them.application_graph_versions`**
+### Phase 2 — Run Trace and Debugger (DB migration required)
 
-```sql
-CREATE TABLE them.application_graph_versions (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    application_id UUID NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
-    graph_hash  CHAR(64) NOT NULL,          -- SHA-256 hex of canonical graph JSON
-    graph_snapshot JSONB NOT NULL,           -- full {nodes, edges} at time of compile
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (application_id, graph_hash)
-);
+| # | Component | What changes | Notes |
+|---|---|---|---|
+| 2.1 | Pipeline Step Trace | New table `them.run_pipeline_steps`; interpreter emits step records via `StepRecorder` interface | Migration + interpreter change; credential-exclusion rule must be tested |
+| 2.2 | Trace Endpoint | `GET /api/v1/runs/{id}/trace` extended for canvas-agent step detail | Requires 2.1 |
+| 2.3 | Failure Classifier | Rule-based classifier over `run_pipeline_steps` | Requires 2.1; ~70% coverage on real failure patterns |
+| 2.4 | Debugger Patch Workflow | Diagnosis + patch preview; reuses existing validate and PUT endpoints for apply | Requires 2.2 + 2.3; no new write endpoints |
 
-CREATE INDEX ON them.application_graph_versions(application_id, created_at DESC);
-```
+### Phase 3 — Graph Versioning (lower priority)
 
-**Upsert on `compile_graph()` success:**
-
-1. Serialize `{nodes, edges}` to canonical JSON (sorted keys, no canvas layout data).
-2. Compute SHA-256.
-3. `INSERT INTO them.application_graph_versions ... ON CONFLICT (application_id, graph_hash) DO NOTHING`.
-4. Return the `id` of the matching version row.
-5. Store this `id` in `them.runs.definition_id` when a new run is created.
-
-**New endpoint — run-to-version diff:**
-
-**`GET /api/v1/runs/{id}/graph-diff`**
-
-Returns a structural diff between the graph that executed the run and the current live graph:
-
-```json
-{
-  "run_id": "770e8400-e29b-41d4-a716-446655440000",
-  "run_graph_hash": "a3f4b2c1d0e9f8a7b6c5d4e3f2a1b0c9",
-  "current_graph_hash": "b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
-  "graphs_match": false,
-  "diff": {
-    "added_nodes": [],
-    "removed_nodes": [],
-    "changed_nodes": [
-      {
-        "node_id": "orch-1",
-        "node_type": "orchestrator",
-        "changes": [
-          { "field": "max_iterations", "run_value": 10, "current_value": 20 }
-        ]
-      }
-    ],
-    "added_edges": [],
-    "removed_edges": []
-  }
-}
-```
-
-**Storage concern:** `graph_snapshot` JSONB can be large for complex applications. Before implementing, benchmark the P99 graph size across existing applications. If median graph JSON exceeds 50KB, consider storing only the hash and implementing a separate snapshot retrieval endpoint, with old snapshots pruned after 90 days.
-
-This component is Phase 3 because it requires a DB migration and changes to the Python `compile_graph()` path and the run-creation path in both Python and Go.
+Application graph snapshot table, run-to-version link, graph-diff endpoint. See git history for full design.
 
 ---
 
-## Component 7: Agent Schema Endpoint
-
-### Problem
-
-`GET /api/v1/admin/agents` returns a full list with all fields including internal ones (encrypted tokens, scan results). An LLM building tool call schemas needs a narrow, stable endpoint for a single agent's input/output contract.
-
-### Design
-
-**`GET /api/v1/admin/agents/{id}/schema`**
-
-Auth: Admin JWT
-
-**Response:**
-
-```json
-{
-  "id": "990e8400-e29b-41d4-a716-446655440003",
-  "slug": "crm-lookup",
-  "tool_name": "agent__crm-lookup",
-  "display_name": "CRM Lookup Agent",
-  "description": "Retrieves customer records by email or account ID.",
-  "input_schema": {
-    "type": "object",
-    "properties": {
-      "query": { "type": "string", "description": "Email address or account ID." }
-    },
-    "required": ["query"]
-  },
-  "output_schema": null,
-  "skills": [
-    {
-      "id": "lookup",
-      "name": "Customer Lookup",
-      "description": "Find a customer record by identifier.",
-      "tags": ["crm", "read"],
-      "input_modes": ["text/plain", "application/json"],
-      "output_modes": ["application/json"]
-    }
-  ],
-  "capabilities": {
-    "streaming": false,
-    "push_notifications": false
-  },
-  "example_calls": null
-}
-```
-
-`output_schema` is null for most agents as they do not declare one in their A2A card. `example_calls` is populated only if `agent_card.examples` is present (not common in current deployments).
-
-Implementation: single `SELECT` on `them.agents WHERE id = $1`. No new columns required. This is the simplest component in the design.
-
----
-
-## Component 8: Per-Entry-Point Capability Card
-
-### Problem
-
-The platform exposes one A2A agent card at `GET /.well-known/agent-card.json` listing all A2A-type entry points as skills. An LLM or A2A client calling a specific entry point slug cannot get an EP-specific capability description without discovering the full platform card and scanning skill IDs.
-
-### Design
-
-**`GET /.well-known/agent-card/{ep-slug}.json`**
-
-No auth required (mirrors platform-wide card behavior).
-
-Returns a card scoped to the named entry point only:
-
-```json
-{
-  "name": "the-M — Customer Support",
-  "description": "Multi-agent customer support orchestration.",
-  "url": "https://platform.example.com/apps/support-ws",
-  "version": "1.0.0",
-  "capabilities": {
-    "streaming": false,
-    "pushNotifications": true
-  },
-  "defaultInputModes": ["text/plain"],
-  "defaultOutputModes": ["text/plain"],
-  "skills": [
-    {
-      "id": "support-ws",
-      "name": "Customer Support",
-      "description": "Handle customer inquiries, account lookups, and ticket creation.",
-      "tags": [],
-      "inputModes": ["text/plain"],
-      "outputModes": ["text/plain"]
-    }
-  ],
-  "securitySchemes": { "bearer": { "type": "http", "scheme": "bearer" } },
-  "security": [{"bearer": []}]
-}
-```
-
-Returns 404 if the slug does not exist or the entry point is not of type `a2a` or `websocket`.
-
-**Confidence caveat:** The A2A 1.0 spec does not define sub-path agent cards. Some A2A clients discover agents exclusively at `/.well-known/agent-card.json`. This endpoint is additive — it does not replace the platform-wide card — but its adoption by third-party A2A clients is uncertain. Implement last in Phase 2.
-
----
-
-## LLM Integration Pattern
-
-This section describes how the components work together in an AI Agent Builder workflow. This is illustrative — no AI feature is being built in this task.
-
-### Building a new application
-
-```
-1. GET /api/v1/meta/node-types
-   → LLM learns: what node types exist, what fields are required, what edges are valid.
-
-2. GET /api/v1/admin/agents (filter: enabled=true)
-   GET /api/v1/admin/orchestrators (list available LLM providers + models)
-   → LLM learns: which agents can be connected, what tools they provide.
-
-3. LLM constructs {nodes, edges} graph JSON following node-type field schemas.
-
-4. POST /api/v1/admin/applications/{id}/validate
-   Body: {graph: {nodes, edges}}
-   → Returns ValidationResult. If valid=false:
-
-5. For each error in ValidationResult.errors:
-   - Read rule, path, suggestion
-   - Apply correction to the graph JSON
-   → Loop back to step 4.
-
-6. Once valid=true:
-   PATCH /api/v1/admin/applications/{id}
-   Body: {graph: {nodes, edges}}
-   → Platform compiles and saves the application.
-```
-
-### Debugging a failed run
-
-```
-1. GET /api/v1/runs/{id}/analysis
-   → Returns error_classification, contributing_factors, suggested_fixes.
-
-2. For each fix in suggested_fixes:
-   - target_type=agent: PATCH /api/v1/admin/agents/{target_id} {field: suggested_value}
-   - target_type=orchestrator: PATCH /api/v1/admin/orchestrators/{target_id} {field: suggested_value}
-   - target_type=graph: construct graph patch and re-validate via step 4 above.
-
-3. (Phase 3) GET /api/v1/runs/{id}/graph-diff
-   → Confirm whether the graph has already changed since the failing run.
-   → If graphs_match=false, the issue may already be fixed.
-```
-
----
-
-## Implementation Roadmap
-
-### Phase 1 — Self-Description Foundation (no DB migrations)
-
-Target: all reads from existing data, one validation refactor.
-
-| Component | Work | Risk |
-|---|---|---|
-| Component 1: Node Type Schema Registry | New Go handler at `go/internal/admin/meta.go`. Compile-time constants. | Low |
-| Component 2: Application Graph Summary | New Go handler. SQL join + Redis lookup. | Low |
-| Component 3: Unified Tool Manifest | New Go handler. SQL join. | Low |
-| Component 4: Structured Validation Responses | Refactor Python `compile_graph` error returns. Update frontend error parsing. | Medium — breaking API change |
-
-Phase 1 alone provides enough foundation for an AI Agent Builder prototype.
-
-### Phase 2 — Run Analysis and Agent Schema
-
-Target: read-only endpoints over existing run recording schema.
-
-| Component | Work | Risk |
-|---|---|---|
-| Component 5: Run Failure Analysis | New Go handler. Rule-based classifier. | Medium — classifier coverage |
-| Component 7: Agent Schema Endpoint | New Go handler. Single SQL select. | Low |
-| Component 8: Per-EP Capability Card | New route in Go A2A handler. | Low-medium — spec conformance |
-
-### Phase 3 — Graph Versioning (requires DB migration)
-
-| Component | Work | Risk |
-|---|---|---|
-| Component 6: Graph Version Tracking | New migration, upsert in compile_graph, run creation change in Python and Go. | Medium — migration + two code paths |
-
----
-
-## Confidence and Risks
+## 13. Confidence and Risks
 
 ### High confidence
 
-**Node Type Schema Registry (Component 1).** The compiler's `_VALID_NODE_TYPES` and `CANVAS_RULES` are stable, well-defined, and have not changed significantly across the codebase history visible in git. Mirroring them as Go compile-time constants is a low-risk, high-value operation.
+**Component 1.1 (node type config schemas).** NodeDef is stable; the typed config structs have been stable across the visible commit history. Adding literal JSON Schema alongside `init()` registration is additive and low-risk. No runtime behavior changes. The only maintenance burden is updating the schema literal when a config struct field changes — this is acceptable given the alternative (reflection-generated schemas with poor descriptions).
 
-**Unified Tool Manifest (Component 3).** All required data exists in DB columns (`allowed_agent_ids`, `mcp_servers` JSONB, `tools_manifest` JSONB). The join is straightforward. The only risk is MCP manifest staleness — manifests are cached with a 5-minute TTL, so the response may lag behind a recently connected MCP server.
+**Component 1.2 (canvas definition wire format).** The `canvasDefinition` struct and all compiler constraints are fully documented in `compiler.go`. A static schema endpoint is a serialization of known constants — low risk, no runtime dependencies.
 
-**Agent Schema Endpoint (Component 7).** A thin wrapper over existing columns. Output schema will be null for most agents because agents rarely declare it in their A2A cards. This is an honest limitation, not a design flaw.
+**Component 1.3 (transform catalog).** `FunctionDef.Examples` already exists. If the handler serializes it, this is already done. At worst, one line change to include the field.
+
+**Existing validate endpoint.** Already returns machine-readable `Issue` structs with `Code`, `NodeID`, `Field`. An LLM consuming this today can already perform self-correction loops. Phase 1 does not change this behavior, only the surrounding context that makes it easier to use.
 
 ### Medium confidence
 
-**Structured Validation Responses (Component 4).** The validation logic is clear, but changing the 422 response shape is a breaking change for any caller parsing `detail` as a string. The frontend currently does this. The risk is mitigated by shipping the frontend change in the same PR as the Python change. However, if any external callers (scripts, other services) parse the old format, they will break silently.
+**Component 1.5 (application validation issues).** Requires refactoring the Python `compile_graph` error path. This is a breaking API change: the 422 body changes from `{"detail": "string"}` to the structured format. The frontend parses `detail` as a string in multiple places. The Python change and the frontend change must ship together. Risk: any external caller (scripts, integrations) that parses the old `detail` string breaks silently. Mitigation: audit callers before shipping.
 
-**Run Failure Classifier (Component 5).** Pattern matching on error strings covers the common cases well. The current run data shows predictable error messages for timeouts, connection failures, and context overflows. However, LLM refusals and invalid tool call errors have more variable message formats across providers. Estimate: rule-based classifier handles ~70% of real failures correctly; remaining 30% classify as `unknown`. This is acceptable — `unknown` is an honest answer. The risk of wrong classification (e.g., classifying a non-transient error as `agent_timeout`) is higher. Mitigate by requiring both string match AND structural evidence (e.g., latency near timeout value).
+**Component 2.1 (pipeline step trace).** The interpreter's `Execute` loop is straightforward, but adding per-step DB writes changes its performance profile. Benchmark write overhead per step on the target hardware before committing to synchronous persistence. If overhead is unacceptable, consider batching writes at skill completion or using a background goroutine with a small in-memory buffer.
 
-**Graph Versioning (Component 6).** The SHA-256 canonical hash approach is correct in principle, but canonical JSON serialization requires careful key ordering to be stable. Use `encoding/json` with sorted map keys in Go, not standard `json.Marshal` (which does not guarantee map key order). The JSONB snapshot storage risk depends on graph sizes in production — benchmark before implementing.
+**Component 2.3 (failure classifier).** Pattern-matching on error strings covers the common cases. LLM refusal messages and provider-specific error formats vary. Estimate: rule-based classifier handles ~70% of real failures correctly. The remaining ~30% classify as `unknown`, which is honest. The risk is false classification — e.g. a non-transient HTTP error classified as `http_timeout` because duration is close to the timeout value. Mitigate by requiring two independent signals (error message AND timing) for sensitive classifications.
 
 ### Lower confidence
 
-**Per-Entry-Point Capability Card (Component 8).** The A2A 1.0 specification defines agent discovery at `/.well-known/agent-card.json` (singular, at root). Sub-path cards (`/.well-known/agent-card/ep-slug.json`) are not part of the spec. Third-party A2A clients that hardcode the root path will not discover EP-specific cards. This endpoint is useful for the platform's own AI builder (which can be told to use the right URL) but may not interoperate with external A2A clients without a spec extension. Implement last; document the non-standard nature explicitly.
+**Phase 2 timeline.** Component 2.1 (interpreter instrumentation) is the dependency for the entire debugger. Its complexity depends on whether pipeline-step persistence can be added without restructuring the `Execute` loop. The `Execute` function is currently synchronous and stateless with respect to persistence. The cleanest approach is a `StepRecorder` interface injected via the `Interpreter` constructor — nil by default, wired in for production. Estimate: 2–3 days of focused implementation and testing.
 
-**Output schemas.** Several components reference `output_schema` (Components 3, 7). In the current agent registry, `output_schema` is null for all agents because A2A agents typically do not declare output schemas in their cards. The foundation exposes this null honestly. Any AI feature built on top must handle null output schemas gracefully rather than assuming structured output.
+### Key risk — credential safety in trace
 
-### Cross-cutting risks
+`InvocationContext.AgentParams` and `AppAPIKey` are already marked `// NEVER logged` in the interpreter. The `run_pipeline_steps` write path must enforce the same constraint at the persistence layer, not just at the display layer.
 
-**Drift between Python compiler and Go meta handler.** Component 1 requires the Go constants to mirror the Python compiler's validation rules. There is no automated enforcement of this today. Risk: a developer updates `CANVAS_RULES` in TypeScript or `_VALID_NODE_TYPES` in Python without updating the Go meta handler. Mitigation: add a CI test that compares the Go handler output against a snapshot generated from the Python constants — fail if they diverge.
+Enforcement rule: before writing `inputs` or `outputs` JSONB, remove any key whose name matches any `AgentParamSpec.Key` in `InvocationContext.Spec.RequiredParams`. This blocklist is derived from the same AgentSpec that governed the run, so it is always accurate.
 
-**Validation response versioning.** If the structured `ValidationResult` format needs to change after external callers have adopted it, a versioned endpoint (`/v2/...`) will be needed. Agree on the format before shipping Phase 1 to minimize future breakage.
-
-**Auth on `/api/v1/meta/node-types`.** Node type schemas are not sensitive, but exposing them without auth could aid attackers in understanding the platform's internal model. Admin-JWT requirement is intentionally conservative. If a future AI builder feature requires the LLM to call this endpoint autonomously without admin credentials, a separate read-only scoped token type will be needed.
+This rule must be covered by an explicit test: create an agent with a secret param, run it, confirm the param key does not appear in `run_pipeline_steps.inputs` or `.outputs` even when it was present in `PipelineVars` during execution.
