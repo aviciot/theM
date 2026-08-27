@@ -22,6 +22,7 @@ const GO_ONLY_PATTERNS = [
   /\/provider-keys/,
   /\/test-llm/,
   /\/orchestrators\/[^/]+\/llm/,
+  /^apps\/[^/]+\/voice\//,
 ];
 
 function resolveBase(path: string): string {
@@ -51,12 +52,14 @@ async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
   const upstream = await fetch(url, { method: req.method, headers, body });
   const upstreamType = upstream.headers.get('content-type') || '';
   if (upstream.status === 204) return new NextResponse(null, { status: 204 });
-  // Stream audio directly without buffering
+  // Stream audio directly without buffering; forward transcript/reply headers
   if (upstreamType.startsWith('audio/')) {
-    return new NextResponse(upstream.body, {
-      status: upstream.status,
-      headers: { 'Content-Type': upstreamType, 'Transfer-Encoding': 'chunked' },
-    });
+    const audioHeaders: Record<string, string> = { 'Content-Type': upstreamType, 'Transfer-Encoding': 'chunked' };
+    const xTranscript = upstream.headers.get('X-Transcript');
+    const xReply = upstream.headers.get('X-Reply');
+    if (xTranscript) audioHeaders['X-Transcript'] = xTranscript;
+    if (xReply) audioHeaders['X-Reply'] = xReply;
+    return new NextResponse(upstream.body, { status: upstream.status, headers: audioHeaders });
   }
   const data = await upstream.json().catch(() => ({}));
   return NextResponse.json(data, { status: upstream.status });

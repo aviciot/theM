@@ -8,7 +8,7 @@ import { themApi, type TaskOut, type ArtifactOut, type ArtifactPart, type Contex
 // ── Connection target ──────────────────────────────────────────────────────
 type ConnTarget =
   | { kind: 'orchestrator'; name: string; label: string }
-  | { kind: 'entrypoint'; slug: string; epType: 'websocket' | 'sse'; appName: string; orchName: string };
+  | { kind: 'entrypoint'; slug: string; epType: 'websocket' | 'sse' | 'voice'; appName: string; orchName: string };
 
 function targetLabel(t: ConnTarget): string {
   if (t.kind === 'orchestrator') return t.label;
@@ -1260,15 +1260,24 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   // Derive orchestrator name from target (for TTS)
   const orchName = target.kind === 'orchestrator' ? target.name : target.orchName;
 
-  // Load voice/tts flags for orchestrator targets
+  // Load voice/tts flags.
+  // For orchestrator targets: from the orchestrator record.
+  // For voice EP targets: always enabled (the EP type IS voice).
+  // For WS/SSE EP targets: from the linked orchestrator record.
   useEffect(() => {
-    if (target.kind !== 'orchestrator') return;
+    if (target.kind === 'entrypoint' && target.epType === 'voice') {
+      setVoiceEnabled(true);
+      setTtsEnabled(true);
+      return;
+    }
+    const name = target.kind === 'orchestrator' ? target.name : target.orchName;
+    if (!name) return;
     themApi.orchestrators().then(list => {
-      const o = list.find(o => o.name === target.name);
+      const o = list.find(o => o.name === name);
       setVoiceEnabled(o?.voice_enabled ?? false);
       setTtsEnabled(o?.tts_enabled ?? false);
     }).catch(() => {});
-  }, [target.kind === 'orchestrator' ? target.name : '']);
+  }, [target.kind, target.kind === 'orchestrator' ? target.name : target.kind === 'entrypoint' ? target.slug : '']);
 
   // Restore context_id from localStorage on mount, then load conversation history.
   // Uses a once-guard (didRestoreRef) so React strict-mode double-invocation
@@ -1600,6 +1609,8 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   }, []);
 
   // ── Voice ─────────────────────────────────────────────────────────────────
+  const isVoiceEP = target.kind === 'entrypoint' && target.epType === 'voice';
+
   const startRecording = async () => {
     if (recordingState !== 'idle') return;
     try {
@@ -1613,9 +1624,35 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
         const blob = new Blob(chunks, { type: 'audio/webm' });
         setRecordingState('transcribing');
         try {
-          const result = await themApi.transcribe(orchName, blob);
-          if (result.text) await sendText(result.text, contextId);
-        } catch { setStatus('Transcription failed'); setTimeout(() => setStatus(''), 3000); }
+          if (isVoiceEP && target.kind === 'entrypoint') {
+            // Voice EP: full pipeline — STT → orchestrator → LLM → TTS in one call
+            setBusy(true); busyRef.current = true;
+            setTrace([]);
+            const res = await themApi.voiceChat(target.slug, blob);
+            const transcript = res.headers.get('X-Transcript') ?? '';
+            const reply = res.headers.get('X-Reply') ?? '';
+            if (transcript) setMessages(prev => [...prev, { role: 'user', text: transcript }]);
+            if (reply) setMessages(prev => [...prev, { role: 'assistant', text: reply }]);
+            // Play back audio/mpeg response
+            setSpeaking(true);
+            const audioBlob = await res.blob();
+            const url = URL.createObjectURL(audioBlob);
+            const audio = new Audio(url);
+            audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+            audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+            audio.play().catch(() => setSpeaking(false));
+            setBusy(false); busyRef.current = false;
+            setStatus('Done');
+          } else {
+            // WS/SSE EP or orchestrator: STT only → send transcript over WS
+            const result = await themApi.transcribe(orchName, blob);
+            if (result.text) await sendText(result.text, contextId);
+          }
+        } catch (e) {
+          setStatus(`Voice error: ${(e as Error).message}`);
+          setTimeout(() => setStatus(''), 4000);
+          setBusy(false); busyRef.current = false;
+        }
         finally { setRecordingState('idle'); }
       };
       recorder.start(); setMediaRecorder(recorder); setRecordingState('recording');
@@ -1720,17 +1757,25 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
             </div>
           </div>
           <div style={{ padding: '6px 14px 10px', display: 'flex', gap: 8 }}>
-            {voiceEnabled && (
-              <button style={micBtnStyle()} onMouseDown={startRecording} onMouseUp={stopRecording} onTouchStart={startRecording} onTouchEnd={stopRecording} disabled={recordingState === 'transcribing' || busy} title={recordingState === 'recording' ? 'Release to transcribe' : 'Hold to record'}>
+            {(voiceEnabled || isVoiceEP) && (
+              <button style={micBtnStyle()} onMouseDown={startRecording} onMouseUp={stopRecording} onTouchStart={startRecording} onTouchEnd={stopRecording} disabled={recordingState === 'transcribing' || busy} title={isVoiceEP ? (recordingState === 'recording' ? 'Release to send' : 'Hold to speak') : (recordingState === 'recording' ? 'Release to transcribe' : 'Hold to record')}>
                 {recordingState === 'transcribing' ? <Spinner /> : <MicIcon />}
               </button>
             )}
-            <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={onKey} disabled={busy} dir="auto" placeholder="Send a message… (Enter to send, Shift+Enter for newline)"
-              style={{ flex: 1, height: inputHeight, padding: '9px 12px', borderRadius: 10, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text)', fontSize: 13, resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.5 }} />
-            {busy ? (
-              <button onClick={stopRun} style={{ padding: '9px 16px', borderRadius: 10, border: `1.5px solid #ef4444`, background: 'transparent', color: '#ef4444', fontSize: 13, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-end' }}>Stop</button>
+            {isVoiceEP ? (
+              <div style={{ flex: 1, height: inputHeight, padding: '9px 12px', borderRadius: 10, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', fontStyle: 'italic' }}>
+                Hold the mic button to speak — voice EP uses audio only
+              </div>
             ) : (
-              <button onClick={send} disabled={!input.trim()} style={{ padding: '9px 16px', borderRadius: 10, border: 'none', background: !input.trim() ? 'var(--tm-surface)' : color, color: !input.trim() ? 'var(--tm-text-muted)' : '#fff', fontSize: 13, fontWeight: 600, cursor: !input.trim() ? 'not-allowed' : 'pointer', alignSelf: 'flex-end' }}>Send</button>
+              <>
+                <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={onKey} disabled={busy} dir="auto" placeholder="Send a message… (Enter to send, Shift+Enter for newline)"
+                  style={{ flex: 1, height: inputHeight, padding: '9px 12px', borderRadius: 10, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text)', fontSize: 13, resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.5 }} />
+                {busy ? (
+                  <button onClick={stopRun} style={{ padding: '9px 16px', borderRadius: 10, border: `1.5px solid #ef4444`, background: 'transparent', color: '#ef4444', fontSize: 13, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-end' }}>Stop</button>
+                ) : (
+                  <button onClick={send} disabled={!input.trim()} style={{ padding: '9px 16px', borderRadius: 10, border: 'none', background: !input.trim() ? 'var(--tm-surface)' : color, color: !input.trim() ? 'var(--tm-text-muted)' : '#fff', fontSize: 13, fontWeight: 600, cursor: !input.trim() ? 'not-allowed' : 'pointer', alignSelf: 'flex-end' }}>Send</button>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -1791,8 +1836,8 @@ function TargetSelector({ applications, value, onChange }: TargetSelectorProps) 
       const slug = v.slice(3);
       for (const app of applications) {
         const ep = app.entry_points.find(e => e.slug === slug);
-        if (ep && (ep.entry_point_type === 'websocket' || ep.entry_point_type === 'sse')) {
-          return { kind: 'entrypoint', slug, epType: ep.entry_point_type, appName: app.name, orchName: app.app_orchestrators?.[0]?.name ?? '' };
+        if (ep && (ep.entry_point_type === 'websocket' || ep.entry_point_type === 'sse' || ep.entry_point_type === 'voice')) {
+          return { kind: 'entrypoint', slug, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice', appName: app.name, orchName: app.app_orchestrators?.[0]?.name ?? '' };
         }
       }
     }
@@ -1807,9 +1852,9 @@ function TargetSelector({ applications, value, onChange }: TargetSelectorProps) 
       onChange={e => { const t = decodeTarget(e.target.value); if (t) onChange(t); }}
       style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text)', fontSize: 13, cursor: 'pointer', maxWidth: 260 }}
     >
-      {applications.filter(a => a.enabled && a.entry_points.some(e => e.enabled && e.entry_point_type !== 'webrtc')).map(app => (
+      {applications.filter(a => a.enabled && a.entry_points.some(e => e.enabled && ['websocket', 'sse', 'voice'].includes(e.entry_point_type))).map(app => (
         <optgroup key={app.id} label={`App: ${app.name}`}>
-          {app.entry_points.filter(e => e.enabled && e.entry_point_type !== 'webrtc').map(ep => (
+          {app.entry_points.filter(e => e.enabled && ['websocket', 'sse', 'voice'].includes(e.entry_point_type)).map(ep => (
             <option key={ep.id} value={`ep:${ep.slug}`}>
               {ep.slug} [{ep.entry_point_type}]
             </option>
@@ -1845,9 +1890,9 @@ function PlaygroundInner() {
       // Seed first tab from first enabled app entry point
       for (const a of apps) {
         if (!a.enabled) continue;
-        const ep = a.entry_points.find(e => e.enabled && (e.entry_point_type === 'websocket' || e.entry_point_type === 'sse'));
+        const ep = a.entry_points.find(e => e.enabled && ['websocket', 'sse', 'voice'].includes(e.entry_point_type));
         if (ep) {
-          const t: ConnTarget = { kind: 'entrypoint', slug: ep.slug, epType: ep.entry_point_type as 'websocket' | 'sse', appName: a.name, orchName: a.app_orchestrators?.[0]?.name ?? '' };
+          const t: ConnTarget = { kind: 'entrypoint', slug: ep.slug, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice', appName: a.name, orchName: a.app_orchestrators?.[0]?.name ?? '' };
           setTabs([t]);
           setActiveTabId(targetId(t));
           break;

@@ -830,6 +830,16 @@ export const themApi = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
+  voiceChat: async (slug: string, audio: Blob): Promise<Response> => {
+    const form = new FormData();
+    form.append('audio', audio, 'recording.webm');
+    const res = await fetch(`/api/them/apps/${slug}/voice/chat`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res;
+  },
   applications: () => api.get<Application[]>('/admin/applications'),
   getApplication: (id: string) => api.get<Application>(`/admin/applications/${id}`),
   createApplication: async (body: unknown): Promise<Application> => {
