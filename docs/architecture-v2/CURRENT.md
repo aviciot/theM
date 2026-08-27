@@ -18,6 +18,9 @@ fa879b7 refactor(agentgen): remove ExposedVars from TransformStepConfig (Step 6)
 2c64517 feat(agentgen+canvas): expose compiled step contracts to frontend debugger
 ```
 
+Architecture review written (not yet committed):
+- `docs/architecture-v2/EXPLICIT_BINDINGS_DESIGN_REVIEW.md` — explicit canvas data bindings design review (7 questions answered, go/no-go recommendation: GO)
+
 ---
 
 ## Deployment state
@@ -374,7 +377,7 @@ What was built:
 ### What remains (per DATAFLOW_EXPLICIT_FEASIBILITY.md)
 - Step 6: **COMPLETE** (fa879b7) — ExposedVars removed from TransformStepConfig; DB data-migrated; frontend cleaned up
 - Stage 6: **COMPLETE** (0edcf2a) — Scoped input resolution + output-only promotion in interpreter.executeStep; ErrContractViolation type; execTransform simplified; 12 new CONT tests
-- Explicit bindings (wiring vars between steps with explicit edges) — not yet
+- Explicit bindings (wiring vars between steps with explicit edges) — **design reviewed** (`EXPLICIT_BINDINGS_DESIGN_REVIEW.md`); implementation pending (Stage A: Go only, low-risk, recommended next)
 - Structured per-var trace events — not yet (requires trace sink design)
 - Temporal/ADK integration — not yet
 
