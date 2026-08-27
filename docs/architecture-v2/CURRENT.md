@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `2c64517` — feat(agentgen+canvas): expose compiled step contracts to frontend debugger
+Commit: `fa879b7` — refactor(agentgen): remove ExposedVars from TransformStepConfig (Step 6)
 
 Recent commits (newest first):
 ```
+fa879b7 refactor(agentgen): remove ExposedVars from TransformStepConfig (Step 6)
 2c64517 feat(agentgen+canvas): expose compiled step contracts to frontend debugger
 4417870 fix(agentgen): path-sensitive Stage 5 data-flow analysis + branch tests
 0670a6a fix(publish): EP access_mode from canvas config applied to entry_point row
 a1fc402 test(agentgen): remove backward-compat round-trip test (DF-25)
-d8054d8 feat(agentgen): explicit data-flow derivation + Stage 5 validateDataFlow
 ```
 
 ---
@@ -372,9 +372,10 @@ What was built:
 2. The validate endpoint response (`step_contracts` field, transient)
 
 ### What remains (per DATAFLOW_EXPLICIT_FEASIBILITY.md)
-- Stage 6: runtime enforcement — agent-runtime reads `Inputs`/`Outputs` from AgentSpec; emit structured trace events per var read/write (NOT this session)
-- Explicit bindings (wiring vars between steps with explicit edges) — NOT this session
-- Temporal/ADK integration — NOT this session
+- Step 6: **COMPLETE** (fa879b7) — ExposedVars removed from TransformStepConfig; DB data-migrated; frontend cleaned up
+- Stage 6 (next): runtime enforcement — agent-runtime reads `Inputs`/`Outputs` from AgentSpec; emit structured trace events per var read/write
+- Explicit bindings (wiring vars between steps with explicit edges) — not yet
+- Temporal/ADK integration — not yet
 
 ---
 
