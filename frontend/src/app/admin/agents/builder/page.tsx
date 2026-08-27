@@ -983,9 +983,9 @@ function CanvasInner() {
     const isDataSrc = conn.sourceHandle?.startsWith('data-out-');
     const isData = isDataSrc && conn.targetHandle?.startsWith('data-in-');
 
-    // Dynamic port creation: data-out dragged onto a node body (no targetHandle).
+    // Dynamic port creation: data-out dragged onto the drop-zone handle.
     // Auto-create a data-in-{varName} port on the target node and wire it.
-    if (isDataSrc && !conn.targetHandle) {
+    if (isDataSrc && conn.targetHandle === 'data-drop-zone') {
       const varName = conn.sourceHandle!.replace('data-out-', '');
       const syntheticHandle = `data-in-${varName}`;
       // Add the port to the target node's data.inputs
@@ -1060,14 +1060,28 @@ function CanvasInner() {
     });
   }, [setLocalPipeEdges, setLocalPipeNodes, markDirty]);
 
+  // Delete a dynamic input port from a node: remove from data.inputs + remove the data edge.
+  const onDeleteInput = useCallback((nodeId: string, portID: string) => {
+    setLocalPipeNodes(prev => prev.map(n => {
+      if (n.id !== nodeId) return n;
+      const existing = { ...((n.data as unknown as import('./types').StepData).inputs ?? {}) };
+      delete existing[portID];
+      return { ...n, data: { ...n.data, inputs: existing } };
+    }));
+    setLocalPipeEdges(prev => prev.filter(e =>
+      !(isDataEdge(e) && e.target === nodeId && e.targetHandle === `data-in-${portID}`)
+    ));
+    markDirty();
+  }, [setLocalPipeNodes, setLocalPipeEdges, markDirty]);
+
   const isPipeConnectionValid = useCallback((conn: Connection | Edge) => {
     if (conn.source === conn.target) return false;
 
     // Data edges skip degree and cycle checks — they carry no execution order.
-    // Also allow data-out dragged onto a node body (no targetHandle) — dynamic port creation.
+    // Also allow data-out dragged onto the drop-zone handle — dynamic port creation.
     const connIsData = (conn as Edge).data?.kind === 'data'
       || ((conn as Connection).sourceHandle?.startsWith('data-out-') && (conn as Connection).targetHandle?.startsWith('data-in-'))
-      || ((conn as Connection).sourceHandle?.startsWith('data-out-') && !(conn as Connection).targetHandle);
+      || ((conn as Connection).sourceHandle?.startsWith('data-out-') && (conn as Connection).targetHandle === 'data-drop-zone');
     if (connIsData) return true;
 
     const srcNode = localPipeNodes.find(n => n.id === conn.source);
@@ -2160,6 +2174,7 @@ function CanvasInner() {
             setDebug={setDebug}
             debugStep={debugStep}
             nodeTypesReady={nodeTypesReady}
+            onDeleteInput={onDeleteInput}
           />
         )}
       </div>

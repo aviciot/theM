@@ -90,6 +90,10 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
   // Data-port handle style — small square, distinct color
   const dataInStyle  = { background: '#f97316', width: 7, height: 7, borderRadius: 2, border: '1px solid rgba(0,0,0,0.4)' };
   const dataOutStyle = { background: '#818cf8', width: 7, height: 7, borderRadius: 2, border: '1px solid rgba(0,0,0,0.4)' };
+
+  // Drop-zone offset: left side (LR layout) or top side (TB layout) where drag-to-create lands.
+  const dropZoneOffset = dynamicInputPorts.length * 16 + (inputPorts.length > 0 ? inputPorts.length * 16 + 8 : 0);
+
   return (
     <div style={{
       background: 'transparent', padding: '8px', minWidth: '80px', textAlign: 'center',
@@ -102,6 +106,25 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
     }}>
       {/* Control target handle — execution flow in */}
       <Handle type="target" position={targetPos} style={{ background: meta.border }} />
+      {/* Drop-zone handle — invisible, wide target that catches data-out drags onto the node body.
+          Positioned below existing dynamic+static input ports so it doesn't overlap them. */}
+      <Handle
+        id="data-drop-zone"
+        type="target"
+        position={targetPos}
+        style={{
+          background: 'transparent',
+          border: '2px dashed rgba(249,115,22,0.4)',
+          width: layoutDir === 'LR' ? 10 : 40,
+          height: layoutDir === 'LR' ? 40 : 10,
+          borderRadius: 4,
+          opacity: 0,
+          ...(layoutDir === 'LR'
+            ? { top: `calc(50% + ${dropZoneOffset}px)`, left: -6 }
+            : { left: `calc(50% + ${dropZoneOffset}px)`, top: -6 }),
+        }}
+        title="Drop variable here to create input port"
+      />
       {/* Dynamic input port handles — created when user drags a data-out onto this node */}
       {dynamicInputPorts.map((portID, idx) => {
         const posStyle: React.CSSProperties = layoutDir === 'LR'

@@ -31,6 +31,7 @@ interface RightPanelProps {
   setDebug: React.Dispatch<React.SetStateAction<DebugState>>;
   debugStep: () => void;
   nodeTypesReady?: boolean;
+  onDeleteInput?: (nodeId: string, portID: string) => void;
 }
 
 export function RightPanel({
@@ -55,6 +56,7 @@ export function RightPanel({
   setDebug,
   debugStep,
   nodeTypesReady,
+  onDeleteInput,
 }: RightPanelProps) {
   const [mcpServers, setMcpServers] = useState<MCPServer[]>([]);
   useEffect(() => {
@@ -263,6 +265,7 @@ export function RightPanel({
               const thisNode = localPipeNodes.find(n => n.id === selectedNode.id);
               if (!thisNode) return null;
               const stepId = (thisNode.data as unknown as StepData).step_id as string | undefined;
+              const dynamicInputs = (thisNode.data as unknown as StepData).inputs ?? {};
 
               // Use authoritative compiled contracts when available (post-validate).
               // Fall back to the heuristic extractNodeVars for live pre-validate UX.
@@ -305,11 +308,21 @@ export function RightPanel({
                         ? unresolvedFromCompiler.has(v)
                         : !varSrcMap?.get(v);
                       const src = !isAuthoritative ? varSrcMap?.get(v) : undefined;
+                      const isDynamic = v in dynamicInputs;
                       return (
                         <div key={v} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 8px', borderRadius: '6px', marginBottom: '4px', background: unresolved ? 'rgba(248,113,113,0.06)' : 'rgba(0,240,255,0.05)', border: `1px solid ${unresolved ? 'rgba(248,113,113,0.3)' : 'rgba(0,240,255,0.15)'}` }}>
                           <code style={{ color: unresolved ? '#f87171' : C.cyan, fontSize: '11px', fontFamily: 'monospace', flexShrink: 0 }}>{`{{.${v}}}`}</code>
                           {src && <><span style={{ color: C.textMuted, fontSize: '10px' }}>from</span><span style={{ color: '#94a3b8', fontSize: '10px' }}>{stepMeta(src.step_type).emoji} {src.label}</span></>}
                           {unresolved && <span style={{ color: '#f87171', fontSize: '10px' }}>— not guaranteed on all paths</span>}
+                          {isDynamic && onDeleteInput && (
+                            <button
+                              onClick={() => onDeleteInput(selectedNode.id, v)}
+                              title={`Remove ${v} input port`}
+                              style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: '12px', lineHeight: 1, padding: '0 2px', display: 'flex', alignItems: 'center' }}
+                              onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
+                              onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
+                            >✕</button>
+                          )}
                         </div>
                       );
                     })}
