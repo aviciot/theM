@@ -41,13 +41,20 @@ function computeFinalOutputs(fns: FunctionStep[]): string[] {
   return finals;
 }
 
+// Port layout constants — pixel-based, same for both layouts.
+const PORT_START = 20;  // px from the node edge where first data port sits
+const PORT_STEP  = 18;  // px between ports
+const HANDLE_SZ  = 8;   // handle square side length
+const HANDLE_OFF = -(HANDLE_SZ / 2 + 1); // flush with node border
+
 export function StepNode({ data }: { data: StepNodeData; id: string }) {
   const nodeDef = getNodeDef(data.step_type);
   const meta = { bg: nodeDef.bg, border: nodeDef.border, emoji: nodeDef.emoji, label: nodeDef.label };
   const cfg = data.config ?? {};
   const layoutDir = useLayoutDir();
-  const targetPos = layoutDir === 'LR' ? Position.Left  : Position.Top;
-  const sourcePos = layoutDir === 'LR' ? Position.Right : Position.Bottom;
+  const isLR = layoutDir === 'LR';
+  const targetPos = isLR ? Position.Left  : Position.Top;
+  const sourcePos = isLR ? Position.Right : Position.Bottom;
   const dbg = data._debug;
   const sub = nodeDef.summary(cfg);
 
@@ -65,198 +72,192 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
     }
   }
 
+  // Drag highlight overrides border/shadow.
+  const dragAccept = data._dragAccept;
+  const ghostVar   = data._draggingVar;
+  if (dragAccept === 'accept') {
+    borderColor = '#4ade80';
+    boxShadow   = '0 0 0 3px rgba(74,222,128,0.5), 0 0 16px 4px rgba(74,222,128,0.3)';
+  } else if (dragAccept === 'reject') {
+    borderColor = '#f87171';
+    boxShadow   = '0 0 0 3px rgba(248,113,113,0.5), 0 0 12px 3px rgba(248,113,113,0.3)';
+  }
+
   const isTransform = data.step_type === 'transform';
   const transformOutputs = isTransform
     ? computeFinalOutputs((cfg.functions as FunctionStep[] | undefined) ?? [])
     : [];
 
-  // Each output row needs 18px; header (emoji + label) needs ~70px minimum.
+  // Each transform output row needs 18px; header needs ~70px minimum.
   const PX_PER_ROW = 18;
   const HEADER_PX = 70;
   const transformMinHeight = isTransform && transformOutputs.length > 0
     ? Math.max(HEADER_PX, transformOutputs.length * PX_PER_ROW + 16)
     : 0;
 
-  // Static data ports from the node registry (LLM input/output, Response input).
-  // Transform and HTTP have dynamic ports — not rendered here.
-  const inputPorts: PortDef[] = nodeDef.input_ports ?? [];
+  // Static data ports from the node registry.
+  const inputPorts: PortDef[]  = nodeDef.input_ports  ?? [];
   const outputPorts: PortDef[] = nodeDef.output_ports ?? [];
 
-  // Dynamic input ports — committed bindings stored in data.inputs.
+  // All dynamic input ports (committed) + ghost (during drag).
   const dynamicInputPorts: string[] = data.inputs ? Object.keys(data.inputs) : [];
-  const hasDataPorts = inputPorts.length > 0 || outputPorts.length > 0;
+  const allInputPorts = ghostVar && dragAccept === 'accept'
+    ? [...dynamicInputPorts, ghostVar]
+    : dynamicInputPorts;
 
-  // Ghost port — shown during drag of a data-out handle over this node.
-  const ghostVar = data._draggingVar;
-  const dragAccept = data._dragAccept;
+  // Data-port handle base styles.
+  const dataInStyle  = { background: '#f97316', width: HANDLE_SZ, height: HANDLE_SZ, borderRadius: 2, border: '1px solid rgba(0,0,0,0.4)' };
+  const dataOutStyle = { background: '#818cf8', width: HANDLE_SZ, height: HANDLE_SZ, borderRadius: 2, border: '1px solid rgba(0,0,0,0.4)' };
 
-  // Drag highlight overrides border/shadow.
-  let dragBorderColor = borderColor;
-  let dragBoxShadow = boxShadow;
-  if (dragAccept === 'accept') {
-    dragBorderColor = '#4ade80';
-    dragBoxShadow = '0 0 0 3px rgba(74,222,128,0.5), 0 0 16px 4px rgba(74,222,128,0.3)';
-  } else if (dragAccept === 'reject') {
-    dragBorderColor = '#f87171';
-    dragBoxShadow = '0 0 0 3px rgba(248,113,113,0.5), 0 0 12px 3px rgba(248,113,113,0.3)';
+  // Returns absolute position style for the Nth data input port on the target edge.
+  // LR: ports stack down the left edge. TB: ports stack right along the top edge.
+  function inputPortPos(idx: number): React.CSSProperties {
+    const offset = PORT_START + idx * PORT_STEP;
+    return isLR
+      ? { position: 'absolute', top: offset, left: HANDLE_OFF }
+      : { position: 'absolute', left: offset, top: HANDLE_OFF };
   }
 
-  // Data-port handle style — small square, distinct color
-  const dataInStyle  = { background: '#f97316', width: 7, height: 7, borderRadius: 2, border: '1px solid rgba(0,0,0,0.4)' };
-  const dataOutStyle = { background: '#818cf8', width: 7, height: 7, borderRadius: 2, border: '1px solid rgba(0,0,0,0.4)' };
+  // Label position: sits inside the node, adjacent to the handle.
+  // LR: label to the right of the left-edge handle.
+  // TB: label below the top-edge handle, centered on handle.
+  function inputLabelPos(idx: number): React.CSSProperties {
+    const offset = PORT_START + idx * PORT_STEP;
+    return isLR
+      ? { position: 'absolute', top: offset - 3, left: HANDLE_SZ + 4, fontSize: 7, color: '#f97316', fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap', lineHeight: 1 }
+      : { position: 'absolute', left: offset - 2, top: HANDLE_SZ + 3, fontSize: 7, color: '#f97316', fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap', lineHeight: 1 };
+  }
 
-  // All input ports (committed dynamic + static) — ghost goes after them.
-  const totalInputCount = dynamicInputPorts.length + inputPorts.length;
+  // Output port position — mirrors input but on the opposite edge.
+  function outputPortPos(idx: number): React.CSSProperties {
+    const offset = PORT_START + idx * PORT_STEP;
+    return isLR
+      ? { position: 'absolute', top: offset, right: HANDLE_OFF }
+      : { position: 'absolute', left: offset, bottom: HANDLE_OFF };
+  }
+
+  function outputLabelPos(idx: number): React.CSSProperties {
+    const offset = PORT_START + idx * PORT_STEP;
+    return isLR
+      ? { position: 'absolute', top: offset - 3, right: HANDLE_SZ + 4, fontSize: 7, color: '#818cf8', fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap', lineHeight: 1, textAlign: 'right' }
+      : { position: 'absolute', left: offset - 2, bottom: HANDLE_SZ + 3, fontSize: 7, color: '#818cf8', fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap', lineHeight: 1 };
+  }
+
+  // Extra padding so port labels don't clip into node content.
+  const inputPortPad  = allInputPorts.length  > 0 ? HANDLE_SZ + 24 : 0;
+  const outputPortPad = outputPorts.length > 0 ? HANDLE_SZ + 24 : 0;
+  const transformRightPad = isTransform && transformOutputs.length > 0 ? 72 : 0;
 
   return (
     <div style={{
       background: 'transparent', padding: '8px', minWidth: '80px', textAlign: 'center',
-      border: `2px solid ${dragBorderColor}`, borderRadius: '10px', boxShadow: dragBoxShadow,
+      border: `2px solid ${borderColor}`, borderRadius: '10px', boxShadow,
       transition: 'border-color 0.15s, box-shadow 0.15s',
       position: 'relative',
-      paddingRight: isTransform && transformOutputs.length > 0 ? '72px' : '8px',
-      paddingLeft: hasDataPorts && inputPorts.length > 0 ? '8px' : '8px',
+      ...(isLR
+        ? {
+            paddingLeft:  inputPortPad  > 0 ? inputPortPad  : '8px',
+            paddingRight: (transformRightPad || outputPortPad) > 0 ? Math.max(transformRightPad, outputPortPad) : '8px',
+          }
+        : {
+            paddingTop:    inputPortPad  > 0 ? inputPortPad  : '8px',
+            paddingBottom: (transformRightPad || outputPortPad) > 0 ? Math.max(transformRightPad, outputPortPad) : '8px',
+          }
+      ),
       ...(transformMinHeight > 0 ? { minHeight: transformMinHeight } : {}),
     }}>
       {/* Control target handle — execution flow in */}
       <Handle type="target" position={targetPos} style={{ background: meta.border }} />
-      {/* Dynamic input port handles — committed ports from data.inputs */}
-      {dynamicInputPorts.map((portID, idx) => {
-        const posStyle: React.CSSProperties = layoutDir === 'LR'
-          ? { top: `calc(25% + ${idx * 16}px)`, left: -5 }
-          : { left: `calc(25% + ${idx * 16}px)`, top: -5 };
+
+      {/* Dynamic input ports: committed + ghost (semi-transparent during drag) */}
+      {allInputPorts.map((portID, idx) => {
+        const isGhost = portID === ghostVar && dragAccept === 'accept' && !dynamicInputPorts.includes(portID);
         return (
-          <span key={`dyn-${portID}`}>
+          <React.Fragment key={`in-${portID}`}>
             <Handle
               id={`data-in-${portID}`}
               type="target"
               position={targetPos}
-              style={{ ...dataInStyle, ...posStyle }}
+              style={{ ...dataInStyle, ...inputPortPos(idx), opacity: isGhost ? 0.55 : 1 }}
               title={portID}
             />
-            <span style={{
-              position: 'absolute', fontSize: 7, color: '#f97316',
-              fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap',
-              ...(layoutDir === 'LR' ? { left: 6, top: `calc(25% + ${idx * 16}px - 4px)` } : { top: 6, left: `calc(25% + ${idx * 16}px)` }),
-            }}>{portID}</span>
-          </span>
+            <span style={{ ...inputLabelPos(idx), opacity: isGhost ? 0.6 : 1 }}>{portID}</span>
+          </React.Fragment>
         );
       })}
-      {/* Data input port handles — one per static input port */}
+
+      {/* Static registry input ports — rendered after dynamic ones */}
       {inputPorts.map((port, idx) => {
-        const posStyle: React.CSSProperties = layoutDir === 'LR'
-          ? { top: `calc(30% + ${idx * 16}px)`, left: -5 }
-          : { left: `calc(30% + ${idx * 16}px)`, top: -5 };
+        const portIdx = allInputPorts.length + idx;
         return (
-          <span key={port.id}>
+          <React.Fragment key={`sin-${port.id}`}>
             <Handle
               id={`data-in-${port.id}`}
               type="target"
               position={targetPos}
-              style={{ ...dataInStyle, ...posStyle }}
+              style={{ ...dataInStyle, ...inputPortPos(portIdx) }}
               title={port.label}
             />
-            <span style={{
-              position: 'absolute', fontSize: 7, color: '#f97316',
-              fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap',
-              ...(layoutDir === 'LR' ? { left: 6, top: `calc(30% + ${idx * 16}px - 4px)` } : { top: 6, left: `calc(30% + ${idx * 16}px)` }),
-            }}>{port.id}</span>
-          </span>
+            <span style={inputLabelPos(portIdx)}>{port.id}</span>
+          </React.Fragment>
         );
       })}
-      {/* Ghost input port — shown during a data-out drag over this node (accept state only).
-          It's a real Handle so ReactFlow can connect to it. After onConnect commits it,
-          onConnectEnd clears _draggingVar and the port persists via data.inputs. */}
-      {ghostVar && dragAccept === 'accept' && (() => {
-        const idx = totalInputCount;
-        const posStyle: React.CSSProperties = layoutDir === 'LR'
-          ? { top: `calc(25% + ${idx * 16}px)`, left: -5 }
-          : { left: `calc(25% + ${idx * 16}px)`, top: -5 };
-        return (
-          <span key={`ghost-${ghostVar}`}>
-            <Handle
-              id={`data-in-${ghostVar}`}
-              type="target"
-              position={targetPos}
-              style={{ ...dataInStyle, opacity: 0.6, ...posStyle }}
-              title={ghostVar}
-            />
-            <span style={{
-              position: 'absolute', fontSize: 7, color: '#fb923c',
-              fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap',
-              opacity: 0.7,
-              ...(layoutDir === 'LR' ? { left: 6, top: `calc(25% + ${idx * 16}px - 4px)` } : { top: 6, left: `calc(25% + ${idx * 16}px)` }),
-            }}>{ghostVar}</span>
-          </span>
-        );
-      })()}
+
+      {/* Source handle(s) — branch has two named, transform has per-var, others have one */}
       {data.step_type === 'branch' ? (
         <>
-          <Handle
-            id="source-true"
-            type="source"
-            position={sourcePos}
-            style={{ background: '#4ade80', width: 10, height: 10, ...(layoutDir === 'LR' ? { top: '30%', right: -6 } : { left: '30%', bottom: -6 }) }}
-          />
-          <div style={{ position: 'absolute', fontSize: 9, color: '#4ade80', fontWeight: 700, pointerEvents: 'none', ...(layoutDir === 'LR' ? { right: -18, top: 'calc(30% - 6px)' } : { bottom: -18, left: 'calc(30% - 6px)' }) }}>T</div>
-          <Handle
-            id="source-false"
-            type="source"
-            position={sourcePos}
-            style={{ background: '#f87171', width: 10, height: 10, ...(layoutDir === 'LR' ? { top: '70%', right: -6 } : { left: '70%', bottom: -6 }) }}
-          />
-          <div style={{ position: 'absolute', fontSize: 9, color: '#f87171', fontWeight: 700, pointerEvents: 'none', ...(layoutDir === 'LR' ? { right: -18, top: 'calc(70% - 6px)' } : { bottom: -18, left: 'calc(70% - 6px)' }) }}>F</div>
+          <Handle id="source-true"  type="source" position={sourcePos}
+            style={{ background: '#4ade80', width: 10, height: 10,
+              ...(isLR ? { top: '30%', right: -6 } : { left: '30%', bottom: -6 }) }} />
+          <div style={{ position: 'absolute', fontSize: 9, color: '#4ade80', fontWeight: 700, pointerEvents: 'none',
+            ...(isLR ? { right: -18, top: 'calc(30% - 6px)' } : { bottom: -18, left: 'calc(30% - 6px)' }) }}>T</div>
+          <Handle id="source-false" type="source" position={sourcePos}
+            style={{ background: '#f87171', width: 10, height: 10,
+              ...(isLR ? { top: '70%', right: -6 } : { left: '70%', bottom: -6 }) }} />
+          <div style={{ position: 'absolute', fontSize: 9, color: '#f87171', fontWeight: 700, pointerEvents: 'none',
+            ...(isLR ? { right: -18, top: 'calc(70% - 6px)' } : { bottom: -18, left: 'calc(70% - 6px)' }) }}>F</div>
         </>
       ) : isTransform && transformOutputs.length > 0 ? (
-        // Dynamic named output handles — fixed 18px per row, node grows to fit
-        // Use data-out- prefix so onPipeConnect recognises them as data edges
+        // Named transform output handles — pixel-based top, node height set by transformMinHeight.
         <>
           {transformOutputs.map((varName, idx) => {
             const topPx = 8 + idx * PX_PER_ROW + PX_PER_ROW / 2;
             return (
-              <span key={varName}>
+              <React.Fragment key={varName}>
                 <Handle
                   id={`data-out-${varName}`}
                   type="source"
                   position={Position.Right}
-                  style={{ ...dataOutStyle, top: topPx, right: -5, width: 9, height: 9 }}
+                  style={{ ...dataOutStyle, top: topPx, right: HANDLE_OFF, width: 9, height: 9 }}
                   title={varName}
                 />
                 <span style={{
-                  position: 'absolute', top: topPx - 5, right: 8,
-                  fontSize: 8, color: '#818cf8',
-                  fontFamily: 'JetBrains Mono, monospace',
+                  position: 'absolute', top: topPx - 4, right: HANDLE_SZ + 4,
+                  fontSize: 8, color: '#818cf8', fontFamily: 'JetBrains Mono, monospace',
                   pointerEvents: 'none', whiteSpace: 'nowrap', textAlign: 'right', lineHeight: 1,
                 }}>{varName}</span>
-              </span>
+              </React.Fragment>
             );
           })}
         </>
       ) : (
         <Handle type="source" position={sourcePos} style={{ background: meta.border }} />
       )}
-      {/* Data output port handles — one per static output port */}
-      {outputPorts.map((port, idx) => {
-        const posStyle: React.CSSProperties = layoutDir === 'LR'
-          ? { top: `calc(70% + ${idx * 16}px)`, right: -5 }
-          : { right: `calc(30% + ${idx * 16}px)`, bottom: -5 };
-        return (
-          <span key={port.id}>
-            <Handle
-              id={`data-out-${port.id}`}
-              type="source"
-              position={sourcePos}
-              style={{ ...dataOutStyle, ...posStyle }}
-              title={port.label}
-            />
-            <span style={{
-              position: 'absolute', fontSize: 7, color: '#818cf8',
-              fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none', whiteSpace: 'nowrap',
-              ...(layoutDir === 'LR' ? { right: 6, top: `calc(70% + ${idx * 16}px - 4px)` } : { bottom: 6, right: `calc(30% + ${idx * 16}px)` }),
-            }}>{port.id}</span>
-          </span>
-        );
-      })}
+
+      {/* Static registry output ports */}
+      {outputPorts.map((port, idx) => (
+        <React.Fragment key={`sout-${port.id}`}>
+          <Handle
+            id={`data-out-${port.id}`}
+            type="source"
+            position={sourcePos}
+            style={{ ...dataOutStyle, ...outputPortPos(idx) }}
+            title={port.label}
+          />
+          <span style={outputLabelPos(idx)}>{port.id}</span>
+        </React.Fragment>
+      ))}
+
       <div style={{ fontSize: '32px', lineHeight: 1 }}>{meta.emoji}</div>
       <div style={{ color: '#fff', fontWeight: 700, fontSize: '11px', marginTop: '5px' }}>{data.label || meta.label}</div>
       {sub && <div style={{ fontSize: '10px', color: meta.border, opacity: 0.9, marginTop: 2 }}>{sub}</div>}
@@ -277,7 +278,7 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
         <div style={{ marginTop: 4, fontSize: '9px', color: '#60a5fa' }}>running…</div>
       )}
       {dbg?.state === 'pending' && (
-        <div style={{ marginTop: 4, fontSize: '9px', color: '#f59e0b' }}>{layoutDir === 'LR' ? 'next →' : 'next ↓'}</div>
+        <div style={{ marginTop: 4, fontSize: '9px', color: '#f59e0b' }}>{isLR ? 'next →' : 'next ↓'}</div>
       )}
     </div>
   );
