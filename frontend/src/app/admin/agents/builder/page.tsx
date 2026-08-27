@@ -464,7 +464,7 @@ function CanvasInner() {
       setValidation(prev => ({ ...prev, loading: true }));
       themApi.validateAgentDefinition(defId, liveDefinition, ctrl.signal)
         .then(result => {
-          setValidation({ issues: result.issues ?? [], loading: false, lastValidatedAt: Date.now() });
+          setValidation({ issues: result.issues ?? [], stepContracts: result.step_contracts ?? {}, loading: false, lastValidatedAt: Date.now() });
         })
         .catch(e => {
           if ((e as { name?: string }).name === 'AbortError') return;
@@ -763,7 +763,7 @@ function CanvasInner() {
     savePipelineState();
     try {
       const result = await themApi.validateAgentDefinition(defId, buildDefinitionDoc());
-      setValidation({ issues: result.issues ?? [], loading: false, lastValidatedAt: Date.now() });
+      setValidation({ issues: result.issues ?? [], stepContracts: result.step_contracts ?? {}, loading: false, lastValidatedAt: Date.now() });
       const errors   = (result.issues ?? []).filter(i => i.severity === 'error').length;
       const warnings = (result.issues ?? []).filter(i => i.severity === 'warning').length;
       const r = errors > 0 ? 'invalid' : warnings > 0 ? 'warn' : 'valid';
@@ -790,7 +790,7 @@ function CanvasInner() {
     } catch (e: unknown) {
       const refreshed = await themApi.validateAgentDefinition(defId);
       if (refreshed.issues && refreshed.issues.length > 0) {
-        setValidation({ issues: refreshed.issues, loading: false, lastValidatedAt: Date.now() });
+        setValidation({ issues: refreshed.issues, stepContracts: refreshed.step_contracts ?? {}, loading: false, lastValidatedAt: Date.now() });
         setPublishError('Publish failed — fix errors before publishing.');
         setLogoResult('invalid');
       } else {
@@ -2047,6 +2047,7 @@ function CanvasInner() {
             localPipeNodes={localPipeNodes}
             localPipeEdges={localPipeEdges}
             validationIssues={validation.issues}
+            stepContracts={validation.stepContracts}
             debug={debug}
             updateSelectedNodeField={updateSelectedNodeField}
             updateStepConfig={updateStepConfig}

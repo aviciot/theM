@@ -65,6 +65,7 @@ export interface DebugState {
 
 export interface ValidationState {
   issues: import('@/lib/api').AgentIssue[];
+  stepContracts: Record<string, import('@/lib/api').StepContract>;
   loading: boolean;
   lastValidatedAt: number | null;
 }

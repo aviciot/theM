@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import type { Node, Edge } from '@xyflow/react';
 import { getNodeDef } from '@/lib/nodeRegistry';
 import type { AgentRootData, SkillData, StepData, DebugState } from '../types';
-import type { AgentIssue, MCPServer, MCPTool } from '@/lib/api';
+import type { AgentIssue, MCPServer, MCPTool, StepContract } from '@/lib/api';
 import { themApi } from '@/lib/api';
 import { C, labelStyle, inputStyle, textareaStyle, selectStyle, fieldGap, hint, LLM_MODELS } from '../constants';
 import { stepMeta } from './StepNode';
@@ -19,6 +19,7 @@ interface RightPanelProps {
   localPipeNodes: Node[];
   localPipeEdges: Edge[];
   validationIssues: AgentIssue[];
+  stepContracts: Record<string, StepContract>;
   debug: DebugState;
   updateSelectedNodeField: (field: string, value: string) => void;
   updateStepConfig: (key: string, value: unknown) => void;
@@ -42,6 +43,7 @@ export function RightPanel({
   localPipeNodes,
   localPipeEdges,
   validationIssues,
+  stepContracts,
   debug,
   updateSelectedNodeField,
   updateStepConfig,
@@ -260,28 +262,54 @@ export function RightPanel({
             {(() => {
               const thisNode = localPipeNodes.find(n => n.id === selectedNode.id);
               if (!thisNode) return null;
-              const { reads, writes } = extractNodeVars(thisNode);
+              const stepId = (thisNode.data as unknown as StepData).step_id as string | undefined;
 
-              // Graph-aware: walk all predecessors/successors, not just direct edges
-              const varSrcMap = upstreamVarSources(selectedNode.id, localPipeNodes, localPipeEdges);
-              const downstreamReads = downstreamReadVars(selectedNode.id, localPipeNodes, localPipeEdges);
+              // Use authoritative compiled contracts when available (post-validate).
+              // Fall back to the heuristic extractNodeVars for live pre-validate UX.
+              const contract = stepId ? stepContracts[stepId] : undefined;
+
+              const reads: string[] = contract
+                ? contract.inputs.map(r => r.name)
+                : extractNodeVars(thisNode).reads;
+              const writes: string[] = contract
+                ? contract.outputs.map(w => w.name)
+                : extractNodeVars(thisNode).writes;
+              const isAuthoritative = !!contract;
+
+              // Graph-aware unresolved detection (heuristic, pre-validate only).
+              const varSrcMap = isAuthoritative ? null : upstreamVarSources(selectedNode.id, localPipeNodes, localPipeEdges);
+              const downstreamReads = isAuthoritative ? null : downstreamReadVars(selectedNode.id, localPipeNodes, localPipeEdges);
+
+              // UNRESOLVED_INPUT issues from the compiled validator (authoritative path).
+              const unresolvedFromCompiler = new Set(
+                validationIssues
+                  .filter(iss => iss.node_id === stepId && iss.code === 'UNRESOLVED_INPUT')
+                  .map(iss => iss.field ?? '')
+              );
 
               return (
                 <div style={{ marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {isAuthoritative && (
+                    <div style={{ fontSize: '9px', color: C.textMuted, letterSpacing: '0.06em', marginBottom: '-4px' }}>
+                      ✓ compiled contract
+                    </div>
+                  )}
+
                   {/* READS */}
                   <div>
                     <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', color: C.cyan, marginBottom: '6px' }}>
                       READS {reads.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400 }}>— no variables consumed</span>}
                     </div>
                     {reads.map(v => {
-                      const src = varSrcMap.get(v);
-                      // Unresolved: this node reads the var but no reachable upstream node writes it
-                      const unresolved = !src;
+                      const unresolved = isAuthoritative
+                        ? unresolvedFromCompiler.has(v)
+                        : !varSrcMap?.get(v);
+                      const src = !isAuthoritative ? varSrcMap?.get(v) : undefined;
                       return (
                         <div key={v} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 8px', borderRadius: '6px', marginBottom: '4px', background: unresolved ? 'rgba(248,113,113,0.06)' : 'rgba(0,240,255,0.05)', border: `1px solid ${unresolved ? 'rgba(248,113,113,0.3)' : 'rgba(0,240,255,0.15)'}` }}>
                           <code style={{ color: unresolved ? '#f87171' : C.cyan, fontSize: '11px', fontFamily: 'monospace', flexShrink: 0 }}>{`{{.${v}}}`}</code>
                           {src && <><span style={{ color: C.textMuted, fontSize: '10px' }}>from</span><span style={{ color: '#94a3b8', fontSize: '10px' }}>{stepMeta(src.step_type).emoji} {src.label}</span></>}
-                          {unresolved && <span style={{ color: '#f87171', fontSize: '10px' }}>— no upstream writer found</span>}
+                          {unresolved && <span style={{ color: '#f87171', fontSize: '10px' }}>— not guaranteed on all paths</span>}
                         </div>
                       );
                     })}
@@ -293,11 +321,11 @@ export function RightPanel({
                       WRITES {writes.length === 0 && <span style={{ color: C.textMuted, fontWeight: 400 }}>— no variables produced</span>}
                     </div>
                     {writes.map(v => {
-                      const consumed = downstreamReads.has(v);
+                      const consumed = isAuthoritative ? true : downstreamReads?.has(v);
                       return (
                         <div key={v} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 8px', borderRadius: '6px', marginBottom: '4px', background: 'rgba(167,139,250,0.05)', border: '1px solid rgba(167,139,250,0.2)' }}>
                           <code style={{ color: '#a78bfa', fontSize: '11px', fontFamily: 'monospace', flexShrink: 0 }}>{`{{.${v}}}`}</code>
-                          {!consumed && <span style={{ color: C.textMuted, fontSize: '10px' }}>— not read downstream</span>}
+                          {!isAuthoritative && !consumed && <span style={{ color: C.textMuted, fontSize: '10px' }}>— not read downstream</span>}
                         </div>
                       );
                     })}

@@ -75,7 +75,7 @@ export const INITIAL_DEBUG: DebugState = {
   pendingVarOverrides: {}, error: null,
 };
 
-export const INITIAL_VALIDATION: ValidationState = { issues: [], loading: false, lastValidatedAt: null };
+export const INITIAL_VALIDATION: ValidationState = { issues: [], stepContracts: {}, loading: false, lastValidatedAt: null };
 
 // ── UUID generator ────────────────────────────────────────────────────────────
 export function genUUID(): string {

@@ -99,6 +99,42 @@ func TestValidateAgentDefinition_InlineValidDefinition(t *testing.T) {
 	}
 }
 
+// TestValidateAgentDefinition_StepContractsPopulated verifies that the
+// validation report includes Inputs/Outputs for each compiled step.
+func TestValidateAgentDefinition_StepContractsPopulated(t *testing.T) {
+	f := &agentDefFakeDal{agentDef: validPublishDef()}
+	svc := publishSvc(f)
+	// Inline definition with a simple 2-step pipeline.
+	def := []byte(`{
+		"agent_root": {"display_name": "My Agent", "version": "1.0.0"},
+		"skills": [{"skill_id": "s1", "name": "S1", "steps": [
+			{"id": "in",  "type": "input",    "config": {}, "next": ["out"]},
+			{"id": "out", "type": "response", "config": {"from_var": "input"}}
+		]}]
+	}`)
+	report, err := svc.ValidateAgentDefinition(context.Background(), "t1", "def-uuid-1", def)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.StepContracts == nil {
+		t.Fatal("StepContracts must not be nil for a valid definition with steps")
+	}
+	inC, ok := report.StepContracts["in"]
+	if !ok {
+		t.Fatal("StepContracts missing entry for step 'in'")
+	}
+	if len(inC.Outputs) == 0 {
+		t.Errorf("input step should have at least one Output, got none")
+	}
+	outC, ok := report.StepContracts["out"]
+	if !ok {
+		t.Fatal("StepContracts missing entry for step 'out'")
+	}
+	if len(outC.Inputs) == 0 {
+		t.Errorf("response step should have at least one Input, got none")
+	}
+}
+
 func TestPublishAgentDefinition_NotFound(t *testing.T) {
 	f := &agentDefFakeDal{getAgentDefErr: pgx.ErrNoRows}
 	svc := publishSvc(f)

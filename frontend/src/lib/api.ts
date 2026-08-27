@@ -634,10 +634,21 @@ export interface AgentCompileError {
   context?: string;
 }
 
+export interface VarRef {
+  name: string;
+  required: boolean;
+}
+
+export interface StepContract {
+  inputs: VarRef[];
+  outputs: VarRef[];
+}
+
 export interface AgentValidationResult {
   valid: boolean;
   issues?: AgentIssue[];
   errors?: AgentIssue[];
+  step_contracts?: Record<string, StepContract>;
 }
 
 export interface AgentPublishResult {

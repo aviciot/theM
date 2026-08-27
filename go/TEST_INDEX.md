@@ -1540,6 +1540,7 @@ PublishAgentDefinition uses `agentgen.CompileForPublish()` (stubs→errors).
 | `TestValidateAgentDefinition_Valid` | good definition → AgentValidationReport{Valid: true, Issues: [...warnings]} |
 | `TestValidateAgentDefinition_InlineDefinitionOverridesDB` | valid DB def + invalid inline → *AgentCompileError (inline wins) |
 | `TestValidateAgentDefinition_InlineValidDefinition` | invalid DB def + valid inline → Valid=true (inline wins) |
+| `TestValidateAgentDefinition_StepContractsPopulated` | valid 2-step pipeline → StepContracts maps each stepID to {Inputs,Outputs} |
 | `TestPublishAgentDefinition_NotFound` | missing definition → ErrNotFound |
 | `TestPublishAgentDefinition_CompileError` | bad definition → *AgentCompileError |
 | `TestPublishAgentDefinition_Success` | valid publish → AgentPublishResult with non-empty fields |

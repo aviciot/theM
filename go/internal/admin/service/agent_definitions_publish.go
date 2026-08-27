@@ -32,11 +32,22 @@ func (e *AgentCompileError) Error() string {
 	return "agent definition compile failed: " + strings.Join(msgs, "; ")
 }
 
+// StepContract is the compiled input/output contract for one pipeline step.
+// Returned in AgentValidationReport so the frontend can show authoritative
+// READS/WRITES per node without re-deriving them from the canvas JSON.
+type StepContract struct {
+	Inputs  []agentgen.VarRef `json:"inputs"`
+	Outputs []agentgen.VarRef `json:"outputs"`
+}
+
 // AgentValidationReport is returned to the caller after validation.
 // Valid is true even when warnings are present — only errors block.
+// StepContracts maps stepID → compiled Inputs/Outputs for every step in the
+// first skill. The frontend uses this for the authoritative READS/WRITES panel.
 type AgentValidationReport struct {
-	Valid  bool             `json:"valid"`
-	Issues []agentgen.Issue `json:"issues,omitempty"`
+	Valid         bool                    `json:"valid"`
+	Issues        []agentgen.Issue        `json:"issues,omitempty"`
+	StepContracts map[string]StepContract `json:"step_contracts,omitempty"`
 }
 
 // AgentPublishResult is returned after a successful publish.
@@ -68,7 +79,7 @@ func (s *AgentDefinitionService) ValidateAgentDefinition(ctx context.Context, te
 		definitionToValidate = rawDefinition
 	}
 
-	_, issues := agentgen.Validate(
+	spec, issues := agentgen.Validate(
 		"00000000-0000-0000-0000-000000000000", // placeholder — validate only
 		tenantID,
 		id,
@@ -85,7 +96,31 @@ func (s *AgentDefinitionService) ValidateAgentDefinition(ctx context.Context, te
 	if len(errors) > 0 {
 		return nil, &AgentCompileError{Errors: errors}
 	}
-	return &AgentValidationReport{Valid: true, Issues: issues}, nil
+
+	// Build step contracts from the compiled spec so the frontend can show
+	// authoritative Inputs/Outputs per node without re-deriving from canvas JSON.
+	var contracts map[string]StepContract
+	if spec != nil {
+		for _, skill := range spec.Skills {
+			for _, step := range skill.Steps {
+				if contracts == nil {
+					contracts = make(map[string]StepContract)
+				}
+				contracts[step.ID] = StepContract{
+					Inputs:  nilToEmpty(step.Inputs),
+					Outputs: nilToEmpty(step.Outputs),
+				}
+			}
+		}
+	}
+	return &AgentValidationReport{Valid: true, Issues: issues, StepContracts: contracts}, nil
+}
+
+func nilToEmpty(refs []agentgen.VarRef) []agentgen.VarRef {
+	if refs == nil {
+		return []agentgen.VarRef{}
+	}
+	return refs
 }
 
 // PublishAgentDefinition compiles the definition, atomically writes the three
