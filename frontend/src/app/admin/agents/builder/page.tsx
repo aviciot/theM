@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type DragEvent } from 'react';
+import React, { useCallback, useEffect, useRef, useState, type MouseEvent, type DragEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
@@ -392,6 +392,12 @@ function CanvasInner() {
 
   // Tracks whether the node-type registry has been fetched.
   const [nodeTypesReady, setNodeTypesReady] = useState(false);
+
+  // Stable refs — memoized to satisfy React Flow's identity check on first render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableNodeTypes = React.useMemo(() => nodeTypes, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableEdgeTypes = React.useMemo(() => edgeTypes, []);
 
   // Validation state
   const [validation, setValidation] = useState<ValidationState>(INITIAL_VALIDATION);
@@ -2099,7 +2105,7 @@ function CanvasInner() {
               onNodeClick={(_: MouseEvent, node: Node) => { setSelectedNode(node); closeCtx(); }}
               onNodeDoubleClick={onAgentNodeDoubleClick}
               onPaneClick={() => { setSelectedNode(null); closeCtx(); }}
-              nodeTypes={nodeTypes}
+              nodeTypes={stableNodeTypes}
               panOnDrag={[1]}
               selectionMode={SelectionMode.Partial}
               multiSelectionKeyCode={['Shift', 'Control']}
@@ -2138,8 +2144,8 @@ function CanvasInner() {
               onNodeClick={(_: MouseEvent, node: Node) => { setSelectedNode(node); closeCtx(); }}
               onNodeDoubleClick={onPipeNodeDoubleClick}
               onPaneClick={() => { setSelectedNode(null); closeCtx(); }}
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
+              nodeTypes={stableNodeTypes}
+              edgeTypes={stableEdgeTypes}
               panOnDrag={[1]}
               selectionMode={SelectionMode.Partial}
               multiSelectionKeyCode={['Shift', 'Control']}
