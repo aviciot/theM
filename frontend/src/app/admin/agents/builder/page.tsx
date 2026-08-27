@@ -5,7 +5,6 @@ import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null); // eslint-disable-line @typescript-eslint/no-explicit-any
 import { getNodeDef, fetchNodeTypes, setCachedNodeTypes, canAddIncoming, canAddOutgoing } from '@/lib/nodeRegistry';
-import { minEdgeForPorts } from './components/StepNode';
 import {
   themApi,
   getPreferences,
@@ -312,38 +311,15 @@ function CanvasInner() {
     if (!dagre) return nodes;
     const g = new dagre.graphlib.Graph();
     g.setDefaultEdgeLabel(() => ({}));
-    g.setGraph({ rankdir: dir, nodesep: 50, ranksep: 120, marginx: 60, marginy: 60 });
-    nodes.forEach(n => {
-      // Size node to fit its data ports: in LR, width = control-flow axis (fixed),
-      // height = data-port axis (top/bottom edges must fit input+output ports).
-      const sd = n.data as unknown as import('./types').StepData;
-      const nodeDef = getNodeDef(sd?.step_type ?? '');
-      const dynIn  = sd?.inputs ? Object.keys(sd.inputs).length : 0;
-      const statIn = (nodeDef.input_ports  ?? []).length;
-      const statOut = (nodeDef.output_ports ?? []).length;
-      const isTransform = sd?.step_type === 'transform';
-      const cfg = (sd?.config ?? {}) as Record<string, unknown>;
-      const transformOuts = isTransform
-        ? (() => {
-            const fns = (cfg.functions as Array<{fn:string;input_var:string;output_var:string}> | undefined) ?? [];
-            const consumed = new Set(fns.map(f => f.input_var).filter(Boolean));
-            return fns.filter(f => f.output_var && !consumed.has(f.output_var)).length;
-          })()
-        : 0;
-      const totalIn  = dynIn + statIn;
-      const totalOut = statOut + transformOuts;
-      // LR: width fixed 110, height must fit data ports on top+bottom edges.
-      // TB: height fixed 80, width must fit data ports on left+right edges.
-      const w = dir === 'LR' ? 110 : Math.max(110, minEdgeForPorts(totalIn), minEdgeForPorts(totalOut));
-      const h = dir === 'LR' ? Math.max(80,  minEdgeForPorts(totalIn), minEdgeForPorts(totalOut)) : 80;
-      g.setNode(n.id, { width: w, height: h });
-    });
-    edges.filter(e => !(e.data as Record<string,unknown>|undefined)?.kind).forEach(e => g.setEdge(e.source, e.target));
+    g.setGraph({ rankdir: dir, nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
+    nodes.forEach(n => g.setNode(n.id, { width: 120, height: 80 }));
+    edges.forEach(e => g.setEdge(e.source, e.target));
     dagre.layout(g);
+    const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
+    const targetPos = dir === 'LR' ? Position.Left  : Position.Top;
     return nodes.map(n => {
       const pos = g.node(n.id);
-      const { width: w, height: h } = g.node(n.id);
-      return { ...n, position: { x: pos.x - w / 2, y: pos.y - h / 2 } };
+      return { ...n, position: { x: pos.x - 60, y: pos.y - 40 }, sourcePosition: sourcePos, targetPosition: targetPos };
     });
   }
 
@@ -1077,7 +1053,7 @@ function CanvasInner() {
   }, [setLocalPipeNodes, setLocalPipeEdges, markDirty]);
 
   // Nodes that cannot accept dynamic data inputs.
-  const DATA_INPUT_REJECT = new Set(['input', 'branch']);
+  const DATA_INPUT_REJECT = new Set(['input', 'transform', 'branch']);
 
   // Tracks whether onConnect fired during the current drag (to detect drop-on-nothing).
   const connectFiredRef = useRef(false);
