@@ -298,7 +298,7 @@ export const APP_CARD_STYLES = `
 `;
 
 // ── EP icon/label for AppCard ─────────────────────────────────────────────────
-export const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2' };
+export const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
 export const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC', a2a: 'A2A' };
 
 // ── RuntimeView provider list ─────────────────────────────────────────────────
