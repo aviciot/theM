@@ -1825,6 +1825,27 @@ ConfigLoader, KeyResolver, and Authenticator to avoid real provider calls.
 
 ---
 
+### S1-71 · Agent Definition Schema + Generate — `internal/admin/agent_definition_schema_test.go`
+
+**Purpose:** Unit tests for the AI Copilot Phase 0 endpoints: `GET /admin/agent-definitions/schema`
+and `POST /admin/agent-definitions/generate`. Verifies static schema content, node LLM knowledge
+fields, generate input validation, and response shape. Uses a mock `generateLLMCaller` to avoid
+real Anthropic calls.
+
+| Test | What it proves |
+|---|---|
+| `TestSchema_ReturnsWireFormatAndIssueCodes` | Schema response contains wire_format (with agent_root/skills), issue_codes (DUPLICATE_SKILL, CYCLE_DETECTED, etc.), and node_types |
+| `TestSchema_NodeTypesHaveConfigFields` | Core implemented node types (llm, http, mcp_call, transform) expose config_fields for LLM prompt building |
+| `TestGenerate_EmptyPromptReturns400` | Empty prompt string → 400 Bad Request |
+| `TestGenerate_BadJSONBodyReturns400` | Non-JSON request body → 400 Bad Request |
+| `TestGenerate_NoLLMReturns501` | Handler constructed with nil llm → 501 Not Implemented |
+| `TestGenerate_ValidDefinitionReturnedWithIssues` | Mock LLM returns a valid definition → 200 with definition JSON, issues array, valid flag |
+| `TestGenerate_LLMReturnsCodeFencedJSON` | Mock LLM wraps JSON in a code fence → extracted and validated correctly |
+
+**Trigger:** any change to `internal/admin/agent_definition_schema.go` or `internal/agentgen/noderegistry.go` or `internal/agentgen/nodes.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -2071,12 +2092,12 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/temporal/workerconfig/loader.go` | S1-61 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
-| `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 |
+| `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 |
 | `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 |
 | `internal/agentgen/interpreter.go` | S1-48 + S1-64 + S1-67 + S1-69 |
 | `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 + S1-67 + S1-69 |
-| `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 + S1-69 |
-| `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 + S1-69 |
+| `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 + S1-69 + S1-71 |
+| `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 + S1-69 + S1-71 |
 | `internal/agentgen/mcp_caller.go` | S1-69 |
 | `internal/agentgen/context.go` | S1-48 + S1-64 |
 | `cmd/agent-runtime/main.go` | S1-60 + S1-62 + S1-65 |
@@ -2094,7 +2115,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/execution/lifecycle.go` | S1-35 + S1-14 + S1-13 |
 | `internal/execution/errors.go` | S1-35 + S1-13 |
 | `internal/execution/request.go` | S1-35 + S1-13 |
-| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S1-50 + S1-51 |
+| `internal/admin/agent_definition_schema.go` | S1-71 |
+| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S1-50 + S1-51 + S1-71 |
 | `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S1-51 + S2-05 (integration) |
 | `internal/admin/dal/agent_definitions_publish.go` | S1-51 |
 | `internal/admin/dal/agent_bindings.go` | S1-51 |
@@ -2115,7 +2137,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/definitions.go` | S1-42 + S1-43 + S1-44 |
 | `internal/admin/agent_definitions.go` | S1-49 |
 | `internal/admin/registry.go` | S1-45 |
-| `internal/admin/router.go` | S1-43 + S1-44 + S1-45 + S1-49 |
+| `internal/admin/router.go` | S1-43 + S1-44 + S1-45 + S1-49 + S1-71 |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |

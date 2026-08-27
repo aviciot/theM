@@ -3,7 +3,24 @@ package agentgen
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
+
+// ConfigFieldDoc documents one config JSON key for a node type.
+// Used by the LLM prompt builder to explain what each field does.
+type ConfigFieldDoc struct {
+	Key         string `json:"key"`
+	Type        string `json:"type"`         // "string" | "int" | "bool" | "object" | "array"
+	Required    bool   `json:"required"`
+	Description string `json:"description"`
+	Example     string `json:"example,omitempty"`
+}
+
+// NodeExample is a short worked example for a node type, used in the LLM system prompt.
+type NodeExample struct {
+	Description string         `json:"description"`
+	Config      map[string]any `json:"config"`
+}
 
 // PortDef declares one named data port on a node type.
 // Port IDs are permanent stable identifiers — never rename after registration.
@@ -57,6 +74,18 @@ type NodeDef struct {
 	OutputPorts []PortDef `json:"output_ports,omitempty"`
 	// Executable is NOT stored — computed from Execute != nil at serialisation time.
 
+	// ── LLM knowledge fields (serialised, used by AI copilot) ────────────────
+	// ConfigFields documents each config JSON key, used to build LLM system prompts.
+	ConfigFields []ConfigFieldDoc `json:"config_fields,omitempty"`
+	// UsageNotes is a paragraph of guidance for the LLM: when to choose this node,
+	// common pitfalls, and relationship to other node types.
+	UsageNotes string `json:"usage_notes,omitempty"`
+	// Examples shows 1-2 worked config examples the LLM can use as templates.
+	Examples []NodeExample `json:"examples,omitempty"`
+	// AllowedSuccessors lists step types that are valid next-hops from this node.
+	// Empty means all types are allowed (no constraint beyond edge rules).
+	AllowedSuccessors []StepType `json:"allowed_successors,omitempty"`
+
 	// ── Runtime-only fields (not serialised) ─────────────────────────────────
 	// Validate checks per-type config constraints at compile time.
 	Validate func(step canvasStep) []Issue `json:"-"`
@@ -91,26 +120,36 @@ type NodeTypeInfo struct {
 	InputPorts  []PortDef      `json:"input_ports,omitempty"`
 	OutputPorts []PortDef      `json:"output_ports,omitempty"`
 	Executable  bool           `json:"executable"`
+
+	// LLM knowledge fields — same as NodeDef, passed through for AI copilot use.
+	ConfigFields      []ConfigFieldDoc `json:"config_fields,omitempty"`
+	UsageNotes        string           `json:"usage_notes,omitempty"`
+	Examples          []NodeExample    `json:"examples,omitempty"`
+	AllowedSuccessors []StepType       `json:"allowed_successors,omitempty"`
 }
 
 // ToInfo converts a NodeDef to its public API representation.
 func (d *NodeDef) ToInfo() NodeTypeInfo {
 	return NodeTypeInfo{
-		Type:        d.Type,
-		Version:     d.Version,
-		Label:       d.Label,
-		Description: d.Description,
-		Emoji:       d.Emoji,
-		OutputArity: d.OutputArity,
-		IsSource:    d.IsSource,
-		IsSink:      d.IsSink,
-		SingleInput: d.SingleInput,
-		Edges:       d.Edges,
-		InputField:  d.InputField,
-		AppParams:   d.AppParams,
-		InputPorts:  d.InputPorts,
-		OutputPorts: d.OutputPorts,
-		Executable:  d.Execute != nil,
+		Type:              d.Type,
+		Version:           d.Version,
+		Label:             d.Label,
+		Description:       d.Description,
+		Emoji:             d.Emoji,
+		OutputArity:       d.OutputArity,
+		IsSource:          d.IsSource,
+		IsSink:            d.IsSink,
+		SingleInput:       d.SingleInput,
+		Edges:             d.Edges,
+		InputField:        d.InputField,
+		AppParams:         d.AppParams,
+		InputPorts:        d.InputPorts,
+		OutputPorts:       d.OutputPorts,
+		Executable:        d.Execute != nil,
+		ConfigFields:      d.ConfigFields,
+		UsageNotes:        d.UsageNotes,
+		Examples:          d.Examples,
+		AllowedSuccessors: d.AllowedSuccessors,
 	}
 }
 
@@ -143,4 +182,16 @@ func AllNodeTypeInfos() []NodeTypeInfo {
 		out = append(out, def.ToInfo())
 	}
 	return out
+}
+
+// ValidateDefinitionJSON validates raw agent definition JSON using the compiler.
+// Uses synthetic IDs so callers need not supply real DB identifiers.
+// Returns the slice of issues (may be empty) and a non-nil error only when the JSON
+// cannot be parsed at all (structural failure — no *AgentSpec returned by Validate).
+func ValidateDefinitionJSON(raw []byte) ([]Issue, error) {
+	spec, issues := Validate("gen", "gen", "gen", "gen_agent", raw)
+	if spec == nil && len(issues) == 0 {
+		return nil, fmt.Errorf("definition JSON could not be parsed")
+	}
+	return issues, nil
 }

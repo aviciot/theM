@@ -144,6 +144,13 @@ func BuildRouter(
 				tokens.Routes(tenantScoped)
 				reg := NewRegistryHandler(db)
 				tenantScoped.Get("/component-definitions", reg.ListComponentDefinitions)
+
+				// Schema + Generate must be registered BEFORE agentDefs.Routes so
+				// chi does not interpret "schema" and "generate" as {id} path params.
+				schemaHandler := NewAgentDefinitionSchemaHandler(db, nil)
+				tenantScoped.Get("/agent-definitions/schema", schemaHandler.Schema)
+				tenantScoped.Post("/agent-definitions/generate", schemaHandler.Generate)
+
 				agentDefs := NewAgentDefinitionsHandler(db, cache, fernetKey)
 				agentDefs.Routes(tenantScoped)
 
