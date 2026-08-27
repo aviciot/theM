@@ -1614,14 +1614,20 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   const startRecording = async () => {
     if (recordingState !== 'idle') return;
     try {
-      const mediaDevices = navigator.mediaDevices ?? (() => { throw new Error('Microphone requires HTTPS or localhost'); })();
-      const stream = await mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Microphone requires HTTPS or localhost');
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Pick the best supported mimeType — Firefox uses ogg/opus, Chrome/Safari prefer webm
+      const mimeType = ['audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', ''].find(
+        m => !m || MediaRecorder.isTypeSupported(m)
+      ) ?? '';
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
       const chunks: Blob[] = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
         setRecordingState('transcribing');
         try {
           if (isVoiceEP && target.kind === 'entrypoint') {
@@ -1656,7 +1662,16 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
         finally { setRecordingState('idle'); }
       };
       recorder.start(); setMediaRecorder(recorder); setRecordingState('recording');
-    } catch { setStatus('Microphone access denied'); setTimeout(() => setStatus(''), 3000); }
+    } catch (e) {
+      const msg = (e as Error).message || '';
+      const friendly = msg.includes('HTTPS') || msg.includes('localhost')
+        ? 'Microphone requires HTTPS or localhost'
+        : msg.includes('Permission') || msg.includes('permission') || msg.includes('denied') || msg.includes('NotAllowed')
+          ? 'Microphone permission denied — allow mic access in your browser'
+          : `Mic error: ${msg}`;
+      setStatus(friendly);
+      setTimeout(() => setStatus(''), 5000);
+    }
   };
 
   const stopRecording = () => { if (mediaRecorder && recordingState === 'recording') { mediaRecorder.stop(); setMediaRecorder(null); } };

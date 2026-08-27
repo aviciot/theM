@@ -138,7 +138,13 @@ export function RuntimeView({ app, onBack }: {
 
   // Per-EP LLM draft (stored on entry_points.llm_provider / llm_model)
   type EPLLMDraft = { provider: string; model: string };
-  const [epLLMDrafts,  setEPLLMDrafts]  = useState<Record<string, EPLLMDraft>>({});
+  const [epLLMDrafts,  setEPLLMDrafts]  = useState<Record<string, EPLLMDraft>>(() => {
+    const init: Record<string, EPLLMDraft> = {};
+    (app.entry_points ?? []).forEach(ep => {
+      init[ep.id] = { provider: ep.llm_provider ?? '', model: ep.llm_model ?? '' };
+    });
+    return init;
+  });
   const [epLLMSaving,  setEPLLMSaving]  = useState<string | null>(null);
   const [epLLMMsg,     setEPLLMMsg]     = useState<Record<string, string>>({});
 
@@ -147,8 +153,20 @@ export function RuntimeView({ app, onBack }: {
     memoryEnabled: boolean; summarizeEveryN: number; fallbackN: number;
     provider: string; model: string;
   };
-  const [entryPoints,  setEntryPoints]  = useState<import('@/lib/api').EntryPoint[]>([]);
-  const [epSumDrafts,  setEPSumDrafts]  = useState<Record<string, EPSummarizerDraft>>({});
+  const [entryPoints,  setEntryPoints]  = useState<import('@/lib/api').EntryPoint[]>(app.entry_points ?? []);
+  const [epSumDrafts,  setEPSumDrafts]  = useState<Record<string, EPSummarizerDraft>>(() => {
+    const init: Record<string, EPSummarizerDraft> = {};
+    (app.entry_points ?? []).forEach(ep => {
+      init[ep.id] = {
+        memoryEnabled:    ep.memory_enabled              ?? false,
+        summarizeEveryN:  ep.summarize_every_n_calls     ?? 10,
+        fallbackN:        ep.memory_raw_fallback_n       ?? 3,
+        provider:         ep.summarizer_provider         ?? '',
+        model:            ep.summarizer_model            ?? '',
+      };
+    });
+    return init;
+  });
   const [epSumSaving,  setEPSumSaving]  = useState<string | null>(null);
   const [epSumMsg,     setEPSumMsg]     = useState<Record<string, string>>({});
 
