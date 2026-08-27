@@ -75,7 +75,10 @@ Assistant thinks:
 - The LLM never regenerates and reloads the entire definition JSON.
 - The user retains full control: they can move nodes, edit fields in the properties panel, and undo any AI change.
 - The assistant knows which definition and which skill it is editing throughout the conversation.
+- The assistant knows which node the user is looking at — "update this" works without further clarification.
+- The assistant only suggests providers, agents, and tools that actually exist in this tenant's configuration.
 - Destructive changes (remove a node with downstream connections, replace a configured node) require a brief preview before execution.
+- When the user opens an assistant panel on an existing complex definition, the assistant narrates what the pipeline does before waiting for instructions.
 
 ---
 
@@ -430,6 +433,7 @@ These are the tools the LLM can call. Names are lowercase_snake_case following M
 | `remove_node` | `{session_id, revision, node_id}` | Removes a step and all its edges. Requires preview if node has downstream dependents |
 | `validate_canvas` | `{session_id}` | Flushes pending mutations, runs `agentgen.Validate()`, returns `AgentValidationReport` |
 | `save_draft` | `{session_id}` | Flushes and saves the current state to `agent_definitions` draft. Does not publish. |
+| `explain_canvas` | `{session_id}` | Returns a plain-language description of what the current pipeline does, step by step. Called at session start on existing definitions and when the user asks "what does this do?" |
 
 **Example `add_node` tool schema (MCP format):**
 
@@ -528,11 +532,27 @@ GET  /api/v1/canvas-assistant/{session_id}/events  (SSE)
 POST /api/v1/canvas-assistant/{session_id}/undo
 ```
 
+The `/turns` request body:
+
+```json
+{
+  "session_id": "cs_...",
+  "message": "update this to call the weather API",
+  "context": {
+    "selected_node_id": "step-http-3",
+    "selected_node_type": "http",
+    "selected_node_label": "Old HTTP Node"
+  }
+}
+```
+
+The `context` field carries what the user is looking at right now — the currently selected node in the canvas. When the user says "update this" or "change that timeout", the assistant knows exactly which node without needing to call `inspect_canvas` or ask the user to name it. The frontend sends the selected node ID on every turn. If no node is selected, `context` is omitted.
+
 The `/turns` endpoint:
 1. Authenticates the request (JWT middleware — same as all admin routes)
 2. Loads the canvas session
-3. Appends the user message to the conversation history
-4. Calls the LLM API with the conversation history + MCP tool definitions
+3. Appends the user message + `context` to the conversation history as a user turn
+4. Calls the LLM API with the assembled system prompt + conversation history + MCP tool definitions
 5. Processes the tool-call loop: for each `tool_use`, calls the Canvas MCP Server internally (same process — no HTTP round-trip)
 6. Streams LLM response tokens back to the browser via SSE on the `/events` channel
 
@@ -540,7 +560,49 @@ The LLM is called using the Anthropic API (Claude) with `tools` set to the Canva
 
 **Conversation history** is stored in Redis per session (same TTL as session). It is NOT stored in `them.runs` or `them.tasks` — this is an authoring conversation, not an orchestration run. This distinction matters for billing, auditing, and data retention.
 
-### 8.3 What REST APIs support directly
+### 8.3 System Prompt Construction
+
+The system prompt is assembled at session creation from the three-tier knowledge load (see Foundation doc Section 6). It is not a static string — it is generated fresh per session and stored in the session record. Structure:
+
+```
+## Role
+You are the the-M Canvas Copilot. You help users build agent pipelines on the
+canvas by adding, connecting, and configuring nodes incrementally.
+
+Rules:
+- Never regenerate and replace the full canvas. Always make targeted changes.
+- Always use only LLM providers from the "Available providers" list below.
+- Always use only agent slugs from the "Available agents" list below.
+- When the user says "this" or "that", use the selected_node_id from context.
+- Call validate_canvas after every change and fix issues before replying.
+- For destructive changes, describe what will be removed and wait for confirmation.
+- When opening an existing definition, call explain_canvas first.
+
+## Available node types
+[serialized NodeTypeInfo[] with ConfigFields, Examples, UsageNotes]
+
+## Canvas definition format
+[wire format schema from /agent-definitions/schema]
+
+## Available LLM providers for this tenant
+[from GET /admin/llm-providers — slugs and supported models only]
+
+## Available A2A agents for a2a_call nodes
+[from GET /admin/agents?enabled=true — slugs and descriptions]
+
+## Available MCP tools for mcp_call nodes
+[from MCP manifest — server slugs and tool names]
+
+## Current canvas
+[current definition JSON from agent_definitions, narrated as a step list]
+[current validation state: valid / N issues]
+```
+
+This prompt gives the Copilot everything it needs before the first user message. It knows the constraints of this tenant's environment — it will not suggest a provider that is not configured, and it will not hallucinate agent slugs.
+
+The prompt is built by the `CreateSession` handler and cached in Redis with the session. It is rebuilt only if the user explicitly reloads (e.g. "refresh your knowledge").
+
+### 8.4 What REST APIs support directly
 
 The browser continues to use REST for:
 - `PUT /api/v1/admin/agent-definitions/{id}` — explicit saves

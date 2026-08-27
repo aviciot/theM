@@ -17,25 +17,32 @@ Two distinct authoring schemas coexist in the-M. The majority of this foundation
 
 ### LLM knowledge loading strategy
 
-An LLM working with the-M needs two categories of information. They are loaded differently:
+An LLM working with the-M needs three categories of information. They are loaded differently.
 
-**Load once at session start — static platform knowledge:**
+**Load once per deployment — static platform knowledge:**
 - What node types exist and how they are configured (`GET /api/v1/admin/node-types`)
 - The canvas definition wire format and validation rule codes (`GET /api/v1/admin/agent-definitions/schema`)
 - The transform function catalog (`GET /api/v1/admin/transform-functions`)
 
-These change only when a developer adds a new node type or transform function — rare. An LLM or assistant panel loads them once at startup and caches them for the session. They are the platform's self-description.
+These change only when a developer registers a new node type or transform function — rare. An LLM or assistant panel loads them once at session start and caches them. They are the platform's self-description. They are also the primary source material for the LLM's system prompt — the Copilot learns what it can build from these endpoints, not from static documentation.
+
+**Load once per session — tenant ecosystem knowledge:**
+- Which LLM providers are configured for this tenant (`GET /api/v1/admin/llm-providers`)
+- Which A2A agents are available as `a2a_call` targets (`GET /api/v1/admin/agents?enabled=true`)
+- Which MCP servers and tools are reachable for `mcp_call` steps (via MCP manifest)
+
+These are tenant-specific and change when an admin registers a new agent or provider. They are loaded at session start and refreshed if the user references something that was not in the initial load. Without this data the Copilot would suggest an `anthropic` LLM provider when the tenant has only `groq` configured — a broken config the user has to fix manually.
 
 **Call on demand — dynamic operations:**
-- Validate a canvas being built (`POST /api/v1/admin/agent-definitions/{id}/validate`)
-- Inspect the current canvas state during a session
+- Validate a canvas being built or modified
 - Add, modify, connect, or remove nodes
-- Test a transform chain (`POST /api/v1/admin/transform-test`)
+- Inspect the current canvas state
+- Test a transform chain
 - Analyze a failed run trace
 
-These are called during the actual building or debugging workflow, once per user action.
+These are called during the actual workflow, once per user action. The LLM is never re-reading schemas mid-conversation — it already knows the platform and the tenant's ecosystem. It only calls APIs to act.
 
-This separation means the LLM is never re-loading node schemas mid-conversation. It already knows the platform. It only calls APIs to act on it.
+This three-tier structure is what makes the Copilot feel knowledgeable from the first message rather than needing to discover everything incrementally.
 
 ### What already exists
 
@@ -192,57 +199,99 @@ The wire format schema references `GET /api/v1/admin/node-types` for step type c
 
 ## 6. LLM Session Startup Sequence
 
-This is the exact sequence an AI assistant or agent builder runs once when a session opens:
+When a Canvas Copilot session opens the backend executes this sequence before the first user message is processed. The results feed directly into the LLM's system prompt — this is not a cache, it is the foundation of the Copilot's knowledge for the session.
+
+### Tier 1 — Platform knowledge (static, shared across all tenants)
 
 ```
-1. GET /api/v1/admin/node-types
-   → Full NodeTypeInfo[] with ConfigFields, Examples, UsageNotes per type.
-   → Cached for the session. Not re-called unless the user explicitly refreshes.
+GET /api/v1/admin/node-types
+→ Full NodeTypeInfo[] with ConfigFields, Examples, UsageNotes per type.
+→ Feeds system prompt section: "Available node types and their configuration"
 
-2. GET /api/v1/admin/agent-definitions/schema
-   → Wire format JSON Schema + all validation issue codes with meanings.
-   → Cached for the session.
+GET /api/v1/admin/agent-definitions/schema
+→ Wire format JSON Schema + all 19 validation issue codes with meanings.
+→ Feeds system prompt section: "Canvas definition format and validation rules"
 
-3. GET /api/v1/admin/transform-functions
-   → Full function catalog with examples.
-   → Cached for the session.
+GET /api/v1/admin/transform-functions
+→ Full function catalog with examples.
+→ Feeds system prompt section: "Transform functions available in transform nodes"
 ```
 
-After these three calls the LLM has complete platform knowledge. Everything after this is an action.
+These three calls are idempotent and can be cached at the process level with a long TTL (invalidated only when a new node type is registered, which requires a deployment). In practice they are near-constant.
+
+### Tier 2 — Tenant ecosystem (per-tenant, loaded per session)
+
+```
+GET /api/v1/admin/llm-providers
+→ Configured providers for this tenant: slugs, supported models, enabled status.
+→ Feeds system prompt section: "LLM providers available for llm nodes"
+→ Critical: Copilot must only suggest providers that are actually configured.
+
+GET /api/v1/admin/agents?enabled=true
+→ Available A2A agents: slugs, descriptions, input schemas, skills.
+→ Feeds system prompt section: "A2A agents available for a2a_call nodes"
+
+GET /api/v1/admin/mcp-servers (with tool manifests)
+→ Available MCP servers and their tools for this tenant.
+→ Feeds system prompt section: "MCP tools available for mcp_call nodes"
+```
+
+These are tenant-specific. They are loaded fresh at each session start. If the user references an agent or provider not in this list, the Copilot can offer to reload — but it must not hallucinate tool names or provider slugs that are not in the response.
+
+### Tier 3 — Current canvas state (per-definition)
+
+```
+GET /api/v1/admin/agent-definitions/{id}
+→ The definition being edited: current skills, steps, connections, validation state.
+→ Feeds system prompt section: "Current canvas state"
+→ Also used to set the opening context: "This is a [description] agent with [N] steps..."
+```
+
+After this sequence the system prompt is assembled and the LLM is ready. The first user message gets a Copilot that already knows what it can build, what the tenant has configured, and what is already on the canvas.
 
 ---
 
 ## 7. On-Demand Operations
 
-These are called during the building or debugging workflow — once per user action, never at startup.
+These are called during the workflow — once per user action. The Copilot never re-reads static platform knowledge mid-conversation.
 
-### Building
+### Building and validation
 
 ```
 POST /api/v1/admin/agent-definitions/{id}/validate
-Body: {"definition": <current canvas JSON>}
 → AgentValidationReport: {valid, issues[{severity,code,node_id,field,message}], step_contracts}
-→ Called after constructing or modifying the definition. LLM uses issue codes
-  (loaded in startup step 2) to self-correct.
+→ Called after every canvas mutation. LLM maps issue codes (known from startup)
+  to corrections and self-heals before replying to the user.
 
 POST /api/v1/admin/agent-definitions (create draft)
 PUT  /api/v1/admin/agent-definitions/{id} (save draft)
 POST /api/v1/admin/agent-definitions/{id}/publish
 
 POST /api/v1/admin/transform-test
-Body: {chain: [{fn, input_var, output_var, args}], input: "sample text"}
-→ TraceResult: per-step results. Called to verify a transform chain before embedding it.
+→ TraceResult with per-step {fn, in, out, ok}. Called to verify a transform chain
+  before embedding it. Gives the Copilot evidence that the chain does what was intended.
 ```
+
+### Ecosystem refresh (on user request)
+
+If the user says "use the new Groq agent I just added" and it was not in the session-start load, the Copilot refreshes:
+
+```
+GET /api/v1/admin/agents?enabled=true   → re-load agent list
+GET /api/v1/admin/llm-providers         → re-load provider list
+```
+
+This is the only time Tier 2 data is re-fetched mid-session.
 
 ### Debugging (Phase 2)
 
 ```
 GET /api/v1/runs/{id}/trace
-→ Step-level execution trace: which step failed, what variables it had, what the error was.
+→ Step-level execution trace: failed step, variable state, error.
 → Called once when the user opens a failed run.
 
 POST /api/v1/admin/agent-definitions/{id}/validate
-→ Reused — validate a proposed fix before presenting it to the user for approval.
+→ Reused to validate a proposed fix before showing it to the user for approval.
 ```
 
 ---
