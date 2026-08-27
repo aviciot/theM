@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-25
+# Last updated: 2026-08-27
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,16 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `9f75a5e` — fix(publish): surface FK violation as clear user error + propagate error messages to toasts
+Commit: `2c64517` — feat(agentgen+canvas): expose compiled step contracts to frontend debugger
 
 Recent commits (newest first):
 ```
-9f75a5e fix(publish): surface FK violation as clear user error + propagate error messages to toasts
-e6cebde fix(proxy): add /agents/{id}/llm-nodes pattern to Go bridge routing
-f4b58bd feat(canvas-llm): per-node LLM provider+model overrides in RuntimeView + debug panel
-1e5c76c test(app-params): Phase 4 — handler + runtime tests; fix plain: decryption
-b308e84 feat(app-params): Phase 3 — frontend UI for app global params
-5328fb6 feat(app-params): Phase 2 — compiler/interpreter/runtime for app_param_ref
+2c64517 feat(agentgen+canvas): expose compiled step contracts to frontend debugger
+4417870 fix(agentgen): path-sensitive Stage 5 data-flow analysis + branch tests
+0670a6a fix(publish): EP access_mode from canvas config applied to entry_point row
+a1fc402 test(agentgen): remove backward-compat round-trip test (DF-25)
+d8054d8 feat(agentgen): explicit data-flow derivation + Stage 5 validateDataFlow
 ```
 
 ---
@@ -148,14 +147,21 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-25, commit 9f75a5e)
+go test ./...  — all packages, 0 failures (verified 2026-08-27, commit 2c64517)
 S1 total: 772 tests (unchanged — CMP/INT tests rewritten not added)
   S1-63: CMP-10..14 (compiler LLM node collection — 5 tests, rewrote from AppParamRefs)
   S1-64: INT-10..14 (interpreter AppParamRef HTTP + NodeLLMOverride — 5 tests, INT-14 rewritten)
   S1-65: RT-20..24 (runtime decodeAppGlobalParams — 5 tests)
   S1-66: HTTP-20..25+ (handler layer — 11 tests)
   fake DAL stubs updated in all 4 test files for GetAgentLLMNodes/UpsertNodeLLMOverride
-go test ./... total: 793
+go test ./... total: 793 (+ 31 new tests from data-flow + step contracts work, see below)
+
+New tests this session (verified 2026-08-27):
+  S1-65 (reused): 28 data-flow tests in internal/agentgen/dataflow_test.go
+    - VarRef derivation for all 11 node types (DF-01..19)
+    - Stage 5 validateDataFlow UNRESOLVED_INPUT (DF-20..26)
+    - Path-sensitive branch analysis (DF-27..29)
+  internal/admin/service: TestValidateAgentDefinition_StepContractsPopulated (new)
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -223,6 +229,8 @@ App global params: e2e validated 2026-08-25 — GET/PUT/DELETE live ✅
 | Debug mode | Browser-side pipeline step-through with per-session provider+model+key (all 4 providers) | ✅ |
 | Bug fixes | polJSON unmarshal, AllowedSkillIDs enforcement, skill selection by ID, slug cache | ✅ |
 | BuildValidator UI | Debounced backend validation, node/field highlighting, issues panel, Publish gate | ✅ |
+| Data-flow contracts | `VarRef`, `DeriveInputs/DeriveOutputs` on all 11 nodes, Stage 5 path-sensitive `validateDataFlow` | ✅ |
+| Frontend spec consumer | `AgentValidationReport.StepContracts`; RightPanel READS/WRITES from compiled contract post-validate | ✅ |
 
 ### Key security constraints (always in force)
 - Credentials decrypted per-request, held only in `InvocationContext.Credentials`, never logged/persisted
@@ -345,6 +353,28 @@ What was built:
 **What's NOT done yet (MCP-3 onward):**
 - MCP-3: runtime executor wired into agent-runtime tool calls (StepMCPCall Execute function)
 - `them-mcp-service` not yet started in production (needs `--profile mcp` in compose)
+
+---
+
+## Data-flow architecture — current state (2026-08-27)
+
+### What's live
+- **`VarRef` + `DeriveInputs/DeriveOutputs`** on all 11 node types in `go/internal/agentgen/nodes.go`
+- **`StepSpec.Inputs/Outputs []VarRef`** (omitempty) — populated by compiler, absent from canvas JSON, present in compiled `AgentSpec`
+- **Stage 5 `validateDataFlow`** — path-sensitive available-definitions lattice (intersection over predecessors). A var is guaranteed only if written on every execution path to the reading step. Branch convergence handled correctly.
+- **`AgentValidationReport.StepContracts`** — validate endpoint returns compiled `{inputs, outputs}` per step
+- **RightPanel READS/WRITES panel** — uses authoritative compiled contract post-validate (shows `✓ compiled contract`), falls back to `extractNodeVars` (heuristic) for live pre-validate UX
+- **`nodeVars.ts`** — unchanged; still used for live edge labels and pre-validate UX
+
+### Boundary: canvas JSON stays clean
+`Inputs`/`Outputs` are NEVER written to canvas JSON (the `definition` column). They exist only in:
+1. The compiled `AgentSpec` (persisted to `agent_runtime_specs.spec`)
+2. The validate endpoint response (`step_contracts` field, transient)
+
+### What remains (per DATAFLOW_EXPLICIT_FEASIBILITY.md)
+- Stage 6: runtime enforcement — agent-runtime reads `Inputs`/`Outputs` from AgentSpec; emit structured trace events per var read/write (NOT this session)
+- Explicit bindings (wiring vars between steps with explicit edges) — NOT this session
+- Temporal/ADK integration — NOT this session
 
 ---
 
