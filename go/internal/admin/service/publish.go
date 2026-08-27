@@ -54,10 +54,11 @@ type componentInstance struct {
 }
 
 type entryPointInstance struct {
-	InstanceID string `json:"instance_id"`
-	Slug       string `json:"slug"`
-	Protocol   string `json:"protocol"`
-	Root       string `json:"root"` // instance_id of the root orchestrator
+	InstanceID string         `json:"instance_id"`
+	Slug       string         `json:"slug"`
+	Protocol   string         `json:"protocol"`
+	Root       string         `json:"root"` // instance_id of the root orchestrator
+	Config     map[string]any `json:"config,omitempty"`
 }
 
 type connectionDef struct {
@@ -392,7 +393,6 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 		}
 	}
 
-	defaultAccessPolicy := []byte(`{"mode":"token"}`)
 	for _, ep := range doc.EntryPoints {
 		var orchID *string
 		if ep.Root != "" {
@@ -401,15 +401,50 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 			}
 		}
 
+		// Extract per-EP canvas config fields.
+		accessPolicy := []byte(`{"mode":"token"}`)
+		var convTokenLimit, maxConcurrent, queueTimeout *int
+		var queueMessage *string
+		if ep.Config != nil {
+			// access_mode → access_policy JSONB
+			if mode, _ := ep.Config["access_mode"].(string); mode != "" {
+				if b, merr := json.Marshal(map[string]string{"mode": mode}); merr == nil {
+					accessPolicy = b
+				}
+			}
+			// conversation_token_limit
+			if v, ok := ep.Config["conversation_token_limit"]; ok {
+				if n, ok2 := toInt(v); ok2 && n > 0 {
+					convTokenLimit = &n
+				}
+			}
+			// max_concurrent_sessions
+			if v, ok := ep.Config["max_concurrent_sessions"]; ok {
+				if n, ok2 := toInt(v); ok2 && n > 0 {
+					maxConcurrent = &n
+				}
+			}
+			// queue_timeout_seconds
+			if v, ok := ep.Config["queue_timeout_seconds"]; ok {
+				if n, ok2 := toInt(v); ok2 && n > 0 {
+					queueTimeout = &n
+				}
+			}
+			// queue_message
+			if v, _ := ep.Config["queue_message"].(string); v != "" {
+				queueMessage = &v
+			}
+		}
+
 		// Extract per-EP memory config from the orchestrator's canvas config.
 		// Stored as config.ep_memory[ep.instance_id] on the orchestrator node.
 		var (
-			memoryEnabled        bool
-			historyWindow        = 20
-			summarizeEveryN      int
-			rawFallbackN         = 3
-			summarizerProvider   *string
-			summarizerModel      *string
+			memoryEnabled      bool
+			historyWindow      = 20
+			summarizeEveryN    int
+			rawFallbackN       = 3
+			summarizerProvider *string
+			summarizerModel    *string
 		)
 		if ep.Root != "" {
 			if orchCfg, ok := orchConfigs[ep.Root]; ok {
@@ -441,21 +476,25 @@ func (s *DefinitionService) PublishDefinition(ctx context.Context, tenantID, app
 		}
 
 		row := dal.EntryPointRow{
-			ApplicationID:        appID,
-			TenantID:             tenantID,
-			Slug:                 ep.Slug,
-			InstanceID:           ep.InstanceID,
-			EntryPointType:       ep.Protocol,
-			AppOrchestratorID:    orchID,
-			AccessPolicy:         defaultAccessPolicy,
-			SourceDefinitionID:   defID,
-			SourceDefinitionHash: def.DefinitionHash,
-			MemoryEnabled:        memoryEnabled,
-			HistoryWindow:        historyWindow,
-			SummarizeEveryNCalls: summarizeEveryN,
-			MemoryRawFallbackN:   rawFallbackN,
-			SummarizerProvider:   summarizerProvider,
-			SummarizerModel:      summarizerModel,
+			ApplicationID:          appID,
+			TenantID:               tenantID,
+			Slug:                   ep.Slug,
+			InstanceID:             ep.InstanceID,
+			EntryPointType:         ep.Protocol,
+			AppOrchestratorID:      orchID,
+			AccessPolicy:           accessPolicy,
+			ConversationTokenLimit: convTokenLimit,
+			MaxConcurrentSessions:  maxConcurrent,
+			QueueTimeoutSeconds:    queueTimeout,
+			QueueMessage:           queueMessage,
+			SourceDefinitionID:     defID,
+			SourceDefinitionHash:   def.DefinitionHash,
+			MemoryEnabled:          memoryEnabled,
+			HistoryWindow:          historyWindow,
+			SummarizeEveryNCalls:   summarizeEveryN,
+			MemoryRawFallbackN:     rawFallbackN,
+			SummarizerProvider:     summarizerProvider,
+			SummarizerModel:        summarizerModel,
 		}
 
 		if _, upsertErr := s.dal.UpsertEntryPoint(ctx, row); upsertErr != nil {

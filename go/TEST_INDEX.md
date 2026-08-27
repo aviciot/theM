@@ -248,6 +248,8 @@ atomic DAL publish call. Tests use a fake registry and fake DAL — no PostgreSQ
 | `TestPublishDefinition_DefinitionNotFound_ReturnsErrNotFound` | Missing definition → ErrNotFound |
 | `TestPublishDefinition_WrongTenantBlocked` | DAL returns pgx.ErrNoRows → ErrNotFound |
 | `TestPublishDefinition_NoRegistry_SkipsResolution` | No registry wired → resolution skipped, publish succeeds |
+| `TestPublishDefinition_EPPublicAccessMode` | EP config.access_mode="public" → AccessPolicy {"mode":"public"} in upserted row |
+| `TestPublishDefinition_EPDefaultAccessMode` | EP without config.access_mode → secure default {"mode":"token"} |
 
 **Trigger:** any change to `internal/admin/service/publish.go`, `internal/admin/dal/publish.go`,
 `internal/admin/definitions.go`, `internal/admin/router.go`, or `internal/registry/`

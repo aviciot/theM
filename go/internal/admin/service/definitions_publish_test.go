@@ -975,3 +975,88 @@ func TestPublishDefinition_NoRegistry_SkipsResolution(t *testing.T) {
 		t.Error("dal.PublishDefinition must be called")
 	}
 }
+
+// ── S1-44-access: EP access_mode is carried through to access_policy ─────────
+
+// TestPublishDefinition_EPPublicAccessMode checks that an entry_point with
+// config.access_mode="public" produces AccessPolicy {"mode":"public"}.
+func TestPublishDefinition_EPPublicAccessMode(t *testing.T) {
+	raw := json.RawMessage(`{
+		"components": [
+			{
+				"instance_id": "orch_main",
+				"definition_ref": {"kind": "orchestrator", "namespace": "builtin", "name": "standard-orchestrator", "version": 1},
+				"config": {}
+			}
+		],
+		"entry_points": [
+			{
+				"instance_id": "ep_pub",
+				"slug": "public-ep",
+				"protocol": "websocket",
+				"root": "orch_main",
+				"config": {"access_mode": "public"}
+			}
+		],
+		"connections": []
+	}`)
+	d := newPublishFakeDal()
+	addDraft(d, "def-access", raw)
+	d.upsertedOrchID = "orch-uuid"
+	d.publishResult = dal.PublishResult{DefinitionID: "def-access", Revision: 1, DefinitionHash: "sha256:abc"}
+
+	reg := &fakeRegistry{
+		defs: map[string]*registry.ComponentDefinition{
+			"builtin/standard-orchestrator": makeOrchDef("comp-orch"),
+		},
+	}
+	svc := service.NewDefinitionServiceWithRegistry(d, reg)
+
+	_, err := svc.PublishDefinition(context.Background(), "tenant-1", "app-1", "def-access")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(d.upsertEPCalls) != 1 {
+		t.Fatalf("want 1 UpsertEntryPoint call, got %d", len(d.upsertEPCalls))
+	}
+	ep := d.upsertEPCalls[0]
+
+	var policy map[string]string
+	if err := json.Unmarshal(ep.AccessPolicy, &policy); err != nil {
+		t.Fatalf("AccessPolicy is not valid JSON: %v", err)
+	}
+	if policy["mode"] != "public" {
+		t.Errorf("AccessPolicy mode: want public, got %q (full policy: %s)", policy["mode"], ep.AccessPolicy)
+	}
+}
+
+// TestPublishDefinition_EPDefaultAccessMode verifies that an EP without
+// config.access_mode gets {"mode":"token"} (the secure default).
+func TestPublishDefinition_EPDefaultAccessMode(t *testing.T) {
+	d := newPublishFakeDal()
+	addDraft(d, "def-default-access", minimalDraftDef())
+	d.upsertedOrchID = "orch-uuid"
+	d.publishResult = dal.PublishResult{DefinitionID: "def-default-access", Revision: 1, DefinitionHash: "sha256:abc"}
+
+	reg := &fakeRegistry{
+		defs: map[string]*registry.ComponentDefinition{
+			"builtin/standard-orchestrator": makeOrchDef("comp-orch"),
+		},
+	}
+	svc := service.NewDefinitionServiceWithRegistry(d, reg)
+
+	_, err := svc.PublishDefinition(context.Background(), "tenant-1", "app-1", "def-default-access")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(d.upsertEPCalls) != 1 {
+		t.Fatalf("want 1 UpsertEntryPoint call, got %d", len(d.upsertEPCalls))
+	}
+	var policy map[string]string
+	if err := json.Unmarshal(d.upsertEPCalls[0].AccessPolicy, &policy); err != nil {
+		t.Fatalf("AccessPolicy is not valid JSON: %v", err)
+	}
+	if policy["mode"] != "token" {
+		t.Errorf("default AccessPolicy mode: want token, got %q", policy["mode"])
+	}
+}
