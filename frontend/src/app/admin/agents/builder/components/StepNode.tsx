@@ -120,8 +120,8 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
           borderRadius: 4,
           opacity: 0,
           ...(layoutDir === 'LR'
-            ? { top: `calc(50% + ${dropZoneOffset}px)`, left: -6 }
-            : { left: `calc(50% + ${dropZoneOffset}px)`, top: -6 }),
+            ? { top: `calc(25% + ${dropZoneOffset}px)`, left: -6 }
+            : { left: `calc(25% + ${dropZoneOffset}px)`, top: -6 }),
         }}
         title="Drop variable here to create input port"
       />
