@@ -96,8 +96,11 @@ type SkillSpec struct {
 // sequential execution model makes concurrent mutation impossible today. When
 // StepParallel is implemented, deep-copy will be required at that boundary.
 type VarRef struct {
-	Name     string `json:"name"`     // PipelineVars key
-	Required bool   `json:"required"` // missing upstream writer → error (true) vs warning (false)
+	Name     string `json:"name"`                // PipelineVars key
+	Required bool   `json:"required"`            // missing upstream writer → error (true) vs warning (false)
+	PortID     string `json:"port_id,omitempty"`   // port this var was derived from (empty for heuristic path)
+	SourceStep string `json:"source_step,omitempty"` // step that produces this value (from explicit binding)
+	SourcePort string `json:"source_port,omitempty"` // output port on the source step
 }
 
 // ErrContractViolation is returned by the interpreter at runtime when a step's

@@ -76,13 +76,23 @@ type canvasSkill struct {
 	Steps       []canvasStep `json:"steps"`
 }
 
+// Binding is an explicit data binding declared on a canvas step's input port.
+// FromStep is the step ID that produces the value; FromPort is the output port ID on that step.
+type Binding struct {
+	FromStep string `json:"from_step"`
+	FromPort string `json:"from_port"`
+}
+
 type canvasStep struct {
-	ID       string          `json:"id"`
-	Label    string          `json:"label"`
-	Type     StepType        `json:"type"`
-	Config   json.RawMessage `json:"config"`
-	Next     []string        `json:"next"`
-	Branches []BranchArm     `json:"branches"`
+	ID       string             `json:"id"`
+	Label    string             `json:"label"`
+	Type     StepType           `json:"type"`
+	Config   json.RawMessage    `json:"config"`
+	Next     []string           `json:"next"`
+	Branches []BranchArm        `json:"branches"`
+	// Inputs holds explicit data bindings: port ID → {from_step, from_port}.
+	// Absent means no explicit bindings for this step (heuristic DeriveInputs used instead).
+	Inputs   map[string]Binding `json:"inputs,omitempty"`
 }
 
 // hasErrors reports whether any issue in the slice has severity "error".
@@ -335,6 +345,10 @@ func validateGraph(def *canvasDefinition) ([]Issue, map[string][]StepSpec) {
 		ordered, cycleErrs := topoSort(cs.SkillID, cs.Steps, stepMap)
 		issues = append(issues, cycleErrs...)
 		if len(cycleErrs) == 0 {
+			// Resolve explicit bindings now that all steps in this skill are compiled.
+			// topoSort produces heuristic-only VarRefs; this pass annotates steps that
+			// have explicit canvas bindings with SourceStep/SourcePort.
+			ordered = resolveBindings(cs.Steps, ordered)
 			compiled[cs.SkillID] = ordered
 		}
 	}
@@ -496,6 +510,8 @@ func Validate(agentID, tenantID, definitionID, agentSlug string, raw json.RawMes
 
 	issues = append(issues, validateDataFlow(def, compiled, "warning")...)
 
+	issues = append(issues, validateBindings(def, compiled, "warning")...)
+
 	spec := buildSpec(agentID, tenantID, definitionID, slug, def, compiled, params, llmNodes)
 	return spec, issues
 }
@@ -534,6 +550,11 @@ func CompileForPublish(agentID, tenantID, definitionID, agentSlug string, raw js
 	}
 
 	issues = append(issues, validateDataFlow(def, compiled, "error")...)
+	if hasErrors(issues) {
+		return nil, issues
+	}
+
+	issues = append(issues, validateBindings(def, compiled, "error")...)
 	if hasErrors(issues) {
 		return nil, issues
 	}
@@ -608,20 +629,170 @@ func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefiniti
 	}
 }
 
-// deriveStepVars calls the NodeDef DeriveInputs/DeriveOutputs hooks for a step
-// and returns the result. Returns empty slices when hooks are nil.
-func deriveStepVars(step canvasStep) (inputs, outputs []VarRef) {
+// deriveStepVars computes the input and output VarRefs for a compiled step.
+//
+// When the canvas step has explicit bindings (step.Inputs non-empty), each bound
+// port is resolved to a VarRef by looking up the source step's output port in the
+// compiled skill and reading the corresponding VarRef.Name.  SourceStep/SourcePort
+// are populated for downstream validation.  Unbound ports fall back to
+// DeriveInputs heuristics — the same behaviour as before explicit bindings.
+//
+// When step.Inputs is empty (no explicit bindings), DeriveInputs/DeriveOutputs
+// are called directly, identical to the pre-binding path.
+func deriveStepVars(step canvasStep, compiledSteps map[string]StepSpec) (inputs, outputs []VarRef) {
 	nd, ok := LookupNode(step.Type)
 	if !ok {
 		return nil, nil
 	}
-	if nd.DeriveInputs != nil {
-		inputs = nd.DeriveInputs(step.Config)
-	}
+
+	// Outputs are always derived from DeriveOutputs — bindings do not change what a step writes.
 	if nd.DeriveOutputs != nil {
 		outputs = nd.DeriveOutputs(step.Config)
 	}
+
+	// Inputs: explicit bindings take precedence over heuristic derivation per port.
+	if len(step.Inputs) == 0 {
+		// No explicit bindings — use heuristic (legacy path).
+		if nd.DeriveInputs != nil {
+			inputs = nd.DeriveInputs(step.Config)
+		}
+		return inputs, outputs
+	}
+
+	// Explicit bindings present: resolve each bound port to a VarRef.
+	// Start with heuristic derivation to get the base set, then annotate
+	// with binding metadata for ports that have an explicit binding.
+	var heuristic []VarRef
+	if nd.DeriveInputs != nil {
+		heuristic = nd.DeriveInputs(step.Config)
+	}
+
+	// Build a lookup from heuristic VarRef by name so we can annotate.
+	heuristicByName := make(map[string]VarRef, len(heuristic))
+	for _, r := range heuristic {
+		heuristicByName[r.Name] = r
+	}
+
+	// For each explicitly bound input port, resolve the var name from the source step's outputs.
+	bound := make(map[string]bool, len(step.Inputs)) // track which heuristic vars got explicit bindings
+	for portID, binding := range step.Inputs {
+		srcSpec, srcOK := compiledSteps[binding.FromStep]
+		if !srcOK {
+			// Source step not (yet) compiled — emit a placeholder; validateBindings will report BROKEN_BINDING.
+			inputs = append(inputs, VarRef{
+				PortID:     portID,
+				SourceStep: binding.FromStep,
+				SourcePort: binding.FromPort,
+			})
+			continue
+		}
+
+		// Find the named output port's VarRef on the source step.
+		var resolved *VarRef
+		for _, outRef := range srcSpec.Outputs {
+			if outRef.PortID == binding.FromPort || outRef.Name == binding.FromPort {
+				resolved = &outRef
+				break
+			}
+		}
+		if resolved == nil {
+			// Port not found — emit placeholder; validateBindings will report BROKEN_BINDING.
+			inputs = append(inputs, VarRef{
+				PortID:     portID,
+				SourceStep: binding.FromStep,
+				SourcePort: binding.FromPort,
+			})
+			continue
+		}
+
+		bound[resolved.Name] = true
+		inputs = append(inputs, VarRef{
+			Name:       resolved.Name,
+			Required:   resolved.Required,
+			PortID:     portID,
+			SourceStep: binding.FromStep,
+			SourcePort: binding.FromPort,
+		})
+	}
+
+	// Any heuristic-derived vars that were NOT covered by an explicit binding
+	// are kept as unbound heuristic inputs (they may be referenced in templates).
+	for _, r := range heuristic {
+		if !bound[r.Name] {
+			inputs = append(inputs, r)
+		}
+	}
+
 	return inputs, outputs
+}
+
+// validateBindings checks each canvas step's explicit bindings for coherence.
+// Emits BROKEN_BINDING (at the given severity) when a binding's from_step does
+// not exist in the compiled skill, or when from_port is not a declared output
+// port on that step.  Steps with no explicit bindings are silently skipped —
+// they are handled by the heuristic DeriveInputs path and the UNRESOLVED_INPUT
+// data-flow check.
+func validateBindings(def *canvasDefinition, compiled map[string][]StepSpec, severity string) []Issue {
+	var issues []Issue
+
+	// Build a flat step-id → StepSpec lookup across all skills.
+	specByID := make(map[string]StepSpec)
+	for _, steps := range compiled {
+		for _, s := range steps {
+			specByID[s.ID] = s
+		}
+	}
+
+	// outputPortSet returns the set of valid port identifiers on a step's outputs.
+	outputPortSet := func(stepID string) map[string]bool {
+		s, ok := specByID[stepID]
+		if !ok {
+			return nil
+		}
+		m := make(map[string]bool, len(s.Outputs)*2)
+		for _, o := range s.Outputs {
+			if o.PortID != "" {
+				m[o.PortID] = true
+			}
+			m[o.Name] = true // also match by var name
+		}
+		return m
+	}
+
+	for _, cs := range def.Skills {
+		for _, step := range cs.Steps {
+			if len(step.Inputs) == 0 {
+				continue // no explicit bindings — heuristic path, nothing to validate here
+			}
+
+			for portID, binding := range step.Inputs {
+				if _, ok := specByID[binding.FromStep]; !ok {
+					issues = append(issues, Issue{
+						Severity: severity,
+						Code:     "BROKEN_BINDING",
+						Message:  fmt.Sprintf("step %q input port %q references unknown source step %q", step.ID, portID, binding.FromStep),
+						SkillID:  cs.SkillID,
+						NodeID:   step.ID,
+						Field:    portID,
+					})
+					continue
+				}
+
+				ports := outputPortSet(binding.FromStep)
+				if ports != nil && !ports[binding.FromPort] {
+					issues = append(issues, Issue{
+						Severity: severity,
+						Code:     "BROKEN_BINDING",
+						Message:  fmt.Sprintf("step %q input port %q: source step %q has no output port %q", step.ID, portID, binding.FromStep, binding.FromPort),
+						SkillID:  cs.SkillID,
+						NodeID:   step.ID,
+						Field:    portID,
+					})
+				}
+			}
+		}
+	}
+	return issues
 }
 
 // validateDataFlow runs path-sensitive data-flow analysis on each compiled skill.
@@ -733,6 +904,36 @@ func validateDataFlow(def *canvasDefinition, compiled map[string][]StepSpec, sev
 }
 
 // topoSort performs DFS-based topological sort and cycle detection.
+// resolveBindings does a second pass over a topologically-ordered skill to annotate
+// steps that have explicit canvas bindings (cs.Inputs non-empty). Steps without
+// bindings are returned unchanged — their heuristic VarRefs from topoSort are kept.
+func resolveBindings(canvasSteps []canvasStep, compiled []StepSpec) []StepSpec {
+	canvasByID := make(map[string]canvasStep, len(canvasSteps))
+	for _, cs := range canvasSteps {
+		canvasByID[cs.ID] = cs
+	}
+	specByID := make(map[string]StepSpec, len(compiled))
+	for _, s := range compiled {
+		specByID[s.ID] = s
+	}
+
+	result := make([]StepSpec, len(compiled))
+	for i, spec := range compiled {
+		cs, ok := canvasByID[spec.ID]
+		if !ok || len(cs.Inputs) == 0 {
+			result[i] = spec
+			continue
+		}
+		ins, _ := deriveStepVars(cs, specByID)
+		spec.Inputs = ins
+		result[i] = spec
+	}
+	return result
+}
+
+// topoSort performs DFS-based topological sort and cycle detection.
+// VarRefs are derived using DeriveInputs/DeriveOutputs heuristics only.
+// Explicit binding resolution happens in a subsequent resolveBindings pass.
 func topoSort(skillID string, steps []canvasStep, stepMap map[string]canvasStep) ([]StepSpec, []Issue) {
 	const (
 		white = 0
@@ -769,7 +970,8 @@ func topoSort(skillID string, steps []canvasStep, stepMap map[string]canvasStep)
 			}
 		}
 		color[id] = black
-		ins, outs := deriveStepVars(step)
+		// Heuristic-only derivation; explicit-binding resolution happens in resolveBindings.
+		ins, outs := deriveStepVars(step, nil)
 		result = append(result, StepSpec{
 			ID:       step.ID,
 			Type:     step.Type,

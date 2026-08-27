@@ -1438,6 +1438,30 @@ to the global-vars path unchanged, and transform outputs are derived from functi
 
 ---
 
+### S1-68 · Explicit canvas data bindings — `internal/agentgen/bindings_test.go`
+
+**Purpose:** Verifies Stage A of explicit data bindings: per-step `inputs` binding map in canvas JSON,
+compiler binding resolution (PortID/SourceStep/SourcePort on VarRef), BROKEN_BINDING validation at
+both Validate (warning) and CompileForPublish (error) severity, static PortDef declarations on LLM
+and Response node types, and backward compatibility for canvas JSON with no `inputs` field.
+
+| Test | What it proves |
+|---|---|
+| `TestBindings_NoExplicitBindings_Clean` (BND-1) | Canvas with no `inputs` fields compiles without BROKEN_BINDING issues |
+| `TestBindings_ExplicitBinding_PopulatesSourceFields` (BND-2) | Explicit binding from valid step/port annotates VarRef with SourceStep/SourcePort |
+| `TestBindings_BrokenBinding_UnknownSourceStep_Validate` (BND-3) | Non-existent from_step → BROKEN_BINDING warning on Validate |
+| `TestBindings_BrokenBinding_UnknownSourceStep_Publish` (BND-4) | Non-existent from_step → BROKEN_BINDING error on CompileForPublish |
+| `TestBindings_BrokenBinding_UnknownSourcePort_Validate` (BND-5) | Valid from_step but non-existent from_port → BROKEN_BINDING warning on Validate |
+| `TestBindings_BrokenBinding_UnknownSourcePort_Publish` (BND-6) | Valid from_step but non-existent from_port → BROKEN_BINDING error on CompileForPublish |
+| `TestBindings_LLMNodeHasStaticPorts` (BND-7) | LLM node type has InputPorts + OutputPorts with stable ID "output" |
+| `TestBindings_ResponseNodeHasInputPortNoOutputPort` (BND-8) | Response node (sink) has InputPorts, no OutputPorts |
+| `TestBindings_VarRefJSONRoundTrip` (BND-9) | VarRef with PortID/SourceStep/SourcePort round-trips through JSON |
+| `TestBindings_NoInputsField_BackwardCompat` (BND-10) | Classic canvas JSON (no `inputs` field) compiles identically to pre-binding behaviour |
+
+**Trigger:** any change to `internal/agentgen/compiler.go`, `internal/agentgen/noderegistry.go`, or `internal/agentgen/nodes.go`
+
+---
+
 ### S1-49 · Agent definitions — `internal/admin/service/agent_definitions_test.go`
 
 **Purpose:** Phase 2 Canvas A2A Builder — agent definition draft CRUD with validation. Verifies
@@ -2037,8 +2061,9 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/service/applications.go` | S1-25 + S1-33 + S1-60 |
 | `internal/admin/service/` (any file) | S1-25 + S1-33 + S1-42 + S1-43 + S1-44 + S1-49 + S1-51 + S1-60 + S1-62 |
 | `internal/admin/service/agent_definitions_publish.go` | S1-51 + S1-54 |
-| `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 |
-| `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 |
+| `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-68 |
+| `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 + S1-68 |
+| `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 + S1-68 |
 | `internal/admin/service/definitions.go` | S1-42 + S1-43 + S1-44 |
 | `internal/admin/service/publish.go` | S1-43 + S1-44 |
 | `internal/admin/dal/publish.go` | S1-43 + S1-44 |
@@ -2146,7 +2171,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-65 | agent-runtime decodeAppGlobalParams (RT-20..24) | 5 |
 | S1-66 | admin handler app params (HTTP-20..25+) | 11 |
 | S1-67 | Stage 6 runtime contract enforcement (CONT-1..12) | 12 |
-| **S1 total** | | **784** |
+| S1-68 | explicit canvas data bindings (BND-1..10) | 10 |
+| **S1 total** | | **794** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2155,4 +2181,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **805** |
+| **`go test ./...` total** | | **815** |

@@ -101,6 +101,11 @@ func init() {
 		SingleInput: true,
 		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
 		InputField:  "user_prompt",
+		// Static port: the prompt input. Var name is instance-specific (user_prompt template vars);
+		// port ID "input" is the canonical handle used in canvas bindings.
+		InputPorts:  []PortDef{{ID: "input", Label: "Prompt input", TypeHint: "text"}},
+		// Static port: LLM response. Var name is instance-specific (output_var config field).
+		OutputPorts: []PortDef{{ID: "output", Label: "LLM response", Required: true, TypeHint: "text"}},
 		Validate:    nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
@@ -143,7 +148,8 @@ func init() {
 			if outVar == "" {
 				outVar = "output"
 			}
-			return []VarRef{{Name: outVar, Required: false}}
+			// PortID "output" is the stable binding handle; Name is the instance var name.
+			return []VarRef{{Name: outVar, Required: false, PortID: "output"}}
 		},
 	})
 
@@ -277,7 +283,9 @@ func init() {
 		SingleInput: true,
 		Edges:       EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 0, MaxOut: 0},
 		InputField:  "from_var",
-		Validate:    nil,
+		// Static port: the value to send back. Var name is instance-specific (from_var config field).
+		InputPorts: []PortDef{{ID: "from_var", Label: "Response value", Required: true, TypeHint: "any"}},
+		Validate:   nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
 			return interp.execResponse(step, vars, result)
@@ -291,7 +299,8 @@ func init() {
 			if fromVar == "" {
 				fromVar = "output"
 			}
-			return []VarRef{{Name: fromVar, Required: true}}
+			// PortID "from_var" is the stable binding handle; Name is the instance var name.
+			return []VarRef{{Name: fromVar, Required: true, PortID: "from_var"}}
 		},
 		DeriveOutputs: func(cfg json.RawMessage) []VarRef {
 			// Response is a sink — writes to ExecutionResult, not PipelineVars.

@@ -18,7 +18,7 @@ fa879b7 refactor(agentgen): remove ExposedVars from TransformStepConfig (Step 6)
 2c64517 feat(agentgen+canvas): expose compiled step contracts to frontend debugger
 ```
 
-Architecture review written (not yet committed):
+Architecture review committed (afa4a9f):
 - `docs/architecture-v2/EXPLICIT_BINDINGS_DESIGN_REVIEW.md` — explicit canvas data bindings design review (7 questions answered, go/no-go recommendation: GO)
 
 ---
@@ -150,8 +150,8 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-27, commit 0edcf2a)
-S1 total: 784 tests (+12 CONT-1..12 in interpreter_contracts_test.go)
+go test ./...  — all packages, 0 failures (verified 2026-08-27, Stage A bindings)
+S1 total: 794 tests (+10 BND-1..10 in bindings_test.go)
   S1-63: CMP-10..14 (compiler LLM node collection — 5 tests, rewrote from AppParamRefs)
   S1-64: INT-10..14 (interpreter AppParamRef HTTP + NodeLLMOverride — 5 tests, INT-14 rewritten)
   S1-65: RT-20..24 (runtime decodeAppGlobalParams — 5 tests)
@@ -234,6 +234,7 @@ App global params: e2e validated 2026-08-25 — GET/PUT/DELETE live ✅
 | BuildValidator UI | Debounced backend validation, node/field highlighting, issues panel, Publish gate | ✅ |
 | Data-flow contracts | `VarRef`, `DeriveInputs/DeriveOutputs` on all 11 nodes, Stage 5 path-sensitive `validateDataFlow` | ✅ |
 | Frontend spec consumer | `AgentValidationReport.StepContracts`; RightPanel READS/WRITES from compiled contract post-validate | ✅ |
+| Explicit bindings Stage A | `PortDef`, `VarRef.SourceStep/SourcePort`, `Binding`/`canvasStep.Inputs`, `resolveBindings`, `validateBindings`, `BROKEN_BINDING`; backward-compat | ✅ |
 
 ### Key security constraints (always in force)
 - Credentials decrypted per-request, held only in `InvocationContext.Credentials`, never logged/persisted
@@ -377,7 +378,7 @@ What was built:
 ### What remains (per DATAFLOW_EXPLICIT_FEASIBILITY.md)
 - Step 6: **COMPLETE** (fa879b7) — ExposedVars removed from TransformStepConfig; DB data-migrated; frontend cleaned up
 - Stage 6: **COMPLETE** (0edcf2a) — Scoped input resolution + output-only promotion in interpreter.executeStep; ErrContractViolation type; execTransform simplified; 12 new CONT tests
-- Explicit bindings (wiring vars between steps with explicit edges) — **design reviewed** (`EXPLICIT_BINDINGS_DESIGN_REVIEW.md`); implementation pending (Stage A: Go only, low-risk, recommended next)
+- Explicit bindings (wiring vars between steps with explicit edges) — **Stage A COMPLETE**: `PortDef`, `VarRef.SourceStep/SourcePort`, `Binding`/`canvasStep.Inputs`, `resolveBindings`, `validateBindings`, `BROKEN_BINDING`; 10 BND tests; runtime unchanged
 - Structured per-var trace events — not yet (requires trace sink design)
 - Temporal/ADK integration — not yet
 

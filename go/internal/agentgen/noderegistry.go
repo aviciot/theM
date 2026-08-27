@@ -5,6 +5,19 @@ import (
 	"encoding/json"
 )
 
+// PortDef declares one named data port on a node type.
+// Port IDs are permanent stable identifiers — never rename after registration.
+// InputPorts/OutputPorts on NodeDef are static (same for every instance).
+// Dynamic ports (e.g. transform outputs from functions[].output_var) are derived
+// per-instance via DeriveInputs/DeriveOutputs instead.
+type PortDef struct {
+	ID       string `json:"id"`                 // stable identifier used in canvas binding references
+	Label    string `json:"label"`              // human-readable name shown in the canvas UX
+	Required bool   `json:"required"`           // for inputs: must be wired; for outputs: always produced
+	Multi    bool   `json:"multi,omitempty"`    // for inputs: accepts multiple bindings (fan-in)
+	TypeHint string `json:"type_hint,omitempty"` // loose tag: "text" | "json" | "any" — informational only
+}
+
 // EdgeRules declares the allowed incoming/outgoing edge counts for a node type.
 // Zero means "no constraint". These are the single source of truth for both
 // the backend graph validator and the frontend connection guard.
@@ -35,6 +48,13 @@ type NodeDef struct {
 	// Populated for HTTP, LLM, and A2A Call nodes; empty for all others.
 	// The compiler aggregates these across all nodes into AgentSpec.RequiredParams.
 	AppParams []AppParamDecl `json:"app_params,omitempty"`
+	// InputPorts declares the named data input ports for this node type.
+	// Nil for types with dynamic inputs (transform) or no data inputs (input step).
+	// Used by the frontend to render port sockets and by the compiler to resolve explicit bindings.
+	InputPorts []PortDef `json:"input_ports,omitempty"`
+	// OutputPorts declares the named data output ports for this node type.
+	// Nil for types with dynamic outputs (transform, http extractions) or no data outputs (response, branch).
+	OutputPorts []PortDef `json:"output_ports,omitempty"`
 	// Executable is NOT stored — computed from Execute != nil at serialisation time.
 
 	// ── Runtime-only fields (not serialised) ─────────────────────────────────
@@ -68,6 +88,8 @@ type NodeTypeInfo struct {
 	Edges       EdgeRules      `json:"edges"`
 	InputField  string         `json:"input_field,omitempty"`
 	AppParams   []AppParamDecl `json:"app_params,omitempty"`
+	InputPorts  []PortDef      `json:"input_ports,omitempty"`
+	OutputPorts []PortDef      `json:"output_ports,omitempty"`
 	Executable  bool           `json:"executable"`
 }
 
@@ -86,6 +108,8 @@ func (d *NodeDef) ToInfo() NodeTypeInfo {
 		Edges:       d.Edges,
 		InputField:  d.InputField,
 		AppParams:   d.AppParams,
+		InputPorts:  d.InputPorts,
+		OutputPorts: d.OutputPorts,
 		Executable:  d.Execute != nil,
 	}
 }
