@@ -1194,7 +1194,10 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [recordingState, setRecordingState] = useState<RecordingState>('idle');
+  const recordingStateRef = useRef<RecordingState>('idle');
+  const setRecState = (s: RecordingState) => { recordingStateRef.current = s; setRecordingState(s); };
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const [debugTab, setDebugTab] = useState<DebugTab>('trace');
   const [contextId, setContextId] = useState<string | null>(null);
   const [restoredSession, setRestoredSession] = useState<ContextSession | null>(null);
@@ -1612,7 +1615,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   const isVoiceEP = target.kind === 'entrypoint' && target.epType === 'voice';
 
   const startRecording = async () => {
-    if (recordingState !== 'idle') return;
+    if (recordingStateRef.current !== 'idle') return;
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error('Microphone requires HTTPS or localhost');
@@ -1628,7 +1631,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
         const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-        setRecordingState('transcribing');
+        setRecState('transcribing');
         try {
           if (isVoiceEP && target.kind === 'entrypoint') {
             // Voice EP: full pipeline — STT → orchestrator → LLM → TTS in one call
@@ -1659,9 +1662,12 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
           setTimeout(() => setStatus(''), 4000);
           setBusy(false); busyRef.current = false;
         }
-        finally { setRecordingState('idle'); }
+        finally { setRecState('idle'); }
       };
-      recorder.start(); setMediaRecorder(recorder); setRecordingState('recording');
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setMediaRecorder(recorder);
+      setRecState('recording');
     } catch (e) {
       const msg = (e as Error).message || '';
       const friendly = msg.includes('HTTPS') || msg.includes('localhost')
@@ -1674,10 +1680,17 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
     }
   };
 
-  const stopRecording = () => { if (mediaRecorder && recordingState === 'recording') { mediaRecorder.stop(); setMediaRecorder(null); } };
+  const stopRecording = () => {
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state === 'recording') {
+      rec.stop();
+      mediaRecorderRef.current = null;
+      setMediaRecorder(null);
+    }
+  };
 
   const toggleRecording = () => {
-    if (recordingState === 'recording') stopRecording();
+    if (recordingStateRef.current === 'recording') stopRecording();
     else startRecording();
   };
 
