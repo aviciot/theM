@@ -7,19 +7,16 @@
 ## HEAD
 
 Branch: `main`
-Commit: `0edcf2a` — feat(agentgen): Stage 6 runtime contract enforcement — scoped inputs + output promotion
+Commit: `a80bba8` — feat(canvas): Stage C — data-binding port handles and edge wiring
 
 Recent commits (newest first):
 ```
+a80bba8 feat(canvas): Stage C — data-binding port handles and edge wiring
+afa4a9f docs(canvas): explicit bindings design review (7 questions, GO verdict)
+6b29bcc feat(agentgen): Stage A explicit bindings — PortDef, VarRef extension, resolveBindings, validateBindings, BROKEN_BINDING (10 BND tests)
+4f98949 feat(canvas): Stage B explicit bindings — TypeScript types (api.ts, nodeRegistry.ts, types.ts, page.tsx)
 0edcf2a feat(agentgen): Stage 6 runtime contract enforcement — scoped inputs + output promotion
-705be39 docs(agentgen): Stage 6 runtime enforcement architecture review
-e36f68c docs(current): update HEAD to fa879b7 — Step 6 ExposedVars removal complete
-fa879b7 refactor(agentgen): remove ExposedVars from TransformStepConfig (Step 6)
-2c64517 feat(agentgen+canvas): expose compiled step contracts to frontend debugger
 ```
-
-Architecture review committed (afa4a9f):
-- `docs/architecture-v2/EXPLICIT_BINDINGS_DESIGN_REVIEW.md` — explicit canvas data bindings design review (7 questions answered, go/no-go recommendation: GO)
 
 ---
 
@@ -236,6 +233,7 @@ App global params: e2e validated 2026-08-25 — GET/PUT/DELETE live ✅
 | Frontend spec consumer | `AgentValidationReport.StepContracts`; RightPanel READS/WRITES from compiled contract post-validate | ✅ |
 | Explicit bindings Stage A | `PortDef`, `VarRef.SourceStep/SourcePort`, `Binding`/`canvasStep.Inputs`, `resolveBindings`, `validateBindings`, `BROKEN_BINDING`; backward-compat | ✅ |
 | Explicit bindings Stage B | `api.ts` Binding/VarRef/AgentStepDoc.inputs; `nodeRegistry.ts` PortDef/input_ports/output_ports; `types.ts` StepData.inputs; `page.tsx` save/load round-trip | ✅ |
+| Explicit bindings Stage C | StepNode data-port handles (orange input squares, indigo output squares); DataEdge dashed wire; onPipeConnect data-edge branch; isPipeConnectionValid skips data edges; both save paths derive inputs from data edges; load path reconstructs data edges from step.inputs | ✅ |
 
 ### Key security constraints (always in force)
 - Credentials decrypted per-request, held only in `InvocationContext.Credentials`, never logged/persisted
@@ -379,7 +377,7 @@ What was built:
 ### What remains (per DATAFLOW_EXPLICIT_FEASIBILITY.md)
 - Step 6: **COMPLETE** (fa879b7) — ExposedVars removed from TransformStepConfig; DB data-migrated; frontend cleaned up
 - Stage 6: **COMPLETE** (0edcf2a) — Scoped input resolution + output-only promotion in interpreter.executeStep; ErrContractViolation type; execTransform simplified; 12 new CONT tests
-- Explicit bindings (wiring vars between steps with explicit edges) — **Stage A COMPLETE**: `PortDef`, `VarRef.SourceStep/SourcePort`, `Binding`/`canvasStep.Inputs`, `resolveBindings`, `validateBindings`, `BROKEN_BINDING`; 10 BND tests; runtime unchanged
+- Explicit bindings (wiring vars between steps with explicit edges) — **Stages A/B/C COMPLETE**: Go compiler (PortDef, resolveBindings, validateBindings, BROKEN_BINDING, 10 BND tests); TypeScript types; canvas port handles (orange data-in, indigo data-out) + DataEdge dashed wire; onPipeConnect data-edge path; save/load round-trip; backward-compat. Runtime unchanged.
 - Structured per-var trace events — not yet (requires trace sink design)
 - Temporal/ADK integration — not yet
 
@@ -387,7 +385,26 @@ What was built:
 
 ## Next recommended task
 
-### Step 1 — Deploy app_params and E2E validate (immediate)
+### Step 0 — Rebuild frontend after Stage C (immediate)
+
+Stage C changes are in `frontend/src/app/admin/agents/builder/`. The Next.js dev server (hot-reload) picks these up automatically; production requires a rebuild:
+
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-frontend
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-frontend
+```
+
+E2E validation path for Stage C:
+1. Open a canvas agent with an LLM + Response step
+2. LLM node should show an indigo data-output handle (port `output`) below the control source
+3. Response node should show an orange data-input handle (port `from_var`) above the control target
+4. Drag from LLM indigo handle to Response orange handle → dashed indigo wire appears
+5. Save → inspect payload: `step.inputs = {"from_var": {"from_step": "llm1", "from_port": "output"}}`
+6. Reload → dashed wire reappears (reconstructed from step.inputs)
+7. Delete the wire → step.inputs absent on next save
+8. Open a legacy canvas (no inputs) → renders and works unchanged
+
+### Step 1 — Deploy app_params and E2E validate
 
 The app global params feature is fully coded and tested but containers have not been rebuilt yet. Do this before starting any new feature:
 
