@@ -219,72 +219,68 @@ function DataEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targ
   );
 }
 
-// ── BundleEdge — multi-port bundled cable visual ───────────────────────────────
-// Renders the port-rail + fan-out bundle matching the reference image.
-// All edges sharing the same source→target pair are grouped; each group gets one
-// BundleEdge that draws ALL wires, the floating port label columns, and the count badge.
-// Individual edges in the group are rendered invisible (opacity:0 BaseEdge placeholder).
+// ── BundleEdge — bundled cable wire visual ────────────────────────────────────
+// Dots are rendered ON the node card by StepNode (always visible).
+// BundleEdge draws only the wires + count badge between nodes.
+// sourceX/Y and targetX/Y come from the invisible 1×1 RF handles in StepNode,
+// which are positioned to match the visible dot positions.
 
 interface BundleEdgeData {
-  portLabel?: string;       // label for the single port this edge carries
-  bundleIndex?: number;     // position of this edge within the group (0-based)
-  bundleTotal?: number;     // total edges in the group
-  bundlePorts?: string[];   // ordered port labels for the whole group
-  isLeader?: boolean;       // only the leader (index=0) renders the full visual
+  portLabel?: string;
+  bundleIndex?: number;
+  bundleTotal?: number;
+  bundlePorts?: string[];
+  isLeader?: boolean;
   layoutDir?: 'LR' | 'TB';
 }
 
-const RAIL_DOT  = 7;    // port dot diameter px
-const RAIL_STEP = 22;   // px between port rows
-const RAIL_PAD  = 10;   // px from node edge to dot center
-const LABEL_OFF = 10;   // px from dot to label
+// Must match PORT_STEP and PORT_COLORS in StepNode.tsx
+const WIRE_STEP   = 22;
+const WIRE_COLORS = ['#818cf8','#a78bfa','#7dd3fc','#6ee7b7','#fcd34d','#f9a8d4'];
 
 function BundleEdge({
   id, sourceX, sourceY, targetX, targetY,
   sourcePosition, targetPosition, data,
 }: EdgeProps) {
   const [hovered, setHovered] = useState(false);
-  const d = (data ?? {}) as BundleEdgeData;
-  const ports      = d.bundlePorts ?? (d.portLabel ? [d.portLabel] : ['']);
-  const total      = ports.length;
-  const isLeader   = d.isLeader ?? true;
-  const layoutDir  = d.layoutDir ?? 'LR';
-  const isLR       = layoutDir === 'LR';
+  const d         = (data ?? {}) as BundleEdgeData;
+  const ports     = d.bundlePorts ?? (d.portLabel ? [d.portLabel] : ['']);
+  const total     = ports.length;
+  const isLeader  = d.isLeader ?? true;
+  const layoutDir = d.layoutDir ?? 'LR';
+  const isLR      = layoutDir === 'LR';
 
-  // For a single edge group just draw a clean smooth path.
+  // Single edge — plain smooth wire.
   if (total <= 1) {
     const [edgePath] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
-    return (
-      <BaseEdge id={id} path={edgePath}
-        style={{ stroke: '#475569', strokeWidth: 1.5, opacity: 0.7 }} />
-    );
+    return <BaseEdge id={id} path={edgePath} style={{ stroke: '#818cf8', strokeWidth: 1.5, strokeDasharray: '5 3', opacity: 0.8 }} />;
   }
 
-  // Multi-port bundle:
-  // Source rail: dots stacked at sourceX/sourceY area, spread vertically (LR) or horizontally (TB)
-  // Target rail: dots stacked at targetX/targetY area
-  // Each wire fans from source dot → midpoint → target dot
-  // Count badge at midpoint
+  // Non-leader: invisible placeholder — RF tracks the connection, leader draws the visual.
+  if (!isLeader) {
+    return <BaseEdge id={id} path={`M ${sourceX} ${sourceY} L ${targetX} ${targetY}`}
+      style={{ stroke: 'transparent', strokeWidth: 0 }} />;
+  }
 
-  // Rail origin: center the stack around the edge anchor point
-  const railOffset = (idx: number) => (idx - (total - 1) / 2) * RAIL_STEP;
-
-  // Source dot positions
-  const srcDots = ports.map((_, i) => ({
-    x: isLR ? sourceX + RAIL_PAD           : sourceX + railOffset(i),
-    y: isLR ? sourceY + railOffset(i)      : sourceY + RAIL_PAD,
-  }));
-  // Target dot positions
-  const tgtDots = ports.map((_, i) => ({
-    x: isLR ? targetX - RAIL_PAD           : targetX + railOffset(i),
-    y: isLR ? targetY + railOffset(i)      : targetY - RAIL_PAD,
-  }));
-
-  // Midpoint for bundle convergence + count badge
+  // Leader draws all wires for the group.
+  // sourceX/Y is the handle of port[0] (index=0). Each subsequent port handle is
+  // WIRE_STEP px lower (LR) or rightward (TB) — matching StepNode's dotOffset(idx).
   const midX = (sourceX + targetX) / 2;
   const midY = (sourceY + targetY) / 2;
 
-  // Cubic bezier from each source dot → mid → target dot
+  // Each wire: from its source handle position → converge at mid → to its target handle position.
+  // Port i handle offset relative to port 0: i * WIRE_STEP in the perpendicular axis.
+  function portSrcPos(i: number) {
+    return isLR
+      ? { x: sourceX, y: sourceY + i * WIRE_STEP }
+      : { x: sourceX + i * WIRE_STEP, y: sourceY };
+  }
+  function portTgtPos(i: number) {
+    return isLR
+      ? { x: targetX, y: targetY + i * WIRE_STEP }
+      : { x: targetX + i * WIRE_STEP, y: targetY };
+  }
+
   function wirePath(src: {x:number;y:number}, tgt: {x:number;y:number}): string {
     const cx1 = isLR ? midX : src.x;
     const cy1 = isLR ? src.y : midY;
@@ -293,110 +289,38 @@ function BundleEdge({
     return `M ${src.x} ${src.y} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${tgt.x} ${tgt.y}`;
   }
 
-  // Wire color — cycle through indigo shades for visual separation
-  const wireColors = ['#818cf8','#a78bfa','#7dd3fc','#6ee7b7','#fcd34d','#f9a8d4'];
-  const wireOpacity = hovered ? 0.85 : 0.45;
-  const wireWidth   = hovered ? 1.8  : 1.2;
+  const wireOpacity = hovered ? 0.9 : 0.55;
+  const wireWidth   = hovered ? 2.0 : 1.4;
 
-  if (!isLeader) {
-    // Non-leader edges: invisible placeholder so React Flow still tracks the connection.
-    return <BaseEdge id={id} path={`M ${sourceX} ${sourceY} L ${targetX} ${targetY}`}
-      style={{ stroke: 'transparent', strokeWidth: 0 }} />;
-  }
+  // Badge center — midpoint of the middle wire
+  const midWire = Math.floor(total / 2);
+  const badgeX = (portSrcPos(midWire).x + portTgtPos(midWire).x) / 2;
+  const badgeY = (portSrcPos(midWire).y + portTgtPos(midWire).y) / 2;
 
   return (
     <>
-      {/* Wire paths */}
       {ports.map((_, i) => (
         <path
           key={i}
-          d={wirePath(srcDots[i], tgtDots[i])}
+          d={wirePath(portSrcPos(i), portTgtPos(i))}
           fill="none"
-          stroke={wireColors[i % wireColors.length]}
+          stroke={WIRE_COLORS[i % WIRE_COLORS.length]}
           strokeWidth={wireWidth}
           opacity={wireOpacity}
           style={{ transition: 'opacity 0.15s, stroke-width 0.15s' }}
         />
       ))}
 
-      {/* Port rail dots + labels — rendered via EdgeLabelRenderer for HTML overlay */}
       <EdgeLabelRenderer>
-        {/* Source port rail */}
-        {ports.map((label, i) => (
-          <div key={`src-${i}`} style={{
-            position: 'absolute',
-            transform: `translate(-50%,-50%) translate(${srcDots[i].x}px,${srcDots[i].y}px)`,
-            pointerEvents: 'none',
-            display: 'flex',
-            flexDirection: isLR ? 'row' : 'column',
-            alignItems: 'center',
-            gap: 4,
-          }}>
-            {/* label left of dot (LR) or above dot (TB) */}
-            {isLR && (
-              <span style={{
-                fontSize: 9, color: wireColors[i % wireColors.length],
-                fontFamily: 'JetBrains Mono, monospace', whiteSpace: 'nowrap',
-                opacity: hovered ? 1 : 0.7, marginRight: LABEL_OFF - 4,
-                maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>{label}</span>
-            )}
-            {/* dot */}
-            <div style={{
-              width: RAIL_DOT, height: RAIL_DOT, borderRadius: '50%',
-              background: wireColors[i % wireColors.length],
-              boxShadow: hovered ? `0 0 6px 2px ${wireColors[i % wireColors.length]}` : 'none',
-              flexShrink: 0,
-            }} />
-            {!isLR && (
-              <span style={{
-                fontSize: 9, color: wireColors[i % wireColors.length],
-                fontFamily: 'JetBrains Mono, monospace', whiteSpace: 'nowrap',
-                opacity: hovered ? 1 : 0.7, marginTop: LABEL_OFF - 4,
-              }}>{label}</span>
-            )}
-          </div>
-        ))}
-
-        {/* Target port rail */}
-        {ports.map((label, i) => (
-          <div key={`tgt-${i}`} style={{
-            position: 'absolute',
-            transform: `translate(-50%,-50%) translate(${tgtDots[i].x}px,${tgtDots[i].y}px)`,
-            pointerEvents: 'none',
-            display: 'flex',
-            flexDirection: isLR ? 'row' : 'column',
-            alignItems: 'center',
-            gap: 4,
-          }}>
-            {/* dot */}
-            <div style={{
-              width: RAIL_DOT, height: RAIL_DOT, borderRadius: '50%',
-              background: wireColors[i % wireColors.length],
-              boxShadow: hovered ? `0 0 6px 2px ${wireColors[i % wireColors.length]}` : 'none',
-              flexShrink: 0,
-            }} />
-            {/* label right of dot (LR) or below dot (TB) */}
-            <span style={{
-              fontSize: 9, color: wireColors[i % wireColors.length],
-              fontFamily: 'JetBrains Mono, monospace', whiteSpace: 'nowrap',
-              opacity: hovered ? 1 : 0.7,
-              [isLR ? 'marginLeft' : 'marginTop']: LABEL_OFF - 4,
-              maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis',
-            }}>{label}</span>
-          </div>
-        ))}
-
-        {/* Count badge at midpoint — hover target */}
         <div
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           style={{
             position: 'absolute',
-            transform: `translate(-50%,-50%) translate(${midX}px,${midY}px)`,
+            transform: `translate(-50%,-50%) translate(${badgeX}px,${badgeY}px)`,
             pointerEvents: 'all',
-            width: 28, height: 28, borderRadius: '50%',
-            background: hovered ? 'rgba(99,102,241,0.9)' : 'rgba(30,30,60,0.85)',
+            width: 26, height: 26, borderRadius: '50%',
+            background: hovered ? 'rgba(99,102,241,0.95)' : 'rgba(20,20,50,0.88)',
             border: `2px solid ${hovered ? '#818cf8' : '#475569'}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: 10, fontWeight: 700, color: hovered ? '#fff' : '#94a3b8',
