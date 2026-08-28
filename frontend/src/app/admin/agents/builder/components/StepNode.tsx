@@ -260,24 +260,31 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       style={{
-        background: CARD_BG,
+        background: 'transparent',
         minWidth: 100,
         minHeight: cardHeight,
-        textAlign: 'center',
+        position: 'relative',
         paddingTop:    topPad,
         paddingBottom: botPad,
         paddingLeft:   leftPad,
         paddingRight:  rightPad,
+        // CSS var for breathe keyframe
+        ['--breathe-color' as string]: breatheColor,
+      }}
+    >
+      {/* Inner card — only this div has the background, border, glow */}
+      <div style={{
+        position: 'absolute',
+        inset: `${topPad - 8}px ${rightPad - 8}px ${botPad - 8}px ${leftPad - 8}px`,
+        background: CARD_BG,
         border: `2px solid ${borderColor}`,
         borderRadius: '12px',
         boxShadow,
         animation,
         transition: 'border-color 0.15s, box-shadow 0.2s',
-        position: 'relative',
-        // CSS var for breathe keyframe — set even when not breathing (no cost)
-        ['--breathe-color' as string]: breatheColor,
-      }}
-    >
+        pointerEvents: 'none',
+        zIndex: 0,
+      }} />
       {/* ── Control INPUT handle — invisible at rest, fades in on hover/wired ── */}
       {!nodeDef.is_source && (
         <Handle
@@ -349,7 +356,8 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         </React.Fragment>
       ))}
 
-      {/* ── Node card content ── */}
+      {/* ── Node card content — sits above the absolute background div ── */}
+      <div style={{ position: 'relative', zIndex: 1, textAlign: 'center' }}>
       <div style={{ fontSize: '26px', lineHeight: 1 }}>{meta.emoji}</div>
       <div style={{ color: '#fff', fontWeight: 700, fontSize: '11px', marginTop: 5 }}>
         {data.label || meta.label}
@@ -378,6 +386,7 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
       {dbg?.state === 'pending' && (
         <div style={{ marginTop: 4, fontSize: '9px', color: '#f59e0b' }}>{isLR ? 'next →' : 'next ↓'}</div>
       )}
+      </div>{/* end content wrapper */}
     </div>
   );
 }
