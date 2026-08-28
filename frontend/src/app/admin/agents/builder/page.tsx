@@ -1260,6 +1260,28 @@ function CanvasInner() {
     markDirty();
   }, [setLocalPipeNodes, setLocalPipeEdges, markDirty]);
 
+  // Rename a dynamic input port: update data.inputs key + retarget the data edge.
+  const onRenameInput = useCallback((nodeId: string, oldPortID: string, newPortID: string) => {
+    if (oldPortID === newPortID) return;
+    setLocalPipeNodes(prev => prev.map(n => {
+      if (n.id !== nodeId) return n;
+      const existing = { ...((n.data as unknown as import('./types').StepData).inputs ?? {}) };
+      if (!(oldPortID in existing)) return n;
+      existing[newPortID] = existing[oldPortID];
+      delete existing[oldPortID];
+      return { ...n, data: { ...n.data, inputs: existing } };
+    }));
+    setLocalPipeEdges(prev => prev.map(e => {
+      if (!isDataEdge(e) || e.target !== nodeId || e.targetHandle !== `data-in-${oldPortID}`) return e;
+      return {
+        ...e,
+        id: e.id.replace(`-${oldPortID}`, `-${newPortID}`),
+        targetHandle: `data-in-${newPortID}`,
+      };
+    }));
+    markDirty();
+  }, [setLocalPipeNodes, setLocalPipeEdges, markDirty]);
+
   // Tracks whether onConnect fired during the current drag (to detect drop-on-nothing).
   const connectFiredRef = useRef(false);
 
@@ -2399,6 +2421,7 @@ function CanvasInner() {
             debugStep={debugStep}
             nodeTypesReady={nodeTypesReady}
             onDeleteInput={onDeleteInput}
+            onRenameInput={onRenameInput}
           />
         )}
       </div>

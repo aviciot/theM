@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Node, Edge } from '@xyflow/react';
 import { getNodeDef } from '@/lib/nodeRegistry';
 import type { AgentRootData, SkillData, StepData, DebugState } from '../types';
@@ -8,6 +8,53 @@ import { C, labelStyle, inputStyle, textareaStyle, selectStyle, fieldGap, hint, 
 import { stepMeta } from './StepNode';
 import { extractNodeVars, upstreamVarSources, downstreamReadVars } from '../nodeVars';
 import { TransformPanel } from './TransformPanel';
+
+// ── Port alias rename field ───────────────────────────────────────────────────
+// Shown in the READS section for dynamic (user-dragged) input ports.
+// Lets the user rename the port ID (which is the variable alias used in config).
+function PortAliasField({
+  nodeId, portID, onRename,
+}: { nodeId: string; portID: string; onRename: (nodeId: string, oldID: string, newID: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(portID);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { setDraft(portID); }, [portID]);
+  useEffect(() => { if (editing) inputRef.current?.select(); }, [editing]);
+
+  function commit() {
+    setEditing(false);
+    const clean = draft.trim().replace(/[^a-z0-9_]/gi, '_').replace(/^[0-9]/, '_$&');
+    if (clean && clean !== portID) onRename(nodeId, portID, clean);
+    else setDraft(portID);
+  }
+
+  if (!editing) {
+    return (
+      <div
+        onClick={() => setEditing(true)}
+        title="Click to rename port alias"
+        style={{ padding: '3px 8px 5px', fontSize: 10, color: '#475569', fontFamily: 'monospace', cursor: 'text', borderTop: '1px dashed rgba(0,240,255,0.1)', display: 'flex', alignItems: 'center', gap: 4 }}
+      >
+        <span style={{ color: '#334155', fontSize: 9 }}>alias:</span>
+        <span style={{ color: '#7dd3fc' }}>{portID}</span>
+        <span style={{ color: '#334155', fontSize: 9, marginLeft: 2 }}>✎</span>
+      </div>
+    );
+  }
+  return (
+    <div style={{ padding: '3px 8px 5px', borderTop: '1px dashed rgba(0,240,255,0.1)' }}>
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setEditing(false); setDraft(portID); } }}
+        style={{ width: '100%', background: 'rgba(0,240,255,0.06)', border: '1px solid rgba(0,240,255,0.3)', color: '#7dd3fc', fontSize: 10, fontFamily: 'monospace', padding: '2px 4px', borderRadius: 3, outline: 'none', boxSizing: 'border-box' }}
+      />
+    </div>
+  );
+}
 
 interface RightPanelProps {
   selectedNode: Node;
@@ -32,6 +79,7 @@ interface RightPanelProps {
   debugStep: () => void;
   nodeTypesReady?: boolean;
   onDeleteInput?: (nodeId: string, portID: string) => void;
+  onRenameInput?: (nodeId: string, oldPortID: string, newPortID: string) => void;
 }
 
 export function RightPanel({
@@ -57,6 +105,7 @@ export function RightPanel({
   debugStep,
   nodeTypesReady,
   onDeleteInput,
+  onRenameInput,
 }: RightPanelProps) {
   const [mcpServers, setMcpServers] = useState<MCPServer[]>([]);
   useEffect(() => {
@@ -310,18 +359,27 @@ export function RightPanel({
                       const src = !isAuthoritative ? varSrcMap?.get(v) : undefined;
                       const isDynamic = v in dynamicInputs;
                       return (
-                        <div key={v} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 8px', borderRadius: '6px', marginBottom: '4px', background: unresolved ? 'rgba(248,113,113,0.06)' : 'rgba(0,240,255,0.05)', border: `1px solid ${unresolved ? 'rgba(248,113,113,0.3)' : 'rgba(0,240,255,0.15)'}` }}>
-                          <code style={{ color: unresolved ? '#f87171' : C.cyan, fontSize: '11px', fontFamily: 'monospace', flexShrink: 0 }}>{`{{.${v}}}`}</code>
-                          {src && <><span style={{ color: C.textMuted, fontSize: '10px' }}>from</span><span style={{ color: '#94a3b8', fontSize: '10px' }}>{stepMeta(src.step_type).emoji} {src.label}</span></>}
-                          {unresolved && <span style={{ color: '#f87171', fontSize: '10px' }}>— not guaranteed on all paths</span>}
-                          {isDynamic && onDeleteInput && (
-                            <button
-                              onClick={() => onDeleteInput(selectedNode.id, v)}
-                              title={`Remove ${v} input port`}
-                              style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: '12px', lineHeight: 1, padding: '0 2px', display: 'flex', alignItems: 'center' }}
-                              onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
-                              onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
-                            >✕</button>
+                        <div key={v} style={{ borderRadius: '6px', marginBottom: '4px', background: unresolved ? 'rgba(248,113,113,0.06)' : 'rgba(0,240,255,0.05)', border: `1px solid ${unresolved ? 'rgba(248,113,113,0.3)' : 'rgba(0,240,255,0.15)'}` }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 8px' }}>
+                            <code style={{ color: unresolved ? '#f87171' : C.cyan, fontSize: '11px', fontFamily: 'monospace', flexShrink: 0 }}>{`{{.${v}}}`}</code>
+                            {src && <><span style={{ color: C.textMuted, fontSize: '10px' }}>from</span><span style={{ color: '#94a3b8', fontSize: '10px' }}>{stepMeta(src.step_type).emoji} {src.label}</span></>}
+                            {unresolved && <span style={{ color: '#f87171', fontSize: '10px' }}>— not guaranteed on all paths</span>}
+                            {isDynamic && onDeleteInput && (
+                              <button
+                                onClick={() => onDeleteInput(selectedNode.id, v)}
+                                title={`Remove ${v} input port`}
+                                style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', fontSize: '12px', lineHeight: 1, padding: '0 2px', display: 'flex', alignItems: 'center' }}
+                                onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
+                                onMouseLeave={e => (e.currentTarget.style.color = '#64748b')}
+                              >✕</button>
+                            )}
+                          </div>
+                          {isDynamic && onRenameInput && (
+                            <PortAliasField
+                              nodeId={selectedNode.id}
+                              portID={v}
+                              onRename={onRenameInput}
+                            />
                           )}
                         </div>
                       );
