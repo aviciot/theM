@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
+import { Handle, Position, useUpdateNodeInternals, useStore } from '@xyflow/react';
 import { getNodeDef, resolveInputPorts, resolveOutputPorts } from '@/lib/nodeRegistry';
 import type { StepNodeData, DebugNodeState } from '../types';
 import { useLayoutDir } from '../LayoutContext';
@@ -43,6 +43,13 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
   const sub      = nodeDef.summary(cfg);
   const updateNodeInternals = useUpdateNodeInternals();
 
+  // Read edges for this node from React Flow store to know which static ports are wired.
+  const edges = useStore(s => s.edges);
+  const dataEdgesOut = edges.filter(e => e.source === id && e.sourceHandle?.startsWith('data-out-'));
+  const dataEdgesIn  = edges.filter(e => e.target === id && e.targetHandle?.startsWith('data-in-'));
+  const wiredOutPortIDs = dataEdgesOut.map(e => e.sourceHandle!.replace('data-out-', ''));
+  const wiredInPortIDs  = dataEdgesIn.map(e => e.targetHandle!.replace('data-in-', ''));
+
   // Ghost port during drag-hover.
   const dynamicInputPortIDs: string[] = data.inputs ? Object.keys(data.inputs) : [];
   const ghostVar  = data._draggingVar;
@@ -52,8 +59,9 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
     : dynamicInputPortIDs;
 
   // Resolve ports generically from backend definition.
-  const inputPorts  = resolveInputPorts(nodeDef, allInputPortIDs);
-  const outputPorts = resolveOutputPorts(nodeDef, cfg as Record<string, unknown>);
+  // Static registry ports only appear when they are already wired via a data edge.
+  const inputPorts  = resolveInputPorts(nodeDef, [...allInputPortIDs, ...wiredInPortIDs]);
+  const outputPorts = resolveOutputPorts(nodeDef, cfg as Record<string, unknown>, wiredOutPortIDs);
 
   // Control output ports are those with kind:'control' in outputPorts.
   const ctrlOutputPorts = outputPorts.filter(p => p.kind === 'control');
@@ -141,7 +149,9 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
       : { position: 'absolute', bottom: -18, left: `calc(${fraction * 100}% - 6px)`, fontSize: 9, color, fontWeight: 700, pointerEvents: 'none' };
   }
 
-  const dataHandleBase = { width: HANDLE_SZ, height: HANDLE_SZ, borderRadius: 2, border: '1px solid rgba(0,0,0,0.4)' };
+  // Data handles are invisible — their positions are used by React Flow for connection
+  // geometry, but the visible dots + labels are drawn by BundleEdge via EdgeLabelRenderer.
+  const dataHandleBase = { width: 1, height: 1, opacity: 0, border: 'none', background: 'transparent' };
 
   return (
     <div style={{
@@ -170,22 +180,16 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         />
       )}
 
-      {/* ── Data input port handles (generic, from resolveInputPorts) ── */}
-      {inputPorts.filter(p => p.kind === 'data').map((port, idx) => {
-        const isGhost = port.id === `data-in-${ghostVar}` && dragAccept === 'accept' && !dynamicInputPortIDs.includes(ghostVar ?? '');
-        return (
-          <React.Fragment key={port.id}>
-            <Handle
-              id={port.id}
-              type="target"
-              position={targetPos}
-              style={{ ...dataHandleBase, background: port.color, ...inputPortStyle(idx), opacity: isGhost ? 0.55 : 1 }}
-              title={port.label}
-            />
-            <span style={{ ...inputLabelStyle(idx), opacity: isGhost ? 0.6 : 1 }}>{port.label}</span>
-          </React.Fragment>
-        );
-      })}
+      {/* ── Data input port handles (invisible — geometry only; dots rendered by BundleEdge) ── */}
+      {inputPorts.filter(p => p.kind === 'data').map((port, idx) => (
+        <Handle
+          key={port.id}
+          id={port.id}
+          type="target"
+          position={targetPos}
+          style={{ ...dataHandleBase, ...inputPortStyle(idx) }}
+        />
+      ))}
 
       {/* ── Named control output handles (e.g. branch true/false) ── */}
       {ctrlOutputPorts.map((port, idx) => (
@@ -214,18 +218,15 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         />
       )}
 
-      {/* ── Data output port handles (generic, from resolveOutputPorts) ── */}
+      {/* ── Data output port handles (invisible — geometry only; dots rendered by BundleEdge) ── */}
       {dataOutputPorts.map((port, idx) => (
-        <React.Fragment key={port.id}>
-          <Handle
-            id={port.id}
-            type="source"
-            position={sourcePos}
-            style={{ ...dataHandleBase, background: port.color, ...outputPortStyle(idx) }}
-            title={port.label}
-          />
-          <span style={outputLabelStyle(idx)}>{port.label}</span>
-        </React.Fragment>
+        <Handle
+          key={port.id}
+          id={port.id}
+          type="source"
+          position={sourcePos}
+          style={{ ...dataHandleBase, ...outputPortStyle(idx) }}
+        />
       ))}
 
       {/* ── Node card content ── */}

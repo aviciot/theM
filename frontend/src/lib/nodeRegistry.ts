@@ -153,8 +153,13 @@ export function resolveInputPorts(
     });
   }
 
-  // Static registry input ports
+  // Static registry input ports — only render if the port is already wired via a
+  // data edge (present in committedInputPortIDs). This avoids showing phantom port
+  // squares on nodes like Response/LLM where the port exists in the registry for
+  // the binding system but isn't visually wired in the common case.
+  const committedSet = new Set(committedInputPortIDs);
   for (const port of nodeDef.input_ports ?? []) {
+    if (!committedSet.has(port.id)) continue; // not yet wired — don't show the square
     ports.push({
       id: `data-in-${port.id}`,
       label: truncLabel(port.label || port.id),
@@ -174,11 +179,12 @@ export function resolveInputPorts(
  * 1. Named control-flow output ports (from control_output_ports, e.g. branch true/false)
  * 2. One anonymous control output (when no named control ports and node is not a sink)
  * 3. Dynamic data output ports (from dynamic_output_source evaluated against cfg)
- * 4. Static data output ports (from output_ports)
+ * 4. Static data output ports (from output_ports) — only if already wired
  */
 export function resolveOutputPorts(
   nodeDef: NodeDef,
   cfg: Record<string, unknown>,
+  committedOutputPortIDs: string[] = [], // port IDs that already have a data edge from them
 ): ResolvedPort[] {
   const ports: ResolvedPort[] = [];
 
@@ -225,8 +231,10 @@ export function resolveOutputPorts(
     }
   }
 
-  // Static data output ports (llm: output, etc.)
+  // Static data output ports (llm: output, etc.) — only show if already wired via a data edge.
+  const wiredOutputSet = new Set(committedOutputPortIDs);
   for (const port of nodeDef.output_ports ?? []) {
+    if (!wiredOutputSet.has(port.id)) continue; // not wired yet — don't show the square
     ports.push({
       id: `data-out-${port.id}`,
       label: truncLabel(port.label || port.id),

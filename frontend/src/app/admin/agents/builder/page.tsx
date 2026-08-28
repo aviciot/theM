@@ -219,6 +219,200 @@ function DataEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targ
   );
 }
 
+// ── BundleEdge — multi-port bundled cable visual ───────────────────────────────
+// Renders the port-rail + fan-out bundle matching the reference image.
+// All edges sharing the same source→target pair are grouped; each group gets one
+// BundleEdge that draws ALL wires, the floating port label columns, and the count badge.
+// Individual edges in the group are rendered invisible (opacity:0 BaseEdge placeholder).
+
+interface BundleEdgeData {
+  portLabel?: string;       // label for the single port this edge carries
+  bundleIndex?: number;     // position of this edge within the group (0-based)
+  bundleTotal?: number;     // total edges in the group
+  bundlePorts?: string[];   // ordered port labels for the whole group
+  isLeader?: boolean;       // only the leader (index=0) renders the full visual
+  layoutDir?: 'LR' | 'TB';
+}
+
+const RAIL_DOT  = 7;    // port dot diameter px
+const RAIL_STEP = 22;   // px between port rows
+const RAIL_PAD  = 10;   // px from node edge to dot center
+const LABEL_OFF = 10;   // px from dot to label
+
+function BundleEdge({
+  id, sourceX, sourceY, targetX, targetY,
+  sourcePosition, targetPosition, data,
+}: EdgeProps) {
+  const [hovered, setHovered] = useState(false);
+  const d = (data ?? {}) as BundleEdgeData;
+  const ports      = d.bundlePorts ?? (d.portLabel ? [d.portLabel] : ['']);
+  const total      = ports.length;
+  const isLeader   = d.isLeader ?? true;
+  const layoutDir  = d.layoutDir ?? 'LR';
+  const isLR       = layoutDir === 'LR';
+
+  // For a single edge group just draw a clean smooth path.
+  if (total <= 1) {
+    const [edgePath] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+    return (
+      <BaseEdge id={id} path={edgePath}
+        style={{ stroke: '#475569', strokeWidth: 1.5, opacity: 0.7 }} />
+    );
+  }
+
+  // Multi-port bundle:
+  // Source rail: dots stacked at sourceX/sourceY area, spread vertically (LR) or horizontally (TB)
+  // Target rail: dots stacked at targetX/targetY area
+  // Each wire fans from source dot → midpoint → target dot
+  // Count badge at midpoint
+
+  // Rail origin: center the stack around the edge anchor point
+  const railOffset = (idx: number) => (idx - (total - 1) / 2) * RAIL_STEP;
+
+  // Source dot positions
+  const srcDots = ports.map((_, i) => ({
+    x: isLR ? sourceX + RAIL_PAD           : sourceX + railOffset(i),
+    y: isLR ? sourceY + railOffset(i)      : sourceY + RAIL_PAD,
+  }));
+  // Target dot positions
+  const tgtDots = ports.map((_, i) => ({
+    x: isLR ? targetX - RAIL_PAD           : targetX + railOffset(i),
+    y: isLR ? targetY + railOffset(i)      : targetY - RAIL_PAD,
+  }));
+
+  // Midpoint for bundle convergence + count badge
+  const midX = (sourceX + targetX) / 2;
+  const midY = (sourceY + targetY) / 2;
+
+  // Cubic bezier from each source dot → mid → target dot
+  function wirePath(src: {x:number;y:number}, tgt: {x:number;y:number}): string {
+    const cx1 = isLR ? midX : src.x;
+    const cy1 = isLR ? src.y : midY;
+    const cx2 = isLR ? midX : tgt.x;
+    const cy2 = isLR ? tgt.y : midY;
+    return `M ${src.x} ${src.y} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${tgt.x} ${tgt.y}`;
+  }
+
+  // Wire color — cycle through indigo shades for visual separation
+  const wireColors = ['#818cf8','#a78bfa','#7dd3fc','#6ee7b7','#fcd34d','#f9a8d4'];
+  const wireOpacity = hovered ? 0.85 : 0.45;
+  const wireWidth   = hovered ? 1.8  : 1.2;
+
+  if (!isLeader) {
+    // Non-leader edges: invisible placeholder so React Flow still tracks the connection.
+    return <BaseEdge id={id} path={`M ${sourceX} ${sourceY} L ${targetX} ${targetY}`}
+      style={{ stroke: 'transparent', strokeWidth: 0 }} />;
+  }
+
+  return (
+    <>
+      {/* Wire paths */}
+      {ports.map((_, i) => (
+        <path
+          key={i}
+          d={wirePath(srcDots[i], tgtDots[i])}
+          fill="none"
+          stroke={wireColors[i % wireColors.length]}
+          strokeWidth={wireWidth}
+          opacity={wireOpacity}
+          style={{ transition: 'opacity 0.15s, stroke-width 0.15s' }}
+        />
+      ))}
+
+      {/* Port rail dots + labels — rendered via EdgeLabelRenderer for HTML overlay */}
+      <EdgeLabelRenderer>
+        {/* Source port rail */}
+        {ports.map((label, i) => (
+          <div key={`src-${i}`} style={{
+            position: 'absolute',
+            transform: `translate(-50%,-50%) translate(${srcDots[i].x}px,${srcDots[i].y}px)`,
+            pointerEvents: 'none',
+            display: 'flex',
+            flexDirection: isLR ? 'row' : 'column',
+            alignItems: 'center',
+            gap: 4,
+          }}>
+            {/* label left of dot (LR) or above dot (TB) */}
+            {isLR && (
+              <span style={{
+                fontSize: 9, color: wireColors[i % wireColors.length],
+                fontFamily: 'JetBrains Mono, monospace', whiteSpace: 'nowrap',
+                opacity: hovered ? 1 : 0.7, marginRight: LABEL_OFF - 4,
+                maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>{label}</span>
+            )}
+            {/* dot */}
+            <div style={{
+              width: RAIL_DOT, height: RAIL_DOT, borderRadius: '50%',
+              background: wireColors[i % wireColors.length],
+              boxShadow: hovered ? `0 0 6px 2px ${wireColors[i % wireColors.length]}` : 'none',
+              flexShrink: 0,
+            }} />
+            {!isLR && (
+              <span style={{
+                fontSize: 9, color: wireColors[i % wireColors.length],
+                fontFamily: 'JetBrains Mono, monospace', whiteSpace: 'nowrap',
+                opacity: hovered ? 1 : 0.7, marginTop: LABEL_OFF - 4,
+              }}>{label}</span>
+            )}
+          </div>
+        ))}
+
+        {/* Target port rail */}
+        {ports.map((label, i) => (
+          <div key={`tgt-${i}`} style={{
+            position: 'absolute',
+            transform: `translate(-50%,-50%) translate(${tgtDots[i].x}px,${tgtDots[i].y}px)`,
+            pointerEvents: 'none',
+            display: 'flex',
+            flexDirection: isLR ? 'row' : 'column',
+            alignItems: 'center',
+            gap: 4,
+          }}>
+            {/* dot */}
+            <div style={{
+              width: RAIL_DOT, height: RAIL_DOT, borderRadius: '50%',
+              background: wireColors[i % wireColors.length],
+              boxShadow: hovered ? `0 0 6px 2px ${wireColors[i % wireColors.length]}` : 'none',
+              flexShrink: 0,
+            }} />
+            {/* label right of dot (LR) or below dot (TB) */}
+            <span style={{
+              fontSize: 9, color: wireColors[i % wireColors.length],
+              fontFamily: 'JetBrains Mono, monospace', whiteSpace: 'nowrap',
+              opacity: hovered ? 1 : 0.7,
+              [isLR ? 'marginLeft' : 'marginTop']: LABEL_OFF - 4,
+              maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>{label}</span>
+          </div>
+        ))}
+
+        {/* Count badge at midpoint — hover target */}
+        <div
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          style={{
+            position: 'absolute',
+            transform: `translate(-50%,-50%) translate(${midX}px,${midY}px)`,
+            pointerEvents: 'all',
+            width: 28, height: 28, borderRadius: '50%',
+            background: hovered ? 'rgba(99,102,241,0.9)' : 'rgba(30,30,60,0.85)',
+            border: `2px solid ${hovered ? '#818cf8' : '#475569'}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 10, fontWeight: 700, color: hovered ? '#fff' : '#94a3b8',
+            boxShadow: hovered ? '0 0 12px 4px rgba(99,102,241,0.5)' : 'none',
+            transition: 'all 0.15s',
+            zIndex: 10,
+            cursor: 'default',
+          }}
+        >
+          {total}
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
+
 // nodeTypes MUST be defined outside the component for stable references.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const nodeTypes: NodeTypes = {
@@ -228,10 +422,60 @@ const nodeTypes: NodeTypes = {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const edgeTypes: EdgeTypes = { debugEdge: DebugEdge as any, dataEdge: DataEdge as any };
+const edgeTypes: EdgeTypes = { debugEdge: DebugEdge as any, dataEdge: DataEdge as any, bundleEdge: BundleEdge as any };
 
 // Returns true for data-binding edges (kind:'data'). False for control edges.
 function isDataEdge(e: Edge): boolean { return (e.data as Record<string, unknown> | undefined)?.kind === 'data'; }
+
+// applyBundleGroups — post-processes the data edge list to tag groups of edges
+// that share the same source→target node pair as bundleEdge type.
+// Single data edges between a pair stay as 'dataEdge'.
+// Groups of 2+ become 'bundleEdge' with leader/index/total/ports metadata.
+function applyBundleGroups(edges: Edge[], layoutDir: 'LR' | 'TB'): Edge[] {
+  // Only process data edges; leave control edges untouched.
+  const dataEdges = edges.filter(isDataEdge);
+  const ctrlEdges = edges.filter(e => !isDataEdge(e));
+
+  // Group data edges by source→target node pair.
+  const groups = new Map<string, Edge[]>();
+  for (const e of dataEdges) {
+    const key = `${e.source}::${e.target}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(e);
+  }
+
+  const result: Edge[] = [...ctrlEdges];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      // Single edge — keep as dataEdge, unchanged.
+      result.push(group[0]);
+      continue;
+    }
+    // Multiple edges — tag as bundleEdge group.
+    const portLabels = group.map(e => {
+      // Derive a readable port label: prefer sourceHandle port name, fallback to targetHandle port name.
+      const sh = (e.sourceHandle ?? '').replace('data-out-', '');
+      return sh || (e.targetHandle ?? '').replace('data-in-', '') || '?';
+    });
+    group.forEach((e, i) => {
+      result.push({
+        ...e,
+        type: 'bundleEdge',
+        data: {
+          ...(e.data as object ?? {}),
+          kind: 'data',
+          portLabel: portLabels[i],
+          bundleIndex: i,
+          bundleTotal: group.length,
+          bundlePorts: portLabels,
+          isLeader: i === 0,
+          layoutDir,
+        },
+      });
+    });
+  }
+  return result;
+}
 
 // ── Canvas Logo (copied from applications/page.tsx) ───────────────────────────
 type LogoStateDef = { opacity: number; filter: string; animation: string; }
@@ -430,6 +674,13 @@ function CanvasInner() {
   const pipelineEdges = activeSkillId ? (skillPipelines[activeSkillId]?.edges ?? []) : [];
   const [localPipeNodes, setLocalPipeNodes, onPipeNodesChange] = useNodesState<Node>(pipelineNodes);
   const [localPipeEdges, setLocalPipeEdges, onPipeEdgesChange] = useEdgesState<Edge>(pipelineEdges);
+
+  // Display edges: data edges between same source→target pair are grouped into bundleEdge.
+  // localPipeEdges stays as raw source of truth; this derived value is only for rendering.
+  const displayPipeEdges = React.useMemo(
+    () => applyBundleGroups(localPipeEdges, layoutDir),
+    [localPipeEdges, layoutDir],
+  );
 
   useEffect(() => {
     fetchNodeTypes()
@@ -2160,7 +2411,7 @@ function CanvasInner() {
           ) : (
             <ReactFlow
               nodes={debug.active ? debugNodes : localPipeNodes}
-              edges={debug.active ? debugEdges : localPipeEdges}
+              edges={debug.active ? debugEdges : displayPipeEdges}
               onNodesChange={onPipeNodesChange}
               onEdgesChange={onPipeEdgesChange}
               onConnect={onPipeConnect}
