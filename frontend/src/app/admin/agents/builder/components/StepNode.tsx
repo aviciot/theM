@@ -268,23 +268,9 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         paddingBottom: botPad,
         paddingLeft:   leftPad,
         paddingRight:  rightPad,
-        // CSS var for breathe keyframe
         ['--breathe-color' as string]: breatheColor,
       }}
     >
-      {/* Inner card — only this div has the background, border, glow */}
-      <div style={{
-        position: 'absolute',
-        inset: `${topPad - 8}px ${rightPad - 8}px ${botPad - 8}px ${leftPad - 8}px`,
-        background: CARD_BG,
-        border: `2px solid ${borderColor}`,
-        borderRadius: '12px',
-        boxShadow,
-        animation,
-        transition: 'border-color 0.15s, box-shadow 0.2s',
-        pointerEvents: 'none',
-        zIndex: 0,
-      }} />
       {/* ── Control INPUT handle — invisible at rest, fades in on hover/wired ── */}
       {!nodeDef.is_source && (
         <Handle
@@ -356,8 +342,17 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         </React.Fragment>
       ))}
 
-      {/* ── Node card content — sits above the absolute background div ── */}
-      <div style={{ position: 'relative', zIndex: 1, textAlign: 'center' }}>
+      {/* ── Node card content — bordered pill, transparent fill ── */}
+      <div style={{
+        position: 'relative', zIndex: 1, textAlign: 'center',
+        border: `2px solid ${borderColor}`,
+        borderRadius: '12px',
+        padding: '10px 14px 8px',
+        background: 'transparent',
+        boxShadow,
+        animation,
+        transition: 'border-color 0.15s, box-shadow 0.2s',
+      }}>
       <div style={{ fontSize: '26px', lineHeight: 1 }}>{meta.emoji}</div>
       <div style={{ color: '#fff', fontWeight: 700, fontSize: '11px', marginTop: 5 }}>
         {data.label || meta.label}
