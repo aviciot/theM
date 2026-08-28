@@ -14,40 +14,58 @@ const debugBorder: Record<DebugNodeState, string> = {
   idle: 'transparent', pending: '#f59e0b', running: '#60a5fa', done: '#4ade80', error: '#f87171',
 };
 const debugGlow: Record<DebugNodeState, string> = {
-  idle: 'none',
+  idle:    'none',
   pending: '0 0 8px 2px rgba(245,158,11,0.5)',
   running: '0 0 8px 2px rgba(96,165,250,0.5)',
   done:    '0 0 8px 2px rgba(74,222,128,0.4)',
   error:   '0 0 8px 2px rgba(248,113,113,0.5)',
 };
 
-// Port geometry — must stay in sync with WIRE_STEP in page.tsx (BundleEdge uses same spacing)
-const PORT_STEP  = 22;   // px between port rows
-const PORT_DOT   = 9;    // visible dot diameter
-const PORT_START = 28;   // px from node top/left to first port dot center
-
-// Port dot colors — cycled by index, matching BundleEdge WIRE_COLORS
+// Port geometry — PORT_STEP must match WIRE_STEP in page.tsx so BundleEdge wires align with dots
+const PORT_STEP  = 22;
+const PORT_DOT   = 9;
+const PORT_START = 28;
 const PORT_COLORS = ['#818cf8', '#a78bfa', '#7dd3fc', '#6ee7b7', '#fcd34d', '#f9a8d4'];
 
-// Card background — solid dark so node is always readable regardless of meta.bg opacity
-const CARD_BG = 'rgba(15,15,30,0.92)';
+// Solid dark card — overrides near-transparent registry bg_color values
+const CARD_BG = 'rgba(13,13,28,0.95)';
+
+// Breathing animation keyframes injected once
+const BREATHE_STYLE = `
+@keyframes breathe {
+  0%,100% { box-shadow: 0 0 6px 2px var(--breathe-color); }
+  50%      { box-shadow: 0 0 18px 6px var(--breathe-color); }
+}
+`;
+if (typeof document !== 'undefined' && !document.getElementById('sn-breathe-style')) {
+  const s = document.createElement('style');
+  s.id = 'sn-breathe-style';
+  s.textContent = BREATHE_STYLE;
+  document.head.appendChild(s);
+}
 
 export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
-  const nodeDef    = getNodeDef(data.step_type);
-  const meta       = { bg: nodeDef.bg, border: nodeDef.border, emoji: nodeDef.emoji, label: nodeDef.label };
-  const cfg        = data.config ?? {};
-  const layoutDir  = useLayoutDir();
-  const isLR       = layoutDir === 'LR';
-  const targetPos  = isLR ? Position.Left  : Position.Top;
-  const sourcePos  = isLR ? Position.Right : Position.Bottom;
-  const dbg        = data._debug;
-  const sub        = nodeDef.summary(cfg);
+  const nodeDef   = getNodeDef(data.step_type);
+  const meta      = { bg: nodeDef.bg, border: nodeDef.border, emoji: nodeDef.emoji, label: nodeDef.label };
+  const cfg       = data.config ?? {};
+  const layoutDir = useLayoutDir();
+  const isLR      = layoutDir === 'LR';
+  const targetPos = isLR ? Position.Left  : Position.Top;
+  const sourcePos = isLR ? Position.Right : Position.Bottom;
+  const dbg       = data._debug;
+  const sub       = nodeDef.summary(cfg);
   const updateNodeInternals = useUpdateNodeInternals();
 
   const [hovered, setHovered] = useState(false);
+  const onMouseEnter = useCallback(() => setHovered(true),  []);
+  const onMouseLeave = useCallback(() => setHovered(false), []);
 
-  // Read live edges — needed to know which wired ports to always show (even when not hovering)
+  // Live edges — tells us which ports are already wired
   const edges = useStore(s => s.edges);
+
+  const hasCtrlIn  = edges.some(e => e.target === id && (!e.sourceHandle || e.sourceHandle.startsWith('ctrl')));
+  const hasCtrlOut = edges.some(e => e.source === id && (!e.sourceHandle || e.sourceHandle.startsWith('ctrl')));
+
   const wiredOutIDs = edges
     .filter(e => e.source === id && e.sourceHandle?.startsWith('data-out-'))
     .map(e => e.sourceHandle!.replace('data-out-', ''));
@@ -63,7 +81,7 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
     ? [...dynamicInputIDs, ghostVar]
     : dynamicInputIDs;
 
-  // Resolve ALL ports — dynamic outputs always included (transform shows output_vars from config)
+  // Resolve ports — dynamic outputs always show (transform output_vars from config)
   const inputPorts  = resolveInputPorts(nodeDef, [...allInputIDs, ...wiredInIDs]);
   const outputPorts = resolveOutputPorts(nodeDef, cfg as Record<string, unknown>);
 
@@ -71,56 +89,57 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
   const dataInputPorts  = inputPorts.filter(p => p.kind === 'data');
   const dataOutputPorts = outputPorts.filter(p => p.kind === 'data');
 
-  // Which data ports to SHOW visually:
-  // - Always show wired ports (their wire already comes from them)
-  // - Show all data ports on hover (so user can drag from any)
-  const wiredOutSet = new Set(wiredOutIDs.map(id => `data-out-${id}`));
-  const wiredInSet  = new Set(wiredInIDs.map(id => `data-in-${id}`));
-
-  const visibleOutPorts = dataOutputPorts.filter(p => hovered || wiredOutSet.has(p.id));
-  const visibleInPorts  = dataInputPorts.filter(p => hovered || wiredInSet.has(p.id));
-
-  // RF handles must always be registered (invisible) even when not visually shown —
-  // so connection geometry works for wired ports even when not hovered.
-  // We render invisible handles for ALL resolved data ports at all times.
+  // Notify RF when handle list changes
   const portKey = [...inputPorts.map(p => p.id), ...outputPorts.map(p => p.id)].join(',');
   useEffect(() => { updateNodeInternals(id); }, [portKey, id, updateNodeInternals]);
 
-  // Node card min-height: enough for the tallest visible rail (hover state = all ports)
-  const maxDataPorts = Math.max(dataInputPorts.length, dataOutputPorts.length);
-  const railHeight   = maxDataPorts > 0 ? PORT_START + maxDataPorts * PORT_STEP + PORT_START : 0;
-  const cardHeight   = Math.max(90, railHeight);
+  // ── Unsatisfied mandatory ports → breathing glow ──────────────────────────────
+  // min_in > 0 means needs at least one incoming control edge
+  // min_out > 0 means needs at least one outgoing control edge
+  const needsIn  = nodeDef.edges.min_in  > 0 && !hasCtrlIn  && !nodeDef.is_source;
+  const needsOut = nodeDef.edges.min_out > 0 && !hasCtrlOut && !nodeDef.is_sink;
+  const breathes = (needsIn || needsOut) && data._debug?.state === undefined;
 
   // ── Visual state ──────────────────────────────────────────────────────────────
   const state = dbg?.state ?? 'idle';
-  let borderColor = state !== 'idle' ? debugBorder[state] : meta.border;
-  let boxShadow   = state !== 'idle' ? debugGlow[state]   : 'none';
-  if (state === 'idle') {
-    if (data._validation === 'error') {
-      borderColor = '#f87171';
-      boxShadow   = '0 0 8px 2px rgba(248,113,113,0.45)';
-    } else if (data._validation === 'warning' || data._stub) {
-      borderColor = '#f59e0b';
-      boxShadow   = '0 0 6px 1px rgba(245,158,11,0.35)';
-    }
-  }
-  if (dragAccept === 'accept') {
+  let borderColor = meta.border;
+  let boxShadow   = 'none';
+  let animation   = 'none';
+
+  if (state !== 'idle') {
+    borderColor = debugBorder[state];
+    boxShadow   = debugGlow[state];
+  } else if (data._validation === 'error') {
+    borderColor = '#f87171';
+    boxShadow   = '0 0 8px 2px rgba(248,113,113,0.45)';
+  } else if (data._validation === 'warning' || data._stub) {
+    borderColor = '#f59e0b';
+    boxShadow   = '0 0 6px 1px rgba(245,158,11,0.35)';
+  } else if (dragAccept === 'accept') {
     borderColor = '#4ade80';
     boxShadow   = '0 0 0 3px rgba(74,222,128,0.5), 0 0 16px 4px rgba(74,222,128,0.3)';
   } else if (dragAccept === 'reject') {
     borderColor = '#f87171';
     boxShadow   = '0 0 0 3px rgba(248,113,113,0.5), 0 0 12px 3px rgba(248,113,113,0.3)';
-  }
-
-  // On hover add a subtle glow to the border so user knows the node is interactive
-  if (hovered && state === 'idle' && dragAccept !== 'accept' && dragAccept !== 'reject') {
-    boxShadow = `0 0 0 1px ${meta.border}, 0 0 14px 3px ${meta.border}55`;
+  } else if (breathes) {
+    // Breathing glow — amber if needs both, indigo-ish per side
+    const breatheColor = needsIn && needsOut
+      ? 'rgba(245,158,11,0.55)'   // amber — needs wiring on both sides
+      : needsIn
+        ? 'rgba(99,102,241,0.55)' // indigo — needs incoming
+        : 'rgba(74,222,128,0.45)'; // green — needs outgoing
+    animation = `breathe 2.2s ease-in-out infinite`;
+    boxShadow = `0 0 6px 2px ${breatheColor}`;
+    // Pass breathe-color as CSS var for the keyframe
+    borderColor = breatheColor.replace('0.55', '0.8').replace('0.45', '0.7');
+  } else if (hovered) {
+    boxShadow = `0 0 0 1px ${meta.border}, 0 0 12px 3px ${meta.border}44`;
   }
 
   // ── Geometry helpers ──────────────────────────────────────────────────────────
   function dotOffset(idx: number) { return PORT_START + idx * PORT_STEP; }
 
-  // Invisible RF handle — just a connection point, no visual
+  // Invisible 1×1 RF handle — connection geometry only
   const invisHandle: React.CSSProperties = {
     width: 1, height: 1, opacity: 0, border: 'none', background: 'transparent',
   };
@@ -138,50 +157,58 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
       : { ...invisHandle, left: off, bottom: 0 };
   }
 
-  // Named control output handle positions — spread 20%–80%
-  function ctrlOutHandleStyle(idx: number, total: number): React.CSSProperties {
-    const frac = total === 1 ? 0.5 : 0.2 + (idx / (total - 1)) * 0.6;
-    return isLR
-      ? { top: `${frac * 100}%`, right: -6, width: 11, height: 11 }
-      : { left: `${frac * 100}%`, bottom: -6, width: 11, height: 11 };
+  // Control handle style — tiny, subtle at rest; slightly brighter on hover
+  function ctrlHandleStyle(wired: boolean): React.CSSProperties {
+    const visible = hovered || wired;
+    return {
+      width: 8, height: 8,
+      background: wired ? meta.border : `${meta.border}99`,
+      border: `1px solid ${meta.border}`,
+      opacity: visible ? 1 : 0,
+      transition: 'opacity 0.15s ease, box-shadow 0.15s ease',
+      boxShadow: hovered && !wired ? `0 0 6px 2px ${meta.border}66` : 'none',
+    };
   }
 
-  // ── Port dot + label renderers ────────────────────────────────────────────────
-  // Dots sit flush with the node border edge, labels inside the card.
-  // Transition: scale + opacity so they animate in on hover.
+  // Named control output positions — spread 20%–80%
+  function ctrlOutHandleStyle(idx: number, total: number): React.CSSProperties {
+    const frac = total === 1 ? 0.5 : 0.2 + (idx / (total - 1)) * 0.6;
+    const base = ctrlHandleStyle(hasCtrlOut);
+    return isLR
+      ? { ...base, position: 'absolute', top: `${frac * 100}%`, right: -5, width: 10, height: 10 }
+      : { ...base, position: 'absolute', left: `${frac * 100}%`, bottom: -5, width: 10, height: 10 };
+  }
 
-  const onMouseEnter = useCallback(() => setHovered(true),  []);
-  const onMouseLeave = useCallback(() => setHovered(false), []);
-
+  // ── Port dot renderer ─────────────────────────────────────────────────────────
   function PortDot({ port, idx, side }: { port: ResolvedPort; idx: number; side: 'in' | 'out' }) {
     const off     = dotOffset(idx);
     const color   = port.color || PORT_COLORS[idx % PORT_COLORS.length];
-    const isWired = side === 'out' ? wiredOutSet.has(port.id) : wiredInSet.has(port.id);
+    const isWired = side === 'out'
+      ? wiredOutIDs.includes(port.id.replace('data-out-', ''))
+      : wiredInIDs.includes(port.id.replace('data-in-', ''));
     const visible = hovered || isWired;
 
-    // Dot position: flush with card border edge
     const dotBase: React.CSSProperties = {
       position: 'absolute',
-      width:  PORT_DOT, height: PORT_DOT,
+      width: PORT_DOT, height: PORT_DOT,
       borderRadius: '50%',
       background: color,
-      boxShadow: `0 0 6px 2px ${color}88`,
+      boxShadow: isWired ? `0 0 8px 3px ${color}99` : `0 0 4px 1px ${color}66`,
       zIndex: 3,
-      transition: 'transform 0.15s ease, opacity 0.15s ease',
-      transform:  visible ? 'scale(1)'   : 'scale(0.3)',
-      opacity:    visible ? (isWired ? 1 : 0.85) : 0,
+      transition: 'transform 0.18s ease, opacity 0.18s ease',
+      transform:  visible ? 'scale(1)'   : 'scale(0.2)',
+      opacity:    visible ? 1 : 0,
       pointerEvents: 'none',
     };
 
     const dotStyle: React.CSSProperties = isLR
       ? side === 'in'
-        ? { ...dotBase, top: off - PORT_DOT / 2, left: -(PORT_DOT / 2 + 1) }
+        ? { ...dotBase, top: off - PORT_DOT / 2, left:  -(PORT_DOT / 2 + 1) }
         : { ...dotBase, top: off - PORT_DOT / 2, right: -(PORT_DOT / 2 + 1) }
       : side === 'in'
-        ? { ...dotBase, left: off - PORT_DOT / 2, top: -(PORT_DOT / 2 + 1) }
+        ? { ...dotBase, left: off - PORT_DOT / 2, top:    -(PORT_DOT / 2 + 1) }
         : { ...dotBase, left: off - PORT_DOT / 2, bottom: -(PORT_DOT / 2 + 1) };
 
-    // Label: inside card, next to dot
     const labelBase: React.CSSProperties = {
       position: 'absolute',
       fontSize: 8,
@@ -190,16 +217,16 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
       whiteSpace: 'nowrap',
       pointerEvents: 'none',
       lineHeight: 1,
-      transition: 'opacity 0.15s ease',
+      transition: 'opacity 0.18s ease',
       opacity: visible ? 1 : 0,
     };
 
     const labelStyle: React.CSSProperties = isLR
       ? side === 'in'
-        ? { ...labelBase, top: off - 4, left: PORT_DOT + 5, maxWidth: 58, overflow: 'hidden', textOverflow: 'ellipsis' }
-        : { ...labelBase, top: off - 4, right: PORT_DOT + 5, maxWidth: 58, overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' }
+        ? { ...labelBase, top: off - 4, left:  PORT_DOT + 5, maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis' }
+        : { ...labelBase, top: off - 4, right: PORT_DOT + 5, maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' }
       : side === 'in'
-        ? { ...labelBase, left: off - 2, top: PORT_DOT + 4 }
+        ? { ...labelBase, left: off - 2, top:    PORT_DOT + 4 }
         : { ...labelBase, left: off - 2, bottom: PORT_DOT + 4 };
 
     return (
@@ -210,15 +237,23 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
     );
   }
 
-  // ── Card padding — only reserve space when hovering (so resting card is compact) ──
-  // We always reserve space for the max port count so the card doesn't resize on hover,
-  // which would cause jarring layout shifts. Card height is stable.
+  // Card sizing — stable height regardless of hover (no layout shift)
+  const maxDataPorts = Math.max(dataInputPorts.length, dataOutputPorts.length);
+  const railHeight   = maxDataPorts > 0 ? PORT_START + maxDataPorts * PORT_STEP + PORT_START : 0;
+  const cardHeight   = Math.max(90, railHeight);
+
+  // Padding — reserve label space only when data ports exist (card stays stable on hover)
   const hasDataIn  = dataInputPorts.length  > 0;
   const hasDataOut = dataOutputPorts.length > 0;
-  const leftPad  = isLR  && hasDataIn  ? PORT_DOT + 60 : 14;
-  const rightPad = isLR  && hasDataOut ? PORT_DOT + 60 : 14;
-  const topPad   = !isLR && hasDataIn  ? PORT_DOT + 26 : 12;
-  const botPad   = !isLR && hasDataOut ? PORT_DOT + 26 : 12;
+  const leftPad  = isLR  && hasDataIn  ? PORT_DOT + 62 : 14;
+  const rightPad = isLR  && hasDataOut ? PORT_DOT + 62 : 14;
+  const topPad   = !isLR && hasDataIn  ? PORT_DOT + 28 : 12;
+  const botPad   = !isLR && hasDataOut ? PORT_DOT + 28 : 12;
+
+  // CSS var for breathe keyframe color
+  const breatheColor = needsIn && needsOut
+    ? 'rgba(245,158,11,0.55)'
+    : needsIn ? 'rgba(99,102,241,0.55)' : 'rgba(74,222,128,0.45)';
 
   return (
     <div
@@ -236,17 +271,24 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         border: `2px solid ${borderColor}`,
         borderRadius: '12px',
         boxShadow,
+        animation,
         transition: 'border-color 0.15s, box-shadow 0.2s',
         position: 'relative',
+        // CSS var for breathe keyframe — set even when not breathing (no cost)
+        ['--breathe-color' as string]: breatheColor,
       }}
     >
-      {/* ── Control target handle (always visible, centered) ── */}
+      {/* ── Control INPUT handle — invisible at rest, fades in on hover/wired ── */}
       {!nodeDef.is_source && (
-        <Handle id="ctrl-in" type="target" position={targetPos}
-          style={{ background: meta.border, width: 10, height: 10 }} />
+        <Handle
+          id="ctrl-in"
+          type="target"
+          position={targetPos}
+          style={ctrlHandleStyle(hasCtrlIn)}
+        />
       )}
 
-      {/* ── Data input handles — invisible geometry for ALL ports, dots shown conditionally ── */}
+      {/* ── Data input handles (invisible geometry) + animated dots ── */}
       {dataInputPorts.map((port, idx) => (
         <React.Fragment key={port.id}>
           <Handle
@@ -259,21 +301,23 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         </React.Fragment>
       ))}
 
-      {/* ── Named control output handles (branch true/false) ── */}
+      {/* ── Named control OUTPUT handles (branch true/false) ── */}
       {ctrlOutputPorts.map((port, idx) => (
         <React.Fragment key={port.id}>
           <Handle
             id={port.id}
             type="source"
             position={sourcePos}
-            style={{ background: port.color, ...ctrlOutHandleStyle(idx, ctrlOutputPorts.length) }}
+            style={ctrlOutHandleStyle(idx, ctrlOutputPorts.length)}
           />
-          {port.label && (
+          {port.label && hovered && (
             <div style={{
               position: 'absolute',
               fontSize: 8, fontWeight: 700, color: port.color, pointerEvents: 'none',
+              opacity: hovered ? 1 : 0,
+              transition: 'opacity 0.15s',
               ...(isLR
-                ? { right: -20, top: `calc(${(ctrlOutputPorts.length === 1 ? 0.5 : 0.2 + (idx / (ctrlOutputPorts.length - 1)) * 0.6) * 100}% - 5px)` }
+                ? { right: -22, top: `calc(${(ctrlOutputPorts.length === 1 ? 0.5 : 0.2 + (idx / (ctrlOutputPorts.length - 1)) * 0.6) * 100}% - 5px)` }
                 : { bottom: -16, left: `calc(${(ctrlOutputPorts.length === 1 ? 0.5 : 0.2 + (idx / (ctrlOutputPorts.length - 1)) * 0.6) * 100}% - 4px)` }),
             }}>
               {port.label.slice(0, 1).toUpperCase()}
@@ -282,13 +326,17 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         </React.Fragment>
       ))}
 
-      {/* ── Anonymous single control output (all non-sink nodes without named ctrl ports) ── */}
+      {/* ── Anonymous single control OUTPUT handle ── */}
       {ctrlOutputPorts.length === 0 && !nodeDef.is_sink && (
-        <Handle id="ctrl-out" type="source" position={sourcePos}
-          style={{ background: meta.border, width: 10, height: 10 }} />
+        <Handle
+          id="ctrl-out"
+          type="source"
+          position={sourcePos}
+          style={ctrlHandleStyle(hasCtrlOut)}
+        />
       )}
 
-      {/* ── Data output handles — invisible geometry for ALL ports, dots shown conditionally ── */}
+      {/* ── Data output handles (invisible geometry) + animated dots ── */}
       {dataOutputPorts.map((port, idx) => (
         <React.Fragment key={port.id}>
           <Handle
