@@ -30,17 +30,20 @@ const PORT_COLORS = ['#818cf8', '#a78bfa', '#7dd3fc', '#6ee7b7', '#fcd34d', '#f9
 // Solid dark card — overrides near-transparent registry bg_color values
 const CARD_BG = 'rgba(13,13,28,0.95)';
 
-// Breathing animation keyframes injected once
-const BREATHE_STYLE = `
+// Global styles injected once — override React Flow's default node background
+// and define the breathing keyframe
+const GLOBAL_STYLE = `
 @keyframes breathe {
   0%,100% { box-shadow: 0 0 6px 2px var(--breathe-color); }
   50%      { box-shadow: 0 0 18px 6px var(--breathe-color); }
 }
+.react-flow__node { background: transparent !important; border: none !important; padding: 0 !important; }
+.react-flow__node.selected > div { outline: none !important; }
 `;
-if (typeof document !== 'undefined' && !document.getElementById('sn-breathe-style')) {
+if (typeof document !== 'undefined' && !document.getElementById('sn-global-style')) {
   const s = document.createElement('style');
-  s.id = 'sn-breathe-style';
-  s.textContent = BREATHE_STYLE;
+  s.id = 'sn-global-style';
+  s.textContent = GLOBAL_STYLE;
   document.head.appendChild(s);
 }
 
@@ -157,26 +160,26 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
       : { ...invisHandle, left: off, bottom: 0 };
   }
 
-  // Control handle style — tiny, subtle at rest; slightly brighter on hover
-  function ctrlHandleStyle(wired: boolean): React.CSSProperties {
-    const visible = hovered || wired;
+  // Control handle — only visible on hover, hidden otherwise
+  // Always present as a valid RF drag target (opacity:0 ≠ gone)
+  function ctrlHandleStyle(): React.CSSProperties {
     return {
-      width: 8, height: 8,
-      background: wired ? meta.border : `${meta.border}99`,
+      width: 10, height: 10,
+      background: meta.border,
       border: `1px solid ${meta.border}`,
-      opacity: visible ? 1 : 0,
-      transition: 'opacity 0.15s ease, box-shadow 0.15s ease',
-      boxShadow: hovered && !wired ? `0 0 6px 2px ${meta.border}66` : 'none',
+      opacity: hovered ? 1 : 0,
+      transition: 'opacity 0.15s ease',
+      boxShadow: hovered ? `0 0 6px 3px ${meta.border}88` : 'none',
     };
   }
 
   // Named control output positions — spread 20%–80%
   function ctrlOutHandleStyle(idx: number, total: number): React.CSSProperties {
     const frac = total === 1 ? 0.5 : 0.2 + (idx / (total - 1)) * 0.6;
-    const base = ctrlHandleStyle(hasCtrlOut);
+    const base = ctrlHandleStyle();
     return isLR
-      ? { ...base, position: 'absolute', top: `${frac * 100}%`, right: -5, width: 10, height: 10 }
-      : { ...base, position: 'absolute', left: `${frac * 100}%`, bottom: -5, width: 10, height: 10 };
+      ? { ...base, position: 'absolute', top: `${frac * 100}%`, right: -5 }
+      : { ...base, position: 'absolute', left: `${frac * 100}%`, bottom: -5 };
   }
 
   // ── Port dot renderer ─────────────────────────────────────────────────────────
@@ -277,7 +280,7 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
           id="ctrl-in"
           type="target"
           position={targetPos}
-          style={ctrlHandleStyle(hasCtrlIn)}
+          style={ctrlHandleStyle()}
         />
       )}
 
@@ -325,7 +328,7 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
           id="ctrl-out"
           type="source"
           position={sourcePos}
-          style={ctrlHandleStyle(hasCtrlOut)}
+          style={ctrlHandleStyle()}
         />
       )}
 
