@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null); // eslint-disable-line @typescript-eslint/no-explicit-any
-import { getNodeDef, fetchNodeTypes, setCachedNodeTypes, canAddIncoming, canAddOutgoing } from '@/lib/nodeRegistry';
+import { getNodeDef, fetchNodeTypes, setCachedNodeTypes, canAddIncoming, canAddOutgoing, acceptsDynamicInputs } from '@/lib/nodeRegistry';
 import {
   themApi,
   getPreferences,
@@ -39,7 +39,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { C, inputStyle, INITIAL_DEBUG, INITIAL_VALIDATION, genUUID } from './constants';
 import { PROVIDER_LIST, RUNTIME_MODELS } from '../../applications/constants';
-import type { AgentRootData, SkillData, StepData, DebugNodeState, DebugState, ValidationState, LogoState, LayoutDir } from './types';
+import type { AgentRootData, SkillData, StepData, StepNodeData, DebugNodeState, DebugState, ValidationState, LogoState, LayoutDir } from './types';
 import { StepNode, stepMeta } from './components/StepNode';
 import { DebugPanel } from './components/DebugPanel';
 import { NodeContextMenu } from './components/NodeContextMenu';
@@ -627,7 +627,15 @@ function CanvasInner() {
         id: `step-${step.id}`,
         type: 'step',
         position: step.position ?? { x: 200, y: 80 + si * 120 },
-        data: { step_id: step.id, step_type: step.type, label: (step as AgentStepDoc & { label?: string }).label || stepMeta(step.type).label, config: (step.config as Record<string, unknown>) ?? {} },
+        data: {
+          step_id: step.id,
+          step_type: step.type,
+          label: (step as AgentStepDoc & { label?: string }).label || stepMeta(step.type).label,
+          config: (step.config as Record<string, unknown>) ?? {},
+          inputs: step.inputs
+            ? Object.fromEntries(Object.entries(step.inputs).map(([portID, b]) => [portID, { from_step: b.from_step, from_port: b.from_port }]))
+            : undefined,
+        },
       }));
       const stepEdges: Edge[] = [];
       for (const step of (sk.steps ?? [])) {
@@ -1058,13 +1066,11 @@ function CanvasInner() {
     markDirty();
   }, [setLocalPipeNodes, setLocalPipeEdges, markDirty]);
 
-  // Nodes that cannot accept dynamic data inputs.
-  const DATA_INPUT_REJECT = new Set(['input', 'transform', 'branch']);
-
   // Tracks whether onConnect fired during the current drag (to detect drop-on-nothing).
   const connectFiredRef = useRef(false);
 
-  const onPipeConnectStart = useCallback((_: MouseEvent | TouchEvent, params: { nodeId: string | null; handleId: string | null; handleType: string | null }) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const onPipeConnectStart = useCallback((_: any, params: { nodeId: string | null; handleId: string | null; handleType: string | null }) => {
     if (!params.handleId?.startsWith('data-out-')) return;
     const varName = params.handleId.replace('data-out-', '');
     connectFiredRef.current = false;
@@ -1073,7 +1079,7 @@ function CanvasInner() {
       if (n.type !== 'step' || n.id === params.nodeId) return n;
       const stepType = (n.data as unknown as StepData).step_type;
       const existingInputs = (n.data as unknown as StepData).inputs ?? {};
-      const accept = !DATA_INPUT_REJECT.has(stepType);
+      const accept = acceptsDynamicInputs(stepType);
       // Deduplicate port name: if varName already exists, try varName_2, _3, etc.
       let ghostVar = varName;
       if (accept && ghostVar in existingInputs) {

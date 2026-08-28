@@ -2,11 +2,11 @@
  * Canvas Node Registry — frontend UI supplement.
  *
  * Structural node metadata (type, label, emoji, outputArity, isSource, isSink,
- * singleInput, inputField, executable, version) is the backend's source of truth.
+ * singleInput, inputField, executable, version, color, bgColor,
+ * acceptsDynamicInputs, dynamicOutputs) is the backend's source of truth.
  * Fetch it at runtime via fetchNodeTypes() / useNodeTypes().
  *
  * This file holds only what the frontend owns exclusively:
- *   - bg / border colours (design-system tokens)
  *   - summary(cfg) — subtitle rendered from live node config data
  */
 
@@ -48,85 +48,60 @@ export interface NodeTypeInfo {
   is_sink: boolean;
   single_input: boolean;
   edges: EdgeRules;
+  /** Primary accent CSS color — border, handle, subtitle text. */
+  color: string;
+  /** Card background CSS color. */
+  bg_color: string;
+  /** Whether the user can drag a data-out port onto this node to create a named input port. */
+  accepts_dynamic_inputs: boolean;
+  /** Whether this node's output port names are derived from config (like transform). */
+  dynamic_outputs: boolean;
   input_field?: string;
   executable: boolean;
   app_params?: AppParamDecl[];
-  /** Static input data ports. Absent for types with dynamic inputs (transform, http) or no data inputs. */
+  /** Static input data ports. Absent for types with dynamic inputs or no data inputs. */
   input_ports?: PortDef[];
-  /** Static output data ports. Absent for types with dynamic outputs (transform, http) or no data outputs. */
+  /** Static output data ports. Absent for types with dynamic outputs or no data outputs. */
   output_ports?: PortDef[];
 }
 
-// ── Frontend-only UI supplement per type ─────────────────────────────────────
+// ── Frontend-only: summary function per type ─────────────────────────────────
 
-export interface NodeUISupp {
-  bg: string;
-  border: string;
-  summary: (cfg: Record<string, unknown>) => string;
-}
+type SummaryFn = (cfg: Record<string, unknown>) => string;
 
 // ── Merged view used by the builder ──────────────────────────────────────────
 
-export type NodeDef = NodeTypeInfo & NodeUISupp;
+export type NodeDef = NodeTypeInfo & { bg: string; border: string; summary: SummaryFn };
 
-// ── Color tokens ─────────────────────────────────────────────────────────────
+// ── Fallback colors (used when Go doesn't provide color — old server version) ─
 
-const greenBg      = 'rgba(74,222,128,0.05)';
-const greenBorder  = 'rgba(74,222,128,0.3)';
-const cyanBg       = 'rgba(0,240,255,0.05)';
-const cyanBorder   = 'rgba(0,240,255,0.4)';
-const purpleBg     = 'rgba(87,27,193,0.1)';
-const purpleBorder = 'rgba(208,188,255,0.6)';
-const amberBg      = 'rgba(245,158,11,0.05)';
-const amberBorder  = 'rgba(245,158,11,0.3)';
-const indigoBg     = 'rgba(99,102,241,0.1)';
-const indigoBorder = 'rgba(99,102,241,0.5)';
-const tealBg       = 'rgba(20,184,166,0.07)';
-const tealBorder   = 'rgba(20,184,166,0.5)';
-const orangeBg     = 'rgba(249,115,22,0.07)';
-const orangeBorder = 'rgba(249,115,22,0.5)';
+const FALLBACK_BG     = 'rgba(99,102,241,0.1)';
+const FALLBACK_BORDER = 'rgba(99,102,241,0.5)';
 
-// ── UI supplement — only colours and summary logic ───────────────────────────
+// ── Summary functions — the only thing the frontend owns exclusively ──────────
 
-const UI_SUPPS: Record<string, NodeUISupp> = {
-  input: {
-    bg: greenBg, border: greenBorder,
-    summary: (cfg) => {
-      const b = cfg.bindings as Record<string, string> | undefined;
-      return b?.text ? `→ ${b.text}` : '→ input';
-    },
+const SUMMARY_FNS: Record<string, SummaryFn> = {
+  input: (cfg) => {
+    const b = cfg.bindings as Record<string, string> | undefined;
+    return b?.text ? `→ ${b.text}` : '→ input';
   },
-  llm: {
-    bg: purpleBg, border: purpleBorder,
-    summary: (cfg) => `→ ${(cfg.output_var as string) || 'output'}`,
+  llm:        (cfg) => `→ ${(cfg.output_var as string) || 'output'}`,
+  http: (cfg) => {
+    const url = cfg.url_template as string | undefined;
+    return url ? url.replace(/^https?:\/\//, '').slice(0, 22) : 'url not set';
   },
-  http: {
-    bg: tealBg, border: tealBorder,
-    summary: (cfg) => {
-      const url = cfg.url_template as string | undefined;
-      return url ? url.replace(/^https?:\/\//, '').slice(0, 22) : 'url not set';
-    },
+  transform: (cfg) => {
+    const fns = cfg.functions as Array<{ output_var?: string }> | undefined;
+    const vars = (fns ?? []).map(f => f.output_var).filter(Boolean);
+    return vars.length ? `→ ${vars.join(', ')}` : '→ vars';
   },
-  transform: {
-    bg: indigoBg, border: indigoBorder,
-    summary: (cfg) => {
-      const keys = Object.keys((cfg.expressions as Record<string, string> | undefined) ?? {});
-      return keys.length ? `→ ${keys.join(', ')}` : '→ vars';
-    },
-  },
-  response:   { bg: cyanBg,    border: cyanBorder,    summary: (cfg) => `from ${(cfg.from_var as string) || 'output'}` },
-  branch:     { bg: orangeBg,  border: orangeBorder,  summary: (cfg) => (cfg.expression as string) ? `if ${(cfg.expression as string).slice(0, 18)}` : 'set expression' },
-  loop:       { bg: amberBg,   border: amberBorder,   summary: () => '' },
-  parallel:   { bg: purpleBg,  border: purpleBorder,  summary: () => '' },
-  a2a_call:   { bg: cyanBg,    border: cyanBorder,    summary: () => '' },
-  human_wait: { bg: greenBg,   border: greenBorder,   summary: () => '' },
-  stream_out: { bg: cyanBg,    border: cyanBorder,    summary: () => '' },
+  response:   (cfg) => `from ${(cfg.from_var as string) || 'output'}`,
+  branch:     (cfg) => (cfg.expression as string) ? `if ${(cfg.expression as string).slice(0, 18)}` : 'set expression',
+  mcp_call:   (cfg) => (cfg.tool_name as string) || '',
+  a2a_call:   (cfg) => (cfg.agent_url as string) ? (cfg.agent_url as string).replace(/^https?:\/\//, '').slice(0, 22) : '',
 };
 
-const FALLBACK_SUPP: NodeUISupp = {
-  bg: indigoBg, border: indigoBorder,
-  summary: () => '',
-};
+const FALLBACK_SUMMARY: SummaryFn = () => '';
 
 // ── API fetch ─────────────────────────────────────────────────────────────────
 
@@ -138,12 +113,16 @@ export async function fetchNodeTypes(): Promise<NodeDef[]> {
   });
   if (!res.ok) throw new Error(`node-types fetch failed: ${res.status}`);
   const infos: NodeTypeInfo[] = await res.json();
-  return infos.map(mergeSupp);
+  return infos.map(toNodeDef);
 }
 
-function mergeSupp(info: NodeTypeInfo): NodeDef {
-  const supp = UI_SUPPS[info.type] ?? FALLBACK_SUPP;
-  return { ...info, ...supp };
+function toNodeDef(info: NodeTypeInfo): NodeDef {
+  return {
+    ...info,
+    bg:      info.bg_color || FALLBACK_BG,
+    border:  info.color    || FALLBACK_BORDER,
+    summary: SUMMARY_FNS[info.type] ?? FALLBACK_SUMMARY,
+  };
 }
 
 // ── In-memory cache populated after first fetch ───────────────────────────────
@@ -169,8 +148,11 @@ const FALLBACK_DEF = (type: string): NodeDef => ({
   type, version: 1, label: type, description: '', emoji: '🔧',
   output_arity: 'single', is_source: false, is_sink: false,
   single_input: false, edges: FALLBACK_EDGES, executable: false,
+  color: FALLBACK_BORDER, bg_color: FALLBACK_BG,
+  accepts_dynamic_inputs: true, dynamic_outputs: false,
   input_ports: undefined, output_ports: undefined,
-  ...FALLBACK_SUPP,
+  bg: FALLBACK_BG, border: FALLBACK_BORDER,
+  summary: FALLBACK_SUMMARY,
 });
 
 export function getNodeDef(type: string): NodeDef {
@@ -182,6 +164,12 @@ export function isSource(type: string): boolean        { return getNodeDef(type)
 export function isSink(type: string): boolean          { return getNodeDef(type).is_sink; }
 export function outputArity(type: string): 'single' | 'multi' | 'none' {
   return getNodeDef(type).output_arity;
+}
+export function acceptsDynamicInputs(type: string): boolean {
+  return getNodeDef(type).accepts_dynamic_inputs;
+}
+export function hasDynamicOutputs(type: string): boolean {
+  return getNodeDef(type).dynamic_outputs;
 }
 
 // canAddIncoming: convention — is_source=true means no incoming allowed.

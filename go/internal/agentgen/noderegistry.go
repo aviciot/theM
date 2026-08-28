@@ -39,10 +39,10 @@ type PortDef struct {
 // Zero means "no constraint". These are the single source of truth for both
 // the backend graph validator and the frontend connection guard.
 type EdgeRules struct {
-	MinIn  int // minimum incoming edges required (0 = none required)
-	MaxIn  int // maximum incoming edges allowed  (0 = unlimited)
-	MinOut int // minimum outgoing edges required (0 = none required)
-	MaxOut int // maximum outgoing edges allowed  (0 = unlimited)
+	MinIn  int `json:"min_in"`  // minimum incoming edges required (0 = none required)
+	MaxIn  int `json:"max_in"`  // maximum incoming edges allowed  (0 = unlimited)
+	MinOut int `json:"min_out"` // minimum outgoing edges required (0 = none required)
+	MaxOut int `json:"max_out"` // maximum outgoing edges allowed  (0 = unlimited)
 }
 
 // NodeDef is the central declaration for one canvas node type.
@@ -61,6 +61,20 @@ type NodeDef struct {
 	SingleInput bool           `json:"single_input"` // only one incoming edge allowed
 	Edges       EdgeRules      `json:"edges"`        // data-driven in/out degree constraints
 	InputField  string         `json:"input_field,omitempty"` // config key used for auto-fill on connect
+	// AcceptsDynamicInputs controls whether the user can drag a data-out port from
+	// another node onto this node to create a named input port. False for routing-only
+	// nodes (input, branch) that don't consume data vars directly.
+	AcceptsDynamicInputs bool `json:"accepts_dynamic_inputs"`
+	// DynamicOutputs is true when this node's output port names are derived from
+	// its config at canvas-edit time rather than statically declared in OutputPorts.
+	// True only for transform (functions[].output_var drives port names).
+	DynamicOutputs bool `json:"dynamic_outputs"`
+	// Color is the primary accent CSS hex color for this node type.
+	// Used for the node border, handle background, and subtitle text.
+	Color string `json:"color"`
+	// BgColor is the card background CSS hex color for this node type.
+	BgColor string `json:"bg_color"`
+
 	// AppParams declares the runtime parameters this node type can consume.
 	// Populated for HTTP, LLM, and A2A Call nodes; empty for all others.
 	// The compiler aggregates these across all nodes into AgentSpec.RequiredParams.
@@ -105,21 +119,25 @@ type NodeDef struct {
 // NodeTypeInfo is the JSON-serialisable view of a NodeDef sent to the frontend.
 // Executable is derived here so NodeDef itself never stores duplicated state.
 type NodeTypeInfo struct {
-	Type        StepType       `json:"type"`
-	Version     int            `json:"version"`
-	Label       string         `json:"label"`
-	Description string         `json:"description"`
-	Emoji       string         `json:"emoji"`
-	OutputArity string         `json:"output_arity"`
-	IsSource    bool           `json:"is_source"`
-	IsSink      bool           `json:"is_sink"`
-	SingleInput bool           `json:"single_input"`
-	Edges       EdgeRules      `json:"edges"`
-	InputField  string         `json:"input_field,omitempty"`
-	AppParams   []AppParamDecl `json:"app_params,omitempty"`
-	InputPorts  []PortDef      `json:"input_ports,omitempty"`
-	OutputPorts []PortDef      `json:"output_ports,omitempty"`
-	Executable  bool           `json:"executable"`
+	Type                 StepType       `json:"type"`
+	Version              int            `json:"version"`
+	Label                string         `json:"label"`
+	Description          string         `json:"description"`
+	Emoji                string         `json:"emoji"`
+	OutputArity          string         `json:"output_arity"`
+	IsSource             bool           `json:"is_source"`
+	IsSink               bool           `json:"is_sink"`
+	SingleInput          bool           `json:"single_input"`
+	Edges                EdgeRules      `json:"edges"`
+	AcceptsDynamicInputs bool           `json:"accepts_dynamic_inputs"`
+	DynamicOutputs       bool           `json:"dynamic_outputs"`
+	Color                string         `json:"color"`
+	BgColor              string         `json:"bg_color"`
+	InputField           string         `json:"input_field,omitempty"`
+	AppParams            []AppParamDecl `json:"app_params,omitempty"`
+	InputPorts           []PortDef      `json:"input_ports,omitempty"`
+	OutputPorts          []PortDef      `json:"output_ports,omitempty"`
+	Executable           bool           `json:"executable"`
 
 	// LLM knowledge fields — same as NodeDef, passed through for AI copilot use.
 	ConfigFields      []ConfigFieldDoc `json:"config_fields,omitempty"`
@@ -131,25 +149,29 @@ type NodeTypeInfo struct {
 // ToInfo converts a NodeDef to its public API representation.
 func (d *NodeDef) ToInfo() NodeTypeInfo {
 	return NodeTypeInfo{
-		Type:              d.Type,
-		Version:           d.Version,
-		Label:             d.Label,
-		Description:       d.Description,
-		Emoji:             d.Emoji,
-		OutputArity:       d.OutputArity,
-		IsSource:          d.IsSource,
-		IsSink:            d.IsSink,
-		SingleInput:       d.SingleInput,
-		Edges:             d.Edges,
-		InputField:        d.InputField,
-		AppParams:         d.AppParams,
-		InputPorts:        d.InputPorts,
-		OutputPorts:       d.OutputPorts,
-		Executable:        d.Execute != nil,
-		ConfigFields:      d.ConfigFields,
-		UsageNotes:        d.UsageNotes,
-		Examples:          d.Examples,
-		AllowedSuccessors: d.AllowedSuccessors,
+		Type:                 d.Type,
+		Version:              d.Version,
+		Label:                d.Label,
+		Description:          d.Description,
+		Emoji:                d.Emoji,
+		OutputArity:          d.OutputArity,
+		IsSource:             d.IsSource,
+		IsSink:               d.IsSink,
+		SingleInput:          d.SingleInput,
+		Edges:                d.Edges,
+		AcceptsDynamicInputs: d.AcceptsDynamicInputs,
+		DynamicOutputs:       d.DynamicOutputs,
+		Color:                d.Color,
+		BgColor:              d.BgColor,
+		InputField:           d.InputField,
+		AppParams:            d.AppParams,
+		InputPorts:           d.InputPorts,
+		OutputPorts:          d.OutputPorts,
+		Executable:           d.Execute != nil,
+		ConfigFields:         d.ConfigFields,
+		UsageNotes:           d.UsageNotes,
+		Examples:             d.Examples,
+		AllowedSuccessors:    d.AllowedSuccessors,
 	}
 }
 

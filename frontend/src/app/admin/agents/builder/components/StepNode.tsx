@@ -1,6 +1,6 @@
 import React from 'react';
 import { Handle, Position } from '@xyflow/react';
-import { getNodeDef } from '@/lib/nodeRegistry';
+import { getNodeDef, hasDynamicOutputs } from '@/lib/nodeRegistry';
 import type { PortDef } from '@/lib/nodeRegistry';
 import type { StepNodeData, DebugNodeState } from '../types';
 import { useLayoutDir } from '../LayoutContext';
@@ -83,15 +83,15 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
     boxShadow   = '0 0 0 3px rgba(248,113,113,0.5), 0 0 12px 3px rgba(248,113,113,0.3)';
   }
 
-  const isTransform = data.step_type === 'transform';
-  const transformOutputs = isTransform
+  const dynOutputs = hasDynamicOutputs(data.step_type);
+  const transformOutputs = dynOutputs
     ? computeFinalOutputs((cfg.functions as FunctionStep[] | undefined) ?? [])
     : [];
 
-  // Each transform output row needs 18px; header needs ~70px minimum.
+  // Each dynamic output row needs 18px; header needs ~70px minimum.
   const PX_PER_ROW = 18;
   const HEADER_PX = 70;
-  const transformMinHeight = isTransform && transformOutputs.length > 0
+  const transformMinHeight = dynOutputs && transformOutputs.length > 0
     ? Math.max(HEADER_PX, transformOutputs.length * PX_PER_ROW + 16)
     : 0;
 
@@ -146,7 +146,7 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
   // Extra padding so port labels don't clip into node content.
   const inputPortPad  = allInputPorts.length  > 0 ? HANDLE_SZ + 24 : 0;
   const outputPortPad = outputPorts.length > 0 ? HANDLE_SZ + 24 : 0;
-  const transformRightPad = isTransform && transformOutputs.length > 0 ? 72 : 0;
+  const transformRightPad = dynOutputs && transformOutputs.length > 0 ? 72 : 0;
 
   return (
     <div style={{
@@ -211,7 +211,7 @@ export function StepNode({ data }: { data: StepNodeData; id: string }) {
           <div style={{ position: 'absolute', fontSize: 9, color: '#f87171', fontWeight: 700, pointerEvents: 'none',
             ...(isLR ? { right: -18, top: 'calc(70% - 6px)' } : { bottom: -18, left: 'calc(70% - 6px)' }) }}>F</div>
         </>
-      ) : isTransform && transformOutputs.length > 0 ? (
+      ) : dynOutputs && transformOutputs.length > 0 ? (
         // Named transform output handles — pixel-based top, node height set by transformMinHeight.
         <>
           {transformOutputs.map((varName, idx) => {
