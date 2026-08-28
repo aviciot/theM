@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-27
+# Last updated: 2026-08-28
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `e6f9660` — feat(agent-runtime): wire MCP_SERVICE_URL to them-mcp-service for mcp_call steps
+Commit: `1e026b2` — feat(canvas): Phase 3 BundleEdge — port-rail cable visual + invisible data handles
 
 Recent commits (newest first):
 ```
+1e026b2 feat(canvas): Phase 3 BundleEdge — port-rail cable visual + invisible data handles
+1917ea8 feat(canvas): generic multi-port model — Phase 1+2
+297b2cd feat(canvas+noderegistry): NodeDef as single source of truth for canvas
 e6f9660 feat(agent-runtime): wire MCP_SERVICE_URL to them-mcp-service for mcp_call steps
 cf882d8 feat(agentgen): MCP-3 — mcp_call canvas step executor
-dd76ea6 docs(current): update HEAD to a80bba8 — explicit bindings Stages A/B/C complete
-a80bba8 feat(canvas): Stage C — data-binding port handles and edge wiring
-afa4a9f docs(canvas): explicit bindings design review (7 questions, GO verdict)
 ```
 
 ---
@@ -234,6 +234,8 @@ App global params: e2e validated 2026-08-25 — GET/PUT/DELETE live ✅
 | Explicit bindings Stage A | `PortDef`, `VarRef.SourceStep/SourcePort`, `Binding`/`canvasStep.Inputs`, `resolveBindings`, `validateBindings`, `BROKEN_BINDING`; backward-compat | ✅ |
 | Explicit bindings Stage B | `api.ts` Binding/VarRef/AgentStepDoc.inputs; `nodeRegistry.ts` PortDef/input_ports/output_ports; `types.ts` StepData.inputs; `page.tsx` save/load round-trip | ✅ |
 | Explicit bindings Stage C | StepNode data-port handles (orange input squares, indigo output squares); DataEdge dashed wire; onPipeConnect data-edge branch; isPipeConnectionValid skips data edges; both save paths derive inputs from data edges; load path reconstructs data edges from step.inputs | ✅ |
+| Multi-port Phase 1+2 | NodeDef as single source of truth: `PortDef.Color/MaxConnections`, `ControlOutputPorts`, `DynamicOutputSource` in Go registry; `resolveInputPorts`/`resolveOutputPorts` in nodeRegistry.ts; StepNode zero-conditional rewrite; branch true/false named control handles; transform dynamic output ports from config | ✅ |
+| Multi-port Phase 3 | BundleEdge: groups data edges between same node pair into port-rail cable visual; EdgeLabelRenderer dots+labels; count badge; `applyBundleGroups()`; data handles invisible (1×1) — geometry only; `useStore(s.edges)` for wired-port detection; Dagre height scales with port count | ✅ |
 
 ### Key security constraints (always in force)
 - Credentials decrypted per-request, held only in `InvocationContext.Credentials`, never logged/persisted
