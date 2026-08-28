@@ -140,34 +140,40 @@ export function resolveInputPorts(
 ): ResolvedPort[] {
   const ports: ResolvedPort[] = [];
 
-  // Dynamic committed inputs (drag-and-wire created ports)
-  for (const portID of committedInputPortIDs) {
-    ports.push({
-      id: `data-in-${portID}`,
-      label: truncLabel(portID),
-      kind: 'data',
-      direction: 'in',
-      color: '#f97316', // orange — data input
-      required: false,
-      maxConnections: 1,
-    });
-  }
+  const emittedIDs = new Set<string>();
 
-  // Static registry input ports — only render if the port is already wired via a
-  // data edge (present in committedInputPortIDs). This avoids showing phantom port
-  // squares on nodes like Response/LLM where the port exists in the registry for
-  // the binding system but isn't visually wired in the common case.
+  // Static registry input ports first — prefer registry metadata (label, color, required)
+  // over the plain port-ID fallback used for dynamic ports.
+  // Only render if already wired (present in committedInputPortIDs).
   const committedSet = new Set(committedInputPortIDs);
   for (const port of nodeDef.input_ports ?? []) {
-    if (!committedSet.has(port.id)) continue; // not yet wired — don't show the square
+    if (!committedSet.has(port.id)) continue;
+    const handleID = `data-in-${port.id}`;
+    emittedIDs.add(handleID);
     ports.push({
-      id: `data-in-${port.id}`,
+      id: handleID,
       label: truncLabel(port.label || port.id),
       kind: 'data',
       direction: 'in',
       color: port.color || '#f97316',
       required: port.required ?? false,
       maxConnections: port.max_connections ?? 1,
+    });
+  }
+
+  // Dynamic committed inputs — ports created by drag-and-wire that are NOT in the
+  // static registry (e.g. user-named variables). Skip any already emitted above.
+  for (const portID of committedInputPortIDs) {
+    const handleID = `data-in-${portID}`;
+    if (emittedIDs.has(handleID)) continue;
+    ports.push({
+      id: handleID,
+      label: truncLabel(portID),
+      kind: 'data',
+      direction: 'in',
+      color: '#f97316',
+      required: false,
+      maxConnections: 1,
     });
   }
 
