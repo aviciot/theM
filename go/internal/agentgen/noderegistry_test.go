@@ -287,6 +287,83 @@ func TestNodeRegistry_ParallelOutputArity(t *testing.T) {
 	}
 }
 
+// TestNodeRegistry_BranchControlOutputPorts verifies branch has two named control output ports.
+func TestNodeRegistry_BranchControlOutputPorts(t *testing.T) {
+	def, ok := agentgen.LookupNode(agentgen.StepBranch)
+	if !ok {
+		t.Fatal("StepBranch not registered")
+	}
+	if len(def.ControlOutputPorts) != 2 {
+		t.Fatalf("branch: want 2 ControlOutputPorts, got %d", len(def.ControlOutputPorts))
+	}
+	truePort := def.ControlOutputPorts[0]
+	falsePort := def.ControlOutputPorts[1]
+	if truePort.ID != "true" {
+		t.Errorf("branch ControlOutputPorts[0].ID: want %q, got %q", "true", truePort.ID)
+	}
+	if falsePort.ID != "false" {
+		t.Errorf("branch ControlOutputPorts[1].ID: want %q, got %q", "false", falsePort.ID)
+	}
+	if truePort.Color == "" {
+		t.Error("branch true port must have a Color set")
+	}
+	if falsePort.Color == "" {
+		t.Error("branch false port must have a Color set")
+	}
+	// Verify these are exposed via ToInfo.
+	info := def.ToInfo()
+	if len(info.ControlOutputPorts) != 2 {
+		t.Fatalf("branch ToInfo: want 2 ControlOutputPorts, got %d", len(info.ControlOutputPorts))
+	}
+}
+
+// TestNodeRegistry_TransformDynamicOutputSource verifies transform declares its dynamic port source path.
+func TestNodeRegistry_TransformDynamicOutputSource(t *testing.T) {
+	def, ok := agentgen.LookupNode(agentgen.StepTransform)
+	if !ok {
+		t.Fatal("StepTransform not registered")
+	}
+	if !def.DynamicOutputs {
+		t.Error("transform: DynamicOutputs must be true")
+	}
+	if def.DynamicOutputSource != "functions[].output_var" {
+		t.Errorf("transform DynamicOutputSource: want %q, got %q", "functions[].output_var", def.DynamicOutputSource)
+	}
+	// Verify exposed via ToInfo.
+	info := def.ToInfo()
+	if info.DynamicOutputSource != "functions[].output_var" {
+		t.Errorf("transform ToInfo DynamicOutputSource: want %q, got %q", "functions[].output_var", info.DynamicOutputSource)
+	}
+}
+
+// TestNodeRegistry_PortDefColorAndMaxConnections verifies new PortDef fields serialize correctly.
+func TestNodeRegistry_PortDefColorAndMaxConnections(t *testing.T) {
+	def, ok := agentgen.LookupNode(agentgen.StepBranch)
+	if !ok {
+		t.Fatal("StepBranch not registered")
+	}
+	info := def.ToInfo()
+	b, err := json.Marshal(info)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	// Round-trip the control_output_ports through JSON.
+	var info2 agentgen.NodeTypeInfo
+	if err := json.Unmarshal(b, &info2); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if len(info2.ControlOutputPorts) != 2 {
+		t.Fatalf("round-trip: want 2 ControlOutputPorts, got %d", len(info2.ControlOutputPorts))
+	}
+	if info2.ControlOutputPorts[0].Color == "" {
+		t.Error("round-trip: true port Color should not be empty")
+	}
+	if info2.ControlOutputPorts[0].MaxConnections != 1 {
+		t.Errorf("round-trip: true port MaxConnections: want 1, got %d", info2.ControlOutputPorts[0].MaxConnections)
+	}
+}
+
+
 // Verify compileFail and hasCode helpers work correctly (smoke test for test helpers).
 func TestNodeRegistry_Helpers_Smoke(t *testing.T) {
 	spec, errs := agentgen.Compile("a", "t", "d", "slug", json.RawMessage(`{"agent_root":{"display_name":"X"},"skills":[]}`))

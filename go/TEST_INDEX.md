@@ -1632,30 +1632,31 @@ PublishAgentDefinition uses `agentgen.CompileForPublish()` (stubs→errors).
 
 ### S1-54 · Node Definition Registry — `internal/agentgen/noderegistry_test.go`
 
-**Purpose:** Validates the `NodeDef` registry is the single source of truth for all 11 canvas node
+**Purpose:** Validates the `NodeDef` registry is the single source of truth for all 12 canvas node
 types. Covers registration completeness, metadata correctness (IsSource/IsSink/OutputArity/Version),
-`ToInfo()` deriving `Executable` from `Execute != nil`, per-type `Validate` functions, and compiler
-integration via `LookupNode`.
+`ToInfo()` deriving `Executable` from `Execute != nil`, per-type `Validate` functions, compiler
+integration via `LookupNode`, and the new multi-port schema fields
+(`ControlOutputPorts`, `DynamicOutputSource`, `PortDef.Color`, `PortDef.MaxConnections`).
 
 | Test | What it proves |
 |---|---|
-| `TestNodeRegistry_AllTypesRegistered` | all 11 StepType constants have a NodeDef in the registry |
-| `TestNodeRegistry_KnownStepTypesCount` | KnownStepTypes() returns exactly 11 |
+| `TestNodeRegistry_AllTypesRegistered` | all 12 StepType constants have a NodeDef in the registry |
+| `TestNodeRegistry_KnownStepTypesCount` | KnownStepTypes() returns exactly 12 |
 | `TestNodeRegistry_InputProperties` | input: IsSource=true, IsSink=false, OutputArity=single, Execute≠nil, Version≥1 |
 | `TestNodeRegistry_ToInfo` | ToInfo(): Executable=true for input (Execute≠nil), Executable=true for branch (now implemented) |
 | `TestNodeRegistry_AllNodesHaveLabelAndVersion` | every registered node has non-empty Label and Version≥1 and valid OutputArity |
 | `TestNodeRegistry_ResponseProperties` | response: IsSource=false, IsSink=true, OutputArity=none, Execute≠nil |
 | `TestNodeRegistry_BranchOutputArity` | branch: OutputArity=multi, Execute≠nil (implemented) |
-| `TestNodeRegistry_ConditionOutputArity` | condition: OutputArity=multi, Execute≠nil (implemented) |
 | `TestNodeRegistry_StreamOutIsSink` | stream_out: IsSink=true, OutputArity=none |
 | `TestNodeRegistry_UnknownTypeReturnsFalse` | LookupNode("banana") → ok=false |
 | `TestNodeRegistry_CompilerRejectsUnknownStepType` | compiler returns UNKNOWN_STEP_TYPE for unregistered type |
-| `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response/branch/condition all have Execute≠nil |
+| `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response/branch/mcp_call all have Execute≠nil |
 | `TestNodeRegistry_StubTypesHaveNilExecute` | loop/parallel/a2a_call/human_wait/stream_out all have Execute=nil |
-| `TestNodeRegistry_LLMValidate_UndeclaredSlot` | llm Validate(): undeclared provider_key_slot → UNDECLARED_SLOT |
-| `TestNodeRegistry_HTTPValidate_UndeclaredSlot` | http Validate(): undeclared credential_slot → UNDECLARED_SLOT |
 | `TestNodeRegistry_ParallelOutputArity` | parallel: OutputArity=multi |
 | `TestNodeRegistry_Helpers_Smoke` | compileFail/hasCode helpers work; minimal spec compiles cleanly |
+| `TestNodeRegistry_BranchControlOutputPorts` | branch has 2 ControlOutputPorts (true/false) with Color set; round-trips via ToInfo |
+| `TestNodeRegistry_TransformDynamicOutputSource` | transform DynamicOutputs=true; DynamicOutputSource="functions[].output_var"; exposed via ToInfo |
+| `TestNodeRegistry_PortDefColorAndMaxConnections` | PortDef.Color and MaxConnections round-trip through JSON marshal/unmarshal |
 
 **Trigger:** any change to `internal/agentgen/noderegistry.go`, `internal/agentgen/nodes.go`, or `internal/agentgen/compiler.go`
 

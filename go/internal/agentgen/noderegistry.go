@@ -28,11 +28,17 @@ type NodeExample struct {
 // Dynamic ports (e.g. transform outputs from functions[].output_var) are derived
 // per-instance via DeriveInputs/DeriveOutputs instead.
 type PortDef struct {
-	ID       string `json:"id"`                 // stable identifier used in canvas binding references
-	Label    string `json:"label"`              // human-readable name shown in the canvas UX
-	Required bool   `json:"required"`           // for inputs: must be wired; for outputs: always produced
-	Multi    bool   `json:"multi,omitempty"`    // for inputs: accepts multiple bindings (fan-in)
-	TypeHint string `json:"type_hint,omitempty"` // loose tag: "text" | "json" | "any" — informational only
+	ID             string `json:"id"`                      // stable identifier used in canvas binding references
+	Label          string `json:"label"`                   // human-readable name shown in the canvas UX
+	Required       bool   `json:"required"`                // for inputs: must be wired; for outputs: always produced
+	Multi          bool   `json:"multi,omitempty"`         // for inputs: accepts multiple bindings (fan-in)
+	TypeHint       string `json:"type_hint,omitempty"`     // loose tag: "text" | "json" | "any" — informational only
+	// Color overrides the node accent color for this specific port's handle.
+	// Used for semantically distinct ports (e.g. branch true=green, false=red).
+	// Empty means use the node's Color.
+	Color          string `json:"color,omitempty"`
+	// MaxConnections caps how many edges may attach to this port. 0 = unlimited.
+	MaxConnections int    `json:"max_connections,omitempty"`
 }
 
 // EdgeRules declares the allowed incoming/outgoing edge counts for a node type.
@@ -86,6 +92,18 @@ type NodeDef struct {
 	// OutputPorts declares the named data output ports for this node type.
 	// Nil for types with dynamic outputs (transform, http extractions) or no data outputs (response, branch).
 	OutputPorts []PortDef `json:"output_ports,omitempty"`
+	// ControlOutputPorts declares named control-flow output ports for nodes that have
+	// multiple named control exits (e.g. branch: true/false paths).
+	// Empty means a single anonymous control output — the common case.
+	// The frontend renders one handle per entry, using PortDef.Color and PortDef.Label.
+	// Handle ID format: "ctrl-out-{portID}" (e.g. "ctrl-out-true", "ctrl-out-false").
+	ControlOutputPorts []PortDef `json:"control_output_ports,omitempty"`
+	// DynamicOutputSource is a JSONPath-like expression that tells the frontend which
+	// config field path drives dynamic output port names. Only meaningful when
+	// DynamicOutputs=true. Format: "functions[].output_var" means iterate cfg.functions,
+	// collect each item's output_var value. The frontend uses this generically without
+	// per-type conditionals.
+	DynamicOutputSource string `json:"dynamic_output_source,omitempty"`
 	// Executable is NOT stored — computed from Execute != nil at serialisation time.
 
 	// ── LLM knowledge fields (serialised, used by AI copilot) ────────────────
@@ -137,6 +155,8 @@ type NodeTypeInfo struct {
 	AppParams            []AppParamDecl `json:"app_params,omitempty"`
 	InputPorts           []PortDef      `json:"input_ports,omitempty"`
 	OutputPorts          []PortDef      `json:"output_ports,omitempty"`
+	ControlOutputPorts   []PortDef      `json:"control_output_ports,omitempty"`
+	DynamicOutputSource  string         `json:"dynamic_output_source,omitempty"`
 	Executable           bool           `json:"executable"`
 
 	// LLM knowledge fields — same as NodeDef, passed through for AI copilot use.
@@ -167,6 +187,8 @@ func (d *NodeDef) ToInfo() NodeTypeInfo {
 		AppParams:            d.AppParams,
 		InputPorts:           d.InputPorts,
 		OutputPorts:          d.OutputPorts,
+		ControlOutputPorts:   d.ControlOutputPorts,
+		DynamicOutputSource:  d.DynamicOutputSource,
 		Executable:           d.Execute != nil,
 		ConfigFields:         d.ConfigFields,
 		UsageNotes:           d.UsageNotes,

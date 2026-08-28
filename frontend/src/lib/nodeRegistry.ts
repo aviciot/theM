@@ -30,11 +30,13 @@ export interface AppParamDecl {
 
 /** One named data port on a node type. Port IDs are permanent stable identifiers. */
 export interface PortDef {
-  id: string;        // stable binding handle (e.g. "output", "from_var")
-  label: string;     // human-readable name for canvas UX
+  id: string;              // stable binding handle (e.g. "output", "from_var")
+  label: string;           // human-readable name for canvas UX
   required?: boolean;
-  multi?: boolean;   // accepts multiple bindings (fan-in)
-  type_hint?: string; // loose tag: "text" | "json" | "any"
+  multi?: boolean;         // accepts multiple bindings (fan-in)
+  type_hint?: string;      // loose tag: "text" | "json" | "any"
+  color?: string;          // per-port accent color override (e.g. branch true=green, false=red)
+  max_connections?: number; // 0 = unlimited; used by connection guard
 }
 
 export interface NodeTypeInfo {
@@ -63,6 +65,180 @@ export interface NodeTypeInfo {
   input_ports?: PortDef[];
   /** Static output data ports. Absent for types with dynamic outputs or no data outputs. */
   output_ports?: PortDef[];
+  /**
+   * Named control-flow output ports. Populated only for nodes with multiple named
+   * control exits (e.g. branch: true/false). Empty = single anonymous control output.
+   * Handle IDs: "ctrl-out-{portID}" (e.g. "ctrl-out-true", "ctrl-out-false").
+   */
+  control_output_ports?: PortDef[];
+  /**
+   * JSONPath-like expression identifying which config field drives dynamic output
+   * port names. Only meaningful when dynamic_outputs=true.
+   * Format: "functions[].output_var" — iterate cfg[array], collect field value.
+   */
+  dynamic_output_source?: string;
+}
+
+// ── Port resolution — generic, driven entirely by NodeDef ────────────────────
+
+/**
+ * A resolved port ready for React Flow Handle rendering.
+ * Direction and kind are derived from context (input vs output array, control vs data).
+ */
+export interface ResolvedPort {
+  id: string;        // stable handle ID (used as React Flow Handle id)
+  label: string;     // truncated for display (~8 chars max)
+  kind: 'control' | 'data';
+  direction: 'in' | 'out';
+  color: string;     // CSS color for the handle dot
+  required: boolean;
+  maxConnections: number; // 0 = unlimited
+}
+
+const LABEL_MAX = 8;
+function truncLabel(s: string): string {
+  return s.length <= LABEL_MAX ? s : s.slice(0, LABEL_MAX - 1) + '…';
+}
+
+/**
+ * Resolve the dynamic output source path (e.g. "functions[].output_var") against
+ * a live step config object, returning the list of port names.
+ * Supports exactly the "array[].field" pattern used by transform.
+ */
+export function resolveDynamicOutputNames(
+  source: string,
+  cfg: Record<string, unknown>,
+): string[] {
+  // Parse "arrayKey[].fieldKey"
+  const m = source.match(/^(\w+)\[\]\.(\w+)$/);
+  if (!m) return [];
+  const [, arrayKey, fieldKey] = m;
+  const arr = cfg[arrayKey];
+  if (!Array.isArray(arr)) return [];
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const item of arr as Record<string, unknown>[]) {
+    const val = item[fieldKey];
+    if (typeof val === 'string' && val && !seen.has(val)) {
+      seen.add(val);
+      names.push(val);
+    }
+  }
+  return names;
+}
+
+/**
+ * Resolve all input ports for a node instance — static registry ports plus any
+ * dynamic input ports committed to the step (from data-edge bindings).
+ *
+ * Dynamic input port names come from the step's committed inputs map; they are
+ * rendered as data-kind handles on the target side.
+ */
+export function resolveInputPorts(
+  nodeDef: NodeDef,
+  committedInputPortIDs: string[], // keys from step.inputs (already-wired port IDs)
+): ResolvedPort[] {
+  const ports: ResolvedPort[] = [];
+
+  // Dynamic committed inputs (drag-and-wire created ports)
+  for (const portID of committedInputPortIDs) {
+    ports.push({
+      id: `data-in-${portID}`,
+      label: truncLabel(portID),
+      kind: 'data',
+      direction: 'in',
+      color: '#f97316', // orange — data input
+      required: false,
+      maxConnections: 1,
+    });
+  }
+
+  // Static registry input ports
+  for (const port of nodeDef.input_ports ?? []) {
+    ports.push({
+      id: `data-in-${port.id}`,
+      label: truncLabel(port.label || port.id),
+      kind: 'data',
+      direction: 'in',
+      color: port.color || '#f97316',
+      required: port.required ?? false,
+      maxConnections: port.max_connections ?? 1,
+    });
+  }
+
+  return ports;
+}
+
+/**
+ * Resolve all output ports for a node instance:
+ * 1. Named control-flow output ports (from control_output_ports, e.g. branch true/false)
+ * 2. One anonymous control output (when no named control ports and node is not a sink)
+ * 3. Dynamic data output ports (from dynamic_output_source evaluated against cfg)
+ * 4. Static data output ports (from output_ports)
+ */
+export function resolveOutputPorts(
+  nodeDef: NodeDef,
+  cfg: Record<string, unknown>,
+): ResolvedPort[] {
+  const ports: ResolvedPort[] = [];
+
+  // Named control-flow outputs (e.g. branch: true/false)
+  const ctrlPorts = nodeDef.control_output_ports ?? [];
+  if (ctrlPorts.length > 0) {
+    for (const port of ctrlPorts) {
+      ports.push({
+        id: `ctrl-out-${port.id}`,
+        label: truncLabel(port.label || port.id),
+        kind: 'control',
+        direction: 'out',
+        color: port.color || nodeDef.border || '#64748b',
+        required: port.required ?? false,
+        maxConnections: port.max_connections ?? 1,
+      });
+    }
+  } else if (!nodeDef.is_sink) {
+    // Single anonymous control output — the common case
+    ports.push({
+      id: 'ctrl-out',
+      label: '',
+      kind: 'control',
+      direction: 'out',
+      color: nodeDef.border || '#64748b',
+      required: false,
+      maxConnections: 0,
+    });
+  }
+
+  // Dynamic data output ports (transform: functions[].output_var)
+  if (nodeDef.dynamic_outputs && nodeDef.dynamic_output_source) {
+    const names = resolveDynamicOutputNames(nodeDef.dynamic_output_source, cfg);
+    for (const name of names) {
+      ports.push({
+        id: `data-out-${name}`,
+        label: truncLabel(name),
+        kind: 'data',
+        direction: 'out',
+        color: '#818cf8', // indigo — data output
+        required: false,
+        maxConnections: 0,
+      });
+    }
+  }
+
+  // Static data output ports (llm: output, etc.)
+  for (const port of nodeDef.output_ports ?? []) {
+    ports.push({
+      id: `data-out-${port.id}`,
+      label: truncLabel(port.label || port.id),
+      kind: 'data',
+      direction: 'out',
+      color: port.color || '#818cf8',
+      required: port.required ?? false,
+      maxConnections: port.max_connections ?? 0,
+    });
+  }
+
+  return ports;
 }
 
 // ── Frontend-only: summary function per type ─────────────────────────────────

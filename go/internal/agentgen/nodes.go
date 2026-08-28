@@ -286,6 +286,9 @@ func init() {
 		SingleInput:          true,
 		AcceptsDynamicInputs: true,
 		DynamicOutputs:       true,
+		// DynamicOutputSource tells the frontend which config path drives output port names.
+		// The frontend resolves "functions[].output_var" generically without per-type conditionals.
+		DynamicOutputSource: "functions[].output_var",
 		Color:                "rgba(99,102,241,0.5)",
 		BgColor:              "rgba(99,102,241,0.1)",
 		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 0},
@@ -405,6 +408,12 @@ func init() {
 		// Two outgoing edges: first = true path, second = false path.
 		// TrueNext/FalseNext in config override edge order when set.
 		Edges: EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 2, MaxOut: 2},
+		// Named control-flow output ports — drives handle rendering generically in the frontend.
+		// Handle IDs: "ctrl-out-true" and "ctrl-out-false".
+		ControlOutputPorts: []PortDef{
+			{ID: "true",  Label: "True path",  Color: "#4ade80", MaxConnections: 1},
+			{ID: "false", Label: "False path", Color: "#f87171", MaxConnections: 1},
+		},
 		ConfigFields: []ConfigFieldDoc{
 			{Key: "expression", Type: "string", Required: true, Description: "Go template expression that evaluates to true or false. Supports {{.varname}} interpolation and comparison operators.", Example: "{{eq .sentiment \"POSITIVE\"}}"},
 			{Key: "true_next", Type: "string", Required: false, Description: "Step ID to route to when expression is true. Overrides the first outgoing edge.", Example: "positive_handler"},

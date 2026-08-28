@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null); // eslint-disable-line @typescript-eslint/no-explicit-any
-import { getNodeDef, fetchNodeTypes, setCachedNodeTypes, canAddIncoming, canAddOutgoing, acceptsDynamicInputs } from '@/lib/nodeRegistry';
+import { getNodeDef, fetchNodeTypes, setCachedNodeTypes, canAddIncoming, canAddOutgoing, acceptsDynamicInputs, resolveInputPorts, resolveOutputPorts } from '@/lib/nodeRegistry';
 import {
   themApi,
   getPreferences,
@@ -312,7 +312,26 @@ function CanvasInner() {
     const g = new dagre.graphlib.Graph();
     g.setDefaultEdgeLabel(() => ({}));
     g.setGraph({ rankdir: dir, nodesep: 60, ranksep: 100, marginx: 60, marginy: 60 });
-    nodes.forEach(n => g.setNode(n.id, { width: 120, height: 80 }));
+    nodes.forEach(n => {
+      // Estimate node height from port count so Dagre routes edges without collisions.
+      // For step nodes: read port counts from the registry + committed inputs.
+      let h = 80;
+      if (n.type === 'step') {
+        const stepd = n.data as unknown as StepData;
+        const nodeDef = getNodeDef(stepd.step_type);
+        const committedInputs = stepd.inputs ? Object.keys(stepd.inputs) : [];
+        const inputPorts = resolveInputPorts(nodeDef, committedInputs);
+        const outputPorts = resolveOutputPorts(nodeDef, (stepd.config ?? {}) as Record<string, unknown>);
+        const dataPortCount = Math.max(
+          inputPorts.filter(p => p.kind === 'data').length,
+          outputPorts.filter(p => p.kind === 'data').length,
+        );
+        if (dataPortCount > 0) {
+          h = Math.max(80, 20 + dataPortCount * 18 + 20);
+        }
+      }
+      g.setNode(n.id, { width: 120, height: h });
+    });
     edges.forEach(e => g.setEdge(e.source, e.target));
     dagre.layout(g);
     const sourcePos = dir === 'LR' ? Position.Right : Position.Bottom;
@@ -447,11 +466,13 @@ function CanvasInner() {
             const stepd = sn.data as unknown as StepData;
             const ctrlOut = pipeline.edges.filter(e => e.source === sn.id && !isDataEdge(e));
             const defaultLabel = stepMeta(stepd.step_type).label;
-            const next = stepd.step_type === 'branch'
-              ? [
-                  ctrlOut.find(e => e.sourceHandle === 'source-true')?.target?.replace('step-', '') ?? '',
-                  ctrlOut.find(e => e.sourceHandle === 'source-false')?.target?.replace('step-', '') ?? '',
-                ].filter(Boolean)
+            // Generic: nodes with named control output ports (e.g. branch) preserve
+            // port order from the registry definition. Anonymous control outputs are ordered by edge insertion.
+            const ctrlPortDefs = getNodeDef(stepd.step_type).control_output_ports ?? [];
+            const next = ctrlPortDefs.length > 0
+              ? ctrlPortDefs
+                  .map(p => ctrlOut.find(e => e.sourceHandle === `ctrl-out-${p.id}`)?.target?.replace('step-', '') ?? '')
+                  .filter(Boolean)
               : ctrlOut.map(e => (e.target as string).replace('step-', ''));
             const dataIn = pipeline.edges.filter(e => e.target === sn.id && isDataEdge(e));
             const inputs: Record<string, { from_step: string; from_port: string }> = {};
@@ -639,17 +660,19 @@ function CanvasInner() {
       }));
       const stepEdges: Edge[] = [];
       for (const step of (sk.steps ?? [])) {
-        // Control edges from step.next
+        // Control edges from step.next.
+        // Named control ports (e.g. branch true/false) are identified by registry
+        // definition order — no node-name conditionals.
+        const ctrlPortDefs = getNodeDef(step.type as string).control_output_ports ?? [];
         (step.next ?? []).forEach((nextId, idx) => {
-          const isBranch = step.type === 'branch';
-          const isTransform = step.type === 'transform';
-          const sh = step.next_handles?.[idx];
+          const sourceHandle = ctrlPortDefs.length > 0
+            ? `ctrl-out-${ctrlPortDefs[idx]?.id ?? idx}`
+            : undefined;
           stepEdges.push({
             id: `${step.id}-to-${nextId}`,
             source: `step-${step.id}`,
             target: `step-${nextId}`,
-            ...(isBranch ? { sourceHandle: idx === 0 ? 'source-true' : 'source-false' } :
-               isTransform && sh ? { sourceHandle: sh } : {}),
+            ...(sourceHandle ? { sourceHandle } : {}),
           });
         });
         // Data binding edges from step.inputs
@@ -688,16 +711,13 @@ function CanvasInner() {
           // Control edges only — data edges (kind:'data') carry no execution order.
           const ctrlOut = pipeline.edges.filter(e => e.source === sn.id && !isDataEdge(e));
           const defaultLabel = stepMeta(stepd.step_type).label;
+          // Generic: nodes with named control output ports preserve definition order.
+          const ctrlPortDefs = getNodeDef(stepd.step_type).control_output_ports ?? [];
           let next: string[];
-          let next_handles: string[] | undefined;
-          if (stepd.step_type === 'branch') {
-            next = [
-              ctrlOut.find(e => e.sourceHandle === 'source-true')?.target?.replace('step-', '') ?? '',
-              ctrlOut.find(e => e.sourceHandle === 'source-false')?.target?.replace('step-', '') ?? '',
-            ].filter(Boolean);
-          } else if (stepd.step_type === 'transform' && ctrlOut.some(e => e.sourceHandle)) {
-            next = ctrlOut.map(e => (e.target as string).replace('step-', ''));
-            next_handles = ctrlOut.map(e => e.sourceHandle as string ?? '');
+          if (ctrlPortDefs.length > 0) {
+            next = ctrlPortDefs
+              .map(p => ctrlOut.find(e => e.sourceHandle === `ctrl-out-${p.id}`)?.target?.replace('step-', '') ?? '')
+              .filter(Boolean);
           } else {
             next = ctrlOut.map(e => (e.target as string).replace('step-', ''));
           }
@@ -716,7 +736,6 @@ function CanvasInner() {
             label: (stepd.label && stepd.label !== defaultLabel) ? stepd.label : undefined,
             config: stepd.config ?? {},
             next,
-            ...(next_handles ? { next_handles } : {}),
             ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
             position: sn.position,
           };
@@ -1117,7 +1136,10 @@ function CanvasInner() {
 
     if (srcNode) {
       const srcType = (srcNode.data as unknown as StepData).step_type;
-      const currentOut = (srcType === 'branch' || srcType === 'transform')
+      // For nodes with named control output ports, degree is per-handle (each port has its own cap).
+      // For anonymous control output nodes, degree is across all outgoing control edges.
+      const hasNamedCtrlPorts = (getNodeDef(srcType).control_output_ports ?? []).length > 0;
+      const currentOut = hasNamedCtrlPorts
         ? ctrlEdges.filter(e => e.source === conn.source && e.sourceHandle === conn.sourceHandle).length
         : ctrlEdges.filter(e => e.source === conn.source).length;
       if (!canAddOutgoing(srcType, currentOut)) return false;
