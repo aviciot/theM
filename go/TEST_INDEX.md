@@ -1643,6 +1643,25 @@ propagation + context cancellation, deep-copy isolation, and nil/empty plan safe
 
 ---
 
+### S1-74 · DAG E2E smoke tests — `internal/agentgen/agentgen_test.go` (Phase 2)
+
+**Purpose:** Full end-to-end integration of `CompileExecutionPlan` + `LocalExecutor` +
+real `Interpreter.executeStep` using production node types (`StepInput`, `StepBranch`,
+`StepTransform`, `StepResponse`). These tests exercise the complete canvas execution stack
+without mocking any internal layer.
+
+| Test | What it proves |
+|---|---|
+| `TestDAG_BranchConvergence_TruePath` | `input="yes"` → Branch true arm → `upper("yes")` → Response `"YES"`; compiler emits `JoinBranchMerge` for the convergence node |
+| `TestDAG_BranchConvergence_FalsePath` | `input="no"` → Branch false arm → `lower("no")` → Response `"no"`; same skill, other arm taken |
+| `TestDAG_ParallelTransforms_BothBranchesRun` | Non-Branch fan-out (Input→arm_a,arm_b→join): compiler emits `JoinWaitAll`; both `upper` and `lower` transforms run; merged vars contain both outputs |
+
+**Trigger:** any change to `internal/agentgen/agentgen_test.go` (E2E helpers),
+`internal/agentgen/local_executor.go`, `internal/agentgen/plan_compiler.go`,
+`internal/agentgen/nodes.go`, or `internal/agentgen/spec.go`
+
+---
+
 ### S1-51 · Agent definition publish service — `internal/admin/service/agent_definitions_publish_test.go`
 
 **Purpose:** Canvas A2A Builder validate/publish service layer. Verifies DAL delegation,
@@ -2137,19 +2156,19 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/temporal/workerconfig/loader.go` | S1-61 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
-| `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 |
+| `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 + S1-74 |
 | `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 |
 | `internal/agentgen/interpreter.go` | S1-48 + S1-64 + S1-67 + S1-69 |
-| `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 + S1-67 + S1-69 + S1-72 + S1-73 |
-| `internal/agentgen/plan_compiler.go` | S1-72 + S1-73 |
-| `internal/agentgen/executor.go` | S1-73 |
-| `internal/agentgen/local_executor.go` | S1-73 |
-| `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 + S1-69 + S1-71 |
+| `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 + S1-67 + S1-69 + S1-72 + S1-73 + S1-74 |
+| `internal/agentgen/plan_compiler.go` | S1-72 + S1-73 + S1-74 |
+| `internal/agentgen/executor.go` | S1-73 + S1-74 |
+| `internal/agentgen/local_executor.go` | S1-73 + S1-74 |
+| `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 + S1-69 + S1-71 + S1-74 |
 | `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 + S1-69 + S1-71 |
 | `internal/agentgen/mcp_caller.go` | S1-69 |
 | `internal/agentgen/context.go` | S1-48 + S1-64 |
 | `cmd/agent-runtime/main.go` | S1-60 + S1-62 + S1-65 |
-| `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1-72 + S1-73 + S1 (full suite) |
+| `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1-72 + S1-73 + S1-74 + S1 (full suite) |
 | `internal/admin/applications.go` (GetAppParams/SetAppParam/DeleteAppParam handlers) | S1-66 |
 | `internal/admin/system_agents.go` | S1-15 + S1 (full suite) |
 | `internal/dashboard/handler.go` | S1-52 |

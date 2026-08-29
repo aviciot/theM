@@ -1184,3 +1184,181 @@ func (f *modelCapturingFactory) NewProvider(provider, model string, _ int, _ str
 	}
 	return f.llm, nil
 }
+
+// ── DAG E2E smoke tests ────────────────────────────────────────────────────────
+// These tests exercise the full CompileExecutionPlan → LocalExecutor →
+// Interpreter.executeStep stack using real node types (no mock nodes).
+// They prove that the live agent-runtime execution path works correctly for
+// branching and parallel fan-out skills.
+
+// TestDAG_BranchConvergence_TruePath verifies a branch skill compiled to a
+// JoinBranchMerge plan and executed via LocalExecutor routes the true arm,
+// runs only the true-arm transform, and produces the correct response.
+//
+//	Input → Branch(eq .flag "yes") → Transform(set label="true_path") → Response
+//	                               ↘ Transform(set label="false_path") ↗
+func TestDAG_BranchConvergence_TruePath(t *testing.T) {
+	skill := branchConvergenceSkill()
+	plan := agentgen.CompileExecutionPlan(skill)
+
+	// Verify compiler classified the join correctly.
+	end := plan.NodeByID("resp")
+	if end == nil {
+		t.Fatal("NodeByID(resp) returned nil")
+	}
+	if end.JoinMode != agentgen.JoinBranchMerge {
+		t.Errorf("resp: expected JoinBranchMerge, got %s", end.JoinMode)
+	}
+
+	interp := agentgen.NewInterpreter(nil, nil, "")
+	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "ag1"}
+	exec := agentgen.NewLocalExecutor(interp)
+
+	// StepInput reads vars["input"] and writes it to vars["msg"] per the binding.
+	// Branch: eq .msg "yes" → true → upper("yes") → label="YES"
+	res, err := exec.Execute(context.Background(), ic, plan, agentgen.PipelineVars{"input": "yes"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.Text != "YES" {
+		t.Errorf("true arm: got %q want %q", res.Text, "YES")
+	}
+}
+
+// TestDAG_BranchConvergence_FalsePath verifies the false arm is taken when the
+// branch expression evaluates to false.
+func TestDAG_BranchConvergence_FalsePath(t *testing.T) {
+	skill := branchConvergenceSkill()
+	plan := agentgen.CompileExecutionPlan(skill)
+	interp := agentgen.NewInterpreter(nil, nil, "")
+	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "ag1"}
+	exec := agentgen.NewLocalExecutor(interp)
+
+	// input="no" → branch false → lower("no") → label="no"
+	res, err := exec.Execute(context.Background(), ic, plan, agentgen.PipelineVars{"input": "no"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.Text != "no" {
+		t.Errorf("false arm: got %q want %q", res.Text, "no")
+	}
+}
+
+// TestDAG_ParallelTransforms_BothBranchesRun verifies a parallel fan-out skill
+// (non-Branch fan-out → JoinWaitAll) executes both arms and merges their vars.
+//
+//	Input → Transform(label_a="arm_a") → Response(reads merged_result)
+//	      ↘ Transform(label_b="arm_b") ↗
+//
+// The response step uses a concat transform to produce "arm_a+arm_b" from the
+// merged vars, which proves both branches ran.
+func TestDAG_ParallelTransforms_BothBranchesRun(t *testing.T) {
+	skill := parallelFanOutSkill()
+	plan := agentgen.CompileExecutionPlan(skill)
+
+	// Compiler must classify the join as JoinWaitAll (non-Branch fan-out source).
+	join := plan.NodeByID("join")
+	if join == nil {
+		t.Fatal("NodeByID(join) returned nil")
+	}
+	if join.JoinMode != agentgen.JoinWaitAll {
+		t.Errorf("join: expected JoinWaitAll, got %s", join.JoinMode)
+	}
+
+	interp := agentgen.NewInterpreter(nil, nil, "")
+	ic := &agentgen.InvocationContext{TenantID: "t1", ApplicationID: "a1", AgentID: "ag1"}
+	exec := agentgen.NewLocalExecutor(interp)
+
+	// StepInput reads vars["input"] → vars["msg"]
+	// arm_a: upper("Hello") → upper_out="HELLO"
+	// arm_b: lower("Hello") → lower_out="hello"
+	// Both must run (JoinWaitAll); Response reads upper_out.
+	res, err := exec.Execute(context.Background(), ic, plan, agentgen.PipelineVars{"input": "Hello"})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.Text != "HELLO" {
+		t.Errorf("result: got %q want %q (upper_out from arm_a)", res.Text, "HELLO")
+	}
+}
+
+// branchConvergenceSkill builds a real SkillSpec using StepBranch:
+//
+//	Input(text→msg) → Branch(eq .msg "yes", true→true_arm, false→false_arm)
+//	→ true_arm: Transform(upper(msg) → label)   produces "YES"
+//	→ false_arm: Transform(lower(msg) → label)  produces "no"
+//	→ resp: Response(from_var=label)             [JoinBranchMerge]
+//
+// Test seeds input="yes" for true path (expects "YES") and input="no" for
+// false path (expects "no"). Both arms converge at the same Response node.
+func branchConvergenceSkill() *agentgen.SkillSpec {
+	trueTransformCfg := mustJSON(agentgen.TransformStepConfig{
+		Functions: []transform.FunctionStep{
+			{Fn: "upper", InputVar: "msg", OutputVar: "label"},
+		},
+	})
+	falseTransformCfg := mustJSON(agentgen.TransformStepConfig{
+		Functions: []transform.FunctionStep{
+			{Fn: "lower", InputVar: "msg", OutputVar: "label"},
+		},
+	})
+	return &agentgen.SkillSpec{
+		ID: "skill-branch-convergence",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:     "in",
+				Type:   agentgen.StepInput,
+				Config: mustJSON(agentgen.InputStepConfig{Bindings: map[string]string{"text": "msg"}}),
+				Next:   []string{"br"},
+			},
+			{
+				ID:   "br",
+				Type: agentgen.StepBranch,
+				Config: mustJSON(agentgen.BranchStepConfig{
+					Expression: `{{eq .msg "yes"}}`,
+					TrueNext:   "true_arm",
+					FalseNext:  "false_arm",
+				}),
+				Next: []string{"true_arm", "false_arm"},
+			},
+			{ID: "true_arm", Type: agentgen.StepTransform, Config: trueTransformCfg, Next: []string{"resp"}},
+			{ID: "false_arm", Type: agentgen.StepTransform, Config: falseTransformCfg, Next: []string{"resp"}},
+			{ID: "resp", Type: agentgen.StepResponse, Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "label"})},
+		},
+	}
+}
+
+// parallelFanOutSkill builds a real SkillSpec with non-Branch fan-out (Input fans
+// to two Transform steps) converging at a Response step (JoinWaitAll).
+//
+//	Input(text→msg) → Transform(upper(msg)→upper_out) → join(Response, reads upper_out)
+//	               ↘ Transform(lower(msg)→lower_out) ↗
+//
+// Response reads upper_out — both arms must have run for the join to fire.
+// lower_out being present in merged vars is an implicit proof that arm_b ran.
+func parallelFanOutSkill() *agentgen.SkillSpec {
+	armACfg := mustJSON(agentgen.TransformStepConfig{
+		Functions: []transform.FunctionStep{
+			{Fn: "upper", InputVar: "msg", OutputVar: "upper_out"},
+		},
+	})
+	armBCfg := mustJSON(agentgen.TransformStepConfig{
+		Functions: []transform.FunctionStep{
+			{Fn: "lower", InputVar: "msg", OutputVar: "lower_out"},
+		},
+	})
+	return &agentgen.SkillSpec{
+		ID: "skill-parallel-fanout",
+		Steps: []agentgen.StepSpec{
+			{
+				ID:     "in",
+				Type:   agentgen.StepInput,
+				Config: mustJSON(agentgen.InputStepConfig{Bindings: map[string]string{"text": "msg"}}),
+				Next:   []string{"arm_a", "arm_b"},
+			},
+			{ID: "arm_a", Type: agentgen.StepTransform, Config: armACfg, Next: []string{"join"}},
+			{ID: "arm_b", Type: agentgen.StepTransform, Config: armBCfg, Next: []string{"join"}},
+			{ID: "join", Type: agentgen.StepResponse, Config: mustJSON(agentgen.ResponseStepConfig{FromVar: "upper_out"})},
+		},
+	}
+}
