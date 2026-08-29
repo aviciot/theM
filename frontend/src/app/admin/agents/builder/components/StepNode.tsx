@@ -238,26 +238,29 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
     width: 1, height: 1, opacity: 0, border: 'none', background: 'transparent',
   };
 
-  // Flow (ctrl) handles — visible arrow dots on the card edge, hoverable
+  // Flow (ctrl) handles — always-visible chevron arrows on card edge
   function ctrlHandleStyle(side: 'in' | 'out'): React.CSSProperties {
+    const size = 18;
     const base: React.CSSProperties = {
-      width: 12, height: 12,
+      width: size, height: size,
       borderRadius: '50%',
-      background: FLOW_COLOR,
-      border: '2px solid rgba(255,255,255,0.18)',
-      opacity: hovered ? 1 : 0.35,
-      transition: 'opacity 0.15s, transform 0.15s',
-      cursor: 'crosshair',
+      background: hovered ? '#334155' : '#1e293b',
+      border: `2px solid ${hovered ? '#64748b' : '#334155'}`,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      cursor: side === 'out' ? 'crosshair' : 'default',
       zIndex: 5,
+      transition: 'background 0.15s, border-color 0.15s',
+      boxSizing: 'border-box',
     };
+    const half = size / 2;
     if (isLR) {
       return side === 'in'
-        ? { ...base, left: -6, top: '50%', transform: 'translateY(-50%)' }
-        : { ...base, right: -6, top: '50%', transform: 'translateY(-50%)' };
+        ? { ...base, left: -half, top: '50%', transform: 'translateY(-50%)' }
+        : { ...base, right: -half, top: '50%', transform: 'translateY(-50%)' };
     }
     return side === 'in'
-      ? { ...base, top: -6, left: '50%', transform: 'translateX(-50%)' }
-      : { ...base, bottom: -6, left: '50%', transform: 'translateX(-50%)' };
+      ? { ...base, top: -half, left: '50%', transform: 'translateX(-50%)' }
+      : { ...base, bottom: -half, left: '50%', transform: 'translateX(-50%)' };
   }
 
   function inputHandleStyle(idx: number): React.CSSProperties {
@@ -302,24 +305,50 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
     >
       {/* ── All INPUT handles ── */}
       {inputPorts.map((port, idx) => (
-        <Handle
-          key={port.handleID}
-          id={port.handleID}
-          type="target"
-          position={targetPos}
-          style={port.kind === 'control' ? ctrlHandleStyle('in') : inputHandleStyle(idx)}
-        />
+        <React.Fragment key={port.handleID}>
+          <Handle
+            id={port.handleID}
+            type="target"
+            position={targetPos}
+            style={port.kind === 'control' ? ctrlHandleStyle('in') : inputHandleStyle(idx)}
+          />
+          {port.kind === 'control' && (
+            <div style={{
+              ...ctrlHandleStyle('in'),
+              position: 'absolute',
+              pointerEvents: 'none',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 10, color: '#64748b', fontWeight: 700, lineHeight: 1,
+              userSelect: 'none',
+            }}>
+              {isLR ? '‹' : '∧'}
+            </div>
+          )}
+        </React.Fragment>
       ))}
 
       {/* ── All OUTPUT handles ── */}
       {outputPorts.map((port, idx) => (
-        <Handle
-          key={port.handleID}
-          id={port.handleID}
-          type="source"
-          position={sourcePos}
-          style={port.kind === 'control' ? ctrlHandleStyle('out') : outputHandleStyle(idx)}
-        />
+        <React.Fragment key={port.handleID}>
+          <Handle
+            id={port.handleID}
+            type="source"
+            position={sourcePos}
+            style={port.kind === 'control' ? ctrlHandleStyle('out') : outputHandleStyle(idx)}
+          />
+          {port.kind === 'control' && (
+            <div style={{
+              ...ctrlHandleStyle('out'),
+              position: 'absolute',
+              pointerEvents: 'none',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 10, color: hovered ? '#94a3b8' : '#64748b', fontWeight: 700, lineHeight: 1,
+              userSelect: 'none',
+            }}>
+              {isLR ? '›' : '∨'}
+            </div>
+          )}
+        </React.Fragment>
       ))}
 
       {/* ── Card content ── */}
