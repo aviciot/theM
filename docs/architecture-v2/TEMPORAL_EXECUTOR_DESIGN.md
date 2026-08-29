@@ -297,11 +297,11 @@ All timeouts must be consistent so no inner timer can fire after the outer has e
 |---|---|---|
 | `RunOrchestratorActivity` `StartToClose` | 10 min | `internal/temporal/workflow.go:activityStartToClose` |
 | `CanvasAgentWorkflow` `WorkflowExecutionTimeout` | 12 min | `DAG_WORKFLOW_TIMEOUT` env, default `"12m"` |
-| `ExecuteStepActivity` `ScheduleToClose` (LLM/HTTP/A2A/MCP) | 5 min | Per-activity options in `canvas_activities.go` |
+| `ExecuteStepActivity` `StartToClose` (LLM/HTTP/A2A/MCP) | 5 min | Per-activity options in `canvas_workflow.go` (`activityOptionsForNode`) |
 | `ExecuteStepActivity` (HumanWait) | Returns immediately; signal wait in workflow | No activity timeout needed |
 | Redis large-value TTL | 30 min | `DAGVarStore` constant `dagVarTTL` |
 
-Rule: `activity ScheduleToClose` < `CanvasAgentWorkflow` execution timeout
+Rule: `activity StartToClose` < `CanvasAgentWorkflow` execution timeout
 < `RunOrchestratorActivity` StartToClose + some slack. This ensures the DAG workflow
 always terminates before the parent activity times out.
 
@@ -473,9 +473,9 @@ subset of that accumulator (filtered by the next node's declared `Inputs`) to th
 next `ExecuteStepActivity` call.
 
 Large values (LLM response > 64 KB): store in Redis under
-`them:dag:var:{workflowID}:{varName}` with TTL = 1 hour; pass the key string as
-the var value; activities read/write via a `DAGVarStore` interface (injectable,
-so tests do not need Redis).
+`them:dag:var:{workflowID}:{varName}` with TTL = 30 min (dynamic: `max(30m, 2×DAGWorkflowTimeout)`
+per §3b.8); pass the key string as the var value; activities read/write via a `DAGVarStore`
+interface (injectable, so tests do not need Redis).
 
 ### 5.3 CanvasAgentWorkflow output
 
@@ -538,12 +538,12 @@ the source of truth. `CanvasAgentWorkflow` resumes from the last completed activ
 
 The `CanvasAgentWorkflow` continues running independently. When `them-agent-runtime`
 restarts and `RunOrchestratorActivity` retries (Temporal retries the activity),
-the new invocation starts a new `CanvasAgentWorkflow` with a new unique workflow ID.
-The orphaned previous workflow eventually times out (`WorkflowExecutionTimeout`).
-To avoid duplicate executions: set a short `WorkflowExecutionTimeout` (e.g. 15 min)
-and use idempotency on the workflow ID (`"{agentID}:{parentRunID}:{skillID}:{attempt}"`
-where attempt comes from Temporal's activity attempt number, accessible via
-`activity.GetInfo(ctx).Attempt`).
+the new invocation uses the stable `"canvas:{agentID}:{invocationID}"` Workflow ID
+from §3b.1. If the workflow is still running, `ExecuteWorkflow` returns
+`AlreadyStarted` and the caller re-attaches via `client.GetWorkflow(ctx, workflowID, "")`.
+The orphaned previous workflow (if any) eventually times out (`WorkflowExecutionTimeout`,
+default 12 min). **Never include the activity attempt number in the Workflow ID** — that
+would start a new workflow on each retry instead of re-attaching to the running one.
 
 ### 7.5 `ErrContractViolation`
 
@@ -556,14 +556,14 @@ Temporal does not retry; the workflow receives the error immediately and fails.
 
 | Node type | MaxAttempts | InitialInterval | BackoffCoeff | MaxInterval | NonRetryable |
 |---|---|---|---|---|---|
-| `llm`, `http`, `a2a_call`, `mcp_call` | 3 | 2s | 2.0 | 30s | `ContractViolation`, `InvalidConfig` |
+| `llm`, `http`, `a2a_call`, `mcp_call` | 2 | 2s | 2.0 | 30s | `ContractViolation`, `InvalidConfig`, `PermissionDenied` |
 | `input`, `transform`, `response`, `branch` | 1 | — | — | — | all (deterministic) |
-| `human_wait` | 1 | — | — | — | `ScheduleToCloseTimeout: 48h` (waits for signal) |
+| `human_wait` | N/A | — | — | — | Activity returns immediately (WaitingForHuman=true); signal-wait in workflow — no activity timeout |
 | `parallel` | 1 | — | — | — | all (no-op coordinator) |
 | `loop` | 1 per iteration | — | — | — | each iteration body activity has its own policy |
 
 `CanvasAgentWorkflow` `WorkflowExecutionTimeout`: configurable via `DAG_WORKFLOW_TIMEOUT`
-env (default `"15m"`). Set low to prevent orphan workflows consuming Temporal quota.
+env (default `"12m"`). Set low to prevent orphan workflows consuming Temporal quota.
 
 ---
 
@@ -604,7 +604,7 @@ Migration `048` is reserved. It will be used only if Phase 4 introduces a new ta
 ```go
 DAGWorkerTaskQueue   string // env: DAG_WORKER_TASK_QUEUE,   default "canvas-dag-nodes"
 DAGWorkerConcurrency int    // env: DAG_WORKER_CONCURRENCY,  default 20
-DAGWorkflowTimeout   string // env: DAG_WORKFLOW_TIMEOUT,    default "15m"
+DAGWorkflowTimeout   string // env: DAG_WORKFLOW_TIMEOUT,    default "12m"
 ```
 
 ### docker-compose additions
@@ -759,8 +759,51 @@ run the same assertions.
 |---|---|---|
 | Temporal history grows large with many nodes or large LLM outputs | Medium | Scoped input/output deltas + Redis var store for large values (OD-2) |
 | `workflow.Await` deadlock if join counter never increments | Medium | Safety timeout inside `workflow.Await`; CT-5 (error path) tests this |
-| Orphan workflows from `agent-runtime` crash | Low-Medium | Short `WorkflowExecutionTimeout`; workflow ID includes attempt number (OD-7) |
+| Orphan workflows from `agent-runtime` crash | Low-Medium | Short `WorkflowExecutionTimeout` (12 min); re-attach via stable Workflow ID on retry (§3b.1) |
 | `them-dag-worker` crash mid-activity | Low | Temporal reschedules on next available replica; history is the source of truth |
 | Per-node Temporal overhead adds latency | Low | ~50–200ms per activity; LLM nodes dominate; measure in Phase 4-C before enabling |
 | `HumanWait` signal routing — must target `CanvasAgentWorkflow`, not parent | High if unhandled | Signal channel name includes `workflowID`; design explicitly in Phase 4-B (OD-3) |
 | Credentials re-loaded from DB per activity — DB load increases | Low | Same pattern as today; credentials are cached in `them-go-bridge` token cache |
+
+---
+
+## 16. Implementation notes — confirmed invariants (Phase 4-B)
+
+The following design invariants were verified during Phase 4-B implementation
+(`canvas_workflow.go`, `canvas_activities.go`, `canvas_workflow_test.go`, commit 68da87c).
+
+### 16.1 Every node runs through ExecuteNodeForActivity → Interpreter dispatch
+
+`ExecuteStepActivity` calls `agentgen.ExecuteNodeForActivity(ctx, interp.Clone(), ic, ...)`
+for every non-human_wait node. `ExecuteNodeForActivity` calls `interp.executeStep(ctx, ic, node, vars)`,
+which dispatches to the same switch-on-type that `LocalExecutor` uses. No node bypasses the
+`Interpreter`. **Future Go registry nodes registered in the same switch require no new Activity** —
+they are automatically dispatched via the existing `executeStep` path.
+
+### 16.2 Runtime secrets are loaded by the worker, never stored in Temporal history
+
+`CanvasAgentWorkflowInput.IC` carries only `{TenantID, ApplicationID, AgentID, BindingID}` —
+no credentials. The `dag-worker` (Phase 4-C) implements `ContextLoader.Load(ctx, ic)` which
+queries the DB (scoped by all four IDs per §3b.7) to retrieve the full `InvocationContext` at
+activity execution time. The `InvocationContext` — including `Credentials` — exists only in
+activity memory and is never written to Temporal history.
+
+### 16.3 Future Go registry nodes need no new Activity
+
+The `Interpreter.executeStep` switch dispatches on `node.Type`. Adding a new Go node type to
+the registry adds a new case to that switch. `ExecuteStepActivity` calls `ExecuteNodeForActivity`
+which calls `executeStep` — so the new node type is automatically available under
+`ExecuteStepActivity` without registering a new Temporal Activity. The only required update is
+`activityOptionsForNode`: add the new node type to the appropriate `case` to assign the correct
+retry policy (idempotent → `MaxAttempts:1`; side-effectful → `MaxAttempts:2`).
+
+### 16.4 Authoritative timeout and retry values (ground truth: code constants in canvas_workflow.go)
+
+| Constant | Value | Source |
+|---|---|---|
+| `dagWorkflowTimeout` | 12 min | `canvas_workflow.go:27` |
+| `stepActivityTimeout` (`StartToCloseTimeout`) | 5 min | `canvas_workflow.go:30` |
+| Redis large-value TTL | 30 min min (`max(30m, 2×dagWorkflowTimeout)`) | §3b.8 policy |
+| `MaximumAttempts` — LLM/HTTP/A2A/MCP | 2 | `activityOptionsForNode` (`canvas_workflow.go`) |
+| `MaximumAttempts` — pure nodes (input/transform/response/branch/parallel) | 1 | `activityOptionsForNode` |
+| Non-retryable error types | `ContractViolation`, `InvalidConfig`, `PermissionDenied` | `activityOptionsForNode` |
