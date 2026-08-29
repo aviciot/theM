@@ -118,7 +118,7 @@ func init() {
 		DynamicOutputs:       false,
 		Color:                "rgba(208,188,255,0.6)",
 		BgColor:              "rgba(87,27,193,0.1)",
-		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
+		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 0},
 		InputField:  "user_prompt",
 		// Static port: the prompt input. Var name is instance-specific (user_prompt template vars);
 		// port ID "input" is the canonical handle used in canvas bindings.
@@ -199,7 +199,7 @@ func init() {
 		DynamicOutputs:       false,
 		Color:                "rgba(20,184,166,0.5)",
 		BgColor:              "rgba(20,184,166,0.07)",
-		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
+		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 0},
 		InputField:  "url_template",
 		AppParams: []AppParamDecl{
 			{
@@ -554,7 +554,7 @@ func init() {
 		DynamicOutputs:       false,
 		Color:                "rgba(0,240,255,0.4)",
 		BgColor:              "rgba(0,240,255,0.05)",
-		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
+		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 0},
 		ConfigFields: []ConfigFieldDoc{
 			{Key: "agent_url", Type: "string", Required: true, Description: "Base URL of the A2A agent to call (e.g. http://my-agent:9200).", Example: "http://vision-agent:9100"},
 			{Key: "skill_id", Type: "string", Required: false, Description: "Specific skill ID to invoke on the target agent. Omit to use the agent's default skill.", Example: "analyze_image"},
@@ -604,7 +604,7 @@ func init() {
 		DynamicOutputs:       false,
 		Color:                "rgba(74,222,128,0.3)",
 		BgColor:              "rgba(74,222,128,0.05)",
-		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
+		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 0},
 		ConfigFields: []ConfigFieldDoc{
 			{Key: "prompt_text", Type: "string", Required: false, Description: "Message shown to the human operator while waiting for input.", Example: "Please review the draft and approve or reject it."},
 			{Key: "reply_var", Type: "string", Required: false, Description: "Variable name to store the human's reply.", Example: "human_reply"},
@@ -681,7 +681,7 @@ func init() {
 		DynamicOutputs:       false,
 		Color:                "rgba(99,102,241,0.5)",
 		BgColor:              "rgba(99,102,241,0.1)",
-		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
+		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 0},
 		ConfigFields: []ConfigFieldDoc{
 			{Key: "mcp_server_slug", Type: "string", Required: true, Description: "Slug of the MCP server as configured in Admin → MCP Servers.", Example: "github-mcp"},
 			{Key: "tool_name", Type: "string", Required: true, Description: "Name of the tool to invoke on the MCP server.", Example: "list_issues"},

@@ -65,6 +65,14 @@ func (interp *Interpreter) WithMCPCaller(mc MCPCaller) *Interpreter {
 	return interp
 }
 
+// clone returns a shallow copy of the Interpreter with a fresh nextStepOverride.
+// Used by LocalExecutor so each branch goroutine has its own mutable state.
+func (interp *Interpreter) clone() *Interpreter {
+	cp := *interp
+	cp.nextStepOverride = ""
+	return &cp
+}
+
 // ExecutionResult is the output of a successful pipeline execution.
 type ExecutionResult struct {
 	Text      string

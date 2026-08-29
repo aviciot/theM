@@ -64,7 +64,7 @@ func (e *LocalExecutor) Execute(
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := e.runBranch(runCtx, ic, plan, nodeIdx, js, res, deepCopyVars(initial), plan.StartID, cancel, errCh, &wg); err != nil {
+		if err := e.runBranch(runCtx, ic, plan, nodeIdx, js, res, deepCopyVars(initial), plan.StartID, cancel, errCh, &wg, e.interp.clone()); err != nil {
 			select {
 			case errCh <- err:
 			default:
@@ -103,6 +103,7 @@ func (e *LocalExecutor) runBranch(
 	cancel context.CancelFunc,
 	errCh chan<- error,
 	wg *sync.WaitGroup,
+	interp *Interpreter, // per-goroutine clone — owns nextStepOverride, never shared
 ) error {
 	currentID := startID
 	visited := make(map[string]bool)
@@ -140,7 +141,7 @@ func (e *LocalExecutor) runBranch(
 
 		// ── Execute the node ───────────────────────────────────────────────────
 		stepSpec := planNodeToStepSpec(node)
-		nextOverride, err := e.execNode(ctx, ic, stepSpec, vars, res)
+		nextOverride, err := e.execNode(ctx, ic, interp, stepSpec, vars, res)
 		if err != nil {
 			cancel()
 			return fmt.Errorf("step %q (%s): %w", node.StepID, node.Type, err)
@@ -163,10 +164,11 @@ func (e *LocalExecutor) runBranch(
 			for _, sibID := range nextIDs[1:] {
 				sibID := sibID // capture
 				sibVars := deepCopyVars(vars)
+				sibInterp := e.interp.clone() // each goroutine owns its nextStepOverride
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					if err := e.runBranch(ctx, ic, plan, nodeIdx, js, res, sibVars, sibID, cancel, errCh, wg); err != nil {
+					if err := e.runBranch(ctx, ic, plan, nodeIdx, js, res, sibVars, sibID, cancel, errCh, wg, sibInterp); err != nil {
 						select {
 						case errCh <- err:
 						default:
@@ -181,31 +183,24 @@ func (e *LocalExecutor) runBranch(
 	return nil
 }
 
-// execNode runs one plan node, updating vars in-place and returning any branch
-// override (from branch steps). The heavy lifting delegates to interp.executeStep.
+// execNode runs one plan node using the caller's per-goroutine interp clone.
+// interp.nextStepOverride is safe to read/write because each goroutine has its own clone.
 func (e *LocalExecutor) execNode(
 	ctx context.Context,
 	ic *InvocationContext,
+	interp *Interpreter,
 	step *StepSpec,
 	vars PipelineVars,
 	res *sharedResult,
 ) (nextOverride string, err error) {
-	// Capture nextStepOverride: we need to reset interp state around executeStep.
-	// Since LocalExecutor may run concurrent branches on the same Interpreter,
-	// we snapshot the override via a temporary wrapper result and the interp field.
-	// NOTE: interp.nextStepOverride is a shared mutable field — safe here because
-	// each branch goroutine calls execNode sequentially (no two goroutines share
-	// the same Interpreter instance path through executeStep simultaneously within
-	// one LocalExecutor.Execute call). Phase 1 constraint: Interpreter must not be
-	// shared across concurrent LocalExecutor.Execute calls.
 	localResult := &ExecutionResult{MediaType: "text/plain"}
 
-	e.interp.nextStepOverride = ""
-	if execErr := e.interp.executeStep(ctx, ic, step, vars, localResult); execErr != nil {
+	interp.nextStepOverride = ""
+	if execErr := interp.executeStep(ctx, ic, step, vars, localResult); execErr != nil {
 		return "", execErr
 	}
-	override := e.interp.nextStepOverride
-	e.interp.nextStepOverride = ""
+	override := interp.nextStepOverride
+	interp.nextStepOverride = ""
 
 	// Promote result if this step produced one.
 	if localResult.Text != "" || step.Type == StepResponse || step.Type == StepStreamOut {
