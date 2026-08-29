@@ -1694,6 +1694,37 @@ or `internal/agentgen/context.go`
 
 ---
 
+### S1-76 · Phase 4-B: CanvasAgentWorkflow + CanvasAgentActivities — `internal/temporal/canvas_workflow_test.go`
+
+**Purpose:** Conformance tests for the Temporal DAG execution layer. Verifies that
+`CanvasAgentWorkflow` correctly orchestrates fan-out, join, branch convergence, error
+propagation, HumanWait signal return, and result capture — all using the Temporal
+`WorkflowTestSuite` (in-process, no live Temporal required). Also verifies
+`CanvasAgentActivities.ExecuteStepActivity` activity-level contracts.
+
+| Test | What it proves |
+|---|---|
+| `TestCT01_LinearChain` | A→B→C executes in order; result from C |
+| `TestCT02_ParallelFanOut_JoinWaitAll` | A→{B,C}→D: both B and C execute; D gets merged vars (JoinWaitAll) |
+| `TestCT03_BranchTruePath` | Branch true arm executes; false arm skipped; join continues (JoinBranchMerge) |
+| `TestCT04_BranchFalsePath` | Branch false arm executes; true arm skipped |
+| `TestCT05_NodeError_PropagatesAndCancelsSiblings` | Activity loader error propagates as workflow error |
+| `TestCT06_EmptyPlan_ReturnsError` | Empty plan returns non-retryable ApplicationError |
+| `TestCT07_JoinBranchMerge_SecondArmDropped` | Only one arm reaches the join; second arm is dropped |
+| `TestCT08_ContractViolation_CausesWorkflowFailure` | Missing required input → ErrContractViolation → workflow failure |
+| `TestCT09_InvalidIC_NonRetryable` | Invalid ActivityIC returns error before any activity is dispatched |
+| `TestCT10_ResponseResult_Propagation` | StepResponse result propagates to CanvasAgentWorkflowOutput |
+| `TestCanvasAgentWorkflowInput_Serialization` | CanvasAgentWorkflowInput round-trips through JSON (Temporal history) |
+| `TestStepActivityOutput_NoSecrets` | StepActivityOutput JSON contains no secret values |
+| `TestExecuteStepActivity_InvalidIC_ReturnsError` | Invalid ActivityIC rejected with TenantID error |
+| `TestExecuteStepActivity_HumanWait_ReturnsImmediately` | human_wait node returns WaitingForHuman=true without blocking |
+| `TestExecuteStepActivity_NilInterp_ReturnsError` | nil InterpTemplate returns non-retryable error |
+| `TestExecuteStepActivity_LoaderError_Propagates` | ContextLoader.Load error propagates as activity error |
+
+**Trigger:** any change to `internal/temporal/canvas_workflow.go`, `internal/temporal/canvas_activities.go`
+
+---
+
 ### S1-51 · Agent definition publish service — `internal/admin/service/agent_definitions_publish_test.go`
 
 **Purpose:** Canvas A2A Builder validate/publish service layer. Verifies DAL delegation,
@@ -2186,6 +2217,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/history/pgx.go` | S1-46 |
 | `internal/summarizer/summarizer.go` | S1-47 |
 | `internal/temporal/activities.go`, `internal/temporal/workflow.go` | S1-29 |
+| `internal/temporal/canvas_workflow.go`, `internal/temporal/canvas_activities.go` | S1-76 |
 | `internal/temporal/workerconfig/loader.go` | S1-61 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
@@ -2342,7 +2374,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-69 | MCP call node + executor (MCP-1..10) | 10 |
 | S1-74 | DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run) | 3 |
 | S1-75 | Phase 4-A: ExecuteNodeForActivity, ActivityIC, ExecutionBackend (NA-01..16) | 16 |
-| **S1 total** | | **824** |
+| S1-76 | Phase 4-B: CanvasAgentWorkflow, CanvasAgentActivities (CT-01..10 + CT-A..F) | 16 |
+| **S1 total** | | **840** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2351,4 +2384,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **845** |
+| **`go test ./...` total** | | **861** |
