@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `cd9632f` — fix(canvas): 3 canvas port bugs — duplicate Handles, popover auto-close, branch card height
+Commit: `a1adbe8` — feat(agentgen): Phase 4-A — ExecutionBackend field, ExecuteNodeForActivity adapter, ActivityIC
 
 Recent commits (newest first):
 ```
+a1adbe8 feat(agentgen): Phase 4-A — ExecutionBackend field, ExecuteNodeForActivity adapter, ActivityIC
+491cf16 docs(arch): revise TemporalExecutor design — 10 corrections applied
+cf15ea4 docs(arch): TemporalExecutor Phase 4 design — DAGWorkflow + ExecuteStepActivity
+e349101 docs(current): update HEAD to cd9632f + record canvas port bug fixes
 cd9632f fix(canvas): 3 canvas port bugs — duplicate Handles, popover auto-close, branch card height
-b5767b0 feat(agentgen): implement StepParallel.Execute — fan-out coordinator is now executable
-bd2ffbd test(agentgen): DAG E2E smoke tests — CompileExecutionPlan + LocalExecutor + real node types
-d471f9f fix(agentgen): harden plan compiler — classifyJoin + BranchMerge + race tests
-a9528d6 feat(agent-runtime): wire LocalExecutor as execution backend
 ```
 
 ---
@@ -147,12 +147,13 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test -race ./...  — all packages, 0 failures, 0 races (verified 2026-08-29, DAG E2E + StepParallel)
+go test ./...  — all packages, 0 failures (verified 2026-08-29, Phase 4-A — full Docker build)
 S1-72: 6 plan compiler tests (TestCompileExecutionPlan_* — including MixedFanOut + BranchMerge)
 S1-73: 10 LocalExecutor tests (TestLocalExecutor_* including Branch/DeterministicMerge/CausalError, TestDeepCopyVars_*)
 S1-74: 3 DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run)
+S1-75: 16 Phase 4-A tests (NA-01..NA-16: ExecuteNodeForActivity, ActivityIC, ExecutionBackend)
 S1-54: 18 node registry tests (added TestNodeRegistry_ParallelIsImplemented)
-go test ./... total: 829
+go test ./... total: 845
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -407,7 +408,10 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | Wired | `cmd/agent-runtime/main.go` uses `LocalExecutor` (not sequential `Interpreter.Execute`) | ✅ commit `a9528d6` |
 | E2E tests | `agentgen_test.go` — 3 smoke tests through CompileExecutionPlan + LocalExecutor + real node types (S1-74) | ✅ commit `bd2ffbd` |
 | StepParallel | `StepParallel.Execute` implemented (no-op fan-out coordinator); removed from stub list | ✅ commit `b5767b0` |
-| 4 | `TemporalExecutor` — `ExecuteStepActivity` + `TemporalExecutor` struct | ⬜ |
+| 4-A | `ExecutionBackend` field in `AgentSpec`; `ExecuteNodeForActivity` adapter; `ActivityIC`; `Interpreter.Clone()`; 16 tests (S1-75) | ✅ commit `a1adbe8` |
+| 4-B | `CanvasAgentWorkflow` + `ExecuteStepActivity` + conformance tests CT-1..CT-10 in `internal/temporal/` | ⬜ |
+| 4-C | `TemporalExecutor`, `them-dag-worker`, `agent-runtime` wiring, Docker service | ⬜ |
+| 4-D | Frontend publish toggle | ⬜ |
 | 5 | Loop, HumanWait, A2A in DAG context | ⬜ |
 
 ### DAG join semantics (hardening summary)
@@ -428,22 +432,39 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Step 1 — DAG live canvas validation (recommended first)
-Build a canvas agent with a Branch or Parallel node in the UI and run it live through `them-agent-runtime`.
-All the E2E unit tests pass, but live canvas DAG execution hasn't been smoke-tested on real canvas agents yet.
-Canvas port UX bugs are now fixed (cd9632f) so the builder should be usable for this test.
-This is low-risk — just create a simple agent in the canvas UI and verify the run completes correctly.
+### Phase 4-B: CanvasAgentWorkflow (new session — start here)
 
-### Step 2 — DAG Phase 4: TemporalExecutor (medium priority)
-Implement `TemporalExecutor` as an `ExecutionBackend` that runs each `PlanNode` as a Temporal activity.
-All DAG semantics (join detection, branch-aware merge, error propagation) are already correct in the
-compiled `ExecutionPlan` — the Temporal executor just needs to schedule activities per the plan graph.
-**This is a new session task** — significant architecture scope.
+Phase 4-A is committed and green. Phase 4-B implements the workflow and activities in `internal/temporal/`:
 
-### Step 3 — Auth admin CRUD Go proxy (lower priority)
-- `them-auth-service` (Python, port 8701) still serves user/role/team management
-- Frontend hits it directly via its own Traefik routes
-- When ready: implement Go proxy at `go/internal/authadmin/` + Traefik redirect
+1. `go/internal/temporal/canvas_activities.go` — `CanvasAgentActivities` struct + `ExecuteStepActivity`:
+   - Receives `StepActivityInput{Node, Vars, IC ActivityIC}`
+   - Loads credentials from DB via all 4 IDs (`dal.GetAgentBinding(ctx, tenantID, appID, agentID, bindingID)`)
+   - Reconstructs `InvocationContext` (with API keys, agent params) from DB
+   - Calls `agentgen.ExecuteNodeForActivity(ctx, interpTemplate.Clone(), ic, NodeExecutionInput{...})`
+   - Returns `StepActivityOutput{Vars, NextOverride, ResultText, ResultMT}`
+   - `HumanWait` node: returns `{WaitingForHuman: true}` immediately (signal-wait is in the workflow)
+
+2. `go/internal/temporal/canvas_workflow.go` — `CanvasAgentWorkflow`:
+   - Takes `CanvasAgentWorkflowInput{Plan, Initial PipelineVars, IC ActivityIC}`
+   - Runs nodes using `workflow.Go` coroutines for fan-out, `workflow.Await` for joins
+   - Merge strategy: accumulate `StepActivityOutput.Vars` into workflow-local map; project down to next node's declared Inputs
+   - Error propagation: shared `workflow.Channel`; first causal error wins; sibling coroutines cancelled
+   - HumanWait: wait on `workflow.GetSignalChannel(ctx, "human_input:{nodeID}")`
+   - Returns `CanvasAgentWorkflowOutput{ResultText, ResultMT}`
+
+3. `go/internal/temporal/canvas_workflow_test.go` — conformance tests CT-1..CT-10 using `WorkflowTestSuite` (see design doc §11 for exact test table)
+
+Key design constraints (from `TEMPORAL_EXECUTOR_DESIGN.md`):
+- Task queue: `"canvas-dag-nodes"` (distinct from `"them-orchestration-go"`)
+- Workflow ID: `"canvas:{agentID}:{invocationID}"` where `invocationID` is stable across retries
+- No Temporal SDK import in `go/internal/agentgen/`
+- `ActivityIC` must never carry secrets; activities load credentials from DB using all 4 IDs
+- `HumanWait` activity returns immediately; signal-wait is in the workflow, not the activity
+- Retry policy: pure nodes (input/transform/response/branch) → MaxAttempts:1; LLM/HTTP/A2A/MCP → MaxAttempts:2-3 with backoff
+
+### Other tasks (lower priority)
+- DAG live canvas validation — smoke test a Branch/Parallel canvas agent live
+- Auth admin CRUD Go proxy — when `them-auth-service` Python retirement is decided
 
 Do NOT begin multiple subsystems in the same session.
 
