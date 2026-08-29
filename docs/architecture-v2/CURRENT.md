@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `a0457bd` — feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
+Commit: `7f6eb97` — feat(agentgen): Pre-4-C hardening — retry/backoff, non-retryable stops, idempotency guard, policy UI
 
 Recent commits (newest first):
 ```
+7f6eb97  feat(agentgen): Pre-4-C hardening — retry/backoff, non-retryable stops, idempotency guard, policy UI
 a0457bd  feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
 d442def  docs(current): record approved ExecutionPolicy plan
 dceb844       docs(temporal): fix all contradictions in TEMPORAL_EXECUTOR_DESIGN.md vs Phase 4-B code
