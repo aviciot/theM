@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `dceb844` — docs(temporal): fix all contradictions in TEMPORAL_EXECUTOR_DESIGN.md vs Phase 4-B code
+Commit: `[pending — see below]` — feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
 
 Recent commits (newest first):
 ```
-dceb844 docs(temporal): fix all contradictions in TEMPORAL_EXECUTOR_DESIGN.md vs Phase 4-B code
-68da87c feat(temporal): Phase 4-B — CanvasAgentWorkflow + ExecuteStepActivity + 16 conformance tests
-0df6929 docs(current): update HEAD to 68da87c — Phase 4-B complete
-a1adbe8 feat(agentgen): Phase 4-A — ExecutionBackend field, ExecuteNodeForActivity adapter, ActivityIC
-491cf16 docs(arch): revise TemporalExecutor design — 10 corrections applied
+[new commit]  feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
+d442def       docs(current): record approved ExecutionPolicy plan
+dceb844       docs(temporal): fix all contradictions in TEMPORAL_EXECUTOR_DESIGN.md vs Phase 4-B code
+68da87c       feat(temporal): Phase 4-B — CanvasAgentWorkflow + ExecuteStepActivity + 16 conformance tests
+a1adbe8       feat(agentgen): Phase 4-A — ExecutionBackend field, ExecuteNodeForActivity adapter, ActivityIC
 ```
 
 ---
@@ -147,14 +147,14 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-29, Phase 4-B — full test suite)
-S1-72: 6 plan compiler tests (TestCompileExecutionPlan_* — including MixedFanOut + BranchMerge)
-S1-73: 10 LocalExecutor tests (TestLocalExecutor_* including Branch/DeterministicMerge/CausalError, TestDeepCopyVars_*)
+go test ./...  — all packages, 0 failures (verified 2026-08-29, Pre-4-C — full test suite)
+S1-72: 15 plan compiler tests (6 prior + 9 new EP-1..EP-9: resolvePolicy HTTP/MCP/LLM/override/compat)
+S1-73: 12 LocalExecutor tests (10 prior + 2 new EP-L1/L2: execNode timeout + no-deadline on zero)
 S1-74: 3 DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run)
 S1-75: 16 Phase 4-A tests (NA-01..NA-16: ExecuteNodeForActivity, ActivityIC, ExecutionBackend)
-S1-76: 16 Phase 4-B tests (CT-01..CT-10 suite + CT-A..CT-F standalone: CanvasAgentWorkflow + ExecuteStepActivity)
+S1-76: 18 Phase 4-B+EP tests (16 prior + 2 new CT-EP1/CT-EP2: NoResult bug fix + policy in plan)
 S1-54: 18 node registry tests (added TestNodeRegistry_ParallelIsImplemented)
-go test ./... total: 861
+go test ./... total: 874 (861 + 13 new)
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -411,7 +411,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | StepParallel | `StepParallel.Execute` implemented (no-op fan-out coordinator); removed from stub list | ✅ commit `b5767b0` |
 | 4-A | `ExecutionBackend` field in `AgentSpec`; `ExecuteNodeForActivity` adapter; `ActivityIC`; `Interpreter.Clone()`; 16 tests (S1-75) | ✅ commit `a1adbe8` |
 | 4-B | `CanvasAgentWorkflow` + `ExecuteStepActivity` + conformance tests CT-01..CT-10 + CT-A..CT-F in `internal/temporal/`; 16 tests (S1-76) | ✅ commit `68da87c` |
-| Pre-4-C | Unified `ExecutionPolicy` — `NodeDef` defaults, compiler resolution, `LocalExecutor` timeout, Temporal policy wiring, NoResult bug fix, frontend Properties panel, ~9 new tests | ⬜ plan approved 2026-08-29 |
+| Pre-4-C | Unified `ExecutionPolicy` — `NodeDef` defaults, compiler resolution, `LocalExecutor` timeout, Temporal policy wiring, NoResult bug fix; 13 new tests (EP-1..9, EP-L1/2, CT-EP1/2) | ✅ |
 | 4-C | `TemporalExecutor`, `them-dag-worker`, `agent-runtime` wiring, Docker service | ⬜ |
 | 4-D | Frontend publish toggle | ⬜ |
 | 5 | Loop, HumanWait, A2A in DAG context | ⬜ |
@@ -434,49 +434,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Pre-4-C: Unified ExecutionPolicy (start here — approved plan, ready to implement)
-
-Before Phase 4-C, implement a unified per-node `ExecutionPolicy` so both `LocalExecutor` and Temporal use **exactly the same resolved retry/timeout policy**. This removes the hardcoded `activityOptionsForNode` switch and adds a per-node timeout to `LocalExecutor`. Plan was fully designed and approved in the session ending 2026-08-29.
-
-**File changes (exact):**
-
-| File | Change |
-|---|---|
-| `go/internal/agentgen/spec.go` | Add `ExecutionPolicy` struct; add `Policy ExecutionPolicy` to `StepSpec` and `PlanNode` |
-| `go/internal/agentgen/noderegistry.go` | Add `DefaultPolicy`/`MaxPolicy` to `NodeDef` (runtime-only, `json:"-"`); expose both on `NodeTypeInfo` (for frontend Properties panel) |
-| `go/internal/agentgen/nodes.go` | Set `DefaultPolicy`/`MaxPolicy` for every `RegisterNode(...)` call; `stdNonRetryable = []string{"ContractViolation","InvalidConfig","PermissionDenied"}` |
-| `go/internal/agentgen/compiler.go` | Add `canvasStep.Policy *ExecutionPolicy`; add `resolvePolicy(def, step)` with HTTP-method and MCP-mutation upgrade logic + user override clamping; call at `PlanNode` build time |
-| `go/internal/agentgen/local_executor.go` | Apply `context.WithTimeout(ctx, policy.TimeoutSeconds)` in `execNode`; guard `TimeoutSeconds==0` → no override |
-| `go/internal/agentgen/node_executor.go` | Add idempotency key guard: mutating HTTP with `MaxAttempts>1` and no `Idempotency-Key` header → `ErrContractViolation` |
-| `go/internal/temporal/canvas_workflow.go` | Replace `activityOptionsForNode` switch with `node.Policy` fields; fix NoResult bug (line 205: `stepOut.ResultText != ""` → add `\|\| stepOut.ResultMT != ""`) |
-| `go/TEST_INDEX.md` | Add ~9 new tests (compiler x6, local x2, Temporal x1) |
-| `frontend/src/app/admin/agents/builder/components/RightPanel.tsx` | Add collapsible "Execution Policy" section driven by `nodeTypeInfo.default_policy` / `max_policy` |
-
-**Per-node defaults:**
-
-| Node | MaxAttempts | InitialInterval | Coefficient | MaxInterval | RequiresIdempotencyKey |
-|---|---|---|---|---|---|
-| `llm` | 2 | 2s | 2.0 | 30s | false |
-| `http` GET | 3 | 1s | 2.0 | 15s | false |
-| `http` POST/PUT/PATCH/DELETE | 1 | — | — | — | true (if MaxAttempts>1) |
-| `a2a_call` | 1 | — | — | — | false |
-| `mcp_call` read | 2 | 1s | 2.0 | 15s | false |
-| `mcp_call` mutating | 1 | — | — | — | true |
-| all others (transform/input/response/branch/join/human_wait/parallel) | 1 | — | — | — | false |
-
-All node types: `TimeoutSeconds=300` (5 min), `NonRetryableErrors=stdNonRetryable` (never user-overridable).
-
-HTTP method and MCP mutation detection happens in `resolvePolicy` at compile time (reads config JSON), not in the NodeDef.
-
-**Backward compat:** existing agents recompile from stored canvas JSON — zero-value `PlanNode.Policy` fields (no stored override) get defaults applied. `activityOptionsForNode` and `execNode` guard `MaxAttempts==0` → treat as 1; `TimeoutSeconds==0` → no timeout.
-
-**Tests to add:**
-- `TestResolvePolicy_HTTPGet`, `TestResolvePolicy_HTTPPost`, `TestResolvePolicy_UserOverrideClamped`, `TestResolvePolicy_NonRetryableNotOverridable`, `TestResolvePolicy_LLM`, `TestResolvePolicy_ZeroValBackwardCompat` (compiler_test.go)
-- `TestExecNodeTimeout`, `TestExecNodeNoTimeoutWhenZero` (local_executor_test.go)
-- `TestNoResultBugFixed` (canvas_workflow_test.go)
-- `TestHTTPMutatingRequiresIdempotencyKey` (node_executor_test.go)
-
-### Phase 4-C: TemporalExecutor + them-dag-worker (after ExecutionPolicy is done)
+### Phase 4-C: TemporalExecutor + them-dag-worker (start here — Pre-4-C complete)
 
 Phases 4-A and 4-B are committed and green. Phase 4-C wires everything end-to-end:
 

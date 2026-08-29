@@ -1,5 +1,115 @@
 package agentgen
 
+import (
+	"encoding/json"
+	"strings"
+)
+
+// resolvePolicy computes the final ExecutionPolicy for a PlanNode.
+// Resolution order: NodeDef.DefaultPolicy → method/mutation upgrade → canvas override (clamped to MaxPolicy).
+// NonRetryableErrors is always taken from the NodeDef and is not user-overridable.
+func resolvePolicy(nd *NodeDef, cfg json.RawMessage, override *ExecutionPolicy) ExecutionPolicy {
+	p := nd.DefaultPolicy
+
+	// HTTP: upgrade GET to 3 attempts; POST/PUT/PATCH/DELETE stay at 1.
+	if nd.Type == StepHTTP {
+		method := extractHTTPMethod(cfg)
+		if method == "" || strings.EqualFold(method, "GET") {
+			p.MaxAttempts = 3
+			p.RequiresIdempotencyKey = false
+		} else {
+			p.MaxAttempts = 1
+			p.RequiresIdempotencyKey = true
+		}
+	}
+
+	// MCP: read-only tools → 2 attempts; mutating (heuristic: name contains create/update/delete/set/write/post/put/patch/remove/insert) → 1.
+	if nd.Type == StepMCPCall {
+		if isMutatingMCPTool(cfg) {
+			p.MaxAttempts = 1
+			p.RequiresIdempotencyKey = true
+		} else {
+			p.MaxAttempts = 2
+		}
+	}
+
+	// Apply canvas override, clamped to MaxPolicy.
+	if override != nil {
+		if override.MaxAttempts > 0 {
+			capped := override.MaxAttempts
+			if nd.MaxPolicy.MaxAttempts > 0 && capped > nd.MaxPolicy.MaxAttempts {
+				capped = nd.MaxPolicy.MaxAttempts
+			}
+			p.MaxAttempts = capped
+		}
+		if override.TimeoutSeconds > 0 {
+			capped := override.TimeoutSeconds
+			if nd.MaxPolicy.TimeoutSeconds > 0 && capped > nd.MaxPolicy.TimeoutSeconds {
+				capped = nd.MaxPolicy.TimeoutSeconds
+			}
+			p.TimeoutSeconds = capped
+		}
+		if override.InitialIntervalSeconds > 0 {
+			p.InitialIntervalSeconds = override.InitialIntervalSeconds
+		}
+		if override.BackoffCoefficient > 0 {
+			p.BackoffCoefficient = override.BackoffCoefficient
+		}
+		if override.MaxIntervalSeconds > 0 {
+			p.MaxIntervalSeconds = override.MaxIntervalSeconds
+		}
+		// RequiresIdempotencyKey: only upgrade, never downgrade.
+		if override.RequiresIdempotencyKey {
+			p.RequiresIdempotencyKey = true
+		}
+	}
+
+	// NonRetryableErrors is always canonical — never user-overridable.
+	p.NonRetryableErrors = nd.DefaultPolicy.NonRetryableErrors
+
+	// Guard: zero MaxAttempts means "not set"; treat as 1.
+	if p.MaxAttempts == 0 {
+		p.MaxAttempts = 1
+	}
+
+	return p
+}
+
+// extractHTTPMethod reads the "method" key from an HTTP step config JSON.
+// Returns "" when unset (caller treats "" as GET).
+func extractHTTPMethod(cfg json.RawMessage) string {
+	if len(cfg) == 0 {
+		return ""
+	}
+	var c struct {
+		Method string `json:"method"`
+	}
+	if err := json.Unmarshal(cfg, &c); err != nil {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(c.Method))
+}
+
+// isMutatingMCPTool returns true when the tool_name suggests a state-changing operation.
+func isMutatingMCPTool(cfg json.RawMessage) bool {
+	if len(cfg) == 0 {
+		return false
+	}
+	var c struct {
+		ToolName string `json:"tool_name"`
+	}
+	if err := json.Unmarshal(cfg, &c); err != nil {
+		return false
+	}
+	name := strings.ToLower(c.ToolName)
+	for _, keyword := range []string{"create", "update", "delete", "set", "write", "post", "put", "patch", "remove", "insert", "add", "push"} {
+		if strings.Contains(name, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
 // CompileExecutionPlan converts a SkillSpec into an ExecutionPlan.
 //
 // Join semantics:
@@ -51,6 +161,12 @@ func CompileExecutionPlan(skill *SkillSpec) *ExecutionPlan {
 
 	nodes := make([]*PlanNode, 0, len(skill.Steps))
 	for _, s := range skill.Steps {
+		// Resolve the execution policy from the NodeDef defaults + optional canvas override.
+		policy := ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable}
+		if nd, ok := LookupNode(s.Type); ok {
+			policy = resolvePolicy(nd, s.Config, s.PolicyOverride)
+		}
+
 		node := &PlanNode{
 			StepID:   s.ID,
 			Type:     s.Type,
@@ -60,6 +176,7 @@ func CompileExecutionPlan(skill *SkillSpec) *ExecutionPlan {
 			Outputs:  s.Outputs,
 			Branches: s.Branches,
 			JoinMode: JoinNone,
+			Policy:   policy,
 		}
 
 		if predecessors := preds[s.ID]; len(predecessors) > 1 {

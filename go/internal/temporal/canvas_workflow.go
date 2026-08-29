@@ -202,7 +202,8 @@ func runBranch(
 		}
 
 		// Capture terminal result (first wins).
-		if stepOut.ResultText != "" && state.result == nil {
+		// Check ResultMT too — a Response node may set only ResultMT (e.g. JSON with empty text).
+		if (stepOut.ResultText != "" || stepOut.ResultMT != "") && state.result == nil {
 			state.result = &CanvasAgentWorkflowOutput{
 				ResultText: stepOut.ResultText,
 				ResultMT:   stepOut.ResultMT,
@@ -289,30 +290,40 @@ func handleJoin(
 	return true
 }
 
-// activityOptionsForNode returns ActivityOptions appropriate for the node type.
+// activityOptionsForNode returns ActivityOptions driven entirely by node.Policy.
+// Both timeout and retry policy come from the resolved ExecutionPolicy so that
+// LocalExecutor and Temporal always use the same per-node settings.
 func activityOptionsForNode(ctx workflow.Context, node *agentgen.PlanNode) workflow.Context {
-	base := workflow.ActivityOptions{
-		TaskQueue:            CanvasDAGTaskQueue,
-		StartToCloseTimeout: stepActivityTimeout,
+	p := node.Policy
+
+	// Guard: zero MaxAttempts (unresolved policy) → treat as 1.
+	maxAttempts := p.MaxAttempts
+	if maxAttempts == 0 {
+		maxAttempts = 1
 	}
 
-	switch node.Type {
-	case agentgen.StepLLM, agentgen.StepHTTP, agentgen.StepA2ACall, agentgen.StepMCPCall:
-		base.RetryPolicy = &temporalerr.RetryPolicy{
-			MaximumAttempts:        2,
-			InitialInterval:        2 * time.Second,
-			BackoffCoefficient:     2.0,
-			MaximumInterval:        30 * time.Second,
-			NonRetryableErrorTypes: []string{"ContractViolation", "InvalidConfig", "PermissionDenied"},
-		}
-	default:
-		base.RetryPolicy = &temporalerr.RetryPolicy{
-			MaximumAttempts:        1,
-			NonRetryableErrorTypes: []string{"ContractViolation", "InvalidConfig", "PermissionDenied"},
-		}
+	timeout := stepActivityTimeout
+	if p.TimeoutSeconds > 0 {
+		timeout = time.Duration(p.TimeoutSeconds) * time.Second
 	}
 
-	return workflow.WithActivityOptions(ctx, base)
+	nonRetryable := p.NonRetryableErrors
+	if len(nonRetryable) == 0 {
+		nonRetryable = []string{"ContractViolation", "InvalidConfig", "PermissionDenied"}
+	}
+
+	opts := workflow.ActivityOptions{
+		TaskQueue:           CanvasDAGTaskQueue,
+		StartToCloseTimeout: timeout,
+		RetryPolicy: &temporalerr.RetryPolicy{
+			MaximumAttempts:        maxAttempts,
+			InitialInterval:        time.Duration(p.InitialIntervalSeconds * float64(time.Second)),
+			BackoffCoefficient:     p.BackoffCoefficient,
+			MaximumInterval:        time.Duration(p.MaxIntervalSeconds) * time.Second,
+			NonRetryableErrorTypes: nonRetryable,
+		},
+	}
+	return workflow.WithActivityOptions(ctx, opts)
 }
 
 // projectInputs returns a scoped copy of vars containing only the keys declared

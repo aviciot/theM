@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // LocalExecutor implements ExecutionBackend using goroutines.
@@ -194,7 +195,7 @@ func (e *LocalExecutor) runBranch(
 
 		// ── Execute the node ───────────────────────────────────────────────────
 		stepSpec := planNodeToStepSpec(node)
-		nextOverride, err := e.execNode(ctx, ic, interp, stepSpec, vars, res)
+		nextOverride, err := e.execNode(ctx, ic, interp, stepSpec, node.Policy, vars, res)
 		if err != nil {
 			cancel()
 			return fmt.Errorf("step %q (%s): %w", node.StepID, node.Type, err)
@@ -237,18 +238,27 @@ func (e *LocalExecutor) runBranch(
 
 // execNode runs one plan node using the caller's per-goroutine interp clone.
 // interp.nextStepOverride is safe to read/write because each goroutine has its own clone.
+// policy.TimeoutSeconds, when non-zero, wraps ctx with a per-node deadline.
 func (e *LocalExecutor) execNode(
 	ctx context.Context,
 	ic *InvocationContext,
 	interp *Interpreter,
 	step *StepSpec,
+	policy ExecutionPolicy,
 	vars PipelineVars,
 	res *sharedResult,
 ) (nextOverride string, err error) {
+	nodeCtx := ctx
+	if policy.TimeoutSeconds > 0 {
+		var cancel context.CancelFunc
+		nodeCtx, cancel = context.WithTimeout(ctx, time.Duration(policy.TimeoutSeconds)*time.Second)
+		defer cancel()
+	}
+
 	localResult := &ExecutionResult{MediaType: "text/plain"}
 
 	interp.nextStepOverride = ""
-	if execErr := interp.executeStep(ctx, ic, step, vars, localResult); execErr != nil {
+	if execErr := interp.executeStep(nodeCtx, ic, step, vars, localResult); execErr != nil {
 		return "", execErr
 	}
 	override := interp.nextStepOverride

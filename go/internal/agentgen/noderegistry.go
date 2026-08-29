@@ -118,6 +118,13 @@ type NodeDef struct {
 	// Empty means all types are allowed (no constraint beyond edge rules).
 	AllowedSuccessors []StepType `json:"allowed_successors,omitempty"`
 
+	// ── Execution policy fields ───────────────────────────────────────────────
+	// DefaultPolicy is the baseline ExecutionPolicy for this node type.
+	// The compiler uses it as the starting point before applying canvas overrides.
+	DefaultPolicy ExecutionPolicy `json:"-"`
+	// MaxPolicy caps any user canvas override. Fields with zero value are uncapped.
+	MaxPolicy ExecutionPolicy `json:"-"`
+
 	// ── Runtime-only fields (not serialised) ─────────────────────────────────
 	// Validate checks per-type config constraints at compile time.
 	Validate func(step canvasStep) []Issue `json:"-"`
@@ -164,6 +171,10 @@ type NodeTypeInfo struct {
 	UsageNotes        string           `json:"usage_notes,omitempty"`
 	Examples          []NodeExample    `json:"examples,omitempty"`
 	AllowedSuccessors []StepType       `json:"allowed_successors,omitempty"`
+
+	// Execution policy metadata — exposed to the frontend for the Properties panel.
+	DefaultPolicy ExecutionPolicy `json:"default_policy"`
+	MaxPolicy     ExecutionPolicy `json:"max_policy"`
 }
 
 // ToInfo converts a NodeDef to its public API representation.
@@ -194,6 +205,8 @@ func (d *NodeDef) ToInfo() NodeTypeInfo {
 		UsageNotes:           d.UsageNotes,
 		Examples:             d.Examples,
 		AllowedSuccessors:    d.AllowedSuccessors,
+		DefaultPolicy:        d.DefaultPolicy,
+		MaxPolicy:            d.MaxPolicy,
 	}
 }
 

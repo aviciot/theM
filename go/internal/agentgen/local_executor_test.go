@@ -634,3 +634,73 @@ func containsRune(s, sub string) bool {
 	}
 	return false
 }
+
+// ── Per-node timeout tests (EP-L1..EP-L2) ────────────────────────────────────
+
+// EP-L1: execNode with TimeoutSeconds=1 and a step that blocks returns deadline exceeded.
+func TestExecNodeTimeout(t *testing.T) {
+	typ := StepType("ep_slow_node_" + t.Name())
+	doneCh := make(chan struct{})
+	registerTestNode(t, NodeDef{
+		Type:          typ,
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
+		Execute: func(ctx context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			select {
+			case <-ctx.Done():
+				close(doneCh)
+				return ctx.Err()
+			case <-make(chan struct{}): // never fires
+			}
+			return nil
+		},
+	})
+
+	interp := NewInterpreter(nil, nil, "")
+	e := NewLocalExecutor(interp)
+
+	step := &StepSpec{ID: "slow", Type: typ, Config: json.RawMessage(`{}`)}
+	policy := ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 1}
+
+	ctx := context.Background()
+	_, err := e.execNode(ctx, &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	if err == nil {
+		t.Fatal("expected error from timed-out step, got nil")
+	}
+	select {
+	case <-doneCh:
+		// good — the step ctx was cancelled
+	default:
+		t.Error("step context was not cancelled")
+	}
+}
+
+// EP-L2: execNode with TimeoutSeconds=0 must not add any deadline.
+func TestExecNodeNoTimeoutWhenZero(t *testing.T) {
+	typ := StepType("ep_notimeout_node_" + t.Name())
+	var capturedDeadline bool
+	registerTestNode(t, NodeDef{
+		Type:          typ,
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
+		Execute: func(ctx context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			_, capturedDeadline = ctx.Deadline()
+			return nil
+		},
+	})
+
+	interp := NewInterpreter(nil, nil, "")
+	e := NewLocalExecutor(interp)
+
+	step := &StepSpec{ID: "nd", Type: typ, Config: json.RawMessage(`{}`)}
+	policy := ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 0} // zero → no deadline
+
+	ctx := context.Background() // background has no deadline
+	_, err := e.execNode(ctx, &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedDeadline {
+		t.Error("TimeoutSeconds=0 must not inject a deadline into the step context")
+	}
+}

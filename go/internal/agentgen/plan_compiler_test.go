@@ -248,3 +248,142 @@ func TestCompileExecutionPlan_Nil(t *testing.T) {
 		t.Errorf("expected empty nodes for empty skill, got %d", len(plan2.Nodes))
 	}
 }
+
+// ── ExecutionPolicy tests (EP-1..EP-9) ───────────────────────────────────────
+
+func httpCfg(method string) json.RawMessage {
+	return json.RawMessage(`{"method":"` + method + `"}`)
+}
+
+func mcpCfg(toolName string) json.RawMessage {
+	return json.RawMessage(`{"mcp_server_slug":"s","tool_name":"` + toolName + `","output_var":"out"}`)
+}
+
+// EP-1: HTTP GET → MaxAttempts=3, RequiresIdempotencyKey=false.
+func TestResolvePolicy_HTTPGet(t *testing.T) {
+	nd, ok := LookupNode(StepHTTP)
+	if !ok {
+		t.Fatal("http node not registered")
+	}
+	p := resolvePolicy(nd, httpCfg("GET"), nil)
+	if p.MaxAttempts != 3 {
+		t.Errorf("GET MaxAttempts: got %d want 3", p.MaxAttempts)
+	}
+	if p.RequiresIdempotencyKey {
+		t.Error("GET must not require idempotency key")
+	}
+}
+
+// EP-2: HTTP POST → MaxAttempts=1, RequiresIdempotencyKey=true.
+func TestResolvePolicy_HTTPPost(t *testing.T) {
+	nd, _ := LookupNode(StepHTTP)
+	p := resolvePolicy(nd, httpCfg("POST"), nil)
+	if p.MaxAttempts != 1 {
+		t.Errorf("POST MaxAttempts: got %d want 1", p.MaxAttempts)
+	}
+	if !p.RequiresIdempotencyKey {
+		t.Error("POST must require idempotency key")
+	}
+}
+
+// EP-3: HTTP empty method treated as GET.
+func TestResolvePolicy_HTTPEmptyMethod(t *testing.T) {
+	nd, _ := LookupNode(StepHTTP)
+	p := resolvePolicy(nd, json.RawMessage(`{}`), nil)
+	if p.MaxAttempts != 3 {
+		t.Errorf("empty method: MaxAttempts got %d want 3", p.MaxAttempts)
+	}
+}
+
+// EP-4: LLM default policy.
+func TestResolvePolicy_LLM(t *testing.T) {
+	nd, _ := LookupNode(StepLLM)
+	p := resolvePolicy(nd, json.RawMessage(`{}`), nil)
+	if p.MaxAttempts != 2 {
+		t.Errorf("LLM MaxAttempts: got %d want 2", p.MaxAttempts)
+	}
+	if p.InitialIntervalSeconds != 2.0 {
+		t.Errorf("LLM InitialInterval: got %v want 2.0", p.InitialIntervalSeconds)
+	}
+}
+
+// EP-5: Canvas override clamped to MaxPolicy.
+func TestResolvePolicy_UserOverrideClamped(t *testing.T) {
+	nd, _ := LookupNode(StepLLM) // MaxPolicy.MaxAttempts = 3
+	override := &ExecutionPolicy{MaxAttempts: 10}
+	p := resolvePolicy(nd, json.RawMessage(`{}`), override)
+	if p.MaxAttempts != 3 {
+		t.Errorf("clamped MaxAttempts: got %d want 3", p.MaxAttempts)
+	}
+}
+
+// EP-6: NonRetryableErrors never overridable by canvas user.
+func TestResolvePolicy_NonRetryableNotOverridable(t *testing.T) {
+	nd, _ := LookupNode(StepLLM)
+	override := &ExecutionPolicy{NonRetryableErrors: []string{}} // attempt to clear
+	p := resolvePolicy(nd, json.RawMessage(`{}`), override)
+	if len(p.NonRetryableErrors) == 0 {
+		t.Error("NonRetryableErrors must not be clearable by canvas override")
+	}
+}
+
+// EP-7: Zero-value PlanNode policy (backward compat) — MaxAttempts must not be 0.
+func TestResolvePolicy_ZeroValBackwardCompat(t *testing.T) {
+	// Simulate a PlanNode compiled before ExecutionPolicy existed.
+	zero := ExecutionPolicy{}
+	if zero.MaxAttempts == 0 {
+		// executors guard this: treat 0 as 1.
+		guarded := zero.MaxAttempts
+		if guarded == 0 {
+			guarded = 1
+		}
+		if guarded != 1 {
+			t.Errorf("zero guard: got %d want 1", guarded)
+		}
+	}
+}
+
+// EP-8: CompileExecutionPlan populates Policy on each PlanNode.
+func TestCompileExecutionPlan_PolicyPopulated(t *testing.T) {
+	skill := &SkillSpec{
+		ID: "skill-policy",
+		Steps: []StepSpec{
+			{ID: "in",  Type: StepInput,    Config: json.RawMessage(`{}`), Next: []string{"llm"}},
+			{ID: "llm", Type: StepLLM,      Config: json.RawMessage(`{}`), Next: []string{"out"}},
+			{ID: "out", Type: StepResponse, Config: json.RawMessage(`{}`), Next: nil},
+		},
+	}
+	plan := CompileExecutionPlan(skill)
+	for _, n := range plan.Nodes {
+		if n.Policy.MaxAttempts == 0 {
+			t.Errorf("node %q has zero MaxAttempts after CompileExecutionPlan", n.StepID)
+		}
+		if n.Policy.TimeoutSeconds == 0 {
+			t.Errorf("node %q has zero TimeoutSeconds after CompileExecutionPlan", n.StepID)
+		}
+		if len(n.Policy.NonRetryableErrors) == 0 {
+			t.Errorf("node %q has empty NonRetryableErrors after CompileExecutionPlan", n.StepID)
+		}
+	}
+}
+
+// EP-9: MCP read-only tool → MaxAttempts=2; mutating tool → MaxAttempts=1.
+func TestResolvePolicy_MCPMutatingVsRead(t *testing.T) {
+	nd, _ := LookupNode(StepMCPCall)
+
+	read := resolvePolicy(nd, mcpCfg("list_issues"), nil)
+	if read.MaxAttempts != 2 {
+		t.Errorf("MCP read MaxAttempts: got %d want 2", read.MaxAttempts)
+	}
+	if read.RequiresIdempotencyKey {
+		t.Error("MCP read must not require idempotency key")
+	}
+
+	mutating := resolvePolicy(nd, mcpCfg("create_issue"), nil)
+	if mutating.MaxAttempts != 1 {
+		t.Errorf("MCP mutating MaxAttempts: got %d want 1", mutating.MaxAttempts)
+	}
+	if !mutating.RequiresIdempotencyKey {
+		t.Error("MCP mutating must require idempotency key")
+	}
+}

@@ -140,6 +140,10 @@ type StepSpec struct {
 	// specs) pass through with the full global vars, preserving backward compatibility.
 	Inputs  []VarRef `json:"inputs,omitempty"`
 	Outputs []VarRef `json:"outputs,omitempty"`
+	// PolicyOverride carries the canvas user override from canvasStep.Policy during
+	// compilation. It is not persisted in AgentSpec (omitempty, pointer). The
+	// ExecutionPlan compiler reads it to produce PlanNode.Policy.
+	PolicyOverride *ExecutionPolicy `json:"policy_override,omitempty"`
 }
 
 type StepType string
@@ -263,6 +267,26 @@ type BranchStepConfig struct {
 	FalseNext  string `json:"false_next"` // step ID when false
 }
 
+// ── ExecutionPolicy ───────────────────────────────────────────────────────────
+
+// ExecutionPolicy describes the retry and timeout behaviour for one plan node.
+// It is the single source of truth consumed by both LocalExecutor and
+// CanvasAgentWorkflow (Temporal). The compiler resolves the final policy from
+// NodeDef.DefaultPolicy + optional user canvas override, clamped to NodeDef.MaxPolicy.
+type ExecutionPolicy struct {
+	MaxAttempts            int32    `json:"max_attempts"`
+	TimeoutSeconds         int      `json:"timeout_seconds"`
+	InitialIntervalSeconds float64  `json:"initial_interval_seconds"`
+	BackoffCoefficient     float64  `json:"backoff_coefficient"`
+	MaxIntervalSeconds     int      `json:"max_interval_seconds"`
+	// NonRetryableErrors is the list of Temporal error types that must never be retried.
+	// Set from the node registry; never overridable by canvas users.
+	NonRetryableErrors     []string `json:"non_retryable_errors,omitempty"`
+	// RequiresIdempotencyKey is true when the node performs a mutating operation that
+	// requires an Idempotency-Key header before MaxAttempts > 1 is allowed.
+	RequiresIdempotencyKey bool     `json:"requires_idempotency_key,omitempty"`
+}
+
 // ── ExecutionPlan ─────────────────────────────────────────────────────────────
 // ExecutionPlan is compiled from a SkillSpec by CompileExecutionPlan.
 // It is a richer, executor-ready representation of the DAG with join annotations.
@@ -296,6 +320,10 @@ type PlanNode struct {
 	Inputs   []VarRef        `json:"inputs,omitempty"`
 	Outputs  []VarRef        `json:"outputs,omitempty"`
 	Branches []BranchArm     `json:"branches,omitempty"`
+	// Policy is the resolved execution policy for this node.
+	// Populated by CompileExecutionPlan from NodeDef defaults + optional canvas override.
+	// Zero value means "not yet resolved" — executors must guard MaxAttempts==0 → treat as 1.
+	Policy   ExecutionPolicy `json:"policy"`
 }
 
 // MCPCallConfig configures an mcp_call canvas step.

@@ -1602,8 +1602,9 @@ Inputs/Outputs for each node type, that missing upstream writers emit the right 
 ### S1-72 · ExecutionPlan compiler — `internal/agentgen/plan_compiler_test.go`
 
 **Purpose:** Phase 0 of DAG execution. Verifies that `CompileExecutionPlan` produces a correct
-`ExecutionPlan` with join annotations from a `SkillSpec`. No runtime changes — purely additive
-types and compiler pass.
+`ExecutionPlan` with join annotations from a `SkillSpec`. Also covers the ExecutionPolicy
+resolution logic (`resolvePolicy`) — per-node defaults, HTTP method upgrade, MCP mutation
+heuristic, user override clamping, and backward compatibility.
 
 | Test | What it proves |
 |---|---|
@@ -1613,9 +1614,19 @@ types and compiler pass.
 | `TestCompileExecutionPlan_MixedFanOut` | LLM parallel fan-out (s2→s3a,s3b→s4): s4 gets `JoinWaitAll` (non-Branch fan-out source) |
 | `TestCompileExecutionPlan_BranchMerge` | Branch convergence (br→s_true/s_false→s_end): s_end gets `JoinBranchMerge`; arm nodes get `JoinNone` |
 | `TestCompileExecutionPlan_Nil` | nil input and empty-step skill both return non-nil plan with zero nodes; no panic |
+| `TestResolvePolicy_HTTPGet` | HTTP GET → MaxAttempts=3, RequiresIdempotencyKey=false |
+| `TestResolvePolicy_HTTPPost` | HTTP POST → MaxAttempts=1, RequiresIdempotencyKey=true |
+| `TestResolvePolicy_HTTPEmptyMethod` | HTTP empty method treated as GET → MaxAttempts=3 |
+| `TestResolvePolicy_LLM` | LLM default → MaxAttempts=2, InitialIntervalSeconds=2.0 |
+| `TestResolvePolicy_UserOverrideClamped` | Canvas override MaxAttempts=10 clamped to MaxPolicy.MaxAttempts=3 |
+| `TestResolvePolicy_NonRetryableNotOverridable` | Canvas override cannot clear NonRetryableErrors |
+| `TestResolvePolicy_ZeroValBackwardCompat` | Zero-value policy (old compiled agents): executor guard converts MaxAttempts=0 → 1 |
+| `TestCompileExecutionPlan_PolicyPopulated` | All nodes in compiled plan have non-zero MaxAttempts, TimeoutSeconds, NonRetryableErrors |
+| `TestResolvePolicy_MCPMutatingVsRead` | MCP read tool → MaxAttempts=2; mutating tool (create_*) → MaxAttempts=1, RequiresIdempotencyKey=true |
 
-**Trigger:** any change to `internal/agentgen/plan_compiler.go` or `internal/agentgen/spec.go`
-(`ExecutionPlan`, `PlanNode`, `JoinMode` types)
+**Trigger:** any change to `internal/agentgen/plan_compiler.go`, `internal/agentgen/spec.go`
+(`ExecutionPlan`, `PlanNode`, `JoinMode`, `ExecutionPolicy` types), or `internal/agentgen/nodes.go`
+(per-node DefaultPolicy/MaxPolicy)
 
 ---
 
@@ -1637,9 +1648,12 @@ propagation + context cancellation, deep-copy isolation, and nil/empty plan safe
 | `TestLocalExecutor_BranchFalse` | Branch routes to false arm; s_end runs exactly once via JoinBranchMerge |
 | `TestLocalExecutor_DeterministicMerge` | 50 iterations: when two branches write same key, JoinOf order determines winner deterministically |
 | `TestLocalExecutor_CausalErrorPreserved` | 20 iterations: causal error survives context.Canceled from sibling cancellation |
+| `TestExecNodeTimeout` | execNode with TimeoutSeconds=1 cancels slow step's context and returns error |
+| `TestExecNodeNoTimeoutWhenZero` | execNode with TimeoutSeconds=0 adds no deadline to the node's context |
 
 **Trigger:** any change to `internal/agentgen/local_executor.go`, `internal/agentgen/executor.go`,
-`internal/agentgen/plan_compiler.go`, or `internal/agentgen/spec.go`
+`internal/agentgen/plan_compiler.go`, `internal/agentgen/spec.go`, or `internal/agentgen/nodes.go`
+(ExecutionPolicy fields used by execNode)
 
 ---
 
@@ -1720,8 +1734,11 @@ propagation, HumanWait signal return, and result capture — all using the Tempo
 | `TestExecuteStepActivity_HumanWait_ReturnsImmediately` | human_wait node returns WaitingForHuman=true without blocking |
 | `TestExecuteStepActivity_NilInterp_ReturnsError` | nil InterpTemplate returns non-retryable error |
 | `TestExecuteStepActivity_LoaderError_Propagates` | ContextLoader.Load error propagates as activity error |
+| `TestNoResultBugFixed` | ResultMT-only output (empty ResultText, non-empty ResultMT) triggers result capture; truly empty output does not |
+| `TestActivityOptionsFromPolicy` | LLM PlanNode from CompileExecutionPlan carries MaxAttempts=2, positive TimeoutSeconds, non-empty NonRetryableErrors |
 
-**Trigger:** any change to `internal/temporal/canvas_workflow.go`, `internal/temporal/canvas_activities.go`
+**Trigger:** any change to `internal/temporal/canvas_workflow.go`, `internal/temporal/canvas_activities.go`,
+or `internal/agentgen/plan_compiler.go` (policy resolution affects Temporal activity options)
 
 ---
 

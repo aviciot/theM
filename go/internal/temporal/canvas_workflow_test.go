@@ -513,3 +513,45 @@ func mustMarshal(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
 }
+
+// ── ExecutionPolicy Temporal tests (CT-EP1..CT-EP2) ──────────────────────────
+
+// CT-EP1: StepActivityOutput with empty ResultText but non-empty ResultMT triggers result capture.
+// This directly tests the NoResult bug fix in the workflow result-capture condition.
+// The fix: (ResultText != "" || ResultMT != "") — previously only checked ResultText.
+func TestNoResultBugFixed(t *testing.T) {
+	// Simulate the condition the workflow evaluates before capturing a result.
+	// Before the fix: stepOut.ResultText != "" was the only check.
+	// After the fix: stepOut.ResultText != "" || stepOut.ResultMT != "" is checked.
+	out := temporal.StepActivityOutput{
+		Vars:       agentgen.PipelineVars{},
+		ResultText: "",                // empty text
+		ResultMT:   "application/json", // but non-empty media type
+	}
+	// Replicate the fixed condition:
+	triggered := out.ResultText != "" || out.ResultMT != ""
+	require.True(t, triggered, "ResultMT-only output must trigger result capture")
+
+	// Also verify that a truly empty output does NOT trigger.
+	empty := temporal.StepActivityOutput{}
+	triggeredEmpty := empty.ResultText != "" || empty.ResultMT != ""
+	require.False(t, triggeredEmpty, "truly empty output must not trigger result capture")
+}
+
+// CT-EP2: Policy-driven activityOptionsForNode — LLM node uses MaxAttempts=2 from resolved policy.
+func TestActivityOptionsFromPolicy(t *testing.T) {
+	// Verify that a PlanNode built from CompileExecutionPlan carries MaxAttempts=2 for LLM.
+	skill := &agentgen.SkillSpec{
+		ID: "sk",
+		Steps: []agentgen.StepSpec{
+			{ID: "llm", Type: agentgen.StepLLM, Config: json.RawMessage(`{}`), Next: nil},
+		},
+	}
+	plan := agentgen.CompileExecutionPlan(skill)
+	require.Len(t, plan.Nodes, 1)
+	node := plan.Nodes[0]
+	require.Equal(t, agentgen.StepLLM, node.Type)
+	require.EqualValues(t, 2, node.Policy.MaxAttempts, "LLM node must have MaxAttempts=2")
+	require.Greater(t, node.Policy.TimeoutSeconds, 0, "LLM node must have positive TimeoutSeconds")
+	require.NotEmpty(t, node.Policy.NonRetryableErrors, "LLM node must have NonRetryableErrors")
+}

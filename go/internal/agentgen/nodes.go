@@ -9,6 +9,10 @@ import (
 	"text/template"
 )
 
+// stdNonRetryable lists the Temporal error types that must never be retried,
+// regardless of MaxAttempts. Set on every node; not user-overridable.
+var stdNonRetryable = []string{"ContractViolation", "InvalidConfig", "PermissionDenied"}
+
 // tmplKeywords is the set of Go template control keywords that are not variable names.
 var tmplKeywords = map[string]bool{
 	"if": true, "else": true, "end": true, "range": true, "with": true,
@@ -81,6 +85,8 @@ func init() {
 			{Description: "Rename input to 'user_query'", Config: map[string]any{"bindings": map[string]any{"text": "user_query"}}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepBranch, StepMCPCall, StepA2ACall, StepResponse},
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
 			return interp.execInput(step, vars)
@@ -138,6 +144,8 @@ func init() {
 			{Description: "Classify sentiment", Config: map[string]any{"user_prompt": "Classify the sentiment of: {{.input}}. Reply with POSITIVE, NEGATIVE, or NEUTRAL only.", "output_var": "sentiment"}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepBranch, StepMCPCall, StepA2ACall, StepResponse, StepStreamOut},
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 2, TimeoutSeconds: 300, InitialIntervalSeconds: 2.0, BackoffCoefficient: 2.0, MaxIntervalSeconds: 30, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 3, TimeoutSeconds: 600},
 		Validate:    nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
@@ -233,6 +241,10 @@ func init() {
 			{Description: "POST with JSON body", Config: map[string]any{"url_template": "https://api.example.com/process", "method": "POST", "body_template": "{\"text\": \"{{.input}}\"}", "headers": map[string]any{"Content-Type": "application/json"}}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepBranch, StepMCPCall, StepA2ACall, StepResponse},
+		// HTTP default is conservative (MaxAttempts=1) because the method (GET vs POST) is
+		// only known at compile time. resolvePolicy upgrades GET to MaxAttempts=3.
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, InitialIntervalSeconds: 1.0, BackoffCoefficient: 2.0, MaxIntervalSeconds: 15, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 3, TimeoutSeconds: 300},
 		Validate: nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
@@ -302,6 +314,8 @@ func init() {
 			{Description: "Trim and uppercase the input", Config: map[string]any{"functions": []map[string]any{{"input_var": "input", "function": "trim", "args": map[string]any{}, "output_var": "clean_input"}, {"input_var": "clean_input", "function": "upper", "args": map[string]any{}, "output_var": "upper_input"}}}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepBranch, StepMCPCall, StepA2ACall, StepResponse},
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
 		Validate:    nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
@@ -366,6 +380,8 @@ func init() {
 			{Description: "Return a named variable", Config: map[string]any{"from_var": "summary"}},
 		},
 		AllowedSuccessors: []StepType{},
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
 		Validate:   nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
@@ -425,6 +441,8 @@ func init() {
 			{Description: "Check if response is non-empty", Config: map[string]any{"expression": "{{gt (len .output) 0}}"}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepBranch, StepMCPCall, StepA2ACall, StepResponse},
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
 		Validate: nil,
 		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext,
 			step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
@@ -475,6 +493,8 @@ func init() {
 			{Description: "Iterate over a list of results", Config: map[string]any{"items_var": "results", "item_var": "item", "accum_var": "processed"}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepResponse},
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
 		Validate:    nil,
 		Execute:     nil,
 		DeriveInputs: func(cfg json.RawMessage) []VarRef {
@@ -523,6 +543,8 @@ func init() {
 			{Description: "Fan out and collect results", Config: map[string]any{"merge_var": "all_results"}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepResponse},
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
 		Validate:    nil,
 		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
 			// StepParallel is a pure fan-out coordinator. LocalExecutor fans out
@@ -572,6 +594,8 @@ func init() {
 			{Description: "Call vision agent", Config: map[string]any{"agent_url": "http://vision-agent:9100", "skill_id": "describe_image", "input_var": "image_url", "output_var": "description"}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepBranch, StepMCPCall, StepResponse},
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 2, TimeoutSeconds: 600},
 		Validate:    nil,
 		Execute:     nil,
 		DeriveInputs: func(cfg json.RawMessage) []VarRef {
@@ -621,6 +645,8 @@ func init() {
 			{Description: "Wait for approval", Config: map[string]any{"prompt_text": "Approve this action?", "reply_var": "approval", "timeout_seconds": 3600}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepBranch, StepResponse},
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
 		Validate:    nil,
 		Execute:     nil,
 		DeriveInputs: func(cfg json.RawMessage) []VarRef {
@@ -661,6 +687,8 @@ func init() {
 			{Description: "Stream the LLM output", Config: map[string]any{"from_var": "output"}},
 		},
 		AllowedSuccessors: []StepType{},
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
 		Validate:    nil,
 		Execute:     nil,
 		DeriveInputs: func(cfg json.RawMessage) []VarRef {
@@ -700,6 +728,10 @@ func init() {
 			{Description: "Search Slack messages", Config: map[string]any{"mcp_server_slug": "slack-mcp", "tool_name": "search_messages", "args_template": "{\"query\": \"{{.input}}\"}", "output_var": "slack_results"}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepBranch, StepMCPCall, StepResponse},
+		// MCP default is conservative (MaxAttempts=1) because mutating vs read-only is
+		// determined by tool_name at compile time. resolvePolicy upgrades read-only tools to 2.
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, InitialIntervalSeconds: 1.0, BackoffCoefficient: 2.0, MaxIntervalSeconds: 15, NonRetryableErrors: stdNonRetryable},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 3, TimeoutSeconds: 300},
 		Validate: func(step canvasStep) []Issue {
 			var c MCPCallConfig
 			if len(step.Config) > 0 {

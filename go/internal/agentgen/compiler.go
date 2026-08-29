@@ -97,6 +97,9 @@ type canvasStep struct {
 	// Inputs holds explicit data bindings: port ID → {from_step, from_port}.
 	// Absent means no explicit bindings for this step (heuristic DeriveInputs used instead).
 	Inputs   map[string]Binding `json:"inputs,omitempty"`
+	// Policy is an optional per-node execution policy override from the canvas.
+	// Absent means use the NodeDef default. The compiler clamps it to NodeDef.MaxPolicy.
+	Policy   *ExecutionPolicy   `json:"policy,omitempty"`
 }
 
 // hasErrors reports whether any issue in the slice has severity "error".
@@ -986,13 +989,14 @@ func topoSort(skillID string, steps []canvasStep, stepMap map[string]canvasStep)
 		// Heuristic-only derivation; explicit-binding resolution happens in resolveBindings.
 		ins, outs := deriveStepVars(step, nil)
 		result = append(result, StepSpec{
-			ID:       step.ID,
-			Type:     step.Type,
-			Config:   step.Config,
-			Next:     step.Next,
-			Branches: step.Branches,
-			Inputs:   ins,
-			Outputs:  outs,
+			ID:             step.ID,
+			Type:           step.Type,
+			Config:         step.Config,
+			Next:           step.Next,
+			Branches:       step.Branches,
+			Inputs:         ins,
+			Outputs:        outs,
+			PolicyOverride: step.Policy,
 		})
 	}
 
