@@ -154,6 +154,17 @@ Application ID must flow through every new feature:
 
 ---
 
+## Rules — File Size & Structure (UI + Go)
+
+- Keep files focused and preferably under 400 lines.
+- If a file approaches 500 lines, stop and propose a logical split before adding more code.
+- Split by clear responsibility, not arbitrary line count.
+- Avoid oversized components, hooks, and mixed UI/business logic.
+- Do not over-fragment into many tiny files.
+- Before creating or expanding a large file, show the proposed structure and wait for approval.
+
+---
+
 ## Rules — Documentation (mandatory)
 
 - New Redis key → `docs/REDIS.md`

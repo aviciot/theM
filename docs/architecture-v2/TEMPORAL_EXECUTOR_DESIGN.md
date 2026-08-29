@@ -1,6 +1,6 @@
-# TemporalExecutor — Phase 4 Design (revised)
+# TemporalExecutor — Phase 4 Design (revised v2)
 # Date: 2026-08-29
-# Status: design only — no code changed
+# Status: Phase 4-A implemented (node_executor.go + spec field + compiler wiring)
 
 ---
 
@@ -211,6 +211,165 @@ Benefits:
 
 The `InvocationContext` dependencies (credential loading from DB, agent-params)
 are shared via the same `internal/admin/dal` package already used by `them-go-bridge`.
+
+---
+
+## 3b. Additional corrections (v2)
+
+### 3b.1 Workflow ID must include a stable invocation/tool-call ID; retries reattach
+
+The previous workflow ID scheme `"canvas-agent:{agentID}:{parentRunID}:{skillID}"` is
+insufficient when `RunOrchestratorActivity` is retried by Temporal: a new attempt would
+start a **new** `CanvasAgentWorkflow` for the same logical invocation, producing duplicate
+execution. The attempt number must not be part of the ID (that was already removed from v1).
+
+Instead, the caller — `agentregistry.InvokeForRun()` — generates a **stable invocation ID**
+(`invocationID`) that is unique per tool-call and stable across retries of the same activity.
+The correct source is the A2A task ID or the run step ID, which is assigned before the
+activity starts and does not change on retry.
+
+**Workflow ID**: `"canvas:{agentID}:{invocationID}"` where `invocationID` is passed from
+the orchestrator through to `them-agent-runtime` as a request header `X-Them-Invocation-Id`.
+
+**Re-attach on retry**: when `ExecuteWorkflow` returns an error because the workflow ID
+already exists (`temporal.IsWorkflowExecutionAlreadyStartedError`), call
+`client.GetWorkflow(ctx, workflowID, "")` to attach to the already-running execution.
+This is the standard Temporal idempotent-start pattern.
+
+```go
+wfOpts := client.StartWorkflowOptions{
+    ID:                    "canvas:" + agentID + ":" + invocationID,
+    TaskQueue:             cfg.DAGWorkerTaskQueue,
+    WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
+}
+run, err := temporalClient.ExecuteWorkflow(ctx, wfOpts, CanvasAgentWorkflow, input)
+if temporal.IsWorkflowExecutionAlreadyStartedError(err) {
+    run = temporalClient.GetWorkflow(ctx, wfOpts.ID, "")
+}
+```
+
+### 3b.2 Cancellation — correct pattern without goroutine race
+
+The previous design used a goroutine + select + channel to wait for the workflow result,
+which creates a race: the goroutine calling `Get` may continue after the `select` arm
+fires and reference stack variables that are no longer valid.
+
+**Correct pattern**: use `ctx` directly with `workflowRun.Get`. When `ctx` is cancelled,
+`Get` returns immediately with `ctx.Err()`. Then explicitly cancel the workflow using a
+fresh `context.Background()` with a short timeout.
+
+```go
+var out CanvasAgentWorkflowOutput
+err := run.Get(ctx, &out)   // returns as soon as ctx is cancelled OR workflow completes
+if err != nil && ctx.Err() != nil {
+    // HTTP ctx cancelled — stop the workflow (best-effort, non-blocking path)
+    cancelCtx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancelFn()
+    _ = temporalClient.CancelWorkflow(cancelCtx, run.GetID(), run.GetRunID())
+    return nil, ctx.Err()
+}
+```
+
+`workflowRun.Get(ctx, &out)` is already context-aware in the Temporal Go SDK — no goroutine
+or channel needed.
+
+### 3b.3 HumanWait handled by CanvasAgentWorkflow via signal, never inside an Activity
+
+`ExecuteStepActivity` for a `human_wait` node must **not** block indefinitely inside the
+activity. Temporal activities have a `ScheduleToClose` timeout; blocking for hours would
+exhaust it. Instead:
+
+- `ExecuteStepActivity` for `human_wait` returns immediately with a sentinel output
+  `{WaitingForHuman: true}`.
+- `CanvasAgentWorkflow` detects this and calls `workflow.GetSignalChannel(ctx, "human_input:{nodeID}")`.
+- The workflow coroutine blocks on `workflow.Await` until the signal arrives or the
+  workflow execution timeout fires.
+- When the signal arrives, the workflow resumes, injects the reply into `PipelineVars`,
+  and calls `ExecuteStepActivity` for the next node.
+- The existing HITL signaler (`go/internal/temporal/signaler.go`) must be extended to
+  target `CanvasAgentWorkflow` by its workflow ID (passed through run metadata).
+
+### 3b.4 Timeout alignment
+
+All timeouts must be consistent so no inner timer can fire after the outer has expired:
+
+| Boundary | Timeout | Config |
+|---|---|---|
+| `RunOrchestratorActivity` `StartToClose` | 10 min | `internal/temporal/workflow.go:activityStartToClose` |
+| `CanvasAgentWorkflow` `WorkflowExecutionTimeout` | 12 min | `DAG_WORKFLOW_TIMEOUT` env, default `"12m"` |
+| `ExecuteStepActivity` `ScheduleToClose` (LLM/HTTP/A2A/MCP) | 5 min | Per-activity options in `canvas_activities.go` |
+| `ExecuteStepActivity` (HumanWait) | Returns immediately; signal wait in workflow | No activity timeout needed |
+| Redis large-value TTL | 30 min | `DAGVarStore` constant `dagVarTTL` |
+
+Rule: `activity ScheduleToClose` < `CanvasAgentWorkflow` execution timeout
+< `RunOrchestratorActivity` StartToClose + some slack. This ensures the DAG workflow
+always terminates before the parent activity times out.
+
+### 3b.5 ExecuteStepActivity must use a fresh cloned Interpreter per activity
+
+Each `ExecuteStepActivity` call must have its own `*Interpreter` instance. `Interpreter`
+carries mutable state (`nextStepOverride string`) which must not be shared across
+concurrent activity goroutines. `them-dag-worker` holds a single `*Interpreter` template;
+each activity call calls `interp.clone()` to get an isolated copy — the same pattern
+`LocalExecutor` uses per branch goroutine.
+
+`ExecuteNodeForActivity` (the Phase 4-A adapter already implemented) takes an `*Interpreter`
+parameter. The caller (`ExecuteStepActivity`) passes `sharedInterp.clone()`.
+
+### 3b.6 Retry policy — explicit idempotency classification per node type
+
+Retrying a non-idempotent operation (LLM call, HTTP POST, A2A task dispatch) produces
+duplicate side-effects. The retry policy must match the idempotency of each node type.
+
+| Node type | Idempotent? | Retry policy | Rationale |
+|---|---|---|---|
+| `input`, `transform`, `response`, `branch`, `parallel` | Yes (pure, no I/O) | `MaxAttempts: 1` | Deterministic; retry adds no value |
+| `http` GET | Yes | `MaxAttempts: 3`, backoff 2s→30s | Safe to retry reads |
+| `http` POST/PUT/DELETE | **No** | `MaxAttempts: 1` | Side-effectful; caller must add idempotency key if retry needed |
+| `llm` | **No** (each call may produce different output) | `MaxAttempts: 2` | Transient provider failures; accept 1 retry |
+| `a2a_call` | **No** | `MaxAttempts: 1` | A2A tasks have their own retry in the target agent |
+| `mcp_call` | Tool-dependent | `MaxAttempts: 2` for read-like tools, `MaxAttempts: 1` for mutating | MCP tool manifest has no idempotency annotation yet; default safe |
+| `human_wait` | N/A | Activity returns immediately; no retry needed | Signal-wait is in the workflow, not the activity |
+| `loop` (per iteration body) | Depends on body | Inherit body node policy | Each iteration schedules its own activities |
+
+**Non-retryable error types** (always `MaxAttempts: 1` regardless of node type):
+- `ContractViolation` — deterministic; retrying will always fail
+- `InvalidConfig` — canvas misconfiguration; retrying will always fail
+- `PermissionDenied` — binding policy violation; not transient
+
+The `NodeTypeIdempotency` value is declared alongside `NodeDef` in the registry so
+the activity options can be computed from the node type without hardcoding a switch.
+
+### 3b.7 Binding reload scoped by all four IDs
+
+When `ExecuteStepActivity` loads credentials from DB using `BindingID`, the query
+must be scoped by all four identity dimensions to prevent cross-tenant or cross-agent
+credential leakage:
+
+```go
+// Correct — all four IDs required
+binding, err := dal.GetAgentBinding(ctx, tenantID, applicationID, agentID, bindingID)
+```
+
+`ActivityIC` must carry all four: `TenantID`, `ApplicationID`, `AgentID`, `BindingID`.
+The DAL query must include all four in the `WHERE` clause — not just `binding_id` alone,
+since binding IDs are UUIDs that could theoretically collide across tenants if a UUID
+were reused (defense in depth).
+
+### 3b.8 Large-value Redis TTL must cover maximum workflow duration
+
+The Redis TTL for large var values (`them:dag:var:{workflowID}:{varName}`) was previously
+set to 1 hour. A `CanvasAgentWorkflow` with a `HumanWait` node may pause for up to the
+`WorkflowExecutionTimeout` (12 min by default). But if a long workflow contains multiple
+HumanWait nodes and the timeout is extended, or if the key is written early and read by
+a later node, the TTL must exceed the maximum possible elapsed time.
+
+**Policy**: TTL = `max(30 min, 2 × DAGWorkflowTimeout)`. With default 12-min workflow
+timeout → TTL = 30 min (safe). If `DAGWorkflowTimeout` is extended to, say, 2 hours
+(for complex HumanWait agents), TTL must be extended to 4 hours to match.
+
+`DAGVarStore` reads `DAGWorkflowTimeout` from config at startup and computes the TTL
+dynamically: `ttl = max(30*time.Minute, 2*workflowTimeout)`.
 
 ---
 

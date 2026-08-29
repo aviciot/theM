@@ -1662,6 +1662,38 @@ without mocking any internal layer.
 
 ---
 
+### S1-75 · Phase 4-A: ExecuteNodeForActivity, ActivityIC, ExecutionBackend — `internal/agentgen/node_executor_test.go`
+
+**Purpose:** Verifies the narrow Temporal-independent adapter (`ExecuteNodeForActivity`),
+the credential-safe `ActivityIC` type, and the `ExecutionBackend` field wired end-to-end
+through compiler → `AgentSpec`. Includes a security test that confirms secrets
+(`AppAPIKey`, `AgentParams`, `AppGlobalParams`) are never copied into `ActivityIC`.
+
+| Test | What it proves |
+|---|---|
+| `TestNA01_InputNode_WritesInputVar` | Input node executes cleanly; NextOverride and ResultText are empty |
+| `TestNA02_ResponseNode_CapturesResultText` | Response node populates ResultText and ResultMT |
+| `TestNA03_BranchNode_SetsNextOverride` | Branch true/false paths each set the correct NextOverride |
+| `TestNA04_NilInterp_ReturnsError` | nil interpreter returns an error, no panic |
+| `TestNA05_UnknownNodeType_ReturnsError` | Unknown StepType returns an error |
+| `TestNA06_ContextCancellation_Propagates` | Cancelled context does not cause a panic |
+| `TestNA07_IsolatedState_ConcurrentCallsDoNotShare` | 100 concurrent Clone()→Execute calls never share nextStepOverride |
+| `TestNA08_ScopedOutputProjection` | Undeclared output key "secret" absent from out.Vars; ResultText correct |
+| `TestNA09_ErrContractViolation_MissingRequiredInput` | Missing required input → *ErrContractViolation |
+| `TestNA10_ActivityIC_Validate` | Missing TenantID/ApplicationID/AgentID → error; BindingID optional |
+| `TestNA11_ActivityICFromInvocationContext_NoSecrets` | ActivityIC JSON contains no secret values from InvocationContext |
+| `TestNA12_AgentSpec_ExecutionBackend_RoundTrip` | "temporal" round-trips through JSON marshal/unmarshal |
+| `TestNA13_AgentSpec_DefaultExecutionBackend_IsEmpty` | Empty ExecutionBackend is omitted from JSON (omitempty) |
+| `TestNA14_Compiler_RejectsInvalidExecutionBackend` | "kubernetes" → INVALID_FIELD issue from validateStructural |
+| `TestNA15_Compiler_CopiesExecutionBackend` | "temporal" in canvas JSON → AgentSpec.ExecutionBackend == "temporal" |
+| `TestNA16_Compiler_DefaultExecutionBackend_IsEmpty` | Missing execution_backend → AgentSpec.ExecutionBackend == "" |
+
+**Trigger:** any change to `internal/agentgen/node_executor.go`, `internal/agentgen/spec.go`
+(`ExecutionBackend` field), `internal/agentgen/compiler.go` (execution_backend validation + buildSpec),
+or `internal/agentgen/context.go`
+
+---
+
 ### S1-51 · Agent definition publish service — `internal/admin/service/agent_definitions_publish_test.go`
 
 **Purpose:** Canvas A2A Builder validate/publish service layer. Verifies DAL delegation,
@@ -2157,17 +2189,18 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/temporal/workerconfig/loader.go` | S1-61 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
-| `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 + S1-74 |
-| `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 |
+| `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 + S1-74 + S1-75 |
+| `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 + S1-75 |
 | `internal/agentgen/interpreter.go` | S1-48 + S1-64 + S1-67 + S1-69 |
-| `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 + S1-67 + S1-69 + S1-72 + S1-73 + S1-74 |
+| `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 + S1-67 + S1-69 + S1-72 + S1-73 + S1-74 + S1-75 |
+| `internal/agentgen/node_executor.go` | S1-75 |
 | `internal/agentgen/plan_compiler.go` | S1-72 + S1-73 + S1-74 |
 | `internal/agentgen/executor.go` | S1-73 + S1-74 |
 | `internal/agentgen/local_executor.go` | S1-73 + S1-74 |
 | `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 + S1-69 + S1-71 + S1-74 |
 | `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 + S1-69 + S1-71 |
 | `internal/agentgen/mcp_caller.go` | S1-69 |
-| `internal/agentgen/context.go` | S1-48 + S1-64 |
+| `internal/agentgen/context.go` | S1-48 + S1-64 + S1-75 |
 | `cmd/agent-runtime/main.go` | S1-60 + S1-62 + S1-65 |
 | `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1-72 + S1-73 + S1-74 + S1 (full suite) |
 | `internal/admin/applications.go` (GetAppParams/SetAppParam/DeleteAppParam handlers) | S1-66 |
@@ -2308,7 +2341,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-68 | explicit canvas data bindings (BND-1..10) | 10 |
 | S1-69 | MCP call node + executor (MCP-1..10) | 10 |
 | S1-74 | DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run) | 3 |
-| **S1 total** | | **808** |
+| S1-75 | Phase 4-A: ExecuteNodeForActivity, ActivityIC, ExecutionBackend (NA-01..16) | 16 |
+| **S1 total** | | **824** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2317,4 +2351,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **829** |
+| **`go test ./...` total** | | **845** |

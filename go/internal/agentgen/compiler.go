@@ -57,13 +57,17 @@ type canvasDefinition struct {
 }
 
 type agentRoot struct {
-	DisplayName  string           `json:"display_name"`
-	Description  string           `json:"description"`
-	Version      string           `json:"version"`
-	Icon         string           `json:"icon"`
-	Category     string           `json:"category"`
-	DefaultModel string           `json:"default_model"`
-	Capabilities CapabilitiesSpec `json:"capabilities"`
+	DisplayName      string           `json:"display_name"`
+	Description      string           `json:"description"`
+	Version          string           `json:"version"`
+	Icon             string           `json:"icon"`
+	Category         string           `json:"category"`
+	DefaultModel     string           `json:"default_model"`
+	Capabilities     CapabilitiesSpec `json:"capabilities"`
+	// ExecutionBackend selects the DAG execution engine.
+	// Valid values: "" (default, same as "local"), "local", "temporal".
+	// Copied verbatim into AgentSpec.ExecutionBackend at compile time.
+	ExecutionBackend string           `json:"execution_backend,omitempty"`
 }
 
 type canvasSkill struct {
@@ -124,6 +128,14 @@ func validateStructural(agentID, tenantID, definitionID, agentSlug string, raw j
 
 	if def.AgentRoot.DisplayName == "" {
 		issues = append(issues, errorf("MISSING_FIELD", "agent_root.display_name is required"))
+	}
+
+	// Validate execution_backend when present.
+	switch def.AgentRoot.ExecutionBackend {
+	case "", "local", "temporal":
+		// valid
+	default:
+		issues = append(issues, errorf("INVALID_FIELD", "agent_root.execution_backend must be one of: \"\", \"local\", \"temporal\""))
 	}
 
 	// Validate duplicate skill IDs.
@@ -610,11 +622,12 @@ func buildSpec(agentID, tenantID, definitionID, slug string, def *canvasDefiniti
 	}
 
 	return &AgentSpec{
-		ID:             agentID,
-		DefinitionID:   definitionID,
-		Slug:           slug,
-		TenantID:       tenantID,
-		DefaultModel:   def.AgentRoot.DefaultModel,
+		ID:               agentID,
+		DefinitionID:     definitionID,
+		Slug:             slug,
+		TenantID:         tenantID,
+		DefaultModel:     def.AgentRoot.DefaultModel,
+		ExecutionBackend: def.AgentRoot.ExecutionBackend,
 		Card: CardSpec{
 			Name:         def.AgentRoot.DisplayName,
 			Description:  def.AgentRoot.Description,

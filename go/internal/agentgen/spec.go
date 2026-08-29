@@ -17,6 +17,11 @@ type AgentSpec struct {
 	DefaultModel   string             `json:"default_model"`
 	RequiredParams []AgentParamSpec   `json:"required_params,omitempty"` // per-binding params (HTTP api_key / bearer_token)
 	LLMNodes       []AgentLLMNodeSpec `json:"llm_nodes,omitempty"`       // LLM nodes whose provider+model can be overridden at runtime
+	// ExecutionBackend selects the DAG execution engine at invocation time.
+	// "" or "local" → LocalExecutor (default, in-process goroutines).
+	// "temporal"    → CanvasAgentWorkflow via Temporal (per-node activities, Phase 4-C+).
+	// Set by the compiler from agent_root.execution_backend in the canvas definition.
+	ExecutionBackend string `json:"execution_backend,omitempty"`
 }
 
 // AgentLLMNodeSpec describes one LLM node in a published agent.

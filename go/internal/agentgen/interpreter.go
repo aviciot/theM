@@ -73,6 +73,13 @@ func (interp *Interpreter) clone() *Interpreter {
 	return &cp
 }
 
+// Clone is the exported equivalent of clone, required by external packages
+// (e.g. CanvasAgentActivities in internal/temporal) that must produce an
+// isolated Interpreter per concurrent activity invocation.
+func (interp *Interpreter) Clone() *Interpreter {
+	return interp.clone()
+}
+
 // ExecutionResult is the output of a successful pipeline execution.
 type ExecutionResult struct {
 	Text      string

@@ -82,6 +82,17 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 
 ---
 
+## Rules — File Size & Structure
+
+- Keep files focused and preferably under 400 lines.
+- If a file approaches 500 lines, stop and propose a logical split before adding more code.
+- Split by clear responsibility (e.g. handlers vs service vs DAL), not arbitrary line count.
+- Avoid oversized files that mix HTTP, business logic, and SQL — respect Handler → Service → DAL.
+- Do not over-fragment into many tiny files.
+- Before creating or expanding a large file, show the proposed structure and wait for approval.
+
+---
+
 ## Rules — Route Ownership
 
 - **Never claim a route is migrated based only on Traefik labels or dead code removal.**
