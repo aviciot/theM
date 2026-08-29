@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-28
+# Last updated: 2026-08-29
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `d8d58a0` — feat(canvas): unified port model — hover-reveal + port alias rename
+Commit: `f5737c0` — feat(agentgen): LocalExecutor — goroutine DAG fan-out + wait_all join (Phase 1)
 
 Recent commits (newest first):
 ```
+f5737c0 feat(agentgen): LocalExecutor — goroutine DAG fan-out + wait_all join (Phase 1)
+0d99d68 feat(agentgen): ExecutionPlan compiler — Phase 0 DAG types + CompileExecutionPlan
+202d7b1 feat(canvas): PortsPopover + BundleEdge rewrite — clean port UX, no backward compat
+20fdf24 feat(canvas): unified port model — PortsPopover absolute child, ctrl handles always-visible
 d8d58a0 feat(canvas): unified port model — hover-reveal + port alias rename
-1e026b2 feat(canvas): Phase 3 BundleEdge — port-rail cable visual + invisible data handles
-1917ea8 feat(canvas): generic multi-port model — Phase 1+2
-297b2cd feat(canvas+noderegistry): NodeDef as single source of truth for canvas
-e6f9660 feat(agent-runtime): wire MCP_SERVICE_URL to them-mcp-service for mcp_call steps
 ```
 
 ---
@@ -147,8 +147,10 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-27, Stage A bindings)
-S1 total: 794 tests (+10 BND-1..10 in bindings_test.go)
+go test ./...  — all packages, 0 failures (verified 2026-08-29, DAG Phase 1)
+S1-72: 4 plan compiler tests (TestCompileExecutionPlan_*)
+S1-73: 6 LocalExecutor tests (TestLocalExecutor_*, TestDeepCopyVars_*)
+S1 total: 800+ tests
   S1-63: CMP-10..14 (compiler LLM node collection — 5 tests, rewrote from AppParamRefs)
   S1-64: INT-10..14 (interpreter AppParamRef HTTP + NodeLLMOverride — 5 tests, INT-14 rewritten)
   S1-65: RT-20..24 (runtime decodeAppGlobalParams — 5 tests)
@@ -237,6 +239,7 @@ App global params: e2e validated 2026-08-25 — GET/PUT/DELETE live ✅
 | Multi-port Phase 1+2 | NodeDef as single source of truth: `PortDef.Color/MaxConnections`, `ControlOutputPorts`, `DynamicOutputSource` in Go registry; `resolveInputPorts`/`resolveOutputPorts` in nodeRegistry.ts; StepNode zero-conditional rewrite; branch true/false named control handles; transform dynamic output ports from config | ✅ |
 | Multi-port Phase 3 | BundleEdge: groups data edges between same node pair into port-rail cable visual; EdgeLabelRenderer dots+labels; count badge; `applyBundleGroups()`; data handles invisible (1×1) — geometry only; `useStore(s.edges)` for wired-port detection; Dagre height scales with port count | ✅ |
 | Unified port model | All flow (→) and data ports in one unified hover-reveal list per side; no separate ctrl-in/ctrl-out center handles; `PortDot` scale+opacity CSS transition; wired ports permanently visible; branch gets named true/false flow out ports; port alias rename in RightPanel READS section | ✅ |
+| Canvas port UX clean rewrite | Removed all backward-compat code (PORTS_V2 flag, PortDot component, breathing animation, legacy paths). `PortsPopover` as absolutely-positioned child of `StepNode`; ctrl handles as always-visible 18px circles with ‹/› arrows. `BundleEdge` rewritten: single bezier + circular N-badge + MappingSheet popover; `callDeleteMapping` module registry for delete callbacks. `resolveOutputPorts` always includes static ports. | ✅ |
 
 ### Key security constraints (always in force)
 - Credentials decrypted per-request, held only in `InvocationContext.Credentials`, never logged/persisted
@@ -399,16 +402,55 @@ What was built:
 
 ---
 
+## DAG Execution Engine — in progress (2026-08-29)
+
+Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-out/join.
+Full design at `docs/architecture-v2/DAG_EXECUTION_PLAN.md`.
+
+**Critical constraint: canvas must NOT allow multi-output wiring (`max_out: 0`) until the runtime
+can actually execute DAG/fan-out correctly. Do NOT change `max_out` in `nodes.go` until Phase 1+2 green.**
+
+| Phase | What | State |
+|---|---|---|
+| 0 | `ExecutionPlan`/`PlanNode`/`JoinMode` types + `CompileExecutionPlan()` + 4 tests (S1-72) | ✅ commit `0d99d68` |
+| 1 | `ExecutionBackend` interface + `LocalExecutor` (goroutine fan-out, wait_all join, deep-copy, cancel) + 6 tests (S1-73) | ✅ commit `f5737c0` |
+| 2 | Race detector validation — requires `gcc` in test image (rebuild from musl-gcc base) | ⬜ next |
+| 3 | Canvas unlock — change `max_out: 0` on LLM/HTTP/Transform/MCPCall/A2ACall in `nodes.go` + UI test | ⬜ after Phase 2 |
+| 4 | `TemporalExecutor` — `ExecuteStepActivity` + `TemporalExecutor` struct | ⬜ |
+| 5 | Loop, HumanWait, A2A in DAG context | ⬜ |
+
+### Key files (Phase 0+1)
+- `go/internal/agentgen/spec.go` — `ExecutionPlan`, `PlanNode`, `JoinMode` types
+- `go/internal/agentgen/plan_compiler.go` — `CompileExecutionPlan()`, `NodeByID()`
+- `go/internal/agentgen/executor.go` — `ExecutionBackend` interface
+- `go/internal/agentgen/local_executor.go` — `LocalExecutor` with goroutine fan-out + `joinState` + `deepCopyVars`
+
+### Race detector blocker
+`go test -race` requires `CGO_ENABLED=1` + `gcc`. The test image (`them-go-test`) is built from
+`Dockerfile.go --target builder` (alpine base, no gcc). To unblock Phase 2:
+```bash
+# Option A: rebuild test image with full Go (not alpine)
+docker build --target builder -f Dockerfile.go -t them-go-test . --build-arg GO_BASE=golang:1.25
+# Option B: run directly in them-go-bridge container (has gcc)
+docker exec them-go-bridge go test -race ./internal/agentgen/...
+```
+
+---
+
 ## Next recommended task
 
-### Step 1 — Auth admin CRUD Go proxy (lower priority)
+### Step 1 — DAG Phase 2: race detector validation
+Run `go test -race ./internal/agentgen/...` against the LocalExecutor tests. Requires gcc (see above).
+Zero races required before proceeding to Phase 3 (canvas unlock).
+
+### Step 2 — DAG Phase 3: canvas unlock
+Once race detector is green, change `max_out: 0` on LLM/HTTP/Transform/MCPCall/A2ACall
+nodes in `go/internal/agentgen/nodes.go`. Test that the canvas allows wiring one node to two targets.
+
+### Step 3 — Auth admin CRUD Go proxy (lower priority)
 - `them-auth-service` (Python, port 8701) still serves user/role/team management
 - Frontend hits it directly via its own Traefik routes
 - When ready: implement Go proxy at `go/internal/authadmin/` + Traefik redirect
-
-### Step 2 — Wave 9 tenant items
-- Session/rate-limit tenant scope, tenant provisioning, multi-tenant JWT claims
-- Not started — begin only after Steps 1–2 are complete
 
 Do NOT begin multiple subsystems in the same session.
 
