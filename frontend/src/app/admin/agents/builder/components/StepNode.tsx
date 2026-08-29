@@ -5,6 +5,7 @@ import type { ResolvedPort } from '@/lib/nodeRegistry';
 import type { StepNodeData, DebugNodeState } from '../types';
 import { useLayoutDir } from '../LayoutContext';
 import { PortsPopover } from './PortsPopover';
+import { extractTemplateVars } from '../nodeVars';
 
 function stepMetaFromType(type: string): { bg: string; border: string; emoji: string; label: string } {
   const def = getNodeDef(type);
@@ -434,32 +435,34 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
           <div style={{ marginTop: 4, fontSize: '9px', color: '#f59e0b' }}>{isLR ? 'next →' : 'next ↓'}</div>
         )}
 
-        {/* Ports button — hidden for branch (no data ports, only named ctrl-flow ports) */}
-        {nodeDef.type !== 'branch' && (
-          <button
-            className="nodrag nowheel nopan"
-            onClick={e => { e.stopPropagation(); setShowPortsPanel(v => !v); }}
-            style={{
-              marginTop: 6,
-              background: showPortsPanel ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.06)',
-              border: `1px solid ${showPortsPanel ? '#818cf8' : '#334155'}`,
-              borderRadius: 6,
-              color: showPortsPanel ? '#a5b4fc' : '#64748b',
-              fontSize: 13, cursor: 'pointer',
-              padding: '2px 7px', lineHeight: 1.4,
-              transition: 'all 0.15s',
-            }}
-            title="Show data ports"
-          >⊕</button>
-        )}
+        {/* Ports button */}
+        <button
+          className="nodrag nowheel nopan"
+          onClick={e => { e.stopPropagation(); setShowPortsPanel(v => !v); }}
+          style={{
+            marginTop: 6,
+            background: showPortsPanel ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.06)',
+            border: `1px solid ${showPortsPanel ? '#818cf8' : '#334155'}`,
+            borderRadius: 6,
+            color: showPortsPanel ? '#a5b4fc' : '#64748b',
+            fontSize: 13, cursor: 'pointer',
+            padding: '2px 7px', lineHeight: 1.4,
+            transition: 'all 0.15s',
+          }}
+          title="Show data ports"
+        >⊕</button>
       </div>
 
-      {nodeDef.type !== 'branch' && showPortsPanel && (
+      {showPortsPanel && (
         <PortsPopover
           nodeId={id}
           nodeDef={nodeDef}
           cfg={cfg as Record<string, unknown>}
-          committedInputPortIDs={dynamicInputIDs}
+          committedInputPortIDs={
+            nodeDef.type === 'branch'
+              ? extractTemplateVars((cfg as Record<string, unknown>).expression as string ?? '')
+              : dynamicInputIDs
+          }
           wiredOutputPortIDs={wiredOutIDs}
           isLR={isLR}
           sourcePos={sourcePos}
