@@ -7,11 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `(pending commit)` — feat(agentgen): Pre-4-C parity — per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults
+Commit: `fae270b` — feat(agentgen): Pre-4-C parity — per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults
 
 Recent commits (newest first):
 ```
-(pending)  feat(agentgen): Pre-4-C parity — per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults
+fae270b  feat(agentgen): Pre-4-C parity — per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults
 7f6eb97  feat(agentgen): Pre-4-C hardening — retry/backoff, non-retryable stops, idempotency guard, policy UI
 a0457bd  feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
 d442def  docs(current): record approved ExecutionPolicy plan
