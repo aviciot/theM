@@ -2,15 +2,19 @@ package agentgen
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 )
 
 // LocalExecutor implements ExecutionBackend using goroutines.
 // Fan-out nodes launch each branch in a separate goroutine with a deep-copied
-// PipelineVars. Join nodes (JoinWaitAll) block until all predecessor branches
-// arrive then merge their vars (JoinOf order, last-write-wins per key).
-// Any branch error cancels all other in-flight branches immediately.
+// PipelineVars. Join nodes block according to their JoinMode:
+//   - JoinWaitAll: block until ALL predecessor branches arrive; merge in JoinOf order.
+//   - JoinBranchMerge: first arrival wins (only one branch arm ever runs); continue immediately.
+//
+// Any branch error cancels all other in-flight branches. The causal error (not
+// context.Canceled from siblings) is always returned.
 type LocalExecutor struct {
 	interp *Interpreter
 }
@@ -40,13 +44,17 @@ func (e *LocalExecutor) Execute(
 
 	// joinState tracks arrivals at join nodes.
 	js := &joinState{
-		arrived: make(map[string][]PipelineVars),
+		arrived: make(map[string]map[string]PipelineVars),
 		count:   make(map[string]int),
 	}
 	// Pre-populate expected arrival counts from JoinOf lists.
 	for _, n := range plan.Nodes {
 		if n.JoinMode == JoinWaitAll {
 			js.count[n.StepID] = len(n.JoinOf)
+		}
+		// JoinBranchMerge expects exactly 1 (first arrival wins).
+		if n.JoinMode == JoinBranchMerge {
+			js.count[n.StepID] = 1
 		}
 	}
 
@@ -57,28 +65,25 @@ func (e *LocalExecutor) Execute(
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Channel for branch errors — buffered so goroutines never block.
+	// errCh carries the causal error from whichever branch first fails.
+	// Buffered to len(plan.Nodes) so goroutines never block on send.
+	// causalErr is the first non-Canceled error; protected by causalMu.
 	errCh := make(chan error, len(plan.Nodes))
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := e.runBranch(runCtx, ic, plan, nodeIdx, js, res, deepCopyVars(initial), plan.StartID, cancel, errCh, &wg, e.interp.clone()); err != nil {
-			select {
-			case errCh <- err:
-			default:
-			}
+		if err := e.runBranch(runCtx, ic, plan, nodeIdx, js, res, deepCopyVars(initial), plan.StartID, "", cancel, errCh, &wg, e.interp.clone()); err != nil {
+			sendErr(errCh, err)
 		}
 	}()
 
 	wg.Wait()
 
-	// Collect first error if any.
-	select {
-	case err := <-errCh:
+	// Return the first causal error. Prefer non-Canceled errors over Canceled.
+	if err := drainFirstCausalError(errCh); err != nil {
 		return nil, err
-	default:
 	}
 
 	result := res.get()
@@ -88,7 +93,41 @@ func (e *LocalExecutor) Execute(
 	return result, nil
 }
 
+// drainFirstCausalError reads all errors from ch and returns the first
+// non-context.Canceled one, or context.Canceled if that's all there is,
+// or nil if the channel is empty.
+func drainFirstCausalError(ch <-chan error) error {
+	var first error
+	for {
+		select {
+		case err := <-ch:
+			if first == nil {
+				first = err
+			}
+			// Replace a Canceled placeholder with a real error if we find one.
+			if errors.Is(first, context.Canceled) && !errors.Is(err, context.Canceled) {
+				first = err
+			}
+		default:
+			if first == nil {
+				return nil
+			}
+			// Final result: if we only collected a no-result sentinel, convert.
+			return first
+		}
+	}
+}
+
+// sendErr sends err to ch without blocking; drops if full (already an error in flight).
+func sendErr(ch chan<- error, err error) {
+	select {
+	case ch <- err:
+	default:
+	}
+}
+
 // runBranch walks the plan from startID, running each node sequentially.
+// fromID is the predecessor step ID that sent this branch here (used for join keying).
 // At a fan-out node (len(Next)>1) it launches sibling goroutines.
 // At a join node it deposits vars and either waits (not last) or merges (last).
 func (e *LocalExecutor) runBranch(
@@ -100,12 +139,14 @@ func (e *LocalExecutor) runBranch(
 	res *sharedResult,
 	vars PipelineVars,
 	startID string,
+	fromID string, // which predecessor step launched this branch
 	cancel context.CancelFunc,
 	errCh chan<- error,
 	wg *sync.WaitGroup,
 	interp *Interpreter, // per-goroutine clone — owns nextStepOverride, never shared
 ) error {
 	currentID := startID
+	prevID := fromID
 	visited := make(map[string]bool)
 
 	for currentID != "" {
@@ -125,17 +166,29 @@ func (e *LocalExecutor) runBranch(
 			return fmt.Errorf("step %q not found in plan %q", currentID, plan.SkillID)
 		}
 
-		// ── Join: deposit vars; only last arrival continues ────────────────────
-		if node.JoinMode == JoinWaitAll {
-			ready, merged, err := js.arrive(node.StepID, len(node.JoinOf), vars)
+		// ── Join: deposit vars; only the triggering arrival continues ──────────
+		switch node.JoinMode {
+		case JoinWaitAll:
+			ready, merged, err := js.arrive(node.StepID, node.JoinOf, prevID, len(node.JoinOf), vars)
 			if err != nil {
 				return err
 			}
 			if !ready {
-				// Not the last arrival — this goroutine's work is done.
-				return nil
+				return nil // not the last arrival — done
 			}
-			// Last arrival: continue with merged vars.
+			vars = merged
+
+		case JoinBranchMerge:
+			// Only one branch arm executes. First arrival wins and continues;
+			// any subsequent arrivals (from arms that somehow ran) are silently
+			// dropped. Use count=1 so arrive() returns ready on first call.
+			ready, merged, err := js.arrive(node.StepID, node.JoinOf, prevID, 1, vars)
+			if err != nil {
+				return err
+			}
+			if !ready {
+				return nil // a sibling arm already won
+			}
 			vars = merged
 		}
 
@@ -165,19 +218,18 @@ func (e *LocalExecutor) runBranch(
 				sibID := sibID // capture
 				sibVars := deepCopyVars(vars)
 				sibInterp := e.interp.clone() // each goroutine owns its nextStepOverride
+				curID := node.StepID          // capture as fromID for the sibling
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					if err := e.runBranch(ctx, ic, plan, nodeIdx, js, res, sibVars, sibID, cancel, errCh, wg, sibInterp); err != nil {
-						select {
-						case errCh <- err:
-						default:
-						}
+					if err := e.runBranch(ctx, ic, plan, nodeIdx, js, res, sibVars, sibID, curID, cancel, errCh, wg, sibInterp); err != nil {
+						sendErr(errCh, err)
 					}
 				}()
 			}
 		}
 
+		prevID = node.StepID
 		currentID = nextIDs[0]
 	}
 	return nil
@@ -229,30 +281,58 @@ func planNodeToStepSpec(n *PlanNode) *StepSpec {
 // All methods are safe for concurrent use.
 type joinState struct {
 	mu      sync.Mutex
-	arrived map[string][]PipelineVars // stepID → arriving branch vars
-	count   map[string]int            // stepID → expected total arrivals
+	arrived map[string]map[string]PipelineVars // joinID → (fromID → vars)
+	count   map[string]int                     // joinID → expected total arrivals
 }
 
-// arrive deposits vars for joinID. Returns (ready=true, merged) when all
-// expected branches have arrived. Returns (false, nil) if more are pending.
-func (js *joinState) arrive(joinID string, expected int, vars PipelineVars) (bool, PipelineVars, error) {
+// arrive deposits vars from predecessor fromID for joinID.
+// joinOf is the ordered list of predecessor IDs used for deterministic merge.
+// expected is the number of arrivals needed before the join fires.
+// Returns (ready=true, merged) when enough branches have arrived.
+// Returns (false, nil) if more are pending.
+func (js *joinState) arrive(joinID string, joinOf []string, fromID string, expected int, vars PipelineVars) (bool, PipelineVars, error) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
 
-	js.arrived[joinID] = append(js.arrived[joinID], vars)
+	if js.arrived[joinID] == nil {
+		js.arrived[joinID] = make(map[string]PipelineVars)
+	}
+	js.arrived[joinID][fromID] = vars
 	got := len(js.arrived[joinID])
 
 	if got < expected {
 		return false, nil, nil
 	}
 
-	// All branches arrived — merge in JoinOf order (last-write-wins per key).
+	// Merge in joinOf order (deterministic: JoinOf defines precedence).
+	// For keys present in multiple branches, later entries in JoinOf win.
+	// For JoinBranchMerge (expected=1, joinOf may be longer), only the
+	// one arrived branch contributes — still deterministic since there's one.
 	merged := make(PipelineVars)
-	for _, bv := range js.arrived[joinID] {
-		for k, v := range bv {
-			merged[k] = v
+	for _, predID := range joinOf {
+		if bv, ok := js.arrived[joinID][predID]; ok {
+			for k, v := range bv {
+				merged[k] = v
+			}
 		}
 	}
+	// Handle branches whose predID wasn't in joinOf (shouldn't happen in
+	// well-formed plans, but be safe: append them last).
+	for predID, bv := range js.arrived[joinID] {
+		inJoinOf := false
+		for _, jid := range joinOf {
+			if jid == predID {
+				inJoinOf = true
+				break
+			}
+		}
+		if !inJoinOf {
+			for k, v := range bv {
+				merged[k] = v
+			}
+		}
+	}
+
 	delete(js.arrived, joinID) // free memory
 	return true, merged, nil
 }

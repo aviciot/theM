@@ -1608,8 +1608,10 @@ types and compiler pass.
 | Test | What it proves |
 |---|---|
 | `TestCompileExecutionPlan_Linear` | A→B→C linear chain: no join nodes, correct `Next` pointers, correct `StartID` |
-| `TestCompileExecutionPlan_FanOutJoin` | Diamond DAG (s1→s2a,s2b→s3): s1 has len(Next)=2; s3 gets `JoinWaitAll` + `JoinOf=[s2a,s2b]` |
-| `TestCompileExecutionPlan_Branch` | Branch DAG (s1→br→s_true/s_false→s_end): s_end gets `JoinWaitAll` with both branch arms as predecessors |
+| `TestCompileExecutionPlan_FanOutJoin` | Diamond DAG (s1→s2a,s2b→s3): s1 fans out; s3 gets `JoinWaitAll` + `JoinOf=[s2a,s2b]` |
+| `TestCompileExecutionPlan_Branch` | Branch DAG (s1→br→s_true/s_false→s_end): s_end gets `JoinBranchMerge` (arms are mutually exclusive) |
+| `TestCompileExecutionPlan_MixedFanOut` | LLM parallel fan-out (s2→s3a,s3b→s4): s4 gets `JoinWaitAll` (non-Branch fan-out source) |
+| `TestCompileExecutionPlan_BranchMerge` | Branch convergence (br→s_true/s_false→s_end): s_end gets `JoinBranchMerge`; arm nodes get `JoinNone` |
 | `TestCompileExecutionPlan_Nil` | nil input and empty-step skill both return non-nil plan with zero nodes; no panic |
 
 **Trigger:** any change to `internal/agentgen/plan_compiler.go` or `internal/agentgen/spec.go`
@@ -1631,6 +1633,10 @@ propagation + context cancellation, deep-copy isolation, and nil/empty plan safe
 | `TestLocalExecutor_JoinFailure_CancelsOtherBranch` | Error in one branch cancels ctx; slow sibling unblocks; error is returned |
 | `TestDeepCopyVars_NestedMap` | `deepCopyVars` deep-copies nested maps and slices; mutation of copy doesn't affect original |
 | `TestLocalExecutor_Nil` | nil plan and empty plan both return a non-nil error cleanly |
+| `TestLocalExecutor_BranchTrue` | Branch routes to true arm; s_end runs exactly once via JoinBranchMerge |
+| `TestLocalExecutor_BranchFalse` | Branch routes to false arm; s_end runs exactly once via JoinBranchMerge |
+| `TestLocalExecutor_DeterministicMerge` | 50 iterations: when two branches write same key, JoinOf order determines winner deterministically |
+| `TestLocalExecutor_CausalErrorPreserved` | 20 iterations: causal error survives context.Canceled from sibling cancellation |
 
 **Trigger:** any change to `internal/agentgen/local_executor.go`, `internal/agentgen/executor.go`,
 `internal/agentgen/plan_compiler.go`, or `internal/agentgen/spec.go`

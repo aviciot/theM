@@ -146,16 +146,90 @@ func TestCompileExecutionPlan_Branch(t *testing.T) {
 		t.Fatalf("Nodes len: got %d want 5", len(plan.Nodes))
 	}
 
-	// s_end receives from s_true and s_false → join
+	// s_end receives from s_true and s_false → branch convergence, not parallel fan-out
 	sEnd := plan.NodeByID("s_end")
 	if sEnd == nil {
 		t.Fatal("NodeByID(s_end) returned nil")
 	}
-	if sEnd.JoinMode != JoinWaitAll {
-		t.Errorf("s_end: expected JoinWaitAll, got %s", sEnd.JoinMode)
+	if sEnd.JoinMode != JoinBranchMerge {
+		t.Errorf("s_end: expected JoinBranchMerge (branch arms are mutually exclusive), got %s", sEnd.JoinMode)
 	}
 	if len(sEnd.JoinOf) != 2 {
 		t.Errorf("s_end.JoinOf len: got %d want 2", len(sEnd.JoinOf))
+	}
+}
+
+// TestCompileExecutionPlan_MixedFanOut verifies that a node reached by both a
+// parallel fan-out source and a branch arm gets JoinWaitAll, not JoinBranchMerge.
+//
+//	llm → s2a (parallel)
+//	llm → s2b (parallel)
+//	s2a → s_end
+//	s2b → s_end
+func TestCompileExecutionPlan_MixedFanOut(t *testing.T) {
+	skill := &SkillSpec{
+		ID: "skill-parallel-fanout",
+		Steps: []StepSpec{
+			{ID: "s1", Type: StepInput, Config: rawCfg(t), Next: []string{"s2"}},
+			{ID: "s2", Type: StepLLM, Config: rawCfg(t), Next: []string{"s3a", "s3b"}},
+			{ID: "s3a", Type: StepHTTP, Config: rawCfg(t), Next: []string{"s4"}},
+			{ID: "s3b", Type: StepHTTP, Config: rawCfg(t), Next: []string{"s4"}},
+			{ID: "s4", Type: StepResponse, Config: rawCfg(t), Next: nil},
+		},
+	}
+
+	plan := CompileExecutionPlan(skill)
+	s4 := plan.NodeByID("s4")
+	if s4 == nil {
+		t.Fatal("NodeByID(s4) returned nil")
+	}
+	if s4.JoinMode != JoinWaitAll {
+		t.Errorf("s4: expected JoinWaitAll (parallel LLM fan-out), got %s", s4.JoinMode)
+	}
+}
+
+// TestCompileExecutionPlan_BranchMerge verifies that a branch convergence node
+// (all predecessors are Branch arms) gets JoinBranchMerge, not JoinWaitAll.
+//
+//	branch → s_true → s_end
+//	branch → s_false → s_end
+func TestCompileExecutionPlan_BranchMerge(t *testing.T) {
+	skill := &SkillSpec{
+		ID: "skill-branch-merge",
+		Steps: []StepSpec{
+			{ID: "s1", Type: StepInput, Config: rawCfg(t), Next: []string{"br"}},
+			{
+				ID: "br", Type: StepBranch, Config: rawCfg(t),
+				Next:     []string{"s_true", "s_false"},
+				Branches: []BranchArm{{Condition: "true", Next: []string{"s_true"}}, {Condition: "false", Next: []string{"s_false"}}},
+			},
+			{ID: "s_true", Type: StepLLM, Config: rawCfg(t), Next: []string{"s_end"}},
+			{ID: "s_false", Type: StepHTTP, Config: rawCfg(t), Next: []string{"s_end"}},
+			{ID: "s_end", Type: StepResponse, Config: rawCfg(t), Next: nil},
+		},
+	}
+
+	plan := CompileExecutionPlan(skill)
+	sEnd := plan.NodeByID("s_end")
+	if sEnd == nil {
+		t.Fatal("NodeByID(s_end) returned nil")
+	}
+	if sEnd.JoinMode != JoinBranchMerge {
+		t.Errorf("s_end: expected JoinBranchMerge, got %s", sEnd.JoinMode)
+	}
+	if len(sEnd.JoinOf) != 2 {
+		t.Errorf("s_end.JoinOf len: got %d want 2", len(sEnd.JoinOf))
+	}
+
+	// s2a, s2b (branch arms) must have JoinNone
+	for _, id := range []string{"s_true", "s_false"} {
+		n := plan.NodeByID(id)
+		if n == nil {
+			t.Fatalf("NodeByID(%s) returned nil", id)
+		}
+		if n.JoinMode != JoinNone {
+			t.Errorf("%s: expected JoinNone, got %s", id, n.JoinMode)
+		}
 	}
 }
 

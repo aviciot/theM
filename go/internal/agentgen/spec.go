@@ -267,9 +267,10 @@ type BranchStepConfig struct {
 type JoinMode string
 
 const (
-	JoinNone    JoinMode = "none"     // standard node — no join
-	JoinWaitAll JoinMode = "wait_all" // block until ALL predecessor branches arrive
-	JoinWaitAny JoinMode = "wait_any" // reserved; not implemented in Phase 1
+	JoinNone        JoinMode = "none"         // standard node — no join
+	JoinWaitAll     JoinMode = "wait_all"     // parallel fan-out: block until ALL predecessor branches arrive
+	JoinBranchMerge JoinMode = "branch_merge" // branch convergence: exactly ONE arm runs; first arrival continues
+	JoinWaitAny     JoinMode = "wait_any"     // reserved; not implemented
 )
 
 // ExecutionPlan is the compiled, executor-ready form of one skill's DAG.

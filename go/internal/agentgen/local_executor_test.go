@@ -351,3 +351,286 @@ func TestLocalExecutor_Nil(t *testing.T) {
 		t.Fatal("expected error for empty plan")
 	}
 }
+
+// ── Branch-convergence tests ──────────────────────────────────────────────────
+
+// TestLocalExecutor_BranchTrue verifies that when the true arm is taken,
+// the convergence node (JoinBranchMerge) executes with the true arm's vars.
+//
+//	s1(passthrough) → s_branch(branch, true→s_true, false→s_false)
+//	s_true(write "from"="true") → s_end(JoinBranchMerge, reads "from")
+//	s_false(write "from"="false") → s_end
+func TestLocalExecutor_BranchTrue(t *testing.T) {
+	setupBranchNodes(t)
+
+	plan := branchPlan(t, "branch-true-test", "true_arm")
+	exec := NewLocalExecutor(testInterp())
+	res, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{"route": "true"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Text != "true_arm" {
+		t.Errorf("result: got %q want %q", res.Text, "true_arm")
+	}
+}
+
+// TestLocalExecutor_BranchFalse verifies that when the false arm is taken,
+// the convergence node executes with the false arm's vars (not waiting for true arm).
+func TestLocalExecutor_BranchFalse(t *testing.T) {
+	setupBranchNodes(t)
+
+	plan := branchPlan(t, "branch-false-test", "false_arm")
+	exec := NewLocalExecutor(testInterp())
+	res, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{"route": "false"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Text != "false_arm" {
+		t.Errorf("result: got %q want %q", res.Text, "false_arm")
+	}
+}
+
+// setupBranchNodes registers the test node types used by branch tests.
+// Types: test_branch_router (routes via nextStepOverride), test_write_true,
+// test_write_false, test_read_from (reads "from" → result).
+func setupBranchNodes(t *testing.T) {
+	t.Helper()
+	// router: reads vars["route"]; overrides next to "s_true" or "s_false"
+	registerTestNode(t, NodeDef{
+		Type:        "test_branch_router",
+		Label:       "test_branch_router",
+		Version:     1,
+		OutputArity: "multi",
+		Execute: func(_ context.Context, interp *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
+			if vars["route"] == "true" {
+				interp.nextStepOverride = "s_true"
+			} else {
+				interp.nextStepOverride = "s_false"
+			}
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	registerTestNode(t, NodeDef{
+		Type:        "test_write_true",
+		Label:       "test_write_true",
+		Version:     1,
+		OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
+			vars["from"] = "true_arm"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	registerTestNode(t, NodeDef{
+		Type:        "test_write_false",
+		Label:       "test_write_false",
+		Version:     1,
+		OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
+			vars["from"] = "false_arm"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	registerTestNode(t, NodeDef{
+		Type:        "test_read_from",
+		Label:       "test_read_from",
+		Version:     1,
+		OutputArity: "none",
+		IsSink:      true,
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, result *ExecutionResult) error {
+			result.Text = fmt.Sprintf("%v", vars["from"])
+			result.MediaType = "text/plain"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	registerTestNode(t, NodeDef{
+		Type:        "test_passthrough",
+		Label:       "test_passthrough",
+		Version:     1,
+		OutputArity: "single",
+		Execute:     func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error { return nil },
+		Edges:       EdgeRules{},
+	})
+}
+
+// branchPlan builds a plan with a router → true/false arms → convergence node.
+// wantArmLabel is not used in the plan — it's for the caller to verify result.
+func branchPlan(t *testing.T, skillID, _ string) *ExecutionPlan {
+	t.Helper()
+	return &ExecutionPlan{
+		SkillID: skillID,
+		StartID: "s1",
+		Nodes: []*PlanNode{
+			{StepID: "s1", Type: "test_passthrough", Config: rawJSON(t, nil), Next: []string{"s_branch"}, JoinMode: JoinNone},
+			// Branch: Next has both, but router will override to only one via nextStepOverride.
+			{StepID: "s_branch", Type: "test_branch_router", Config: rawJSON(t, nil), Next: []string{"s_true", "s_false"}, JoinMode: JoinNone},
+			{StepID: "s_true", Type: "test_write_true", Config: rawJSON(t, nil), Next: []string{"s_end"}, JoinMode: JoinNone},
+			{StepID: "s_false", Type: "test_write_false", Config: rawJSON(t, nil), Next: []string{"s_end"}, JoinMode: JoinNone},
+			{StepID: "s_end", Type: "test_read_from", Config: rawJSON(t, nil), JoinMode: JoinBranchMerge, JoinOf: []string{"s_true", "s_false"}},
+		},
+	}
+}
+
+// ── Deterministic merge tests ─────────────────────────────────────────────────
+
+// TestLocalExecutor_DeterministicMerge verifies that when both parallel branches
+// write the SAME key, the merge result follows JoinOf order (last entry wins),
+// regardless of which goroutine arrived first.
+//
+// Plan: s1 → s2a (writes "shared"="from_a") + s2b (writes "shared"="from_b")
+//
+//	→ s3 (JoinWaitAll, JoinOf: ["s2a","s2b"]) → s4 (reads "shared")
+//
+// Expected: "from_b" wins because s2b is last in JoinOf.
+func TestLocalExecutor_DeterministicMerge(t *testing.T) {
+	registerTestNode(t, NodeDef{
+		Type:        "test_write_shared_a",
+		Label:       "test_write_shared_a",
+		Version:     1,
+		OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
+			vars["shared"] = "from_a"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	registerTestNode(t, NodeDef{
+		Type:        "test_write_shared_b",
+		Label:       "test_write_shared_b",
+		Version:     1,
+		OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
+			vars["shared"] = "from_b"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	registerTestNode(t, NodeDef{
+		Type:        "test_passthrough",
+		Label:       "test_passthrough",
+		Version:     1,
+		OutputArity: "single",
+		Execute:     func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error { return nil },
+		Edges:       EdgeRules{},
+	})
+	registerTestNode(t, NodeDef{
+		Type:        "test_resp_shared",
+		Label:       "test_resp_shared",
+		Version:     1,
+		OutputArity: "none",
+		IsSink:      true,
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, result *ExecutionResult) error {
+			result.Text = fmt.Sprintf("%v", vars["shared"])
+			result.MediaType = "text/plain"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+
+	// Run the plan many times to catch non-determinism from goroutine scheduling.
+	for i := 0; i < 50; i++ {
+		plan := &ExecutionPlan{
+			SkillID: "deterministic-merge",
+			StartID: "s1",
+			Nodes: []*PlanNode{
+				{StepID: "s1", Type: "test_passthrough", Config: rawJSON(t, nil), Next: []string{"s2a", "s2b"}, JoinMode: JoinNone},
+				{StepID: "s2a", Type: "test_write_shared_a", Config: rawJSON(t, nil), Next: []string{"s3"}, JoinMode: JoinNone},
+				{StepID: "s2b", Type: "test_write_shared_b", Config: rawJSON(t, nil), Next: []string{"s3"}, JoinMode: JoinNone},
+				// JoinOf: ["s2a","s2b"] — s2b is last, so "from_b" must always win.
+				{StepID: "s3", Type: "test_passthrough", Config: rawJSON(t, nil), Next: []string{"s4"}, JoinMode: JoinWaitAll, JoinOf: []string{"s2a", "s2b"}},
+				{StepID: "s4", Type: "test_resp_shared", Config: rawJSON(t, nil), JoinMode: JoinNone},
+			},
+		}
+		exec := NewLocalExecutor(testInterp())
+		res, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{})
+		if err != nil {
+			t.Fatalf("iter %d: unexpected error: %v", i, err)
+		}
+		if res.Text != "from_b" {
+			t.Errorf("iter %d: merge result: got %q want %q (JoinOf order must be deterministic)", i, res.Text, "from_b")
+		}
+	}
+}
+
+// ── Error propagation tests ───────────────────────────────────────────────────
+
+// TestLocalExecutor_CausalErrorPreserved verifies that when one branch fails,
+// the returned error is the original causal error, not context.Canceled from
+// a sibling goroutine that was cancelled.
+func TestLocalExecutor_CausalErrorPreserved(t *testing.T) {
+	const causalMsg = "deliberate branch failure"
+
+	registerTestNode(t, NodeDef{
+		Type:        "test_causal_fail",
+		Label:       "test_causal_fail",
+		Version:     1,
+		OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			return errors.New(causalMsg)
+		},
+		Edges: EdgeRules{},
+	})
+	registerTestNode(t, NodeDef{
+		Type:        "test_slow_waiter",
+		Label:       "test_slow_waiter",
+		Version:     1,
+		OutputArity: "single",
+		Execute: func(ctx context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		Edges: EdgeRules{},
+	})
+	registerTestNode(t, NodeDef{
+		Type:        "test_passthrough",
+		Label:       "test_passthrough",
+		Version:     1,
+		OutputArity: "single",
+		Execute:     func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error { return nil },
+		Edges:       EdgeRules{},
+	})
+
+	plan := &ExecutionPlan{
+		SkillID: "causal-error-test",
+		StartID: "s1",
+		Nodes: []*PlanNode{
+			{StepID: "s1", Type: "test_passthrough", Config: rawJSON(t, nil), Next: []string{"s_fail", "s_slow"}, JoinMode: JoinNone},
+			{StepID: "s_fail", Type: "test_causal_fail", Config: rawJSON(t, nil), Next: []string{"s3"}, JoinMode: JoinNone},
+			{StepID: "s_slow", Type: "test_slow_waiter", Config: rawJSON(t, nil), Next: []string{"s3"}, JoinMode: JoinNone},
+			{StepID: "s3", Type: "test_passthrough", Config: rawJSON(t, nil), JoinMode: JoinWaitAll, JoinOf: []string{"s_fail", "s_slow"}},
+		},
+	}
+
+	// Run many times — non-deterministic scheduling could expose ordering bugs.
+	for i := 0; i < 20; i++ {
+		exec := NewLocalExecutor(testInterp())
+		_, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{})
+		if err == nil {
+			t.Fatalf("iter %d: expected error, got nil", i)
+		}
+		// Must not be pure context.Canceled — must contain the causal message.
+		if errors.Is(err, context.Canceled) && !containsMsg(err, causalMsg) {
+			t.Errorf("iter %d: got context.Canceled instead of causal error %q: %v", i, causalMsg, err)
+		}
+	}
+}
+
+func containsMsg(err error, msg string) bool {
+	return err != nil && len(err.Error()) > 0 && (err.Error() == msg || len(err.Error()) > len(msg) && contains(err.Error(), msg))
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsRune(s, sub))
+}
+
+func containsRune(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
