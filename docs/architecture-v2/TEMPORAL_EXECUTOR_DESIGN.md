@@ -1,4 +1,4 @@
-# TemporalExecutor — Phase 4 Design
+# TemporalExecutor — Phase 4 Design (revised)
 # Date: 2026-08-29
 # Status: design only — no code changed
 
@@ -8,14 +8,18 @@
 
 ```
 WS/SSE handler
-  └── OrchestrationWorkflow (Temporal)
-        └── RunOrchestratorActivity  ← one long-running heartbeating activity
+  └── OrchestrationWorkflow  (Temporal, task queue: "them-orchestration-go")
+        └── RunOrchestratorActivity  ← long-running, heartbeating activity
               └── orchestrator.Run()  ← multi-turn LLM tool loop
                     └── agentregistry.InvokeForRun()
                           └── HTTP POST → them-agent-runtime
                                 └── LocalExecutor.Execute()
                                       └── goroutine fan-out over ExecutionPlan
 ```
+
+Key constants in `go/internal/temporal/workflow.go`:
+- `GoTaskQueue = "them-orchestration-go"` — Go worker polls this queue
+- `TaskQueue   = "them-orchestration"`    — Python legacy queue (kept for compat)
 
 `LocalExecutor` is in `go/internal/agentgen/local_executor.go`.
 `ExecutionBackend` interface is in `go/internal/agentgen/executor.go`.
@@ -26,131 +30,259 @@ It has no visibility into individual DAG nodes.
 
 ---
 
-## 2. Workflow boundary decision — the central question
-
-**Option A — Child workflow started by agent-runtime (recommended)**
-
-When `them-agent-runtime` receives an invocation, instead of running `LocalExecutor`, it signals Temporal to start a child DAG workflow. The child workflow executes the `ExecutionPlan` node by node using `ExecuteStepActivity` activities. The HTTP handler on `agent-runtime` blocks (polls Redis or a Temporal `QueryWorkflow`) until the child completes, then returns the result to the caller.
+## 2. Corrected execution flow
 
 ```
-RunOrchestratorActivity  (parent, unchanged)
+RunOrchestratorActivity  (activity running on them-go-worker, unchanged)
   → HTTP POST → them-agent-runtime
-       └── TemporalClient.ExecuteWorkflow(DAGWorkflow, plan, ic)
-             └── DAGWorkflow (child)
-                   ├── ExecuteStepActivity(node-A)
-                   ├── ExecuteStepActivity(node-B1) ─┐ parallel
-                   ├── ExecuteStepActivity(node-B2) ─┘
-                   └── ExecuteStepActivity(node-C)   ← join
+       └── if execution_backend == "temporal":
+             TemporalClient.ExecuteWorkflow("CanvasAgentWorkflow", plan, ic_safe)
+             block on workflow result  (client.GetWorkflow(...).Get(ctx, &result))
+             if HTTP ctx cancelled → client.CancelWorkflow(...)
+             → return HTTP response to caller
+       └── else:
+             LocalExecutor.Execute(...)  (unchanged)
+
+CanvasAgentWorkflow  (independent top-level workflow, task queue: "dag-nodes")
+  ├── ExecuteStepActivity(node-A)
+  ├── ExecuteStepActivity(node-B1) ─┐ parallel workflow.Go coroutines
+  ├── ExecuteStepActivity(node-B2) ─┘
+  └── ExecuteStepActivity(node-C)   ← join (workflow.Await)
 ```
-
-**Option B — Inline in RunOrchestratorActivity as Temporal child workflow**
-
-When the orchestrator decides to call a canvas agent, instead of posting to `agent-runtime`, `RunOrchestratorActivity` directly schedules a child Temporal workflow via `workflow.ExecuteChildWorkflow`. No HTTP hop.
-
-**Option C — TemporalExecutor replaces LocalExecutor in agent-runtime, no child workflow**
-
-`agent-runtime` uses `TemporalExecutor` which calls `workflow.ExecuteActivity` on each node inside what would need to be its own workflow context — but `agent-runtime` is not itself a Temporal workflow, so this is not valid without restructuring.
-
-### Decision: Option A
-
-**Reasons:**
-
-1. **Preserves the existing call boundary exactly.** `agentregistry.InvokeForRun()` already makes an HTTP POST to `them-agent-runtime`. No changes to the orchestrator, the LLM loop, or `RunOrchestratorActivity`.
-
-2. **`them-agent-runtime` is already the canvas execution boundary.** It owns `ExecutionPlan` compilation, `InvocationContext` parsing, and skill dispatch. Adding a Temporal client there is additive.
-
-3. **Config lives in `them-agent-runtime`.** The `execution_backend` field on `AgentSpec` is read there. The switch from `LocalExecutor` to `TemporalExecutor` is a one-line branch in `main.go`.
-
-4. **No Temporal workflow determinism constraints on the LLM loop.** `RunOrchestratorActivity` uses real `context.Context`, makes HTTP calls, reads random — none of that is valid inside a Temporal workflow function. Option B would require the LLM loop to be a workflow, which is architecturally incompatible.
-
-5. **Child workflow gives per-node Temporal visibility.** Each `ExecuteStepActivity` call appears in the Temporal UI under the child workflow. Retry counts, timeouts, and failure reasons are all visible per node.
-
-**Trade-off of Option A:** The `agent-runtime` HTTP handler must wait for the child workflow to complete before returning to the caller. This is synchronous blocking — acceptable because `RunOrchestratorActivity` already heartbeats independently and can tolerate a long-running canvas agent.
 
 ---
 
-## 3. Component map — files to create or change
+## 3. Corrections to the original design
 
-### New files
+### 3.1 `CanvasAgentWorkflow` is a top-level workflow, not a child workflow
+
+`them-agent-runtime` is an HTTP service, not a Temporal workflow. It holds a
+`temporal.Client` and calls `client.ExecuteWorkflow(...)`, which starts an
+**independent top-level workflow** named `CanvasAgentWorkflow`. There is no
+parent–child relationship in the Temporal sense. The agent-runtime HTTP handler
+blocks synchronously on the workflow result via `client.GetWorkflow(...).Get(ctx, &out)`.
+
+The name `DAGWorkflow` from the original design is replaced throughout by
+`CanvasAgentWorkflow` to make this explicit.
+
+### 3.2 Option B is invalid — `RunOrchestratorActivity` cannot call `workflow.ExecuteChildWorkflow`
+
+`workflow.ExecuteChildWorkflow` is only callable from workflow code that receives a
+`workflow.Context`. `RunOrchestratorActivity` receives a plain `context.Context`
+and runs inside an activity goroutine — it cannot schedule child workflows.
+Option B is architecturally impossible without restructuring the orchestrator as
+a workflow, which is incompatible with its LLM loop and HTTP calls.
+**Option B is removed from this design.**
+
+### 3.3 Cancellation does not propagate automatically
+
+When `RunOrchestratorActivity`'s context is cancelled (Temporal timeout, workflow
+cancel, pod crash), the HTTP call to `them-agent-runtime` is cancelled too. But
+`CanvasAgentWorkflow` has already been registered with Temporal and **runs
+independently** — it is not cancelled automatically.
+
+`them-agent-runtime` must explicitly cancel the workflow when the HTTP request
+context is cancelled:
+
+```go
+workflowRun, err := temporalClient.ExecuteWorkflow(ctx, opts, CanvasAgentWorkflow, input)
+// ...
+resultCh := make(chan result, 1)
+go func() {
+    var out CanvasAgentWorkflowOutput
+    err := workflowRun.Get(ctx, &out)
+    resultCh <- result{out, err}
+}()
+
+select {
+case r := <-resultCh:
+    // normal completion
+case <-ctx.Done():
+    // HTTP request cancelled — explicitly stop the workflow
+    cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    _ = temporalClient.CancelWorkflow(cancelCtx, workflowRun.GetID(), workflowRun.GetRunID())
+    return nil, ctx.Err()
+}
+```
+
+Inside `CanvasAgentWorkflow`, Temporal delivers the cancellation as a
+`workflow.Context` cancellation. In-flight activities receive a cancellation
+signal; the workflow returns `temporal.CanceledError`.
+
+### 3.4 Correlation — parent run ID, Workflow ID, Memo, Search Attributes
+
+Every `CanvasAgentWorkflow` execution is correlated to its parent orchestration run:
+
+- **Workflow ID**: `"canvas-agent:{agentID}:{parentRunID}:{skillID}"` — deterministic,
+  unique per invocation, searchable in Temporal UI.
+- **Memo**: `{"parent_run_id": parentRunID, "tenant_id": tenantID, "agent_id": agentID}`
+  — visible in Temporal UI without a Search Attribute index.
+- **Search Attributes** (optional, requires Temporal namespace config):
+  `ParentRunID`, `TenantID`, `AgentID` as custom search attributes — enables
+  server-side filtering. Add only if the Temporal namespace is configured for it.
+
+### 3.5 Single source of truth for `execution_backend`
+
+`execution_backend` is stored **only in `AgentSpec`** (the compiled JSON in
+`agent_runtime_specs.spec`). No separate DB column. The value is set by the
+compiler at publish time, persisted as part of `AgentSpec`, and read at invocation
+time from the already-loaded spec. Adding a separate column would duplicate the
+authoritative value and require keeping two stores in sync.
+
+The `AgentSpec` field:
+```go
+ExecutionBackend string `json:"execution_backend,omitempty"` // "" or "local" → LocalExecutor; "temporal" → TemporalExecutor
+```
+
+### 3.6 Migration number
+
+The next available migration number is **`048`** (046 = `mcp_probe_credential`,
+047 = `ep_llm` already exist). No `agent_runtime_specs` column is added — see §3.5.
+Migration 048 is reserved for any schema change that Phase 4 actually requires
+(e.g. a `canvas_dag_runs` audit table if we add per-node run recording).
+If Phase 4 needs no schema change, 048 is unused.
+
+### 3.7 Actual task queue names
+
+From `go/internal/temporal/workflow.go`:
+- `GoTaskQueue = "them-orchestration-go"` — existing Go worker queue
+- `TaskQueue   = "them-orchestration"`    — Python legacy queue
+
+The new DAG node queue is `"canvas-dag-nodes"` (distinct from both). See §6.
+
+### 3.8 What must NOT pass through Temporal history
+
+Temporal persists every workflow and activity input/output in its history. This is
+permanent and visible to operators.
+
+**Never pass:**
+- Full `InvocationContext` (contains `Credentials map[string]string`)
+- Full cumulative `PipelineVars` at each node (may contain LLM output, PII)
+- Raw API keys, bearer tokens, or any secret material
+
+**Pass instead:**
+- `ActivityIC` — credential-safe subset: `TenantID`, `ApplicationID`, `AgentID`, `BindingID` only
+- **Scoped input delta** for each node: only the `VarRef` names declared in `node.Inputs`, not the full accumulated vars
+- **Scoped output delta** from each node: only the vars declared in `node.Outputs`
+- For large values (LLM output > 64KB threshold): store in Redis with a TTL key;
+  pass the Redis key in vars. Activity reads and writes the key. This keeps history small.
+
+The `CanvasAgentWorkflow` reconstructs global `PipelineVars` by merging output
+deltas from each completed activity — it never passes the full merged map to the
+next activity, only the projected scoped inputs.
+
+### 3.9 Package placement — `internal/temporal`, not `agentgen`
+
+Temporal workflow and activity code belongs in `go/internal/temporal/`, which
+already owns all Temporal concerns (`workflow.go`, `activities.go`, `client.go`,
+`signaler.go`). Placing Temporal-specific constructs inside `agentgen` would
+couple the core execution engine to the Temporal SDK — a framework dependency that
+does not belong in a package meant to be testable without Temporal.
+
+The boundary:
+
+- `go/internal/agentgen/` — exports one adapter function (see §4.2) and the
+  existing `ExecutionBackend` interface. No Temporal SDK import.
+- `go/internal/temporal/` — contains `CanvasAgentWorkflow`, `CanvasAgentActivities`,
+  and `TemporalExecutor`. Imports `agentgen` for types and the adapter function.
+
+### 3.10 Dedicated worker process vs. in-process worker in `agent-runtime`
+
+`them-agent-runtime` is an HTTP service optimized for low-latency canvas agent
+invocations. Adding a Temporal worker (goroutine pool, long-poll loop, activity
+registration) to the same process:
+
+- Increases baseline memory and goroutine count per replica
+- Means the Temporal worker task queue competes with HTTP handler goroutines
+- Tightly couples a stateless HTTP service to a stateful Temporal polling loop
+
+**Recommended: separate dedicated worker process — `them-dag-worker`.**
+
+A new binary `go/cmd/dag-worker/main.go` polls `"canvas-dag-nodes"`, registers
+`CanvasAgentWorkflow` and `ExecuteStepActivity`, and holds the `Interpreter`,
+`LLMFactory`, `MCPCaller` dependencies. `them-agent-runtime` retains only the
+`temporal.Client` to start and wait on workflows.
+
+Benefits:
+- `them-agent-runtime` HTTP latency is unaffected by Temporal polling
+- `them-dag-worker` can be scaled independently (more replicas = more concurrent node executions)
+- Failures in the DAG worker do not crash the HTTP service
+
+The `InvocationContext` dependencies (credential loading from DB, agent-params)
+are shared via the same `internal/admin/dal` package already used by `them-go-bridge`.
+
+---
+
+## 4. Component map — files to create or change
+
+### 4.1 New files
 
 | File | Purpose |
 |---|---|
-| `go/internal/agentgen/temporal_executor.go` | `TemporalExecutor` — implements `ExecutionBackend`; uses a Temporal client to start `DAGWorkflow` and wait for its result |
-| `go/internal/agentgen/dag_workflow.go` | `DAGWorkflow` — Temporal workflow function; runs the `ExecutionPlan` using `workflow.Go`, `workflow.ExecuteActivity`, and `workflow.Await` |
-| `go/internal/agentgen/dag_activities.go` | `ExecuteStepActivity` — Temporal activity; calls `Interpreter.executeStep` for one node; stateless, registered on a dedicated task queue |
-| `go/internal/agentgen/dag_worker.go` | Worker registration helper — registers `DAGWorkflow` + `ExecuteStepActivity` on `"dag-nodes"` task queue; called from `cmd/agent-runtime/main.go` |
-| `go/internal/agentgen/temporal_executor_test.go` | Conformance tests (shared test suite run against both executors) |
+| `go/internal/temporal/canvas_workflow.go` | `CanvasAgentWorkflow` — top-level Temporal workflow; orchestrates DAG fan-out/join using `workflow.Go` + `workflow.Await` |
+| `go/internal/temporal/canvas_activities.go` | `CanvasAgentActivities` struct + `ExecuteStepActivity` — calls `agentgen.ExecuteNodeForActivity` per node; loads credentials from DB |
+| `go/internal/temporal/temporal_executor.go` | `TemporalExecutor` — implements `agentgen.ExecutionBackend`; starts `CanvasAgentWorkflow`, blocks on result, cancels on ctx done |
+| `go/cmd/dag-worker/main.go` | `them-dag-worker` binary — connects Temporal, registers `CanvasAgentWorkflow` + `ExecuteStepActivity` on `"canvas-dag-nodes"`, wires dependencies |
+| `go/internal/agentgen/node_executor.go` | `ExecuteNodeForActivity(ctx, ic, node, scopedVars) (outputVars, nextOverride, resultText, error)` — narrow exported adapter; no Temporal SDK import |
+| `go/internal/temporal/canvas_workflow_test.go` | Conformance tests CT-1..CT-10 using `testsuite.WorkflowTestSuite` |
 
-### Changed files
+### 4.2 Narrow agentgen adapter
+
+```go
+// go/internal/agentgen/node_executor.go
+// No Temporal SDK import. Called by CanvasAgentActivities.
+
+type NodeExecutionInput struct {
+    Node     PlanNode     // the node to execute
+    Vars     PipelineVars // scoped inputs (only declared node.Inputs keys)
+}
+
+type NodeExecutionOutput struct {
+    Vars         PipelineVars // scoped outputs (only declared node.Outputs keys)
+    NextOverride string       // branch routing override; empty if none
+    ResultText   string       // non-empty if node is a terminal step
+    ResultMT     string
+}
+
+func ExecuteNodeForActivity(
+    ctx      context.Context,
+    interp   *Interpreter,
+    ic       *InvocationContext,
+    input    NodeExecutionInput,
+) (NodeExecutionOutput, error)
+```
+
+`ExecuteNodeForActivity` calls `interp.executeStep` exactly as `LocalExecutor.execNode`
+does — no logic is duplicated.
+
+### 4.3 Changed files
 
 | File | Change |
 |---|---|
-| `go/cmd/agent-runtime/main.go` | Add Temporal client init; add `execution_backend` branch; wire `TemporalExecutor` when spec says `"temporal"` |
-| `go/internal/agentgen/spec.go` | Add `ExecutionBackend string` field to `AgentSpec` (`"local"` default, `"temporal"` for Temporal) |
-| `go/internal/admin/service/agent_definitions_publish.go` | Copy `execution_backend` from canvas JSON into compiled `AgentSpec` |
-| `go/internal/config/config.go` | Add `DAGWorkerTaskQueue`, `DAGWorkerConcurrency` env vars |
-| `db/046_agent_execution_backend.sql` | Add `execution_backend TEXT NOT NULL DEFAULT 'local' CHECK (execution_backend IN ('local','temporal'))` to `agent_runtime_specs` |
-| `go/TEST_INDEX.md` | New S1-75 section |
+| `go/internal/agentgen/spec.go` | Add `ExecutionBackend string` to `AgentSpec` |
+| `go/internal/agentgen/executor.go` | No change to interface |
+| `go/cmd/agent-runtime/main.go` | Add Temporal client init; add `execution_backend` branch; wire `TemporalExecutor`; add cancel-on-ctx-done |
+| `go/internal/admin/service/agent_definitions_publish.go` | Copy `execution_backend` from canvas definition into `AgentSpec` |
+| `go/internal/config/config.go` | Add `DAGWorkerTaskQueue` (default `"canvas-dag-nodes"`), `DAGWorkerConcurrency`, `DAGWorkflowTimeout` |
+| `go/TEST_INDEX.md` | New S1-75 section for canvas_workflow_test.go |
+| `docker-compose.yml` | New `them-dag-worker` service |
+| `Dockerfile.dag-worker` | New — mirrors `Dockerfile.agent-runtime` structure |
 
 ---
 
-## 4. Data flow and semantics
+## 5. Data model through Temporal history
 
-### 4.1 ExecutionPlan serialization
-
-`ExecutionPlan` is already JSON-serializable (`json` tags on every field). It is the only input to both executors. The Temporal workflow receives it as its `WorkflowInput` — Temporal serializes it through its data converter (JSON by default).
-
-`PipelineVars` is `map[string]any` — also JSON-serializable. Each activity input carries the node's scoped input vars; each activity output carries the node's scoped output vars.
-
-### 4.2 InvocationContext serialization
-
-`InvocationContext` holds `TenantID`, `ApplicationID`, `AgentID`, `BindingID`, `Credentials`, `AgentParams`, `AppGlobalParams`, `NodeLLMOverrides`. All are strings or `map[string]string` — safe for JSON serialization. **Credentials must never appear in Temporal history.** Pass credentials as an opaque encrypted blob; `TemporalExecutor` decrypts after the activity starts (using the same per-request decryption already done in `agent-runtime`). Alternatively, pass only the `BindingID` and re-decrypt in the activity from DB — same pattern as `TaskState` today.
-
-### 4.3 JoinMode → Temporal primitives
-
-| LocalExecutor | DAGWorkflow equivalent |
-|---|---|
-| `sync.WaitGroup` fan-out | `workflow.Go` coroutines per branch |
-| `joinState.arrive()` mutex | `workflow.Await()` over a shared counter (deterministic) |
-| `JoinWaitAll` — wait for all | `workflow.Await(func() bool { return arrivals == len(JoinOf) })` |
-| `JoinBranchMerge` — first wins | `workflow.Await(func() bool { return arrivals >= 1 })` |
-| `cancel()` on error | `workflow.GetChildWorkflowExecution().Cancel()` or ctx cancel on sibling coroutines |
-| `sharedResult.setIfEmpty` | Workflow-local var; first coroutine to set it wins |
-
-All of this is deterministic: Temporal replays the workflow from history using the same coroutine scheduling. `workflow.Go` and `workflow.Await` are safe in Temporal workflow functions.
-
-### 4.4 nextStepOverride (branch routing)
-
-`execNode` returns `nextOverride` set by `Interpreter.executeStep` → branch Execute logic sets `interp.nextStepOverride`. In the Temporal path, `ExecuteStepActivity` returns `{OutputVars map[string]any, NextOverride string}`. The workflow reads `NextOverride` to determine which arm to follow — identical semantics, different delivery mechanism.
-
-### 4.5 Error and cancellation
-
-- Activity failure → workflow coroutine gets the error → workflow cancels sibling coroutines via `ctx` cancel → workflow returns the causal error to the caller.
-- Parent `RunOrchestratorActivity` context cancelled → Temporal propagates cancellation to the child `DAGWorkflow` → workflow cancels all in-flight activities.
-- `ErrContractViolation` → returned as a non-retryable `temporal.ApplicationError("ContractViolation")` so retries do not repeat a deterministically failing node.
-
----
-
-## 5. ExecuteStepActivity — the generic dispatcher
+### 5.1 CanvasAgentWorkflow input
 
 ```go
-// go/internal/agentgen/dag_activities.go
-
-type StepActivityInput struct {
-    Node    PlanNode        `json:"node"`
-    Vars    PipelineVars    `json:"vars"`    // scoped inputs for this node
-    IC      ActivityIC      `json:"ic"`      // credential-safe InvocationContext subset
+type CanvasAgentWorkflowInput struct {
+    Plan    agentgen.ExecutionPlan `json:"plan"`    // compiled DAG — no secrets
+    Initial agentgen.PipelineVars  `json:"initial"` // seed vars: {"input": userText} only
+    IC      ActivityIC             `json:"ic"`      // credential-safe
 }
 
-type StepActivityOutput struct {
-    Vars         PipelineVars `json:"vars"`          // scoped outputs written by node
-    NextOverride string       `json:"next_override"`  // non-empty if branch sets routing
-    ResultText   string       `json:"result_text"`    // non-empty if node produced a final result
-    ResultMT     string       `json:"result_mt"`
-}
-
-// ActivityIC carries only the non-secret fields over Temporal history.
-// Secrets are re-loaded from DB by binding_id in the activity.
+// ActivityIC — never contains secrets
 type ActivityIC struct {
     TenantID      string `json:"tenant_id"`
     ApplicationID string `json:"application_id"`
@@ -159,223 +291,317 @@ type ActivityIC struct {
 }
 ```
 
-The activity:
-1. Reconstructs `InvocationContext` by loading credentials from DB using `BindingID` (same as today).
-2. Calls `interp.executeStep(ctx, ic, stepSpec, vars, &result)`.
-3. Returns `StepActivityOutput`.
-
-No node logic is duplicated. All 12 node types dispatch through the existing registry.
-
----
-
-## 6. DAGWorkflow — workflow function sketch
+### 5.2 ExecuteStepActivity input and output
 
 ```go
-// go/internal/agentgen/dag_workflow.go
-
-type DAGWorkflowInput struct {
-    Plan    ExecutionPlan `json:"plan"`
-    Initial PipelineVars  `json:"initial"`
-    IC      ActivityIC    `json:"ic"`
+type StepActivityInput struct {
+    Node  agentgen.PlanNode    `json:"node"`  // one node from the plan
+    Vars  agentgen.PipelineVars `json:"vars"` // scoped: only keys in node.Inputs
+    IC    ActivityIC            `json:"ic"`
 }
 
-type DAGWorkflowOutput struct {
+type StepActivityOutput struct {
+    Vars         agentgen.PipelineVars `json:"vars"`          // scoped: only keys in node.Outputs
+    NextOverride string                `json:"next_override"` // branch routing; empty if none
+    ResultText   string                `json:"result_text"`   // non-empty if terminal step
+    ResultMT     string                `json:"result_mt"`
+}
+```
+
+The workflow reconstructs `PipelineVars` by merging `StepActivityOutput.Vars` into
+a workflow-local accumulator after each node completes. It passes only the projected
+subset of that accumulator (filtered by the next node's declared `Inputs`) to the
+next `ExecuteStepActivity` call.
+
+Large values (LLM response > 64 KB): store in Redis under
+`them:dag:var:{workflowID}:{varName}` with TTL = 1 hour; pass the key string as
+the var value; activities read/write via a `DAGVarStore` interface (injectable,
+so tests do not need Redis).
+
+### 5.3 CanvasAgentWorkflow output
+
+```go
+type CanvasAgentWorkflowOutput struct {
     ResultText string `json:"result_text"`
     ResultMT   string `json:"result_mt"`
 }
-
-func DAGWorkflow(ctx workflow.Context, input DAGWorkflowInput) (DAGWorkflowOutput, error) {
-    // Build node index
-    // Initialize joinCounters (atomic in workflow-local state, deterministic)
-    // Launch runBranch coroutine from plan.StartID
-    // workflow.Await final result or first error
-    // Return DAGWorkflowOutput
-}
 ```
 
-Each `runBranch` coroutine (a `workflow.Go` goroutine):
-1. Checks join state — `workflow.Await` if not ready.
-2. Calls `workflow.ExecuteActivity(ctx, ExecuteStepActivity, input, activityOptions)`.
-3. Reads `NextOverride` from output to determine next step.
-4. At fan-out: calls `workflow.Go` for each sibling branch.
-5. At terminal node: sets shared result, signals completion.
-
 ---
 
-## 7. Retry and timeout policy
-
-| Level | Policy |
-|---|---|
-| `ExecuteStepActivity` — LLM, HTTP, A2ACall | `MaxAttempts: 3`, `InitialInterval: 2s`, `BackoffCoefficient: 2.0`, `MaxInterval: 30s`, `NonRetryableErrors: ["ContractViolation", "InvalidConfig"]` |
-| `ExecuteStepActivity` — Input, Transform, Response, Branch | `MaxAttempts: 1` (deterministic — retry is pointless) |
-| `ExecuteStepActivity` — HumanWait | `MaxAttempts: 1`, `ScheduleToCloseTimeout: 48h` (waits for signal) |
-| `ExecuteStepActivity` — MCP | `MaxAttempts: 3`, same backoff as HTTP |
-| `DAGWorkflow` itself | `WorkflowExecutionTimeout: 10m` (configurable via env `DAG_WORKFLOW_TIMEOUT`) |
-
----
-
-## 8. Task queues
+## 6. Task queues
 
 | Queue | Workers | Purpose |
 |---|---|---|
-| `"orchestration"` (existing) | `them-go-worker` | `OrchestrationWorkflow` + `RunOrchestratorActivity` — unchanged |
-| `"dag-nodes"` (new) | `them-agent-runtime` (both replicas) | `DAGWorkflow` + `ExecuteStepActivity` |
+| `"them-orchestration-go"` (existing) | `them-go-worker` | `OrchestrationWorkflow` + `RunOrchestratorActivity` — unchanged |
+| `"them-orchestration"` (existing) | Python legacy | Legacy Python orchestration — unchanged |
+| `"canvas-dag-nodes"` (new) | `them-dag-worker` | `CanvasAgentWorkflow` + `ExecuteStepActivity` |
 
-`them-agent-runtime` already holds `Interpreter`, `LLMFactory`, `MCPCaller` — all the execution dependencies. Registering a Temporal worker there is the natural fit. The worker runs in the same process as the existing HTTP handler, on the existing 2 replicas — giving the Temporal scheduler two execution slots for DAG activities.
-
-`DAGWorkflow` must also be registered on the `"dag-nodes"` queue so Temporal can replay it there. If the workflow is replayed on a worker that lacks an `Interpreter` (e.g. `them-go-worker`), it will fail. Keeping both on the same queue avoids this.
+`them-agent-runtime` does **not** poll any task queue. It only holds a
+`temporal.Client` to start workflows and query their results.
 
 ---
 
-## 9. DB and config changes
+## 7. Cancellation and failure behavior (exact)
 
-### DB migration — `db/046_agent_execution_backend.sql`
+### 7.1 Normal cancellation path
 
-```sql
-ALTER TABLE agent_runtime_specs
-  ADD COLUMN IF NOT EXISTS execution_backend TEXT NOT NULL DEFAULT 'local'
-    CHECK (execution_backend IN ('local', 'temporal'));
-```
+1. `RunOrchestratorActivity` context is cancelled (workflow cancel or timeout).
+2. The HTTP call from `agentregistry.InvokeForRun()` to `them-agent-runtime` is cancelled.
+3. `them-agent-runtime` HTTP handler detects `ctx.Done()` while blocked in `workflowRun.Get(ctx, &out)`.
+4. Handler calls `client.CancelWorkflow(background5s, workflowID, runID)`.
+5. Temporal delivers a cancel request to `CanvasAgentWorkflow`.
+6. In-flight `ExecuteStepActivity` calls receive context cancellation from Temporal.
+7. `CanvasAgentWorkflow` returns `temporal.CanceledError`.
+8. Handler returns the original `ctx.Err()` to the caller.
 
-One column on `agent_runtime_specs`. No index needed — read once at invocation time.
+### 7.2 Activity failure path
 
-### AgentSpec field — `go/internal/agentgen/spec.go`
+1. `ExecuteStepActivity` returns an error.
+2. Temporal retries per the retry policy (see §8).
+3. On final retry exhaustion: Temporal marks the activity as failed; the workflow
+   coroutine that called it gets the error.
+4. The workflow cancels all sibling `workflow.Go` coroutines via a shared
+   `workflow.Channel` error signal (same semantics as `cancel()` in `LocalExecutor`).
+5. `CanvasAgentWorkflow` returns the causal error (first non-canceled error, matching
+   `LocalExecutor.drainFirstCausalError` semantics).
+6. `workflowRun.Get(...)` in `them-agent-runtime` returns the error.
+7. HTTP handler returns 500 to `agentregistry.InvokeForRun()`.
+8. Orchestrator records a failed run step.
+
+### 7.3 `them-dag-worker` crash
+
+Temporal detects the missing heartbeat and reschedules in-flight activities on
+another available `them-dag-worker` replica. No data is lost — Temporal history is
+the source of truth. `CanvasAgentWorkflow` resumes from the last completed activity.
+
+### 7.4 `them-agent-runtime` crash mid-wait
+
+The `CanvasAgentWorkflow` continues running independently. When `them-agent-runtime`
+restarts and `RunOrchestratorActivity` retries (Temporal retries the activity),
+the new invocation starts a new `CanvasAgentWorkflow` with a new unique workflow ID.
+The orphaned previous workflow eventually times out (`WorkflowExecutionTimeout`).
+To avoid duplicate executions: set a short `WorkflowExecutionTimeout` (e.g. 15 min)
+and use idempotency on the workflow ID (`"{agentID}:{parentRunID}:{skillID}:{attempt}"`
+where attempt comes from Temporal's activity attempt number, accessible via
+`activity.GetInfo(ctx).Attempt`).
+
+### 7.5 `ErrContractViolation`
+
+Returned as `temporal.NewNonRetryableApplicationError("ContractViolation", ...)`.
+Temporal does not retry; the workflow receives the error immediately and fails.
+
+---
+
+## 8. Retry and timeout policy
+
+| Node type | MaxAttempts | InitialInterval | BackoffCoeff | MaxInterval | NonRetryable |
+|---|---|---|---|---|---|
+| `llm`, `http`, `a2a_call`, `mcp_call` | 3 | 2s | 2.0 | 30s | `ContractViolation`, `InvalidConfig` |
+| `input`, `transform`, `response`, `branch` | 1 | — | — | — | all (deterministic) |
+| `human_wait` | 1 | — | — | — | `ScheduleToCloseTimeout: 48h` (waits for signal) |
+| `parallel` | 1 | — | — | — | all (no-op coordinator) |
+| `loop` | 1 per iteration | — | — | — | each iteration body activity has its own policy |
+
+`CanvasAgentWorkflow` `WorkflowExecutionTimeout`: configurable via `DAG_WORKFLOW_TIMEOUT`
+env (default `"15m"`). Set low to prevent orphan workflows consuming Temporal quota.
+
+---
+
+## 9. JoinMode → Temporal workflow primitives
+
+| `LocalExecutor` | `CanvasAgentWorkflow` equivalent |
+|---|---|
+| `sync.WaitGroup` fan-out | `workflow.Go` coroutine per branch |
+| `joinState.arrive()` mutex | workflow-local `map[joinID]map[predID]PipelineVars`; no mutex needed (single-threaded workflow coroutine scheduler) |
+| `JoinWaitAll` | `workflow.Await(ctx, func() bool { return len(arrived[id]) == len(node.JoinOf) })` |
+| `JoinBranchMerge` | `workflow.Await(ctx, func() bool { return len(arrived[id]) >= 1 })`; subsequent arrivals update map but workflow already continued |
+| `sharedResult.setIfEmpty` | workflow-local `*CanvasAgentWorkflowOutput`; first coroutine to set it wins |
+| `cancel()` on error | shared `workflow.Channel`; any coroutine sends error; all others select on it and return |
+| `drainFirstCausalError` | workflow-local `firstErr`; set once; prefer non-CanceledError |
+| `nextStepOverride` | returned as `StepActivityOutput.NextOverride`; read by the workflow coroutine after activity completes |
+
+All `workflow.Await` calls are deterministic — Temporal replays them exactly.
+
+---
+
+## 10. DB and config changes
+
+### No new DB column for `execution_backend`
+
+`execution_backend` lives only in `AgentSpec.ExecutionBackend` (the `spec` JSONB
+column in `agent_runtime_specs`). This is the single source of truth. It is set by
+the compiler at publish time and read by `them-agent-runtime` at invocation time
+from the already-loaded `AgentSpec`. No separate column is added.
+
+### Migration 048 — reserved
+
+Migration `048` is reserved. It will be used only if Phase 4 introduces a new table
+(e.g. `canvas_dag_runs` for per-node audit records). If no schema change is needed,
+048 is left unused until the next unrelated migration.
+
+### Config additions — `go/internal/config/config.go`
 
 ```go
-type AgentSpec struct {
-    // ... existing fields ...
-    ExecutionBackend string `json:"execution_backend,omitempty"` // "local" (default) or "temporal"
-}
-```
-
-Empty string and `"local"` both mean `LocalExecutor`. The compiler sets this from the canvas publish payload.
-
-### Config — `go/internal/config/config.go`
-
-```go
-DAGWorkerTaskQueue   string // env: DAG_WORKER_TASK_QUEUE, default "dag-nodes"
-DAGWorkerConcurrency int    // env: DAG_WORKER_CONCURRENCY, default 20
-DAGWorkflowTimeout   string // env: DAG_WORKFLOW_TIMEOUT, default "10m"
+DAGWorkerTaskQueue   string // env: DAG_WORKER_TASK_QUEUE,   default "canvas-dag-nodes"
+DAGWorkerConcurrency int    // env: DAG_WORKER_CONCURRENCY,  default 20
+DAGWorkflowTimeout   string // env: DAG_WORKFLOW_TIMEOUT,    default "15m"
 ```
 
 ### docker-compose additions
 
 ```yaml
-them-agent-runtime:
+them-dag-worker:
+  build:
+    context: .
+    dockerfile: Dockerfile.dag-worker
   environment:
     - TEMPORAL_ENABLED=true
     - TEMPORAL_HOST_PORT=temporal:7233
-    - DAG_WORKER_TASK_QUEUE=dag-nodes
+    - DAG_WORKER_TASK_QUEUE=canvas-dag-nodes
     - DAG_WORKER_CONCURRENCY=20
+    - DATABASE_URL=${DATABASE_URL}
+    - REDIS_URL=${REDIS_URL}
+  depends_on:
+    - them-postgres
+    - them-redis
+    - temporal
+  profiles: [temporal]
+```
+
+`them-agent-runtime` additions:
+```yaml
+environment:
+  - TEMPORAL_ENABLED=true
+  - TEMPORAL_HOST_PORT=temporal:7233
+  - DAG_WORKER_TASK_QUEUE=canvas-dag-nodes  # only used to start/cancel workflows
 ```
 
 ---
 
-## 10. Conformance test suite
+## 11. Conformance test suite
 
-`go/internal/agentgen/temporal_executor_test.go` runs the same table of scenarios against both executors. The test harness uses the Temporal `testsuite.WorkflowTestSuite` (in-process, no external Temporal required).
+`go/internal/temporal/canvas_workflow_test.go` uses `testsuite.WorkflowTestSuite`
+(in-process, no external Temporal required). The same test table runs against both
+`LocalExecutor` and `CanvasAgentWorkflow` via a shared interface:
 
-### Test scenarios (must pass on both executors)
+```go
+type conformanceExecutor interface {
+    Execute(ctx context.Context, ic *agentgen.InvocationContext, plan *agentgen.ExecutionPlan, initial agentgen.PipelineVars) (*agentgen.ExecutionResult, error)
+}
+```
+
+`LocalExecutor` already implements `agentgen.ExecutionBackend` which matches this
+shape. `TemporalExecutor` implements the same interface. Tests instantiate both and
+run the same assertions.
+
+### Test scenarios (CT-1..CT-10)
 
 | ID | Scenario | Assertion |
 |---|---|---|
-| CT-1 | Linear chain A→B→C | Result from C; A/B/C all execute in order |
-| CT-2 | Parallel fan-out A→{B,C}→D (JoinWaitAll) | Both B and C execute; D receives merged vars |
-| CT-3 | Branch true path A→branch→B→D (JoinBranchMerge) | B executes, C does not; D receives B's vars |
-| CT-4 | Branch false path A→branch→C→D | C executes, B does not |
-| CT-5 | Node error propagates | Error from B cancels siblings; caller receives causal error |
-| CT-6 | Context cancellation | Cancel before DAG completes; all in-flight nodes stop |
-| CT-7 | JoinBranchMerge: second arm dropped | Even if C somehow executes, D continues with first arrival only |
+| CT-1 | Linear chain A→B→C | Result from C; A/B/C execute in order |
+| CT-2 | Parallel fan-out A→{B,C}→D (`JoinWaitAll`) | Both B and C execute; D receives merged vars |
+| CT-3 | Branch true path A→branch→B→D (`JoinBranchMerge`) | B executes; C does not; D receives B's vars |
+| CT-4 | Branch false path A→branch→C→D | C executes; B does not |
+| CT-5 | Node error propagates and cancels siblings | Causal error returned; sibling cancelled |
+| CT-6 | Context cancellation mid-DAG | All in-flight nodes stop; `ctx.Err()` returned |
+| CT-7 | `JoinBranchMerge` — second arm dropped | D continues with first arrival vars only |
 | CT-8 | Empty plan | Returns error immediately |
-| CT-9 | VarRef contract violation | Returns `ErrContractViolation`; non-retryable |
-| CT-10 | Result from correct node | `StepResponse` output var propagated to `ExecutionResult.Text` |
-
-The test harness uses `MockInterpreter` (already used in existing tests) so no real LLM/HTTP calls are needed.
+| CT-9 | `ErrContractViolation` — non-retryable | Error returned; non-retryable in Temporal path |
+| CT-10 | `StepResponse` result propagation | `ExecutionResult.Text` matches `from_var` value |
 
 ---
 
-## 11. Phased implementation plan
+## 12. Phased implementation plan
 
-### Phase 4-A — Serialization and wiring (no workflow yet)
+### Phase 4-A — Adapter and serialization
 
-**Scope:** Prove the data model survives a Temporal round-trip.
+**Scope:** The `agentgen` adapter and data types only. No Temporal SDK dependency in `agentgen`.
 
-1. Add `ExecutionBackend` to `AgentSpec` and `agent_runtime_specs` (DB migration + compiler + DAL).
-2. Add `ActivityIC` type (credential-safe IC subset).
-3. Add `StepActivityInput` / `StepActivityOutput` types.
-4. Implement `ExecuteStepActivity` (calls `interp.executeStep` — same as `execNode` in local executor).
-5. Write unit tests for activity serialization (CT-9, CT-10 input/output shapes).
+1. Add `ExecutionBackend string` to `AgentSpec` in `spec.go`.
+2. Add `ActivityIC`, `StepActivityInput`, `StepActivityOutput`, `NodeExecutionInput`, `NodeExecutionOutput` types.
+3. Implement `ExecuteNodeForActivity` in `go/internal/agentgen/node_executor.go`.
+4. Update compiler (`agent_definitions_publish.go`) to copy `execution_backend` from canvas doc to `AgentSpec`.
+5. Unit-test `ExecuteNodeForActivity` for each node type with `MockInterpreter`.
+6. Run `go test ./internal/agentgen/...` — must be green.
 
-**Files:** `spec.go`, `db/046_*.sql`, `dag_activities.go`, `dag_activities_test.go`.
-**Risk:** Low. No workflow code yet; existing tests unaffected.
+**Files:** `spec.go`, `node_executor.go`, `agent_definitions_publish.go`.
+**Risk:** Low. No Temporal SDK; no workflow code.
 
-### Phase 4-B — DAGWorkflow
+### Phase 4-B — `CanvasAgentWorkflow` with conformance tests
 
-**Scope:** Implement the workflow using `testsuite`.
+**Scope:** Implement the workflow and activities in `internal/temporal/`.
 
-1. Implement `DAGWorkflow` in `dag_workflow.go`.
-2. Implement `dag_worker.go` (registration helper).
-3. Write conformance tests CT-1 through CT-10 against `WorkflowTestSuite`.
-4. Run `go test -race ./internal/agentgen/...` — must be green.
+1. Implement `ExecuteStepActivity` in `canvas_activities.go` (calls `ExecuteNodeForActivity`; loads credentials from DB via `BindingID`).
+2. Implement `CanvasAgentWorkflow` in `canvas_workflow.go` (fan-out via `workflow.Go`, join via `workflow.Await`, error propagation via shared channel).
+3. Write conformance tests CT-1..CT-10 in `canvas_workflow_test.go` using `WorkflowTestSuite`.
+4. Run `go test -race ./internal/temporal/...` — must be green.
 
-**Files:** `dag_workflow.go`, `dag_worker.go`, `temporal_executor_test.go`.
-**Risk:** Medium. `workflow.Await` in Temporal must be used carefully — deadlock possible if the join counter is never incremented. Use deterministic Temporal timer as a safety timeout inside `workflow.Await`.
+**Files:** `canvas_activities.go`, `canvas_workflow.go`, `canvas_workflow_test.go`.
+**Risk:** Medium. `workflow.Await` deadlock possible if join counter never increments — guard with `workflow.WithTimeout` inside the await. Test CT-5 (error path) specifically exercises this.
 
-### Phase 4-C — TemporalExecutor
+### Phase 4-C — `TemporalExecutor` and `them-dag-worker`
 
-**Scope:** Implement `TemporalExecutor` and wire it into `agent-runtime`.
+**Scope:** Wire everything end-to-end.
 
-1. Implement `TemporalExecutor` in `temporal_executor.go`: starts `DAGWorkflow` as a child workflow (or via `temporal.Client.ExecuteWorkflow` depending on context), blocks until result, returns `ExecutionResult`.
-2. Wire Temporal worker registration into `cmd/agent-runtime/main.go`.
-3. Add `execution_backend` branch: `if spec.ExecutionBackend == "temporal" { ... }` at line 294–295.
-4. Run conformance tests CT-1..CT-10 against real Temporal dev server in CI (`docker compose --profile temporal`).
+1. Implement `TemporalExecutor` in `internal/temporal/temporal_executor.go` (start workflow, block, cancel on ctx done — exact code from §3.3).
+2. Implement `go/cmd/dag-worker/main.go` (registers `CanvasAgentWorkflow` + `ExecuteStepActivity` on `"canvas-dag-nodes"`).
+3. Add Temporal client init to `cmd/agent-runtime/main.go`; add `execution_backend` branch.
+4. Add `Dockerfile.dag-worker` and `them-dag-worker` service to `docker-compose.yml`.
+5. Add config vars to `config.go`.
+6. Run conformance tests against real Temporal dev server (`docker compose --profile temporal`).
+7. Live smoke test: publish one canvas agent with `execution_backend: "temporal"`, invoke it, verify Temporal UI shows node-level activity history.
 
-**Files:** `temporal_executor.go`, `cmd/agent-runtime/main.go`, `config.go`.
-**Risk:** Medium. Real Temporal round-trip adds ~50–200ms per activity. Fine for correctness; measure before enabling on LLM-heavy agents.
+**Files:** `temporal_executor.go`, `cmd/dag-worker/main.go`, `cmd/agent-runtime/main.go`, `Dockerfile.dag-worker`, `docker-compose.yml`, `config.go`.
+**Risk:** Medium. Temporal round-trip adds ~50–200 ms per activity. LLM nodes dominate latency so this overhead is acceptable. Measure before enabling on latency-sensitive paths.
 
-### Phase 4-D — Frontend and publish UI
+### Phase 4-D — Frontend publish toggle
 
-**Scope:** Surface `execution_backend` in the publish panel.
+**Scope:** Expose `execution_backend` in the canvas builder publish panel.
 
-1. Add `execution_backend` field to `AgentDefinitionDoc` in `api.ts`.
-2. Add a toggle (Local / Temporal) in the `BuilderTopBar` publish panel.
-3. Round-trip through `handlePublish` → `agent_definitions` → compiler → `AgentSpec`.
+1. Add `execution_backend` field to `AgentDefinitionDoc` in `frontend/src/lib/api.ts`.
+2. Add a "Execution backend" toggle (Local / Temporal) in `BuilderTopBar.tsx`.
+3. Round-trip through `handlePublish` → compiler → `AgentSpec`.
+4. Default: `"local"` — no behavior change for existing agents.
 
-**Files:** `frontend/src/lib/api.ts`, `frontend/src/app/admin/agents/builder/components/BuilderTopBar.tsx`.
-**Risk:** Low. UI change only; no execution path changes.
-
----
-
-## 12. Open decisions
-
-| # | Question | Options | Recommendation |
-|---|---|---|---|
-| OD-1 | How to pass credentials to `ExecuteStepActivity`? | (a) Pass encrypted blob; activity decrypts. (b) Pass only `BindingID`; activity re-loads from DB. | **Option (b)** — consistent with how `TaskState` handles credentials today; nothing secret in Temporal history. |
-| OD-2 | Where does `DAGWorkflow` live — child workflow or separate top-level? | (a) Child of nothing — started by `agent-runtime` via `temporal.Client.ExecuteWorkflow`. (b) Child of `OrchestrationWorkflow`. | **Option (a)** — keeps the existing `RunOrchestratorActivity` boundary intact; child of (b) would require changes to `OrchestrationWorkflow` and coupling. |
-| OD-3 | How does `agent-runtime` HTTP handler wait for the child workflow result? | (a) Temporal `client.GetWorkflow(ctx, workflowID, "").Get(ctx, &result)` — blocks. (b) Polling Redis. | **Option (a)** — Temporal long-poll is the right primitive; no extra Redis key needed. |
-| OD-4 | `HumanWait` in DAG Temporal — how does the signal arrive? | Signal must be sent to the `DAGWorkflow` run, not the parent `OrchestrationWorkflow`. | Add `DAGWorkflowID` to the run's metadata so the HITL signal handler can target the correct workflow. Design separately in Phase 4-B. |
-| OD-5 | `StepLoop` in Temporal — how to handle `MaxIterations` without a loop in the workflow? | Temporal workflow can use a `for` loop — deterministic because each iteration produces activity calls that appear in history. | Implement as a `for` loop in the workflow; MaxIterations enforced by the workflow, not the activity. |
-| OD-6 | Default `execution_backend` for new agents? | `"local"` (safe, existing behavior) or `"temporal"` (new). | **`"local"`** until Phase 4-C is live-verified. |
+**Files:** `frontend/src/lib/api.ts`, `BuilderTopBar.tsx`.
+**Risk:** Low. UI only; no execution path changes.
 
 ---
 
-## 13. What does NOT change
+## 13. Open decisions
 
-- `LocalExecutor` is preserved as-is. All existing canvas agents continue to use it.
+| # | Question | Recommendation |
+|---|---|---|
+| OD-1 | Credential loading in activity | Activity receives only `BindingID`; re-loads credentials from DB. Matches `TaskState` today. Nothing secret in Temporal history. |
+| OD-2 | Large var values (LLM output > 64 KB) | Store in Redis `them:dag:var:{workflowID}:{varName}` TTL 1h; pass Redis key as var value. Inject `DAGVarStore` interface (Redis impl + in-memory test impl). |
+| OD-3 | `HumanWait` in `CanvasAgentWorkflow` | `ExecuteStepActivity` for `human_wait` blocks on a Temporal `workflow.Channel` signal sent by the existing HITL signaler. The signal channel name must include `workflowID` so the signaler targets the correct workflow run. Design separately in Phase 4-B. |
+| OD-4 | `StepLoop` in workflow | Implement as a `for` loop in the workflow coroutine. Each iteration body schedules activities. `MaxIterations` enforced by the workflow. Each iteration is a deterministic Temporal replay step. |
+| OD-5 | Default `execution_backend` for new agents | `"local"` (empty string treated as local) until Phase 4-C is live-verified. |
+| OD-6 | Search Attributes for `CanvasAgentWorkflow` | Add `ParentRunID`, `TenantID`, `AgentID` as custom Search Attributes only if the Temporal namespace is pre-configured. Otherwise Memo is sufficient for the initial deployment. |
+| OD-7 | Orphan workflow from `agent-runtime` crash | Workflow ID includes activity attempt number. Short `WorkflowExecutionTimeout` (15 min default) ensures orphans self-terminate. |
+
+---
+
+## 14. What does NOT change
+
+- `LocalExecutor` is preserved unchanged. All existing canvas agents use it.
 - `OrchestrationWorkflow` and `RunOrchestratorActivity` are unchanged.
-- `InvokeForRun` in `agentregistry` is unchanged — it still posts to `them-agent-runtime`.
-- All 12 node `Execute` functions in `nodes.go` are unchanged — `ExecuteStepActivity` calls them through the existing interpreter dispatch.
-- All existing tests (S1-54, S1-72, S1-73, S1-74) continue to pass.
+- `agentregistry.InvokeForRun()` is unchanged — still posts to `them-agent-runtime`.
+- All 12 node `Execute` functions in `nodes.go` are unchanged — `ExecuteNodeForActivity` calls them through the existing interpreter dispatch.
+- Existing tests S1-54, S1-72, S1-73, S1-74 continue to pass.
+- `them-agent-runtime` HTTP API is unchanged — callers see no difference.
 
 ---
 
-## 14. Risks
+## 15. Risks
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| Temporal history size grows with many nodes | Low-Medium | Each activity input/output is bounded by `PipelineVars` size; large LLM responses → store in Redis, pass reference in vars |
-| Activity timeout on slow LLM calls | Medium | `ScheduleToCloseTimeout: 5m` on LLM activities; matches existing HTTP client timeout in interpreter |
-| Deadlock in `workflow.Await` if join counter never increments | Medium | Add `workflow.WithTimeout` inside `workflow.Await` as a safety valve; test with CT-5 (error path) |
-| Credential leakage into Temporal history | High if mishandled | Use OD-1 option (b) — only `BindingID` in history; re-load from DB in activity |
-| `them-agent-runtime` now needs a Temporal worker — adds startup dependency | Low | Temporal worker startup failure is non-fatal if `execution_backend == "local"` (default); guard with `if cfg.TemporalEnabled` |
-| `DAGWorkflow` replay requires same worker registration | Medium | Keep `DAGWorkflow` and `ExecuteStepActivity` on same task queue `"dag-nodes"`; never register one without the other |
+| Temporal history grows large with many nodes or large LLM outputs | Medium | Scoped input/output deltas + Redis var store for large values (OD-2) |
+| `workflow.Await` deadlock if join counter never increments | Medium | Safety timeout inside `workflow.Await`; CT-5 (error path) tests this |
+| Orphan workflows from `agent-runtime` crash | Low-Medium | Short `WorkflowExecutionTimeout`; workflow ID includes attempt number (OD-7) |
+| `them-dag-worker` crash mid-activity | Low | Temporal reschedules on next available replica; history is the source of truth |
+| Per-node Temporal overhead adds latency | Low | ~50–200ms per activity; LLM nodes dominate; measure in Phase 4-C before enabling |
+| `HumanWait` signal routing — must target `CanvasAgentWorkflow`, not parent | High if unhandled | Signal channel name includes `workflowID`; design explicitly in Phase 4-B (OD-3) |
+| Credentials re-loaded from DB per activity — DB load increases | Low | Same pattern as today; credentials are cached in `them-go-bridge` token cache |
