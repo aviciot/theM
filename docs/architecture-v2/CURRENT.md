@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `f5737c0` — feat(agentgen): LocalExecutor — goroutine DAG fan-out + wait_all join (Phase 1)
+Commit: `82c5be4` — fix(agentgen): harden DAG execution — branch-aware joins, deterministic merge, causal error
 
 Recent commits (newest first):
 ```
+82c5be4 fix(agentgen): harden DAG execution — branch-aware joins, deterministic merge, causal error
+ddaca40 feat(agentgen): DAG Phase 2+3 — race-free LocalExecutor + canvas fan-out unlocked
+e1544bc docs(current): update state — canvas port rewrite + DAG Phase 0+1 complete
 f5737c0 feat(agentgen): LocalExecutor — goroutine DAG fan-out + wait_all join (Phase 1)
 0d99d68 feat(agentgen): ExecutionPlan compiler — Phase 0 DAG types + CompileExecutionPlan
-202d7b1 feat(canvas): PortsPopover + BundleEdge rewrite — clean port UX, no backward compat
-20fdf24 feat(canvas): unified port model — PortsPopover absolute child, ctrl handles always-visible
-d8d58a0 feat(canvas): unified port model — hover-reveal + port alias rename
 ```
 
 ---
@@ -147,9 +147,9 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-29, DAG Phase 1)
-S1-72: 4 plan compiler tests (TestCompileExecutionPlan_*)
-S1-73: 6 LocalExecutor tests (TestLocalExecutor_*, TestDeepCopyVars_*)
+go test -race ./...  — all packages, 0 failures, 0 races (verified 2026-08-29, DAG hardening)
+S1-72: 6 plan compiler tests (TestCompileExecutionPlan_* — including MixedFanOut + BranchMerge)
+S1-73: 10 LocalExecutor tests (TestLocalExecutor_* including Branch/DeterministicMerge/CausalError, TestDeepCopyVars_*)
 S1 total: 800+ tests
   S1-63: CMP-10..14 (compiler LLM node collection — 5 tests, rewrote from AppParamRefs)
   S1-64: INT-10..14 (interpreter AppParamRef HTTP + NodeLLMOverride — 5 tests, INT-14 rewritten)
@@ -402,50 +402,46 @@ What was built:
 
 ---
 
-## DAG Execution Engine — in progress (2026-08-29)
+## DAG Execution Engine — complete through Phase 3 + hardening (2026-08-29)
 
 Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-out/join.
-Full design at `docs/architecture-v2/DAG_EXECUTION_PLAN.md`.
-
-**Critical constraint: canvas must NOT allow multi-output wiring (`max_out: 0`) until the runtime
-can actually execute DAG/fan-out correctly. Do NOT change `max_out` in `nodes.go` until Phase 1+2 green.**
 
 | Phase | What | State |
 |---|---|---|
 | 0 | `ExecutionPlan`/`PlanNode`/`JoinMode` types + `CompileExecutionPlan()` + 4 tests (S1-72) | ✅ commit `0d99d68` |
 | 1 | `ExecutionBackend` interface + `LocalExecutor` (goroutine fan-out, wait_all join, deep-copy, cancel) + 6 tests (S1-73) | ✅ commit `f5737c0` |
-| 2 | Race detector validation — requires `gcc` in test image (rebuild from musl-gcc base) | ⬜ next |
-| 3 | Canvas unlock — change `max_out: 0` on LLM/HTTP/Transform/MCPCall/A2ACall in `nodes.go` + UI test | ⬜ after Phase 2 |
+| 2 | Race detector validation — `go test -race ./...` green; `Interpreter.clone()` fix for `nextStepOverride` contention | ✅ commit `ddaca40` |
+| 3 | Canvas unlock — `max_out: 0` on LLM/HTTP/A2ACall/HumanWait/MCPCall in `nodes.go` | ✅ commit `ddaca40` |
+| Hardening | Branch-aware joins (`JoinBranchMerge` vs `JoinWaitAll`); deterministic merge (predecessor-keyed map + JoinOf order); causal error preservation; 4 new tests (S1-72/73 expanded) | ✅ commit `82c5be4` |
 | 4 | `TemporalExecutor` — `ExecuteStepActivity` + `TemporalExecutor` struct | ⬜ |
 | 5 | Loop, HumanWait, A2A in DAG context | ⬜ |
 
-### Key files (Phase 0+1)
-- `go/internal/agentgen/spec.go` — `ExecutionPlan`, `PlanNode`, `JoinMode` types
-- `go/internal/agentgen/plan_compiler.go` — `CompileExecutionPlan()`, `NodeByID()`
-- `go/internal/agentgen/executor.go` — `ExecutionBackend` interface
-- `go/internal/agentgen/local_executor.go` — `LocalExecutor` with goroutine fan-out + `joinState` + `deepCopyVars`
+### DAG join semantics (hardening summary)
+- **JoinWaitAll**: join node whose predecessors originate from a non-Branch fan-out (e.g. LLM with `len(Next)>1`). All branches always run — must wait for all.
+- **JoinBranchMerge**: join node whose predecessors are ALL direct arm-children of a single Branch step. Only one arm runs — first arrival continues; subsequent arrivals are silently dropped.
+- Detection in `classifyJoin()`: JoinBranchMerge requires (1) every predecessor has exactly one parent, (2) that parent is a Branch step, (3) all share the same Branch parent B, (4) B's full Next set == predecessor set. Anything else → JoinWaitAll.
+- Merge is deterministic: `joinState.arrived` is `map[string]map[string]PipelineVars` (predecessor-keyed); merge iterates `JoinOf` slice in order — later entries win on key collisions.
+- `drainFirstCausalError`: reads all errors from buffered chan, prefers first non-`context.Canceled` over Canceled. Causal error survives sibling cancellation.
 
-### Race detector blocker
-`go test -race` requires `CGO_ENABLED=1` + `gcc`. The test image (`them-go-test`) is built from
-`Dockerfile.go --target builder` (alpine base, no gcc). To unblock Phase 2:
-```bash
-# Option A: rebuild test image with full Go (not alpine)
-docker build --target builder -f Dockerfile.go -t them-go-test . --build-arg GO_BASE=golang:1.25
-# Option B: run directly in them-go-bridge container (has gcc)
-docker exec them-go-bridge go test -race ./internal/agentgen/...
-```
+### Key files
+- `go/internal/agentgen/spec.go` — `ExecutionPlan`, `PlanNode`, `JoinMode` (JoinNone/JoinWaitAll/JoinBranchMerge/JoinWaitAny)
+- `go/internal/agentgen/plan_compiler.go` — `CompileExecutionPlan()`, `classifyJoin()`, `NodeByID()`
+- `go/internal/agentgen/executor.go` — `ExecutionBackend` interface
+- `go/internal/agentgen/local_executor.go` — `LocalExecutor` with goroutine fan-out + per-goroutine `clone()` + `joinState` + `drainFirstCausalError` + `deepCopyVars`
+- `go/internal/agentgen/nodes.go` — canvas nodes; all fan-out-capable nodes have `MaxOut: 0` (unlimited)
 
 ---
 
 ## Next recommended task
 
-### Step 1 — DAG Phase 2: race detector validation
-Run `go test -race ./internal/agentgen/...` against the LocalExecutor tests. Requires gcc (see above).
-Zero races required before proceeding to Phase 3 (canvas unlock).
+### Step 1 — DAG Phase 4: TemporalExecutor
+Implement `TemporalExecutor` as an `ExecutionBackend` that runs each `PlanNode` as a Temporal activity.
+All DAG semantics (join detection, branch-aware merge, error propagation) are already correct in the
+compiled `ExecutionPlan` — the Temporal executor just needs to schedule activities per the plan graph.
 
-### Step 2 — DAG Phase 3: canvas unlock
-Once race detector is green, change `max_out: 0` on LLM/HTTP/Transform/MCPCall/A2ACall
-nodes in `go/internal/agentgen/nodes.go`. Test that the canvas allows wiring one node to two targets.
+### Step 2 — Wire DAG into the agent-runtime execution path
+Connect `LocalExecutor` (or `TemporalExecutor`) to the agent-runtime's `InvokeForRun` path.
+Currently the interpreter runs sequentially; the compiled plan should drive it instead.
 
 ### Step 3 — Auth admin CRUD Go proxy (lower priority)
 - `them-auth-service` (Python, port 8701) still serves user/role/team management
