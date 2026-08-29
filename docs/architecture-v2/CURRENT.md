@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `82c5be4` — fix(agentgen): harden DAG execution — branch-aware joins, deterministic merge, causal error
+Commit: `a9528d6` — feat(agent-runtime): wire LocalExecutor as execution backend
 
 Recent commits (newest first):
 ```
+a9528d6 feat(agent-runtime): wire LocalExecutor as execution backend
 82c5be4 fix(agentgen): harden DAG execution — branch-aware joins, deterministic merge, causal error
 ddaca40 feat(agentgen): DAG Phase 2+3 — race-free LocalExecutor + canvas fan-out unlocked
 e1544bc docs(current): update state — canvas port rewrite + DAG Phase 0+1 complete
 f5737c0 feat(agentgen): LocalExecutor — goroutine DAG fan-out + wait_all join (Phase 1)
-0d99d68 feat(agentgen): ExecutionPlan compiler — Phase 0 DAG types + CompileExecutionPlan
 ```
 
 ---
@@ -434,14 +434,14 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Step 1 — DAG Phase 4: TemporalExecutor
+### Step 1 — DAG Phase 4: TemporalExecutor (next)
 Implement `TemporalExecutor` as an `ExecutionBackend` that runs each `PlanNode` as a Temporal activity.
 All DAG semantics (join detection, branch-aware merge, error propagation) are already correct in the
 compiled `ExecutionPlan` — the Temporal executor just needs to schedule activities per the plan graph.
 
-### Step 2 — Wire DAG into the agent-runtime execution path
-Connect `LocalExecutor` (or `TemporalExecutor`) to the agent-runtime's `InvokeForRun` path.
-Currently the interpreter runs sequentially; the compiled plan should drive it instead.
+### Step 2 — Multi-output fan-out E2E test (optional but recommended)
+Build a canvas agent with a Branch or multi-output LLM node and verify the live DAG path works end-to-end.
+Now that `them-agent-runtime` uses `LocalExecutor`, this is a live smoke test rather than a unit test.
 
 ### Step 3 — Auth admin CRUD Go proxy (lower priority)
 - `them-auth-service` (Python, port 8701) still serves user/role/team management
