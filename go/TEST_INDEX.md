@@ -1599,7 +1599,7 @@ Inputs/Outputs for each node type, that missing upstream writers emit the right 
 
 ---
 
-### S1-70 · ExecutionPlan compiler — `internal/agentgen/plan_compiler_test.go`
+### S1-72 · ExecutionPlan compiler — `internal/agentgen/plan_compiler_test.go`
 
 **Purpose:** Phase 0 of DAG execution. Verifies that `CompileExecutionPlan` produces a correct
 `ExecutionPlan` with join annotations from a `SkillSpec`. No runtime changes — purely additive
@@ -1614,6 +1614,26 @@ types and compiler pass.
 
 **Trigger:** any change to `internal/agentgen/plan_compiler.go` or `internal/agentgen/spec.go`
 (`ExecutionPlan`, `PlanNode`, `JoinMode` types)
+
+---
+
+### S1-73 · LocalExecutor (DAG runtime Phase 1) — `internal/agentgen/local_executor_test.go`
+
+**Purpose:** Phase 1 of DAG execution. Verifies `LocalExecutor` correctly executes compiled
+`ExecutionPlan`s: linear chains, goroutine fan-out, wait_all join with var merging, error
+propagation + context cancellation, deep-copy isolation, and nil/empty plan safety.
+
+| Test | What it proves |
+|---|---|
+| `TestLocalExecutor_Linear` | A→B→C chain executes in order; vars propagate correctly |
+| `TestLocalExecutor_FanOut` | Fan-out (s1→s2a,s2b) both branches run (counter=2) |
+| `TestLocalExecutor_Join_WaitAll` | Both branches arrive at join; merged vars contain keys from both branches |
+| `TestLocalExecutor_JoinFailure_CancelsOtherBranch` | Error in one branch cancels ctx; slow sibling unblocks; error is returned |
+| `TestDeepCopyVars_NestedMap` | `deepCopyVars` deep-copies nested maps and slices; mutation of copy doesn't affect original |
+| `TestLocalExecutor_Nil` | nil plan and empty plan both return a non-nil error cleanly |
+
+**Trigger:** any change to `internal/agentgen/local_executor.go`, `internal/agentgen/executor.go`,
+`internal/agentgen/plan_compiler.go`, or `internal/agentgen/spec.go`
 
 ---
 
@@ -2111,10 +2131,13 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/temporal/workerconfig/loader.go` | S1-61 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
-| `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 |
+| `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 |
 | `internal/agentgen/compiler.go` | S1-50 + S1-54 + S1-63 + S1-65 |
 | `internal/agentgen/interpreter.go` | S1-48 + S1-64 + S1-67 + S1-69 |
-| `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 + S1-67 + S1-69 |
+| `internal/agentgen/spec.go` | S1-50 + S1-63 + S1-65 + S1-67 + S1-69 + S1-72 + S1-73 |
+| `internal/agentgen/plan_compiler.go` | S1-72 + S1-73 |
+| `internal/agentgen/executor.go` | S1-73 |
+| `internal/agentgen/local_executor.go` | S1-73 |
 | `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 + S1-69 + S1-71 |
 | `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 + S1-69 + S1-71 |
 | `internal/agentgen/mcp_caller.go` | S1-69 |
