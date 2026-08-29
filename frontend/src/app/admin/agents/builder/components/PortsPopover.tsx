@@ -31,8 +31,7 @@ export function PortsPopover({
   const isDragging = connection.inProgress;
 
   const inPorts  = resolveInputPorts(nodeDef, committedInputPortIDs);
-  // Show all static output ports (including unwired ones) in the popover
-  const outPorts = resolveOutputPorts(nodeDef, cfg, wiredOutputPortIDs, { includeUnwiredStatic: true })
+  const outPorts = resolveOutputPorts(nodeDef, cfg, wiredOutputPortIDs)
     .filter(p => p.kind === 'data');
 
   const opacity      = isDragging ? 0.45 : 1;

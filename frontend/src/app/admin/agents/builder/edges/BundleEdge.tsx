@@ -6,13 +6,7 @@ import { callDeleteMapping } from '../canvas/connections';
 
 interface BundleEdgeData {
   mappings?: MappingRecord[];
-  isLeader?: boolean;
   layoutDir?: 'LR' | 'TB';
-  // V1 legacy fields (kept for graceful fallback)
-  portLabel?: string;
-  bundleIndex?: number;
-  bundleTotal?: number;
-  bundlePorts?: string[];
 }
 
 export function BundleEdge({
@@ -20,9 +14,7 @@ export function BundleEdge({
   sourcePosition, targetPosition, data,
 }: EdgeProps) {
   const d = (data ?? {}) as BundleEdgeData;
-  const mappings: MappingRecord[] = d.mappings ?? (
-    d.portLabel ? [{ edgeId: id, sourceHandle: '', targetHandle: '', portLabel: d.portLabel }] : []
-  );
+  const mappings: MappingRecord[] = d.mappings ?? [];
   const count = mappings.length;
 
   const [sheetOpen, setSheetOpen] = useState(false);

@@ -1,12 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Handle, Position, useUpdateNodeInternals, useStore } from '@xyflow/react';
-import { getNodeDef, resolveInputPorts, resolveOutputPorts } from '@/lib/nodeRegistry';
+import { getNodeDef, resolveOutputPorts } from '@/lib/nodeRegistry';
 import type { ResolvedPort } from '@/lib/nodeRegistry';
 import type { StepNodeData, DebugNodeState } from '../types';
 import { useLayoutDir } from '../LayoutContext';
 import { PortsPopover } from './PortsPopover';
-
-const PORTS_V2 = process.env.NEXT_PUBLIC_CANVAS_PORTS_V2 === 'true';
 
 function stepMetaFromType(type: string): { bg: string; border: string; emoji: string; label: string } {
   const def = getNodeDef(type);
@@ -24,10 +22,8 @@ const debugGlow: Record<DebugNodeState, string> = {
   error:   '0 0 8px 2px rgba(248,113,113,0.5)',
 };
 
-// Port geometry — PORT_STEP must match WIRE_STEP in page.tsx
-const PORT_STEP   = 22;
-const PORT_DOT    = 9;
-const PORT_START  = 28;  // distance from card top/left to first port center
+const PORT_STEP  = 22;
+const PORT_START = 28;
 
 // Flow port — gray arrow, always first in list
 const FLOW_COLOR  = '#64748b';
@@ -272,81 +268,15 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
       : { ...invisHandle, left: off, bottom: 0 };
   }
 
-  // ── Port dot + label (V1 only) ────────────────────────────────────────────
-  function PortDot({ port, idx, side }: { port: UnifiedPort; idx: number; side: 'in' | 'out' }) {
-    const off   = dotOffset(idx);
-    const color = port.color;
-    const isWired = side === 'out'
-      ? (port.kind === 'control'
-          ? hasCtrlOut
-          : wiredOutIDs.includes(port.handleID.replace('data-out-', '')))
-      : (port.kind === 'control'
-          ? hasCtrlIn
-          : wiredInIDs.includes(port.handleID.replace('data-in-', '')));
-
-    const visible = hovered || isWired;
-
-    const dotBase: React.CSSProperties = {
-      position: 'absolute',
-      width: PORT_DOT, height: PORT_DOT,
-      borderRadius: '50%',
-      background: color,
-      boxShadow: isWired ? `0 0 8px 3px ${color}99` : `0 0 4px 1px ${color}66`,
-      zIndex: 3,
-      transition: 'transform 0.18s ease, opacity 0.18s ease',
-      transform:  visible ? 'scale(1)'   : 'scale(0.2)',
-      opacity:    visible ? 1 : 0,
-      pointerEvents: 'none',
-    };
-
-    const dotStyle: React.CSSProperties = isLR
-      ? side === 'in'
-        ? { ...dotBase, top: off - PORT_DOT / 2, left:  -(PORT_DOT / 2 + 1) }
-        : { ...dotBase, top: off - PORT_DOT / 2, right: -(PORT_DOT / 2 + 1) }
-      : side === 'in'
-        ? { ...dotBase, left: off - PORT_DOT / 2, top:    -(PORT_DOT / 2 + 1) }
-        : { ...dotBase, left: off - PORT_DOT / 2, bottom: -(PORT_DOT / 2 + 1) };
-
-    const labelBase: React.CSSProperties = {
-      position: 'absolute',
-      fontSize: 8,
-      color,
-      fontFamily: 'JetBrains Mono, monospace',
-      whiteSpace: 'nowrap',
-      pointerEvents: 'none',
-      lineHeight: 1,
-      transition: 'opacity 0.18s ease',
-      opacity: visible ? 1 : 0,
-    };
-
-    const labelStyle: React.CSSProperties = isLR
-      ? side === 'in'
-        ? { ...labelBase, top: off - 4, left:  PORT_DOT + 5, maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis' }
-        : { ...labelBase, top: off - 4, right: PORT_DOT + 5, maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' }
-      : side === 'in'
-        ? { ...labelBase, left: off - 2, top:    PORT_DOT + 4 }
-        : { ...labelBase, left: off - 2, bottom: PORT_DOT + 4 };
-
-    return (
-      <>
-        <div style={dotStyle} />
-        {port.label && <div style={labelStyle}>{port.label}</div>}
-      </>
-    );
-  }
-
   // Card sizing — stable, based on max port count
   const maxPorts  = Math.max(inputPorts.length, outputPorts.length);
   const railH     = maxPorts > 0 ? PORT_START + maxPorts * PORT_STEP + PORT_START : 0;
   const cardH     = Math.max(80, railH);
 
-  // Padding — reserve space for port label area so card doesn't resize on hover
-  const hasDataIn  = inputPorts.some(p => p.kind === 'data');
-  const hasDataOut = outputPorts.some(p => p.kind === 'data');
-  const leftPad  = PORTS_V2 ? PORT_DOT + 12 : (isLR  ? (hasDataIn  ? PORT_DOT + 68 : PORT_DOT + 12) : 14);
-  const rightPad = PORTS_V2 ? PORT_DOT + 12 : (isLR  ? (hasDataOut ? PORT_DOT + 68 : PORT_DOT + 12) : 14);
-  const topPad   = PORTS_V2 ? PORT_DOT + 12 : (!isLR ? (hasDataIn  ? PORT_DOT + 30 : PORT_DOT + 12) : 12);
-  const botPad   = PORTS_V2 ? PORT_DOT + 12 : (!isLR ? (hasDataOut ? PORT_DOT + 30 : PORT_DOT + 12) : 12);
+  const leftPad  = isLR  ? 21 : 14;
+  const rightPad = isLR  ? 21 : 14;
+  const topPad   = !isLR ? 21 : 12;
+  const botPad   = !isLR ? 21 : 12;
 
   return (
     <div
@@ -361,35 +291,31 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         paddingBottom: botPad,
         paddingLeft:   leftPad,
         paddingRight:  rightPad,
-        overflow: PORTS_V2 ? 'visible' : undefined,
-        zIndex: PORTS_V2 && showPortsPanel ? 10 : undefined,
+        overflow: 'visible',
+        zIndex: showPortsPanel ? 10 : undefined,
         ['--breathe-color' as string]: breatheColor,
       }}
     >
-      {/* ── All INPUT handles + dots ── */}
+      {/* ── All INPUT handles ── */}
       {inputPorts.map((port, idx) => (
-        <React.Fragment key={port.handleID}>
-          <Handle
-            id={port.handleID}
-            type="target"
-            position={targetPos}
-            style={inputHandleStyle(idx)}
-          />
-          {!PORTS_V2 && <PortDot port={port} idx={idx} side="in" />}
-        </React.Fragment>
+        <Handle
+          key={port.handleID}
+          id={port.handleID}
+          type="target"
+          position={targetPos}
+          style={inputHandleStyle(idx)}
+        />
       ))}
 
-      {/* ── All OUTPUT handles + dots ── */}
+      {/* ── All OUTPUT handles ── */}
       {outputPorts.map((port, idx) => (
-        <React.Fragment key={port.handleID}>
-          <Handle
-            id={port.handleID}
-            type="source"
-            position={sourcePos}
-            style={outputHandleStyle(idx)}
-          />
-          {!PORTS_V2 && <PortDot port={port} idx={idx} side="out" />}
-        </React.Fragment>
+        <Handle
+          key={port.handleID}
+          id={port.handleID}
+          type="source"
+          position={sourcePos}
+          style={outputHandleStyle(idx)}
+        />
       ))}
 
       {/* ── Card content ── */}
@@ -432,28 +358,25 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
           <div style={{ marginTop: 4, fontSize: '9px', color: '#f59e0b' }}>{isLR ? 'next →' : 'next ↓'}</div>
         )}
 
-        {/* ── V2: Ports button ── */}
-        {PORTS_V2 && (
-          <button
-            className="nodrag nowheel nopan"
-            onClick={e => { e.stopPropagation(); setShowPortsPanel(v => !v); }}
-            style={{
-              marginTop: 6,
-              background: showPortsPanel ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.06)',
-              border: `1px solid ${showPortsPanel ? '#818cf8' : '#334155'}`,
-              borderRadius: 6,
-              color: showPortsPanel ? '#a5b4fc' : '#64748b',
-              fontSize: 13, cursor: 'pointer',
-              padding: '2px 7px', lineHeight: 1.4,
-              transition: 'all 0.15s',
-            }}
-            title="Show data ports"
-          >⊕</button>
-        )}
+        {/* Ports button */}
+        <button
+          className="nodrag nowheel nopan"
+          onClick={e => { e.stopPropagation(); setShowPortsPanel(v => !v); }}
+          style={{
+            marginTop: 6,
+            background: showPortsPanel ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.06)',
+            border: `1px solid ${showPortsPanel ? '#818cf8' : '#334155'}`,
+            borderRadius: 6,
+            color: showPortsPanel ? '#a5b4fc' : '#64748b',
+            fontSize: 13, cursor: 'pointer',
+            padding: '2px 7px', lineHeight: 1.4,
+            transition: 'all 0.15s',
+          }}
+          title="Show data ports"
+        >⊕</button>
       </div>
 
-      {/* ── V2: PortsPopover ── */}
-      {PORTS_V2 && showPortsPanel && (
+      {showPortsPanel && (
         <PortsPopover
           nodeId={id}
           nodeDef={nodeDef}
