@@ -286,7 +286,13 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 			}
 		}
 
-		execResult, err := rt.interp.Execute(ctx, ic, skill, inputText, dataVars)
+		initial := agentgen.PipelineVars{"input": inputText}
+		for k, v := range dataVars {
+			initial[k] = v
+		}
+
+		plan := agentgen.CompileExecutionPlan(skill)
+		execResult, err := agentgen.NewLocalExecutor(rt.interp).Execute(ctx, ic, plan, initial)
 		if err != nil {
 			errMsg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(err.Error()))
 			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, errMsg), nil) //nolint:errcheck

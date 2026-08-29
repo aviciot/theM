@@ -2149,7 +2149,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/agentgen/mcp_caller.go` | S1-69 |
 | `internal/agentgen/context.go` | S1-48 + S1-64 |
 | `cmd/agent-runtime/main.go` | S1-60 + S1-62 + S1-65 |
-| `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1 (full suite) |
+| `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1-72 + S1-73 + S1 (full suite) |
 | `internal/admin/applications.go` (GetAppParams/SetAppParam/DeleteAppParam handlers) | S1-66 |
 | `internal/admin/system_agents.go` | S1-15 + S1 (full suite) |
 | `internal/dashboard/handler.go` | S1-52 |
