@@ -39,6 +39,17 @@ export interface PortDef {
   max_connections?: number; // 0 = unlimited; used by connection guard
 }
 
+/** Per-node execution policy served by GET /admin/node-types. */
+export interface ExecutionPolicy {
+  max_attempts: number;
+  timeout_seconds: number;
+  initial_interval_seconds: number;
+  backoff_coefficient: number;
+  max_interval_seconds: number;
+  non_retryable_errors?: string[];
+  requires_idempotency_key?: boolean;
+}
+
 export interface NodeTypeInfo {
   type: string;
   version: number;
@@ -77,6 +88,10 @@ export interface NodeTypeInfo {
    * Format: "functions[].output_var" — iterate cfg[array], collect field value.
    */
   dynamic_output_source?: string;
+  /** Baseline execution policy for this node type. */
+  default_policy?: ExecutionPolicy;
+  /** Maximum allowed values; canvas overrides are clamped to these. */
+  max_policy?: ExecutionPolicy;
 }
 
 // ── Port resolution — generic, driven entirely by NodeDef ────────────────────

@@ -587,6 +587,8 @@ export interface AgentStepDoc {
   next_handles?: string[]; // parallel to next — named sourceHandle per outgoing edge (transform, branch)
   /** Explicit data bindings: input port ID → {from_step, from_port}. Absent means heuristic path. */
   inputs?: Record<string, Binding>;
+  /** Optional per-node execution policy override. Absent means use NodeDef defaults. */
+  policy?: { max_attempts?: number; timeout_seconds?: number; initial_interval_seconds?: number; backoff_coefficient?: number; max_interval_seconds?: number; };
   position?: { x: number; y: number };
 }
 

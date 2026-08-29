@@ -2,8 +2,10 @@ package agentgen
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -236,9 +238,49 @@ func (e *LocalExecutor) runBranch(
 	return nil
 }
 
+// isNonRetryable returns true when err must not be retried.
+// Matches *ErrContractViolation, *ErrIdempotencyKeyMissing, and context errors directly.
+// Also string-matches against the policy.NonRetryableErrors list for Temporal-style type names.
+func isNonRetryable(err error, policy ExecutionPolicy) bool {
+	if err == nil {
+		return false
+	}
+	// Context cancellation and deadline: never retry — stop immediately.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	// Typed Go sentinels that map to stdNonRetryable type strings.
+	var cv *ErrContractViolation
+	if errors.As(err, &cv) {
+		return true
+	}
+	var ik *ErrIdempotencyKeyMissing
+	if errors.As(err, &ik) {
+		return true
+	}
+	// String-match Temporal-style non-retryable type names in the error message.
+	msg := err.Error()
+	for _, name := range policy.NonRetryableErrors {
+		if name != "" && strings.Contains(msg, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // execNode runs one plan node using the caller's per-goroutine interp clone.
 // interp.nextStepOverride is safe to read/write because each goroutine has its own clone.
-// policy.TimeoutSeconds, when non-zero, wraps ctx with a per-node deadline.
+//
+// Retry semantics (matching Temporal's RetryPolicy):
+//   - Up to policy.MaxAttempts total attempts (0 treated as 1 for backward compat).
+//   - Non-retryable errors (ErrContractViolation, ErrIdempotencyKeyMissing, context errors,
+//     NonRetryableErrors string matches) stop immediately without further attempts.
+//   - Between attempts: exponential backoff with InitialIntervalSeconds, BackoffCoefficient,
+//     MaxIntervalSeconds. Zero values use safe defaults (1s initial, 2.0 coeff, 30s max).
+//   - policy.TimeoutSeconds, when non-zero, wraps the entire multi-attempt window with a
+//     single deadline — consistent with Temporal StartToCloseTimeout semantics.
+//   - policy.RequiresIdempotencyKey: when true AND MaxAttempts > 1, the HTTP step config
+//     MUST contain a static Idempotency-Key header; if absent → ErrIdempotencyKeyMissing.
 func (e *LocalExecutor) execNode(
 	ctx context.Context,
 	ic *InvocationContext,
@@ -248,6 +290,7 @@ func (e *LocalExecutor) execNode(
 	vars PipelineVars,
 	res *sharedResult,
 ) (nextOverride string, err error) {
+	// Apply node-level timeout over the entire attempt window (StartToCloseTimeout semantics).
 	nodeCtx := ctx
 	if policy.TimeoutSeconds > 0 {
 		var cancel context.CancelFunc
@@ -255,21 +298,108 @@ func (e *LocalExecutor) execNode(
 		defer cancel()
 	}
 
-	localResult := &ExecutionResult{MediaType: "text/plain"}
-
-	interp.nextStepOverride = ""
-	if execErr := interp.executeStep(nodeCtx, ic, step, vars, localResult); execErr != nil {
-		return "", execErr
-	}
-	override := interp.nextStepOverride
-	interp.nextStepOverride = ""
-
-	// Promote result if this step produced one.
-	if localResult.Text != "" || step.Type == StepResponse || step.Type == StepStreamOut {
-		res.setIfEmpty(localResult)
+	maxAttempts := policy.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 1 // backward compat: zero means "not set"
 	}
 
-	return override, nil
+	// Idempotency guard: before any retry, ensure the caller has set a static key.
+	if policy.RequiresIdempotencyKey && maxAttempts > 1 {
+		if step.Type == StepHTTP {
+			if !httpConfigHasIdempotencyKey(step.Config) {
+				return "", &ErrIdempotencyKeyMissing{StepID: step.ID}
+			}
+		}
+	}
+
+	// Backoff parameters — use safe defaults when unset.
+	initialInterval := policy.InitialIntervalSeconds
+	if initialInterval <= 0 {
+		initialInterval = 1.0
+	}
+	backoffCoeff := policy.BackoffCoefficient
+	if backoffCoeff < 1.0 {
+		backoffCoeff = 2.0
+	}
+	maxInterval := float64(policy.MaxIntervalSeconds)
+	if maxInterval <= 0 {
+		maxInterval = 30.0
+	}
+
+	var lastErr error
+	interval := initialInterval
+
+	for attempt := int32(1); attempt <= maxAttempts; attempt++ {
+		// Check cancellation before each attempt.
+		select {
+		case <-nodeCtx.Done():
+			if lastErr != nil {
+				return "", lastErr
+			}
+			return "", nodeCtx.Err()
+		default:
+		}
+
+		localResult := &ExecutionResult{MediaType: "text/plain"}
+		interp.nextStepOverride = ""
+		execErr := interp.executeStep(nodeCtx, ic, step, vars, localResult)
+		if execErr == nil {
+			override := interp.nextStepOverride
+			interp.nextStepOverride = ""
+
+			// Promote result if this step produced one.
+			if localResult.Text != "" || step.Type == StepResponse || step.Type == StepStreamOut {
+				res.setIfEmpty(localResult)
+			}
+			return override, nil
+		}
+
+		lastErr = execErr
+		interp.nextStepOverride = ""
+
+		// Non-retryable: stop immediately.
+		if isNonRetryable(execErr, policy) {
+			return "", execErr
+		}
+
+		// Last attempt: no sleep needed.
+		if attempt >= maxAttempts {
+			break
+		}
+
+		// Backoff sleep — respect context cancellation.
+		sleep := time.Duration(interval * float64(time.Second))
+		select {
+		case <-nodeCtx.Done():
+			return "", nodeCtx.Err()
+		case <-time.After(sleep):
+		}
+
+		// Advance interval for next attempt.
+		interval = min(interval*backoffCoeff, maxInterval)
+	}
+
+	return "", lastErr
+}
+
+// httpConfigHasIdempotencyKey returns true when the HTTP step config contains
+// a static "Idempotency-Key" header (case-insensitive key match).
+func httpConfigHasIdempotencyKey(cfg json.RawMessage) bool {
+	if len(cfg) == 0 {
+		return false
+	}
+	var c struct {
+		Headers map[string]string `json:"headers"`
+	}
+	if err := json.Unmarshal(cfg, &c); err != nil {
+		return false
+	}
+	for k := range c.Headers {
+		if strings.EqualFold(k, "Idempotency-Key") {
+			return true
+		}
+	}
+	return false
 }
 
 // planNodeToStepSpec converts a PlanNode back to a StepSpec for executeStep.

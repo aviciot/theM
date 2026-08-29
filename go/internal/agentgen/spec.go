@@ -122,6 +122,18 @@ func (e *ErrContractViolation) Error() string {
 	return "contract violation at step " + e.StepID + ": " + e.Kind + " (var: " + e.VarName + ")"
 }
 
+// ErrIdempotencyKeyMissing is returned by the executor when a step has
+// RequiresIdempotencyKey=true and MaxAttempts>1, but no static Idempotency-Key
+// header is present in the HTTP step config. This prevents double-spend bugs
+// on retried mutating HTTP calls.
+type ErrIdempotencyKeyMissing struct {
+	StepID string
+}
+
+func (e *ErrIdempotencyKeyMissing) Error() string {
+	return "step " + e.StepID + ": RequiresIdempotencyKey=true but no Idempotency-Key header is set in config; set a static Idempotency-Key header or reduce max_attempts to 1"
+}
+
 // StepSpec is one pipeline node, compiled from the canvas.
 type StepSpec struct {
 	ID       string          `json:"id"`

@@ -20,6 +20,7 @@ interface RightPanelProps {
   debug: DebugState;
   updateSelectedNodeField: (field: string, value: string) => void;
   updateStepConfig: (key: string, value: unknown) => void;
+  updateStepPolicy: (policy: Record<string, unknown> | null) => void;
   setAgentNodes: (updater: (prev: Node[]) => Node[]) => void;
   setDirty: (dirty: boolean) => void;
   savePipelineState: () => void;
@@ -46,6 +47,7 @@ export function RightPanel({
   debug,
   updateSelectedNodeField,
   updateStepConfig,
+  updateStepPolicy,
   setAgentNodes,
   setDirty,
   savePipelineState,
@@ -107,6 +109,7 @@ export function RightPanel({
           debug={debug}
           updateSelectedNodeField={updateSelectedNodeField}
           updateStepConfig={updateStepConfig}
+          updateStepPolicy={updateStepPolicy}
           setDebug={setDebug}
           debugStep={debugStep}
           nodeTypesReady={nodeTypesReady}

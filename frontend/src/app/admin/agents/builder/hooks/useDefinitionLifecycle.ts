@@ -10,7 +10,7 @@ import { getNodeDef, fetchNodeTypes, setCachedNodeTypes } from '@/lib/nodeRegist
 import { INITIAL_VALIDATION } from '../constants';
 import { stepMeta } from '../components/StepNode';
 import { isDataEdge } from '../canvas/connections';
-import type { AgentRootData, SkillData, StepData, ValidationState } from '../types';
+import type { AgentRootData, SkillData, StepData, StepPolicyOverride, ValidationState } from '../types';
 import type { Node, Edge } from '@xyflow/react';
 
 // Re-export for external use
@@ -145,6 +145,7 @@ export function useDefinitionLifecycle({
               config: stepd.config ?? {},
               next,
               ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
+              ...(stepd.policy ? { policy: stepd.policy } : {}),
               position: sn.position,
             };
           });
@@ -247,6 +248,7 @@ export function useDefinitionLifecycle({
           inputs: step.inputs
             ? Object.fromEntries(Object.entries(step.inputs).map(([portID, b]) => [portID, { from_step: b.from_step, from_port: b.from_port }]))
             : undefined,
+          ...(step.policy ? { policy: step.policy as StepPolicyOverride } : {}),
         },
       }));
       const stepEdges: Edge[] = [];

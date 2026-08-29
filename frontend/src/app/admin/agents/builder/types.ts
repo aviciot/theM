@@ -18,6 +18,14 @@ export interface SkillData {
   examples: string[];
 }
 
+export interface StepPolicyOverride {
+  max_attempts?: number;
+  timeout_seconds?: number;
+  initial_interval_seconds?: number;
+  backoff_coefficient?: number;
+  max_interval_seconds?: number;
+}
+
 export interface StepData {
   step_id: string;
   step_type: string;
@@ -25,6 +33,8 @@ export interface StepData {
   config: Record<string, unknown>;
   /** Explicit data bindings: input port ID → {from_step, from_port}. Absent means heuristic path. */
   inputs?: Record<string, { from_step: string; from_port: string }>;
+  /** Optional per-node execution policy override. Absent means use NodeDef defaults. */
+  policy?: StepPolicyOverride;
 }
 
 export interface StepNodeData extends StepData {

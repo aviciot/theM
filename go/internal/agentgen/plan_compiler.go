@@ -12,22 +12,25 @@ func resolvePolicy(nd *NodeDef, cfg json.RawMessage, override *ExecutionPolicy) 
 	p := nd.DefaultPolicy
 
 	// HTTP: upgrade GET to 3 attempts; POST/PUT/PATCH/DELETE stay at 1.
+	// RequiresIdempotencyKey is only meaningful when MaxAttempts > 1 (i.e. retries can occur).
 	if nd.Type == StepHTTP {
 		method := extractHTTPMethod(cfg)
 		if method == "" || strings.EqualFold(method, "GET") {
 			p.MaxAttempts = 3
 			p.RequiresIdempotencyKey = false
 		} else {
+			// Mutating HTTP: single attempt by default — no idempotency key needed.
+			// If a canvas override raises MaxAttempts > 1, the idempotency requirement kicks in (see below).
 			p.MaxAttempts = 1
-			p.RequiresIdempotencyKey = true
+			p.RequiresIdempotencyKey = false
 		}
 	}
 
-	// MCP: read-only tools → 2 attempts; mutating (heuristic: name contains create/update/delete/set/write/post/put/patch/remove/insert) → 1.
+	// MCP: read-only tools → 2 attempts; mutating → 1 (same reasoning as HTTP above).
 	if nd.Type == StepMCPCall {
 		if isMutatingMCPTool(cfg) {
 			p.MaxAttempts = 1
-			p.RequiresIdempotencyKey = true
+			p.RequiresIdempotencyKey = false
 		} else {
 			p.MaxAttempts = 2
 		}
@@ -58,10 +61,6 @@ func resolvePolicy(nd *NodeDef, cfg json.RawMessage, override *ExecutionPolicy) 
 		if override.MaxIntervalSeconds > 0 {
 			p.MaxIntervalSeconds = override.MaxIntervalSeconds
 		}
-		// RequiresIdempotencyKey: only upgrade, never downgrade.
-		if override.RequiresIdempotencyKey {
-			p.RequiresIdempotencyKey = true
-		}
 	}
 
 	// NonRetryableErrors is always canonical — never user-overridable.
@@ -70,6 +69,26 @@ func resolvePolicy(nd *NodeDef, cfg json.RawMessage, override *ExecutionPolicy) 
 	// Guard: zero MaxAttempts means "not set"; treat as 1.
 	if p.MaxAttempts == 0 {
 		p.MaxAttempts = 1
+	}
+
+	// RequiresIdempotencyKey: set when MaxAttempts > 1 AND the node type is mutating by nature.
+	// HTTP nodes whose method is NOT GET are inherently mutating.
+	// MCP nodes with a mutating tool name are inherently mutating.
+	// This is re-evaluated AFTER clamping so the override's MaxAttempts takes effect first.
+	if nd.Type == StepHTTP {
+		method := extractHTTPMethod(cfg)
+		if method != "" && !strings.EqualFold(method, "GET") && p.MaxAttempts > 1 {
+			p.RequiresIdempotencyKey = true
+		}
+	}
+	if nd.Type == StepMCPCall {
+		if isMutatingMCPTool(cfg) && p.MaxAttempts > 1 {
+			p.RequiresIdempotencyKey = true
+		}
+	}
+	// Canvas override can also explicitly request it (upgrade only).
+	if override != nil && override.RequiresIdempotencyKey {
+		p.RequiresIdempotencyKey = true
 	}
 
 	return p

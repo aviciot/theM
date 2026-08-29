@@ -147,14 +147,14 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-29, Pre-4-C — full test suite)
-S1-72: 15 plan compiler tests (6 prior + 9 new EP-1..EP-9: resolvePolicy HTTP/MCP/LLM/override/compat)
-S1-73: 12 LocalExecutor tests (10 prior + 2 new EP-L1/L2: execNode timeout + no-deadline on zero)
+go test ./...  — all packages, 0 failures (verified 2026-08-29, Pre-4-C hardening — full test suite)
+S1-72: 17 plan compiler tests (15 prior + EP-2b: POST+retry→RequiresKey + EP-9 fixed semantics)
+S1-73: 20 LocalExecutor tests (12 prior + 8 new EP-L3..EP-L8: retry success/exhaust/non-retryable/cancel/idempotency)
 S1-74: 3 DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run)
 S1-75: 16 Phase 4-A tests (NA-01..NA-16: ExecuteNodeForActivity, ActivityIC, ExecutionBackend)
 S1-76: 18 Phase 4-B+EP tests (16 prior + 2 new CT-EP1/CT-EP2: NoResult bug fix + policy in plan)
 S1-54: 18 node registry tests (added TestNodeRegistry_ParallelIsImplemented)
-go test ./... total: 874 (861 + 13 new)
+go test ./... total: 882 (874 + 8 new)
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -412,6 +412,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 4-A | `ExecutionBackend` field in `AgentSpec`; `ExecuteNodeForActivity` adapter; `ActivityIC`; `Interpreter.Clone()`; 16 tests (S1-75) | ✅ commit `a1adbe8` |
 | 4-B | `CanvasAgentWorkflow` + `ExecuteStepActivity` + conformance tests CT-01..CT-10 + CT-A..CT-F in `internal/temporal/`; 16 tests (S1-76) | ✅ commit `68da87c` |
 | Pre-4-C | Unified `ExecutionPolicy` — `NodeDef` defaults, compiler resolution, `LocalExecutor` timeout, Temporal policy wiring, NoResult bug fix; 13 new tests (EP-1..9, EP-L1/2, CT-EP1/2) | ✅ |
+| Pre-4-C hardening | LocalExecutor retry loop + backoff; non-retryable short-circuit; idempotency guard; `RequiresIdempotencyKey` logic fix; frontend Execution Policy section in node Properties; 9 new tests (EP-2b, EP-L3..EP-L8) | ✅ |
 | 4-C | `TemporalExecutor`, `them-dag-worker`, `agent-runtime` wiring, Docker service | ⬜ |
 | 4-D | Frontend publish toggle | ⬜ |
 | 5 | Loop, HumanWait, A2A in DAG context | ⬜ |

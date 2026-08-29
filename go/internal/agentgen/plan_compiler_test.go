@@ -274,15 +274,28 @@ func TestResolvePolicy_HTTPGet(t *testing.T) {
 	}
 }
 
-// EP-2: HTTP POST → MaxAttempts=1, RequiresIdempotencyKey=true.
+// EP-2: HTTP POST → MaxAttempts=1, RequiresIdempotencyKey=false (no retry → key not required).
 func TestResolvePolicy_HTTPPost(t *testing.T) {
 	nd, _ := LookupNode(StepHTTP)
 	p := resolvePolicy(nd, httpCfg("POST"), nil)
 	if p.MaxAttempts != 1 {
 		t.Errorf("POST MaxAttempts: got %d want 1", p.MaxAttempts)
 	}
+	if p.RequiresIdempotencyKey {
+		t.Error("POST with MaxAttempts=1 must NOT require idempotency key (no retry possible)")
+	}
+}
+
+// EP-2b: HTTP POST with canvas override MaxAttempts=2 → RequiresIdempotencyKey=true.
+func TestResolvePolicy_HTTPPostRetryRequiresKey(t *testing.T) {
+	nd, _ := LookupNode(StepHTTP)
+	override := &ExecutionPolicy{MaxAttempts: 2}
+	p := resolvePolicy(nd, httpCfg("POST"), override)
+	if p.MaxAttempts != 2 {
+		t.Errorf("POST override MaxAttempts: got %d want 2", p.MaxAttempts)
+	}
 	if !p.RequiresIdempotencyKey {
-		t.Error("POST must require idempotency key")
+		t.Error("POST with MaxAttempts=2 MUST require idempotency key")
 	}
 }
 
@@ -383,7 +396,7 @@ func TestResolvePolicy_MCPMutatingVsRead(t *testing.T) {
 	if mutating.MaxAttempts != 1 {
 		t.Errorf("MCP mutating MaxAttempts: got %d want 1", mutating.MaxAttempts)
 	}
-	if !mutating.RequiresIdempotencyKey {
-		t.Error("MCP mutating must require idempotency key")
+	if mutating.RequiresIdempotencyKey {
+		t.Error("MCP mutating with MaxAttempts=1 must NOT require idempotency key (no retry possible)")
 	}
 }

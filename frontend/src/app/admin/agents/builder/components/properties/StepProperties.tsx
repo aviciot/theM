@@ -15,6 +15,7 @@ interface StepPropertiesProps {
   debug: DebugState;
   updateSelectedNodeField: (field: string, value: string) => void;
   updateStepConfig: (key: string, value: unknown) => void;
+  updateStepPolicy: (policy: Record<string, unknown> | null) => void;
   setDebug: React.Dispatch<React.SetStateAction<DebugState>>;
   debugStep: () => void;
   nodeTypesReady?: boolean;
@@ -24,7 +25,7 @@ interface StepPropertiesProps {
 
 export function StepProperties({
   selectedNode, localPipeNodes, localPipeEdges, validationIssues, stepContracts,
-  debug, updateSelectedNodeField, updateStepConfig, setDebug, debugStep,
+  debug, updateSelectedNodeField, updateStepConfig, updateStepPolicy, setDebug, debugStep,
   nodeTypesReady, onDeleteInput, onRenameInput,
 }: StepPropertiesProps) {
   const d = (localPipeNodes.find(n => n.id === selectedNode.id)?.data ?? selectedNode.data) as unknown as StepData;
@@ -85,6 +86,7 @@ export function StepProperties({
         localPipeNodes={localPipeNodes}
         localPipeEdges={localPipeEdges}
         updateStepConfig={updateStepConfig}
+        updateStepPolicy={updateStepPolicy}
         nodeTypesReady={nodeTypesReady}
       />
 

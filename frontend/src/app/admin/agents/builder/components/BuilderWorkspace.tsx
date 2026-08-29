@@ -289,6 +289,16 @@ export function BuilderWorkspace() {
     history.markDirty();
   }
 
+  function updateStepPolicy(policy: Record<string, unknown> | null) {
+    if (!graph.selectedNode || graph.activeView !== 'skill') return;
+    pipeline.setLocalPipeNodes(prev => prev.map(n =>
+      n.id === graph.selectedNode!.id
+        ? { ...n, data: { ...n.data, policy: policy ?? undefined } }
+        : n
+    ));
+    history.markDirty();
+  }
+
   return (
     <PortsPanelContext.Provider value={portsPanelCloseToken}>
     <LayoutDirContext.Provider value={graph.layoutDir}>
@@ -419,6 +429,7 @@ export function BuilderWorkspace() {
             debug={debugSession.debug}
             updateSelectedNodeField={updateSelectedNodeField}
             updateStepConfig={updateStepConfig}
+            updateStepPolicy={updateStepPolicy}
             setAgentNodes={graph.setAgentNodes}
             setDirty={lifecycle.setDirty}
             savePipelineState={pipeline.savePipelineState}
