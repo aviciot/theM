@@ -374,9 +374,9 @@ export function StepConfigSection({
             </div>
           </div>
           <div style={{ marginTop: 12, padding: '10px', background: 'rgba(249,115,22,0.06)', border: '1px solid rgba(249,115,22,0.25)', borderRadius: 6, fontSize: 11, color: '#94a3b8', lineHeight: 1.7 }}>
-            <strong style={{ color: '#f97316' }}>Exactly 2 output edges required:</strong><br />
-            <span style={{ color: '#4ade80' }}>1st edge drawn</span> → taken when expression is <strong>truthy</strong><br />
-            <span style={{ color: '#f87171' }}>2nd edge drawn</span> → taken when expression is <strong>falsy</strong><br />
+            <strong style={{ color: '#f97316' }}>Connect both output ports:</strong><br />
+            <span style={{ color: '#4ade80', fontWeight: 700 }}>T</span> port → step taken when expression is <strong>truthy</strong><br />
+            <span style={{ color: '#f87171', fontWeight: 700 }}>F</span> port → step taken when expression is <strong>falsy</strong><br />
             <span style={{ color: '#64748b', fontSize: 10 }}>Falsy values: empty string, <code style={{ color: '#94a3b8' }}>false</code>, <code style={{ color: '#94a3b8' }}>0</code>. Everything else is truthy.</span>
           </div>
         </>

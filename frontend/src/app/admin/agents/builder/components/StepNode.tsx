@@ -328,28 +328,71 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
       ))}
 
       {/* ── All OUTPUT handles ── */}
-      {outputPorts.map((port, idx) => (
-        <React.Fragment key={port.handleID}>
-          <Handle
-            id={port.handleID}
-            type="source"
-            position={sourcePos}
-            style={port.kind === 'control' ? ctrlHandleStyle('out') : outputHandleStyle(idx)}
-          />
-          {port.kind === 'control' && (
-            <div style={{
-              ...ctrlHandleStyle('out'),
-              position: 'absolute',
-              pointerEvents: 'none',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 10, color: hovered ? '#94a3b8' : '#64748b', fontWeight: 700, lineHeight: 1,
-              userSelect: 'none',
-            }}>
-              {isLR ? '›' : '∨'}
-            </div>
-          )}
-        </React.Fragment>
-      ))}
+      {(() => {
+        const ctrlOutPorts = outputPorts.filter(p => p.kind === 'control');
+        const dataOutPorts = outputPorts.filter(p => p.kind === 'data');
+        const multiCtrl = ctrlOutPorts.length > 1;
+
+        return (
+          <>
+            {ctrlOutPorts.map((port, idx) => {
+              const baseStyle = ctrlHandleStyle('out');
+              // For multi ctrl-out: build a clean style without duplicate top/transform keys
+              const portStyle: React.CSSProperties = multiCtrl
+                ? (() => {
+                    const { top: _t, transform: _tr, ...rest } = baseStyle;
+                    void _t; void _tr;
+                    return isLR
+                      ? { ...rest, top: `${33 + idx * 34}%`, transform: 'translateY(-50%)' }
+                      : { ...rest, left: `${33 + idx * 34}%`, transform: 'translateX(-50%)' };
+                  })()
+                : baseStyle;
+
+              const portLabel = multiCtrl
+                ? port.label.charAt(0).toUpperCase()
+                : (isLR ? '›' : '∨');
+
+              const labelColor = multiCtrl
+                ? (port.color || (hovered ? '#94a3b8' : '#64748b'))
+                : (hovered ? '#94a3b8' : '#64748b');
+
+              return (
+                <React.Fragment key={port.handleID}>
+                  <Handle
+                    id={port.handleID}
+                    type="source"
+                    position={sourcePos}
+                    style={portStyle}
+                  />
+                  <div style={{
+                    ...portStyle,
+                    position: 'absolute',
+                    pointerEvents: 'none',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: multiCtrl ? 9 : 10,
+                    color: labelColor,
+                    fontWeight: 700, lineHeight: 1,
+                    userSelect: 'none',
+                  }}>
+                    {portLabel}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+
+            {dataOutPorts.map((port, idx) => (
+              <React.Fragment key={port.handleID}>
+                <Handle
+                  id={port.handleID}
+                  type="source"
+                  position={sourcePos}
+                  style={outputHandleStyle(idx)}
+                />
+              </React.Fragment>
+            ))}
+          </>
+        );
+      })()}
 
       {/* ── Card content ── */}
       <div style={{
@@ -391,25 +434,27 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
           <div style={{ marginTop: 4, fontSize: '9px', color: '#f59e0b' }}>{isLR ? 'next →' : 'next ↓'}</div>
         )}
 
-        {/* Ports button */}
-        <button
-          className="nodrag nowheel nopan"
-          onClick={e => { e.stopPropagation(); setShowPortsPanel(v => !v); }}
-          style={{
-            marginTop: 6,
-            background: showPortsPanel ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.06)',
-            border: `1px solid ${showPortsPanel ? '#818cf8' : '#334155'}`,
-            borderRadius: 6,
-            color: showPortsPanel ? '#a5b4fc' : '#64748b',
-            fontSize: 13, cursor: 'pointer',
-            padding: '2px 7px', lineHeight: 1.4,
-            transition: 'all 0.15s',
-          }}
-          title="Show data ports"
-        >⊕</button>
+        {/* Ports button — hidden for branch (no data ports, only named ctrl-flow ports) */}
+        {nodeDef.type !== 'branch' && (
+          <button
+            className="nodrag nowheel nopan"
+            onClick={e => { e.stopPropagation(); setShowPortsPanel(v => !v); }}
+            style={{
+              marginTop: 6,
+              background: showPortsPanel ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.06)',
+              border: `1px solid ${showPortsPanel ? '#818cf8' : '#334155'}`,
+              borderRadius: 6,
+              color: showPortsPanel ? '#a5b4fc' : '#64748b',
+              fontSize: 13, cursor: 'pointer',
+              padding: '2px 7px', lineHeight: 1.4,
+              transition: 'all 0.15s',
+            }}
+            title="Show data ports"
+          >⊕</button>
+        )}
       </div>
 
-      {showPortsPanel && (
+      {nodeDef.type !== 'branch' && showPortsPanel && (
         <PortsPopover
           nodeId={id}
           nodeDef={nodeDef}

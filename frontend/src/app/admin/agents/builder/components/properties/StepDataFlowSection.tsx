@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
 import type { Node, Edge } from '@xyflow/react';
 import type { AgentIssue, StepContract } from '@/lib/api';
 import type { StepData } from '../../types';
@@ -157,9 +157,26 @@ export function StepDataFlowSection({
             const tgt = localPipeNodes.find(n => n.id === e.target);
             const tgtData = tgt?.data as unknown as StepData | undefined;
             const tgtMeta = tgtData ? stepMeta(tgtData.step_type) : { emoji: '?', label: 'unknown' };
+
+            const isBranch = d.step_type === 'branch';
+            let routeLabel: ReactNode;
+            if (isBranch) {
+              const handle = (e.sourceHandle ?? '').replace('ctrl-out-', '');
+              const isTrue = handle === 'true';
+              routeLabel = (
+                <code style={{ color: isTrue ? '#4ade80' : '#f87171', fontSize: '11px', fontFamily: 'monospace' }}>
+                  {isTrue ? 'true' : 'false'}
+                </code>
+              );
+            } else {
+              routeLabel = (
+                <code style={{ color: C.green, fontSize: '11px', fontFamily: 'monospace' }}>{`{{${outVar}}}`}</code>
+              );
+            }
+
             return (
               <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '6px', marginBottom: '4px', background: 'rgba(74,222,128,0.05)', border: '1px solid rgba(74,222,128,0.2)' }}>
-                <code style={{ color: C.green, fontSize: '11px', fontFamily: 'monospace' }}>{`{{${outVar}}}`}</code>
+                {routeLabel}
                 <span style={{ color: C.textMuted, fontSize: '11px' }}>→</span>
                 <span style={{ fontSize: '14px' }}>{tgtMeta.emoji}</span>
                 <span style={{ color: '#e2e8f0', fontSize: '11px', fontWeight: 600 }}>{tgtData?.label || tgtMeta.label}</span>
