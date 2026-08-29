@@ -7,12 +7,12 @@
 ## HEAD
 
 Branch: `main`
-Commit: `[pending — see below]` — feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
+Commit: `a0457bd` — feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
 
 Recent commits (newest first):
 ```
-[new commit]  feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
-d442def       docs(current): record approved ExecutionPolicy plan
+a0457bd  feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
+d442def  docs(current): record approved ExecutionPolicy plan
 dceb844       docs(temporal): fix all contradictions in TEMPORAL_EXECUTOR_DESIGN.md vs Phase 4-B code
 68da87c       feat(temporal): Phase 4-B — CanvasAgentWorkflow + ExecuteStepActivity + 16 conformance tests
 a1adbe8       feat(agentgen): Phase 4-A — ExecutionBackend field, ExecuteNodeForActivity adapter, ActivityIC
