@@ -30,12 +30,8 @@ const FLOW_COLOR  = '#64748b';
 // Data port colors — cycled by index
 const DATA_COLORS = ['#818cf8', '#a78bfa', '#7dd3fc', '#6ee7b7', '#fcd34d', '#f9a8d4'];
 
-// Inject global styles once — kills RF default node background, defines breathe keyframe
+// Inject global styles once — kills RF default node background
 const GLOBAL_CSS = `
-@keyframes breathe {
-  0%,100% { box-shadow: 0 0 6px 2px var(--breathe-color); }
-  50%      { box-shadow: 0 0 20px 8px var(--breathe-color); }
-}
 .react-flow__node { background: transparent !important; border: none !important; padding: 0 !important; box-shadow: none !important; }
 `;
 if (typeof document !== 'undefined' && !document.getElementById('sn-global-css')) {
@@ -210,15 +206,6 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
   const portKey = [...inputPorts.map(p => p.handleID), ...outputPorts.map(p => p.handleID)].join(',');
   useEffect(() => { updateNodeInternals(id); }, [portKey, id, updateNodeInternals]);
 
-  // ── Breathing glow — unsatisfied mandatory ports ──────────────────────────
-  const needsIn  = nodeDef.edges.min_in  > 0 && !hasCtrlIn  && !nodeDef.is_source;
-  const needsOut = nodeDef.edges.min_out > 0 && !hasCtrlOut && !nodeDef.is_sink;
-  const breathes = (needsIn || needsOut) && !dbg?.state;
-
-  const breatheColor = needsIn && needsOut
-    ? 'rgba(245,158,11,0.6)'
-    : needsIn ? 'rgba(99,102,241,0.6)' : 'rgba(74,222,128,0.5)';
-
   // ── Visual state ──────────────────────────────────────────────────────────
   const state = dbg?.state ?? 'idle';
   let borderColor = meta.border;
@@ -240,10 +227,6 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
   } else if (dragAccept === 'reject') {
     borderColor = '#f87171';
     boxShadow   = '0 0 0 3px rgba(248,113,113,0.5), 0 0 12px 3px rgba(248,113,113,0.3)';
-  } else if (breathes) {
-    animation   = 'breathe 2.2s ease-in-out infinite';
-    boxShadow   = `0 0 6px 2px ${breatheColor}`;
-    borderColor = breatheColor.replace('0.6', '0.9').replace('0.5', '0.8');
   } else if (hovered) {
     boxShadow = `0 0 0 1px ${meta.border}, 0 0 12px 3px ${meta.border}44`;
   }
@@ -254,6 +237,28 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
   const invisHandle: React.CSSProperties = {
     width: 1, height: 1, opacity: 0, border: 'none', background: 'transparent',
   };
+
+  // Flow (ctrl) handles — visible arrow dots on the card edge, hoverable
+  function ctrlHandleStyle(side: 'in' | 'out'): React.CSSProperties {
+    const base: React.CSSProperties = {
+      width: 12, height: 12,
+      borderRadius: '50%',
+      background: FLOW_COLOR,
+      border: '2px solid rgba(255,255,255,0.18)',
+      opacity: hovered ? 1 : 0.35,
+      transition: 'opacity 0.15s, transform 0.15s',
+      cursor: 'crosshair',
+      zIndex: 5,
+    };
+    if (isLR) {
+      return side === 'in'
+        ? { ...base, left: -6, top: '50%', transform: 'translateY(-50%)' }
+        : { ...base, right: -6, top: '50%', transform: 'translateY(-50%)' };
+    }
+    return side === 'in'
+      ? { ...base, top: -6, left: '50%', transform: 'translateX(-50%)' }
+      : { ...base, bottom: -6, left: '50%', transform: 'translateX(-50%)' };
+  }
 
   function inputHandleStyle(idx: number): React.CSSProperties {
     const off = dotOffset(idx);
@@ -293,7 +298,6 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         paddingRight:  rightPad,
         overflow: 'visible',
         zIndex: showPortsPanel ? 10 : undefined,
-        ['--breathe-color' as string]: breatheColor,
       }}
     >
       {/* ── All INPUT handles ── */}
@@ -303,7 +307,7 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
           id={port.handleID}
           type="target"
           position={targetPos}
-          style={inputHandleStyle(idx)}
+          style={port.kind === 'control' ? ctrlHandleStyle('in') : inputHandleStyle(idx)}
         />
       ))}
 
@@ -314,7 +318,7 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
           id={port.handleID}
           type="source"
           position={sourcePos}
-          style={outputHandleStyle(idx)}
+          style={port.kind === 'control' ? ctrlHandleStyle('out') : outputHandleStyle(idx)}
         />
       ))}
 
