@@ -258,6 +258,40 @@ type BranchStepConfig struct {
 	FalseNext  string `json:"false_next"` // step ID when false
 }
 
+// ── ExecutionPlan ─────────────────────────────────────────────────────────────
+// ExecutionPlan is compiled from a SkillSpec by CompileExecutionPlan.
+// It is a richer, executor-ready representation of the DAG with join annotations.
+// Stored alongside AgentSpec; the same plan is executed by LocalExecutor or
+// TemporalExecutor without modification.
+
+type JoinMode string
+
+const (
+	JoinNone    JoinMode = "none"     // standard node — no join
+	JoinWaitAll JoinMode = "wait_all" // block until ALL predecessor branches arrive
+	JoinWaitAny JoinMode = "wait_any" // reserved; not implemented in Phase 1
+)
+
+// ExecutionPlan is the compiled, executor-ready form of one skill's DAG.
+type ExecutionPlan struct {
+	SkillID string      `json:"skill_id"`
+	StartID string      `json:"start_id"` // ID of the entry step (type: input or first step)
+	Nodes   []*PlanNode `json:"nodes"`
+}
+
+// PlanNode is one node in the ExecutionPlan.
+type PlanNode struct {
+	StepID   string          `json:"step_id"`
+	Type     StepType        `json:"type"`
+	Config   json.RawMessage `json:"config"`
+	Next     []string        `json:"next"`              // len>1 = fan-out point
+	JoinOf   []string        `json:"join_of,omitempty"` // predecessor IDs that must all arrive
+	JoinMode JoinMode        `json:"join_mode"`
+	Inputs   []VarRef        `json:"inputs,omitempty"`
+	Outputs  []VarRef        `json:"outputs,omitempty"`
+	Branches []BranchArm     `json:"branches,omitempty"`
+}
+
 // MCPCallConfig configures an mcp_call canvas step.
 type MCPCallConfig struct {
 	MCPServerSlug string `json:"mcp_server_slug"` // slug of the MCP server registered in the admin UI

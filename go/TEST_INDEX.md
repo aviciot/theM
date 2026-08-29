@@ -1599,6 +1599,24 @@ Inputs/Outputs for each node type, that missing upstream writers emit the right 
 
 ---
 
+### S1-70 · ExecutionPlan compiler — `internal/agentgen/plan_compiler_test.go`
+
+**Purpose:** Phase 0 of DAG execution. Verifies that `CompileExecutionPlan` produces a correct
+`ExecutionPlan` with join annotations from a `SkillSpec`. No runtime changes — purely additive
+types and compiler pass.
+
+| Test | What it proves |
+|---|---|
+| `TestCompileExecutionPlan_Linear` | A→B→C linear chain: no join nodes, correct `Next` pointers, correct `StartID` |
+| `TestCompileExecutionPlan_FanOutJoin` | Diamond DAG (s1→s2a,s2b→s3): s1 has len(Next)=2; s3 gets `JoinWaitAll` + `JoinOf=[s2a,s2b]` |
+| `TestCompileExecutionPlan_Branch` | Branch DAG (s1→br→s_true/s_false→s_end): s_end gets `JoinWaitAll` with both branch arms as predecessors |
+| `TestCompileExecutionPlan_Nil` | nil input and empty-step skill both return non-nil plan with zero nodes; no panic |
+
+**Trigger:** any change to `internal/agentgen/plan_compiler.go` or `internal/agentgen/spec.go`
+(`ExecutionPlan`, `PlanNode`, `JoinMode` types)
+
+---
+
 ### S1-51 · Agent definition publish service — `internal/admin/service/agent_definitions_publish_test.go`
 
 **Purpose:** Canvas A2A Builder validate/publish service layer. Verifies DAL delegation,
