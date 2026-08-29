@@ -1,8 +1,12 @@
 'use client';
 import React from 'react';
-import { Handle, Position, useConnection } from '@xyflow/react';
+import { useConnection, Position } from '@xyflow/react';
 import { resolveInputPorts, resolveOutputPorts } from '@/lib/nodeRegistry';
 import type { NodeDef } from '@/lib/nodeRegistry';
+
+// PortsPopover is display-only — it shows which data ports exist on this node.
+// All Handle elements live exclusively in StepNode (the permanent invisible handles
+// at rail offsets). Duplicating Handles here caused silent ReactFlow edge misrouting.
 
 const DATA_COLORS = ['#818cf8', '#a78bfa', '#7dd3fc', '#6ee7b7', '#fcd34d', '#f9a8d4'];
 
@@ -18,14 +22,11 @@ interface PortsPopoverProps {
 }
 
 export function PortsPopover({
-  nodeId,
   nodeDef,
   cfg,
   committedInputPortIDs,
   wiredOutputPortIDs,
   isLR,
-  sourcePos,
-  targetPos,
 }: PortsPopoverProps) {
   const connection = useConnection();
   const isDragging = connection.inProgress;
@@ -34,7 +35,7 @@ export function PortsPopover({
   const outPorts = resolveOutputPorts(nodeDef, cfg, wiredOutputPortIDs)
     .filter(p => p.kind === 'data');
 
-  const opacity      = isDragging ? 0.45 : 1;
+  const opacity       = isDragging ? 0.45 : 1;
   const pointerEvents = isDragging ? 'none' : 'all';
 
   const panelStyle: React.CSSProperties = {
@@ -62,21 +63,24 @@ export function PortsPopover({
     );
   }
 
+  function portDot(color: string) {
+    return (
+      <div style={{
+        width: 8, height: 8, borderRadius: '50%',
+        background: color, flexShrink: 0,
+      }} />
+    );
+  }
+
   return (
     <div className="nodrag nowheel nopan" style={panelStyle}>
-      {/* IN ports — status only, no handles here */}
+      {/* IN ports — display only */}
       {inPorts.length > 0 && (
         <div style={{ marginBottom: outPorts.length > 0 ? 10 : 0 }}>
           {sectionLabel('IN')}
           {inPorts.map((p, i) => (
-            <div key={p.id} style={{
-              display: 'flex', alignItems: 'center', gap: 6, marginBottom: i < inPorts.length - 1 ? 4 : 0,
-            }}>
-              <div style={{
-                width: 8, height: 8, borderRadius: '50%',
-                background: p.color || DATA_COLORS[i % DATA_COLORS.length],
-                flexShrink: 0,
-              }} />
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: i < inPorts.length - 1 ? 4 : 0 }}>
+              {portDot(p.color || DATA_COLORS[i % DATA_COLORS.length])}
               <span style={{ fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: '#cbd5e1' }}>
                 {p.label}
               </span>
@@ -85,49 +89,23 @@ export function PortsPopover({
         </div>
       )}
 
-      {/* OUT ports — real draggable Handle elements */}
+      {/* OUT ports — display only; drag from the invisible handles on the node card */}
       {outPorts.length > 0 && (
         <div>
           {sectionLabel('OUT')}
           {outPorts.map((p, i) => {
             const color = p.color || DATA_COLORS[i % DATA_COLORS.length];
             return (
-              <div key={p.id} style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                marginBottom: i < outPorts.length - 1 ? 4 : 0,
-                position: 'relative',
-              }}>
+              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: i < outPorts.length - 1 ? 4 : 0 }}>
                 <span style={{ fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: '#cbd5e1', flex: 1 }}>
                   {p.label}
                 </span>
-                {/* Drag grip with real Handle */}
                 <div style={{
-                  position: 'relative', width: 20, height: 20,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: 12, height: 12, borderRadius: '50%',
+                  background: color,
+                  boxShadow: `0 0 6px 2px ${color}88`,
                   flexShrink: 0,
-                }}>
-                  <div style={{
-                    width: 12, height: 12, borderRadius: '50%',
-                    background: color,
-                    boxShadow: `0 0 6px 2px ${color}88`,
-                    cursor: 'crosshair',
-                    pointerEvents: 'none',
-                  }} />
-                  <Handle
-                    id={p.id}
-                    type="source"
-                    position={sourcePos}
-                    style={{
-                      position: 'absolute',
-                      inset: 0, margin: 'auto',
-                      width: 20, height: 20,
-                      opacity: 0,
-                      background: 'transparent',
-                      border: 'none',
-                      cursor: 'crosshair',
-                    }}
-                  />
-                </div>
+                }} />
               </div>
             );
           })}
@@ -137,21 +115,6 @@ export function PortsPopover({
       {inPorts.length === 0 && outPorts.length === 0 && (
         <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>No data ports</div>
       )}
-
-      {/* Target handles for IN ports — invisible, positioned at the node edge for drop */}
-      {inPorts.map(p => (
-        <Handle
-          key={`t-${p.id}`}
-          id={p.id}
-          type="target"
-          position={targetPos}
-          style={{
-            position: 'absolute',
-            width: 1, height: 1,
-            opacity: 0, background: 'transparent', border: 'none',
-          }}
-        />
-      ))}
     </div>
   );
 }

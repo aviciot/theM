@@ -49,6 +49,7 @@ interface BuilderCanvasProps {
   onPipeConnectStart: (e: unknown, params: { nodeId: string | null; handleId: string | null; handleType: string | null }) => void;
   onPipeConnectEnd: () => void;
   isPipeConnectionValid: (conn: Connection | Edge) => boolean;
+  onClosePopovers: () => void;
   onNodeCtx: (e: MouseEvent, node: Node) => void;
   onEdgeCtx: (e: MouseEvent, edge: Edge) => void;
   onAgentNodeDoubleClick: (e: MouseEvent, node: Node) => void;
@@ -74,7 +75,7 @@ export function BuilderCanvas({
   onAgentNodesChange, onAgentEdgesChange, onPipeNodesChange, onPipeEdgesChange,
   debugNodes, debugEdges, localPipeNodes, displayPipeEdges,
   onAgentConnect, onPipeConnect, onPipeConnectStart, onPipeConnectEnd, isPipeConnectionValid,
-  onNodeCtx, onEdgeCtx, onAgentNodeDoubleClick, onPipeNodeDoubleClick,
+  onClosePopovers, onNodeCtx, onEdgeCtx, onAgentNodeDoubleClick, onPipeNodeDoubleClick,
   setSelectedNode, closeCtx, ctxMenu, ctxDelete, ctxEditPipeline,
   fitView, applyDagreAndFit, toggleLayoutDir, layoutDir, debugActive,
   onAgentDrop, onPipeDrop, stableNodeTypes, stableEdgeTypes,
@@ -125,9 +126,9 @@ export function BuilderCanvas({
           onConnect={onAgentConnect}
           onNodeContextMenu={onNodeCtx}
           onEdgeContextMenu={onEdgeCtx}
-          onNodeClick={(_: MouseEvent, node: Node) => { setSelectedNode(node); closeCtx(); }}
+          onNodeClick={(_: MouseEvent, node: Node) => { setSelectedNode(node); closeCtx(); onClosePopovers(); }}
           onNodeDoubleClick={onAgentNodeDoubleClick}
-          onPaneClick={() => { setSelectedNode(null); closeCtx(); }}
+          onPaneClick={() => { setSelectedNode(null); closeCtx(); onClosePopovers(); }}
           nodeTypes={stableNodeTypes}
           panOnDrag={[1]}
           selectionMode={SelectionMode.Partial}
@@ -151,9 +152,9 @@ export function BuilderCanvas({
           isValidConnection={isPipeConnectionValid}
           onNodeContextMenu={onNodeCtx}
           onEdgeContextMenu={onEdgeCtx}
-          onNodeClick={(_: MouseEvent, node: Node) => { setSelectedNode(node); closeCtx(); }}
+          onNodeClick={(_: MouseEvent, node: Node) => { setSelectedNode(node); closeCtx(); onClosePopovers(); }}
           onNodeDoubleClick={onPipeNodeDoubleClick}
-          onPaneClick={() => { setSelectedNode(null); closeCtx(); }}
+          onPaneClick={() => { setSelectedNode(null); closeCtx(); onClosePopovers(); }}
           nodeTypes={stableNodeTypes}
           edgeTypes={stableEdgeTypes}
           panOnDrag={[1]}

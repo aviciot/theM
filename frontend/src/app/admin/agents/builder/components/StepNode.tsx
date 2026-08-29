@@ -4,6 +4,7 @@ import { getNodeDef, resolveOutputPorts } from '@/lib/nodeRegistry';
 import type { ResolvedPort } from '@/lib/nodeRegistry';
 import type { StepNodeData, DebugNodeState } from '../types';
 import { useLayoutDir } from '../LayoutContext';
+import { usePortsPanelCloseToken } from '../PortsPanelContext';
 import { PortsPopover } from './PortsPopover';
 import { extractTemplateVars } from '../nodeVars';
 
@@ -176,13 +177,12 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
   const onMouseEnter = useCallback(() => setHovered(true),  []);
   const onMouseLeave = useCallback(() => setHovered(false), []);
 
+  // Close popover when canvas broadcasts a close signal (node/pane click elsewhere)
+  const closeToken = usePortsPanelCloseToken();
+  useEffect(() => { setShowPortsPanel(false); }, [closeToken]);
+
   // Live edges from RF store
   const edges = useStore(s => s.edges);
-
-  const hasCtrlIn  = edges.some(e => e.target === id &&
-    (e.targetHandle === 'ctrl-in' || !e.targetHandle?.startsWith('data')));
-  const hasCtrlOut = edges.some(e => e.source === id &&
-    (e.sourceHandle === 'ctrl-out' || e.sourceHandle?.startsWith('ctrl-out')));
 
   const wiredOutIDs = edges
     .filter(e => e.source === id && e.sourceHandle?.startsWith('data-out-'))
@@ -277,8 +277,10 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
       : { ...invisHandle, left: off, bottom: 0 };
   }
 
-  // Card sizing — stable, based on max port count
-  const maxPorts  = Math.max(inputPorts.length, outputPorts.length);
+  // Card sizing — data ports only; ctrl handles are absolutely positioned and need no rail space
+  const dataInCount  = inputPorts.filter(p => p.kind === 'data').length;
+  const dataOutCount = outputPorts.filter(p => p.kind === 'data').length;
+  const maxPorts  = Math.max(dataInCount, dataOutCount);
   const railH     = maxPorts > 0 ? PORT_START + maxPorts * PORT_STEP + PORT_START : 0;
   const cardH     = Math.max(80, railH);
 

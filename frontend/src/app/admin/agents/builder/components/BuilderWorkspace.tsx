@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useRef, useState, type DragEvent, type M
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useReactFlow, type Node, type Edge, type NodeTypes, type EdgeTypes } from '@xyflow/react';
 import { LayoutDirContext } from '../LayoutContext';
+import { PortsPanelContext } from '../PortsPanelContext';
 import { C, INITIAL_DEBUG, genUUID } from '../constants';
 import type { SkillData } from '../types';
 import type { AgentStepDoc } from '@/lib/api';
@@ -106,6 +107,10 @@ export function BuilderWorkspace() {
   const stableNodeTypes = React.useMemo<NodeTypes>(() => nodeTypes, []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableEdgeTypes = React.useMemo<EdgeTypes>(() => edgeTypes, []);
+
+  // ── Ports panel close broadcast ───────────────────────────────────────────────
+  const [portsPanelCloseToken, setPortsPanelCloseToken] = useState(0);
+  const closeAllPopovers = useCallback(() => setPortsPanelCloseToken(t => t + 1), []);
 
   // ── Context menu ──────────────────────────────────────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; target: CtxTarget } | null>(null);
@@ -285,6 +290,7 @@ export function BuilderWorkspace() {
   }
 
   return (
+    <PortsPanelContext.Provider value={portsPanelCloseToken}>
     <LayoutDirContext.Provider value={graph.layoutDir}>
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg }}>
       <BuilderTopBar
@@ -377,6 +383,7 @@ export function BuilderWorkspace() {
           onPipeConnectStart={pipeline.onPipeConnectStart}
           onPipeConnectEnd={pipeline.onPipeConnectEnd}
           isPipeConnectionValid={pipeline.isPipeConnectionValid}
+          onClosePopovers={closeAllPopovers}
           onNodeCtx={onNodeCtx}
           onEdgeCtx={onEdgeCtx}
           onAgentNodeDoubleClick={onAgentNodeDoubleClick}
@@ -427,5 +434,6 @@ export function BuilderWorkspace() {
       </div>
     </div>
     </LayoutDirContext.Provider>
+    </PortsPanelContext.Provider>
   );
 }
