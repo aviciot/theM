@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `b5767b0` — feat(agentgen): implement StepParallel.Execute — fan-out coordinator is now executable
+Commit: `cd9632f` — fix(canvas): 3 canvas port bugs — duplicate Handles, popover auto-close, branch card height
 
 Recent commits (newest first):
 ```
+cd9632f fix(canvas): 3 canvas port bugs — duplicate Handles, popover auto-close, branch card height
 b5767b0 feat(agentgen): implement StepParallel.Execute — fan-out coordinator is now executable
 bd2ffbd test(agentgen): DAG E2E smoke tests — CompileExecutionPlan + LocalExecutor + real node types
 d471f9f fix(agentgen): harden plan compiler — classifyJoin + BranchMerge + race tests
 a9528d6 feat(agent-runtime): wire LocalExecutor as execution backend
-82c5be4 fix(agentgen): harden DAG execution — branch-aware joins, deterministic merge, causal error
 ```
 
 ---
@@ -229,6 +229,7 @@ App global params: e2e validated 2026-08-25 — GET/PUT/DELETE live ✅
 | Multi-port Phase 3 | BundleEdge: groups data edges between same node pair into port-rail cable visual; EdgeLabelRenderer dots+labels; count badge; `applyBundleGroups()`; data handles invisible (1×1) — geometry only; `useStore(s.edges)` for wired-port detection; Dagre height scales with port count | ✅ |
 | Unified port model | All flow (→) and data ports in one unified hover-reveal list per side; no separate ctrl-in/ctrl-out center handles; `PortDot` scale+opacity CSS transition; wired ports permanently visible; branch gets named true/false flow out ports; port alias rename in RightPanel READS section | ✅ |
 | Canvas port UX clean rewrite | Removed all backward-compat code (PORTS_V2 flag, PortDot component, breathing animation, legacy paths). `PortsPopover` as absolutely-positioned child of `StepNode`; ctrl handles as always-visible 18px circles with ‹/› arrows. `BundleEdge` rewritten: single bezier + circular N-badge + MappingSheet popover; `callDeleteMapping` module registry for delete callbacks. `resolveOutputPorts` always includes static ports. | ✅ |
+| Canvas port bug fixes (cd9632f) | CRITICAL: PortsPopover duplicate Handle IDs → display-only (no `<Handle>` JSX). HIGH: PortsPanelContext broadcast closes all popovers on node/pane click. MEDIUM: card height now counts only data ports. LOW: dead `hasCtrlIn`/`hasCtrlOut` vars removed. | ✅ |
 
 ### Key security constraints (always in force)
 - Credentials decrypted per-request, held only in `InvocationContext.Credentials`, never logged/persisted
@@ -430,6 +431,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 ### Step 1 — DAG live canvas validation (recommended first)
 Build a canvas agent with a Branch or Parallel node in the UI and run it live through `them-agent-runtime`.
 All the E2E unit tests pass, but live canvas DAG execution hasn't been smoke-tested on real canvas agents yet.
+Canvas port UX bugs are now fixed (cd9632f) so the builder should be usable for this test.
 This is low-risk — just create a simple agent in the canvas UI and verify the run completes correctly.
 
 ### Step 2 — DAG Phase 4: TemporalExecutor (medium priority)
