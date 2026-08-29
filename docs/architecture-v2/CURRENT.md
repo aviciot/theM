@@ -7,15 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `a9528d6` — feat(agent-runtime): wire LocalExecutor as execution backend
+Commit: `b5767b0` — feat(agentgen): implement StepParallel.Execute — fan-out coordinator is now executable
 
 Recent commits (newest first):
 ```
+b5767b0 feat(agentgen): implement StepParallel.Execute — fan-out coordinator is now executable
+bd2ffbd test(agentgen): DAG E2E smoke tests — CompileExecutionPlan + LocalExecutor + real node types
+d471f9f fix(agentgen): harden plan compiler — classifyJoin + BranchMerge + race tests
 a9528d6 feat(agent-runtime): wire LocalExecutor as execution backend
 82c5be4 fix(agentgen): harden DAG execution — branch-aware joins, deterministic merge, causal error
-ddaca40 feat(agentgen): DAG Phase 2+3 — race-free LocalExecutor + canvas fan-out unlocked
-e1544bc docs(current): update state — canvas port rewrite + DAG Phase 0+1 complete
-f5737c0 feat(agentgen): LocalExecutor — goroutine DAG fan-out + wait_all join (Phase 1)
 ```
 
 ---
@@ -147,23 +147,12 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test -race ./...  — all packages, 0 failures, 0 races (verified 2026-08-29, DAG hardening)
+go test -race ./...  — all packages, 0 failures, 0 races (verified 2026-08-29, DAG E2E + StepParallel)
 S1-72: 6 plan compiler tests (TestCompileExecutionPlan_* — including MixedFanOut + BranchMerge)
 S1-73: 10 LocalExecutor tests (TestLocalExecutor_* including Branch/DeterministicMerge/CausalError, TestDeepCopyVars_*)
-S1 total: 800+ tests
-  S1-63: CMP-10..14 (compiler LLM node collection — 5 tests, rewrote from AppParamRefs)
-  S1-64: INT-10..14 (interpreter AppParamRef HTTP + NodeLLMOverride — 5 tests, INT-14 rewritten)
-  S1-65: RT-20..24 (runtime decodeAppGlobalParams — 5 tests)
-  S1-66: HTTP-20..25+ (handler layer — 11 tests)
-  fake DAL stubs updated in all 4 test files for GetAgentLLMNodes/UpsertNodeLLMOverride
-go test ./... total: 793 (+ 31 new tests from data-flow + step contracts work, see below)
-
-New tests this session (verified 2026-08-27):
-  S1-65 (reused): 28 data-flow tests in internal/agentgen/dataflow_test.go
-    - VarRef derivation for all 11 node types (DF-01..19)
-    - Stage 5 validateDataFlow UNRESOLVED_INPUT (DF-20..26)
-    - Path-sensitive branch analysis (DF-27..29)
-  internal/admin/service: TestValidateAgentDefinition_StepContractsPopulated (new)
+S1-74: 3 DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run)
+S1-54: 18 node registry tests (added TestNodeRegistry_ParallelIsImplemented)
+go test ./... total: 829
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -413,6 +402,10 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 2 | Race detector validation — `go test -race ./...` green; `Interpreter.clone()` fix for `nextStepOverride` contention | ✅ commit `ddaca40` |
 | 3 | Canvas unlock — `max_out: 0` on LLM/HTTP/A2ACall/HumanWait/MCPCall in `nodes.go` | ✅ commit `ddaca40` |
 | Hardening | Branch-aware joins (`JoinBranchMerge` vs `JoinWaitAll`); deterministic merge (predecessor-keyed map + JoinOf order); causal error preservation; 4 new tests (S1-72/73 expanded) | ✅ commit `82c5be4` |
+| Compiler fix | `classifyJoin()` rewrite — fixes fan-out source vs fan-out target level confusion; MixedFanOut + BranchMerge tests | ✅ commit `d471f9f` |
+| Wired | `cmd/agent-runtime/main.go` uses `LocalExecutor` (not sequential `Interpreter.Execute`) | ✅ commit `a9528d6` |
+| E2E tests | `agentgen_test.go` — 3 smoke tests through CompileExecutionPlan + LocalExecutor + real node types (S1-74) | ✅ commit `bd2ffbd` |
+| StepParallel | `StepParallel.Execute` implemented (no-op fan-out coordinator); removed from stub list | ✅ commit `b5767b0` |
 | 4 | `TemporalExecutor` — `ExecuteStepActivity` + `TemporalExecutor` struct | ⬜ |
 | 5 | Loop, HumanWait, A2A in DAG context | ⬜ |
 
@@ -434,14 +427,16 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Step 1 — DAG Phase 4: TemporalExecutor (next)
+### Step 1 — DAG live canvas validation (recommended first)
+Build a canvas agent with a Branch or Parallel node in the UI and run it live through `them-agent-runtime`.
+All the E2E unit tests pass, but live canvas DAG execution hasn't been smoke-tested on real canvas agents yet.
+This is low-risk — just create a simple agent in the canvas UI and verify the run completes correctly.
+
+### Step 2 — DAG Phase 4: TemporalExecutor (medium priority)
 Implement `TemporalExecutor` as an `ExecutionBackend` that runs each `PlanNode` as a Temporal activity.
 All DAG semantics (join detection, branch-aware merge, error propagation) are already correct in the
 compiled `ExecutionPlan` — the Temporal executor just needs to schedule activities per the plan graph.
-
-### Step 2 — Multi-output fan-out E2E test (optional but recommended)
-Build a canvas agent with a Branch or multi-output LLM node and verify the live DAG path works end-to-end.
-Now that `them-agent-runtime` uses `LocalExecutor`, this is a live smoke test rather than a unit test.
+**This is a new session task** — significant architecture scope.
 
 ### Step 3 — Auth admin CRUD Go proxy (lower priority)
 - `them-auth-service` (Python, port 8701) still serves user/role/team management
