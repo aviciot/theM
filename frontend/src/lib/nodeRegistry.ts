@@ -185,12 +185,14 @@ export function resolveInputPorts(
  * 1. Named control-flow output ports (from control_output_ports, e.g. branch true/false)
  * 2. One anonymous control output (when no named control ports and node is not a sink)
  * 3. Dynamic data output ports (from dynamic_output_source evaluated against cfg)
- * 4. Static data output ports (from output_ports) — only if already wired
+ * 4. Static data output ports (from output_ports) — only if already wired, unless
+ *    options.includeUnwiredStatic is true (used by PortsPopover to show all available outputs)
  */
 export function resolveOutputPorts(
   nodeDef: NodeDef,
   cfg: Record<string, unknown>,
   committedOutputPortIDs: string[] = [], // port IDs that already have a data edge from them
+  options?: { includeUnwiredStatic?: boolean },
 ): ResolvedPort[] {
   const ports: ResolvedPort[] = [];
 
@@ -237,10 +239,11 @@ export function resolveOutputPorts(
     }
   }
 
-  // Static data output ports (llm: output, etc.) — only show if already wired via a data edge.
+  // Static data output ports (llm: output, etc.) — only show if already wired via a data edge,
+  // unless includeUnwiredStatic is true (for PortsPopover showing all available ports).
   const wiredOutputSet = new Set(committedOutputPortIDs);
   for (const port of nodeDef.output_ports ?? []) {
-    if (!wiredOutputSet.has(port.id)) continue; // not wired yet — don't show the square
+    if (!options?.includeUnwiredStatic && !wiredOutputSet.has(port.id)) continue;
     ports.push({
       id: `data-out-${port.id}`,
       label: truncLabel(port.label || port.id),

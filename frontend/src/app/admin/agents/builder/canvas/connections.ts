@@ -25,6 +25,22 @@ export function topoSort(nodes: Node[], edges: Edge[]): string[] | null {
   return order.length === nodes.length ? order : null;
 }
 
+/** One data-flow mapping represented in a bundle edge. */
+export interface MappingRecord {
+  edgeId: string;
+  sourceHandle: string;
+  targetHandle: string;
+  portLabel: string;
+}
+
+/**
+ * All data edges between the same source→target pair are collapsed into a
+ * single BundleEdge (leader) with a `mappings` array. Non-leader edges get
+ * `hidden: true` so React Flow still tracks their handles but doesn't draw them.
+ *
+ * Even a single data mapping renders as a BundleEdge — gives consistent UX
+ * (badge always visible, MappingSheet always openable).
+ */
 export function applyBundleGroups(edges: Edge[], layoutDir: 'LR' | 'TB'): Edge[] {
   const dataEdges = edges.filter(isDataEdge);
   const ctrlEdges = edges.filter(e => !isDataEdge(e));
@@ -38,30 +54,49 @@ export function applyBundleGroups(edges: Edge[], layoutDir: 'LR' | 'TB'): Edge[]
 
   const result: Edge[] = [...ctrlEdges];
   for (const group of groups.values()) {
-    if (group.length === 1) {
-      result.push(group[0]);
-      continue;
-    }
-    const portLabels = group.map(e => {
+    const mappings: MappingRecord[] = group.map(e => {
       const sh = (e.sourceHandle ?? '').replace('data-out-', '');
-      return sh || (e.targetHandle ?? '').replace('data-in-', '') || '?';
+      const th = (e.targetHandle ?? '').replace('data-in-', '');
+      return {
+        edgeId: e.id,
+        sourceHandle: e.sourceHandle ?? '',
+        targetHandle: e.targetHandle ?? '',
+        portLabel: sh || th || '?',
+      };
     });
+
     group.forEach((e, i) => {
-      result.push({
-        ...e,
-        type: 'bundleEdge',
-        data: {
-          ...(e.data as object ?? {}),
-          kind: 'data',
-          portLabel: portLabels[i],
-          bundleIndex: i,
-          bundleTotal: group.length,
-          bundlePorts: portLabels,
-          isLeader: i === 0,
-          layoutDir,
-        },
-      });
+      if (i === 0) {
+        result.push({
+          ...e,
+          type: 'bundleEdge',
+          data: {
+            ...(e.data as object ?? {}),
+            kind: 'data',
+            mappings,
+            isLeader: true,
+            layoutDir,
+          },
+        });
+      } else {
+        result.push({ ...e, hidden: true });
+      }
     });
   }
   return result;
+}
+
+// ── Module-level callback registry for BundleEdge → useSkillPipeline ─────────
+// BundleEdge is a pure React component with no access to pipeline callbacks.
+// The delete callback is registered here and called by edgeId.
+
+type DeleteMappingFn = (edgeId: string) => void;
+let _deleteMappingFn: DeleteMappingFn | null = null;
+
+export function registerDeleteMapping(fn: DeleteMappingFn): void {
+  _deleteMappingFn = fn;
+}
+
+export function callDeleteMapping(edgeId: string): void {
+  _deleteMappingFn?.(edgeId);
 }

@@ -4,7 +4,7 @@ import { acceptsDynamicInputs, canAddIncoming, canAddOutgoing, getNodeDef } from
 import { genUUID } from '../constants';
 import type { AgentStepDoc } from '@/lib/api';
 import type { LayoutDir, StepData, StepNodeData } from '../types';
-import { applyBundleGroups, isDataEdge, topoSort } from '../canvas/connections';
+import { applyBundleGroups, isDataEdge, registerDeleteMapping, topoSort } from '../canvas/connections';
 import { applyDagreLayout } from '../canvas/dagre';
 
 interface UseSkillPipelineParams {
@@ -161,6 +161,28 @@ export function useSkillPipeline({
     }));
     markDirty();
   }, [setLocalPipeNodes, setLocalPipeEdges, markDirty]);
+
+  // Register delete callback so BundleEdge's MappingSheet × button can remove individual mappings
+  useEffect(() => {
+    registerDeleteMapping((edgeId: string) => {
+      // Find the edge to extract target node and port ID
+      setLocalPipeEdges(prev => {
+        const edge = prev.find(e => e.id === edgeId);
+        if (!edge) return prev;
+        const nodeId = edge.target;
+        const portID = (edge.targetHandle ?? '').replace('data-in-', '');
+        // Remove from inputs on the target node
+        setLocalPipeNodes(ns => ns.map(n => {
+          if (n.id !== nodeId) return n;
+          const existing = { ...((n.data as unknown as import('../types').StepData).inputs ?? {}) };
+          delete existing[portID];
+          return { ...n, data: { ...n.data, inputs: existing } };
+        }));
+        markDirty();
+        return prev.filter(e => e.id !== edgeId);
+      });
+    });
+  }, [setLocalPipeEdges, setLocalPipeNodes, markDirty]);
 
   const connectFiredRef = useRef(false);
 

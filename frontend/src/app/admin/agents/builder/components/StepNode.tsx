@@ -4,6 +4,9 @@ import { getNodeDef, resolveInputPorts, resolveOutputPorts } from '@/lib/nodeReg
 import type { ResolvedPort } from '@/lib/nodeRegistry';
 import type { StepNodeData, DebugNodeState } from '../types';
 import { useLayoutDir } from '../LayoutContext';
+import { PortsPopover } from './PortsPopover';
+
+const PORTS_V2 = process.env.NEXT_PUBLIC_CANVAS_PORTS_V2 === 'true';
 
 function stepMetaFromType(type: string): { bg: string; border: string; emoji: string; label: string } {
   const def = getNodeDef(type);
@@ -176,6 +179,7 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
   const updateNodeInternals = useUpdateNodeInternals();
 
   const [hovered, setHovered] = useState(false);
+  const [showPortsPanel, setShowPortsPanel] = useState(false);
   const onMouseEnter = useCallback(() => setHovered(true),  []);
   const onMouseLeave = useCallback(() => setHovered(false), []);
 
@@ -268,7 +272,7 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
       : { ...invisHandle, left: off, bottom: 0 };
   }
 
-  // ── Port dot + label ──────────────────────────────────────────────────────
+  // ── Port dot + label (V1 only) ────────────────────────────────────────────
   function PortDot({ port, idx, side }: { port: UnifiedPort; idx: number; side: 'in' | 'out' }) {
     const off   = dotOffset(idx);
     const color = port.color;
@@ -339,10 +343,10 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
   // Padding — reserve space for port label area so card doesn't resize on hover
   const hasDataIn  = inputPorts.some(p => p.kind === 'data');
   const hasDataOut = outputPorts.some(p => p.kind === 'data');
-  const leftPad  = isLR  ? (hasDataIn  ? PORT_DOT + 68 : PORT_DOT + 12) : 14;
-  const rightPad = isLR  ? (hasDataOut ? PORT_DOT + 68 : PORT_DOT + 12) : 14;
-  const topPad   = !isLR ? (hasDataIn  ? PORT_DOT + 30 : PORT_DOT + 12) : 12;
-  const botPad   = !isLR ? (hasDataOut ? PORT_DOT + 30 : PORT_DOT + 12) : 12;
+  const leftPad  = PORTS_V2 ? PORT_DOT + 12 : (isLR  ? (hasDataIn  ? PORT_DOT + 68 : PORT_DOT + 12) : 14);
+  const rightPad = PORTS_V2 ? PORT_DOT + 12 : (isLR  ? (hasDataOut ? PORT_DOT + 68 : PORT_DOT + 12) : 14);
+  const topPad   = PORTS_V2 ? PORT_DOT + 12 : (!isLR ? (hasDataIn  ? PORT_DOT + 30 : PORT_DOT + 12) : 12);
+  const botPad   = PORTS_V2 ? PORT_DOT + 12 : (!isLR ? (hasDataOut ? PORT_DOT + 30 : PORT_DOT + 12) : 12);
 
   return (
     <div
@@ -357,6 +361,8 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         paddingBottom: botPad,
         paddingLeft:   leftPad,
         paddingRight:  rightPad,
+        overflow: PORTS_V2 ? 'visible' : undefined,
+        zIndex: PORTS_V2 && showPortsPanel ? 10 : undefined,
         ['--breathe-color' as string]: breatheColor,
       }}
     >
@@ -369,7 +375,7 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
             position={targetPos}
             style={inputHandleStyle(idx)}
           />
-          <PortDot port={port} idx={idx} side="in" />
+          {!PORTS_V2 && <PortDot port={port} idx={idx} side="in" />}
         </React.Fragment>
       ))}
 
@@ -382,7 +388,7 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
             position={sourcePos}
             style={outputHandleStyle(idx)}
           />
-          <PortDot port={port} idx={idx} side="out" />
+          {!PORTS_V2 && <PortDot port={port} idx={idx} side="out" />}
         </React.Fragment>
       ))}
 
@@ -425,7 +431,40 @@ export function StepNode({ id, data }: { id: string; data: StepNodeData }) {
         {dbg?.state === 'pending' && (
           <div style={{ marginTop: 4, fontSize: '9px', color: '#f59e0b' }}>{isLR ? 'next →' : 'next ↓'}</div>
         )}
+
+        {/* ── V2: Ports button ── */}
+        {PORTS_V2 && (
+          <button
+            className="nodrag nowheel nopan"
+            onClick={e => { e.stopPropagation(); setShowPortsPanel(v => !v); }}
+            style={{
+              marginTop: 6,
+              background: showPortsPanel ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.06)',
+              border: `1px solid ${showPortsPanel ? '#818cf8' : '#334155'}`,
+              borderRadius: 6,
+              color: showPortsPanel ? '#a5b4fc' : '#64748b',
+              fontSize: 13, cursor: 'pointer',
+              padding: '2px 7px', lineHeight: 1.4,
+              transition: 'all 0.15s',
+            }}
+            title="Show data ports"
+          >⊕</button>
+        )}
       </div>
+
+      {/* ── V2: PortsPopover ── */}
+      {PORTS_V2 && showPortsPanel && (
+        <PortsPopover
+          nodeId={id}
+          nodeDef={nodeDef}
+          cfg={cfg as Record<string, unknown>}
+          committedInputPortIDs={dynamicInputIDs}
+          wiredOutputPortIDs={wiredOutIDs}
+          isLR={isLR}
+          sourcePos={sourcePos}
+          targetPos={targetPos}
+        />
+      )}
     </div>
   );
 }
