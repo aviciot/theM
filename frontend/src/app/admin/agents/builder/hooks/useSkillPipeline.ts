@@ -5,7 +5,7 @@ import { genUUID } from '../constants';
 import type { AgentStepDoc } from '@/lib/api';
 import type { LayoutDir, StepData, StepNodeData } from '../types';
 import { applyBundleGroups, isDataEdge, topoSort } from '../canvas/connections';
-import { applyDagreLayout } from '../canvas/layout';
+import { applyDagreLayout } from '../canvas/dagre';
 
 interface UseSkillPipelineParams {
   activeSkillId: string | null;

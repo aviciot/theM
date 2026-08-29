@@ -13,7 +13,7 @@ import { useBuilderHistory } from '../hooks/useBuilderHistory';
 import { useDebugSession } from '../hooks/useDebugSession';
 import { useResizablePanels } from '../hooks/useResizablePanels';
 import { useBuilderDerivedState } from '../hooks/useBuilderDerivedState';
-import { applyDagreLayout } from '../canvas/layout';
+import { applyDagreLayout } from '../canvas/dagre';
 import { BuilderCanvas, nodeTypes, edgeTypes } from './BuilderCanvas';
 import { BuilderTopBar } from './BuilderTopBar';
 import { NodeLibraryPanel } from './NodeLibraryPanel';
