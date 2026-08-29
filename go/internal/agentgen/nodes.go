@@ -504,7 +504,7 @@ func init() {
 		Type:                 StepParallel,
 		Version:              1,
 		Label:                "Parallel",
-		Description:          "Fan out to multiple branches simultaneously and wait for all to complete before continuing. (stub)",
+		Description:          "Fan out to multiple branches simultaneously and wait for all to complete before continuing.",
 		Emoji:                "⚡",
 		OutputArity:          "multi",
 		IsSource:             false,
@@ -518,13 +518,19 @@ func init() {
 		ConfigFields: []ConfigFieldDoc{
 			{Key: "merge_var", Type: "string", Required: false, Description: "Variable name to collect all branch outputs into a list once all branches complete.", Example: "branch_results"},
 		},
-		UsageNotes: "Parallel is not yet fully implemented (stub). It fans out to N downstream branches simultaneously and waits for all to finish. For immediate use, keep steps sequential.",
+		UsageNotes: "Fans out to N downstream branches simultaneously and waits for all to finish before the next node runs. The downstream convergence node receives merged vars from all branches.",
 		Examples: []NodeExample{
 			{Description: "Fan out and collect results", Config: map[string]any{"merge_var": "all_results"}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepResponse},
 		Validate:    nil,
-		Execute:     nil,
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			// StepParallel is a pure fan-out coordinator. LocalExecutor fans out
+			// to all node.Next entries automatically when len(Next) > 1 — no work
+			// is needed here. The downstream join node (JoinWaitAll) merges vars
+			// once all branches complete.
+			return nil
+		},
 		DeriveInputs: func(cfg json.RawMessage) []VarRef {
 			return nil
 		},

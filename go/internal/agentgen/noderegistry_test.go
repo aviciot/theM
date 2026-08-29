@@ -213,7 +213,6 @@ func TestNodeRegistry_ImplementedTypesHaveNonNilExecute(t *testing.T) {
 func TestNodeRegistry_StubTypesHaveNilExecute(t *testing.T) {
 	stubs := []agentgen.StepType{
 		agentgen.StepLoop,
-		agentgen.StepParallel,
 		agentgen.StepA2ACall,
 		agentgen.StepHumanWait,
 		agentgen.StepStreamOut,
@@ -284,6 +283,17 @@ func TestNodeRegistry_ParallelOutputArity(t *testing.T) {
 	}
 	if def.OutputArity != "multi" {
 		t.Errorf("parallel OutputArity: want %q, got %q", "multi", def.OutputArity)
+	}
+}
+
+// TestNodeRegistry_ParallelIsImplemented verifies StepParallel.Execute is no longer nil.
+func TestNodeRegistry_ParallelIsImplemented(t *testing.T) {
+	def, ok := agentgen.LookupNode(agentgen.StepParallel)
+	if !ok {
+		t.Fatal("StepParallel not registered")
+	}
+	if def.Execute == nil {
+		t.Error("StepParallel.Execute is nil — node is not yet executable")
 	}
 }
 

@@ -1714,8 +1714,9 @@ integration via `LookupNode`, and the new multi-port schema fields
 | `TestNodeRegistry_UnknownTypeReturnsFalse` | LookupNode("banana") → ok=false |
 | `TestNodeRegistry_CompilerRejectsUnknownStepType` | compiler returns UNKNOWN_STEP_TYPE for unregistered type |
 | `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response/branch/mcp_call all have Execute≠nil |
-| `TestNodeRegistry_StubTypesHaveNilExecute` | loop/parallel/a2a_call/human_wait/stream_out all have Execute=nil |
+| `TestNodeRegistry_StubTypesHaveNilExecute` | loop/a2a_call/human_wait/stream_out all have Execute=nil (parallel removed — now implemented) |
 | `TestNodeRegistry_ParallelOutputArity` | parallel: OutputArity=multi |
+| `TestNodeRegistry_ParallelIsImplemented` | parallel: Execute≠nil (fan-out coordinator is now executable) |
 | `TestNodeRegistry_Helpers_Smoke` | compileFail/hasCode helpers work; minimal spec compiles cleanly |
 | `TestNodeRegistry_BranchControlOutputPorts` | branch has 2 ControlOutputPorts (true/false) with Color set; round-trips via ToInfo |
 | `TestNodeRegistry_TransformDynamicOutputSource` | transform DynamicOutputs=true; DynamicOutputSource="functions[].output_var"; exposed via ToInfo |
@@ -2295,7 +2296,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-51 | agent definition publish service | 11 |
 | S1-52 | dashboard WebSocket handler | 11 |
 | S1-53 | agent-runtime spec cache + skill routing + policy enforcement | 12 |
-| S1-54 | node definition registry (all 12 types, metadata, Validate, ToInfo) | 17 |
+| S1-54 | node definition registry (all 12 types, metadata, Validate, ToInfo) | 18 |
 | S1-60 | admin/service provider key encryption | 9 |
 | S1-61 | temporal/workerconfig loader contracts | 2 |
 | S1-62 | admin/service app global params (AGP-1..8) | 8 |
@@ -2306,7 +2307,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-67 | Stage 6 runtime contract enforcement (CONT-1..12) | 12 |
 | S1-68 | explicit canvas data bindings (BND-1..10) | 10 |
 | S1-69 | MCP call node + executor (MCP-1..10) | 10 |
-| **S1 total** | | **804** |
+| S1-74 | DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run) | 3 |
+| **S1 total** | | **808** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2315,4 +2317,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **825** |
+| **`go test ./...` total** | | **829** |

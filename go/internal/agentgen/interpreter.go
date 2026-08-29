@@ -165,7 +165,8 @@ func (interp *Interpreter) executeStep(ctx context.Context, ic *InvocationContex
 	// Immutability contract: Execute functions MUST NOT mutate values retrieved
 	// from scoped inputs (map[string]any / []any values are shared references).
 	// Deep-copy is intentionally omitted — sequential execution makes concurrent
-	// mutation impossible. This will need revisiting when StepParallel is implemented.
+	// mutation impossible. LocalExecutor deep-copies vars at the fan-out boundary
+	// before each branch goroutine starts, so StepParallel nodes are safe.
 	if len(step.Inputs) > 0 || len(step.Outputs) > 0 {
 		// Check required inputs before building the scoped map.
 		for _, ref := range step.Inputs {
