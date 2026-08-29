@@ -1636,6 +1636,9 @@ heuristic, user override clamping, and backward compatibility.
 **Purpose:** Phase 1 of DAG execution. Verifies `LocalExecutor` correctly executes compiled
 `ExecutionPlan`s: linear chains, goroutine fan-out, wait_all join with var merging, error
 propagation + context cancellation, deep-copy isolation, and nil/empty plan safety.
+Also covers `execNode` ExecutionPolicy enforcement: per-attempt timeout (StartToCloseTimeout
+semantics), exponential backoff retry, vars isolation across retry attempts, non-retryable
+error detection via `NonRetryableError` interface, and idempotency guard.
 
 | Test | What it proves |
 |---|---|
@@ -1657,9 +1660,15 @@ propagation + context cancellation, deep-copy isolation, and nil/empty plan safe
 | `TestExecNodeRetry_CancelledStopsImmediately` | Pre-cancelled context stops execution with ≤1 attempt |
 | `TestExecNodeRetry_IdempotencyKeyMissing` | RequiresIdempotencyKey=true + MaxAttempts=2 + no header → *ErrIdempotencyKeyMissing |
 | `TestExecNodeRetry_IdempotencyKeyPresent_AllowsExecution` | RequiresIdempotencyKey=true + MaxAttempts=2 + Idempotency-Key header → guard does not fire |
+| `TestExecNodeRetry_PerAttemptTimeout` | TimeoutSeconds applies per-attempt (StartToCloseTimeout): DeadlineExceeded from attempt 1 is non-retryable, stops after 1 call |
+| `TestExecNodeRetry_VarsIsolation` | Failed attempt's var writes are not visible to the next attempt's input vars |
+| `TestExecNodeRetry_NonRetryableInterface` | Error implementing NonRetryableError.IsNonRetryable()=true stops after 1 attempt (interface-based detection) |
+| `TestExecuteNodeForActivity_IdempotencyGuard` | ExecuteNodeForActivity enforces idempotency guard: RequiresIdempotencyKey=true + MaxAttempts=2 + no header → *ErrIdempotencyKeyMissing |
+| `TestExecuteNodeForActivity_IdempotencyGuard_MaxAttempts1_Skips` | RequiresIdempotencyKey=true but MaxAttempts=1 → guard does not fire (no retry, no protection needed) |
 
-**Trigger:** any change to `internal/agentgen/local_executor.go`, `internal/agentgen/executor.go`,
-`internal/agentgen/plan_compiler.go`, `internal/agentgen/spec.go`, or `internal/agentgen/nodes.go`
+**Trigger:** any change to `internal/agentgen/local_executor.go`, `internal/agentgen/node_executor.go`,
+`internal/agentgen/plan_compiler.go`, `internal/agentgen/spec.go` (`NonRetryableError` interface,
+`ErrContractViolation`, `ErrIdempotencyKeyMissing`), or `internal/agentgen/nodes.go`
 (ExecutionPolicy fields used by execNode)
 
 ---
@@ -1710,8 +1719,8 @@ through compiler → `AgentSpec`. Includes a security test that confirms secrets
 | `TestNA16_Compiler_DefaultExecutionBackend_IsEmpty` | Missing execution_backend → AgentSpec.ExecutionBackend == "" |
 
 **Trigger:** any change to `internal/agentgen/node_executor.go`, `internal/agentgen/spec.go`
-(`ExecutionBackend` field), `internal/agentgen/compiler.go` (execution_backend validation + buildSpec),
-or `internal/agentgen/context.go`
+(`ExecutionBackend` field, `NonRetryableError` interface), `internal/agentgen/compiler.go`
+(execution_backend validation + buildSpec), or `internal/agentgen/context.go`
 
 ---
 

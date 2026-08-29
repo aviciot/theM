@@ -239,8 +239,12 @@ func (e *LocalExecutor) runBranch(
 }
 
 // isNonRetryable returns true when err must not be retried.
-// Matches *ErrContractViolation, *ErrIdempotencyKeyMissing, and context errors directly.
-// Also string-matches against the policy.NonRetryableErrors list for Temporal-style type names.
+//
+// Detection order:
+//  1. Context cancellation / deadline — always non-retryable.
+//  2. NonRetryableError interface — any typed error that declares IsNonRetryable() bool.
+//  3. policy.NonRetryableErrors — exact substring match of the error type name in err.Error()
+//     for Temporal-style type names (e.g. "ContractViolation", "InvalidConfig").
 func isNonRetryable(err error, policy ExecutionPolicy) bool {
 	if err == nil {
 		return false
@@ -249,16 +253,15 @@ func isNonRetryable(err error, policy ExecutionPolicy) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	// Typed Go sentinels that map to stdNonRetryable type strings.
-	var cv *ErrContractViolation
-	if errors.As(err, &cv) {
+	// Typed NonRetryableError interface — catches *ErrContractViolation,
+	// *ErrIdempotencyKeyMissing, and any future error type that opts in.
+	var nre NonRetryableError
+	if errors.As(err, &nre) && nre.IsNonRetryable() {
 		return true
 	}
-	var ik *ErrIdempotencyKeyMissing
-	if errors.As(err, &ik) {
-		return true
-	}
-	// String-match Temporal-style non-retryable type names in the error message.
+	// Fallback: string-match Temporal-style type names from the policy list.
+	// Used for error types that don't implement NonRetryableError (e.g. from
+	// external services or Temporal activity wrappers).
 	msg := err.Error()
 	for _, name := range policy.NonRetryableErrors {
 		if name != "" && strings.Contains(msg, name) {
@@ -273,14 +276,15 @@ func isNonRetryable(err error, policy ExecutionPolicy) bool {
 //
 // Retry semantics (matching Temporal's RetryPolicy):
 //   - Up to policy.MaxAttempts total attempts (0 treated as 1 for backward compat).
-//   - Non-retryable errors (ErrContractViolation, ErrIdempotencyKeyMissing, context errors,
-//     NonRetryableErrors string matches) stop immediately without further attempts.
+//   - Non-retryable errors (NonRetryableError interface, context errors, NonRetryableErrors
+//     string matches) stop immediately without further attempts.
 //   - Between attempts: exponential backoff with InitialIntervalSeconds, BackoffCoefficient,
 //     MaxIntervalSeconds. Zero values use safe defaults (1s initial, 2.0 coeff, 30s max).
-//   - policy.TimeoutSeconds, when non-zero, wraps the entire multi-attempt window with a
-//     single deadline — consistent with Temporal StartToCloseTimeout semantics.
+//   - policy.TimeoutSeconds, when non-zero, wraps each individual attempt (StartToCloseTimeout
+//     per-attempt semantics, matching Temporal). A fresh deadline is created per attempt.
 //   - policy.RequiresIdempotencyKey: when true AND MaxAttempts > 1, the HTTP step config
 //     MUST contain a static Idempotency-Key header; if absent → ErrIdempotencyKeyMissing.
+//   - vars is deep-copied before each attempt so a failed attempt cannot leak partial writes.
 func (e *LocalExecutor) execNode(
 	ctx context.Context,
 	ic *InvocationContext,
@@ -290,14 +294,6 @@ func (e *LocalExecutor) execNode(
 	vars PipelineVars,
 	res *sharedResult,
 ) (nextOverride string, err error) {
-	// Apply node-level timeout over the entire attempt window (StartToCloseTimeout semantics).
-	nodeCtx := ctx
-	if policy.TimeoutSeconds > 0 {
-		var cancel context.CancelFunc
-		nodeCtx, cancel = context.WithTimeout(ctx, time.Duration(policy.TimeoutSeconds)*time.Second)
-		defer cancel()
-	}
-
 	maxAttempts := policy.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 1 // backward compat: zero means "not set"
@@ -332,20 +328,44 @@ func (e *LocalExecutor) execNode(
 	for attempt := int32(1); attempt <= maxAttempts; attempt++ {
 		// Check cancellation before each attempt.
 		select {
-		case <-nodeCtx.Done():
+		case <-ctx.Done():
 			if lastErr != nil {
 				return "", lastErr
 			}
-			return "", nodeCtx.Err()
+			return "", ctx.Err()
 		default:
 		}
 
+		// Per-attempt timeout (StartToCloseTimeout semantics): each attempt gets its
+		// own fresh deadline. This matches Temporal's behaviour where StartToCloseTimeout
+		// is applied to each individual activity attempt, not the whole retry sequence.
+		attemptCtx := ctx
+		var attemptCancel context.CancelFunc
+		if policy.TimeoutSeconds > 0 {
+			attemptCtx, attemptCancel = context.WithTimeout(ctx, time.Duration(policy.TimeoutSeconds)*time.Second)
+		}
+
+		// Deep-copy vars before each attempt so a failed attempt cannot leak partial
+		// writes into the next attempt's input.
+		attemptVars := deepCopyVars(vars)
+
 		localResult := &ExecutionResult{MediaType: "text/plain"}
 		interp.nextStepOverride = ""
-		execErr := interp.executeStep(nodeCtx, ic, step, vars, localResult)
+		execErr := interp.executeStep(attemptCtx, ic, step, attemptVars, localResult)
+
+		if attemptCancel != nil {
+			attemptCancel()
+		}
+
 		if execErr == nil {
 			override := interp.nextStepOverride
 			interp.nextStepOverride = ""
+
+			// Merge successful attempt's var writes back to the caller's vars map
+			// so that downstream steps can see the outputs of this step.
+			for k, v := range attemptVars {
+				vars[k] = v
+			}
 
 			// Promote result if this step produced one.
 			if localResult.Text != "" || step.Type == StepResponse || step.Type == StepStreamOut {
@@ -370,8 +390,8 @@ func (e *LocalExecutor) execNode(
 		// Backoff sleep — respect context cancellation.
 		sleep := time.Duration(interval * float64(time.Second))
 		select {
-		case <-nodeCtx.Done():
-			return "", nodeCtx.Err()
+		case <-ctx.Done():
+			return "", ctx.Err()
 		case <-time.After(sleep):
 		}
 

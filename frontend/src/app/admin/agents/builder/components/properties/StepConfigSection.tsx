@@ -33,9 +33,22 @@ export function StepConfigSection({
   void nodeTypesReady;
 
   const nodeDef = getNodeDef(d.step_type);
-  const defaultPolicy = nodeDef.default_policy;
   const maxPolicy = nodeDef.max_policy;
   const policy = (d.policy ?? {}) as StepPolicyOverride;
+
+  // For HTTP nodes, default max_attempts depends on the method: GET→3, mutating→1.
+  // resolvePolicy in Go applies this same rule at compile time; mirror it here so
+  // the UI shows the accurate resolved default before the user overrides anything.
+  const defaultPolicy = (() => {
+    const base = nodeDef.default_policy;
+    if (!base) return base;
+    if (d.step_type === 'http') {
+      const method = ((cfg.method as string) ?? '').toUpperCase();
+      const isMutating = method !== '' && method !== 'GET';
+      return { ...base, max_attempts: isMutating ? 1 : 3 };
+    }
+    return base;
+  })();
 
   function policyNum(key: keyof StepPolicyOverride, fallback: number): number {
     const v = policy[key];

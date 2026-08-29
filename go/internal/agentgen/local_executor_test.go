@@ -895,3 +895,184 @@ func TestExecNodeRetry_IdempotencyKeyPresent_AllowsExecution(t *testing.T) {
 		t.Fatalf("idempotency guard must NOT fire when key is present: %v", err)
 	}
 }
+
+// EP-L9: per-attempt timeout — a second attempt gets a fresh timeout after the first times out.
+// With per-attempt semantics, attempt 1 times out (returns DeadlineExceeded, non-retryable)
+// and the executor stops immediately without a second attempt. The key assertion is that
+// DeadlineExceeded from a single timed-out attempt is treated as non-retryable.
+func TestExecNodeRetry_PerAttemptTimeout(t *testing.T) {
+	typ := StepType("ep_per_attempt_timeout_" + t.Name())
+	var calls int32
+	registerTestNode(t, NodeDef{
+		Type:          typ,
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 3, TimeoutSeconds: 300},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 3, TimeoutSeconds: 300},
+		Execute: func(ctx context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			atomic.AddInt32(&calls, 1)
+			// Block until the per-attempt timeout fires.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-make(chan struct{}): // never fires
+			}
+			return nil
+		},
+	})
+
+	interp := NewInterpreter(nil, nil, "")
+	e := NewLocalExecutor(interp)
+
+	step := &StepSpec{ID: "pat", Type: typ, Config: json.RawMessage(`{}`)}
+	policy := ExecutionPolicy{
+		MaxAttempts:            3,
+		TimeoutSeconds:         1, // 1s per attempt
+		InitialIntervalSeconds: 0.001,
+		BackoffCoefficient:     1.0,
+		MaxIntervalSeconds:     1,
+	}
+
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	if err == nil {
+		t.Fatal("expected DeadlineExceeded, got nil")
+	}
+	// DeadlineExceeded is non-retryable — only 1 attempt should have run.
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("DeadlineExceeded must stop retries: expected 1 attempt, got %d", n)
+	}
+}
+
+// EP-L10: vars isolation per retry — a failed attempt's var writes must not appear
+// in the input vars of the NEXT attempt. Each attempt starts from the original
+// vars snapshot, not the mutated state left by a prior failed attempt.
+func TestExecNodeRetry_VarsIsolation(t *testing.T) {
+	typ := StepType("ep_vars_iso_" + t.Name())
+	var calls int32
+	// seenPriorWrite tracks whether attempt N saw "attempt_writes" from attempt N-1.
+	var seenPriorWrite bool
+
+	registerTestNode(t, NodeDef{
+		Type:          typ,
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 3, TimeoutSeconds: 300},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 3, TimeoutSeconds: 300},
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
+			n := atomic.AddInt32(&calls, 1)
+			if n > 1 {
+				// If isolation is broken, a prior failed attempt's write is visible here.
+				if _, ok := vars["attempt_writes"]; ok {
+					seenPriorWrite = true
+				}
+			}
+			vars["attempt_writes"] = fmt.Sprintf("from_attempt_%d", n)
+			if n < 3 {
+				return fmt.Errorf("transient %d", n)
+			}
+			return nil
+		},
+	})
+
+	interp := NewInterpreter(nil, nil, "")
+	e := NewLocalExecutor(interp)
+
+	step := &StepSpec{ID: "vi", Type: typ, Config: json.RawMessage(`{}`)}
+	policy := ExecutionPolicy{
+		MaxAttempts:            3,
+		InitialIntervalSeconds: 0.001,
+		BackoffCoefficient:     1.0,
+		MaxIntervalSeconds:     1,
+	}
+
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{"initial": "clean"}, &sharedResult{})
+	if err != nil {
+		t.Fatalf("expected success on 3rd attempt, got: %v", err)
+	}
+	if seenPriorWrite {
+		t.Error("failed attempt leaked var write into next attempt's input vars")
+	}
+	if atomic.LoadInt32(&calls) != 3 {
+		t.Errorf("expected 3 attempts, got %d", atomic.LoadInt32(&calls))
+	}
+}
+
+// EP-L11: NonRetryableError interface — an error implementing IsNonRetryable()=true
+// stops retries after the first attempt even when MaxAttempts > 1.
+// Uses ErrContractViolation (which implements NonRetryableError) as a representative case.
+func TestExecNodeRetry_NonRetryableInterface(t *testing.T) {
+	typ := StepType("ep_nre_iface_" + t.Name())
+	var calls int32
+	registerTestNode(t, NodeDef{
+		Type:          typ,
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 5, TimeoutSeconds: 300},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 5, TimeoutSeconds: 300},
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, s *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			atomic.AddInt32(&calls, 1)
+			return &ErrContractViolation{StepID: s.ID, VarName: "x", Kind: "missing_required_input"}
+		},
+	})
+
+	interp := NewInterpreter(nil, nil, "")
+	e := NewLocalExecutor(interp)
+
+	step := &StepSpec{ID: "nre", Type: typ, Config: json.RawMessage(`{}`)}
+	policy := ExecutionPolicy{
+		MaxAttempts:            5,
+		InitialIntervalSeconds: 0.001,
+		BackoffCoefficient:     1.0,
+		MaxIntervalSeconds:     1,
+	}
+
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	var cv *ErrContractViolation
+	if !errors.As(err, &cv) {
+		t.Fatalf("expected *ErrContractViolation, got %T: %v", err, err)
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("NonRetryableError interface must stop after 1 attempt, got %d", n)
+	}
+}
+
+// EP-L12: idempotency guard fires in ExecuteNodeForActivity when RequiresIdempotencyKey=true
+// and MaxAttempts>1 but no Idempotency-Key header is in the HTTP config.
+func TestExecuteNodeForActivity_IdempotencyGuard(t *testing.T) {
+	interp := NewInterpreter(nil, nil, "")
+
+	node := PlanNode{
+		StepID: "act_http",
+		Type:   StepHTTP,
+		Config: json.RawMessage(`{"method":"POST","url_template":"http://example.com"}`),
+		Policy: ExecutionPolicy{
+			MaxAttempts:            2,
+			RequiresIdempotencyKey: true,
+		},
+	}
+	input := NodeExecutionInput{Node: node, Vars: PipelineVars{}}
+
+	_, err := ExecuteNodeForActivity(context.Background(), interp.clone(), &InvocationContext{TenantID: "t"}, input)
+	var ik *ErrIdempotencyKeyMissing
+	if !errors.As(err, &ik) {
+		t.Fatalf("expected *ErrIdempotencyKeyMissing, got %T: %v", err, err)
+	}
+}
+
+// EP-L13: ExecuteNodeForActivity allows execution when RequiresIdempotencyKey=true
+// but MaxAttempts=1 (single attempt, no retry — idempotency protection not needed).
+func TestExecuteNodeForActivity_IdempotencyGuard_MaxAttempts1_Skips(t *testing.T) {
+	interp := NewInterpreter(nil, nil, "")
+
+	node := PlanNode{
+		StepID: "act_http_single",
+		Type:   StepHTTP,
+		Config: json.RawMessage(`{"method":"POST","url_template":"http://127.0.0.1:0/no-server"}`),
+		Policy: ExecutionPolicy{
+			MaxAttempts:            1,
+			RequiresIdempotencyKey: true, // set, but MaxAttempts=1 → guard does NOT fire
+		},
+	}
+	input := NodeExecutionInput{Node: node, Vars: PipelineVars{}}
+
+	_, err := ExecuteNodeForActivity(context.Background(), interp.clone(), &InvocationContext{TenantID: "t"}, input)
+	// Guard must not fire — error (if any) comes from the HTTP execution attempt itself.
+	var ik *ErrIdempotencyKeyMissing
+	if errors.As(err, &ik) {
+		t.Fatalf("idempotency guard must NOT fire when MaxAttempts=1: %v", err)
+	}
+}

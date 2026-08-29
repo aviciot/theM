@@ -134,6 +134,24 @@ func (e *ErrIdempotencyKeyMissing) Error() string {
 	return "step " + e.StepID + ": RequiresIdempotencyKey=true but no Idempotency-Key header is set in config; set a static Idempotency-Key header or reduce max_attempts to 1"
 }
 
+// NonRetryableError is implemented by errors that must never trigger a retry,
+// regardless of MaxAttempts or NonRetryableErrors lists. The executor checks
+// this interface before applying any retry logic.
+//
+// Implement IsNonRetryable() bool on your error type to opt out of retries
+// without relying on string matching:
+//
+//	func (e *MyFatalError) IsNonRetryable() bool { return true }
+type NonRetryableError interface {
+	error
+	IsNonRetryable() bool
+}
+
+// ErrContractViolation and ErrIdempotencyKeyMissing implement NonRetryableError.
+
+func (e *ErrContractViolation) IsNonRetryable() bool    { return true }
+func (e *ErrIdempotencyKeyMissing) IsNonRetryable() bool { return true }
+
 // StepSpec is one pipeline node, compiled from the canvas.
 type StepSpec struct {
 	ID       string          `json:"id"`

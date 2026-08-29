@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `7f6eb97` — feat(agentgen): Pre-4-C hardening — retry/backoff, non-retryable stops, idempotency guard, policy UI
+Commit: `(pending commit)` — feat(agentgen): Pre-4-C parity — per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults
 
 Recent commits (newest first):
 ```
+(pending)  feat(agentgen): Pre-4-C parity — per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults
 7f6eb97  feat(agentgen): Pre-4-C hardening — retry/backoff, non-retryable stops, idempotency guard, policy UI
 a0457bd  feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
 d442def  docs(current): record approved ExecutionPolicy plan
@@ -148,14 +149,15 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-29, Pre-4-C hardening — full test suite)
-S1-72: 17 plan compiler tests (15 prior + EP-2b: POST+retry→RequiresKey + EP-9 fixed semantics)
-S1-73: 20 LocalExecutor tests (12 prior + 8 new EP-L3..EP-L8: retry success/exhaust/non-retryable/cancel/idempotency)
+go test ./...  — all packages, 0 failures (verified 2026-08-29, Pre-4-C parity — full test suite)
+S1-72: 17 plan compiler tests (unchanged from previous session)
+S1-73: 25 LocalExecutor tests (20 prior + 5 new: EP-L9 per-attempt timeout, EP-L10 vars isolation,
+        EP-L11 NonRetryableError interface, EP-L12/EP-L13 idempotency guard in ExecuteNodeForActivity)
 S1-74: 3 DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run)
 S1-75: 16 Phase 4-A tests (NA-01..NA-16: ExecuteNodeForActivity, ActivityIC, ExecutionBackend)
 S1-76: 18 Phase 4-B+EP tests (16 prior + 2 new CT-EP1/CT-EP2: NoResult bug fix + policy in plan)
 S1-54: 18 node registry tests (added TestNodeRegistry_ParallelIsImplemented)
-go test ./... total: 882 (874 + 8 new)
+go test ./... total: 1061
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅

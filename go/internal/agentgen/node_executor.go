@@ -34,6 +34,13 @@ type NodeExecutionOutput struct {
 // This function has no Temporal SDK dependency. It is the single point of dispatch
 // from CanvasAgentActivities into the agentgen execution engine.
 //
+// Policy enforcement:
+//   - Idempotency guard: when Node.Policy.RequiresIdempotencyKey=true and
+//     MaxAttempts>1, the HTTP step config MUST contain a static Idempotency-Key
+//     header; if absent → ErrIdempotencyKeyMissing. (Retries are managed by the
+//     Temporal RetryPolicy set in activityOptionsForNode; this guard prevents
+//     the activity from being registered at all without the safety header.)
+//
 // Scoping contract:
 //   - input.Vars contains only the keys declared in input.Node.Inputs.
 //     Nodes with empty Inputs receive the full projected map (backward-compat).
@@ -52,6 +59,22 @@ func ExecuteNodeForActivity(
 	}
 
 	step := planNodeToStepSpec(&input.Node)
+	p := input.Node.Policy
+
+	// Idempotency guard: mirror the same check LocalExecutor performs so Temporal
+	// activities are also protected against double-spend on mutating HTTP retries.
+	maxAttempts := p.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	if p.RequiresIdempotencyKey && maxAttempts > 1 {
+		if step.Type == StepHTTP {
+			if !httpConfigHasIdempotencyKey(step.Config) {
+				return NodeExecutionOutput{}, &ErrIdempotencyKeyMissing{StepID: step.ID}
+			}
+		}
+	}
+
 	localResult := &ExecutionResult{MediaType: "text/plain"}
 
 	interp.nextStepOverride = ""
