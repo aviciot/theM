@@ -1780,8 +1780,27 @@ submitting a `CanvasAgentWorkflow` to Temporal and blocking until completion. Al
 | `TestTemporalExecutor_Execute_EmptyPlan` (TE-03) | nil plan and empty plan both return error before calling `ExecuteWorkflow` |
 | `TestTemporalExecutor_ImplementsExecutionBackend` (TE-04) | Compile-time guard: `TemporalExecutor` satisfies `agentgen.ExecutionBackend` |
 | `TestTemporalExecutor_DefaultTimeout` (TE-05) | `NewTemporalExecutor` with zero timeout returns non-nil executor (default timeout applied) |
+| `TestTemporalExecutor_StableWorkflowID` (TE-06) | Workflow ID incorporates `ic.InvocationID`; retries re-attach to existing workflow |
+| `TestTemporalExecutor_PolicyMaxConcurrentTasks` (TE-07) | `ic.Policies.MaxConcurrentTasks` forwarded to `CanvasAgentWorkflowInput`, overriding struct default |
 
 **Trigger:** any change to `internal/temporal/temporal_executor.go` or `cmd/dag-worker/main.go`
+
+---
+
+### S1-78 · dag-worker SQL tenant scope — `cmd/dag-worker/main_test.go`
+
+**Purpose:** Asserts that every DB query in `dbContextLoader` carries a `tenant_id` predicate
+to prevent cross-tenant data access. Tests verify query strings statically; integration tests
+cover live round-trips.
+
+| Test | What it proves |
+|---|---|
+| `TestDBContextLoader_SQLContainsTenantScope/loadSpec` | `agent_runtime_specs` query scoped by `tenant_id` |
+| `TestDBContextLoader_SQLContainsTenantScope/loadAppAPIKey` | `applications` provider-key query scoped by `tenant_id` |
+| `TestDBContextLoader_SQLContainsTenantScope/loadAppGlobalParams` | `applications` global-params query scoped by `tenant_id` |
+| `TestDBContextLoader_SQLContainsTenantScope/loadBinding` | `app_agent_bindings` JOIN `applications` filters by `a.tenant_id` |
+
+**Trigger:** any change to `cmd/dag-worker/main.go` (DB query methods)
 
 ---
 
@@ -2189,6 +2208,31 @@ python3 go/scripts/smoke_test_go_gateway.py --token <tok> --app <app_slug> --ep 
 ```
 
 **Trigger:** any change to `internal/temporal/`, `internal/runstream/`, `internal/ws/id.go`, `internal/sse/handler.go` (newID), `docker-compose.hetzner.yml`
+
+---
+
+### S2-06 · Phase 4-C: Temporal E2E — `internal/temporal/integration_test.go`
+
+**Purpose:** Integration-tagged tests for fail-closed Temporal behaviour and the live DAG path.
+Build tag: `//go:build integration`.
+
+| Test | What it proves | Requirements |
+|---|---|---|
+| `TestTemporalConnect_Unavailable` | `Connect` returns non-nil error for unreachable Temporal | None (targets unused port) |
+| `TestTemporalExecutor_EmptyPlan_Integration` | Nil/empty plan rejected before any RPC call; nil client proves guard runs first | None |
+| `TestTemporalExecutor_LiveDAG` | End-to-end single-node DAG through running Temporal + dag-worker | `THEM_TEMPORAL_E2E=true`, live Temporal + dag-worker |
+
+**Run command (full integration suite):**
+```bash
+go test -tags=integration -v -timeout 120s ./internal/temporal/...
+```
+
+**Run live E2E only:**
+```bash
+THEM_TEMPORAL_E2E=true TEMPORAL_HOST_PORT=localhost:7233 go test -tags=integration -v -run TestTemporalExecutor_LiveDAG ./internal/temporal/...
+```
+
+**Trigger:** any change to `internal/temporal/temporal_executor.go`, `internal/temporal/canvas_workflow.go`, `cmd/dag-worker/main.go`, `docker-compose.yml` (temporal profile)
 
 ---
 
