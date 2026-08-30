@@ -400,3 +400,17 @@ func TestResolvePolicy_MCPMutatingVsRead(t *testing.T) {
 		t.Error("MCP mutating with MaxAttempts=1 must NOT require idempotency key (no retry possible)")
 	}
 }
+
+// EP-10: Canvas override cannot raise MaxAttempts above 1 for a mutating MCP tool.
+// The hard-clamp in resolvePolicy must apply AFTER the override is applied.
+func TestResolvePolicy_MCPMutatingOverrideHardClamped(t *testing.T) {
+	nd, _ := LookupNode(StepMCPCall)
+	override := &ExecutionPolicy{MaxAttempts: 3} // user tries to raise to 3
+	p := resolvePolicy(nd, mcpCfg("create_issue"), override)
+	if p.MaxAttempts != 1 {
+		t.Errorf("MCP mutating override: got MaxAttempts=%d want 1 (hard-clamped)", p.MaxAttempts)
+	}
+	if p.RequiresIdempotencyKey {
+		t.Error("MCP mutating with MaxAttempts=1 must NOT require idempotency key")
+	}
+}

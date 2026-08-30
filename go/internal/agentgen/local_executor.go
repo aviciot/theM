@@ -243,9 +243,13 @@ func (e *LocalExecutor) runBranch(
 // Detection order:
 //  1. Context cancellation / deadline — always non-retryable.
 //  2. NonRetryableError interface — any typed error that declares IsNonRetryable() bool.
-//  3. policy.NonRetryableErrors — exact substring match of the error type name in err.Error()
-//     for Temporal-style type names (e.g. "ContractViolation", "InvalidConfig").
-func isNonRetryable(err error, policy ExecutionPolicy) bool {
+//
+// policy.NonRetryableErrors is intentionally NOT checked here. That list contains
+// Temporal error type name strings consumed by Temporal's RetryPolicy.NonRetryableErrorTypes.
+// In the LocalExecutor path all non-retryable conditions are expressed as typed Go errors
+// implementing NonRetryableError, so string-matching is both unnecessary and fragile
+// (e.g. a generic "invalid config: ..." message would false-positive on "InvalidConfig").
+func isNonRetryable(err error, _ ExecutionPolicy) bool {
 	if err == nil {
 		return false
 	}
@@ -259,25 +263,18 @@ func isNonRetryable(err error, policy ExecutionPolicy) bool {
 	if errors.As(err, &nre) && nre.IsNonRetryable() {
 		return true
 	}
-	// Fallback: string-match Temporal-style type names from the policy list.
-	// Used for error types that don't implement NonRetryableError (e.g. from
-	// external services or Temporal activity wrappers).
-	msg := err.Error()
-	for _, name := range policy.NonRetryableErrors {
-		if name != "" && strings.Contains(msg, name) {
-			return true
-		}
-	}
 	return false
 }
 
-// execNode runs one plan node using the caller's per-goroutine interp clone.
-// interp.nextStepOverride is safe to read/write because each goroutine has its own clone.
+// execNode runs one plan node with full retry semantics.
+//
+// interp is treated as a template: each attempt gets a fresh interp.clone() so that
+// no mutable interpreter state (nextStepOverride or future fields) leaks between attempts.
+// This mirrors the Temporal path where each activity invocation gets its own isolated clone.
 //
 // Retry semantics (matching Temporal's RetryPolicy):
 //   - Up to policy.MaxAttempts total attempts (0 treated as 1 for backward compat).
-//   - Non-retryable errors (NonRetryableError interface, context errors, NonRetryableErrors
-//     string matches) stop immediately without further attempts.
+//   - Non-retryable errors (NonRetryableError interface, context errors) stop immediately.
 //   - Between attempts: exponential backoff with InitialIntervalSeconds, BackoffCoefficient,
 //     MaxIntervalSeconds. Zero values use safe defaults (1s initial, 2.0 coeff, 30s max).
 //   - policy.TimeoutSeconds, when non-zero, wraps each individual attempt (StartToCloseTimeout
@@ -345,21 +342,24 @@ func (e *LocalExecutor) execNode(
 			attemptCtx, attemptCancel = context.WithTimeout(ctx, time.Duration(policy.TimeoutSeconds)*time.Second)
 		}
 
+		// Fresh interpreter clone per attempt: each attempt starts with clean mutable
+		// state (nextStepOverride and any future Interpreter fields). interp is the
+		// template; we never execute on it directly.
+		attemptInterp := interp.clone()
+
 		// Deep-copy vars before each attempt so a failed attempt cannot leak partial
 		// writes into the next attempt's input.
 		attemptVars := deepCopyVars(vars)
 
 		localResult := &ExecutionResult{MediaType: "text/plain"}
-		interp.nextStepOverride = ""
-		execErr := interp.executeStep(attemptCtx, ic, step, attemptVars, localResult)
+		execErr := attemptInterp.executeStep(attemptCtx, ic, step, attemptVars, localResult)
 
 		if attemptCancel != nil {
 			attemptCancel()
 		}
 
 		if execErr == nil {
-			override := interp.nextStepOverride
-			interp.nextStepOverride = ""
+			override := attemptInterp.nextStepOverride
 
 			// Merge successful attempt's var writes back to the caller's vars map
 			// so that downstream steps can see the outputs of this step.
@@ -375,7 +375,6 @@ func (e *LocalExecutor) execNode(
 		}
 
 		lastErr = execErr
-		interp.nextStepOverride = ""
 
 		// Non-retryable: stop immediately.
 		if isNonRetryable(execErr, policy) {

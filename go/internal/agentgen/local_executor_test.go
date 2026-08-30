@@ -1076,3 +1076,73 @@ func TestExecuteNodeForActivity_IdempotencyGuard_MaxAttempts1_Skips(t *testing.T
 		t.Fatalf("idempotency guard must NOT fire when MaxAttempts=1: %v", err)
 	}
 }
+
+// EP-L14: string matching removed — a generic error whose message contains a
+// Temporal type name (e.g. "invalid config: ...") must NOT be treated as non-retryable
+// in the Local path. Only typed Go errors (NonRetryableError interface) or context
+// errors stop retries; string matching was removed to prevent false positives.
+func TestIsNonRetryable_NoStringMatch(t *testing.T) {
+	// "InvalidConfig" appears in stdNonRetryable (Temporal list). A plain error whose
+	// message contains this substring must NOT be non-retryable in LocalExecutor.
+	plainErr := fmt.Errorf("InvalidConfig: something went wrong")
+	policy := ExecutionPolicy{NonRetryableErrors: []string{"InvalidConfig", "PermissionDenied"}}
+
+	if isNonRetryable(plainErr, policy) {
+		t.Error("string-match on NonRetryableErrors must not classify plain errors as non-retryable in LocalExecutor")
+	}
+}
+
+// EP-L15: fresh interpreter clone per attempt — state set by attempt N (here,
+// nextStepOverride) must not appear in the interpreter of attempt N+1.
+// We verify this by registering a node that sets nextStepOverride on attempt 1
+// and returns an error (so attempt 2 runs), then checks that attempt 2's interp
+// starts clean. This requires exposing the interp state through the result.
+func TestExecNodeRetry_FreshClonePerAttempt(t *testing.T) {
+	typ := StepType("ep_fresh_clone_" + t.Name())
+	var calls int32
+	var attempt2SawOverride bool
+
+	registerTestNode(t, NodeDef{
+		Type:          typ,
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 3, TimeoutSeconds: 300},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 3, TimeoutSeconds: 300},
+		Execute: func(_ context.Context, interp *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			n := atomic.AddInt32(&calls, 1)
+			if n == 1 {
+				// Set interpreter state on attempt 1 then fail.
+				interp.nextStepOverride = "stale_override"
+				return fmt.Errorf("transient failure on attempt 1")
+			}
+			if n == 2 {
+				// A fresh clone must have empty nextStepOverride.
+				if interp.nextStepOverride != "" {
+					attempt2SawOverride = true
+				}
+				return nil
+			}
+			return nil
+		},
+	})
+
+	interp := NewInterpreter(nil, nil, "")
+	e := NewLocalExecutor(interp)
+
+	step := &StepSpec{ID: "fc", Type: typ, Config: json.RawMessage(`{}`)}
+	policy := ExecutionPolicy{
+		MaxAttempts:            2,
+		InitialIntervalSeconds: 0.001,
+		BackoffCoefficient:     1.0,
+		MaxIntervalSeconds:     1,
+	}
+
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	if err != nil {
+		t.Fatalf("expected success on attempt 2, got: %v", err)
+	}
+	if attempt2SawOverride {
+		t.Error("attempt 2 saw nextStepOverride set by attempt 1 — interpreter clone is not fresh per attempt")
+	}
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Errorf("expected 2 calls, got %d", atomic.LoadInt32(&calls))
+	}
+}

@@ -71,6 +71,13 @@ func resolvePolicy(nd *NodeDef, cfg json.RawMessage, override *ExecutionPolicy) 
 		p.MaxAttempts = 1
 	}
 
+	// Hard-clamp: mutating MCP tools are always limited to MaxAttempts=1 regardless of any
+	// canvas override. No real idempotency metadata exists for MCP tools today, so allowing
+	// retries would risk double-spend on state-changing operations without any safety net.
+	if nd.Type == StepMCPCall && isMutatingMCPTool(cfg) {
+		p.MaxAttempts = 1
+	}
+
 	// RequiresIdempotencyKey: set when MaxAttempts > 1 AND the node type is mutating by nature.
 	// HTTP nodes whose method is NOT GET are inherently mutating.
 	// MCP nodes with a mutating tool name are inherently mutating.
