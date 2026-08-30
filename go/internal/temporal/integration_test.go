@@ -4,6 +4,7 @@ package temporal_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -52,13 +53,18 @@ func TestTemporalExecutor_EmptyPlan_Integration(t *testing.T) {
 	t.Logf("empty plan correctly rejected: %v", err)
 }
 
-// TestTemporalExecutor_LiveDAG is a full E2E test that requires a running
-// Temporal server and dag-worker.  Set TEMPORAL_HOST_PORT to point at the
-// Temporal frontend (e.g. localhost:7233) and THEM_TEMPORAL_E2E=true to enable.
-// Skipped unless explicitly enabled so it never runs in unit CI.
+// TestTemporalExecutor_LiveDAG exercises TemporalExecutor.Execute directly against a
+// live Temporal server + dag-worker. It does NOT go through the agent-runtime HTTP
+// path (no A2A parsing, no spec/binding DB lookup, no invocation-context wiring).
+// For the full agent-runtime → Temporal → dag-worker E2E, see:
+//   cmd/agent-runtime/e2e_integration_test.go:TestAgentRuntime_LiveE2E
+//
+// This test is still useful for validating the Temporal executor wiring in isolation.
+// Gated by THEM_TEMPORAL_E2E=true. Uses a timestamp-based InvocationID to ensure a
+// NEW workflow is started on every run (never re-attached to a prior completed run).
 func TestTemporalExecutor_LiveDAG(t *testing.T) {
 	if os.Getenv("THEM_TEMPORAL_E2E") != "true" {
-		t.Skip("THEM_TEMPORAL_E2E not set — skipping live Temporal E2E")
+		t.Skip("THEM_TEMPORAL_E2E not set — skipping live Temporal executor test")
 	}
 
 	hostPort := os.Getenv("TEMPORAL_HOST_PORT")
@@ -83,11 +89,18 @@ func TestTemporalExecutor_LiveDAG(t *testing.T) {
 			{StepID: "step-1", Type: "response", Outputs: []agentgen.VarRef{{Name: "output"}}},
 		},
 	}
+
+	// Unique InvocationID per test run: prevents re-attachment to a prior completed
+	// workflow that carries the same ID (ALLOW_DUPLICATE_FAILED_ONLY re-attaches on
+	// AlreadyStarted, which also fires for a successfully completed workflow).
+	uniqueID := fmt.Sprintf("e2e-executor-%d", time.Now().UnixNano())
+	t.Logf("unique invocation ID: %s", uniqueID)
+
 	ic := &agentgen.InvocationContext{
 		TenantID:      "00000000-0000-0000-0000-000000000001",
 		ApplicationID: "00000000-0000-0000-0000-000000000002",
 		AgentID:       "00000000-0000-0000-0000-000000000003",
-		InvocationID:  "e2e-live-dag-" + t.Name(),
+		InvocationID:  uniqueID,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -97,5 +110,5 @@ func TestTemporalExecutor_LiveDAG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
-	t.Logf("E2E result: text=%q mt=%q", result.Text, result.MediaType)
+	t.Logf("TemporalExecutor E2E (direct, not via agent-runtime): text=%q mt=%q", result.Text, result.MediaType)
 }

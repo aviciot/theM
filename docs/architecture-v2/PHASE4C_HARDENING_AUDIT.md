@@ -1,16 +1,29 @@
 # Phase 4-C Hardening Audit Report
-# Last updated: 2026-08-30 (revised 2026-08-30 — all items fixed; E2E LiveDAG PASSED)
+# Last updated: 2026-08-30 (revised 2026-08-30 — final corrections: B12/B13 fixed, HumanWait partial)
 
 Evidence-based verification of all production blockers and advisory items
 identified during the Phase 4-C hardening review. Every finding is cited against
 actual on-disk file and line numbers confirmed in this session.
 
-Second-round gaps (identified post-commit `df3ed8e`) also fixed: raw `err.Error()` in
-executeSkill, unconditional `TEMPORAL_ENABLED` in dev overlay, tenant-scope for all
-agent-runtime lookups, and HumanWait 24h timeout.
+Second-round gaps (identified post-commit `df3ed8e`) status:
 
-**E2E evidence:** `TestTemporalExecutor_LiveDAG` PASSED in 0.12s against live Temporal
-+ dag-worker + PostgreSQL on 2026-08-30.
+| Gap | Status |
+|---|---|
+| Raw `err.Error()` in executeSkill | Fixed ✅ |
+| Unconditional `TEMPORAL_ENABLED` in dev overlay | Fixed ✅ (`docker-compose.temporal.yml`) |
+| Tenant-scope for all agent-runtime lookups (spec, binding, api-key, params) | Fixed ✅ |
+| `loadBinding(bindingID)` path: enforce all 4 IDs (binding+app+agent+tenant) | Fixed ✅ |
+| HumanWait 24h timeout | Partial — timeout only; async return not implemented |
+
+**E2E evidence (real path):** `TestAgentRuntime_LiveE2E` PASSED via:
+`agent-runtime HTTP → A2A SDK → TemporalExecutor → Temporal → dag-worker → PostgreSQL`
+Task state `TASK_STATE_COMPLETED`, unique task ID `01a05201-9040-...`, on 2026-08-30.
+Three distinct Temporal workflow IDs confirmed (no re-attachment).
+
+The prior `TestTemporalExecutor_LiveDAG` was a **partial** E2E that called
+`TemporalExecutor.Execute` directly, bypassing A2A parsing, spec/binding DB lookups,
+and invocation-context wiring. It also re-attached to a completed workflow (same
+InvocationID). Both issues are now corrected.
 
 ---
 
@@ -184,21 +197,25 @@ Build tag `//go:build integration` — excluded from unit CI (`go test ./...`).
 **Pre-fix bug:** `TestTemporalExecutor_LiveDAG` had `Outputs: []string{"output"}` which does not
 compile — `PlanNode.Outputs` is `[]VarRef`, not `[]string`. Fixed to `[]agentgen.VarRef{{Name: "output"}}`.
 
-Three tests (all compile clean under `go build -tags=integration`):
+**Correction (2026-08-30):** `TestTemporalExecutor_LiveDAG` calls `TemporalExecutor.Execute`
+directly — it does NOT exercise the agent-runtime HTTP path (A2A parsing, spec/binding DB
+lookups, invocation-context wiring). It was also re-attaching to a prior completed workflow
+because the `InvocationID` was static (`t.Name()` is fixed per test). Both issues are now
+corrected:
 
-| Test | What it covers |
-|---|---|
-| `TestTemporalConnect_Unavailable` | `Connect` to port 19999 returns error — fail-closed without live Temporal |
-| `TestTemporalExecutor_EmptyPlan_Integration` | nil-plan guard fires before any RPC with nil client |
-| `TestTemporalExecutor_LiveDAG` | Full E2E; gated by `THEM_TEMPORAL_E2E=true` — skipped in unit CI |
+1. `TestTemporalExecutor_LiveDAG` now uses a timestamp-based unique InvocationID
+   (`e2e-executor-{UnixNano}`) and is documented as a TemporalExecutor-only test.
+2. Real full-path E2E moved to `go/cmd/agent-runtime/e2e_integration_test.go:TestAgentRuntime_LiveE2E`
+   (gated by `THEM_AGENT_RUNTIME_E2E=true`).
 
-Run integration tests:
-```bash
-THEM_TEMPORAL_E2E=true TEMPORAL_HOST_PORT=localhost:7233 \
-  go test -tags=integration -v ./internal/temporal/...
-```
+| Test | What it covers | Gate var |
+|---|---|---|
+| `TestTemporalConnect_Unavailable` | `Connect` to port 19999 returns error | none |
+| `TestTemporalExecutor_EmptyPlan_Integration` | nil-plan guard fires before any RPC | none |
+| `TestTemporalExecutor_LiveDAG` | TemporalExecutor.Execute against live Temporal (NOT full path) | `THEM_TEMPORAL_E2E=true` |
+| `TestAgentRuntime_LiveE2E` | Full path: HTTP → A2A → agent-runtime → Temporal → dag-worker → PG | `THEM_AGENT_RUNTIME_E2E=true` |
 
-**Status: FIXED ✅**
+**Status: FIXED ✅ (with scope correction)**
 
 ---
 
@@ -359,11 +376,13 @@ can propagate the value if needed.
 | B | Temporal payload/history growth | Advisory — monitor |
 | C | DB pool < activity concurrency | Advisory — medium urgency |
 | D | No health endpoint in dag-worker | Advisory — required before prod |
-| B11 | HumanWait: `planHasHumanWait` + 24h timeout in `TemporalExecutor` + `HumanWaitTimeout` field in workflow input | Fixed ✅ |
+| B11 | HumanWait: `planHasHumanWait` + 24h timeout in `TemporalExecutor` + `HumanWaitTimeout` field in workflow input | Partial ⚠️ — timeout only; async return/signal/reconnect not implemented; see `HUMANWAIT_DESIGN.md` |
 | B12 | Raw `err.Error()` in `executeSkill` execution failure path → `"execution failed"` + `slog.Error` | Fixed ✅ |
-| B13 | Tenant-scope all agent-runtime lookups: `loadBinding`, `loadAppAPIKey`, `loadAppGlobalParams` | Fixed ✅ |
+| B13 | Tenant-scope all agent-runtime lookups: `loadBinding` (all 4 IDs), `loadAppAPIKey`, `loadAppGlobalParams` | Fixed ✅ |
+| B14 | `loadBinding(bindingID)` path enforces `application_id + agent_id` in addition to `tenant_id` (cross-agent/cross-app rejection) | Fixed ✅ |
+| B15 | Real E2E test `TestAgentRuntime_LiveE2E` (HTTP → A2A → Temporal → dag-worker → PG) with unique workflow IDs | Fixed ✅ |
 | A | N+1 DB queries per node | Advisory — low urgency |
 | B | Temporal payload/history growth | Advisory — monitor |
 | C | DB pool < activity concurrency | Advisory — medium urgency |
 | D | No health endpoint in dag-worker | Advisory — required before prod |
-| E | 12-min timeout breaks HumanWait | Fixed ✅ (B11 above) |
+| E | 12-min timeout breaks HumanWait | Partial ⚠️ — see B11; full async design in `HUMANWAIT_DESIGN.md` |

@@ -1917,7 +1917,8 @@ tenant cache key isolation. No Postgres or Redis required.
 | `TestExecuteSkill_SkillSelectionByID_NotFound` | Unknown `skill_id` in metadata → Failed event (not panic) |
 | `TestExecuteSkill_PolicyAllowedSkillIDs_Denied` | `Policies.AllowedSkillIDs` excludes a skill → Failed event |
 | `TestExecuteSkill_PolicyAllowedSkillIDs_Permitted` | Skill in `AllowedSkillIDs` → Completed event |
-| `TestLoadBinding_SQLTenantScope` | Both query paths in `loadBinding` contain `a.tenant_id` predicate (via JOIN on `applications`) |
+| `TestLoadBinding_SQLTenantScope` | `bindingID` path enforces all 4 IDs (`b.id + b.application_id + b.agent_id + a.tenant_id`); `no-bindingID` path enforces 3 predicates |
+| `TestLoadBinding_CrossAgentRejection` | Live DB: correct 4-ID lookup succeeds; wrong `agentID` rejected; wrong `appID` rejected (gated by `THEM_AGENT_RUNTIME_E2E=true`) |
 | `TestLoadAppAPIKey_SQLTenantScope` | `loadAppAPIKey` query contains `tenant_id = $2::uuid` predicate |
 | `TestLoadAppGlobalParams_SQLTenantScope` | `loadAppGlobalParams` query contains `tenant_id = $2::uuid` predicate |
 
@@ -2218,28 +2219,63 @@ python3 go/scripts/smoke_test_go_gateway.py --token <tok> --app <app_slug> --ep 
 
 ---
 
-### S2-06 · Phase 4-C: Temporal E2E — `internal/temporal/integration_test.go`
+### S2-06 · Phase 4-C: Temporal executor E2E — `internal/temporal/integration_test.go`
 
-**Purpose:** Integration-tagged tests for fail-closed Temporal behaviour and the live DAG path.
+**Purpose:** Integration-tagged tests for fail-closed Temporal behaviour and the TemporalExecutor
+live path. Note: these tests call `TemporalExecutor.Execute` directly — they do NOT exercise
+the agent-runtime HTTP path. For the full path E2E see S2-07.
 Build tag: `//go:build integration`.
 
 | Test | What it proves | Requirements |
 |---|---|---|
 | `TestTemporalConnect_Unavailable` | `Connect` returns non-nil error for unreachable Temporal | None (targets unused port) |
 | `TestTemporalExecutor_EmptyPlan_Integration` | Nil/empty plan rejected before any RPC call; nil client proves guard runs first | None |
-| `TestTemporalExecutor_LiveDAG` | End-to-end single-node DAG through running Temporal + dag-worker | `THEM_TEMPORAL_E2E=true`, live Temporal + dag-worker |
+| `TestTemporalExecutor_LiveDAG` | `TemporalExecutor.Execute` against live Temporal + dag-worker; unique InvocationID per run | `THEM_TEMPORAL_E2E=true`, live Temporal + dag-worker |
 
-**Run command (full integration suite):**
+**Run command:**
 ```bash
-go test -tags=integration -v -timeout 120s ./internal/temporal/...
-```
-
-**Run live E2E only:**
-```bash
-THEM_TEMPORAL_E2E=true TEMPORAL_HOST_PORT=localhost:7233 go test -tags=integration -v -run TestTemporalExecutor_LiveDAG ./internal/temporal/...
+THEM_TEMPORAL_E2E=true TEMPORAL_HOST_PORT=localhost:7233 \
+  go test -tags=integration -v -timeout 120s ./internal/temporal/...
 ```
 
 **Trigger:** any change to `internal/temporal/temporal_executor.go`, `internal/temporal/canvas_workflow.go`, `cmd/dag-worker/main.go`, `docker-compose.yml` (temporal profile)
+
+---
+
+### S2-07 · Phase 4-C: Agent-runtime full-path E2E — `cmd/agent-runtime/e2e_integration_test.go`
+
+**Purpose:** Full end-to-end test through the complete production path:
+HTTP client → `Runtime.handle()` → A2A SDK → `executeSkill` → spec/binding DB lookup →
+`TemporalExecutor.Execute` → Temporal → dag-worker → PostgreSQL.
+
+Uses a timestamp-based unique message ID to guarantee a new Temporal workflow is started
+on every run (no re-attachment to prior completed workflows).
+
+| Test | What it proves | Requirements |
+|---|---|---|
+| `TestAgentRuntime_LiveE2E` | Full path TASK_STATE_COMPLETED; unique workflow ID per run; not re-attached | `THEM_AGENT_RUNTIME_E2E=true`, live Postgres + Redis + Temporal + dag-worker |
+| `TestLoadBinding_CrossAgentRejection` | `loadBinding(bindingID)` rejects wrong agentID and wrong appID within same tenant | `THEM_AGENT_RUNTIME_E2E=true`, live Postgres |
+
+Seeded prerequisites (permanent fixtures in dev DB):
+
+| Resource | ID |
+|---|---|
+| tenant | `00000000-0000-0000-0000-000000000001` (slug: `default`) |
+| application | `00000000-0000-0000-0000-000000000002` (E2E Test App) |
+| agent | `00000000-0000-0000-0000-000000000003` (slug: `e2etestagent`, backend: `temporal`) |
+| binding | `fa6ae508-412b-46e4-8da1-34441825c6c2` |
+
+**Run command (from inside them-network container):**
+```bash
+THEM_AGENT_RUNTIME_E2E=true \
+  DATABASE_HOST=them-postgres DATABASE_USER=them DATABASE_NAME=them DATABASE_PASSWORD=<pw> \
+  REDIS_HOST=them-redis \
+  TEMPORAL_HOST_PORT=temporal-frontend:7233 \
+  SECRET_KEY=<key> \
+  go test -tags=integration -v -timeout 120s ./cmd/agent-runtime/ -run 'TestAgentRuntime_LiveE2E|TestLoadBinding_CrossAgentRejection'
+```
+
+**Trigger:** any change to `cmd/agent-runtime/main.go` (handle, executeSkill, loadBinding, loadSpecByAgentID)
 
 ---
 

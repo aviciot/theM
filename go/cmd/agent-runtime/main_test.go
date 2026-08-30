@@ -2,18 +2,45 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"iter"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aviciot/them/internal/agentgen"
 )
+
+// buildTestDSN constructs a postgres DSN from environment variables for live DB tests.
+func buildTestDSN(t *testing.T) string {
+	t.Helper()
+	host := os.Getenv("DATABASE_HOST")
+	if host == "" {
+		host = "localhost"
+	}
+	port := os.Getenv("DATABASE_PORT")
+	if port == "" {
+		port = "5432"
+	}
+	user := os.Getenv("DATABASE_USER")
+	if user == "" {
+		user = "them"
+	}
+	password := os.Getenv("DATABASE_PASSWORD")
+	name := os.Getenv("DATABASE_NAME")
+	if name == "" {
+		name = "them"
+	}
+	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s", user, password, host, port, name)
+}
 
 // TestSpecCache_MissAndHit verifies TTL-based eviction and cache hit.
 func TestSpecCache_MissAndHit(t *testing.T) {
@@ -507,34 +534,43 @@ func TestExecuteSkill_InvocationIDFromTaskID(t *testing.T) {
 	}
 }
 
-// TestLoadBinding_SQLTenantScope verifies that both loadBinding query paths carry
-// a tenant_id predicate via the JOIN on applications, preventing cross-tenant binding reads.
+// TestLoadBinding_SQLTenantScope verifies that both loadBinding query paths carry a
+// tenant_id predicate and — critically — that the bindingID path also enforces
+// application_id and agent_id so a cross-application/cross-agent binding lookup within
+// the same tenant is rejected at the DB level.
 func TestLoadBinding_SQLTenantScope(t *testing.T) {
-	// Verify by calling loadBinding with an intentionally nil pool — the function
-	// will panic only if it reaches the DB; we check the query strings directly instead.
-	rt := &Runtime{}
-
-	// Use reflection or indirect inspection: verify the SQL literal is correct
-	// by reproducing the logic inline and checking string containment.
 	const expectedJoin = "JOIN them.applications a ON a.id = b.application_id"
-	const expectedTenantWithID = "a.tenant_id = $2::uuid"
+	const expectedTenantParam4 = "a.tenant_id = $4::uuid"
+	const expectedAppID = "b.application_id = $2::uuid"
+	const expectedAgentID = "b.agent_id = $3::uuid"
 	const expectedTenantNoID = "a.tenant_id = $3::uuid"
 
-	// bindingID path
+	// bindingID path — must enforce all 4 IDs: bindingID + appID + agentID + tenantID.
+	// The old query only had b.id + a.tenant_id, which allowed cross-app/cross-agent
+	// binding reads within the same tenant.
 	queryWithID := `SELECT b.id, b.application_id, b.agent_id, b.definition_id,
 		          b.credential_bindings, b.config_overrides, b.policies,
 		          COALESCE(b.agent_params, '{}')
 		          FROM them.app_agent_bindings b
 		          JOIN them.applications a ON a.id = b.application_id
-		          WHERE b.id = $1::uuid AND a.tenant_id = $2::uuid`
+		          WHERE b.id = $1::uuid
+		            AND b.application_id = $2::uuid
+		            AND b.agent_id = $3::uuid
+		            AND a.tenant_id = $4::uuid`
 	if !strings.Contains(queryWithID, expectedJoin) {
 		t.Errorf("bindingID path missing JOIN: %q", queryWithID)
 	}
-	if !strings.Contains(queryWithID, expectedTenantWithID) {
-		t.Errorf("bindingID path missing tenant_id predicate: %q", queryWithID)
+	if !strings.Contains(queryWithID, expectedAppID) {
+		t.Errorf("bindingID path missing application_id predicate: %q", queryWithID)
+	}
+	if !strings.Contains(queryWithID, expectedAgentID) {
+		t.Errorf("bindingID path missing agent_id predicate: %q", queryWithID)
+	}
+	if !strings.Contains(queryWithID, expectedTenantParam4) {
+		t.Errorf("bindingID path missing a.tenant_id = $4::uuid predicate: %q", queryWithID)
 	}
 
-	// appID+agentID path
+	// appID+agentID path (no bindingID) — unchanged; already has all 3 predicates.
 	queryNoID := `SELECT b.id, b.application_id, b.agent_id, b.definition_id,
 		          b.credential_bindings, b.config_overrides, b.policies,
 		          COALESCE(b.agent_params, '{}')
@@ -545,9 +581,56 @@ func TestLoadBinding_SQLTenantScope(t *testing.T) {
 		t.Errorf("no-bindingID path missing JOIN: %q", queryNoID)
 	}
 	if !strings.Contains(queryNoID, expectedTenantNoID) {
-		t.Errorf("no-bindingID path missing tenant_id predicate: %q", queryNoID)
+		t.Errorf("no-bindingID path missing a.tenant_id = $3::uuid: %q", queryNoID)
 	}
-	_ = rt
+}
+
+// TestLoadBinding_CrossAgentRejection verifies that a binding that exists in the DB
+// but belongs to a different agent (same tenant, same app) is rejected when the caller
+// supplies the wrong agentID. This test runs against a live Postgres database and is
+// gated by THEM_AGENT_RUNTIME_E2E=true.
+func TestLoadBinding_CrossAgentRejection(t *testing.T) {
+	if os.Getenv("THEM_AGENT_RUNTIME_E2E") != "true" {
+		t.Skip("THEM_AGENT_RUNTIME_E2E not set — skipping live DB cross-agent rejection test")
+	}
+	dsn := buildTestDSN(t)
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	rt := &Runtime{pool: pool, logger: slog.New(slog.NewTextHandler(os.Stdout, nil))}
+
+	const (
+		tenantID  = "00000000-0000-0000-0000-000000000001"
+		appID     = "00000000-0000-0000-0000-000000000002"
+		agentID   = "00000000-0000-0000-0000-000000000003"
+		bindingID = "fa6ae508-412b-46e4-8da1-34441825c6c2" // real binding for agentID above
+	)
+
+	// Happy path: correct tenant + app + agent + binding → succeeds.
+	_, _, err = rt.loadBinding(ctx, tenantID, appID, agentID, bindingID)
+	if err != nil {
+		t.Fatalf("correct 4-ID lookup failed: %v", err)
+	}
+
+	// Cross-agent: same binding UUID + same tenant + same app, but wrong agentID → rejected.
+	wrongAgentID := "00000000-0000-0000-0000-000000000099"
+	_, _, err = rt.loadBinding(ctx, tenantID, appID, wrongAgentID, bindingID)
+	if err == nil {
+		t.Fatal("cross-agent binding lookup must be rejected but was not")
+	}
+	t.Logf("cross-agent correctly rejected: %v", err)
+
+	// Cross-application: same binding UUID + same tenant + wrong appID → rejected.
+	wrongAppID := "00000000-0000-0000-0000-000000000098"
+	_, _, err = rt.loadBinding(ctx, tenantID, wrongAppID, agentID, bindingID)
+	if err == nil {
+		t.Fatal("cross-application binding lookup must be rejected but was not")
+	}
+	t.Logf("cross-application correctly rejected: %v", err)
 }
 
 // TestLoadAppAPIKey_SQLTenantScope verifies that the provider_keys query includes tenant_id.

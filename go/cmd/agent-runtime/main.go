@@ -592,17 +592,21 @@ func (rt *Runtime) loadBinding(ctx context.Context, tenantID, appID, agentID, bi
 		query string
 		args  []any
 	)
-	// Both query paths JOIN applications to assert tenant ownership.
-	// This prevents a caller from accessing a binding that belongs to another tenant
-	// by supplying a valid binding/application UUID they do not own.
+	// Both query paths JOIN applications to assert tenant ownership and enforce all
+	// four caller-supplied IDs. Without the applicationID + agentID predicates in the
+	// bindingID path, a caller within the same tenant could supply a valid binding UUID
+	// belonging to a different application or agent and bypass the ownership check.
 	if bindingID != "" {
 		query = `SELECT b.id, b.application_id, b.agent_id, b.definition_id,
 		          b.credential_bindings, b.config_overrides, b.policies,
 		          COALESCE(b.agent_params, '{}')
 		          FROM them.app_agent_bindings b
 		          JOIN them.applications a ON a.id = b.application_id
-		          WHERE b.id = $1::uuid AND a.tenant_id = $2::uuid`
-		args = []any{bindingID, tenantID}
+		          WHERE b.id = $1::uuid
+		            AND b.application_id = $2::uuid
+		            AND b.agent_id = $3::uuid
+		            AND a.tenant_id = $4::uuid`
+		args = []any{bindingID, appID, agentID, tenantID}
 	} else {
 		query = `SELECT b.id, b.application_id, b.agent_id, b.definition_id,
 		          b.credential_bindings, b.config_overrides, b.policies,
