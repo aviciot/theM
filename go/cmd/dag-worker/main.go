@@ -168,18 +168,18 @@ func (l *dbContextLoader) Load(ctx context.Context, ic agentgen.ActivityIC) (*ag
 		BindingID:     ic.BindingID,
 	}
 
-	// Load AgentSpec from agent_runtime_specs (scoped by agent_id).
-	spec, err := l.loadSpec(ctx, ic.AgentID)
+	// Load AgentSpec from agent_runtime_specs (scoped by agent_id AND tenant_id).
+	spec, err := l.loadSpec(ctx, ic.TenantID, ic.AgentID)
 	if err != nil {
 		return nil, fmt.Errorf("dbContextLoader.Load: spec: %w", err)
 	}
 	full.Spec = spec
 
-	// Load per-app provider keys (for LLM steps).
-	full.AppAPIKey = l.loadAppAPIKey(ctx, ic.ApplicationID)
+	// Load per-app provider keys (for LLM steps), scoped by tenant.
+	full.AppAPIKey = l.loadAppAPIKey(ctx, ic.TenantID, ic.ApplicationID)
 
-	// Load app-level global params.
-	full.AppGlobalParams = l.loadAppGlobalParams(ctx, ic.ApplicationID)
+	// Load app-level global params, scoped by tenant.
+	full.AppGlobalParams = l.loadAppGlobalParams(ctx, ic.TenantID, ic.ApplicationID)
 
 	// Load binding — scoped by all four IDs.
 	if ic.BindingID != "" {
@@ -198,9 +198,11 @@ func (l *dbContextLoader) Load(ctx context.Context, ic agentgen.ActivityIC) (*ag
 	return full, nil
 }
 
-func (l *dbContextLoader) loadSpec(ctx context.Context, agentID string) (*agentgen.AgentSpec, error) {
+func (l *dbContextLoader) loadSpec(ctx context.Context, tenantID, agentID string) (*agentgen.AgentSpec, error) {
 	row := l.pool.QueryRow(ctx,
-		`SELECT spec FROM them.agent_runtime_specs WHERE agent_id = $1::uuid`, agentID)
+		`SELECT spec FROM them.agent_runtime_specs
+		  WHERE agent_id = $1::uuid AND tenant_id = $2::uuid`,
+		agentID, tenantID)
 	var specJSON []byte
 	if err := row.Scan(&specJSON); err != nil {
 		return nil, fmt.Errorf("query spec: %w", err)
@@ -212,9 +214,11 @@ func (l *dbContextLoader) loadSpec(ctx context.Context, agentID string) (*agentg
 	return &spec, nil
 }
 
-func (l *dbContextLoader) loadAppAPIKey(ctx context.Context, appID string) map[string]string {
+func (l *dbContextLoader) loadAppAPIKey(ctx context.Context, tenantID, appID string) map[string]string {
 	row := l.pool.QueryRow(ctx,
-		`SELECT COALESCE(provider_keys, '{}') FROM them.applications WHERE id = $1::uuid`, appID)
+		`SELECT COALESCE(provider_keys, '{}') FROM them.applications
+		  WHERE id = $1::uuid AND tenant_id = $2::uuid`,
+		appID, tenantID)
 	var raw []byte
 	if err := row.Scan(&raw); err != nil {
 		return map[string]string{}
@@ -260,9 +264,11 @@ func (l *dbContextLoader) loadAppAPIKey(ctx context.Context, appID string) map[s
 	return out
 }
 
-func (l *dbContextLoader) loadAppGlobalParams(ctx context.Context, appID string) map[string]string {
+func (l *dbContextLoader) loadAppGlobalParams(ctx context.Context, tenantID, appID string) map[string]string {
 	row := l.pool.QueryRow(ctx,
-		`SELECT COALESCE(app_params, '{}') FROM them.applications WHERE id = $1::uuid`, appID)
+		`SELECT COALESCE(app_params, '{}') FROM them.applications
+		  WHERE id = $1::uuid AND tenant_id = $2::uuid`,
+		appID, tenantID)
 	var raw []byte
 	if err := row.Scan(&raw); err != nil {
 		return map[string]string{}
@@ -305,12 +311,14 @@ func (l *dbContextLoader) loadAppGlobalParams(ctx context.Context, appID string)
 // the raw agent_params JSON, config_overrides map, and resolved policies.
 func (l *dbContextLoader) loadBinding(ctx context.Context, ic agentgen.ActivityIC) ([]byte, map[string]any, agentgen.InvocationPolicies, error) {
 	row := l.pool.QueryRow(ctx,
-		`SELECT COALESCE(agent_params, '{}'), config_overrides, policies
-		   FROM them.app_agent_bindings
-		  WHERE id = $1::uuid
-		    AND application_id = $2::uuid
-		    AND agent_id = $3::uuid`,
-		ic.BindingID, ic.ApplicationID, ic.AgentID,
+		`SELECT COALESCE(b.agent_params, '{}'), b.config_overrides, b.policies
+		   FROM them.app_agent_bindings b
+		   JOIN them.applications a ON a.id = b.application_id
+		  WHERE b.id = $1::uuid
+		    AND b.application_id = $2::uuid
+		    AND b.agent_id = $3::uuid
+		    AND a.tenant_id = $4::uuid`,
+		ic.BindingID, ic.ApplicationID, ic.AgentID, ic.TenantID,
 	)
 	var agentParamsJSON, cfgJSON, polJSON []byte
 	if err := row.Scan(&agentParamsJSON, &cfgJSON, &polJSON); err != nil {
