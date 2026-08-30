@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `89c7e67`
+Commit: `(pending Phase 5-C gap commit)`
 
 Recent commits (newest first):
 ```
+(pending) fix(a2a-call): Phase 5-C gaps — binding required, stable UUIDs, error sanitization, E2E tests
 89c7e67  feat(a2a-call): Phase 5-C — A2ACaller abstraction, depth tracking, HumanWait+local validation
 0487797  fix(hitl): Phase 5-B hardening — auth, state model, wait_token, loop body, reconnect
 3b1052f  feat(hitl): Phase 5-B — HumanWait async submit, Redis handle store, signal endpoint
@@ -163,9 +164,9 @@ S1-78: 4 dag-worker SQL tenant scope tests
 S1-79: 11 HITLStore Phase 5-B hardening tests (HS-1..11: state machine, UpdateWaitToken, TrySignal CAS, MarkDone, RepeatedWait)
 S1-80: 5 agent-runtime HITL Phase 5-B handler tests (RT-HITL-1..5: ReturnsWorking, StoresHandle, HITLRequestHandler)
 S1-81: 4 Canvas HITL signal admin endpoint tests (CSIG-1..4: Success, NotFound, CrossTenant, WrongToken)
-S1-82: 13 A2A Call node Phase 5-C tests (A2A-1..13: NodeRegistered, Validate, Execute, self-call, depth, HumanWait backend, HTTPA2ACaller, DeriveOutputs)
+S1-82: 18 A2A Call node Phase 5-C + gap tests (A2A-1..18: NodeRegistered, Validate, Execute, self-call, depth, HumanWait backend, HTTPA2ACaller (all 4 headers), DeriveOutputs, fail-closed, stable UUIDs, error sanitization, E2E LocalExecutor, E2E ExecuteNodeForActivity)
 S2-06: 3 integration-tagged Temporal E2E tests
-Total go test ./...: 911
+Total go test ./...: 916
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -494,31 +495,41 @@ Done (canvas ports, commit 81c3a31):
 - `CanvasTasksHandler` in `internal/admin/canvas_tasks.go` — tenant ownership check + TrySignal CAS
 - 20 total tests: HS-1..11, RT-HITL-1..5, CSIG-1..4; `go test ./...` → 0 failures
 
-### Phase 5-C: A2A call node — COMPLETE (pending commit)
+### Phase 5-C: A2A call node — COMPLETE (commits 89c7e67 + pending gap fix)
 
-**What was built:**
+**What was built (Phase 5-C initial, commit 89c7e67):**
 - `go/internal/agentgen/a2a_caller.go`: `A2ACaller` interface + `HTTPA2ACaller` + `AgentEndpointResolver` + `DBAgentEndpointResolver`
 - `go/internal/agentgen/interpreter.go`: `a2aCaller` field + `WithA2ACaller()` + `execA2ACall`
 - `go/internal/agentgen/context.go`: `A2ACallDepth int` on `InvocationContext`
-- `go/internal/agentgen/nodes.go`: `StepA2ACall` — Execute set (no longer stub); Validate checks required fields
-- `go/internal/agentgen/node_executor.go`: `A2ACallDepth` on `ActivityIC` (propagates through Temporal)
-- `go/internal/agentgen/compiler.go`: `validateHumanWaitBackend` — human_wait requires execution_backend=temporal
-- `go/internal/agentgen/spec.go`: `A2ACallStepConfig` uses `AgentSlug`/`InputVar`/`OutputVar`/`TimeoutSeconds`
-- `go/cmd/agent-runtime/main.go`: parses `X-Them-A2A-Depth` header; wires `HTTPA2ACaller` with `pgxAgentEndpointQueryer`
-- `go/cmd/dag-worker/main.go`: wires `HTTPA2ACaller` + sets `A2ACallDepth` in `dbContextLoader.Load`
-- `go/internal/agentgen/a2a_test.go`: 13 tests (A2A-1..13)
-- `go/TEST_INDEX.md`: S1-82 added (13 tests), totals updated 898 → 911
+- `go/internal/agentgen/nodes.go`: `StepA2ACall` — Execute set; Validate checks required fields
+- `go/internal/agentgen/node_executor.go`: `A2ACallDepth` on `ActivityIC`
+- `go/internal/agentgen/compiler.go`: `validateHumanWaitBackend`
+- `go/internal/agentgen/spec.go`: `A2ACallStepConfig` with AgentSlug/InputVar/OutputVar/TimeoutSeconds
+- `go/cmd/agent-runtime/main.go` + `go/cmd/dag-worker/main.go`: wired HTTPA2ACaller
+
+**What was fixed (Phase 5-C gap fixes, pending commit):**
+- `A2ACallParams` struct — replaces positional `Call()` args; adds `InvocationID` + `StepID`
+- `ResolvedEndpoint` struct — resolver now returns `AgentID` + `BindingID`
+- `AgentEndpointQueryer.QueryAgentEndpoint` — takes `applicationID`; JOINs `app_agent_bindings + applications`; returns 4 columns
+- `DBAgentEndpointResolver.ResolveEndpoint` — fail-closed when binding or endpoint missing
+- `HTTPA2ACaller.Call` — sends `X-Them-Agent-Id` + `X-Them-Binding-Id` headers
+- `stableCallUUID` — UUID v5 from `invocationID:stepID:agentSlug:role` so retries re-use same IDs
+- `sanitizeRemoteError` — strips URLs → `[url-redacted]`, truncates at 300 chars
+- 5 new tests: A2A-9b, A2A-14..18 (fail-closed, stable UUIDs, sanitized errors, E2E Local + Temporal)
+- Total: 18 tests (A2A-1..18), suite total 898 → 916
 
 **Security constraints enforced:**
-- Target endpoint resolved exclusively from DB (`auth_token_encrypted` decrypted with `cryptoKey`) — never user-supplied
-- `X-Them-A2A-Depth` propagated over HTTP for cross-service depth enforcement
-- `MaxA2ACallDepth = 3` hard cap
-- Self-call rejection at IC level (before resolver is called)
-- No credentials in logs or Temporal history (`A2ACallDepth` is just an int)
+- Binding required — no call without verified `app_agent_bindings` row (fail closed)
+- `X-Them-Agent-Id` + `X-Them-Binding-Id` sent so callee can verify tenant ownership
+- Endpoint + auth token from DB only — never user-supplied
+- `X-Them-A2A-Depth` propagated; `MaxA2ACallDepth = 3` hard cap
+- Self-call rejection before resolver is invoked
+- Remote error messages sanitized (no internal URLs in logs/responses)
+- No secrets in Temporal history
 
 **Next recommended task:**
 - Phase 5-D: StreamOut node implementation (currently Execute=nil stub), or
-- UI: A2A Call node properties panel in canvas RightPanel (server/slug + var config), or
+- UI: A2A Call node properties panel in canvas RightPanel (slug + var config), or
 - Traefik: fix `/a2a/` router to point at `them-go-bridge-svc` (currently broken, points to dead Python service)
 
 ### Phase 4-C Advisory items (deferred)

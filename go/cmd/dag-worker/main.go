@@ -464,6 +464,9 @@ var _ agentgen.LLMFactory = (*multiLLMFactory)(nil)
 var _ temporal.ContextLoader = (*dbContextLoader)(nil)
 
 // pgxAgentEndpointQueryer implements agentgen.AgentEndpointQueryer using pgxpool.
+// Returns (agent_id, binding_id, endpoint_url, auth_token_encrypted) by joining
+// agents → app_agent_bindings → applications to enforce tenant + binding ownership.
+// Returns no row when the agent is disabled, not bound to the app, or wrong tenant.
 type pgxAgentEndpointQueryer struct {
 	pool *pgxpool.Pool
 }
@@ -472,12 +475,18 @@ type pgxSingleRow struct{ row interface{ Scan(...any) error } }
 
 func (r pgxSingleRow) Scan(dest ...any) error { return r.row.Scan(dest...) }
 
-func (q *pgxAgentEndpointQueryer) QueryAgentEndpoint(ctx context.Context, tenantID, agentSlug string) agentgen.AgentEndpointRow {
+func (q *pgxAgentEndpointQueryer) QueryAgentEndpoint(ctx context.Context, tenantID, applicationID, agentSlug string) agentgen.AgentEndpointRow {
 	row := q.pool.QueryRow(ctx,
-		`SELECT COALESCE(endpoint_url,''), COALESCE(auth_token_encrypted,'')
-		   FROM them.agents
-		  WHERE slug = $1 AND tenant_id = $2::uuid AND enabled = true`,
-		agentSlug, tenantID)
+		`SELECT a.id::text, b.id::text,
+		        COALESCE(a.endpoint_url,''), COALESCE(a.auth_token_encrypted,'')
+		   FROM them.agents a
+		   JOIN them.app_agent_bindings b ON b.agent_id = a.id
+		   JOIN them.applications app     ON app.id = b.application_id
+		  WHERE a.slug           = $1
+		    AND b.application_id = $2::uuid
+		    AND app.tenant_id    = $3::uuid
+		    AND a.enabled        = true`,
+		agentSlug, applicationID, tenantID)
 	return pgxSingleRow{row: row}
 }
 

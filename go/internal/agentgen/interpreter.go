@@ -565,7 +565,15 @@ func (interp *Interpreter) execA2ACall(ctx context.Context, ic *InvocationContex
 		defer cancel()
 	}
 
-	result, err := interp.a2aCaller.Call(callCtx, ic.TenantID, ic.ApplicationID, cfg.AgentSlug, inputJSON, ic.A2ACallDepth)
+	result, err := interp.a2aCaller.Call(callCtx, A2ACallParams{
+		TenantID:      ic.TenantID,
+		ApplicationID: ic.ApplicationID,
+		AgentSlug:     cfg.AgentSlug,
+		InvocationID:  ic.InvocationID,
+		StepID:        step.ID,
+		Input:         inputJSON,
+		Depth:         ic.A2ACallDepth,
+	})
 	if err != nil {
 		return fmt.Errorf("a2a_call: %w", err)
 	}
