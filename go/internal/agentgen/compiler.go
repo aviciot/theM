@@ -500,6 +500,32 @@ func validateExecutability(def *canvasDefinition, severity string) []Issue {
 	return issues
 }
 
+// validateHumanWaitBackend checks that any skill containing a human_wait step is
+// configured with execution_backend="temporal". LocalExecutor cannot block a
+// goroutine waiting for external human input — only Temporal can durably park
+// a workflow and resume it on signal.
+// severity controls whether violations are "warning" (Validate) or "error" (CompileForPublish).
+func validateHumanWaitBackend(def *canvasDefinition, severity string) []Issue {
+	if def.AgentRoot.ExecutionBackend == "temporal" {
+		return nil
+	}
+	var issues []Issue
+	for _, cs := range def.Skills {
+		for _, step := range cs.Steps {
+			if StepType(step.Type) == StepHumanWait {
+				issues = append(issues, Issue{
+					Severity: severity,
+					Code:     "HUMAN_WAIT_REQUIRES_TEMPORAL",
+					Message:  "human_wait steps require execution_backend=\"temporal\" — LocalExecutor cannot durably pause for human input",
+					SkillID:  cs.SkillID,
+					NodeID:   step.ID,
+				})
+			}
+		}
+	}
+	return issues
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 // Validate runs structural + node + graph + param checks and returns all issues.
@@ -522,6 +548,8 @@ func Validate(agentID, tenantID, definitionID, agentSlug string, raw json.RawMes
 	llmNodes := collectLLMNodes(def)
 
 	issues = append(issues, validateExecutability(def, "warning")...)
+
+	issues = append(issues, validateHumanWaitBackend(def, "warning")...)
 
 	issues = append(issues, validateDataFlow(def, compiled, "warning")...)
 
@@ -560,6 +588,11 @@ func CompileForPublish(agentID, tenantID, definitionID, agentSlug string, raw js
 	llmNodes := collectLLMNodes(def)
 
 	issues = append(issues, validateExecutability(def, "error")...)
+	if hasErrors(issues) {
+		return nil, issues
+	}
+
+	issues = append(issues, validateHumanWaitBackend(def, "error")...)
 	if hasErrors(issues) {
 		return nil, issues
 	}

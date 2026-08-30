@@ -45,9 +45,10 @@ type PipelineVars map[string]any
 type Interpreter struct {
 	httpClient       HTTPDoer
 	llmFactory       LLMFactory
-	mcpCaller        MCPCaller // nil when MCP_SERVICE_URL is not configured
-	platformAPIKey   string    // fallback LLM key when no app key is set
-	nextStepOverride string    // set by condition/branch steps; read and cleared by the Execute loop
+	mcpCaller        MCPCaller  // nil when MCP_SERVICE_URL is not configured
+	a2aCaller        A2ACaller  // nil when A2A inter-agent calls are not wired
+	platformAPIKey   string     // fallback LLM key when no app key is set
+	nextStepOverride string     // set by condition/branch steps; read and cleared by the Execute loop
 }
 
 // NewInterpreter creates an Interpreter.
@@ -62,6 +63,12 @@ func NewInterpreter(httpClient HTTPDoer, llmFactory LLMFactory, platformAPIKey s
 // WithMCPCaller sets the MCP caller used for mcp_call steps.
 func (interp *Interpreter) WithMCPCaller(mc MCPCaller) *Interpreter {
 	interp.mcpCaller = mc
+	return interp
+}
+
+// WithA2ACaller sets the A2A caller used for a2a_call steps.
+func (interp *Interpreter) WithA2ACaller(ac A2ACaller) *Interpreter {
+	interp.a2aCaller = ac
 	return interp
 }
 
@@ -500,6 +507,80 @@ func (interp *Interpreter) execResponse(step *StepSpec, vars PipelineVars, resul
 	result.MediaType = cfg.MediaType
 	if result.MediaType == "" {
 		result.MediaType = "text/plain"
+	}
+	return nil
+}
+
+// execA2ACall invokes another registered agent as a pipeline step.
+// It reads ic.A2ACallDepth to enforce the nesting cap, marshals the input variable
+// to JSON, calls the target via A2ACaller, and stores the response in output_var.
+func (interp *Interpreter) execA2ACall(ctx context.Context, ic *InvocationContext, step *StepSpec, vars PipelineVars) error {
+	if interp.a2aCaller == nil {
+		return fmt.Errorf("a2a_call: A2ACaller is not configured — check agent-runtime wiring")
+	}
+
+	var cfg A2ACallStepConfig
+	if err := json.Unmarshal(step.Config, &cfg); err != nil {
+		return fmt.Errorf("a2a_call: parse config: %w", err)
+	}
+	if cfg.AgentSlug == "" {
+		return fmt.Errorf("a2a_call: agent_slug is required")
+	}
+	if cfg.OutputVar == "" {
+		cfg.OutputVar = "a2a_response"
+	}
+
+	// Enforce self-call rejection: a canvas agent cannot call itself by slug.
+	if ic.Spec != nil && cfg.AgentSlug == ic.Spec.Slug {
+		return fmt.Errorf("a2a_call: self-invocation not allowed (agent_slug %q == caller slug)", cfg.AgentSlug)
+	}
+
+	// Build input: marshal the named variable to JSON.
+	var inputJSON json.RawMessage
+	if cfg.InputVar != "" {
+		if v, ok := vars[cfg.InputVar]; ok {
+			b, err := json.Marshal(v)
+			if err != nil {
+				return fmt.Errorf("a2a_call: marshal input_var %q: %w", cfg.InputVar, err)
+			}
+			inputJSON = b
+		} else {
+			inputJSON = json.RawMessage(`""`)
+		}
+	} else {
+		// No input_var — send the current "input" var as fallback.
+		if v, ok := vars["input"]; ok {
+			b, _ := json.Marshal(v)
+			inputJSON = b
+		} else {
+			inputJSON = json.RawMessage(`""`)
+		}
+	}
+
+	// Apply per-step timeout if configured, bounded by the parent context.
+	callCtx := ctx
+	if cfg.TimeoutSeconds > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
+		defer cancel()
+	}
+
+	result, err := interp.a2aCaller.Call(callCtx, ic.TenantID, ic.ApplicationID, cfg.AgentSlug, inputJSON, ic.A2ACallDepth)
+	if err != nil {
+		return fmt.Errorf("a2a_call: %w", err)
+	}
+
+	// Store result: unwrap a JSON string, otherwise store the raw JSON.
+	var text string
+	if json.Unmarshal(result, &text) == nil {
+		vars[cfg.OutputVar] = text
+	} else {
+		var obj any
+		if json.Unmarshal(result, &obj) == nil {
+			vars[cfg.OutputVar] = obj
+		} else {
+			vars[cfg.OutputVar] = string(result)
+		}
 	}
 	return nil
 }

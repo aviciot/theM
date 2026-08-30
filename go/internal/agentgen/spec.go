@@ -262,13 +262,17 @@ type ResponseStepConfig struct {
 }
 
 type A2ACallStepConfig struct {
-	Ref            DefinitionRef `json:"ref"`
-	InputVar       string        `json:"input_var"`
-	OutputVar      string        `json:"output_var"`
-	TimeoutSeconds int           `json:"timeout_seconds"`
+	// AgentSlug is the slug of the target agent registered in the platform.
+	// The caller resolves it via the registry to get the endpoint URL and auth token.
+	// Must not be empty; must not equal the calling agent's own slug (self-call rejection).
+	AgentSlug      string `json:"agent_slug"`
+	InputVar       string `json:"input_var"`
+	OutputVar      string `json:"output_var"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
 }
 
 // DefinitionRef is a portable cross-environment reference to a component.
+// Used by the registry and publish flow; not used directly by canvas step configs.
 type DefinitionRef struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`

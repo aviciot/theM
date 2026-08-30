@@ -130,6 +130,10 @@ type ActivityIC struct {
 	ApplicationID string `json:"application_id"`
 	AgentID       string `json:"agent_id"`
 	BindingID     string `json:"binding_id"`
+	// A2ACallDepth is the nesting level of this workflow invocation.
+	// 0 = top-level; incremented by HTTPA2ACaller before forwarding.
+	// Not a secret — safe to store in Temporal history.
+	A2ACallDepth  int    `json:"a2a_call_depth,omitempty"`
 }
 
 // Validate returns a non-nil error when any required field is missing.
@@ -155,5 +159,6 @@ func ActivityICFromInvocationContext(ic *InvocationContext) ActivityIC {
 		ApplicationID: ic.ApplicationID,
 		AgentID:       ic.AgentID,
 		BindingID:     ic.BindingID,
+		A2ACallDepth:  ic.A2ACallDepth,
 	}
 }

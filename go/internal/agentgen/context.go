@@ -53,6 +53,12 @@ type InvocationContext struct {
 	// Loaded from app_agent_bindings.config_overrides["llm_nodes"][node_id].
 	// NEVER logged or serialized — cleared after the request.
 	NodeLLMOverrides map[string]NodeLLMOverride // node_id → override
+
+	// A2ACallDepth tracks nested a2a_call invocations. Starts at 0 for top-level
+	// calls; incremented by HTTPA2ACaller before forwarding via X-Them-A2A-Depth.
+	// The interpreter rejects calls when A2ACallDepth >= MaxA2ACallDepth.
+	// NEVER logged — not secret, but not useful in structured logs.
+	A2ACallDepth int
 }
 
 // NodeLLMOverride is the runtime provider+model override for one LLM canvas node.

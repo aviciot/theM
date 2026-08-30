@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +74,13 @@ func main() {
 	if cfg.MCPServiceURL != "" {
 		interpBase.WithMCPCaller(agentgen.NewHTTPMCPCaller(cfg.MCPServiceURL, &http.Client{Timeout: 30 * time.Second}))
 	}
+
+	// A2A inter-agent call support: resolve target endpoint from DB, decrypt auth token.
+	a2aResolver := agentgen.NewDBAgentEndpointResolver(
+		&pgxAgentEndpointQueryer{pool: database.Pool()},
+		func(ct string) (string, error) { return crypto.DecryptStored(cryptoKey, ct) },
+	)
+	interpBase.WithA2ACaller(agentgen.NewHTTPA2ACaller(a2aResolver, &http.Client{Timeout: 5 * time.Minute}))
 
 	rt := &Runtime{
 		pool:      database.Pool(),
@@ -655,11 +663,18 @@ func (rt *Runtime) parseInvocationContext(r *http.Request) (*agentgen.Invocation
 	if tenantID == "" || appID == "" || agentID == "" {
 		return nil, fmt.Errorf("missing required invocation context headers")
 	}
+	depth := 0
+	if d := r.Header.Get("X-Them-A2A-Depth"); d != "" {
+		if n, err := strconv.Atoi(d); err == nil && n >= 0 {
+			depth = n
+		}
+	}
 	return &agentgen.InvocationContext{
 		TenantID:      tenantID,
 		ApplicationID: appID,
 		AgentID:       agentID,
 		BindingID:     bindingID,
+		A2ACallDepth:  depth,
 	}, nil
 }
 
@@ -1077,3 +1092,24 @@ func (a *anthropicProviderAdapter) Complete(ctx context.Context, systemPrompt, u
 
 var _ agentgen.LLMProvider = (*anthropicProviderAdapter)(nil)
 var _ agentgen.LLMFactory = (*multiLLMFactory)(nil)
+
+// pgxAgentEndpointQueryer implements agentgen.AgentEndpointQueryer using pgxpool.
+// Returns endpoint_url and auth_token_encrypted for one agent by tenant+slug.
+type pgxAgentEndpointQueryer struct {
+	pool *pgxpool.Pool
+}
+
+type pgxSingleRow struct{ row interface{ Scan(...any) error } }
+
+func (r pgxSingleRow) Scan(dest ...any) error { return r.row.Scan(dest...) }
+
+func (q *pgxAgentEndpointQueryer) QueryAgentEndpoint(ctx context.Context, tenantID, agentSlug string) agentgen.AgentEndpointRow {
+	row := q.pool.QueryRow(ctx,
+		`SELECT COALESCE(endpoint_url,''), COALESCE(auth_token_encrypted,'')
+		   FROM them.agents
+		  WHERE slug = $1 AND tenant_id = $2::uuid AND enabled = true`,
+		agentSlug, tenantID)
+	return pgxSingleRow{row: row}
+}
+
+var _ agentgen.AgentEndpointQueryer = (*pgxAgentEndpointQueryer)(nil)

@@ -306,11 +306,11 @@ func TestNA10_ActivityIC_Validate(t *testing.T) {
 		ic      agentgen.ActivityIC
 		wantErr bool
 	}{
-		{"all fields", agentgen.ActivityIC{"t", "a", "ag", "b"}, false},
-		{"no binding", agentgen.ActivityIC{"t", "a", "ag", ""}, false},  // BindingID optional
-		{"missing tenant", agentgen.ActivityIC{"", "a", "ag", "b"}, true},
-		{"missing app", agentgen.ActivityIC{"t", "", "ag", "b"}, true},
-		{"missing agent", agentgen.ActivityIC{"t", "a", "", "b"}, true},
+		{"all fields", agentgen.ActivityIC{TenantID: "t", ApplicationID: "a", AgentID: "ag", BindingID: "b"}, false},
+		{"no binding", agentgen.ActivityIC{TenantID: "t", ApplicationID: "a", AgentID: "ag"}, false}, // BindingID optional
+		{"missing tenant", agentgen.ActivityIC{ApplicationID: "a", AgentID: "ag", BindingID: "b"}, true},
+		{"missing app", agentgen.ActivityIC{TenantID: "t", AgentID: "ag", BindingID: "b"}, true},
+		{"missing agent", agentgen.ActivityIC{TenantID: "t", ApplicationID: "a", BindingID: "b"}, true},
 	}
 	for _, tc := range cases {
 		err := tc.ic.Validate()

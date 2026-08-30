@@ -111,6 +111,13 @@ func run() error {
 		interpTemplate.WithMCPCaller(agentgen.NewHTTPMCPCaller(cfg.MCPServiceURL, &http.Client{Timeout: 30 * time.Second}))
 	}
 
+	// A2A inter-agent call support: resolve target endpoint from DB, decrypt auth token.
+	a2aResolver := agentgen.NewDBAgentEndpointResolver(
+		&pgxAgentEndpointQueryer{pool: database.Pool()},
+		func(ct string) (string, error) { return crypto.DecryptStored(cryptoKey, ct) },
+	)
+	interpTemplate.WithA2ACaller(agentgen.NewHTTPA2ACaller(a2aResolver, &http.Client{Timeout: 5 * time.Minute}))
+
 	// ── 9. Create CanvasAgentActivities ───────────────────────────────────────
 	acts := &temporal.CanvasAgentActivities{
 		InterpTemplate: interpTemplate,
@@ -166,6 +173,7 @@ func (l *dbContextLoader) Load(ctx context.Context, ic agentgen.ActivityIC) (*ag
 		ApplicationID: ic.ApplicationID,
 		AgentID:       ic.AgentID,
 		BindingID:     ic.BindingID,
+		A2ACallDepth:  ic.A2ACallDepth,
 	}
 
 	// Load AgentSpec from agent_runtime_specs (scoped by agent_id AND tenant_id).
@@ -454,3 +462,23 @@ func (a *anthropicAdapter) Complete(ctx context.Context, systemPrompt, userPromp
 var _ agentgen.LLMProvider = (*anthropicAdapter)(nil)
 var _ agentgen.LLMFactory = (*multiLLMFactory)(nil)
 var _ temporal.ContextLoader = (*dbContextLoader)(nil)
+
+// pgxAgentEndpointQueryer implements agentgen.AgentEndpointQueryer using pgxpool.
+type pgxAgentEndpointQueryer struct {
+	pool *pgxpool.Pool
+}
+
+type pgxSingleRow struct{ row interface{ Scan(...any) error } }
+
+func (r pgxSingleRow) Scan(dest ...any) error { return r.row.Scan(dest...) }
+
+func (q *pgxAgentEndpointQueryer) QueryAgentEndpoint(ctx context.Context, tenantID, agentSlug string) agentgen.AgentEndpointRow {
+	row := q.pool.QueryRow(ctx,
+		`SELECT COALESCE(endpoint_url,''), COALESCE(auth_token_encrypted,'')
+		   FROM them.agents
+		  WHERE slug = $1 AND tenant_id = $2::uuid AND enabled = true`,
+		agentSlug, tenantID)
+	return pgxSingleRow{row: row}
+}
+
+var _ agentgen.AgentEndpointQueryer = (*pgxAgentEndpointQueryer)(nil)

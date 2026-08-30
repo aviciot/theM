@@ -1897,6 +1897,35 @@ behind JWT + RequireSuperAdmin + AdminTenantMiddleware. Validates tenant ownersh
 
 ---
 
+### S1-82 · A2A Call node Phase 5-C — `internal/agentgen/a2a_test.go`
+
+**Purpose:** Tests for the `a2a_call` node implementation (Phase 5-C). Covers node registration,
+validation, runtime execution via `A2ACaller`/`HTTPA2ACaller`, security invariants (self-call
+rejection, recursion depth cap), HumanWait+local-backend compiler validation, and the HTTP
+integration layer (`HTTPA2ACaller` + `AgentEndpointResolver`).
+
+| Test | What it proves |
+|---|---|
+| `TestA2A_NodeRegistered` (A2A-1) | `StepA2ACall` is registered with non-nil Execute after Phase 5-C |
+| `TestA2A_Validate_MissingFields` (A2A-2) | Missing `agent_slug` and `input_var` produce "error" issues |
+| `TestA2A_Validate_ValidConfig` (A2A-3) | Complete config produces no required-field errors |
+| `TestA2A_Execute_NoCaller` (A2A-4) | Execute with nil A2ACaller returns an error |
+| `TestA2A_Execute_CallsCallerAndSetsVar` (A2A-5) | Correct tenant/app/slug forwarded; result stored in output_var |
+| `TestA2A_Execute_CallerError` (A2A-6) | A2ACaller errors propagate cleanly (no secret leakage) |
+| `TestA2A_Execute_PropagatesDepth` (A2A-7) | IC.A2ACallDepth is forwarded to A2ACaller.Call |
+| `TestA2A_Execute_SelfCallRejected` (A2A-8) | agent_slug == caller slug → error before A2ACaller.Call |
+| `TestA2A_MaxDepthEnforced` (A2A-9) | A2ACallDepth >= MaxA2ACallDepth → depth error |
+| `TestA2A_HumanWait_LocalBackend_Rejected` (A2A-10) | human_wait + execution_backend=local → HUMAN_WAIT_REQUIRES_TEMPORAL warning (Validate) + error (CompileForPublish) |
+| `TestA2A_HumanWait_TemporalBackend_OK` (A2A-11) | human_wait + execution_backend=temporal → no HUMAN_WAIT_REQUIRES_TEMPORAL |
+| `TestA2A_HTTPA2ACaller_Integration` (A2A-12) | Real HTTP call with stub server; verifies X-Them-Tenant-Id + X-Them-A2A-Depth headers and response extraction |
+| `TestA2A_DeriveOutputs_DefaultVar` (A2A-13) | DeriveOutputs returns "a2a_response" when output_var not set |
+
+**Trigger:** any change to `internal/agentgen/a2a_caller.go`, `internal/agentgen/a2a_test.go`,
+`internal/agentgen/interpreter.go` (execA2ACall), `internal/agentgen/nodes.go` (StepA2ACall),
+`internal/agentgen/compiler.go` (validateHumanWaitBackend), `internal/agentgen/context.go` (A2ACallDepth)
+
+---
+
 ### S1-51 · Agent definition publish service — `internal/admin/service/agent_definitions_publish_test.go`
 
 **Purpose:** Canvas A2A Builder validate/publish service layer. Verifies DAL delegation,
@@ -2620,7 +2649,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-79 | HITLStore Phase 5-B (HS-1..11): state machine, UpdateWaitToken, TrySignal CAS, MarkDone, RepeatedWait | 11 |
 | S1-80 | agent-runtime HITL Phase 5-B (RT-HITL-1..5): ReturnsWorking, StoresHandle, HITLRequestHandler CancelTask/SubscribeToTask | 5 |
 | S1-81 | Canvas HITL signal admin endpoint (CSIG-1..4): Success, NotFound, CrossTenant, WrongToken | 4 |
-| **S1 total** | | **893** |
+| S1-82 | A2A Call node Phase 5-C (A2A-1..13): NodeRegistered, Validate missing/valid, Execute no-caller/calls-caller/error/depth/self-call/depth-cap, HumanWait local/temporal, HTTPA2ACaller integration, DeriveOutputs default | 13 |
+| **S1 total** | | **906** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2629,4 +2659,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **898** |
+| **`go test ./...` total** | | **911** |

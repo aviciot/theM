@@ -593,7 +593,7 @@ func init() {
 		Type:                 StepA2ACall,
 		Version:              1,
 		Label:                "A2A Call",
-		Description:          "Invoke an external A2A agent as a step in this pipeline. Passes variables and receives structured output. (stub)",
+		Description:          "Invoke another registered agent as a step in this pipeline. Passes a pipeline variable as input and stores the response in a named output variable.",
 		Emoji:                "🤝",
 		OutputArity:          "single",
 		IsSource:             false,
@@ -605,20 +605,38 @@ func init() {
 		BgColor:              "rgba(0,240,255,0.05)",
 		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 0},
 		ConfigFields: []ConfigFieldDoc{
-			{Key: "agent_url", Type: "string", Required: true, Description: "Base URL of the A2A agent to call (e.g. http://my-agent:9200).", Example: "http://vision-agent:9100"},
-			{Key: "skill_id", Type: "string", Required: false, Description: "Specific skill ID to invoke on the target agent. Omit to use the agent's default skill.", Example: "analyze_image"},
+			{Key: "agent_slug", Type: "string", Required: true, Description: "Slug of the target agent registered in the platform. Must not equal the calling agent's own slug.", Example: "vision-agent"},
 			{Key: "input_var", Type: "string", Required: true, Description: "Pipeline variable name to send as the A2A task input.", Example: "user_query"},
 			{Key: "output_var", Type: "string", Required: false, Description: "Pipeline variable name to store the A2A response. Defaults to \"a2a_response\".", Example: "agent_result"},
+			{Key: "timeout_seconds", Type: "int", Required: false, Description: "Per-step timeout in seconds. 0 = use the node execution policy timeout.", Example: "60"},
 		},
-		UsageNotes: "A2A Call is not yet fully implemented (stub). Use it to delegate a subtask to another A2A-compliant agent registered in the platform. For immediate use, prefer MCP Tool or HTTP nodes to call external services.",
+		UsageNotes: "A2A Call delegates a subtask to another agent registered in the platform. The target agent is resolved by slug — never by direct URL. Maximum nesting depth is 3.",
 		Examples: []NodeExample{
-			{Description: "Call vision agent", Config: map[string]any{"agent_url": "http://vision-agent:9100", "skill_id": "describe_image", "input_var": "image_url", "output_var": "description"}},
+			{Description: "Call vision agent", Config: map[string]any{"agent_slug": "vision-agent", "input_var": "image_url", "output_var": "description"}},
 		},
-		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepBranch, StepMCPCall, StepResponse},
+		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepBranch, StepMCPCall, StepA2ACall, StepResponse},
 		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
 		MaxPolicy:     ExecutionPolicy{MaxAttempts: 2, TimeoutSeconds: 600},
-		Validate:    nil,
-		Execute:     nil,
+		Validate: func(step canvasStep) []Issue {
+			var c A2ACallStepConfig
+			if len(step.Config) > 0 {
+				_ = json.Unmarshal(step.Config, &c)
+			}
+			var issues []Issue
+			if c.AgentSlug == "" {
+				issues = append(issues, Issue{Severity: "error", Code: "MISSING_FIELD", Message: "a2a_call: agent_slug is required"})
+			}
+			if c.InputVar == "" {
+				issues = append(issues, Issue{Severity: "error", Code: "MISSING_FIELD", Message: "a2a_call: input_var is required"})
+			}
+			if c.OutputVar == "" {
+				issues = append(issues, Issue{Severity: "warning", Code: "MISSING_FIELD", Message: "a2a_call: output_var not set; response will be stored in \"a2a_response\""})
+			}
+			return issues
+		},
+		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext, step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
+			return interp.execA2ACall(ctx, ic, step, vars)
+		},
 		DeriveInputs: func(cfg json.RawMessage) []VarRef {
 			var c A2ACallStepConfig
 			if len(cfg) > 0 {
@@ -634,10 +652,11 @@ func init() {
 			if len(cfg) > 0 {
 				_ = json.Unmarshal(cfg, &c)
 			}
-			if c.OutputVar != "" {
-				return []VarRef{{Name: c.OutputVar, Required: false}}
+			outVar := c.OutputVar
+			if outVar == "" {
+				outVar = "a2a_response"
 			}
-			return nil
+			return []VarRef{{Name: outVar, Required: false}}
 		},
 	})
 

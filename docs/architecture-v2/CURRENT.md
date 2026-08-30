@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `0487797`
+Commit: `(pending — Phase 5-C commit)`
 
 Recent commits (newest first):
 ```
+(pending) feat(a2a-call): Phase 5-C — A2ACaller abstraction, execA2ACall, depth tracking, HumanWait+local validation, 13 tests
 0487797  fix(hitl): Phase 5-B hardening — auth, state model, wait_token, loop body, reconnect
 3b1052f  feat(hitl): Phase 5-B — HumanWait async submit, Redis handle store, signal endpoint
 6ea9e23  docs: update CURRENT.md HEAD to 7b0a09a
@@ -151,7 +152,7 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — 42 packages, 0 failures (verified 2026-08-30, Phase 5-B hardening)
+go test ./...  — 42 packages, 0 failures (verified 2026-08-30, Phase 5-C)
 S1-72: 20 EP compiler tests (+PC-LOOP-1..6: ValidateLoopBodies + compileLoopBodyPlan Branch/Join + resolveLoopOuterNext)
 S1-73: 33 LocalExecutor tests (+EP-LOOP-6/7/8: BranchInsideBody, IterationIsolation, ScopedAccumulation)
 S1-74: 3 DAG E2E smoke tests
@@ -162,8 +163,9 @@ S1-78: 4 dag-worker SQL tenant scope tests
 S1-79: 11 HITLStore Phase 5-B hardening tests (HS-1..11: state machine, UpdateWaitToken, TrySignal CAS, MarkDone, RepeatedWait)
 S1-80: 5 agent-runtime HITL Phase 5-B handler tests (RT-HITL-1..5: ReturnsWorking, StoresHandle, HITLRequestHandler)
 S1-81: 4 Canvas HITL signal admin endpoint tests (CSIG-1..4: Success, NotFound, CrossTenant, WrongToken)
+S1-82: 13 A2A Call node Phase 5-C tests (A2A-1..13: NodeRegistered, Validate, Execute, self-call, depth, HumanWait backend, HTTPA2ACaller, DeriveOutputs)
 S2-06: 3 integration-tagged Temporal E2E tests
-Total go test ./...: 898
+Total go test ./...: 911
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -431,7 +433,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 4-D | Frontend execution_backend toggle (Local / ⚡ Temporal pill in top bar) | ✅ commit `7d39d44` |
 | 5-A | StepLoop — LocalExecutor + Temporal + frontend config panel + durable loop architecture + canvas ports + gap fixes (compileLoopBodyPlan JoinOf/JoinMode, ExecuteBody onTerminal, bodyIterState isolation, BFS boundary, accum scoping) + 8 new tests (EP-LOOP-6/7/8, CT-LOOP-DURABLE-6/7, PC-LOOP-4/5/6) | ✅ |
 | 5-B | HumanWait async — Phase 1 (commit `3b1052f`): HITLStore, PlanHasHumanWait, CanvasSubmitter/Signaler, Submit/SignalCanvasStep, executeSkill HITL async path, signalHITL; Phase 2 hardening (commit `0487797`): HITLHandle 6-field state machine (tenant_id, wait_token, state), UpdateWaitToken/TrySignal CAS/MarkDone, deterministic wait_token (sha256, no uuid), hitl_status workflow query handler, per-step timeout via workflow.Select, loop-body HumanWait, HITLRequestHandler (GetTask/SubscribeToTask/CancelTask), RedisA2ATaskStore (SDK taskstore.Store), signal endpoint moved to JWT-auth admin router `/admin/canvas-tasks/{task_id}/signal`; 20 total tests (HS-1..11, RT-HITL-1..5, CSIG-1..4) | ✅ commit `0487797` |
-| 5-C | A2A call node in DAG fan-out / Temporal activity wiring | ⬜ |
+| 5-C | A2A Call node — `A2ACaller` abstraction, `HTTPA2ACaller`, depth tracking, self-call rejection, HumanWait+local validation, agent-runtime + dag-worker wiring | ✅ |
 
 ### DAG join semantics (hardening summary)
 - **JoinWaitAll**: join node whose predecessors originate from a non-Branch fan-out (e.g. LLM with `len(Next)>1`). All branches always run — must wait for all.
@@ -492,9 +494,32 @@ Done (canvas ports, commit 81c3a31):
 - `CanvasTasksHandler` in `internal/admin/canvas_tasks.go` — tenant ownership check + TrySignal CAS
 - 20 total tests: HS-1..11, RT-HITL-1..5, CSIG-1..4; `go test ./...` → 0 failures
 
-### Phase 5-C: A2A call node in DAG fan-out context
-- `StepA2ACall` already has a local executor; needs Temporal activity wiring
-- Requires agent-runtime → agent-runtime call path (internal network)
+### Phase 5-C: A2A call node — COMPLETE (pending commit)
+
+**What was built:**
+- `go/internal/agentgen/a2a_caller.go`: `A2ACaller` interface + `HTTPA2ACaller` + `AgentEndpointResolver` + `DBAgentEndpointResolver`
+- `go/internal/agentgen/interpreter.go`: `a2aCaller` field + `WithA2ACaller()` + `execA2ACall`
+- `go/internal/agentgen/context.go`: `A2ACallDepth int` on `InvocationContext`
+- `go/internal/agentgen/nodes.go`: `StepA2ACall` — Execute set (no longer stub); Validate checks required fields
+- `go/internal/agentgen/node_executor.go`: `A2ACallDepth` on `ActivityIC` (propagates through Temporal)
+- `go/internal/agentgen/compiler.go`: `validateHumanWaitBackend` — human_wait requires execution_backend=temporal
+- `go/internal/agentgen/spec.go`: `A2ACallStepConfig` uses `AgentSlug`/`InputVar`/`OutputVar`/`TimeoutSeconds`
+- `go/cmd/agent-runtime/main.go`: parses `X-Them-A2A-Depth` header; wires `HTTPA2ACaller` with `pgxAgentEndpointQueryer`
+- `go/cmd/dag-worker/main.go`: wires `HTTPA2ACaller` + sets `A2ACallDepth` in `dbContextLoader.Load`
+- `go/internal/agentgen/a2a_test.go`: 13 tests (A2A-1..13)
+- `go/TEST_INDEX.md`: S1-82 added (13 tests), totals updated 898 → 911
+
+**Security constraints enforced:**
+- Target endpoint resolved exclusively from DB (`auth_token_encrypted` decrypted with `cryptoKey`) — never user-supplied
+- `X-Them-A2A-Depth` propagated over HTTP for cross-service depth enforcement
+- `MaxA2ACallDepth = 3` hard cap
+- Self-call rejection at IC level (before resolver is called)
+- No credentials in logs or Temporal history (`A2ACallDepth` is just an int)
+
+**Next recommended task:**
+- Phase 5-D: StreamOut node implementation (currently Execute=nil stub), or
+- UI: A2A Call node properties panel in canvas RightPanel (server/slug + var config), or
+- Traefik: fix `/a2a/` router to point at `them-go-bridge-svc` (currently broken, points to dead Python service)
 
 ### Phase 4-C Advisory items (deferred)
 - Advisory A: DB round-trips per Temporal activity (4 queries/node) — cache spec in `ActivityIC`
