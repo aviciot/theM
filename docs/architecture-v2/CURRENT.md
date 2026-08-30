@@ -7,17 +7,17 @@
 ## HEAD
 
 Branch: `main`
-Commit: `7b0a09a`
+Commit: `3b1052f`
 
 Recent commits (newest first):
 ```
+3b1052f  feat(hitl): Phase 5-B — HumanWait async submit, Redis handle store, signal endpoint
+6ea9e23  docs: update CURRENT.md HEAD to 7b0a09a
 7b0a09a  fix(loop): Phase 5-A gap fixes — correct SubPlan DAG semantics, iteration isolation, scoped accum
 81c3a31  feat(canvas): add loop-body and loop-done output ports to loop node
 05351bd  feat(loop): durable loop — each body step is its own Temporal activity
 a69f01a  feat(loop): Phase 5-A StepLoop — LocalExecutor + Temporal + frontend config panel
 b3bd71a  fix(agent-runtime): Phase 4-C final corrections — E2E path, binding 4-ID scope, HumanWait design
-8d815cc  fix(agent-runtime,temporal): Phase 4-C gap-2 hardening — all 5 remaining blockers
-df3ed8e  fix(agent-runtime/temporal): Phase 4-C hardening — all 6 remaining blockers
 ```
 
 ---
@@ -150,16 +150,18 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — 42 packages, 0 failures (verified 2026-08-30, Phase 5-A gap fixes)
+go test ./...  — 43 packages, 0 failures (verified 2026-08-30, Phase 5-B)
 S1-72: 20 EP compiler tests (+PC-LOOP-1..6: ValidateLoopBodies + compileLoopBodyPlan Branch/Join + resolveLoopOuterNext)
 S1-73: 33 LocalExecutor tests (+EP-LOOP-6/7/8: BranchInsideBody, IterationIsolation, ScopedAccumulation)
 S1-74: 3 DAG E2E smoke tests
 S1-75: 16 Phase 4-A tests (NA-01..NA-16)
 S1-76: 21 Phase 4-B tests (+CT-LOOP-DURABLE-6/7: IterationIsolation, ScopedAccumVar)
-S1-77: 7 Phase 4-C TemporalExecutor tests (TE-01..TE-07)
+S1-77: 13 Phase 4-C TemporalExecutor tests (TE-01..TE-09, TE-10..13: Submit/Signal/PlanHasHumanWait)
 S1-78: 4 dag-worker SQL tenant scope tests
+S1-79: 5 HITLStore tests (HS-1..5)
+S1-80: 5 agent-runtime HITL handler tests (RT-HITL-1..5)
 S2-06: 3 integration-tagged Temporal E2E tests
-Total go test ./...: 869
+Total go test ./...: 883
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -426,7 +428,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 4-C gap-2 | 5 additional fixes: tenant-scope ALL lookups, safe errors, conditional Temporal overlay, HumanWait 24h timeout, real full-path E2E, binding 4-ID enforcement | ✅ commits `8d815cc`..`b3bd71a` |
 | 4-D | Frontend execution_backend toggle (Local / ⚡ Temporal pill in top bar) | ✅ commit `7d39d44` |
 | 5-A | StepLoop — LocalExecutor + Temporal + frontend config panel + durable loop architecture + canvas ports + gap fixes (compileLoopBodyPlan JoinOf/JoinMode, ExecuteBody onTerminal, bodyIterState isolation, BFS boundary, accum scoping) + 8 new tests (EP-LOOP-6/7/8, CT-LOOP-DURABLE-6/7, PC-LOOP-4/5/6) | ✅ |
-| 5-B | HumanWait async (design doc complete, not yet implemented) | ⬜ |
+| 5-B | HumanWait async — HITLStore (Redis, 24h), PlanHasHumanWait, CanvasSubmitter/Signaler interfaces, Submit()/SignalCanvasStep() on TemporalExecutor, HITL executeSkill path (detached ctx), signalHITL POST handler; 14 new tests (HS-1..5, TE-10..13, RT-HITL-1..5) | ✅ commit `3b1052f` |
 | 5-C | A2A call node in DAG fan-out / Temporal activity wiring | ⬜ |
 
 ### DAG join semantics (hardening summary)
@@ -470,10 +472,17 @@ Done (canvas ports, commit 81c3a31):
 - `nodeRegistry.ts`: loop added to `SUMMARY_FNS` (shows `items_var`)
 - `useDefinitionLifecycle.ts`: both serialization paths (validation useEffect + `buildDefinitionDoc`) derive `body_steps` via BFS from `ctrl-out-loop-body` edge chain; set `next` to only `ctrl-out-loop-done` target; load path reconstructs both edges from `step.next[0]` (done) and `config.body_steps[0]` (body entry)
 
-### Phase 5-B: HumanWait async (design doc complete)
-- Full async design in `docs/architecture-v2/HUMANWAIT_DESIGN.md`
-- Prerequisites: Redis task handle store + signal endpoint + reconnect/resubscribe
-- Do NOT implement until design is reviewed
+### Phase 5-B: HumanWait async — COMPLETE (commit `3b1052f`)
+
+What was built:
+- `HITLStore` (`internal/agentgen/hitl_store.go`) — Redis-backed handle store, key `them:hitl:{task_id}`, TTL 24h; `ErrHITLNotFound` sentinel
+- `PlanHasHumanWait` exported from `plan_compiler.go` (was private in `temporal` pkg)
+- `TemporalExecutor.Submit()` — starts workflow without blocking (`no run.Get()`); returns `SubmitResult{WorkflowID, RunID}`
+- `TemporalExecutor.SignalCanvasStep()` — delivers per-step `human_input:{stepID}` signals
+- `CanvasSubmitter` and `CanvasSignaler` interfaces with compile-time guards
+- `cmd/agent-runtime/main.go`: HITL async path in `executeSkill` — detaches from HTTP context (`context.Background()+24h`), calls `Submit`, stores handle, yields `input-required`; `signalHITL` handler at `POST /agents/{slug}/tasks/{task_id}/signal`
+- 14 new tests: HS-1..5 (HITLStore), TE-10..13 (Submit/Signal/PlanHasHumanWait), RT-HITL-1..5 (executeSkill HITL + signalHITL)
+- `docs/REDIS.md`: `them:hitl:{task_id}` documented
 
 ### Phase 5-C: A2A call node in DAG fan-out context
 - `StepA2ACall` already has a local executor; needs Temporal activity wiring
@@ -484,7 +493,7 @@ Done (canvas ports, commit 81c3a31):
 - Advisory B: `PipelineVars` payload growth — prune vars before each `StepActivityInput`
 - Advisory C: DB pool (20) vs DAGWorkerMaxConcurrentActivities (50) mismatch — raise pool
 - Advisory D: dag-worker health/readiness HTTP endpoint (currently no /healthz)
-- Advisory E: HumanWait fully incomplete — 24h timeout is partial only; see design doc
+- Advisory E: HumanWait — RESOLVED by Phase 5-B. `input-required` path fully async. Reconnect via SDK `SubscribeToTask` (no code needed — SDK handles it).
 
 ### Other tasks (lower priority)
 - DAG live canvas validation — smoke test a Branch/Parallel canvas agent live with `--profile temporal`
