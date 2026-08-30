@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const BRIDGE_BASE = process.env.THE_M_API_URL || 'http://them-bridge:8001';
+const BRIDGE_BASE = process.env.THE_M_API_URL || 'http://them-go-bridge:8002';
 const GO_BRIDGE_BASE = process.env.THE_M_GO_API_URL || 'http://them-go-bridge:8002';
 
 // Paths that only exist in the Go bridge — forward these directly instead of Python.

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const BRIDGE_BASE = process.env.THE_M_API_URL || 'http://them-bridge:8001';
+const BRIDGE_BASE = process.env.THE_M_API_URL || 'http://them-go-bridge:8002';
 
 async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
   const token = req.cookies.get('them_access_token')?.value;
