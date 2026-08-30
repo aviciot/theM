@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `05351bd`
+Commit: `81c3a31`
 
 Recent commits (newest first):
 ```
+81c3a31  feat(canvas): add loop-body and loop-done output ports to loop node
 05351bd  feat(loop): durable loop — each body step is its own Temporal activity
 a69f01a  feat(loop): Phase 5-A StepLoop — LocalExecutor + Temporal + frontend config panel
 b3bd71a  fix(agent-runtime): Phase 4-C final corrections — E2E path, binding 4-ID scope, HumanWait design
@@ -422,7 +423,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 4-C hardening | 7 production blockers fixed: Compose env vars, fail-closed, stable workflow ID, policy concurrency, tenant-scoped DB queries, bounded cancel, integration tests | ✅ commits `1c44aa0`..`30f9f95` |
 | 4-C gap-2 | 5 additional fixes: tenant-scope ALL lookups, safe errors, conditional Temporal overlay, HumanWait 24h timeout, real full-path E2E, binding 4-ID enforcement | ✅ commits `8d815cc`..`b3bd71a` |
 | 4-D | Frontend execution_backend toggle (Local / ⚡ Temporal pill in top bar) | ✅ commit `7d39d44` |
-| 5-A | StepLoop — LocalExecutor + Temporal + frontend config panel + durable loop architecture | ✅ |
+| 5-A | StepLoop — LocalExecutor + Temporal + frontend config panel + durable loop architecture + canvas ports | ✅ |
 | 5-B | HumanWait async (design doc complete, not yet implemented) | ⬜ |
 | 5-C | A2A call node in DAG fan-out / Temporal activity wiring | ⬜ |
 
@@ -444,7 +445,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Phase 5-A: StepLoop — COMPLETE (commit 05351bd, durable loop architecture)
+### Phase 5-A: StepLoop — FULLY COMPLETE (commit 81c3a31)
 
 Done (initial, commit a69f01a):
 - `LoopConfig`: `ItemsVar`, `ItemVar`, `AccumVar`, `Condition`, `MaxIterations`, `BodySteps`
@@ -462,9 +463,10 @@ Done (durable loop, commit 05351bd) — addresses all 4 Phase 5-A audit findings
 - `canvas_workflow.go`: `runBranch` intercepts `StepLoop` before `ExecuteActivity`; `runLoopNode` iterates items sequentially, schedules each body step as its own `ExecuteStepActivity` with its own policy/retry/timeout/history entry. Branch inside body works.
 - Tests: CT-LOOP-DURABLE-1..5, PC-LOOP-1..3; all 42 packages pass
 
-**Open (Phase 5-A blockers for production use):**
-- `body_steps` must be derived from `loop-body` canvas output port by the frontend serializer (`useDefinitionLifecycle.ts`) — loop is silent no-op until this is done
-- Two output ports (`loop-body`, `loop-done`) must be added to the loop node in `nodeRegistry.ts`
+Done (canvas ports, commit 81c3a31):
+- `nodes.go`: `ControlOutputPorts: [{loop-body}, {loop-done}]`; `EdgeRules.MaxOut: 2`
+- `nodeRegistry.ts`: loop added to `SUMMARY_FNS` (shows `items_var`)
+- `useDefinitionLifecycle.ts`: both serialization paths (validation useEffect + `buildDefinitionDoc`) derive `body_steps` via BFS from `ctrl-out-loop-body` edge chain; set `next` to only `ctrl-out-loop-done` target; load path reconstructs both edges from `step.next[0]` (done) and `config.body_steps[0]` (body entry)
 
 ### Phase 5-B: HumanWait async (design doc complete)
 - Full async design in `docs/architecture-v2/HUMANWAIT_DESIGN.md`
