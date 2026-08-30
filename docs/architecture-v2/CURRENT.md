@@ -416,7 +416,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | Pre-4-C hardening | LocalExecutor retry loop + backoff; non-retryable short-circuit; idempotency guard; `RequiresIdempotencyKey` logic fix; frontend Execution Policy section in node Properties; 9 new tests (EP-2b, EP-L3..EP-L8) | ✅ |
 | Pre-4-C parity | Per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults; 5 new tests (EP-L9..EP-L13) | ✅ |
 | Pre-4-C final | MCP mutating hard-clamp; removed string-match from `isNonRetryable`; fresh interp clone per retry; 3 new tests (EP-10, EP-L14, EP-L15) | ✅ commit `3a8f0f6` |
-| Pre-4-C concurrency | Per-run `MaxConcurrentTasks` semaphore in `LocalExecutor` + `CanvasAgentWorkflow`; `DAG_WORKER_MAX_CONCURRENT_ACTIVITIES` config; `ResolveMaxConcurrentTasks`; 5 new tests (CONC-1..5) | ✅ (pending push) |
+| Pre-4-C concurrency | Per-run `MaxConcurrentTasks` semaphore in `LocalExecutor` + `CanvasAgentWorkflow`; `DAG_WORKER_MAX_CONCURRENT_ACTIVITIES` config; `ResolveMaxConcurrentTasks`; 5 new tests (CONC-1..5) | ✅ commit `df4b19e` |
 | 4-C | `TemporalExecutor`, `them-dag-worker`, `agent-runtime` wiring, Docker service | ⬜ |
 | 4-D | Frontend publish toggle | ⬜ |
 | 5 | Loop, HumanWait, A2A in DAG context | ⬜ |
