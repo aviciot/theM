@@ -7,16 +7,15 @@
 ## HEAD
 
 Branch: `main`
-Commit: `b3bd71a`
+Commit: `05351bd`
 
 Recent commits (newest first):
 ```
+05351bd  feat(loop): durable loop — each body step is its own Temporal activity
+a69f01a  feat(loop): Phase 5-A StepLoop — LocalExecutor + Temporal + frontend config panel
 b3bd71a  fix(agent-runtime): Phase 4-C final corrections — E2E path, binding 4-ID scope, HumanWait design
 8d815cc  fix(agent-runtime,temporal): Phase 4-C gap-2 hardening — all 5 remaining blockers
 df3ed8e  fix(agent-runtime/temporal): Phase 4-C hardening — all 6 remaining blockers
-8fb54fc  docs(audit): Phase 4-C hardening audit report
-30f9f95  test(temporal): integration-tagged E2E tests + TEST_INDEX update — blocker 7
-bfda621  fix(dag-worker): scope all DB queries by TenantID — blocker 5
 ```
 
 ---
@@ -149,17 +148,15 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — 42 packages, 0 failures (verified 2026-08-30, Phase 4-C hardening)
-S1-72: 17 EP compiler tests (+1 new: EP-10 MCP mutating hard-clamp)
-S1-73: 30 LocalExecutor tests (+EP-L14 no-string-match, +EP-L15 fresh-clone-per-attempt,
-        +TestResolveMaxConcurrentTasks_Zero, +TestLocalExecutor_ConcurrencyLimit,
-        +TestLocalExecutor_ConcurrencyLimit_Cancellation)
+go test ./...  — 42 packages, 0 failures (verified 2026-08-30, durable loop)
+S1-72: 20 EP compiler tests (+PC-LOOP-1..3: ValidateLoopBodies — unknown step, budget, valid)
+S1-73: 30 LocalExecutor tests (ExecNodeWithPolicy extracted; execNode is thin wrapper)
 S1-74: 3 DAG E2E smoke tests
 S1-75: 16 Phase 4-A tests (NA-01..NA-16)
-S1-76: 19 Phase 4-B tests (+CT-CONC1: MaxConcurrentTasks=0 resolves to 10 in workflow)
-S1-77: 7 Phase 4-C TemporalExecutor tests (TE-01..TE-07) — +TE-06 stable InvocationID, +TE-07 policy concurrency
-S1-78: 4 dag-worker SQL tenant scope tests (new)
-S2-06: 3 integration-tagged Temporal E2E tests (TestTemporalConnect_Unavailable, TestTemporalExecutor_EmptyPlan_Integration, TestTemporalExecutor_LiveDAG)
+S1-76: 27 Phase 4-B tests (+CT-LOOP-1..3 + CT-LOOP-DURABLE-1..5 durable loop workflow tests)
+S1-77: 7 Phase 4-C TemporalExecutor tests (TE-01..TE-07)
+S1-78: 4 dag-worker SQL tenant scope tests
+S2-06: 3 integration-tagged Temporal E2E tests
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -425,7 +422,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 4-C hardening | 7 production blockers fixed: Compose env vars, fail-closed, stable workflow ID, policy concurrency, tenant-scoped DB queries, bounded cancel, integration tests | ✅ commits `1c44aa0`..`30f9f95` |
 | 4-C gap-2 | 5 additional fixes: tenant-scope ALL lookups, safe errors, conditional Temporal overlay, HumanWait 24h timeout, real full-path E2E, binding 4-ID enforcement | ✅ commits `8d815cc`..`b3bd71a` |
 | 4-D | Frontend execution_backend toggle (Local / ⚡ Temporal pill in top bar) | ✅ commit `7d39d44` |
-| 5-A | StepLoop — LocalExecutor + Temporal activity path + frontend config panel | ✅ |
+| 5-A | StepLoop — LocalExecutor + Temporal + frontend config panel + durable loop architecture | ✅ |
 | 5-B | HumanWait async (design doc complete, not yet implemented) | ⬜ |
 | 5-C | A2A call node in DAG fan-out / Temporal activity wiring | ⬜ |
 
@@ -447,20 +444,27 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Phase 5-A: StepLoop — COMPLETE
+### Phase 5-A: StepLoop — COMPLETE (commit 05351bd, durable loop architecture)
 
-Done:
-- `LoopConfig` extended: `ItemsVar`, `ItemVar` added to spec struct
-- `PlanNode.SubPlan *ExecutionPlan` + `StepSpec.SubPlan *ExecutionPlan` — loop body embedded
-- `plan_compiler.go`: `compileLoopBodyPlan`, `resolveLoopOuterNext` — body steps extracted into sub-plan, removed from outer DAG, loop Next remapped to post-loop step
-- `nodes.go`: `execLoop` — iterates items, condition filter, max_iterations cap, runs body via interpreter.executeStep, accumulates into accum_var
-- `planNodeToStepSpec` copies SubPlan
-- Tests: EP-LOOP-1..5 in `local_executor_test.go` — LocalExecutor path
-- **Temporal path**: `ExecuteStepActivity` handles loops via `ExecuteNodeForActivity` → `executeStep` → `execLoop` (normal dispatch; no special-casing needed). Tests: CT-LOOP-1..3 in `canvas_workflow_test.go`.
-- **Frontend**: Loop config panel in `StepConfigSection.tsx` — `items_var` (required), `item_var`, `accum_var`, `max_iterations`, `condition` fields; inline help text; amber accent; removed from "not yet supported" fallback.
-- `go test ./...` — all packages, 0 failures
+Done (initial, commit a69f01a):
+- `LoopConfig`: `ItemsVar`, `ItemVar`, `AccumVar`, `Condition`, `MaxIterations`, `BodySteps`
+- `PlanNode.SubPlan *ExecutionPlan` — loop body compiled by `compileLoopBodyPlan`
+- `plan_compiler.go`: `compileLoopBodyPlan`, `resolveLoopOuterNext`
+- `nodes.go`: `execLoop` — LocalExecutor path only
+- Frontend: Loop config panel in `StepConfigSection.tsx`
+- Tests: EP-LOOP-1..5, CT-LOOP-1..3
 
-### Phase 5-B: HumanWait async (design doc complete)
+Done (durable loop, commit 05351bd) — addresses all 4 Phase 5-A audit findings:
+- `local_executor.go`: `ExecNodeWithPolicy` exported; `execNode` is now a thin wrapper
+- `nodes.go`: `execLoop` uses `ExecNodeWithPolicy` per body step (retry/timeout per body node);
+  accum_var snapshots only declared body `Outputs` keys; `Validate` errors on empty `BodySteps`
+- `plan_compiler.go`: `ValidateLoopBodies` — unknown body step IDs + `MaxLoopHistoryBudget` (5000) check; wired into `agent-runtime` invocation path
+- `canvas_workflow.go`: `runBranch` intercepts `StepLoop` before `ExecuteActivity`; `runLoopNode` iterates items sequentially, schedules each body step as its own `ExecuteStepActivity` with its own policy/retry/timeout/history entry. Branch inside body works.
+- Tests: CT-LOOP-DURABLE-1..5, PC-LOOP-1..3; all 42 packages pass
+
+**Open (Phase 5-A blockers for production use):**
+- `body_steps` must be derived from `loop-body` canvas output port by the frontend serializer (`useDefinitionLifecycle.ts`) — loop is silent no-op until this is done
+- Two output ports (`loop-body`, `loop-done`) must be added to the loop node in `nodeRegistry.ts`
 
 ### Phase 5-B: HumanWait async (design doc complete)
 - Full async design in `docs/architecture-v2/HUMANWAIT_DESIGN.md`
