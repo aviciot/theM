@@ -493,73 +493,61 @@ func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	orchDone := make(chan struct{})
+	// Reap the workflow in the background so Temporal resources are released, but
+	// do NOT use its completion as the stream terminal signal. The orchestrator
+	// publishes a "done" or "error" bus event after every token has been emitted,
+	// so the bus event is the only correct terminal. Using orchDone as a terminal
+	// races against buffered token events still in the bus channel.
 	go func() {
-		defer close(orchDone)
 		if err := wfRun.Get(streamCtx, nil); err != nil {
 			s.logger.Warn("a2a stream: workflow error", "run_id", h.RunID, "error", err)
 		}
 	}()
 
 	// Drain bus events, translating them to A2A SSE frames.
-	drainOne := func(ev event.Event) (keepGoing bool) {
-		switch ev.Type {
-		case "token":
-			var content string
-			var p map[string]json.RawMessage
-			if json.Unmarshal(ev.Payload, &p) == nil {
-				json.Unmarshal(p["content"], &content) //nolint:errcheck
-			}
-			return writeSSE(streamEvent{
-				JSONRPC: "2.0",
-				Method:  "stream/event",
-				Params: streamEventParam{Event: streamEventBody{
-					Kind:  "message-delta",
-					Role:  "assistant",
-					Parts: []rpcTextPart{{Text: content}},
-				}},
-			})
-		case "done":
-			sendStatus("completed")
-			return false
-		case "error":
-			sendStatus("failed")
-			return false
-		}
-		return true
-	}
-
+	// Terminal signal comes from the "done"/"error" bus event, not from orchDone.
 	for {
 		select {
 		case ev, ok := <-evCh:
 			if !ok {
 				return
 			}
-			if !drainOne(ev) {
+			switch ev.Type {
+			case "token":
+				var content string
+				var p map[string]json.RawMessage
+				if json.Unmarshal(ev.Payload, &p) == nil {
+					json.Unmarshal(p["content"], &content) //nolint:errcheck
+				}
+				if !writeSSE(streamEvent{
+					JSONRPC: "2.0",
+					Method:  "stream/event",
+					Params: streamEventParam{Event: streamEventBody{
+						Kind:  "message-delta",
+						Role:  "assistant",
+						Parts: []rpcTextPart{{Text: content}},
+					}},
+				}) {
+					return
+				}
+			case "done":
+				sendStatus("completed")
+				return
+			case "error":
+				sendStatus("failed")
 				return
 			}
 		case ev, ok := <-termCh:
 			if !ok {
 				return
 			}
-			drainOne(ev) //nolint:errcheck
-			return
-		case <-orchDone:
-			// Drain any buffered events then send completed.
-			for {
-				select {
-				case ev, ok := <-evCh:
-					if !ok {
-						return
-					}
-					if !drainOne(ev) {
-						return
-					}
-				default:
-					sendStatus("completed")
-					return
-				}
+			switch ev.Type {
+			case "done":
+				sendStatus("completed")
+			case "error":
+				sendStatus("failed")
 			}
+			return
 		case <-streamCtx.Done():
 			return
 		}

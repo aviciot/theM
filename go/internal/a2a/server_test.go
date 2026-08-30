@@ -145,6 +145,10 @@ func (f *fakeWorkflowRun) GetWithOptions(_ context.Context, valuePtr interface{}
 type fakeTemporal struct {
 	run  *fakeWorkflowRun
 	err  error
+	// bus and contextID are set by stream tests so ExecuteWorkflow can publish
+	// the bus "done" event that handleMessageStream waits for as its terminal signal.
+	bus       *event.InMemoryBus
+	contextID string
 
 	called    bool
 	lastInput temporal.WorkflowInput
@@ -155,10 +159,25 @@ func (f *fakeTemporal) ExecuteWorkflow(_ context.Context, _ temporalclient.Start
 	if len(args) > 0 {
 		if inp, ok := args[0].(temporal.WorkflowInput); ok {
 			f.lastInput = inp
+			// Capture the context ID stamped by Lifecycle.Start so the bus publish
+			// reaches the correct subscriber in stream tests.
+			if f.contextID == "" {
+				f.contextID = inp.ContextID
+			}
 		}
 	}
 	if f.err != nil {
 		return nil, f.err
+	}
+	// Publish done on the bus so handleMessageStream terminates cleanly.
+	// In non-stream tests the bus has no subscriber for this topic — safe to publish.
+	if f.bus != nil && f.contextID != "" {
+		raw, _ := json.Marshal(map[string]string{"run_id": f.lastInput.RunID})
+		f.bus.Publish(context.Background(), event.Event{
+			Topic:   f.contextID,
+			Type:    "done",
+			Payload: raw,
+		})
 	}
 	return f.run, nil
 }
@@ -222,13 +241,21 @@ func defaultBuilder() *serverBuilder {
 	}
 }
 
-func (b *serverBuilder) build() *a2aserver.Server {
+type builtServer struct {
+	*a2aserver.Server
+	bus *event.InMemoryBus
+}
+
+func (b *serverBuilder) build() builtServer {
 	bus := event.New()
 	lc := execution.NewLifecycleWithRecorder(
 		b.auth, b.epLoader, b.gate, b.sessions,
 		b.recorder, b.temporal, devLogger,
 	)
-	return a2aserver.NewServer(lc, bus, b.auth, "test-instance", devLogger)
+	return builtServer{
+		Server: a2aserver.NewServer(lc, bus, b.auth, "test-instance", devLogger),
+		bus:    bus,
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -813,10 +840,25 @@ func postStream(t *testing.T, srv *httptest.Server, body any, token string) (int
 	return resp.StatusCode, lines
 }
 
+// streamBuilder returns a builtServer where fakeTemporal is wired to the bus
+// so ExecuteWorkflow publishes the "done" bus event that handleMessageStream
+// waits for as its terminal signal.
+func streamBuilder() (*serverBuilder, func(bs builtServer)) {
+	tc := &fakeTemporal{run: &fakeWorkflowRun{
+		result: temporal.WorkflowResult{FinalText: "hello from orchestrator", Status: domain.RunStatusCompleted},
+	}}
+	b := defaultBuilder()
+	b.temporal = tc
+	wire := func(bs builtServer) { tc.bus = bs.bus }
+	return b, wire
+}
+
 // A2A-S01: message/stream → 200 + text/event-stream content type
 func TestA2AStream_ContentType(t *testing.T) {
-	b := defaultBuilder()
-	srv := httptest.NewServer(b.build().Routes())
+	b, wire := streamBuilder()
+	bs := b.build()
+	wire(bs)
+	srv := httptest.NewServer(bs.Routes())
 	defer srv.Close()
 
 	data, _ := json.Marshal(validStreamBody())
@@ -833,8 +875,10 @@ func TestA2AStream_ContentType(t *testing.T) {
 
 // A2A-S02: message/stream success → emits a task-status-update completed event
 func TestA2AStream_EmitsCompletedStatus(t *testing.T) {
-	b := defaultBuilder()
-	srv := httptest.NewServer(b.build().Routes())
+	b, wire := streamBuilder()
+	bs := b.build()
+	wire(bs)
+	srv := httptest.NewServer(bs.Routes())
 	defer srv.Close()
 
 	status, lines := postStream(t, srv, validStreamBody(), "valid-token")
