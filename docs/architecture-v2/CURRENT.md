@@ -7,11 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `(pending — Phase 5-C commit)`
+Commit: `89c7e67`
 
 Recent commits (newest first):
 ```
-(pending) feat(a2a-call): Phase 5-C — A2ACaller abstraction, execA2ACall, depth tracking, HumanWait+local validation, 13 tests
+89c7e67  feat(a2a-call): Phase 5-C — A2ACaller abstraction, depth tracking, HumanWait+local validation
 0487797  fix(hitl): Phase 5-B hardening — auth, state model, wait_token, loop body, reconnect
 3b1052f  feat(hitl): Phase 5-B — HumanWait async submit, Redis handle store, signal endpoint
 6ea9e23  docs: update CURRENT.md HEAD to 7b0a09a
