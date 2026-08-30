@@ -7,16 +7,16 @@
 ## HEAD
 
 Branch: `main`
-Commit: `7d39d44`
+Commit: `30f9f95`
 
 Recent commits (newest first):
 ```
+30f9f95  test(temporal): integration-tagged E2E tests + TEST_INDEX update — blocker 7
+bfda621  fix(dag-worker): scope all DB queries by TenantID — blocker 5
+f952565  fix(temporal/agent-runtime): blockers 2 3 4 6 — fail-closed, stable ID, policy concurrency, logged cancel
+1c44aa0  fix(agent-runtime): wire TEMPORAL_ENABLED/TEMPORAL_HOST_PORT into Compose service
+7d39d44  feat(builder): Phase 4-D — execution_backend toggle in top bar
 0b68dcb  feat(temporal/agentgen): Phase 4-C — TemporalExecutor, them-dag-worker, agent-runtime wiring
-df4b19e  feat(agentgen/temporal): pre-4-C concurrency — per-run DAG semaphore, dag-worker config
-3a8f0f6  fix(agentgen): 3 final parity fixes before Phase 4-C
-45e23be  docs(current): update HEAD to fae270b + record Pre-4-C parity fixes
-fae270b  feat(agentgen): Pre-4-C parity — per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults
-7f6eb97  feat(agentgen): Pre-4-C hardening — retry/backoff, non-retryable stops, idempotency guard, policy UI
 ```
 
 ---
@@ -148,7 +148,7 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — 41 packages, 0 failures (verified 2026-08-30, Phase 4-C)
+go test ./...  — 42 packages, 0 failures (verified 2026-08-30, Phase 4-C hardening)
 S1-72: 17 EP compiler tests (+1 new: EP-10 MCP mutating hard-clamp)
 S1-73: 30 LocalExecutor tests (+EP-L14 no-string-match, +EP-L15 fresh-clone-per-attempt,
         +TestResolveMaxConcurrentTasks_Zero, +TestLocalExecutor_ConcurrencyLimit,
@@ -156,7 +156,9 @@ S1-73: 30 LocalExecutor tests (+EP-L14 no-string-match, +EP-L15 fresh-clone-per-
 S1-74: 3 DAG E2E smoke tests
 S1-75: 16 Phase 4-A tests (NA-01..NA-16)
 S1-76: 19 Phase 4-B tests (+CT-CONC1: MaxConcurrentTasks=0 resolves to 10 in workflow)
-S1-77: 5 Phase 4-C TemporalExecutor tests (TE-01..TE-05)
+S1-77: 7 Phase 4-C TemporalExecutor tests (TE-01..TE-07) — +TE-06 stable InvocationID, +TE-07 policy concurrency
+S1-78: 4 dag-worker SQL tenant scope tests (new)
+S2-06: 3 integration-tagged Temporal E2E tests (TestTemporalConnect_Unavailable, TestTemporalExecutor_EmptyPlan_Integration, TestTemporalExecutor_LiveDAG)
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -419,6 +421,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | Pre-4-C final | MCP mutating hard-clamp; removed string-match from `isNonRetryable`; fresh interp clone per retry; 3 new tests (EP-10, EP-L14, EP-L15) | ✅ commit `3a8f0f6` |
 | Pre-4-C concurrency | Per-run `MaxConcurrentTasks` semaphore in `LocalExecutor` + `CanvasAgentWorkflow`; `DAG_WORKER_MAX_CONCURRENT_ACTIVITIES` config; `ResolveMaxConcurrentTasks`; 5 new tests (CONC-1..5) | ✅ commit `df4b19e` |
 | 4-C | `TemporalExecutor`, `them-dag-worker`, `agent-runtime` wiring, Docker service | ✅ commit `0b68dcb` |
+| 4-C hardening | 7 production blockers fixed: Compose env vars, fail-closed, stable workflow ID, policy concurrency, tenant-scoped DB queries, bounded cancel, integration tests | ✅ commits `1c44aa0`..`30f9f95` |
 | 4-D | Frontend execution_backend toggle (Local / ⚡ Temporal pill in top bar) | ✅ commit `7d39d44` |
 | 5 | Loop, HumanWait, A2A in DAG context | ⬜ |
 
@@ -440,13 +443,21 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Phase 5: Loop, HumanWait, A2A in DAG context (start here — Phases 4-A through 4-D complete)
+### Phase 5: Loop, HumanWait, A2A in DAG context (start here — 4-C fully hardened, 4-D complete)
 - Implement `StepLoop` executor in `LocalExecutor` and `CanvasAgentWorkflow`
 - Implement HumanWait signal flow in canvas agent context
 - A2A call node in DAG fan-out context
 
+### Phase 4-C Advisory items (lower priority — deferred)
+- Advisory A: DB round-trips per Temporal activity (4 queries/node) — consider caching spec in `ActivityIC`
+- Advisory B: `PipelineVars` payload growth — prune vars before each node's `StepActivityInput`
+- Advisory C: DB pool (20) vs DAGWorkerMaxConcurrentActivities (50) mismatch — tune or raise pool
+- Advisory D: dag-worker health/readiness HTTP endpoint (currently no /healthz)
+- Advisory E: `dagWorkflowTimeout = 12 min` will abort HumanWait workflows — raise for human-wait paths
+
 ### Other tasks (lower priority)
 - DAG live canvas validation — smoke test a Branch/Parallel canvas agent live with `--profile temporal`
+- Docker E2E test (`THEM_TEMPORAL_E2E=true`) against live stack to validate all 7 blockers end-to-end
 - Auth admin CRUD Go proxy — when `them-auth-service` Python retirement is decided
 
 Do NOT begin multiple subsystems in the same session.
