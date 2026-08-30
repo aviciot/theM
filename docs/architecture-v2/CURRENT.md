@@ -35,7 +35,7 @@ UI: `http://<server-ip>:8088`
 Key facts:
 - `them-auth-go` is the sole auth service (HS256 JWT + bcrypt)
 - **`them-bridge` (Python FastAPI) is permanently retired** — behind `profiles: [legacy]`; does NOT start in default or `--profile temporal` mode
-- **`them-worker` (Python Temporal worker) is STILL REQUIRED** — behind `profiles: [legacy]` in compose but must be kept running. It polls `them-orchestration` task queue which handles all `/apps/{slug}/ws` and `/apps/{slug}/sse` sessions. `them-go-worker` uses a separate `them-orchestration-go` queue and is NOT yet a replacement.
+- **`them-worker` (Python Temporal worker) is permanently retired** — behind `profiles: [legacy]`. All WS/SSE sessions now submit to `them-orchestration-go` handled by `them-go-worker`. `them-orchestration` queue is empty. Confirmed stopped 2026-08-30.
 - `them-go-bridge` is the active API gateway on port 8002
 - `them-go-worker` is the active Temporal worker — **no explicit profile in `docker-compose.dev.yml`**, starts by default
 - `them-agent-runtime` runs 2 replicas (port 9300 internal), profile `[agents]`
@@ -56,7 +56,7 @@ them-redis            ✅ healthy
 them-traefik          ✅ healthy
 temporal-frontend     ✅ (with --profile temporal)
 them-bridge (Python)  ❌ NOT running — profiles: [legacy] — PERMANENTLY RETIRED
-them-worker (Python)  ✅ Running (must stay up) — polls them-orchestration for WS/SSE sessions
+them-worker (Python)  ❌ NOT running — profiles: [legacy] — PERMANENTLY RETIRED (them-orchestration queue empty; all traffic on them-orchestration-go)
 them-dag-worker (Go)  ✅ Running — polls canvas-dag-nodes for CanvasAgentWorkflow
 ```
 
@@ -493,7 +493,7 @@ Do NOT begin multiple subsystems in the same session.
 - Secrets never in logs — use `cfg.SafeString()`
 - Never `git add .` or `git add -A`
 - **`them-bridge` (Python FastAPI) is permanently retired.** It MUST stay behind `profiles: [legacy]` and must NOT start.
-- **`them-worker` (Python Temporal) is still required.** It polls `them-orchestration` for all WS/SSE orchestration sessions. Do NOT stop it until `them-go-worker` is migrated to the same queue.
+- **`them-worker` (Python Temporal) is permanently retired.** All WS/SSE sessions submit to `them-orchestration-go` (Go worker). The Python `them-orchestration` queue is empty. `them-worker` must NOT be started.
 - **No global LLM key fallback.** Apps with no key get an explicit error.
 - **No secrets in Definition JSONB, Component Definition JSONB, export files, logs, or Temporal history.**
 - **Agent registry Redis key is `them:agents:registry:{tenant_id}`.** Global key must not be written or read.
