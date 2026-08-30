@@ -1,7 +1,10 @@
 package temporal
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
+	"text/template"
 	"time"
 
 	temporalerr "go.temporal.io/sdk/temporal"
@@ -166,6 +169,27 @@ func runBranch(
 			// Retrieve merged vars produced by handleJoin.
 			localVars = state.joinMerged[node.StepID]
 			delete(state.joinMerged, node.StepID)
+		}
+
+		// ── Loop: orchestrate body iterations as individual activities ────────
+		if node.Type == agentgen.StepLoop {
+			outVars, loopErr := runLoopNode(ctx, state, node, localVars)
+			if loopErr != nil {
+				errCh.Send(ctx, fmt.Errorf("step %q (loop): %w", node.StepID, loopErr))
+				cancelAll()
+				return
+			}
+			for k, v := range outVars {
+				localVars[k] = v
+				state.vars[k] = v
+			}
+			prevID = node.StepID
+			if len(node.Next) > 0 {
+				currentID = node.Next[0]
+			} else {
+				currentID = ""
+			}
+			continue
 		}
 
 		// ── Execute node (guarded by per-run activity semaphore) ──────────────
@@ -375,6 +399,171 @@ func cloneVars(src agentgen.PipelineVars) agentgen.PipelineVars {
 		dst[k] = v
 	}
 	return dst
+}
+
+// runLoopNode executes a StepLoop node in the Temporal path by iterating items
+// sequentially and scheduling every body step as its own ExecuteStepActivity.
+//
+// Each body step gets its own activity with the policy from SubPlan.Nodes[i].Policy,
+// giving it independent retry, timeout, and Temporal history entry.
+//
+// Body iterations are sequential (one item at a time). Parallel iteration is a future
+// enhancement controlled by a LoopConfig.Parallel flag; not implemented here.
+//
+// Returns outVars containing accum_var (if configured) and any vars written during
+// the last body iteration. The caller merges outVars into localVars and state.vars.
+func runLoopNode(
+	ctx workflow.Context,
+	state *workflowState,
+	node *agentgen.PlanNode,
+	localVars agentgen.PipelineVars,
+) (agentgen.PipelineVars, error) {
+	var cfg agentgen.LoopConfig
+	if len(node.Config) > 0 {
+		if err := json.Unmarshal(node.Config, &cfg); err != nil {
+			return nil, fmt.Errorf("invalid loop config: %w", err)
+		}
+	}
+	if cfg.ItemsVar == "" {
+		return nil, fmt.Errorf("items_var is required")
+	}
+	if node.SubPlan == nil || len(node.SubPlan.Nodes) == 0 {
+		// Empty body — no-op; return vars unchanged.
+		return agentgen.PipelineVars{}, nil
+	}
+
+	itemVar := cfg.ItemVar
+	if itemVar == "" {
+		itemVar = "item"
+	}
+	maxIter := cfg.MaxIterations
+	if maxIter <= 0 {
+		maxIter = 100
+	}
+
+	raw, ok := localVars[cfg.ItemsVar]
+	if !ok {
+		return agentgen.PipelineVars{}, nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%q must be a list, got %T", cfg.ItemsVar, raw)
+	}
+
+	// Build body node index and collect declared output keys.
+	bodyIdx := make(map[string]*agentgen.PlanNode, len(node.SubPlan.Nodes))
+	bodyOutputKeys := make(map[string]bool)
+	for _, bn := range node.SubPlan.Nodes {
+		bodyIdx[bn.StepID] = bn
+		for _, ref := range bn.Outputs {
+			bodyOutputKeys[ref.Name] = true
+		}
+	}
+
+	var accumulated []any
+	outVars := agentgen.PipelineVars{} // collects accum_var + last-iteration body outputs
+
+	for i, item := range items {
+		if i >= maxIter {
+			break
+		}
+
+		// Build per-iteration vars starting from the outer localVars.
+		iterVars := cloneVars(localVars)
+		iterVars[itemVar] = item
+
+		// Apply optional condition filter (deterministic template rendering).
+		if cfg.Condition != "" {
+			tmpl, err := template.New("loop_cond").Option("missingkey=zero").Parse(cfg.Condition)
+			if err != nil {
+				return nil, fmt.Errorf("iteration %d: condition parse error: %w", i, err)
+			}
+			var buf strings.Builder
+			if err := tmpl.Execute(&buf, iterVars); err != nil {
+				return nil, fmt.Errorf("iteration %d: condition execute error: %w", i, err)
+			}
+			if strings.TrimSpace(buf.String()) != "true" {
+				continue
+			}
+		}
+
+		// Walk the body sequentially, scheduling each step as its own activity.
+		currentBodyID := node.SubPlan.StartID
+		for currentBodyID != "" {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			bodyNode, found := bodyIdx[currentBodyID]
+			if !found {
+				return nil, fmt.Errorf("iteration %d: body step %q not found in sub-plan", i, currentBodyID)
+			}
+
+			// Acquire outer semaphore before scheduling the body activity.
+			workflow.Await(ctx, func() bool {
+				return ctx.Err() != nil || state.dagSemInFlight < state.dagSemLimit
+			})
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			state.dagSemInFlight++
+
+			ao := activityOptionsForNode(ctx, bodyNode)
+			var bodyOut StepActivityOutput
+			actErr := workflow.ExecuteActivity(ao, CanvasExecuteStepActivityName, StepActivityInput{
+				Node: *bodyNode,
+				Vars: projectInputs(bodyNode, iterVars),
+				IC:   state.ic,
+			}).Get(ctx, &bodyOut)
+
+			state.dagSemInFlight--
+
+			if actErr != nil {
+				return nil, fmt.Errorf("iteration %d body step %q: %w", i, currentBodyID, actErr)
+			}
+
+			// Merge body step outputs into iteration vars.
+			for k, v := range bodyOut.Vars {
+				iterVars[k] = v
+			}
+
+			// Advance to next body step (branch override or node.Next[0]).
+			if bodyOut.NextOverride != "" {
+				currentBodyID = bodyOut.NextOverride
+			} else if len(bodyNode.Next) > 0 {
+				currentBodyID = bodyNode.Next[0]
+			} else {
+				currentBodyID = ""
+			}
+		}
+
+		// Merge last-iteration body outputs back into outer localVars.
+		for k, v := range iterVars {
+			localVars[k] = v
+			outVars[k] = v
+		}
+
+		// Accumulate only declared body output keys (or all if none declared).
+		if cfg.AccumVar != "" {
+			snapshot := make(agentgen.PipelineVars)
+			if len(bodyOutputKeys) > 0 {
+				for k := range bodyOutputKeys {
+					if v, exists := iterVars[k]; exists {
+						snapshot[k] = v
+					}
+				}
+			} else {
+				for k, v := range iterVars {
+					snapshot[k] = v
+				}
+			}
+			accumulated = append(accumulated, snapshot)
+		}
+	}
+
+	if cfg.AccumVar != "" {
+		outVars[cfg.AccumVar] = accumulated
+	}
+	return outVars, nil
 }
 
 // drainWorkflowErrors reads all errors from a workflow.Channel and returns the

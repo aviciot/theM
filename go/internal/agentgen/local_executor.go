@@ -276,6 +276,25 @@ func isNonRetryable(err error, _ ExecutionPolicy) bool {
 
 // execNode runs one plan node with full retry semantics.
 //
+// Thin wrapper around ExecNodeWithPolicy that passes the shared sharedResult.
+func (e *LocalExecutor) execNode(
+	ctx context.Context,
+	ic *InvocationContext,
+	interp *Interpreter,
+	step *StepSpec,
+	policy ExecutionPolicy,
+	vars PipelineVars,
+	res *sharedResult,
+	sem chan struct{},
+) (nextOverride string, err error) {
+	return ExecNodeWithPolicy(ctx, ic, interp, step, policy, vars, res, sem)
+}
+
+// ExecNodeWithPolicy runs one step with full retry/timeout/backoff semantics.
+//
+// Exported so execLoop (nodes.go) can apply per-body-step policy in the LocalExecutor
+// path without duplicating the retry machinery.
+//
 // interp is treated as a template: each attempt gets a fresh interp.clone() so that
 // no mutable interpreter state (nextStepOverride or future fields) leaks between attempts.
 // This mirrors the Temporal path where each activity invocation gets its own isolated clone.
@@ -290,7 +309,9 @@ func isNonRetryable(err error, _ ExecutionPolicy) bool {
 //   - policy.RequiresIdempotencyKey: when true AND MaxAttempts > 1, the HTTP step config
 //     MUST contain a static Idempotency-Key header; if absent → ErrIdempotencyKeyMissing.
 //   - vars is deep-copied before each attempt so a failed attempt cannot leak partial writes.
-func (e *LocalExecutor) execNode(
+//
+// res may be nil (loop body steps do not emit a terminal result).
+func ExecNodeWithPolicy(
 	ctx context.Context,
 	ic *InvocationContext,
 	interp *Interpreter,
@@ -298,7 +319,7 @@ func (e *LocalExecutor) execNode(
 	policy ExecutionPolicy,
 	vars PipelineVars,
 	res *sharedResult,
-	sem chan struct{}, // per-run concurrency semaphore; never nil
+	sem chan struct{},
 ) (nextOverride string, err error) {
 	maxAttempts := policy.MaxAttempts
 	if maxAttempts <= 0 {
@@ -390,8 +411,8 @@ func (e *LocalExecutor) execNode(
 				vars[k] = v
 			}
 
-			// Promote result if this step produced one.
-			if localResult.Text != "" || step.Type == StepResponse || step.Type == StepStreamOut {
+			// Promote result if this step produced one (nil res = body step, no terminal output).
+			if res != nil && (localResult.Text != "" || step.Type == StepResponse || step.Type == StepStreamOut) {
 				res.setIfEmpty(localResult)
 			}
 			return override, nil

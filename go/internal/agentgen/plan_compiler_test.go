@@ -2,6 +2,7 @@ package agentgen
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -412,5 +413,72 @@ func TestResolvePolicy_MCPMutatingOverrideHardClamped(t *testing.T) {
 	}
 	if p.RequiresIdempotencyKey {
 		t.Error("MCP mutating with MaxAttempts=1 must NOT require idempotency key")
+	}
+}
+
+// ── PC-LOOP-1: ValidateLoopBodies — unknown body step ID returns error ──────────
+
+func TestValidateLoopBodies_UnknownBodyStep(t *testing.T) {
+	loopCfg, _ := json.Marshal(LoopConfig{
+		BodySteps: []string{"missing_step"},
+		ItemsVar:  "items",
+		ItemVar:   "item",
+	})
+	skill := &SkillSpec{
+		ID: "sk",
+		Steps: []StepSpec{
+			{ID: "in", Type: StepInput, Config: json.RawMessage(`{}`), Next: []string{"loop1"}},
+			{ID: "loop1", Type: StepLoop, Config: loopCfg},
+		},
+	}
+	err := ValidateLoopBodies(skill)
+	if err == nil {
+		t.Fatal("expected error for unknown body step, got nil")
+	}
+}
+
+// ── PC-LOOP-2: ValidateLoopBodies — history budget exceeded returns error ───────
+
+func TestValidateLoopBodies_HistoryBudgetExceeded(t *testing.T) {
+	// 51 body steps × 100 iterations = 5100 > MaxLoopHistoryBudget (5000)
+	bodySteps := make([]string, 51)
+	allSteps := []StepSpec{{ID: "loop1", Type: StepLoop}} // loop node itself
+	for i := range bodySteps {
+		id := fmt.Sprintf("b%d", i)
+		bodySteps[i] = id
+		allSteps = append(allSteps, StepSpec{ID: id, Type: StepInput, Config: json.RawMessage(`{}`)})
+	}
+	loopCfg, _ := json.Marshal(LoopConfig{
+		BodySteps: bodySteps,
+		ItemsVar:  "items",
+		ItemVar:   "item",
+	})
+	allSteps[0].Config = loopCfg
+
+	skill := &SkillSpec{ID: "sk", Steps: allSteps}
+	err := ValidateLoopBodies(skill)
+	if err == nil {
+		t.Fatal("expected error for budget exceeded, got nil")
+	}
+}
+
+// ── PC-LOOP-3: ValidateLoopBodies — valid loop passes without error ───────────
+
+func TestValidateLoopBodies_Valid(t *testing.T) {
+	loopCfg, _ := json.Marshal(LoopConfig{
+		BodySteps:     []string{"body1"},
+		ItemsVar:      "items",
+		ItemVar:       "item",
+		MaxIterations: 10,
+	})
+	skill := &SkillSpec{
+		ID: "sk",
+		Steps: []StepSpec{
+			{ID: "loop1", Type: StepLoop, Config: loopCfg},
+			{ID: "body1", Type: StepInput, Config: json.RawMessage(`{}`)},
+		},
+	}
+	if err := ValidateLoopBodies(skill); err != nil {
+		t.Fatalf("expected no error for valid loop, got: %v", err)
 	}
 }

@@ -587,10 +587,12 @@ func TestExecuteStepActivity_Loop_BasicIteration(t *testing.T) {
 		StartID: "b1",
 		Nodes: []*agentgen.PlanNode{
 			{
-				StepID: "b1",
-				Type:   "ct_loop_body_L1",
-				Config: json.RawMessage(`{}`),
-				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30},
+				StepID:  "b1",
+				Type:    "ct_loop_body_L1",
+				Config:  json.RawMessage(`{}`),
+				Inputs:  []agentgen.VarRef{{Name: "item"}},
+				Outputs: []agentgen.VarRef{{Name: "processed_item"}},
+				Policy:  agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30},
 			},
 		},
 	}
@@ -619,6 +621,15 @@ func TestExecuteStepActivity_Loop_BasicIteration(t *testing.T) {
 	accumSlice, ok := accum.([]any)
 	require.True(t, ok, "accum_var must be a []any")
 	require.Len(t, accumSlice, 3)
+	// Each entry must contain only the declared output key (processed_item), not all pipeline vars.
+	for i, entry := range accumSlice {
+		mv, mvok := entry.(agentgen.PipelineVars)
+		require.True(t, mvok, "accum entry %d must be agentgen.PipelineVars", i)
+		_, hasProcessed := mv["processed_item"]
+		_, hasItems := mv["items"]
+		require.True(t, hasProcessed, "accum entry %d must contain declared output key processed_item", i)
+		require.False(t, hasItems, "accum entry %d must NOT contain pipeline-wide var 'items'", i)
+	}
 }
 
 // ── CT-LOOP-2: ExecuteStepActivity — loop node with nil SubPlan is a no-op ──────
@@ -682,7 +693,339 @@ func TestExecuteStepActivity_Loop_NonListItemsVar(t *testing.T) {
 	require.Error(t, err, "non-list items_var must return an error")
 }
 
-// CT-CONC1: CanvasAgentWorkflowInput.MaxConcurrentTasks=0 resolves to DefaultMaxConcurrentTasks (10).
+// ── CT-LOOP-DURABLE-1: CanvasAgentWorkflow — loop schedules each body step as its own activity ──
+
+func (s *CanvasWorkflowTestSuite) TestCTLoopDurable1_BasicIteration() {
+	var callCount int32
+
+	agentgen.RegisterNode(agentgen.NodeDef{
+		Type: "ct_ld_body", Label: "CT LD Body", Version: 1,
+		OutputArity: "single",
+		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
+			atomic.AddInt32(&callCount, 1)
+			if item, ok := vars["item"]; ok {
+				vars["processed"] = fmt.Sprintf("done:%v", item)
+			}
+			return nil
+		},
+		Edges: agentgen.EdgeRules{},
+	})
+
+	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
+		BodySteps: []string{"body1"},
+		ItemsVar:  "items",
+		ItemVar:   "item",
+		AccumVar:  "results",
+	})
+	subPlan := &agentgen.ExecutionPlan{
+		SkillID: "ld:body",
+		StartID: "body1",
+		Nodes: []*agentgen.PlanNode{{
+			StepID:  "body1",
+			Type:    "ct_ld_body",
+			Config:  json.RawMessage(`{}`),
+			Inputs:  []agentgen.VarRef{{Name: "item"}},
+			Outputs: []agentgen.VarRef{{Name: "processed"}},
+			Policy:  agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}},
+		}},
+	}
+
+	inputCfg, _ := json.Marshal(agentgen.InputStepConfig{})
+	respCfg, _ := json.Marshal(agentgen.ResponseStepConfig{FromVar: "results", MediaType: "application/json"})
+	plan := agentgen.ExecutionPlan{
+		SkillID: "loop-durable",
+		StartID: "in",
+		Nodes: []*agentgen.PlanNode{
+			{StepID: "in", Type: agentgen.StepInput, Config: inputCfg, Next: []string{"loop1"},
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}},
+				Outputs: []agentgen.VarRef{{Name: "items"}}},
+			{StepID: "loop1", Type: agentgen.StepLoop, Config: loopCfg, Next: []string{"resp"},
+				SubPlan: subPlan,
+				Inputs:  []agentgen.VarRef{{Name: "items", Required: true}},
+				Outputs: []agentgen.VarRef{{Name: "results"}},
+				Policy:  agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 60, NonRetryableErrors: []string{"ContractViolation"}}},
+			{StepID: "resp", Type: agentgen.StepResponse, Config: respCfg,
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+		},
+	}
+
+	s.env.ExecuteWorkflow(temporal.CanvasAgentWorkflow, temporal.CanvasAgentWorkflowInput{
+		Plan:    plan,
+		Initial: agentgen.PipelineVars{"input": "go", "items": []any{"a", "b", "c"}},
+		IC:      makeTestIC(),
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	// body must have been called once per item
+	s.EqualValues(3, atomic.LoadInt32(&callCount), "body activity must run once per item")
+	var out temporal.CanvasAgentWorkflowOutput
+	s.NoError(s.env.GetWorkflowResult(&out))
+	s.NotEmpty(out.ResultText)
+}
+
+// ── CT-LOOP-DURABLE-2: CanvasAgentWorkflow — loop over empty list skips body, post-loop runs ──
+
+func (s *CanvasWorkflowTestSuite) TestCTLoopDurable2_EmptyList() {
+	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
+		BodySteps: []string{"body_empty"},
+		ItemsVar:  "items",
+		ItemVar:   "item",
+	})
+	subPlan := &agentgen.ExecutionPlan{
+		SkillID: "ld_empty:body",
+		StartID: "body_empty",
+		Nodes: []*agentgen.PlanNode{{
+			StepID: "body_empty", Type: agentgen.StepInput, Config: json.RawMessage(`{}`),
+			Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}},
+		}},
+	}
+	inputCfg, _ := json.Marshal(agentgen.InputStepConfig{})
+	respCfg, _ := json.Marshal(agentgen.ResponseStepConfig{FromVar: "input", MediaType: "text/plain"})
+	plan := agentgen.ExecutionPlan{
+		SkillID: "loop-empty",
+		StartID: "in",
+		Nodes: []*agentgen.PlanNode{
+			{StepID: "in", Type: agentgen.StepInput, Config: inputCfg, Next: []string{"loop1"},
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+			{StepID: "loop1", Type: agentgen.StepLoop, Config: loopCfg, Next: []string{"resp"},
+				SubPlan: subPlan,
+				Inputs:  []agentgen.VarRef{{Name: "items", Required: true}},
+				Policy:  agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+			{StepID: "resp", Type: agentgen.StepResponse, Config: respCfg,
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+		},
+	}
+
+	s.env.ExecuteWorkflow(temporal.CanvasAgentWorkflow, temporal.CanvasAgentWorkflowInput{
+		Plan:    plan,
+		Initial: agentgen.PipelineVars{"input": "hello", "items": []any{}},
+		IC:      makeTestIC(),
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	var out temporal.CanvasAgentWorkflowOutput
+	s.NoError(s.env.GetWorkflowResult(&out))
+	s.Equal("hello", out.ResultText, "post-loop response node must run after empty loop")
+}
+
+// ── CT-LOOP-DURABLE-3: CanvasAgentWorkflow — max_iterations cap is enforced ──
+
+func (s *CanvasWorkflowTestSuite) TestCTLoopDurable3_MaxIterationsCap() {
+	var callCount int32
+
+	agentgen.RegisterNode(agentgen.NodeDef{
+		Type: "ct_ld_cap_body", Label: "CT LD Cap Body", Version: 1,
+		OutputArity: "single",
+		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
+			atomic.AddInt32(&callCount, 1)
+			return nil
+		},
+		Edges: agentgen.EdgeRules{},
+	})
+
+	// 10-item list but max_iterations=3
+	items := make([]any, 10)
+	for i := range items {
+		items[i] = i
+	}
+	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
+		BodySteps:     []string{"body_cap"},
+		ItemsVar:      "items",
+		ItemVar:       "item",
+		MaxIterations: 3,
+	})
+	subPlan := &agentgen.ExecutionPlan{
+		SkillID: "ld_cap:body",
+		StartID: "body_cap",
+		Nodes: []*agentgen.PlanNode{{
+			StepID: "body_cap", Type: "ct_ld_cap_body", Config: json.RawMessage(`{}`),
+			Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}},
+		}},
+	}
+	inputCfg, _ := json.Marshal(agentgen.InputStepConfig{})
+	respCfg, _ := json.Marshal(agentgen.ResponseStepConfig{FromVar: "input", MediaType: "text/plain"})
+	plan := agentgen.ExecutionPlan{
+		SkillID: "loop-cap",
+		StartID: "in",
+		Nodes: []*agentgen.PlanNode{
+			{StepID: "in", Type: agentgen.StepInput, Config: inputCfg, Next: []string{"loop1"},
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+			{StepID: "loop1", Type: agentgen.StepLoop, Config: loopCfg, Next: []string{"resp"},
+				SubPlan: subPlan,
+				Inputs:  []agentgen.VarRef{{Name: "items", Required: true}},
+				Policy:  agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 60, NonRetryableErrors: []string{"ContractViolation"}}},
+			{StepID: "resp", Type: agentgen.StepResponse, Config: respCfg,
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+		},
+	}
+
+	s.env.ExecuteWorkflow(temporal.CanvasAgentWorkflow, temporal.CanvasAgentWorkflowInput{
+		Plan:    plan,
+		Initial: agentgen.PipelineVars{"input": "hi", "items": items},
+		IC:      makeTestIC(),
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.EqualValues(3, atomic.LoadInt32(&callCount), "max_iterations cap must stop after 3 iterations")
+}
+
+// ── CT-LOOP-DURABLE-4: CanvasAgentWorkflow — accum_var contains only declared body outputs ──
+
+func (s *CanvasWorkflowTestSuite) TestCTLoopDurable4_AccumVarScopedToOutputs() {
+	agentgen.RegisterNode(agentgen.NodeDef{
+		Type: "ct_ld_accum_body", Label: "CT LD Accum Body", Version: 1,
+		OutputArity: "single",
+		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
+			if item, ok := vars["item"]; ok {
+				vars["out_key"] = fmt.Sprintf("processed:%v", item)
+				vars["should_not_appear"] = "secret"
+			}
+			return nil
+		},
+		Edges: agentgen.EdgeRules{},
+	})
+
+	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
+		BodySteps: []string{"body_accum"},
+		ItemsVar:  "items",
+		ItemVar:   "item",
+		AccumVar:  "results",
+	})
+	subPlan := &agentgen.ExecutionPlan{
+		SkillID: "ld_accum:body",
+		StartID: "body_accum",
+		Nodes: []*agentgen.PlanNode{{
+			StepID:  "body_accum",
+			Type:    "ct_ld_accum_body",
+			Config:  json.RawMessage(`{}`),
+			Inputs:  []agentgen.VarRef{{Name: "item"}},
+			Outputs: []agentgen.VarRef{{Name: "out_key"}}, // only out_key declared
+			Policy:  agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}},
+		}},
+	}
+	inputCfg, _ := json.Marshal(agentgen.InputStepConfig{})
+	respCfg, _ := json.Marshal(agentgen.ResponseStepConfig{FromVar: "results", MediaType: "application/json"})
+	plan := agentgen.ExecutionPlan{
+		SkillID: "loop-accum",
+		StartID: "in",
+		Nodes: []*agentgen.PlanNode{
+			{StepID: "in", Type: agentgen.StepInput, Config: inputCfg, Next: []string{"loop1"},
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+			{StepID: "loop1", Type: agentgen.StepLoop, Config: loopCfg, Next: []string{"resp"},
+				SubPlan: subPlan,
+				Inputs:  []agentgen.VarRef{{Name: "items", Required: true}},
+				Outputs: []agentgen.VarRef{{Name: "results"}},
+				Policy:  agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 60, NonRetryableErrors: []string{"ContractViolation"}}},
+			{StepID: "resp", Type: agentgen.StepResponse, Config: respCfg,
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+		},
+	}
+
+	s.env.ExecuteWorkflow(temporal.CanvasAgentWorkflow, temporal.CanvasAgentWorkflowInput{
+		Plan:    plan,
+		Initial: agentgen.PipelineVars{"input": "go", "items": []any{"x", "y"}},
+		IC:      makeTestIC(),
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	var out temporal.CanvasAgentWorkflowOutput
+	s.NoError(s.env.GetWorkflowResult(&out))
+	// The response text contains a fmt.Sprint of the []any accum_var.
+	// Verify it contains the declared output key and not the undeclared one.
+	s.Contains(out.ResultText, "out_key", "accum_var must contain declared output key")
+	s.NotContains(out.ResultText, "should_not_appear", "accum_var must not contain undeclared key")
+	// Two items processed.
+	s.Contains(out.ResultText, "processed:x")
+	s.Contains(out.ResultText, "processed:y")
+}
+
+// ── CT-LOOP-DURABLE-5: CanvasAgentWorkflow — branch inside loop body selects correct arm ──
+
+func (s *CanvasWorkflowTestSuite) TestCTLoopDurable5_BranchInsideBody() {
+	var trueCount, falseCount int32
+
+	agentgen.RegisterNode(agentgen.NodeDef{
+		Type: "ct_ld_branch_true", Label: "CT LD Branch True", Version: 1,
+		OutputArity: "single",
+		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
+			atomic.AddInt32(&trueCount, 1)
+			vars["arm"] = "true"
+			return nil
+		},
+		Edges: agentgen.EdgeRules{},
+	})
+	agentgen.RegisterNode(agentgen.NodeDef{
+		Type: "ct_ld_branch_false", Label: "CT LD Branch False", Version: 1,
+		OutputArity: "single",
+		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
+			atomic.AddInt32(&falseCount, 1)
+			vars["arm"] = "false"
+			return nil
+		},
+		Edges: agentgen.EdgeRules{},
+	})
+
+	// Body: branch("{{.item}}") → true_arm | false_arm
+	// items: ["true", "false", "true"] → 2 true, 1 false
+	branchCfg, _ := json.Marshal(agentgen.BranchStepConfig{
+		Expression: `{{.item}}`,
+		TrueNext:   "arm_true",
+		FalseNext:  "arm_false",
+	})
+	trueCfg, _ := json.Marshal(map[string]any{})
+	falseCfg, _ := json.Marshal(map[string]any{})
+	subPlan := &agentgen.ExecutionPlan{
+		SkillID: "ld_branch:body",
+		StartID: "br",
+		Nodes: []*agentgen.PlanNode{
+			{StepID: "br", Type: agentgen.StepBranch, Config: branchCfg, Next: []string{"arm_true", "arm_false"},
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+			{StepID: "arm_true", Type: "ct_ld_branch_true", Config: json.RawMessage(trueCfg),
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+			{StepID: "arm_false", Type: "ct_ld_branch_false", Config: json.RawMessage(falseCfg),
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+		},
+	}
+
+	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
+		BodySteps: []string{"br", "arm_true", "arm_false"},
+		ItemsVar:  "items",
+		ItemVar:   "item",
+	})
+	inputCfg, _ := json.Marshal(agentgen.InputStepConfig{})
+	respCfg, _ := json.Marshal(agentgen.ResponseStepConfig{FromVar: "input", MediaType: "text/plain"})
+	plan := agentgen.ExecutionPlan{
+		SkillID: "loop-branch",
+		StartID: "in",
+		Nodes: []*agentgen.PlanNode{
+			{StepID: "in", Type: agentgen.StepInput, Config: inputCfg, Next: []string{"loop1"},
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+			{StepID: "loop1", Type: agentgen.StepLoop, Config: loopCfg, Next: []string{"resp"},
+				SubPlan: subPlan,
+				Inputs:  []agentgen.VarRef{{Name: "items", Required: true}},
+				Policy:  agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 60, NonRetryableErrors: []string{"ContractViolation"}}},
+			{StepID: "resp", Type: agentgen.StepResponse, Config: respCfg,
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}},
+		},
+	}
+
+	s.env.ExecuteWorkflow(temporal.CanvasAgentWorkflow, temporal.CanvasAgentWorkflowInput{
+		Plan:    plan,
+		Initial: agentgen.PipelineVars{"input": "go", "items": []any{"true", "false", "true"}},
+		IC:      makeTestIC(),
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.EqualValues(2, atomic.LoadInt32(&trueCount), "true arm must execute for 'true' items")
+	s.EqualValues(1, atomic.LoadInt32(&falseCount), "false arm must execute for 'false' item")
+}
+
+// ── CT-CONC1: CanvasAgentWorkflowInput.MaxConcurrentTasks=0 resolves to DefaultMaxConcurrentTasks (10).
 // Verifies that the workflow wires up the semaphore correctly and a zero value is safe.
 func (s *CanvasWorkflowTestSuite) TestWorkflowConcurrencyLimit_ZeroResolvesToDefault() {
 	// A simple linear plan: input → response. With limit=0 the semaphore resolves

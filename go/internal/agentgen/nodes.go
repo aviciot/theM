@@ -505,6 +505,9 @@ func init() {
 			if c.ItemsVar == "" {
 				issues = append(issues, Issue{Severity: "error", Code: "INVALID_CONFIG", NodeID: step.ID, Field: "items_var", Message: "items_var is required"})
 			}
+			if len(c.BodySteps) == 0 {
+				issues = append(issues, Issue{Severity: "error", Code: "INVALID_CONFIG", NodeID: step.ID, Field: "body_steps", Message: "loop body is empty — connect steps from the loop-body output port"})
+			}
 			return issues
 		},
 		Execute: execLoop,
@@ -835,16 +838,20 @@ func execMCP(ctx context.Context, interp *Interpreter, ic *InvocationContext, st
 	return nil
 }
 
-// execLoop is the Execute function for StepLoop.
+// execLoop is the Execute function for StepLoop (LocalExecutor path only).
+//
+// In the Temporal path, CanvasAgentWorkflow.runLoopNode handles loop iteration by
+// scheduling each body step as its own ExecuteStepActivity. This function is only
+// reached when ExecutionBackend == "local".
 //
 // It iterates over vars[cfg.ItemsVar] (must be []any), injects cfg.ItemVar per
-// element, runs the compiled SubPlan body steps sequentially once per item,
-// and accumulates each iteration's output vars into cfg.AccumVar ([]any).
+// element, runs the compiled SubPlan body steps sequentially once per item using
+// ExecNodeWithPolicy (so each body step gets its own retry/timeout/backoff), and
+// accumulates only declared body Outputs keys into cfg.AccumVar ([]any).
 //
 // cfg.Condition is an optional Go template; items that do not render to "true" are skipped.
 // cfg.MaxIterations caps the number of iterations (default 100).
-// Body steps are run directly via the interpreter to keep vars mutable across the body.
-func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
+func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, step *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
 	var cfg LoopConfig
 	if len(step.Config) > 0 {
 		if err := json.Unmarshal(step.Config, &cfg); err != nil {
@@ -878,14 +885,20 @@ func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, s
 		return fmt.Errorf("loop step %q: %q must be a list, got %T", step.ID, cfg.ItemsVar, raw)
 	}
 
-	// Build a step index from the sub-plan for O(1) lookup.
+	// Build a step index and collect declared output keys from the body sub-plan.
 	bodyIdx := make(map[string]*PlanNode, len(step.SubPlan.Nodes))
+	bodyOutputKeys := make(map[string]bool)
 	for _, n := range step.SubPlan.Nodes {
 		bodyIdx[n.StepID] = n
+		for _, ref := range n.Outputs {
+			bodyOutputKeys[ref.Name] = true
+		}
 	}
 
+	// Sequential body semaphore: one slot — body steps run one at a time.
+	bodySem := make(chan struct{}, 1)
+
 	var accumulated []any
-	bodyInterp := interp.clone()
 
 	for i, item := range items {
 		if i >= maxIter {
@@ -911,10 +924,9 @@ func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, s
 			}
 		}
 
-		// Run each body step sequentially. bodyInterp.nextStepOverride is used by
-		// branch/condition steps inside the body.
+		// Run each body step sequentially via ExecNodeWithPolicy so that each body
+		// node gets its own retry/timeout/backoff from node.Policy.
 		currentID := step.SubPlan.StartID
-		iterResult := &ExecutionResult{MediaType: "text/plain"}
 		for currentID != "" {
 			select {
 			case <-ctx.Done():
@@ -926,12 +938,10 @@ func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, s
 				return fmt.Errorf("loop step %q iteration %d: body step %q not found", step.ID, i, currentID)
 			}
 			bodySpec := planNodeToStepSpec(node)
-			bodyInterp.nextStepOverride = ""
-			if err := bodyInterp.executeStep(ctx, ic, bodySpec, iterVars, iterResult); err != nil {
+			override, err := ExecNodeWithPolicy(ctx, ic, interp, bodySpec, node.Policy, iterVars, nil, bodySem)
+			if err != nil {
 				return fmt.Errorf("loop step %q iteration %d body step %q: %w", step.ID, i, currentID, err)
 			}
-			override := bodyInterp.nextStepOverride
-			bodyInterp.nextStepOverride = ""
 			if override != "" {
 				currentID = override
 			} else if len(node.Next) > 0 {
@@ -946,11 +956,21 @@ func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, s
 			vars[k] = v
 		}
 
-		// Accumulate a snapshot of this iteration's output vars.
+		// Accumulate only declared body output keys for this iteration.
+		// Falls back to all keys written during this iteration when no body node
+		// declares Outputs (legacy/untyped body steps).
 		if cfg.AccumVar != "" {
-			snapshot := make(PipelineVars, len(iterVars))
-			for k, v := range iterVars {
-				snapshot[k] = v
+			snapshot := make(PipelineVars)
+			if len(bodyOutputKeys) > 0 {
+				for k := range bodyOutputKeys {
+					if v, exists := iterVars[k]; exists {
+						snapshot[k] = v
+					}
+				}
+			} else {
+				for k, v := range iterVars {
+					snapshot[k] = v
+				}
 			}
 			accumulated = append(accumulated, snapshot)
 		}

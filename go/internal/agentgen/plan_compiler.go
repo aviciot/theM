@@ -2,8 +2,54 @@ package agentgen
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 )
+
+// MaxLoopHistoryBudget is the maximum number of Temporal history events a loop
+// body may generate (body steps × max_iterations). ValidateLoopBodies returns an
+// error when the resolved cap would exceed this limit.
+const MaxLoopHistoryBudget = 5000
+
+// ValidateLoopBodies validates all loop nodes in skill before compilation.
+//
+// Checks:
+//   - Every step ID in body_steps exists in the skill's step list.
+//   - len(body_steps) × effective_max_iterations ≤ MaxLoopHistoryBudget.
+//
+// Call this before CompileExecutionPlan at publish / invocation time.
+func ValidateLoopBodies(skill *SkillSpec) error {
+	if skill == nil {
+		return nil
+	}
+	stepByID := make(map[string]bool, len(skill.Steps))
+	for _, s := range skill.Steps {
+		stepByID[s.ID] = true
+	}
+	for _, s := range skill.Steps {
+		if s.Type != StepLoop {
+			continue
+		}
+		var lc LoopConfig
+		if len(s.Config) > 0 {
+			_ = json.Unmarshal(s.Config, &lc)
+		}
+		for _, bID := range lc.BodySteps {
+			if !stepByID[bID] {
+				return fmt.Errorf("loop step %q: body_steps references unknown step %q", s.ID, bID)
+			}
+		}
+		maxIter := lc.MaxIterations
+		if maxIter <= 0 {
+			maxIter = 100
+		}
+		if budget := len(lc.BodySteps) * maxIter; budget > MaxLoopHistoryBudget {
+			return fmt.Errorf("loop step %q: body_steps(%d) × max_iterations(%d) = %d exceeds MaxLoopHistoryBudget(%d)",
+				s.ID, len(lc.BodySteps), maxIter, budget, MaxLoopHistoryBudget)
+		}
+	}
+	return nil
+}
 
 // resolvePolicy computes the final ExecutionPolicy for a PlanNode.
 // Resolution order: NodeDef.DefaultPolicy → method/mutation upgrade → canvas override (clamped to MaxPolicy).

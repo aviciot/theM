@@ -311,6 +311,13 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 			initial[k] = v
 		}
 
+		if err := agentgen.ValidateLoopBodies(skill); err != nil {
+				errMsg := a2a.NewMessage(a2a.MessageRoleAgent,
+					a2a.NewTextPart("invalid agent definition: "+err.Error()))
+				yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, errMsg), nil) //nolint:errcheck
+				return
+			}
+
 		plan := agentgen.CompileExecutionPlan(skill)
 
 		// Choose execution backend: temporal for canvas agents that have opted in,

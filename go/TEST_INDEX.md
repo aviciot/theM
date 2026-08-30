@@ -1625,6 +1625,9 @@ heuristic, user override clamping, and backward compatibility.
 | `TestCompileExecutionPlan_PolicyPopulated` | All nodes in compiled plan have non-zero MaxAttempts, TimeoutSeconds, NonRetryableErrors |
 | `TestResolvePolicy_MCPMutatingVsRead` | MCP read → MaxAttempts=2, RequiresIdempotencyKey=false; mutating → MaxAttempts=1, RequiresIdempotencyKey=false (no retry) |
 | `TestResolvePolicy_MCPMutatingOverrideHardClamped` | EP-10: canvas override MaxAttempts=3 on mutating MCP tool is hard-clamped to 1 (no canvas override can raise it) |
+| `TestValidateLoopBodies_UnknownBodyStep` | PC-LOOP-1: body_steps references unknown step ID → error returned |
+| `TestValidateLoopBodies_HistoryBudgetExceeded` | PC-LOOP-2: 51 body steps × 100 iterations = 5100 > MaxLoopHistoryBudget → error returned |
+| `TestValidateLoopBodies_Valid` | PC-LOOP-3: valid loop (1 body step × 10 iterations) passes without error |
 
 **Trigger:** any change to `internal/agentgen/plan_compiler.go`, `internal/agentgen/spec.go`
 (`ExecutionPlan`, `PlanNode`, `JoinMode`, `ExecutionPolicy`, `LoopConfig` types), `internal/agentgen/nodes.go`
@@ -1765,14 +1768,19 @@ propagation, HumanWait signal return, and result capture — all using the Tempo
 | `TestNoResultBugFixed` | ResultMT-only output (empty ResultText, non-empty ResultMT) triggers result capture; truly empty output does not |
 | `TestActivityOptionsFromPolicy` | LLM PlanNode from CompileExecutionPlan carries MaxAttempts=2, positive TimeoutSeconds, non-empty NonRetryableErrors |
 | `TestWorkflowConcurrencyLimit_ZeroResolvesToDefault` | CT-CONC1: MaxConcurrentTasks=0 in workflow input resolves to 10; linear plan completes normally |
-| `TestExecuteStepActivity_Loop_BasicIteration` | CT-LOOP-1: loop node with 3-item list runs body 3×; accum_var accumulates into output |
+| `TestExecuteStepActivity_Loop_BasicIteration` | CT-LOOP-1: loop node with 3-item list runs body 3×; accum_var entries contain only declared output key (not all pipeline vars) |
 | `TestExecuteStepActivity_Loop_NilSubPlan` | CT-LOOP-2: loop node with nil SubPlan is a no-op (no error) |
 | `TestExecuteStepActivity_Loop_NonListItemsVar` | CT-LOOP-3: loop node with non-list items_var returns an error |
+| `TestCTLoopDurable1_BasicIteration` | CT-LOOP-DURABLE-1: CanvasAgentWorkflow runs loop body as 3 separate activities (one per item) |
+| `TestCTLoopDurable2_EmptyList` | CT-LOOP-DURABLE-2: empty items list skips all body activities; post-loop step runs normally |
+| `TestCTLoopDurable3_MaxIterationsCap` | CT-LOOP-DURABLE-3: max_iterations=3 caps 10-item list to 3 body activity invocations |
+| `TestCTLoopDurable4_AccumVarScopedToOutputs` | CT-LOOP-DURABLE-4: accum_var entries contain only declared body Outputs keys, not undeclared keys |
+| `TestCTLoopDurable5_BranchInsideBody` | CT-LOOP-DURABLE-5: branch node inside loop body routes to correct arm per item (2 true, 1 false) |
 
 **Trigger:** any change to `internal/temporal/canvas_workflow.go`, `internal/temporal/canvas_activities.go`,
 `internal/agentgen/context.go` (ResolveMaxConcurrentTasks),
 `internal/agentgen/plan_compiler.go` (policy resolution affects Temporal activity options), or
-`internal/agentgen/nodes.go` (execLoop — Temporal activity delegates to ExecuteNodeForActivity which calls execLoop)
+`internal/agentgen/nodes.go` (execLoop, ExecNodeWithPolicy, or StepLoop Validate)
 
 ---
 
