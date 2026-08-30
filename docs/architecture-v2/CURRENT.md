@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: (pending — Phase 5-A gap fixes + 8 new tests, not yet committed)
+Commit: `7b0a09a`
 
 Recent commits (newest first):
 ```
+7b0a09a  fix(loop): Phase 5-A gap fixes — correct SubPlan DAG semantics, iteration isolation, scoped accum
 81c3a31  feat(canvas): add loop-body and loop-done output ports to loop node
 05351bd  feat(loop): durable loop — each body step is its own Temporal activity
 a69f01a  feat(loop): Phase 5-A StepLoop — LocalExecutor + Temporal + frontend config panel
