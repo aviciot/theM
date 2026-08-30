@@ -151,6 +151,10 @@ func isMutatingMCPTool(cfg json.RawMessage) bool {
 // its only predecessor AND B's Next list covers exactly {P1..Pn}. If yes →
 // JoinBranchMerge; otherwise → JoinWaitAll.
 //
+// Loop nodes: LoopConfig.BodySteps are extracted into PlanNode.SubPlan and removed
+// from the outer plan. The outer plan sees the loop as a single opaque node; its
+// Next points to the first post-loop step (the step after the last body step).
+//
 // The SkillSpec.Steps slice must be topologically sorted. No cycle detection is
 // done here — the compiler enforces acyclicity upstream.
 func CompileExecutionPlan(skill *SkillSpec) *ExecutionPlan {
@@ -158,15 +162,40 @@ func CompileExecutionPlan(skill *SkillSpec) *ExecutionPlan {
 		return &ExecutionPlan{SkillID: safeSkillID(skill)}
 	}
 
-	// Build step-type and predecessor maps.
-	stepTypes := make(map[string]StepType, len(skill.Steps))
+	// Collect body step IDs from all loop nodes so they can be excluded from the
+	// outer plan and compiled into per-loop SubPlans instead.
+	bodyStepIDs := make(map[string]bool)
+	stepByID := make(map[string]StepSpec, len(skill.Steps))
 	for _, s := range skill.Steps {
+		stepByID[s.ID] = s
+		if s.Type == StepLoop {
+			var lc LoopConfig
+			if len(s.Config) > 0 {
+				_ = json.Unmarshal(s.Config, &lc)
+			}
+			for _, bID := range lc.BodySteps {
+				bodyStepIDs[bID] = true
+			}
+		}
+	}
+
+	// Outer steps: exclude body steps that belong to a loop's SubPlan.
+	outerSteps := make([]StepSpec, 0, len(skill.Steps))
+	for _, s := range skill.Steps {
+		if !bodyStepIDs[s.ID] {
+			outerSteps = append(outerSteps, s)
+		}
+	}
+
+	// Build step-type and predecessor maps from outer steps only.
+	stepTypes := make(map[string]StepType, len(outerSteps))
+	for _, s := range outerSteps {
 		stepTypes[s.ID] = s.Type
 	}
 
 	// preds: targetID → []predecessorID
-	preds := make(map[string][]string, len(skill.Steps))
-	for _, s := range skill.Steps {
+	preds := make(map[string][]string, len(outerSteps))
+	for _, s := range outerSteps {
 		if _, ok := preds[s.ID]; !ok {
 			preds[s.ID] = nil
 		}
@@ -176,8 +205,8 @@ func CompileExecutionPlan(skill *SkillSpec) *ExecutionPlan {
 	}
 
 	// nextSet: stepID → set of direct successors (for branch-coverage check).
-	nextSet := make(map[string]map[string]bool, len(skill.Steps))
-	for _, s := range skill.Steps {
+	nextSet := make(map[string]map[string]bool, len(outerSteps))
+	for _, s := range outerSteps {
 		set := make(map[string]bool, len(s.Next))
 		for _, n := range s.Next {
 			set[n] = true
@@ -185,24 +214,36 @@ func CompileExecutionPlan(skill *SkillSpec) *ExecutionPlan {
 		nextSet[s.ID] = set
 	}
 
-	nodes := make([]*PlanNode, 0, len(skill.Steps))
-	for _, s := range skill.Steps {
+	nodes := make([]*PlanNode, 0, len(outerSteps))
+	for _, s := range outerSteps {
 		// Resolve the execution policy from the NodeDef defaults + optional canvas override.
 		policy := ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable}
 		if nd, ok := LookupNode(s.Type); ok {
 			policy = resolvePolicy(nd, s.Config, s.PolicyOverride)
 		}
 
+		// For loop nodes, remap Next to skip over body steps and point to the
+		// first post-loop step (the step that follows the last body step).
+		outerNext := s.Next
+		if s.Type == StepLoop {
+			outerNext = resolveLoopOuterNext(s, stepByID, bodyStepIDs)
+		}
+
 		node := &PlanNode{
 			StepID:   s.ID,
 			Type:     s.Type,
 			Config:   s.Config,
-			Next:     s.Next,
+			Next:     outerNext,
 			Inputs:   s.Inputs,
 			Outputs:  s.Outputs,
 			Branches: s.Branches,
 			JoinMode: JoinNone,
 			Policy:   policy,
+		}
+
+		// Loop nodes: compile BodySteps into SubPlan.
+		if s.Type == StepLoop {
+			node.SubPlan = compileLoopBodyPlan(s, stepByID)
 		}
 
 		if predecessors := preds[s.ID]; len(predecessors) > 1 {
@@ -214,14 +255,87 @@ func CompileExecutionPlan(skill *SkillSpec) *ExecutionPlan {
 	}
 
 	startID := ""
-	if len(skill.Steps) > 0 {
-		startID = skill.Steps[0].ID
+	if len(outerSteps) > 0 {
+		startID = outerSteps[0].ID
 	}
 
 	return &ExecutionPlan{
 		SkillID: skill.ID,
 		StartID: startID,
 		Nodes:   nodes,
+	}
+}
+
+// resolveLoopOuterNext finds the first post-loop step: the step that follows the last body step
+// but is NOT itself a body step. This becomes the loop node's Next in the outer plan.
+func resolveLoopOuterNext(loopStep StepSpec, stepByID map[string]StepSpec, bodyStepIDs map[string]bool) []string {
+	var lc LoopConfig
+	if len(loopStep.Config) > 0 {
+		_ = json.Unmarshal(loopStep.Config, &lc)
+	}
+	if len(lc.BodySteps) == 0 {
+		return loopStep.Next
+	}
+	// Walk the last body step's Next to find the first non-body successor.
+	lastBodyID := lc.BodySteps[len(lc.BodySteps)-1]
+	if last, ok := stepByID[lastBodyID]; ok {
+		for _, nextID := range last.Next {
+			if !bodyStepIDs[nextID] {
+				return []string{nextID}
+			}
+		}
+	}
+	return nil
+}
+
+// compileLoopBodyPlan builds an ExecutionPlan for the body steps declared in a loop node's config.
+// Body steps form a linear sub-plan; the last body step's Next is cleared (the loop executor
+// controls when iteration ends, not the DAG walker).
+func compileLoopBodyPlan(loopStep StepSpec, stepByID map[string]StepSpec) *ExecutionPlan {
+	var lc LoopConfig
+	if len(loopStep.Config) > 0 {
+		_ = json.Unmarshal(loopStep.Config, &lc)
+	}
+	if len(lc.BodySteps) == 0 {
+		return &ExecutionPlan{SkillID: loopStep.ID + ":body"}
+	}
+
+	bodyNodes := make([]*PlanNode, 0, len(lc.BodySteps))
+	for i, bID := range lc.BodySteps {
+		s, ok := stepByID[bID]
+		if !ok {
+			continue
+		}
+		policy := ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable}
+		if nd, ok2 := LookupNode(s.Type); ok2 {
+			policy = resolvePolicy(nd, s.Config, s.PolicyOverride)
+		}
+		// The last body step must not jump out of the sub-plan; clear its Next.
+		next := s.Next
+		if i == len(lc.BodySteps)-1 {
+			next = nil
+		}
+		bodyNodes = append(bodyNodes, &PlanNode{
+			StepID:   s.ID,
+			Type:     s.Type,
+			Config:   s.Config,
+			Next:     next,
+			Inputs:   s.Inputs,
+			Outputs:  s.Outputs,
+			Branches: s.Branches,
+			JoinMode: JoinNone,
+			Policy:   policy,
+		})
+	}
+
+	startID := ""
+	if len(bodyNodes) > 0 {
+		startID = bodyNodes[0].StepID
+	}
+	return &ExecutionPlan{
+		SkillID: loopStep.ID + ":body",
+		StartID: startID,
+		Nodes:   bodyNodes,
 	}
 }
 

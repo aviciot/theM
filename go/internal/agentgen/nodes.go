@@ -471,7 +471,7 @@ func init() {
 		Type:                 StepLoop,
 		Version:              1,
 		Label:                "Loop",
-		Description:          "Iterate over a list, running the connected pipeline once per item. (stub)",
+		Description:          "Iterate over a list, running the connected body pipeline once per item.",
 		Emoji:                "🔁",
 		OutputArity:          "single",
 		IsSource:             false,
@@ -487,22 +487,36 @@ func init() {
 			{Key: "item_var", Type: "string", Required: false, Description: "Variable name for the current loop item within each iteration. Defaults to \"item\".", Example: "item"},
 			{Key: "condition", Type: "string", Required: false, Description: "Optional Go template expression to filter items. Only items where this evaluates to true are processed.", Example: "{{gt .item.score 0.5}}"},
 			{Key: "accum_var", Type: "string", Required: false, Description: "Variable name to accumulate loop outputs into a list.", Example: "processed_items"},
+			{Key: "max_iterations", Type: "int", Required: false, Description: "Hard cap on iterations. Defaults to 100.", Example: "50"},
 		},
-		UsageNotes: "Loop is not yet fully implemented (stub). Use it only in designs where iteration will be wired at runtime. For immediate use, prefer Transform + LLM with a prompt that handles multiple items.",
+		UsageNotes: "Iterates over items_var (must be []any). Each iteration runs the body steps with item_var injected. Results are accumulated into accum_var. Body steps are compiled into a sub-plan; they do not appear in the outer DAG.",
 		Examples: []NodeExample{
-			{Description: "Iterate over a list of results", Config: map[string]any{"items_var": "results", "item_var": "item", "accum_var": "processed"}},
+			{Description: "Iterate over a list of results", Config: map[string]any{"items_var": "results", "item_var": "item", "accum_var": "processed", "max_iterations": 100}},
 		},
 		AllowedSuccessors: []StepType{StepLLM, StepHTTP, StepTransform, StepResponse},
 		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
 		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
-		Validate:    nil,
-		Execute:     nil,
+		Validate: func(step canvasStep) []Issue {
+			var c LoopConfig
+			if len(step.Config) > 0 {
+				_ = json.Unmarshal(step.Config, &c)
+			}
+			var issues []Issue
+			if c.ItemsVar == "" {
+				issues = append(issues, Issue{Severity: "error", Code: "INVALID_CONFIG", NodeID: step.ID, Field: "items_var", Message: "items_var is required"})
+			}
+			return issues
+		},
+		Execute: execLoop,
 		DeriveInputs: func(cfg json.RawMessage) []VarRef {
 			var c LoopConfig
 			if len(cfg) > 0 {
 				_ = json.Unmarshal(cfg, &c)
 			}
-			var refs []VarRef
+			refs := []VarRef{}
+			if c.ItemsVar != "" {
+				refs = append(refs, VarRef{Name: c.ItemsVar, Required: true})
+			}
 			for _, v := range extractTmplVars(c.Condition) {
 				refs = append(refs, VarRef{Name: v, Required: false})
 			}
@@ -817,6 +831,133 @@ func execMCP(ctx context.Context, interp *Interpreter, ic *InvocationContext, st
 	if cfg.OutputVar != "" {
 		// Store the raw JSON as a string so downstream template steps can reference it.
 		vars[cfg.OutputVar] = string(result)
+	}
+	return nil
+}
+
+// execLoop is the Execute function for StepLoop.
+//
+// It iterates over vars[cfg.ItemsVar] (must be []any), injects cfg.ItemVar per
+// element, runs the compiled SubPlan body steps sequentially once per item,
+// and accumulates each iteration's output vars into cfg.AccumVar ([]any).
+//
+// cfg.Condition is an optional Go template; items that do not render to "true" are skipped.
+// cfg.MaxIterations caps the number of iterations (default 100).
+// Body steps are run directly via the interpreter to keep vars mutable across the body.
+func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
+	var cfg LoopConfig
+	if len(step.Config) > 0 {
+		if err := json.Unmarshal(step.Config, &cfg); err != nil {
+			return fmt.Errorf("loop step %q: invalid config: %w", step.ID, err)
+		}
+	}
+	if cfg.ItemsVar == "" {
+		return fmt.Errorf("loop step %q: items_var is required", step.ID)
+	}
+	if step.SubPlan == nil || len(step.SubPlan.Nodes) == 0 {
+		// No body configured — no-op.
+		return nil
+	}
+
+	itemVar := cfg.ItemVar
+	if itemVar == "" {
+		itemVar = "item"
+	}
+	maxIter := cfg.MaxIterations
+	if maxIter <= 0 {
+		maxIter = 100
+	}
+
+	raw, ok := vars[cfg.ItemsVar]
+	if !ok {
+		// items_var absent — treat as empty list.
+		return nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return fmt.Errorf("loop step %q: %q must be a list, got %T", step.ID, cfg.ItemsVar, raw)
+	}
+
+	// Build a step index from the sub-plan for O(1) lookup.
+	bodyIdx := make(map[string]*PlanNode, len(step.SubPlan.Nodes))
+	for _, n := range step.SubPlan.Nodes {
+		bodyIdx[n.StepID] = n
+	}
+
+	var accumulated []any
+	bodyInterp := interp.clone()
+
+	for i, item := range items {
+		if i >= maxIter {
+			break
+		}
+
+		// Build per-iteration vars: start from global state, inject item.
+		iterVars := deepCopyVars(vars)
+		iterVars[itemVar] = item
+
+		// Apply optional condition filter.
+		if cfg.Condition != "" {
+			tmpl, err := template.New("loop_cond").Option("missingkey=zero").Parse(cfg.Condition)
+			if err != nil {
+				return fmt.Errorf("loop step %q: condition parse error: %w", step.ID, err)
+			}
+			var buf strings.Builder
+			if err := tmpl.Execute(&buf, iterVars); err != nil {
+				return fmt.Errorf("loop step %q: condition execute error: %w", step.ID, err)
+			}
+			if strings.TrimSpace(buf.String()) != "true" {
+				continue
+			}
+		}
+
+		// Run each body step sequentially. bodyInterp.nextStepOverride is used by
+		// branch/condition steps inside the body.
+		currentID := step.SubPlan.StartID
+		iterResult := &ExecutionResult{MediaType: "text/plain"}
+		for currentID != "" {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			node, found := bodyIdx[currentID]
+			if !found {
+				return fmt.Errorf("loop step %q iteration %d: body step %q not found", step.ID, i, currentID)
+			}
+			bodySpec := planNodeToStepSpec(node)
+			bodyInterp.nextStepOverride = ""
+			if err := bodyInterp.executeStep(ctx, ic, bodySpec, iterVars, iterResult); err != nil {
+				return fmt.Errorf("loop step %q iteration %d body step %q: %w", step.ID, i, currentID, err)
+			}
+			override := bodyInterp.nextStepOverride
+			bodyInterp.nextStepOverride = ""
+			if override != "" {
+				currentID = override
+			} else if len(node.Next) > 0 {
+				currentID = node.Next[0]
+			} else {
+				currentID = ""
+			}
+		}
+
+		// Merge iteration outputs back into global vars (last iteration wins).
+		for k, v := range iterVars {
+			vars[k] = v
+		}
+
+		// Accumulate a snapshot of this iteration's output vars.
+		if cfg.AccumVar != "" {
+			snapshot := make(PipelineVars, len(iterVars))
+			for k, v := range iterVars {
+				snapshot[k] = v
+			}
+			accumulated = append(accumulated, snapshot)
+		}
+	}
+
+	if cfg.AccumVar != "" {
+		vars[cfg.AccumVar] = accumulated
 	}
 	return nil
 }

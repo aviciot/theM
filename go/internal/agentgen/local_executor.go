@@ -454,6 +454,7 @@ func planNodeToStepSpec(n *PlanNode) *StepSpec {
 		Branches: n.Branches,
 		Inputs:   n.Inputs,
 		Outputs:  n.Outputs,
+		SubPlan:  n.SubPlan,
 	}
 }
 

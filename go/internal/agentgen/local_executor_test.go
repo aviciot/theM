@@ -1364,3 +1364,235 @@ func TestLocalExecutor_ConcurrencyLimit_Cancellation(t *testing.T) {
 		t.Fatal("Execute deadlocked after context cancellation (5s timeout)")
 	}
 }
+
+// ── StepLoop tests (EP-LOOP-1..5) ────────────────────────────────────────────
+
+// buildLoopPlanWithResponse builds an outer plan: loop → response(fromVar).
+// The response step captures fromVar into result.Text so we can assert on it.
+func buildLoopPlanWithResponse(t *testing.T, loopCfg LoopConfig, bodyNodes []*PlanNode, responseFromVar string) *ExecutionPlan {
+	t.Helper()
+	cfg := rawJSON(t, loopCfg)
+	startID := ""
+	if len(bodyNodes) > 0 {
+		startID = bodyNodes[0].StepID
+	}
+	subPlan := &ExecutionPlan{SkillID: "loop:body", StartID: startID, Nodes: bodyNodes}
+	loopNode := &PlanNode{
+		StepID:  "loop1",
+		Type:    StepLoop,
+		Config:  cfg,
+		Next:    []string{"resp1"},
+		SubPlan: subPlan,
+		Policy:  ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 60},
+	}
+	// Response step reads responseFromVar and formats its length as text.
+	respCfg := rawJSON(t, ResponseStepConfig{FromVar: responseFromVar, MediaType: "text/plain"})
+	respNode := &PlanNode{
+		StepID:  "resp1",
+		Type:    StepResponse,
+		Config:  respCfg,
+		Policy:  ExecutionPolicy{MaxAttempts: 1},
+	}
+	return &ExecutionPlan{
+		SkillID: "loop_test",
+		StartID: "loop1",
+		Nodes:   []*PlanNode{loopNode, respNode},
+	}
+}
+
+// buildLoopPlanNoResponse builds an outer plan: loop → stub response.
+// The stub response node produces a constant result so LocalExecutor doesn't complain.
+func buildLoopPlanNoResponse(t *testing.T, loopCfg LoopConfig, bodyNodes []*PlanNode) *ExecutionPlan {
+	t.Helper()
+	cfg := rawJSON(t, loopCfg)
+	startID := ""
+	if len(bodyNodes) > 0 {
+		startID = bodyNodes[0].StepID
+	}
+	subPlan := &ExecutionPlan{SkillID: "loop:body", StartID: startID, Nodes: bodyNodes}
+	// Minimal sink so LocalExecutor.Execute doesn't return "no result".
+	sinkType := StepType("test_loop_sink_" + loopCfg.ItemsVar)
+	registerTestNode(t, NodeDef{
+		Type: sinkType, Version: 1, OutputArity: "none", IsSink: true,
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, res *ExecutionResult) error {
+			res.Text = "done"
+			res.MediaType = "text/plain"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	return &ExecutionPlan{
+		SkillID: "loop_test",
+		StartID: "loop1",
+		Nodes: []*PlanNode{
+			{
+				StepID:  "loop1",
+				Type:    StepLoop,
+				Config:  cfg,
+				Next:    []string{"sink1"},
+				SubPlan: subPlan,
+				Policy:  ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 60},
+			},
+			{
+				StepID: "sink1",
+				Type:   sinkType,
+				Config: rawJSON(t, nil),
+				Policy: ExecutionPolicy{MaxAttempts: 1},
+			},
+		},
+	}
+}
+
+// EP-LOOP-1: basic iteration — 3 items, body runs 3 times, accum_var accumulates.
+func TestLocalExecutor_Loop_BasicIteration(t *testing.T) {
+	var callCount atomic.Int32
+	registerTestNode(t, NodeDef{
+		Type: "test_loop_body_L1", Version: 1, OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
+			callCount.Add(1)
+			if item, ok := vars["item"]; ok {
+				vars["processed_item"] = fmt.Sprintf("done:%v", item)
+			}
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+
+	bodyNodes := []*PlanNode{
+		{StepID: "b1", Type: "test_loop_body_L1", Config: rawJSON(t, nil), Policy: ExecutionPolicy{MaxAttempts: 1}},
+	}
+	// Use a counter node as response to verify loop ran.
+	plan := buildLoopPlanNoResponse(t, LoopConfig{
+		ItemsVar: "items",
+		ItemVar:  "item",
+		AccumVar: "results",
+	}, bodyNodes)
+
+	exec := NewLocalExecutor(testInterp())
+	_, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{"items": []any{"a", "b", "c"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount.Load() != 3 {
+		t.Errorf("expected body to run 3 times, ran %d times", callCount.Load())
+	}
+}
+
+// EP-LOOP-2: max_iterations caps the loop — 5 items but cap=2.
+func TestLocalExecutor_Loop_MaxIterations(t *testing.T) {
+	var callCount atomic.Int32
+	registerTestNode(t, NodeDef{
+		Type: "test_loop_body_L2", Version: 1, OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			callCount.Add(1)
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+
+	bodyNodes := []*PlanNode{
+		{StepID: "b2", Type: "test_loop_body_L2", Config: rawJSON(t, nil), Policy: ExecutionPolicy{MaxAttempts: 1}},
+	}
+	plan := buildLoopPlanNoResponse(t, LoopConfig{
+		ItemsVar:      "items",
+		ItemVar:       "item",
+		MaxIterations: 2,
+	}, bodyNodes)
+
+	exec := NewLocalExecutor(testInterp())
+	_, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{"items": []any{"a", "b", "c", "d", "e"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount.Load() != 2 {
+		t.Errorf("max_iterations=2 but body ran %d times", callCount.Load())
+	}
+}
+
+// EP-LOOP-3: items_var absent → no-op, no error, body never runs.
+func TestLocalExecutor_Loop_MissingItemsVar(t *testing.T) {
+	var callCount atomic.Int32
+	registerTestNode(t, NodeDef{
+		Type: "test_loop_body_L3", Version: 1, OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			callCount.Add(1)
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+
+	bodyNodes := []*PlanNode{
+		{StepID: "b3", Type: "test_loop_body_L3", Config: rawJSON(t, nil), Policy: ExecutionPolicy{MaxAttempts: 1}},
+	}
+	plan := buildLoopPlanNoResponse(t, LoopConfig{ItemsVar: "missing_var", ItemVar: "item"}, bodyNodes)
+
+	exec := NewLocalExecutor(testInterp())
+	_, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{})
+	if err != nil {
+		t.Fatalf("missing items_var should be a no-op, got error: %v", err)
+	}
+	if callCount.Load() != 0 {
+		t.Errorf("body should not run when items_var is absent, ran %d times", callCount.Load())
+	}
+}
+
+// EP-LOOP-4: items_var is not a list → execution error.
+func TestLocalExecutor_Loop_NonListItemsVar(t *testing.T) {
+	registerTestNode(t, NodeDef{
+		Type: "test_loop_body_L4", Version: 1, OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+
+	bodyNodes := []*PlanNode{
+		{StepID: "b4", Type: "test_loop_body_L4", Config: rawJSON(t, nil), Policy: ExecutionPolicy{MaxAttempts: 1}},
+	}
+	plan := buildLoopPlanNoResponse(t, LoopConfig{ItemsVar: "bad_var", ItemVar: "item"}, bodyNodes)
+
+	exec := NewLocalExecutor(testInterp())
+	_, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{"bad_var": "not_a_list"})
+	if err == nil {
+		t.Fatal("expected error when items_var is not a list, got nil")
+	}
+}
+
+// EP-LOOP-5: nil sub-plan → no-op, no error.
+func TestLocalExecutor_Loop_NilSubPlan(t *testing.T) {
+	registerTestNode(t, NodeDef{
+		Type: "test_loop_sink_nil", Version: 1, OutputArity: "none", IsSink: true,
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, res *ExecutionResult) error {
+			res.Text = "done"
+			res.MediaType = "text/plain"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	plan := &ExecutionPlan{
+		SkillID: "loop_nil_body",
+		StartID: "loop1",
+		Nodes: []*PlanNode{
+			{
+				StepID:  "loop1",
+				Type:    StepLoop,
+				Config:  rawJSON(t, LoopConfig{ItemsVar: "items", ItemVar: "item"}),
+				Next:    []string{"sink_nil"},
+				SubPlan: nil,
+				Policy:  ExecutionPolicy{MaxAttempts: 1},
+			},
+			{
+				StepID:  "sink_nil",
+				Type:    "test_loop_sink_nil",
+				Config:  rawJSON(t, nil),
+				Policy:  ExecutionPolicy{MaxAttempts: 1},
+			},
+		},
+	}
+
+	exec := NewLocalExecutor(testInterp())
+	_, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{"items": []any{"x", "y"}})
+	if err != nil {
+		t.Fatalf("nil sub-plan should be no-op, got error: %v", err)
+	}
+}

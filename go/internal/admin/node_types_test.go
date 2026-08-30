@@ -61,8 +61,8 @@ func TestNodeTypesHandler_ExecutableComputedNotStored(t *testing.T) {
 	if !byType[agentgen.StepBranch].Executable {
 		t.Error("branch node must report executable=true")
 	}
-	if byType[agentgen.StepLoop].Executable {
-		t.Error("loop node must report executable=false (stub)")
+	if !byType[agentgen.StepLoop].Executable {
+		t.Error("loop node must report executable=true (implemented in Phase 5-A)")
 	}
 }
 

@@ -1546,7 +1546,7 @@ split (warning at validate / error at publish), and structured Issue fields (Ski
 | `TestCompile_CycleDetected` | A→B→A cycle → CYCLE_DETECTED |
 | `TestCompile_SpecHasNoCredentialSlots` | compiled spec has no CredentialSlots (removed) |
 | `TestCompile_TopologicalOrder` | linear chain compiled in execution order |
-| `TestValidate_StubNodeIsWarning` | Validate(): stub node (loop) → NODE_NOT_EXECUTABLE severity=warning |
+| `TestValidate_StubNodeIsWarning` | Validate(): stub node (a2a_call) → NODE_NOT_EXECUTABLE severity=warning |
 | `TestValidate_StubNodeDoesNotBlockSpec` | Validate(): stub nodes present → spec still non-nil (canvas can render) |
 | `TestCompileForPublish_StubNodeIsError` | CompileForPublish(): stub node → NODE_NOT_EXECUTABLE severity=error |
 | `TestCompileForPublish_ImplementedOnlySucceeds` | CompileForPublish(): implemented-only graph → no errors, non-nil spec |
@@ -1627,8 +1627,8 @@ heuristic, user override clamping, and backward compatibility.
 | `TestResolvePolicy_MCPMutatingOverrideHardClamped` | EP-10: canvas override MaxAttempts=3 on mutating MCP tool is hard-clamped to 1 (no canvas override can raise it) |
 
 **Trigger:** any change to `internal/agentgen/plan_compiler.go`, `internal/agentgen/spec.go`
-(`ExecutionPlan`, `PlanNode`, `JoinMode`, `ExecutionPolicy` types), or `internal/agentgen/nodes.go`
-(per-node DefaultPolicy/MaxPolicy)
+(`ExecutionPlan`, `PlanNode`, `JoinMode`, `ExecutionPolicy`, `LoopConfig` types), `internal/agentgen/nodes.go`
+(per-node DefaultPolicy/MaxPolicy, loop `BodySteps` handling), or loop SubPlan compilation logic
 
 ---
 
@@ -1671,12 +1671,17 @@ error detection via `NonRetryableError` interface, and idempotency guard.
 | `TestResolveMaxConcurrentTasks_Zero` | 0 and negative → DefaultMaxConcurrentTasks (10); values > SystemMaxConcurrentTasks → clamped to 100 |
 | `TestLocalExecutor_ConcurrencyLimit` | Fan-out of 5 nodes with limit=2: high-water mark of simultaneous executions never exceeds 2 |
 | `TestLocalExecutor_ConcurrencyLimit_Cancellation` | Context cancel while nodes wait at semaphore: Execute returns promptly (no deadlock, 5s timeout) |
+| `TestLocalExecutor_Loop_BasicIteration` | EP-LOOP-1: 3 items → body runs 3 times (callCount verified) |
+| `TestLocalExecutor_Loop_MaxIterations` | EP-LOOP-2: max_iterations=2 caps 5-item list to 2 body runs |
+| `TestLocalExecutor_Loop_MissingItemsVar` | EP-LOOP-3: absent items_var → no-op, body never runs, no error |
+| `TestLocalExecutor_Loop_NonListItemsVar` | EP-LOOP-4: items_var holds a string → execution error returned |
+| `TestLocalExecutor_Loop_NilSubPlan` | EP-LOOP-5: nil SubPlan → no-op, no error |
 
 **Trigger:** any change to `internal/agentgen/local_executor.go`, `internal/agentgen/node_executor.go`,
 `internal/agentgen/plan_compiler.go`, `internal/agentgen/spec.go` (`NonRetryableError` interface,
 `ErrContractViolation`, `ErrIdempotencyKeyMissing`), `internal/agentgen/context.go`
-(InvocationPolicies, ResolveMaxConcurrentTasks), or `internal/agentgen/nodes.go`
-(ExecutionPolicy fields used by execNode)
+(InvocationPolicies, ResolveMaxConcurrentTasks), `internal/agentgen/nodes.go`
+(ExecutionPolicy fields used by execNode, loop Execute), or `StepLoop` config changes
 
 ---
 
@@ -1857,8 +1862,8 @@ integration via `LookupNode`, and the new multi-port schema fields
 | `TestNodeRegistry_StreamOutIsSink` | stream_out: IsSink=true, OutputArity=none |
 | `TestNodeRegistry_UnknownTypeReturnsFalse` | LookupNode("banana") → ok=false |
 | `TestNodeRegistry_CompilerRejectsUnknownStepType` | compiler returns UNKNOWN_STEP_TYPE for unregistered type |
-| `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response/branch/mcp_call all have Execute≠nil |
-| `TestNodeRegistry_StubTypesHaveNilExecute` | loop/a2a_call/human_wait/stream_out all have Execute=nil (parallel removed — now implemented) |
+| `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response/branch/loop/mcp_call all have Execute≠nil |
+| `TestNodeRegistry_StubTypesHaveNilExecute` | a2a_call/human_wait/stream_out all have Execute=nil (loop promoted to implemented in Phase 5-A) |
 | `TestNodeRegistry_ParallelOutputArity` | parallel: OutputArity=multi |
 | `TestNodeRegistry_ParallelIsImplemented` | parallel: Execute≠nil (fan-out coordinator is now executable) |
 | `TestNodeRegistry_Helpers_Smoke` | compileFail/hasCode helpers work; minimal spec compiles cleanly |

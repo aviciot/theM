@@ -445,10 +445,21 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Phase 5-A: StepLoop in LocalExecutor + CanvasAgentWorkflow (start here)
-- Implement `StepLoop` executor: iterate over an array var, execute a sub-plan per element
-- Wire into `LocalExecutor` and `CanvasAgentWorkflow`
-- Tests: CT-LOOP-1..N in `internal/temporal/`
+### Phase 5-A: StepLoop — COMPLETE (LocalExecutor path)
+Done:
+- `LoopConfig` extended: `ItemsVar`, `ItemVar` added to spec struct
+- `PlanNode.SubPlan *ExecutionPlan` + `StepSpec.SubPlan *ExecutionPlan` — loop body embedded
+- `plan_compiler.go`: `compileLoopBodyPlan`, `resolveLoopOuterNext` — body steps extracted into sub-plan, removed from outer DAG, loop Next remapped to post-loop step
+- `nodes.go`: `execLoop` — iterates items, condition filter, max_iterations cap, runs body via interpreter.executeStep, accumulates into accum_var
+- `planNodeToStepSpec` copies SubPlan
+- Tests: EP-LOOP-1..5 in `local_executor_test.go` — all pass
+- `go test ./...` — 42 packages, 0 failures
+
+**Still needed for 5-A:**
+- Temporal path: `canvas_activities.go` / `canvas_workflow.go` — `StepLoop` in `ExecuteStepActivity` runs `LocalExecutor` on `SubPlan` inline (no sub-workflow needed)
+- Frontend `RightPanel`: loop node properties panel (items_var, item_var, accum_var, max_iterations fields)
+
+### Phase 5-B: HumanWait async (design doc complete)
 
 ### Phase 5-B: HumanWait async (design doc complete)
 - Full async design in `docs/architecture-v2/HUMANWAIT_DESIGN.md`

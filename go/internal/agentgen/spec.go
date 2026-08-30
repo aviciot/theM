@@ -174,6 +174,10 @@ type StepSpec struct {
 	// compilation. It is not persisted in AgentSpec (omitempty, pointer). The
 	// ExecutionPlan compiler reads it to produce PlanNode.Policy.
 	PolicyOverride *ExecutionPolicy `json:"policy_override,omitempty"`
+	// SubPlan holds the compiled body for loop nodes. nil for all other node types.
+	// Populated by CompileExecutionPlan and copied into the StepSpec passed to Execute
+	// so that the loop Execute function can run the body without accessing PlanNode directly.
+	SubPlan *ExecutionPlan `json:"sub_plan,omitempty"`
 }
 
 type StepType string
@@ -277,10 +281,12 @@ type HumanWaitConfig struct {
 }
 
 type LoopConfig struct {
-	BodySteps     []string `json:"body_steps"`
-	Condition     string   `json:"condition"`
-	MaxIterations int      `json:"max_iterations"`
-	AccumVar      string   `json:"accum_var,omitempty"`
+	BodySteps     []string `json:"body_steps"`               // step IDs that form the loop body (set by canvas user)
+	ItemsVar      string   `json:"items_var"`                // pipeline var holding the []any to iterate
+	ItemVar       string   `json:"item_var,omitempty"`       // var name injected per iteration (default: "item")
+	Condition     string   `json:"condition"`                // optional Go template filter; "true" to include item
+	MaxIterations int      `json:"max_iterations"`           // hard cap; 0 = use default (100)
+	AccumVar      string   `json:"accum_var,omitempty"`      // var to collect per-iteration outputs into []any
 }
 
 type ParallelConfig struct {
@@ -354,6 +360,10 @@ type PlanNode struct {
 	// Populated by CompileExecutionPlan from NodeDef defaults + optional canvas override.
 	// Zero value means "not yet resolved" — executors must guard MaxAttempts==0 → treat as 1.
 	Policy   ExecutionPolicy `json:"policy"`
+	// SubPlan holds the compiled body for loop nodes. nil for all other node types.
+	// The loop node Execute function runs SubPlan once per item; the outer DAG walker
+	// does not visit the body nodes directly.
+	SubPlan *ExecutionPlan  `json:"sub_plan,omitempty"`
 }
 
 // MCPCallConfig configures an mcp_call canvas step.

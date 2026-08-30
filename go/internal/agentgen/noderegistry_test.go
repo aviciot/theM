@@ -194,6 +194,7 @@ func TestNodeRegistry_ImplementedTypesHaveNonNilExecute(t *testing.T) {
 		agentgen.StepTransform,
 		agentgen.StepResponse,
 		agentgen.StepBranch,
+		agentgen.StepLoop,
 		agentgen.StepMCPCall,
 	}
 	for _, st := range implemented {
@@ -212,7 +213,6 @@ func TestNodeRegistry_ImplementedTypesHaveNonNilExecute(t *testing.T) {
 // Execute=nil, signalling they are not yet implemented.
 func TestNodeRegistry_StubTypesHaveNilExecute(t *testing.T) {
 	stubs := []agentgen.StepType{
-		agentgen.StepLoop,
 		agentgen.StepA2ACall,
 		agentgen.StepHumanWait,
 		agentgen.StepStreamOut,
