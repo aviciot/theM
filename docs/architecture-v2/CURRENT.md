@@ -7,11 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `pending — Phase 4-C commit in progress`
+Commit: `0b68dcb`
 
 Recent commits (newest first):
 ```
-[4-C]    feat(temporal/agentgen): Phase 4-C — TemporalExecutor, them-dag-worker, agent-runtime wiring
+0b68dcb  feat(temporal/agentgen): Phase 4-C — TemporalExecutor, them-dag-worker, agent-runtime wiring
 df4b19e  feat(agentgen/temporal): pre-4-C concurrency — per-run DAG semaphore, dag-worker config
 3a8f0f6  fix(agentgen): 3 final parity fixes before Phase 4-C
 45e23be  docs(current): update HEAD to fae270b + record Pre-4-C parity fixes
