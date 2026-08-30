@@ -7,11 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `(pending Phase 5-C gap commit)`
+Commit: `3b56ef8`
 
 Recent commits (newest first):
 ```
-(pending) fix(a2a-call): Phase 5-C gaps — binding required, stable UUIDs, error sanitization, E2E tests
+3b56ef8  fix(a2a-call): Phase 5-C gap fixes — binding required, stable UUIDs, error sanitization, E2E tests
 89c7e67  feat(a2a-call): Phase 5-C — A2ACaller abstraction, depth tracking, HumanWait+local validation
 0487797  fix(hitl): Phase 5-B hardening — auth, state model, wait_token, loop body, reconnect
 3b1052f  feat(hitl): Phase 5-B — HumanWait async submit, Redis handle store, signal endpoint
