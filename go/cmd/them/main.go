@@ -304,7 +304,7 @@ func run() error {
 		authenticator,
 		cfg.InstanceID,
 		log,
-	)
+	).WithRunStreamer(rsStreamer)
 	srv.MountA2A(a2aServer.Routes())
 	log.Info("A2A server mounted")
 

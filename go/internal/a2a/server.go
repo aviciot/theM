@@ -36,6 +36,7 @@ import (
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/execution"
+	"github.com/aviciot/them/internal/runstream"
 	"github.com/aviciot/them/internal/temporal"
 	"github.com/aviciot/them/internal/tenantctx"
 	"github.com/aviciot/them/internal/transport"
@@ -161,6 +162,7 @@ type Server struct {
 	authenticator Authenticator
 	instanceID    string
 	logger        *slog.Logger
+	runStreamer   runstream.RedisStreamer
 }
 
 // NewServer creates a Server backed by the shared execution Lifecycle.
@@ -183,6 +185,14 @@ func NewServer(
 		instanceID:    instanceID,
 		logger:        logger,
 	}
+}
+
+// WithRunStreamer attaches the Redis Streams reader used to deliver run events
+// to the streaming client. Without it, message/stream falls back to the
+// in-process bus (only works when the orchestrator runs in the same process).
+func (s *Server) WithRunStreamer(rc runstream.RedisStreamer) *Server {
+	s.runStreamer = rc
+	return s
 }
 
 // Routes returns an http.Handler with A2A routes mounted.
@@ -471,9 +481,48 @@ func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 
-	// Subscribe BEFORE Start so no bus event emitted between launch and subscribe is lost.
-	evCh, termCh, unsub := s.bus.Subscribe(ctx, h.ContextID, 256)
-	defer unsub()
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Subscribe to run events. Prefer the Redis run-stream (cross-process, used by
+	// the SSE handler) because the Temporal activity runs in them-go-worker, a
+	// separate process whose in-process bus events never reach this handler.
+	// Fall back to the in-process bus only when no runStreamer is configured (tests).
+	var evCh <-chan event.Event
+	if s.runStreamer != nil {
+		ch, rsErr := runstream.StreamFromRedis(streamCtx, s.runStreamer, h.RunID, runstream.StreamerOptions{})
+		if rsErr != nil {
+			s.logger.Warn("a2a stream: runstream subscribe failed", "run_id", h.RunID, "error", rsErr)
+			sendStatus("failed")
+			return
+		}
+		evCh = ch
+	} else {
+		// In-process bus fallback (unit tests / same-process orchestrator).
+		busEvCh, busTermCh, unsub := s.bus.Subscribe(streamCtx, h.ContextID, 256)
+		defer unsub()
+		merged := make(chan event.Event, 256)
+		go func() {
+			defer close(merged)
+			for {
+				select {
+				case ev, ok := <-busEvCh:
+					if !ok {
+						return
+					}
+					merged <- ev
+				case ev, ok := <-busTermCh:
+					if !ok {
+						return
+					}
+					merged <- ev
+				case <-streamCtx.Done():
+					return
+				}
+			}
+		}()
+		evCh = merged
+	}
 
 	input := temporal.WorkflowInput{
 		OrchestratorName:  orchName,
@@ -490,22 +539,15 @@ func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req
 	s.logger.Info("a2a stream: workflow started",
 		"app_slug", appSlug, "run_id", h.RunID, "workflow_id", wfRun.GetID())
 
-	streamCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Reap the workflow in the background so Temporal resources are released, but
-	// do NOT use its completion as the stream terminal signal. The orchestrator
-	// publishes a "done" or "error" bus event after every token has been emitted,
-	// so the bus event is the only correct terminal. Using orchDone as a terminal
-	// races against buffered token events still in the bus channel.
+	// Reap the workflow in the background to release Temporal resources.
+	// The terminal signal comes from the run-stream "done"/"error" event.
 	go func() {
 		if err := wfRun.Get(streamCtx, nil); err != nil {
 			s.logger.Warn("a2a stream: workflow error", "run_id", h.RunID, "error", err)
 		}
 	}()
 
-	// Drain bus events, translating them to A2A SSE frames.
-	// Terminal signal comes from the "done"/"error" bus event, not from orchDone.
+	// Drain run-stream events, translating them to A2A SSE frames.
 	for {
 		select {
 		case ev, ok := <-evCh:
@@ -537,17 +579,6 @@ func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req
 				sendStatus("failed")
 				return
 			}
-		case ev, ok := <-termCh:
-			if !ok {
-				return
-			}
-			switch ev.Type {
-			case "done":
-				sendStatus("completed")
-			case "error":
-				sendStatus("failed")
-			}
-			return
 		case <-streamCtx.Done():
 			return
 		}
