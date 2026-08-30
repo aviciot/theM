@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -554,6 +556,130 @@ func TestActivityOptionsFromPolicy(t *testing.T) {
 	require.EqualValues(t, 2, node.Policy.MaxAttempts, "LLM node must have MaxAttempts=2")
 	require.Greater(t, node.Policy.TimeoutSeconds, 0, "LLM node must have positive TimeoutSeconds")
 	require.NotEmpty(t, node.Policy.NonRetryableErrors, "LLM node must have NonRetryableErrors")
+}
+
+// ── CT-LOOP-1: ExecuteStepActivity — loop node iterates body and accumulates ─────
+
+func TestExecuteStepActivity_Loop_BasicIteration(t *testing.T) {
+	var callCount int32
+
+	agentgen.RegisterNode(agentgen.NodeDef{
+		Type: "ct_loop_body_L1", Label: "CT Loop Body L1", Version: 1,
+		OutputArity: "single",
+		Execute: func(_ context.Context, _ *agentgen.Interpreter, _ *agentgen.InvocationContext, _ *agentgen.StepSpec, vars agentgen.PipelineVars, _ *agentgen.ExecutionResult) error {
+			atomic.AddInt32(&callCount, 1)
+			if item, ok := vars["item"]; ok {
+				vars["processed_item"] = fmt.Sprintf("done:%v", item)
+			}
+			return nil
+		},
+		Edges: agentgen.EdgeRules{},
+	})
+
+	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
+		BodySteps: []string{"b1"},
+		ItemsVar:  "items",
+		ItemVar:   "item",
+		AccumVar:  "results",
+	})
+	subPlan := &agentgen.ExecutionPlan{
+		SkillID: "loop:body",
+		StartID: "b1",
+		Nodes: []*agentgen.PlanNode{
+			{
+				StepID: "b1",
+				Type:   "ct_loop_body_L1",
+				Config: json.RawMessage(`{}`),
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30},
+			},
+		},
+	}
+
+	acts := makeTestActivities()
+	ctx := context.Background()
+	// Inputs and Outputs must be declared so Stage-6 scoping passes the right vars.
+	// items_var ("items") is the declared input; accum_var ("results") is the output.
+	out, err := acts.ExecuteStepActivity(ctx, temporal.StepActivityInput{
+		Node: agentgen.PlanNode{
+			StepID:  "loop1",
+			Type:    agentgen.StepLoop,
+			Config:  loopCfg,
+			SubPlan: subPlan,
+			Inputs:  []agentgen.VarRef{{Name: "items", Required: true}},
+			Outputs: []agentgen.VarRef{{Name: "results"}},
+			Policy:  agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30},
+		},
+		Vars: agentgen.PipelineVars{"items": []any{"a", "b", "c"}},
+		IC:   makeTestIC(),
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 3, atomic.LoadInt32(&callCount), "body must run once per item")
+	accum, ok := out.Vars["results"]
+	require.True(t, ok, "accum_var must appear in output vars")
+	accumSlice, ok := accum.([]any)
+	require.True(t, ok, "accum_var must be a []any")
+	require.Len(t, accumSlice, 3)
+}
+
+// ── CT-LOOP-2: ExecuteStepActivity — loop node with nil SubPlan is a no-op ──────
+
+func TestExecuteStepActivity_Loop_NilSubPlan(t *testing.T) {
+	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
+		ItemsVar: "items",
+		ItemVar:  "item",
+	})
+
+	acts := makeTestActivities()
+	ctx := context.Background()
+	_, err := acts.ExecuteStepActivity(ctx, temporal.StepActivityInput{
+		Node: agentgen.PlanNode{
+			StepID:  "loop_nil",
+			Type:    agentgen.StepLoop,
+			Config:  loopCfg,
+			SubPlan: nil,
+			Policy:  agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30},
+		},
+		Vars: agentgen.PipelineVars{"items": []any{"x", "y"}},
+		IC:   makeTestIC(),
+	})
+	require.NoError(t, err, "nil SubPlan must be a no-op, not an error")
+}
+
+// ── CT-LOOP-3: ExecuteStepActivity — loop node with non-list items_var → error ──
+
+func TestExecuteStepActivity_Loop_NonListItemsVar(t *testing.T) {
+	loopCfg, _ := json.Marshal(agentgen.LoopConfig{
+		BodySteps: []string{"b_nl"},
+		ItemsVar:  "bad_var",
+		ItemVar:   "item",
+	})
+	subPlan := &agentgen.ExecutionPlan{
+		SkillID: "loop:body",
+		StartID: "b_nl",
+		Nodes: []*agentgen.PlanNode{
+			{
+				StepID: "b_nl",
+				Type:   agentgen.StepInput,
+				Config: json.RawMessage(`{}`),
+				Policy: agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30},
+			},
+		},
+	}
+
+	acts := makeTestActivities()
+	ctx := context.Background()
+	_, err := acts.ExecuteStepActivity(ctx, temporal.StepActivityInput{
+		Node: agentgen.PlanNode{
+			StepID:  "loop_bad",
+			Type:    agentgen.StepLoop,
+			Config:  loopCfg,
+			SubPlan: subPlan,
+			Policy:  agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30},
+		},
+		Vars: agentgen.PipelineVars{"bad_var": "not_a_list"},
+		IC:   makeTestIC(),
+	})
+	require.Error(t, err, "non-list items_var must return an error")
 }
 
 // CT-CONC1: CanvasAgentWorkflowInput.MaxConcurrentTasks=0 resolves to DefaultMaxConcurrentTasks (10).

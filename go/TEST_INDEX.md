@@ -1765,10 +1765,14 @@ propagation, HumanWait signal return, and result capture — all using the Tempo
 | `TestNoResultBugFixed` | ResultMT-only output (empty ResultText, non-empty ResultMT) triggers result capture; truly empty output does not |
 | `TestActivityOptionsFromPolicy` | LLM PlanNode from CompileExecutionPlan carries MaxAttempts=2, positive TimeoutSeconds, non-empty NonRetryableErrors |
 | `TestWorkflowConcurrencyLimit_ZeroResolvesToDefault` | CT-CONC1: MaxConcurrentTasks=0 in workflow input resolves to 10; linear plan completes normally |
+| `TestExecuteStepActivity_Loop_BasicIteration` | CT-LOOP-1: loop node with 3-item list runs body 3×; accum_var accumulates into output |
+| `TestExecuteStepActivity_Loop_NilSubPlan` | CT-LOOP-2: loop node with nil SubPlan is a no-op (no error) |
+| `TestExecuteStepActivity_Loop_NonListItemsVar` | CT-LOOP-3: loop node with non-list items_var returns an error |
 
 **Trigger:** any change to `internal/temporal/canvas_workflow.go`, `internal/temporal/canvas_activities.go`,
-`internal/agentgen/context.go` (ResolveMaxConcurrentTasks), or
-`internal/agentgen/plan_compiler.go` (policy resolution affects Temporal activity options)
+`internal/agentgen/context.go` (ResolveMaxConcurrentTasks),
+`internal/agentgen/plan_compiler.go` (policy resolution affects Temporal activity options), or
+`internal/agentgen/nodes.go` (execLoop — Temporal activity delegates to ExecuteNodeForActivity which calls execLoop)
 
 ---
 

@@ -425,7 +425,9 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 4-C hardening | 7 production blockers fixed: Compose env vars, fail-closed, stable workflow ID, policy concurrency, tenant-scoped DB queries, bounded cancel, integration tests | ✅ commits `1c44aa0`..`30f9f95` |
 | 4-C gap-2 | 5 additional fixes: tenant-scope ALL lookups, safe errors, conditional Temporal overlay, HumanWait 24h timeout, real full-path E2E, binding 4-ID enforcement | ✅ commits `8d815cc`..`b3bd71a` |
 | 4-D | Frontend execution_backend toggle (Local / ⚡ Temporal pill in top bar) | ✅ commit `7d39d44` |
-| 5 | Loop, HumanWait async, A2A in DAG context | ⬜ |
+| 5-A | StepLoop — LocalExecutor + Temporal activity path + frontend config panel | ✅ |
+| 5-B | HumanWait async (design doc complete, not yet implemented) | ⬜ |
+| 5-C | A2A call node in DAG fan-out / Temporal activity wiring | ⬜ |
 
 ### DAG join semantics (hardening summary)
 - **JoinWaitAll**: join node whose predecessors originate from a non-Branch fan-out (e.g. LLM with `len(Next)>1`). All branches always run — must wait for all.
@@ -445,19 +447,18 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Phase 5-A: StepLoop — COMPLETE (LocalExecutor path)
+### Phase 5-A: StepLoop — COMPLETE
+
 Done:
 - `LoopConfig` extended: `ItemsVar`, `ItemVar` added to spec struct
 - `PlanNode.SubPlan *ExecutionPlan` + `StepSpec.SubPlan *ExecutionPlan` — loop body embedded
 - `plan_compiler.go`: `compileLoopBodyPlan`, `resolveLoopOuterNext` — body steps extracted into sub-plan, removed from outer DAG, loop Next remapped to post-loop step
 - `nodes.go`: `execLoop` — iterates items, condition filter, max_iterations cap, runs body via interpreter.executeStep, accumulates into accum_var
 - `planNodeToStepSpec` copies SubPlan
-- Tests: EP-LOOP-1..5 in `local_executor_test.go` — all pass
-- `go test ./...` — 42 packages, 0 failures
-
-**Still needed for 5-A:**
-- Temporal path: `canvas_activities.go` / `canvas_workflow.go` — `StepLoop` in `ExecuteStepActivity` runs `LocalExecutor` on `SubPlan` inline (no sub-workflow needed)
-- Frontend `RightPanel`: loop node properties panel (items_var, item_var, accum_var, max_iterations fields)
+- Tests: EP-LOOP-1..5 in `local_executor_test.go` — LocalExecutor path
+- **Temporal path**: `ExecuteStepActivity` handles loops via `ExecuteNodeForActivity` → `executeStep` → `execLoop` (normal dispatch; no special-casing needed). Tests: CT-LOOP-1..3 in `canvas_workflow_test.go`.
+- **Frontend**: Loop config panel in `StepConfigSection.tsx` — `items_var` (required), `item_var`, `accum_var`, `max_iterations`, `condition` fields; inline help text; amber accent; removed from "not yet supported" fallback.
+- `go test ./...` — all packages, 0 failures
 
 ### Phase 5-B: HumanWait async (design doc complete)
 

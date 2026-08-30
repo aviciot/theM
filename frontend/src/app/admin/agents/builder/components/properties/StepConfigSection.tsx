@@ -415,7 +415,73 @@ export function StepConfigSection({
         </>
       )}
 
-      {!['input', 'llm', 'http', 'transform', 'response', 'branch'].includes(d.step_type) && (
+      {d.step_type === 'loop' && (
+        <>
+          <div style={{ color: C.amber, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', marginBottom: '10px' }}>LOOP CONFIG</div>
+          <label style={labelStyle}>Items Variable <span style={{ ...hint, color: '#f59e0b' }}>required</span></label>
+          <input
+            value={cfgStr('items_var')}
+            onChange={e => updateStepConfig('items_var', e.target.value)}
+            style={{ ...inputStyle, borderColor: cfgStr('items_var') ? '' : 'rgba(245,158,11,0.5)' }}
+            placeholder="e.g. results"
+          />
+          <div style={{ marginTop: 4, fontSize: 11, color: '#64748b' }}>
+            Pipeline variable that holds the <code style={{ color: C.amber }}>{'[]any'}</code> list to iterate over.
+          </div>
+          <div style={fieldGap}>
+            <label style={labelStyle}>Item Variable <span style={hint}>default: item</span></label>
+            <input
+              value={cfgStr('item_var')}
+              onChange={e => updateStepConfig('item_var', e.target.value)}
+              style={inputStyle}
+              placeholder="item"
+            />
+          </div>
+          <div style={fieldGap}>
+            <label style={labelStyle}>Accumulator Variable <span style={hint}>optional — collects each iteration&apos;s output</span></label>
+            <input
+              value={cfgStr('accum_var')}
+              onChange={e => updateStepConfig('accum_var', e.target.value)}
+              style={inputStyle}
+              placeholder="e.g. processed_items"
+            />
+          </div>
+          <div style={fieldGap}>
+            <label style={labelStyle}>Max Iterations <span style={hint}>default: 100</span></label>
+            <input
+              type="number"
+              min={1}
+              max={1000}
+              value={cfgNum('max_iterations', 0) || ''}
+              onChange={e => {
+                const v = parseInt(e.target.value);
+                updateStepConfig('max_iterations', isNaN(v) || v <= 0 ? 0 : v);
+              }}
+              style={inputStyle}
+              placeholder="100"
+            />
+          </div>
+          <div style={fieldGap}>
+            <label style={labelStyle}>Condition <span style={hint}>Go template · optional · skip items where false</span></label>
+            <input
+              value={cfgStr('condition')}
+              onChange={e => updateStepConfig('condition', e.target.value)}
+              style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace', fontSize: '12px' }}
+              placeholder={'{{gt .item.score 0.5}}'}
+            />
+          </div>
+          <div style={{ marginTop: 12, padding: '10px', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 6, fontSize: 11, color: '#94a3b8', lineHeight: 1.7 }}>
+            <strong style={{ color: C.amber }}>Body steps:</strong> connect steps <em>from</em> this node&apos;s output port.<br />
+            Each connected step runs once per item; the item is available as{' '}
+            <code style={{ color: C.amber }}>{'{{.' + (cfgStr('item_var') || 'item') + '}}'}</code>.<br />
+            {cfgStr('accum_var') && (
+              <>Results accumulate in{' '}<code style={{ color: C.amber }}>{'{{.' + cfgStr('accum_var') + '}}'}</code> after the loop.</>
+            )}
+          </div>
+        </>
+      )}
+
+      {!['input', 'llm', 'http', 'transform', 'response', 'branch', 'loop'].includes(d.step_type) && (
         <div style={{ color: '#64748b', fontSize: '12px', padding: '12px', border: `1px dashed ${C.outline}`, borderRadius: '6px', textAlign: 'center' }}>
           Config for <strong style={{ color: C.text }}>{d.step_type}</strong> is not yet supported in the builder.
         </div>
