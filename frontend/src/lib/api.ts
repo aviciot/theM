@@ -574,6 +574,8 @@ export interface AgentRootDoc {
   icon?: string;
   category?: string;
   capabilities: { streaming: boolean; push_notifications: boolean };
+  /** DAG execution backend. "" or "local" → in-process goroutines. "temporal" → CanvasAgentWorkflow. */
+  execution_backend?: 'local' | 'temporal';
 }
 
 export interface AgentStepDoc {

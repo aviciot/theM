@@ -7,6 +7,8 @@ interface BuilderTopBarProps {
   defId: string | null;
   agentSlug: string;
   onSlugChange: (v: string) => void;
+  executionBackend: 'local' | 'temporal';
+  onExecutionBackendChange: (v: 'local' | 'temporal') => void;
   dirty: boolean;
   saving: boolean;
   deleting: boolean;
@@ -37,6 +39,7 @@ interface BuilderTopBarProps {
 
 export function BuilderTopBar({
   activeView, activeSkillId, defId, agentSlug, onSlugChange,
+  executionBackend, onExecutionBackendChange,
   dirty, saving, deleting, validating, publishing,
   saveError, publishedRevision, errorCount, warningCount,
   validationLoading, lastValidatedAt, debugActive,
@@ -70,6 +73,29 @@ export function BuilderTopBar({
               }}
             />
             <span style={{ color: C.textMuted, fontSize: '12px' }}>Agent Builder</span>
+            <div
+              title="Execution backend: Local = in-process goroutines (fast, no Temporal required). Temporal = durable DAG workflow (node-level history, retries, long runs)."
+              style={{ display: 'flex', alignItems: 'center', gap: '0', borderRadius: '6px', overflow: 'hidden', border: `1px solid ${C.outline}` }}
+            >
+              {(['local', 'temporal'] as const).map(opt => (
+                <button
+                  key={opt}
+                  onClick={() => onExecutionBackendChange(opt)}
+                  style={{
+                    padding: '5px 11px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', border: 'none',
+                    background: executionBackend === opt
+                      ? (opt === 'temporal' ? 'rgba(0,240,255,0.18)' : 'rgba(100,116,139,0.25)')
+                      : 'transparent',
+                    color: executionBackend === opt
+                      ? (opt === 'temporal' ? '#00f0ff' : '#94a3b8')
+                      : '#475569',
+                    transition: 'background 0.15s, color 0.15s',
+                  }}
+                >
+                  {opt === 'local' ? 'Local' : '⚡ Temporal'}
+                </button>
+              ))}
+            </div>
           </div>
         ) : (
           <span style={{ color: C.purple, fontWeight: 600, fontSize: '14px' }}>

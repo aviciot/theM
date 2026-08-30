@@ -309,6 +309,8 @@ export function BuilderWorkspace() {
         defId={defId}
         agentSlug={graph.agentSlug}
         onSlugChange={v => { graph.setAgentSlug(v); history.markDirty(); }}
+        executionBackend={lifecycle.executionBackend}
+        onExecutionBackendChange={v => { lifecycle.setExecutionBackend(v); history.markDirty(); }}
         dirty={lifecycle.dirty}
         saving={lifecycle.saving}
         deleting={lifecycle.deleting}

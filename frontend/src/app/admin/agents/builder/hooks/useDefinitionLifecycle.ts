@@ -81,6 +81,7 @@ export function useDefinitionLifecycle({
   const [logoResult, setLogoResult] = useState<'none' | 'valid' | 'invalid' | 'warn'>('none');
   const [nodeTypesReady, setNodeTypesReady] = useState(false);
   const [validation, setValidation] = useState<ValidationState>(INITIAL_VALIDATION);
+  const [executionBackend, setExecutionBackend] = useState<'local' | 'temporal'>('local');
 
   const validationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -195,6 +196,7 @@ export function useDefinitionLifecycle({
       setDisplayName(doc.agent_root.display_name ?? '');
       setDescription(doc.agent_root.description ?? '');
       setVersion(doc.agent_root.version ?? '1.0.0');
+      setExecutionBackend(doc.agent_root.execution_backend === 'temporal' ? 'temporal' : 'local');
       loadDefinitionDoc(doc);
     }).catch(e => {
       setLoadError('Failed to load definition: ' + String(e));
@@ -349,6 +351,7 @@ export function useDefinitionLifecycle({
         description: desc,
         version: ver,
         capabilities: { streaming: false, push_notifications: false },
+        ...(executionBackend === 'temporal' ? { execution_backend: 'temporal' as const } : {}),
       },
       skills,
     };
@@ -494,6 +497,7 @@ export function useDefinitionLifecycle({
     logoResult, setLogoResult,
     nodeTypesReady,
     validation, setValidation,
+    executionBackend, setExecutionBackend,
     importFileRef,
     loadDefinitionDoc,
     buildDefinitionDoc,
