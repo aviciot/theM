@@ -141,6 +141,10 @@ export function useDefinitionLifecycle({
             }
             let config: Record<string, unknown> = stepd.config ?? {};
             if (stepd.step_type === 'loop') {
+              const doneEdge = ctrlOut.find(e => e.sourceHandle === 'ctrl-out-loop-done');
+              const doneTarget = doneEdge ? (doneEdge.target as string).replace('step-', '') : null;
+              next = doneTarget ? [doneTarget] : [];
+
               const bodyEntryEdge = ctrlOut.find(e => e.sourceHandle === 'ctrl-out-loop-body');
               const bodySteps: string[] = [];
               if (bodyEntryEdge) {
@@ -155,12 +159,12 @@ export function useDefinitionLifecycle({
                   const outEdges = pipeline.edges.filter(e => e.source === `step-${cur}` && !isDataEdge(e));
                   for (const oe of outEdges) {
                     const tid = (oe.target as string).replace('step-', '');
-                    if (!visited.has(tid)) queue.push(tid);
+                    if (!visited.has(tid) && tid !== doneTarget && tid !== stepd.step_id) {
+                      queue.push(tid);
+                    }
                   }
                 }
               }
-              const doneEdge = ctrlOut.find(e => e.sourceHandle === 'ctrl-out-loop-done');
-              next = doneEdge ? [(doneEdge.target as string).replace('step-', '')] : [];
               config = { ...config, body_steps: bodySteps };
             }
             return {
@@ -370,7 +374,15 @@ export function useDefinitionLifecycle({
 
           let config: Record<string, unknown> = stepd.config ?? {};
           if (stepd.step_type === 'loop') {
+            // Compute loop-done target first so BFS can use it as a boundary.
+            const doneEdge = ctrlOut.find(e => e.sourceHandle === 'ctrl-out-loop-done');
+            const doneTarget = doneEdge ? (doneEdge.target as string).replace('step-', '') : null;
+            next = doneTarget ? [doneTarget] : [];
+
             // Derive body_steps via BFS from the loop-body control edge.
+            // Stop at the loop boundary: do not follow edges whose target is the
+            // loop-done target or any other non-body node (i.e. not reachable from
+            // loop-body but only from loop-done).
             const bodyEntryEdge = ctrlOut.find(e => e.sourceHandle === 'ctrl-out-loop-body');
             const bodySteps: string[] = [];
             if (bodyEntryEdge) {
@@ -385,13 +397,14 @@ export function useDefinitionLifecycle({
                 const outEdges = pipeline.edges.filter(e => e.source === `step-${cur}` && !isDataEdge(e));
                 for (const oe of outEdges) {
                   const tid = (oe.target as string).replace('step-', '');
-                  if (!visited.has(tid)) queue.push(tid);
+                  // Stop at the loop boundary: skip the done target and any node
+                  // that is the loop node itself or already known to be outside.
+                  if (!visited.has(tid) && tid !== doneTarget && tid !== stepd.step_id) {
+                    queue.push(tid);
+                  }
                 }
               }
             }
-            // next is only the loop-done target, not body steps.
-            const doneEdge = ctrlOut.find(e => e.sourceHandle === 'ctrl-out-loop-done');
-            next = doneEdge ? [(doneEdge.target as string).replace('step-', '')] : [];
             config = { ...config, body_steps: bodySteps };
           }
 

@@ -848,10 +848,10 @@ func execMCP(ctx context.Context, interp *Interpreter, ic *InvocationContext, st
 // scheduling each body step as its own ExecuteStepActivity. This function is only
 // reached when ExecutionBackend == "local".
 //
-// It iterates over vars[cfg.ItemsVar] (must be []any), injects cfg.ItemVar per
-// element, runs the compiled SubPlan body steps sequentially once per item using
-// ExecNodeWithPolicy (so each body step gets its own retry/timeout/backoff), and
-// accumulates only declared body Outputs keys into cfg.AccumVar ([]any).
+// It runs the compiled SubPlan body through a fresh LocalExecutor per iteration so
+// that Parallel/Join and Branch patterns inside the body work correctly. Each
+// iteration gets an isolated copy of vars with the current item injected; only
+// declared body output keys are merged back and accumulated.
 //
 // cfg.Condition is an optional Go template; items that do not render to "true" are skipped.
 // cfg.MaxIterations caps the number of iterations (default 100).
@@ -866,7 +866,6 @@ func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, s
 		return fmt.Errorf("loop step %q: items_var is required", step.ID)
 	}
 	if step.SubPlan == nil || len(step.SubPlan.Nodes) == 0 {
-		// No body configured — no-op.
 		return nil
 	}
 
@@ -881,7 +880,6 @@ func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, s
 
 	raw, ok := vars[cfg.ItemsVar]
 	if !ok {
-		// items_var absent — treat as empty list.
 		return nil
 	}
 	items, ok := raw.([]any)
@@ -889,18 +887,18 @@ func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, s
 		return fmt.Errorf("loop step %q: %q must be a list, got %T", step.ID, cfg.ItemsVar, raw)
 	}
 
-	// Build a step index and collect declared output keys from the body sub-plan.
-	bodyIdx := make(map[string]*PlanNode, len(step.SubPlan.Nodes))
+	// Collect declared output keys across ALL body nodes.
 	bodyOutputKeys := make(map[string]bool)
 	for _, n := range step.SubPlan.Nodes {
-		bodyIdx[n.StepID] = n
 		for _, ref := range n.Outputs {
 			bodyOutputKeys[ref.Name] = true
 		}
 	}
-
-	// Sequential body semaphore: one slot — body steps run one at a time.
-	bodySem := make(chan struct{}, 1)
+	// Only enforce declared outputs when there are items to iterate; an empty list
+	// is a no-op and the body's Outputs don't matter.
+	if len(items) > 0 && len(bodyOutputKeys) == 0 {
+		return fmt.Errorf("loop step %q: body steps must declare at least one output (add Outputs to body nodes)", step.ID)
+	}
 
 	var accumulated []any
 
@@ -909,7 +907,8 @@ func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, s
 			break
 		}
 
-		// Build per-iteration vars: start from global state, inject item.
+		// Per-iteration isolated vars: include outer state so body steps can read
+		// upstream variables, but changes are scoped to this iteration.
 		iterVars := deepCopyVars(vars)
 		iterVars[itemVar] = item
 
@@ -928,51 +927,36 @@ func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, s
 			}
 		}
 
-		// Run each body step sequentially via ExecNodeWithPolicy so that each body
-		// node gets its own retry/timeout/backoff from node.Policy.
-		currentID := step.SubPlan.StartID
-		for currentID != "" {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-			node, found := bodyIdx[currentID]
-			if !found {
-				return fmt.Errorf("loop step %q iteration %d: body step %q not found", step.ID, i, currentID)
-			}
-			bodySpec := planNodeToStepSpec(node)
-			override, err := ExecNodeWithPolicy(ctx, ic, interp, bodySpec, node.Policy, iterVars, nil, bodySem)
-			if err != nil {
-				return fmt.Errorf("loop step %q iteration %d body step %q: %w", step.ID, i, currentID, err)
-			}
-			if override != "" {
-				currentID = override
-			} else if len(node.Next) > 0 {
-				currentID = node.Next[0]
-			} else {
-				currentID = ""
+		// Run the body sub-plan through a fresh LocalExecutor so that Branch, Parallel,
+		// and Join nodes inside the body work correctly. The body plan has no Response
+		// node, so Execute returns ErrNoResult — we ignore that sentinel and read
+		// outputs from iterVars after the executor has mutated them via the shared vars map.
+		//
+		// We pass iterVars as initial; the executor deep-copies it internally, but all
+		// writes from executeStep flow back through the shared vars reference that the
+		// executor carries. After Execute, iterVars still holds the pre-execution values,
+		// so we reconstruct the post-execution state by running the body through a
+		// wrapper that writes back to iterVars.
+		//
+		// Implementation: re-use execLoopBody which runs the sub-plan inline with a
+		// body-scoped LocalExecutor and returns the post-execution vars.
+		postVars, err := execLoopBody(ctx, interp, ic, step.SubPlan, iterVars)
+		if err != nil {
+			return fmt.Errorf("loop step %q iteration %d: %w", step.ID, i, err)
+		}
+
+		// Merge only declared body output keys back into outer vars (last iteration wins).
+		for k := range bodyOutputKeys {
+			if v, exists := postVars[k]; exists {
+				vars[k] = v
 			}
 		}
 
-		// Merge iteration outputs back into global vars (last iteration wins).
-		for k, v := range iterVars {
-			vars[k] = v
-		}
-
-		// Accumulate only declared body output keys for this iteration.
-		// Falls back to all keys written during this iteration when no body node
-		// declares Outputs (legacy/untyped body steps).
+		// Accumulate declared body outputs for this iteration.
 		if cfg.AccumVar != "" {
-			snapshot := make(PipelineVars)
-			if len(bodyOutputKeys) > 0 {
-				for k := range bodyOutputKeys {
-					if v, exists := iterVars[k]; exists {
-						snapshot[k] = v
-					}
-				}
-			} else {
-				for k, v := range iterVars {
+			snapshot := make(PipelineVars, len(bodyOutputKeys))
+			for k := range bodyOutputKeys {
+				if v, exists := postVars[k]; exists {
 					snapshot[k] = v
 				}
 			}
@@ -984,6 +968,14 @@ func execLoop(ctx context.Context, interp *Interpreter, ic *InvocationContext, s
 		vars[cfg.AccumVar] = accumulated
 	}
 	return nil
+}
+
+// execLoopBody runs a body sub-plan and returns the post-execution PipelineVars.
+// Body plans have no Response node, so we use LocalExecutor.ExecuteBody which
+// captures terminal-branch vars instead of requiring a Result.
+func execLoopBody(ctx context.Context, interp *Interpreter, ic *InvocationContext, plan *ExecutionPlan, initial PipelineVars) (PipelineVars, error) {
+	exec := NewLocalExecutor(interp.clone())
+	return exec.ExecuteBody(ctx, ic, plan, initial)
 }
 
 // renderMCPArgs renders the args_template (a JSON object Go template) against

@@ -401,17 +401,37 @@ func cloneVars(src agentgen.PipelineVars) agentgen.PipelineVars {
 	return dst
 }
 
-// runLoopNode executes a StepLoop node in the Temporal path by iterating items
-// sequentially and scheduling every body step as its own ExecuteStepActivity.
+// bodyIterState holds per-iteration join state so iterations don't bleed into each other.
+type bodyIterState struct {
+	nodeIdx     map[string]*agentgen.PlanNode
+	joinArrived map[string]map[string]agentgen.PipelineVars
+	joinMerged  map[string]agentgen.PipelineVars
+	joinFired   map[string]bool
+}
+
+func newBodyIterState(bodyNodes []*agentgen.PlanNode) *bodyIterState {
+	idx := make(map[string]*agentgen.PlanNode, len(bodyNodes))
+	for i := range bodyNodes {
+		n := bodyNodes[i]
+		idx[n.StepID] = n
+	}
+	return &bodyIterState{
+		nodeIdx:     idx,
+		joinArrived: make(map[string]map[string]agentgen.PipelineVars),
+		joinMerged:  make(map[string]agentgen.PipelineVars),
+		joinFired:   make(map[string]bool),
+	}
+}
+
+// runLoopNode executes a StepLoop node in the Temporal path.
 //
-// Each body step gets its own activity with the policy from SubPlan.Nodes[i].Policy,
-// giving it independent retry, timeout, and Temporal history entry.
+// Each body step is its own ExecuteStepActivity with its own policy/retry/timeout.
+// Branch/Parallel/Join inside the body are handled with per-iteration isolated join
+// state and workflow.Go coroutines so that fan-out works correctly.
+// Iteration state is fully isolated — no join arrival bleeds between iterations.
 //
-// Body iterations are sequential (one item at a time). Parallel iteration is a future
-// enhancement controlled by a LoopConfig.Parallel flag; not implemented here.
-//
-// Returns outVars containing accum_var (if configured) and any vars written during
-// the last body iteration. The caller merges outVars into localVars and state.vars.
+// Only declared body output keys are merged back to outer vars and accumulated.
+// No fallback to all vars is applied; body nodes must declare their Outputs.
 func runLoopNode(
 	ctx workflow.Context,
 	state *workflowState,
@@ -428,7 +448,6 @@ func runLoopNode(
 		return nil, fmt.Errorf("items_var is required")
 	}
 	if node.SubPlan == nil || len(node.SubPlan.Nodes) == 0 {
-		// Empty body — no-op; return vars unchanged.
 		return agentgen.PipelineVars{}, nil
 	}
 
@@ -450,29 +469,29 @@ func runLoopNode(
 		return nil, fmt.Errorf("%q must be a list, got %T", cfg.ItemsVar, raw)
 	}
 
-	// Build body node index and collect declared output keys.
-	bodyIdx := make(map[string]*agentgen.PlanNode, len(node.SubPlan.Nodes))
+	// Collect declared output keys across ALL body nodes.
 	bodyOutputKeys := make(map[string]bool)
 	for _, bn := range node.SubPlan.Nodes {
-		bodyIdx[bn.StepID] = bn
 		for _, ref := range bn.Outputs {
 			bodyOutputKeys[ref.Name] = true
 		}
 	}
+	// Only enforce declared outputs when there are items to iterate.
+	if len(items) > 0 && len(bodyOutputKeys) == 0 {
+		return nil, fmt.Errorf("loop body steps must declare at least one output (add Outputs to body nodes)")
+	}
 
 	var accumulated []any
-	outVars := agentgen.PipelineVars{} // collects accum_var + last-iteration body outputs
+	outVars := agentgen.PipelineVars{}
 
 	for i, item := range items {
 		if i >= maxIter {
 			break
 		}
 
-		// Build per-iteration vars starting from the outer localVars.
 		iterVars := cloneVars(localVars)
 		iterVars[itemVar] = item
 
-		// Apply optional condition filter (deterministic template rendering).
 		if cfg.Condition != "" {
 			tmpl, err := template.New("loop_cond").Option("missingkey=zero").Parse(cfg.Condition)
 			if err != nil {
@@ -487,72 +506,24 @@ func runLoopNode(
 			}
 		}
 
-		// Walk the body sequentially, scheduling each step as its own activity.
-		currentBodyID := node.SubPlan.StartID
-		for currentBodyID != "" {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			bodyNode, found := bodyIdx[currentBodyID]
-			if !found {
-				return nil, fmt.Errorf("iteration %d: body step %q not found in sub-plan", i, currentBodyID)
-			}
+		// Run the body sub-plan for this iteration with isolated join state.
+		postVars, err := runBodyIteration(ctx, state, node.SubPlan, iterVars, i)
+		if err != nil {
+			return nil, fmt.Errorf("iteration %d: %w", i, err)
+		}
 
-			// Acquire outer semaphore before scheduling the body activity.
-			workflow.Await(ctx, func() bool {
-				return ctx.Err() != nil || state.dagSemInFlight < state.dagSemLimit
-			})
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			state.dagSemInFlight++
-
-			ao := activityOptionsForNode(ctx, bodyNode)
-			var bodyOut StepActivityOutput
-			actErr := workflow.ExecuteActivity(ao, CanvasExecuteStepActivityName, StepActivityInput{
-				Node: *bodyNode,
-				Vars: projectInputs(bodyNode, iterVars),
-				IC:   state.ic,
-			}).Get(ctx, &bodyOut)
-
-			state.dagSemInFlight--
-
-			if actErr != nil {
-				return nil, fmt.Errorf("iteration %d body step %q: %w", i, currentBodyID, actErr)
-			}
-
-			// Merge body step outputs into iteration vars.
-			for k, v := range bodyOut.Vars {
-				iterVars[k] = v
-			}
-
-			// Advance to next body step (branch override or node.Next[0]).
-			if bodyOut.NextOverride != "" {
-				currentBodyID = bodyOut.NextOverride
-			} else if len(bodyNode.Next) > 0 {
-				currentBodyID = bodyNode.Next[0]
-			} else {
-				currentBodyID = ""
+		// Merge only declared body output keys back into outer scope.
+		for k := range bodyOutputKeys {
+			if v, exists := postVars[k]; exists {
+				localVars[k] = v
+				outVars[k] = v
 			}
 		}
 
-		// Merge last-iteration body outputs back into outer localVars.
-		for k, v := range iterVars {
-			localVars[k] = v
-			outVars[k] = v
-		}
-
-		// Accumulate only declared body output keys (or all if none declared).
 		if cfg.AccumVar != "" {
-			snapshot := make(agentgen.PipelineVars)
-			if len(bodyOutputKeys) > 0 {
-				for k := range bodyOutputKeys {
-					if v, exists := iterVars[k]; exists {
-						snapshot[k] = v
-					}
-				}
-			} else {
-				for k, v := range iterVars {
+			snapshot := make(agentgen.PipelineVars, len(bodyOutputKeys))
+			for k := range bodyOutputKeys {
+				if v, exists := postVars[k]; exists {
 					snapshot[k] = v
 				}
 			}
@@ -564,6 +535,233 @@ func runLoopNode(
 		outVars[cfg.AccumVar] = accumulated
 	}
 	return outVars, nil
+}
+
+// runBodyIteration executes one iteration of the loop body sub-plan.
+// It creates an isolated bodyIterState so join arrivals from this iteration
+// do not contaminate other iterations. Fan-out/Join inside the body is handled
+// with workflow.Go coroutines, mirroring the outer runBranch structure.
+//
+// Returns the merged post-execution vars from all terminal branches.
+func runBodyIteration(
+	ctx workflow.Context,
+	state *workflowState,
+	plan *agentgen.ExecutionPlan,
+	iterVars agentgen.PipelineVars,
+	iterIdx int,
+) (agentgen.PipelineVars, error) {
+	bis := newBodyIterState(plan.Nodes)
+
+	// errCh carries errors from body coroutines. Buffered to plan size.
+	errCh := workflow.NewChannel(ctx)
+
+	// terminalVarsCh captures vars from each terminal branch.
+	terminalVarsCh := workflow.NewChannel(ctx)
+
+	// cancelCtx + cancel for body-wide cancellation on error.
+	bodyCtx, cancelBody := workflow.WithCancel(ctx)
+	_ = cancelBody // called on first error
+
+	var inFlight int
+
+	var launchBodyBranch func(startID, fromID string, branchVars agentgen.PipelineVars)
+	launchBodyBranch = func(startID, fromID string, branchVars agentgen.PipelineVars) {
+		inFlight++
+		workflow.Go(bodyCtx, func(gCtx workflow.Context) {
+			defer func() { inFlight-- }()
+			runBodyBranch(gCtx, state, bis, plan, startID, fromID, cloneVars(branchVars),
+				&launchBodyBranch, cancelBody, errCh, terminalVarsCh)
+		})
+	}
+
+	launchBodyBranch(plan.StartID, "", cloneVars(iterVars))
+
+	// Collect results: wait until all in-flight coroutines finish.
+	mergedTerminal := make(agentgen.PipelineVars)
+	var firstErr error
+
+	workflow.Await(bodyCtx, func() bool {
+		// Drain errCh.
+		var e error
+		for errCh.ReceiveAsync(&e) {
+			if firstErr == nil {
+				firstErr = e
+			}
+			cancelBody()
+		}
+		// Drain terminalVarsCh.
+		var tv agentgen.PipelineVars
+		for terminalVarsCh.ReceiveAsync(&tv) {
+			for k, v := range tv {
+				mergedTerminal[k] = v
+			}
+		}
+		return inFlight == 0 || firstErr != nil || bodyCtx.Err() != nil
+	})
+
+	// Final drain after Await.
+	var e error
+	for errCh.ReceiveAsync(&e) {
+		if firstErr == nil {
+			firstErr = e
+		}
+	}
+	var tv agentgen.PipelineVars
+	for terminalVarsCh.ReceiveAsync(&tv) {
+		for k, v := range tv {
+			mergedTerminal[k] = v
+		}
+	}
+
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	_ = iterIdx
+	return mergedTerminal, nil
+}
+
+// runBodyBranch walks one branch of the body sub-plan, scheduling each step
+// as its own ExecuteStepActivity. Fan-out launches sibling coroutines. Join nodes
+// use the per-iteration bodyIterState (never the outer workflowState join maps).
+func runBodyBranch(
+	ctx workflow.Context,
+	state *workflowState,
+	bis *bodyIterState,
+	plan *agentgen.ExecutionPlan,
+	startID, fromID string,
+	localVars agentgen.PipelineVars,
+	launchBranch *func(string, string, agentgen.PipelineVars),
+	cancelAll func(),
+	errCh workflow.Channel,
+	terminalCh workflow.Channel,
+) {
+	currentID := startID
+	prevID := fromID
+
+	for currentID != "" {
+		if ctx.Err() != nil {
+			return
+		}
+
+		bodyNode, found := bis.nodeIdx[currentID]
+		if !found {
+			errCh.Send(ctx, fmt.Errorf("body step %q not found in sub-plan", currentID))
+			cancelAll()
+			return
+		}
+
+		// ── Join: use per-iteration bis join state ──────────────────────────
+		if bodyNode.JoinMode == agentgen.JoinWaitAll || bodyNode.JoinMode == agentgen.JoinBranchMerge {
+			if !handleBodyJoin(ctx, bis, bodyNode, prevID, localVars) {
+				return // not the winning coroutine for this join
+			}
+			localVars = bis.joinMerged[bodyNode.StepID]
+			delete(bis.joinMerged, bodyNode.StepID)
+		}
+
+		// ── Execute as its own activity ─────────────────────────────────────
+		workflow.Await(ctx, func() bool {
+			return ctx.Err() != nil || state.dagSemInFlight < state.dagSemLimit
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		state.dagSemInFlight++
+
+		ao := activityOptionsForNode(ctx, bodyNode)
+		var bodyOut StepActivityOutput
+		actErr := workflow.ExecuteActivity(ao, CanvasExecuteStepActivityName, StepActivityInput{
+			Node: *bodyNode,
+			Vars: projectInputs(bodyNode, localVars),
+			IC:   state.ic,
+		}).Get(ctx, &bodyOut)
+
+		state.dagSemInFlight--
+
+		if actErr != nil {
+			errCh.Send(ctx, fmt.Errorf("body step %q: %w", currentID, actErr))
+			cancelAll()
+			return
+		}
+
+		for k, v := range bodyOut.Vars {
+			localVars[k] = v
+		}
+
+		// ── Determine next ──────────────────────────────────────────────────
+		var nextIDs []string
+		if bodyOut.NextOverride != "" {
+			nextIDs = []string{bodyOut.NextOverride}
+		} else {
+			nextIDs = bodyNode.Next
+		}
+
+		if len(nextIDs) == 0 {
+			// Terminal body node — send final vars to collector.
+			terminalCh.Send(ctx, localVars)
+			return
+		}
+
+		// Fan-out sibling branches.
+		if len(nextIDs) > 1 {
+			for _, sibID := range nextIDs[1:] {
+				sibID := sibID
+				(*launchBranch)(sibID, bodyNode.StepID, cloneVars(localVars))
+			}
+		}
+
+		prevID = bodyNode.StepID
+		currentID = nextIDs[0]
+	}
+}
+
+// handleBodyJoin is the per-iteration equivalent of handleJoin but uses
+// bodyIterState instead of workflowState. This keeps join arrivals per-iteration.
+func handleBodyJoin(
+	ctx workflow.Context,
+	bis *bodyIterState,
+	node *agentgen.PlanNode,
+	prevID string,
+	localVars agentgen.PipelineVars,
+) bool {
+	if bis.joinFired[node.StepID] {
+		return false
+	}
+
+	expected := len(node.JoinOf)
+	if node.JoinMode == agentgen.JoinBranchMerge {
+		expected = 1
+	}
+
+	if bis.joinArrived[node.StepID] == nil {
+		bis.joinArrived[node.StepID] = make(map[string]agentgen.PipelineVars)
+	}
+	bis.joinArrived[node.StepID][prevID] = localVars
+
+	workflow.Await(ctx, func() bool {
+		return ctx.Err() != nil ||
+			bis.joinFired[node.StepID] ||
+			len(bis.joinArrived[node.StepID]) >= expected
+	})
+	if ctx.Err() != nil || bis.joinFired[node.StepID] {
+		return false
+	}
+
+	bis.joinFired[node.StepID] = true
+
+	merged := make(agentgen.PipelineVars)
+	for _, predID := range node.JoinOf {
+		if bv, ok := bis.joinArrived[node.StepID][predID]; ok {
+			for k, v := range bv {
+				merged[k] = v
+			}
+		}
+	}
+	bis.joinMerged[node.StepID] = merged
+	return true
 }
 
 // drainWorkflowErrors reads all errors from a workflow.Channel and returns the

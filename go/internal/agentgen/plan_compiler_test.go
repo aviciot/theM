@@ -482,3 +482,106 @@ func TestValidateLoopBodies_Valid(t *testing.T) {
 		t.Fatalf("expected no error for valid loop, got: %v", err)
 	}
 }
+
+// ── PC-LOOP-4: compileLoopBodyPlan — branch+join inside body gets correct JoinMode ──
+
+func TestCompileLoopBodyPlan_BranchJoinInsideBody(t *testing.T) {
+	// Body: branch → arm_true | arm_false → join
+	branchCfg, _ := json.Marshal(BranchStepConfig{Expression: "{{.item}}", TrueNext: "arm_t", FalseNext: "arm_f"})
+	loopCfg, _ := json.Marshal(LoopConfig{
+		BodySteps: []string{"br", "arm_t", "arm_f", "join"},
+		ItemsVar:  "items", ItemVar: "item",
+	})
+	stepByID := map[string]StepSpec{
+		"loop1": {ID: "loop1", Type: StepLoop, Config: loopCfg},
+		"br":    {ID: "br", Type: StepBranch, Config: branchCfg, Next: []string{"arm_t", "arm_f"}},
+		"arm_t": {ID: "arm_t", Type: StepLLM, Next: []string{"join"}},
+		"arm_f": {ID: "arm_f", Type: StepLLM, Next: []string{"join"}},
+		"join":  {ID: "join", Type: StepTransform},
+	}
+	loopStep := stepByID["loop1"]
+	plan := compileLoopBodyPlan(loopStep, stepByID)
+
+	if len(plan.Nodes) != 4 {
+		t.Fatalf("expected 4 body nodes, got %d", len(plan.Nodes))
+	}
+	nodeByID := make(map[string]*PlanNode)
+	for _, n := range plan.Nodes {
+		nodeByID[n.StepID] = n
+	}
+
+	// Branch node must have 2 intra-body Next entries.
+	brNode := nodeByID["br"]
+	if len(brNode.Next) != 2 {
+		t.Errorf("branch node should have 2 Next, got %d", len(brNode.Next))
+	}
+
+	// Join node must be classified as JoinBranchMerge.
+	joinNode := nodeByID["join"]
+	if joinNode.JoinMode != JoinBranchMerge {
+		t.Errorf("join node should be JoinBranchMerge, got %v", joinNode.JoinMode)
+	}
+	if len(joinNode.JoinOf) != 2 {
+		t.Errorf("join node JoinOf should have 2 entries, got %d", len(joinNode.JoinOf))
+	}
+
+	// Terminal nodes (arm_t, arm_f, join) have no intra-body Next.
+	// arm_t and arm_f point to join (intra-body), join has no body successors.
+	armTNode := nodeByID["arm_t"]
+	if len(armTNode.Next) != 1 || armTNode.Next[0] != "join" {
+		t.Errorf("arm_t should have Next=[join], got %v", armTNode.Next)
+	}
+	if len(joinNode.Next) != 0 {
+		t.Errorf("join node (terminal) should have no Next, got %v", joinNode.Next)
+	}
+}
+
+// ── PC-LOOP-5: compileLoopBodyPlan — terminal detection excludes post-loop nodes ──
+
+func TestCompileLoopBodyPlan_TerminalExcludesPostLoop(t *testing.T) {
+	// Body has one step whose Next includes a post-loop node ("done").
+	// compileLoopBodyPlan must trim "done" from the body step's Next.
+	loopCfg, _ := json.Marshal(LoopConfig{
+		BodySteps: []string{"body1"},
+		ItemsVar:  "items", ItemVar: "item",
+	})
+	stepByID := map[string]StepSpec{
+		"loop1": {ID: "loop1", Type: StepLoop, Config: loopCfg, Next: []string{"done"}},
+		"body1": {ID: "body1", Type: StepLLM, Next: []string{"done"}}, // post-loop target
+		"done":  {ID: "done", Type: StepResponse},
+	}
+	plan := compileLoopBodyPlan(stepByID["loop1"], stepByID)
+
+	if len(plan.Nodes) != 1 {
+		t.Fatalf("expected 1 body node, got %d", len(plan.Nodes))
+	}
+	bodyNode := plan.Nodes[0]
+	if len(bodyNode.Next) != 0 {
+		t.Errorf("body terminal node must have no Next after trimming post-loop edge, got %v", bodyNode.Next)
+	}
+}
+
+// ── PC-LOOP-6: resolveLoopOuterNext — uses loopStep.Next directly when present ──
+
+func TestResolveLoopOuterNext_UsesLoopStepNext(t *testing.T) {
+	loopCfg, _ := json.Marshal(LoopConfig{
+		BodySteps: []string{"body1"},
+		ItemsVar:  "items",
+	})
+	loopStep := StepSpec{
+		ID:     "loop1",
+		Type:   StepLoop,
+		Config: loopCfg,
+		Next:   []string{"post_loop"}, // explicitly set by frontend serializer
+	}
+	stepByID := map[string]StepSpec{
+		"loop1": loopStep,
+		"body1": {ID: "body1", Type: StepLLM, Next: []string{"also_not_body"}},
+		"post_loop": {ID: "post_loop", Type: StepResponse},
+	}
+	bodyStepIDs := map[string]bool{"body1": true}
+	result := resolveLoopOuterNext(loopStep, stepByID, bodyStepIDs)
+	if len(result) != 1 || result[0] != "post_loop" {
+		t.Errorf("expected [post_loop], got %v", result)
+	}
+}

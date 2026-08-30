@@ -39,58 +39,18 @@ func (e *LocalExecutor) Execute(
 		return nil, fmt.Errorf("LocalExecutor: empty or nil plan")
 	}
 
-	// Build node index for O(1) lookup.
-	nodeIdx := make(map[string]*PlanNode, len(plan.Nodes))
-	for _, n := range plan.Nodes {
-		nodeIdx[n.StepID] = n
-	}
+	nodeIdx, js, sem, res, runCtx, cancel, errCh, wg := e.setupPlan(ctx, plan, ic)
 
-	// joinState tracks arrivals at join nodes.
-	js := &joinState{
-		arrived: make(map[string]map[string]PipelineVars),
-		count:   make(map[string]int),
-	}
-	// Pre-populate expected arrival counts from JoinOf lists.
-	for _, n := range plan.Nodes {
-		if n.JoinMode == JoinWaitAll {
-			js.count[n.StepID] = len(n.JoinOf)
-		}
-		// JoinBranchMerge expects exactly 1 (first arrival wins).
-		if n.JoinMode == JoinBranchMerge {
-			js.count[n.StepID] = 1
-		}
-	}
-
-	// Shared result — first response/stream_out step wins.
-	res := &sharedResult{}
-
-	// cancelable context — any branch error cancels all others.
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Per-run concurrency semaphore: limits how many nodes execute simultaneously.
-	// Acquired per attempt in execNode; released after the attempt completes.
-	// Goroutines that fan out but can't acquire wait without blocking join logic —
-	// joins do not hold the semaphore, so no deadlock.
-	limit := ResolveMaxConcurrentTasks(ic.Policies.MaxConcurrentTasks)
-	sem := make(chan struct{}, limit)
-
-	// errCh carries the causal error from whichever branch first fails.
-	// Buffered to len(plan.Nodes) so goroutines never block on send.
-	errCh := make(chan error, len(plan.Nodes))
-
-	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := e.runBranch(runCtx, ic, plan, nodeIdx, js, res, deepCopyVars(initial), plan.StartID, "", cancel, errCh, &wg, e.interp.clone(), sem); err != nil {
+		if err := e.runBranch(runCtx, ic, plan, nodeIdx, js, res, nil, deepCopyVars(initial), plan.StartID, "", cancel, errCh, wg, e.interp.clone(), sem); err != nil {
 			sendErr(errCh, err)
 		}
 	}()
 
 	wg.Wait()
 
-	// Return the first causal error. Prefer non-Canceled errors over Canceled.
 	if err := drainFirstCausalError(errCh); err != nil {
 		return nil, err
 	}
@@ -100,6 +60,90 @@ func (e *LocalExecutor) Execute(
 		return nil, fmt.Errorf("plan %q produced no result", plan.SkillID)
 	}
 	return result, nil
+}
+
+// ExecuteBody runs a body sub-plan (no Response node required) and returns the
+// post-execution PipelineVars written by all terminal branches. It handles
+// Branch/Parallel/Join inside the body correctly via the same runBranch machinery.
+func (e *LocalExecutor) ExecuteBody(
+	ctx context.Context,
+	ic *InvocationContext,
+	plan *ExecutionPlan,
+	initial PipelineVars,
+) (PipelineVars, error) {
+	if plan == nil || len(plan.Nodes) == 0 {
+		return PipelineVars{}, nil
+	}
+
+	nodeIdx, js, sem, res, runCtx, cancel, errCh, wg := e.setupPlan(ctx, plan, ic)
+
+	// Capture vars from every terminal branch — last writer wins per key.
+	var finalMu sync.Mutex
+	finalVars := make(PipelineVars)
+	onTerminal := func(tv PipelineVars) {
+		finalMu.Lock()
+		for k, v := range tv {
+			finalVars[k] = v
+		}
+		finalMu.Unlock()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := e.runBranch(runCtx, ic, plan, nodeIdx, js, res, onTerminal, deepCopyVars(initial), plan.StartID, "", cancel, errCh, wg, e.interp.clone(), sem); err != nil {
+			sendErr(errCh, err)
+		}
+	}()
+
+	wg.Wait()
+
+	if err := drainFirstCausalError(errCh); err != nil {
+		return nil, err
+	}
+	return finalVars, nil
+}
+
+// setupPlan builds the shared data structures needed by Execute and ExecuteBody.
+func (e *LocalExecutor) setupPlan(
+	ctx context.Context,
+	plan *ExecutionPlan,
+	ic *InvocationContext,
+) (
+	nodeIdx map[string]*PlanNode,
+	js *joinState,
+	sem chan struct{},
+	res *sharedResult,
+	runCtx context.Context,
+	cancel context.CancelFunc,
+	errCh chan error,
+	wg *sync.WaitGroup,
+) {
+	nodeIdx = make(map[string]*PlanNode, len(plan.Nodes))
+	for _, n := range plan.Nodes {
+		nodeIdx[n.StepID] = n
+	}
+
+	js = &joinState{
+		arrived: make(map[string]map[string]PipelineVars),
+		count:   make(map[string]int),
+	}
+	for _, n := range plan.Nodes {
+		if n.JoinMode == JoinWaitAll {
+			js.count[n.StepID] = len(n.JoinOf)
+		}
+		if n.JoinMode == JoinBranchMerge {
+			js.count[n.StepID] = 1
+		}
+	}
+
+	res = &sharedResult{}
+	runCtx, cancel = context.WithCancel(ctx)
+	limit := ResolveMaxConcurrentTasks(ic.Policies.MaxConcurrentTasks)
+	sem = make(chan struct{}, limit)
+	errCh = make(chan error, len(plan.Nodes))
+	wg = &sync.WaitGroup{}
+	return
 }
 
 // drainFirstCausalError reads all errors from ch and returns the first
@@ -140,6 +184,7 @@ func sendErr(ch chan<- error, err error) {
 // At a fan-out node (len(Next)>1) it launches sibling goroutines.
 // At a join node it deposits vars and either waits (not last) or merges (last).
 // sem is the per-run concurrency semaphore threaded from Execute.
+// onTerminal, if non-nil, is called with the final vars when a terminal branch ends.
 func (e *LocalExecutor) runBranch(
 	ctx context.Context,
 	ic *InvocationContext,
@@ -147,6 +192,7 @@ func (e *LocalExecutor) runBranch(
 	nodeIdx map[string]*PlanNode,
 	js *joinState,
 	res *sharedResult,
+	onTerminal func(PipelineVars),
 	vars PipelineVars,
 	startID string,
 	fromID string, // which predecessor step launched this branch
@@ -220,6 +266,9 @@ func (e *LocalExecutor) runBranch(
 		}
 
 		if len(nextIDs) == 0 {
+			if onTerminal != nil {
+				onTerminal(vars)
+			}
 			return nil
 		}
 
@@ -233,7 +282,7 @@ func (e *LocalExecutor) runBranch(
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					if err := e.runBranch(ctx, ic, plan, nodeIdx, js, res, sibVars, sibID, curID, cancel, errCh, wg, sibInterp, sem); err != nil {
+					if err := e.runBranch(ctx, ic, plan, nodeIdx, js, res, onTerminal, sibVars, sibID, curID, cancel, errCh, wg, sibInterp, sem); err != nil {
 						sendErr(errCh, err)
 					}
 				}()

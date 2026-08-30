@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `81c3a31`
+Commit: (pending — Phase 5-A gap fixes + 8 new tests, not yet committed)
 
 Recent commits (newest first):
 ```
@@ -149,15 +149,16 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — 42 packages, 0 failures (verified 2026-08-30, durable loop)
-S1-72: 20 EP compiler tests (+PC-LOOP-1..3: ValidateLoopBodies — unknown step, budget, valid)
-S1-73: 30 LocalExecutor tests (ExecNodeWithPolicy extracted; execNode is thin wrapper)
+go test ./...  — 42 packages, 0 failures (verified 2026-08-30, Phase 5-A gap fixes)
+S1-72: 20 EP compiler tests (+PC-LOOP-1..6: ValidateLoopBodies + compileLoopBodyPlan Branch/Join + resolveLoopOuterNext)
+S1-73: 33 LocalExecutor tests (+EP-LOOP-6/7/8: BranchInsideBody, IterationIsolation, ScopedAccumulation)
 S1-74: 3 DAG E2E smoke tests
 S1-75: 16 Phase 4-A tests (NA-01..NA-16)
-S1-76: 27 Phase 4-B tests (+CT-LOOP-1..3 + CT-LOOP-DURABLE-1..5 durable loop workflow tests)
+S1-76: 21 Phase 4-B tests (+CT-LOOP-DURABLE-6/7: IterationIsolation, ScopedAccumVar)
 S1-77: 7 Phase 4-C TemporalExecutor tests (TE-01..TE-07)
 S1-78: 4 dag-worker SQL tenant scope tests
 S2-06: 3 integration-tagged Temporal E2E tests
+Total go test ./...: 869
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -423,7 +424,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 4-C hardening | 7 production blockers fixed: Compose env vars, fail-closed, stable workflow ID, policy concurrency, tenant-scoped DB queries, bounded cancel, integration tests | ✅ commits `1c44aa0`..`30f9f95` |
 | 4-C gap-2 | 5 additional fixes: tenant-scope ALL lookups, safe errors, conditional Temporal overlay, HumanWait 24h timeout, real full-path E2E, binding 4-ID enforcement | ✅ commits `8d815cc`..`b3bd71a` |
 | 4-D | Frontend execution_backend toggle (Local / ⚡ Temporal pill in top bar) | ✅ commit `7d39d44` |
-| 5-A | StepLoop — LocalExecutor + Temporal + frontend config panel + durable loop architecture + canvas ports | ✅ |
+| 5-A | StepLoop — LocalExecutor + Temporal + frontend config panel + durable loop architecture + canvas ports + gap fixes (compileLoopBodyPlan JoinOf/JoinMode, ExecuteBody onTerminal, bodyIterState isolation, BFS boundary, accum scoping) + 8 new tests (EP-LOOP-6/7/8, CT-LOOP-DURABLE-6/7, PC-LOOP-4/5/6) | ✅ |
 | 5-B | HumanWait async (design doc complete, not yet implemented) | ⬜ |
 | 5-C | A2A call node in DAG fan-out / Temporal activity wiring | ⬜ |
 

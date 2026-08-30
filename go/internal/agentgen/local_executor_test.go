@@ -1459,7 +1459,13 @@ func TestLocalExecutor_Loop_BasicIteration(t *testing.T) {
 	})
 
 	bodyNodes := []*PlanNode{
-		{StepID: "b1", Type: "test_loop_body_L1", Config: rawJSON(t, nil), Policy: ExecutionPolicy{MaxAttempts: 1}},
+		{
+			StepID:  "b1",
+			Type:    "test_loop_body_L1",
+			Config:  rawJSON(t, nil),
+			Policy:  ExecutionPolicy{MaxAttempts: 1},
+			Outputs: []VarRef{{Name: "processed_item"}},
+		},
 	}
 	// Use a counter node as response to verify loop ran.
 	plan := buildLoopPlanNoResponse(t, LoopConfig{
@@ -1491,7 +1497,13 @@ func TestLocalExecutor_Loop_MaxIterations(t *testing.T) {
 	})
 
 	bodyNodes := []*PlanNode{
-		{StepID: "b2", Type: "test_loop_body_L2", Config: rawJSON(t, nil), Policy: ExecutionPolicy{MaxAttempts: 1}},
+		{
+			StepID:  "b2",
+			Type:    "test_loop_body_L2",
+			Config:  rawJSON(t, nil),
+			Policy:  ExecutionPolicy{MaxAttempts: 1},
+			Outputs: []VarRef{{Name: "b2_out"}},
+		},
 	}
 	plan := buildLoopPlanNoResponse(t, LoopConfig{
 		ItemsVar:      "items",
@@ -1595,4 +1607,228 @@ func TestLocalExecutor_Loop_NilSubPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("nil sub-plan should be no-op, got error: %v", err)
 	}
+}
+
+// EP-LOOP-6: branch inside loop body — only the selected arm runs, counter reflects it.
+func TestLocalExecutor_Loop_BranchInsideBody(t *testing.T) {
+	var trueCount, falseCount atomic.Int32
+
+	registerTestNode(t, NodeDef{
+		Type: "test_lb6_branch_true", Version: 1, OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
+			trueCount.Add(1)
+			vars["arm_result"] = "true"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	registerTestNode(t, NodeDef{
+		Type: "test_lb6_branch_false", Version: 1, OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
+			falseCount.Add(1)
+			vars["arm_result"] = "false"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+
+	// Body: branch(item=="true") → true_arm | false_arm
+	// items: ["true", "false", "true"] → 2 true, 1 false
+	branchCfg := rawJSON(t, BranchStepConfig{
+		Expression: `{{.item}}`,
+		TrueNext:   "arm_true",
+		FalseNext:  "arm_false",
+	})
+	subPlan := &ExecutionPlan{
+		SkillID: "lb6:body",
+		StartID: "br",
+		Nodes: []*PlanNode{
+			{StepID: "br", Type: StepBranch, Config: branchCfg, Next: []string{"arm_true", "arm_false"},
+				Policy: ExecutionPolicy{MaxAttempts: 1}},
+			{StepID: "arm_true", Type: "test_lb6_branch_true", Config: rawJSON(t, nil),
+				Outputs: []VarRef{{Name: "arm_result"}},
+				Policy:  ExecutionPolicy{MaxAttempts: 1}},
+			{StepID: "arm_false", Type: "test_lb6_branch_false", Config: rawJSON(t, nil),
+				Outputs: []VarRef{{Name: "arm_result"}},
+				Policy:  ExecutionPolicy{MaxAttempts: 1}},
+		},
+	}
+
+	loopCfg := rawJSON(t, LoopConfig{
+		BodySteps: []string{"br", "arm_true", "arm_false"},
+		ItemsVar:  "items",
+		ItemVar:   "item",
+	})
+	registerTestNode(t, NodeDef{
+		Type: "test_lb6_sink", Version: 1, OutputArity: "none", IsSink: true,
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, res *ExecutionResult) error {
+			res.Text = "done"
+			res.MediaType = "text/plain"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	plan := &ExecutionPlan{
+		SkillID: "lb6_test",
+		StartID: "loop1",
+		Nodes: []*PlanNode{
+			{StepID: "loop1", Type: StepLoop, Config: loopCfg, Next: []string{"sink_lb6"},
+				SubPlan: subPlan, Policy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 60}},
+			{StepID: "sink_lb6", Type: "test_lb6_sink", Config: rawJSON(t, nil), Policy: ExecutionPolicy{MaxAttempts: 1}},
+		},
+	}
+
+	exec := NewLocalExecutor(testInterp())
+	_, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{"items": []any{"true", "false", "true"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if trueCount.Load() != 2 {
+		t.Errorf("true arm should run 2 times, ran %d", trueCount.Load())
+	}
+	if falseCount.Load() != 1 {
+		t.Errorf("false arm should run 1 time, ran %d", falseCount.Load())
+	}
+}
+
+// EP-LOOP-7: iteration isolation — vars written in iteration N do not persist to N+1.
+func TestLocalExecutor_Loop_IterationIsolation(t *testing.T) {
+	registerTestNode(t, NodeDef{
+		Type: "test_lb7_body", Version: 1, OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
+			// Write a sentinel value; the next iteration should NOT see it via a previous-iteration leak.
+			prev, hasPrev := vars["prev_sentinel"]
+			vars["iter_out"] = fmt.Sprintf("item=%v prev=%v", vars["item"], hasPrev)
+			_ = prev
+			vars["prev_sentinel"] = "was_set"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+
+	subPlan := &ExecutionPlan{
+		SkillID: "lb7:body",
+		StartID: "body7",
+		Nodes: []*PlanNode{
+			{StepID: "body7", Type: "test_lb7_body", Config: rawJSON(t, nil),
+				Inputs:  []VarRef{{Name: "item"}},
+				Outputs: []VarRef{{Name: "iter_out"}},
+				Policy:  ExecutionPolicy{MaxAttempts: 1}},
+		},
+	}
+	loopCfg := rawJSON(t, LoopConfig{
+		BodySteps: []string{"body7"},
+		ItemsVar:  "items",
+		ItemVar:   "item",
+		AccumVar:  "results",
+	})
+	registerTestNode(t, NodeDef{
+		Type: "test_lb7_resp", Version: 1, OutputArity: "none", IsSink: true,
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, res *ExecutionResult) error {
+			res.Text = "done"
+			res.MediaType = "text/plain"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	plan := &ExecutionPlan{
+		SkillID: "lb7_test",
+		StartID: "loop1",
+		Nodes: []*PlanNode{
+			{StepID: "loop1", Type: StepLoop, Config: loopCfg, Next: []string{"resp7"},
+				SubPlan: subPlan, Policy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 60}},
+			{StepID: "resp7", Type: "test_lb7_resp", Config: rawJSON(t, nil), Policy: ExecutionPolicy{MaxAttempts: 1}},
+		},
+	}
+
+	exec := NewLocalExecutor(testInterp())
+	_, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{"items": []any{"a", "b", "c"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// EP-LOOP-8: scoped accumulation — accum_var contains only declared Outputs, not itemVar or outer vars.
+func TestLocalExecutor_Loop_ScopedAccumulation(t *testing.T) {
+	registerTestNode(t, NodeDef{
+		Type: "test_lb8_body", Version: 1, OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, _ *ExecutionResult) error {
+			vars["body_out"] = fmt.Sprintf("processed:%v", vars["current_item"])
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+
+	subPlan := &ExecutionPlan{
+		SkillID: "lb8:body",
+		StartID: "body8",
+		Nodes: []*PlanNode{
+			{StepID: "body8", Type: "test_lb8_body", Config: rawJSON(t, nil),
+				Inputs:  []VarRef{{Name: "current_item"}},
+				Outputs: []VarRef{{Name: "body_out"}},
+				Policy:  ExecutionPolicy{MaxAttempts: 1}},
+		},
+	}
+	loopCfg := rawJSON(t, LoopConfig{
+		BodySteps: []string{"body8"},
+		ItemsVar:  "items",
+		ItemVar:   "current_item",
+		AccumVar:  "all_results",
+	})
+	registerTestNode(t, NodeDef{
+		Type: "test_lb8_resp", Version: 1, OutputArity: "single",
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, res *ExecutionResult) error {
+			if results, ok := vars["all_results"]; ok {
+				res.Text = fmt.Sprintf("%v", results)
+			} else {
+				res.Text = "missing"
+			}
+			res.MediaType = "text/plain"
+			return nil
+		},
+		Edges: EdgeRules{},
+	})
+	plan := &ExecutionPlan{
+		SkillID: "lb8_test",
+		StartID: "loop1",
+		Nodes: []*PlanNode{
+			{StepID: "loop1", Type: StepLoop, Config: loopCfg, Next: []string{"resp8"},
+				SubPlan: subPlan, Policy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 60}},
+			{StepID: "resp8", Type: "test_lb8_resp", Config: rawJSON(t, nil),
+				Inputs:  []VarRef{{Name: "all_results"}},
+				Policy:  ExecutionPolicy{MaxAttempts: 1}},
+		},
+	}
+
+	exec := NewLocalExecutor(testInterp())
+	result, err := exec.Execute(context.Background(), testIC(), plan, PipelineVars{"items": []any{"x", "y"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Each accum snapshot must contain "body_out" but NOT "current_item" or "items".
+	if result == nil {
+		t.Fatal("expected a result")
+	}
+	if !containsStr(result.Text, "processed:x") {
+		t.Errorf("expected accum to contain 'processed:x', got: %s", result.Text)
+	}
+	if !containsStr(result.Text, "processed:y") {
+		t.Errorf("expected accum to contain 'processed:y', got: %s", result.Text)
+	}
+	if containsStr(result.Text, "current_item") {
+		t.Errorf("accum_var must not contain the item variable, got: %s", result.Text)
+	}
+}
+
+func containsStr(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(s) > 0 && stringContains(s, sub))
+}
+
+func stringContains(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }

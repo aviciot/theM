@@ -312,31 +312,47 @@ func CompileExecutionPlan(skill *SkillSpec) *ExecutionPlan {
 	}
 }
 
-// resolveLoopOuterNext finds the first post-loop step: the step that follows the last body step
-// but is NOT itself a body step. This becomes the loop node's Next in the outer plan.
+// resolveLoopOuterNext returns the loop node's post-loop next steps.
+//
+// The frontend serializes the loop-done edge target into loopStep.Next directly,
+// so we return loopStep.Next when it is non-empty. If it is empty (legacy or
+// hand-crafted specs), we fall back to scanning all terminal body steps' outbound
+// non-body edges to find the post-loop target.
 func resolveLoopOuterNext(loopStep StepSpec, stepByID map[string]StepSpec, bodyStepIDs map[string]bool) []string {
+	if len(loopStep.Next) > 0 {
+		return loopStep.Next
+	}
 	var lc LoopConfig
 	if len(loopStep.Config) > 0 {
 		_ = json.Unmarshal(loopStep.Config, &lc)
 	}
-	if len(lc.BodySteps) == 0 {
-		return loopStep.Next
-	}
-	// Walk the last body step's Next to find the first non-body successor.
-	lastBodyID := lc.BodySteps[len(lc.BodySteps)-1]
-	if last, ok := stepByID[lastBodyID]; ok {
-		for _, nextID := range last.Next {
-			if !bodyStepIDs[nextID] {
-				return []string{nextID}
+	// Legacy fallback: scan terminal body steps for non-body successors.
+	seen := make(map[string]bool)
+	var result []string
+	for _, bID := range lc.BodySteps {
+		s, ok := stepByID[bID]
+		if !ok {
+			continue
+		}
+		for _, nextID := range s.Next {
+			if !bodyStepIDs[nextID] && !seen[nextID] {
+				seen[nextID] = true
+				result = append(result, nextID)
 			}
 		}
 	}
-	return nil
+	return result
 }
 
-// compileLoopBodyPlan builds an ExecutionPlan for the body steps declared in a loop node's config.
-// Body steps form a linear sub-plan; the last body step's Next is cleared (the loop executor
-// controls when iteration ends, not the DAG walker).
+// compileLoopBodyPlan builds an ExecutionPlan for the body steps of a loop node.
+//
+// Unlike the old linear approach, it mirrors CompileExecutionPlan: it builds
+// predecessor and nextSet maps for body steps only, calls classifyJoin to detect
+// Branch/Join patterns inside the body, and trims outbound edges that escape the
+// body sub-plan (edges whose target is not a body step).
+//
+// Terminal body nodes (nodes with no body successors) have their Next cleared so
+// the body executor never escapes the sub-plan.
 func compileLoopBodyPlan(loopStep StepSpec, stepByID map[string]StepSpec) *ExecutionPlan {
 	var lc LoopConfig
 	if len(loopStep.Config) > 0 {
@@ -346,8 +362,38 @@ func compileLoopBodyPlan(loopStep StepSpec, stepByID map[string]StepSpec) *Execu
 		return &ExecutionPlan{SkillID: loopStep.ID + ":body"}
 	}
 
+	// Build the set of body step IDs for boundary detection.
+	bodySet := make(map[string]bool, len(lc.BodySteps))
+	for _, bID := range lc.BodySteps {
+		bodySet[bID] = true
+	}
+
+	// Build per-body predecessor, nextSet, and stepTypes maps (mirrors CompileExecutionPlan).
+	stepTypes := make(map[string]StepType, len(lc.BodySteps))
+	preds := make(map[string][]string, len(lc.BodySteps))
+	nextSet := make(map[string]map[string]bool, len(lc.BodySteps))
+	for _, bID := range lc.BodySteps {
+		s, ok := stepByID[bID]
+		if !ok {
+			continue
+		}
+		stepTypes[bID] = s.Type
+		if _, ok2 := preds[bID]; !ok2 {
+			preds[bID] = nil
+		}
+		// Only track intra-body edges; edges escaping the body are trimmed below.
+		set := make(map[string]bool)
+		for _, n := range s.Next {
+			if bodySet[n] {
+				set[n] = true
+				preds[n] = append(preds[n], bID)
+			}
+		}
+		nextSet[bID] = set
+	}
+
 	bodyNodes := make([]*PlanNode, 0, len(lc.BodySteps))
-	for i, bID := range lc.BodySteps {
+	for _, bID := range lc.BodySteps {
 		s, ok := stepByID[bID]
 		if !ok {
 			continue
@@ -356,22 +402,34 @@ func compileLoopBodyPlan(loopStep StepSpec, stepByID map[string]StepSpec) *Execu
 		if nd, ok2 := LookupNode(s.Type); ok2 {
 			policy = resolvePolicy(nd, s.Config, s.PolicyOverride)
 		}
-		// The last body step must not jump out of the sub-plan; clear its Next.
-		next := s.Next
-		if i == len(lc.BodySteps)-1 {
-			next = nil
+
+		// Trim Next to body-only edges; terminal nodes (no body successors) get nil.
+		var intraNext []string
+		for _, n := range s.Next {
+			if bodySet[n] {
+				intraNext = append(intraNext, n)
+			}
 		}
-		bodyNodes = append(bodyNodes, &PlanNode{
+
+		node := &PlanNode{
 			StepID:   s.ID,
 			Type:     s.Type,
 			Config:   s.Config,
-			Next:     next,
+			Next:     intraNext,
 			Inputs:   s.Inputs,
 			Outputs:  s.Outputs,
 			Branches: s.Branches,
 			JoinMode: JoinNone,
 			Policy:   policy,
-		})
+		}
+
+		// Classify joins within the body sub-plan (handles Branch+Join inside loop body).
+		if predecessors := preds[bID]; len(predecessors) > 1 {
+			node.JoinOf = predecessors
+			node.JoinMode = classifyJoin(bID, predecessors, stepTypes, preds, nextSet)
+		}
+
+		bodyNodes = append(bodyNodes, node)
 	}
 
 	startID := ""

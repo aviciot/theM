@@ -1628,6 +1628,9 @@ heuristic, user override clamping, and backward compatibility.
 | `TestValidateLoopBodies_UnknownBodyStep` | PC-LOOP-1: body_steps references unknown step ID → error returned |
 | `TestValidateLoopBodies_HistoryBudgetExceeded` | PC-LOOP-2: 51 body steps × 100 iterations = 5100 > MaxLoopHistoryBudget → error returned |
 | `TestValidateLoopBodies_Valid` | PC-LOOP-3: valid loop (1 body step × 10 iterations) passes without error |
+| `TestCompileLoopBodyPlan_BranchJoinInsideBody` | PC-LOOP-4: branch→arm_t/arm_f→join body plan: branch has 2 Next, join gets JoinBranchMerge + JoinOf[2], join terminal has no Next |
+| `TestCompileLoopBodyPlan_TerminalExcludesPostLoop` | PC-LOOP-5: body step with Next pointing outside body: intra-body Next trimmed to [] (post-loop edge removed) |
+| `TestResolveLoopOuterNext_UsesLoopStepNext` | PC-LOOP-6: loopStep.Next=[post_loop] → resolveLoopOuterNext returns [post_loop] (no legacy scan needed) |
 
 **Trigger:** any change to `internal/agentgen/plan_compiler.go`, `internal/agentgen/spec.go`
 (`ExecutionPlan`, `PlanNode`, `JoinMode`, `ExecutionPolicy`, `LoopConfig` types), `internal/agentgen/nodes.go`
@@ -1679,6 +1682,9 @@ error detection via `NonRetryableError` interface, and idempotency guard.
 | `TestLocalExecutor_Loop_MissingItemsVar` | EP-LOOP-3: absent items_var → no-op, body never runs, no error |
 | `TestLocalExecutor_Loop_NonListItemsVar` | EP-LOOP-4: items_var holds a string → execution error returned |
 | `TestLocalExecutor_Loop_NilSubPlan` | EP-LOOP-5: nil SubPlan → no-op, no error |
+| `TestLocalExecutor_Loop_BranchInsideBody` | EP-LOOP-6: branch inside body — items=["true","false","true"]: trueCount=2, falseCount=1 (Parallel+Branch via DAG machinery) |
+| `TestLocalExecutor_Loop_IterationIsolation` | EP-LOOP-7: iter 0 writes "sentinel" to body_out; iter 1 starts fresh and must NOT see "sentinel" from iter 0 |
+| `TestLocalExecutor_Loop_ScopedAccumulation` | EP-LOOP-8: accum_var entries contain only declared "body_out" — not item_var ("current_item") or outer "items" |
 
 **Trigger:** any change to `internal/agentgen/local_executor.go`, `internal/agentgen/node_executor.go`,
 `internal/agentgen/plan_compiler.go`, `internal/agentgen/spec.go` (`NonRetryableError` interface,
@@ -1776,6 +1782,8 @@ propagation, HumanWait signal return, and result capture — all using the Tempo
 | `TestCTLoopDurable3_MaxIterationsCap` | CT-LOOP-DURABLE-3: max_iterations=3 caps 10-item list to 3 body activity invocations |
 | `TestCTLoopDurable4_AccumVarScopedToOutputs` | CT-LOOP-DURABLE-4: accum_var entries contain only declared body Outputs keys, not undeclared keys |
 | `TestCTLoopDurable5_BranchInsideBody` | CT-LOOP-DURABLE-5: branch node inside loop body routes to correct arm per item (2 true, 1 false) |
+| `TestCTLoopDurable6_IterationIsolation` | CT-LOOP-DURABLE-6: iter 0 writes "sentinel" to body_out; iter 1 starts with fresh bodyIterState and must NOT see iter 0's value |
+| `TestCTLoopDurable7_ScopedAccumVar` | CT-LOOP-DURABLE-7: accum_var contains "done:x"/"done:y" but NOT "should_not_appear" or "items" (scoped to declared Outputs only) |
 
 **Trigger:** any change to `internal/temporal/canvas_workflow.go`, `internal/temporal/canvas_activities.go`,
 `internal/agentgen/context.go` (ResolveMaxConcurrentTasks),
@@ -2536,12 +2544,12 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-67 | Stage 6 runtime contract enforcement (CONT-1..12) | 12 |
 | S1-68 | explicit canvas data bindings (BND-1..10) | 10 |
 | S1-69 | MCP call node + executor (MCP-1..10) | 10 |
-| S1-72 | ExecutionPlan compiler — EP-1..10 (plan_compiler_test.go) | 17 |
-| S1-73 | LocalExecutor — EP-L1..L15 + concurrency limit tests (local_executor_test.go) | 30 |
+| S1-72 | ExecutionPlan compiler — EP-1..10 + PC-LOOP-1..6 (plan_compiler_test.go) | 20 |
+| S1-73 | LocalExecutor — EP-L1..L15 + concurrency limit + EP-LOOP-1..8 (local_executor_test.go) | 33 |
 | S1-74 | DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run) | 3 |
 | S1-75 | Phase 4-A: ExecuteNodeForActivity, ActivityIC, ExecutionBackend (NA-01..16) | 16 |
-| S1-76 | Phase 4-B: CanvasAgentWorkflow, CanvasAgentActivities (CT-01..10 + CT-A..F + CT-CONC1) | 19 |
-| **S1 total** | | **856** |
+| S1-76 | Phase 4-B: CanvasAgentWorkflow, CanvasAgentActivities (CT-01..10 + CT-A..F + CT-CONC1 + CT-LOOP-DURABLE-1..7) | 21 |
+| **S1 total** | | **864** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2550,4 +2558,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **861** |
+| **`go test ./...` total** | | **869** |
