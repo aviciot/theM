@@ -913,6 +913,51 @@ export const themApi = {
       clearTimeout(timer);
     }
   },
+  // a2aStream: POSTs a message/stream JSON-RPC request to an A2A entry point and
+  // yields parsed SSE event bodies: { kind, parts?, status?, taskId? }
+  // Auth is handled by the Next.js proxy via the them_access_token session cookie.
+  a2aStream: async function* (slug: string, text: string, _bearerToken: string, signal?: AbortSignal): AsyncGenerator<Record<string, unknown>> {
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: `pg-${Date.now()}`,
+      method: 'message/stream',
+      params: {
+        message: { role: 'user', parts: [{ text }] },
+      },
+    });
+    const res = await fetch(`/api/them/a2a/${slug}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
+      body,
+      signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => `HTTP ${res.status}`);
+      throw new Error(errText);
+    }
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop() ?? '';
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith('data:')) continue;
+        try {
+          const frame = JSON.parse(line.slice(5).trim()) as { params?: { event?: Record<string, unknown> } };
+          const event = frame?.params?.event;
+          if (event) yield event;
+        } catch { /* skip malformed */ }
+      }
+    }
+  },
   applications: () => api.get<Application[]>('/admin/applications'),
   getApplication: (id: string) => api.get<Application>(`/admin/applications/${id}`),
   createApplication: async (body: unknown): Promise<Application> => {

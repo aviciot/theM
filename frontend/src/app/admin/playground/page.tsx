@@ -8,7 +8,7 @@ import { themApi, type TaskOut, type ArtifactOut, type ArtifactPart, type Contex
 // ── Connection target ──────────────────────────────────────────────────────
 type ConnTarget =
   | { kind: 'orchestrator'; name: string; label: string }
-  | { kind: 'entrypoint'; slug: string; epType: 'websocket' | 'sse' | 'voice'; appName: string; orchName: string };
+  | { kind: 'entrypoint'; slug: string; epType: 'websocket' | 'sse' | 'voice' | 'a2a'; appName: string; orchName: string };
 
 function targetLabel(t: ConnTarget): string {
   if (t.kind === 'orchestrator') return t.label;
@@ -1373,6 +1373,86 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
     if (!r.ok) { setBusy(false); busyRef.current = false; return; }
     const { token } = await r.json();
 
+    // ── A2A path: HTTP POST JSON-RPC with SSE streaming response ─────────────
+    if (target.kind === 'entrypoint' && target.epType === 'a2a') {
+      setMessages(prev => [...prev, { role: 'assistant', text: '', pending: true }]);
+      setStatus('Sending…');
+      assistantBuf.current = '';
+
+      try {
+        for await (const ev of themApi.a2aStream(target.slug, text, token)) {
+          const kind = ev.kind as string;
+          if (kind === 'run-started') {
+            const rid = ev.taskId as string | undefined;
+            const cid = ev.contextId as string | undefined;
+            if (rid) {
+              runId.current = rid;
+              setStatus(`Run ${rid.slice(0, 8)}…`);
+              openDashWs(rid);
+            }
+            if (cid) {
+              setContextId(cid);
+              const storageKey = `them:playground:ctx:${target.slug}`;
+              localStorage.setItem(storageKey, cid);
+            }
+          } else if (kind === 'message-delta') {
+            const parts = (ev.parts as Array<{ text?: string }>) ?? [];
+            for (const p of parts) {
+              if (p.text) {
+                assistantBuf.current += p.text;
+                setMessages(prev => {
+                  const copy = [...prev];
+                  const last = copy[copy.length - 1];
+                  if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, text: assistantBuf.current };
+                  return copy;
+                });
+              }
+            }
+          } else if (kind === 'task-status-update') {
+            const state = (ev.status as { state?: string } | undefined)?.state ?? '';
+            if (state === 'completed') {
+              setMessages(prev => {
+                const copy = [...prev];
+                const last = copy[copy.length - 1];
+                if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, pending: false };
+                return copy;
+              });
+              setStatus('Done');
+              setBusy(false); busyRef.current = false;
+              dashWs.current?.close();
+              break;
+            } else if (state === 'failed') {
+              const msg = (ev.status as { message?: string } | undefined)?.message ?? 'Run failed';
+              setMessages(prev => {
+                const copy = [...prev];
+                const last = copy[copy.length - 1];
+                if (last?.role === 'assistant' && last.pending) copy[copy.length - 1] = { ...last, text: `Error: ${msg}`, pending: false };
+                else copy.push({ role: 'assistant', text: `Error: ${msg}` });
+                return copy;
+              });
+              setStatus(`Error: ${msg}`);
+              setBusy(false); busyRef.current = false;
+              dashWs.current?.close();
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        const msg = (e as Error).message ?? 'A2A stream error';
+        setMessages(prev => {
+          const copy = [...prev];
+          const last = copy[copy.length - 1];
+          if (last?.role === 'assistant' && last.pending) copy[copy.length - 1] = { ...last, text: `Error: ${msg}`, pending: false };
+          else copy.push({ role: 'assistant', text: `Error: ${msg}` });
+          return copy;
+        });
+        setStatus(`Error: ${msg}`);
+        setBusy(false); busyRef.current = false;
+        dashWs.current?.close();
+      }
+      return;
+    }
+
     const ws = new WebSocket(targetWsUrl(target, token));
     chatWs.current = ws;
     assistantBuf.current = '';
@@ -1951,8 +2031,8 @@ function TargetSelector({ applications, value, onChange }: TargetSelectorProps) 
       const slug = v.slice(3);
       for (const app of applications) {
         const ep = app.entry_points.find(e => e.slug === slug);
-        if (ep && (ep.entry_point_type === 'websocket' || ep.entry_point_type === 'sse' || ep.entry_point_type === 'voice')) {
-          return { kind: 'entrypoint', slug, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice', appName: app.name, orchName: app.app_orchestrators?.[0]?.name ?? '' };
+        if (ep && (ep.entry_point_type === 'websocket' || ep.entry_point_type === 'sse' || ep.entry_point_type === 'voice' || ep.entry_point_type === 'a2a')) {
+          return { kind: 'entrypoint', slug, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: app.name, orchName: app.app_orchestrators?.[0]?.name ?? '' };
         }
       }
     }
@@ -1967,9 +2047,9 @@ function TargetSelector({ applications, value, onChange }: TargetSelectorProps) 
       onChange={e => { const t = decodeTarget(e.target.value); if (t) onChange(t); }}
       style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text)', fontSize: 13, cursor: 'pointer', maxWidth: 260 }}
     >
-      {applications.filter(a => a.enabled && a.entry_points.some(e => e.enabled && ['websocket', 'sse', 'voice'].includes(e.entry_point_type))).map(app => (
+      {applications.filter(a => a.enabled && a.entry_points.some(e => e.enabled && ['websocket', 'sse', 'voice', 'a2a'].includes(e.entry_point_type))).map(app => (
         <optgroup key={app.id} label={`App: ${app.name}`}>
-          {app.entry_points.filter(e => e.enabled && ['websocket', 'sse', 'voice'].includes(e.entry_point_type)).map(ep => (
+          {app.entry_points.filter(e => e.enabled && ['websocket', 'sse', 'voice', 'a2a'].includes(e.entry_point_type)).map(ep => (
             <option key={ep.id} value={`ep:${ep.slug}`}>
               {ep.slug} [{ep.entry_point_type}]
             </option>
@@ -2005,9 +2085,9 @@ function PlaygroundInner() {
       // Seed first tab from first enabled app entry point
       for (const a of apps) {
         if (!a.enabled) continue;
-        const ep = a.entry_points.find(e => e.enabled && ['websocket', 'sse', 'voice'].includes(e.entry_point_type));
+        const ep = a.entry_points.find(e => e.enabled && ['websocket', 'sse', 'voice', 'a2a'].includes(e.entry_point_type));
         if (ep) {
-          const t: ConnTarget = { kind: 'entrypoint', slug: ep.slug, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice', appName: a.name, orchName: a.app_orchestrators?.[0]?.name ?? '' };
+          const t: ConnTarget = { kind: 'entrypoint', slug: ep.slug, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: a.name, orchName: a.app_orchestrators?.[0]?.name ?? '' };
           setTabs([t]);
           setActiveTabId(targetId(t));
           break;
@@ -2110,7 +2190,9 @@ function PlaygroundInner() {
                       {targetLabel(t)}
                     </span>
                     {t.kind === 'entrypoint' && (
-                      <span style={{ fontSize: 9, padding: '0px 4px', borderRadius: 3, background: 'rgba(124,58,237,0.2)', color: '#a78bfa', fontWeight: 700, flexShrink: 0 }}>{t.epType === 'websocket' ? 'WS' : 'SSE'}</span>
+                      <span style={{ fontSize: 9, padding: '0px 4px', borderRadius: 3, background: 'rgba(124,58,237,0.2)', color: '#a78bfa', fontWeight: 700, flexShrink: 0 }}>
+                        {t.epType === 'websocket' ? 'WS' : t.epType === 'sse' ? 'SSE' : t.epType === 'a2a' ? 'A2A' : 'VOI'}
+                      </span>
                     )}
                     {tabs.length > 1 && (
                       <span

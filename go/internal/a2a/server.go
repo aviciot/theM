@@ -137,11 +137,12 @@ type streamEventParam struct {
 }
 
 type streamEventBody struct {
-	Kind   string           `json:"kind"`
-	TaskID string           `json:"taskId,omitempty"`
-	Role   string           `json:"role,omitempty"`
-	Parts  []rpcTextPart    `json:"parts,omitempty"`
-	Status *rpcStreamStatus `json:"status,omitempty"`
+	Kind      string           `json:"kind"`
+	TaskID    string           `json:"taskId,omitempty"`
+	ContextID string           `json:"contextId,omitempty"`
+	Role      string           `json:"role,omitempty"`
+	Parts     []rpcTextPart    `json:"parts,omitempty"`
+	Status    *rpcStreamStatus `json:"status,omitempty"`
 }
 
 type rpcStreamStatus struct {
@@ -538,6 +539,17 @@ func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req
 
 	s.logger.Info("a2a stream: workflow started",
 		"app_slug", appSlug, "run_id", h.RunID, "workflow_id", wfRun.GetID())
+
+	// Emit run-started so clients can capture run_id/context_id for dashboard subscription.
+	writeSSE(streamEvent{ //nolint:errcheck
+		JSONRPC: "2.0",
+		Method:  "stream/event",
+		Params: streamEventParam{Event: streamEventBody{
+			Kind:      "run-started",
+			TaskID:    h.RunID,
+			ContextID: h.ContextID,
+		}},
+	})
 
 	// Reap the workflow in the background to release Temporal resources.
 	// The terminal signal comes from the run-stream "done"/"error" event.

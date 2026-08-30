@@ -13,6 +13,7 @@ const GO_ONLY_PREFIXES = [
   'admin/transform-assist',
   'admin/mcp-servers',
   'admin/component-definitions',
+  'a2a/',
 ];
 // Sub-path patterns that must also go to Go regardless of prefix.
 const GO_ONLY_PATTERNS = [
@@ -32,7 +33,7 @@ function resolveBase(path: string): string {
 }
 
 // Go routes mounted at root (no /api/v1 prefix) — matched after resolveBase picks Go.
-const GO_ROOT_PATTERNS = [/^apps\/[^/]+\/voice\//];
+const GO_ROOT_PATTERNS = [/^apps\/[^/]+\/voice\//, /^a2a\//];
 
 async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
   const token = req.cookies.get('them_access_token')?.value;
