@@ -80,7 +80,7 @@ func TestTemporalExecutor_LiveDAG(t *testing.T) {
 		SkillID: "e2e-skill",
 		StartID: "step-1",
 		Nodes: []*agentgen.PlanNode{
-			{StepID: "step-1", Type: "response", Outputs: []string{"output"}},
+			{StepID: "step-1", Type: "response", Outputs: []agentgen.VarRef{{Name: "output"}}},
 		},
 	}
 	ic := &agentgen.InvocationContext{

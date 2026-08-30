@@ -19,7 +19,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aviciot/them/internal/agentgen"
@@ -156,12 +155,13 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 
 	ic, err := rt.parseInvocationContext(r)
 	if err != nil {
-		writeJSONRPCError(w, nil, -32600, "unauthorized: "+err.Error(), http.StatusUnauthorized)
+		rt.logger.Warn("agent-runtime: unauthorized request", "slug", slug, "err", err)
+		writeJSONRPCError(w, nil, -32600, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	// Invariant 2: cross-check URL slug vs authoritative agent_id from invocation context.
-	spec, err := rt.loadSpecByAgentID(r.Context(), ic.AgentID)
+	spec, err := rt.loadSpecByAgentID(r.Context(), ic.TenantID, ic.AgentID)
 	if err != nil || spec.Slug != slug {
 		writeJSONRPCError(w, nil, -32600, "forbidden", http.StatusForbidden)
 		return
@@ -220,7 +220,11 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 //
 //	Submitted → Working → ArtifactEvent → Completed  (success path)
 //	Submitted → Working → Failed                     (error path)
+//
+// InvocationID is stamped from execCtx.TaskID — the SDK assigns this once per logical
+// task and reuses it across retries, giving Temporal a stable workflow ID for re-attach.
 func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationContext, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	ic.InvocationID = string(execCtx.TaskID)
 	return func(yield func(a2a.Event, error) bool) {
 		// Emit Submitted only for new tasks (no prior StoredTask).
 		if execCtx.StoredTask == nil {
@@ -346,6 +350,8 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 // parseInvocationContext reads identity from X-Them-* headers.
 // Phase 1 uses plain headers (internal Docker network only).
 // Phase 3 upgrades to signed JWT (THE_M_INVOCATION_JWT_KEY).
+// InvocationID is left empty here; executeSkill stamps it from execCtx.TaskID
+// so retries of the same A2A task reuse the same Temporal workflow ID.
 func (rt *Runtime) parseInvocationContext(r *http.Request) (*agentgen.InvocationContext, error) {
 	tenantID := r.Header.Get("X-Them-Tenant-Id")
 	appID := r.Header.Get("X-Them-Application-Id")
@@ -359,7 +365,6 @@ func (rt *Runtime) parseInvocationContext(r *http.Request) (*agentgen.Invocation
 		ApplicationID: appID,
 		AgentID:       agentID,
 		BindingID:     bindingID,
-		InvocationID:  uuid.NewString(),
 	}, nil
 }
 
@@ -374,27 +379,36 @@ type cachedSpec struct {
 	expiresAt time.Time
 }
 
-func (c *specCache) get(agentID string) *agentgen.AgentSpec {
+// specCacheKey returns a cache key that includes the tenantID so specs from
+// different tenants with coincidental agent UUIDs cannot cross-contaminate.
+func specCacheKey(tenantID, agentID string) string {
+	return tenantID + ":" + agentID
+}
+
+func (c *specCache) get(key string) *agentgen.AgentSpec {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e, ok := c.entries[agentID]; ok && time.Now().Before(e.expiresAt) {
+	if e, ok := c.entries[key]; ok && time.Now().Before(e.expiresAt) {
 		return e.spec
 	}
 	return nil
 }
 
-func (c *specCache) set(agentID string, spec *agentgen.AgentSpec) {
+func (c *specCache) set(key string, spec *agentgen.AgentSpec) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries[agentID] = &cachedSpec{spec: spec, expiresAt: time.Now().Add(60 * time.Second)}
+	c.entries[key] = &cachedSpec{spec: spec, expiresAt: time.Now().Add(60 * time.Second)}
 }
 
-func (rt *Runtime) loadSpecByAgentID(ctx context.Context, agentID string) (*agentgen.AgentSpec, error) {
-	if spec := rt.specCache.get(agentID); spec != nil {
+func (rt *Runtime) loadSpecByAgentID(ctx context.Context, tenantID, agentID string) (*agentgen.AgentSpec, error) {
+	key := specCacheKey(tenantID, agentID)
+	if spec := rt.specCache.get(key); spec != nil {
 		return spec, nil
 	}
 	row := rt.pool.QueryRow(ctx,
-		`SELECT spec FROM them.agent_runtime_specs WHERE agent_id = $1::uuid`, agentID)
+		`SELECT s.spec FROM them.agent_runtime_specs s
+		 JOIN them.agents a ON a.id = s.agent_id
+		 WHERE s.agent_id = $1::uuid AND a.tenant_id = $2::uuid`, agentID, tenantID)
 	var specJSON []byte
 	if err := row.Scan(&specJSON); err != nil {
 		return nil, fmt.Errorf("load spec: %w", err)
@@ -403,7 +417,7 @@ func (rt *Runtime) loadSpecByAgentID(ctx context.Context, agentID string) (*agen
 	if err := json.Unmarshal(specJSON, &spec); err != nil {
 		return nil, fmt.Errorf("unmarshal spec: %w", err)
 	}
-	rt.specCache.set(agentID, &spec)
+	rt.specCache.set(key, &spec)
 	return &spec, nil
 }
 
@@ -530,10 +544,8 @@ func (rt *Runtime) loadSpecBySlug(ctx context.Context, slug string) (*agentgen.A
 	if err := json.Unmarshal(specJSON, &spec); err != nil {
 		return nil, fmt.Errorf("unmarshal spec: %w", err)
 	}
-	// Populate the agent-ID cache so subsequent handle() calls avoid a DB round-trip.
-	if spec.ID != "" {
-		rt.specCache.set(spec.ID, &spec)
-	}
+	// Note: we cannot pre-populate the agent-ID cache here because loadSpecBySlug
+	// has no tenantID, and cache keys are tenant-scoped (specCacheKey).
 	return &spec, nil
 }
 
@@ -758,6 +770,3 @@ func (a *anthropicProviderAdapter) Complete(ctx context.Context, systemPrompt, u
 
 var _ agentgen.LLMProvider = (*anthropicProviderAdapter)(nil)
 var _ agentgen.LLMFactory = (*multiLLMFactory)(nil)
-
-// Ensure uuid is referenced (used in tests, kept for backward compat with generated IDs).
-var _ = uuid.NewString

@@ -1,5 +1,5 @@
 # Phase 4-C Hardening Audit Report
-# Last updated: 2026-08-30
+# Last updated: 2026-08-30 (revised 2026-08-30 — items 1/2/3/4/5/6 re-verified and fixed)
 
 Evidence-based verification of all 7 production blockers and 5 advisory items
 identified during the Phase 4-C hardening review. Every finding is cited against
@@ -54,30 +54,42 @@ A2A error. There is no silent fallback to Local.
 
 ---
 
-### Blocker 3 — Stable InvocationID set at request boundary
+### Blocker 3 — Stable InvocationID from A2A task ID
 
 **Files:**
-- `go/internal/agentgen/context.go` line 38 — `InvocationID string` added to `InvocationContext`
-- `go/cmd/agent-runtime/main.go` line ~362 — `InvocationID: uuid.NewString()` in `parseInvocationContext`
-- `go/internal/temporal/temporal_executor.go` lines 65-69:
+- `go/internal/agentgen/context.go` — `InvocationID string` in `InvocationContext`
+- `go/cmd/agent-runtime/main.go` — `executeSkill` stamps `ic.InvocationID = string(execCtx.TaskID)`
+  before execution. The A2A SDK assigns `TaskID` once per logical task and reuses it across retries.
+  `parseInvocationContext` no longer assigns a UUID — InvocationID is empty until executeSkill runs.
+- `go/internal/temporal/temporal_executor.go` lines 65-69 — defensive uuid fallback retained.
+- `go/internal/temporal/temporal_executor.go` — `WorkflowIDReusePolicy` set to
+  `ALLOW_DUPLICATE_FAILED_ONLY`: if a prior run succeeded, `ExecuteWorkflow` returns
+  `AlreadyStarted` and we re-attach via `GetWorkflow` (idempotent); only failed/cancelled
+  runs are allowed to create a new execution.
 
-```go
-invID := ic.InvocationID
-if invID == "" {
-    invID = uuid.NewString() // defensive fallback only
-}
-workflowID := fmt.Sprintf("canvas:%s:%s", ic.AgentID, invID)
-```
-
-The UUID is assigned once per HTTP request. Retries of the same logical call
-reuse the same workflow ID and re-attach to the existing workflow via
-`GetWorkflow` on `AlreadyStarted` (line ~94-95).
+**Previous state (pre-fix):** `parseInvocationContext` called `uuid.NewString()` unconditionally —
+every HTTP call (including retries) got a fresh UUID and started a new Temporal workflow.
 
 **Status: FIXED ✅**
 
 ---
 
-### Blocker 4 — `MaxConcurrentTasks` policy propagated into workflow
+### Blocker 4 (original) — Tenant-scope spec cache and DB query in agent-runtime
+
+**Files:**
+- `go/cmd/agent-runtime/main.go` — `specCacheKey(tenantID, agentID)` used for all cache reads/writes.
+  Same `agentID` UUID under different tenants now produces distinct cache entries.
+- `go/cmd/agent-runtime/main.go` — `loadSpecByAgentID` query now JOINs `them.agents` and
+  filters on `a.tenant_id = $2::uuid` so a cross-tenant agent ID cannot return another tenant's spec.
+- Tests: `TestSpecCacheKey_TenantIsolation` and updated `TestSpecCache_IsolatedKeys`.
+
+**Previous state (pre-fix):** cache key was bare `agentID`; DB query had no `tenant_id` predicate.
+
+**Status: FIXED ✅**
+
+---
+
+### Blocker 5 (original numbering: 4) — `MaxConcurrentTasks` policy propagated into workflow
 
 **Files:**
 - `go/internal/temporal/temporal_executor.go` lines 72-75:
@@ -156,30 +168,28 @@ The error does not shadow the original cancellation error returned to the caller
 
 ---
 
-### Blocker 7 — Docker E2E integration tests
+### Blocker 7 (original numbering: 7) — Integration tests compile and cover fail-closed
 
 **File:** `go/internal/temporal/integration_test.go`
 
 Build tag `//go:build integration` — excluded from unit CI (`go test ./...`).
-Three tests:
+
+**Pre-fix bug:** `TestTemporalExecutor_LiveDAG` had `Outputs: []string{"output"}` which does not
+compile — `PlanNode.Outputs` is `[]VarRef`, not `[]string`. Fixed to `[]agentgen.VarRef{{Name: "output"}}`.
+
+Three tests (all compile clean under `go build -tags=integration`):
 
 | Test | What it covers |
 |---|---|
-| `TestTemporalConnect_Unavailable` | `Connect` to port 19999 (nothing listening) returns error — fail-closed verified without live Temporal |
-| `TestTemporalExecutor_EmptyPlan_Integration` | nil-plan guard fires before any RPC even with nil client — proves guard ordering is correct |
-| `TestTemporalExecutor_LiveDAG` | Full E2E: real Temporal + dag-worker; gated by `THEM_TEMPORAL_E2E=true` — skipped in unit CI |
+| `TestTemporalConnect_Unavailable` | `Connect` to port 19999 returns error — fail-closed without live Temporal |
+| `TestTemporalExecutor_EmptyPlan_Integration` | nil-plan guard fires before any RPC with nil client |
+| `TestTemporalExecutor_LiveDAG` | Full E2E; gated by `THEM_TEMPORAL_E2E=true` — skipped in unit CI |
 
 Run integration tests:
 ```bash
-# Inside docker container or with Temporal running:
 THEM_TEMPORAL_E2E=true TEMPORAL_HOST_PORT=localhost:7233 \
   go test -tags=integration -v ./internal/temporal/...
 ```
-
-**Note on live test coverage:** `TestTemporalExecutor_LiveDAG` uses a single
-`type: "response"` node. This requires `agentgen.ExecuteNodeForActivity` to
-handle the `response` step type. Verify that this type is implemented before
-running the live test in a new environment.
 
 **Status: FIXED ✅**
 
@@ -334,11 +344,14 @@ node to production. Current behavior silently drops the HITL session at 12 min.
 |---|---|---|
 | B1 | `TEMPORAL_ENABLED`/`TEMPORAL_HOST_PORT` in Compose | Fixed ✅ |
 | B2 | Fail-closed on Temporal unavailable | Fixed ✅ |
-| B3 | Stable InvocationID at request boundary | Fixed ✅ |
-| B4 | Policy `MaxConcurrentTasks` propagated | Fixed ✅ |
-| B5 | All DB queries tenant-scoped (4-ID) | Fixed ✅ |
-| B6 | Bounded synchronous cancel with slog.Error | Fixed ✅ |
-| B7 | Integration tests with build tag | Fixed ✅ |
+| B3 | Stable InvocationID from A2A TaskID + `ALLOW_DUPLICATE_FAILED_ONLY` reuse policy | Fixed ✅ |
+| B4 | Tenant-scope spec cache key + DB query in agent-runtime | Fixed ✅ |
+| B5 | Policy `MaxConcurrentTasks` propagated (dag-worker) | Fixed ✅ |
+| B6 | All dag-worker DB queries tenant-scoped (4-ID) | Fixed ✅ |
+| B7 | Bounded synchronous cancel with slog.Error | Fixed ✅ |
+| B8 | Integration test `Outputs []string` compile error fixed to `[]VarRef` | Fixed ✅ |
+| B9 | Raw `err.Error()` removed from unauthorized response; logged server-side | Fixed ✅ |
+| B10 | `docker-compose.dev.yml` — agent-runtime gets `TEMPORAL_ENABLED=true` with temporal profile | Fixed ✅ |
 | A | N+1 DB queries per node | Advisory — low urgency |
 | B | Temporal payload/history growth | Advisory — monitor |
 | C | DB pool < activity concurrency | Advisory — medium urgency |

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	enumspb "go.temporal.io/api/enums/v1"
 	temporalerr "go.temporal.io/sdk/temporal"
 
 	"github.com/aviciot/them/internal/agentgen"
@@ -74,11 +75,16 @@ func (e *TemporalExecutor) Execute(
 		maxConcurrent = ic.Policies.MaxConcurrentTasks
 	}
 
-	// WorkflowIDReusePolicy defaults to AllowDuplicate — no need to set it explicitly.
+	// AllowDuplicateFailedOnly: if a prior run with this workflow ID completed
+	// successfully, re-attach via GetWorkflow (idempotent); only allow a new
+	// run when the prior run failed or was cancelled. This is the correct
+	// policy for canvas agents where the stable InvocationID comes from the
+	// A2A TaskID — retries of a successful invocation must not re-execute.
 	opts := client.StartWorkflowOptions{
 		ID:                       workflowID,
 		TaskQueue:                CanvasDAGTaskQueue,
 		WorkflowExecutionTimeout: e.workflowTimeout,
+		WorkflowIDReusePolicy:    enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
 
 	input := CanvasAgentWorkflowInput{

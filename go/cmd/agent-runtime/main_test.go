@@ -438,16 +438,72 @@ func TestSpecCache_IsolatedKeys(t *testing.T) {
 
 	s1 := &agentgen.AgentSpec{Slug: "agent-one"}
 	s2 := &agentgen.AgentSpec{Slug: "agent-two"}
-	c.set("id-1", s1)
-	c.set("id-2", s2)
+	c.set(specCacheKey("tenant-1", "id-1"), s1)
+	c.set(specCacheKey("tenant-1", "id-2"), s2)
 
-	got1 := c.get("id-1")
-	got2 := c.get("id-2")
+	got1 := c.get(specCacheKey("tenant-1", "id-1"))
+	got2 := c.get(specCacheKey("tenant-1", "id-2"))
 	if got1 == nil || got1.Slug != "agent-one" {
 		t.Errorf("id-1: want agent-one, got %v", got1)
 	}
 	if got2 == nil || got2.Slug != "agent-two" {
 		t.Errorf("id-2: want agent-two, got %v", got2)
+	}
+}
+
+// TestSpecCacheKey_TenantIsolation verifies that the same agentID under different
+// tenants produces distinct cache keys, preventing cross-tenant spec poisoning.
+func TestSpecCacheKey_TenantIsolation(t *testing.T) {
+	const agentID = "00000000-0000-0000-0000-000000000001"
+	k1 := specCacheKey("tenant-a", agentID)
+	k2 := specCacheKey("tenant-b", agentID)
+	if k1 == k2 {
+		t.Errorf("expected distinct keys for different tenants, both got %q", k1)
+	}
+}
+
+// TestExecuteSkill_InvocationIDFromTaskID verifies that executeSkill stamps
+// ic.InvocationID from execCtx.TaskID before executing, so Temporal receives a
+// stable workflow ID derived from the A2A task ID rather than a new UUID per call.
+func TestExecuteSkill_InvocationIDFromTaskID(t *testing.T) {
+	rt := &Runtime{
+		interp: agentgen.NewInterpreter(
+			&http.Client{},
+			&stubLLMFactory{reply: "ok"},
+			"",
+		),
+	}
+
+	ic := &agentgen.InvocationContext{
+		TenantID:      "t1",
+		ApplicationID: "app1",
+		AgentID:       "agent1",
+		Spec: &agentgen.AgentSpec{
+			Skills: []agentgen.SkillSpec{
+				{
+					ID:   "sk1",
+					Name: "Skill One",
+					Steps: []agentgen.StepSpec{
+						{ID: "step-1", Type: agentgen.StepResponse, Config: []byte(`{}`)},
+					},
+				},
+			},
+		},
+	}
+
+	taskID := a2a.NewTaskID()
+	execCtx := &a2asrv.ExecutorContext{
+		TaskID:    taskID,
+		ContextID: a2a.NewContextID(),
+		Message:   a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi")),
+	}
+
+	// Drain the iterator to trigger executeSkill.
+	for range rt.executeSkill(context.Background(), ic, execCtx) {
+	}
+
+	if ic.InvocationID != string(taskID) {
+		t.Errorf("InvocationID: want %q (TaskID), got %q", string(taskID), ic.InvocationID)
 	}
 }
 

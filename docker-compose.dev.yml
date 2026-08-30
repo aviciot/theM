@@ -188,6 +188,14 @@ services:
   # ── Canvas DAG Worker ─────────────────────────────────────────────────────────
   # Polls "canvas-dag-nodes" Temporal task queue and executes canvas agent DAG
   # steps as Temporal activities. Starts only with --profile temporal.
+  # Override: when the temporal profile is active, agent-runtime must also have
+  # TEMPORAL_ENABLED=true so canvas agents with execution_backend=temporal are
+  # routed to the DAG worker instead of failing closed.
+  them-agent-runtime:
+    environment:
+      - TEMPORAL_ENABLED=true
+      - TEMPORAL_HOST_PORT=temporal-frontend:7233
+
   them-dag-worker:
     build:
       context: .
