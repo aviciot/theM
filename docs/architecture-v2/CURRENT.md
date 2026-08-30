@@ -7,11 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: pending (Phase 5-B hardening — see below)
+Commit: `0487797`
 
 Recent commits (newest first):
 ```
-(pending)  fix(hitl): Phase 5-B hardening — auth, state model, wait_token, loop body, reconnect
+0487797  fix(hitl): Phase 5-B hardening — auth, state model, wait_token, loop body, reconnect
 3b1052f  feat(hitl): Phase 5-B — HumanWait async submit, Redis handle store, signal endpoint
 6ea9e23  docs: update CURRENT.md HEAD to 7b0a09a
 7b0a09a  fix(loop): Phase 5-A gap fixes — correct SubPlan DAG semantics, iteration isolation, scoped accum
@@ -430,7 +430,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 4-C gap-2 | 5 additional fixes: tenant-scope ALL lookups, safe errors, conditional Temporal overlay, HumanWait 24h timeout, real full-path E2E, binding 4-ID enforcement | ✅ commits `8d815cc`..`b3bd71a` |
 | 4-D | Frontend execution_backend toggle (Local / ⚡ Temporal pill in top bar) | ✅ commit `7d39d44` |
 | 5-A | StepLoop — LocalExecutor + Temporal + frontend config panel + durable loop architecture + canvas ports + gap fixes (compileLoopBodyPlan JoinOf/JoinMode, ExecuteBody onTerminal, bodyIterState isolation, BFS boundary, accum scoping) + 8 new tests (EP-LOOP-6/7/8, CT-LOOP-DURABLE-6/7, PC-LOOP-4/5/6) | ✅ |
-| 5-B | HumanWait async — Phase 1 (commit `3b1052f`): HITLStore, PlanHasHumanWait, CanvasSubmitter/Signaler, Submit/SignalCanvasStep, executeSkill HITL async path, signalHITL; Phase 2 hardening (pending commit): HITLHandle 6-field state machine (tenant_id, wait_token, state), UpdateWaitToken/TrySignal CAS/MarkDone, deterministic wait_token (sha256, no uuid), hitl_status workflow query handler, per-step timeout via workflow.Select, loop-body HumanWait, HITLRequestHandler (GetTask/SubscribeToTask/CancelTask), RedisA2ATaskStore (SDK taskstore.Store), signal endpoint moved to JWT-auth admin router `/admin/canvas-tasks/{task_id}/signal`; 20 total tests (HS-1..11, RT-HITL-1..5, CSIG-1..4) | ✅ commit pending |
+| 5-B | HumanWait async — Phase 1 (commit `3b1052f`): HITLStore, PlanHasHumanWait, CanvasSubmitter/Signaler, Submit/SignalCanvasStep, executeSkill HITL async path, signalHITL; Phase 2 hardening (commit `0487797`): HITLHandle 6-field state machine (tenant_id, wait_token, state), UpdateWaitToken/TrySignal CAS/MarkDone, deterministic wait_token (sha256, no uuid), hitl_status workflow query handler, per-step timeout via workflow.Select, loop-body HumanWait, HITLRequestHandler (GetTask/SubscribeToTask/CancelTask), RedisA2ATaskStore (SDK taskstore.Store), signal endpoint moved to JWT-auth admin router `/admin/canvas-tasks/{task_id}/signal`; 20 total tests (HS-1..11, RT-HITL-1..5, CSIG-1..4) | ✅ commit `0487797` |
 | 5-C | A2A call node in DAG fan-out / Temporal activity wiring | ⬜ |
 
 ### DAG join semantics (hardening summary)
