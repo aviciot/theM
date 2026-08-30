@@ -32,6 +32,10 @@ type InvocationContext struct {
 	ApplicationID   string
 	AgentID         string
 	BindingID       string
+	// InvocationID is a UUID assigned once at the request boundary. It is used as
+	// the stable component of the Temporal workflow ID so retries of the same
+	// logical call re-attach to the existing workflow rather than creating a duplicate.
+	InvocationID    string
 	Spec            *AgentSpec
 	ConfigOverrides map[string]any
 	Policies        InvocationPolicies

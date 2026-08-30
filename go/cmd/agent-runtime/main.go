@@ -88,12 +88,11 @@ func main() {
 	if cfg.TemporalEnabled {
 		temporalCli, err := temporal.Connect(cfg.TemporalHostPort, logger)
 		if err != nil {
-			logger.Error("temporal connect failed — temporal execution_backend will be unavailable",
-				"err", err)
-		} else {
-			rt.temporalExecutor = temporal.NewTemporalExecutor(temporalCli, 0, 0)
-			logger.Info("temporal executor configured", "host_port", cfg.TemporalHostPort)
+			logger.Error("temporal connect failed", "err", err)
+			os.Exit(1)
 		}
+		rt.temporalExecutor = temporal.NewTemporalExecutor(temporalCli, 0, 0, logger)
+		logger.Info("temporal executor configured", "host_port", cfg.TemporalHostPort)
 	}
 
 	port := "9300"
@@ -312,8 +311,17 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 
 		// Choose execution backend: temporal for canvas agents that have opted in,
 		// local (goroutine fan-out) for all others.
+		// Fail closed: if the agent requests Temporal but the executor is nil (i.e.
+		// TEMPORAL_ENABLED=false on this pod), return a typed error rather than
+		// silently falling back to Local execution.
 		var backend agentgen.ExecutionBackend
-		if ic.Spec.ExecutionBackend == "temporal" && rt.temporalExecutor != nil {
+		if ic.Spec.ExecutionBackend == "temporal" {
+			if rt.temporalExecutor == nil {
+				errMsg := a2a.NewMessage(a2a.MessageRoleAgent,
+					a2a.NewTextPart("execution_backend=temporal but Temporal is not enabled on this runtime"))
+				yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, errMsg), nil) //nolint:errcheck
+				return
+			}
 			backend = rt.temporalExecutor
 		} else {
 			backend = agentgen.NewLocalExecutor(rt.interp)
@@ -351,6 +359,7 @@ func (rt *Runtime) parseInvocationContext(r *http.Request) (*agentgen.Invocation
 		ApplicationID: appID,
 		AgentID:       agentID,
 		BindingID:     bindingID,
+		InvocationID:  uuid.NewString(),
 	}, nil
 }
 
