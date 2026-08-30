@@ -168,7 +168,7 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	ic.Spec = spec
 
-	binding, agentParamsJSON, err := rt.loadBinding(r.Context(), ic.ApplicationID, ic.AgentID, ic.BindingID)
+	binding, agentParamsJSON, err := rt.loadBinding(r.Context(), ic.TenantID, ic.ApplicationID, ic.AgentID, ic.BindingID)
 	if err != nil {
 		writeJSONRPCError(w, nil, -32600, "binding not found", http.StatusNotFound)
 		return
@@ -185,14 +185,14 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 
 	// Load per-app provider keys so the interpreter can prefer them over the platform env key.
 	// Errors are non-fatal — the platform key fallback still works.
-	ic.AppAPIKey = rt.loadAppAPIKey(r.Context(), ic.ApplicationID)
+	ic.AppAPIKey = rt.loadAppAPIKey(r.Context(), ic.TenantID, ic.ApplicationID)
 
 	// Resolve agent params from the binding (decrypt secrets, apply defaults).
 	// ic.AgentParams is never nil — steps can safely read from it without nil checks.
 	ic.AgentParams = rt.resolveAgentParams(agentParamsJSON, spec.RequiredParams)
 
 	// Load app-level global params for HTTP app_param_ref injection.
-	ic.AppGlobalParams = rt.loadAppGlobalParams(r.Context(), ic.ApplicationID)
+	ic.AppGlobalParams = rt.loadAppGlobalParams(r.Context(), ic.TenantID, ic.ApplicationID)
 
 	// Extract per-node LLM overrides from config_overrides["llm_nodes"].
 	ic.NodeLLMOverrides = extractNodeLLMOverrides(binding.ConfigOverrides)
@@ -332,7 +332,14 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 		}
 		execResult, err := backend.Execute(ctx, ic, plan, initial)
 		if err != nil {
-			errMsg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(err.Error()))
+			rt.logger.Error("agent-runtime: execution failed",
+				"tenant_id", ic.TenantID,
+				"application_id", ic.ApplicationID,
+				"agent_id", ic.AgentID,
+				"invocation_id", ic.InvocationID,
+				"err", err,
+			)
+			errMsg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("execution failed"))
 			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, errMsg), nil) //nolint:errcheck
 			return
 		}
@@ -424,10 +431,11 @@ func (rt *Runtime) loadSpecByAgentID(ctx context.Context, tenantID, agentID stri
 // loadAppAPIKey fetches and decrypts the provider_keys for the given application.
 // Returns a map of provider→plaintext key (e.g. "anthropic"→"sk-ant-...").
 // Returns an empty map on any error — callers fall back to the platform key.
-// The decrypted keys are never logged.
-func (rt *Runtime) loadAppAPIKey(ctx context.Context, appID string) map[string]string {
+// The decrypted keys are never logged. The tenant_id predicate prevents cross-tenant key reads.
+func (rt *Runtime) loadAppAPIKey(ctx context.Context, tenantID, appID string) map[string]string {
 	row := rt.pool.QueryRow(ctx,
-		`SELECT COALESCE(provider_keys, '{}') FROM them.applications WHERE id = $1::uuid`, appID)
+		`SELECT COALESCE(provider_keys, '{}') FROM them.applications WHERE id = $1::uuid AND tenant_id = $2::uuid`,
+		appID, tenantID)
 	var raw []byte
 	if err := row.Scan(&raw); err != nil {
 		return map[string]string{}
@@ -482,10 +490,11 @@ func (rt *Runtime) loadAppAPIKey(ctx context.Context, appID string) map[string]s
 
 // loadAppGlobalParams fetches and decrypts app_params for the given application.
 // Returns a name→plaintext map. Non-fatal: returns an empty map on any error.
-// The decrypted values are never logged.
-func (rt *Runtime) loadAppGlobalParams(ctx context.Context, appID string) map[string]string {
+// The decrypted values are never logged. The tenant_id predicate prevents cross-tenant reads.
+func (rt *Runtime) loadAppGlobalParams(ctx context.Context, tenantID, appID string) map[string]string {
 	row := rt.pool.QueryRow(ctx,
-		`SELECT COALESCE(app_params, '{}') FROM them.applications WHERE id = $1::uuid`, appID)
+		`SELECT COALESCE(app_params, '{}') FROM them.applications WHERE id = $1::uuid AND tenant_id = $2::uuid`,
+		appID, tenantID)
 	var raw []byte
 	if err := row.Scan(&raw); err != nil {
 		return map[string]string{}
@@ -578,24 +587,30 @@ func extractNodeLLMOverrides(overrides map[string]any) map[string]agentgen.NodeL
 	return out
 }
 
-func (rt *Runtime) loadBinding(ctx context.Context, appID, agentID, bindingID string) (*agentgen.AppAgentBinding, []byte, error) {
+func (rt *Runtime) loadBinding(ctx context.Context, tenantID, appID, agentID, bindingID string) (*agentgen.AppAgentBinding, []byte, error) {
 	var (
 		query string
 		args  []any
 	)
+	// Both query paths JOIN applications to assert tenant ownership.
+	// This prevents a caller from accessing a binding that belongs to another tenant
+	// by supplying a valid binding/application UUID they do not own.
 	if bindingID != "" {
-		query = `SELECT id, application_id, agent_id, definition_id,
-		          credential_bindings, config_overrides, policies,
-		          COALESCE(agent_params, '{}')
-		          FROM them.app_agent_bindings WHERE id = $1::uuid`
-		args = []any{bindingID}
+		query = `SELECT b.id, b.application_id, b.agent_id, b.definition_id,
+		          b.credential_bindings, b.config_overrides, b.policies,
+		          COALESCE(b.agent_params, '{}')
+		          FROM them.app_agent_bindings b
+		          JOIN them.applications a ON a.id = b.application_id
+		          WHERE b.id = $1::uuid AND a.tenant_id = $2::uuid`
+		args = []any{bindingID, tenantID}
 	} else {
-		query = `SELECT id, application_id, agent_id, definition_id,
-		          credential_bindings, config_overrides, policies,
-		          COALESCE(agent_params, '{}')
-		          FROM them.app_agent_bindings
-		          WHERE application_id = $1::uuid AND agent_id = $2::uuid`
-		args = []any{appID, agentID}
+		query = `SELECT b.id, b.application_id, b.agent_id, b.definition_id,
+		          b.credential_bindings, b.config_overrides, b.policies,
+		          COALESCE(b.agent_params, '{}')
+		          FROM them.app_agent_bindings b
+		          JOIN them.applications a ON a.id = b.application_id
+		          WHERE b.application_id = $1::uuid AND b.agent_id = $2::uuid AND a.tenant_id = $3::uuid`
+		args = []any{appID, agentID, tenantID}
 	}
 
 	row := rt.pool.QueryRow(ctx, query, args...)

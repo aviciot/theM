@@ -14,19 +14,27 @@ import (
 	"go.temporal.io/sdk/client"
 )
 
+// humanWaitWorkflowTimeout is the WorkflowExecutionTimeout applied when the
+// plan contains at least one human_wait node. Long enough for a human to respond
+// in a typical working session. Override via NewTemporalExecutorWithHumanWait.
+const humanWaitWorkflowTimeout = 24 * time.Hour
+
 // TemporalExecutor implements agentgen.ExecutionBackend by submitting a
 // CanvasAgentWorkflow to Temporal and blocking until it completes.
 // Context cancellation sends a bounded synchronous CancelWorkflow to Temporal
 // and logs any error via the embedded logger.
 type TemporalExecutor struct {
-	client             client.Client
-	workflowTimeout    time.Duration
-	maxConcurrentTasks int
-	logger             *slog.Logger
+	client              client.Client
+	workflowTimeout     time.Duration
+	humanWaitTimeout    time.Duration // timeout override when plan has human_wait nodes
+	maxConcurrentTasks  int
+	logger              *slog.Logger
 }
 
 // NewTemporalExecutor creates a TemporalExecutor.
 // workflowTimeout is applied as WorkflowExecutionTimeout (default 12 min if zero).
+// Plans containing human_wait nodes automatically use humanWaitWorkflowTimeout (24h)
+// instead of workflowTimeout.
 // maxConcurrentTasks is the struct-level default; ic.Policies.MaxConcurrentTasks
 // takes precedence at invocation time (0 → DefaultMaxConcurrentTasks).
 // logger must not be nil; pass slog.Default() if no dedicated logger is available.
@@ -40,9 +48,20 @@ func NewTemporalExecutor(c client.Client, workflowTimeout time.Duration, maxConc
 	return &TemporalExecutor{
 		client:             c,
 		workflowTimeout:    workflowTimeout,
+		humanWaitTimeout:   humanWaitWorkflowTimeout,
 		maxConcurrentTasks: maxConcurrentTasks,
 		logger:             logger,
 	}
+}
+
+// planHasHumanWait returns true when at least one node in the plan is a human_wait step.
+func planHasHumanWait(plan *agentgen.ExecutionPlan) bool {
+	for _, n := range plan.Nodes {
+		if n.Type == agentgen.StepHumanWait {
+			return true
+		}
+	}
+	return false
 }
 
 // Execute submits a CanvasAgentWorkflow and blocks until it completes.
@@ -51,6 +70,10 @@ func NewTemporalExecutor(c client.Client, workflowTimeout time.Duration, maxConc
 // InvocationID is empty (defensive only — the request boundary always sets it).
 // When ctx is cancelled the workflow receives a synchronous bounded CancelWorkflow;
 // errors from that call are logged but do not shadow the original cancellation error.
+//
+// Timeout selection:
+//   - Normal workflows: workflowTimeout (default 12 min)
+//   - Plans with any human_wait node: humanWaitTimeout (default 24h)
 func (e *TemporalExecutor) Execute(
 	ctx context.Context,
 	ic *agentgen.InvocationContext,
@@ -75,6 +98,13 @@ func (e *TemporalExecutor) Execute(
 		maxConcurrent = ic.Policies.MaxConcurrentTasks
 	}
 
+	// Choose timeout: long-running for plans with HITL, bounded for all others.
+	wfTimeout := e.workflowTimeout
+	humanWait := planHasHumanWait(plan)
+	if humanWait {
+		wfTimeout = e.humanWaitTimeout
+	}
+
 	// AllowDuplicateFailedOnly: if a prior run with this workflow ID completed
 	// successfully, re-attach via GetWorkflow (idempotent); only allow a new
 	// run when the prior run failed or was cancelled. This is the correct
@@ -83,7 +113,7 @@ func (e *TemporalExecutor) Execute(
 	opts := client.StartWorkflowOptions{
 		ID:                       workflowID,
 		TaskQueue:                CanvasDAGTaskQueue,
-		WorkflowExecutionTimeout: e.workflowTimeout,
+		WorkflowExecutionTimeout: wfTimeout,
 		WorkflowIDReusePolicy:    enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
 
@@ -92,6 +122,7 @@ func (e *TemporalExecutor) Execute(
 		Initial:            initial,
 		IC:                 agentgen.ActivityICFromInvocationContext(ic),
 		MaxConcurrentTasks: maxConcurrent,
+		HumanWaitTimeout:   int64(wfTimeout),
 	}
 
 	run, err := e.client.ExecuteWorkflow(ctx, opts, CanvasAgentWorkflow, input)

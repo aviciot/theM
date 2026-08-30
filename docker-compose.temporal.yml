@@ -1,0 +1,25 @@
+# docker-compose.temporal.yml
+#
+# Temporal-profile override layer for the-M.
+# Load this file ONLY when starting the stack with --profile temporal so that
+# them-agent-runtime gets TEMPORAL_ENABLED=true.  Without this file,
+# them-agent-runtime defaults to TEMPORAL_ENABLED=false (agents-only mode).
+#
+# ── Startup commands ──────────────────────────────────────────────────────────
+#
+#   Agents-only (no Temporal — default):
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#       --profile agents up -d
+#
+#   With Temporal (canvas agents backed by DAG worker):
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#       -f docker-compose.temporal.yml \
+#       --profile temporal --profile agents up -d
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  them-agent-runtime:
+    environment:
+      - TEMPORAL_ENABLED=true
+      - TEMPORAL_HOST_PORT=temporal-frontend:7233

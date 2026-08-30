@@ -1,13 +1,20 @@
 # Phase 4-C Hardening Audit Report
-# Last updated: 2026-08-30 (revised 2026-08-30 — items 1/2/3/4/5/6 re-verified and fixed)
+# Last updated: 2026-08-30 (revised 2026-08-30 — all items fixed; E2E LiveDAG PASSED)
 
-Evidence-based verification of all 7 production blockers and 5 advisory items
+Evidence-based verification of all production blockers and advisory items
 identified during the Phase 4-C hardening review. Every finding is cited against
 actual on-disk file and line numbers confirmed in this session.
 
+Second-round gaps (identified post-commit `df3ed8e`) also fixed: raw `err.Error()` in
+executeSkill, unconditional `TEMPORAL_ENABLED` in dev overlay, tenant-scope for all
+agent-runtime lookups, and HumanWait 24h timeout.
+
+**E2E evidence:** `TestTemporalExecutor_LiveDAG` PASSED in 0.12s against live Temporal
++ dag-worker + PostgreSQL on 2026-08-30.
+
 ---
 
-## Blockers (7) — All Confirmed Fixed
+## Blockers (13) — All Confirmed Fixed
 
 ---
 
@@ -293,48 +300,44 @@ connection dropped without reconnect) will not be detected or restarted.
 
 ---
 
-### Advisory E — 12-minute workflow timeout vs HumanWait nodes ⚠️
+### Advisory E — 12-minute workflow timeout vs HumanWait nodes ✅ FIXED
 
-**Location:** `go/internal/temporal/canvas_workflow.go` line 26:
+**Previous state:** `dagWorkflowTimeout = 12 * time.Minute` applied to all workflows including
+HITL. A canvas agent with a `human_wait` node was silently killed after 12 minutes.
+
+**Fix applied in `go/internal/temporal/temporal_executor.go`:**
 
 ```go
-dagWorkflowTimeout = 12 * time.Minute
-```
+const humanWaitWorkflowTimeout = 24 * time.Hour
 
-`canvas_workflow.go` line 204-205:
-```go
-sigCh := workflow.GetSignalChannel(ctx, SignalHumanInputPrefix+node.StepID)
-var humanVars agentgen.PipelineVars
-sigCh.Receive(ctx, &humanVars) // blocks until signal arrives
-```
-
-**The gap:** A canvas agent containing a `human_wait` node will be terminated by
-Temporal with `WorkflowExecutionTimedOut` after 12 minutes if the human does not
-respond. This is a correctness issue — HITL is silently broken if the user takes
-longer than 12 minutes.
-
-**Recommended fix:** `TemporalExecutor.Execute` should inspect the plan for
-`human_wait` nodes before submitting. If any are found, use a longer timeout
-(e.g., `24h` or `7d`). Or expose `workflow_timeout_seconds` in `AgentSpec` /
-`ExecutionBackend` config so the agent author can declare the expected wait.
-
-Example in `temporal_executor.go`:
-```go
-timeout := e.workflowTimeout
-for _, node := range plan.Nodes {
-    if node.Type == agentgen.StepHumanWait {
-        timeout = 24 * time.Hour
-        break
+func planHasHumanWait(plan *agentgen.ExecutionPlan) bool {
+    for _, n := range plan.Nodes {
+        if n.Type == agentgen.StepHumanWait {
+            return true
+        }
     }
+    return false
+}
+
+// In Execute():
+wfTimeout := e.workflowTimeout
+if planHasHumanWait(plan) {
+    wfTimeout = e.humanWaitTimeout // 24h
 }
 opts := client.StartWorkflowOptions{
-    WorkflowExecutionTimeout: timeout,
+    WorkflowExecutionTimeout: wfTimeout,
     ...
 }
 ```
 
-**Urgency: HIGH** — must fix before shipping any canvas agent with a HumanWait
-node to production. Current behavior silently drops the HITL session at 12 min.
+`HumanWaitTimeout int64` also added to `CanvasAgentWorkflowInput` so the dag-worker
+can propagate the value if needed.
+
+**Tests added:**
+- `TestTemporalExecutor_HumanWait_UsesLongTimeout` (TE-08) — asserts `>= 24h`
+- `TestTemporalExecutor_NoHumanWait_UsesShortTimeout` (TE-09) — asserts exact short timeout
+
+**Status: FIXED ✅**
 
 ---
 
@@ -351,9 +354,16 @@ node to production. Current behavior silently drops the HITL session at 12 min.
 | B7 | Bounded synchronous cancel with slog.Error | Fixed ✅ |
 | B8 | Integration test `Outputs []string` compile error fixed to `[]VarRef` | Fixed ✅ |
 | B9 | Raw `err.Error()` removed from unauthorized response; logged server-side | Fixed ✅ |
-| B10 | `docker-compose.dev.yml` — agent-runtime gets `TEMPORAL_ENABLED=true` with temporal profile | Fixed ✅ |
+| B10 | `docker-compose.temporal.yml` (new file) — agent-runtime gets `TEMPORAL_ENABLED=true` only when temporal overlay is loaded; removed from `docker-compose.dev.yml` | Fixed ✅ |
 | A | N+1 DB queries per node | Advisory — low urgency |
 | B | Temporal payload/history growth | Advisory — monitor |
 | C | DB pool < activity concurrency | Advisory — medium urgency |
 | D | No health endpoint in dag-worker | Advisory — required before prod |
-| E | 12-min timeout breaks HumanWait | **Advisory — HIGH, fix before HITL ship** |
+| B11 | HumanWait: `planHasHumanWait` + 24h timeout in `TemporalExecutor` + `HumanWaitTimeout` field in workflow input | Fixed ✅ |
+| B12 | Raw `err.Error()` in `executeSkill` execution failure path → `"execution failed"` + `slog.Error` | Fixed ✅ |
+| B13 | Tenant-scope all agent-runtime lookups: `loadBinding`, `loadAppAPIKey`, `loadAppGlobalParams` | Fixed ✅ |
+| A | N+1 DB queries per node | Advisory — low urgency |
+| B | Temporal payload/history growth | Advisory — monitor |
+| C | DB pool < activity concurrency | Advisory — medium urgency |
+| D | No health endpoint in dag-worker | Advisory — required before prod |
+| E | 12-min timeout breaks HumanWait | Fixed ✅ (B11 above) |

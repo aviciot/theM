@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	go_client "go.temporal.io/sdk/client"
 	temporalmocks "go.temporal.io/sdk/mocks"
 
 	"github.com/aviciot/them/internal/agentgen"
@@ -170,7 +171,87 @@ func TestTemporalExecutor_StableWorkflowID(t *testing.T) {
 	_ = capturedOpts // actual assertion is that the workflow ran without error; ID is in test name
 }
 
-// ── TE-07: policy MaxConcurrentTasks overrides struct default ────────────────
+// ── TE-07: HumanWait timeout override ────────────────────────────────────────
+
+// TestTemporalExecutor_HumanWait_UsesLongTimeout verifies that a plan containing
+// a human_wait node causes Execute to use humanWaitWorkflowTimeout (24h) rather
+// than the short workflowTimeout, so HITL sessions are not killed at 12 minutes.
+func TestTemporalExecutor_HumanWait_UsesLongTimeout(t *testing.T) {
+	mockClient := temporalmocks.NewClient(t)
+	mockRun := temporalmocks.NewWorkflowRun(t)
+
+	var capturedOpts interface{}
+	mockClient.On("ExecuteWorkflow",
+		mock.Anything,
+		mock.MatchedBy(func(opts interface{}) bool {
+			capturedOpts = opts
+			return true
+		}),
+		mock.Anything, mock.Anything,
+	).Return(mockRun, nil).Once()
+
+	mockRun.On("Get", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			out := args.Get(1).(*temporal.CanvasAgentWorkflowOutput)
+			out.ResultText = "ok"
+		}).
+		Return(nil).Once()
+
+	// Plan with a human_wait node.
+	plan := &agentgen.ExecutionPlan{
+		SkillID: "skill-1",
+		StartID: "step-1",
+		Nodes: []*agentgen.PlanNode{
+			{StepID: "step-1", Type: agentgen.StepHumanWait},
+		},
+	}
+
+	exec := temporal.NewTemporalExecutor(mockClient, 10*time.Second, 0, testLogger())
+	_, err := exec.Execute(context.Background(), makeTestExecutorIC(), plan, agentgen.PipelineVars{})
+	require.NoError(t, err)
+
+	// The captured opts must use the long HITL timeout, not 10s.
+	opts, ok := capturedOpts.(go_client.StartWorkflowOptions)
+	require.True(t, ok, "opts must be StartWorkflowOptions")
+	assert.GreaterOrEqual(t, opts.WorkflowExecutionTimeout, 24*time.Hour,
+		"human_wait plan must use at least 24h timeout, got %v", opts.WorkflowExecutionTimeout)
+}
+
+// TestTemporalExecutor_NoHumanWait_UsesShortTimeout verifies that a plan without
+// human_wait nodes uses the configured short timeout.
+func TestTemporalExecutor_NoHumanWait_UsesShortTimeout(t *testing.T) {
+	mockClient := temporalmocks.NewClient(t)
+	mockRun := temporalmocks.NewWorkflowRun(t)
+
+	var capturedOpts interface{}
+	mockClient.On("ExecuteWorkflow",
+		mock.Anything,
+		mock.MatchedBy(func(opts interface{}) bool {
+			capturedOpts = opts
+			return true
+		}),
+		mock.Anything, mock.Anything,
+	).Return(mockRun, nil).Once()
+
+	mockRun.On("Get", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			out := args.Get(1).(*temporal.CanvasAgentWorkflowOutput)
+			out.ResultText = "ok"
+		}).
+		Return(nil).Once()
+
+	const shortTimeout = 30 * time.Second
+	exec := temporal.NewTemporalExecutor(mockClient, shortTimeout, 0, testLogger())
+	_, err := exec.Execute(context.Background(), makeTestExecutorIC(), makeOnePlanNode(), agentgen.PipelineVars{})
+	require.NoError(t, err)
+
+	opts, ok := capturedOpts.(go_client.StartWorkflowOptions)
+	require.True(t, ok, "opts must be StartWorkflowOptions")
+	assert.Equal(t, shortTimeout, opts.WorkflowExecutionTimeout,
+		"non-HITL plan must use the configured short timeout")
+}
+
+// ── TE-08: policy MaxConcurrentTasks overrides struct default ────────────────
 
 // TestTemporalExecutor_PolicyMaxConcurrentTasks verifies that ic.Policies.MaxConcurrentTasks
 // is forwarded into CanvasAgentWorkflowInput when non-zero, overriding the struct-level default.

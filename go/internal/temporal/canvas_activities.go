@@ -15,10 +15,11 @@ import (
 // CanvasAgentWorkflowInput is the input to CanvasAgentWorkflow. It must be
 // safe to store in Temporal history: no secrets, no credentials.
 type CanvasAgentWorkflowInput struct {
-	Plan               agentgen.ExecutionPlan `json:"plan"`                 // compiled DAG — no secrets
-	Initial            agentgen.PipelineVars  `json:"initial"`              // seed vars: {"input": userText}
-	IC                 agentgen.ActivityIC    `json:"ic"`                   // credential-safe 4-ID subset
-	MaxConcurrentTasks int                    `json:"max_concurrent_tasks"` // 0 → DefaultMaxConcurrentTasks (10)
+	Plan               agentgen.ExecutionPlan `json:"plan"`                  // compiled DAG — no secrets
+	Initial            agentgen.PipelineVars  `json:"initial"`               // seed vars: {"input": userText}
+	IC                 agentgen.ActivityIC    `json:"ic"`                    // credential-safe 4-ID subset
+	MaxConcurrentTasks int                    `json:"max_concurrent_tasks"`  // 0 → DefaultMaxConcurrentTasks (10)
+	HumanWaitTimeout   int64                  `json:"human_wait_timeout_ns"` // nanoseconds; 0 means no human_wait nodes
 }
 
 // CanvasAgentWorkflowOutput is the result returned by CanvasAgentWorkflow.

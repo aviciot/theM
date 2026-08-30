@@ -1782,6 +1782,8 @@ submitting a `CanvasAgentWorkflow` to Temporal and blocking until completion. Al
 | `TestTemporalExecutor_DefaultTimeout` (TE-05) | `NewTemporalExecutor` with zero timeout returns non-nil executor (default timeout applied) |
 | `TestTemporalExecutor_StableWorkflowID` (TE-06) | Workflow ID incorporates `ic.InvocationID`; retries re-attach to existing workflow |
 | `TestTemporalExecutor_PolicyMaxConcurrentTasks` (TE-07) | `ic.Policies.MaxConcurrentTasks` forwarded to `CanvasAgentWorkflowInput`, overriding struct default |
+| `TestTemporalExecutor_HumanWait_UsesLongTimeout` (TE-08) | Plan with `human_wait` node → `StartWorkflowOptions.WorkflowExecutionTimeout >= 24h`; short workflowTimeout not used |
+| `TestTemporalExecutor_NoHumanWait_UsesShortTimeout` (TE-09) | Plan without `human_wait` → configured short timeout (30s) used exactly; HITL override not applied |
 
 **Trigger:** any change to `internal/temporal/temporal_executor.go` or `cmd/dag-worker/main.go`
 
@@ -1915,8 +1917,11 @@ tenant cache key isolation. No Postgres or Redis required.
 | `TestExecuteSkill_SkillSelectionByID_NotFound` | Unknown `skill_id` in metadata → Failed event (not panic) |
 | `TestExecuteSkill_PolicyAllowedSkillIDs_Denied` | `Policies.AllowedSkillIDs` excludes a skill → Failed event |
 | `TestExecuteSkill_PolicyAllowedSkillIDs_Permitted` | Skill in `AllowedSkillIDs` → Completed event |
+| `TestLoadBinding_SQLTenantScope` | Both query paths in `loadBinding` contain `a.tenant_id` predicate (via JOIN on `applications`) |
+| `TestLoadAppAPIKey_SQLTenantScope` | `loadAppAPIKey` query contains `tenant_id = $2::uuid` predicate |
+| `TestLoadAppGlobalParams_SQLTenantScope` | `loadAppGlobalParams` query contains `tenant_id = $2::uuid` predicate |
 
-**Trigger:** any change to `cmd/agent-runtime/main.go` (specCache, specCacheKey, buildSDKAgentCard, executeSkill, handle, agentCard, loadBinding, loadSpecBySlug)
+**Trigger:** any change to `cmd/agent-runtime/main.go` (specCache, specCacheKey, buildSDKAgentCard, executeSkill, handle, agentCard, loadBinding, loadSpecBySlug, loadAppAPIKey, loadAppGlobalParams)
 
 ---
 
