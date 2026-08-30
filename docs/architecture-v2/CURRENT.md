@@ -7,7 +7,7 @@
 ## HEAD
 
 Branch: `main`
-Commit: `0b68dcb`
+Commit: `7d39d44`
 
 Recent commits (newest first):
 ```
@@ -418,8 +418,8 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | Pre-4-C parity | Per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults; 5 new tests (EP-L9..EP-L13) | ✅ |
 | Pre-4-C final | MCP mutating hard-clamp; removed string-match from `isNonRetryable`; fresh interp clone per retry; 3 new tests (EP-10, EP-L14, EP-L15) | ✅ commit `3a8f0f6` |
 | Pre-4-C concurrency | Per-run `MaxConcurrentTasks` semaphore in `LocalExecutor` + `CanvasAgentWorkflow`; `DAG_WORKER_MAX_CONCURRENT_ACTIVITIES` config; `ResolveMaxConcurrentTasks`; 5 new tests (CONC-1..5) | ✅ commit `df4b19e` |
-| 4-C | `TemporalExecutor`, `them-dag-worker`, `agent-runtime` wiring, Docker service | ✅ |
-| 4-D | Frontend publish toggle | ⬜ |
+| 4-C | `TemporalExecutor`, `them-dag-worker`, `agent-runtime` wiring, Docker service | ✅ commit `0b68dcb` |
+| 4-D | Frontend execution_backend toggle (Local / ⚡ Temporal pill in top bar) | ✅ commit `7d39d44` |
 | 5 | Loop, HumanWait, A2A in DAG context | ⬜ |
 
 ### DAG join semantics (hardening summary)
@@ -440,19 +440,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Phase 4-D: Frontend publish toggle for `execution_backend` (start here)
-
-Phase 4-C is complete and committed. Phase 4-D wires the UI end:
-
-1. **Builder top bar toggle** — add a segmented control or dropdown in the canvas builder top bar that sets `execution_backend` to `"local"` or `"temporal"` on the canvas JSON root. Default: empty / `"local"`. Only show `"temporal"` when the system supports it (can be feature-flagged or always shown).
-
-2. **Validate endpoint consumer** — `execution_backend` already round-trips through compile/validate (S1-72 NA-12..NA-16). The UI just needs to write it into the canvas `definition` JSON before calling validate/publish.
-
-3. **Publish gate** — warn if `execution_backend: "temporal"` is selected but no `--profile temporal` stack is running (best-effort: check `GET /health/ready` of temporal, or just show an info banner).
-
-4. **No backend changes needed** — all compile/validate/publish/runtime code already handles `execution_backend` correctly.
-
-### Phase 5: Loop, HumanWait, A2A in DAG context (next after 4-D)
+### Phase 5: Loop, HumanWait, A2A in DAG context (start here — Phases 4-A through 4-D complete)
 - Implement `StepLoop` executor in `LocalExecutor` and `CanvasAgentWorkflow`
 - Implement HumanWait signal flow in canvas agent context
 - A2A call node in DAG fan-out context
