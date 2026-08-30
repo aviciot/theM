@@ -1191,6 +1191,8 @@ services:
       - THE_M_INVOCATION_JWT_KEY=${THE_M_INVOCATION_JWT_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - MCP_SERVICE_URL=http://them-mcp-service:8010
+      - TEMPORAL_ENABLED=${TEMPORAL_ENABLED:-false}
+      - TEMPORAL_HOST_PORT=${TEMPORAL_HOST_PORT:-temporal-frontend:7233}
     networks:
       - them-network
     depends_on:
