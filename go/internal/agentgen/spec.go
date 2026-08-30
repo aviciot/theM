@@ -279,6 +279,11 @@ type DefinitionRef struct {
 	Version   int    `json:"version"`
 }
 
+type StreamOutStepConfig struct {
+	FromVar   string `json:"from_var"`
+	MediaType string `json:"media_type"`
+}
+
 type HumanWaitConfig struct {
 	Prompt         string `json:"prompt"`
 	ReplyVar       string `json:"reply_var"`

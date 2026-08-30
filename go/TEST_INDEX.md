@@ -1931,6 +1931,30 @@ coverage through both LocalExecutor and `ExecuteNodeForActivity` (Temporal path)
 
 ---
 
+### S1-83 · StreamOut node Phase 5-D — `internal/agentgen/stream_out_test.go`
+
+**Purpose:** Verifies the stream_out pipeline sink: reads `from_var`, defaults to `"output"` when absent,
+sets `result.Text` and `result.MediaType`, validates `from_var` required at compile time, and integrates
+correctly in a full LLM→stream_out pipeline.
+
+| Test | What it proves |
+|---|---|
+| `TestStreamOut_ReadsFromVar` (SO-1) | result.Text is set from named from_var |
+| `TestStreamOut_DefaultMediaType` (SO-2) | media_type defaults to text/plain |
+| `TestStreamOut_ExplicitMediaType` (SO-3) | explicit media_type is honoured |
+| `TestStreamOut_MissingVar_EmptyResult` (SO-4) | missing var → empty result, no error |
+| `TestStreamOut_DefaultFromVar` (SO-5) | empty from_var config → falls back to "output" |
+| `TestStreamOut_Validate_MissingFromVar` (SO-6) | Validate emits STREAM_OUT_MISSING_FROM_VAR when from_var absent |
+| `TestStreamOut_Validate_Valid` (SO-7) | Validate accepts stream_out with from_var set |
+| `TestStreamOut_DeriveInputs` (SO-8) | DeriveInputs declares from_var as required input |
+| `TestStreamOut_DeriveInputs_DefaultVar` (SO-9) | DeriveInputs defaults to "output" when from_var empty |
+| `TestStreamOut_FullPipeline` (SO-10) | LLM stub → stream_out: result.Text from LLM, media_type=text/plain |
+
+**Trigger:** any change to `internal/agentgen/nodes.go` (StepStreamOut), `internal/agentgen/interpreter.go` (execStreamOut),
+`internal/agentgen/spec.go` (StreamOutStepConfig)
+
+---
+
 ### S1-51 · Agent definition publish service — `internal/admin/service/agent_definitions_publish_test.go`
 
 **Purpose:** Canvas A2A Builder validate/publish service layer. Verifies DAL delegation,
@@ -1979,11 +2003,11 @@ integration via `LookupNode`, and the new multi-port schema fields
 | `TestNodeRegistry_AllNodesHaveLabelAndVersion` | every registered node has non-empty Label and Version≥1 and valid OutputArity |
 | `TestNodeRegistry_ResponseProperties` | response: IsSource=false, IsSink=true, OutputArity=none, Execute≠nil |
 | `TestNodeRegistry_BranchOutputArity` | branch: OutputArity=multi, Execute≠nil (implemented) |
-| `TestNodeRegistry_StreamOutIsSink` | stream_out: IsSink=true, OutputArity=none |
+| `TestNodeRegistry_StreamOutIsSink` | stream_out: IsSink=true, OutputArity=none, Execute≠nil (Phase 5-D) |
 | `TestNodeRegistry_UnknownTypeReturnsFalse` | LookupNode("banana") → ok=false |
 | `TestNodeRegistry_CompilerRejectsUnknownStepType` | compiler returns UNKNOWN_STEP_TYPE for unregistered type |
-| `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response/branch/loop/mcp_call all have Execute≠nil |
-| `TestNodeRegistry_StubTypesHaveNilExecute` | a2a_call/human_wait/stream_out all have Execute=nil (loop promoted to implemented in Phase 5-A) |
+| `TestNodeRegistry_ImplementedTypesHaveNonNilExecute` | input/llm/http/transform/response/branch/loop/mcp_call/a2a_call/stream_out all have Execute≠nil |
+| `TestNodeRegistry_StubTypesHaveNilExecute` | human_wait has Execute=nil (only remaining stub after Phase 5-D) |
 | `TestNodeRegistry_ParallelOutputArity` | parallel: OutputArity=multi |
 | `TestNodeRegistry_ParallelIsImplemented` | parallel: Execute≠nil (fan-out coordinator is now executable) |
 | `TestNodeRegistry_Helpers_Smoke` | compileFail/hasCode helpers work; minimal spec compiles cleanly |
@@ -2655,7 +2679,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-80 | agent-runtime HITL Phase 5-B (RT-HITL-1..5): ReturnsWorking, StoresHandle, HITLRequestHandler CancelTask/SubscribeToTask | 5 |
 | S1-81 | Canvas HITL signal admin endpoint (CSIG-1..4): Success, NotFound, CrossTenant, WrongToken | 4 |
 | S1-82 | A2A Call node Phase 5-C + 5-C gaps (A2A-1..18): NodeRegistered, Validate missing/valid, Execute no-caller/calls-caller/error/depth/self-call/depth-cap+HTTPA2ACaller cap, HumanWait local/temporal, HTTPA2ACaller integration (all 4 headers), DeriveOutputs default, fail-closed no-binding, stable request IDs, remote error sanitization, E2E LocalExecutor (headers+tenant isolation), E2E ExecuteNodeForActivity (depth propagation) | 18 |
-| **S1 total** | | **911** |
+| S1-83 | StreamOut node Phase 5-D (SO-1..10): ReadsFromVar, DefaultMediaType, ExplicitMediaType, MissingVar, DefaultFromVar, Validate_MissingFromVar, Validate_Valid, DeriveInputs, DeriveInputs_DefaultVar, FullPipeline (LLM→stream_out) | 10 |
+| **S1 total** | | **921** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2664,4 +2689,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **916** |
+| **`go test ./...` total** | | **926** |

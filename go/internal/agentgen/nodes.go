@@ -708,7 +708,7 @@ func init() {
 		Type:                 StepStreamOut,
 		Version:              1,
 		Label:                "Stream Out",
-		Description:          "Pipeline sink. Streams incremental output tokens back to the caller as they are generated. (stub)",
+		Description:          "Pipeline sink. Streams output tokens back to the caller. Reads from_var and emits the value as the agent response; the transport layer handles incremental streaming.",
 		Emoji:                "📡",
 		OutputArity:          "none",
 		IsSource:             false,
@@ -721,18 +721,39 @@ func init() {
 		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 0, MaxOut: 0},
 		ConfigFields: []ConfigFieldDoc{
 			{Key: "from_var", Type: "string", Required: true, Description: "Pipeline variable name to stream as output. The variable must hold the text to be streamed.", Example: "llm_output"},
+			{Key: "media_type", Type: "string", Required: false, Description: "MIME type of the output. Defaults to text/plain.", Example: "text/plain"},
 		},
-		UsageNotes: "StreamOut is not yet fully implemented (stub). When implemented, it will stream LLM tokens incrementally over SSE instead of returning a complete response. For now, use Response as the pipeline sink.",
+		UsageNotes: "Use StreamOut as the pipeline sink when you want the response streamed incrementally to the caller. Equivalent to Response at the interpreter level; streaming is handled by the agent-runtime transport layer.",
 		Examples: []NodeExample{
 			{Description: "Stream the LLM output", Config: map[string]any{"from_var": "output"}},
+			{Description: "Stream with explicit media type", Config: map[string]any{"from_var": "output", "media_type": "text/markdown"}},
 		},
 		AllowedSuccessors: []StepType{},
 		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300, NonRetryableErrors: stdNonRetryable},
 		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 300},
-		Validate:    nil,
-		Execute:     nil,
-		DeriveInputs: func(cfg json.RawMessage) []VarRef {
+		Validate: func(step canvasStep) []Issue {
+			var c StreamOutStepConfig
+			if len(step.Config) > 0 {
+				_ = json.Unmarshal(step.Config, &c)
+			}
+			if c.FromVar == "" {
+				return []Issue{{Code: "STREAM_OUT_MISSING_FROM_VAR", Severity: "error",
+					Message: "stream_out requires from_var", NodeID: step.ID}}
+			}
 			return nil
+		},
+		Execute: func(ctx context.Context, interp *Interpreter, ic *InvocationContext, step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
+			return interp.execStreamOut(step, vars, result)
+		},
+		DeriveInputs: func(cfg json.RawMessage) []VarRef {
+			var c StreamOutStepConfig
+			if len(cfg) > 0 {
+				_ = json.Unmarshal(cfg, &c)
+			}
+			if c.FromVar == "" {
+				c.FromVar = "output"
+			}
+			return []VarRef{{Name: c.FromVar, Required: true}}
 		},
 		DeriveOutputs: func(cfg json.RawMessage) []VarRef {
 			return nil

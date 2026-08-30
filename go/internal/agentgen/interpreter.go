@@ -511,6 +511,32 @@ func (interp *Interpreter) execResponse(step *StepSpec, vars PipelineVars, resul
 	return nil
 }
 
+// execStreamOut is the sink implementation for stream_out nodes.
+// At the interpreter level it behaves identically to execResponse — it reads
+// from_var and sets result.Text / result.MediaType.  The transport layer
+// (agent-runtime A2A server) is responsible for emitting incremental artifact
+// events as the response streams back to the caller.
+func (interp *Interpreter) execStreamOut(step *StepSpec, vars PipelineVars, result *ExecutionResult) error {
+	var cfg StreamOutStepConfig
+	if err := json.Unmarshal(step.Config, &cfg); err != nil {
+		return fmt.Errorf("parse stream_out config: %w", err)
+	}
+	fromVar := cfg.FromVar
+	if fromVar == "" {
+		fromVar = "output"
+	}
+	val, ok := vars[fromVar]
+	if !ok {
+		val = ""
+	}
+	result.Text = fmt.Sprintf("%v", val)
+	result.MediaType = cfg.MediaType
+	if result.MediaType == "" {
+		result.MediaType = "text/plain"
+	}
+	return nil
+}
+
 // execA2ACall invokes another registered agent as a pipeline step.
 // It reads ic.A2ACallDepth to enforce the nesting cap, marshals the input variable
 // to JSON, calls the target via A2ACaller, and stores the response in output_var.

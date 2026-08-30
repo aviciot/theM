@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `3b56ef8`
+Commit: `(pending Phase 5-D commit)`
 
 Recent commits (newest first):
 ```
+(pending) feat(stream_out): Phase 5-D — StreamOut node implemented, 10 tests SO-1..10
 3b56ef8  fix(a2a-call): Phase 5-C gap fixes — binding required, stable UUIDs, error sanitization, E2E tests
 89c7e67  feat(a2a-call): Phase 5-C — A2ACaller abstraction, depth tracking, HumanWait+local validation
 0487797  fix(hitl): Phase 5-B hardening — auth, state model, wait_token, loop body, reconnect
@@ -165,8 +166,9 @@ S1-79: 11 HITLStore Phase 5-B hardening tests (HS-1..11: state machine, UpdateWa
 S1-80: 5 agent-runtime HITL Phase 5-B handler tests (RT-HITL-1..5: ReturnsWorking, StoresHandle, HITLRequestHandler)
 S1-81: 4 Canvas HITL signal admin endpoint tests (CSIG-1..4: Success, NotFound, CrossTenant, WrongToken)
 S1-82: 18 A2A Call node Phase 5-C + gap tests (A2A-1..18: NodeRegistered, Validate, Execute, self-call, depth, HumanWait backend, HTTPA2ACaller (all 4 headers), DeriveOutputs, fail-closed, stable UUIDs, error sanitization, E2E LocalExecutor, E2E ExecuteNodeForActivity)
+S1-83: 10 StreamOut node Phase 5-D tests (SO-1..10: ReadsFromVar, DefaultMediaType, ExplicitMediaType, MissingVar, DefaultFromVar, Validate_MissingFromVar, Validate_Valid, DeriveInputs, DeriveInputs_DefaultVar, FullPipeline)
 S2-06: 3 integration-tagged Temporal E2E tests
-Total go test ./...: 916
+Total go test ./...: 926
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -435,6 +437,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 5-A | StepLoop — LocalExecutor + Temporal + frontend config panel + durable loop architecture + canvas ports + gap fixes (compileLoopBodyPlan JoinOf/JoinMode, ExecuteBody onTerminal, bodyIterState isolation, BFS boundary, accum scoping) + 8 new tests (EP-LOOP-6/7/8, CT-LOOP-DURABLE-6/7, PC-LOOP-4/5/6) | ✅ |
 | 5-B | HumanWait async — Phase 1 (commit `3b1052f`): HITLStore, PlanHasHumanWait, CanvasSubmitter/Signaler, Submit/SignalCanvasStep, executeSkill HITL async path, signalHITL; Phase 2 hardening (commit `0487797`): HITLHandle 6-field state machine (tenant_id, wait_token, state), UpdateWaitToken/TrySignal CAS/MarkDone, deterministic wait_token (sha256, no uuid), hitl_status workflow query handler, per-step timeout via workflow.Select, loop-body HumanWait, HITLRequestHandler (GetTask/SubscribeToTask/CancelTask), RedisA2ATaskStore (SDK taskstore.Store), signal endpoint moved to JWT-auth admin router `/admin/canvas-tasks/{task_id}/signal`; 20 total tests (HS-1..11, RT-HITL-1..5, CSIG-1..4) | ✅ commit `0487797` |
 | 5-C | A2A Call node — `A2ACaller` abstraction, `HTTPA2ACaller`, depth tracking, self-call rejection, HumanWait+local validation, agent-runtime + dag-worker wiring | ✅ |
+| 5-D | StreamOut node — `execStreamOut`, `StreamOutStepConfig`, `STREAM_OUT_MISSING_FROM_VAR` validation, `DeriveInputs` | ✅ |
 
 ### DAG join semantics (hardening summary)
 - **JoinWaitAll**: join node whose predecessors originate from a non-Branch fan-out (e.g. LLM with `len(Next)>1`). All branches always run — must wait for all.
@@ -527,9 +530,22 @@ Done (canvas ports, commit 81c3a31):
 - Remote error messages sanitized (no internal URLs in logs/responses)
 - No secrets in Temporal history
 
+### Phase 5-D: StreamOut node — COMPLETE
+
+**What was built (Phase 5-D):**
+- `go/internal/agentgen/spec.go`: `StreamOutStepConfig{FromVar, MediaType}`
+- `go/internal/agentgen/interpreter.go`: `execStreamOut` — reads `from_var`, defaults to `"output"`, sets `result.Text` + `result.MediaType` (same semantics as `execResponse`; incremental streaming is a transport-layer concern handled by agent-runtime's A2A artifact events)
+- `go/internal/agentgen/nodes.go`: `StepStreamOut` — `Execute` wired to `execStreamOut`; `Validate` checks `from_var` required (`STREAM_OUT_MISSING_FROM_VAR`); `DeriveInputs` declares `from_var` as required; description updated (no longer stub)
+- `go/internal/agentgen/noderegistry_test.go`: `StepStreamOut` moved from stubs list → implemented list; `TestNodeRegistry_StreamOutIsSink` asserts `Execute≠nil`; `TestNodeRegistry_StubTypesHaveNilExecute` updated (only `human_wait` remains)
+- `go/internal/agentgen/compiler_test.go`: `stubGraph` updated from `stream_out` to `human_wait` (stream_out is no longer a stub)
+- `go/internal/agentgen/stream_out_test.go`: 10 new tests (SO-1..10)
+- `go/TEST_INDEX.md`: S1-83 added, totals 916→926
+
+**Design note:** At the interpreter level, StreamOut and Response are functionally identical — both read a variable and set `result.Text`. The transport differentiation (incremental artifact events vs. single artifact) happens in `agent-runtime/main.go`'s `executeSkill`, which already emits `ArtifactEvent` at the end of every execution. A true token-by-token streaming path would require a callback/writer interface injected into the interpreter — that's a future transport-layer enhancement, not a canvas-node concern.
+
 **Next recommended task:**
-- Phase 5-D: StreamOut node implementation (currently Execute=nil stub), or
-- UI: A2A Call node properties panel in canvas RightPanel (slug + var config), or
+- UI: StreamOut properties panel in canvas `RightPanel.tsx` (from_var + media_type fields) — mirrors Response panel
+- UI: A2A Call node properties panel in canvas RightPanel (slug + var config)
 - Traefik: fix `/a2a/` router to point at `them-go-bridge-svc` (currently broken, points to dead Python service)
 
 ### Phase 4-C Advisory items (deferred)

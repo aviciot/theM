@@ -145,7 +145,7 @@ func TestNodeRegistry_BranchOutputArity(t *testing.T) {
 	}
 }
 
-// TestNodeRegistry_StreamOutIsSink verifies stream_out terminates the pipeline.
+// TestNodeRegistry_StreamOutIsSink verifies stream_out terminates the pipeline and is implemented.
 func TestNodeRegistry_StreamOutIsSink(t *testing.T) {
 	def, ok := agentgen.LookupNode(agentgen.StepStreamOut)
 	if !ok {
@@ -156,6 +156,9 @@ func TestNodeRegistry_StreamOutIsSink(t *testing.T) {
 	}
 	if def.OutputArity != "none" {
 		t.Errorf("stream_out OutputArity: want %q, got %q", "none", def.OutputArity)
+	}
+	if def.Execute == nil {
+		t.Error("stream_out Execute must be non-nil (implemented)")
 	}
 }
 
@@ -196,6 +199,8 @@ func TestNodeRegistry_ImplementedTypesHaveNonNilExecute(t *testing.T) {
 		agentgen.StepBranch,
 		agentgen.StepLoop,
 		agentgen.StepMCPCall,
+		agentgen.StepA2ACall,
+		agentgen.StepStreamOut,
 	}
 	for _, st := range implemented {
 		def, ok := agentgen.LookupNode(st)
@@ -214,7 +219,6 @@ func TestNodeRegistry_ImplementedTypesHaveNonNilExecute(t *testing.T) {
 func TestNodeRegistry_StubTypesHaveNilExecute(t *testing.T) {
 	stubs := []agentgen.StepType{
 		agentgen.StepHumanWait,
-		agentgen.StepStreamOut,
 	}
 	for _, st := range stubs {
 		def, ok := agentgen.LookupNode(st)
