@@ -7,16 +7,16 @@
 ## HEAD
 
 Branch: `main`
-Commit: `30f9f95`
+Commit: `b3bd71a`
 
 Recent commits (newest first):
 ```
+b3bd71a  fix(agent-runtime): Phase 4-C final corrections — E2E path, binding 4-ID scope, HumanWait design
+8d815cc  fix(agent-runtime,temporal): Phase 4-C gap-2 hardening — all 5 remaining blockers
+df3ed8e  fix(agent-runtime/temporal): Phase 4-C hardening — all 6 remaining blockers
+8fb54fc  docs(audit): Phase 4-C hardening audit report
 30f9f95  test(temporal): integration-tagged E2E tests + TEST_INDEX update — blocker 7
 bfda621  fix(dag-worker): scope all DB queries by TenantID — blocker 5
-f952565  fix(temporal/agent-runtime): blockers 2 3 4 6 — fail-closed, stable ID, policy concurrency, logged cancel
-1c44aa0  fix(agent-runtime): wire TEMPORAL_ENABLED/TEMPORAL_HOST_PORT into Compose service
-7d39d44  feat(builder): Phase 4-D — execution_backend toggle in top bar
-0b68dcb  feat(temporal/agentgen): Phase 4-C — TemporalExecutor, them-dag-worker, agent-runtime wiring
 ```
 
 ---
@@ -34,8 +34,8 @@ UI: `http://<server-ip>:8088`
 
 Key facts:
 - `them-auth-go` is the sole auth service (HS256 JWT + bcrypt)
-- **`them-bridge` (Python) is permanently retired** — behind `profiles: [legacy]`; does NOT start in default or `--profile temporal` mode
-- **`them-worker` (Python) is permanently retired** — behind `profiles: [legacy]`
+- **`them-bridge` (Python FastAPI) is permanently retired** — behind `profiles: [legacy]`; does NOT start in default or `--profile temporal` mode
+- **`them-worker` (Python Temporal worker) is STILL REQUIRED** — behind `profiles: [legacy]` in compose but must be kept running. It polls `them-orchestration` task queue which handles all `/apps/{slug}/ws` and `/apps/{slug}/sse` sessions. `them-go-worker` uses a separate `them-orchestration-go` queue and is NOT yet a replacement.
 - `them-go-bridge` is the active API gateway on port 8002
 - `them-go-worker` is the active Temporal worker — **no explicit profile in `docker-compose.dev.yml`**, starts by default
 - `them-agent-runtime` runs 2 replicas (port 9300 internal), profile `[agents]`
@@ -55,8 +55,9 @@ them-postgres         ✅ healthy
 them-redis            ✅ healthy
 them-traefik          ✅ healthy
 temporal-frontend     ✅ (with --profile temporal)
-them-bridge (Python)  ❌ NOT running — profiles: [legacy]
-them-worker (Python)  ❌ NOT running — profiles: [legacy]
+them-bridge (Python)  ❌ NOT running — profiles: [legacy] — PERMANENTLY RETIRED
+them-worker (Python)  ✅ Running (must stay up) — polls them-orchestration for WS/SSE sessions
+them-dag-worker (Go)  ✅ Running — polls canvas-dag-nodes for CanvasAgentWorkflow
 ```
 
 ---
@@ -422,8 +423,9 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | Pre-4-C concurrency | Per-run `MaxConcurrentTasks` semaphore in `LocalExecutor` + `CanvasAgentWorkflow`; `DAG_WORKER_MAX_CONCURRENT_ACTIVITIES` config; `ResolveMaxConcurrentTasks`; 5 new tests (CONC-1..5) | ✅ commit `df4b19e` |
 | 4-C | `TemporalExecutor`, `them-dag-worker`, `agent-runtime` wiring, Docker service | ✅ commit `0b68dcb` |
 | 4-C hardening | 7 production blockers fixed: Compose env vars, fail-closed, stable workflow ID, policy concurrency, tenant-scoped DB queries, bounded cancel, integration tests | ✅ commits `1c44aa0`..`30f9f95` |
+| 4-C gap-2 | 5 additional fixes: tenant-scope ALL lookups, safe errors, conditional Temporal overlay, HumanWait 24h timeout, real full-path E2E, binding 4-ID enforcement | ✅ commits `8d815cc`..`b3bd71a` |
 | 4-D | Frontend execution_backend toggle (Local / ⚡ Temporal pill in top bar) | ✅ commit `7d39d44` |
-| 5 | Loop, HumanWait, A2A in DAG context | ⬜ |
+| 5 | Loop, HumanWait async, A2A in DAG context | ⬜ |
 
 ### DAG join semantics (hardening summary)
 - **JoinWaitAll**: join node whose predecessors originate from a non-Branch fan-out (e.g. LLM with `len(Next)>1`). All branches always run — must wait for all.
@@ -443,17 +445,26 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Phase 5: Loop, HumanWait, A2A in DAG context (start here — 4-C fully hardened, 4-D complete)
-- Implement `StepLoop` executor in `LocalExecutor` and `CanvasAgentWorkflow`
-- Implement HumanWait signal flow in canvas agent context
-- A2A call node in DAG fan-out context
+### Phase 5-A: StepLoop in LocalExecutor + CanvasAgentWorkflow (start here)
+- Implement `StepLoop` executor: iterate over an array var, execute a sub-plan per element
+- Wire into `LocalExecutor` and `CanvasAgentWorkflow`
+- Tests: CT-LOOP-1..N in `internal/temporal/`
 
-### Phase 4-C Advisory items (lower priority — deferred)
-- Advisory A: DB round-trips per Temporal activity (4 queries/node) — consider caching spec in `ActivityIC`
-- Advisory B: `PipelineVars` payload growth — prune vars before each node's `StepActivityInput`
-- Advisory C: DB pool (20) vs DAGWorkerMaxConcurrentActivities (50) mismatch — tune or raise pool
+### Phase 5-B: HumanWait async (design doc complete)
+- Full async design in `docs/architecture-v2/HUMANWAIT_DESIGN.md`
+- Prerequisites: Redis task handle store + signal endpoint + reconnect/resubscribe
+- Do NOT implement until design is reviewed
+
+### Phase 5-C: A2A call node in DAG fan-out context
+- `StepA2ACall` already has a local executor; needs Temporal activity wiring
+- Requires agent-runtime → agent-runtime call path (internal network)
+
+### Phase 4-C Advisory items (deferred)
+- Advisory A: DB round-trips per Temporal activity (4 queries/node) — cache spec in `ActivityIC`
+- Advisory B: `PipelineVars` payload growth — prune vars before each `StepActivityInput`
+- Advisory C: DB pool (20) vs DAGWorkerMaxConcurrentActivities (50) mismatch — raise pool
 - Advisory D: dag-worker health/readiness HTTP endpoint (currently no /healthz)
-- Advisory E: `dagWorkflowTimeout = 12 min` will abort HumanWait workflows — raise for human-wait paths
+- Advisory E: HumanWait fully incomplete — 24h timeout is partial only; see design doc
 
 ### Other tasks (lower priority)
 - DAG live canvas validation — smoke test a Branch/Parallel canvas agent live with `--profile temporal`
@@ -481,7 +492,8 @@ Do NOT begin multiple subsystems in the same session.
 - `go/TEST_INDEX.md` updated in same commit as new Go tests
 - Secrets never in logs — use `cfg.SafeString()`
 - Never `git add .` or `git add -A`
-- **Python is permanently retired.** `them-bridge` and `them-worker` MUST remain behind `profiles: [legacy]`.
+- **`them-bridge` (Python FastAPI) is permanently retired.** It MUST stay behind `profiles: [legacy]` and must NOT start.
+- **`them-worker` (Python Temporal) is still required.** It polls `them-orchestration` for all WS/SSE orchestration sessions. Do NOT stop it until `them-go-worker` is migrated to the same queue.
 - **No global LLM key fallback.** Apps with no key get an explicit error.
 - **No secrets in Definition JSONB, Component Definition JSONB, export files, logs, or Temporal history.**
 - **Agent registry Redis key is `them:agents:registry:{tenant_id}`.** Global key must not be written or read.
