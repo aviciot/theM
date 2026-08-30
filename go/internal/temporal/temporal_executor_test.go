@@ -286,3 +286,85 @@ func TestTemporalExecutor_PolicyMaxConcurrentTasks(t *testing.T) {
 	require.True(t, ok, "workflow input must be CanvasAgentWorkflowInput")
 	assert.Equal(t, 42, input.MaxConcurrentTasks, "policy value must override struct default")
 }
+
+// ── TE-10: Submit returns workflowID and runID without blocking ───────────────
+
+func TestTemporalExecutor_Submit_ReturnsHandleWithoutBlocking(t *testing.T) {
+	mockClient := temporalmocks.NewClient(t)
+	mockRun := temporalmocks.NewWorkflowRun(t)
+
+	mockClient.On("ExecuteWorkflow",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+	).Return(mockRun, nil).Once()
+
+	mockRun.On("GetRunID").Return("run-42").Maybe()
+
+	exec := temporal.NewTemporalExecutor(mockClient, 10*time.Second, 0, testLogger())
+	ic := makeTestExecutorIC()
+	ic.InvocationID = "inv-submit-1"
+
+	plan := &agentgen.ExecutionPlan{
+		SkillID: "sk",
+		StartID: "hw1",
+		Nodes: []*agentgen.PlanNode{
+			{StepID: "hw1", Type: agentgen.StepHumanWait},
+		},
+	}
+
+	res, err := exec.Submit(context.Background(), ic, plan, agentgen.PipelineVars{"input": "hi"})
+	require.NoError(t, err)
+
+	wantWFID := "canvas:ag1:inv-submit-1"
+	assert.Equal(t, wantWFID, res.WorkflowID, "workflow ID must follow canvas:{agentID}:{invID} pattern")
+	assert.Equal(t, "run-42", res.RunID)
+	// ExecuteWorkflow was called; Get was NOT called (no blocking).
+	mockRun.AssertNotCalled(t, "Get", mock.Anything, mock.Anything)
+}
+
+// ── TE-11: Submit on nil/empty plan returns error ────────────────────────────
+
+func TestTemporalExecutor_Submit_EmptyPlan(t *testing.T) {
+	exec := temporal.NewTemporalExecutor(temporalmocks.NewClient(t), 10*time.Second, 0, testLogger())
+	_, err := exec.Submit(context.Background(), makeTestExecutorIC(), nil, agentgen.PipelineVars{})
+	require.Error(t, err, "Submit with nil plan must return an error")
+}
+
+// ── TE-12: SignalCanvasStep calls SignalWorkflow with the correct args ─────────
+
+func TestTemporalExecutor_SignalCanvasStep_Delegates(t *testing.T) {
+	mockClient := temporalmocks.NewClient(t)
+
+	mockClient.On("SignalWorkflow",
+		mock.Anything,      // ctx
+		"wf-signal-1",     // workflowID
+		"run-signal-1",    // runID
+		"human_input:hw1", // signalName
+		mock.MatchedBy(func(payload agentgen.PipelineVars) bool {
+			v, ok := payload["approval"]
+			return ok && v == "yes"
+		}),
+	).Return(nil).Once()
+
+	exec := temporal.NewTemporalExecutor(mockClient, 10*time.Second, 0, testLogger())
+	err := exec.SignalCanvasStep(context.Background(), "wf-signal-1", "run-signal-1", "human_input:hw1",
+		agentgen.PipelineVars{"approval": "yes"})
+	require.NoError(t, err)
+	mockClient.AssertExpectations(t)
+}
+
+// ── TE-13: PlanHasHumanWait detects human_wait nodes ─────────────────────────
+
+func TestPlanHasHumanWait(t *testing.T) {
+	withHW := &agentgen.ExecutionPlan{
+		StartID: "hw",
+		Nodes:   []*agentgen.PlanNode{{StepID: "hw", Type: agentgen.StepHumanWait}},
+	}
+	without := &agentgen.ExecutionPlan{
+		StartID: "llm",
+		Nodes:   []*agentgen.PlanNode{{StepID: "llm", Type: "llm"}},
+	}
+
+	assert.True(t, agentgen.PlanHasHumanWait(withHW), "plan with human_wait must return true")
+	assert.False(t, agentgen.PlanHasHumanWait(without), "plan without human_wait must return false")
+	assert.False(t, agentgen.PlanHasHumanWait(nil), "nil plan must return false")
+}

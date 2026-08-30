@@ -54,16 +54,6 @@ func NewTemporalExecutor(c client.Client, workflowTimeout time.Duration, maxConc
 	}
 }
 
-// planHasHumanWait returns true when at least one node in the plan is a human_wait step.
-func planHasHumanWait(plan *agentgen.ExecutionPlan) bool {
-	for _, n := range plan.Nodes {
-		if n.Type == agentgen.StepHumanWait {
-			return true
-		}
-	}
-	return false
-}
-
 // Execute submits a CanvasAgentWorkflow and blocks until it completes.
 // The workflow ID is derived from ic.InvocationID so retries of the same logical
 // request re-attach to the existing workflow. A uuid fallback is used when
@@ -100,8 +90,7 @@ func (e *TemporalExecutor) Execute(
 
 	// Choose timeout: long-running for plans with HITL, bounded for all others.
 	wfTimeout := e.workflowTimeout
-	humanWait := planHasHumanWait(plan)
-	if humanWait {
+	if agentgen.PlanHasHumanWait(plan) {
 		wfTimeout = e.humanWaitTimeout
 	}
 
@@ -158,5 +147,96 @@ func (e *TemporalExecutor) Execute(
 	}, nil
 }
 
-// compile-time interface satisfaction check.
+// SubmitResult holds the Temporal workflow coordinates returned by Submit.
+type SubmitResult struct {
+	WorkflowID string
+	RunID      string
+}
+
+// Submit starts a CanvasAgentWorkflow and returns immediately without waiting for it.
+// It is used for HITL plans where the HTTP connection must be released before the
+// workflow completes. The returned SubmitResult can be stored so a signal endpoint
+// can route human responses back to the correct workflow run.
+//
+// ctx should be a background context with a generous timeout (e.g. 24h) — NOT the
+// HTTP request context. Using the request context would cancel the workflow on
+// client disconnect.
+func (e *TemporalExecutor) Submit(
+	ctx context.Context,
+	ic *agentgen.InvocationContext,
+	plan *agentgen.ExecutionPlan,
+	initial agentgen.PipelineVars,
+) (SubmitResult, error) {
+	if plan == nil || len(plan.Nodes) == 0 {
+		return SubmitResult{}, fmt.Errorf("TemporalExecutor: empty or nil plan")
+	}
+
+	invID := ic.InvocationID
+	if invID == "" {
+		invID = uuid.NewString()
+	}
+	workflowID := fmt.Sprintf("canvas:%s:%s", ic.AgentID, invID)
+
+	maxConcurrent := e.maxConcurrentTasks
+	if ic.Policies.MaxConcurrentTasks > 0 {
+		maxConcurrent = ic.Policies.MaxConcurrentTasks
+	}
+
+	wfTimeout := e.workflowTimeout
+	if agentgen.PlanHasHumanWait(plan) {
+		wfTimeout = e.humanWaitTimeout
+	}
+
+	opts := client.StartWorkflowOptions{
+		ID:                       workflowID,
+		TaskQueue:                CanvasDAGTaskQueue,
+		WorkflowExecutionTimeout: wfTimeout,
+		WorkflowIDReusePolicy:    enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
+	}
+
+	input := CanvasAgentWorkflowInput{
+		Plan:               *plan,
+		Initial:            initial,
+		IC:                 agentgen.ActivityICFromInvocationContext(ic),
+		MaxConcurrentTasks: maxConcurrent,
+		HumanWaitTimeout:   int64(wfTimeout),
+	}
+
+	run, err := e.client.ExecuteWorkflow(ctx, opts, CanvasAgentWorkflow, input)
+	if err != nil {
+		if temporalerr.IsWorkflowExecutionAlreadyStartedError(err) {
+			run = e.client.GetWorkflow(ctx, workflowID, "")
+		} else {
+			return SubmitResult{}, fmt.Errorf("TemporalExecutor: submit workflow: %w", err)
+		}
+	}
+
+	return SubmitResult{WorkflowID: workflowID, RunID: run.GetRunID()}, nil
+}
+
+// SignalCanvasStep delivers a human_input signal to a specific step in a
+// CanvasAgentWorkflow. signalName must be SignalHumanInputPrefix+stepID.
+// payload is merged into the workflow's pipeline vars at the waiting node.
+func (e *TemporalExecutor) SignalCanvasStep(ctx context.Context, workflowID, runID, signalName string, payload agentgen.PipelineVars) error {
+	if err := e.client.SignalWorkflow(ctx, workflowID, runID, signalName, payload); err != nil {
+		return fmt.Errorf("TemporalExecutor: signal canvas step: %w", err)
+	}
+	return nil
+}
+
+// CanvasSignaler can deliver a human_input signal to a running CanvasAgentWorkflow.
+// Implemented by TemporalExecutor; nil when Temporal is disabled.
+type CanvasSignaler interface {
+	SignalCanvasStep(ctx context.Context, workflowID, runID, signalName string, payload agentgen.PipelineVars) error
+}
+
+// CanvasSubmitter can start a CanvasAgentWorkflow without blocking.
+// Implemented by TemporalExecutor; nil when Temporal is disabled.
+type CanvasSubmitter interface {
+	Submit(ctx context.Context, ic *agentgen.InvocationContext, plan *agentgen.ExecutionPlan, initial agentgen.PipelineVars) (SubmitResult, error)
+}
+
+// compile-time interface satisfaction checks.
 var _ agentgen.ExecutionBackend = (*TemporalExecutor)(nil)
+var _ CanvasSignaler = (*TemporalExecutor)(nil)
+var _ CanvasSubmitter = (*TemporalExecutor)(nil)

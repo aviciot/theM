@@ -51,6 +51,21 @@ func ValidateLoopBodies(skill *SkillSpec) error {
 	return nil
 }
 
+// PlanHasHumanWait returns true when at least one top-level node in the plan
+// is a human_wait step. Loop body nodes are not scanned — human_wait inside
+// a loop body is not supported and should be caught at compile time.
+func PlanHasHumanWait(plan *ExecutionPlan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, n := range plan.Nodes {
+		if n.Type == StepHumanWait {
+			return true
+		}
+	}
+	return false
+}
+
 // resolvePolicy computes the final ExecutionPolicy for a PlanNode.
 // Resolution order: NodeDef.DefaultPolicy → method/mutation upgrade → canvas override (clamped to MaxPolicy).
 // NonRetryableErrors is always taken from the NodeDef and is not user-overridable.

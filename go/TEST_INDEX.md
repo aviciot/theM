@@ -1809,6 +1809,10 @@ submitting a `CanvasAgentWorkflow` to Temporal and blocking until completion. Al
 | `TestTemporalExecutor_PolicyMaxConcurrentTasks` (TE-07) | `ic.Policies.MaxConcurrentTasks` forwarded to `CanvasAgentWorkflowInput`, overriding struct default |
 | `TestTemporalExecutor_HumanWait_UsesLongTimeout` (TE-08) | Plan with `human_wait` node → `StartWorkflowOptions.WorkflowExecutionTimeout >= 24h`; short workflowTimeout not used |
 | `TestTemporalExecutor_NoHumanWait_UsesShortTimeout` (TE-09) | Plan without `human_wait` → configured short timeout (30s) used exactly; HITL override not applied |
+| `TestTemporalExecutor_Submit_ReturnsHandleWithoutBlocking` (TE-10) | Submit() calls ExecuteWorkflow; returns WorkflowID+RunID; never calls run.Get() (non-blocking) |
+| `TestTemporalExecutor_Submit_EmptyPlan` (TE-11) | Submit() with nil plan returns error before calling ExecuteWorkflow |
+| `TestTemporalExecutor_SignalCanvasStep_Delegates` (TE-12) | SignalCanvasStep() calls client.SignalWorkflow with correct workflowID/runID/signalName/payload |
+| `TestPlanHasHumanWait` (TE-13) | PlanHasHumanWait() returns true for human_wait plan, false for others, false for nil |
 
 **Trigger:** any change to `internal/temporal/temporal_executor.go` or `cmd/dag-worker/main.go`
 
@@ -1828,6 +1832,43 @@ cover live round-trips.
 | `TestDBContextLoader_SQLContainsTenantScope/loadBinding` | `app_agent_bindings` JOIN `applications` filters by `a.tenant_id` |
 
 **Trigger:** any change to `cmd/dag-worker/main.go` (DB query methods)
+
+---
+
+### S1-79 · HITLStore — `internal/agentgen/hitl_store_test.go`
+
+**Purpose:** Unit tests for `HITLStore`, which persists HITL task handles (`{workflow_id, run_id, step_id}`)
+in Redis so the signal endpoint can route human responses to the correct Temporal workflow after the
+HTTP connection that started the workflow has been released.
+
+| Test | What it proves |
+|---|---|
+| `TestHITLStore_StoreAndGet` (HS-1) | Store then Get returns exact WorkflowID/RunID/StepID |
+| `TestHITLStore_GetMissing` (HS-2) | Get on missing key returns `ErrHITLNotFound` |
+| `TestHITLStore_Delete` (HS-3) | Delete removes handle; subsequent Get returns `ErrHITLNotFound` |
+| `TestHITLStore_StoreOverwrite` (HS-4) | Second Store for same taskID overwrites; Get returns new values |
+| `TestHITLStore_KeyPrefix` (HS-5) | Redis key uses `them:hitl:` prefix |
+
+**Trigger:** any change to `internal/agentgen/hitl_store.go`
+
+---
+
+### S1-80 · agent-runtime HITL async path — `cmd/agent-runtime/main_test.go`
+
+**Purpose:** Tests for Phase 5-B HITL async execution: executeSkill submits without blocking for HITL
+plans, stores the handle in HITLStore, and returns `input-required`. signalHITL routes human responses
+to the correct Temporal workflow via the stored handle.
+
+| Test | What it proves |
+|---|---|
+| `TestExecuteSkill_HITL_ReturnsInputRequired` (RT-HITL-1) | executeSkill with HITL Temporal plan calls Submit (not Execute), emits `input-required` instead of blocking on completion |
+| `TestExecuteSkill_HITL_StoresHandle` (RT-HITL-2) | After Submit, workflow handle stored in hitlStore keyed by taskID with correct WorkflowID/StepID |
+| `TestSignalHITL_DeliverssSignal` (RT-HITL-3) | signalHITL reads handle from store and calls SignalCanvasStep with correct workflowID/runID/signalName/payload |
+| `TestSignalHITL_NotFound` (RT-HITL-4) | signalHITL returns 404 when no handle exists for task |
+| `TestSignalHITL_TemporalNotEnabled` (RT-HITL-5) | signalHITL returns 503 when canvasSignaler is nil (Temporal disabled) |
+
+**Trigger:** any change to `cmd/agent-runtime/main.go` (signalHITL, executeSkill HITL path),
+`internal/agentgen/hitl_store.go`, `internal/temporal/temporal_executor.go` (CanvasSubmitter/CanvasSignaler)
 
 ---
 
@@ -2549,7 +2590,11 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-74 | DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run) | 3 |
 | S1-75 | Phase 4-A: ExecuteNodeForActivity, ActivityIC, ExecutionBackend (NA-01..16) | 16 |
 | S1-76 | Phase 4-B: CanvasAgentWorkflow, CanvasAgentActivities (CT-01..10 + CT-A..F + CT-CONC1 + CT-LOOP-DURABLE-1..7) | 21 |
-| **S1 total** | | **864** |
+| S1-77 | Phase 4-C + 5-B: TemporalExecutor (TE-01..13) | 13 |
+| S1-78 | dag-worker SQL tenant scope | 4 |
+| S1-79 | HITLStore (HS-1..5) | 5 |
+| S1-80 | agent-runtime HITL async (RT-HITL-1..5) | 5 |
+| **S1 total** | | **878** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2558,4 +2603,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **869** |
+| **`go test ./...` total** | | **883** |

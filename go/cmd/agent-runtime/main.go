@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -77,6 +78,7 @@ func main() {
 		pool:      database.Pool(),
 		cryptoKey: cryptoKey,
 		taskStore: agentgen.NewRedisTaskStore(taskRedis),
+		hitlStore: agentgen.NewHITLStore(taskRedis),
 		specCache: &specCache{entries: make(map[string]*cachedSpec)},
 		logger:    logger,
 		interp:    interpBase,
@@ -90,7 +92,10 @@ func main() {
 			logger.Error("temporal connect failed", "err", err)
 			os.Exit(1)
 		}
-		rt.temporalExecutor = temporal.NewTemporalExecutor(temporalCli, 0, 0, logger)
+		te := temporal.NewTemporalExecutor(temporalCli, 0, 0, logger)
+		rt.temporalExecutor = te
+		rt.canvasSubmitter = te
+		rt.canvasSignaler = te
 		logger.Info("temporal executor configured", "host_port", cfg.TemporalHostPort)
 	}
 
@@ -108,6 +113,9 @@ func main() {
 	// then the SDK's NewJSONRPCHandler dispatches message/send, tasks/get, tasks/cancel,
 	// message/stream, tasks/resubscribe and all other A2A methods.
 	r.Post("/agents/{slug}", rt.handle)
+	// HITL signal endpoint: delivers human input to a paused Temporal canvas workflow.
+	// Called by the orchestration layer after the human submits their response.
+	r.Post("/agents/{slug}/tasks/{task_id}/signal", rt.signalHITL)
 
 	logger.Info("them-agent-runtime starting", "port", port)
 	if err := http.ListenAndServe(":"+port, r); err != nil {
@@ -121,12 +129,16 @@ type Runtime struct {
 	pool             *pgxpool.Pool
 	cryptoKey        []byte
 	taskStore        *agentgen.RedisTaskStore
+	hitlStore        *agentgen.HITLStore
 	specCache        *specCache
 	logger           *slog.Logger
 	interp           *agentgen.Interpreter
 	// temporalExecutor is non-nil when TEMPORAL_ENABLED=true. Canvas agents with
 	// execution_backend=="temporal" are routed here; all others use LocalExecutor.
 	temporalExecutor agentgen.ExecutionBackend
+	// canvasSubmitter and canvasSignaler are non-nil only when temporalExecutor is set.
+	canvasSubmitter  temporal.CanvasSubmitter
+	canvasSignaler   temporal.CanvasSignaler
 }
 
 func (rt *Runtime) healthz(w http.ResponseWriter, r *http.Request) {
@@ -320,19 +332,78 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 
 		plan := agentgen.CompileExecutionPlan(skill)
 
-		// Choose execution backend: temporal for canvas agents that have opted in,
-		// local (goroutine fan-out) for all others.
-		// Fail closed: if the agent requests Temporal but the executor is nil (i.e.
-		// TEMPORAL_ENABLED=false on this pod), return a typed error rather than
-		// silently falling back to Local execution.
-		var backend agentgen.ExecutionBackend
-		if ic.Spec.ExecutionBackend == "temporal" {
-			if rt.temporalExecutor == nil {
-				errMsg := a2a.NewMessage(a2a.MessageRoleAgent,
-					a2a.NewTextPart("execution_backend=temporal but Temporal is not enabled on this runtime"))
+		// HITL detection: Temporal-based plans with a human_wait node use the async
+		// submit path (no blocking on completion) when a CanvasSubmitter is available.
+		// The "temporal not enabled" guard below only applies to non-HITL Temporal plans
+		// because HITL only requires canvasSubmitter, not the blocking temporalExecutor.
+		isHITL := ic.Spec.ExecutionBackend == "temporal" &&
+			agentgen.PlanHasHumanWait(plan) &&
+			rt.canvasSubmitter != nil
+
+		// ── HITL async path ──────────────────────────────────────────────────────
+		// For HITL plans we must NOT block on workflow completion (the HTTP request
+		// ctx would be cancelled by a proxy timeout or client disconnect, which would
+		// cancel the Temporal workflow). Instead:
+		//   1. Submit the workflow on a detached background context.
+		//   2. Store the workflow handle + step ID in Redis so signalHITL can route
+		//      the human response back.
+		//   3. Return TaskStateWorking immediately — the SDK's SubscribeToTask lets
+		//      the caller reconnect later.
+		if isHITL {
+			// Detach from the HTTP request context so client disconnect does not
+			// cancel the long-running HITL workflow.
+			bgCtx, bgCancel := context.WithTimeout(context.Background(), agentgen.HITLHandleTTL)
+			defer bgCancel()
+
+			submitted, err := rt.canvasSubmitter.Submit(bgCtx, ic, plan, initial)
+			if err != nil {
+				rt.logger.Error("agent-runtime: HITL submit failed",
+					"tenant_id", ic.TenantID,
+					"agent_id", ic.AgentID,
+					"err", err,
+				)
+				errMsg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("failed to start HITL workflow"))
 				yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, errMsg), nil) //nolint:errcheck
 				return
 			}
+
+			// Find the first human_wait step ID — this is what the workflow will
+			// signal on when ready for human input.
+			humanStepID := ""
+			for _, n := range plan.Nodes {
+				if n.Type == agentgen.StepHumanWait {
+					humanStepID = n.StepID
+					break
+				}
+			}
+
+			storeCtx, storeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer storeCancel()
+			if err := rt.hitlStore.Store(storeCtx, string(execCtx.TaskID), submitted.WorkflowID, submitted.RunID, humanStepID); err != nil {
+				rt.logger.Warn("agent-runtime: HITL store failed (workflow is running but reconnect may not work)",
+					"task_id", string(execCtx.TaskID),
+					"workflow_id", submitted.WorkflowID,
+					"err", err,
+				)
+			}
+
+			// Return working — the caller reconnects via tasks/resubscribe (SDK-native).
+			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateInputRequired, nil), nil) //nolint:errcheck
+			return
+		}
+
+		// ── Normal (non-HITL) execution path ────────────────────────────────────
+		// Fail closed: if the agent requests Temporal but the executor is nil
+		// (TEMPORAL_ENABLED=false on this pod), return a typed error rather than
+		// silently falling back to Local execution.
+		if ic.Spec.ExecutionBackend == "temporal" && rt.temporalExecutor == nil {
+			errMsg := a2a.NewMessage(a2a.MessageRoleAgent,
+				a2a.NewTextPart("execution_backend=temporal but Temporal is not enabled on this runtime"))
+			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, errMsg), nil) //nolint:errcheck
+			return
+		}
+		var backend agentgen.ExecutionBackend
+		if ic.Spec.ExecutionBackend == "temporal" {
 			backend = rt.temporalExecutor
 		} else {
 			backend = agentgen.NewLocalExecutor(rt.interp)
@@ -359,6 +430,58 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 
 		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil) //nolint:errcheck
 	}
+}
+
+// signalHITL handles POST /agents/{slug}/tasks/{task_id}/signal.
+// It delivers a human response to a paused CanvasAgentWorkflow by:
+//  1. Looking up the Temporal workflow handle in Redis (stored when the HITL task was submitted).
+//  2. Sending a SignalHumanInputPrefix+stepID signal with the request body as PipelineVars.
+//
+// The body must be a JSON object: {"reply_var": "value", ...}.
+// Returns 200 OK on success, 404 when the task handle has expired or was never stored.
+func (rt *Runtime) signalHITL(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "task_id")
+	if taskID == "" {
+		http.Error(w, `{"error":"missing task_id"}`, http.StatusBadRequest)
+		return
+	}
+
+	if rt.canvasSignaler == nil {
+		http.Error(w, `{"error":"Temporal not enabled"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	handle, err := rt.hitlStore.Get(r.Context(), taskID)
+	if err != nil {
+		if errors.Is(err, agentgen.ErrHITLNotFound) {
+			http.Error(w, `{"error":"task not found or expired"}`, http.StatusNotFound)
+			return
+		}
+		rt.logger.Error("agent-runtime: HITL store get failed", "task_id", taskID, "err", err)
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	var payload agentgen.PipelineVars
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		return
+	}
+
+	signalName := temporal.SignalHumanInputPrefix + handle.StepID
+	if err := rt.canvasSignaler.SignalCanvasStep(r.Context(), handle.WorkflowID, handle.RunID, signalName, payload); err != nil {
+		rt.logger.Error("agent-runtime: SignalCanvasStep failed",
+			"task_id", taskID,
+			"workflow_id", handle.WorkflowID,
+			"err", err,
+		)
+		http.Error(w, `{"error":"signal delivery failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"signaled":true}`)) //nolint:errcheck
 }
 
 // parseInvocationContext reads identity from X-Them-* headers.

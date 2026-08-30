@@ -14,9 +14,11 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aviciot/them/internal/agentgen"
+	"github.com/aviciot/them/internal/temporal"
 )
 
 // buildTestDSN constructs a postgres DSN from environment variables for live DB tests.
@@ -700,5 +702,244 @@ func TestDecodeAppGlobalParams_MixedEntries(t *testing.T) {
 	}
 	if got := out["target"]; got != "prod" {
 		t.Errorf("target: expected 'prod', got %q", got)
+	}
+}
+
+// ── HITL async tests ──────────────────────────────────────────────────────────
+
+// stubHITLRedis is a trivial in-memory TaskStoreRedis for hitlStore tests.
+type stubHITLRedis struct {
+	data map[string][]byte
+}
+
+func newStubHITLRedis() *stubHITLRedis {
+	return &stubHITLRedis{data: make(map[string][]byte)}
+}
+
+func (m *stubHITLRedis) Get(_ context.Context, key string) ([]byte, bool, error) {
+	v, ok := m.data[key]
+	return v, ok, nil
+}
+
+func (m *stubHITLRedis) SetEX(_ context.Context, key string, value []byte, _ time.Duration) error {
+	m.data[key] = value
+	return nil
+}
+
+func (m *stubHITLRedis) Del(_ context.Context, key string) error {
+	delete(m.data, key)
+	return nil
+}
+
+// stubCanvasSubmitter captures the Submit call and returns a fixed SubmitResult.
+type stubCanvasSubmitter struct {
+	called bool
+	result temporal.SubmitResult
+	err    error
+}
+
+func (s *stubCanvasSubmitter) Submit(_ context.Context, _ *agentgen.InvocationContext, _ *agentgen.ExecutionPlan, _ agentgen.PipelineVars) (temporal.SubmitResult, error) {
+	s.called = true
+	return s.result, s.err
+}
+
+// stubCanvasSignaler captures SignalCanvasStep calls.
+type stubCanvasSignaler struct {
+	called     bool
+	workflowID string
+	runID      string
+	signalName string
+	payload    agentgen.PipelineVars
+	err        error
+}
+
+func (s *stubCanvasSignaler) SignalCanvasStep(_ context.Context, workflowID, runID, signalName string, payload agentgen.PipelineVars) error {
+	s.called = true
+	s.workflowID = workflowID
+	s.runID = runID
+	s.signalName = signalName
+	s.payload = payload
+	return s.err
+}
+
+// makeHITLSpec builds an AgentSpec with a single human_wait skill.
+func makeHITLSpec() *agentgen.AgentSpec {
+	return &agentgen.AgentSpec{
+		ExecutionBackend: "temporal",
+		Skills: []agentgen.SkillSpec{
+			{
+				ID:   "hitl-skill",
+				Name: "HITL Skill",
+				Steps: []agentgen.StepSpec{
+					{ID: "hw1", Type: agentgen.StepHumanWait, Config: []byte(`{"prompt":"approve?","reply_var":"approval"}`)},
+				},
+			},
+		},
+	}
+}
+
+// RT-HITL-1: executeSkill for a HITL Temporal plan returns TaskStateInputRequired
+// immediately without blocking on workflow completion.
+func TestExecuteSkill_HITL_ReturnsInputRequired(t *testing.T) {
+	submitter := &stubCanvasSubmitter{result: temporal.SubmitResult{WorkflowID: "wf-1", RunID: "run-1"}}
+	stubRedis := newStubHITLRedis()
+	rt := &Runtime{
+		interp:          agentgen.NewInterpreter(&http.Client{}, &stubLLMFactory{}, ""),
+		hitlStore:       agentgen.NewHITLStore(stubRedis),
+		canvasSubmitter: submitter,
+	}
+
+	ic := &agentgen.InvocationContext{
+		TenantID:      "t1",
+		ApplicationID: "app1",
+		AgentID:       "agent1",
+		Spec:          makeHITLSpec(),
+	}
+	execCtx := &a2asrv.ExecutorContext{
+		TaskID:    a2a.NewTaskID(),
+		ContextID: a2a.NewContextID(),
+		Message:   a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("please approve")),
+	}
+
+	var events []a2a.Event
+	for evt, err := range rt.executeSkill(context.Background(), ic, execCtx) {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		events = append(events, evt)
+	}
+
+	if !submitter.called {
+		t.Error("Submit must be called for HITL plan")
+	}
+
+	// Last event must be InputRequired (async — no completion yet).
+	if len(events) == 0 {
+		t.Fatal("expected at least one event")
+	}
+	last := events[len(events)-1]
+	su, ok := last.(*a2a.TaskStatusUpdateEvent)
+	if !ok {
+		t.Fatalf("last event must be *a2a.TaskStatusUpdateEvent, got %T", last)
+	}
+	if su.Status.State != a2a.TaskStateInputRequired {
+		t.Errorf("last state: want input-required, got %v", su.Status.State)
+	}
+}
+
+// RT-HITL-2: executeSkill stores the workflow handle in HITLStore after Submit.
+func TestExecuteSkill_HITL_StoresHandle(t *testing.T) {
+	submitter := &stubCanvasSubmitter{result: temporal.SubmitResult{WorkflowID: "wf-store", RunID: "run-store"}}
+	stubRedis := newStubHITLRedis()
+	rt := &Runtime{
+		interp:          agentgen.NewInterpreter(&http.Client{}, &stubLLMFactory{}, ""),
+		hitlStore:       agentgen.NewHITLStore(stubRedis),
+		canvasSubmitter: submitter,
+	}
+	ic := &agentgen.InvocationContext{
+		Spec: makeHITLSpec(),
+	}
+	taskID := a2a.NewTaskID()
+	execCtx := &a2asrv.ExecutorContext{
+		TaskID:    taskID,
+		ContextID: a2a.NewContextID(),
+		Message:   a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi")),
+	}
+
+	for range rt.executeSkill(context.Background(), ic, execCtx) {
+	}
+
+	h, err := rt.hitlStore.Get(context.Background(), string(taskID))
+	if err != nil {
+		t.Fatalf("hitlStore.Get: %v", err)
+	}
+	if h.WorkflowID != "wf-store" {
+		t.Errorf("WorkflowID: want wf-store, got %q", h.WorkflowID)
+	}
+	if h.StepID != "hw1" {
+		t.Errorf("StepID: want hw1 (first human_wait node), got %q", h.StepID)
+	}
+}
+
+// RT-HITL-3: signalHITL delivers the signal to the correct workflow.
+func TestSignalHITL_DeliverssSignal(t *testing.T) {
+	stubRedis := newStubHITLRedis()
+	store := agentgen.NewHITLStore(stubRedis)
+	taskID := "task-sig-1"
+	_ = store.Store(context.Background(), taskID, "wf-sig", "run-sig", "step-hw")
+
+	sig := &stubCanvasSignaler{}
+	rt := &Runtime{
+		hitlStore:      store,
+		canvasSignaler: sig,
+	}
+
+	body := `{"approval":"yes"}`
+	req := httptest.NewRequest(http.MethodPost, "/agents/slug/tasks/"+taskID+"/signal", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	// Inject chi URL param manually.
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("task_id", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	rt.signalHITL(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !sig.called {
+		t.Error("SignalCanvasStep must be called")
+	}
+	if sig.workflowID != "wf-sig" {
+		t.Errorf("workflowID: want wf-sig, got %q", sig.workflowID)
+	}
+	if sig.signalName != temporal.SignalHumanInputPrefix+"step-hw" {
+		t.Errorf("signalName: want %q, got %q", temporal.SignalHumanInputPrefix+"step-hw", sig.signalName)
+	}
+	approval, _ := sig.payload["approval"].(string)
+	if approval != "yes" {
+		t.Errorf("payload approval: want yes, got %q", approval)
+	}
+}
+
+// RT-HITL-4: signalHITL returns 404 when no handle exists for the task.
+func TestSignalHITL_NotFound(t *testing.T) {
+	rt := &Runtime{
+		hitlStore:      agentgen.NewHITLStore(newStubHITLRedis()),
+		canvasSignaler: &stubCanvasSignaler{},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/agents/slug/tasks/missing/signal", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("task_id", "missing")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	rt.signalHITL(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rr.Code)
+	}
+}
+
+// RT-HITL-5: signalHITL returns 503 when Temporal is not configured.
+func TestSignalHITL_TemporalNotEnabled(t *testing.T) {
+	rt := &Runtime{
+		hitlStore: agentgen.NewHITLStore(newStubHITLRedis()),
+		// canvasSignaler is nil — Temporal disabled
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/agents/slug/tasks/t1/signal", strings.NewReader("{}"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("task_id", "t1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	rt.signalHITL(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rr.Code)
 	}
 }
