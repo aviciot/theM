@@ -126,7 +126,7 @@ export function useDefinitionLifecycle({
             const ctrlOut = pipeline.edges.filter(e => e.source === sn.id && !isDataEdge(e));
             const defaultLabel = stepMeta(stepd.step_type).label;
             const ctrlPortDefs = getNodeDef(stepd.step_type).control_output_ports ?? [];
-            const next = ctrlPortDefs.length > 0
+            let next = ctrlPortDefs.length > 0
               ? ctrlPortDefs
                   .map(p => ctrlOut.find(e => e.sourceHandle === `ctrl-out-${p.id}`)?.target?.replace('step-', '') ?? '')
                   .filter(Boolean)
@@ -139,11 +139,35 @@ export function useDefinitionLifecycle({
               const fromStepID = (de.source as string).replace('step-', '');
               if (portID && fromPort && fromStepID) inputs[portID] = { from_step: fromStepID, from_port: fromPort };
             }
+            let config: Record<string, unknown> = stepd.config ?? {};
+            if (stepd.step_type === 'loop') {
+              const bodyEntryEdge = ctrlOut.find(e => e.sourceHandle === 'ctrl-out-loop-body');
+              const bodySteps: string[] = [];
+              if (bodyEntryEdge) {
+                const entryId = (bodyEntryEdge.target as string).replace('step-', '');
+                const visited = new Set<string>();
+                const queue = [entryId];
+                while (queue.length > 0) {
+                  const cur = queue.shift()!;
+                  if (visited.has(cur)) continue;
+                  visited.add(cur);
+                  bodySteps.push(cur);
+                  const outEdges = pipeline.edges.filter(e => e.source === `step-${cur}` && !isDataEdge(e));
+                  for (const oe of outEdges) {
+                    const tid = (oe.target as string).replace('step-', '');
+                    if (!visited.has(tid)) queue.push(tid);
+                  }
+                }
+              }
+              const doneEdge = ctrlOut.find(e => e.sourceHandle === 'ctrl-out-loop-done');
+              next = doneEdge ? [(doneEdge.target as string).replace('step-', '')] : [];
+              config = { ...config, body_steps: bodySteps };
+            }
             return {
               id: stepd.step_id,
               type: stepd.step_type as AgentStepDoc['type'],
               label: (stepd.label && stepd.label !== defaultLabel) ? stepd.label : undefined,
-              config: stepd.config ?? {},
+              config,
               next,
               ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
               ...(stepd.policy ? { policy: stepd.policy } : {}),
@@ -255,18 +279,43 @@ export function useDefinitionLifecycle({
       }));
       const stepEdges: Edge[] = [];
       for (const step of (sk.steps ?? [])) {
-        const ctrlPortDefs = getNodeDef(step.type as string).control_output_ports ?? [];
-        (step.next ?? []).forEach((nextId, idx) => {
-          const sourceHandle = ctrlPortDefs.length > 0
-            ? `ctrl-out-${ctrlPortDefs[idx]?.id ?? idx}`
-            : undefined;
-          stepEdges.push({
-            id: `${step.id}-to-${nextId}`,
-            source: `step-${step.id}`,
-            target: `step-${nextId}`,
-            ...(sourceHandle ? { sourceHandle } : {}),
+        if (step.type === 'loop') {
+          // loop-done edge: step.next[0] is the post-loop target
+          const doneTarget = (step.next ?? [])[0];
+          if (doneTarget) {
+            stepEdges.push({
+              id: `${step.id}-to-${doneTarget}`,
+              source: `step-${step.id}`,
+              target: `step-${doneTarget}`,
+              sourceHandle: 'ctrl-out-loop-done',
+            });
+          }
+          // loop-body edge: first entry in body_steps
+          const cfg = (step.config ?? {}) as Record<string, unknown>;
+          const bodySteps = cfg.body_steps as string[] | undefined;
+          const bodyEntry = bodySteps?.[0];
+          if (bodyEntry) {
+            stepEdges.push({
+              id: `${step.id}-body-to-${bodyEntry}`,
+              source: `step-${step.id}`,
+              target: `step-${bodyEntry}`,
+              sourceHandle: 'ctrl-out-loop-body',
+            });
+          }
+        } else {
+          const ctrlPortDefs = getNodeDef(step.type as string).control_output_ports ?? [];
+          (step.next ?? []).forEach((nextId, idx) => {
+            const sourceHandle = ctrlPortDefs.length > 0
+              ? `ctrl-out-${ctrlPortDefs[idx]?.id ?? idx}`
+              : undefined;
+            stepEdges.push({
+              id: `${step.id}-to-${nextId}`,
+              source: `step-${step.id}`,
+              target: `step-${nextId}`,
+              ...(sourceHandle ? { sourceHandle } : {}),
+            });
           });
-        });
+        }
         if (step.inputs) {
           for (const [portID, binding] of Object.entries(step.inputs)) {
             stepEdges.push({
@@ -318,11 +367,39 @@ export function useDefinitionLifecycle({
             const fromStepID = (de.source as string).replace('step-', '');
             if (portID && fromPort && fromStepID) inputs[portID] = { from_step: fromStepID, from_port: fromPort };
           }
+
+          let config: Record<string, unknown> = stepd.config ?? {};
+          if (stepd.step_type === 'loop') {
+            // Derive body_steps via BFS from the loop-body control edge.
+            const bodyEntryEdge = ctrlOut.find(e => e.sourceHandle === 'ctrl-out-loop-body');
+            const bodySteps: string[] = [];
+            if (bodyEntryEdge) {
+              const entryId = (bodyEntryEdge.target as string).replace('step-', '');
+              const visited = new Set<string>();
+              const queue = [entryId];
+              while (queue.length > 0) {
+                const cur = queue.shift()!;
+                if (visited.has(cur)) continue;
+                visited.add(cur);
+                bodySteps.push(cur);
+                const outEdges = pipeline.edges.filter(e => e.source === `step-${cur}` && !isDataEdge(e));
+                for (const oe of outEdges) {
+                  const tid = (oe.target as string).replace('step-', '');
+                  if (!visited.has(tid)) queue.push(tid);
+                }
+              }
+            }
+            // next is only the loop-done target, not body steps.
+            const doneEdge = ctrlOut.find(e => e.sourceHandle === 'ctrl-out-loop-done');
+            next = doneEdge ? [(doneEdge.target as string).replace('step-', '')] : [];
+            config = { ...config, body_steps: bodySteps };
+          }
+
           return {
             id: stepd.step_id,
             type: stepd.step_type as AgentStepDoc['type'],
             label: (stepd.label && stepd.label !== defaultLabel) ? stepd.label : undefined,
-            config: stepd.config ?? {},
+            config,
             next,
             ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
             position: sn.position,

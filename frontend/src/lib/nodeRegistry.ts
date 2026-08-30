@@ -302,6 +302,7 @@ const SUMMARY_FNS: Record<string, SummaryFn> = {
   branch:     (cfg) => (cfg.expression as string) ? `if ${(cfg.expression as string).slice(0, 18)}` : 'set expression',
   mcp_call:   (cfg) => (cfg.tool_name as string) || '',
   a2a_call:   (cfg) => (cfg.agent_url as string) ? (cfg.agent_url as string).replace(/^https?:\/\//, '').slice(0, 22) : '',
+  loop:       (cfg) => (cfg.items_var as string) ? `→ ${cfg.items_var as string}` : 'set items_var',
 };
 
 const FALLBACK_SUMMARY: SummaryFn = () => '';

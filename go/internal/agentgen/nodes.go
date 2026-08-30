@@ -481,7 +481,11 @@ func init() {
 		DynamicOutputs:       false,
 		Color:                "rgba(245,158,11,0.3)",
 		BgColor:              "rgba(245,158,11,0.05)",
-		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 1, MaxOut: 1},
+		Edges:                EdgeRules{MinIn: 1, MaxIn: 1, MinOut: 2, MaxOut: 2},
+		ControlOutputPorts: []PortDef{
+			{ID: "loop-body", Label: "Body"},
+			{ID: "loop-done", Label: "Done"},
+		},
 		ConfigFields: []ConfigFieldDoc{
 			{Key: "items_var", Type: "string", Required: true, Description: "Pipeline variable name that holds the list to iterate over.", Example: "results"},
 			{Key: "item_var", Type: "string", Required: false, Description: "Variable name for the current loop item within each iteration. Defaults to \"item\".", Example: "item"},
