@@ -77,7 +77,7 @@ func main() {
 	rt := &Runtime{
 		pool:      database.Pool(),
 		cryptoKey: cryptoKey,
-		taskStore: agentgen.NewRedisTaskStore(taskRedis),
+		taskStore: agentgen.NewRedisA2ATaskStore(taskRedis),
 		hitlStore: agentgen.NewHITLStore(taskRedis),
 		specCache: &specCache{entries: make(map[string]*cachedSpec)},
 		logger:    logger,
@@ -96,6 +96,9 @@ func main() {
 		rt.temporalExecutor = te
 		rt.canvasSubmitter = te
 		rt.canvasSignaler = te
+		rt.canvasAwaiter = te
+		rt.canvasCanceler = te
+		rt.canvasHITLQuerier = te
 		logger.Info("temporal executor configured", "host_port", cfg.TemporalHostPort)
 	}
 
@@ -113,9 +116,6 @@ func main() {
 	// then the SDK's NewJSONRPCHandler dispatches message/send, tasks/get, tasks/cancel,
 	// message/stream, tasks/resubscribe and all other A2A methods.
 	r.Post("/agents/{slug}", rt.handle)
-	// HITL signal endpoint: delivers human input to a paused Temporal canvas workflow.
-	// Called by the orchestration layer after the human submits their response.
-	r.Post("/agents/{slug}/tasks/{task_id}/signal", rt.signalHITL)
 
 	logger.Info("them-agent-runtime starting", "port", port)
 	if err := http.ListenAndServe(":"+port, r); err != nil {
@@ -128,7 +128,7 @@ func main() {
 type Runtime struct {
 	pool             *pgxpool.Pool
 	cryptoKey        []byte
-	taskStore        *agentgen.RedisTaskStore
+	taskStore        *agentgen.RedisA2ATaskStore // SDK-compatible task store backed by Redis
 	hitlStore        *agentgen.HITLStore
 	specCache        *specCache
 	logger           *slog.Logger
@@ -136,9 +136,13 @@ type Runtime struct {
 	// temporalExecutor is non-nil when TEMPORAL_ENABLED=true. Canvas agents with
 	// execution_backend=="temporal" are routed here; all others use LocalExecutor.
 	temporalExecutor agentgen.ExecutionBackend
-	// canvasSubmitter and canvasSignaler are non-nil only when temporalExecutor is set.
-	canvasSubmitter  temporal.CanvasSubmitter
-	canvasSignaler   temporal.CanvasSignaler
+	// canvasSubmitter, canvasSignaler, canvasAwaiter, canvasCanceler and canvasHITLQuerier
+	// are non-nil only when temporalExecutor is set.
+	canvasSubmitter   temporal.CanvasSubmitter
+	canvasSignaler    temporal.CanvasSignaler
+	canvasAwaiter     temporal.CanvasAwaiter
+	canvasCanceler    temporal.CanvasCanceler
+	canvasHITLQuerier temporal.CanvasHITLQuerier
 }
 
 func (rt *Runtime) healthz(w http.ResponseWriter, r *http.Request) {
@@ -215,12 +219,26 @@ func (rt *Runtime) handle(w http.ResponseWriter, r *http.Request) {
 		return rt.executeSkill(ctx, ic, execCtx)
 	})
 
-	// NewHandler creates a RequestHandler backed by the SDK's local task manager
-	// (in-memory by default). It handles GetTask, ListTasks, CancelTask,
-	// SendMessage, SubscribeToTask, SendStreamingMessage, and push config methods.
-	handler := a2asrv.NewHandler(executor,
+	// NewHandler creates a RequestHandler backed by the SDK's local task manager.
+	// WithTaskStore connects rt.taskStore so task state persists across in-process
+	// handler instances and survives pod restarts (reads from Redis).
+	inner := a2asrv.NewHandler(executor,
 		a2asrv.WithLogger(rt.logger),
+		a2asrv.WithTaskStore(rt.taskStore),
 	)
+
+	// HITLRequestHandler wraps the inner handler to intercept GetTask, SubscribeToTask,
+	// and CancelTask for HITL tasks, polling the Temporal query handler for state sync.
+	handler := &HITLRequestHandler{
+		inner:      inner,
+		hitlStore:  rt.hitlStore,
+		querier:    rt.canvasHITLQuerier,
+		awaiter:    rt.canvasAwaiter,
+		canceler:   rt.canvasCanceler,
+		signaler:   rt.canvasSignaler,
+		taskStore:  rt.taskStore,
+		logger:     rt.logger,
+	}
 
 	// NewJSONRPCHandler wraps the RequestHandler in a single POST endpoint that
 	// dispatches all A2A JSON-RPC 2.0 methods, replacing our hand-rolled dispatch.
@@ -379,7 +397,7 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 
 			storeCtx, storeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer storeCancel()
-			if err := rt.hitlStore.Store(storeCtx, string(execCtx.TaskID), submitted.WorkflowID, submitted.RunID, humanStepID); err != nil {
+			if err := rt.hitlStore.Store(storeCtx, string(execCtx.TaskID), submitted.WorkflowID, submitted.RunID, ic.TenantID, humanStepID); err != nil {
 				rt.logger.Warn("agent-runtime: HITL store failed (workflow is running but reconnect may not work)",
 					"task_id", string(execCtx.TaskID),
 					"workflow_id", submitted.WorkflowID,
@@ -387,8 +405,10 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 				)
 			}
 
-			// Return working — the caller reconnects via tasks/resubscribe (SDK-native).
-			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateInputRequired, nil), nil) //nolint:errcheck
+			// Return working — the caller polls via SubscribeToTask or GetTask.
+			// InputRequired is emitted only when the workflow actually reaches a human_wait node
+			// (detected via hitl_status query poll in HITLRequestHandler.SubscribeToTask).
+			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, nil), nil) //nolint:errcheck
 			return
 		}
 
@@ -432,57 +452,195 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 	}
 }
 
-// signalHITL handles POST /agents/{slug}/tasks/{task_id}/signal.
-// It delivers a human response to a paused CanvasAgentWorkflow by:
-//  1. Looking up the Temporal workflow handle in Redis (stored when the HITL task was submitted).
-//  2. Sending a SignalHumanInputPrefix+stepID signal with the request body as PipelineVars.
+// HITLRequestHandler wraps an inner a2asrv.RequestHandler to intercept GetTask,
+// SubscribeToTask, and CancelTask for HITL tasks. Non-HITL tasks are delegated to
+// the inner handler unchanged.
 //
-// The body must be a JSON object: {"reply_var": "value", ...}.
-// Returns 200 OK on success, 404 when the task handle has expired or was never stored.
-func (rt *Runtime) signalHITL(w http.ResponseWriter, r *http.Request) {
-	taskID := chi.URLParam(r, "task_id")
-	if taskID == "" {
-		http.Error(w, `{"error":"missing task_id"}`, http.StatusBadRequest)
-		return
-	}
-
-	if rt.canvasSignaler == nil {
-		http.Error(w, `{"error":"Temporal not enabled"}`, http.StatusServiceUnavailable)
-		return
-	}
-
-	handle, err := rt.hitlStore.Get(r.Context(), taskID)
-	if err != nil {
-		if errors.Is(err, agentgen.ErrHITLNotFound) {
-			http.Error(w, `{"error":"task not found or expired"}`, http.StatusNotFound)
-			return
-		}
-		rt.logger.Error("agent-runtime: HITL store get failed", "task_id", taskID, "err", err)
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	var payload agentgen.PipelineVars
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
-		return
-	}
-
-	signalName := temporal.SignalHumanInputPrefix + handle.StepID
-	if err := rt.canvasSignaler.SignalCanvasStep(r.Context(), handle.WorkflowID, handle.RunID, signalName, payload); err != nil {
-		rt.logger.Error("agent-runtime: SignalCanvasStep failed",
-			"task_id", taskID,
-			"workflow_id", handle.WorkflowID,
-			"err", err,
-		)
-		http.Error(w, `{"error":"signal delivery failed"}`, http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"signaled":true}`)) //nolint:errcheck
+// For HITL tasks it:
+//   - GetTask: polls hitl_status, syncs HITLStore state, then delegates.
+//   - SubscribeToTask: polls hitl_status every ~1s while the connection is alive;
+//     emits InputRequired when the workflow reaches a human_wait node; awaits the
+//     final result when signalled; emits Completed. No permanent background goroutines.
+//   - CancelTask: cancels the Temporal workflow, marks the handle done, then delegates.
+type HITLRequestHandler struct {
+	inner     a2asrv.RequestHandler
+	hitlStore *agentgen.HITLStore
+	querier   temporal.CanvasHITLQuerier
+	awaiter   temporal.CanvasAwaiter
+	canceler  temporal.CanvasCanceler
+	signaler  temporal.CanvasSignaler
+	taskStore *agentgen.RedisA2ATaskStore
+	logger    *slog.Logger
 }
+
+// syncHITLState queries the Temporal workflow and updates HITLStore when the
+// workflow has advanced (e.g., reached waiting state). Returns the updated handle
+// and ok=false if no HITL handle exists for this task.
+func (h *HITLRequestHandler) syncHITLState(ctx context.Context, taskID string) (agentgen.HITLHandle, bool) {
+	handle, err := h.hitlStore.Get(ctx, taskID)
+	if errors.Is(err, agentgen.ErrHITLNotFound) {
+		return agentgen.HITLHandle{}, false
+	}
+	if err != nil || h.querier == nil {
+		return handle, true
+	}
+
+	status, err := h.querier.QueryHITLStatus(ctx, handle.WorkflowID, handle.RunID)
+	if err != nil {
+		// Workflow may be terminal — mark done.
+		_ = h.hitlStore.MarkDone(ctx, taskID)
+		return agentgen.HITLHandle{}, false
+	}
+
+	// Sync state transitions: submitted→waiting, signalled→waiting (next step).
+	if status.State == agentgen.HITLStateWaiting && handle.WaitToken != status.WaitToken {
+		if uerr := h.hitlStore.UpdateWaitToken(ctx, taskID, status.WaitToken, status.StepID); uerr == nil {
+			handle.State = agentgen.HITLStateWaiting
+			handle.WaitToken = status.WaitToken
+			handle.StepID = status.StepID
+		}
+	}
+	return handle, true
+}
+
+// GetTask syncs HITL state before delegating to the inner handler.
+func (h *HITLRequestHandler) GetTask(ctx context.Context, req *a2a.GetTaskRequest) (*a2a.Task, error) {
+	h.syncHITLState(ctx, string(req.ID)) //nolint:errcheck
+	return h.inner.GetTask(ctx, req)
+}
+
+// SubscribeToTask polls the Temporal hitl_status query while the connection is alive.
+// Emits InputRequired when the workflow reaches a human_wait node.
+// Emits Completed+Artifact when the workflow is done.
+// Delegates to the inner handler for non-HITL tasks.
+func (h *HITLRequestHandler) SubscribeToTask(ctx context.Context, req *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error] {
+	taskID := string(req.ID)
+	handle, isHITL := h.syncHITLState(ctx, taskID)
+	if !isHITL || h.querier == nil {
+		return h.inner.SubscribeToTask(ctx, req)
+	}
+
+	return func(yield func(a2a.Event, error) bool) {
+		ticker := time.NewTicker(1500 * time.Millisecond)
+		defer ticker.Stop()
+
+		// Emit current state immediately when already waiting.
+		if handle.State == agentgen.HITLStateWaiting {
+			prompt := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("waiting for human input"))
+			ev := &a2a.TaskStatusUpdateEvent{
+				TaskID:    req.ID,
+				ContextID: "",
+				Status:    a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: prompt},
+			}
+			if !yield(ev, nil) {
+				return
+			}
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				status, qErr := h.querier.QueryHITLStatus(ctx, handle.WorkflowID, handle.RunID)
+				if qErr != nil {
+					// Workflow terminated — check for final result.
+					if h.awaiter != nil {
+						result, aErr := h.awaiter.AwaitResult(ctx, handle.WorkflowID, handle.RunID)
+						if aErr == nil && result != nil {
+							artEv := a2a.NewArtifactEvent(&fakeTaskInfo{id: req.ID}, a2a.NewTextPart(result.Text))
+							if !yield(artEv, nil) {
+								return
+							}
+							doneEv := &a2a.TaskStatusUpdateEvent{
+								TaskID: req.ID, ContextID: "",
+								Status: a2a.TaskStatus{State: a2a.TaskStateCompleted},
+							}
+							yield(doneEv, nil) //nolint:errcheck
+						} else {
+							failEv := &a2a.TaskStatusUpdateEvent{
+								TaskID: req.ID, ContextID: "",
+								Status: a2a.TaskStatus{State: a2a.TaskStateFailed},
+							}
+							yield(failEv, nil) //nolint:errcheck
+						}
+					}
+					_ = h.hitlStore.MarkDone(ctx, taskID)
+					return
+				}
+
+				// Sync state — new human_wait occurrence.
+				if status.State == agentgen.HITLStateWaiting && status.WaitToken != handle.WaitToken {
+					_ = h.hitlStore.UpdateWaitToken(ctx, taskID, status.WaitToken, status.StepID)
+					handle.WaitToken = status.WaitToken
+					handle.StepID = status.StepID
+					handle.State = agentgen.HITLStateWaiting
+					prompt := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("waiting for human input"))
+					ev := &a2a.TaskStatusUpdateEvent{
+						TaskID: req.ID, ContextID: "",
+						Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: prompt},
+					}
+					if !yield(ev, nil) {
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+// fakeTaskInfo is a minimal a2a.TaskInfoProvider used when constructing artifact events
+// outside of an ExecutorContext (e.g., in SubscribeToTask reconnect path).
+type fakeTaskInfo struct {
+	id a2a.TaskID
+}
+
+func (f *fakeTaskInfo) TaskInfo() a2a.TaskInfo {
+	return a2a.TaskInfo{TaskID: f.id}
+}
+
+// CancelTask cancels the Temporal workflow if a HITL handle exists, then delegates.
+func (h *HITLRequestHandler) CancelTask(ctx context.Context, req *a2a.CancelTaskRequest) (*a2a.Task, error) {
+	taskID := string(req.ID)
+	if handle, err := h.hitlStore.Get(ctx, taskID); err == nil && h.canceler != nil {
+		if cerr := h.canceler.CancelWorkflow(ctx, handle.WorkflowID, handle.RunID); cerr != nil {
+			h.logger.Warn("HITLRequestHandler: CancelWorkflow failed",
+				"task_id", taskID, "workflow_id", handle.WorkflowID, "err", cerr)
+		}
+		_ = h.hitlStore.MarkDone(ctx, taskID)
+	}
+	return h.inner.CancelTask(ctx, req)
+}
+
+// Delegate all other methods to the inner handler.
+
+func (h *HITLRequestHandler) ListTasks(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
+	return h.inner.ListTasks(ctx, req)
+}
+func (h *HITLRequestHandler) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
+	return h.inner.SendMessage(ctx, req)
+}
+func (h *HITLRequestHandler) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+	return h.inner.SendStreamingMessage(ctx, req)
+}
+func (h *HITLRequestHandler) GetTaskPushConfig(ctx context.Context, req *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error) {
+	return h.inner.GetTaskPushConfig(ctx, req)
+}
+func (h *HITLRequestHandler) ListTaskPushConfigs(ctx context.Context, req *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error) {
+	return h.inner.ListTaskPushConfigs(ctx, req)
+}
+func (h *HITLRequestHandler) CreateTaskPushConfig(ctx context.Context, cfg *a2a.PushConfig) (*a2a.PushConfig, error) {
+	return h.inner.CreateTaskPushConfig(ctx, cfg)
+}
+func (h *HITLRequestHandler) DeleteTaskPushConfig(ctx context.Context, req *a2a.DeleteTaskPushConfigRequest) error {
+	return h.inner.DeleteTaskPushConfig(ctx, req)
+}
+func (h *HITLRequestHandler) GetExtendedAgentCard(ctx context.Context, req *a2a.GetExtendedAgentCardRequest) (*a2a.AgentCard, error) {
+	return h.inner.GetExtendedAgentCard(ctx, req)
+}
+
+// compile-time check that HITLRequestHandler satisfies RequestHandler.
+var _ a2asrv.RequestHandler = (*HITLRequestHandler)(nil)
 
 // parseInvocationContext reads identity from X-Them-* headers.
 // Phase 1 uses plain headers (internal Docker network only).

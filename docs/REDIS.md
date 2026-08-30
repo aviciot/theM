@@ -28,7 +28,8 @@
 | `them:mcp:manifest:{slug}` | 300s | go/internal/mcp/registry.go | Yes | Cached MCP tool manifest JSON for one server (by slug). Written by supervisor on discovery; read by executor on tool call. |
 | `them:mcp:health:{slug}` | 90s | go/internal/mcp/registry.go | Yes | Latest health probe result JSON for one server. Short TTL — absence implies server is unknown/unreachable. |
 | `them:mcp:leader` | 30s | go/internal/mcp/leader.go | No | Leader election lock for `them-mcp-service` supervisor. SET NX PX 30000; renewed every 20s by the current leader. Only one pod runs the reconciler/supervisor at a time. |
-| `them:hitl:{task_id}` | 24h | go/internal/agentgen/hitl_store.go (written by agent-runtime on HITL submit) | Yes | HITL handle: `{workflow_id, run_id, step_id}` — maps an A2A task ID to its paused Temporal workflow. The signal endpoint reads this to route human responses. Deleted on workflow completion or explicit cancel. |
+| `them:hitl:{task_id}` | 24h | go/internal/agentgen/hitl_store.go (written by agent-runtime on HITL submit) | Yes | HITL handle: `{workflow_id, run_id, tenant_id, step_id, wait_token, state}` — maps an A2A task ID to its paused Temporal workflow. State machine: "submitted" → "waiting" (when workflow reaches hw node, with deterministic wait_token) → "signalled" (after TrySignal CAS) → deleted (MarkDone on completion). Signal endpoint at `/admin/canvas-tasks/{task_id}/signal` reads this to verify tenant, validate wait_token, and route human responses. |
+| `them:agent:a2atask:{task_id}` | 24h | go/internal/agentgen/a2a_task_store.go (RedisA2ATaskStore) | Yes | Full A2A SDK Task JSON blob — implements `taskstore.Store` for the A2A server SDK. Enables durable task state across pod restarts; read by GetTask and SubscribeToTask. |
 
 ## Pub/Sub Channels
 

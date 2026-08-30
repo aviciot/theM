@@ -51,15 +51,17 @@ func ValidateLoopBodies(skill *SkillSpec) error {
 	return nil
 }
 
-// PlanHasHumanWait returns true when at least one top-level node in the plan
-// is a human_wait step. Loop body nodes are not scanned — human_wait inside
-// a loop body is not supported and should be caught at compile time.
+// PlanHasHumanWait returns true when any node in the plan (including sub-plans
+// inside loop body nodes) is a human_wait step.
 func PlanHasHumanWait(plan *ExecutionPlan) bool {
 	if plan == nil {
 		return false
 	}
 	for _, n := range plan.Nodes {
 		if n.Type == StepHumanWait {
+			return true
+		}
+		if n.SubPlan != nil && PlanHasHumanWait(n.SubPlan) {
 			return true
 		}
 	}

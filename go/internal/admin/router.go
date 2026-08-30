@@ -9,8 +9,10 @@ import (
 	"github.com/redis/rueidis"
 
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/registry"
+	"github.com/aviciot/them/internal/temporal"
 )
 
 // registryQuerierAdapter adapts admin.DBQuerier to registry.DBQuerier.
@@ -100,7 +102,7 @@ func (a *registryQuerierAdapter) QueryRow(ctx context.Context, sql string, args 
 func BuildRouter(
 	db DBQuerier,
 	cache CacheInvalidator,
-	temporal TemporalSignaler,
+	temporalSig TemporalSignaler,
 	sessionReader service.SessionReader,
 	jwtMiddleware func(http.Handler) http.Handler,
 	tokenCache *auth.Cache,
@@ -110,6 +112,8 @@ func BuildRouter(
 	fernetKey []byte,
 	mcpServiceURL string,
 	anthropicAPIKey string,
+	hitlStore *agentgen.HITLStore,
+	canvasSignaler temporal.CanvasSignaler,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -117,7 +121,7 @@ func BuildRouter(
 	orchs := NewOrchestratorsHandler(db, cache)
 	apps := NewApplicationsHandler(db, cache, fernetKey)
 	defs := NewDefinitionsHandlerWithRegistry(db, registry.NewResolver(&registryQuerierAdapter{db}))
-	runs := NewRunsHandler(db, temporal)
+	runs := NewRunsHandler(db, temporalSig)
 	tokens := NewTokensHandler(db, cache)
 	monitoring := NewMonitoringConfigHandler(db)
 	llmRouting := NewLLMRoutingHandler(db)
@@ -166,6 +170,11 @@ func BuildRouter(
 
 				mcpServers := NewMCPServersHandler(db, secretKey, mcpServiceURL)
 				mcpServers.Routes(tenantScoped)
+
+				// HITL canvas task signal endpoint — only mounted when Temporal is enabled.
+				if ct := NewCanvasTasksHandler(hitlStore, canvasSignaler); ct != nil {
+					ct.Routes(tenantScoped)
+				}
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,

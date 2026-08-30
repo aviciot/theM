@@ -7,10 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: `3b1052f`
+Commit: pending (Phase 5-B hardening — see below)
 
 Recent commits (newest first):
 ```
+(pending)  fix(hitl): Phase 5-B hardening — auth, state model, wait_token, loop body, reconnect
 3b1052f  feat(hitl): Phase 5-B — HumanWait async submit, Redis handle store, signal endpoint
 6ea9e23  docs: update CURRENT.md HEAD to 7b0a09a
 7b0a09a  fix(loop): Phase 5-A gap fixes — correct SubPlan DAG semantics, iteration isolation, scoped accum
@@ -150,7 +151,7 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — 43 packages, 0 failures (verified 2026-08-30, Phase 5-B)
+go test ./...  — 42 packages, 0 failures (verified 2026-08-30, Phase 5-B hardening)
 S1-72: 20 EP compiler tests (+PC-LOOP-1..6: ValidateLoopBodies + compileLoopBodyPlan Branch/Join + resolveLoopOuterNext)
 S1-73: 33 LocalExecutor tests (+EP-LOOP-6/7/8: BranchInsideBody, IterationIsolation, ScopedAccumulation)
 S1-74: 3 DAG E2E smoke tests
@@ -158,10 +159,11 @@ S1-75: 16 Phase 4-A tests (NA-01..NA-16)
 S1-76: 21 Phase 4-B tests (+CT-LOOP-DURABLE-6/7: IterationIsolation, ScopedAccumVar)
 S1-77: 13 Phase 4-C TemporalExecutor tests (TE-01..TE-09, TE-10..13: Submit/Signal/PlanHasHumanWait)
 S1-78: 4 dag-worker SQL tenant scope tests
-S1-79: 5 HITLStore tests (HS-1..5)
-S1-80: 5 agent-runtime HITL handler tests (RT-HITL-1..5)
+S1-79: 11 HITLStore Phase 5-B hardening tests (HS-1..11: state machine, UpdateWaitToken, TrySignal CAS, MarkDone, RepeatedWait)
+S1-80: 5 agent-runtime HITL Phase 5-B handler tests (RT-HITL-1..5: ReturnsWorking, StoresHandle, HITLRequestHandler)
+S1-81: 4 Canvas HITL signal admin endpoint tests (CSIG-1..4: Success, NotFound, CrossTenant, WrongToken)
 S2-06: 3 integration-tagged Temporal E2E tests
-Total go test ./...: 883
+Total go test ./...: 898
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -428,7 +430,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 4-C gap-2 | 5 additional fixes: tenant-scope ALL lookups, safe errors, conditional Temporal overlay, HumanWait 24h timeout, real full-path E2E, binding 4-ID enforcement | ✅ commits `8d815cc`..`b3bd71a` |
 | 4-D | Frontend execution_backend toggle (Local / ⚡ Temporal pill in top bar) | ✅ commit `7d39d44` |
 | 5-A | StepLoop — LocalExecutor + Temporal + frontend config panel + durable loop architecture + canvas ports + gap fixes (compileLoopBodyPlan JoinOf/JoinMode, ExecuteBody onTerminal, bodyIterState isolation, BFS boundary, accum scoping) + 8 new tests (EP-LOOP-6/7/8, CT-LOOP-DURABLE-6/7, PC-LOOP-4/5/6) | ✅ |
-| 5-B | HumanWait async — HITLStore (Redis, 24h), PlanHasHumanWait, CanvasSubmitter/Signaler interfaces, Submit()/SignalCanvasStep() on TemporalExecutor, HITL executeSkill path (detached ctx), signalHITL POST handler; 14 new tests (HS-1..5, TE-10..13, RT-HITL-1..5) | ✅ commit `3b1052f` |
+| 5-B | HumanWait async — Phase 1 (commit `3b1052f`): HITLStore, PlanHasHumanWait, CanvasSubmitter/Signaler, Submit/SignalCanvasStep, executeSkill HITL async path, signalHITL; Phase 2 hardening (pending commit): HITLHandle 6-field state machine (tenant_id, wait_token, state), UpdateWaitToken/TrySignal CAS/MarkDone, deterministic wait_token (sha256, no uuid), hitl_status workflow query handler, per-step timeout via workflow.Select, loop-body HumanWait, HITLRequestHandler (GetTask/SubscribeToTask/CancelTask), RedisA2ATaskStore (SDK taskstore.Store), signal endpoint moved to JWT-auth admin router `/admin/canvas-tasks/{task_id}/signal`; 20 total tests (HS-1..11, RT-HITL-1..5, CSIG-1..4) | ✅ commit pending |
 | 5-C | A2A call node in DAG fan-out / Temporal activity wiring | ⬜ |
 
 ### DAG join semantics (hardening summary)
@@ -472,17 +474,23 @@ Done (canvas ports, commit 81c3a31):
 - `nodeRegistry.ts`: loop added to `SUMMARY_FNS` (shows `items_var`)
 - `useDefinitionLifecycle.ts`: both serialization paths (validation useEffect + `buildDefinitionDoc`) derive `body_steps` via BFS from `ctrl-out-loop-body` edge chain; set `next` to only `ctrl-out-loop-done` target; load path reconstructs both edges from `step.next[0]` (done) and `config.body_steps[0]` (body entry)
 
-### Phase 5-B: HumanWait async — COMPLETE (commit `3b1052f`)
+### Phase 5-B: HumanWait async — COMPLETE (two commits: `3b1052f` + pending hardening)
 
-What was built:
-- `HITLStore` (`internal/agentgen/hitl_store.go`) — Redis-backed handle store, key `them:hitl:{task_id}`, TTL 24h; `ErrHITLNotFound` sentinel
-- `PlanHasHumanWait` exported from `plan_compiler.go` (was private in `temporal` pkg)
-- `TemporalExecutor.Submit()` — starts workflow without blocking (`no run.Get()`); returns `SubmitResult{WorkflowID, RunID}`
-- `TemporalExecutor.SignalCanvasStep()` — delivers per-step `human_input:{stepID}` signals
-- `CanvasSubmitter` and `CanvasSignaler` interfaces with compile-time guards
-- `cmd/agent-runtime/main.go`: HITL async path in `executeSkill` — detaches from HTTP context (`context.Background()+24h`), calls `Submit`, stores handle, yields `input-required`; `signalHITL` handler at `POST /agents/{slug}/tasks/{task_id}/signal`
-- 14 new tests: HS-1..5 (HITLStore), TE-10..13 (Submit/Signal/PlanHasHumanWait), RT-HITL-1..5 (executeSkill HITL + signalHITL)
-- `docs/REDIS.md`: `them:hitl:{task_id}` documented
+**Phase 1** (commit `3b1052f`) built the initial async path.
+
+**Phase 2 hardening** (pending commit) adds:
+- `HITLHandle` 6-field schema: `{workflow_id, run_id, tenant_id, step_id, wait_token, state}` — state machine "submitted"→"waiting"→"signalled"→deleted
+- `UpdateWaitToken()`, `TrySignal()` (atomic CAS), `MarkDone()` on HITLStore
+- Deterministic `wait_token` via `sha256(runID+":"+stepID+":"+counter)[:16]` — never `uuid.New()` in workflow code
+- `hitl_status` workflow query handler registered at workflow start — polled by agent-runtime
+- Per-step HITL timeout via `workflow.Select` + timer (configurable via `HumanWaitConfig.TimeoutSeconds`)
+- `runBodyBranch` WaitingForHuman block — loop body `human_wait` support
+- `HITLRequestHandler` — intercepts GetTask/SubscribeToTask/CancelTask for HITL A2A tasks; polls `QueryHITLStatus` to sync state; no permanent background goroutines
+- `RedisA2ATaskStore` — proper `taskstore.Store` implementation connected to SDK via `WithTaskStore`
+- `CanvasAwaiter`, `CanvasCanceler`, `CanvasHITLQuerier` interfaces on `TemporalExecutor`
+- Signal endpoint moved from unauthenticated port 9300 to JWT-authenticated admin router: `POST /admin/canvas-tasks/{task_id}/signal` behind `RequireSuperAdmin + AdminTenantMiddleware`
+- `CanvasTasksHandler` in `internal/admin/canvas_tasks.go` — tenant ownership check + TrySignal CAS
+- 20 total tests: HS-1..11, RT-HITL-1..5, CSIG-1..4; `go test ./...` → 0 failures
 
 ### Phase 5-C: A2A call node in DAG fan-out context
 - `StepA2ACall` already has a local executor; needs Temporal activity wiring

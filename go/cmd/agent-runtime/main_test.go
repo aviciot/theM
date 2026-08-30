@@ -14,7 +14,6 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aviciot/them/internal/agentgen"
@@ -778,9 +777,11 @@ func makeHITLSpec() *agentgen.AgentSpec {
 	}
 }
 
-// RT-HITL-1: executeSkill for a HITL Temporal plan returns TaskStateInputRequired
+// RT-HITL-1: executeSkill for a HITL Temporal plan returns TaskStateWorking
 // immediately without blocking on workflow completion.
-func TestExecuteSkill_HITL_ReturnsInputRequired(t *testing.T) {
+// InputRequired is emitted later by HITLRequestHandler.SubscribeToTask when the
+// workflow query reports state==waiting.
+func TestExecuteSkill_HITL_ReturnsWorking(t *testing.T) {
 	submitter := &stubCanvasSubmitter{result: temporal.SubmitResult{WorkflowID: "wf-1", RunID: "run-1"}}
 	stubRedis := newStubHITLRedis()
 	rt := &Runtime{
@@ -813,7 +814,7 @@ func TestExecuteSkill_HITL_ReturnsInputRequired(t *testing.T) {
 		t.Error("Submit must be called for HITL plan")
 	}
 
-	// Last event must be InputRequired (async — no completion yet).
+	// Last event must be Working (async — not yet at human_wait node).
 	if len(events) == 0 {
 		t.Fatal("expected at least one event")
 	}
@@ -822,8 +823,8 @@ func TestExecuteSkill_HITL_ReturnsInputRequired(t *testing.T) {
 	if !ok {
 		t.Fatalf("last event must be *a2a.TaskStatusUpdateEvent, got %T", last)
 	}
-	if su.Status.State != a2a.TaskStateInputRequired {
-		t.Errorf("last state: want input-required, got %v", su.Status.State)
+	if su.Status.State != a2a.TaskStateWorking {
+		t.Errorf("last state: want working, got %v", su.Status.State)
 	}
 }
 
@@ -861,85 +862,156 @@ func TestExecuteSkill_HITL_StoresHandle(t *testing.T) {
 	}
 }
 
-// RT-HITL-3: signalHITL delivers the signal to the correct workflow.
-func TestSignalHITL_DeliverssSignal(t *testing.T) {
-	stubRedis := newStubHITLRedis()
-	store := agentgen.NewHITLStore(stubRedis)
-	taskID := "task-sig-1"
-	_ = store.Store(context.Background(), taskID, "wf-sig", "run-sig", "step-hw")
+// stubCanvasCanceler records CancelWorkflow calls.
+type stubCanvasCanceler struct {
+	called     bool
+	workflowID string
+	runID      string
+	err        error
+}
 
-	sig := &stubCanvasSignaler{}
-	rt := &Runtime{
-		hitlStore:      store,
-		canvasSignaler: sig,
+func (s *stubCanvasCanceler) CancelWorkflow(_ context.Context, workflowID, runID string) error {
+	s.called = true
+	s.workflowID = workflowID
+	s.runID = runID
+	return s.err
+}
+
+// stubCanvasAwaiter records AwaitResult calls and returns a fixed result.
+type stubCanvasAwaiter struct {
+	called bool
+	result *agentgen.ExecutionResult
+	err    error
+}
+
+func (s *stubCanvasAwaiter) AwaitResult(_ context.Context, _, _ string) (*agentgen.ExecutionResult, error) {
+	s.called = true
+	return s.result, s.err
+}
+
+// stubCanvasHITLQuerier records QueryHITLStatus calls.
+type stubCanvasHITLQuerier struct {
+	status temporal.HITLQueryStatus
+	err    error
+}
+
+func (s *stubCanvasHITLQuerier) QueryHITLStatus(_ context.Context, _, _ string) (temporal.HITLQueryStatus, error) {
+	return s.status, s.err
+}
+
+// stubSDKHandler is a minimal a2asrv.RequestHandler that records delegated calls.
+type stubSDKHandler struct {
+	cancelTaskCalled bool
+	getTaskCalled    bool
+	subscribeCalled  bool
+}
+
+func (s *stubSDKHandler) GetTask(_ context.Context, _ *a2a.GetTaskRequest) (*a2a.Task, error) {
+	s.getTaskCalled = true
+	return &a2a.Task{}, nil
+}
+func (s *stubSDKHandler) ListTasks(_ context.Context, _ *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
+	return &a2a.ListTasksResponse{Tasks: []*a2a.Task{}}, nil
+}
+func (s *stubSDKHandler) CancelTask(_ context.Context, _ *a2a.CancelTaskRequest) (*a2a.Task, error) {
+	s.cancelTaskCalled = true
+	return &a2a.Task{}, nil
+}
+func (s *stubSDKHandler) SendMessage(_ context.Context, _ *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
+	return nil, nil
+}
+func (s *stubSDKHandler) SubscribeToTask(_ context.Context, _ *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error] {
+	s.subscribeCalled = true
+	return func(yield func(a2a.Event, error) bool) {}
+}
+func (s *stubSDKHandler) SendStreamingMessage(_ context.Context, _ *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {}
+}
+func (s *stubSDKHandler) GetTaskPushConfig(_ context.Context, _ *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error) {
+	return nil, nil
+}
+func (s *stubSDKHandler) ListTaskPushConfigs(_ context.Context, _ *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error) {
+	return &a2a.ListTaskPushConfigResponse{}, nil
+}
+func (s *stubSDKHandler) CreateTaskPushConfig(_ context.Context, cfg *a2a.PushConfig) (*a2a.PushConfig, error) {
+	return cfg, nil
+}
+func (s *stubSDKHandler) DeleteTaskPushConfig(_ context.Context, _ *a2a.DeleteTaskPushConfigRequest) error {
+	return nil
+}
+func (s *stubSDKHandler) GetExtendedAgentCard(_ context.Context, _ *a2a.GetExtendedAgentCardRequest) (*a2a.AgentCard, error) {
+	return nil, nil
+}
+
+// RT-HITL-3 (renamed): HITLRequestHandler.CancelTask cancels the workflow and marks done.
+func TestHITLRequestHandler_CancelTask_CancelsWorkflow(t *testing.T) {
+	store := agentgen.NewHITLStore(newStubHITLRedis())
+	taskID := a2a.TaskID("task-cancel-1")
+	_ = store.Store(context.Background(), string(taskID), "wf-cancel", "run-cancel", "t1", "hw1")
+
+	canceler := &stubCanvasCanceler{}
+	inner := &stubSDKHandler{}
+	h := &HITLRequestHandler{
+		inner:     inner,
+		hitlStore: store,
+		canceler:  canceler,
+		logger:    slog.Default(),
 	}
 
-	body := `{"approval":"yes"}`
-	req := httptest.NewRequest(http.MethodPost, "/agents/slug/tasks/"+taskID+"/signal", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	// Inject chi URL param manually.
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("task_id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rr := httptest.NewRecorder()
-	rt.signalHITL(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	_, err := h.CancelTask(context.Background(), &a2a.CancelTaskRequest{ID: taskID})
+	if err != nil {
+		t.Fatalf("CancelTask: unexpected error: %v", err)
 	}
-	if !sig.called {
-		t.Error("SignalCanvasStep must be called")
+	if !canceler.called {
+		t.Error("CancelWorkflow must be called for HITL task")
 	}
-	if sig.workflowID != "wf-sig" {
-		t.Errorf("workflowID: want wf-sig, got %q", sig.workflowID)
+	if canceler.workflowID != "wf-cancel" {
+		t.Errorf("workflowID: want wf-cancel, got %q", canceler.workflowID)
 	}
-	if sig.signalName != temporal.SignalHumanInputPrefix+"step-hw" {
-		t.Errorf("signalName: want %q, got %q", temporal.SignalHumanInputPrefix+"step-hw", sig.signalName)
+	if !inner.cancelTaskCalled {
+		t.Error("inner handler must be called")
 	}
-	approval, _ := sig.payload["approval"].(string)
-	if approval != "yes" {
-		t.Errorf("payload approval: want yes, got %q", approval)
+	// Handle must be marked done (removed from store).
+	if _, err := store.Get(context.Background(), string(taskID)); err == nil {
+		t.Error("handle must be removed after CancelTask")
 	}
 }
 
-// RT-HITL-4: signalHITL returns 404 when no handle exists for the task.
-func TestSignalHITL_NotFound(t *testing.T) {
-	rt := &Runtime{
-		hitlStore:      agentgen.NewHITLStore(newStubHITLRedis()),
-		canvasSignaler: &stubCanvasSignaler{},
+// RT-HITL-4 (renamed): HITLRequestHandler.CancelTask for a non-HITL task delegates without cancelling Temporal.
+func TestHITLRequestHandler_CancelTask_NonHITL_Delegates(t *testing.T) {
+	canceler := &stubCanvasCanceler{}
+	inner := &stubSDKHandler{}
+	h := &HITLRequestHandler{
+		inner:     inner,
+		hitlStore: agentgen.NewHITLStore(newStubHITLRedis()), // empty store
+		canceler:  canceler,
+		logger:    slog.Default(),
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/agents/slug/tasks/missing/signal", strings.NewReader("{}"))
-	req.Header.Set("Content-Type", "application/json")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("task_id", "missing")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rr := httptest.NewRecorder()
-	rt.signalHITL(rr, req)
-
-	if rr.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rr.Code)
+	_, _ = h.CancelTask(context.Background(), &a2a.CancelTaskRequest{ID: "no-such-task"})
+	if canceler.called {
+		t.Error("CancelWorkflow must NOT be called for non-HITL task")
+	}
+	if !inner.cancelTaskCalled {
+		t.Error("inner handler must be called")
 	}
 }
 
-// RT-HITL-5: signalHITL returns 503 when Temporal is not configured.
-func TestSignalHITL_TemporalNotEnabled(t *testing.T) {
-	rt := &Runtime{
-		hitlStore: agentgen.NewHITLStore(newStubHITLRedis()),
-		// canvasSignaler is nil — Temporal disabled
+// RT-HITL-5 (renamed): HITLRequestHandler.SubscribeToTask for a non-HITL task delegates to inner handler.
+func TestHITLRequestHandler_SubscribeToTask_NonHITL_Delegates(t *testing.T) {
+	querier := &stubCanvasHITLQuerier{}
+	inner := &stubSDKHandler{}
+	h := &HITLRequestHandler{
+		inner:     inner,
+		hitlStore: agentgen.NewHITLStore(newStubHITLRedis()), // empty store
+		querier:   querier,
+		logger:    slog.Default(),
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/agents/slug/tasks/t1/signal", strings.NewReader("{}"))
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("task_id", "t1")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rr := httptest.NewRecorder()
-	rt.signalHITL(rr, req)
-
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected 503, got %d", rr.Code)
+	seq := h.SubscribeToTask(context.Background(), &a2a.SubscribeToTaskRequest{ID: "no-hitl-task"})
+	for range seq {
+	}
+	if !inner.subscribeCalled {
+		t.Error("inner SubscribeToTask must be called for non-HITL task")
 	}
 }

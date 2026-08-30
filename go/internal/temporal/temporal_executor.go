@@ -224,6 +224,40 @@ func (e *TemporalExecutor) SignalCanvasStep(ctx context.Context, workflowID, run
 	return nil
 }
 
+// AwaitResult blocks until the CanvasAgentWorkflow identified by workflowID/runID
+// completes and returns its output. Use after a HITL workflow has been signalled
+// to collect the final result without re-starting the workflow.
+func (e *TemporalExecutor) AwaitResult(ctx context.Context, workflowID, runID string) (*agentgen.ExecutionResult, error) {
+	run := e.client.GetWorkflow(ctx, workflowID, runID)
+	var out CanvasAgentWorkflowOutput
+	if err := run.Get(ctx, &out); err != nil {
+		return nil, fmt.Errorf("TemporalExecutor: await result: %w", err)
+	}
+	return &agentgen.ExecutionResult{Text: out.ResultText, MediaType: out.ResultMT}, nil
+}
+
+// CancelWorkflow requests cancellation of the running workflow.
+func (e *TemporalExecutor) CancelWorkflow(ctx context.Context, workflowID, runID string) error {
+	if err := e.client.CancelWorkflow(ctx, workflowID, runID); err != nil {
+		return fmt.Errorf("TemporalExecutor: cancel workflow: %w", err)
+	}
+	return nil
+}
+
+// QueryHITLStatus queries the hitl_status query handler on a running workflow.
+// Returns ErrHITLWorkflowNotRunning when the workflow is not in a queryable state.
+func (e *TemporalExecutor) QueryHITLStatus(ctx context.Context, workflowID, runID string) (HITLQueryStatus, error) {
+	resp, err := e.client.QueryWorkflow(ctx, workflowID, runID, "hitl_status")
+	if err != nil {
+		return HITLQueryStatus{}, fmt.Errorf("TemporalExecutor: query hitl_status: %w", err)
+	}
+	var status HITLQueryStatus
+	if err := resp.Get(&status); err != nil {
+		return HITLQueryStatus{}, fmt.Errorf("TemporalExecutor: decode hitl_status: %w", err)
+	}
+	return status, nil
+}
+
 // CanvasSignaler can deliver a human_input signal to a running CanvasAgentWorkflow.
 // Implemented by TemporalExecutor; nil when Temporal is disabled.
 type CanvasSignaler interface {
@@ -236,7 +270,28 @@ type CanvasSubmitter interface {
 	Submit(ctx context.Context, ic *agentgen.InvocationContext, plan *agentgen.ExecutionPlan, initial agentgen.PipelineVars) (SubmitResult, error)
 }
 
+// CanvasAwaiter can block until a running CanvasAgentWorkflow completes.
+// Implemented by TemporalExecutor; nil when Temporal is disabled.
+type CanvasAwaiter interface {
+	AwaitResult(ctx context.Context, workflowID, runID string) (*agentgen.ExecutionResult, error)
+}
+
+// CanvasCanceler can request cancellation of a running CanvasAgentWorkflow.
+// Implemented by TemporalExecutor; nil when Temporal is disabled.
+type CanvasCanceler interface {
+	CancelWorkflow(ctx context.Context, workflowID, runID string) error
+}
+
+// CanvasHITLQuerier can query the hitl_status handler on a running CanvasAgentWorkflow.
+// Implemented by TemporalExecutor; nil when Temporal is disabled.
+type CanvasHITLQuerier interface {
+	QueryHITLStatus(ctx context.Context, workflowID, runID string) (HITLQueryStatus, error)
+}
+
 // compile-time interface satisfaction checks.
 var _ agentgen.ExecutionBackend = (*TemporalExecutor)(nil)
 var _ CanvasSignaler = (*TemporalExecutor)(nil)
 var _ CanvasSubmitter = (*TemporalExecutor)(nil)
+var _ CanvasAwaiter = (*TemporalExecutor)(nil)
+var _ CanvasCanceler = (*TemporalExecutor)(nil)
+var _ CanvasHITLQuerier = (*TemporalExecutor)(nil)

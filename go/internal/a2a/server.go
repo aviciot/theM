@@ -7,16 +7,24 @@
 //	POST /a2a/{app_slug}            — JSON-RPC 2.0 endpoint
 //	GET  /.well-known/agent.json    — A2A agent card
 //
+// Supported A2A methods:
+//
+//	message/send   — blocking: waits for workflow completion, returns full result.
+//	message/stream — streaming: responds with text/event-stream, emitting A2A
+//	                 streaming events as the workflow runs, then a final
+//	                 task-status-update (completed/failed).
+//
 // Execution pipeline (shared via internal/execution):
 //
 //	tryAuthenticate → Lifecycle.Admit (EPConfig, auth, access, gate, session, run) →
 //	bus.Subscribe → Lifecycle.Start (ExecuteWorkflow) →
-//	wfRun.Get (block) → result → defer Lifecycle.Release
+//	stream/block on bus events → defer Lifecycle.Release
 //
 // TenantID and ApplicationID come from EPConfig only; never from the request.
 package a2a
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -115,6 +123,30 @@ type agentCardCapability struct {
 	Streaming bool `json:"streaming"`
 }
 
+// streamEvent is a single A2A streaming event frame sent over SSE.
+// The spec uses method "stream/event" with a params.event discriminated by "kind".
+type streamEvent struct {
+	JSONRPC string          `json:"jsonrpc"`
+	Method  string          `json:"method"`
+	Params  streamEventParam `json:"params"`
+}
+
+type streamEventParam struct {
+	Event streamEventBody `json:"event"`
+}
+
+type streamEventBody struct {
+	Kind   string           `json:"kind"`
+	TaskID string           `json:"taskId,omitempty"`
+	Role   string           `json:"role,omitempty"`
+	Parts  []rpcTextPart    `json:"parts,omitempty"`
+	Status *rpcStreamStatus `json:"status,omitempty"`
+}
+
+type rpcStreamStatus struct {
+	State string `json:"state"`
+}
+
 // ── Dependency interfaces ─────────────────────────────────────────────────────
 
 // Authenticator validates bearer tokens. Implemented by auth.Cache.
@@ -173,7 +205,7 @@ func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 		URL:         fmt.Sprintf("http://%s/a2a/{app_slug}", host),
 		Version:     "1.0",
 		Capabilities: agentCardCapability{
-			Streaming: false,
+			Streaming: true,
 		},
 	}
 	writeJSON(w, http.StatusOK, card)
@@ -196,6 +228,8 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 	switch req.Method {
 	case "message/send":
 		s.handleMessageSend(w, r, req)
+	case "message/stream":
+		s.handleMessageStream(w, r, req)
 	default:
 		writeRPCError(w, req.ID, codeMethodNotFound, fmt.Sprintf("method not found: %s", req.Method))
 	}
@@ -337,6 +371,199 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req r
 		"run_id", h.RunID,
 		"session_id", h.SessionID,
 	)
+}
+
+// handleMessageStream processes the "message/stream" RPC method.
+// It follows the same Admit→Subscribe→Start pipeline as handleMessageSend but
+// responds with text/event-stream (SSE) and emits incremental A2A events from
+// the in-process event bus. The final event is always a task-status-update
+// (completed or failed). The HTTP connection is held open until the workflow
+// terminates or the client disconnects.
+func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req rpcRequest) {
+	ctx := r.Context()
+	appSlug := chi.URLParam(r, "app_slug")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeRPCError(w, req.ID, codeInternalError, "streaming not supported by server")
+		return
+	}
+
+	rawToken := s.extractRawToken(r)
+
+	var params messageSendParams
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			writeRPCError(w, req.ID, codeParseError, "invalid params")
+			return
+		}
+	}
+
+	var userText string
+	for _, part := range params.Message.Parts {
+		if part.Text != "" {
+			userText = part.Text
+			break
+		}
+	}
+	if userText == "" {
+		writeRPCError(w, req.ID, codeInternalError, "no text content in message")
+		return
+	}
+
+	tenantID := tenantctx.BootstrapTenantID
+	if rawToken != "" && s.authenticator != nil {
+		if ti, err := s.authenticator.Validate(ctx, rawToken); err == nil && ti.TenantID != "" {
+			tenantID = ti.TenantID
+		}
+	}
+
+	admitReq := execution.ExecutionRequest{
+		EPSlug:      appSlug,
+		TenantID:    tenantID,
+		RawToken:    rawToken,
+		ContextID:   params.Message.ContextID,
+		InstanceID:  s.instanceID,
+		UserMessage: domain.TextMessage(domain.RoleUser, userText),
+	}
+	h, err := s.lc.Admit(ctx, admitReq)
+	if err != nil {
+		s.mapAdmitError(w, req.ID, err)
+		return
+	}
+	defer s.lc.Release(h)
+
+	// All pre-stream errors above return clean HTTP responses.
+	// After writing SSE headers, all errors become SSE terminal events.
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	writeSSE := func(ev streamEvent) bool {
+		data, err := json.Marshal(ev)
+		if err != nil {
+			return false
+		}
+		_, werr := fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+		return werr == nil
+	}
+
+	sendStatus := func(state string) {
+		writeSSE(streamEvent{ //nolint:errcheck
+			JSONRPC: "2.0",
+			Method:  "stream/event",
+			Params: streamEventParam{Event: streamEventBody{
+				Kind:   "task-status-update",
+				TaskID: h.RunID,
+				Status: &rpcStreamStatus{State: state},
+			}},
+		})
+	}
+
+	orchName := h.EPConfig.OrchestratorName
+	if orchName == "" {
+		s.logger.Warn("a2a stream: entry point has no orchestrator bound",
+			"app_slug", appSlug, "app_id", h.EPConfig.AppID)
+		sendStatus("failed")
+		return
+	}
+
+	// Subscribe BEFORE Start so no bus event emitted between launch and subscribe is lost.
+	evCh, termCh, unsub := s.bus.Subscribe(ctx, h.ContextID, 256)
+	defer unsub()
+
+	input := temporal.WorkflowInput{
+		OrchestratorName:  orchName,
+		AppOrchestratorID: h.EPConfig.AppOrchestratorID,
+		UserMessage:       domain.TextMessage(domain.RoleUser, userText),
+	}
+	wfRun, startErr := s.lc.Start(ctx, h, input)
+	if startErr != nil {
+		s.logger.Warn("a2a stream: start workflow failed", "run_id", h.RunID, "error", startErr)
+		sendStatus("failed")
+		return
+	}
+
+	s.logger.Info("a2a stream: workflow started",
+		"app_slug", appSlug, "run_id", h.RunID, "workflow_id", wfRun.GetID())
+
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	orchDone := make(chan struct{})
+	go func() {
+		defer close(orchDone)
+		if err := wfRun.Get(streamCtx, nil); err != nil {
+			s.logger.Warn("a2a stream: workflow error", "run_id", h.RunID, "error", err)
+		}
+	}()
+
+	// Drain bus events, translating them to A2A SSE frames.
+	drainOne := func(ev event.Event) (keepGoing bool) {
+		switch ev.Type {
+		case "token":
+			var content string
+			var p map[string]json.RawMessage
+			if json.Unmarshal(ev.Payload, &p) == nil {
+				json.Unmarshal(p["content"], &content) //nolint:errcheck
+			}
+			return writeSSE(streamEvent{
+				JSONRPC: "2.0",
+				Method:  "stream/event",
+				Params: streamEventParam{Event: streamEventBody{
+					Kind:  "message-delta",
+					Role:  "assistant",
+					Parts: []rpcTextPart{{Text: content}},
+				}},
+			})
+		case "done":
+			sendStatus("completed")
+			return false
+		case "error":
+			sendStatus("failed")
+			return false
+		}
+		return true
+	}
+
+	for {
+		select {
+		case ev, ok := <-evCh:
+			if !ok {
+				return
+			}
+			if !drainOne(ev) {
+				return
+			}
+		case ev, ok := <-termCh:
+			if !ok {
+				return
+			}
+			drainOne(ev) //nolint:errcheck
+			return
+		case <-orchDone:
+			// Drain any buffered events then send completed.
+			for {
+				select {
+				case ev, ok := <-evCh:
+					if !ok {
+						return
+					}
+					if !drainOne(ev) {
+						return
+					}
+				default:
+					sendStatus("completed")
+					return
+				}
+			}
+		case <-streamCtx.Done():
+			return
+		}
+	}
 }
 
 // extractRawToken reads the bearer token string from the Authorization header

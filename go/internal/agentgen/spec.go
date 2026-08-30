@@ -276,8 +276,9 @@ type DefinitionRef struct {
 }
 
 type HumanWaitConfig struct {
-	Prompt   string `json:"prompt"`
-	ReplyVar string `json:"reply_var"`
+	Prompt         string `json:"prompt"`
+	ReplyVar       string `json:"reply_var"`
+	TimeoutSeconds int    `json:"timeout_seconds"` // 0 = no per-step timeout (workflow timeout applies)
 }
 
 type LoopConfig struct {

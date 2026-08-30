@@ -1837,9 +1837,10 @@ cover live round-trips.
 
 ### S1-79 · HITLStore — `internal/agentgen/hitl_store_test.go`
 
-**Purpose:** Unit tests for `HITLStore`, which persists HITL task handles (`{workflow_id, run_id, step_id}`)
-in Redis so the signal endpoint can route human responses to the correct Temporal workflow after the
-HTTP connection that started the workflow has been released.
+**Purpose:** Unit tests for `HITLStore`, which persists HITL task handles in Redis (Phase 5-B hardened
+schema: `{workflow_id, run_id, tenant_id, step_id, wait_token, state}`) so the signal endpoint can
+route human responses to the correct Temporal workflow. State machine: submitted → waiting → signalled
+→ deleted. Atomic CAS via `TrySignal` prevents duplicate delivery.
 
 | Test | What it proves |
 |---|---|
@@ -1848,6 +1849,12 @@ HTTP connection that started the workflow has been released.
 | `TestHITLStore_Delete` (HS-3) | Delete removes handle; subsequent Get returns `ErrHITLNotFound` |
 | `TestHITLStore_StoreOverwrite` (HS-4) | Second Store for same taskID overwrites; Get returns new values |
 | `TestHITLStore_KeyPrefix` (HS-5) | Redis key uses `them:hitl:` prefix |
+| `TestHITLStore_UpdateWaitToken` (HS-6) | UpdateWaitToken transitions state to "waiting" and stores the token |
+| `TestHITLStore_TrySignal_Success` (HS-7) | TrySignal with correct token → state "signalled", returns updated handle |
+| `TestHITLStore_TrySignal_WrongToken` (HS-8) | TrySignal with wrong token → ErrHITLWrongToken, state unchanged |
+| `TestHITLStore_TrySignal_NotWaiting` (HS-9) | TrySignal when state ≠ "waiting" → ErrHITLNotWaiting |
+| `TestHITLStore_MarkDone` (HS-10) | MarkDone removes handle; subsequent Get returns ErrHITLNotFound |
+| `TestHITLStore_RepeatedWait` (HS-11) | UpdateWaitToken when state=signalled resets to waiting with new token (loop body re-use) |
 
 **Trigger:** any change to `internal/agentgen/hitl_store.go`
 
@@ -1856,19 +1863,37 @@ HTTP connection that started the workflow has been released.
 ### S1-80 · agent-runtime HITL async path — `cmd/agent-runtime/main_test.go`
 
 **Purpose:** Tests for Phase 5-B HITL async execution: executeSkill submits without blocking for HITL
-plans, stores the handle in HITLStore, and returns `input-required`. signalHITL routes human responses
-to the correct Temporal workflow via the stored handle.
+plans, stores the handle, and returns `working`. HITLRequestHandler intercepts GetTask/SubscribeToTask/CancelTask
+to sync HITL state via Temporal query polling.
 
 | Test | What it proves |
 |---|---|
-| `TestExecuteSkill_HITL_ReturnsInputRequired` (RT-HITL-1) | executeSkill with HITL Temporal plan calls Submit (not Execute), emits `input-required` instead of blocking on completion |
+| `TestExecuteSkill_HITL_ReturnsWorking` (RT-HITL-1) | executeSkill with HITL Temporal plan calls Submit, emits `working` (not `input-required`) immediately |
 | `TestExecuteSkill_HITL_StoresHandle` (RT-HITL-2) | After Submit, workflow handle stored in hitlStore keyed by taskID with correct WorkflowID/StepID |
-| `TestSignalHITL_DeliverssSignal` (RT-HITL-3) | signalHITL reads handle from store and calls SignalCanvasStep with correct workflowID/runID/signalName/payload |
-| `TestSignalHITL_NotFound` (RT-HITL-4) | signalHITL returns 404 when no handle exists for task |
-| `TestSignalHITL_TemporalNotEnabled` (RT-HITL-5) | signalHITL returns 503 when canvasSignaler is nil (Temporal disabled) |
+| `TestHITLRequestHandler_CancelTask_CancelsWorkflow` (RT-HITL-3) | CancelTask for HITL task calls CancelWorkflow on the Temporal executor |
+| `TestHITLRequestHandler_CancelTask_NonHITL_Delegates` (RT-HITL-4) | CancelTask for non-HITL task delegates to the inner SDK handler |
+| `TestHITLRequestHandler_SubscribeToTask_NonHITL_Delegates` (RT-HITL-5) | SubscribeToTask for non-HITL task delegates to the inner SDK handler |
 
-**Trigger:** any change to `cmd/agent-runtime/main.go` (signalHITL, executeSkill HITL path),
-`internal/agentgen/hitl_store.go`, `internal/temporal/temporal_executor.go` (CanvasSubmitter/CanvasSignaler)
+**Trigger:** any change to `cmd/agent-runtime/main.go` (HITLRequestHandler, executeSkill HITL path),
+`internal/agentgen/hitl_store.go`, `internal/agentgen/a2a_task_store.go`,
+`internal/temporal/temporal_executor.go` (CanvasAwaiter/CanvasCanceler/CanvasHITLQuerier)
+
+---
+
+### S1-81 · Canvas HITL signal admin endpoint — `internal/admin/canvas_tasks_test.go`
+
+**Purpose:** Tests for `CanvasTasksHandler`, which exposes `POST /admin/canvas-tasks/{task_id}/signal`
+behind JWT + RequireSuperAdmin + AdminTenantMiddleware. Validates tenant ownership, atomic CAS via
+`TrySignal`, and signal delivery to the correct Temporal workflow.
+
+| Test | What it proves |
+|---|---|
+| `TestCanvasTasksHandler_Signal_Success` (CSIG-1) | Correct token + correct tenant → 200 OK, SignalCanvasStep called with right workflowID and payload |
+| `TestCanvasTasksHandler_Signal_NotFound` (CSIG-2) | Missing handle → 404, no signal delivered |
+| `TestCanvasTasksHandler_Signal_CrossTenant` (CSIG-3) | Tenant mismatch → 403 Forbidden, no signal delivered |
+| `TestCanvasTasksHandler_Signal_WrongToken` (CSIG-4) | Wrong wait_token → 409 Conflict, no signal delivered |
+
+**Trigger:** any change to `internal/admin/canvas_tasks.go`, `internal/agentgen/hitl_store.go`
 
 ---
 
@@ -2592,9 +2617,10 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-76 | Phase 4-B: CanvasAgentWorkflow, CanvasAgentActivities (CT-01..10 + CT-A..F + CT-CONC1 + CT-LOOP-DURABLE-1..7) | 21 |
 | S1-77 | Phase 4-C + 5-B: TemporalExecutor (TE-01..13) | 13 |
 | S1-78 | dag-worker SQL tenant scope | 4 |
-| S1-79 | HITLStore (HS-1..5) | 5 |
-| S1-80 | agent-runtime HITL async (RT-HITL-1..5) | 5 |
-| **S1 total** | | **878** |
+| S1-79 | HITLStore Phase 5-B (HS-1..11): state machine, UpdateWaitToken, TrySignal CAS, MarkDone, RepeatedWait | 11 |
+| S1-80 | agent-runtime HITL Phase 5-B (RT-HITL-1..5): ReturnsWorking, StoresHandle, HITLRequestHandler CancelTask/SubscribeToTask | 5 |
+| S1-81 | Canvas HITL signal admin endpoint (CSIG-1..4): Success, NotFound, CrossTenant, WrongToken | 4 |
+| **S1 total** | | **893** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2603,4 +2629,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **883** |
+| **`go test ./...` total** | | **898** |

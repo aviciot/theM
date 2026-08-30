@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -759,4 +760,184 @@ func TestA2A_LifecycleInterface_Satisfied(t *testing.T) {
 func TestA2A_TemporalInterface_Satisfied(t *testing.T) {
 	var _ transport.TemporalClientExecutor = &fakeTemporal{}
 	_ = t
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// message/stream tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+func validStreamBody() map[string]any {
+	return map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "message/stream",
+		"params": map[string]any{
+			"message": map[string]any{
+				"role":      "user",
+				"parts":     []map[string]any{{"text": "hi"}},
+				"messageId": "uuid-stream-1",
+			},
+		},
+		"id": "stream-req-1",
+	}
+}
+
+// postStream posts a message/stream request and returns the raw SSE body lines.
+func postStream(t *testing.T, srv *httptest.Server, body any, token string) (int, []string) {
+	t.Helper()
+	data, err := json.Marshal(body)
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/a2a/myapp", bytes.NewReader(data))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, nil
+	}
+
+	var lines []string
+	buf := make([]byte, 1<<14)
+	n, _ := resp.Body.Read(buf)
+	raw := string(buf[:n])
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return resp.StatusCode, lines
+}
+
+// A2A-S01: message/stream → 200 + text/event-stream content type
+func TestA2AStream_ContentType(t *testing.T) {
+	b := defaultBuilder()
+	srv := httptest.NewServer(b.build().Routes())
+	defer srv.Close()
+
+	data, _ := json.Marshal(validStreamBody())
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/a2a/myapp", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+}
+
+// A2A-S02: message/stream success → emits a task-status-update completed event
+func TestA2AStream_EmitsCompletedStatus(t *testing.T) {
+	b := defaultBuilder()
+	srv := httptest.NewServer(b.build().Routes())
+	defer srv.Close()
+
+	status, lines := postStream(t, srv, validStreamBody(), "valid-token")
+	require.Equal(t, http.StatusOK, status)
+
+	var foundCompleted bool
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err != nil {
+			continue
+		}
+		params, _ := ev["params"].(map[string]any)
+		event, _ := params["event"].(map[string]any)
+		if event["kind"] == "task-status-update" {
+			status, _ := event["status"].(map[string]any)
+			if status["state"] == "completed" {
+				foundCompleted = true
+			}
+		}
+	}
+	assert.True(t, foundCompleted, "expected a task-status-update completed event in the SSE stream")
+}
+
+// A2A-S03: message/stream with missing token on token EP → 401 (clean HTTP, no SSE started)
+func TestA2AStream_MissingToken_401(t *testing.T) {
+	b := defaultBuilder()
+	b.epLoader = &fakeEPLoader{cfg: tokenEPConfig()}
+	srv := httptest.NewServer(b.build().Routes())
+	defer srv.Close()
+
+	status, _ := postStream(t, srv, validStreamBody(), "")
+	assert.Equal(t, http.StatusUnauthorized, status)
+}
+
+// A2A-S04: message/stream with unknown slug → 404
+func TestA2AStream_UnknownSlug_404(t *testing.T) {
+	b := defaultBuilder()
+	b.epLoader = &fakeEPLoader{err: epconfig.ErrNotFound}
+	srv := httptest.NewServer(b.build().Routes())
+	defer srv.Close()
+
+	status, _ := postStream(t, srv, validStreamBody(), "valid-token")
+	assert.Equal(t, http.StatusNotFound, status)
+}
+
+// A2A-S05: message/stream — gate cap exceeded → 429
+func TestA2AStream_CapExceeded_429(t *testing.T) {
+	b := defaultBuilder()
+	b.gate = &fakeGate{checkErr: gate.ErrCapExceeded}
+	srv := httptest.NewServer(b.build().Routes())
+	defer srv.Close()
+
+	status, _ := postStream(t, srv, validStreamBody(), "valid-token")
+	assert.Equal(t, http.StatusTooManyRequests, status)
+}
+
+// A2A-S06: message/stream — no text in parts → JSON-RPC error (HTTP 200, error body)
+func TestA2AStream_NoText_RPCError(t *testing.T) {
+	b := defaultBuilder()
+	srv := httptest.NewServer(b.build().Routes())
+	defer srv.Close()
+
+	body := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "message/stream",
+		"params": map[string]any{
+			"message": map[string]any{
+				"role":  "user",
+				"parts": []map[string]any{},
+			},
+		},
+		"id": "stream-req-2",
+	}
+	data, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/a2a/myapp", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer valid-token")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var rpcResp map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	assert.NotNil(t, rpcResp["error"])
+}
+
+// A2A-S07: agent card advertises streaming: true
+func TestA2A_AgentCard_StreamingTrue(t *testing.T) {
+	b := defaultBuilder()
+	srv := httptest.NewServer(b.build().Routes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/.well-known/agent.json")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var card map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&card))
+	caps, _ := card["capabilities"].(map[string]any)
+	assert.Equal(t, true, caps["streaming"], "agent card must advertise streaming: true")
 }

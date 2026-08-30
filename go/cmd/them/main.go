@@ -18,9 +18,10 @@ import (
 
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
+	"github.com/aviciot/them/internal/agentgen"
+	"github.com/aviciot/them/internal/agentregistry"
 	"github.com/aviciot/them/internal/appliveness"
 	"github.com/aviciot/them/internal/dashboard"
-	"github.com/aviciot/them/internal/agentregistry"
 	"github.com/aviciot/them/internal/artifacts"
 	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/cache"
@@ -324,12 +325,16 @@ func run() error {
 	adminCache := cache.NewAdminCacheClient(redisCache.Client())
 	// Temporal signaler is optional — nil if Temporal is not enabled.
 	var temporalSignaler admin.TemporalSignaler
+	var temporalCanvasSignaler temporal.CanvasSignaler
 	if temporalCli != nil {
 		temporalSignaler = temporal.NewSignaler(temporalCli)
+		temporalCanvasSignaler = temporal.NewTemporalExecutor(temporalCli, 0, 0, log)
 	}
 	// Derive Fernet key from SECRET_KEY for agent token decryption in action endpoints.
 	adminFernetKey := crypto.DeriveKey(cfg.SecretKey)
-	adminRouter := admin.BuildRouter(adminDB, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey)
+	adminHITLRedis := cache.NewAuthRedisClient(redisCache.Client())
+	adminHITLStore := agentgen.NewHITLStore(adminHITLRedis)
+	adminRouter := admin.BuildRouter(adminDB, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey, adminHITLStore, temporalCanvasSignaler)
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
 

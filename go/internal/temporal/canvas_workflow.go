@@ -1,8 +1,10 @@
 package temporal
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -32,6 +34,22 @@ const (
 	stepActivityTimeout = 5 * time.Minute
 )
 
+// HITLQueryStatus is the payload returned by the "hitl_status" workflow query.
+// The agent-runtime polls this to synchronize the HITLStore without needing a
+// reverse push from the workflow. Never logged or written to Temporal history;
+// it is returned only as a query response.
+type HITLQueryStatus struct {
+	State     string `json:"state"`      // "submitted" | "waiting" | "signalled" | "done"
+	WaitToken string `json:"wait_token"` // deterministic token for the current wait occurrence
+	StepID    string `json:"step_id"`    // canvas node ID currently waiting for signal
+}
+
+// hitlStatusState is workflow-local HITL tracking state.
+type hitlStatusState struct {
+	status  HITLQueryStatus
+	counter int // occurrence counter for deterministic wait_token generation
+}
+
 // workflowState is workflow-local mutable state shared across coroutines.
 // Safe because the Temporal coroutine scheduler is single-threaded.
 type workflowState struct {
@@ -42,12 +60,21 @@ type workflowState struct {
 	vars        agentgen.PipelineVars                        // global accumulator
 	result      *CanvasAgentWorkflowOutput                   // first terminal result
 	ic          agentgen.ActivityIC
+	hitl        hitlStatusState // HITL query state (polled by agent-runtime)
 	// dagSem is the per-run activity concurrency semaphore. It counts the number
 	// of in-flight ExecuteActivity calls. A coroutine acquires by incrementing
 	// dagSemInFlight (checking < limit) and releases by decrementing.
 	// Since the Temporal scheduler is single-threaded, no mutex is needed.
-	dagSemLimit   int // max concurrent activities for this run
+	dagSemLimit    int // max concurrent activities for this run
 	dagSemInFlight int // current count of activities in flight
+}
+
+// hitlWaitToken generates a deterministic wait token for a given human_wait
+// occurrence. It must be deterministic so Temporal replay produces the same token.
+// Never call uuid.New() inside workflow code — it is non-deterministic.
+func hitlWaitToken(runID, stepID string, counter int) string {
+	sum := sha256.Sum256([]byte(runID + ":" + stepID + ":" + strconv.Itoa(counter)))
+	return fmt.Sprintf("%x", sum[:8]) // 16-char hex token
 }
 
 // CanvasAgentWorkflow is an independent top-level Temporal workflow that runs one
@@ -82,14 +109,27 @@ func CanvasAgentWorkflow(ctx workflow.Context, input CanvasAgentWorkflowInput) (
 	}
 
 	state := &workflowState{
-		nodeIdx:      nodeIdx,
-		joinArrived:  make(map[string]map[string]agentgen.PipelineVars),
-		joinMerged:   make(map[string]agentgen.PipelineVars),
-		joinFired:    make(map[string]bool),
-		vars:         cloneVars(input.Initial),
-		ic:           input.IC,
-		dagSemLimit:  agentgen.ResolveMaxConcurrentTasks(input.MaxConcurrentTasks),
+		nodeIdx:        nodeIdx,
+		joinArrived:    make(map[string]map[string]agentgen.PipelineVars),
+		joinMerged:     make(map[string]agentgen.PipelineVars),
+		joinFired:      make(map[string]bool),
+		vars:           cloneVars(input.Initial),
+		ic:             input.IC,
+		dagSemLimit:    agentgen.ResolveMaxConcurrentTasks(input.MaxConcurrentTasks),
 		dagSemInFlight: 0,
+		hitl: hitlStatusState{
+			status: HITLQueryStatus{State: agentgen.HITLStateSubmitted},
+		},
+	}
+
+	// Register hitl_status query handler. The agent-runtime polls this to
+	// synchronize HITLStore state without a reverse push from the workflow.
+	// The closure captures state.hitl directly — safe because the Temporal
+	// scheduler is single-threaded (query handlers run between coroutine steps).
+	if err := workflow.SetQueryHandler(ctx, "hitl_status", func() (HITLQueryStatus, error) {
+		return state.hitl.status, nil
+	}); err != nil {
+		return CanvasAgentWorkflowOutput{}, fmt.Errorf("CanvasAgentWorkflow: register query handler: %w", err)
 	}
 
 	// cancelCtx cancels all in-flight coroutines when an error occurs.
@@ -222,14 +262,64 @@ func runBranch(
 			return
 		}
 
-		// ── HumanWait: receive signal then continue ────────────────────────────
+		// ── HumanWait: update HITL state, receive signal then continue ───────────
 		if stepOut.WaitingForHuman {
+			// Generate a deterministic wait token for this occurrence.
+			// counter increments per wait so repeated waits (loop bodies) get unique tokens.
+			state.hitl.counter++
+			tok := hitlWaitToken(workflow.GetInfo(ctx).WorkflowExecution.RunID, node.StepID, state.hitl.counter)
+			state.hitl.status = HITLQueryStatus{
+				State:     agentgen.HITLStateWaiting,
+				WaitToken: tok,
+				StepID:    node.StepID,
+			}
+
 			sigCh := workflow.GetSignalChannel(ctx, SignalHumanInputPrefix+node.StepID)
+
+			// Parse per-step timeout from the node config.
+			var hwCfg agentgen.HumanWaitConfig
+			if len(node.Config) > 0 {
+				_ = json.Unmarshal(node.Config, &hwCfg)
+			}
+
 			var humanVars agentgen.PipelineVars
-			sigCh.Receive(ctx, &humanVars)
+			received := false
+			if hwCfg.TimeoutSeconds > 0 {
+				// Use workflow.Select + a timer so the workflow can time out per step.
+				timer := workflow.NewTimer(ctx, time.Duration(hwCfg.TimeoutSeconds)*time.Second)
+				sel := workflow.NewSelector(ctx)
+				sel.AddReceive(sigCh, func(c workflow.ReceiveChannel, _ bool) {
+					c.Receive(ctx, &humanVars)
+					received = true
+				})
+				sel.AddFuture(timer, func(_ workflow.Future) {
+					// Timeout: cancel the coroutine path.
+				})
+				sel.Select(ctx)
+			} else {
+				sigCh.Receive(ctx, &humanVars)
+				received = true
+			}
+
 			if ctx.Err() != nil {
 				return
 			}
+			if !received {
+				// Per-step timeout expired — treat as workflow-level cancellation.
+				errCh.Send(ctx, temporalerr.NewNonRetryableApplicationError(
+					fmt.Sprintf("human_wait step %q timed out after %ds", node.StepID, hwCfg.TimeoutSeconds),
+					"HumanWaitTimeout", nil,
+				))
+				cancelAll()
+				return
+			}
+
+			state.hitl.status = HITLQueryStatus{
+				State:     agentgen.HITLStateSignalled,
+				WaitToken: tok,
+				StepID:    node.StepID,
+			}
+
 			for k, v := range humanVars {
 				localVars[k] = v
 			}
@@ -685,6 +775,70 @@ func runBodyBranch(
 			errCh.Send(ctx, fmt.Errorf("body step %q: %w", currentID, actErr))
 			cancelAll()
 			return
+		}
+
+		// ── HumanWait inside loop body ──────────────────────────────────────
+		if bodyOut.WaitingForHuman {
+			state.hitl.counter++
+			tok := hitlWaitToken(workflow.GetInfo(ctx).WorkflowExecution.RunID, bodyNode.StepID, state.hitl.counter)
+			state.hitl.status = HITLQueryStatus{
+				State:     agentgen.HITLStateWaiting,
+				WaitToken: tok,
+				StepID:    bodyNode.StepID,
+			}
+
+			sigCh := workflow.GetSignalChannel(ctx, SignalHumanInputPrefix+bodyNode.StepID)
+
+			var hwCfg agentgen.HumanWaitConfig
+			if len(bodyNode.Config) > 0 {
+				_ = json.Unmarshal(bodyNode.Config, &hwCfg)
+			}
+
+			var humanVars agentgen.PipelineVars
+			received := false
+			if hwCfg.TimeoutSeconds > 0 {
+				timer := workflow.NewTimer(ctx, time.Duration(hwCfg.TimeoutSeconds)*time.Second)
+				sel := workflow.NewSelector(ctx)
+				sel.AddReceive(sigCh, func(c workflow.ReceiveChannel, _ bool) {
+					c.Receive(ctx, &humanVars)
+					received = true
+				})
+				sel.AddFuture(timer, func(_ workflow.Future) {})
+				sel.Select(ctx)
+			} else {
+				sigCh.Receive(ctx, &humanVars)
+				received = true
+			}
+
+			if ctx.Err() != nil {
+				return
+			}
+			if !received {
+				errCh.Send(ctx, temporalerr.NewNonRetryableApplicationError(
+					fmt.Sprintf("human_wait body step %q timed out after %ds", bodyNode.StepID, hwCfg.TimeoutSeconds),
+					"HumanWaitTimeout", nil,
+				))
+				cancelAll()
+				return
+			}
+
+			state.hitl.status = HITLQueryStatus{
+				State:     agentgen.HITLStateSignalled,
+				WaitToken: tok,
+				StepID:    bodyNode.StepID,
+			}
+
+			for k, v := range humanVars {
+				localVars[k] = v
+			}
+			prevID = bodyNode.StepID
+			if len(bodyNode.Next) > 0 {
+				currentID = bodyNode.Next[0]
+			} else {
+				terminalCh.Send(ctx, localVars)
+				return
+			}
+			continue
 		}
 
 		for k, v := range bodyOut.Vars {
