@@ -7,11 +7,11 @@
 ## HEAD
 
 Branch: `main`
-Commit: pending push — see recent commits below
+Commit: `df4b19e`
 
 Recent commits (newest first):
 ```
-(Commit 2 — pending)  feat(agentgen/temporal): pre-4-C concurrency — per-run DAG semaphore, dag-worker config
+df4b19e  feat(agentgen/temporal): pre-4-C concurrency — per-run DAG semaphore, dag-worker config
 3a8f0f6  fix(agentgen): 3 final parity fixes before Phase 4-C
 45e23be  docs(current): update HEAD to fae270b + record Pre-4-C parity fixes
 fae270b  feat(agentgen): Pre-4-C parity — per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults
