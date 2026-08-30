@@ -7,16 +7,16 @@
 ## HEAD
 
 Branch: `main`
-Commit: `df4b19e`
+Commit: `pending — Phase 4-C commit in progress`
 
 Recent commits (newest first):
 ```
+[4-C]    feat(temporal/agentgen): Phase 4-C — TemporalExecutor, them-dag-worker, agent-runtime wiring
 df4b19e  feat(agentgen/temporal): pre-4-C concurrency — per-run DAG semaphore, dag-worker config
 3a8f0f6  fix(agentgen): 3 final parity fixes before Phase 4-C
 45e23be  docs(current): update HEAD to fae270b + record Pre-4-C parity fixes
 fae270b  feat(agentgen): Pre-4-C parity — per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults
 7f6eb97  feat(agentgen): Pre-4-C hardening — retry/backoff, non-retryable stops, idempotency guard, policy UI
-a0457bd  feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
 ```
 
 ---
@@ -148,7 +148,7 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — 41 packages, 0 failures (verified 2026-08-30, pre-4-C final parity + concurrency)
+go test ./...  — 41 packages, 0 failures (verified 2026-08-30, Phase 4-C)
 S1-72: 17 EP compiler tests (+1 new: EP-10 MCP mutating hard-clamp)
 S1-73: 30 LocalExecutor tests (+EP-L14 no-string-match, +EP-L15 fresh-clone-per-attempt,
         +TestResolveMaxConcurrentTasks_Zero, +TestLocalExecutor_ConcurrencyLimit,
@@ -156,6 +156,7 @@ S1-73: 30 LocalExecutor tests (+EP-L14 no-string-match, +EP-L15 fresh-clone-per-
 S1-74: 3 DAG E2E smoke tests
 S1-75: 16 Phase 4-A tests (NA-01..NA-16)
 S1-76: 19 Phase 4-B tests (+CT-CONC1: MaxConcurrentTasks=0 resolves to 10 in workflow)
+S1-77: 5 Phase 4-C TemporalExecutor tests (TE-01..TE-05)
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -417,7 +418,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | Pre-4-C parity | Per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults; 5 new tests (EP-L9..EP-L13) | ✅ |
 | Pre-4-C final | MCP mutating hard-clamp; removed string-match from `isNonRetryable`; fresh interp clone per retry; 3 new tests (EP-10, EP-L14, EP-L15) | ✅ commit `3a8f0f6` |
 | Pre-4-C concurrency | Per-run `MaxConcurrentTasks` semaphore in `LocalExecutor` + `CanvasAgentWorkflow`; `DAG_WORKER_MAX_CONCURRENT_ACTIVITIES` config; `ResolveMaxConcurrentTasks`; 5 new tests (CONC-1..5) | ✅ commit `df4b19e` |
-| 4-C | `TemporalExecutor`, `them-dag-worker`, `agent-runtime` wiring, Docker service | ⬜ |
+| 4-C | `TemporalExecutor`, `them-dag-worker`, `agent-runtime` wiring, Docker service | ✅ |
 | 4-D | Frontend publish toggle | ⬜ |
 | 5 | Loop, HumanWait, A2A in DAG context | ⬜ |
 
@@ -439,44 +440,25 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ## Next recommended task
 
-### Phase 4-C: TemporalExecutor + them-dag-worker (start here — Pre-4-C complete)
+### Phase 4-D: Frontend publish toggle for `execution_backend` (start here)
 
-Phases 4-A and 4-B are committed and green. Phase 4-C wires everything end-to-end:
+Phase 4-C is complete and committed. Phase 4-D wires the UI end:
 
-1. `go/internal/temporal/temporal_executor.go` — `TemporalExecutor` implementing `agentgen.ExecutionBackend`:
-   - `Execute(ctx, ic, plan, initial)` → `client.ExecuteWorkflow(ctx, opts, CanvasAgentWorkflow, input)`
-   - Workflow ID: `"canvas:{agentID}:{invocationID}"` (stable across retries)
-   - Re-attach on `AlreadyStarted`: `client.GetWorkflow(ctx, id, "")`
-   - Block via `run.Get(ctx, &out)` — returns on ctx cancel or workflow completion
-   - On ctx cancel: `client.CancelWorkflow(background5s, id, runID)` (best-effort)
+1. **Builder top bar toggle** — add a segmented control or dropdown in the canvas builder top bar that sets `execution_backend` to `"local"` or `"temporal"` on the canvas JSON root. Default: empty / `"local"`. Only show `"temporal"` when the system supports it (can be feature-flagged or always shown).
 
-2. `go/cmd/dag-worker/main.go` — `them-dag-worker` binary:
-   - Connects to Temporal, registers `CanvasAgentWorkflow` + `ExecuteStepActivity` on `"canvas-dag-nodes"`
-   - Wires `CanvasAgentActivities{InterpTemplate, Loader}` where `Loader` is a real DB-backed `ContextLoader`
-   - `ContextLoader.Load` must query with all 4 IDs: `TenantID`, `ApplicationID`, `AgentID`, `BindingID`
+2. **Validate endpoint consumer** — `execution_backend` already round-trips through compile/validate (S1-72 NA-12..NA-16). The UI just needs to write it into the canvas `definition` JSON before calling validate/publish.
 
-3. `go/cmd/agent-runtime/main.go` — add Temporal client + `execution_backend` branch:
-   - When `AgentSpec.ExecutionBackend == "temporal"`: use `TemporalExecutor`
-   - Otherwise: use existing `LocalExecutor` (no change)
-   - Init Temporal client only when `cfg.TemporalEnabled`
+3. **Publish gate** — warn if `execution_backend: "temporal"` is selected but no `--profile temporal` stack is running (best-effort: check `GET /health/ready` of temporal, or just show an info banner).
 
-4. `Dockerfile.dag-worker` + `docker-compose.yml` `them-dag-worker` service under `profiles: [temporal]`
+4. **No backend changes needed** — all compile/validate/publish/runtime code already handles `execution_backend` correctly.
 
-5. `go/internal/config/config.go`: add `DAGWorkerTaskQueue` (default `"canvas-dag-nodes"`), `DAGWorkerConcurrency` (default 20), `DAGWorkflowTimeout` (default `"12m"`)
-
-6. Run conformance tests against real Temporal dev server (`docker compose --profile temporal`)
-
-7. Live smoke test: publish one canvas agent with `execution_backend: "temporal"`, invoke it, verify Temporal UI shows node-level activity history
-
-Key design constraints (from `TEMPORAL_EXECUTOR_DESIGN.md §16`):
-- Task queue: `"canvas-dag-nodes"` (distinct from `"them-orchestration-go"`)
-- `ContextLoader.Load` scopes by all 4 IDs — never just `BindingID`
-- Workflow timeout: 12 min (`DAGWorkflowTimeout`), activity `StartToCloseTimeout`: from `node.Policy.TimeoutSeconds` (default 300s)
-- Retry policy comes entirely from `node.Policy` (no hardcoded switch)
+### Phase 5: Loop, HumanWait, A2A in DAG context (next after 4-D)
+- Implement `StepLoop` executor in `LocalExecutor` and `CanvasAgentWorkflow`
+- Implement HumanWait signal flow in canvas agent context
+- A2A call node in DAG fan-out context
 
 ### Other tasks (lower priority)
-- Phase 4-D: frontend publish toggle for `execution_backend` (Local/Temporal) in builder top bar
-- DAG live canvas validation — smoke test a Branch/Parallel canvas agent live
+- DAG live canvas validation — smoke test a Branch/Parallel canvas agent live with `--profile temporal`
 - Auth admin CRUD Go proxy — when `them-auth-service` Python retirement is decided
 
 Do NOT begin multiple subsystems in the same session.

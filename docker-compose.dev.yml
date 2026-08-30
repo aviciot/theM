@@ -185,6 +185,44 @@ services:
         max-size: "50m"
         max-file: "10"
 
+  # ── Canvas DAG Worker ─────────────────────────────────────────────────────────
+  # Polls "canvas-dag-nodes" Temporal task queue and executes canvas agent DAG
+  # steps as Temporal activities. Starts only with --profile temporal.
+  them-dag-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dag-worker
+    container_name: them-dag-worker
+    profiles: [temporal]
+    environment:
+      - THE_M_INSTANCE_ID=dag-worker-1
+      - APP_ENV=production
+      - DATABASE_HOST=them-postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=them
+      - DATABASE_USER=${THE_M_DB_USER:-them}
+      - DATABASE_PASSWORD=${THE_M_DB_PASSWORD:-them_secret}
+      - REDIS_HOST=them-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
+      - REDIS_DB=0
+      - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-secret-key}
+      - JWT_SECRET=${THE_M_JWT_SECRET:-}
+      - LOG_FORMAT=json
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - TEMPORAL_ENABLED=true
+      - TEMPORAL_HOST_PORT=temporal-frontend:7233
+      - DAG_WORKER_MAX_CONCURRENT_ACTIVITIES=${DAG_WORKER_MAX_CONCURRENT_ACTIVITIES:-50}
+      - MCP_SERVICE_URL=http://them-mcp-service:8010
+    networks:
+      - them-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
+
 # ── Named volumes (Docker manages ownership — no UID/GID issues on Linux) ─────
 # external: true allows re-use of volumes created by a previous project invocation
 # (e.g. after project name changes or stack migrations).

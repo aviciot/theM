@@ -1767,6 +1767,24 @@ propagation, HumanWait signal return, and result capture — all using the Tempo
 
 ---
 
+### S1-77 · Phase 4-C: TemporalExecutor — `internal/temporal/temporal_executor_test.go`
+
+**Purpose:** Unit tests for `TemporalExecutor`, which implements `agentgen.ExecutionBackend` by
+submitting a `CanvasAgentWorkflow` to Temporal and blocking until completion. All tests use
+`temporalmocks.NewClient` and `temporalmocks.NewWorkflowRun` (no live Temporal server required).
+
+| Test | What it proves |
+|---|---|
+| `TestTemporalExecutor_Execute_Success` (TE-01) | `ExecuteWorkflow` called; `Get` populates output; `ExecutionResult{Text, MediaType}` returned correctly |
+| `TestTemporalExecutor_Execute_WorkflowError` (TE-02) | Error from `run.Get` is wrapped and returned; no panic |
+| `TestTemporalExecutor_Execute_EmptyPlan` (TE-03) | nil plan and empty plan both return error before calling `ExecuteWorkflow` |
+| `TestTemporalExecutor_ImplementsExecutionBackend` (TE-04) | Compile-time guard: `TemporalExecutor` satisfies `agentgen.ExecutionBackend` |
+| `TestTemporalExecutor_DefaultTimeout` (TE-05) | `NewTemporalExecutor` with zero timeout returns non-nil executor (default timeout applied) |
+
+**Trigger:** any change to `internal/temporal/temporal_executor.go` or `cmd/dag-worker/main.go`
+
+---
+
 ### S1-51 · Agent definition publish service — `internal/admin/service/agent_definitions_publish_test.go`
 
 **Purpose:** Canvas A2A Builder validate/publish service layer. Verifies DAL delegation,

@@ -29,6 +29,7 @@ import (
 	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/llm"
+	"github.com/aviciot/them/internal/temporal"
 )
 
 // agentParamEntry is the stored shape for a secret-type agent param.
@@ -82,6 +83,19 @@ func main() {
 		interp:    interpBase,
 	}
 
+	// When Temporal is enabled, create a TemporalExecutor so canvas agents with
+	// execution_backend=="temporal" can be routed to the DAG worker.
+	if cfg.TemporalEnabled {
+		temporalCli, err := temporal.Connect(cfg.TemporalHostPort, logger)
+		if err != nil {
+			logger.Error("temporal connect failed — temporal execution_backend will be unavailable",
+				"err", err)
+		} else {
+			rt.temporalExecutor = temporal.NewTemporalExecutor(temporalCli, 0, 0)
+			logger.Info("temporal executor configured", "host_port", cfg.TemporalHostPort)
+		}
+	}
+
 	port := "9300"
 	if p := os.Getenv("PORT"); p != "" {
 		port = p
@@ -106,12 +120,15 @@ func main() {
 
 // Runtime is the stateless request handler. One per process; all state in Redis/Postgres.
 type Runtime struct {
-	pool      *pgxpool.Pool
-	cryptoKey []byte
-	taskStore *agentgen.RedisTaskStore
-	specCache *specCache
-	logger    *slog.Logger
-	interp    *agentgen.Interpreter
+	pool             *pgxpool.Pool
+	cryptoKey        []byte
+	taskStore        *agentgen.RedisTaskStore
+	specCache        *specCache
+	logger           *slog.Logger
+	interp           *agentgen.Interpreter
+	// temporalExecutor is non-nil when TEMPORAL_ENABLED=true. Canvas agents with
+	// execution_backend=="temporal" are routed here; all others use LocalExecutor.
+	temporalExecutor agentgen.ExecutionBackend
 }
 
 func (rt *Runtime) healthz(w http.ResponseWriter, r *http.Request) {
@@ -292,7 +309,16 @@ func (rt *Runtime) executeSkill(ctx context.Context, ic *agentgen.InvocationCont
 		}
 
 		plan := agentgen.CompileExecutionPlan(skill)
-		execResult, err := agentgen.NewLocalExecutor(rt.interp).Execute(ctx, ic, plan, initial)
+
+		// Choose execution backend: temporal for canvas agents that have opted in,
+		// local (goroutine fan-out) for all others.
+		var backend agentgen.ExecutionBackend
+		if ic.Spec.ExecutionBackend == "temporal" && rt.temporalExecutor != nil {
+			backend = rt.temporalExecutor
+		} else {
+			backend = agentgen.NewLocalExecutor(rt.interp)
+		}
+		execResult, err := backend.Execute(ctx, ic, plan, initial)
 		if err != nil {
 			errMsg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(err.Error()))
 			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, errMsg), nil) //nolint:errcheck

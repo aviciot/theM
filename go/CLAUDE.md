@@ -177,6 +177,8 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | `internal/ws/handler.go` | `go test ./internal/ws/...` |
 | `internal/sse/handler.go` | `go test ./internal/sse/...` |
 | `internal/a2a/server.go` | `go test ./internal/a2a/...` |
+| `internal/temporal/temporal_executor.go` | `go test ./internal/temporal/...` |
+| `cmd/dag-worker/main.go` | `go test ./... + go build ./cmd/dag-worker/` |
 | `internal/admin/` (any file) | `go test ./internal/admin/...` |
 | `internal/admin/dal/` (any file) | `go test ./internal/admin/...` |
 | `internal/transport/transport.go` | `go test ./internal/ws/... ./internal/sse/...` |
