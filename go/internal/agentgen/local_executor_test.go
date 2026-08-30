@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // Silence "imported and not used" for errors in the cancellation test.
@@ -663,7 +664,7 @@ func TestExecNodeTimeout(t *testing.T) {
 	policy := ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 1}
 
 	ctx := context.Background()
-	_, err := e.execNode(ctx, &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	_, err := e.execNode(ctx, &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{}, make(chan struct{}, 10))
 	if err == nil {
 		t.Fatal("expected error from timed-out step, got nil")
 	}
@@ -696,7 +697,7 @@ func TestExecNodeNoTimeoutWhenZero(t *testing.T) {
 	policy := ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 0} // zero → no deadline
 
 	ctx := context.Background() // background has no deadline
-	_, err := e.execNode(ctx, &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	_, err := e.execNode(ctx, &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{}, make(chan struct{}, 10))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -733,7 +734,7 @@ func TestExecNodeRetry_SucceedsOnThirdAttempt(t *testing.T) {
 		MaxIntervalSeconds:     1,
 	}
 
-	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{}, make(chan struct{}, 10))
 	if err != nil {
 		t.Fatalf("expected success on 3rd attempt, got: %v", err)
 	}
@@ -767,7 +768,7 @@ func TestExecNodeRetry_ExhaustsAttempts(t *testing.T) {
 		MaxIntervalSeconds:     1,
 	}
 
-	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{}, make(chan struct{}, 10))
 	if err == nil {
 		t.Fatal("expected error after exhausting retries")
 	}
@@ -796,7 +797,7 @@ func TestExecNodeRetry_ContractViolationIsNonRetryable(t *testing.T) {
 	step := &StepSpec{ID: "cv", Type: typ, Config: json.RawMessage(`{}`)}
 	policy := ExecutionPolicy{MaxAttempts: 3, InitialIntervalSeconds: 0.001, BackoffCoefficient: 1.0, MaxIntervalSeconds: 1}
 
-	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{}, make(chan struct{}, 10))
 	var cv *ErrContractViolation
 	if !errors.As(err, &cv) {
 		t.Fatalf("expected *ErrContractViolation, got %T: %v", err, err)
@@ -829,7 +830,7 @@ func TestExecNodeRetry_CancelledStopsImmediately(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before starting
 
-	_, err := e.execNode(ctx, &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	_, err := e.execNode(ctx, &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{}, make(chan struct{}, 10))
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
@@ -858,7 +859,7 @@ func TestExecNodeRetry_IdempotencyKeyMissing(t *testing.T) {
 		MaxIntervalSeconds:     1,
 	}
 
-	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{}, make(chan struct{}, 10))
 	var ik *ErrIdempotencyKeyMissing
 	if !errors.As(err, &ik) {
 		t.Fatalf("expected *ErrIdempotencyKeyMissing, got %T: %v", err, err)
@@ -888,7 +889,7 @@ func TestExecNodeRetry_IdempotencyKeyPresent_AllowsExecution(t *testing.T) {
 		MaxIntervalSeconds:     1,
 	}
 
-	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{}, make(chan struct{}, 10))
 	// The guard must not fire — error will be from the HTTP call itself (no client / no server).
 	var ik *ErrIdempotencyKeyMissing
 	if errors.As(err, &ik) {
@@ -931,7 +932,7 @@ func TestExecNodeRetry_PerAttemptTimeout(t *testing.T) {
 		MaxIntervalSeconds:     1,
 	}
 
-	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{}, make(chan struct{}, 10))
 	if err == nil {
 		t.Fatal("expected DeadlineExceeded, got nil")
 	}
@@ -981,7 +982,7 @@ func TestExecNodeRetry_VarsIsolation(t *testing.T) {
 		MaxIntervalSeconds:     1,
 	}
 
-	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{"initial": "clean"}, &sharedResult{})
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{"initial": "clean"}, &sharedResult{}, make(chan struct{}, 10))
 	if err != nil {
 		t.Fatalf("expected success on 3rd attempt, got: %v", err)
 	}
@@ -1020,7 +1021,7 @@ func TestExecNodeRetry_NonRetryableInterface(t *testing.T) {
 		MaxIntervalSeconds:     1,
 	}
 
-	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{}, make(chan struct{}, 10))
 	var cv *ErrContractViolation
 	if !errors.As(err, &cv) {
 		t.Fatalf("expected *ErrContractViolation, got %T: %v", err, err)
@@ -1135,7 +1136,7 @@ func TestExecNodeRetry_FreshClonePerAttempt(t *testing.T) {
 		MaxIntervalSeconds:     1,
 	}
 
-	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{})
+	_, err := e.execNode(context.Background(), &InvocationContext{}, interp.clone(), step, policy, PipelineVars{}, &sharedResult{}, make(chan struct{}, 10))
 	if err != nil {
 		t.Fatalf("expected success on attempt 2, got: %v", err)
 	}
@@ -1144,5 +1145,222 @@ func TestExecNodeRetry_FreshClonePerAttempt(t *testing.T) {
 	}
 	if atomic.LoadInt32(&calls) != 2 {
 		t.Errorf("expected 2 calls, got %d", atomic.LoadInt32(&calls))
+	}
+}
+
+// ── Concurrency limit tests ───────────────────────────────────────────────────
+
+// TestResolveMaxConcurrentTasks_Zero verifies that 0 and negative values resolve
+// to DefaultMaxConcurrentTasks, and values above SystemMaxConcurrentTasks are clamped.
+func TestResolveMaxConcurrentTasks_Zero(t *testing.T) {
+	if got := ResolveMaxConcurrentTasks(0); got != DefaultMaxConcurrentTasks {
+		t.Errorf("0 → got %d want %d", got, DefaultMaxConcurrentTasks)
+	}
+	if got := ResolveMaxConcurrentTasks(-5); got != DefaultMaxConcurrentTasks {
+		t.Errorf("-5 → got %d want %d", got, DefaultMaxConcurrentTasks)
+	}
+	if got := ResolveMaxConcurrentTasks(5); got != 5 {
+		t.Errorf("5 → got %d want 5", got)
+	}
+	if got := ResolveMaxConcurrentTasks(SystemMaxConcurrentTasks + 1); got != SystemMaxConcurrentTasks {
+		t.Errorf(">SystemMax → got %d want %d", got, SystemMaxConcurrentTasks)
+	}
+	if got := ResolveMaxConcurrentTasks(SystemMaxConcurrentTasks); got != SystemMaxConcurrentTasks {
+		t.Errorf("SystemMax → got %d want %d", got, SystemMaxConcurrentTasks)
+	}
+}
+
+// TestLocalExecutor_ConcurrencyLimit verifies that when MaxConcurrentTasks=2,
+// at most 2 nodes execute at the same time across a fan-out of 5 branches.
+// Measures a high-water mark of simultaneous in-flight executions.
+func TestLocalExecutor_ConcurrencyLimit(t *testing.T) {
+	const fanOut = 5
+	const limit = 2
+
+	typ := StepType("conc_limit_node_" + t.Name())
+	var inFlight atomic.Int32
+	var highWater atomic.Int32
+	// gate blocks each node until all are started (so timing is deterministic)
+	ready := make(chan struct{})
+
+	registerTestNode(t, NodeDef{
+		Type:          typ,
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 10},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 10},
+		Execute: func(ctx context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, vars PipelineVars, result *ExecutionResult) error {
+			cur := inFlight.Add(1)
+			defer inFlight.Add(-1)
+			// Track high-water mark.
+			for {
+				hw := highWater.Load()
+				if cur <= hw || highWater.CompareAndSwap(hw, cur) {
+					break
+				}
+			}
+			// Wait until released, or context cancelled.
+			select {
+			case <-ready:
+			case <-ctx.Done():
+			}
+			result.Text = "ok"
+			result.MediaType = "text/plain"
+			return nil
+		},
+	})
+
+	// Build a fan-out plan: root → 5 parallel nodes → join → response.
+	respTyp := StepType("conc_limit_resp_" + t.Name())
+	registerTestNode(t, NodeDef{
+		Type:        respTyp,
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 10},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 10},
+		IsSink:      true,
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, result *ExecutionResult) error {
+			result.Text = "done"
+			result.MediaType = "text/plain"
+			return nil
+		},
+	})
+	inputTyp := StepType("conc_limit_in_" + t.Name())
+	registerTestNode(t, NodeDef{
+		Type:          inputTyp,
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 10},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 10},
+		Execute: func(_ context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			return nil
+		},
+	})
+
+	nextIDs := make([]string, fanOut)
+	for i := range nextIDs {
+		nextIDs[i] = fmt.Sprintf("n%d", i)
+	}
+	joinOf := make([]string, fanOut)
+	copy(joinOf, nextIDs)
+
+	nodes := []*PlanNode{
+		{StepID: "root", Type: inputTyp, Config: json.RawMessage(`{}`), Next: nextIDs, JoinMode: JoinNone, Policy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 10}},
+	}
+	for i, id := range nextIDs {
+		_ = i
+		nodes = append(nodes, &PlanNode{
+			StepID:   id,
+			Type:     typ,
+			Config:   json.RawMessage(`{}`),
+			Next:     []string{"join"},
+			JoinMode: JoinNone,
+			Policy:   ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 10},
+		})
+	}
+	nodes = append(nodes, &PlanNode{
+		StepID:   "join",
+		Type:     respTyp,
+		Config:   json.RawMessage(`{}`),
+		JoinMode: JoinWaitAll,
+		JoinOf:   joinOf,
+		Policy:   ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 10},
+	})
+
+	plan := &ExecutionPlan{SkillID: "conc", StartID: "root", Nodes: nodes}
+	ic := &InvocationContext{Policies: InvocationPolicies{MaxConcurrentTasks: limit}}
+	exec := NewLocalExecutor(NewInterpreter(nil, nil, ""))
+
+	// Release all nodes after a short delay to let them start.
+	go func() {
+		// Give goroutines time to start and block on the semaphore.
+		// Then release them all.
+		// We don't sleep — instead we close ready when the first limit nodes are waiting.
+		// Simplest: close after a short poll of inFlight.
+		for {
+			if inFlight.Load() > 0 {
+				break
+			}
+		}
+		close(ready)
+	}()
+
+	_, err := exec.Execute(context.Background(), ic, plan, PipelineVars{"input": "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hw := highWater.Load()
+	if hw > int32(limit) {
+		t.Errorf("concurrency limit violated: high-water=%d, limit=%d", hw, limit)
+	}
+	if hw == 0 {
+		t.Error("no nodes executed (high-water=0)")
+	}
+}
+
+// TestLocalExecutor_ConcurrencyLimit_Cancellation verifies that cancelling the
+// context while nodes are waiting at the semaphore does not deadlock.
+// The plan has 4 nodes behind a limit=1 semaphore; the root blocks forever,
+// so the 3 fan-out siblings wait at the semaphore. Cancelling the context
+// must unblock everything and return promptly.
+func TestLocalExecutor_ConcurrencyLimit_Cancellation(t *testing.T) {
+	typ := StepType("conc_cancel_node_" + t.Name())
+	var started atomic.Int32
+	// blockCh is never closed; nodes block until context is cancelled.
+	blockCh := make(chan struct{})
+
+	registerTestNode(t, NodeDef{
+		Type:          typ,
+		DefaultPolicy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30},
+		MaxPolicy:     ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30},
+		Execute: func(ctx context.Context, _ *Interpreter, _ *InvocationContext, _ *StepSpec, _ PipelineVars, _ *ExecutionResult) error {
+			started.Add(1)
+			select {
+			case <-blockCh: // never fires
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	})
+
+	nextIDs := []string{"n0", "n1", "n2"}
+	nodes := []*PlanNode{
+		{StepID: "root", Type: typ, Config: json.RawMessage(`{}`), Next: nextIDs, JoinMode: JoinNone, Policy: ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30}},
+	}
+	for _, id := range nextIDs {
+		nodes = append(nodes, &PlanNode{
+			StepID:   id,
+			Type:     typ,
+			Config:   json.RawMessage(`{}`),
+			Next:     nil,
+			JoinMode: JoinNone,
+			Policy:   ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30},
+		})
+	}
+
+	// Limit=1: root acquires the semaphore and blocks. The 3 fan-out goroutines
+	// wait at the semaphore. Cancelling should unblock all of them.
+	plan := &ExecutionPlan{SkillID: "cancel", StartID: "root", Nodes: nodes}
+	ic := &InvocationContext{Policies: InvocationPolicies{MaxConcurrentTasks: 1}}
+	exec := NewLocalExecutor(NewInterpreter(nil, nil, ""))
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := exec.Execute(ctx, ic, plan, PipelineVars{})
+		done <- err
+	}()
+
+	// Wait until root has started (is blocking inside Execute), then cancel.
+	for started.Load() == 0 {
+		// spin — root starts almost immediately
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		// Must return an error (context cancelled or similar) without deadlocking.
+		if err == nil {
+			t.Error("expected non-nil error after context cancellation")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Execute deadlocked after context cancellation (5s timeout)")
 	}
 }

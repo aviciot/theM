@@ -68,16 +68,22 @@ func (e *LocalExecutor) Execute(
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Per-run concurrency semaphore: limits how many nodes execute simultaneously.
+	// Acquired per attempt in execNode; released after the attempt completes.
+	// Goroutines that fan out but can't acquire wait without blocking join logic —
+	// joins do not hold the semaphore, so no deadlock.
+	limit := ResolveMaxConcurrentTasks(ic.Policies.MaxConcurrentTasks)
+	sem := make(chan struct{}, limit)
+
 	// errCh carries the causal error from whichever branch first fails.
 	// Buffered to len(plan.Nodes) so goroutines never block on send.
-	// causalErr is the first non-Canceled error; protected by causalMu.
 	errCh := make(chan error, len(plan.Nodes))
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := e.runBranch(runCtx, ic, plan, nodeIdx, js, res, deepCopyVars(initial), plan.StartID, "", cancel, errCh, &wg, e.interp.clone()); err != nil {
+		if err := e.runBranch(runCtx, ic, plan, nodeIdx, js, res, deepCopyVars(initial), plan.StartID, "", cancel, errCh, &wg, e.interp.clone(), sem); err != nil {
 			sendErr(errCh, err)
 		}
 	}()
@@ -133,6 +139,7 @@ func sendErr(ch chan<- error, err error) {
 // fromID is the predecessor step ID that sent this branch here (used for join keying).
 // At a fan-out node (len(Next)>1) it launches sibling goroutines.
 // At a join node it deposits vars and either waits (not last) or merges (last).
+// sem is the per-run concurrency semaphore threaded from Execute.
 func (e *LocalExecutor) runBranch(
 	ctx context.Context,
 	ic *InvocationContext,
@@ -147,6 +154,7 @@ func (e *LocalExecutor) runBranch(
 	errCh chan<- error,
 	wg *sync.WaitGroup,
 	interp *Interpreter, // per-goroutine clone — owns nextStepOverride, never shared
+	sem chan struct{},    // per-run concurrency semaphore; never nil
 ) error {
 	currentID := startID
 	prevID := fromID
@@ -197,7 +205,7 @@ func (e *LocalExecutor) runBranch(
 
 		// ── Execute the node ───────────────────────────────────────────────────
 		stepSpec := planNodeToStepSpec(node)
-		nextOverride, err := e.execNode(ctx, ic, interp, stepSpec, node.Policy, vars, res)
+		nextOverride, err := e.execNode(ctx, ic, interp, stepSpec, node.Policy, vars, res, sem)
 		if err != nil {
 			cancel()
 			return fmt.Errorf("step %q (%s): %w", node.StepID, node.Type, err)
@@ -225,7 +233,7 @@ func (e *LocalExecutor) runBranch(
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					if err := e.runBranch(ctx, ic, plan, nodeIdx, js, res, sibVars, sibID, curID, cancel, errCh, wg, sibInterp); err != nil {
+					if err := e.runBranch(ctx, ic, plan, nodeIdx, js, res, sibVars, sibID, curID, cancel, errCh, wg, sibInterp, sem); err != nil {
 						sendErr(errCh, err)
 					}
 				}()
@@ -290,6 +298,7 @@ func (e *LocalExecutor) execNode(
 	policy ExecutionPolicy,
 	vars PipelineVars,
 	res *sharedResult,
+	sem chan struct{}, // per-run concurrency semaphore; never nil
 ) (nextOverride string, err error) {
 	maxAttempts := policy.MaxAttempts
 	if maxAttempts <= 0 {
@@ -333,6 +342,19 @@ func (e *LocalExecutor) execNode(
 		default:
 		}
 
+		// Acquire the per-run concurrency semaphore before executing.
+		// Goroutines that exceed the limit block here (not at goroutine launch),
+		// so join logic is unaffected — joins wait via js.arrive() which does not
+		// hold the semaphore. Release is deferred to after the attempt completes.
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return "", lastErr
+			}
+			return "", ctx.Err()
+		case sem <- struct{}{}:
+		}
+
 		// Per-attempt timeout (StartToCloseTimeout semantics): each attempt gets its
 		// own fresh deadline. This matches Temporal's behaviour where StartToCloseTimeout
 		// is applied to each individual activity attempt, not the whole retry sequence.
@@ -357,6 +379,7 @@ func (e *LocalExecutor) execNode(
 		if attemptCancel != nil {
 			attemptCancel()
 		}
+		<-sem // release semaphore slot
 
 		if execErr == nil {
 			override := attemptInterp.nextStepOverride

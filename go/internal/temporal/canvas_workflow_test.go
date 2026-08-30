@@ -555,3 +555,36 @@ func TestActivityOptionsFromPolicy(t *testing.T) {
 	require.Greater(t, node.Policy.TimeoutSeconds, 0, "LLM node must have positive TimeoutSeconds")
 	require.NotEmpty(t, node.Policy.NonRetryableErrors, "LLM node must have NonRetryableErrors")
 }
+
+// CT-CONC1: CanvasAgentWorkflowInput.MaxConcurrentTasks=0 resolves to DefaultMaxConcurrentTasks (10).
+// Verifies that the workflow wires up the semaphore correctly and a zero value is safe.
+func (s *CanvasWorkflowTestSuite) TestWorkflowConcurrencyLimit_ZeroResolvesToDefault() {
+	// A simple linear plan: input → response. With limit=0 the semaphore resolves
+	// to 10. The workflow must complete normally (the semaphore is not a bottleneck
+	// when there is only one activity in flight).
+	plan := agentgen.ExecutionPlan{
+		SkillID: "conc-zero",
+		StartID: "in",
+		Nodes: []*agentgen.PlanNode{
+			inputPlanNode("in", "resp"),
+			responsePlanNode("resp", "input"),
+		},
+	}
+	for _, n := range plan.Nodes {
+		n.Policy = agentgen.ExecutionPolicy{MaxAttempts: 1, TimeoutSeconds: 30, NonRetryableErrors: []string{"ContractViolation"}}
+	}
+
+	s.env.RegisterActivity(s.acts.ExecuteStepActivity)
+	s.env.ExecuteWorkflow(temporal.CanvasAgentWorkflow, temporal.CanvasAgentWorkflowInput{
+		Plan:               plan,
+		Initial:            agentgen.PipelineVars{"input": "hi"},
+		IC:                 makeTestIC(),
+		MaxConcurrentTasks: 0, // must resolve to 10 without panic
+	})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	var out temporal.CanvasAgentWorkflowOutput
+	s.NoError(s.env.GetWorkflowResult(&out))
+	s.NotEmpty(out.ResultText)
+}

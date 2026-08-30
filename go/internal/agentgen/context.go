@@ -2,6 +2,29 @@ package agentgen
 
 import "fmt"
 
+const (
+	// DefaultMaxConcurrentTasks is the per-run node concurrency limit used when
+	// InvocationPolicies.MaxConcurrentTasks is 0 (unset).
+	DefaultMaxConcurrentTasks = 10
+
+	// SystemMaxConcurrentTasks is the hard upper bound on MaxConcurrentTasks.
+	// Values above this are clamped down to prevent unbounded goroutine fan-out.
+	SystemMaxConcurrentTasks = 100
+)
+
+// ResolveMaxConcurrentTasks returns the effective per-run node concurrency limit.
+// Values <= 0 resolve to DefaultMaxConcurrentTasks; values > SystemMaxConcurrentTasks
+// are clamped to SystemMaxConcurrentTasks.
+func ResolveMaxConcurrentTasks(n int) int {
+	if n <= 0 {
+		return DefaultMaxConcurrentTasks
+	}
+	if n > SystemMaxConcurrentTasks {
+		return SystemMaxConcurrentTasks
+	}
+	return n
+}
+
 // InvocationContext is built per request from the signed invocation JWT/headers.
 // It is NEVER logged, NEVER serialized, NEVER written to Redis or Temporal history.
 type InvocationContext struct {
@@ -34,7 +57,14 @@ type NodeLLMOverride struct {
 	Model    string
 }
 
+// InvocationPolicies carries per-run execution limits.
+// Zero values are replaced with safe defaults at execution time.
 type InvocationPolicies struct {
+	// MaxConcurrentTasks is the maximum number of DAG nodes that may execute
+	// simultaneously within one run. 0 resolves to DefaultMaxConcurrentTasks (10).
+	// Values above SystemMaxConcurrentTasks (100) are clamped down.
+	// This applies to both LocalExecutor (goroutine semaphore) and
+	// CanvasAgentWorkflow (per-workflow activity semaphore).
 	MaxConcurrentTasks int      `json:"max_concurrent_tasks,omitempty"`
 	AllowedSkillIDs    []string `json:"allowed_skill_ids,omitempty"` // nil = all skills allowed
 	RateLimitPerMinute int      `json:"rate_limit_per_minute,omitempty"`

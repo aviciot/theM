@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-29
+# Last updated: 2026-08-30
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,17 +7,16 @@
 ## HEAD
 
 Branch: `main`
-Commit: `fae270b` — feat(agentgen): Pre-4-C parity — per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults
+Commit: pending push — see recent commits below
 
 Recent commits (newest first):
 ```
+(Commit 2 — pending)  feat(agentgen/temporal): pre-4-C concurrency — per-run DAG semaphore, dag-worker config
+3a8f0f6  fix(agentgen): 3 final parity fixes before Phase 4-C
+45e23be  docs(current): update HEAD to fae270b + record Pre-4-C parity fixes
 fae270b  feat(agentgen): Pre-4-C parity — per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults
 7f6eb97  feat(agentgen): Pre-4-C hardening — retry/backoff, non-retryable stops, idempotency guard, policy UI
 a0457bd  feat(agentgen): Pre-4-C — unified ExecutionPolicy, per-node timeout, NoResult fix
-d442def  docs(current): record approved ExecutionPolicy plan
-dceb844       docs(temporal): fix all contradictions in TEMPORAL_EXECUTOR_DESIGN.md vs Phase 4-B code
-68da87c       feat(temporal): Phase 4-B — CanvasAgentWorkflow + ExecuteStepActivity + 16 conformance tests
-a1adbe8       feat(agentgen): Phase 4-A — ExecutionBackend field, ExecuteNodeForActivity adapter, ActivityIC
 ```
 
 ---
@@ -149,15 +148,14 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 ## Test state
 
 ```
-go test ./...  — all packages, 0 failures (verified 2026-08-29, Pre-4-C parity — full test suite)
-S1-72: 17 plan compiler tests (unchanged from previous session)
-S1-73: 25 LocalExecutor tests (20 prior + 5 new: EP-L9 per-attempt timeout, EP-L10 vars isolation,
-        EP-L11 NonRetryableError interface, EP-L12/EP-L13 idempotency guard in ExecuteNodeForActivity)
-S1-74: 3 DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run)
-S1-75: 16 Phase 4-A tests (NA-01..NA-16: ExecuteNodeForActivity, ActivityIC, ExecutionBackend)
-S1-76: 18 Phase 4-B+EP tests (16 prior + 2 new CT-EP1/CT-EP2: NoResult bug fix + policy in plan)
-S1-54: 18 node registry tests (added TestNodeRegistry_ParallelIsImplemented)
-go test ./... total: 1061
+go test ./...  — 41 packages, 0 failures (verified 2026-08-30, pre-4-C final parity + concurrency)
+S1-72: 17 EP compiler tests (+1 new: EP-10 MCP mutating hard-clamp)
+S1-73: 30 LocalExecutor tests (+EP-L14 no-string-match, +EP-L15 fresh-clone-per-attempt,
+        +TestResolveMaxConcurrentTasks_Zero, +TestLocalExecutor_ConcurrencyLimit,
+        +TestLocalExecutor_ConcurrencyLimit_Cancellation)
+S1-74: 3 DAG E2E smoke tests
+S1-75: 16 Phase 4-A tests (NA-01..NA-16)
+S1-76: 19 Phase 4-B tests (+CT-CONC1: MaxConcurrentTasks=0 resolves to 10 in workflow)
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -416,6 +414,9 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 | 4-B | `CanvasAgentWorkflow` + `ExecuteStepActivity` + conformance tests CT-01..CT-10 + CT-A..CT-F in `internal/temporal/`; 16 tests (S1-76) | ✅ commit `68da87c` |
 | Pre-4-C | Unified `ExecutionPolicy` — `NodeDef` defaults, compiler resolution, `LocalExecutor` timeout, Temporal policy wiring, NoResult bug fix; 13 new tests (EP-1..9, EP-L1/2, CT-EP1/2) | ✅ |
 | Pre-4-C hardening | LocalExecutor retry loop + backoff; non-retryable short-circuit; idempotency guard; `RequiresIdempotencyKey` logic fix; frontend Execution Policy section in node Properties; 9 new tests (EP-2b, EP-L3..EP-L8) | ✅ |
+| Pre-4-C parity | Per-attempt timeout, vars isolation, typed non-retryable, idempotency guard in activity path, method-aware UI defaults; 5 new tests (EP-L9..EP-L13) | ✅ |
+| Pre-4-C final | MCP mutating hard-clamp; removed string-match from `isNonRetryable`; fresh interp clone per retry; 3 new tests (EP-10, EP-L14, EP-L15) | ✅ commit `3a8f0f6` |
+| Pre-4-C concurrency | Per-run `MaxConcurrentTasks` semaphore in `LocalExecutor` + `CanvasAgentWorkflow`; `DAG_WORKER_MAX_CONCURRENT_ACTIVITIES` config; `ResolveMaxConcurrentTasks`; 5 new tests (CONC-1..5) | ✅ (pending push) |
 | 4-C | `TemporalExecutor`, `them-dag-worker`, `agent-runtime` wiring, Docker service | ⬜ |
 | 4-D | Frontend publish toggle | ⬜ |
 | 5 | Loop, HumanWait, A2A in DAG context | ⬜ |

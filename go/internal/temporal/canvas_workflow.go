@@ -39,6 +39,12 @@ type workflowState struct {
 	vars        agentgen.PipelineVars                        // global accumulator
 	result      *CanvasAgentWorkflowOutput                   // first terminal result
 	ic          agentgen.ActivityIC
+	// dagSem is the per-run activity concurrency semaphore. It counts the number
+	// of in-flight ExecuteActivity calls. A coroutine acquires by incrementing
+	// dagSemInFlight (checking < limit) and releases by decrementing.
+	// Since the Temporal scheduler is single-threaded, no mutex is needed.
+	dagSemLimit   int // max concurrent activities for this run
+	dagSemInFlight int // current count of activities in flight
 }
 
 // CanvasAgentWorkflow is an independent top-level Temporal workflow that runs one
@@ -73,12 +79,14 @@ func CanvasAgentWorkflow(ctx workflow.Context, input CanvasAgentWorkflowInput) (
 	}
 
 	state := &workflowState{
-		nodeIdx:     nodeIdx,
-		joinArrived: make(map[string]map[string]agentgen.PipelineVars),
-		joinMerged:  make(map[string]agentgen.PipelineVars),
-		joinFired:   make(map[string]bool),
-		vars:        cloneVars(input.Initial),
-		ic:          input.IC,
+		nodeIdx:      nodeIdx,
+		joinArrived:  make(map[string]map[string]agentgen.PipelineVars),
+		joinMerged:   make(map[string]agentgen.PipelineVars),
+		joinFired:    make(map[string]bool),
+		vars:         cloneVars(input.Initial),
+		ic:           input.IC,
+		dagSemLimit:  agentgen.ResolveMaxConcurrentTasks(input.MaxConcurrentTasks),
+		dagSemInFlight: 0,
 	}
 
 	// cancelCtx cancels all in-flight coroutines when an error occurs.
@@ -160,7 +168,19 @@ func runBranch(
 			delete(state.joinMerged, node.StepID)
 		}
 
-		// ── Execute node ───────────────────────────────────────────────────────
+		// ── Execute node (guarded by per-run activity semaphore) ──────────────
+		// Acquire: wait until in-flight count is below the per-run limit.
+		// The semaphore is applied here, around the individual ExecuteActivity call,
+		// so goroutines that fan out but are waiting do NOT block join logic.
+		// Joins wait via workflow.Await(state.joinArrived check) which is independent.
+		workflow.Await(ctx, func() bool {
+			return ctx.Err() != nil || state.dagSemInFlight < state.dagSemLimit
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		state.dagSemInFlight++
+
 		ao := activityOptionsForNode(ctx, node)
 		var stepOut StepActivityOutput
 		err := workflow.ExecuteActivity(ao, CanvasExecuteStepActivityName, StepActivityInput{
@@ -168,6 +188,10 @@ func runBranch(
 			Vars: projectInputs(node, localVars),
 			IC:   state.ic,
 		}).Get(ctx, &stepOut)
+
+		// Release immediately after activity completes (success or failure).
+		state.dagSemInFlight--
+
 		if err != nil {
 			errCh.Send(ctx, fmt.Errorf("step %q (%s): %w", node.StepID, node.Type, err))
 			cancelAll()

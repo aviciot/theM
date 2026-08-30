@@ -1624,6 +1624,7 @@ heuristic, user override clamping, and backward compatibility.
 | `TestResolvePolicy_ZeroValBackwardCompat` | Zero-value policy (old compiled agents): executor guard converts MaxAttempts=0 → 1 |
 | `TestCompileExecutionPlan_PolicyPopulated` | All nodes in compiled plan have non-zero MaxAttempts, TimeoutSeconds, NonRetryableErrors |
 | `TestResolvePolicy_MCPMutatingVsRead` | MCP read → MaxAttempts=2, RequiresIdempotencyKey=false; mutating → MaxAttempts=1, RequiresIdempotencyKey=false (no retry) |
+| `TestResolvePolicy_MCPMutatingOverrideHardClamped` | EP-10: canvas override MaxAttempts=3 on mutating MCP tool is hard-clamped to 1 (no canvas override can raise it) |
 
 **Trigger:** any change to `internal/agentgen/plan_compiler.go`, `internal/agentgen/spec.go`
 (`ExecutionPlan`, `PlanNode`, `JoinMode`, `ExecutionPolicy` types), or `internal/agentgen/nodes.go`
@@ -1665,10 +1666,16 @@ error detection via `NonRetryableError` interface, and idempotency guard.
 | `TestExecNodeRetry_NonRetryableInterface` | Error implementing NonRetryableError.IsNonRetryable()=true stops after 1 attempt (interface-based detection) |
 | `TestExecuteNodeForActivity_IdempotencyGuard` | ExecuteNodeForActivity enforces idempotency guard: RequiresIdempotencyKey=true + MaxAttempts=2 + no header → *ErrIdempotencyKeyMissing |
 | `TestExecuteNodeForActivity_IdempotencyGuard_MaxAttempts1_Skips` | RequiresIdempotencyKey=true but MaxAttempts=1 → guard does not fire (no retry, no protection needed) |
+| `TestIsNonRetryable_NoStringMatch` | EP-L14: NonRetryableErrors string list NOT checked in LocalExecutor — plain error containing "InvalidConfig" is NOT non-retryable |
+| `TestExecNodeRetry_FreshClonePerAttempt` | EP-L15: each retry attempt gets a fresh interp.clone(); nextStepOverride from attempt 1 is not visible in attempt 2 |
+| `TestResolveMaxConcurrentTasks_Zero` | 0 and negative → DefaultMaxConcurrentTasks (10); values > SystemMaxConcurrentTasks → clamped to 100 |
+| `TestLocalExecutor_ConcurrencyLimit` | Fan-out of 5 nodes with limit=2: high-water mark of simultaneous executions never exceeds 2 |
+| `TestLocalExecutor_ConcurrencyLimit_Cancellation` | Context cancel while nodes wait at semaphore: Execute returns promptly (no deadlock, 5s timeout) |
 
 **Trigger:** any change to `internal/agentgen/local_executor.go`, `internal/agentgen/node_executor.go`,
 `internal/agentgen/plan_compiler.go`, `internal/agentgen/spec.go` (`NonRetryableError` interface,
-`ErrContractViolation`, `ErrIdempotencyKeyMissing`), or `internal/agentgen/nodes.go`
+`ErrContractViolation`, `ErrIdempotencyKeyMissing`), `internal/agentgen/context.go`
+(InvocationPolicies, ResolveMaxConcurrentTasks), or `internal/agentgen/nodes.go`
 (ExecutionPolicy fields used by execNode)
 
 ---
@@ -1752,9 +1759,11 @@ propagation, HumanWait signal return, and result capture — all using the Tempo
 | `TestExecuteStepActivity_LoaderError_Propagates` | ContextLoader.Load error propagates as activity error |
 | `TestNoResultBugFixed` | ResultMT-only output (empty ResultText, non-empty ResultMT) triggers result capture; truly empty output does not |
 | `TestActivityOptionsFromPolicy` | LLM PlanNode from CompileExecutionPlan carries MaxAttempts=2, positive TimeoutSeconds, non-empty NonRetryableErrors |
+| `TestWorkflowConcurrencyLimit_ZeroResolvesToDefault` | CT-CONC1: MaxConcurrentTasks=0 in workflow input resolves to 10; linear plan completes normally |
 
 **Trigger:** any change to `internal/temporal/canvas_workflow.go`, `internal/temporal/canvas_activities.go`,
-or `internal/agentgen/plan_compiler.go` (policy resolution affects Temporal activity options)
+`internal/agentgen/context.go` (ResolveMaxConcurrentTasks), or
+`internal/agentgen/plan_compiler.go` (policy resolution affects Temporal activity options)
 
 ---
 
@@ -2265,7 +2274,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/agentgen/nodes.go` | S1-54 + S1-50 + S1-65 + S1-69 + S1-71 + S1-74 |
 | `internal/agentgen/noderegistry.go` | S1-54 + S1-50 + S1-65 + S1-69 + S1-71 |
 | `internal/agentgen/mcp_caller.go` | S1-69 |
-| `internal/agentgen/context.go` | S1-48 + S1-64 + S1-75 |
+| `internal/agentgen/context.go` | S1-48 + S1-64 + S1-73 + S1-75 + S1-76 |
 | `cmd/agent-runtime/main.go` | S1-60 + S1-62 + S1-65 |
 | `cmd/agent-runtime/main.go` | S1-48 + S1-50 + S1-53 + S1-72 + S1-73 + S1-74 + S1 (full suite) |
 | `internal/admin/applications.go` (GetAppParams/SetAppParam/DeleteAppParam handlers) | S1-66 |
@@ -2405,10 +2414,12 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-67 | Stage 6 runtime contract enforcement (CONT-1..12) | 12 |
 | S1-68 | explicit canvas data bindings (BND-1..10) | 10 |
 | S1-69 | MCP call node + executor (MCP-1..10) | 10 |
+| S1-72 | ExecutionPlan compiler — EP-1..10 (plan_compiler_test.go) | 17 |
+| S1-73 | LocalExecutor — EP-L1..L15 + concurrency limit tests (local_executor_test.go) | 30 |
 | S1-74 | DAG E2E smoke tests (BranchConvergence true/false + ParallelTransforms both run) | 3 |
 | S1-75 | Phase 4-A: ExecuteNodeForActivity, ActivityIC, ExecutionBackend (NA-01..16) | 16 |
-| S1-76 | Phase 4-B: CanvasAgentWorkflow, CanvasAgentActivities (CT-01..10 + CT-A..F) | 16 |
-| **S1 total** | | **840** |
+| S1-76 | Phase 4-B: CanvasAgentWorkflow, CanvasAgentActivities (CT-01..10 + CT-A..F + CT-CONC1) | 19 |
+| **S1 total** | | **856** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

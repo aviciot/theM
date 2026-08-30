@@ -68,6 +68,13 @@ type Config struct {
 	// Default: "them-orchestration-go" (separate from Python's "them-orchestration").
 	WorkerTaskQueue string
 
+	// DAGWorkerMaxConcurrentActivities is the maximum number of ExecuteStepActivity
+	// invocations that the dag-worker process may run in parallel.
+	// This is a per-worker-process (not cluster-global) limit; total activity throughput
+	// scales with the number of dag-worker replicas × this value.
+	// Parsed from DAG_WORKER_MAX_CONCURRENT_ACTIVITIES; default 50; 0 uses the default.
+	DAGWorkerMaxConcurrentActivities int
+
 	// MCPServiceURL is the internal base URL of them-mcp-service (e.g. http://them-mcp-service:8010).
 	// When empty the probe proxy endpoint returns 503 — mcp-service is not deployed.
 	MCPServiceURL string
@@ -122,6 +129,8 @@ func Load() (*Config, error) {
 		TemporalEnabled:  getEnvBool("TEMPORAL_ENABLED", false),
 		TemporalHostPort: getEnv("TEMPORAL_HOST_PORT", "localhost:7233"),
 		WorkerTaskQueue:  getEnv("WORKER_TASK_QUEUE", "them-orchestration-go"),
+
+		DAGWorkerMaxConcurrentActivities: parseDAGWorkerConcurrency(os.Getenv("DAG_WORKER_MAX_CONCURRENT_ACTIVITIES")),
 
 		MCPServiceURL: getEnv("MCP_SERVICE_URL", ""),
 
@@ -316,4 +325,19 @@ func getEnvBoolSafe(key string, safeDefault bool) bool {
 		return safeDefault
 	}
 	return b
+}
+
+const dagWorkerDefaultConcurrency = 50
+
+// parseDAGWorkerConcurrency parses DAG_WORKER_MAX_CONCURRENT_ACTIVITIES.
+// 0 or missing → 50. Negative values → 50. Invalid strings → 50.
+func parseDAGWorkerConcurrency(s string) int {
+	if s == "" {
+		return dagWorkerDefaultConcurrency
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return dagWorkerDefaultConcurrency
+	}
+	return n
 }
