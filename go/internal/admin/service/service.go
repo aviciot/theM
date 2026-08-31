@@ -40,8 +40,8 @@ type Dal interface {
 	// Applications + entry points — tenant-scoped (apps); entry points scoped through app
 	ListApplications(ctx context.Context, tenantID string) ([]dal.Application, error)
 	GetApplication(ctx context.Context, tenantID, id string) (dal.Application, error)
-	CreateApplication(ctx context.Context, tenantID, name string, enabled bool) (string, error)
-	UpdateApplication(ctx context.Context, tenantID, id, name string, enabled bool) error
+	CreateApplication(ctx context.Context, tenantID, name, slug string, enabled bool) (string, error)
+	UpdateApplication(ctx context.Context, tenantID, id, name, slug string, enabled bool) error
 	DeleteApplication(ctx context.Context, tenantID, id string) error
 	ListEntryPoints(ctx context.Context, appID string) []dal.EntryPoint
 	CreateEntryPoint(ctx context.Context, appID, slug, epType string, enabled bool) (string, error)

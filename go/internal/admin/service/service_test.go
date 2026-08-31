@@ -171,10 +171,10 @@ func (f *fakeDal) ListApplications(_ context.Context, _ string) ([]dal.Applicati
 func (f *fakeDal) GetApplication(_ context.Context, _, _ string) (dal.Application, error) {
 	return f.app, f.getAppErr
 }
-func (f *fakeDal) CreateApplication(_ context.Context, _, _ string, _ bool) (string, error) {
+func (f *fakeDal) CreateApplication(_ context.Context, _, _, _ string, _ bool) (string, error) {
 	return f.createdID, f.createAppErr
 }
-func (f *fakeDal) UpdateApplication(_ context.Context, _, _, _ string, _ bool) error {
+func (f *fakeDal) UpdateApplication(_ context.Context, _, _, _, _ string, _ bool) error {
 	return f.updateAppErr
 }
 func (f *fakeDal) DeleteApplication(_ context.Context, _, _ string) error { return f.deleteAppErr }
@@ -803,7 +803,7 @@ func TestAgentService_NilCache_NoPanic(t *testing.T) {
 
 func TestAppService_Create_MissingName_Validation(t *testing.T) {
 	svc := service.NewAppService(&fakeDal{}, nil, nil)
-	_, err := svc.Create(context.Background(), "t1", "", nil)
+	_, err := svc.Create(context.Background(), "t1", "", "", nil)
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation, got %v", err)
 	}
@@ -874,7 +874,7 @@ func TestAppService_Update_InvalidatesAppEPs(t *testing.T) {
 		{TenantID: svcTestTenantID, Slug: "ep-b"},
 	}}
 	svc := service.NewAppService(d, c, nil)
-	_ = svc.Update(context.Background(), "t1", "app-1", "New Name", nil)
+	_ = svc.Update(context.Background(), "t1", "app-1", "New Name", "", nil)
 	if len(c.publishOrder) != 2 {
 		t.Errorf("want 2 EP publishes, got %d: %v", len(c.publishOrder), c.publishOrder)
 	}

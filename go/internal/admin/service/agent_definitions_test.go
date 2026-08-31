@@ -108,10 +108,10 @@ func (f *agentDefFakeDal) ListApplications(_ context.Context, _ string) ([]dal.A
 func (f *agentDefFakeDal) GetApplication(_ context.Context, _, _ string) (dal.Application, error) {
 	return dal.Application{}, nil
 }
-func (f *agentDefFakeDal) CreateApplication(_ context.Context, _, _ string, _ bool) (string, error) {
+func (f *agentDefFakeDal) CreateApplication(_ context.Context, _, _, _ string, _ bool) (string, error) {
 	return "", nil
 }
-func (f *agentDefFakeDal) UpdateApplication(_ context.Context, _, _, _ string, _ bool) error {
+func (f *agentDefFakeDal) UpdateApplication(_ context.Context, _, _, _, _ string, _ bool) error {
 	return nil
 }
 func (f *agentDefFakeDal) DeleteApplication(_ context.Context, _, _ string) error { return nil }

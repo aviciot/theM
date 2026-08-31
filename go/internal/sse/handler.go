@@ -108,22 +108,18 @@ func (h *Handler) Routes() http.Handler {
 	return r
 }
 
-// AppsSSERoute returns an http.Handler for /{slug}/sse (relative path).
-// Mount at /apps so the full external path is /apps/{slug}/sse.
+// AppsSSERoute returns an http.Handler for /{app_slug}/{ep_slug}/sse (relative path).
+// Mount at /apps so the full external path is /apps/{app_slug}/{ep_slug}/sse.
 func (h *Handler) AppsSSERoute() http.Handler {
 	r := chi.NewRouter()
-	r.Get("/{slug}/sse", func(w http.ResponseWriter, r *http.Request) {
-		slug := chi.URLParam(r, "slug")
+	r.Get("/{app_slug}/{ep_slug}/sse", func(w http.ResponseWriter, r *http.Request) {
 		rctx := chi.RouteContext(r.Context())
-		rctx.URLParams.Add("app_slug", slug)
-		rctx.URLParams.Add("entry_point_slug", slug)
+		rctx.URLParams.Add("entry_point_slug", chi.URLParam(r, "ep_slug"))
 		h.ServeHTTP(w, r)
 	})
-	r.Post("/{slug}/sse", func(w http.ResponseWriter, r *http.Request) {
-		slug := chi.URLParam(r, "slug")
+	r.Post("/{app_slug}/{ep_slug}/sse", func(w http.ResponseWriter, r *http.Request) {
 		rctx := chi.RouteContext(r.Context())
-		rctx.URLParams.Add("app_slug", slug)
-		rctx.URLParams.Add("entry_point_slug", slug)
+		rctx.URLParams.Add("entry_point_slug", chi.URLParam(r, "ep_slug"))
 		h.ServeHTTP(w, r)
 	})
 	return r
@@ -131,6 +127,7 @@ func (h *Handler) AppsSSERoute() http.Handler {
 
 // ServeHTTP handles the SSE connection.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	appSlug := chi.URLParam(r, "app_slug")
 	epSlug := chi.URLParam(r, "entry_point_slug")
 
 	metrics.ActiveSSEConnections.Inc()
@@ -161,6 +158,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// All pre-Admit errors return clean HTTP responses. After Admit succeeds,
 	// SSE headers are written and errors become SSE error events.
 	admitReq := execution.ExecutionRequest{
+		AppSlug:     appSlug,
 		EPSlug:      epSlug,
 		TenantID:    tenantID,
 		RawToken:    rawToken,

@@ -6,10 +6,32 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/crypto"
 )
+
+// slugRe matches characters that are not lowercase alphanum or hyphen.
+var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
+
+// SlugifyName derives a URL-safe slug from an application name.
+// Rules: lowercase, collapse non-alphanum runs → hyphen, strip leading/trailing
+// hyphens, truncate to 48 chars. Returns "app" as fallback for empty results.
+func SlugifyName(name string) string {
+	s := strings.ToLower(name)
+	s = slugRe.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 48 {
+		s = s[:48]
+		s = strings.TrimRight(s, "-")
+	}
+	if s == "" {
+		return "app"
+	}
+	return s
+}
+
 
 // epConfigChannel is the Redis pub/sub channel for cross-pod EP config cache invalidation.
 // Must stay in sync with the Python platform's EP_CONFIG_CHANGED_CHANNEL constant.
@@ -82,17 +104,36 @@ func (s *AppService) Get(ctx context.Context, tenantID, id string) (dal.Applicat
 	return a, nil
 }
 
-// Create validates the input, persists under the tenant, and returns the new ID.
-func (s *AppService) Create(ctx context.Context, tenantID, name string, enabled *bool) (string, error) {
+// Create validates the input, derives a slug from the name, persists under the
+// tenant, and returns the new application ID. Returns ErrSlugConflict when the
+// derived or caller-supplied slug is already taken in this tenant.
+func (s *AppService) Create(ctx context.Context, tenantID, name, slug string, enabled *bool) (string, error) {
 	if name == "" {
 		return "", validation("name is required")
 	}
-	return s.dal.CreateApplication(ctx, tenantID, name, enabledOrDefault(enabled))
+	if slug == "" {
+		slug = SlugifyName(name)
+	}
+	id, err := s.dal.CreateApplication(ctx, tenantID, name, slug, enabledOrDefault(enabled))
+	if err != nil {
+		if dal.IsUniqueViolation(err) {
+			return "", fmt.Errorf("%w: slug %q is already in use in this tenant", ErrConflict, slug)
+		}
+		return "", err
+	}
+	return id, nil
 }
 
 // Update persists changes scoped to the tenant and invalidates all EP slugs for the application.
-func (s *AppService) Update(ctx context.Context, tenantID, id, name string, enabled *bool) error {
-	if err := s.dal.UpdateApplication(ctx, tenantID, id, name, enabledOrDefault(enabled)); err != nil {
+// If slug is empty it is re-derived from name. Returns ErrSlugConflict on slug collision.
+func (s *AppService) Update(ctx context.Context, tenantID, id, name, slug string, enabled *bool) error {
+	if slug == "" {
+		slug = SlugifyName(name)
+	}
+	if err := s.dal.UpdateApplication(ctx, tenantID, id, name, slug, enabledOrDefault(enabled)); err != nil {
+		if dal.IsUniqueViolation(err) {
+			return fmt.Errorf("%w: slug %q is already in use in this tenant", ErrConflict, slug)
+		}
 		return err
 	}
 	s.invalidateAppEPs(ctx, id)

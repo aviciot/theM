@@ -779,191 +779,41 @@ services:
       - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.path=/health/live"
       - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.interval=10s"
       - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.timeout=3s"
-      # ── /ws/dashboard → Go dashboard WebSocket handler ────────────────────────
+      # ── /ws/dashboard — exact path match (priority 150 beats /ws prefix) ──────
       - "traefik.http.routers.them-go-ws-dashboard.rule=Path(`/ws/dashboard`)"
       - "traefik.http.routers.them-go-ws-dashboard.entrypoints=web"
       - "traefik.http.routers.them-go-ws-dashboard.priority=150"
       - "traefik.http.routers.them-go-ws-dashboard.service=them-go-bridge-svc"
-      # ── /health/live and /health/ready ──────────────────────────────────────────
-      - "traefik.http.routers.them-go-health-sub.rule=PathPrefix(`/health/live`) || PathPrefix(`/health/ready`)"
-      - "traefik.http.routers.them-go-health-sub.entrypoints=web"
-      - "traefik.http.routers.them-go-health-sub.priority=130"
-      - "traefik.http.routers.them-go-health-sub.service=them-go-bridge-svc"
-      # ── GET-only admin reads ────────────────────────────────────────────────────
-      # Runs: all GET sub-paths under /api/v1/runs.
-      - "traefik.http.routers.them-go-admin-reads.rule=(PathPrefix(`/api/v1/admin/agents`) || PathPrefix(`/api/v1/admin/orchestrators`) || PathPrefix(`/api/v1/admin/applications`) || PathPrefix(`/api/v1/runs`)) && Method(`GET`)"
-      - "traefik.http.routers.them-go-admin-reads.entrypoints=web"
-      - "traefik.http.routers.them-go-admin-reads.priority=110"
-      - "traefik.http.routers.them-go-admin-reads.service=them-go-bridge-svc"
-      # ── system-agents — GET + PUT + POST /{role}/test-llm ───────────────────
-      - "traefik.http.routers.them-go-system-agents.rule=PathPrefix(`/api/v1/admin/system-agents`)"
-      - "traefik.http.routers.them-go-system-agents.entrypoints=web"
-      - "traefik.http.routers.them-go-system-agents.priority=120"
-      - "traefik.http.routers.them-go-system-agents.service=them-go-bridge-svc"
-      # ── /api/v1/admin/monitoring-config — GET + PUT ─────────────────────────────
-      - "traefik.http.routers.them-go-monitoring-config.rule=Path(`/api/v1/admin/monitoring-config`)"
-      - "traefik.http.routers.them-go-monitoring-config.entrypoints=web"
-      - "traefik.http.routers.them-go-monitoring-config.priority=120"
-      - "traefik.http.routers.them-go-monitoring-config.service=them-go-bridge-svc"
-      # ── /api/v1/admin/llm-providers/routing/config — GET + PUT ─────────────────
-      - "traefik.http.routers.them-go-llm-routing-config.rule=Path(`/api/v1/admin/llm-providers/routing/config`)"
-      - "traefik.http.routers.them-go-llm-routing-config.entrypoints=web"
-      - "traefik.http.routers.them-go-llm-routing-config.priority=120"
-      - "traefik.http.routers.them-go-llm-routing-config.service=them-go-bridge-svc"
-      # ── /api/v1/admin/llm-providers CRUD — GET/POST/PATCH/DELETE ───────────────
-      # Excludes /routing/config (claimed separately above at same priority).
-      - "traefik.http.routers.them-go-llm-providers.rule=PathPrefix(`/api/v1/admin/llm-providers`) && !Path(`/api/v1/admin/llm-providers/routing/config`)"
-      - "traefik.http.routers.them-go-llm-providers.entrypoints=web"
-      - "traefik.http.routers.them-go-llm-providers.priority=120"
-      - "traefik.http.routers.them-go-llm-providers.service=them-go-bridge-svc"
-      # ── Wave 2a: agents writes ─────────────────────────────────────────────────
-      - "traefik.http.routers.them-go-agents-create.rule=Path(`/api/v1/admin/agents`) && Method(`POST`)"
-      - "traefik.http.routers.them-go-agents-create.entrypoints=web"
-      - "traefik.http.routers.them-go-agents-create.priority=115"
-      - "traefik.http.routers.them-go-agents-create.service=them-go-bridge-svc"
-      - "traefik.http.routers.them-go-agents-update.rule=PathRegexp(`^/api/v1/admin/agents/[^/]+$$`) && (Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
-      - "traefik.http.routers.them-go-agents-update.entrypoints=web"
-      - "traefik.http.routers.them-go-agents-update.priority=115"
-      - "traefik.http.routers.them-go-agents-update.service=them-go-bridge-svc"
-      # ── Wave 2b: orchestrators writes ─────────────────────────────────────────
-      - "traefik.http.routers.them-go-orchs-create.rule=Path(`/api/v1/admin/orchestrators`) && Method(`POST`)"
-      - "traefik.http.routers.them-go-orchs-create.entrypoints=web"
-      - "traefik.http.routers.them-go-orchs-create.priority=115"
-      - "traefik.http.routers.them-go-orchs-create.service=them-go-bridge-svc"
-      - "traefik.http.routers.them-go-orchs-update.rule=PathRegexp(`^/api/v1/admin/orchestrators/[^/]+$$`) && (Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
-      - "traefik.http.routers.them-go-orchs-update.entrypoints=web"
-      - "traefik.http.routers.them-go-orchs-update.priority=115"
-      - "traefik.http.routers.them-go-orchs-update.service=them-go-bridge-svc"
-      # ── Wave 2c: applications writes ──────────────────────────────────────────
-      - "traefik.http.routers.them-go-apps-create.rule=Path(`/api/v1/admin/applications`) && Method(`POST`)"
-      - "traefik.http.routers.them-go-apps-create.entrypoints=web"
-      - "traefik.http.routers.them-go-apps-create.priority=115"
-      - "traefik.http.routers.them-go-apps-create.service=them-go-bridge-svc"
-      - "traefik.http.routers.them-go-apps-update.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+$$`) && (Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
-      - "traefik.http.routers.them-go-apps-update.entrypoints=web"
-      - "traefik.http.routers.them-go-apps-update.priority=115"
-      - "traefik.http.routers.them-go-apps-update.service=them-go-bridge-svc"
-      - "traefik.http.routers.them-go-eps-writes.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/entry-points(/[^/]+)?$$`) && (Method(`GET`) || Method(`POST`) || Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))"
-      - "traefik.http.routers.them-go-eps-writes.entrypoints=web"
-      - "traefik.http.routers.them-go-eps-writes.priority=115"
-      - "traefik.http.routers.them-go-eps-writes.service=them-go-bridge-svc"
-      # ── Wave 8: applications sub-routes ───────────────────────────────────────
-      - "traefik.http.routers.them-go-apps-subroutes.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/.+$$`) && (Method(`GET`) || Method(`PUT`) || Method(`POST`) || Method(`PATCH`) || Method(`DELETE`))"
-      - "traefik.http.routers.them-go-apps-subroutes.entrypoints=web"
-      - "traefik.http.routers.them-go-apps-subroutes.priority=115"
-      - "traefik.http.routers.them-go-apps-subroutes.service=them-go-bridge-svc"
-      # ── Wave 8: Agent Store actions (discover / test / security-scan) ─────────
-      - "traefik.http.routers.them-go-agents-actions.rule=PathRegexp(`^/api/v1/admin/agents(/discover|/[^/]+/test|/[^/]+/security-scan)$$`) && Method(`POST`)"
-      - "traefik.http.routers.them-go-agents-actions.entrypoints=web"
-      - "traefik.http.routers.them-go-agents-actions.priority=116"
-      - "traefik.http.routers.them-go-agents-actions.service=them-go-bridge-svc"
-      # ── Wave 2d: runs signal ───────────────────────────────────────────────────
-      - "traefik.http.routers.them-go-runs-signal.rule=PathRegexp(`^/api/v1/runs/[^/]+/signal$$`) && Method(`POST`)"
-      - "traefik.http.routers.them-go-runs-signal.entrypoints=web"
-      - "traefik.http.routers.them-go-runs-signal.priority=115"
-      - "traefik.http.routers.them-go-runs-signal.service=them-go-bridge-svc"
-      # ── Wave 2e: runs sub-resources (tasks + artifacts) → Go ─────────────────
-      - "traefik.http.routers.them-go-runs-sub.rule=PathRegexp(`^/api/v1/runs/[^/]+/(tasks|artifacts)$$`) && Method(`GET`)"
-      - "traefik.http.routers.them-go-runs-sub.entrypoints=web"
-      - "traefik.http.routers.them-go-runs-sub.priority=115"
-      - "traefik.http.routers.them-go-runs-sub.service=them-go-bridge-svc"
-      # ── Wave 2f: runs writes (cancel, delete, bulk-delete) → Go ──────────────
-      - "traefik.http.routers.them-go-runs-cancel.rule=PathRegexp(`^/api/v1/runs/[^/]+/cancel$$`) && Method(`PATCH`)"
-      - "traefik.http.routers.them-go-runs-cancel.entrypoints=web"
-      - "traefik.http.routers.them-go-runs-cancel.priority=116"
-      - "traefik.http.routers.them-go-runs-cancel.service=them-go-bridge-svc"
-      - "traefik.http.routers.them-go-runs-delete.rule=PathRegexp(`^/api/v1/runs/[^/]+$$`) && Method(`DELETE`)"
-      - "traefik.http.routers.them-go-runs-delete.entrypoints=web"
-      - "traefik.http.routers.them-go-runs-delete.priority=114"
-      - "traefik.http.routers.them-go-runs-delete.service=them-go-bridge-svc"
-      - "traefik.http.routers.them-go-runs-bulk-delete.rule=Path(`/api/v1/runs/bulk-delete`) && Method(`POST`)"
-      - "traefik.http.routers.them-go-runs-bulk-delete.entrypoints=web"
-      - "traefik.http.routers.them-go-runs-bulk-delete.priority=116"
-      - "traefik.http.routers.them-go-runs-bulk-delete.service=them-go-bridge-svc"
-      # ── Wave 4a: /apps/{slug}/ws → Go WS handler ──────────────────────────────
-      - "traefik.http.routers.them-go-apps-ws.rule=PathRegexp(`^/apps/[^/]+/ws$$`) && Method(`GET`)"
-      - "traefik.http.routers.them-go-apps-ws.entrypoints=web"
-      - "traefik.http.routers.them-go-apps-ws.priority=120"
-      - "traefik.http.routers.them-go-apps-ws.service=them-go-bridge-svc"
-      # ── Wave 4b: /apps/{slug}/sse → Go SSE handler ────────────────────────────
-      - "traefik.http.routers.them-go-apps-sse.rule=PathRegexp(`^/apps/[^/]+/sse$$`) && (Method(`GET`) || Method(`POST`))"
-      - "traefik.http.routers.them-go-apps-sse.entrypoints=web"
-      - "traefik.http.routers.them-go-apps-sse.priority=120"
-      - "traefik.http.routers.them-go-apps-sse.service=them-go-bridge-svc"
-      # ── Wave 4e: /apps/{slug}/voice/* → Go voice handler ─────────────────────
-      - "traefik.http.routers.them-go-apps-voice.rule=PathRegexp(`^/apps/[^/]+/voice/`) && Method(`POST`)"
-      - "traefik.http.routers.them-go-apps-voice.entrypoints=web"
-      - "traefik.http.routers.them-go-apps-voice.priority=120"
-      - "traefik.http.routers.them-go-apps-voice.service=them-go-bridge-svc"
-      # ── Wave 4c: /ws/orchestrate/{app}/{ep} (two-segment) → Go ───────────────
-      - "traefik.http.routers.them-go-ws-two-seg.rule=PathRegexp(`^/ws/orchestrate/[^/]+/[^/]+$$`) && Method(`GET`)"
-      - "traefik.http.routers.them-go-ws-two-seg.entrypoints=web"
-      - "traefik.http.routers.them-go-ws-two-seg.priority=120"
-      - "traefik.http.routers.them-go-ws-two-seg.service=them-go-bridge-svc"
-      # ── Wave 4d: /sse/orchestrate/{app}/{ep} (two-segment) → Go ─────────────
-      - "traefik.http.routers.them-go-sse-two-seg.rule=PathRegexp(`^/sse/orchestrate/[^/]+/[^/]+$$`) && (Method(`GET`) || Method(`POST`))"
-      - "traefik.http.routers.them-go-sse-two-seg.entrypoints=web"
-      - "traefik.http.routers.them-go-sse-two-seg.priority=120"
-      - "traefik.http.routers.them-go-sse-two-seg.service=them-go-bridge-svc"
-      # ── Wave 5: /api/v1/admin/tokens — full CRUD ──────────────────────────────
-      - "traefik.http.routers.them-go-tokens.rule=PathPrefix(`/api/v1/admin/tokens`)"
-      - "traefik.http.routers.them-go-tokens.entrypoints=web"
-      - "traefik.http.routers.them-go-tokens.priority=120"
-      - "traefik.http.routers.them-go-tokens.service=them-go-bridge-svc"
-      # ── Wave 5: /api/v1/admin/sessions — list + disconnect ────────────────────
-      - "traefik.http.routers.them-go-sessions.rule=PathPrefix(`/api/v1/admin/sessions`)"
-      - "traefik.http.routers.them-go-sessions.entrypoints=web"
-      - "traefik.http.routers.them-go-sessions.priority=120"
-      - "traefik.http.routers.them-go-sessions.service=them-go-bridge-svc"
-      # ── Node type registry: /api/v1/admin/node-types — canvas metadata ─────────
-      - "traefik.http.routers.them-go-node-types.rule=PathPrefix(`/api/v1/admin/node-types`)"
-      - "traefik.http.routers.them-go-node-types.entrypoints=web"
-      - "traefik.http.routers.them-go-node-types.priority=120"
-      - "traefik.http.routers.them-go-node-types.service=them-go-bridge-svc"
-      # ── Debug proxy: /api/v1/admin/debug-proxy — server-side HTTP relay for canvas debug ──
-      - "traefik.http.routers.them-go-debug-proxy.rule=Path(`/api/v1/admin/debug-proxy`)"
-      - "traefik.http.routers.them-go-debug-proxy.entrypoints=web"
-      - "traefik.http.routers.them-go-debug-proxy.priority=121"
-      - "traefik.http.routers.them-go-debug-proxy.service=them-go-bridge-svc"
-      # ── Transform: /api/v1/admin/transform-* — function catalog, test runner, AI assist stub ──
-      - "traefik.http.routers.them-go-transform.rule=PathPrefix(`/api/v1/admin/transform-`)"
-      - "traefik.http.routers.them-go-transform.entrypoints=web"
-      - "traefik.http.routers.them-go-transform.priority=121"
-      - "traefik.http.routers.them-go-transform.service=them-go-bridge-svc"
-      # ── Phase D: /api/v1/admin/component-definitions — registry read ──────────
-      - "traefik.http.routers.them-go-component-defs.rule=PathPrefix(`/api/v1/admin/component-definitions`)"
-      - "traefik.http.routers.them-go-component-defs.entrypoints=web"
-      - "traefik.http.routers.them-go-component-defs.priority=120"
-      - "traefik.http.routers.them-go-component-defs.service=them-go-bridge-svc"
-      # ── Phase 2: /api/v1/admin/agent-definitions — Canvas A2A Agent Builder CRUD ──
-      - "traefik.http.routers.them-go-agent-defs.rule=PathPrefix(`/api/v1/admin/agent-definitions`)"
-      - "traefik.http.routers.them-go-agent-defs.entrypoints=web"
-      - "traefik.http.routers.them-go-agent-defs.priority=120"
-      - "traefik.http.routers.them-go-agent-defs.service=them-go-bridge-svc"
-      # ── Phase 3: /api/v1/admin/applications/{id}/agent-bindings — credential bindings ──
-      - "traefik.http.routers.them-go-agent-bindings.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/agent-bindings(/[^/]+)?$`)"
-      - "traefik.http.routers.them-go-agent-bindings.entrypoints=web"
-      - "traefik.http.routers.them-go-agent-bindings.priority=121"
-      - "traefik.http.routers.them-go-agent-bindings.service=them-go-bridge-svc"
-      # ── A2A server: /a2a — Go A2A JSON-RPC handler ────────────────────────────
+      # ── /health/* ──────────────────────────────────────────────────────────────
+      - "traefik.http.routers.them-go-health.rule=PathPrefix(`/health`)"
+      - "traefik.http.routers.them-go-health.entrypoints=web"
+      - "traefik.http.routers.them-go-health.priority=130"
+      - "traefik.http.routers.them-go-health.service=them-go-bridge-svc"
+      # ── /api/v1 — all admin REST, runs, artifacts ─────────────────────────────
+      - "traefik.http.routers.them-go-api.rule=PathPrefix(`/api/v1`)"
+      - "traefik.http.routers.them-go-api.entrypoints=web"
+      - "traefik.http.routers.them-go-api.priority=110"
+      - "traefik.http.routers.them-go-api.service=them-go-bridge-svc"
+      # ── /ws — WebSocket (orchestrate + dashboard fallthrough) ─────────────────
+      - "traefik.http.routers.them-go-ws.rule=PathPrefix(`/ws`)"
+      - "traefik.http.routers.them-go-ws.entrypoints=web"
+      - "traefik.http.routers.them-go-ws.priority=120"
+      - "traefik.http.routers.them-go-ws.service=them-go-bridge-svc"
+      # ── /sse — Server-Sent Events ─────────────────────────────────────────────
+      - "traefik.http.routers.them-go-sse.rule=PathPrefix(`/sse`)"
+      - "traefik.http.routers.them-go-sse.entrypoints=web"
+      - "traefik.http.routers.them-go-sse.priority=120"
+      - "traefik.http.routers.them-go-sse.service=them-go-bridge-svc"
+      # ── /apps — WS, SSE, voice (two-segment: /apps/{app_slug}/{ep_slug}/*) ────
+      - "traefik.http.routers.them-go-apps.rule=PathPrefix(`/apps`)"
+      - "traefik.http.routers.them-go-apps.entrypoints=web"
+      - "traefik.http.routers.them-go-apps.priority=120"
+      - "traefik.http.routers.them-go-apps.service=them-go-bridge-svc"
+      # ── /a2a — A2A JSON-RPC + per-agent card (/a2a/{app}/{ep}/.well-known) ────
       - "traefik.http.routers.them-go-a2a.rule=PathPrefix(`/a2a`)"
       - "traefik.http.routers.them-go-a2a.entrypoints=web"
       - "traefik.http.routers.them-go-a2a.priority=120"
       - "traefik.http.routers.them-go-a2a.service=them-go-bridge-svc"
-      # ── A2A agent card: /.well-known/agent.json ────────────────────────────────
-      - "traefik.http.routers.them-go-well-known.rule=Path(`/.well-known/agent.json`)"
-      - "traefik.http.routers.them-go-well-known.entrypoints=web"
-      - "traefik.http.routers.them-go-well-known.priority=120"
-      - "traefik.http.routers.them-go-well-known.service=them-go-bridge-svc"
-      # ── MCP Store: mcp-servers CRUD + app credentials ─────────────────────
-      - "traefik.http.routers.them-go-mcp-servers.rule=PathPrefix(`/api/v1/admin/mcp-servers`)"
-      - "traefik.http.routers.them-go-mcp-servers.entrypoints=web"
-      - "traefik.http.routers.them-go-mcp-servers.priority=115"
-      - "traefik.http.routers.them-go-mcp-servers.service=them-go-bridge-svc"
-      - "traefik.http.routers.them-go-mcp-credentials.rule=PathRegexp(`^/api/v1/admin/applications/[^/]+/mcp-credentials(/[^/]+)?$$`)"
-      - "traefik.http.routers.them-go-mcp-credentials.entrypoints=web"
-      - "traefik.http.routers.them-go-mcp-credentials.priority=116"
-      - "traefik.http.routers.them-go-mcp-credentials.service=them-go-bridge-svc"
     restart: unless-stopped
     logging:
       driver: "json-file"

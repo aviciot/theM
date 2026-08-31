@@ -187,12 +187,12 @@ func (f *isolationFakeDal) GetApplication(_ context.Context, tenantID, id string
 	}
 	return dal.Application{ID: r.id, Name: r.name}, nil
 }
-func (f *isolationFakeDal) CreateApplication(_ context.Context, tenantID, name string, _ bool) (string, error) {
+func (f *isolationFakeDal) CreateApplication(_ context.Context, tenantID, name, _ string, _ bool) (string, error) {
 	id := tenantID + "/" + name
 	f.apps = append(f.apps, isoRecord{tenantID: tenantID, id: id, name: name})
 	return id, nil
 }
-func (f *isolationFakeDal) UpdateApplication(_ context.Context, tenantID, id, _ string, _ bool) error {
+func (f *isolationFakeDal) UpdateApplication(_ context.Context, tenantID, id, _, _ string, _ bool) error {
 	_, ok := f.findByIDAndTenant(f.apps, tenantID, id)
 	if !ok {
 		return errors.New("not found")
@@ -740,7 +740,7 @@ func TestAppService_TenantIsolation_OwnRecordSucceeds(t *testing.T) {
 	svc := service.NewAppService(f, nil, nil)
 	ctx := context.Background()
 
-	id, err := svc.Create(ctx, tenantAlpha, "my-app", nil)
+	id, err := svc.Create(ctx, tenantAlpha, "my-app", "", nil)
 	if err != nil {
 		t.Fatalf("Create(alpha): %v", err)
 	}
@@ -760,7 +760,7 @@ func TestAppService_TenantIsolation_OtherTenantCannotRead(t *testing.T) {
 	svc := service.NewAppService(f, nil, nil)
 	ctx := context.Background()
 
-	id, _ := svc.Create(ctx, tenantAlpha, "secret-app", nil)
+	id, _ := svc.Create(ctx, tenantAlpha, "secret-app", "", nil)
 
 	_, err := svc.Get(ctx, tenantBravo, id)
 	if !errors.Is(err, service.ErrNotFound) {
@@ -774,11 +774,11 @@ func TestAppService_TenantIsolation_SameNameAcrossTenantsAllowed(t *testing.T) {
 	svc := service.NewAppService(f, nil, nil)
 	ctx := context.Background()
 
-	_, err := svc.Create(ctx, tenantAlpha, "shared-app", nil)
+	_, err := svc.Create(ctx, tenantAlpha, "shared-app", "", nil)
 	if err != nil {
 		t.Fatalf("Create(alpha): %v", err)
 	}
-	_, err = svc.Create(ctx, tenantBravo, "shared-app", nil)
+	_, err = svc.Create(ctx, tenantBravo, "shared-app", "", nil)
 	if err != nil {
 		t.Errorf("Create(bravo, same name): expected success, got %v", err)
 	}

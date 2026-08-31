@@ -107,7 +107,7 @@ func (h *ApplicationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	id, err := h.svc.Create(r.Context(), tenantID, input.Name, input.Enabled)
+	id, err := h.svc.Create(r.Context(), tenantID, input.Name, input.Slug, input.Enabled)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -152,7 +152,10 @@ func (h *ApplicationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.Update(r.Context(), tenantID, id, input.Name, input.Enabled); err != nil {
+	if err := h.svc.Update(r.Context(), tenantID, id, input.Name, input.Slug, input.Enabled); err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "update application: "+err.Error())
 		return
 	}

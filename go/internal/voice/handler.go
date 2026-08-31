@@ -48,9 +48,10 @@ type EPVoiceConfig struct {
 	TenantID string
 }
 
-// ConfigLoader resolves voice configuration for a voice entry point by slug.
+// ConfigLoader resolves voice configuration for a voice entry point.
+// Migration 048: resolution is now by (tenantID, appSlug, epSlug).
 type ConfigLoader interface {
-	LoadVoiceConfig(ctx context.Context, tenantID, epSlug string) (*EPVoiceConfig, error)
+	LoadVoiceConfig(ctx context.Context, tenantID, appSlug, epSlug string) (*EPVoiceConfig, error)
 }
 
 // KeyResolver decrypts and returns the plaintext provider API key for an application.
@@ -102,18 +103,18 @@ func NewHandler(
 	}
 }
 
-// Routes returns an http.Handler mounting all three voice endpoints.
-// Mount at /apps so full paths are /apps/{slug}/voice/*.
+// Routes returns an http.Handler mounting all voice endpoints.
+// Mount at /apps so full paths are /apps/{app_slug}/{ep_slug}/voice/*.
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
-	r.Post("/{slug}/voice/chat", h.Chat)
-	r.Post("/{slug}/voice/stream", h.Stream)
-	r.Post("/{slug}/voice/transcribe", h.Transcribe)
-	r.Post("/{slug}/voice/tts", h.TTS)
+	r.Post("/{app_slug}/{ep_slug}/voice/chat", h.Chat)
+	r.Post("/{app_slug}/{ep_slug}/voice/stream", h.Stream)
+	r.Post("/{app_slug}/{ep_slug}/voice/transcribe", h.Transcribe)
+	r.Post("/{app_slug}/{ep_slug}/voice/tts", h.TTS)
 	return r
 }
 
-// Chat handles POST /apps/{slug}/voice/chat.
+// Chat handles POST /apps/{app_slug}/{ep_slug}/voice/chat.
 // Full pipeline: audio → STT → orchestrator (LLM) → TTS → audio stream.
 // The voice EP must be connected to an orchestrator in the canvas.
 func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +122,8 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
 
-	slug := chi.URLParam(r, "slug")
+	appSlug := chi.URLParam(r, "app_slug")
+	epSlug := chi.URLParam(r, "ep_slug")
 
 	// ── 1. Parse audio from multipart ────────────────────────────────────────
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -141,7 +143,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── 2. Load voice config + resolve STT key ────────────────────────────────
-	cfg, sttKey, err := h.resolveAndAuth(r, slug, "stt")
+	cfg, sttKey, err := h.resolveAndAuth(r, appSlug, epSlug, "stt")
 	if err != nil {
 		h.writeErr(w, err)
 		return
@@ -158,7 +160,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	transcript, err := Transcribe(ctx, cfg.STTProvider, cfg.STTModel, sttKey, audioBytes, header.Filename, ct)
 	if err != nil {
-		h.logger.Warn("voice: transcribe failed", "ep_slug", slug, "error", err)
+		h.logger.Warn("voice: transcribe failed", "ep_slug", epSlug, "error", err)
 		http.Error(w, `{"error":"transcription failed"}`, http.StatusBadGateway)
 		return
 	}
@@ -170,14 +172,14 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	// ── 4. Load orchestrator config + build Go orchestrator (no Temporal) ───────
 	runCfg, cfgErr := h.runLoader.LoadRunConfig(ctx, cfg.OrchestratorID, cfg.AppID, "")
 	if cfgErr != nil {
-		h.logger.Warn("voice: load run config failed", "ep_slug", slug, "orch_id", cfg.OrchestratorID, "error", cfgErr)
+		h.logger.Warn("voice: load run config failed", "ep_slug", epSlug, "orch_id", cfg.OrchestratorID, "error", cfgErr)
 		http.Error(w, `{"error":"orchestrator configuration unavailable"}`, http.StatusInternalServerError)
 		return
 	}
 
 	provider, provErr := h.buildProvider(runCfg)
 	if provErr != nil {
-		h.logger.Warn("voice: build LLM provider failed", "ep_slug", slug, "provider", runCfg.LLMProvider, "error", provErr)
+		h.logger.Warn("voice: build LLM provider failed", "ep_slug", epSlug, "provider", runCfg.LLMProvider, "error", provErr)
 		http.Error(w, `{"error":"LLM provider not configured — set an API key in Runtime settings"}`, http.StatusBadRequest)
 		return
 	}
@@ -189,13 +191,13 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		run := domain.Run{
 			ID:             runID,
 			TenantID:       h.tenantID,
-			EntryPointSlug: slug,
+			EntryPointSlug: epSlug,
 			Goal:           transcript,
 			Status:         domain.RunRunning,
 			StartedAt:      time.Now().UTC(),
 		}
 		if err := h.recorder.CreateRun(ctx, run); err != nil {
-			h.logger.Warn("voice: create run failed (non-fatal)", "ep_slug", slug, "error", err)
+			h.logger.Warn("voice: create run failed (non-fatal)", "ep_slug", epSlug, "error", err)
 		}
 	}
 
@@ -209,7 +211,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		orchestrator.RunContext{TenantID: h.tenantID, ApplicationID: cfg.AppID},
 	)
 	if orchErr != nil {
-		h.logger.Warn("voice: orchestrator run failed", "ep_slug", slug, "run_id", runID, "error", orchErr)
+		h.logger.Warn("voice: orchestrator run failed", "ep_slug", epSlug, "run_id", runID, "error", orchErr)
 		http.Error(w, `{"error":"orchestrator error"}`, http.StatusBadGateway)
 		return
 	}
@@ -219,7 +221,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── 8. Resolve TTS key ────────────────────────────────────────────────────
-	_, ttsKey, err := h.resolveAndAuth(r, slug, "tts")
+	_, ttsKey, err := h.resolveAndAuth(r, appSlug, epSlug, "tts")
 	if err != nil {
 		http.Error(w, `{"error":"TTS not configured — set TTS provider in Runtime settings"}`, http.StatusBadRequest)
 		return
@@ -231,11 +233,11 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Transcript", transcript)
 	w.Header().Set("X-Reply", replyText)
 	if _, err := StreamTTS(ctx, w, cfg.TTSProvider, cfg.TTSVoice, cfg.TTSModel, ttsKey, replyText); err != nil {
-		h.logger.Warn("voice: tts stream failed", "ep_slug", slug, "error", err)
+		h.logger.Warn("voice: tts stream failed", "ep_slug", epSlug, "error", err)
 	}
 }
 
-// Stream handles POST /apps/{slug}/voice/stream.
+// Stream handles POST /apps/{app_slug}/{ep_slug}/voice/stream.
 // Streaming pipeline: audio → STT → SSE stream (transcript + LLM tokens) → done.
 // The caller is expected to separately call /voice/tts with the full reply text
 // to play back audio, enabling the user to read the reply as it streams in.
@@ -251,7 +253,8 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), streamTimeout)
 	defer cancel()
 
-	slug := chi.URLParam(r, "slug")
+	appSlug := chi.URLParam(r, "app_slug")
+	epSlug := chi.URLParam(r, "ep_slug")
 
 	// ── 1. Parse audio ────────────────────────────────────────────────────────
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -271,7 +274,7 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── 2. Load voice config + auth ───────────────────────────────────────────
-	cfg, sttKey, err := h.resolveAndAuth(r, slug, "stt")
+	cfg, sttKey, err := h.resolveAndAuth(r, appSlug, epSlug, "stt")
 	if err != nil {
 		h.writeErr(w, err)
 		return
@@ -288,7 +291,7 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 	transcript, err := Transcribe(ctx, cfg.STTProvider, cfg.STTModel, sttKey, audioBytes, header.Filename, ct)
 	if err != nil {
-		h.logger.Warn("voice/stream: transcribe failed", "ep_slug", slug, "error", err)
+		h.logger.Warn("voice/stream: transcribe failed", "ep_slug", epSlug, "error", err)
 		http.Error(w, `{"error":"transcription failed"}`, http.StatusBadGateway)
 		return
 	}
@@ -300,7 +303,7 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	// ── 4. Load orchestrator config + build provider ──────────────────────────
 	runCfg, cfgErr := h.runLoader.LoadRunConfig(ctx, cfg.OrchestratorID, cfg.AppID, "")
 	if cfgErr != nil {
-		h.logger.Warn("voice/stream: load run config failed", "ep_slug", slug, "error", cfgErr)
+		h.logger.Warn("voice/stream: load run config failed", "ep_slug", epSlug, "error", cfgErr)
 		http.Error(w, `{"error":"orchestrator configuration unavailable"}`, http.StatusInternalServerError)
 		return
 	}
@@ -346,13 +349,13 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 		run := domain.Run{
 			ID:             runID,
 			TenantID:       h.tenantID,
-			EntryPointSlug: slug,
+			EntryPointSlug: epSlug,
 			Goal:           transcript,
 			Status:         domain.RunRunning,
 			StartedAt:      time.Now().UTC(),
 		}
 		if err := h.recorder.CreateRun(ctx, run); err != nil {
-			h.logger.Warn("voice/stream: create run failed (non-fatal)", "ep_slug", slug, "error", err)
+			h.logger.Warn("voice/stream: create run failed (non-fatal)", "ep_slug", epSlug, "error", err)
 		}
 	}
 
@@ -431,13 +434,14 @@ func (h *Handler) buildProvider(cfg workerconfig.RunConfig) (llm.Provider, error
 	}
 }
 
-// Transcribe handles POST /apps/{slug}/voice/transcribe.
+// Transcribe handles POST /apps/{app_slug}/{ep_slug}/voice/transcribe.
 // Accepts multipart/form-data with an "audio" file field.
 // Returns JSON: {"text":"...","provider":"...","model":"..."}
 func (h *Handler) Transcribe(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
+	appSlug := chi.URLParam(r, "app_slug")
+	epSlug := chi.URLParam(r, "ep_slug")
 
-	cfg, apiKey, err := h.resolveAndAuth(r, slug, "stt")
+	cfg, apiKey, err := h.resolveAndAuth(r, appSlug, epSlug, "stt")
 	if err != nil {
 		h.writeErr(w, err)
 		return
@@ -467,7 +471,7 @@ func (h *Handler) Transcribe(w http.ResponseWriter, r *http.Request) {
 
 	text, err := Transcribe(r.Context(), cfg.STTProvider, cfg.STTModel, apiKey, audioBytes, header.Filename, ct)
 	if err != nil {
-		h.logger.Warn("voice: transcribe failed", "ep_slug", slug, "error", err)
+		h.logger.Warn("voice: transcribe failed", "ep_slug", epSlug, "error", err)
 		http.Error(w, `{"error":"transcription failed"}`, http.StatusBadGateway)
 		return
 	}
@@ -480,13 +484,14 @@ func (h *Handler) Transcribe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// TTS handles POST /apps/{slug}/voice/tts.
+// TTS handles POST /apps/{app_slug}/{ep_slug}/voice/tts.
 // Accepts JSON: {"text":"..."}
 // Streams audio/mpeg back to the client.
 func (h *Handler) TTS(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
+	appSlug := chi.URLParam(r, "app_slug")
+	epSlug := chi.URLParam(r, "ep_slug")
 
-	cfg, apiKey, err := h.resolveAndAuth(r, slug, "tts")
+	cfg, apiKey, err := h.resolveAndAuth(r, appSlug, epSlug, "tts")
 	if err != nil {
 		h.writeErr(w, err)
 		return
@@ -506,7 +511,7 @@ func (h *Handler) TTS(w http.ResponseWriter, r *http.Request) {
 
 	mimeType, err := StreamTTS(r.Context(), w, cfg.TTSProvider, cfg.TTSVoice, cfg.TTSModel, apiKey, body.Text)
 	if err != nil {
-		h.logger.Warn("voice: tts failed", "ep_slug", slug, "error", err)
+		h.logger.Warn("voice: tts failed", "ep_slug", epSlug, "error", err)
 		return
 	}
 	_ = mimeType
@@ -523,7 +528,7 @@ type voiceErr struct {
 
 func (e *voiceErr) Error() string { return e.message }
 
-func (h *Handler) resolveAndAuth(r *http.Request, slug, mode string) (*EPVoiceConfig, string, error) {
+func (h *Handler) resolveAndAuth(r *http.Request, appSlug, epSlug, mode string) (*EPVoiceConfig, string, error) {
 	tenantID := h.tenantID
 	rawToken := extractRawToken(r)
 
@@ -533,7 +538,7 @@ func (h *Handler) resolveAndAuth(r *http.Request, slug, mode string) (*EPVoiceCo
 		}
 	}
 
-	cfg, err := h.loader.LoadVoiceConfig(r.Context(), tenantID, slug)
+	cfg, err := h.loader.LoadVoiceConfig(r.Context(), tenantID, appSlug, epSlug)
 	if err != nil {
 		return nil, "", &voiceErr{http.StatusNotFound, "entry point not found"}
 	}

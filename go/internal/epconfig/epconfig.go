@@ -206,19 +206,21 @@ type EPConfigRow struct {
 
 // DBQuerier is the single query needed by the epconfig loader.
 type DBQuerier interface {
-	// QueryEPConfig fetches the config row for the given tenant ID and EP slug.
-	// Returns ErrNotFound (wrapped) when no matching row exists.
-	// The tenantID filter prevents cross-tenant slug collision (migration 028).
-	QueryEPConfig(ctx context.Context, tenantID, epSlug string) (*EPConfigRow, error)
+	// QueryEPConfig fetches the config row for the given tenant ID, app slug,
+	// and EP slug. Returns ErrNotFound (wrapped) when no matching row exists.
+	// Tenant + app + ep triple is the canonical unique key (migration 048).
+	QueryEPConfig(ctx context.Context, tenantID, appSlug, epSlug string) (*EPConfigRow, error)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Loader
 // ──────────────────────────────────────────────────────────────────────────────
 
-// epCacheKey returns the in-process cache key for a (tenantID, slug) pair.
-// Format: "{tenantID}:{slug}" — same convention as agent registry (SEC-03).
-func epCacheKey(tenantID, slug string) string { return tenantID + ":" + slug }
+// epCacheKey returns the in-process cache key for a (tenantID, appSlug, epSlug) triple.
+// Format: "{tenantID}:{appSlug}:{epSlug}" — unique per tenant + app + EP.
+func epCacheKey(tenantID, appSlug, epSlug string) string {
+	return tenantID + ":" + appSlug + ":" + epSlug
+}
 
 // Loader resolves EPConfig for a given (tenantID, slug) pair. It caches results
 // for CacheTTL to avoid a DB query on every connection.
@@ -242,19 +244,19 @@ func NewLoader(db DBQuerier, logger *slog.Logger) *Loader {
 	}
 }
 
-// Load resolves the EPConfig for the given tenant ID and EP slug.
+// Load resolves the EPConfig for the given tenant ID, app slug, and EP slug.
 // The tenantID must be the authoritative UUID from the caller's auth token or
 // JWT. For public EPs in a single-tenant deployment the bootstrap tenant UUID
-// must be passed explicitly — never infer tenantID from the EP slug.
+// must be passed explicitly — never infer tenantID from the slugs.
 //
 // Errors:
-//   - ErrNotFound — no entry point with this (tenantID, slug) exists
+//   - ErrNotFound — no entry point with this (tenantID, appSlug, epSlug) exists
 //   - ErrDBUnavailable — DB query failed
 //
 // Callers should additionally call CheckAccess after Load to enforce
 // enabled/blocked checks.
-func (l *Loader) Load(ctx context.Context, tenantID, epSlug string) (*EPConfig, error) {
-	key := epCacheKey(tenantID, epSlug)
+func (l *Loader) Load(ctx context.Context, tenantID, appSlug, epSlug string) (*EPConfig, error) {
+	key := epCacheKey(tenantID, appSlug, epSlug)
 	l.mu.Lock()
 	if cached, ok := l.cache[key]; ok && !cached.expired() {
 		l.mu.Unlock()
@@ -262,12 +264,12 @@ func (l *Loader) Load(ctx context.Context, tenantID, epSlug string) (*EPConfig, 
 	}
 	l.mu.Unlock()
 
-	row, err := l.db.QueryEPConfig(ctx, tenantID, epSlug)
+	row, err := l.db.QueryEPConfig(ctx, tenantID, appSlug, epSlug)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return nil, ErrNotFound
 		}
-		l.logger.Warn("epconfig: db query failed", "tenant_id", tenantID, "ep_slug", epSlug, "error", err)
+		l.logger.Warn("epconfig: db query failed", "tenant_id", tenantID, "app_slug", appSlug, "ep_slug", epSlug, "error", err)
 		return nil, fmt.Errorf("%w: %v", ErrDBUnavailable, err)
 	}
 
@@ -284,12 +286,21 @@ func (l *Loader) Load(ctx context.Context, tenantID, epSlug string) (*EPConfig, 
 	return cfg, nil
 }
 
-// Invalidate evicts the cached config for the given (tenantID, slug) pair.
+// Invalidate evicts the cached config for the given (tenantID, appSlug, epSlug) triple.
 // Call this when the admin API mutates an entry point or its parent application.
+// When appSlug is unknown (legacy publish path), pass "" and the Loader will
+// evict all cached entries that match tenantID + epSlug via InvalidateByEPSlug.
 func (l *Loader) Invalidate(tenantID, epSlug string) {
-	key := epCacheKey(tenantID, epSlug)
+	// Legacy call-site compatibility: evict any key ending in ":<epSlug>".
 	l.mu.Lock()
-	delete(l.cache, key)
+	prefix := tenantID + ":"
+	suffix := ":" + epSlug
+	for key := range l.cache {
+		if len(key) > len(prefix) && key[:len(prefix)] == prefix &&
+			len(key) >= len(suffix) && key[len(key)-len(suffix):] == suffix {
+			delete(l.cache, key)
+		}
+	}
 	l.mu.Unlock()
 }
 

@@ -354,8 +354,9 @@ func run() error {
 	return srv.ListenAndServe()
 }
 
-// appsDispatcher routes /apps/{slug}/ws to wsApps, /apps/{slug}/sse to sseApps,
-// /apps/{slug}/voice/* to voiceApps, and returns 404 for anything else.
+// appsDispatcher routes /apps/{app_slug}/{ep_slug}/ws to wsApps,
+// /apps/{app_slug}/{ep_slug}/sse to sseApps,
+// /apps/{app_slug}/{ep_slug}/voice/* to voiceApps, and returns 404 for anything else.
 // Each sub-handler owns its own chi router; this function only dispatches.
 // voiceApps may be nil (voice is disabled/not wired).
 func appsDispatcher(wsApps, sseApps, voiceApps http.Handler) http.Handler {

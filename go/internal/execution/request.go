@@ -11,6 +11,7 @@ import (
 // ExecutionRequest carries the per-call inputs that the caller (protocol handler)
 // has already resolved before calling Admit. The Lifecycle does not parse HTTP.
 type ExecutionRequest struct {
+	AppSlug       string           // application slug from URL path (migration 048)
 	EPSlug        string           // entry-point slug from URL path
 	RawToken      string           // bearer token string; empty if none presented
 	TokenInfo     *auth.TokenInfo  // nil if public EP or token absent/invalid

@@ -8,13 +8,13 @@ import (
 )
 
 // listAppQuery is shared by ListApplications and GetApplication.
-// It returns: id, name, enabled, active_revision, active_status.
+// It returns: id, name, slug, enabled, active_revision, active_status.
 // app_orchestrators are fetched separately per-app to avoid N×M fanout.
-// Note: them.applications has no slug column — slug lives on entry_points.
 const listAppQuery = `
 SELECT
     a.id::text,
     a.name,
+    COALESCE(a.slug, ''),
     a.enabled,
     d.revision,
     d.status
@@ -25,7 +25,7 @@ WHERE a.tenant_id = $1::uuid`
 // scanApplication scans one application row from listAppQuery.
 func scanApplication(rows SingleRowScanner) (Application, error) {
 	var a Application
-	if err := rows.Scan(&a.ID, &a.Name, &a.Enabled, &a.ActiveRevision, &a.ActiveStatus); err != nil {
+	if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.Enabled, &a.ActiveRevision, &a.ActiveStatus); err != nil {
 		return a, err
 	}
 	return a, nil
@@ -130,11 +130,11 @@ func (d *DB) GetApplication(ctx context.Context, tenantID, id string) (Applicati
 }
 
 // CreateApplication inserts a new application row for the given tenant and returns the new UUID.
-func (d *DB) CreateApplication(ctx context.Context, tenantID, name string, enabled bool) (string, error) {
-	const q = `INSERT INTO them.applications (tenant_id, name, enabled) VALUES ($1::uuid, $2, $3) RETURNING id::text`
+func (d *DB) CreateApplication(ctx context.Context, tenantID, name, slug string, enabled bool) (string, error) {
+	const q = `INSERT INTO them.applications (tenant_id, name, slug, enabled) VALUES ($1::uuid, $2, $3, $4) RETURNING id::text`
 
 	var id string
-	row := d.q.ExecReturning(ctx, q, tenantID, name, enabled)
+	row := d.q.ExecReturning(ctx, q, tenantID, name, slug, enabled)
 	if err := row.Scan(&id); err != nil {
 		return "", err
 	}
@@ -142,9 +142,9 @@ func (d *DB) CreateApplication(ctx context.Context, tenantID, name string, enabl
 }
 
 // UpdateApplication modifies an existing application row, scoped to the tenant.
-func (d *DB) UpdateApplication(ctx context.Context, tenantID, id, name string, enabled bool) error {
-	const q = `UPDATE them.applications SET name=$3, enabled=$4, updated_at=now() WHERE id=$1::uuid AND tenant_id=$2::uuid`
-	return d.q.Exec(ctx, q, id, tenantID, name, enabled)
+func (d *DB) UpdateApplication(ctx context.Context, tenantID, id, name, slug string, enabled bool) error {
+	const q = `UPDATE them.applications SET name=$3, slug=$4, enabled=$5, updated_at=now() WHERE id=$1::uuid AND tenant_id=$2::uuid`
+	return d.q.Exec(ctx, q, id, tenantID, name, slug, enabled)
 }
 
 // DeleteApplication soft-deletes an application by setting enabled=false, scoped to the tenant.

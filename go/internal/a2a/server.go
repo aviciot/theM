@@ -208,16 +208,17 @@ func (s *Server) WithPublicURL(u string) *Server {
 // Routes returns an http.Handler with A2A routes mounted.
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
-	r.Post("/a2a/{app_slug}", s.handleRPC)
-	r.Get("/.well-known/agent.json", s.handleAgentCard)
+	r.Post("/a2a/{app_slug}/{ep_slug}", s.handleRPC)
+	r.Get("/a2a/{app_slug}/{ep_slug}/.well-known/agent.json", s.handleAgentCard)
 	return r
 }
 
-// handleAgentCard serves GET /.well-known/agent.json.
+// handleAgentCard serves GET /a2a/{app_slug}/{ep_slug}/.well-known/agent.json.
 func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
+	appSlug := chi.URLParam(r, "app_slug")
+	epSlug := chi.URLParam(r, "ep_slug")
 	base := s.publicURL
 	if base == "" {
-		// Derive from the request: honour X-Forwarded-Proto set by Traefik.
 		scheme := r.Header.Get("X-Forwarded-Proto")
 		if scheme == "" {
 			scheme = "http"
@@ -231,7 +232,7 @@ func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 	card := agentCard{
 		Name:        "the-M Orchestrator",
 		Description: "AI orchestration platform",
-		URL:         fmt.Sprintf("%s/a2a/{app_slug}", base),
+		URL:         fmt.Sprintf("%s/a2a/%s/%s", base, appSlug, epSlug),
 		Version:     "1.0",
 		Capabilities: agentCardCapability{
 			Streaming: true,
@@ -270,6 +271,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req rpcRequest) {
 	ctx := r.Context()
 	appSlug := chi.URLParam(r, "app_slug")
+	epSlug := chi.URLParam(r, "ep_slug")
 
 	// ── 1. Extract raw token (Lifecycle.Admit owns all validation/enforcement) ─
 	rawToken := s.extractRawToken(r)
@@ -307,7 +309,8 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req r
 
 	// ── 4. Admit: auth → EPConfig → access → gate → session → CreateRun ──────
 	admitReq := execution.ExecutionRequest{
-		EPSlug:      appSlug,
+		AppSlug:     appSlug,
+		EPSlug:      epSlug,
 		TenantID:    tenantID,
 		RawToken:    rawToken,
 		ContextID:   params.Message.ContextID, // caller-supplied multi-turn ID; empty → generated
@@ -411,6 +414,7 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req r
 func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req rpcRequest) {
 	ctx := r.Context()
 	appSlug := chi.URLParam(r, "app_slug")
+	epSlug := chi.URLParam(r, "ep_slug")
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -448,7 +452,8 @@ func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req
 	}
 
 	admitReq := execution.ExecutionRequest{
-		EPSlug:      appSlug,
+		AppSlug:     appSlug,
+		EPSlug:      epSlug,
 		TenantID:    tenantID,
 		RawToken:    rawToken,
 		ContextID:   params.Message.ContextID,

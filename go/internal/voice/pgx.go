@@ -30,7 +30,8 @@ func NewPgxLoader(pool *pgxpool.Pool) *PgxLoader {
 
 // voiceConfigQuery resolves a voice entry point's config in one query:
 // entry_points → applications → app_orchestrators (voice config columns).
-// It is scoped by (tenant_id, slug) to prevent cross-tenant access.
+// Scoped by (tenant_id, app_slug, ep_slug) — migration 048 adds slug to
+// applications, making the triple the canonical unique key for an entry point.
 const voiceConfigQuery = `
 SELECT
     ep.enabled,
@@ -51,18 +52,19 @@ LEFT JOIN them.app_orchestrators ao
     ON ao.id = ep.app_orchestrator_id
    AND ao.application_id = ep.application_id
 WHERE ep.tenant_id = $1::uuid
-  AND ep.slug       = $2
+  AND a.slug        = $2
+  AND ep.slug       = $3
   AND ep.entry_point_type = 'voice'
 LIMIT 1`
 
 // LoadVoiceConfig fetches the resolved voice configuration for the given
-// (tenantID, epSlug) pair. Returns an error when the EP does not exist or
-// is not of type "voice".
-func (q *PgxLoader) LoadVoiceConfig(ctx context.Context, tenantID, epSlug string) (*EPVoiceConfig, error) {
+// (tenantID, appSlug, epSlug) triple. Returns an error when the EP does not
+// exist or is not of type "voice".
+func (q *PgxLoader) LoadVoiceConfig(ctx context.Context, tenantID, appSlug, epSlug string) (*EPVoiceConfig, error) {
 	var cfg EPVoiceConfig
 	var ttsModelProxy string
 
-	err := q.pool.QueryRow(ctx, voiceConfigQuery, tenantID, epSlug).Scan(
+	err := q.pool.QueryRow(ctx, voiceConfigQuery, tenantID, appSlug, epSlug).Scan(
 		&cfg.EPEnabled,
 		&cfg.AppEnabled,
 		&cfg.AccessMode,

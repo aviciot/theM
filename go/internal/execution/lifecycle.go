@@ -144,12 +144,12 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		lc.logger.Warn("execution: no ep loader configured", "ep_slug", req.EPSlug)
 		return nil, admitErr(AdmitErrInternal)
 	}
-	resolvedCfg, err := lc.epLoader.Load(ctx, req.TenantID, req.EPSlug)
+	resolvedCfg, err := lc.epLoader.Load(ctx, req.TenantID, req.AppSlug, req.EPSlug)
 	if err != nil {
 		if errors.Is(err, epconfig.ErrNotFound) {
 			return nil, admitErr(AdmitErrNotFound)
 		}
-		lc.logger.Warn("execution: epconfig load failed", "tenant_id", req.TenantID, "ep_slug", req.EPSlug, "error", err)
+		lc.logger.Warn("execution: epconfig load failed", "tenant_id", req.TenantID, "app_slug", req.AppSlug, "ep_slug", req.EPSlug, "error", err)
 		return nil, admitErr(AdmitErrDBUnavailable)
 	}
 

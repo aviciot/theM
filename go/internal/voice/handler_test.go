@@ -29,7 +29,7 @@ type fakeLoader struct {
 	err error
 }
 
-func (f *fakeLoader) LoadVoiceConfig(_ context.Context, _, _ string) (*voice.EPVoiceConfig, error) {
+func (f *fakeLoader) LoadVoiceConfig(_ context.Context, _, _, _ string) (*voice.EPVoiceConfig, error) {
 	return f.cfg, f.err
 }
 
@@ -86,7 +86,7 @@ func TestTranscribe_EPNotFound(t *testing.T) {
 	defer srv.Close()
 
 	buf, ct := buildMultipart(t, []byte("audio"))
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-voice-ep/voice/transcribe", buf)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-app/my-voice-ep/voice/transcribe", buf)
 	req.Header.Set("Content-Type", ct)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -112,7 +112,7 @@ func TestTranscribe_TokenEPNoAuth(t *testing.T) {
 	defer srv.Close()
 
 	buf, ct := buildMultipart(t, []byte("audio"))
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-ep/voice/transcribe", buf)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-app/my-ep/voice/transcribe", buf)
 	req.Header.Set("Content-Type", ct)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestTranscribe_EPDisabled(t *testing.T) {
 	defer srv.Close()
 
 	buf, ct := buildMultipart(t, []byte("audio"))
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-ep/voice/transcribe", buf)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-app/my-ep/voice/transcribe", buf)
 	req.Header.Set("Content-Type", ct)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestTranscribe_NoSTTProvider(t *testing.T) {
 	defer srv.Close()
 
 	buf, ct := buildMultipart(t, []byte("audio"))
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-ep/voice/transcribe", buf)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-app/my-ep/voice/transcribe", buf)
 	req.Header.Set("Content-Type", ct)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -190,7 +190,7 @@ func TestTranscribe_NoAPIKey(t *testing.T) {
 	defer srv.Close()
 
 	buf, ct := buildMultipart(t, []byte("audio"))
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-ep/voice/transcribe", buf)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-app/my-ep/voice/transcribe", buf)
 	req.Header.Set("Content-Type", ct)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -221,7 +221,7 @@ func TestTTS_MissingText(t *testing.T) {
 	defer srv.Close()
 
 	body, _ := json.Marshal(map[string]string{"text": ""})
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-ep/voice/tts", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-app/my-ep/voice/tts", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -247,7 +247,7 @@ func TestTTS_TokenEPNoAuth(t *testing.T) {
 	defer srv.Close()
 
 	body, _ := json.Marshal(map[string]string{"text": "hello"})
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-ep/voice/tts", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/my-app/my-ep/voice/tts", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

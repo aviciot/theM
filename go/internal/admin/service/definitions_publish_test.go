@@ -165,8 +165,8 @@ func (f *publishFakeDal) UpdateOrchestrator(_ context.Context, _, _ string, _ da
 func (f *publishFakeDal) DeleteOrchestrator(_ context.Context, _, _ string) error      { return nil }
 func (f *publishFakeDal) ListApplications(_ context.Context, _ string) ([]dal.Application, error) { return nil, nil }
 func (f *publishFakeDal) GetApplication(_ context.Context, _, _ string) (dal.Application, error) { return dal.Application{}, nil }
-func (f *publishFakeDal) CreateApplication(_ context.Context, _, _ string, _ bool) (string, error) { return "", nil }
-func (f *publishFakeDal) UpdateApplication(_ context.Context, _, _, _ string, _ bool) error { return nil }
+func (f *publishFakeDal) CreateApplication(_ context.Context, _, _, _ string, _ bool) (string, error) { return "", nil }
+func (f *publishFakeDal) UpdateApplication(_ context.Context, _, _, _, _ string, _ bool) error { return nil }
 func (f *publishFakeDal) DeleteApplication(_ context.Context, _, _ string) error       { return nil }
 func (f *publishFakeDal) ListEntryPoints(_ context.Context, _ string) []dal.EntryPoint { return nil }
 func (f *publishFakeDal) CreateEntryPoint(_ context.Context, _, _, _ string, _ bool) (string, error) { return "", nil }

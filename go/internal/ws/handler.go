@@ -143,17 +143,13 @@ func (h *Handler) Routes() http.Handler {
 	return r
 }
 
-// AppsWSRoute returns an http.Handler for /{slug}/ws (relative path).
-// Mount at /apps so the full external path is /apps/{slug}/ws.
-// It remaps the {slug} chi param to {entry_point_slug} so the shared
-// ServeHTTP can call chi.URLParam(r, "entry_point_slug") uniformly.
+// AppsWSRoute returns an http.Handler for /{app_slug}/{ep_slug}/ws (relative path).
+// Mount at /apps so the full external path is /apps/{app_slug}/{ep_slug}/ws.
 func (h *Handler) AppsWSRoute() http.Handler {
 	r := chi.NewRouter()
-	r.Get("/{slug}/ws", func(w http.ResponseWriter, r *http.Request) {
-		slug := chi.URLParam(r, "slug")
+	r.Get("/{app_slug}/{ep_slug}/ws", func(w http.ResponseWriter, r *http.Request) {
 		rctx := chi.RouteContext(r.Context())
-		rctx.URLParams.Add("app_slug", slug)
-		rctx.URLParams.Add("entry_point_slug", slug)
+		rctx.URLParams.Add("entry_point_slug", chi.URLParam(r, "ep_slug"))
 		h.ServeHTTP(w, r)
 	})
 	return r
@@ -171,6 +167,7 @@ func (h *Handler) AppsWSRoute() http.Handler {
 //  3. Lifecycle.Start → ExecuteWorkflow
 //  4. streamEvents → forward run events to client until done or disconnect
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	appSlug := chi.URLParam(r, "app_slug")
 	epSlug := chi.URLParam(r, "entry_point_slug")
 
 	metrics.ActiveWSConnections.Inc()
@@ -197,6 +194,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// All pre-upgrade errors are clean HTTP responses (not WS close frames).
 	// The voice EP check (→ 501) is inside Lifecycle, so no separate check needed.
 	admitReq := execution.ExecutionRequest{
+		AppSlug:    appSlug,
 		EPSlug:     epSlug,
 		TenantID:   tenantID,
 		RawToken:   rawToken,

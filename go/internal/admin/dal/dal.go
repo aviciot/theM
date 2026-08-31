@@ -210,6 +210,7 @@ type AppOrchestratorSummary struct {
 type Application struct {
 	ID               string                   `json:"id"`
 	Name             string                   `json:"name"`
+	Slug             string                   `json:"slug"`
 	Enabled          bool                     `json:"enabled"`
 	ActiveRevision   *int                     `json:"active_revision,omitempty"`
 	ActiveStatus     *string                  `json:"active_status,omitempty"`
@@ -237,6 +238,7 @@ type EntryPoint struct {
 // ApplicationInput is the request body for application create/update.
 type ApplicationInput struct {
 	Name    string `json:"name"`
+	Slug    string `json:"slug,omitempty"`
 	Enabled *bool  `json:"enabled,omitempty"`
 }
 
