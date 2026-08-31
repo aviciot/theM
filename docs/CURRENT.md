@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+ca51f2a  refactor(agent-runtime): split main.go (1123 lines) into 5 focused modules
+aa2e360  docs(current): record ChatColumn split (wave 5 complete)
+44a7c8d  refactor(frontend): split ChatColumn.tsx (957 lines) into 3 focused modules
 d47f8c1  refactor(frontend): extract CanvasNodePropertiesPanel from CanvasBuilderView
 9071b15  refactor(docs): flatten docs/architecture-v2/ into docs/
-a0116ef  refactor(frontend): split lib/api.ts and PropertiesPanel.tsx into focused modules
-45a0e23  feat(a2a): migrate EP server to official a2a-go/v2 SDK — 100% A2A v1.0 wire format
-7af3e1c  fix(monitor): wire SessionPublisher into A2A handler so A2A sessions appear in Monitor
 ```
 
 ---
@@ -498,7 +498,43 @@ All oversized frontend files have been split. No files remain above 600 lines in
 
 ---
 
-## Next recommended task
+## Go file-split refactor — in progress
+
+### Completed this session
+| File | Before | After | New files | Commit |
+|---|---|---|---|---|
+| `go/cmd/agent-runtime/main.go` | 1123 lines | 115 lines | `runtime.go` (376), `hitl.go` (205), `spec.go` (333), `llm.go` (150) | `ca51f2a` |
+
+### Remaining candidates (next session picks one)
+
+| File | Lines | Suggested split |
+|---|---|---|
+| `go/internal/agentgen/compiler.go` | 1056 | `compiler.go` (entry points) + `validate.go` (all validate* funcs) + `topo.go` (topoSort/resolveBindings/deriveStepVars/collect*) |
+| `go/internal/agentgen/nodes.go` | 1040 | `nodes.go` (registry + spec types) + `nodes_exec.go` (all exec* funcs) |
+| `go/internal/admin/applications.go` | 972 | `applications.go` (CRUD handlers) + `applications_llm.go` (TestLLM/Patch*/probe* funcs) |
+| `go/internal/temporal/canvas_workflow.go` | 939 | Harder — single workflow; defer unless it grows |
+| `go/internal/orchestrator/orchestrator.go` | 925 | Risky without full E2E; defer |
+| `go/internal/agentregistry/registry.go` | 834 | `registry.go` (cache + lookup) + `registry_invoke.go` (A2A invocation logic) |
+| `go/internal/admin/service/applications.go` | 756 | Mirrors handler split — defer until handler split is done |
+
+**Start with `compiler.go` — clearest responsibility boundaries, pure functions, no live state.**
+
+### Session startup commands
+```bash
+# Verify stack is healthy
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml ps
+
+# Confirm tests still green
+docker run --rm -v /opt/docker/them/go:/workspace -w /workspace golang:1.25-alpine \
+  sh -c "apk add --no-cache git ca-certificates 2>/dev/null && go test ./... 2>&1 | tail -5"
+```
+
+### First prompt for next session
+> Read docs/CURRENT.md. The next task is to split `go/internal/agentgen/compiler.go` (1056 lines) into three focused files: `compiler.go` (entry points: Validate/Compile/CompileForPublish/buildSpec), `validate.go` (all validateStructural/validateNodes/validateGraph/validateBindings/validateDataFlow/validateExecutability/validateHumanWaitBackend funcs), and `topo.go` (topoSort, resolveBindings, deriveStepVars, collectAgentParams, collectLLMNodes, extractAppParamKey). Logic must be preserved exactly — no behaviour changes. After splitting: run `go test ./internal/agentgen/...`, build the Docker image with `docker build -f Dockerfile.agent-runtime -t them-agent-runtime:split-test .`, confirm all pass, then commit and push.
+
+---
+
+## Next recommended task (features)
 
 ### Phase 5-A: StepLoop — FULLY COMPLETE (commit 81c3a31)
 
