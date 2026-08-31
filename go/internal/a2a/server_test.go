@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -827,11 +828,9 @@ func postStream(t *testing.T, srv *httptest.Server, body any, token string) (int
 		return resp.StatusCode, nil
 	}
 
+	raw, _ := io.ReadAll(resp.Body)
 	var lines []string
-	buf := make([]byte, 1<<14)
-	n, _ := resp.Body.Read(buf)
-	raw := string(buf[:n])
-	for _, line := range strings.Split(raw, "\n") {
+	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			lines = append(lines, line)

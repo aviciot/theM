@@ -448,7 +448,7 @@ func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req
 	// After writing SSE headers, all errors become SSE terminal events.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Connection", "close")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
