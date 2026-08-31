@@ -482,7 +482,7 @@ Split 4 oversized admin pages into focused sub-components. No logic changes. Typ
 | `admin/mcp-servers/page.tsx` | 1,022 lines | 157 lines | `MCPBadges.tsx`, `MCPServerCard.tsx`, `MCPToolRow.tsx`, `MCPPropertiesPanel.tsx`, `MCPCreateModal.tsx`, `mcpConstants.ts` |
 | `admin/settings/page.tsx` | 905 lines | 189 lines | `RoleCard.tsx`, `MonitoringPanel.tsx`, `settingsConstants.ts` |
 
-## Frontend file-split — waves 1–3 (complete, 2026-08-31)
+## Frontend file-split — waves 1–4 (complete, 2026-08-31)
 
 All splits: no logic changes. TypeScript passes with zero errors throughout.
 
@@ -491,12 +491,9 @@ All splits: no logic changes. TypeScript passes with zero errors throughout.
 | `lib/api.ts` | 1,152 lines | 476 lines | `lib/apiTypes.ts` (728 lines), `lib/apiClient.ts` (71 lines) |
 | `applications/components/PropertiesPanel.tsx` | 936 lines | 125 lines | `panel/AppPanel.tsx`, `panel/EntryPointPanel.tsx`, `panel/OrchestratorPanel.tsx` (484), `panel/AgentPanel.tsx`, `panel/MiddlewarePanel.tsx`, `panel/panelStyles.ts` |
 | `applications/components/CanvasBuilderView.tsx` | 1,152 lines | 625 lines | `cbv/CanvasNodePropertiesPanel.tsx` (573 lines) |
+| `admin/playground/page.tsx` | 2,309 lines | 276 lines | `playgroundTypes.ts` (169), `MarkdownRenderer.tsx` (240), `DebugPanel.tsx` (588), `ChatColumn.tsx` (957) |
 
-**Still large (not yet split):**
-
-| File | Lines | Next action |
-|---|---|---|
-| `admin/playground/page.tsx` | 2,309 | Extract `useWebSocket` hook first, then `ChatColumn`, `DebugPanel`, `ActivityBar` |
+All oversized frontend files have been split. No files remain above 400 lines in the pages that were targeted.
 
 ---
 
