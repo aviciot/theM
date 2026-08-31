@@ -2,99 +2,324 @@
   <img src="logo/logo_black.png" alt="the-M" height="140" />
 
   <h1>the-M</h1>
-  <p><strong>Durable Multi-Agent Orchestration Platform</strong></p>
+  <h3>The Enterprise Operating System for AI</h3>
   <p>
-    Compose teams of AI agents. Define what each one does.<br/>
-    Let the LLM decide — in parallel, across turns, with full durability.
+    Anyone can build an agent.<br/>
+    the-M gives enterprises one control plane to run hundreds — or thousands — of them safely.
+  </p>
+  <p>
+    Build AI anywhere. Connect it to the-M.<br/>
+    Govern it. Secure it. Orchestrate it. Observe it. Scale it.
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white" />
-    <img src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white" />
+    <img src="https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white" />
     <img src="https://img.shields.io/badge/Temporal-1.x-blueviolet" />
     <img src="https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs&logoColor=white" />
     <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white" />
     <img src="https://img.shields.io/badge/A2A-v1.0-6A4CE6" />
+    <img src="https://img.shields.io/badge/MCP-enabled-00BCD4" />
     <img src="https://img.shields.io/badge/Traefik-v3.6-24A1C1?logo=traefikproxy&logoColor=white" />
   </p>
 </div>
 
 ---
 
-## The Problem
+## Why the-M Exists
 
-Most AI agent frameworks focus on building a single agent. Real-world tasks require **teams of specialists** — a researcher, a coder, a critic, a data analyst — working in concert.
+The cost of building an AI agent is collapsing. A team can now ship a useful internal agent in days using Claude, OpenAI, LangGraph, Python, or any number of frameworks and tools.
 
-Coordinating multiple agents introduces hard problems:
+That is not the hard problem anymore.
 
-- **Who decides which agent to call?** Static pipelines break when requirements vary.
-- **What happens when a call fails mid-run?** In-memory state is lost on any crash.
-- **How do you scale across replicas** without duplicating work or losing history?
-- **How do you expose these workflows** to different clients — chat, voice, REST, SSE?
+The hard problem is what happens next — at scale, across an organization:
 
-**the-M** solves all of these. It is an orchestration layer that sits above your agents, not inside them.
+- Who owns each agent?
+- Which models may it use, and at what cost?
+- What data can it access? Which actions require approval?
+- What did it do yesterday — and did it produce the right business outcome?
+- How do you replace its underlying model without rebuilding everything?
+- How do hundreds of independently-built agents become one manageable enterprise AI environment?
 
----
+> **Building an agent is cheap. Building the infrastructure to operate hundreds of agents safely is not.**
 
-## What is the-M?
-
-**the-M** is a production-grade multi-agent orchestration platform. It gives an LLM a registry of AI agents as callable tools, then runs a durable agentic loop — planning, parallel execution, result synthesis — across any number of turns.
-
-Every run is a [Temporal](https://temporal.io/) workflow: crash-proof, auditable, and resumable. The orchestration layer is fully stateless — any replica can serve any connection, and a mid-run restart loses nothing.
-
-Agents communicate via the [Google A2A v1.0 protocol](https://google.github.io/A2A/), a vendor-neutral HTTP standard. Any A2A-compatible service can join the agent pool without touching orchestration code.
+the-M exists to solve the second problem.
 
 ---
 
-## How It Works
+## What the-M Is
+
+the-M is an **Enterprise AI Control Plane** — the operational layer that enterprises use to manage, secure, govern, orchestrate, and observe all AI activity across the organization.
+
+It is **not** another agent builder, chatbot framework, or workflow tool.
+
+It is the layer that sits above all of them.
+
+**Use whatever AI stack you want. the-M gives your organization control over all of it.**
+
+Agents may be built natively inside the-M's visual canvas, or externally using Python, Go, Claude, OpenAI, LangGraph, CrewAI, custom frameworks, or any other tool — as long as they expose a standard interface (A2A, MCP, REST). the-M registers them, secures them, governs them, orchestrates them, and makes them observable.
+
+---
+
+## Core Platform Capabilities
+
+### AI Gateway
+Every interaction with models, tools, agents, and external AI systems passes through a single governed layer:
+
+- Authentication and authorization
+- Routing and load balancing
+- Rate limiting and budget controls
+- Policy enforcement and secret management
+- Model selection and provider abstraction
+- Prompt and response filtering
+- Audit logging and usage tracking
+- Failover and cost-aware routing
+
+Once traffic passes through the-M's gateway, the organization gains visibility and control over all AI activity.
+
+### AI Asset Registry
+Every enterprise AI capability becomes a managed, discoverable asset:
+
+| Asset type | Tracked metadata |
+|---|---|
+| Agents | owner, version, environment, health, cost, dependencies |
+| Models & providers | capabilities, cost, data-handling policy |
+| MCP servers | tools exposed, access rules, versions |
+| A2A endpoints | capabilities, input/output types, wire format |
+| Workflows & orchestrators | step graph, inputs, outputs, assigned agents |
+| Prompts & knowledge sources | versions, ownership, usage |
+
+Think of it as the **service catalog and CMDB for enterprise AI** — so any stakeholder can answer the question: *"What AI do we actually have, and what is it doing?"*
+
+### Agent Runtime & Orchestration
+Organizations will not have one agent. They will have hundreds.
+
+the-M provides a production-grade execution layer for agentic workflows:
+
+- **Durable execution** via Temporal — crash-proof, resumable, auditable
+- **Parallel fan-out** — multiple agents execute concurrently across a single turn
+- **Multi-turn conversation history** — reconstructed from Postgres; valid across restarts and replica changes
+- **Retries, cancellation, timeouts, idempotency**
+- **Human-in-the-loop** — pause/resume via Temporal signals, approval workflows
+- **Scheduling and event-driven execution**
+- **Swarm mode** — agents spawning sub-agents (planned)
+
+### Governance & Security
+Enterprise adoption is ultimately won here. the-M enforces policy at multiple levels:
+
+```
+User → Agent → Tool → Data → Model → Action
+```
+
+Examples of expressible policy:
+
+- Finance agents may only call approved enterprise models
+- Agents handling PCI data may not route to public model providers
+- Actions above a cost threshold require human approval
+- An agent may only call the MCP servers assigned to its application
+- External agents must authenticate before invoking internal capabilities
+
+### Observability & AI Operations
+For every execution, the-M answers:
+
+- Which agent ran, and which model did it call?
+- Which tools were invoked, and what data passed through?
+- How many tokens were consumed? What did it cost?
+- Where did it fail — and why?
+- What was the business outcome?
+
+Every run produces a structured trace:
+
+```
+Run
+ ├── Agent
+ ├── Workflow
+ │    ├── Node
+ │    │    ├── Input / Output
+ │    │    ├── Model + tokens + cost + latency
+ │    │    └── Tool calls
+ │    └── Node
+ ├── Policies applied
+ ├── Security decisions
+ ├── Errors
+ └── Final result
+```
+
+---
+
+## Who the-M Is For
+
+the-M is not a one-size-fits-all tool. Different organizations come to it from different directions, and the platform is designed to meet them where they are — without requiring a full adoption on day one.
+
+---
+
+### Large Enterprise / FinTech
+
+**The situation:** Multiple development teams building AI independently. Five different LLM providers. Internal APIs, databases, and MCP servers scattered across business units. No central view of what AI the company actually has, who owns it, or what it costs.
+
+**The problem:** Every team reinvents auth, secrets management, model routing, and rate limiting. There is no consistent audit trail. No one can answer "which agents can access customer PII?" Security and compliance reviews become investigations.
+
+**How the-M helps:** the-M becomes the company's central AI control plane. All agents — regardless of where they were built — are registered. All model traffic flows through the gateway. Policies apply consistently across teams. Every execution is traced. Costs are tracked per application, per team, per agent.
+
+Relevant capabilities: registry, gateway, RBAC, policy enforcement, cost tracking, audit log, observability, lifecycle management.
+
+---
+
+### Banks, Insurance, and Highly Regulated Enterprises
+
+**The situation:** Sensitive customer data. Internal Oracle, core banking, or CRM systems. Identity managed through Microsoft Entra ID, Okta, SAML, or OIDC. Strict regulatory requirements around data residency, audit, and authorization. AI execution cannot freely reach production data.
+
+**The problem:** Most AI platforms assume they own the execution environment. That does not work when PCI data must stay inside a controlled perimeter, or when regulators require a complete audit trail of every AI action that touched a customer record.
+
+**How the-M helps:** the-M supports a hybrid deployment model. The control plane — registry, policies, RBAC, audit, orchestration definitions — can run centrally or in a dedicated environment. Temporal workers and agent runtimes execute close to the customer's sensitive systems, within their own infrastructure. Definitions travel; data does not.
+
+A bank using Entra ID and internal Oracle databases does not need to rebuild its identity layer. the-M integrates with existing IdPs via standard protocols. MCP servers wrap internal APIs without exposing them externally. The audit trail is complete because it is recorded at the control plane, not inside individual agents.
+
+Relevant capabilities: hybrid runtime deployment, IdP integration, per-agent data-access policy, human-in-the-loop approvals, immutable audit log, RBAC with fine-grained scope.
+
+---
+
+### Enterprise SaaS Companies
+
+**The situation:** An enterprise SaaS product that needs to embed AI capabilities for its own customers. Different tenants need different agents, different models, different usage limits, and full isolation from each other.
+
+**The problem:** Building multi-tenant AI infrastructure correctly is hard. Usage tracking, model routing, per-customer policies, agent lifecycle management, and tenant isolation are all engineering problems that distract from the core product.
+
+**How the-M helps:** the-M operates as a multi-tenant AI platform underneath the SaaS product. Each customer tenant gets its own isolated application context — its own agents, entry points, usage buckets, and policies. The SaaS company's engineering team manages the platform; tenants interact with AI capabilities through the product surface.
+
+Relevant capabilities: application-scoped tenancy, per-application rate limiting and budget, agent and orchestrator assignment per application, token-based entry points, usage tracking by tenant.
+
+---
+
+### Organizations with Existing Agents
+
+**The situation:** The engineering team has already built Python agents, LangGraph workflows, Claude-based tools, custom REST services, and several MCP servers. Rebuilding them is not on the table.
+
+**The problem:** Each agent has its own auth, its own secrets, its own logging. There is no consistent way to apply a policy, observe a run, or understand costs across all of them.
+
+**How the-M helps:** the-M does not require agents to be rebuilt. Any agent that exposes an A2A, MCP, or REST interface can be registered and managed through the platform immediately.
+
+> **Build AI anywhere. Operate it through the-M.**
+
+Once registered, an existing agent gets the same governance, observability, and orchestration capabilities as a natively-built one. The entry cost is low: register the endpoint, define the access policy, assign it to an application.
+
+Relevant capabilities: A2A and MCP registration, agent card discovery, external agent assignment to orchestrators, policy application without code changes.
+
+---
+
+### Platform Engineering / Internal AI Platform Teams
+
+**The situation:** An architecture or platform team tasked with creating one approved enterprise way to expose AI to business units. They need reusable agents, shared MCP services, approved models, and consistent policies — without becoming a bottleneck.
+
+**The problem:** Without a platform, every business unit builds its own infrastructure. With too much centralization, the platform team becomes the blocker. The right model is a managed set of shared primitives that business units can self-serve within defined guardrails.
+
+**How the-M helps:** the-M becomes the internal AI platform layer. The platform team manages the registry, approved models, shared MCP servers, and organizational policies. Business units build and deploy their own agents within that governed environment, using the platform's entry points and tooling without touching the underlying infrastructure.
+
+Relevant capabilities: registry, approved model list, shared MCP server management, application-scoped policies, agent canvas for business-unit self-service, RBAC separating platform admins from application owners.
+
+---
+
+### Government and Security-Sensitive Organizations
+
+**The situation:** On-premises or private cloud requirement. Only approved or locally-hosted models. No sensitive data leaving controlled networks. Air-gapped or network-restricted environments. Strong audit requirements from internal or external oversight bodies.
+
+**The problem:** Cloud-first AI platforms are a non-starter. Custom-built internal solutions take years and leave gaps in governance and observability.
+
+**How the-M helps:** the-M is deployable as a fully private stack — Postgres, Redis, Temporal workers, and agent runtimes all run within the customer's controlled environment. Local or approved models are registered as providers. No external model API calls are required. The full audit trail and governance layer operates entirely within the perimeter.
+
+Relevant capabilities: private/on-prem deployment, local model provider support, air-gap compatible runtime, full audit log, execution isolation per application.
+
+---
+
+### Adoption Path — Start Where You Are
+
+No organization needs to adopt the full platform on day one.
+
+A common entry point is:
+
+**Phase 1 — Control and Visibility**
+Register existing agents and MCP servers. Route model traffic through the gateway. Apply RBAC and basic policies. Start producing an audit trail.
+> Gateway + Agent Registry + MCP Registry + Governance
+
+**Phase 2 — Orchestration and Runtime**
+Connect agents into multi-agent workflows. Move execution onto the durable runtime. Add human-in-the-loop steps and approval flows.
+> Orchestration + Temporal Runtime + Agent Canvas
+
+**Phase 3 — Operations and Scale**
+Full observability across all runs. Cost attribution by team and application. AI-assisted diagnostics. Agent marketplace and reuse.
+> Observability + Cost Tracking + Copilot + Evaluation
+
+Each phase delivers standalone value. The platform deepens as adoption grows.
+
+---
+
+### Deployment Models
+
+| Model | Description | Typical customer |
+|---|---|---|
+| **Multi-tenant SaaS** | Shared platform, application-scoped isolation | SaaS companies, FinTechs, startups scaling fast |
+| **Dedicated SaaS** | Single-tenant hosted instance | Large enterprises needing isolation without on-prem ops |
+| **Customer Cloud (BYOC)** | the-M deployed into the customer's cloud account | Enterprises with cloud-residency requirements |
+| **On-Prem / Private Cloud** | Full stack runs inside the customer's infrastructure | Banks, government, regulated industries |
+| **Hybrid — Control Plane + Customer Runtime** | Centrally managed control plane; workers and agent runtimes run customer-side | Banks with sensitive data that cannot leave their perimeter |
+
+---
+
+## Architecture Overview
 
 ```mermaid
 flowchart TD
-    U(["User — any interface"])
+    U(["Enterprise Users\nApps · Copilots · Developers"])
 
-    subgraph Edge["Edge Layer"]
+    subgraph Edge["Edge Layer — Traefik :8088"]
         WS["WebSocket"]
         SSE["SSE Stream"]
-        REST["REST"]
+        REST["REST / HTTP"]
     end
 
-    subgraph Core["the-M Core (stateless bridge)"]
-        Auth["Auth & Token Validation"]
-        Bridge["Bridge — starts Temporal workflow\nrelays token stream to client"]
+    subgraph Core["the-M Control Plane (Go)"]
+        Auth["Auth & Policy\nJWT · RBAC · Rate Limits"]
+        Bridge["API Gateway\nRouting · Budget · Audit"]
     end
 
-    subgraph Temporal["Durable Execution — Temporal Worker"]
-        W["OrchestrationWorkflow"]
-        A1["plan_turn\n— LLM reasoning"]
-        A2["invoke_agent × N\n— parallel fan-out"]
-        A3["record_tool_results\n— history integrity"]
-        A4["finalize_run\n— always runs"]
+    subgraph Runtime["Agent Runtime & Orchestration"]
+        W["OrchestrationWorkflow (Temporal)"]
+        A1["plan_turn — LLM reasoning"]
+        A2["invoke_agent × N — parallel fan-out"]
+        A3["record_tool_results"]
+        A4["finalize_run"]
     end
 
-    subgraph Agents["Agent Pool — A2A v1.0"]
-        AG1["Agent A"]
-        AG2["Agent B"]
-        AG3["Agent C"]
+    subgraph Pool["Agent Pool"]
+        AG1["A2A Agent"]
+        AG2["MCP Server"]
+        AG3["External Agent\n(LangGraph · Python · etc.)"]
     end
 
     subgraph Data["Data Layer"]
-        PG[("PostgreSQL\ntasks · artifacts · messages")]
-        RD[("Redis\ntoken stream · cache · pub/sub")]
+        PG[("PostgreSQL\nagents · runs · tasks · artifacts")]
+        RD[("Redis\nstreams · pub/sub · rate limits")]
+    end
+
+    subgraph Admin["Admin & Observability"]
+        REG["Asset Registry"]
+        OBS["Trace Viewer · Cost · Audit"]
+        GOV["Policy Engine"]
     end
 
     U --> Edge --> Auth --> Bridge
-    Bridge -- "signal_with_start" --> W
+    Bridge -- "durable workflow" --> W
     W --> A1 --> A2
     A2 --> AG1 & AG2 & AG3
     A2 --> A3 --> A4
-    W -- "publish tokens" --> RD
+    W -- "token stream" --> RD
     Bridge -- "relay stream" --> U
-    A1 & A2 & A3 & A4 --> PG
+    W --> PG
+    Bridge --> Admin
 ```
 
 ### The Agentic Loop
 
-Each run executes inside a Temporal workflow. The LLM is the planner; agents are the executors.
+Each orchestrated run executes inside a Temporal workflow. The LLM is the planner; agents are the executors.
 
 ```
 OrchestrationWorkflow
@@ -110,34 +335,70 @@ OrchestrationWorkflow
   └─ finalize_run                ← always runs; completes run record, writes Final Answer artifact
 ```
 
-The bridge is a thin relay — it authenticates the connection, starts the workflow, and pipes the Redis token stream back to the client. All orchestration state lives in Temporal and Postgres.
+---
+
+## Major Components
+
+| Container | Role | Port |
+|---|---|---|
+| `them-traefik` | Reverse proxy — single external entry point, path routing, sticky LB | **8088** (host) |
+| `them-go-bridge` | Go API gateway — all routes, auth middleware, WebSocket/SSE/REST | 8002 (internal) |
+| `them-go-worker` | Go Temporal worker — durable orchestration activities | — |
+| `them-dag-worker` | Go DAG worker — canvas workflow execution (`CanvasAgentWorkflow`) | — |
+| `them-agent-runtime` | Go agent runtime — runs 2 replicas (port 9300) | 9300 (internal) |
+| `them-auth-go` | Go auth service — login, session, JWT (replaces Python auth for UI contract) | 8703 (internal) |
+| `them-auth-service` | Python IAM — users/roles/teams/permissions admin CRUD | 8701 (internal) |
+| `them-mcp-service` | Go MCP server supervisor and executor (internal only) | 8010 (internal) |
+| `them-frontend` | Next.js 16 dashboard — canvas, admin, observability | 3200 (internal) |
+| `them-postgres` | PostgreSQL 16 — main data store (`them` schema) | 5432 (internal) |
+| `them-redis` | Redis 7 — token streams, pub/sub, rate limiting, cache | 6379 (internal) |
 
 ---
 
-## Key Design Decisions
+## Agent & Protocol Connectivity
+
+### A2A — Agent-to-Agent Protocol
+
+Agents communicate via the [Google A2A v1.0](https://google.github.io/A2A/) HTTP protocol — a vendor-neutral standard for agent interoperability. Any A2A-compatible service can join the agent pool without touching orchestration code.
+
+the-M handles:
+- Fetching and caching agent cards (capability declarations)
+- Routing typed JSON or plain-text inputs based on declared `input_modes`
+- Async submit → poll/stream lifecycle
+- Deduplicating streaming artifact chunks
+
+**Adding an A2A agent — three steps:**
+
+1. **Register** — POST to `/api/v1/admin/agents` with `slug`, `description`, `endpoint_url`
+2. **Discover** — click Discover in the admin UI to fetch and store the agent card
+3. **Assign** — add the agent to an orchestrator's allowed list
+
+No routing rules. No code changes. The LLM reads the `description` field to decide when to call the agent.
+
+### MCP — Model Context Protocol
+
+the-M manages MCP servers as first-class registered assets. Each server is registered with its tool manifest, access policy, and assigned applications. The MCP service supervisor handles lifecycle management and secure execution.
+
+### External & Framework-Built Agents
+
+Agents built outside the-M — using LangGraph, CrewAI, Python scripts, cloud functions, or any other tool — can be connected via their REST or A2A interface. Once registered, they receive the same governance, observability, and orchestration capabilities as natively-built agents.
+
+---
+
+## Key Technical Properties
 
 ### Durability via Temporal
 
-Orchestration state is never held in process memory. Temporal's workflow model guarantees:
+Orchestration state is never held in process memory. Temporal guarantees:
 
 - **Crash recovery** — a worker restart replays the workflow from the last checkpoint
-- **Exactly-once activity execution** — retries are idempotent; DB writes are keyed by sequence number
+- **Exactly-once activity execution** — retries are idempotent; DB writes keyed by sequence number
 - **Cancellation with correct semantics** — stop button sets `status=canceled`, not `failed`
-- **HITL pause/resume** — a workflow can block on a human signal indefinitely without consuming resources
+- **HITL pause/resume** — a workflow blocks on a human signal without consuming resources
 
-### Stateless Bridge, N Replicas
+### Stateless Gateway, N Replicas
 
-Because all state is in Temporal + Postgres + Redis, the bridge process holds nothing. Any replica can serve any WebSocket connection. Scaling is `docker compose --profile replica up -d them-bridge-2` — no sticky sessions, no coordination.
-
-### A2A Protocol — Pluggable Agent Pool
-
-Agents implement the [Google A2A v1.0](https://google.github.io/A2A/) HTTP protocol. The platform:
-- Fetches and caches agent cards (capability declarations)
-- Routes typed JSON or plain-text inputs based on declared `input_modes`
-- Handles async submit → poll/stream lifecycle transparently
-- Deduplicates streaming artifact chunks
-
-New agents are registered via the admin UI or API. No orchestrator code changes required.
+Because all state is in Temporal + Postgres + Redis, the gateway process holds nothing. Any replica can serve any WebSocket connection. Scaling is a single compose command — no sticky sessions, no coordination required.
 
 ### Multi-Turn History with Integrity Guarantees
 
@@ -151,41 +412,23 @@ Turn N root task:
   seq=3  assistant final answer
 ```
 
-On the next turn, history is reconstructed from Postgres and passed through a full-pass sanitizer that drops any orphaned `tool_use`/`tool_result` pairs — preventing the Anthropic API `400` error that otherwise occurs when a prior run was interrupted mid-iteration.
+On the next turn, history is reconstructed from Postgres and passed through a sanitizer that removes orphaned `tool_use`/`tool_result` pairs — preventing API errors when a prior run was interrupted mid-iteration.
 
-### Context-Aware Compaction
+### Context Compaction
 
-Long-running orchestrations with verbose agents grow the LLM context window exponentially. the-M addresses this at two levels:
+Long orchestrations grow the LLM context window exponentially. the-M addresses this at three levels:
 
-- **Tool result compaction** — JSON responses are reduced to routing fields only (`main_point`, `confidence`, `approach`, `winner`…); full content is stored in artifacts
-- **Assistant turn slimming** — heavy nested argument arrays are stripped from tool_use blocks stored in `self.messages`
-- **Rolling summary** — a background activity summarizes recent agent outputs and injects the summary into future agent inputs
-
----
-
-## Feature Set
-
-| Category | Capability |
-|---|---|
-| **Orchestration** | LLM-driven agentic loop, configurable `max_iterations`, token budget enforcement |
-| **Execution** | Parallel fan-out via `asyncio.gather`, per-agent concurrency limits, durable Temporal activities |
-| **Agent protocol** | Google A2A v1.0 — async submit, SSE/poll streaming, push webhooks, typed JSON parts |
-| **Durability** | Crash recovery, idempotent retries, run history in Postgres, HITL pause/resume |
-| **Multi-turn** | Full conversation history reconstructed from DB; context threads across reconnects and replica changes |
-| **Memory** | Rolling LLM-generated summary injected into agent inputs across turns |
-| **Edges** | WebSocket, SSE, REST fire-and-forget — same orchestrator behind every transport |
-| **Applications** | Named entry points bind an orchestrator to an edge; public or token access policy |
-| **Security** | JWT auth, bearer tokens with expiry, per-user rate limiting, ownership isolation, TOCTOU-safe scope checks |
-| **Observability** | Real-time trace tab, task graph, artifact browser, per-turn token + cost tracking, Temporal UI |
-| **Admin** | Agent registry CRUD, agent card discovery + diff, orchestrator config, access token management |
+- **Tool result compaction** — JSON responses are reduced to routing fields; full content stored in artifacts
+- **Assistant turn slimming** — heavy nested argument arrays stripped from in-memory turn records
+- **Rolling summary** — a background activity summarizes recent outputs and injects the summary into future agent inputs
 
 ---
 
-## Debate Stack — Example: Structured Multi-Agent Reasoning
+## Example: Structured Multi-Agent Reasoning
 
-The debate stack is a production example of what the-M makes easy to build.
+The debate stack shows what the-M's runtime makes straightforward to build.
 
-Four specialized A2A agents debate any proposition across two rounds, then a judge synthesizes a verdict:
+Four specialized A2A agents debate a proposition across two rounds; a judge synthesizes a verdict. All argument agents run in parallel each round. Full text is preserved in Postgres artifacts; only summary fields flow through the orchestrator's context window — keeping LLM cost flat regardless of argument length.
 
 ```mermaid
 sequenceDiagram
@@ -213,7 +456,40 @@ sequenceDiagram
     J-->>-O: {winner, scores, synthesized_answer}
 ```
 
-All three argument agents run in parallel each round. Full argument text is preserved in Postgres artifacts; only summary fields flow through the orchestrator's context window — keeping LLM cost flat regardless of argument length.
+---
+
+## Platform Capabilities at a Glance
+
+| Area | Capability |
+|---|---|
+| **Gateway** | JWT auth, bearer tokens, per-app rate limiting, RBAC, audit log, budget controls |
+| **Registry** | Agent CRUD, MCP server management, orchestrator config, A2A card discovery + diff |
+| **Orchestration** | LLM-driven agentic loop, configurable `max_iterations`, token budget enforcement |
+| **Execution** | Parallel fan-out, per-agent concurrency limits, durable Temporal activities |
+| **Agent protocol** | Google A2A v1.0 — async submit, SSE/poll streaming, push webhooks, typed JSON parts |
+| **Durability** | Crash recovery, idempotent retries, full run history in Postgres, HITL pause/resume |
+| **Multi-turn** | Conversation history reconstructed from DB; context threads across reconnects and replicas |
+| **Memory** | Rolling LLM-generated summary injected into agent inputs across turns |
+| **Edges** | WebSocket, SSE, REST fire-and-forget — same orchestrator behind every transport |
+| **Applications** | Named entry points bind an orchestrator to an edge; public or token access policy |
+| **Observability** | Real-time trace tab, task graph, artifact browser, per-turn token + cost tracking, Temporal UI |
+| **MCP** | MCP server registry, lifecycle management, tool access policy |
+
+---
+
+## Technology Stack
+
+| Layer | Technology |
+|---|---|
+| API gateway & services | Go 1.23 |
+| Durable orchestration | Temporal 1.x |
+| Auth | Go · bcrypt · JWT HS256 |
+| Reverse proxy | Traefik v3.6 · Docker label provider |
+| Database | PostgreSQL 16 |
+| Cache & pub/sub | Redis 7 (AOF persistence) |
+| Frontend | Next.js 16 · TypeScript · Tailwind CSS 4 |
+| Agent protocol | Google A2A v1.0 |
+| Tool protocol | MCP (Model Context Protocol) |
 
 ---
 
@@ -221,85 +497,79 @@ All three argument agents run in parallel each round. Full argument text is pres
 
 | Status | Item |
 |---|---|
+| ✅ Done | Go API gateway (replaces Python bridge) |
+| ✅ Done | Go Temporal worker (replaces Python worker) |
+| ✅ Done | Go auth service (HS256 JWT + bcrypt) |
+| ✅ Done | A2A v1.0 agent protocol (official a2a-go/v2 SDK) |
 | ✅ Done | Durable execution via Temporal |
-| ✅ Done | A2A v1.0 agent protocol |
 | ✅ Done | Multi-turn conversation history |
 | ✅ Done | Parallel fan-out + context compaction |
 | ✅ Done | HITL pause/resume via Temporal signals |
 | ✅ Done | SSE + WebSocket pluggable edges |
-| ✅ Done | Session resume in playground UI |
+| ✅ Done | MCP server registry and supervisor |
+| ✅ Done | Live Monitor — realtime session and run event feed |
+| ✅ Done | Visual agent canvas (canvas builder) |
+| 🔄 Planned | Policy engine — AI Policy as Code |
 | 🔄 Planned | WebRTC edge (real-time voice) |
 | 🔄 Planned | Swarm execution mode (agents spawning sub-agents) |
-| 🔄 Planned | Visual workflow builder |
-| 🔄 Planned | Agent marketplace / discovery index |
-| 🔄 Planned | Cost-aware routing (cheapest capable agent wins) |
+| 🔄 Planned | Cost-aware model routing |
+| 🔄 Planned | Agent marketplace and discovery index |
 | 🔄 Planned | Evaluation harness for agent quality benchmarking |
+| 🔄 Planned | AI-assisted run diagnostics (why did this fail?) |
 
 ---
 
-## Stack
+## Getting Started
 
-| Layer | Technology |
-|---|---|
-| Durable orchestration | Temporal 1.x · `temporalio` Python SDK |
-| API & edges | Python 3.13 · FastAPI · asyncpg · SQLAlchemy async |
-| Auth | Python 3.11 · FastAPI · bcrypt · JWT HS256 |
-| Reverse proxy | Traefik v3.6 · Docker label provider |
-| Database | PostgreSQL 16 |
-| Cache & pub/sub | Redis 7 (AOF persistence) |
-| Frontend | Next.js 16 · TypeScript · Tailwind CSS 4 |
-| Agent protocol | Google A2A v1.0 |
-
----
-
-## Quick Start
-
-**Prerequisites:** Docker Engine + Compose plugin, Python 3.x, Anthropic API key.
+**Prerequisites:** Docker Engine + Compose plugin, Anthropic API key (or another supported model provider).
 
 ```bash
-git clone https://github.com/aviciot/odin-stuck.git && cd odin-stuck
+git clone <repository-url> && cd them
 
 # Generate secrets and set your API key
-./generate-env.sh
+./generate-env.sh                         # Linux/Mac
+# .\generate-env.ps1                      # Windows
 echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
 
 # Start the full stack (Temporal required for orchestration)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d
+docker compose --project-name them_gateway \
+  -f docker-compose.yml -f docker-compose.dev.yml \
+  --profile temporal up -d
 
-# Initialize the database (first boot only — see CLAUDE.md for full migration steps)
-# ... apply db/001_schema.sql through db/008_debate_stack.sql
+# Initialize the database (first boot only)
+docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
+docker cp auth_service/SCHEMA.sql them-postgres:/tmp/them_auth_schema.sql
+docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
+docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
+docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
+# Apply migrations 003 through latest — see docs/CURRENT.md for full list
 
-# Verify
-python3 scripts/tests/run_tests.py 01 02 03 04 15
+# Verify the stack
+docker compose --project-name them_gateway \
+  -f docker-compose.yml -f docker-compose.dev.yml ps
 ```
 
-Open **http://localhost:8088** — login `admin` / `admin123`.
-Temporal UI: **http://localhost:8088/temporal/**
+**Dashboard:** `http://localhost:8088` — login `admin` / `admin123`  
+**Temporal UI:** `http://localhost:8088/temporal/`
 
 ---
 
-## Adding an Agent
-
-Any A2A v1.0 service can join the pool in three steps:
-
-1. **Register** — POST to `/api/v1/admin/agents` with `slug`, `description`, `endpoint_url`
-2. **Discover** — click Discover in the admin UI to fetch and store the agent card
-3. **Assign** — add the agent to an orchestrator's allowed list
-
-The LLM reads the `description` field to decide when to call the agent. No routing rules. No code changes.
-
----
-
-## Docs
+## Documentation
 
 | Doc | Contents |
 |---|---|
-| `docs/ARCHITECTURE.md` | Full system design, Temporal workflow, activity table, multi-turn history |
+| `docs/CURRENT.md` | Current architecture state, migration progress, next steps |
 | `docs/SCHEMA.md` | All DB tables, columns, and invariants |
-| `docs/LESSONS.md` | Hard-won lessons from building this — Temporal edge cases, A2A protocol quirks, context explosion |
+| `docs/REDIS.md` | Redis key layout and usage patterns |
 | `docs/ADAPTERS.md` | A2A adapter protocol details |
-| `docs/STATUS.md` | Current build state, open items |
-| `scripts/tests/INDEX.md` | Test index and trigger map (400+ checks) |
+| `docs/A2A_AGENTS.md` | A2A test agents — start/stop, enable, test commands |
+| `docs/STATUS.md` | Current build state, open items, known blockers |
+| `docs/LESSONS.md` | Hard-won lessons — Temporal edge cases, A2A quirks, context explosion |
+| `docs/AUTH.md` | Authentication architecture |
+| `go/CLAUDE.md` | Go package map and development conventions |
+| `scripts/tests/INDEX.md` | Test index and trigger map |
 
 ---
 
