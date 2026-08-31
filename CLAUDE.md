@@ -178,71 +178,31 @@ Application ID must flow through every new feature:
 
 ## Rules — Testing (mandatory, non-negotiable)
 
-- **Every code change that touches `app/` or `go/` MUST have a corresponding test** — new behavior = new test, changed behavior = updated test
+- **Every code change that touches `go/` MUST have a corresponding test** — new behavior = new test, changed behavior = updated test
 - **After every change run the full suite** — zero new failures allowed before committing
-- **`scripts/tests/INDEX.md` MUST be updated** whenever a Python test is added, changed, or its coverage expands
 - **`go/TEST_INDEX.md` MUST be updated** whenever a Go test is added, changed, or its coverage expands
 - **CLAUDE.md trigger maps MUST be kept in sync** with their respective INDEX.md files
 - Never commit with a test regression — fix the code or the test; do not skip or delete tests
 
-### Python test runner
+### Go test runner
 
 ```bash
-# MUST use python3.12 — system python3 is 3.6 and silently breaks all docker calls
-python3.12 scripts/tests/run_tests.py            # full suite
-python3.12 scripts/tests/run_tests.py 01 02 03 04 15   # sanity only (~15s)
+cd go && go test ./...   # full suite — must be zero failures before every commit
 ```
 
-Expected clean result: N passed, 0 failed, ≤5 skipped
-
-Skips are legitimate env gaps — not failures:
-- `structlog`/`fastapi` missing on host (tests 07/19 import checks) → skip, run fine in CI
-- `ADMIN_JWT` not set (test 14 e2e) → set via `ADMIN_JWT=<token> python3.12 ...`
-- `code_agent` unreachable (test 24) → external service, expected skip
-
-### Python trigger map — which tests to run after changing what
+### Go trigger map — which tests to run after changing what
 
 | Changed | Run tests |
 |---|---|
-| `db/001_schema.sql` or `app/models.py` | 01 (DB schema) |
-| `app/adapters/` | 07 (adapter factory) |
-| `app/services/rate_limiter.py` or `token_cache.py` | 08 09 (rate limiter + token cache) |
-| `app/services/run_recorder.py` or `app/services/task_runner.py` | 10 (run recorder + task runner) |
-| `app/routers/admin_agents.py` | 05 (agents CRUD) |
-| `app/routers/admin_orchestrators.py` | 06 (orchestrators CRUD) |
-| `app/routers/admin_tokens.py` | 08 09 (tokens CRUD + cache) |
-| `app/routers/ws_orchestrator.py` | 11 (WS orchestrate) |
-| `app/routers/runs.py` | 12 (runs API) |
-| `app/routers/ws_dashboard.py` or `dashboard_broadcaster.py` | 13 (dashboard WS) |
-| Any infrastructure change | 15 (compose health) |
-| `agents/a2a_*`, docker-compose test-agents profile | 16 (A2A agent structure) |
-| `app/services/memory_service.py`, `db/003_phase8.sql` (memory columns) | 17 (context summarization memory) |
-| `app/routers/a2a_server.py` (orch-as-agent sections), `app/models.py` (a2a_exposed/budget_tokens) | 18 (orchestrator-as-agent) |
-| `app/edges/` | 19 (pluggable edge adapters) |
-| `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.dev.yml` | 20 (Traefik routing + multi-replica) |
-| `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 (A2A Phase 9 hardening) |
-| `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `app/models.py` (EntryPoint), `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts` | 22 27 + `scripts/test_multi_ep.py` (inside them-bridge) |
-| `app/temporal/loaders.py` | 28 (loaders resolution) |
-| `db/014_app_orchestrators.sql`, `app/models.py` (AppOrchestrator), `app/routers/admin_applications.py` (_flush_orch_caches) | 01 29 (app_orchestrators migration + model) |
-| `app/services/app_compiler.py`, `db/018_graph_compiler.sql`, `app/routers/admin_applications.py` (graph/export/import/restore), `frontend/src/app/admin/applications/page.tsx` (handleSave graph payload) | 27 30 (canvas rules + graph compiler) |
-| `app/services/session_manager.py`, `app/routers/ws_orchestrator.py` (session wiring), `app/routers/apps.py` (session wiring), `app/main.py` (_pod_heartbeat_loop) | 31 (session context manager) |
-| `app/routers/admin_monitoring_config.py`, `frontend/src/app/admin/settings/page.tsx` (Monitoring tab), `frontend/src/app/admin/applications/page.tsx` (SessionsView heatmap) | 32 (monitoring config CRUD + heatmap thresholds) |
-| `app/services/runtime_manager.py`, `app/routers/apps.py` (runtime_gate + control listener), `app/routers/ws_orchestrator.py` (runtime_gate + control listener), `app/routers/admin_sessions.py` (disconnect endpoint), `app/services/session_manager.py` (signal_disconnect), `db/022_runtime_limits.sql`, `app/models.py` (EntryPoint.max_concurrent_sessions), `app/routers/admin_applications.py` (EntryPointIn/Out.max_concurrent_sessions), `frontend/src/lib/api.ts` (disconnectSession), `frontend/src/app/admin/applications/page.tsx` (SessionsView terminate/limits) | 33 (runtime management layer — session cap, terminate, EP limits) |
-| `db/023_app_runtime.sql`, `app/models.py` (Application.runtime_config), `app/routers/admin_applications.py` (AppRuntimeConfig, PUT /{app_id}/runtime), `app/services/runtime_manager.py` (app gate: blocked tokens/users, app rate limit, soft app cap), `app/routers/apps.py` (app_runtime + token_hash + hashlib.sha256), `app/routers/ws_orchestrator.py` (ep_max_concurrent/app_runtime/token_hash=None), `docs/REDIS.md` (rl:them:app:), `frontend/src/lib/api.ts` (AppRuntimeConfig, getAppRuntime, putAppRuntime), `frontend/src/app/admin/applications/page.tsx` (RuntimeView, Runtime button, onRuntime) | 34 (application runtime layer — blocked tokens/users, app rate limit, soft session cap, RuntimeView UI) |
-| `db/024_ep_queue.sql`, `app/models.py` (EntryPoint.queue_timeout_seconds/queue_message), `app/services/app_compiler.py` (queue fields in compile_graph/export_graph), `app/routers/admin_applications.py` (EntryPointIn/Out queue fields), `app/services/runtime_manager.py` (RuntimeQueueFull, ep_gate_try, queue params), `app/routers/apps.py` (RuntimeQueueFull/ep_gate_try import, waiting message, retry loop), `frontend/src/lib/api.ts` (queue fields on EntryPoint), `frontend/src/app/admin/applications/page.tsx` (EP builder queue panel, saveEpLimit removed) | 35 (EP queue config — per-EP wait queue with timeout and custom message) |
-| `app/services/task_runner.py` (`_ensure_agent_skills`, `_CARD_TTL_SECONDS`), `agents/docu_writer/`, `db/007_docu_stack.sql` | 23 (A2A skill auto-discovery) |
-| `db/007_docu_stack.sql` code_agent endpoint/token | 24 (code_agent live) |
-| `agents/docu_writer/main.py`, `app/adapters/a2a_async_adapter.py`, `app/adapters/factory.py`, `app/services/task_runner.py` (typed A2A), `db/007_docu_stack.sql` | 25 (true A2A typed input) |
-| `agents/security_scanner/`, `app/routers/admin_agents.py` (security-scan endpoint), `app/routers/ws_dashboard.py` (agent: channel), `app/services/dashboard_broadcaster.py` (scan helpers), `db/009_security_scan.sql`, `frontend/src/app/admin/agents/page.tsx` (scan UI) | 26 (security scan) |
-| `app/services/task_runner.py` (history), `app/models.py` (history_window), `app/routers/admin_orchestrators.py` | 10 + MT (multi-turn behavioral) |
-| `app/temporal/activities.py`, `app/temporal/workflows.py`, `app/temporal/serde.py` | Full suite + `scripts/test_temporal_workflow.py` (inside them-worker) + **restart them-worker** |
-| `app/temporal/bridge_client.py`, `app/routers/ws_orchestrator.py` (Temporal path) | 10 11 + `scripts/test_temporal_workflow.py` + **restart them-worker** |
-| `app/routers/runs.py` (signal endpoint) | 12 + `scripts/test_temporal_phase5.py` |
-| `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.dev.yml` | 20 (Traefik routing + multi-replica) |
-| `go/internal/authserver/`, `go/cmd/auth-server/`, `Dockerfile.auth-go`, `docker-compose.yml` (them-auth-go / THE_M_AUTH_URL / AUTH_SERVICE_URL), `frontend/src/app/api/auth/*` | `go test ./internal/authserver/...` (in `go/`) + 15 (compose health) + live login/me/refresh/logout smoke through them-auth-go |
-| `go/internal/mcp/` (any file), `go/cmd/mcp-service/main.go`, `Dockerfile.mcp-service` | `go test ./internal/mcp/...` (in `go/`) |
-| `go/internal/admin/mcp_servers.go`, `go/internal/admin/dal/mcp_servers.go`, `go/internal/admin/service/mcp_servers.go` | `go test ./internal/admin/...` (in `go/`) |
-| Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) + MT + `scripts/test_temporal_workflow.py` |
+| `db/001_schema.sql` | `go test ./internal/admin/...` (schema-dependent DAL tests) |
+| `go/internal/authserver/`, `go/cmd/auth-server/`, `Dockerfile.auth-go`, `docker-compose.yml` (them-auth-go) | `go test ./internal/authserver/...` + live login/me/refresh/logout smoke |
+| `go/internal/mcp/` (any file), `go/cmd/mcp-service/main.go`, `Dockerfile.mcp-service` | `go test ./internal/mcp/...` |
+| `go/internal/admin/mcp_servers.go`, `go/internal/admin/dal/mcp_servers.go`, `go/internal/admin/service/mcp_servers.go` | `go test ./internal/admin/...` |
+| `go/internal/agentgen/` | `go test ./internal/agentgen/...` |
+| `go/internal/temporal/` or `go/cmd/dag-worker/` | `go test ./internal/temporal/...` + **restart them-dag-worker** |
+| `go/cmd/agent-runtime/` | `go test ./...` + **rebuild + restart them-agent-runtime** |
+| `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.dev.yml` | compose health smoke (bring up stack, check all containers healthy) |
+| Before a release / PR merge | `go test ./...` + live E2E smoke |
 
 ### E2E test (14) — needs a JWT
 
@@ -255,15 +215,12 @@ curl -s -X POST http://localhost:8701/auth/login -H "Content-Type: application/j
 ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14
 ```
 
-### Temporal worker restart — REQUIRED after editing activity/workflow files
+### Temporal worker restart — REQUIRED after editing Go worker files
 
 ```bash
-# Temporal activities are registered at worker startup. If you edit:
-#   app/temporal/activities.py, app/temporal/workflows.py, app/temporal/shared.py
-# the running worker still has the OLD code. Always restart after changes:
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal restart them-worker
-docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
-# Symptom if forgotten: new params on activities silently receive None at runtime.
+# Go Temporal worker registers activities at startup. If you edit go/internal/temporal/ or go/cmd/dag-worker/:
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal restart them-go-worker them-dag-worker
+docker logs them-go-worker --tail 5   # confirm polling
 ```
 
 ---
@@ -277,9 +234,7 @@ docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 | `them-redis` | Redis DB 0 | 6379 (internal) | bind mount `./data/them-redis` |
 | `them-auth-go` | Go auth service — UI-facing login/me/refresh/logout + verify/validate (replaces them-auth-service for the UI contract) | 8703 (internal) | `go/cmd/auth-server/`, `go/internal/authserver/` |
 | `them-auth-service` | Python Auth/IAM microservice — users/roles/teams/permissions admin CRUD only (UI auth moved to them-auth-go) | 8701 (internal) | `auth_service/` |
-| `them-bridge` | Python orchestrator API + WS (replica 1) | 8001 (internal) | `app/` |
-| `them-bridge-2` | Python replica 2 (`profiles: [replica]`) | 8001 (internal) | `app/` |
-| `them-go-bridge` | Go gateway (routes progressively migrated from Python) | 8002 (internal) | `go/` |
+| `them-go-bridge` | Go API gateway — all routes | 8002 (internal) | `go/` |
 | `them-mcp-service` | Go MCP server supervisor + executor (internal only — Traefik disabled) | 8010 (internal, no external exposure) | `go/cmd/mcp-service/`, `go/internal/mcp/` |
 | `them-frontend` | Next.js dashboard | 3200 (internal) | `frontend/` |
 | `vision-agent` | Vision/maps agent | 9100 (internal) | `agents/vision_agent/` |
@@ -294,20 +249,6 @@ docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 
 | Concern | Location |
 |---|---|
-| Orchestrator agentic loop (Python) | `app/services/task_runner.py` |
-| Agent registry → NeutralTool list | `app/services/agent_registry.py` |
-| Agent transport adapters | `app/adapters/` (base, a2a_async_adapter, factory) |
-| Orchestrator WS endpoint (Python) | `app/routers/ws_orchestrator.py` |
-| Dashboard WS (multiplexed channels) | `app/routers/ws_dashboard.py` |
-| Temporal workflow (agentic loop) | `app/temporal/workflows.py` |
-| Temporal activities (all I/O) | `app/temporal/activities.py` |
-| Temporal bridge client | `app/temporal/bridge_client.py` |
-| Temporal worker entrypoint | `app/temporal/worker.py` |
-| LLM providers (Python) | `app/services/providers/` |
-| Token cache (L1+L2) | `app/services/token_cache.py` |
-| Run recording (Python) | `app/services/run_recorder.py` |
-| DB models (Python) | `app/models.py` |
-| Config + env vars (Python) | `app/config.py` |
 | DB schema source of truth | `db/001_schema.sql` |
 | Auth schema source of truth | `auth_service/SCHEMA.sql` |
 | Frontend proxy route | `frontend/src/app/api/them/[...path]/route.ts` |
@@ -326,12 +267,12 @@ docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 # Stack (core only)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
-docker compose logs -f them-bridge
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml logs -f them-go-bridge
 
-# Stack with Temporal (required for orchestration — TEMPORAL_ENABLED=true in bridge)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile temporal ps
-docker logs them-worker
+# Stack with Temporal (required for orchestration)
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal up -d
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile temporal ps
+docker logs them-go-worker
 # Temporal UI: http://localhost:8088/temporal
 
 # ── Hetzner (production) ──────────────────────────────────────────────────────
@@ -347,7 +288,7 @@ docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS a
 docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
-# Apply remaining migrations in order: 003 through 018 (see CLAUDE.md history or docs/STATUS.md for full list)
+# Apply remaining migrations in order: 003 through latest (see docs/architecture-v2/CURRENT.md for full list)
 
 # DB access
 docker exec -it them-postgres psql -U them -d them
@@ -356,8 +297,8 @@ docker exec -it them-postgres psql -U them -d them
 .\generate-env.ps1    # Windows
 ./generate-env.sh     # Linux/Mac
 
-# Enable replica 2
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile replica up -d them-bridge-2
+# Enable Go bridge replica 2
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile replica up -d them-go-bridge-2
 ```
 
 ---
@@ -367,7 +308,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile replica
 **`auth_service` schema** — owned by `them-auth-service` (port 8701). Never access directly from bridge.
 Tables: `roles`, `users`, `teams`, `team_members`, `user_overrides`, `auth_audit`, `user_sessions`, `blacklisted_tokens`
 
-**`them` schema** — owned by `them-bridge`.
+**`them` schema** — owned by `them-go-bridge`.
 Tables: `llm_providers`, `config`, `agents`, `orchestrators`, `access_tokens`, `runs` (has `entry_point_slug`), `run_steps`, `run_usage`, `audit_logs`, `tasks`, `artifacts`, `task_messages`, `applications` (parent), `entry_points` (child of applications — one row per WS/SSE/WebRTC door)
 
 **Credentials:** derived via HMAC-SHA256 from `secrets.local`. Re-run `.\generate-env.ps1` to regenerate `.env`.

@@ -40,7 +40,7 @@ Key facts:
 - `them-go-worker` is the active Temporal worker — **no explicit profile in `docker-compose.dev.yml`**, starts by default
 - `them-agent-runtime` runs 2 replicas (port 9300 internal), profile `[agents]`
 - Frontend `THE_M_API_URL` points to `http://them-traefik:8088`
-- Named Docker volumes: `them-postgres-data`, `them-redis-data`, `them-logs` — `external: true`
+- Named Docker volumes: `them-postgres-data`, `them-redis-data` — `external: true` (`them-logs` volume removed — Python bridge is deleted)
 - **Project name: `them_gateway`** — required for all compose commands
 
 Currently running containers (verified):
@@ -581,8 +581,8 @@ Do NOT begin multiple subsystems in the same session.
 - `go/TEST_INDEX.md` updated in same commit as new Go tests
 - Secrets never in logs — use `cfg.SafeString()`
 - Never `git add .` or `git add -A`
-- **`them-bridge` (Python FastAPI) has been removed.** It no longer exists in `docker-compose.yml`.
-- **`them-worker` (Python Temporal) has been removed.** It no longer exists in `docker-compose.yml`. All WS/SSE sessions submit to `them-orchestration-go`.
+- **`them-bridge` (Python FastAPI) has been deleted.** `app/`, `Dockerfile`, `Dockerfile.worker` removed from filesystem. Not in `docker-compose.yml`.
+- **`them-worker` (Python Temporal) has been deleted.** Not in `docker-compose.yml`. All WS/SSE sessions submit to `them-orchestration-go`.
 - **No global LLM key fallback.** Apps with no key get an explicit error.
 - **No secrets in Definition JSONB, Component Definition JSONB, export files, logs, or Temporal history.**
 - **Agent registry Redis key is `them:agents:registry:{tenant_id}`.** Global key must not be written or read.

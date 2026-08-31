@@ -1,6 +1,6 @@
 # the-M — Current Status
-# Last updated: 2026-08-23
-# HEAD: 4cb2dd9
+# Last updated: 2026-08-31
+# HEAD: 4a6241b
 
 ---
 
@@ -24,9 +24,11 @@ UI: `http://<server-ip>:8088`
 | `them-frontend` | `frontend/` (Next.js) | 3200 (internal) | Running |
 | `temporal-frontend` | temporalio/auto-setup | 7233 (internal) | Running |
 
-**Python is permanently retired:**
-- `them-bridge` (Python FastAPI) — behind `profiles: [legacy]`, NOT running
-- `them-worker` (Python Temporal) — behind `profiles: [legacy]`, NOT running
+**Python bridge is fully deleted (2026-08-31):**
+- `them-bridge` (Python FastAPI) — `app/`, `Dockerfile`, `Dockerfile.worker` deleted from filesystem
+- `them-worker` (Python Temporal) — deleted; all traffic on `them-orchestration-go`
+- All stale test scripts targeting port 8001 / them-bridge container deleted
+- `docker-compose.hetzner.yml` cleaned of bridge/worker blocks
 
 **Optional profiles:**
 - `--profile test-agents` — adds A2A echo/slow/stream test agents (ports 9200-9202)
