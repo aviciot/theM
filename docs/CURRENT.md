@@ -519,18 +519,11 @@ All oversized frontend files have been split. No files remain above 600 lines in
 
 **Start with `compiler.go` — clearest responsibility boundaries, pure functions, no live state.**
 
-### Session startup commands
-```bash
-# Verify stack is healthy
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml ps
-
-# Confirm tests still green
-docker run --rm -v /opt/docker/them/go:/workspace -w /workspace golang:1.25-alpine \
-  sh -c "apk add --no-cache git ca-certificates 2>/dev/null && go test ./... 2>&1 | tail -5"
-```
+**Full step-by-step instructions (exact file map, imports, verification, commit message) are in:**
+`docs/SPLIT_COMPILER_INSTRUCTIONS.md`
 
 ### First prompt for next session
-> Read docs/CURRENT.md. The next task is to split `go/internal/agentgen/compiler.go` (1056 lines) into three focused files: `compiler.go` (entry points: Validate/Compile/CompileForPublish/buildSpec), `validate.go` (all validateStructural/validateNodes/validateGraph/validateBindings/validateDataFlow/validateExecutability/validateHumanWaitBackend funcs), and `topo.go` (topoSort, resolveBindings, deriveStepVars, collectAgentParams, collectLLMNodes, extractAppParamKey). Logic must be preserved exactly — no behaviour changes. After splitting: run `go test ./internal/agentgen/...`, build the Docker image with `docker build -f Dockerfile.agent-runtime -t them-agent-runtime:split-test .`, confirm all pass, then commit and push.
+> Read docs/SPLIT_COMPILER_INSTRUCTIONS.md in full before touching any code. Follow the procedure exactly: pre-flight → create compiler_validate.go → create compiler_topo.go → trim compiler.go → run all 4 verification steps → commit and push.
 
 ---
 
