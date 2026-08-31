@@ -79,6 +79,13 @@ type Config struct {
 	// When empty the probe proxy endpoint returns 503 — mcp-service is not deployed.
 	MCPServiceURL string
 
+	// PublicURL is the externally-reachable base URL of this service, e.g.
+	// "https://example.com". Used in the A2A agent card URL field so that
+	// clients see the correct public address rather than the internal Docker
+	// hostname. Read from THE_M_PUBLIC_URL; empty string means derive from
+	// the incoming request's Host header at serve time.
+	PublicURL string
+
 	// Reconciler
 	// ReconcilerDryRun controls whether the run reconciler writes to the DB.
 	// Default is true (safe). Set RECONCILER_DRY_RUN=false to enable writes.
@@ -133,6 +140,8 @@ func Load() (*Config, error) {
 		DAGWorkerMaxConcurrentActivities: parseDAGWorkerConcurrency(os.Getenv("DAG_WORKER_MAX_CONCURRENT_ACTIVITIES")),
 
 		MCPServiceURL: getEnv("MCP_SERVICE_URL", ""),
+
+		PublicURL: getEnv("THE_M_PUBLIC_URL", ""),
 
 		ReconcilerDryRun: getEnvBoolSafe("RECONCILER_DRY_RUN", true),
 

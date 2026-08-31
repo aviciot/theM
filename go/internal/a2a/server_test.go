@@ -984,3 +984,36 @@ func TestA2A_AgentCard_StreamingTrue(t *testing.T) {
 	caps, _ := card["capabilities"].(map[string]any)
 	assert.Equal(t, true, caps["streaming"], "agent card must advertise streaming: true")
 }
+
+// A2A-S08: agent card URL uses WithPublicURL when set
+func TestA2A_AgentCard_WithPublicURL(t *testing.T) {
+	b := defaultBuilder()
+	s := b.build().WithPublicURL("https://example.com")
+	srv := httptest.NewServer(s.Routes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/.well-known/agent.json")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var card map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&card))
+	assert.Equal(t, "https://example.com/a2a/{app_slug}", card["url"])
+}
+
+// A2A-S09: agent card URL is derived from request host when publicURL is unset
+func TestA2A_AgentCard_DerivedURL(t *testing.T) {
+	b := defaultBuilder()
+	srv := httptest.NewServer(b.build().Routes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/.well-known/agent.json")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var card map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&card))
+	u, _ := card["url"].(string)
+	assert.Contains(t, u, "/a2a/{app_slug}", "URL must end with a2a path template")
+	assert.Contains(t, u, "http://", "URL must include http scheme when no X-Forwarded-Proto")
+}

@@ -163,7 +163,8 @@ type Server struct {
 	authenticator Authenticator
 	instanceID    string
 	logger        *slog.Logger
-	runStreamer   runstream.RedisStreamer
+	runStreamer    runstream.RedisStreamer
+	publicURL     string // externally-reachable base URL, e.g. "https://example.com"
 }
 
 // NewServer creates a Server backed by the shared execution Lifecycle.
@@ -196,6 +197,14 @@ func (s *Server) WithRunStreamer(rc runstream.RedisStreamer) *Server {
 	return s
 }
 
+// WithPublicURL sets the externally-reachable base URL used in the agent card
+// (e.g. "https://example.com"). When empty (the default), the handler derives
+// the base URL from the incoming request's scheme and Host header.
+func (s *Server) WithPublicURL(u string) *Server {
+	s.publicURL = strings.TrimRight(u, "/")
+	return s
+}
+
 // Routes returns an http.Handler with A2A routes mounted.
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
@@ -206,14 +215,23 @@ func (s *Server) Routes() http.Handler {
 
 // handleAgentCard serves GET /.well-known/agent.json.
 func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
-	host := r.Host
-	if host == "" {
-		host = "localhost"
+	base := s.publicURL
+	if base == "" {
+		// Derive from the request: honour X-Forwarded-Proto set by Traefik.
+		scheme := r.Header.Get("X-Forwarded-Proto")
+		if scheme == "" {
+			scheme = "http"
+		}
+		host := r.Host
+		if host == "" {
+			host = "localhost"
+		}
+		base = scheme + "://" + host
 	}
 	card := agentCard{
 		Name:        "the-M Orchestrator",
 		Description: "AI orchestration platform",
-		URL:         fmt.Sprintf("http://%s/a2a/{app_slug}", host),
+		URL:         fmt.Sprintf("%s/a2a/{app_slug}", base),
 		Version:     "1.0",
 		Capabilities: agentCardCapability{
 			Streaming: true,

@@ -764,6 +764,7 @@ services:
       - TEMPORAL_HOST_PORT=temporal-frontend:7233
       - JWT_PUBLIC_KEY_PEM=${JWT_PUBLIC_KEY_PEM:-}
       - MCP_SERVICE_URL=http://them-mcp-service:8010
+      - THE_M_PUBLIC_URL=${THE_M_PUBLIC_URL:-http://localhost:8088}
     networks:
       - them-network
     depends_on:
@@ -949,6 +950,11 @@ services:
       - "traefik.http.routers.them-go-a2a.entrypoints=web"
       - "traefik.http.routers.them-go-a2a.priority=120"
       - "traefik.http.routers.them-go-a2a.service=them-go-bridge-svc"
+      # ── A2A agent card: /.well-known/agent.json ────────────────────────────────
+      - "traefik.http.routers.them-go-well-known.rule=Path(`/.well-known/agent.json`)"
+      - "traefik.http.routers.them-go-well-known.entrypoints=web"
+      - "traefik.http.routers.them-go-well-known.priority=120"
+      - "traefik.http.routers.them-go-well-known.service=them-go-bridge-svc"
       # ── MCP Store: mcp-servers CRUD + app credentials ─────────────────────
       - "traefik.http.routers.them-go-mcp-servers.rule=PathPrefix(`/api/v1/admin/mcp-servers`)"
       - "traefik.http.routers.them-go-mcp-servers.entrypoints=web"

@@ -16,6 +16,7 @@
 | 121 | `them-go-transform` | them-go-bridge-svc | `/api/v1/admin/transform-*` |
 | 120 | `them-auth-go-router` | them-auth-go-svc | `/auth/*` |
 | 120 | `them-go-a2a` | them-go-bridge-svc | `/a2a/*` |
+| 120 | `them-go-well-known` | them-go-bridge-svc | `Path(/.well-known/agent.json)` — A2A agent card |
 | 120 | `them-go-agent-defs` | them-go-bridge-svc | `/api/v1/admin/agent-definitions` |
 | 120 | `them-go-apps-sse` | them-go-bridge-svc | `/apps/{slug}/sse` |
 | 120 | `them-go-apps-voice` | them-go-bridge-svc | `POST /apps/{slug}/voice/*` |
@@ -112,6 +113,9 @@ curl -si -X POST $HOST/a2a/<agent-slug> \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","method":"tasks/send","id":"1","params":{...}}' | head -2
 # expect: HTTP/1.1 200 (or 404 if slug unknown), JSON-RPC response
+
+curl -si $HOST/.well-known/agent.json | head -2
+# expect: HTTP/1.1 200, Content-Type: application/json, JSON agent card body
 
 # ── WebSocket (must reach them-go-bridge:8002) ────────────────────────────────
 # Use wscat or similar — Traefik upgrades the connection to ws://them-go-bridge:8002
