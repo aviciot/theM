@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-30
+# Last updated: 2026-08-31
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -7,21 +7,16 @@
 ## HEAD
 
 Branch: `main`
-Commit: `(pending Phase 5-D commit)`
 
 Recent commits (newest first):
 ```
-(pending) feat(stream_out): Phase 5-D — StreamOut node implemented, 10 tests SO-1..10
+002531a  feat: frontend two-segment URL migration (app_slug/ep_slug)
+(prior)  feat: app_slug migration — DB 048, Go handlers, Traefik 7 routers
+(prior)  feat(stream_out): Phase 5-D — StreamOut node implemented, 10 tests SO-1..10
 3b56ef8  fix(a2a-call): Phase 5-C gap fixes — binding required, stable UUIDs, error sanitization, E2E tests
 89c7e67  feat(a2a-call): Phase 5-C — A2ACaller abstraction, depth tracking, HumanWait+local validation
 0487797  fix(hitl): Phase 5-B hardening — auth, state model, wait_token, loop body, reconnect
 3b1052f  feat(hitl): Phase 5-B — HumanWait async submit, Redis handle store, signal endpoint
-6ea9e23  docs: update CURRENT.md HEAD to 7b0a09a
-7b0a09a  fix(loop): Phase 5-A gap fixes — correct SubPlan DAG semantics, iteration isolation, scoped accum
-81c3a31  feat(canvas): add loop-body and loop-done output ports to loop node
-05351bd  feat(loop): durable loop — each body step is its own Temporal activity
-a69f01a  feat(loop): Phase 5-A StepLoop — LocalExecutor + Temporal + frontend config panel
-b3bd71a  fix(agent-runtime): Phase 4-C final corrections — E2E path, binding 4-ID scope, HumanWait design
 ```
 
 ---
@@ -110,9 +105,12 @@ Explicit routers at priority 110–150 still win over the catch-all.
 - `POST /api/v1/runs/bulk-delete`
 - `POST /api/v1/runs/{id}/signal`
 
-### App entry points (WS/SSE)
-- `GET /apps/{slug}/ws`
-- `GET|POST /apps/{slug}/sse`
+### App entry points (WS/SSE/A2A/Voice)
+- `GET /apps/{app_slug}/{ep_slug}/ws`
+- `GET|POST /apps/{app_slug}/{ep_slug}/sse`
+- `POST /a2a/{app_slug}/{ep_slug}` (A2A JSON-RPC)
+- `GET /a2a/{app_slug}/{ep_slug}/.well-known/agent.json` (per-agent card)
+- `GET|POST /apps/{app_slug}/{ep_slug}/voice/chat|stream|transcribe|tts`
 - `GET /ws/orchestrate/{orch}/{ep}` (two-segment legacy path)
 - `GET|POST /sse/orchestrate/{orch}/{ep}` (two-segment legacy path)
 
@@ -132,7 +130,7 @@ Explicit routers at priority 110–150 still win over the catch-all.
 
 ## DB schema state (live)
 
-All migrations applied through `db/037_agents_transport_canvas.sql`:
+All migrations applied through `db/048_application_slug.sql`:
 
 | Migration | Status |
 |---|---|
@@ -148,6 +146,7 @@ All migrations applied through `db/037_agents_transport_canvas.sql`:
 | `db/037_agents_transport_canvas.sql` | ✅ applied — `agents_transport_check` includes `'canvas_a2a'` |
 | `db/038_app_agent_params.sql` | ✅ applied — `app_agent_bindings.agent_params` JSONB column |
 | `db/045_app_global_params.sql` | ✅ applied — `applications.app_params` JSONB column |
+| `db/048_application_slug.sql` | ✅ applied — `applications.slug` column, `UNIQUE(tenant_id,slug)`, EP uniqueness relaxed to `UNIQUE(application_id,slug)` |
 
 ---
 
@@ -546,7 +545,8 @@ Done (canvas ports, commit 81c3a31):
 **Next recommended task:**
 - UI: StreamOut properties panel in canvas `RightPanel.tsx` (from_var + media_type fields) — mirrors Response panel
 - UI: A2A Call node properties panel in canvas RightPanel (slug + var config)
-- Traefik: fix `/a2a/` router to point at `them-go-bridge-svc` (currently broken, points to dead Python service)
+- Smoke test the two-segment URL paths end-to-end (WS connect, SSE connect, A2A card fetch) via the playground
+- Frontend: expose app slug as an editable field in the application properties panel so users can rename/customize it
 
 ### Phase 4-C Advisory items (deferred)
 - Advisory A: DB round-trips per Temporal activity (4 queries/node) — cache spec in `ActivityIC`
@@ -586,8 +586,9 @@ Do NOT begin multiple subsystems in the same session.
 - **No global LLM key fallback.** Apps with no key get an explicit error.
 - **No secrets in Definition JSONB, Component Definition JSONB, export files, logs, or Temporal history.**
 - **Agent registry Redis key is `them:agents:registry:{tenant_id}`.** Global key must not be written or read.
-- **EP cache key is `"{tenantID}:{slug}"`.** Invalidation payload on `them:ep:config:changed` is always `"{tenantID}:{slug}"`.
-- **`entry_points.tenant_id` is NOT NULL.** `UNIQUE(tenant_id, slug)` enforced at DB level.
+- **EP cache key is `"{tenantID}:{appSlug}:{epSlug}"`.** Invalidation payload on `them:ep:config:changed` is always `"{tenantID}:{appSlug}:{epSlug}"`. DB resolves by `(tenant_id, app_slug, ep_slug)`.
+- **`entry_points.tenant_id` is NOT NULL.** `UNIQUE(application_id, slug)` enforced at DB level (relaxed from tenant-scoped to application-scoped in migration 048).
+- **`applications.slug` is NOT NULL** after migration 048. `UNIQUE(tenant_id, slug)` enforced at DB level. URL shape is `/apps/{app_slug}/{ep_slug}/...`.
 - **Go Temporal worker MUST resolve orchestrators by `AppOrchestratorID` UUID** — never globally by name.
 - **Project name: `them_gateway`** — required for all compose commands.
 
