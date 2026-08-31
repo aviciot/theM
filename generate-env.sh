@@ -67,7 +67,6 @@ SECURITY_SCANNER_ANTHROPIC_API_KEY=
 # ─── Network ─────────────────────────────────────────────────
 THE_M_HOSTNAME=them.example.com
 THE_M_UI_HOSTNAME=them-ui.example.com
-THE_M_BRIDGE_WS_URL=ws://localhost:8001
 THE_M_CORS_ORIGINS=http://localhost:3200
 
 # ─── Application ─────────────────────────────────────────────

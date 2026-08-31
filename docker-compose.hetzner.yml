@@ -60,41 +60,6 @@ services:
       - them-redis-data:/data
       - ./redis/config/redis.conf:/etc/redis/redis.conf:ro
 
-  # ── Python bridge: no source bind mount — code baked into image ───────────────
-  # WS and SSE routes intentionally absent — Go bridge owns them at priority 120.
-  them-bridge:
-    volumes:
-      - them-logs:/app/logs
-    labels:
-      - "traefik.enable=true"
-      - "traefik-instance=them"
-      - "traefik.docker.network=them-network"
-      - "traefik.http.routers.them-api.rule=PathPrefix(`/api/v1`)"
-      - "traefik.http.routers.them-api.entrypoints=web"
-      - "traefik.http.routers.them-api.priority=100"
-      - "traefik.http.routers.them-api.service=them-bridge-svc"
-      - "traefik.http.routers.them-health.rule=PathPrefix(`/health`)"
-      - "traefik.http.routers.them-health.entrypoints=web"
-      - "traefik.http.routers.them-health.priority=90"
-      - "traefik.http.routers.them-health.service=them-bridge-svc"
-      - "traefik.http.routers.them-apps.rule=PathPrefix(`/apps`)"
-      - "traefik.http.routers.them-apps.entrypoints=web"
-      - "traefik.http.routers.them-apps.priority=100"
-      - "traefik.http.routers.them-apps.service=them-bridge-svc"
-      - "traefik.http.routers.them-a2a.rule=PathPrefix(`/a2a`)"
-      - "traefik.http.routers.them-a2a.entrypoints=web"
-      - "traefik.http.routers.them-a2a.priority=100"
-      - "traefik.http.routers.them-a2a.service=them-bridge-svc"
-      - "traefik.http.services.them-bridge-svc.loadbalancer.server.port=8001"
-      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.path=/health/live"
-      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.interval=10s"
-      - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.timeout=3s"
-
-  # ── Python worker: no source bind mount ───────────────────────────────────────
-  them-worker:
-    volumes:
-      - them-logs:/app/logs
-
   # ── Frontend: no overrides needed — base already has prod Dockerfile + node server.js
   # Hetzner uses the same production config as the base.
   them-frontend: {}
@@ -436,5 +401,3 @@ volumes:
     name: them-postgres-data
   them-redis-data:
     name: them-redis-data
-  them-logs:
-    name: them-logs
