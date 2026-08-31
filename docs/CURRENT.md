@@ -482,20 +482,27 @@ Split 4 oversized admin pages into focused sub-components. No logic changes. Typ
 | `admin/mcp-servers/page.tsx` | 1,022 lines | 157 lines | `MCPBadges.tsx`, `MCPServerCard.tsx`, `MCPToolRow.tsx`, `MCPPropertiesPanel.tsx`, `MCPCreateModal.tsx`, `mcpConstants.ts` |
 | `admin/settings/page.tsx` | 905 lines | 189 lines | `RoleCard.tsx`, `MonitoringPanel.tsx`, `settingsConstants.ts` |
 
-**Still large (not yet split) — see `docs/FRONTEND_SPLIT_SUGGESTIONS.md`:**
+## Frontend file-split — wave 2 (pending commit, 2026-08-31)
+
+Split `lib/api.ts` and `PropertiesPanel.tsx`. No logic changes. TypeScript passes with zero errors.
+
+| File | Before | After | New files |
+|---|---|---|---|
+| `lib/api.ts` | 1,152 lines | 476 lines | `lib/apiTypes.ts` (728 lines — all interfaces), `lib/apiClient.ts` (71 lines — request/tryRefresh/api) |
+| `applications/components/PropertiesPanel.tsx` | 936 lines | 125 lines | `panel/AppPanel.tsx`, `panel/EntryPointPanel.tsx`, `panel/OrchestratorPanel.tsx` (484), `panel/AgentPanel.tsx`, `panel/MiddlewarePanel.tsx`, `panel/panelStyles.ts` |
+
+All callers of `@/lib/api` unchanged — api.ts re-exports everything.
+
+**Still large (not yet split):**
 
 | File | Lines | Next action |
 |---|---|---|
 | `admin/playground/page.tsx` | 2,309 | Extract `useWebSocket` hook first, then `ChatColumn`, `DebugPanel`, `ActivityBar` |
-| `lib/api.ts` | 1,152 | Extract `apiTypes.ts` (interfaces) + `apiClient.ts` (request/tryRefresh) — no callers break |
 | `applications/components/CanvasBuilderView.tsx` | 1,152 | Extract `CanvasNodePropertiesPanel` (inline `renderPropertiesPanel` ~550 lines) |
-| `applications/components/PropertiesPanel.tsx` | 936 | Extract 5 sub-panels: App, EntryPoint, Orchestrator, Agent, Middleware |
 
 **Recommended split order for next session:**
-1. `lib/api.ts` — highest leverage (all pages import it)
-2. `PropertiesPanel.tsx` — clean seams, 1:1 panel → component
-3. `CanvasBuilderView.tsx` — extract the renderPropertiesPanel function
-4. `playground/page.tsx` — last (needs `useWebSocket` hook first)
+1. `CanvasBuilderView.tsx` — extract the renderPropertiesPanel function
+2. `playground/page.tsx` — last (needs `useWebSocket` hook first)
 
 ---
 
