@@ -311,21 +311,30 @@ export function PropertiesPanel({
                       wordBreak: 'break-all', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
                     }}>
                       <span style={{ flex: 1 }}>
-                        {d.epType === 'websocket' ? `ws://<host>:8088/apps/${d.slug}/ws`
-                          : d.epType === 'webrtc' ? `http://<host>:8088/apps/${d.slug}/voice`
-                          : d.epType === 'voice' ? `http://<host>:8088/apps/${d.slug}/voice/transcribe · /voice/tts`
-                          : `http://<host>:8088/apps/${d.slug}/sse`}
+                        {(() => {
+                          const as = app?.slug ?? '<app-slug>';
+                          if (d.epType === 'websocket') return `ws://<host>/apps/${as}/${d.slug}/ws`;
+                          if (d.epType === 'webrtc')   return `http://<host>/apps/${as}/${d.slug}/voice/chat`;
+                          if (d.epType === 'voice')    return `http://<host>/apps/${as}/${d.slug}/voice/tts`;
+                          if (d.epType === 'a2a')      return `http://<host>/a2a/${as}/${d.slug}`;
+                          return `http://<host>/apps/${as}/${d.slug}/sse`;
+                        })()}
                       </span>
                       <button
-                        onClick={() => navigator.clipboard.writeText(
-                          d.epType === 'websocket'
-                            ? `ws://localhost:8088/apps/${d.slug}/ws`
+                        onClick={() => {
+                          const as = app?.slug ?? '';
+                          const host = typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : 'http://localhost:8088';
+                          const url = d.epType === 'websocket'
+                            ? `${host.replace(/^http/, 'ws')}/apps/${as}/${d.slug}/ws`
                             : d.epType === 'webrtc'
-                            ? `http://localhost:8088/apps/${d.slug}/voice`
+                            ? `${host}/apps/${as}/${d.slug}/voice/chat`
                             : d.epType === 'voice'
-                            ? `http://localhost:8088/apps/${d.slug}/voice/transcribe`
-                            : `http://localhost:8088/apps/${d.slug}/sse`
-                        )}
+                            ? `${host}/apps/${as}/${d.slug}/voice/tts`
+                            : d.epType === 'a2a'
+                            ? `${host}/a2a/${as}/${d.slug}`
+                            : `${host}/apps/${as}/${d.slug}/sse`;
+                          navigator.clipboard.writeText(url);
+                        }}
                         title="Copy endpoint URL"
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.cyan, flexShrink: 0, padding: 0 }}
                       >

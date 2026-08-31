@@ -196,7 +196,7 @@ export default function ApplicationsPage() {
           loading={loading}
           onNew={async () => {
             try {
-              const app = await themApi.createApplication({ name: 'New Application', enabled: false });
+              const app = await themApi.createApplication({ name: `New Application ${Date.now()}`, enabled: false });
               await load();
               openDefinition(app);
             } catch {/* ignore */}

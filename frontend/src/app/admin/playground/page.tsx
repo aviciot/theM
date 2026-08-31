@@ -8,7 +8,7 @@ import { themApi, type TaskOut, type ArtifactOut, type ArtifactPart, type Contex
 // ── Connection target ──────────────────────────────────────────────────────
 type ConnTarget =
   | { kind: 'orchestrator'; name: string; label: string }
-  | { kind: 'entrypoint'; slug: string; epType: 'websocket' | 'sse' | 'voice' | 'a2a'; appName: string; orchName: string };
+  | { kind: 'entrypoint'; slug: string; appSlug: string; epType: 'websocket' | 'sse' | 'voice' | 'a2a'; appName: string; orchName: string };
 
 function targetLabel(t: ConnTarget): string {
   if (t.kind === 'orchestrator') return t.label;
@@ -17,7 +17,12 @@ function targetLabel(t: ConnTarget): string {
 
 function targetId(t: ConnTarget): string {
   if (t.kind === 'orchestrator') return `orch:${t.name}`;
-  return `ep:${t.slug}`;
+  return `ep:${t.appSlug}/${t.slug}`;
+}
+
+function targetStorageKey(t: ConnTarget): string {
+  if (t.kind === 'orchestrator') return t.name;
+  return `${t.appSlug}/${t.slug}`;
 }
 
 function targetWsUrl(t: ConnTarget, token: string): string {
@@ -1282,7 +1287,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
       setVoiceEnabled(o?.voice_enabled ?? false);
       setTtsEnabled(o?.tts_enabled ?? false);
     }).catch(() => {});
-  }, [target.kind, target.kind === 'orchestrator' ? target.name : target.kind === 'entrypoint' ? target.slug : '']);
+  }, [targetId(target)]);
 
   // Restore context_id from localStorage on mount, then load conversation history.
   // Uses a once-guard (didRestoreRef) so React strict-mode double-invocation
@@ -1290,7 +1295,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   useEffect(() => {
     if (didRestoreRef.current) return;
     didRestoreRef.current = true;
-    const storageKey = `them:playground:ctx:${target.kind === 'orchestrator' ? target.name : target.slug}`;
+    const storageKey = `them:playground:ctx:${targetStorageKey(target)}`;
     const saved = localStorage.getItem(storageKey);
     if (!saved) return;
     themApi.contexts().then(sessions => {
@@ -1328,7 +1333,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
   // Persist context_id
   useEffect(() => {
     if (!contextId) return;
-    const storageKey = `them:playground:ctx:${target.kind === 'orchestrator' ? target.name : target.slug}`;
+    const storageKey = `them:playground:ctx:${targetStorageKey(target)}`;
     localStorage.setItem(storageKey, contextId);
   }, [contextId]);
 
@@ -1380,7 +1385,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
       assistantBuf.current = '';
 
       try {
-        for await (const ev of themApi.a2aStream(target.slug, text, token)) {
+        for await (const ev of themApi.a2aStream(target.appSlug, target.slug, text, token)) {
           const kind = ev.kind as string;
           if (kind === 'run-started') {
             const rid = ev.taskId as string | undefined;
@@ -1392,7 +1397,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
             }
             if (cid) {
               setContextId(cid);
-              const storageKey = `them:playground:ctx:${target.slug}`;
+              const storageKey = `them:playground:ctx:${targetStorageKey(target)}`;
               localStorage.setItem(storageKey, cid);
             }
           } else if (kind === 'message-delta') {
@@ -1668,7 +1673,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
     setMessages([]); setTrace([]); setStatus('');
     setActivities([]); activitiesRef.current = [];
     setContextId(null); setRestoredSession(null); runId.current = null;
-    const storageKey = `them:playground:ctx:${target.kind === 'orchestrator' ? target.name : target.slug}`;
+    const storageKey = `them:playground:ctx:${targetStorageKey(target)}`;
     localStorage.removeItem(storageKey);
   }, [target]);
 
@@ -1721,7 +1726,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
             try {
               let assistantAdded = false;
               let fullReply = '';
-              for await (const ev of themApi.voiceStream(target.slug, blob, fetchAbort.signal)) {
+              for await (const ev of themApi.voiceStream(target.appSlug, target.slug, blob, fetchAbort.signal)) {
                 const evType = ev.type as string;
                 if (evType === 'transcript') {
                   // Show user text immediately — don't wait for LLM
@@ -1753,7 +1758,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
                   const replyText = (ev.text as string) || fullReply;
                   if (replyText && ev.tts_enabled !== false) {
                     setStatus('Speaking…');
-                    themApi.voiceTTS(target.slug, replyText, fetchAbort.signal)
+                    themApi.voiceTTS(target.appSlug, target.slug, replyText, fetchAbort.signal)
                       .then(audioBlob => {
                         if (!audioBlob || audioBlob.size === 0) return;
                         setSpeaking(true);
@@ -1896,7 +1901,7 @@ function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = tru
             <div style={{ fontSize: 12, color: 'var(--tm-text)', fontStyle: 'italic', opacity: 0.8 }}>"{restoredSession.title}"</div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => resumeSession(restoredSession)} style={{ flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', background: color, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Resume</button>
-              <button onClick={() => { setRestoredSession(null); localStorage.removeItem(`them:playground:ctx:${target.kind === 'orchestrator' ? target.name : target.slug}`); }} style={{ flex: 1, padding: '6px 0', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text-muted)', fontSize: 12, cursor: 'pointer' }}>Fresh start</button>
+              <button onClick={() => { setRestoredSession(null); localStorage.removeItem(`them:playground:ctx:${targetStorageKey(target)}`); }} style={{ flex: 1, padding: '6px 0', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text-muted)', fontSize: 12, cursor: 'pointer' }}>Fresh start</button>
             </div>
           </div>
         )}
@@ -2028,11 +2033,17 @@ function TargetSelector({ applications, value, onChange }: TargetSelectorProps) 
 
   const decodeTarget = useCallback((v: string): ConnTarget | null => {
     if (v.startsWith('ep:')) {
-      const slug = v.slice(3);
+      const rest = v.slice(3); // "appSlug/epSlug"
+      const sep = rest.indexOf('/');
+      const encodedAppSlug = sep >= 0 ? rest.slice(0, sep) : '';
+      const slug = sep >= 0 ? rest.slice(sep + 1) : rest;
       for (const app of applications) {
+        // Prefer the app whose slug matches the encoded app slug
+        if (encodedAppSlug && app.slug !== encodedAppSlug && app.id !== encodedAppSlug) continue;
         const ep = app.entry_points.find(e => e.slug === slug);
         if (ep && (ep.entry_point_type === 'websocket' || ep.entry_point_type === 'sse' || ep.entry_point_type === 'voice' || ep.entry_point_type === 'a2a')) {
-          return { kind: 'entrypoint', slug, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: app.name, orchName: app.app_orchestrators?.[0]?.name ?? '' };
+          const resolvedAppSlug = app.slug ?? app.id;
+          return { kind: 'entrypoint', slug, appSlug: resolvedAppSlug, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: app.name, orchName: app.app_orchestrators?.[0]?.name ?? '' };
         }
       }
     }
@@ -2050,7 +2061,7 @@ function TargetSelector({ applications, value, onChange }: TargetSelectorProps) 
       {applications.filter(a => a.enabled && a.entry_points.some(e => e.enabled && ['websocket', 'sse', 'voice', 'a2a'].includes(e.entry_point_type))).map(app => (
         <optgroup key={app.id} label={`App: ${app.name}`}>
           {app.entry_points.filter(e => e.enabled && ['websocket', 'sse', 'voice', 'a2a'].includes(e.entry_point_type)).map(ep => (
-            <option key={ep.id} value={`ep:${ep.slug}`}>
+            <option key={ep.id} value={`ep:${app.slug ?? app.id}/${ep.slug}`}>
               {ep.slug} [{ep.entry_point_type}]
             </option>
           ))}
@@ -2087,7 +2098,7 @@ function PlaygroundInner() {
         if (!a.enabled) continue;
         const ep = a.entry_points.find(e => e.enabled && ['websocket', 'sse', 'voice', 'a2a'].includes(e.entry_point_type));
         if (ep) {
-          const t: ConnTarget = { kind: 'entrypoint', slug: ep.slug, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: a.name, orchName: a.app_orchestrators?.[0]?.name ?? '' };
+          const t: ConnTarget = { kind: 'entrypoint', slug: ep.slug, appSlug: a.slug ?? a.id, epType: ep.entry_point_type as 'websocket' | 'sse' | 'voice' | 'a2a', appName: a.name, orchName: a.app_orchestrators?.[0]?.name ?? '' };
           setTabs([t]);
           setActiveTabId(targetId(t));
           break;
