@@ -76,13 +76,15 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Post("/orchestrators/{orch_id}/test-tts", h.TestOrchestratorTTS)
 		app.Patch("/orchestrators/{orch_id}/mcp-servers", h.PatchOrchestratorMCPServers)
 		app.Get("/entry-points", h.ListEntryPoints)
-		app.Patch("/entry-points/{ep_id}/summarizer", h.PatchEntryPointSummarizer)
-		app.Patch("/entry-points/{ep_id}/llm", h.PatchEntryPointLLM)
 		app.Post("/entry-points", h.CreateEntryPoint)
-		app.Put("/entry-points/{ep_id}", h.UpdateEntryPoint)
-		app.Patch("/entry-points/{ep_id}", h.UpdateEntryPoint) // Python sends PATCH
-		app.Delete("/entry-points/{ep_id}", h.DeleteEntryPoint)
-		app.Post("/entry-points/{ep_id}/discover", h.DiscoverEP)
+		app.Route("/entry-points/{ep_id}", func(ep chi.Router) {
+			ep.Put("/", h.UpdateEntryPoint)
+			ep.Patch("/", h.UpdateEntryPoint) // Python sends PATCH
+			ep.Delete("/", h.DeleteEntryPoint)
+			ep.Patch("/summarizer", h.PatchEntryPointSummarizer)
+			ep.Patch("/llm", h.PatchEntryPointLLM)
+			ep.Post("/discover", h.DiscoverEP)
+		})
 		for _, b := range bindings {
 			b.MountOn(app)
 		}
