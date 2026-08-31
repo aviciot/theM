@@ -493,8 +493,7 @@ OrchestrationWorkflow
 | `them-go-worker` | Go Temporal worker — durable orchestration activities | — |
 | `them-dag-worker` | Go DAG worker — canvas workflow execution (`CanvasAgentWorkflow`) | — |
 | `them-agent-runtime` | Go agent runtime — runs 2 replicas (port 9300) | 9300 (internal) |
-| `them-auth-go` | Go auth service — login, session, JWT (replaces Python auth for UI contract) | 8703 (internal) |
-| `them-auth-service` | Python IAM — users/roles/teams/permissions admin CRUD | 8701 (internal) |
+| `them-auth-go` | Go auth service — login, session, JWT, users/roles/teams/permissions | 8703 (internal) |
 | `them-mcp-service` | Go MCP server supervisor and executor (internal only) | 8010 (internal) |
 | `them-frontend` | Next.js 16 dashboard — canvas, admin, observability | 3200 (internal) |
 | `them-postgres` | PostgreSQL 16 — main data store (`them` schema) | 5432 (internal) |
