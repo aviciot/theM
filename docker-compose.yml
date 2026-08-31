@@ -949,12 +949,6 @@ services:
       - "traefik.http.routers.them-go-a2a.entrypoints=web"
       - "traefik.http.routers.them-go-a2a.priority=120"
       - "traefik.http.routers.them-go-a2a.service=them-go-bridge-svc"
-      # ── Catch-all: Python permanently retired — all unmatched routes go to Go ──
-      # Priority 90 is below all explicit Go routers (110–150) so they still win.
-      - "traefik.http.routers.them-go-catchall.rule=PathPrefix(`/`)"
-      - "traefik.http.routers.them-go-catchall.entrypoints=web"
-      - "traefik.http.routers.them-go-catchall.priority=90"
-      - "traefik.http.routers.them-go-catchall.service=them-go-bridge-svc"
       # ── MCP Store: mcp-servers CRUD + app credentials ─────────────────────
       - "traefik.http.routers.them-go-mcp-servers.rule=PathPrefix(`/api/v1/admin/mcp-servers`)"
       - "traefik.http.routers.them-go-mcp-servers.entrypoints=web"
