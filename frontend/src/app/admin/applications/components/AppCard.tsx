@@ -268,11 +268,11 @@ export function AppCard({
           </div>
         </div>
 
-        {/* Row 4: entry point URL rows — only enabled EPs */}
-        {enabledEps.length > 0 && (
+        {/* Row 4: entry point URL rows — all EPs, disabled ones dimmed */}
+        {(app.entry_points ?? []).length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 4 }}>
             <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 2 }}>Entry Points</div>
-            {enabledEps.map(epRow => {
+            {(app.entry_points ?? []).map(epRow => {
               const urls = epUrls(epRow);
               const epC = epIconColor(epRow.entry_point_type);
               const primaryUrl = urls[0];

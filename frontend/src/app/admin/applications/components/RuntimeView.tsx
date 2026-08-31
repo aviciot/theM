@@ -169,6 +169,7 @@ export function RuntimeView({ app, onBack }: {
   });
   const [epSumSaving,  setEPSumSaving]  = useState<string | null>(null);
   const [epSumMsg,     setEPSumMsg]     = useState<Record<string, string>>({});
+  const [epToggling,   setEPToggling]   = useState<string | null>(null);
 
   // Canvas agent params
   const [agentParamsList,   setAgentParamsList]   = useState<AgentParamsResponse[]>([]);
@@ -299,6 +300,14 @@ export function RuntimeView({ app, onBack }: {
     } catch (e: unknown) {
       setKeyTestMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Error' }));
     } finally { setKeyTesting(null); }
+  }
+
+  async function handleToggleEP(epId: string, currentEnabled: boolean) {
+    setEPToggling(epId);
+    try {
+      await themApi.patchEntryPoint(app.id, epId, { enabled: !currentEnabled });
+      setEntryPoints(prev => prev.map(ep => ep.id === epId ? { ...ep, enabled: !currentEnabled } : ep));
+    } catch { /* ignore */ } finally { setEPToggling(null); }
   }
 
   async function handleSaveEPLLM(epId: string) {
@@ -680,6 +689,16 @@ export function RuntimeView({ app, onBack }: {
                               <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted }}>{epTypeIcon}</span>
                               <span style={{ fontSize: 12, fontWeight: 700, color: C.text, fontFamily: 'JetBrains Mono, monospace', flex: 1 }}>{ep.slug}</span>
                               <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 20, background: 'rgba(132,158,190,0.1)', color: C.textMuted, border: '1px solid rgba(132,158,190,0.18)', fontWeight: 600 }}>{ep.entry_point_type}</span>
+                              <button
+                                onClick={() => handleToggleEP(ep.id, ep.enabled)}
+                                disabled={epToggling === ep.id}
+                                title={ep.enabled ? 'Disable entry point' : 'Enable entry point'}
+                                style={{ background: 'none', border: 'none', cursor: epToggling === ep.id ? 'wait' : 'pointer', color: ep.enabled ? '#4ade80' : C.textMuted, display: 'flex', alignItems: 'center', padding: '2px 4px', borderRadius: 4, flexShrink: 0, opacity: epToggling === ep.id ? 0.5 : 1 }}
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+                                  {epToggling === ep.id ? 'hourglass_empty' : ep.enabled ? 'toggle_on' : 'toggle_off'}
+                                </span>
+                              </button>
                             </div>
 
                             {ep.entry_point_type === 'voice' ? (
