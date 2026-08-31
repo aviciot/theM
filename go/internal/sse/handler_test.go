@@ -1113,3 +1113,42 @@ func TestSSE_IDsAreUUIDv4(t *testing.T) {
 	assert.True(t, uuidRe(run.ContextID), "ContextID must be UUID v4: %s", run.ContextID)
 	assert.True(t, uuidRe(sess.getLastSession().SessionID), "SessionID must be UUID v4")
 }
+
+// 21. "file" bus event is forwarded as an artifact-update SSE event.
+func TestSSEFileEventForwardedAsArtifactUpdate(t *testing.T) {
+	authn := &fakeAuth{token: "tok", info: &auth.TokenInfo{TokenID: 1}}
+	tc := &fakeTemporalClient{}
+	raw1, _ := json.Marshal(map[string]any{
+		"type":         "file",
+		"artifact_id":  "art-123",
+		"filename":     "report.pdf",
+		"content_type": "application/pdf",
+		"download_url": "https://example.com/files/report.pdf",
+		"run_id":       "run-1",
+	})
+	raw2, _ := json.Marshal(map[string]any{"type": "done", "run_id": "run-1"})
+	b := &sseBuilder{authn: authn, temporal: tc, streamMsgs: []string{string(raw1), string(raw2)}}
+	h, _ := b.build()
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+
+	req := mustGet(srv.URL + "/orchestrate/myapp/ep?message=hello")
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := collectSSE(t, resp, 3*time.Second)
+	var artifactEv map[string]any
+	for _, ev := range events {
+		if ev["type"] == "artifact-update" {
+			artifactEv = ev
+			break
+		}
+	}
+	require.NotNil(t, artifactEv, "expected an artifact-update SSE event")
+	assert.Equal(t, "report.pdf", artifactEv["filename"])
+	assert.Equal(t, "application/pdf", artifactEv["content_type"])
+	assert.Equal(t, "https://example.com/files/report.pdf", artifactEv["url"])
+}

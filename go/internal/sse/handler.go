@@ -430,6 +430,27 @@ func (h *Handler) formatSSE(ev event.Event) (string, error) {
 			_ = json.Unmarshal(raw, &runID)
 		}
 		msg = map[string]any{"type": "replay_unavailable", "reason": reason, "run_id": runID}
+	case "file":
+		var artifactID, filename, contentType, downloadURL string
+		if raw, ok := payload["artifact_id"]; ok {
+			_ = json.Unmarshal(raw, &artifactID)
+		}
+		if raw, ok := payload["filename"]; ok {
+			_ = json.Unmarshal(raw, &filename)
+		}
+		if raw, ok := payload["content_type"]; ok {
+			_ = json.Unmarshal(raw, &contentType)
+		}
+		if raw, ok := payload["download_url"]; ok {
+			_ = json.Unmarshal(raw, &downloadURL)
+		}
+		msg = map[string]any{
+			"type":         "artifact-update",
+			"artifact_id":  artifactID,
+			"filename":     filename,
+			"content_type": contentType,
+			"url":          downloadURL,
+		}
 	default:
 		return "", fmt.Errorf("sse: unknown event type %q", ev.Type)
 	}

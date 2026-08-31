@@ -528,6 +528,7 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestSSE_MissingMessage` | Missing ?message= → 400 before any Lifecycle call |
 | `TestSSE_RunStreamSubscribedBeforeStart` | R-5.2: runEvents subscribe called BEFORE ExecuteWorkflow (bootstrap ordering invariant) |
 | `TestSSE_IDsAreUUIDv4` | All run/session/context IDs are UUID v4 (Python worker requires uuid.UUID() parsing) |
+| `TestSSEFileEventForwardedAsArtifactUpdate` | `file` bus event forwarded as `artifact-update` SSE event with correct filename/content_type/url fields |
 
 **Trigger:** any change to `internal/sse/handler.go` or `internal/execution/lifecycle.go`
 
@@ -572,6 +573,13 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestA2A_AgentCard_SynthesizedCard` | CardLoader returns synthesized card → served with URL injected |
 | `TestA2A_AgentCard_FallbackToOrchName` | CardLoader returns row with nil AgentCardJSON → fallback card uses OrchestratorDisplayName |
 | `TestA2A_AgentCard_FallbackNoLoader` | No CardLoader configured → static "the-M Orchestrator" fallback served |
+| `TestA2AStream_ContentType` | message/stream → 200 + text/event-stream content type |
+| `TestA2AStream_EmitsCompletedStatus` | Successful stream → task-status-update completed event emitted |
+| `TestA2AStream_MissingToken_401` | Missing token on token EP → 401 (clean HTTP, no SSE started) |
+| `TestA2AStream_UnknownSlug_404` | Unknown slug → 404 |
+| `TestA2AStream_CapExceeded_429` | Gate cap exceeded → 429 |
+| `TestA2AStream_NoText_RPCError` | Empty message → JSON-RPC error |
+| `TestA2AStream_FileEventForwardedAsArtifactUpdate` | `file` bus event forwarded as A2A `artifact-update` stream/event frame with correct URL/mediaType/name |
 
 **Trigger:** any change to `internal/a2a/server.go`, `internal/a2a/pgx.go`, `internal/execution/lifecycle.go`, or `internal/epconfig/pgx.go`
 

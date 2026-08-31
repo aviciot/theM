@@ -87,6 +87,13 @@ type rpcTextPart struct {
 	Text string `json:"text"`
 }
 
+// rpcFilePart is a file part used in artifact-update events.
+type rpcFilePart struct {
+	URL       string `json:"url"`
+	MediaType string `json:"mediaType"`
+	Name      string `json:"name,omitempty"`
+}
+
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -142,7 +149,7 @@ type streamEventBody struct {
 	TaskID    string           `json:"taskId,omitempty"`
 	ContextID string           `json:"contextId,omitempty"`
 	Role      string           `json:"role,omitempty"`
-	Parts     []rpcTextPart    `json:"parts,omitempty"`
+	Parts     []any            `json:"parts,omitempty"`
 	Status    *rpcStreamStatus `json:"status,omitempty"`
 }
 
@@ -646,11 +653,27 @@ func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req
 					Params: streamEventParam{Event: streamEventBody{
 						Kind:  "message-delta",
 						Role:  "assistant",
-						Parts: []rpcTextPart{{Text: content}},
+						Parts: []any{rpcTextPart{Text: content}},
 					}},
 				}) {
 					return
 				}
+			case "file":
+				var p map[string]json.RawMessage
+				var filename, contentType, downloadURL string
+				if json.Unmarshal(ev.Payload, &p) == nil {
+					json.Unmarshal(p["filename"], &filename)       //nolint:errcheck
+					json.Unmarshal(p["content_type"], &contentType) //nolint:errcheck
+					json.Unmarshal(p["download_url"], &downloadURL) //nolint:errcheck
+				}
+				writeSSE(streamEvent{ //nolint:errcheck
+					JSONRPC: "2.0",
+					Method:  "stream/event",
+					Params: streamEventParam{Event: streamEventBody{
+						Kind:  "artifact-update",
+						Parts: []any{rpcFilePart{URL: downloadURL, MediaType: contentType, Name: filename}},
+					}},
+				})
 			case "done":
 				sendStatus("completed")
 				return

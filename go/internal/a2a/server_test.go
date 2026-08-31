@@ -1094,3 +1094,79 @@ func TestA2A_AgentCard_FallbackNoLoader(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&card))
 	assert.Equal(t, "the-M Orchestrator", card["name"])
 }
+
+// A2A-S13: "file" bus event is forwarded as an artifact-update stream/event frame.
+func TestA2AStream_FileEventForwardedAsArtifactUpdate(t *testing.T) {
+	inner := &fakeTemporal{run: &fakeWorkflowRun{
+		result: temporal.WorkflowResult{FinalText: "done", Status: domain.RunStatusCompleted},
+	}}
+	fileFake := &filePublishTemporal{delegate: inner}
+	b := defaultBuilder()
+	b.temporal = fileFake
+	bs := b.build()
+	fileFake.bus = bs.bus
+
+	srv := httptest.NewServer(bs.Routes())
+	defer srv.Close()
+
+	status, lines := postStream(t, srv, validStreamBody(), "valid-token")
+	require.Equal(t, http.StatusOK, status)
+
+	var foundArtifact bool
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err != nil {
+			continue
+		}
+		params, _ := ev["params"].(map[string]any)
+		evBody, _ := params["event"].(map[string]any)
+		if evBody["kind"] == "artifact-update" {
+			parts, _ := evBody["parts"].([]any)
+			if len(parts) > 0 {
+				part, _ := parts[0].(map[string]any)
+				if part["url"] == "https://example.com/report.pdf" {
+					foundArtifact = true
+				}
+			}
+		}
+	}
+	assert.True(t, foundArtifact, "expected an artifact-update stream event with the file URL")
+}
+
+// filePublishTemporal publishes a "file" bus event then "done" when ExecuteWorkflow is called.
+type filePublishTemporal struct {
+	delegate *fakeTemporal
+	bus      *event.InMemoryBus
+}
+
+func (f *filePublishTemporal) ExecuteWorkflow(ctx context.Context, opts temporalclient.StartWorkflowOptions, wf interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
+	// Capture args without publishing done — suppress the delegate's auto-publish.
+	origBus := f.delegate.bus
+	f.delegate.bus = nil
+	run, err := f.delegate.ExecuteWorkflow(ctx, opts, wf, args...)
+	f.delegate.bus = origBus
+	if err != nil || f.bus == nil {
+		return run, err
+	}
+	contextID := f.delegate.contextID
+	runID := f.delegate.lastInput.RunID
+	bus := f.bus
+	go func() {
+		// Give handleMessageStream a moment to subscribe before publishing events.
+		time.Sleep(20 * time.Millisecond)
+		fileRaw, _ := json.Marshal(map[string]any{
+			"artifact_id":  "art-001",
+			"filename":     "report.pdf",
+			"content_type": "application/pdf",
+			"download_url": "https://example.com/report.pdf",
+			"run_id":       runID,
+		})
+		doneRaw, _ := json.Marshal(map[string]string{"run_id": runID})
+		bus.Publish(context.Background(), event.Event{Topic: contextID, Type: "file", Payload: fileRaw})
+		bus.Publish(context.Background(), event.Event{Topic: contextID, Type: "done", Payload: doneRaw})
+	}()
+	return run, nil
+}
