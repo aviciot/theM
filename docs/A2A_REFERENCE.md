@@ -11,4 +11,4 @@ The skill loads from `.claude/skills/a2a.md` and covers:
 - Phase D SDK adoption checklist
 - Anti-patterns (including all the Python patterns that were here)
 
-For the full canvas agent architecture: `docs/architecture-v2/CANVAS_A2A_AGENT_GENERATION.md`
+For the full canvas agent architecture: `docs/CANVAS_A2A_AGENT_GENERATION.md`

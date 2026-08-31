@@ -12,7 +12,7 @@ One line per doc. Read this first, then open only what you need.
 |---|---|
 | `CLAUDE.md` | Every session — always read first |
 | `docs/STATUS.md` | Start of session — current containers, migration state, known blockers |
-| `docs/architecture-v2/CURRENT.md` | Start of session — current HEAD, next task, hard constraints |
+| `docs/CURRENT.md` | Start of session — current HEAD, next task, hard constraints |
 
 ---
 
@@ -20,7 +20,6 @@ One line per doc. Read this first, then open only what you need.
 
 | File | Subject | Update when |
 |---|---|---|
-| `docs/ARCHITECTURE.md` | Current Go/Python hybrid architecture, Traefik routing, application model | Any flow or component changes |
 | `docs/AUTH.md` | Auth service contract, JWT claims, AdminTenantMiddleware, machine tokens | Auth flow changes |
 | `docs/SCHEMA.md` | All `them.*` tables — columns, FKs, rationale | DB table or column changes |
 | `docs/REDIS.md` | Every Redis key pattern, TTL, owner, pub/sub channels | Redis key added or renamed |
@@ -30,12 +29,11 @@ One line per doc. Read this first, then open only what you need.
 
 ---
 
-## Migration tracking (temporary — remove when Python is gone)
+## Go package inventory
 
 | File | Subject |
 |---|---|
-| `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md` | Live route ownership: Go vs Python per endpoint |
-| `docs/architecture-v2/implementation-status.md` | Go package inventory, test counts, route map |
+| `docs/implementation-status.md` | Go package inventory, test counts, route map |
 
 ---
 
@@ -43,10 +41,10 @@ One line per doc. Read this first, then open only what you need.
 
 | File | Decision |
 |---|---|
-| `docs/architecture-v2/adr-001-canonical-run-id.md` | Canonical run ID strategy |
-| `docs/architecture-v2/adr-002-reconciler-status-mapping.md` | Reconciler status mapping |
-| `docs/architecture-v2/adr-003-redis-streams-event-delivery.md` | Redis streams for event delivery |
-| `docs/architecture-v2/REGISTRY_BACKED_APPLICATION_COMPONENT_MODEL.md` | Component registry model (Wave 9 foundation) |
+| `docs/adr-001-canonical-run-id.md` | Canonical run ID strategy |
+| `docs/adr-002-reconciler-status-mapping.md` | Reconciler status mapping |
+| `docs/adr-003-redis-streams-event-delivery.md` | Redis streams for event delivery |
+| `docs/REGISTRY_BACKED_APPLICATION_COMPONENT_MODEL.md` | Component registry model (Wave 9 foundation) |
 
 ---
 
@@ -54,7 +52,7 @@ One line per doc. Read this first, then open only what you need.
 
 | File | When to read |
 |---|---|
-| `docs/architecture-v2/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` | Docker, deployment, container recreation |
+| `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` | Docker, deployment, container recreation |
 | `go/TEST_INDEX.md` | Before running or writing Go tests |
 
 ---
@@ -73,11 +71,11 @@ cd go && go test ./...
 | Question | Read |
 |---|---|
 | What's running right now? | `docs/STATUS.md` |
-| What's the next task? | `docs/architecture-v2/CURRENT.md` |
-| How does the LLM agentic loop work? | `docs/ARCHITECTURE.md` |
+| What's the next task? | `docs/CURRENT.md` |
+| How does the LLM agentic loop work? | `docs/CURRENT.md` + `docs/implementation-status.md` |
 | How does auth work? | `docs/AUTH.md` |
 | What columns does `them.agents` have? | `docs/SCHEMA.md` |
 | What Redis TTL does `them:token:*` have? | `docs/REDIS.md` |
-| Which routes does Go own? | `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md` |
+| Which routes does Go own? | `docs/implementation-status.md` |
 | What burned us before? | `docs/LESSONS.md` |
-| Historical plans and reports? | `docs/architecture-v2/archive/` |
+| Current architecture state? | `docs/CURRENT.md` |

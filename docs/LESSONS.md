@@ -8,7 +8,7 @@
 **Symptom:** Login returns 200, but the page immediately shows "Failed to load user". Auth-go logs show no `/me` request ever arriving.
 **Root cause:** The Next.js login route sets auth cookies with `Secure=true` when `NODE_ENV=production`. Browsers silently discard `Secure` cookies on plain HTTP — so the cookie set by `/api/auth/login` is never sent on the immediately following `/api/auth/me` call, which returns 401.
 **Fix:** Added `COOKIE_SECURE` env var to the frontend. When set to `"false"`, cookies are issued without the `Secure` flag. `docker-compose.yml` sets `COOKIE_SECURE=false` for local/HTTP deployments. Remove it (or set to `"true"`) for HTTPS production (Hetzner with TLS).
-**Watch for:** Any new environment that serves over plain HTTP — must have `COOKIE_SECURE=false` set. Any environment that moves to HTTPS must remove it. See `docs/architecture-v2/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` for the full variable table.
+**Watch for:** Any new environment that serves over plain HTTP — must have `COOKIE_SECURE=false` set. Any environment that moves to HTTPS must remove it. See `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` for the full variable table.
 
 ---
 

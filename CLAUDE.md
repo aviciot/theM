@@ -11,19 +11,19 @@ Before touching any code, read these docs if you haven't this session:
 | Doc | When to read |
 |---|---|
 | `docs/INDEX.md` | Find the right doc fast |
-| `docs/ARCHITECTURE.md` | Any time you touch `app/` — how the orchestrator works |
-| `docs/SCHEMA.md` | Touching `models.py` or writing queries |
+| `docs/CURRENT.md` | Current architecture state, containers, next task |
+| `docs/SCHEMA.md` | Touching DB schema or writing queries |
 | `docs/REDIS.md` | Touching anything that reads/writes Redis |
 | `docs/ADAPTERS.md` | Adding/changing an agent transport |
 | `docs/A2A_AGENTS.md` | Working with A2A test agents — start/stop, enable, test commands |
 | `docs/STATUS.md` | Know what's broken/pending before you start |
 | `docs/LESSONS.md` | Before any judgment call — read what burned us before |
 | `scripts/tests/INDEX.md` | Before running or writing tests |
-| `docs/architecture-v2/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` | Docker, deployment, environment, or container recreation work |
+| `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md` | Docker, deployment, environment, or container recreation work |
 
 For Go work, also read `go/CLAUDE.md` — it governs everything under `go/`.
 
-**Before Docker, deployment, environment, or container recreation work, read `docs/architecture-v2/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md`. Never commit or print real secrets.**
+**Before Docker, deployment, environment, or container recreation work, read `docs/LOCAL_TEST_ENVIRONMENT_RUNBOOK.md`. Never commit or print real secrets.**
 
 ---
 
@@ -48,7 +48,7 @@ Migration order:
 
 **One focused subsystem per task.** Do not migrate multiple subsystems in a single session.
 
-Current state: Agents Store slice complete (agents CRUD + discover/test/security-scan + Go auth). See `docs/architecture-v2/CURRENT.md` for exact state and next steps. See `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md` for route ownership.
+Current state: Agents Store slice complete (agents CRUD + discover/test/security-scan + Go auth). See `docs/CURRENT.md` for exact state and next steps. See `docs/implementation-status.md` for route ownership.
 
 ---
 
@@ -61,7 +61,7 @@ Current state: Agents Store slice complete (agents CRUD + discover/test/security
 
 ## Long Answers
 
-Long explanations, detailed reviews, analysis reports, and migration plans must be written to Markdown files under `docs/architecture-v2/`. Return only the file path and a one-paragraph summary in chat.
+Long explanations, detailed reviews, analysis reports, and migration plans must be written to Markdown files under `docs/`. Return only the file path and a one-paragraph summary in chat.
 
 ---
 
@@ -93,7 +93,7 @@ Do not wait until context quality has already degraded.
 2. Finish and test the current focused task only — do not widen scope.
 3. Commit all safe changes.
 4. Push if credentials are available (`git push origin main`).
-5. Update `docs/architecture-v2/CURRENT.md` with:
+5. Update `docs/CURRENT.md` with:
    - current HEAD (`git log --oneline -1`)
    - deployment state
    - current migration slice and what was completed
@@ -169,7 +169,7 @@ Application ID must flow through every new feature:
 
 - New Redis key → `docs/REDIS.md`
 - New DB table or column → `docs/SCHEMA.md` + `db/001_schema.sql`
-- New/changed flow → `docs/ARCHITECTURE.md`
+- New/changed flow → `docs/CURRENT.md`
 - Bug fix or non-obvious behavior → `docs/LESSONS.md`
 - Unresolved at session end → `docs/STATUS.md`
 - Trust code over docs; always update the doc when they diverge
@@ -288,7 +288,7 @@ docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS a
 docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
-# Apply remaining migrations in order: 003 through latest (see docs/architecture-v2/CURRENT.md for full list)
+# Apply remaining migrations in order: 003 through latest (see docs/CURRENT.md for full list)
 
 # DB access
 docker exec -it them-postgres psql -U them -d them

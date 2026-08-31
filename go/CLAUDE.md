@@ -15,9 +15,9 @@ Before touching any Go code, read:
 | Doc | When to read |
 |---|---|
 | `TEST_INDEX.md` | Before adding or changing any test |
-| `docs/architecture-v2/implementation-status.md` | Package inventory, route ownership, completed waves |
-| `docs/architecture-v2/lessons-learned.md` | Before any judgment call — what burned us before |
-| `docs/architecture-v2/CURRENT.md` | Current state, next task, hard constraints |
+| `docs/implementation-status.md` | Package inventory, route ownership, completed waves |
+| `docs/lessons-learned.md` | Before any judgment call — what burned us before |
+| `docs/CURRENT.md` | Current state, next task, hard constraints |
 
 ---
 
@@ -117,11 +117,11 @@ Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_*
 | Change | Update |
 |---|---|
 | New test | `TEST_INDEX.md` (same commit) |
-| New package | `TEST_INDEX.md` + `docs/architecture-v2/implementation-status.md` |
-| New Redis key | `docs/architecture-v2/` (note the key + TTL + purpose) |
-| Bug fix or non-obvious behavior | `docs/architecture-v2/lessons-learned.md` |
-| New route | `docs/architecture-v2/implementation-status.md` route map |
-| Architectural decision | `docs/architecture-v2/` (new or updated doc) |
+| New package | `TEST_INDEX.md` + `docs/implementation-status.md` |
+| New Redis key | `docs/` (note the key + TTL + purpose) |
+| Bug fix or non-obvious behavior | `docs/lessons-learned.md` |
+| New route | `docs/implementation-status.md` route map |
+| Architectural decision | `docs/` (new or updated doc) |
 
 ---
 
@@ -187,7 +187,7 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | `cmd/them/main.go` | `go test ./...` (full suite) |
 | `go.mod` or `go.sum` | `go test ./...` (full suite) |
 | `Dockerfile.go` | rebuild image + `go test -tags=integration ./...` |
-| `docker-compose.yml` (Go labels) | `go test -tags=integration ./...` + live smoke test per `docs/architecture-v2/REMAINING_ROUTE_OWNERSHIP_INVENTORY.md` |
+| `docker-compose.yml` (Go labels) | `go test -tags=integration ./...` + live smoke test per `docs/implementation-status.md` |
 | Any `internal/` change | `go test ./...` before commit |
 | Before any production deploy | `go test -race ./...` + `go test -tags=integration ./...` + live smoke tests per handover doc |
 
@@ -197,7 +197,7 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 
 | Decision | Choice | Where documented |
 |---|---|---|
-| Architecture | Monolith-first Go service | `docs/architecture-v2/implementation-status.md` |
+| Architecture | Monolith-first Go service | `docs/implementation-status.md` |
 | JWT auth | Local RS256 signature validation (no HTTP call) — user session tokens from auth service | `internal/auth/jwt.go` |
 | Bearer token auth | Opaque token: L1 in-process sync.Map → L2 Redis `them:token:{sha256}` → PostgreSQL `them.access_tokens` | `internal/auth/token_cache.go` |
 | Token revocation | Redis pub/sub `them:token:revoked` — cross-pod L1 eviction | `internal/auth/token_cache.go` |
@@ -207,9 +207,9 @@ docker compose --project-name them_gateway logs -f them-go-bridge
 | LLM cancellation | `context.Context` propagated to HTTP | `internal/llm/anthropic.go` |
 | Temporal | Retained (Go SDK), HITL via Signal | `internal/temporal/workflow.go` |
 | Message format | Canonical domain types in DB | `internal/domain/domain.go` |
-| Tenant boundary | Application is the tenant | `docs/architecture-v2/implementation-status.md` (Architectural Findings Fixed table) |
+| Tenant boundary | Application is the tenant | `docs/implementation-status.md` (Architectural Findings Fixed table) |
 | Bus subscribe timing | Subscribe BEFORE StartWorkflow | `internal/ws/handler.go` line ~154 |
-| ExecLua return type | Use `res.ToAny()` for Lua scripts that may return non-integer results (e.g. arrays) | `docs/architecture-v2/lessons-learned.md` |
+| ExecLua return type | Use `res.ToAny()` for Lua scripts that may return non-integer results (e.g. arrays) | `docs/lessons-learned.md` |
 | AT TIME ZONE parsing | PG `AT TIME ZONE 'UTC'` on timestamptz returns timestamp without tz suffix — parseTS must handle both formats | `go/internal/admin/dal/tokens.go` |
 
 ---
