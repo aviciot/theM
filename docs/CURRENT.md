@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+d47f8c1  refactor(frontend): extract CanvasNodePropertiesPanel from CanvasBuilderView
+9071b15  refactor(docs): flatten docs/architecture-v2/ into docs/
+a0116ef  refactor(frontend): split lib/api.ts and PropertiesPanel.tsx into focused modules
 45a0e23  feat(a2a): migrate EP server to official a2a-go/v2 SDK — 100% A2A v1.0 wire format
 7af3e1c  fix(monitor): wire SessionPublisher into A2A handler so A2A sessions appear in Monitor
-9d407bd  feat(monitor): add Live Monitor tab — realtime session + run event feed
-01d5165  fix(sse,a2a): forward sub-agent file artifacts as artifact-update events
-(prior)  feat: app_slug migration — DB 048, Go handlers, Traefik 7 routers
 ```
 
 ---
@@ -482,27 +482,21 @@ Split 4 oversized admin pages into focused sub-components. No logic changes. Typ
 | `admin/mcp-servers/page.tsx` | 1,022 lines | 157 lines | `MCPBadges.tsx`, `MCPServerCard.tsx`, `MCPToolRow.tsx`, `MCPPropertiesPanel.tsx`, `MCPCreateModal.tsx`, `mcpConstants.ts` |
 | `admin/settings/page.tsx` | 905 lines | 189 lines | `RoleCard.tsx`, `MonitoringPanel.tsx`, `settingsConstants.ts` |
 
-## Frontend file-split — wave 2 (pending commit, 2026-08-31)
+## Frontend file-split — waves 1–3 (complete, 2026-08-31)
 
-Split `lib/api.ts` and `PropertiesPanel.tsx`. No logic changes. TypeScript passes with zero errors.
+All splits: no logic changes. TypeScript passes with zero errors throughout.
 
 | File | Before | After | New files |
 |---|---|---|---|
-| `lib/api.ts` | 1,152 lines | 476 lines | `lib/apiTypes.ts` (728 lines — all interfaces), `lib/apiClient.ts` (71 lines — request/tryRefresh/api) |
+| `lib/api.ts` | 1,152 lines | 476 lines | `lib/apiTypes.ts` (728 lines), `lib/apiClient.ts` (71 lines) |
 | `applications/components/PropertiesPanel.tsx` | 936 lines | 125 lines | `panel/AppPanel.tsx`, `panel/EntryPointPanel.tsx`, `panel/OrchestratorPanel.tsx` (484), `panel/AgentPanel.tsx`, `panel/MiddlewarePanel.tsx`, `panel/panelStyles.ts` |
-
-All callers of `@/lib/api` unchanged — api.ts re-exports everything.
+| `applications/components/CanvasBuilderView.tsx` | 1,152 lines | 625 lines | `cbv/CanvasNodePropertiesPanel.tsx` (573 lines) |
 
 **Still large (not yet split):**
 
 | File | Lines | Next action |
 |---|---|---|
 | `admin/playground/page.tsx` | 2,309 | Extract `useWebSocket` hook first, then `ChatColumn`, `DebugPanel`, `ActivityBar` |
-| `applications/components/CanvasBuilderView.tsx` | 1,152 | Extract `CanvasNodePropertiesPanel` (inline `renderPropertiesPanel` ~550 lines) |
-
-**Recommended split order for next session:**
-1. `CanvasBuilderView.tsx` — extract the renderPropertiesPanel function
-2. `playground/page.tsx` — last (needs `useWebSocket` hook first)
 
 ---
 
