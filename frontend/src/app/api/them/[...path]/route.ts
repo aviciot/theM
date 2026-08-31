@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 const BRIDGE_BASE = process.env.THE_M_API_URL || 'http://them-go-bridge:8002';
 
 // Go routes mounted at root (no /api/v1 prefix).
-const GO_ROOT_PATTERNS = [/^apps\/[^/]+\/voice\//, /^a2a\//];
+// Voice: /apps/{app_slug}/{ep_slug}/voice/* — two slug segments before /voice/
+const GO_ROOT_PATTERNS = [/^apps\/[^/]+\/[^/]+\/voice\//, /^a2a\//];
 
 async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
   const token = req.cookies.get('them_access_token')?.value;
