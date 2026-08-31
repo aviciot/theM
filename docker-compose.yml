@@ -682,8 +682,8 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ── Go Bridge — active API gateway (Python permanently retired) ──────────────
-  # Go serves all routes. Python bridge is behind profiles: [legacy] and must not start.
+  # ── Go Bridge — sole active API gateway ────────────────────────────────────────
+  # Go serves all routes. Python bridge has been removed entirely.
   # ============================================================
   # them-mcp-service — dedicated MCP Store service
   # Manages MCP server health checks, tool discovery, and tool
@@ -778,21 +778,18 @@ services:
       - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.path=/health/live"
       - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.interval=10s"
       - "traefik.http.services.them-go-bridge-svc.loadbalancer.healthcheck.timeout=3s"
-      # ── /ws/dashboard → Go dashboard WebSocket handler (priority 150 > Python ws 100)
+      # ── /ws/dashboard → Go dashboard WebSocket handler ────────────────────────
       - "traefik.http.routers.them-go-ws-dashboard.rule=Path(`/ws/dashboard`)"
       - "traefik.http.routers.them-go-ws-dashboard.entrypoints=web"
       - "traefik.http.routers.them-go-ws-dashboard.priority=150"
       - "traefik.http.routers.them-go-ws-dashboard.service=them-go-bridge-svc"
-      # ── Wave 1: /health/live and /health/ready (priority 130 beats Python's 90)
-      # Go health handlers live at /health/live and /health/ready only.
-      # Do NOT claim bare /health — Python serves that; we don't want a 404 from Go.
+      # ── /health/live and /health/ready ──────────────────────────────────────────
       - "traefik.http.routers.them-go-health-sub.rule=PathPrefix(`/health/live`) || PathPrefix(`/health/ready`)"
       - "traefik.http.routers.them-go-health-sub.entrypoints=web"
       - "traefik.http.routers.them-go-health-sub.priority=130"
       - "traefik.http.routers.them-go-health-sub.service=them-go-bridge-svc"
-      # ── Wave 1: GET-only admin reads (priority 110 beats Python's 100) ─────
-      # Go serves read-only admin endpoints; Python still handles all writes.
-      # Runs: all GET sub-paths under /api/v1/runs (list, get-by-id, stats, contexts, context artifacts, tasks, artifacts).
+      # ── GET-only admin reads ────────────────────────────────────────────────────
+      # Runs: all GET sub-paths under /api/v1/runs.
       - "traefik.http.routers.them-go-admin-reads.rule=(PathPrefix(`/api/v1/admin/agents`) || PathPrefix(`/api/v1/admin/orchestrators`) || PathPrefix(`/api/v1/admin/applications`) || PathPrefix(`/api/v1/runs`)) && Method(`GET`)"
       - "traefik.http.routers.them-go-admin-reads.entrypoints=web"
       - "traefik.http.routers.them-go-admin-reads.priority=110"
@@ -802,24 +799,18 @@ services:
       - "traefik.http.routers.them-go-system-agents.entrypoints=web"
       - "traefik.http.routers.them-go-system-agents.priority=120"
       - "traefik.http.routers.them-go-system-agents.service=them-go-bridge-svc"
-      # ── Wave 6: /api/v1/admin/monitoring-config — GET + PUT ─────────────────
-      # Python owns /api/v1 at priority 100; Go claims monitoring-config at 120.
-      # ROLLBACK: remove this router block (them-go-monitoring-config).
+      # ── /api/v1/admin/monitoring-config — GET + PUT ─────────────────────────────
       - "traefik.http.routers.them-go-monitoring-config.rule=Path(`/api/v1/admin/monitoring-config`)"
       - "traefik.http.routers.them-go-monitoring-config.entrypoints=web"
       - "traefik.http.routers.them-go-monitoring-config.priority=120"
       - "traefik.http.routers.them-go-monitoring-config.service=them-go-bridge-svc"
-      # ── Wave 6: /api/v1/admin/llm-providers/routing/config — GET + PUT ──────
-      # Literal path — does not conflict with /llm-providers/{id} (Python keeps that).
-      # ROLLBACK: remove this router block (them-go-llm-routing-config).
+      # ── /api/v1/admin/llm-providers/routing/config — GET + PUT ─────────────────
       - "traefik.http.routers.them-go-llm-routing-config.rule=Path(`/api/v1/admin/llm-providers/routing/config`)"
       - "traefik.http.routers.them-go-llm-routing-config.entrypoints=web"
       - "traefik.http.routers.them-go-llm-routing-config.priority=120"
       - "traefik.http.routers.them-go-llm-routing-config.service=them-go-bridge-svc"
-      # ── Wave 7: /api/v1/admin/llm-providers CRUD — GET/POST/PATCH/DELETE ─────
-      # Excludes /routing/config (already owned by them-go-llm-routing-config at 120).
-      # The exclusion is belt-and-suspenders: Traefik PathPrefix+!Path beats PathPrefix alone.
-      # ROLLBACK: remove this router block (them-go-llm-providers).
+      # ── /api/v1/admin/llm-providers CRUD — GET/POST/PATCH/DELETE ───────────────
+      # Excludes /routing/config (claimed separately above at same priority).
       - "traefik.http.routers.them-go-llm-providers.rule=PathPrefix(`/api/v1/admin/llm-providers`) && !Path(`/api/v1/admin/llm-providers/routing/config`)"
       - "traefik.http.routers.them-go-llm-providers.entrypoints=web"
       - "traefik.http.routers.them-go-llm-providers.priority=120"
@@ -953,11 +944,17 @@ services:
       - "traefik.http.routers.them-go-agent-bindings.entrypoints=web"
       - "traefik.http.routers.them-go-agent-bindings.priority=121"
       - "traefik.http.routers.them-go-agent-bindings.service=them-go-bridge-svc"
-      # ── A2A server: /a2a — Go A2A JSON-RPC handler (was pointing at dead Python bridge) ──
+      # ── A2A server: /a2a — Go A2A JSON-RPC handler ────────────────────────────
       - "traefik.http.routers.them-go-a2a.rule=PathPrefix(`/a2a`)"
       - "traefik.http.routers.them-go-a2a.entrypoints=web"
       - "traefik.http.routers.them-go-a2a.priority=120"
       - "traefik.http.routers.them-go-a2a.service=them-go-bridge-svc"
+      # ── Catch-all: Python permanently retired — all unmatched routes go to Go ──
+      # Priority 90 is below all explicit Go routers (110–150) so they still win.
+      - "traefik.http.routers.them-go-catchall.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.them-go-catchall.entrypoints=web"
+      - "traefik.http.routers.them-go-catchall.priority=90"
+      - "traefik.http.routers.them-go-catchall.service=them-go-bridge-svc"
       # ── MCP Store: mcp-servers CRUD + app credentials ─────────────────────
       - "traefik.http.routers.them-go-mcp-servers.rule=PathPrefix(`/api/v1/admin/mcp-servers`)"
       - "traefik.http.routers.them-go-mcp-servers.entrypoints=web"

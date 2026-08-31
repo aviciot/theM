@@ -39,8 +39,8 @@ UI: `http://<server-ip>:8088`
 
 Key facts:
 - `them-auth-go` is the sole auth service (HS256 JWT + bcrypt)
-- **`them-bridge` (Python FastAPI) is permanently retired** — behind `profiles: [legacy]`; does NOT start in default or `--profile temporal` mode
-- **`them-worker` (Python Temporal worker) is permanently retired** — behind `profiles: [legacy]`. All WS/SSE sessions now submit to `them-orchestration-go` handled by `them-go-worker`. `them-orchestration` queue is empty. Confirmed stopped 2026-08-30.
+- **`them-bridge` (Python FastAPI) is permanently removed** — not in `docker-compose.yml`
+- **`them-worker` (Python Temporal worker) is permanently removed** — not in `docker-compose.yml`. All WS/SSE sessions submit to `them-orchestration-go` handled by `them-go-worker`. `them-orchestration` queue is empty.
 - `them-go-bridge` is the active API gateway on port 8002
 - `them-go-worker` is the active Temporal worker — **no explicit profile in `docker-compose.dev.yml`**, starts by default
 - `them-agent-runtime` runs 2 replicas (port 9300 internal), profile `[agents]`
@@ -60,8 +60,8 @@ them-postgres         ✅ healthy
 them-redis            ✅ healthy
 them-traefik          ✅ healthy
 temporal-frontend     ✅ (with --profile temporal)
-them-bridge (Python)  ❌ NOT running — profiles: [legacy] — PERMANENTLY RETIRED
-them-worker (Python)  ❌ NOT running — profiles: [legacy] — PERMANENTLY RETIRED (them-orchestration queue empty; all traffic on them-orchestration-go)
+them-bridge (Python)  ❌ REMOVED — not in docker-compose.yml
+them-worker (Python)  ❌ REMOVED — not in docker-compose.yml (them-orchestration queue empty; all traffic on them-orchestration-go)
 them-dag-worker (Go)  ✅ Running — polls canvas-dag-nodes for CanvasAgentWorkflow
 ```
 
@@ -69,7 +69,9 @@ them-dag-worker (Go)  ✅ Running — polls canvas-dag-nodes for CanvasAgentWork
 
 ## Go route ownership (all confirmed via Traefik labels)
 
-All routes below are owned by `them-go-bridge` (`them-go-bridge-svc`, port 8002):
+All routes are owned by `them-go-bridge` (`them-go-bridge-svc`, port 8002).
+A catch-all router at priority 90 (`them-go-catchall`, `PathPrefix /`) ensures all unmatched paths reach Go.
+Explicit routers at priority 110–150 still win over the catch-all.
 
 ### Admin — read
 - `GET /api/v1/admin/agents` (list)
@@ -120,8 +122,6 @@ All routes below are owned by `them-go-bridge` (`them-go-bridge-svc`, port 8002)
 ### Health
 - `GET|HEAD /health/live`, `/health/ready`
 
-### Not yet migrated to Go Traefik (handler exists but route not wired)
-- **`/a2a/*`** — Go handler implemented at `go/internal/a2a/` and mounted in `main.go`, but Traefik router `them-a2a` still points to `them-bridge-svc` (port 8001, Python — dead). **Active bug: `/a2a/` is currently broken.** Fix: redirect `them-a2a` router to `them-go-bridge-svc` in compose labels.
 
 ### Not in Go (no handler or Traefik route)
 - `GET /api/v1/admin/users`, `/roles`, `/teams` — auth admin CRUD (served by `them-auth-service` on port 8701 directly from frontend; no Go handler needed unless we want to proxy it)
@@ -581,8 +581,8 @@ Do NOT begin multiple subsystems in the same session.
 - `go/TEST_INDEX.md` updated in same commit as new Go tests
 - Secrets never in logs — use `cfg.SafeString()`
 - Never `git add .` or `git add -A`
-- **`them-bridge` (Python FastAPI) is permanently retired.** It MUST stay behind `profiles: [legacy]` and must NOT start.
-- **`them-worker` (Python Temporal) is permanently retired.** All WS/SSE sessions submit to `them-orchestration-go` (Go worker). The Python `them-orchestration` queue is empty. `them-worker` must NOT be started.
+- **`them-bridge` (Python FastAPI) has been removed.** It no longer exists in `docker-compose.yml`.
+- **`them-worker` (Python Temporal) has been removed.** It no longer exists in `docker-compose.yml`. All WS/SSE sessions submit to `them-orchestration-go`.
 - **No global LLM key fallback.** Apps with no key get an explicit error.
 - **No secrets in Definition JSONB, Component Definition JSONB, export files, logs, or Temporal history.**
 - **Agent registry Redis key is `them:agents:registry:{tenant_id}`.** Global key must not be written or read.

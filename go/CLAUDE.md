@@ -25,7 +25,7 @@ Before touching any Go code, read:
 
 **the-M Go Gateway** is the Go rewrite of the THEM AI orchestration platform.
 Module: `github.com/aviciot/them` — source at `go/` in the repo root.
-Port: **8002** (runs alongside Python bridge on 8001, behind shared Traefik on 8088).
+Port: **8002** (sole active API gateway, behind Traefik on 8088; Python bridge permanently removed).
 
 Language rules: UI/docs say **the-M**. Code identifiers use **them** / **THE_M_**.
 

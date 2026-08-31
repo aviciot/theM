@@ -1,47 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 const BRIDGE_BASE = process.env.THE_M_API_URL || 'http://them-go-bridge:8002';
-const GO_BRIDGE_BASE = process.env.THE_M_GO_API_URL || 'http://them-go-bridge:8002';
 
-// Paths that only exist in the Go bridge — forward these directly instead of Python.
-// Pattern: substring match on the joined path (no leading slash).
-const GO_ONLY_PREFIXES = [
-  'admin/agent-definitions',
-  'admin/node-types',
-  'admin/transform-functions',
-  'admin/transform-test',
-  'admin/transform-assist',
-  'admin/mcp-servers',
-  'admin/component-definitions',
-  'a2a/',
-];
-// Sub-path patterns that must also go to Go regardless of prefix.
-const GO_ONLY_PATTERNS = [
-  /\/agent-bindings/,
-  /\/agents\/[^/]+\/params/,
-  /\/agents\/[^/]+\/llm-nodes/,
-  /\/provider-keys/,
-  /\/test-llm/,
-  /\/orchestrators\/[^/]+\/llm/,
-  /^apps\/[^/]+\/voice\//,
-];
-
-function resolveBase(path: string): string {
-  if (GO_ONLY_PREFIXES.some(p => path.startsWith(p))) return GO_BRIDGE_BASE;
-  if (GO_ONLY_PATTERNS.some(p => p.test(path))) return GO_BRIDGE_BASE;
-  return BRIDGE_BASE;
-}
-
-// Go routes mounted at root (no /api/v1 prefix) — matched after resolveBase picks Go.
+// Go routes mounted at root (no /api/v1 prefix).
 const GO_ROOT_PATTERNS = [/^apps\/[^/]+\/voice\//, /^a2a\//];
 
 async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
   const token = req.cookies.get('them_access_token')?.value;
   const { path: segments } = await params;
   const path = segments.join('/');
-  const base = resolveBase(path);
-  const isGoRoot = base === GO_BRIDGE_BASE && GO_ROOT_PATTERNS.some(p => p.test(path));
-  const url = `${base}${isGoRoot ? '' : '/api/v1'}/${path}${req.nextUrl.search}`;
+  const isGoRoot = GO_ROOT_PATTERNS.some(p => p.test(path));
+  const url = `${BRIDGE_BASE}${isGoRoot ? '' : '/api/v1'}/${path}${req.nextUrl.search}`;
 
   const contentType = req.headers.get('content-type') || '';
   const isMultipart = contentType.includes('multipart/form-data');
