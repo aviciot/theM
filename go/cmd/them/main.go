@@ -246,8 +246,11 @@ func run() error {
 	// ── 16c. Wire WebSocket handler (/ws/*) ──────────────────────────────────
 	// Auth, EPConfig, gate, session, CreateRun, and temporal start are now owned by
 	// execLifecycle. The WS handler retains only upgrade, frame I/O, and metrics.
+	sessionPubRedis := cache.NewSessionRedisClient(redisCache.Client())
+	sessionPub := dashboard.NewSessionPublisher(sessionPubRedis, log)
 	wsHandler := ws.NewHandler(execLifecycle, bus, authenticator, cfg.InstanceID, log).
-		WithRunStreamer(rsStreamer)
+		WithRunStreamer(rsStreamer).
+		WithSessionPublisher(sessionPub)
 	srv.MountWS(wsHandler.Routes())
 	log.Info("WebSocket handler mounted", "prefix", "/ws")
 

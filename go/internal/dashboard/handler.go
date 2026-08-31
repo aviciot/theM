@@ -52,6 +52,15 @@ type dashRedis interface {
 	HGetAll(ctx context.Context, key string) (map[string]string, error)
 	// Get returns the string value at key, or "" if not found.
 	Get(ctx context.Context, key string) (string, error)
+	// XRevRange returns at most count stream entries newest-first.
+	// end="+" start="-" scans the full stream newest-first.
+	XRevRange(ctx context.Context, key, end, start string, count int64) ([]StreamEntry, error)
+}
+
+// StreamEntry is a minimal Redis stream entry (ID + data field).
+type StreamEntry struct {
+	ID   string
+	Data string
 }
 
 // Handler is the /ws/dashboard WebSocket handler.
@@ -94,6 +103,22 @@ func (a *rueidisAdapter) Get(ctx context.Context, key string) (string, error) {
 		return "", err
 	}
 	return res.ToString()
+}
+
+func (a *rueidisAdapter) XRevRange(ctx context.Context, key, end, start string, count int64) ([]StreamEntry, error) {
+	cmd := a.client.B().Xrevrange().Key(key).End(end).Start(start).Count(count).Build()
+	entries, err := a.client.Do(ctx, cmd).AsXRange()
+	if err != nil {
+		if rueidis.IsRedisNil(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]StreamEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, StreamEntry{ID: e.ID, Data: e.FieldValues["data"]})
+	}
+	return out, nil
 }
 
 // New creates a Handler wrapping a rueidis.Client.
@@ -246,6 +271,9 @@ func (h *Handler) sendSnapshots(ctx context.Context, cw *connWriter, channels []
 		case strings.HasPrefix(ch, "sessions:"):
 			appID := ch[len("sessions:"):]
 			h.sendSessionsSnapshot(ctx, cw, ch, appID)
+		case strings.HasPrefix(ch, "run:"):
+			runID := ch[len("run:"):]
+			h.sendRunSnapshot(ctx, cw, ch, runID)
 		}
 	}
 }
@@ -300,6 +328,28 @@ func (h *Handler) sendSessionsSnapshot(ctx context.Context, cw *connWriter, ch, 
 	}
 	snapshotJSON, _ := json.Marshal(snapshot)
 	_ = cw.writeJSON(map[string]any{"channel": ch, "event": json.RawMessage(snapshotJSON)})
+}
+
+// sendRunSnapshot replays the last 100 events from the run's Redis Stream so
+// late subscribers (e.g. the Monitor tab opened mid-run) catch up immediately.
+// Source: XREVRANGE them:dash:run:{runID}:stream + - COUNT 100
+// Events are reversed back to chronological order before sending.
+func (h *Handler) sendRunSnapshot(ctx context.Context, cw *connWriter, ch, runID string) {
+	key := "them:dash:run:" + runID + ":stream"
+	entries, err := h.redis.XRevRange(ctx, key, "+", "-", 100)
+	if err != nil || len(entries) == 0 {
+		return
+	}
+	// XRevRange returns newest-first — reverse to chronological order.
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+	for _, e := range entries {
+		if e.Data == "" {
+			continue
+		}
+		_ = cw.writeJSON(map[string]any{"channel": ch, "event": json.RawMessage(e.Data)})
+	}
 }
 
 // pingLoop sends a JSON ping every 30s until ctx is cancelled.

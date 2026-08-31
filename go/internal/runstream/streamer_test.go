@@ -56,6 +56,10 @@ func (m *mockStreamer) XRangeN(_ context.Context, _, _, _ string, _ int64) ([]ru
 	return m.oldest, nil
 }
 
+func (m *mockStreamer) XRevRange(_ context.Context, _, _, _ string, _ int64) ([]runstream.StreamEntry, error) {
+	return nil, nil
+}
+
 func (m *mockStreamer) XRead(ctx context.Context, args runstream.XReadArgs) ([]runstream.StreamMessage, error) {
 	m.mu.Lock()
 	// record cursor for continuity assertions

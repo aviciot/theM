@@ -477,6 +477,7 @@ export interface SessionInfo {
   ep_slug: string | null;
   app_id: string | null;
   context_id: string;
+  run_id?: string;
   started_at: string; // ISO8601
   active_agents?: string[];
 }

@@ -98,6 +98,12 @@ func (s *SessionRedisClient) ExecLua(ctx context.Context, script string, keys []
 	return res.ToAny()
 }
 
+// HDel removes the given fields from a hash key.
+func (s *SessionRedisClient) HDel(ctx context.Context, key string, fields ...string) error {
+	cmd := s.client.B().Hdel().Key(key).Field(fields...).Build()
+	return s.client.Do(ctx, cmd).Error()
+}
+
 // Publish sends payload on channel.
 func (s *SessionRedisClient) Publish(ctx context.Context, channel, payload string) error {
 	cmd := s.client.B().Publish().Channel(channel).Message(payload).Build()

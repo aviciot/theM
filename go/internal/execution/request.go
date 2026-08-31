@@ -5,6 +5,7 @@ import (
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/epconfig"
 	"github.com/aviciot/them/internal/gate"
+	"github.com/aviciot/them/internal/session"
 	temporalclient "go.temporal.io/sdk/client"
 )
 
@@ -34,10 +35,11 @@ type ExecutionRequest struct {
 // The gateAdmitted/gateCfg fields are unexported — Release uses them internally;
 // callers should not access gate state directly.
 type ExecutionHandle struct {
-	RunID     string
-	ContextID string
-	SessionID string
-	EPConfig  *epconfig.EPConfig
+	RunID      string
+	ContextID  string
+	SessionID  string
+	InstanceID string
+	EPConfig   *epconfig.EPConfig
 
 	// internal gate state — used by Release only
 	gateAdmitted bool
@@ -55,6 +57,25 @@ type ExecutionHandle struct {
 // workflow. Used in tests to verify that startedOK is set even when downstream
 // steps (e.g. UpdateRunStatus) fail — the workflow is running regardless.
 func (h *ExecutionHandle) IsStartedOK() bool { return h.startedOK }
+
+// SessionInfo builds a session.SessionInfo from the handle's resolved fields.
+// Used by protocol handlers to publish session lifecycle events to the dashboard.
+func (h *ExecutionHandle) SessionInfo() session.SessionInfo {
+	cfg := h.EPConfig
+	if cfg == nil {
+		cfg = &epconfig.EPConfig{}
+	}
+	return session.SessionInfo{
+		SessionID:        h.SessionID,
+		InstanceID:       h.InstanceID,
+		OrchestratorName: cfg.OrchestratorName,
+		EPSlug:           cfg.EPSlug,
+		AppID:            cfg.AppID,
+		TenantID:         cfg.TenantID,
+		ContextID:        h.ContextID,
+		RunID:            h.RunID,
+	}
+}
 
 // ExecutionResult is the workflow outcome for callers that block synchronously (e.g. A2A).
 // Streaming handlers (WS, SSE) iterate events while calling wfRun.Get themselves.

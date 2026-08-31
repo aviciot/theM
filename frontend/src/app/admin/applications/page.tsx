@@ -8,6 +8,7 @@ import { CanvasBuilderView } from './components/CanvasBuilderView';
 import { RuntimeView } from './components/RuntimeView';
 import { SessionsView } from './components/SessionsView';
 import { MCPCredentialsView } from './components/MCPCredentialsView';
+import { MonitorView } from './components/MonitorView';
 import { ListView } from './components/ListView';
 
 // ── Page root ─────────────────────────────────────────────────────────────────
@@ -15,11 +16,12 @@ export default function ApplicationsPage() {
   const [list, setList] = useState<Application[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'list' | 'definition' | 'sessions' | 'runtime' | 'mcp-credentials'>('list');
+  const [view, setView] = useState<'list' | 'definition' | 'sessions' | 'runtime' | 'mcp-credentials' | 'monitor'>('list');
   const [definitionApp, setDefinitionApp] = useState<Application | null>(null);
   const [sessionsApp, setSessionsApp] = useState<Application | null>(null);
   const [runtimeApp, setRuntimeApp] = useState<Application | null>(null);
   const [mcpApp, setMcpApp] = useState<Application | null>(null);
+  const [monitorApp, setMonitorApp] = useState<Application | null>(null);
   const [token, setToken] = useState<string | null>(null);
   useEffect(() => {
     fetch('/api/auth/token').then(r => r.ok ? r.json() : null).then(d => { if (d?.token) setToken(d.token); }).catch(() => {});
@@ -102,6 +104,12 @@ export default function ApplicationsPage() {
     setSessionsApp(null);
     setRuntimeApp(null);
     setMcpApp(null);
+    setMonitorApp(null);
+  }
+
+  function openMonitor(app: Application) {
+    setMonitorApp(app);
+    setView('monitor');
   }
 
   function openMCPCredentials(app: Application) {
@@ -117,6 +125,19 @@ export default function ApplicationsPage() {
   function openRuntime(app: Application) {
     setRuntimeApp(app);
     setView('runtime');
+  }
+
+  if (view === 'monitor' && monitorApp) {
+    return (
+      <AuthGuard>
+        <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
+          <Sidebar />
+          <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+            <MonitorView app={monitorApp} token={token} onBack={backToList} />
+          </div>
+        </div>
+      </AuthGuard>
+    );
   }
 
   if (view === 'mcp-credentials' && mcpApp) {
@@ -205,6 +226,7 @@ export default function ApplicationsPage() {
           onSessions={openSessions}
           onRuntime={openRuntime}
           onMCPCredentials={openMCPCredentials}
+          onMonitor={openMonitor}
           onToggle={handleToggle}
           onDelete={handleDelete}
           onReload={load}

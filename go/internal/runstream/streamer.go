@@ -99,6 +99,9 @@ type RedisStreamer interface {
 	XRangeN(ctx context.Context, key, start, stop string, count int64) ([]StreamEntry, error)
 	// XRead blocks (per args.Block) for entries after the given cursor(s).
 	XRead(ctx context.Context, args XReadArgs) ([]StreamMessage, error)
+	// XRevRange returns at most count entries in reverse order from end to start.
+	// Use "+" for end and "-" for start to scan newest-first (matches Redis XREVRANGE key end start).
+	XRevRange(ctx context.Context, key, end, start string, count int64) ([]StreamEntry, error)
 }
 
 // StreamerOptions configures replay and live reads.

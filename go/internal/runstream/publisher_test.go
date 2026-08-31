@@ -167,6 +167,10 @@ func (b *bridgePublisher) XRangeN(_ context.Context, _, _, _ string, count int64
 	return out, nil
 }
 
+func (b *bridgePublisher) XRevRange(_ context.Context, _, _, _ string, _ int64) ([]runstream.StreamEntry, error) {
+	return nil, nil
+}
+
 func (b *bridgePublisher) XRead(ctx context.Context, args runstream.XReadArgs) ([]runstream.StreamMessage, error) {
 	// For the round-trip test we return no new entries after replay is done;
 	// context cancellation stops the live loop.

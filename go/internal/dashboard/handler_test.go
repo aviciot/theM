@@ -63,6 +63,10 @@ func (f *fakeRedis) Get(_ context.Context, key string) (string, error) {
 	return f.gets[key], nil
 }
 
+func (f *fakeRedis) XRevRange(_ context.Context, _, _, _ string, _ int64) ([]dashboard.StreamEntry, error) {
+	return nil, nil
+}
+
 func (f *fakeRedis) queueMessage(channel, payload string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

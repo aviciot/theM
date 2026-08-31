@@ -228,6 +228,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		AppID:            resolvedCfg.AppID,
 		TenantID:         resolvedCfg.TenantID,
 		ContextID:        contextID,
+		RunID:            runID,
 		StartedAt:        time.Now().UTC().Format(time.RFC3339),
 	}
 	if lc.sessions != nil {
@@ -303,6 +304,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 		RunID:        runID,
 		ContextID:    contextID,
 		SessionID:    sessionID,
+		InstanceID:   req.InstanceID,
 		EPConfig:     resolvedCfg,
 		gateCfg:      gateCfg,
 		gateAdmitted: gateAdmitted,

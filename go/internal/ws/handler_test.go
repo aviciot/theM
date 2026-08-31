@@ -275,6 +275,10 @@ func (f *fakeRunStreamer) XRangeN(_ context.Context, _, _, _ string, _ int64) ([
 	return nil, nil
 }
 
+func (f *fakeRunStreamer) XRevRange(_ context.Context, _, _, _ string, _ int64) ([]runstream.StreamEntry, error) {
+	return nil, nil
+}
+
 func (f *fakeRunStreamer) XRead(ctx context.Context, _ runstream.XReadArgs) ([]runstream.StreamMessage, error) {
 	<-ctx.Done()
 	return nil, nil

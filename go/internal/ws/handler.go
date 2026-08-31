@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
+	"github.com/aviciot/them/internal/dashboard"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/execution"
@@ -99,6 +100,7 @@ type Handler struct {
 	instanceID    string
 	logger        *slog.Logger
 	runStreamer   runstream.RedisStreamer
+	sessionPub    *dashboard.SessionPublisher
 }
 
 // NewHandler creates a Handler. All admission/session/gate logic is delegated
@@ -127,6 +129,13 @@ func NewHandler(
 // execution.Lifecycle. When not attached, runEvents fails fast at connect time.
 func (h *Handler) WithRunStreamer(rc runstream.RedisStreamer) *Handler {
 	h.runStreamer = rc
+	return h
+}
+
+// WithSessionPublisher attaches the dashboard session publisher that broadcasts
+// session_start/session_end events to the /ws/dashboard subscribers.
+func (h *Handler) WithSessionPublisher(pub *dashboard.SessionPublisher) *Handler {
+	h.sessionPub = pub
 	return h
 }
 
@@ -247,6 +256,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"run_id", handle.RunID,
 	)
 
+	// Publish session_start to the dashboard so MonitorView subscribers see it.
+	if h.sessionPub != nil {
+		h.sessionPub.PublishSessionStart(r.Context(), handle.SessionInfo())
+	}
+
 	defer func() {
 		metrics.ActiveSessions.WithLabelValues(epType).Dec()
 		metrics.SessionsEnded.WithLabelValues(epType, "client_disconnect").Inc()
@@ -257,6 +271,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"tenant_id", handle.EPConfig.TenantID,
 			"session_id", handle.SessionID,
 		)
+		// Publish session_end before Release so the dashboard WS sees it while
+		// the session is still technically valid.
+		if h.sessionPub != nil {
+			cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cleanCancel()
+			h.sessionPub.PublishSessionEnd(cleanCtx, handle.SessionID, handle.EPConfig.AppID)
+		}
 		h.lc.Release(handle)
 	}()
 

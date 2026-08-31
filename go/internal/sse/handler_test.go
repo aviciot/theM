@@ -239,6 +239,10 @@ func (f *fakeRunStreamer) XRangeN(_ context.Context, _, _, _ string, _ int64) ([
 	return nil, nil
 }
 
+func (f *fakeRunStreamer) XRevRange(_ context.Context, _, _, _ string, _ int64) ([]runstream.StreamEntry, error) {
+	return nil, nil
+}
+
 func (f *fakeRunStreamer) XRead(ctx context.Context, _ runstream.XReadArgs) ([]runstream.StreamMessage, error) {
 	<-ctx.Done()
 	return nil, nil
@@ -1004,6 +1008,10 @@ func (s *orderingStreamer) XRange(_ context.Context, _, start, _ string) ([]runs
 }
 
 func (s *orderingStreamer) XRangeN(_ context.Context, _, _, _ string, _ int64) ([]runstream.StreamEntry, error) {
+	return nil, nil
+}
+
+func (s *orderingStreamer) XRevRange(_ context.Context, _, _, _ string, _ int64) ([]runstream.StreamEntry, error) {
 	return nil, nil
 }
 

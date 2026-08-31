@@ -102,5 +102,20 @@ func convertXRange(entries []rueidis.XRangeEntry) []runstream.StreamEntry {
 	return out
 }
 
+// XRevRange returns at most count entries in reverse order from end to start.
+// Pass "+" for end and "-" for start to scan the full stream newest-first.
+// Note: rueidis builder order is Key→End→Start (matches Redis XREVRANGE key end start).
+func (r *RunStreamerRedisClient) XRevRange(ctx context.Context, key, end, start string, count int64) ([]runstream.StreamEntry, error) {
+	cmd := r.client.B().Xrevrange().Key(key).End(end).Start(start).Count(count).Build()
+	entries, err := r.client.Do(ctx, cmd).AsXRange()
+	if err != nil {
+		if rueidis.IsRedisNil(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return convertXRange(entries), nil
+}
+
 // compile-time interface check.
 var _ runstream.RedisStreamer = (*RunStreamerRedisClient)(nil)
