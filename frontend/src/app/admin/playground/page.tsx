@@ -28,7 +28,7 @@ function targetStorageKey(t: ConnTarget): string {
 function targetWsUrl(t: ConnTarget, token: string): string {
   const base = getBridgeWs();
   if (t.kind === 'orchestrator') return `${base}/ws/orchestrate/${t.name}?token=${encodeURIComponent(token)}`;
-  return `${base}/apps/${t.slug}/ws?token=${encodeURIComponent(token)}`;
+  return `${base}/apps/${t.appSlug}/${t.slug}/ws?token=${encodeURIComponent(token)}`;
 }
 
 // Tab colour palette — cycles for each open tab
@@ -2087,7 +2087,7 @@ function PlaygroundInner() {
   const sentCount = useRef(0);
 
   // WebRTC slugs associated with any orchestrator (for the voice button)
-  const [webrtcSlugs, setWebrtcSlugs] = useState<Record<string, string>>({});
+  const [webrtcSlugs, setWebrtcSlugs] = useState<Record<string, { appSlug: string; epSlug: string }>>({});
 
   // Load applications once
   useEffect(() => {
@@ -2104,13 +2104,13 @@ function PlaygroundInner() {
           break;
         }
       }
-      // Build webrtcSlugs map: orchName → first webrtc EP slug
-      const m: Record<string, string> = {};
+      // Build webrtcSlugs map: orchName → { appSlug, epSlug } for first webrtc EP
+      const m: Record<string, { appSlug: string; epSlug: string }> = {};
       for (const a of apps) {
         if (!a.enabled) continue;
         const ep = a.entry_points.find(e => e.enabled && e.entry_point_type === 'webrtc');
         const aoName = a.app_orchestrators?.[0]?.name;
-        if (ep && aoName && !m[aoName]) m[aoName] = ep.slug;
+        if (ep && aoName && !m[aoName]) m[aoName] = { appSlug: a.slug ?? a.id, epSlug: ep.slug };
       }
       setWebrtcSlugs(m);
     }).catch(() => {});
@@ -2137,7 +2137,7 @@ function PlaygroundInner() {
   };
 
   // WebRTC slug for the active tab's orchestrator
-  const activeWebrtcSlug = useMemo(() => {
+  const activeWebrtc = useMemo(() => {
     if (!activeTab) return null;
     const name = activeTab.kind === 'orchestrator' ? activeTab.name : activeTab.orchName;
     return webrtcSlugs[name] ?? null;
@@ -2229,15 +2229,15 @@ function PlaygroundInner() {
 
             {/* WebRTC voice room button */}
             <button
-              onClick={() => activeWebrtcSlug && window.open(`/apps/${activeWebrtcSlug}/voice`, '_blank', 'noopener')}
-              disabled={!activeWebrtcSlug}
-              title={activeWebrtcSlug ? `Open voice room (${activeWebrtcSlug})` : 'No WebRTC app configured for this target'}
-              style={{ width: 34, height: 34, borderRadius: 9, border: '1.5px solid', borderColor: activeWebrtcSlug ? 'rgba(99,202,183,0.6)' : 'var(--tm-border)', background: activeWebrtcSlug ? 'rgba(99,202,183,0.08)' : 'var(--tm-surface)', cursor: activeWebrtcSlug ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, opacity: activeWebrtcSlug ? 1 : 0.35 }}
+              onClick={() => activeWebrtc && window.open(`/apps/${activeWebrtc.appSlug}/${activeWebrtc.epSlug}/voice`, '_blank', 'noopener')}
+              disabled={!activeWebrtc}
+              title={activeWebrtc ? `Open voice room (${activeWebrtc.appSlug}/${activeWebrtc.epSlug})` : 'No WebRTC app configured for this target'}
+              style={{ width: 34, height: 34, borderRadius: 9, border: '1.5px solid', borderColor: activeWebrtc ? 'rgba(99,202,183,0.6)' : 'var(--tm-border)', background: activeWebrtc ? 'rgba(99,202,183,0.08)' : 'var(--tm-surface)', cursor: activeWebrtc ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, opacity: activeWebrtc ? 1 : 0.35 }}
             >
               <svg width="18" height="18" viewBox="0 0 100 100" fill="none">
-                <circle cx="50" cy="28" r="22" fill={activeWebrtcSlug ? '#63cab7' : 'currentColor'} opacity="0.9"/>
-                <circle cx="30" cy="65" r="22" fill={activeWebrtcSlug ? '#f08030' : 'currentColor'} opacity="0.9"/>
-                <circle cx="70" cy="65" r="22" fill={activeWebrtcSlug ? '#63cab7' : 'currentColor'} opacity="0.7"/>
+                <circle cx="50" cy="28" r="22" fill={activeWebrtc ? '#63cab7' : 'currentColor'} opacity="0.9"/>
+                <circle cx="30" cy="65" r="22" fill={activeWebrtc ? '#f08030' : 'currentColor'} opacity="0.9"/>
+                <circle cx="70" cy="65" r="22" fill={activeWebrtc ? '#63cab7' : 'currentColor'} opacity="0.7"/>
                 <circle cx="50" cy="28" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
                 <circle cx="30" cy="65" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
                 <circle cx="70" cy="65" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
