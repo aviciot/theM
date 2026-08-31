@@ -10,13 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-002531a  feat: frontend two-segment URL migration (app_slug/ep_slug)
+45a0e23  feat(a2a): migrate EP server to official a2a-go/v2 SDK — 100% A2A v1.0 wire format
+7af3e1c  fix(monitor): wire SessionPublisher into A2A handler so A2A sessions appear in Monitor
+9d407bd  feat(monitor): add Live Monitor tab — realtime session + run event feed
+01d5165  fix(sse,a2a): forward sub-agent file artifacts as artifact-update events
 (prior)  feat: app_slug migration — DB 048, Go handlers, Traefik 7 routers
-(prior)  feat(stream_out): Phase 5-D — StreamOut node implemented, 10 tests SO-1..10
-3b56ef8  fix(a2a-call): Phase 5-C gap fixes — binding required, stable UUIDs, error sanitization, E2E tests
-89c7e67  feat(a2a-call): Phase 5-C — A2ACaller abstraction, depth tracking, HumanWait+local validation
-0487797  fix(hitl): Phase 5-B hardening — auth, state model, wait_token, loop body, reconnect
-3b1052f  feat(hitl): Phase 5-B — HumanWait async submit, Redis handle store, signal endpoint
 ```
 
 ---
@@ -153,7 +151,8 @@ All migrations applied through `db/048_application_slug.sql`:
 ## Test state
 
 ```
-go test ./...  — 42 packages, 0 failures (verified 2026-08-30, Phase 5-C)
+go test ./...  — 44 packages, 0 failures (verified 2026-08-31, A2A SDK migration)
+S1-14: 30 A2A server tests — 3 new compliance tests A2A-WF01 (SendMessage result shape), A2A-WF02 (token streaming), A2A-WF03 (artifact-update wire format); fixtures updated for SDK method names (SendMessage/SendStreamingMessage, TASK_STATE_COMPLETED)
 S1-72: 20 EP compiler tests (+PC-LOOP-1..6: ValidateLoopBodies + compileLoopBodyPlan Branch/Join + resolveLoopOuterNext)
 S1-73: 33 LocalExecutor tests (+EP-LOOP-6/7/8: BranchInsideBody, IterationIsolation, ScopedAccumulation)
 S1-74: 3 DAG E2E smoke tests
@@ -451,6 +450,24 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 - `go/internal/agentgen/executor.go` — `ExecutionBackend` interface
 - `go/internal/agentgen/local_executor.go` — `LocalExecutor` with goroutine fan-out + per-goroutine `clone()` + `joinState` + `drainFirstCausalError` + `deepCopyVars`
 - `go/internal/agentgen/nodes.go` — canvas nodes; all fan-out-capable nodes have `MaxOut: 0` (unlimited)
+
+---
+
+## A2A EP SDK Migration — COMPLETE (commit 45a0e23, 2026-08-31)
+
+### What was done
+- `go/internal/a2a/server.go`: rewritten to use `a2asrv.NewJSONRPCHandler` — 100% A2A v1.0 wire format
+- `go/internal/a2a/executor.go` (new): `orchExecutorFunc` bridges `Lifecycle.Start` + run-stream bus to `iter.Seq2[a2a.Event, error]`; maps `token/file/done/error` bus events to SDK types
+- `go/internal/a2a/card.go` (new): `buildSDKAgentCard` from DB row or fallback; served via `StaticAgentCardHandler`
+- `go/cmd/them/main.go`: wires `RedisA2ATaskStore` via `WithTaskStore` + `WithSessionPublisher` retained
+- `go/internal/a2a/server_test.go`: all fixtures updated for `SendMessage`/`SendStreamingMessage` and `TASK_STATE_COMPLETED`; 3 new compliance tests A2A-WF01/WF02/WF03
+- `go/TEST_INDEX.md`: count 27→30, 3 new compliance rows
+
+### Breaking change for external A2A clients
+External clients calling `/a2a/{app_slug}/{ep_slug}` MUST update:
+- Method name: `message/send` → `SendMessage`; `message/stream` → `SendStreamingMessage`
+- TaskState: `"completed"` → `"TASK_STATE_COMPLETED"`, `"failed"` → `"TASK_STATE_FAILED"`
+- Internal callers (agentregistry) already use `SendMessage`/`SendStreamingMessage` — unaffected.
 
 ---
 
