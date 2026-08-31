@@ -28,6 +28,8 @@ export function ListView({
 }) {
   const [renameApp, setRenameApp] = useState<Application | null>(null);
   const [renameName, setRenameName] = useState('');
+  const [renameSlug, setRenameSlug] = useState('');
+  const [slugManual, setSlugManual] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [listToast, setListToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
@@ -36,21 +38,32 @@ export function ListView({
     setTimeout(() => setListToast(null), 3000);
   }
 
+  function slugify(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || '';
+  }
+
   function openRename(app: Application) {
     setRenameApp(app);
     setRenameName(app.name);
+    setRenameSlug(app.slug ?? slugify(app.name));
+    setSlugManual(false);
+  }
+
+  function handleRenameNameChange(name: string) {
+    setRenameName(name);
+    if (!slugManual) setRenameSlug(slugify(name));
   }
 
   async function commitRename() {
     if (!renameApp || !renameName.trim()) return;
     setRenaming(true);
     try {
-      await themApi.updateApplication(renameApp.id, { name: renameName.trim(), enabled: renameApp.enabled });
+      await themApi.updateApplication(renameApp.id, { name: renameName.trim(), slug: renameSlug.trim() || undefined, enabled: renameApp.enabled });
       setRenameApp(null);
       showListToast('Renamed', true);
       onReload();
-    } catch {
-      showListToast('Rename failed', false);
+    } catch (e) {
+      showListToast(e instanceof Error && e.message.includes('409') ? 'Slug already in use' : 'Rename failed', false);
     } finally {
       setRenaming(false);
     }
@@ -252,13 +265,22 @@ export function ListView({
             onClick={e => e.stopPropagation()}
           >
             <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 16 }}>Rename Application</div>
+            <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>Name</div>
             <input
               autoFocus
               value={renameName}
-              onChange={e => setRenameName(e.target.value)}
+              onChange={e => handleRenameNameChange(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenameApp(null); }}
               placeholder="Application name"
-              style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: C.surfaceContainer, color: C.text, fontSize: 14, outline: 'none', boxSizing: 'border-box', marginBottom: 16 }}
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: C.surfaceContainer, color: C.text, fontSize: 14, outline: 'none', boxSizing: 'border-box', marginBottom: 12 }}
+            />
+            <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>URL slug <span style={{ color: '#64748b' }}>(used in /apps/{'{slug}'}/…)</span></div>
+            <input
+              value={renameSlug}
+              onChange={e => { setRenameSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, '')); setSlugManual(true); }}
+              onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenameApp(null); }}
+              placeholder="url-slug"
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: C.surfaceContainer, color: '#a5b4fc', fontSize: 13, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', marginBottom: 16 }}
             />
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button onClick={() => setRenameApp(null)} disabled={renaming} style={{ padding: '8px 18px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 13 }}>Cancel</button>
