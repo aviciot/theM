@@ -30,9 +30,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aviciot/them/internal/dashboard"
 	"github.com/aviciot/them/internal/domain"
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/execution"
@@ -172,6 +174,7 @@ type Server struct {
 	instanceID    string
 	logger        *slog.Logger
 	runStreamer    runstream.RedisStreamer
+	sessionPub    *dashboard.SessionPublisher
 	publicURL     string     // externally-reachable base URL, e.g. "https://example.com"
 	cardLoader    CardLoader // optional; when nil serves a minimal fallback card
 }
@@ -211,6 +214,13 @@ func (s *Server) WithRunStreamer(rc runstream.RedisStreamer) *Server {
 // the base URL from the incoming request's scheme and Host header.
 func (s *Server) WithPublicURL(u string) *Server {
 	s.publicURL = strings.TrimRight(u, "/")
+	return s
+}
+
+// WithSessionPublisher attaches a SessionPublisher so A2A sessions are visible
+// in the dashboard Monitor view.
+func (s *Server) WithSessionPublisher(pub *dashboard.SessionPublisher) *Server {
+	s.sessionPub = pub
 	return s
 }
 
@@ -374,6 +384,15 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, req r
 		return
 	}
 	defer s.lc.Release(h)
+	if s.sessionPub != nil {
+		s.sessionPub.PublishSessionStart(ctx, h.SessionInfo())
+		sid, appID := h.SessionID, h.EPConfig.AppID
+		defer func() {
+			cleanCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			s.sessionPub.PublishSessionEnd(cleanCtx, sid, appID)
+		}()
+	}
 
 	s.logger.Info("a2a: session started",
 		"app_slug", appSlug,
@@ -517,6 +536,15 @@ func (s *Server) handleMessageStream(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	defer s.lc.Release(h)
+	if s.sessionPub != nil {
+		s.sessionPub.PublishSessionStart(ctx, h.SessionInfo())
+		sid, appID := h.SessionID, h.EPConfig.AppID
+		defer func() {
+			cleanCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			s.sessionPub.PublishSessionEnd(cleanCtx, sid, appID)
+		}()
+	}
 
 	// All pre-stream errors above return clean HTTP responses.
 	// After writing SSE headers, all errors become SSE terminal events.
