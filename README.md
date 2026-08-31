@@ -264,6 +264,153 @@ Each phase delivers standalone value. The platform deepens as adoption grows.
 
 ---
 
+## Deployment Architecture
+
+the-M is one product that supports multiple enterprise deployment models. The core architecture, agent definitions, governance model, and runtime contract are identical across all of them. What changes is where the components run — not how they work.
+
+> **Control can be centralized while execution remains close to the customer's data.**
+
+### Control Plane vs. Execution Plane
+
+the-M is logically split into two separable layers:
+
+**Control Plane** — manages definitions, policies, and visibility. Can run centrally.
+
+| Component | Role |
+|---|---|
+| Management UI | Admin dashboard, canvas, observability |
+| Agent & MCP Registry | Definitions, versions, ownership, health |
+| Identity / RBAC | Users, roles, teams, permissions, IdP integration |
+| Governance & Policy | Per-agent, per-tool, per-application rules |
+| Configuration | Orchestrators, entry points, model providers |
+| Audit Log | Immutable record of all significant actions |
+| Global Observability | Traces, costs, usage across all runtimes |
+
+**Execution Plane** — runs agents, calls models and tools, accesses data. Can run anywhere.
+
+| Component | Role |
+|---|---|
+| Agent Runtime | Hosts and executes A2A agents |
+| Temporal Workers | Durable orchestration activities |
+| MCP Service | Tool supervisor and executor |
+| Model calls | LLM API calls to local or external providers |
+| Workflow execution | DAG and canvas workflow runner |
+| Local integrations | Internal APIs, databases, private MCP servers |
+
+This separation is the architectural foundation for all deployment models below.
+
+---
+
+### Deployment Models
+
+```mermaid
+flowchart TD
+    CP["the-M CONTROL PLANE\nRegistry · Policy · RBAC · UI · Audit · Observability"]
+
+    CP --> ST["Multi-Tenant SaaS Runtime\nShared managed infrastructure"]
+    CP --> DS["Dedicated SaaS Runtime\nIsolated managed instance"]
+    CP --> CC["Customer Cloud Runtime\nAWS / Azure / GCP (BYOC)"]
+    CP --> OP["On-Prem / Private Cloud Runtime\nCustomer-controlled infrastructure"]
+
+    ST --> ST_A["Agents · MCP · Models"]
+    DS --> DS_A["Agents · MCP · Models"]
+    CC --> CC_A["Agents · MCP\nPrivate Data · Internal APIs"]
+    OP --> OP_A["Agents · MCP · Local Models\nInternal Systems · Air-gapped Data"]
+```
+
+---
+
+#### 1. Multi-Tenant SaaS
+
+Multiple customers share the same managed platform instance with strong application-level tenant isolation. Each tenant has its own agents, entry points, usage buckets, and policies. No dedicated infrastructure per customer.
+
+- Fast onboarding — no infrastructure provisioning required
+- Centralized operations and upgrades
+- Full tenant isolation enforced at the application boundary
+- Suitable for customers without dedicated infrastructure requirements
+
+---
+
+#### 2. Dedicated SaaS
+
+A fully isolated the-M environment per customer — separate compute, storage, secrets, and runtime boundaries — still managed and operated centrally.
+
+- Stronger isolation than multi-tenant without customer ops overhead
+- Separate database, Redis, and Temporal namespaces per customer
+- Suitable for larger enterprises requiring infrastructure-level separation
+- Same platform, different deployment boundary
+
+---
+
+#### 3. BYOC — Customer Cloud
+
+the-M components deploy inside the customer's own cloud account (AWS, Azure, GCP). Useful when data, agents, MCP servers, or integrations must remain within the customer's cloud boundary.
+
+- Customer owns the cloud account; the-M operates the platform within it
+- Agents and MCP servers run alongside private cloud resources
+- Data does not leave the customer's cloud environment
+- Control plane management experience is preserved
+
+---
+
+#### 4. On-Prem / Private Cloud
+
+Full deployment inside customer-controlled infrastructure. No external dependencies required. Designed for banks, government agencies, regulated industries, and security-sensitive organizations.
+
+- Runs entirely within the customer's network perimeter
+- Supports private or locally-hosted models — no public model API calls required
+- Compatible with internal databases, private MCP servers, and air-gapped environments
+- Full audit trail and governance layer operates within the perimeter
+- Supports IdP integration with Entra ID, Okta, SAML, OIDC
+
+---
+
+#### 5. Hybrid — Control Plane + Customer Runtime
+
+The most architecturally significant model for regulated enterprises. the-M's Control Plane runs centrally (or in a dedicated SaaS instance) and manages all definitions, policies, and audit. The Execution Plane — workers, agent runtimes, MCP services — runs inside the customer's infrastructure, close to private data and internal systems.
+
+```mermaid
+flowchart LR
+    subgraph Central["the-M Control Plane (central or dedicated SaaS)"]
+        REG["Agent & MCP Registry"]
+        POL["Policy & RBAC"]
+        AUD["Audit & Observability"]
+        UI["Management UI"]
+    end
+
+    subgraph Customer["Customer Environment (on-prem or BYOC)"]
+        WRK["Temporal Workers"]
+        RT["Agent Runtime"]
+        MCP["MCP Service"]
+        DB[("Internal Databases\nPrivate APIs\nLocal Models")]
+    end
+
+    Central -- "Definitions · Policy · Config" --> Customer
+    Customer -- "Traces · Audit events · Usage" --> Central
+    WRK --> DB
+    RT --> DB
+    MCP --> DB
+```
+
+Sensitive data never leaves the customer environment. Agent definitions, governance policies, and RBAC are authored centrally and pushed to the runtime. Execution results and audit events flow back to the control plane for observability — without exposing underlying data.
+
+**Example:** A bank using Microsoft Entra ID and internal Oracle databases deploys Temporal workers and agent runtimes inside its private cloud. the-M's control plane manages which agents exist, which tools they may call, and who may invoke them. The workers execute close to the data. The bank's security team sees a complete audit trail in the central UI without raw data leaving their perimeter.
+
+---
+
+### One Platform, Multiple Deployment Models
+
+Agent definitions, governance rules, and runtime contracts are identical across all deployment models. A customer can:
+
+1. Start on **Multi-Tenant SaaS** for fast onboarding
+2. Migrate to **Dedicated SaaS** as usage grows
+3. Move the execution plane to **BYOC** when data-residency requirements arrive
+4. Shift to **Hybrid or On-Prem** when regulatory or security requirements demand it
+
+No agent rebuilding. No policy redesign. The deployment model changes; the platform does not.
+
+---
+
 ## Architecture Overview
 
 ```mermaid
