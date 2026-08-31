@@ -1,80 +1,27 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus } from '@/lib/api';
-import { C, glass, PROVIDER_LIST, RUNTIME_MODELS, STT_PROVIDERS, STT_MODELS, TTS_PROVIDERS, TTS_VOICES_OPENAI, TTS_MODELS_OPENAI } from '../constants';
+import { C, PROVIDER_LIST, RUNTIME_MODELS } from '../constants';
+import { Section, sharedField, sharedLbl, badge, makeSaveBtn } from './RuntimeShared';
+import { EPSections } from './RuntimeEPSections';
+import { CanvasAgentsSection } from './RuntimeAgentsSection';
+import type { VoiceDraft } from './RuntimeVoicePanel';
 
-// ── Collapsible section wrapper ───────────────────────────────────────────────
-function Section({ title, subtitle, icon, children, defaultOpen = true, accent }: {
-  title: string; subtitle?: string; icon: string; children: React.ReactNode;
-  defaultOpen?: boolean; accent?: string;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div style={{ ...glass, borderRadius: 12, marginBottom: 16, overflow: 'hidden' }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          width: '100%', display: 'flex', alignItems: 'center', gap: 12,
-          padding: '14px 20px', background: 'none', border: 'none', cursor: 'pointer',
-          borderBottom: open ? '1px solid rgba(255,255,255,0.06)' : 'none',
-        }}
-      >
-        <span className="material-symbols-outlined" style={{ fontSize: 18, color: accent ?? C.purple, flexShrink: 0 }}>{icon}</span>
-        <div style={{ flex: 1, textAlign: 'left' }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{title}</div>
-          {subtitle && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{subtitle}</div>}
-        </div>
-        <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.textMuted, transition: 'transform 0.15s', transform: open ? 'rotate(180deg)' : 'none' }}>
-          expand_more
-        </span>
-      </button>
-      {open && <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>{children}</div>}
-    </div>
-  );
-}
+type KeyStatus   = { provider: string; key_set: boolean; key_hint?: string };
+type OrchMeta    = { id: string; name: string; displayName: string };
+type EPLLMDraft  = { provider: string; model: string };
+type EPSumDraft  = { memoryEnabled: boolean; summarizeEveryN: number; fallbackN: number; provider: string; model: string };
+type NodeLLMDraft = { provider: string; model: string };
 
-// ── Agent section wrapper (accent border left) ────────────────────────────────
-function AgentSection({ slug, children, defaultOpen = true }: { slug: string; children: React.ReactNode; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div style={{ borderRadius: 10, border: '1px solid rgba(208,188,255,0.18)', marginBottom: 12, overflow: 'hidden', background: 'rgba(208,188,255,0.03)' }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'none', border: 'none', cursor: 'pointer', borderBottom: open ? '1px solid rgba(208,188,255,0.1)' : 'none' }}
-      >
-        <span className="material-symbols-outlined" style={{ fontSize: 15, color: C.purple }}>smart_toy</span>
-        <span style={{ flex: 1, textAlign: 'left', fontSize: 12, fontWeight: 700, color: C.text, fontFamily: 'JetBrains Mono, monospace' }}>{slug}</span>
-        <span className="material-symbols-outlined" style={{ fontSize: 16, color: C.textMuted, transition: 'transform 0.15s', transform: open ? 'rotate(180deg)' : 'none' }}>expand_more</span>
-      </button>
-      {open && <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>{children}</div>}
-    </div>
-  );
-}
-
-// ── Sub-section label inside an agent card ────────────────────────────────────
-function AgentSubLabel({ icon, label }: { icon: string; label: string }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-      <span className="material-symbols-outlined" style={{ fontSize: 13, color: C.textMuted }}>{icon}</span>
-      <span style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em' }}>{label}</span>
-    </div>
-  );
-}
-
-// ── RuntimeView ───────────────────────────────────────────────────────────────
-export function RuntimeView({ app, onBack }: {
-  app: Application; onBack: () => void;
-}) {
+export function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) {
   const emptyRuntime = { max_concurrent_sessions: null, rate_limit_rpm: null, blocked_tokens: [], blocked_user_ids: [], session_timeout_minutes: null };
-  const [cfg, setCfg]     = useState<import('@/lib/api').AppRuntimeConfig>(app.runtime_config ?? emptyRuntime);
+  const [cfg, setCfg]         = useState<import('@/lib/api').AppRuntimeConfig>(app.runtime_config ?? emptyRuntime);
   const [saving, setSaving]   = useState(false);
   const [saved, setSaved]     = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [tokensInput, setTokensInput] = useState((app.runtime_config?.blocked_tokens ?? []).join('\n'));
   const [usersInput,  setUsersInput]  = useState((app.runtime_config?.blocked_user_ids ?? []).join(', '));
 
-  // Provider keys
-  type KeyStatus = { provider: string; key_set: boolean; key_hint?: string };
   const [keyStatuses, setKeyStatuses] = useState<KeyStatus[]>([]);
   const [keyInputs,   setKeyInputs]   = useState<Record<string, string>>({});
   const [keySaving,   setKeySaving]   = useState<string | null>(null);
@@ -82,28 +29,13 @@ export function RuntimeView({ app, onBack }: {
   const [keyTestMsg,  setKeyTestMsg]  = useState<Record<string, string>>({});
   const [keyTesting,  setKeyTesting]  = useState<string | null>(null);
 
-  // Orchestrator metadata — fetched fresh on mount so we always reflect the
-  // latest publish (app prop can be stale from the list-page snapshot).
-  type OrchMeta = { id: string; name: string; displayName: string };
-  type VoiceDraft = { stt_provider: string; stt_model: string; tts_provider: string; tts_voice: string; tts_model: string; voice_enabled: boolean; tts_enabled: boolean };
   const [orchMetas, setOrchMetas] = useState<OrchMeta[]>(
     (app.app_orchestrators ?? []).map(o => ({ id: o.id, name: o.name, displayName: o.display_name || o.name }))
   );
-
-  // Per-orchestrator voice config draft (STT + TTS)
-  // Initialized synchronously from the app prop so checkboxes are correct on first render.
   const [voiceDrafts,  setVoiceDrafts]  = useState<Record<string, VoiceDraft>>(() => {
     const init: Record<string, VoiceDraft> = {};
     (app.app_orchestrators ?? []).forEach(o => {
-      init[o.id] = {
-        stt_provider:  o.transcription_provider ?? '',
-        stt_model:     o.transcription_model    ?? '',
-        tts_provider:  o.tts_provider           ?? '',
-        tts_voice:     o.tts_voice              ?? '',
-        tts_model:     'tts-1',
-        voice_enabled: o.voice_enabled          ?? false,
-        tts_enabled:   o.tts_enabled            ?? false,
-      };
+      init[o.id] = { stt_provider: o.transcription_provider ?? '', stt_model: o.transcription_model ?? '', tts_provider: o.tts_provider ?? '', tts_voice: o.tts_voice ?? '', tts_model: 'tts-1', voice_enabled: o.voice_enabled ?? false, tts_enabled: o.tts_enabled ?? false };
     });
     return init;
   });
@@ -114,397 +46,154 @@ export function RuntimeView({ app, onBack }: {
   const [ttsTesting,   setTtsTesting]   = useState<string | null>(null);
   const [ttsTestMsg,   setTtsTestMsg]   = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    themApi.getApplication(app.id).then(fresh => {
-      setOrchMetas((fresh.app_orchestrators ?? []).map(o => ({
-        id: o.id, name: o.name, displayName: o.display_name || o.name,
-      })));
-      // Populate voice drafts from app_orchestrators
-      const drafts: Record<string, VoiceDraft> = {};
-      (fresh.app_orchestrators ?? []).forEach(o => {
-        drafts[o.id] = {
-          stt_provider: o.transcription_provider ?? '',
-          stt_model:    o.transcription_model    ?? '',
-          tts_provider: o.tts_provider           ?? '',
-          tts_voice:    o.tts_voice              ?? '',
-          tts_model:    'tts-1',
-          voice_enabled: o.voice_enabled  ?? false,
-          tts_enabled:   o.tts_enabled    ?? false,
-        };
-      });
-      setVoiceDrafts(drafts);
-    }).catch(() => {});
-  }, [app.id]);
-
-  // Per-EP LLM draft (stored on entry_points.llm_provider / llm_model)
-  type EPLLMDraft = { provider: string; model: string };
-  const [epLLMDrafts,  setEPLLMDrafts]  = useState<Record<string, EPLLMDraft>>(() => {
-    const init: Record<string, EPLLMDraft> = {};
-    (app.entry_points ?? []).forEach(ep => {
-      init[ep.id] = { provider: ep.llm_provider ?? '', model: ep.llm_model ?? '' };
-    });
-    return init;
-  });
+  const [epLLMDrafts,  setEPLLMDrafts]  = useState<Record<string, EPLLMDraft>>(() => { const i: Record<string, EPLLMDraft> = {}; (app.entry_points ?? []).forEach(ep => { i[ep.id] = { provider: ep.llm_provider ?? '', model: ep.llm_model ?? '' }; }); return i; });
   const [epLLMSaving,  setEPLLMSaving]  = useState<string | null>(null);
   const [epLLMMsg,     setEPLLMMsg]     = useState<Record<string, string>>({});
-
-  // Entry points — fetched on mount so we always have app_orchestrator_id + summarizer fields
-  type EPSummarizerDraft = {
-    memoryEnabled: boolean; summarizeEveryN: number; fallbackN: number;
-    provider: string; model: string;
-  };
   const [entryPoints,  setEntryPoints]  = useState<import('@/lib/api').EntryPoint[]>(app.entry_points ?? []);
-  const [epSumDrafts,  setEPSumDrafts]  = useState<Record<string, EPSummarizerDraft>>(() => {
-    const init: Record<string, EPSummarizerDraft> = {};
-    (app.entry_points ?? []).forEach(ep => {
-      init[ep.id] = {
-        memoryEnabled:    ep.memory_enabled              ?? false,
-        summarizeEveryN:  ep.summarize_every_n_calls     ?? 10,
-        fallbackN:        ep.memory_raw_fallback_n       ?? 3,
-        provider:         ep.summarizer_provider         ?? '',
-        model:            ep.summarizer_model            ?? '',
-      };
-    });
-    return init;
-  });
+  const [epSumDrafts,  setEPSumDrafts]  = useState<Record<string, EPSumDraft>>(() => { const i: Record<string, EPSumDraft> = {}; (app.entry_points ?? []).forEach(ep => { i[ep.id] = { memoryEnabled: ep.memory_enabled ?? false, summarizeEveryN: ep.summarize_every_n_calls ?? 10, fallbackN: ep.memory_raw_fallback_n ?? 3, provider: ep.summarizer_provider ?? '', model: ep.summarizer_model ?? '' }; }); return i; });
   const [epSumSaving,  setEPSumSaving]  = useState<string | null>(null);
   const [epSumMsg,     setEPSumMsg]     = useState<Record<string, string>>({});
   const [epToggling,   setEPToggling]   = useState<string | null>(null);
 
-  // Canvas agent params
-  const [agentParamsList,   setAgentParamsList]   = useState<AgentParamsResponse[]>([]);
-  const [agentParamInputs,  setAgentParamInputs]  = useState<Record<string, Record<string, string>>>({});
-  const [agentParamSaving,  setAgentParamSaving]  = useState<string | null>(null);
-  const [agentParamMsg,     setAgentParamMsg]     = useState<Record<string, string>>({});
+  const [agentParamsList,  setAgentParamsList]  = useState<AgentParamsResponse[]>([]);
+  const [agentParamInputs, setAgentParamInputs] = useState<Record<string, Record<string, string>>>({});
+  const [agentParamSaving, setAgentParamSaving] = useState<string | null>(null);
+  const [agentParamMsg,    setAgentParamMsg]    = useState<Record<string, string>>({});
+  const [agentLLMNodes,    setAgentLLMNodes]    = useState<AgentLLMNodeStatus[]>([]);
+  const [nodeLLMDrafts,    setNodeLLMDrafts]    = useState<Record<string, NodeLLMDraft>>({});
+  const [nodeLLMSaving,    setNodeLLMSaving]    = useState<string | null>(null);
+  const [nodeLLMMsg,       setNodeLLMMsg]       = useState<Record<string, string>>({});
 
-  // Canvas agent LLM node overrides
-  const [agentLLMNodes,  setAgentLLMNodes]  = useState<AgentLLMNodeStatus[]>([]);
-  type NodeLLMDraft = { provider: string; model: string };
-  const [nodeLLMDrafts,  setNodeLLMDrafts]  = useState<Record<string, NodeLLMDraft>>({});
-  const [nodeLLMSaving,  setNodeLLMSaving]  = useState<string | null>(null);
-  const [nodeLLMMsg,     setNodeLLMMsg]     = useState<Record<string, string>>({});
+  const [appParams,       setAppParams]       = useState<AppGlobalParam[]>([]);
+  const [newParamName,    setNewParamName]    = useState('');
+  const [newParamType,    setNewParamType]    = useState('string');
+  const [newParamValue,   setNewParamValue]   = useState('');
+  const [editParamInputs, setEditParamInputs] = useState<Record<string, string>>({});
+  const [paramSaving,     setParamSaving]     = useState<string | null>(null);
+  const [paramMsg,        setParamMsg]        = useState<Record<string, string>>({});
+  const [addingParam,     setAddingParam]     = useState(false);
+  const [addParamSaving,  setAddParamSaving]  = useState(false);
+  const [addParamMsg,     setAddParamMsg]     = useState('');
 
-  // App global parameters
-  const [appParams,        setAppParams]        = useState<AppGlobalParam[]>([]);
-  const [newParamName,     setNewParamName]     = useState('');
-  const [newParamType,     setNewParamType]     = useState('string');
-  const [newParamValue,    setNewParamValue]    = useState('');
-  const [editParamInputs,  setEditParamInputs]  = useState<Record<string, string>>({});
-  const [paramSaving,      setParamSaving]      = useState<string | null>(null);
-  const [paramMsg,         setParamMsg]         = useState<Record<string, string>>({});
-  const [addingParam,      setAddingParam]      = useState(false);
-  const [addParamSaving,   setAddParamSaving]   = useState(false);
-  const [addParamMsg,      setAddParamMsg]      = useState('');
-
+  useEffect(() => { themApi.getProviderKeys(app.id).then(setKeyStatuses).catch(() => {}); }, [app.id]);
   useEffect(() => {
-    themApi.getProviderKeys(app.id).then(setKeyStatuses).catch(() => {});
+    themApi.getApplication(app.id).then(fresh => {
+      setOrchMetas((fresh.app_orchestrators ?? []).map(o => ({ id: o.id, name: o.name, displayName: o.display_name || o.name })));
+      const d: Record<string, VoiceDraft> = {};
+      (fresh.app_orchestrators ?? []).forEach(o => { d[o.id] = { stt_provider: o.transcription_provider ?? '', stt_model: o.transcription_model ?? '', tts_provider: o.tts_provider ?? '', tts_voice: o.tts_voice ?? '', tts_model: 'tts-1', voice_enabled: o.voice_enabled ?? false, tts_enabled: o.tts_enabled ?? false }; });
+      setVoiceDrafts(d);
+    }).catch(() => {});
   }, [app.id]);
-
   useEffect(() => {
     themApi.listEntryPoints(app.id).then(eps => {
       setEntryPoints(eps);
-      const sumDrafts: Record<string, EPSummarizerDraft> = {};
-      const llmDrafts: Record<string, EPLLMDraft> = {};
+      const sd: Record<string, EPSumDraft> = {}; const ld: Record<string, EPLLMDraft> = {};
       eps.forEach(ep => {
-        sumDrafts[ep.id] = {
-          memoryEnabled: ep.memory_enabled ?? false,
-          summarizeEveryN: ep.summarize_every_n_calls ?? 10,
-          fallbackN: ep.memory_raw_fallback_n ?? 3,
-          provider: ep.summarizer_provider ?? '',
-          model: ep.summarizer_model ?? '',
-        };
-        llmDrafts[ep.id] = {
-          provider: ep.llm_provider ?? '',
-          model: ep.llm_model ?? '',
-        };
+        sd[ep.id] = { memoryEnabled: ep.memory_enabled ?? false, summarizeEveryN: ep.summarize_every_n_calls ?? 10, fallbackN: ep.memory_raw_fallback_n ?? 3, provider: ep.summarizer_provider ?? '', model: ep.summarizer_model ?? '' };
+        ld[ep.id] = { provider: ep.llm_provider ?? '', model: ep.llm_model ?? '' };
       });
-      setEPSumDrafts(sumDrafts);
-      setEPLLMDrafts(llmDrafts);
+      setEPSumDrafts(sd); setEPLLMDrafts(ld);
     }).catch(() => {});
   }, [app.id]);
-
-  useEffect(() => {
-    themApi.getAppParams(app.id).then(p => setAppParams(p ?? [])).catch(() => {});
-  }, [app.id]);
-
+  useEffect(() => { themApi.getAppParams(app.id).then(p => setAppParams(p ?? [])).catch(() => {}); }, [app.id]);
   useEffect(() => {
     themApi.listAgentBindings(app.id).then(bindings => {
       Promise.all(bindings.map(b => themApi.getAgentParams(app.id, b.agent_id).catch(() => null)))
-        .then(results => setAgentParamsList(results.filter((r): r is AgentParamsResponse => r !== null && r.required_params.length > 0)));
+        .then(r => setAgentParamsList(r.filter((x): x is AgentParamsResponse => x !== null && x.required_params.length > 0)));
       Promise.all(bindings.map(b => themApi.getAgentLLMNodes(app.id, b.agent_id).catch(() => null)))
-        .then(results => {
-          const nodes = results.flatMap(r => r ?? []);
-          setAgentLLMNodes(nodes);
-          const drafts: Record<string, NodeLLMDraft> = {};
-          nodes.forEach(n => { drafts[n.node_id] = { provider: n.override_provider ?? n.compiled_provider ?? '', model: n.override_model ?? n.compiled_model ?? '' }; });
-          setNodeLLMDrafts(drafts);
-        });
+        .then(r => { const nodes = r.flatMap(x => x ?? []); setAgentLLMNodes(nodes); const d: Record<string, NodeLLMDraft> = {}; nodes.forEach(n => { d[n.node_id] = { provider: n.override_provider ?? n.compiled_provider ?? '', model: n.override_model ?? n.compiled_model ?? '' }; }); setNodeLLMDrafts(d); });
     }).catch(() => {});
   }, [app.id]);
 
-  // Derived: providers with a key set
   const setProviders = keyStatuses.filter(k => k.key_set).map(k => k.provider);
+  const getKeyStatus = (p: string): KeyStatus => keyStatuses.find(k => k.provider === p) ?? { provider: p, key_set: false };
+  const agentIds = [...new Set([...agentLLMNodes.map(n => n.agent_id), ...agentParamsList.map(a => a.agent_id)])];
 
-  function getKeyStatus(provider: string): KeyStatus {
-    return keyStatuses.find(k => k.provider === provider) ?? { provider, key_set: false };
+  const f = sharedField;
+  const l = sharedLbl;
+  const saveBtn = makeSaveBtn();
+
+  async function handleToggleEP(epId: string, cur: boolean) {
+    setEPToggling(epId);
+    try { await themApi.patchEntryPoint(app.id, epId, { enabled: !cur }); setEntryPoints(prev => prev.map(ep => ep.id === epId ? { ...ep, enabled: !cur } : ep)); }
+    catch { /* ignore */ } finally { setEPToggling(null); }
   }
-
-  // Group agent LLM nodes and params by agent
-  const agentIds = [...new Set(agentLLMNodes.map(n => n.agent_id))];
-  // Also include agents that have params but no LLM nodes
-  agentParamsList.forEach(a => { if (!agentIds.includes(a.agent_id)) agentIds.push(a.agent_id); });
-
-  // ── Handlers ─────────────────────────────────────────────────────────────
-
+  async function handleSaveEPLLM(epId: string) {
+    const d = epLLMDrafts[epId]; if (!d) return; setEPLLMSaving(epId);
+    try { await themApi.patchEntryPointLLM(app.id, epId, { llm_provider: d.provider || null, llm_model: d.model || null }); setEPLLMMsg(m => ({ ...m, [epId]: 'Saved' })); setTimeout(() => setEPLLMMsg(m => ({ ...m, [epId]: '' })), 2500); }
+    catch (e: unknown) { setEPLLMMsg(m => ({ ...m, [epId]: e instanceof Error ? e.message : 'Failed' })); } finally { setEPLLMSaving(null); }
+  }
+  async function handleSaveEPSummarizer(epId: string) {
+    const d = epSumDrafts[epId]; if (!d) return; setEPSumSaving(epId);
+    try { await themApi.patchEntryPointSummarizer(app.id, epId, { memory_enabled: d.memoryEnabled, summarize_every_n_calls: d.summarizeEveryN, memory_raw_fallback_n: d.fallbackN, summarizer_provider: d.provider || null, summarizer_model: d.model || null }); setEPSumMsg(m => ({ ...m, [epId]: 'Saved' })); setTimeout(() => setEPSumMsg(m => ({ ...m, [epId]: '' })), 2500); }
+    catch (e: unknown) { setEPSumMsg(m => ({ ...m, [epId]: e instanceof Error ? e.message : 'Failed' })); } finally { setEPSumSaving(null); }
+  }
+  async function handleSaveVoice(orchId: string) {
+    const d = voiceDrafts[orchId]; if (!d) return; setVoiceSaving(orchId);
+    try { await themApi.patchOrchestratorVoice(app.id, orchId, { stt_provider: d.stt_provider, stt_model: d.stt_model, tts_provider: d.tts_provider, tts_voice: d.tts_voice, voice_enabled: d.voice_enabled, tts_enabled: d.tts_enabled }); setVoiceMsg(m => ({ ...m, [orchId]: 'Saved' })); setTimeout(() => setVoiceMsg(m => ({ ...m, [orchId]: '' })), 2500); }
+    catch (e: unknown) { setVoiceMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Failed' })); } finally { setVoiceSaving(null); }
+  }
+  async function handleTestSTT(orchId: string) {
+    const d = voiceDrafts[orchId]; if (!d?.stt_provider) return; setVoiceTesting(orchId); setVoiceTestMsg(m => ({ ...m, [orchId]: '' }));
+    try { const r = await themApi.testAppOrchVoice(app.id, orchId, { provider: d.stt_provider, model: d.stt_model }); setVoiceTestMsg(m => ({ ...m, [orchId]: r.ok ? `✓ STT ${r.latency_ms}ms` : (r.error ?? 'Failed') })); }
+    catch (e: unknown) { setVoiceTestMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Error' })); } finally { setVoiceTesting(null); }
+  }
+  async function handleTestTTS(orchId: string) {
+    const d = voiceDrafts[orchId]; if (!d?.tts_provider) return; setTtsTesting(orchId); setTtsTestMsg(m => ({ ...m, [orchId]: '' }));
+    try { const r = await themApi.testAppOrchTts(app.id, orchId, { provider: d.tts_provider, voice: d.tts_voice }); setTtsTestMsg(m => ({ ...m, [orchId]: r.ok ? `✓ TTS ${r.latency_ms}ms` : (r.error ?? 'Failed') })); }
+    catch (e: unknown) { setTtsTestMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Error' })); } finally { setTtsTesting(null); }
+  }
   async function handleSaveKey(provider: string) {
-    const key = (keyInputs[provider] ?? '').trim();
-    if (!key) return;
-    setKeySaving(provider);
-    try {
-      await themApi.setProviderKey(app.id, provider, key);
-      const keys = await themApi.getProviderKeys(app.id);
-      setKeyStatuses(keys);
-      setKeyInputs(ki => ({ ...ki, [provider]: '' }));
-      setKeyMsg(m => ({ ...m, [provider]: 'Saved' }));
-      setTimeout(() => setKeyMsg(m => ({ ...m, [provider]: '' })), 2500);
-    } catch (e: unknown) {
-      setKeyMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Failed' }));
-    } finally { setKeySaving(null); }
+    const key = (keyInputs[provider] ?? '').trim(); if (!key) return; setKeySaving(provider);
+    try { await themApi.setProviderKey(app.id, provider, key); setKeyStatuses(await themApi.getProviderKeys(app.id)); setKeyInputs(ki => ({ ...ki, [provider]: '' })); setKeyMsg(m => ({ ...m, [provider]: 'Saved' })); setTimeout(() => setKeyMsg(m => ({ ...m, [provider]: '' })), 2500); }
+    catch (e: unknown) { setKeyMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Failed' })); } finally { setKeySaving(null); }
   }
-
   async function handleDeleteKey(provider: string) {
     setKeySaving(provider);
-    try {
-      await themApi.deleteProviderKey(app.id, provider);
-      const keys = await themApi.getProviderKeys(app.id);
-      setKeyStatuses(keys);
-      setKeyMsg(m => ({ ...m, [provider]: 'Removed' }));
-      setTimeout(() => setKeyMsg(m => ({ ...m, [provider]: '' })), 2500);
-    } catch (e: unknown) {
-      setKeyMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Failed' }));
-    } finally { setKeySaving(null); }
+    try { await themApi.deleteProviderKey(app.id, provider); setKeyStatuses(await themApi.getProviderKeys(app.id)); setKeyMsg(m => ({ ...m, [provider]: 'Removed' })); setTimeout(() => setKeyMsg(m => ({ ...m, [provider]: '' })), 2500); }
+    catch (e: unknown) { setKeyMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Failed' })); } finally { setKeySaving(null); }
   }
-
   async function handleTestKey(provider: string) {
-    setKeyTesting(provider);
-    setKeyTestMsg(m => ({ ...m, [provider]: '' }));
+    setKeyTesting(provider); setKeyTestMsg(m => ({ ...m, [provider]: '' }));
     try {
-      if (!RUNTIME_MODELS[provider]) {
-        // Non-LLM provider (e.g. elevenlabs) — key validation only, no model test
-        setKeyTestMsg(m => ({ ...m, [provider]: 'Key saved — test via an orchestrator voice panel' }));
-        return;
-      }
-      const model = RUNTIME_MODELS[provider][0];
-      const res = await themApi.testAppLlm(app.id, provider, model);
-      setKeyTestMsg(m => ({ ...m, [provider]: res.ok ? `✓ ${res.latency_ms}ms` : (res.error ?? 'Failed') }));
-    } catch (e: unknown) {
-      setKeyTestMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Error' }));
-    } finally { setKeyTesting(null); }
+      if (!RUNTIME_MODELS[provider]) { setKeyTestMsg(m => ({ ...m, [provider]: 'Key saved — test via an orchestrator voice panel' })); return; }
+      const r = await themApi.testAppLlm(app.id, provider, RUNTIME_MODELS[provider][0]);
+      setKeyTestMsg(m => ({ ...m, [provider]: r.ok ? `✓ ${r.latency_ms}ms` : (r.error ?? 'Failed') }));
+    } catch (e: unknown) { setKeyTestMsg(m => ({ ...m, [provider]: e instanceof Error ? e.message : 'Error' })); } finally { setKeyTesting(null); }
   }
-
-  async function handleToggleEP(epId: string, currentEnabled: boolean) {
-    setEPToggling(epId);
-    try {
-      await themApi.patchEntryPoint(app.id, epId, { enabled: !currentEnabled });
-      setEntryPoints(prev => prev.map(ep => ep.id === epId ? { ...ep, enabled: !currentEnabled } : ep));
-    } catch { /* ignore */ } finally { setEPToggling(null); }
-  }
-
-  async function handleSaveEPLLM(epId: string) {
-    const draft = epLLMDrafts[epId];
-    if (!draft) return;
-    setEPLLMSaving(epId);
-    try {
-      await themApi.patchEntryPointLLM(app.id, epId, {
-        llm_provider: draft.provider || null,
-        llm_model: draft.model || null,
-      });
-      setEPLLMMsg(m => ({ ...m, [epId]: 'Saved' }));
-      setTimeout(() => setEPLLMMsg(m => ({ ...m, [epId]: '' })), 2500);
-    } catch (e: unknown) {
-      setEPLLMMsg(m => ({ ...m, [epId]: e instanceof Error ? e.message : 'Failed' }));
-    } finally { setEPLLMSaving(null); }
-  }
-
-  async function handleSaveEPSummarizer(epId: string) {
-    const draft = epSumDrafts[epId];
-    if (!draft) return;
-    setEPSumSaving(epId);
-    try {
-      await themApi.patchEntryPointSummarizer(app.id, epId, {
-        memory_enabled: draft.memoryEnabled,
-        summarize_every_n_calls: draft.summarizeEveryN,
-        memory_raw_fallback_n: draft.fallbackN,
-        summarizer_provider: draft.provider || null,
-        summarizer_model: draft.model || null,
-      });
-      setEPSumMsg(m => ({ ...m, [epId]: 'Saved' }));
-      setTimeout(() => setEPSumMsg(m => ({ ...m, [epId]: '' })), 2500);
-    } catch (e: unknown) {
-      setEPSumMsg(m => ({ ...m, [epId]: e instanceof Error ? e.message : 'Failed' }));
-    } finally { setEPSumSaving(null); }
-  }
-
-  async function handleSaveAgentParams(agentId: string) {
-    const inputs = agentParamInputs[agentId] ?? {};
-    const nonEmpty = Object.fromEntries(Object.entries(inputs).filter(([, v]) => v.trim() !== ''));
-    if (Object.keys(nonEmpty).length === 0) return;
-    setAgentParamSaving(agentId);
-    try {
-      await themApi.putAgentParams(app.id, agentId, nonEmpty);
-      const updated = await themApi.getAgentParams(app.id, agentId);
-      setAgentParamsList(prev => prev.map(a => a.agent_id === agentId ? updated : a));
-      setAgentParamInputs(prev => ({ ...prev, [agentId]: {} }));
-      setAgentParamMsg(m => ({ ...m, [agentId]: 'Saved' }));
-      setTimeout(() => setAgentParamMsg(m => ({ ...m, [agentId]: '' })), 2500);
-    } catch (e: unknown) {
-      setAgentParamMsg(m => ({ ...m, [agentId]: e instanceof Error ? e.message : 'Failed' }));
-    } finally { setAgentParamSaving(null); }
-  }
-
   async function handleSaveNodeLLM(agentId: string, nodeId: string) {
-    const draft = nodeLLMDrafts[nodeId];
-    if (!draft?.provider || !draft?.model) return;
-    const key = `${agentId}::${nodeId}`;
-    setNodeLLMSaving(key);
-    try {
-      await themApi.putNodeLLMOverride(app.id, agentId, nodeId, draft.provider, draft.model);
-      setAgentLLMNodes(prev => prev.map(n => n.node_id === nodeId ? { ...n, override_provider: draft.provider, override_model: draft.model } : n));
-      setNodeLLMMsg(m => ({ ...m, [nodeId]: 'Saved' }));
-      setTimeout(() => setNodeLLMMsg(m => ({ ...m, [nodeId]: '' })), 2500);
-    } catch (e: unknown) {
-      setNodeLLMMsg(m => ({ ...m, [nodeId]: e instanceof Error ? e.message : 'Failed' }));
-    } finally { setNodeLLMSaving(null); }
+    const d = nodeLLMDrafts[nodeId]; if (!d?.provider || !d?.model) return; const key = `${agentId}::${nodeId}`; setNodeLLMSaving(key);
+    try { await themApi.putNodeLLMOverride(app.id, agentId, nodeId, d.provider, d.model); setAgentLLMNodes(prev => prev.map(n => n.node_id === nodeId ? { ...n, override_provider: d.provider, override_model: d.model } : n)); setNodeLLMMsg(m => ({ ...m, [nodeId]: 'Saved' })); setTimeout(() => setNodeLLMMsg(m => ({ ...m, [nodeId]: '' })), 2500); }
+    catch (e: unknown) { setNodeLLMMsg(m => ({ ...m, [nodeId]: e instanceof Error ? e.message : 'Failed' })); } finally { setNodeLLMSaving(null); }
   }
-
+  async function handleSaveAgentParams(agentId: string) {
+    const inputs = agentParamInputs[agentId] ?? {}; const nonEmpty = Object.fromEntries(Object.entries(inputs).filter(([, v]) => v.trim() !== '')); if (!Object.keys(nonEmpty).length) return; setAgentParamSaving(agentId);
+    try { await themApi.putAgentParams(app.id, agentId, nonEmpty); setAgentParamsList(prev => prev.map(a => a.agent_id === agentId ? { ...a } : a)); setAgentParamInputs(prev => ({ ...prev, [agentId]: {} })); setAgentParamMsg(m => ({ ...m, [agentId]: 'Saved' })); setTimeout(() => setAgentParamMsg(m => ({ ...m, [agentId]: '' })), 2500); }
+    catch (e: unknown) { setAgentParamMsg(m => ({ ...m, [agentId]: e instanceof Error ? e.message : 'Failed' })); } finally { setAgentParamSaving(null); }
+  }
   async function handleAddAppParam() {
-    const name = newParamName.trim();
-    const value = newParamValue.trim();
-    if (!name || !value) return;
-    setAddParamSaving(true);
-    try {
-      await themApi.setAppParam(app.id, name, value, newParamType);
-      setAppParams(await themApi.getAppParams(app.id) ?? []);
-      setNewParamName(''); setNewParamValue(''); setNewParamType('string');
-      setAddingParam(false); setAddParamMsg('');
-    } catch (e: unknown) {
-      setAddParamMsg(e instanceof Error ? e.message : 'Failed');
-    } finally { setAddParamSaving(false); }
+    const name = newParamName.trim(); const value = newParamValue.trim(); if (!name || !value) return; setAddParamSaving(true);
+    try { await themApi.setAppParam(app.id, name, value, newParamType); setAppParams(await themApi.getAppParams(app.id) ?? []); setNewParamName(''); setNewParamValue(''); setNewParamType('string'); setAddingParam(false); setAddParamMsg(''); }
+    catch (e: unknown) { setAddParamMsg(e instanceof Error ? e.message : 'Failed'); } finally { setAddParamSaving(false); }
   }
-
   async function handleUpdateAppParam(name: string) {
-    const value = (editParamInputs[name] ?? '').trim();
-    if (!value) return;
-    const param = appParams.find(p => p.name === name);
-    if (!param) return;
-    setParamSaving(name);
-    try {
-      await themApi.setAppParam(app.id, name, value, param.type);
-      setAppParams(await themApi.getAppParams(app.id) ?? []);
-      setEditParamInputs(prev => ({ ...prev, [name]: '' }));
-      setParamMsg(m => ({ ...m, [name]: 'Saved' }));
-      setTimeout(() => setParamMsg(m => ({ ...m, [name]: '' })), 2500);
-    } catch (e: unknown) {
-      setParamMsg(m => ({ ...m, [name]: e instanceof Error ? e.message : 'Failed' }));
-    } finally { setParamSaving(null); }
+    const value = (editParamInputs[name] ?? '').trim(); if (!value) return; const param = appParams.find(p => p.name === name); if (!param) return; setParamSaving(name);
+    try { await themApi.setAppParam(app.id, name, value, param.type); setAppParams(await themApi.getAppParams(app.id) ?? []); setEditParamInputs(prev => ({ ...prev, [name]: '' })); setParamMsg(m => ({ ...m, [name]: 'Saved' })); setTimeout(() => setParamMsg(m => ({ ...m, [name]: '' })), 2500); }
+    catch (e: unknown) { setParamMsg(m => ({ ...m, [name]: e instanceof Error ? e.message : 'Failed' })); } finally { setParamSaving(null); }
   }
-
   async function handleDeleteAppParam(name: string) {
     setParamSaving(name);
-    try {
-      await themApi.deleteAppParam(app.id, name);
-      setAppParams(await themApi.getAppParams(app.id) ?? []);
-    } catch (e: unknown) {
-      setParamMsg(m => ({ ...m, [name]: e instanceof Error ? e.message : 'Failed' }));
-    } finally { setParamSaving(null); }
+    try { await themApi.deleteAppParam(app.id, name); setAppParams(await themApi.getAppParams(app.id) ?? []); }
+    catch (e: unknown) { setParamMsg(m => ({ ...m, [name]: e instanceof Error ? e.message : 'Failed' })); } finally { setParamSaving(null); }
   }
-
   async function handleSave() {
     setSaving(true); setError(null);
-    try {
-      const parsedUsers  = usersInput.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n));
-      const parsedTokens = tokensInput.split(/\n/).map(s => s.trim()).filter(Boolean);
-      const payload = { ...cfg, blocked_tokens: parsedTokens, blocked_user_ids: parsedUsers };
-      await themApi.putAppRuntime(app.id, payload);
-      setCfg(payload); setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Save failed');
-    } finally { setSaving(false); }
+    try { const parsedUsers = usersInput.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n)); const parsedTokens = tokensInput.split(/\n/).map(s => s.trim()).filter(Boolean); const payload = { ...cfg, blocked_tokens: parsedTokens, blocked_user_ids: parsedUsers }; await themApi.putAppRuntime(app.id, payload); setCfg(payload); setSaved(true); setTimeout(() => setSaved(false), 2500); }
+    catch (e: unknown) { setError(e instanceof Error ? e.message : 'Save failed'); } finally { setSaving(false); }
   }
-
-  async function handleSaveVoice(orchId: string) {
-    const draft = voiceDrafts[orchId];
-    if (!draft) return;
-    setVoiceSaving(orchId);
-    try {
-      await themApi.patchOrchestratorVoice(app.id, orchId, {
-        stt_provider:  draft.stt_provider,
-        stt_model:     draft.stt_model,
-        tts_provider:  draft.tts_provider,
-        tts_voice:     draft.tts_voice,
-        voice_enabled: draft.voice_enabled,
-        tts_enabled:   draft.tts_enabled,
-      });
-      setVoiceMsg(m => ({ ...m, [orchId]: 'Saved' }));
-      setTimeout(() => setVoiceMsg(m => ({ ...m, [orchId]: '' })), 2500);
-    } catch (e: unknown) {
-      setVoiceMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Failed' }));
-    } finally { setVoiceSaving(null); }
-  }
-
-  async function handleTestSTT(orchId: string) {
-    const draft = voiceDrafts[orchId];
-    if (!draft?.stt_provider) return;
-    setVoiceTesting(orchId);
-    setVoiceTestMsg(m => ({ ...m, [orchId]: '' }));
-    try {
-      const res = await themApi.testAppOrchVoice(app.id, orchId, { provider: draft.stt_provider, model: draft.stt_model });
-      setVoiceTestMsg(m => ({ ...m, [orchId]: res.ok ? `✓ STT ${res.latency_ms}ms` : (res.error ?? 'Failed') }));
-    } catch (e: unknown) {
-      setVoiceTestMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Error' }));
-    } finally { setVoiceTesting(null); }
-  }
-
-  async function handleTestTTS(orchId: string) {
-    const draft = voiceDrafts[orchId];
-    if (!draft?.tts_provider) return;
-    setTtsTesting(orchId);
-    setTtsTestMsg(m => ({ ...m, [orchId]: '' }));
-    try {
-      const res = await themApi.testAppOrchTts(app.id, orchId, { provider: draft.tts_provider, voice: draft.tts_voice });
-      setTtsTestMsg(m => ({ ...m, [orchId]: res.ok ? `✓ TTS ${res.latency_ms}ms` : (res.error ?? 'Failed') }));
-    } catch (e: unknown) {
-      setTtsTestMsg(m => ({ ...m, [orchId]: e instanceof Error ? e.message : 'Error' }));
-    } finally { setTtsTesting(null); }
-  }
-
-  // ── Shared styles ─────────────────────────────────────────────────────────
-
-  const field: React.CSSProperties = {
-    width: '100%', padding: '9px 12px', borderRadius: 7,
-    border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)',
-    color: C.text, fontSize: 13, outline: 'none', boxSizing: 'border-box',
-  };
-  const lbl: React.CSSProperties = {
-    fontSize: 11, fontWeight: 600, color: C.textMuted, letterSpacing: '0.06em',
-    textTransform: 'uppercase', marginBottom: 5, display: 'block',
-  };
-  const badge = (color: string, bg: string, border: string, text: string) => (
-    <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: bg, color, border: `1px solid ${border}` }}>{text}</span>
-  );
-  const saveBtn = (onClick: () => void, busy: boolean, disabled: boolean, label = 'Save') => (
-    <button onClick={onClick} disabled={busy || disabled} style={{ padding: '8px 14px', borderRadius: 7, border: `1px solid ${C.purpleBorder}`, background: 'rgba(208,188,255,0.07)', color: C.purple, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0, opacity: busy || disabled ? 0.45 : 1 }}>
-      {busy ? '…' : label}
-    </button>
-  );
-
-  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '36px 40px 64px', background: C.bg }}>
-
-      {/* Breadcrumb */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
         <button onClick={onBack} style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontSize: 13 }}>
           <span className="material-symbols-outlined" style={{ fontSize: 17 }}>arrow_back</span>
@@ -516,57 +205,92 @@ export function RuntimeView({ app, onBack }: {
         <span style={{ fontSize: 14, color: '#fb923c', fontWeight: 700 }}>Runtime</span>
       </div>
 
-      <div style={{ maxWidth: 680 }}>
+      <div style={{ maxWidth: 720 }}>
+        <EPSections
+          entryPoints={entryPoints} orchMetas={orchMetas}
+          voiceDrafts={voiceDrafts} setVoiceDrafts={setVoiceDrafts}
+          epLLMDrafts={epLLMDrafts} setEPLLMDrafts={setEPLLMDrafts}
+          epSumDrafts={epSumDrafts} setEPSumDrafts={setEPSumDrafts}
+          epLLMSaving={epLLMSaving} epSumSaving={epSumSaving} epToggling={epToggling}
+          epLLMMsg={epLLMMsg} epSumMsg={epSumMsg}
+          setProviders={setProviders}
+          voiceSaving={voiceSaving} voiceTesting={voiceTesting} ttsTesting={ttsTesting}
+          voiceMsg={voiceMsg} voiceTestMsg={voiceTestMsg} ttsTestMsg={ttsTestMsg}
+          onToggleEP={handleToggleEP} onSaveEPLLM={handleSaveEPLLM} onSaveEPSummarizer={handleSaveEPSummarizer}
+          onSaveVoice={handleSaveVoice} onTestSTT={handleTestSTT} onTestTTS={handleTestTTS}
+          saveBtn={saveBtn}
+        />
 
-        {/* ── 1. GLOBAL ──────────────────────────────────────────────────── */}
-        <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8, paddingLeft: 4 }}>
-          Global
+        <CanvasAgentsSection
+          agentIds={agentIds} agentLLMNodes={agentLLMNodes} agentParamsList={agentParamsList}
+          nodeLLMDrafts={nodeLLMDrafts} setNodeLLMDrafts={setNodeLLMDrafts}
+          nodeLLMSaving={nodeLLMSaving} nodeLLMMsg={nodeLLMMsg}
+          agentParamInputs={agentParamInputs} setAgentParamInputs={setAgentParamInputs}
+          agentParamSaving={agentParamSaving} agentParamMsg={agentParamMsg}
+          setProviders={setProviders} saveBtn={saveBtn}
+          onSaveNodeLLM={handleSaveNodeLLM} onSaveAgentParams={handleSaveAgentParams}
+        />
+
+        <Section title="Session Limits" icon="timer" accent="#f59e0b" defaultOpen={false}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div>
+              <label style={l}>Max Concurrent Sessions</label>
+              <input type="number" min={1} placeholder="Unlimited" value={cfg.max_concurrent_sessions ?? ''} style={f} onChange={e => setCfg(c => ({ ...c, max_concurrent_sessions: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>App-wide soft cap. Empty = unlimited.</div>
+            </div>
+            <div>
+              <label style={l}>Session Timeout (min)</label>
+              <input type="number" min={1} placeholder="No timeout" value={cfg.session_timeout_minutes ?? ''} style={f} onChange={e => setCfg(c => ({ ...c, session_timeout_minutes: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Advisory. Empty = no timeout.</div>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Rate Limiting" icon="speed" accent="#f59e0b" defaultOpen={false}>
+          <label style={l}>Requests per minute</label>
+          <input type="number" min={1} placeholder="Unlimited" value={cfg.rate_limit_rpm ?? ''} style={f} onChange={e => setCfg(c => ({ ...c, rate_limit_rpm: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: -8 }}>Applied across all entry points of this app.</div>
+        </Section>
+
+        <Section title="Access Control" icon="block" accent="#f59e0b" defaultOpen={false}>
+          <div>
+            <label style={l}>Blocked User IDs (comma-separated)</label>
+            <input type="text" placeholder="e.g. 42, 107, 889" value={usersInput} style={f} onChange={e => setUsersInput(e.target.value)} />
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Connections from these user IDs are rejected immediately.</div>
+          </div>
+          <div>
+            <label style={l}>Blocked Token Hashes (one per line)</label>
+            <textarea placeholder="SHA-256 hash of each blocked token" value={tokensInput} rows={3} style={{ ...f, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }} onChange={e => setTokensInput(e.target.value)} />
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Paste the SHA-256 hash of the token — not the raw token. One per line.</div>
+          </div>
+        </Section>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, marginBottom: 24 }}>
+          <button onClick={handleSave} disabled={saving} style={{ padding: '11px 28px', borderRadius: 8, border: 'none', cursor: saving ? 'not-allowed' : 'pointer', background: '#fb923c', color: '#000', fontSize: 14, fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
+            {saving ? 'Saving…' : 'Save Policy'}
+          </button>
+          {saved && <span style={{ fontSize: 13, color: C.green }}>Saved</span>}
+          {error && <span style={{ fontSize: 13, color: C.error }}>{error}</span>}
         </div>
 
-        {/* Provider Keys */}
-        <Section title="Provider Keys" icon="key" accent="#fb923c"
-          subtitle={setProviders.length > 0 ? `${setProviders.length} of ${PROVIDER_LIST.length} providers configured` : 'No providers configured yet'}>
-          <div style={{ fontSize: 12, color: C.textMuted, marginTop: -4 }}>
-            API keys are AES-GCM encrypted at rest. LLM keys are available in orchestrators and canvas agents. Voice keys (openai, groq, elevenlabs) are used by voice entry points.
-          </div>
+        <Section title="Provider Keys" icon="key" accent="#fb923c" defaultOpen={false}
+          subtitle={setProviders.length > 0 ? `${setProviders.length} of ${PROVIDER_LIST.length} configured` : 'No providers configured yet'}>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: -4 }}>API keys are AES-GCM encrypted at rest.</div>
           {PROVIDER_LIST.map(provider => {
-            const status = getKeyStatus(provider);
-            const isBusy = keySaving === provider;
-            const isTesting = keyTesting === provider;
-            const msg = keyMsg[provider] ?? '';
-            const testMsg = keyTestMsg[provider] ?? '';
-            const isErr = msg && msg !== 'Saved' && msg !== 'Removed';
-            const isTestErr = testMsg && !testMsg.startsWith('✓');
+            const status = getKeyStatus(provider); const isBusy = keySaving === provider; const isTesting = keyTesting === provider;
+            const msg = keyMsg[provider] ?? ''; const testMsg = keyTestMsg[provider] ?? '';
+            const isErr = msg && msg !== 'Saved' && msg !== 'Removed'; const isTestErr = testMsg && !testMsg.startsWith('✓');
             return (
               <div key={provider} style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${status.key_set ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.07)'}` }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 130, flexShrink: 0 }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{provider}</span>
-                    {status.key_set
-                      ? badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', `set ···${status.key_hint ?? ''}`)
-                      : badge('#fb923c', 'rgba(251,146,60,0.1)', 'rgba(251,146,60,0.3)', 'not set')}
+                    {status.key_set ? badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', `set ···${status.key_hint ?? ''}`) : badge('#fb923c', 'rgba(251,146,60,0.1)', 'rgba(251,146,60,0.3)', 'not set')}
                   </div>
-                  <input
-                    type="password"
-                    placeholder={status.key_set ? 'Replace key…' : 'Paste API key…'}
-                    value={keyInputs[provider] ?? ''}
-                    onChange={e => setKeyInputs(ki => ({ ...ki, [provider]: e.target.value }))}
-                    onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }}
-                    style={{ ...field, flex: 1, minWidth: 160 }}
-                  />
+                  <input type="password" placeholder={status.key_set ? 'Replace key…' : 'Paste API key…'} value={keyInputs[provider] ?? ''} onChange={e => setKeyInputs(ki => ({ ...ki, [provider]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleSaveKey(provider); }} style={{ ...f, flex: 1, minWidth: 160 }} />
                   {saveBtn(() => handleSaveKey(provider), isBusy, !(keyInputs[provider] ?? '').trim())}
-                  {status.key_set && (
-                    <button onClick={() => handleTestKey(provider)} disabled={isBusy || isTesting}
-                      style={{ padding: '8px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy || isTesting ? 0.5 : 1 }}>
-                      {isTesting ? '…' : 'Test'}
-                    </button>
-                  )}
-                  {status.key_set && (
-                    <button onClick={() => handleDeleteKey(provider)} disabled={isBusy}
-                      style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}>
-                      Remove
-                    </button>
-                  )}
+                  {status.key_set && <button onClick={() => handleTestKey(provider)} disabled={isBusy || isTesting} style={{ padding: '8px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy || isTesting ? 0.5 : 1 }}>{isTesting ? '…' : 'Test'}</button>}
+                  {status.key_set && <button onClick={() => handleDeleteKey(provider)} disabled={isBusy} style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}>Remove</button>}
                   {msg && <span style={{ fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</span>}
                 </div>
                 {testMsg && <div style={{ marginTop: 6, fontSize: 12, color: isTestErr ? C.error : C.green, fontWeight: 600, paddingLeft: 138 }}>{testMsg}</div>}
@@ -575,19 +299,12 @@ export function RuntimeView({ app, onBack }: {
           })}
         </Section>
 
-        {/* App Global Parameters */}
-        <Section title="Global Parameters" icon="variable_insert" accent="#fb923c"
-          subtitle={appParams.length > 0 ? `${appParams.length} parameter${appParams.length !== 1 ? 's' : ''} — referenced by canvas agent nodes` : 'Shared named values for canvas agent HTTP and LLM nodes'}>
-          <div style={{ fontSize: 12, color: C.textMuted, marginTop: -4 }}>
-            Values here are referenced by name in canvas agent nodes via <code style={{ fontFamily: 'monospace', fontSize: 11, background: 'rgba(255,255,255,0.07)', padding: '1px 5px', borderRadius: 4 }}>app_param_ref</code>. Secrets are encrypted and never shown in full.
-          </div>
-
+        <Section title="Global Parameters" icon="variable_insert" accent="#fb923c" defaultOpen={false}
+          subtitle={appParams.length > 0 ? `${appParams.length} parameter${appParams.length !== 1 ? 's' : ''}` : 'Shared named values for canvas agent nodes'}>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: -4 }}>Referenced by name in canvas agent nodes via <code style={{ fontFamily: 'monospace', fontSize: 11, background: 'rgba(255,255,255,0.07)', padding: '1px 5px', borderRadius: 4 }}>app_param_ref</code>.</div>
           {appParams.map(param => {
-            const isBusy = paramSaving === param.name;
-            const msg = paramMsg[param.name] ?? '';
-            const isErr = msg && msg !== 'Saved';
-            const isSecret = param.type === 'secret';
-            const editVal = editParamInputs[param.name] ?? '';
+            const isBusy = paramSaving === param.name; const msg = paramMsg[param.name] ?? ''; const isErr = msg && msg !== 'Saved';
+            const isSecret = param.type === 'secret'; const editVal = editParamInputs[param.name] ?? '';
             return (
               <div key={param.name} style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.1)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
@@ -595,541 +312,34 @@ export function RuntimeView({ app, onBack }: {
                   <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 20, background: 'rgba(132,158,190,0.1)', color: C.textMuted, border: '1px solid rgba(132,158,190,0.18)' }}>{param.type}</span>
                   {param.is_set && badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', isSecret ? `set ···${param.value_hint ?? ''}` : 'set')}
                 </div>
-                {!isSecret && param.is_set && param.value && (
-                  <div style={{ fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, marginBottom: 7, wordBreak: 'break-all' }}>{param.value}</div>
-                )}
+                {!isSecret && param.is_set && param.value && <div style={{ fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, marginBottom: 7, wordBreak: 'break-all' }}>{param.value}</div>}
                 <div style={{ display: 'flex', gap: 6 }}>
-                  <input
-                    type={isSecret ? 'password' : 'text'}
-                    placeholder={param.is_set ? 'Replace value…' : 'Enter value…'}
-                    value={editVal}
-                    onChange={e => setEditParamInputs(prev => ({ ...prev, [param.name]: e.target.value }))}
-                    onKeyDown={e => { if (e.key === 'Enter') handleUpdateAppParam(param.name); }}
-                    style={{ ...field, flex: 1, minWidth: 0 }}
-                  />
+                  <input type={isSecret ? 'password' : 'text'} placeholder={param.is_set ? 'Replace value…' : 'Enter value…'} value={editVal} onChange={e => setEditParamInputs(prev => ({ ...prev, [param.name]: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter') handleUpdateAppParam(param.name); }} style={{ ...f, flex: 1, minWidth: 0 }} />
                   {saveBtn(() => handleUpdateAppParam(param.name), isBusy, !editVal.trim(), 'Update')}
-                  <button onClick={() => handleDeleteAppParam(param.name)} disabled={isBusy}
-                    style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}>
-                    Remove
-                  </button>
+                  <button onClick={() => handleDeleteAppParam(param.name)} disabled={isBusy} style={{ padding: '8px 10px', borderRadius: 7, border: '1px solid rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)', color: '#f87171', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: isBusy ? 0.5 : 1 }}>Remove</button>
                 </div>
                 {msg && <div style={{ marginTop: 5, fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
               </div>
             );
           })}
-
           {!addingParam ? (
-            <button onClick={() => setAddingParam(true)}
-              style={{ width: '100%', padding: '8px 0', borderRadius: 7, border: `1px dashed ${C.outline}`, background: 'transparent', color: C.textMuted, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
-              + Add parameter
-            </button>
+            <button onClick={() => setAddingParam(true)} style={{ width: '100%', padding: '8px 0', borderRadius: 7, border: `1px dashed rgba(132,158,190,0.3)`, background: 'transparent', color: C.textMuted, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>+ Add parameter</button>
           ) : (
             <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(132,158,190,0.18)' }}>
-              <div style={{ ...lbl, marginBottom: 10 }}>New Parameter</div>
+              <div style={{ ...l, marginBottom: 10 }}>New Parameter</div>
               <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-                <input placeholder="name (a-z0-9_)" value={newParamName}
-                  onChange={e => setNewParamName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
-                  style={{ ...field, flex: 2, fontFamily: 'JetBrains Mono, monospace' }} />
-                <select value={newParamType} onChange={e => setNewParamType(e.target.value)}
-                  style={{ ...field, flex: 1 }}>
-                  {['string', 'secret', 'url', 'int', 'bool'].map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
+                <input placeholder="name (a-z0-9_)" value={newParamName} onChange={e => setNewParamName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))} style={{ ...f, flex: 2, fontFamily: 'JetBrains Mono, monospace' }} />
+                <select value={newParamType} onChange={e => setNewParamType(e.target.value)} style={{ ...f, flex: 1 }}>{['string', 'secret', 'url', 'int', 'bool'].map(t => <option key={t} value={t}>{t}</option>)}</select>
               </div>
-              <input
-                type={newParamType === 'secret' ? 'password' : 'text'}
-                placeholder="Value…" value={newParamValue}
-                onChange={e => setNewParamValue(e.target.value)}
-                style={{ ...field, marginBottom: 8 }} />
+              <input type={newParamType === 'secret' ? 'password' : 'text'} placeholder="Value…" value={newParamValue} onChange={e => setNewParamValue(e.target.value)} style={{ ...f, marginBottom: 8 }} />
               {addParamMsg && <div style={{ fontSize: 12, color: C.error, fontWeight: 600, marginBottom: 6 }}>{addParamMsg}</div>}
               <div style={{ display: 'flex', gap: 6 }}>
                 {saveBtn(handleAddAppParam, addParamSaving, !newParamName.trim() || !newParamValue.trim())}
-                <button onClick={() => { setAddingParam(false); setNewParamName(''); setNewParamValue(''); setNewParamType('string'); setAddParamMsg(''); }}
-                  style={{ padding: '8px 14px', borderRadius: 7, border: `1px solid ${C.outline}`, background: 'transparent', color: C.textMuted, cursor: 'pointer', fontSize: 12 }}>
-                  Cancel
-                </button>
+                <button onClick={() => { setAddingParam(false); setNewParamName(''); setNewParamValue(''); setNewParamType('string'); setAddParamMsg(''); }} style={{ padding: '8px 14px', borderRadius: 7, border: '1px solid rgba(132,158,190,0.3)', background: 'transparent', color: C.textMuted, cursor: 'pointer', fontSize: 12 }}>Cancel</button>
               </div>
             </div>
           )}
         </Section>
-
-        {/* ── 2. ORCHESTRATORS ───────────────────────────────────────────── */}
-        {orchMetas.length > 0 && (
-          <>
-            <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', margin: '24px 0 8px', paddingLeft: 4 }}>
-              Orchestrators
-            </div>
-            <Section title="LLM & Memory" icon="hub"
-              subtitle="Configure conversation LLM and memory summarizer per entry point.">
-              {orchMetas.map(orch => {
-                const orchEPs = entryPoints.filter(ep => ep.app_orchestrator_id === orch.id);
-                return (
-                  <div key={orch.id} style={{ borderRadius: 10, border: '1px solid rgba(132,158,190,0.18)', overflow: 'hidden', background: 'rgba(132,158,190,0.02)' }}>
-                    {/* Orchestrator header */}
-                    <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(132,158,190,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span className="material-symbols-outlined" style={{ fontSize: 15, color: C.purple }}>hub</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: C.text, flex: 1 }}>{orch.displayName || orch.name}</span>
-                    </div>
-
-                    <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      {orchEPs.length === 0 && (
-                        <div style={{ fontSize: 12, color: C.textMuted }}>No entry points connected to this orchestrator.</div>
-                      )}
-                      {orchEPs.map(ep => {
-                        const llmDraft = epLLMDrafts[ep.id] ?? { provider: '', model: '' };
-                        const sumDraft = epSumDrafts[ep.id] ?? { memoryEnabled: false, summarizeEveryN: 10, fallbackN: 3, provider: '', model: '' };
-                        const llmBusy = epLLMSaving === ep.id;
-                        const sumBusy = epSumSaving === ep.id;
-                        const llmMsg = epLLMMsg[ep.id] ?? '';
-                        const sumMsg = epSumMsg[ep.id] ?? '';
-                        const epTypeIcon = ep.entry_point_type === 'websocket' ? 'cable' : ep.entry_point_type === 'sse' ? 'stream' : ep.entry_point_type === 'voice' ? 'mic' : 'link';
-                        return (
-                          <div key={ep.id} style={{ borderRadius: 8, border: `1px solid ${sumDraft.memoryEnabled ? 'rgba(208,188,255,0.2)' : 'rgba(132,158,190,0.14)'}`, overflow: 'hidden', background: 'rgba(255,255,255,0.02)' }}>
-                            {/* EP header */}
-                            <div style={{ padding: '9px 12px', borderBottom: '1px solid rgba(132,158,190,0.1)', display: 'flex', alignItems: 'center', gap: 7 }}>
-                              <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted }}>{epTypeIcon}</span>
-                              <span style={{ fontSize: 12, fontWeight: 700, color: C.text, fontFamily: 'JetBrains Mono, monospace', flex: 1 }}>{ep.slug}</span>
-                              <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 20, background: 'rgba(132,158,190,0.1)', color: C.textMuted, border: '1px solid rgba(132,158,190,0.18)', fontWeight: 600 }}>{ep.entry_point_type}</span>
-                              <button
-                                onClick={() => handleToggleEP(ep.id, ep.enabled)}
-                                disabled={epToggling === ep.id}
-                                title={ep.enabled ? 'Disable entry point' : 'Enable entry point'}
-                                style={{ background: 'none', border: 'none', cursor: epToggling === ep.id ? 'wait' : 'pointer', color: ep.enabled ? '#4ade80' : C.textMuted, display: 'flex', alignItems: 'center', padding: '2px 4px', borderRadius: 4, flexShrink: 0, opacity: epToggling === ep.id ? 0.5 : 1 }}
-                              >
-                                <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
-                                  {epToggling === ep.id ? 'hourglass_empty' : ep.enabled ? 'toggle_on' : 'toggle_off'}
-                                </span>
-                              </button>
-                            </div>
-
-                            {ep.entry_point_type === 'voice' ? (
-                              /* ── Voice Config Panel ─────────────────────────── */
-                              (() => {
-                                const vd = voiceDrafts[orch.id] ?? { stt_provider: '', stt_model: '', tts_provider: '', tts_voice: '', tts_model: 'tts-1', voice_enabled: false, tts_enabled: false };
-                                const vBusy   = voiceSaving === orch.id;
-                                const vTest   = voiceTesting === orch.id;
-                                const tTest   = ttsTesting === orch.id;
-                                const vMsg    = voiceMsg[orch.id] ?? '';
-                                const vtMsg   = voiceTestMsg[orch.id] ?? '';
-                                const ttMsg   = ttsTestMsg[orch.id] ?? '';
-                                const setVd = (patch: Partial<typeof vd>) =>
-                                  setVoiceDrafts(prev => ({ ...prev, [orch.id]: { ...vd, ...patch } }));
-                                return (
-                                  <div style={{ padding: '12px 12px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-                                    {/* STT */}
-                                    <div>
-                                      <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
-                                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>mic</span>
-                                        Speech-to-Text (STT)
-                                        <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', marginLeft: 'auto', fontWeight: 600, textTransform: 'none', letterSpacing: 0 }}>
-                                          <input type="checkbox" checked={vd.voice_enabled}
-                                            onChange={e => setVd({ voice_enabled: e.target.checked })}
-                                            style={{ accentColor: C.purple, width: 13, height: 13 }} />
-                                          <span style={{ fontSize: 11, color: C.textMuted }}>Enable</span>
-                                        </label>
-                                      </div>
-                                      <div style={{ opacity: vd.voice_enabled ? 1 : 0.45, display: 'flex', gap: 8, alignItems: 'center' }}>
-                                        <select value={vd.stt_provider} disabled={!vd.voice_enabled}
-                                          onChange={e => {
-                                            const p = e.target.value;
-                                            const models = STT_MODELS[p] ?? [];
-                                            setVd({ stt_provider: p, stt_model: models[0] ?? '' });
-                                          }}
-                                          style={{ ...field, width: 140, flexShrink: 0 }}>
-                                          <option value="">— provider —</option>
-                                          {(STT_PROVIDERS as readonly string[]).map(p => <option key={p} value={p}>{p}</option>)}
-                                        </select>
-                                        <select value={vd.stt_model} disabled={!vd.voice_enabled || !vd.stt_provider}
-                                          onChange={e => setVd({ stt_model: e.target.value })}
-                                          style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
-                                          <option value="">— model —</option>
-                                          {(STT_MODELS[vd.stt_provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
-                                        </select>
-                                        <button onClick={() => handleTestSTT(orch.id)} disabled={vBusy || vTest || !vd.stt_provider}
-                                          style={{ padding: '8px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: (vBusy || vTest || !vd.stt_provider) ? 0.45 : 1, flexShrink: 0 }}>
-                                          {vTest ? '…' : 'Test'}
-                                        </button>
-                                      </div>
-                                      {vtMsg && <div style={{ marginTop: 5, fontSize: 12, color: vtMsg.startsWith('✓') ? C.green : C.error, fontWeight: 600 }}>{vtMsg}</div>}
-                                    </div>
-
-                                    {/* TTS */}
-                                    <div style={{ borderTop: '1px solid rgba(132,158,190,0.1)', paddingTop: 12 }}>
-                                      <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
-                                        <span className="material-symbols-outlined" style={{ fontSize: 13 }}>volume_up</span>
-                                        Text-to-Speech (TTS)
-                                        <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', marginLeft: 'auto', fontWeight: 600, textTransform: 'none', letterSpacing: 0 }}>
-                                          <input type="checkbox" checked={vd.tts_enabled}
-                                            onChange={e => setVd({ tts_enabled: e.target.checked })}
-                                            style={{ accentColor: C.purple, width: 13, height: 13 }} />
-                                          <span style={{ fontSize: 11, color: C.textMuted }}>Enable</span>
-                                        </label>
-                                      </div>
-                                      <div style={{ opacity: vd.tts_enabled ? 1 : 0.45, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                        <div style={{ display: 'flex', gap: 8 }}>
-                                          <select value={vd.tts_provider} disabled={!vd.tts_enabled}
-                                            onChange={e => {
-                                              const p = e.target.value;
-                                              setVd({ tts_provider: p, tts_voice: p === 'openai' ? 'alloy' : '', tts_model: p === 'openai' ? 'tts-1' : '' });
-                                            }}
-                                            style={{ ...field, width: 140, flexShrink: 0 }}>
-                                            <option value="">— provider —</option>
-                                            {(TTS_PROVIDERS as readonly string[]).map(p => <option key={p} value={p}>{p}</option>)}
-                                          </select>
-                                          {vd.tts_provider === 'openai' && (
-                                            <select value={vd.tts_model} disabled={!vd.tts_enabled}
-                                              onChange={e => setVd({ tts_model: e.target.value })}
-                                              style={{ ...field, width: 130, flexShrink: 0, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
-                                              {(TTS_MODELS_OPENAI as readonly string[]).map(m => <option key={m} value={m}>{m}</option>)}
-                                            </select>
-                                          )}
-                                        </div>
-                                        {vd.tts_provider === 'openai' && (
-                                          <div>
-                                            <label style={lbl}>Voice</label>
-                                            <select value={vd.tts_voice} disabled={!vd.tts_enabled}
-                                              onChange={e => setVd({ tts_voice: e.target.value })}
-                                              style={{ ...field, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
-                                              <option value="">— voice —</option>
-                                              {(TTS_VOICES_OPENAI as readonly string[]).map(v => <option key={v} value={v}>{v}</option>)}
-                                            </select>
-                                          </div>
-                                        )}
-                                        {vd.tts_provider === 'elevenlabs' && (
-                                          <div>
-                                            <label style={lbl}>Voice ID (from ElevenLabs dashboard)</label>
-                                            <input
-                                              type="text"
-                                              placeholder="e.g. 21m00Tcm4TlvDq8ikWAM"
-                                              value={vd.tts_voice}
-                                              disabled={!vd.tts_enabled}
-                                              onChange={e => setVd({ tts_voice: e.target.value })}
-                                              style={{ ...field, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}
-                                            />
-                                          </div>
-                                        )}
-                                        <div style={{ display: 'flex', gap: 8 }}>
-                                          <button onClick={() => handleTestTTS(orch.id)} disabled={vBusy || tTest || !vd.tts_provider || !vd.tts_voice}
-                                            style={{ padding: '8px 12px', borderRadius: 7, border: '1px solid rgba(74,222,128,0.3)', background: 'rgba(74,222,128,0.07)', color: C.green, cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: (vBusy || tTest || !vd.tts_provider || !vd.tts_voice) ? 0.45 : 1 }}>
-                                            {tTest ? '…' : 'Test TTS'}
-                                          </button>
-                                        </div>
-                                        {ttMsg && <div style={{ marginTop: 4, fontSize: 12, color: ttMsg.startsWith('✓') ? C.green : C.error, fontWeight: 600 }}>{ttMsg}</div>}
-                                      </div>
-                                    </div>
-
-                                    {/* Save row */}
-                                    <div style={{ borderTop: '1px solid rgba(132,158,190,0.1)', paddingTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-                                      {saveBtn(() => handleSaveVoice(orch.id), vBusy, false, 'Save Voice Config')}
-                                      {vMsg && <span style={{ fontSize: 12, color: vMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{vMsg}</span>}
-                                    </div>
-                                  </div>
-                                );
-                              })()
-                            ) : (
-                              <div style={{ padding: '12px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-                              {/* Conversation LLM */}
-                              <div>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
-                                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>psychology</span>
-                                  Conversation LLM
-                                </div>
-                                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                  <select value={llmDraft.provider}
-                                    onChange={e => {
-                                      const p = e.target.value;
-                                      const models = RUNTIME_MODELS[p] ?? [];
-                                      setEPLLMDrafts(prev => ({ ...prev, [ep.id]: { provider: p, model: models.includes(llmDraft.model) ? llmDraft.model : (models[0] ?? '') } }));
-                                    }}
-                                    style={{ ...field, width: 150, flexShrink: 0 }}>
-                                    <option value="">— provider —</option>
-                                    {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
-                                  </select>
-                                  <select value={llmDraft.model} disabled={!llmDraft.provider}
-                                    onChange={e => setEPLLMDrafts(prev => ({ ...prev, [ep.id]: { ...llmDraft, model: e.target.value } }))}
-                                    style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
-                                    <option value="">— model —</option>
-                                    {(RUNTIME_MODELS[llmDraft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
-                                  </select>
-                                  {saveBtn(() => handleSaveEPLLM(ep.id), llmBusy, !llmDraft.provider || !llmDraft.model)}
-                                </div>
-                                {llmMsg && <div style={{ marginTop: 5, fontSize: 12, color: llmMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{llmMsg}</div>}
-                              </div>
-
-                              {/* Memory & Summarizer */}
-                              <div style={{ borderTop: '1px solid rgba(132,158,190,0.1)', paddingTop: 12 }}>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
-                                  <span className="material-symbols-outlined" style={{ fontSize: 13 }}>memory</span>
-                                  Memory & Summarizer
-                                  <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', marginLeft: 'auto', fontWeight: 600, textTransform: 'none', letterSpacing: 0 }}>
-                                    <input type="checkbox" checked={sumDraft.memoryEnabled}
-                                      onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, memoryEnabled: e.target.checked } }))}
-                                      style={{ accentColor: C.purple, width: 13, height: 13 }} />
-                                    <span style={{ fontSize: 11, color: C.textMuted }}>Enable</span>
-                                  </label>
-                                </div>
-                                <div style={{ opacity: sumDraft.memoryEnabled ? 1 : 0.45, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                                    <div>
-                                      <label style={lbl}>Every N turns</label>
-                                      <input type="number" min={1} value={sumDraft.summarizeEveryN} disabled={!sumDraft.memoryEnabled} style={field}
-                                        onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, summarizeEveryN: parseInt(e.target.value) || 10 } }))} />
-                                    </div>
-                                    <div>
-                                      <label style={lbl}>Keep last N verbatim</label>
-                                      <input type="number" min={0} value={sumDraft.fallbackN} disabled={!sumDraft.memoryEnabled} style={field}
-                                        onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, fallbackN: parseInt(e.target.value) || 0 } }))} />
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <label style={lbl}>Summarizer model (optional — defaults to conversation LLM)</label>
-                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                      <select value={sumDraft.provider} disabled={!sumDraft.memoryEnabled}
-                                        onChange={e => {
-                                          const p = e.target.value;
-                                          const models = RUNTIME_MODELS[p] ?? [];
-                                          setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, provider: p, model: models.includes(sumDraft.model) ? sumDraft.model : (models[0] ?? '') } }));
-                                        }}
-                                        style={{ ...field, width: 150, flexShrink: 0 }}>
-                                        <option value="">— same as LLM —</option>
-                                        {setProviders.map(p => <option key={p} value={p}>{p}</option>)}
-                                      </select>
-                                      <select value={sumDraft.model} disabled={!sumDraft.memoryEnabled || !sumDraft.provider}
-                                        onChange={e => setEPSumDrafts(prev => ({ ...prev, [ep.id]: { ...sumDraft, model: e.target.value } }))}
-                                        style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
-                                        <option value="">— model —</option>
-                                        {(RUNTIME_MODELS[sumDraft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
-                                      </select>
-                                      {saveBtn(() => handleSaveEPSummarizer(ep.id), sumBusy, false)}
-                                    </div>
-                                  </div>
-                                </div>
-                                {sumMsg && <div style={{ marginTop: 6, fontSize: 12, color: sumMsg !== 'Saved' ? C.error : C.green, fontWeight: 600 }}>{sumMsg}</div>}
-                              </div>
-                            </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </Section>
-          </>
-        )}
-
-        {/* ── 3. CANVAS AGENTS ───────────────────────────────────────────── */}
-        {agentIds.length > 0 && (
-          <>
-            <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', margin: '24px 0 8px', paddingLeft: 4 }}>
-              Canvas Agents
-            </div>
-
-            {agentIds.map(agentId => {
-              const nodes = agentLLMNodes.filter(n => n.agent_id === agentId);
-              const agentParams = agentParamsList.find(a => a.agent_id === agentId);
-              const slug = nodes[0]?.agent_slug ?? agentParams?.agent_slug ?? agentId;
-              const paramsBusy = agentParamSaving === agentId;
-              const paramsMsg = agentParamMsg[agentId] ?? '';
-              const paramsErr = paramsMsg && paramsMsg !== 'Saved';
-              const paramInputs = agentParamInputs[agentId] ?? {};
-              const hasParamInput = Object.values(paramInputs).some(v => v.trim() !== '');
-
-              // Classify params: HTTP-relevant (url/string used by http nodes) vs other
-              const httpParams = agentParams?.required_params.filter(p =>
-                p.used_by_nodes?.some(n => n.toLowerCase().includes('http')) ||
-                p.type === 'url'
-              ) ?? [];
-              const otherParams = agentParams?.required_params.filter(p => !httpParams.includes(p)) ?? [];
-
-              return (
-                <AgentSection key={agentId} slug={slug}>
-
-                  {/* LLM Nodes */}
-                  {nodes.length > 0 && (
-                    <div>
-                      <AgentSubLabel icon="psychology" label="LLM Nodes" />
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {nodes.map(node => {
-                          const key = `${agentId}::${node.node_id}`;
-                          const isBusy = nodeLLMSaving === key;
-                          const msg = nodeLLMMsg[node.node_id] ?? '';
-                          const isErr = msg && msg !== 'Saved';
-                          const draft = nodeLLMDrafts[node.node_id] ?? { provider: '', model: '' };
-                          const canSave = draft.provider && draft.model;
-                          const isOverridden = !!(node.override_provider && node.override_model);
-                          return (
-                            <div key={node.node_id} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${isOverridden ? 'rgba(251,146,60,0.2)' : 'rgba(255,255,255,0.07)'}` }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                                <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: C.text }}>{node.label || node.node_id}</span>
-                                <span style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
-                                  default: {node.compiled_provider}/{node.compiled_model}
-                                </span>
-                                {isOverridden && badge('#fb923c', 'rgba(251,146,60,0.1)', 'rgba(251,146,60,0.3)', 'overridden')}
-                              </div>
-                              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                {/* Only configured providers shown */}
-                                <select value={draft.provider}
-                                  onChange={e => {
-                                    const p = e.target.value;
-                                    setNodeLLMDrafts(prev => {
-                                      const models = RUNTIME_MODELS[p] ?? [];
-                                      const prevModel = prev[node.node_id]?.model ?? '';
-                                      return { ...prev, [node.node_id]: { provider: p, model: models.includes(prevModel) ? prevModel : (models[0] ?? '') } };
-                                    });
-                                  }}
-                                  style={{ ...field, width: 150, flexShrink: 0 }}>
-                                  <option value="">— provider —</option>
-                                  {setProviders.length > 0
-                                    ? setProviders.map(p => <option key={p} value={p}>{p}</option>)
-                                    : PROVIDER_LIST.map(p => <option key={p} value={p}>{p}</option>)
-                                  }
-                                </select>
-                                <select value={draft.model} disabled={!draft.provider}
-                                  onChange={e => setNodeLLMDrafts(prev => ({ ...prev, [node.node_id]: { ...draft, model: e.target.value } }))}
-                                  style={{ ...field, flex: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: 12 }}>
-                                  <option value="">— model —</option>
-                                  {(RUNTIME_MODELS[draft.provider] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
-                                </select>
-                                {saveBtn(() => handleSaveNodeLLM(agentId, node.node_id), isBusy, !canSave)}
-                              </div>
-                              {msg && <div style={{ marginTop: 6, fontSize: 12, color: isErr ? C.error : C.green, fontWeight: 600 }}>{msg}</div>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* HTTP Params */}
-                  {httpParams.length > 0 && (
-                    <div>
-                      <AgentSubLabel icon="http" label="HTTP Nodes" />
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {httpParams.map(param => {
-                          const isSecret = param.type === 'secret';
-                          const currentVal = paramInputs[param.key] ?? '';
-                          return (
-                            <div key={param.key} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                                <label style={{ ...lbl, marginBottom: 0, flex: 1 }}>{param.label}</label>
-                                {param.required && !param.is_set && badge('#f87171', 'rgba(248,113,113,0.1)', 'rgba(248,113,113,0.3)', 'required')}
-                                {param.is_set && badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', `set ···${param.hint}`)}
-                              </div>
-                              {param.description && <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>{param.description}</div>}
-                              <input
-                                type={isSecret ? 'password' : 'text'}
-                                placeholder={param.is_set ? 'Replace…' : (param.default_value ? `default: ${param.default_value}` : 'Enter value…')}
-                                value={currentVal}
-                                onChange={e => setAgentParamInputs(prev => ({ ...prev, [agentId]: { ...(prev[agentId] ?? {}), [param.key]: e.target.value } }))}
-                                style={{ ...field }}
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Other Params */}
-                  {otherParams.length > 0 && (
-                    <div>
-                      <AgentSubLabel icon="tune" label="Parameters" />
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {otherParams.map(param => {
-                          const isSecret = param.type === 'secret';
-                          const currentVal = paramInputs[param.key] ?? '';
-                          return (
-                            <div key={param.key} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                                <label style={{ ...lbl, marginBottom: 0, flex: 1 }}>{param.label}</label>
-                                {param.required && !param.is_set && badge('#f87171', 'rgba(248,113,113,0.1)', 'rgba(248,113,113,0.3)', 'required')}
-                                {param.is_set && badge(C.green, 'rgba(74,222,128,0.1)', 'rgba(74,222,128,0.3)', `set ···${param.hint}`)}
-                              </div>
-                              {param.description && <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>{param.description}</div>}
-                              <input
-                                type={isSecret ? 'password' : 'text'}
-                                placeholder={param.is_set ? 'Replace…' : (param.default_value ? `default: ${param.default_value}` : 'Enter value…')}
-                                value={currentVal}
-                                onChange={e => setAgentParamInputs(prev => ({ ...prev, [agentId]: { ...(prev[agentId] ?? {}), [param.key]: e.target.value } }))}
-                                style={{ ...field }}
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Save params button — spans all param types */}
-                  {agentParams && agentParams.required_params.length > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {saveBtn(() => handleSaveAgentParams(agentId), paramsBusy, !hasParamInput, 'Save Parameters')}
-                      {paramsMsg && <span style={{ fontSize: 12, color: paramsErr ? C.error : C.green, fontWeight: 600 }}>{paramsMsg}</span>}
-                    </div>
-                  )}
-                </AgentSection>
-              );
-            })}
-          </>
-        )}
-
-        {/* ── 4. POLICY ──────────────────────────────────────────────────── */}
-        <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase', margin: '24px 0 8px', paddingLeft: 4 }}>
-          Policy
-        </div>
-
-        <Section title="Session Limits" icon="timer" defaultOpen={false}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-            <div>
-              <label style={lbl}>Max Concurrent Sessions</label>
-              <input type="number" min={1} placeholder="Unlimited" value={cfg.max_concurrent_sessions ?? ''} style={field}
-                onChange={e => setCfg(c => ({ ...c, max_concurrent_sessions: e.target.value === '' ? null : parseInt(e.target.value) }))} />
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>App-wide soft cap. Empty = unlimited.</div>
-            </div>
-            <div>
-              <label style={lbl}>Session Timeout (min)</label>
-              <input type="number" min={1} placeholder="No timeout" value={cfg.session_timeout_minutes ?? ''} style={field}
-                onChange={e => setCfg(c => ({ ...c, session_timeout_minutes: e.target.value === '' ? null : parseInt(e.target.value) }))} />
-              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Advisory. Empty = no timeout.</div>
-            </div>
-          </div>
-        </Section>
-
-        <Section title="Rate Limiting" icon="speed" defaultOpen={false}>
-          <label style={lbl}>Requests per minute</label>
-          <input type="number" min={1} placeholder="Unlimited" value={cfg.rate_limit_rpm ?? ''} style={field}
-            onChange={e => setCfg(c => ({ ...c, rate_limit_rpm: e.target.value === '' ? null : parseInt(e.target.value) }))} />
-          <div style={{ fontSize: 11, color: C.textMuted, marginTop: -8 }}>Applied across all entry points of this app.</div>
-        </Section>
-
-        <Section title="Access Control" icon="block" defaultOpen={false}>
-          <div>
-            <label style={lbl}>Blocked User IDs (comma-separated)</label>
-            <input type="text" placeholder="e.g. 42, 107, 889" value={usersInput} style={field}
-              onChange={e => setUsersInput(e.target.value)} />
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Connections from these user IDs are rejected immediately.</div>
-          </div>
-          <div>
-            <label style={lbl}>Blocked Token Hashes (one per line)</label>
-            <textarea placeholder="SHA-256 hash of each blocked token" value={tokensInput} rows={3}
-              style={{ ...field, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
-              onChange={e => setTokensInput(e.target.value)} />
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Paste the SHA-256 hash of the token — not the raw token. One per line.</div>
-          </div>
-        </Section>
-
-        {/* Save policy */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
-          <button onClick={handleSave} disabled={saving}
-            style={{ padding: '11px 28px', borderRadius: 8, border: 'none', cursor: saving ? 'not-allowed' : 'pointer', background: '#fb923c', color: '#000', fontSize: 14, fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
-            {saving ? 'Saving…' : 'Save Policy'}
-          </button>
-          {saved  && <span style={{ fontSize: 13, color: C.green }}>Saved</span>}
-          {error  && <span style={{ fontSize: 13, color: C.error }}>{error}</span>}
-        </div>
-
       </div>
     </div>
   );
