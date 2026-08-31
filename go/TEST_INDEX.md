@@ -580,6 +580,9 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestA2AStream_CapExceeded_429` | Gate cap exceeded → 429 |
 | `TestA2AStream_NoText_RPCError` | Empty message → JSON-RPC error |
 | `TestA2AStream_FileEventForwardedAsArtifactUpdate` | `file` bus event forwarded as A2A `artifact-update` stream/event frame with correct URL/mediaType/name |
+| `TestA2ASend_ResultIsSpecCompliant` | (A2A-WF01) `SendMessage` result object shape: `result.task.id`, `result.task.status.state == "TASK_STATE_COMPLETED"`, `result.task.artifacts[0].parts[0].text` — exact A2A v1.0 wire format |
+| `TestA2AStream_TokenIsSpecCompliant` | (A2A-WF02) `SendStreamingMessage` token SSE frame shape: `data: {"result":{"artifactUpdate":{...}}}` — no `params`, no `kind`, exact v1.0 wire format |
+| `TestA2AStream_ArtifactUpdateIsSpecCompliant` | (A2A-WF03) `SendStreamingMessage` completed-status SSE frame shape: `data: {"result":{"statusUpdate":{"status":{"state":"TASK_STATE_COMPLETED"}}}}` — no `isFinal` field in wire format |
 
 **Trigger:** any change to `internal/a2a/server.go`, `internal/a2a/pgx.go`, `internal/execution/lifecycle.go`, or `internal/epconfig/pgx.go`
 
@@ -2634,7 +2637,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-11 | agentregistry | 17 |
 | S1-12 | ws | 24 |
 | S1-13 | sse | 23 |
-| S1-14 | a2a | 27 |
+| S1-14 | a2a | 30 |
 | S1-15 | admin | 55 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |

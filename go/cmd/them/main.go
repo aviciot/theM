@@ -301,6 +301,8 @@ func run() error {
 
 	// ── 17b. Wire A2A server (/a2a/*, /.well-known/*) ────────────────────────
 	// Uses the shared execLifecycle (constructed in section 16).
+	a2aTaskRedis := cache.NewAuthRedisClient(redisCache.Client())
+	a2aTaskStore := agentgen.NewRedisA2ATaskStore(a2aTaskRedis)
 	a2aServer := a2a.NewServer(
 		execLifecycle,
 		bus,
@@ -310,7 +312,8 @@ func run() error {
 	).WithRunStreamer(rsStreamer).
 		WithPublicURL(cfg.PublicURL).
 		WithCardLoader(a2a.NewPgxCardLoader(database.Pool())).
-		WithSessionPublisher(sessionPub)
+		WithSessionPublisher(sessionPub).
+		WithTaskStore(a2aTaskStore)
 	srv.MountA2A(a2aServer.Routes())
 	log.Info("A2A server mounted")
 

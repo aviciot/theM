@@ -281,7 +281,7 @@ func postRPC(t *testing.T, srv *httptest.Server, body any, token string) *http.R
 func validSendBody() map[string]any {
 	return map[string]any{
 		"jsonrpc": "2.0",
-		"method":  "message/send",
+		"method":  "SendMessage",
 		"params": map[string]any{
 			"message": map[string]any{
 				"role":      "user",
@@ -425,6 +425,7 @@ func TestA2A_ClientCannotOverrideTenantID(t *testing.T) {
 			"role":      "user",
 			"parts":     []map[string]any{{"text": "hi"}},
 			"contextId": "attacker-controlled-context",
+			"messageId": "uuid-attacker-1", // required by A2A v1.0 spec
 		},
 		"tenant_id":      "attacker-tenant",
 		"application_id": "attacker-app",
@@ -535,7 +536,8 @@ func TestA2A_GateRollbackOnRegisterFail(t *testing.T) {
 	assert.True(t, g.rollbackCalled, "gate.Rollback must be called on Register failure")
 }
 
-// A2A-14: Successful workflow → "completed" state + text artifact
+// A2A-14: Successful workflow → SDK Task with "completed" state + text artifact.
+// The SDK wraps the result in StreamResponse: {"task": {id, contextId, status, artifacts}}.
 func TestA2A_RPCResult_CompletedState(t *testing.T) {
 	b := defaultBuilder()
 	srv := httptest.NewServer(b.build().Routes())
@@ -552,11 +554,13 @@ func TestA2A_RPCResult_CompletedState(t *testing.T) {
 	assert.Nil(t, rpcResp["error"])
 	require.NotNil(t, rpcResp["result"])
 
+	// SDK wraps result in StreamResponse: {"task": {...}}
 	result := rpcResp["result"].(map[string]any)
-	status := result["status"].(map[string]any)
-	assert.Equal(t, "completed", status["state"])
+	task := result["task"].(map[string]any)
+	status := task["status"].(map[string]any)
+	assert.Equal(t, "TASK_STATE_COMPLETED", status["state"])
 
-	artifacts := result["artifacts"].([]any)
+	artifacts, _ := task["artifacts"].([]any)
 	require.Len(t, artifacts, 1)
 	parts := artifacts[0].(map[string]any)["parts"].([]any)
 	require.Len(t, parts, 1)
@@ -565,7 +569,7 @@ func TestA2A_RPCResult_CompletedState(t *testing.T) {
 	assert.Nil(t, part["kind"], "wire format must not include 'kind' field (non-spec)")
 }
 
-// A2A-14b: taskId present in result
+// A2A-14b: task id present in result (SDK Task uses "id" field, not "taskId")
 func TestA2A_RPCResult_HasTaskID(t *testing.T) {
 	b := defaultBuilder()
 	srv := httptest.NewServer(b.build().Routes())
@@ -578,13 +582,17 @@ func TestA2A_RPCResult_HasTaskID(t *testing.T) {
 	var rpcResp map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
 
+	// SDK wraps result in StreamResponse: {"task": {"id": "...", ...}}
 	result := rpcResp["result"].(map[string]any)
-	taskID, ok := result["taskId"]
-	assert.True(t, ok, "result must contain taskId")
-	assert.NotEmpty(t, taskID, "taskId must be non-empty")
+	task := result["task"].(map[string]any)
+	taskID, ok := task["id"]
+	assert.True(t, ok, "task must contain id field")
+	assert.NotEmpty(t, taskID, "task id must be non-empty")
 }
 
-// A2A-15: Failed workflow → sanitized JSON-RPC error (no raw error string)
+// A2A-15: Failed workflow → SDK Task with status.state == "failed".
+// With the SDK, the executor yields a failed status event; the SDK returns a Task
+// (not a JSON-RPC error). The raw error is never exposed to callers.
 func TestA2A_RPCError_WorkflowFailed(t *testing.T) {
 	b := defaultBuilder()
 	b.temporal = &fakeTemporal{run: &fakeWorkflowRun{err: errors.New("temporal internal error")}}
@@ -594,14 +602,20 @@ func TestA2A_RPCError_WorkflowFailed(t *testing.T) {
 	resp := postRPC(t, srv, validSendBody(), "valid-token")
 	defer resp.Body.Close()
 
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	// SDK returns HTTP 200 with a Task in failed state (not an HTTP-level error).
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	var rpcResp map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
 
-	require.NotNil(t, rpcResp["error"])
-	errObj := rpcResp["error"].(map[string]any)
-	assert.Equal(t, "internal error", errObj["message"])
-	assert.NotContains(t, errObj["message"], "temporal internal error",
+	// No raw error in the JSON-RPC result.
+	assert.Nil(t, rpcResp["error"])
+	result := rpcResp["result"].(map[string]any)
+	task := result["task"].(map[string]any)
+	status := task["status"].(map[string]any)
+	assert.Equal(t, "TASK_STATE_FAILED", status["state"], "failed workflow must produce task with state=failed")
+	// Verify the raw error string is not leaked anywhere.
+	respBytes, _ := json.Marshal(rpcResp)
+	assert.NotContains(t, string(respBytes), "temporal internal error",
 		"raw error must not be exposed to callers")
 }
 
@@ -621,6 +635,7 @@ func TestA2A_ContextIDFromParams(t *testing.T) {
 			"role":      "user",
 			"parts":     []map[string]any{{"text": "hi"}},
 			"contextId": "caller-context-id-abc123",
+			"messageId": "uuid-ctx-test-1", // required by A2A v1.0 spec
 		},
 	}
 
@@ -740,7 +755,10 @@ func TestA2AMalformedJSON(t *testing.T) {
 	assert.Equal(t, float64(-32700), errObj["code"])
 }
 
-// A2A-22: Temporal client nil → 503
+// A2A-22: Temporal client nil → executor yields failed status → SDK returns task with state=failed.
+// With the SDK executor model, "temporal not configured" becomes a workflow start error
+// that the executor maps to TaskStateFailed. The SDK returns HTTP 200 with a failed task
+// (the HTTP-level 503 path was only present in the hand-rolled handler).
 func TestA2A_TemporalNotConfigured_503(t *testing.T) {
 	b := defaultBuilder()
 	b.temporal = nil
@@ -749,7 +767,15 @@ func TestA2A_TemporalNotConfigured_503(t *testing.T) {
 
 	resp := postRPC(t, srv, validSendBody(), "valid-token")
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	// SDK path: HTTP 200 + task with state=failed (not HTTP 503).
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var rpcResp map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&rpcResp))
+	assert.Nil(t, rpcResp["error"])
+	result, _ := rpcResp["result"].(map[string]any)
+	task, _ := result["task"].(map[string]any)
+	status, _ := task["status"].(map[string]any)
+	assert.Equal(t, "TASK_STATE_FAILED", status["state"])
 }
 
 // A2A-23: ContextID generated by Lifecycle is UUID v4 format
@@ -797,7 +823,7 @@ func TestA2A_TemporalInterface_Satisfied(t *testing.T) {
 func validStreamBody() map[string]any {
 	return map[string]any{
 		"jsonrpc": "2.0",
-		"method":  "message/stream",
+		"method":  "SendStreamingMessage",
 		"params": map[string]any{
 			"message": map[string]any{
 				"role":      "user",
@@ -872,7 +898,8 @@ func TestA2AStream_ContentType(t *testing.T) {
 	assert.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
 }
 
-// A2A-S02: message/stream success → emits a task-status-update completed event
+// A2A-S02: message/stream success → emits a statusUpdate completed event.
+// SDK SSE format: data: {"jsonrpc":"2.0","id":...,"result":{"statusUpdate":{"status":{"state":"completed",...}}}}
 func TestA2AStream_EmitsCompletedStatus(t *testing.T) {
 	b, wire := streamBuilder()
 	bs := b.build()
@@ -880,8 +907,8 @@ func TestA2AStream_EmitsCompletedStatus(t *testing.T) {
 	srv := httptest.NewServer(bs.Routes())
 	defer srv.Close()
 
-	status, lines := postStream(t, srv, validStreamBody(), "valid-token")
-	require.Equal(t, http.StatusOK, status)
+	httpStatus, lines := postStream(t, srv, validStreamBody(), "valid-token")
+	require.Equal(t, http.StatusOK, httpStatus)
 
 	var foundCompleted bool
 	for _, line := range lines {
@@ -892,16 +919,18 @@ func TestA2AStream_EmitsCompletedStatus(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err != nil {
 			continue
 		}
-		params, _ := ev["params"].(map[string]any)
-		event, _ := params["event"].(map[string]any)
-		if event["kind"] == "task-status-update" {
-			status, _ := event["status"].(map[string]any)
-			if status["state"] == "completed" {
+		// SDK SSE events are full JSON-RPC responses:
+		// {"jsonrpc":"2.0","id":...,"result":{"statusUpdate":{...}}}
+		result, _ := ev["result"].(map[string]any)
+		statusUpdate, _ := result["statusUpdate"].(map[string]any)
+		if statusUpdate != nil {
+			s, _ := statusUpdate["status"].(map[string]any)
+			if s["state"] == "TASK_STATE_COMPLETED" {
 				foundCompleted = true
 			}
 		}
 	}
-	assert.True(t, foundCompleted, "expected a task-status-update completed event in the SSE stream")
+	assert.True(t, foundCompleted, "expected a statusUpdate completed event in the SSE stream")
 }
 
 // A2A-S03: message/stream with missing token on token EP → 401 (clean HTTP, no SSE started)
@@ -937,7 +966,8 @@ func TestA2AStream_CapExceeded_429(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, status)
 }
 
-// A2A-S06: message/stream — no text in parts → JSON-RPC error (HTTP 200, error body)
+// A2A-S06: no text in parts → JSON-RPC error before admission (HTTP 200, error body).
+// The pre-check runs before the SDK, so it returns our custom error regardless of method.
 func TestA2AStream_NoText_RPCError(t *testing.T) {
 	b := defaultBuilder()
 	srv := httptest.NewServer(b.build().Routes())
@@ -945,7 +975,7 @@ func TestA2AStream_NoText_RPCError(t *testing.T) {
 
 	body := map[string]any{
 		"jsonrpc": "2.0",
-		"method":  "message/stream",
+		"method":  "SendStreamingMessage",
 		"params": map[string]any{
 			"message": map[string]any{
 				"role":  "user",
@@ -985,7 +1015,8 @@ func TestA2A_AgentCard_StreamingTrue(t *testing.T) {
 	assert.Equal(t, true, caps["streaming"], "agent card must advertise streaming: true")
 }
 
-// A2A-S08: agent card URL uses WithPublicURL when set
+// A2A-S08: agent card URL uses WithPublicURL when set.
+// SDK-built cards use supportedInterfaces[0].url per A2A v1.0 spec.
 func TestA2A_AgentCard_WithPublicURL(t *testing.T) {
 	b := defaultBuilder()
 	s := b.build().WithPublicURL("https://example.com")
@@ -998,10 +1029,15 @@ func TestA2A_AgentCard_WithPublicURL(t *testing.T) {
 
 	var card map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&card))
-	assert.Equal(t, "https://example.com/a2a/myapp/ep1", card["url"])
+	// SDK-built cards: URL is in supportedInterfaces[0].url, not top-level "url".
+	ifaces, _ := card["supportedInterfaces"].([]any)
+	require.NotEmpty(t, ifaces, "card must have at least one supportedInterface")
+	iface, _ := ifaces[0].(map[string]any)
+	assert.Equal(t, "https://example.com/a2a/myapp/ep1", iface["url"])
 }
 
-// A2A-S09: agent card URL is derived from request host when publicURL is unset
+// A2A-S09: agent card URL is derived from request host when publicURL is unset.
+// SDK-built cards use supportedInterfaces[0].url per A2A v1.0 spec.
 func TestA2A_AgentCard_DerivedURL(t *testing.T) {
 	b := defaultBuilder()
 	srv := httptest.NewServer(b.build().Routes())
@@ -1013,7 +1049,11 @@ func TestA2A_AgentCard_DerivedURL(t *testing.T) {
 
 	var card map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&card))
-	u, _ := card["url"].(string)
+	// SDK-built cards: URL is in supportedInterfaces[0].url, not top-level "url".
+	ifaces, _ := card["supportedInterfaces"].([]any)
+	require.NotEmpty(t, ifaces, "card must have at least one supportedInterface")
+	iface, _ := ifaces[0].(map[string]any)
+	u, _ := iface["url"].(string)
 	assert.Contains(t, u, "/a2a/myapp/ep1", "URL must contain app and ep slugs")
 	assert.Contains(t, u, "http://", "URL must include http scheme when no X-Forwarded-Proto")
 }
@@ -1062,6 +1102,7 @@ func TestA2A_AgentCard_SynthesizedCard(t *testing.T) {
 }
 
 // A2A-S11: fallback card uses OrchestratorDisplayName when no card is synthesized yet.
+// SDK-built fallback cards put URL in supportedInterfaces[0].url.
 func TestA2A_AgentCard_FallbackToOrchName(t *testing.T) {
 	b := defaultBuilder()
 	s := b.build().WithCardLoader(&fakeCardLoader{
@@ -1077,7 +1118,11 @@ func TestA2A_AgentCard_FallbackToOrchName(t *testing.T) {
 	var card map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&card))
 	assert.Equal(t, "My Orchestrator", card["name"])
-	assert.Contains(t, card["url"].(string), "/a2a/myapp/ep1")
+	// SDK-built fallback: URL in supportedInterfaces[0].url.
+	ifaces, _ := card["supportedInterfaces"].([]any)
+	require.NotEmpty(t, ifaces)
+	iface, _ := ifaces[0].(map[string]any)
+	assert.Contains(t, iface["url"].(string), "/a2a/myapp/ep1")
 }
 
 // A2A-S12: static fallback served when no CardLoader is configured.
@@ -1095,7 +1140,8 @@ func TestA2A_AgentCard_FallbackNoLoader(t *testing.T) {
 	assert.Equal(t, "the-M Orchestrator", card["name"])
 }
 
-// A2A-S13: "file" bus event is forwarded as an artifact-update stream/event frame.
+// A2A-S13: "file" bus event is forwarded as an artifactUpdate SSE frame.
+// SDK SSE format: data: {"jsonrpc":"2.0","id":...,"result":{"artifactUpdate":{"artifact":{...}}}}
 func TestA2AStream_FileEventForwardedAsArtifactUpdate(t *testing.T) {
 	inner := &fakeTemporal{run: &fakeWorkflowRun{
 		result: temporal.WorkflowResult{FinalText: "done", Status: domain.RunStatusCompleted},
@@ -1109,8 +1155,8 @@ func TestA2AStream_FileEventForwardedAsArtifactUpdate(t *testing.T) {
 	srv := httptest.NewServer(bs.Routes())
 	defer srv.Close()
 
-	status, lines := postStream(t, srv, validStreamBody(), "valid-token")
-	require.Equal(t, http.StatusOK, status)
+	httpStatus, lines := postStream(t, srv, validStreamBody(), "valid-token")
+	require.Equal(t, http.StatusOK, httpStatus)
 
 	var foundArtifact bool
 	for _, line := range lines {
@@ -1121,19 +1167,26 @@ func TestA2AStream_FileEventForwardedAsArtifactUpdate(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err != nil {
 			continue
 		}
-		params, _ := ev["params"].(map[string]any)
-		evBody, _ := params["event"].(map[string]any)
-		if evBody["kind"] == "artifact-update" {
-			parts, _ := evBody["parts"].([]any)
-			if len(parts) > 0 {
-				part, _ := parts[0].(map[string]any)
-				if part["url"] == "https://example.com/report.pdf" {
-					foundArtifact = true
-				}
+		// SDK SSE events: {"jsonrpc":"2.0","id":...,"result":{"artifactUpdate":{"artifact":{...}}}}
+		result, _ := ev["result"].(map[string]any)
+		artifactUpdate, _ := result["artifactUpdate"].(map[string]any)
+		if artifactUpdate == nil {
+			continue
+		}
+		artifact, _ := artifactUpdate["artifact"].(map[string]any)
+		if artifact == nil {
+			continue
+		}
+		parts, _ := artifact["parts"].([]any)
+		for _, p := range parts {
+			part, _ := p.(map[string]any)
+			// SDK serializes URL parts as {"url": "..."} directly in the part object.
+			if part["url"] == "https://example.com/report.pdf" {
+				foundArtifact = true
 			}
 		}
 	}
-	assert.True(t, foundArtifact, "expected an artifact-update stream event with the file URL")
+	assert.True(t, foundArtifact, "expected an artifactUpdate SSE frame with the file URL")
 }
 
 // filePublishTemporal publishes a "file" bus event then "done" when ExecuteWorkflow is called.
@@ -1143,7 +1196,7 @@ type filePublishTemporal struct {
 }
 
 func (f *filePublishTemporal) ExecuteWorkflow(ctx context.Context, opts temporalclient.StartWorkflowOptions, wf interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
-	// Capture args without publishing done — suppress the delegate's auto-publish.
+	// Suppress the delegate's auto-done publish so we control event ordering.
 	origBus := f.delegate.bus
 	f.delegate.bus = nil
 	run, err := f.delegate.ExecuteWorkflow(ctx, opts, wf, args...)
@@ -1154,7 +1207,11 @@ func (f *filePublishTemporal) ExecuteWorkflow(ctx context.Context, opts temporal
 	contextID := f.delegate.contextID
 	runID := f.delegate.lastInput.RunID
 	bus := f.bus
+	// Use a blocking workflow run so that wfRun.Get() waits until after bus events
+	// are published and consumed. This prevents the wfCh path from firing first.
+	doneCh := make(chan struct{})
 	go func() {
+		defer close(doneCh)
 		// Give handleMessageStream a moment to subscribe before publishing events.
 		time.Sleep(20 * time.Millisecond)
 		fileRaw, _ := json.Marshal(map[string]any{
@@ -1167,6 +1224,192 @@ func (f *filePublishTemporal) ExecuteWorkflow(ctx context.Context, opts temporal
 		doneRaw, _ := json.Marshal(map[string]string{"run_id": runID})
 		bus.Publish(context.Background(), event.Event{Topic: contextID, Type: "file", Payload: fileRaw})
 		bus.Publish(context.Background(), event.Event{Topic: contextID, Type: "done", Payload: doneRaw})
+		// Small pause to let the executor consume the bus "done" event before unblocking Get.
+		time.Sleep(10 * time.Millisecond)
 	}()
-	return run, nil
+	return &blockingWorkflowRun{inner: f.delegate.run, doneCh: doneCh}, nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A2A v1.0 wire format compliance tests (new — 3 required)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// A2A-WF01: SendMessage returns a compliant A2A v1.0 task object.
+// The result must be: {"jsonrpc":"2.0","id":...,"result":{"task":{...}}}
+// with a Task that has id, contextId, status.state, and artifacts fields.
+// The "kind" field must NOT appear anywhere in the response (non-spec invention).
+func TestA2ASend_ResultIsSpecCompliant(t *testing.T) {
+	b := defaultBuilder()
+	srv := httptest.NewServer(b.build().Routes())
+	defer srv.Close()
+
+	resp := postRPC(t, srv, validSendBody(), "valid-token")
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	var rpcResp map[string]any
+	require.NoError(t, json.Unmarshal(body, &rpcResp))
+
+	// Top-level JSON-RPC envelope.
+	assert.Equal(t, "2.0", rpcResp["jsonrpc"])
+	assert.Nil(t, rpcResp["error"], "compliant result must not have an error key")
+	require.NotNil(t, rpcResp["result"])
+	assert.NotNil(t, rpcResp["id"])
+
+	// result must be {"task": {...}} — A2A v1.0 StreamResponse.
+	result := rpcResp["result"].(map[string]any)
+	require.NotNil(t, result["task"], "result must contain 'task' key per A2A v1.0 spec")
+
+	task := result["task"].(map[string]any)
+	assert.NotEmpty(t, task["id"], "task must have an id field")
+	assert.NotEmpty(t, task["contextId"], "task must have a contextId field")
+
+	status := task["status"].(map[string]any)
+	assert.Equal(t, "TASK_STATE_COMPLETED", status["state"])
+
+	// The non-spec "kind" field must not appear anywhere.
+	assert.NotContains(t, string(body), `"kind"`,
+		"'kind' is not an A2A v1.0 wire format field")
+}
+
+// A2A-WF02: SendStreamingMessage token event → artifactUpdate SSE frame.
+// SDK SSE format: data: {"jsonrpc":"2.0","id":...,"result":{"artifactUpdate":{...}}}
+// Tokens published via the bus must arrive as artifactUpdate events with text parts.
+func TestA2AStream_TokenIsSpecCompliant(t *testing.T) {
+	inner := &fakeTemporal{run: &fakeWorkflowRun{
+		result: temporal.WorkflowResult{FinalText: "hello", Status: domain.RunStatusCompleted},
+	}}
+	tokenFake := &tokenPublishTemporal{delegate: inner}
+	b := defaultBuilder()
+	b.temporal = tokenFake
+	bs := b.build()
+	tokenFake.bus = bs.bus
+
+	srv := httptest.NewServer(bs.Routes())
+	defer srv.Close()
+
+	httpStatus, lines := postStream(t, srv, validStreamBody(), "valid-token")
+	require.Equal(t, http.StatusOK, httpStatus)
+
+	var foundArtifact bool
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var ev map[string]any
+		if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev) != nil {
+			continue
+		}
+		// Token events must produce artifactUpdate frames.
+		result, _ := ev["result"].(map[string]any)
+		artifactUpdate, _ := result["artifactUpdate"].(map[string]any)
+		if artifactUpdate == nil {
+			continue
+		}
+		artifact, _ := artifactUpdate["artifact"].(map[string]any)
+		parts, _ := artifact["parts"].([]any)
+		for _, p := range parts {
+			part, _ := p.(map[string]any)
+			if part["text"] == "streaming-token" {
+				foundArtifact = true
+			}
+		}
+	}
+	assert.True(t, foundArtifact, "token bus event must produce an artifactUpdate SSE frame with the token text")
+}
+
+// tokenPublishTemporal publishes a "token" bus event then "done" after a short delay.
+// The returned WorkflowRun blocks until the bus events have been published and consumed.
+type tokenPublishTemporal struct {
+	delegate *fakeTemporal
+	bus      *event.InMemoryBus
+}
+
+// blockingWorkflowRun wraps fakeWorkflowRun.Get() to block until a signal is given.
+// This ensures bus events are published and consumed before wfRun.Get() returns.
+type blockingWorkflowRun struct {
+	inner  *fakeWorkflowRun
+	doneCh <-chan struct{}
+}
+
+func (b *blockingWorkflowRun) GetID() string    { return b.inner.GetID() }
+func (b *blockingWorkflowRun) GetRunID() string { return b.inner.GetRunID() }
+func (b *blockingWorkflowRun) Get(ctx context.Context, valuePtr interface{}) error {
+	select {
+	case <-b.doneCh:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return b.inner.Get(ctx, valuePtr)
+}
+func (b *blockingWorkflowRun) GetWithOptions(ctx context.Context, valuePtr interface{}, opts temporalclient.WorkflowRunGetOptions) error {
+	return b.Get(ctx, valuePtr)
+}
+
+func (f *tokenPublishTemporal) ExecuteWorkflow(ctx context.Context, opts temporalclient.StartWorkflowOptions, wf interface{}, args ...interface{}) (temporalclient.WorkflowRun, error) {
+	// Suppress delegate's auto-done publish so we control event ordering.
+	origBus := f.delegate.bus
+	f.delegate.bus = nil
+	_, err := f.delegate.ExecuteWorkflow(ctx, opts, wf, args...)
+	f.delegate.bus = origBus
+	if err != nil || f.bus == nil {
+		return f.delegate.run, err
+	}
+	contextID := f.delegate.contextID
+	runID := f.delegate.lastInput.RunID
+	bus := f.bus
+
+	// doneCh is closed after bus events are published — unblocks wfRun.Get().
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		time.Sleep(20 * time.Millisecond)
+		tokenRaw, _ := json.Marshal(map[string]string{"content": "streaming-token"})
+		doneRaw, _ := json.Marshal(map[string]string{"run_id": runID})
+		bus.Publish(context.Background(), event.Event{Topic: contextID, Type: "token", Payload: tokenRaw})
+		bus.Publish(context.Background(), event.Event{Topic: contextID, Type: "done", Payload: doneRaw})
+		// Small pause to allow the executor to process the bus events before Get returns.
+		time.Sleep(10 * time.Millisecond)
+	}()
+	return &blockingWorkflowRun{inner: f.delegate.run, doneCh: doneCh}, nil
+}
+
+// A2A-WF03: SendStreamingMessage final frame must be a statusUpdate completed event.
+// After all artifact frames, the SDK must emit a statusUpdate with state=completed.
+// This verifies proper stream termination per the A2A v1.0 spec.
+func TestA2AStream_ArtifactUpdateIsSpecCompliant(t *testing.T) {
+	b, wire := streamBuilder()
+	bs := b.build()
+	wire(bs)
+	srv := httptest.NewServer(bs.Routes())
+	defer srv.Close()
+
+	httpStatus, lines := postStream(t, srv, validStreamBody(), "valid-token")
+	require.Equal(t, http.StatusOK, httpStatus)
+
+	var lastResult map[string]any
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var ev map[string]any
+		if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev) != nil {
+			continue
+		}
+		result, _ := ev["result"].(map[string]any)
+		if result != nil {
+			lastResult = result
+		}
+	}
+	require.NotNil(t, lastResult, "must receive at least one SSE result frame")
+
+	// The final frame in the stream must be a statusUpdate with state=completed.
+	statusUpdate, _ := lastResult["statusUpdate"].(map[string]any)
+	require.NotNil(t, statusUpdate, "final SSE frame must be a statusUpdate (not artifactUpdate or raw task)")
+	s, _ := statusUpdate["status"].(map[string]any)
+	assert.Equal(t, "TASK_STATE_COMPLETED", s["state"],
+		"final statusUpdate must have state=TASK_STATE_COMPLETED per A2A v1.0 spec")
 }
