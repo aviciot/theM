@@ -23,13 +23,19 @@ func newMultipartWriter(buf *bytes.Buffer) *multipart.Writer { return multipart.
 
 // ApplicationsHandler handles /api/v1/admin/applications routes.
 type ApplicationsHandler struct {
-	svc *service.AppService
+	svc       *service.AppService
+	dal       *dal.DB
+	fernetKey []byte
 }
 
 // NewApplicationsHandler creates an ApplicationsHandler.
 // fernetKey is the AES-GCM key used to encrypt/decrypt provider_keys at rest.
 func NewApplicationsHandler(db DBQuerier, cache CacheInvalidator, fernetKey []byte) *ApplicationsHandler {
-	return &ApplicationsHandler{svc: service.NewAppService(dal.NewDB(db), cache, fernetKey)}
+	return &ApplicationsHandler{
+		svc:       service.NewAppService(dal.NewDB(db), cache, fernetKey),
+		dal:       dal.NewDB(db),
+		fernetKey: fernetKey,
+	}
 }
 
 // Svc returns the underlying AppService so callers (e.g. the voice handler)
@@ -76,6 +82,7 @@ func (h *ApplicationsHandler) Routes(r chi.Router, bindings ...BindingRouter) {
 		app.Put("/entry-points/{ep_id}", h.UpdateEntryPoint)
 		app.Patch("/entry-points/{ep_id}", h.UpdateEntryPoint) // Python sends PATCH
 		app.Delete("/entry-points/{ep_id}", h.DeleteEntryPoint)
+		app.Post("/entry-points/{ep_id}/discover", h.DiscoverEP)
 		for _, b := range bindings {
 			b.MountOn(app)
 		}

@@ -32,7 +32,6 @@ from app.routers import ws_dashboard
 from app.routers import runs
 from app.routers import transcription
 from app.routers import tts
-from app.routers import a2a_server
 from app.routers import apps as apps_router
 from app.routers import webrtc as webrtc_router
 from app.services.agent_registry import start_change_listener
@@ -212,6 +211,5 @@ app.include_router(ws_dashboard.router)
 app.include_router(runs.router, prefix="/api/v1")
 app.include_router(transcription.router, prefix="/api/v1")
 app.include_router(tts.router, prefix="/api/v1")
-app.include_router(a2a_server.router)
 app.include_router(apps_router.router)
 app.include_router(webrtc_router.router)

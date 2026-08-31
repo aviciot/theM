@@ -504,3 +504,96 @@ func (d *DB) BulkDeleteApplications(ctx context.Context, tenantID string, ids []
 	}
 	return count, nil
 }
+
+// ── EP agent-card synthesis helpers ──────────────────────────────────────────
+
+// AppOrchDetail carries the orchestrator fields needed to synthesize a card.
+type AppOrchDetail struct {
+	ID               string
+	DisplayName      string
+	SystemPrompt     string
+	AllowedAgentIDs  []string
+}
+
+// GetAppOrchForEP returns the orchestrator bound to the given entry point.
+// Scoped to appID for tenant safety. Returns ErrNotFound when the EP has no
+// orchestrator binding or when the EP/app does not exist.
+func (d *DB) GetAppOrchForEP(ctx context.Context, appID, epID string) (AppOrchDetail, error) {
+	const q = `
+SELECT ao.id::text,
+       COALESCE(ao.display_name, ao.name),
+       COALESCE(ao.system_prompt, ''),
+       COALESCE(ao.allowed_agent_ids, '{}')
+FROM them.entry_points ep
+JOIN them.app_orchestrators ao
+  ON ao.id = ep.app_orchestrator_id
+ AND ao.application_id = ep.application_id
+WHERE ep.id             = $1::uuid
+  AND ep.application_id = $2::uuid`
+
+	var det AppOrchDetail
+	var agentIDs []string
+	err := d.q.QueryRow(ctx, q, epID, appID).Scan(
+		&det.ID, &det.DisplayName, &det.SystemPrompt, &agentIDs,
+	)
+	if err != nil {
+		return AppOrchDetail{}, err
+	}
+	det.AllowedAgentIDs = agentIDs
+	return det, nil
+}
+
+// AgentCardSummary is the minimal agent data needed to synthesize a card.
+type AgentCardSummary struct {
+	DisplayName string
+	Description string
+	SkillsJSON  []byte
+}
+
+// GetAgentSummariesByIDs returns display_name, description, and skills for a
+// list of agent UUIDs. Order is not guaranteed. Missing IDs are silently skipped.
+func (d *DB) GetAgentSummariesByIDs(ctx context.Context, ids []string) ([]AgentCardSummary, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	// Build $1,$2,... placeholders.
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d::uuid", i+1)
+		args[i] = id
+	}
+	q := fmt.Sprintf(`
+SELECT display_name, description, COALESCE(skills, '[]'::jsonb)
+FROM them.agents
+WHERE id IN (%s)`, strings.Join(placeholders, ","))
+
+	rows, err := d.q.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []AgentCardSummary
+	for rows.Next() {
+		var s AgentCardSummary
+		if err := rows.Scan(&s.DisplayName, &s.Description, &s.SkillsJSON); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// SetEPAgentCard writes a synthesized agent card to entry_points.agent_card
+// and updates card_synthesized_at. Scoped to appID for tenant safety.
+func (d *DB) SetEPAgentCard(ctx context.Context, appID, epID string, card []byte) error {
+	const q = `
+UPDATE them.entry_points
+SET agent_card          = $3::jsonb,
+    card_synthesized_at = now(),
+    updated_at          = now()
+WHERE id             = $1::uuid
+  AND application_id = $2::uuid`
+	return d.q.Exec(ctx, q, epID, appID, string(card))
+}

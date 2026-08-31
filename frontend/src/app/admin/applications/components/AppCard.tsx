@@ -48,7 +48,22 @@ export function AppCard({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [synthesizing, setSynthesizing] = useState<string | null>(null); // ep id
+  const [synthToast, setSynthToast] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  async function handleSynthesizeCard(epId: string) {
+    setSynthesizing(epId);
+    try {
+      const res = await themApi.discoverEP(app.id, epId);
+      setSynthToast(res.ok ? 'Card synthesized' : (res.detail ?? 'Synthesis failed'));
+    } catch {
+      setSynthToast('Synthesis failed');
+    } finally {
+      setSynthesizing(null);
+      setTimeout(() => setSynthToast(null), 3500);
+    }
+  }
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -285,9 +300,26 @@ export function AppCard({
                       <span className="material-symbols-outlined" style={{ fontSize: 13 }}>content_copy</span>
                     </button>
                   )}
+                  {epRow.entry_point_type === 'a2a' && (
+                    <button
+                      onClick={() => handleSynthesizeCard(epRow.id)}
+                      disabled={synthesizing === epRow.id}
+                      title="Synthesize A2A agent card from orchestrator + sub-agents"
+                      style={{ background: 'none', border: 'none', cursor: synthesizing === epRow.id ? 'wait' : 'pointer', color: '#f59e0b', display: 'flex', alignItems: 'center', padding: 2, flexShrink: 0, opacity: synthesizing === epRow.id ? 0.5 : 1 }}
+                      onMouseEnter={e => (e.currentTarget.style.opacity = synthesizing === epRow.id ? '0.5' : '0.75')}
+                      onMouseLeave={e => (e.currentTarget.style.opacity = synthesizing === epRow.id ? '0.5' : '1')}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{synthesizing === epRow.id ? 'hourglass_empty' : 'auto_awesome'}</span>
+                    </button>
+                  )}
                 </div>
               );
             })}
+          </div>
+        )}
+        {synthToast && (
+          <div style={{ fontSize: 11, color: synthToast.startsWith('Card') ? '#4ade80' : '#f87171', padding: '4px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', marginTop: 4 }}>
+            {synthToast}
           </div>
         )}
       </div>

@@ -111,7 +111,8 @@ type rpcIncomingPart struct {
 
 // ── Agent card ────────────────────────────────────────────────────────────────
 
-// agentCard is the A2A well-known agent card.
+// agentCard is the A2A well-known agent card served when no synthesized card
+// exists yet.
 type agentCard struct {
 	Name         string              `json:"name"`
 	Description  string              `json:"description"`
@@ -164,7 +165,8 @@ type Server struct {
 	instanceID    string
 	logger        *slog.Logger
 	runStreamer    runstream.RedisStreamer
-	publicURL     string // externally-reachable base URL, e.g. "https://example.com"
+	publicURL     string     // externally-reachable base URL, e.g. "https://example.com"
+	cardLoader    CardLoader // optional; when nil serves a minimal fallback card
 }
 
 // NewServer creates a Server backed by the shared execution Lifecycle.
@@ -205,6 +207,14 @@ func (s *Server) WithPublicURL(u string) *Server {
 	return s
 }
 
+// WithCardLoader attaches a CardLoader so handleAgentCard can serve the
+// synthesized card stored in entry_points.agent_card instead of the static
+// fallback.
+func (s *Server) WithCardLoader(cl CardLoader) *Server {
+	s.cardLoader = cl
+	return s
+}
+
 // Routes returns an http.Handler with A2A routes mounted.
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
@@ -214,9 +224,13 @@ func (s *Server) Routes() http.Handler {
 }
 
 // handleAgentCard serves GET /a2a/{app_slug}/{ep_slug}/.well-known/agent.json.
+// When a synthesized card exists in the DB it is served as-is with the URL
+// field injected. When not yet synthesized, a minimal card is returned using
+// the orchestrator display_name so callers always get a valid response.
 func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 	appSlug := chi.URLParam(r, "app_slug")
 	epSlug := chi.URLParam(r, "ep_slug")
+
 	base := s.publicURL
 	if base == "" {
 		scheme := r.Header.Get("X-Forwarded-Proto")
@@ -229,16 +243,46 @@ func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 		}
 		base = scheme + "://" + host
 	}
-	card := agentCard{
-		Name:        "the-M Orchestrator",
-		Description: "AI orchestration platform",
-		URL:         fmt.Sprintf("%s/a2a/%s/%s", base, appSlug, epSlug),
-		Version:     "1.0",
-		Capabilities: agentCardCapability{
-			Streaming: true,
-		},
+	epURL := fmt.Sprintf("%s/a2a/%s/%s", base, appSlug, epSlug)
+
+	// Try to serve the synthesized card from DB.
+	if s.cardLoader != nil {
+		row, err := s.cardLoader.LoadEPCard(r.Context(), appSlug, epSlug)
+		if err == nil && len(row.AgentCardJSON) > 0 {
+			// Parse the stored card and inject the live URL.
+			var stored map[string]any
+			if json.Unmarshal(row.AgentCardJSON, &stored) == nil {
+				stored["url"] = epURL
+				stored["capabilities"] = agentCardCapability{Streaming: true}
+				writeJSON(w, http.StatusOK, stored)
+				return
+			}
+		}
+		// Card not yet synthesized — build a minimal card from orchestrator name.
+		if err == nil {
+			name := row.OrchestratorDisplayName
+			if name == "" {
+				name = row.AppName
+			}
+			writeJSON(w, http.StatusOK, agentCard{
+				Name:         name,
+				Description:  "Powered by the-M orchestration platform",
+				URL:          epURL,
+				Version:      "1.0",
+				Capabilities: agentCardCapability{Streaming: true},
+			})
+			return
+		}
 	}
-	writeJSON(w, http.StatusOK, card)
+
+	// Final fallback — no loader or EP not found.
+	writeJSON(w, http.StatusOK, agentCard{
+		Name:         "the-M Orchestrator",
+		Description:  "AI orchestration platform",
+		URL:          epURL,
+		Version:      "1.0",
+		Capabilities: agentCardCapability{Streaming: true},
+	})
 }
 
 // handleRPC handles POST /a2a/{app_slug}.

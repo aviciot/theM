@@ -328,6 +328,8 @@ User-composable agentic applications. Each row is one deployable entry point bou
 | orchestrator_id | UUID FK→orchestrators ON DELETE CASCADE | target orchestrator |
 | access_policy | JSONB | `{"mode":"token"}` or `{"mode":"public"}` |
 | presentation | JSONB | UI metadata (title, theme, icon, etc.) |
+| agent_card | JSONB | synthesized A2A agent card (populated by `POST .../entry-points/{ep_id}/discover`) |
+| card_synthesized_at | TIMESTAMPTZ | timestamp of last card synthesis |
 | enabled | BOOL | |
 | created_at | TIMESTAMPTZ | |
 | updated_at | TIMESTAMPTZ | |

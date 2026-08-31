@@ -117,6 +117,12 @@ const ROLE_DEFAULTS: Record<string, { label: string; description: string; prompt
     promptPlaceholder: 'You are an agent classifier. Given an agent\'s name, description, and skills, return ONLY valid JSON: {"category": "<Research|Coding|Vision|Security|A2A|Data|Communication|Agent>", "icon": "<Material Symbols name>"}. No explanation, no markdown, just JSON.',
     whereUsed: 'Runs automatically on agent creation (auto-assigns category & icon) and during Discover / Scan (updates category & icon from the agent card).',
   },
+  card_synthesizer: {
+    label: 'Card Synthesizer',
+    description: 'Synthesizes an A2A agent card for application entry points by analysing the orchestrator purpose and sub-agent skills.',
+    promptPlaceholder: 'You are an AI application analyst. Given an orchestrator\'s purpose and its sub-agents, synthesize a JSON A2A agent card. Return ONLY: {"name":"...","description":"...","skills":[{"id":"...","name":"...","description":"...","tags":[...]}]}',
+    whereUsed: 'Runs when clicking "Synthesize Card" on an A2A entry point in the Applications admin. The result is stored per entry point and served as the public A2A agent card.',
+  },
 };
 
 function getRoleLabel(role: string) {

@@ -1017,3 +1017,80 @@ func TestA2A_AgentCard_DerivedURL(t *testing.T) {
 	assert.Contains(t, u, "/a2a/myapp/ep1", "URL must contain app and ep slugs")
 	assert.Contains(t, u, "http://", "URL must include http scheme when no X-Forwarded-Proto")
 }
+
+// ─── card loader tests ────────────────────────────────────────────────────────
+
+// fakeCardLoader is a test double for CardLoader.
+type fakeCardLoader struct {
+	row a2aserver.EPCardRow
+	err error
+}
+
+func (f *fakeCardLoader) LoadEPCard(_ context.Context, _, _ string) (a2aserver.EPCardRow, error) {
+	return f.row, f.err
+}
+
+// A2A-S10: synthesized card served when CardLoader returns a stored card.
+func TestA2A_AgentCard_SynthesizedCard(t *testing.T) {
+	synthesized := map[string]any{
+		"name":        "My App",
+		"description": "Does cool things",
+		"skills":      []any{},
+	}
+	cardBytes, _ := json.Marshal(synthesized)
+
+	b := defaultBuilder()
+	s := b.build().WithCardLoader(&fakeCardLoader{
+		row: a2aserver.EPCardRow{AgentCardJSON: cardBytes, OrchestratorDisplayName: "ignored", AppName: "ignored"},
+	})
+	srv := httptest.NewServer(s.Routes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/a2a/myapp/ep1/.well-known/agent.json")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var card map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&card))
+	assert.Equal(t, "My App", card["name"])
+	assert.Equal(t, "Does cool things", card["description"])
+	// URL is always injected regardless of stored card content.
+	assert.Contains(t, card["url"].(string), "/a2a/myapp/ep1")
+	// Capabilities always present.
+	caps, _ := card["capabilities"].(map[string]any)
+	assert.Equal(t, true, caps["streaming"])
+}
+
+// A2A-S11: fallback card uses OrchestratorDisplayName when no card is synthesized yet.
+func TestA2A_AgentCard_FallbackToOrchName(t *testing.T) {
+	b := defaultBuilder()
+	s := b.build().WithCardLoader(&fakeCardLoader{
+		row: a2aserver.EPCardRow{AgentCardJSON: nil, OrchestratorDisplayName: "My Orchestrator", AppName: "My App"},
+	})
+	srv := httptest.NewServer(s.Routes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/a2a/myapp/ep1/.well-known/agent.json")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var card map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&card))
+	assert.Equal(t, "My Orchestrator", card["name"])
+	assert.Contains(t, card["url"].(string), "/a2a/myapp/ep1")
+}
+
+// A2A-S12: static fallback served when no CardLoader is configured.
+func TestA2A_AgentCard_FallbackNoLoader(t *testing.T) {
+	b := defaultBuilder()
+	srv := httptest.NewServer(b.build().Routes()) // no WithCardLoader
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/a2a/myapp/ep1/.well-known/agent.json")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var card map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&card))
+	assert.Equal(t, "the-M Orchestrator", card["name"])
+}

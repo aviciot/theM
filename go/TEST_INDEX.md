@@ -569,8 +569,11 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestA2A_AgentCard_StreamingTrue` | agent card `/.well-known/agent.json` returns `streaming: true` in capabilities |
 | `TestA2A_AgentCard_WithPublicURL` | `WithPublicURL("https://example.com")` → card URL uses public base, not request host |
 | `TestA2A_AgentCard_DerivedURL` | No `WithPublicURL` set → card URL derived from request scheme + host |
+| `TestA2A_AgentCard_SynthesizedCard` | CardLoader returns synthesized card → served with URL injected |
+| `TestA2A_AgentCard_FallbackToOrchName` | CardLoader returns row with nil AgentCardJSON → fallback card uses OrchestratorDisplayName |
+| `TestA2A_AgentCard_FallbackNoLoader` | No CardLoader configured → static "the-M Orchestrator" fallback served |
 
-**Trigger:** any change to `internal/a2a/server.go`, `internal/execution/lifecycle.go`, or `internal/epconfig/pgx.go`
+**Trigger:** any change to `internal/a2a/server.go`, `internal/a2a/pgx.go`, `internal/execution/lifecycle.go`, or `internal/epconfig/pgx.go`
 
 ---
 

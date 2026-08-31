@@ -304,7 +304,9 @@ func run() error {
 		authenticator,
 		cfg.InstanceID,
 		log,
-	).WithRunStreamer(rsStreamer).WithPublicURL(cfg.PublicURL)
+	).WithRunStreamer(rsStreamer).
+		WithPublicURL(cfg.PublicURL).
+		WithCardLoader(a2a.NewPgxCardLoader(database.Pool()))
 	srv.MountA2A(a2aServer.Routes())
 	log.Info("A2A server mounted")
 

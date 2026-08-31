@@ -1019,6 +1019,7 @@ export const themApi = {
   testAppLlm: (appId: string, provider: string, model: string) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/applications/${appId}/test-llm`, { provider, model }),
   patchOrchestratorLLM: (appId: string, orchId: string, provider: string, model: string) => api.patch<{ id: string; llm_provider: string; llm_model: string }>(`/admin/applications/${appId}/orchestrators/${orchId}/llm`, { provider, model }),
   listEntryPoints: (appId: string) => api.get<EntryPoint[]>(`/admin/applications/${appId}/entry-points`),
+  discoverEP: (appId: string, epId: string) => api.post<{ ok: boolean; card?: Record<string, unknown>; detail?: string }>(`/admin/applications/${appId}/entry-points/${epId}/discover`, {}),
   patchEntryPointSummarizer: (appId: string, epId: string, payload: { memory_enabled: boolean; summarize_every_n_calls: number; memory_raw_fallback_n: number; summarizer_provider: string | null; summarizer_model: string | null }) => api.patch<{ id: string }>(`/admin/applications/${appId}/entry-points/${epId}/summarizer`, payload),
   patchEntryPointLLM: (appId: string, epId: string, payload: { llm_provider: string | null; llm_model: string | null }) => api.patch<{ id: string }>(`/admin/applications/${appId}/entry-points/${epId}/llm`, payload),
   patchOrchestratorMCPServers: (appId: string, orchId: string, mcpServers: MCPServerAttachment[]) => api.patch<{ id: string; mcp_servers: MCPServerAttachment[] }>(`/admin/applications/${appId}/orchestrators/${orchId}/mcp-servers`, { mcp_servers: mcpServers }),
