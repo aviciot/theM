@@ -147,11 +147,19 @@ function useRunFeed(token: string | null, runId: string | null): {
   const [entries, setEntries] = useState<FeedEntry[]>([]);
   const [connected, setConnected] = useState(false);
   const [done, setDone] = useState(false);
+  // Track which runId we're currently subscribed to — only clear entries when
+  // the runId changes to a *different* non-null value (not on reconnects).
+  const subscribedRunId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!token || !runId) return;
-    setEntries([]);
-    setDone(false);
+    // Only clear accumulated events when switching to a different run
+    if (subscribedRunId.current !== null && subscribedRunId.current !== runId) {
+      setEntries([]);
+      setDone(false);
+    }
+    subscribedRunId.current = runId;
+
     const wsBase = window.location.origin.replace(/^http/, 'ws').replace(/^https/, 'wss');
     const wsUrl = `${wsBase}/ws/dashboard?token=${token}`;
     let ws: WebSocket;
@@ -355,67 +363,76 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
   }, []);
   void tick;
 
-  // Sync live sessions → trackedSessions with TTL for ended ones
+  // Single atomic effect: merge live sessions into tracked state, mark ended,
+  // preserve TTL entries, and auto-pin new sessions when there's a free slot.
   useEffect(() => {
+    const now = Date.now();
+    const liveIds = new Set(liveSessions.map(s => s.session_id));
+
     setTrackedSessions(prev => {
-      const now = Date.now();
-      // Merge live sessions in, preserving TTL entries
-      const liveIds = new Set(liveSessions.map(s => s.session_id));
+      const next: TrackedSession[] = [];
+      const newSessions: TrackedSession[] = [];
 
-      // Keep prev entries that are either still live or within TTL
-      const kept: TrackedSession[] = prev
-        .map(p => {
-          if (liveIds.has(p.session_id)) {
-            // Session came back (or is still live) — update info, clear ended state
-            const live = liveSessions.find(s => s.session_id === p.session_id)!;
-            return { ...live, _ended: false, _endedAt: undefined };
-          }
-          if (p._ended && p._endedAt && now - p._endedAt < SESSION_TTL_MS) {
-            return p; // still within TTL
-          }
-          return null;
-        })
-        .filter(Boolean) as TrackedSession[];
+      // Update or expire existing tracked sessions
+      for (const p of prev) {
+        if (liveIds.has(p.session_id)) {
+          // Still live — update fields, clear ended state
+          const live = liveSessions.find(s => s.session_id === p.session_id)!;
+          next.push({ ...live, _ended: false, _endedAt: undefined });
+        } else if (!p._ended) {
+          // Just ended — start TTL
+          next.push({ ...p, _ended: true, _endedAt: now });
+        } else if (p._endedAt && now - p._endedAt < SESSION_TTL_MS) {
+          // Within TTL — keep
+          next.push(p);
+        }
+        // else: expired — drop
+      }
 
-      // Add newly seen live sessions not in prev
-      const keptIds = new Set(kept.map(k => k.session_id));
+      // Add brand-new sessions not yet tracked
+      const trackedIds = new Set(next.map(n => n.session_id));
       for (const s of liveSessions) {
-        if (!keptIds.has(s.session_id)) {
-          kept.push({ ...s, _ended: false });
+        if (!trackedIds.has(s.session_id)) {
+          const ts: TrackedSession = { ...s, _ended: false };
+          next.push(ts);
+          newSessions.push(ts);
         }
       }
 
-      return kept;
+      // Auto-pin new sessions if there's room (run outside setTrackedSessions
+      // to avoid nested state updates — schedule via setTimeout)
+      if (newSessions.length > 0) {
+        setTimeout(() => {
+          setPinned(prev => {
+            let updated = prev;
+            for (const s of newSessions) {
+              if (updated.length >= MAX_PINNED) break;
+              if (!updated.find(p => p.session_id === s.session_id)) {
+                updated = [...updated, s];
+              }
+            }
+            return updated;
+          });
+        }, 0);
+      }
+
+      return next;
     });
-  }, [liveSessions]);
+  }, [liveSessions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // When a session disappears from liveSessions, mark it as ended (start TTL)
-  useEffect(() => {
-    const liveIds = new Set(liveSessions.map(s => s.session_id));
-    setTrackedSessions(prev =>
-      prev.map(p => {
-        if (!liveIds.has(p.session_id) && !p._ended) {
-          return { ...p, _ended: true, _endedAt: Date.now() };
-        }
-        return p;
-      })
-    );
-  }, [liveSessions]);
-
-  // Expire TTL entries and remove from pinned
+  // Expire TTL entries every 10s
   useEffect(() => {
     const iv = setInterval(() => {
       const now = Date.now();
       setTrackedSessions(prev => {
-        const next = prev.filter(p => !p._ended || !p._endedAt || (now - p._endedAt < SESSION_TTL_MS));
+        const next = prev.filter(p => !p._ended || !p._endedAt || now - p._endedAt < SESSION_TTL_MS);
         return next.length === prev.length ? prev : next;
       });
-      // Clean up pinned that have fully expired
       setPinned(prev => {
-        const next = prev.filter(p => !p._ended || !p._endedAt || (Date.now() - p._endedAt < SESSION_TTL_MS));
+        const next = prev.filter(p => !p._ended || !p._endedAt || Date.now() - p._endedAt < SESSION_TTL_MS);
         return next.length === prev.length ? prev : next;
       });
-    }, 5000);
+    }, 10000);
     return () => clearInterval(iv);
   }, []);
 
@@ -431,12 +448,12 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
     setPinned(prev => prev.filter(p => p.session_id !== sessionId));
   }, []);
 
-  // Sync pinned with latest tracked state (e.g. _ended flag updates)
+  // Keep pinned entries in sync with latest tracked state (_ended, run_id updates)
   useEffect(() => {
-    setPinned(prev => prev.map(p => {
-      const updated = trackedSessions.find(t => t.session_id === p.session_id);
-      return updated ?? p;
-    }));
+    setPinned(prev => {
+      const next = prev.map(p => trackedSessions.find(t => t.session_id === p.session_id) ?? p);
+      return next.every((n, i) => n === prev[i]) ? prev : next;
+    });
   }, [trackedSessions]);
 
   async function handleTerminate(sid: string) {
