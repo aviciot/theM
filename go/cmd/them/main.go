@@ -46,6 +46,8 @@ import (
 	"github.com/aviciot/them/internal/transport"
 	"github.com/aviciot/them/internal/voice"
 	"github.com/aviciot/them/internal/ws"
+
+	"github.com/redis/rueidis"
 )
 
 func main() {
@@ -307,6 +309,17 @@ func run() error {
 
 	// File gate: intercepts A2A file artifacts when security scanning is enabled.
 	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(database.Pool()))
+	// Subscribe to security config invalidation so the 30s cache is busted
+	// immediately when an admin saves a new config via PUT /security-config.
+	go func() {
+		cmd := redisCache.Client().B().Subscribe().
+			Channel("them:security_config:invalidated:*").Build()
+		_ = redisCache.Client().Receive(ctx, cmd, func(msg rueidis.PubSubMessage) {
+			appID := strings.TrimPrefix(msg.Channel, "them:security_config:invalidated:")
+			fileGate.InvalidateCache(appID)
+			log.Info("file gate: security config cache invalidated", "app_id", appID)
+		})
+	}()
 
 	a2aServer := a2a.NewServer(
 		execLifecycle,
