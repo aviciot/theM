@@ -276,8 +276,8 @@ export const themApi = {
         const line = part.trim();
         if (!line.startsWith('data:')) continue;
         try {
-          const frame = JSON.parse(line.slice(5).trim()) as { params?: { event?: Record<string, unknown> } };
-          const event = frame?.params?.event;
+          const frame = JSON.parse(line.slice(5).trim()) as { result?: { event?: Record<string, unknown> } };
+          const event = frame?.result?.event;
           if (event) yield event;
         } catch { /* skip malformed */ }
       }
