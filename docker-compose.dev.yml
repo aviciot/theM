@@ -152,6 +152,69 @@ services:
   # NOTE: them-agent-runtime needs TEMPORAL_ENABLED=true only when running with
   # the temporal profile. That override lives in docker-compose.temporal.yml —
   # loaded explicitly alongside --profile temporal. See startup commands below.
+  them-clamd:
+    image: clamav/clamav:stable
+    container_name: them-clamd
+    profiles: [security]
+    restart: unless-stopped
+    volumes:
+      - clamav-socket:/var/run/clamav
+      - clamav-db:/var/lib/clamav
+    networks:
+      - them-network
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 300s   # ClamAV downloads ~300MB virus defs on first boot
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  them-middleware-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.middleware-worker
+    container_name: them-middleware-worker
+    profiles: [security]
+    environment:
+      - THE_M_INSTANCE_ID=middleware-worker-1
+      - APP_ENV=production
+      - DATABASE_HOST=them-postgres
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=them
+      - DATABASE_USER=${THE_M_DB_USER:-them}
+      - DATABASE_PASSWORD=${THE_M_DB_PASSWORD:-them_secret}
+      - REDIS_HOST=them-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${THE_M_REDIS_PASSWORD:-}
+      - REDIS_DB=0
+      - SECRET_KEY=${THE_M_SECRET_KEY:-change-this-secret-key}
+      - JWT_SECRET=${THE_M_JWT_SECRET:-}
+      - LOG_FORMAT=json
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CLAMAV_SOCKET=/var/run/clamav/clamd.sock
+      - MIDDLEWARE_WORKER_CONCURRENCY=${MIDDLEWARE_WORKER_CONCURRENCY:-8}
+      - MIDDLEWARE_POLL_INTERVAL_MS=${MIDDLEWARE_POLL_INTERVAL_MS:-500}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - clamav-socket:/var/run/clamav
+    networks:
+      - them-network
+    depends_on:
+      - them-postgres
+      - them-redis
+      - them-clamd
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   them-dag-worker:
     build:
       context: .
@@ -200,3 +263,7 @@ volumes:
   them-logs:
     name: them-logs
     external: true
+  clamav-socket:
+    name: them-clamav-socket
+  clamav-db:
+    name: them-clamav-db
