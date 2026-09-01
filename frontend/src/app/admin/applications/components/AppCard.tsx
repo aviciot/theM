@@ -26,7 +26,6 @@ export function AppCard({
   selected,
   onToggleSelect,
   onEdit,
-  onSessions,
   onRuntime,
   onMCPCredentials,
   onMonitor,
@@ -40,7 +39,6 @@ export function AppCard({
   selected?: boolean;
   onToggleSelect?: (id: string, checked: boolean) => void;
   onEdit: (a: Application) => void;
-  onSessions: (a: Application) => void;
   onRuntime: (a: Application) => void;
   onMCPCredentials: (a: Application) => void;
   onMonitor: (a: Application) => void;
@@ -328,10 +326,11 @@ export function AppCard({
 
       {/* ── Action buttons ── */}
       <div style={{ borderTop: '1px solid var(--tm-divider)', padding: '10px 14px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {/* Sessions */}
+        {/* Monitor (unified — replaces separate Sessions + Monitor) */}
         <button
           className="app-card-btn"
-          onClick={() => onSessions(app)}
+          onClick={() => onMonitor(app)}
+          title="Live Monitor — sessions, topology & event feeds"
           style={{
             flex: '2 1 80px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
             background: sessionCount > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)',
@@ -341,29 +340,11 @@ export function AppCard({
           onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,240,255,0.12)'; e.currentTarget.style.color = '#00f0ff'; }}
           onMouseLeave={e => { e.currentTarget.style.background = sessionCount > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = sessionCount > 0 ? '#00f0ff' : C.textMuted; }}
         >
-          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>person</span>
-          Sessions
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>monitor_heart</span>
+          Monitor
           {sessionCount > 0 && (
             <span style={{ background: '#00f0ff', color: '#000', fontSize: 10, fontWeight: 800, borderRadius: 8, padding: '0px 5px', lineHeight: '16px', minWidth: 16, textAlign: 'center' }}>{sessionCount}</span>
           )}
-        </button>
-
-        {/* Monitor */}
-        <button
-          className="app-card-btn"
-          onClick={() => onMonitor(app)}
-          title="Live Monitor"
-          style={{
-            flex: '1 1 60px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-            background: sessionCount > 0 ? 'rgba(167,139,250,0.1)' : 'rgba(255,255,255,0.03)',
-            color: sessionCount > 0 ? '#a78bfa' : C.textMuted,
-            border: `1px solid ${sessionCount > 0 ? 'rgba(167,139,250,0.35)' : 'rgba(255,255,255,0.1)'}`,
-          }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(167,139,250,0.15)'; e.currentTarget.style.color = '#a78bfa'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = sessionCount > 0 ? 'rgba(167,139,250,0.1)' : 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = sessionCount > 0 ? '#a78bfa' : C.textMuted; }}
-        >
-          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>monitor_heart</span>
-          Monitor
         </button>
 
         {/* Builder (was "Definition") */}

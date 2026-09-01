@@ -267,7 +267,7 @@ export function buildNodesFromApp(
             } as OrchestratorData,
           });
 
-          const allowedAgents = agents.filter(a => ao.allowed_agent_ids.includes(a.id));
+          const allowedAgents = agents.filter(a => ao.allowed_agent_ids?.includes(a.id));
           const spread = Math.max(allowedAgents.length * 180, 400);
           const startX = 300 - spread / 2 + 90;
           allowedAgents.forEach((agent, i) => {

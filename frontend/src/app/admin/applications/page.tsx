@@ -197,7 +197,6 @@ export default function ApplicationsPage() {
             } catch {/* ignore */}
           }}
           onEdit={(app) => openDefinition(app)}
-          onSessions={openMonitor}
           onRuntime={openRuntime}
           onMCPCredentials={openMCPCredentials}
           onMonitor={openMonitor}

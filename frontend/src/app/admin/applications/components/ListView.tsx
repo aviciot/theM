@@ -7,14 +7,13 @@ import { AppCard, useDashAppStatuses } from './AppCard';
 import type { AppLiveness } from '../types';
 
 export function ListView({
-  list, loading, onNew, onEdit, onSessions, onRuntime, onMCPCredentials, onMonitor, onToggle, onDelete, onReload,
+  list, loading, onNew, onEdit, onRuntime, onMCPCredentials, onMonitor, onToggle, onDelete, onReload,
   selectedApps, onToggleSelect, onSelectAll, onBulkDelete, bulkDeleting,
 }: {
   list: Application[];
   loading: boolean;
   onNew: () => void;
   onEdit: (app: Application) => void;
-  onSessions: (app: Application) => void;
   onRuntime: (app: Application) => void;
   onMCPCredentials: (app: Application) => void;
   onMonitor: (app: Application) => void;
@@ -224,7 +223,6 @@ export function ListView({
             selected={selectedApps.has(app.id)}
             onToggleSelect={onToggleSelect}
             onEdit={onEdit}
-            onSessions={onSessions}
             onRuntime={onRuntime}
             onMCPCredentials={onMCPCredentials}
             onMonitor={onMonitor}
