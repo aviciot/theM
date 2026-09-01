@@ -152,6 +152,54 @@ services:
   # NOTE: them-agent-runtime needs TEMPORAL_ENABLED=true only when running with
   # the temporal profile. That override lives in docker-compose.temporal.yml —
   # loaded explicitly alongside --profile temporal. See startup commands below.
+  them-minio:
+    image: minio/minio:latest
+    container_name: them-minio
+    profiles: [security]
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-them-minio}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-them-minio-secret}
+    volumes:
+      - minio-data:/data
+    networks:
+      - them-network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  them-minio-init:
+    image: minio/mc:latest
+    container_name: them-minio-init
+    profiles: [security]
+    depends_on:
+      them-minio:
+        condition: service_healthy
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-them-minio}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-them-minio-secret}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://them-minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      mc mb --ignore-existing local/them-quarantine &&
+      mc mb --ignore-existing local/them-artifacts &&
+      mc anonymous set none local/them-quarantine &&
+      mc anonymous set none local/them-artifacts &&
+      echo 'MinIO buckets ready.'
+      "
+    networks:
+      - them-network
+    restart: "no"
+
   them-clamd:
     image: clamav/clamav:stable
     container_name: them-clamd
@@ -200,12 +248,19 @@ services:
       - MIDDLEWARE_WORKER_CONCURRENCY=${MIDDLEWARE_WORKER_CONCURRENCY:-8}
       - MIDDLEWARE_POLL_INTERVAL_MS=${MIDDLEWARE_POLL_INTERVAL_MS:-500}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Object storage (MinIO)
+      - THE_M_S3_ENDPOINT=${THE_M_S3_ENDPOINT:-http://them-minio:9000}
+      - THE_M_S3_ACCESS_KEY=${THE_M_S3_ACCESS_KEY:-them-minio}
+      - THE_M_S3_SECRET_KEY=${THE_M_S3_SECRET_KEY:-them-minio-secret}
+      - THE_M_S3_QUARANTINE_BUCKET=${THE_M_S3_QUARANTINE_BUCKET:-them-quarantine}
+      - THE_M_S3_ARTIFACTS_BUCKET=${THE_M_S3_ARTIFACTS_BUCKET:-them-artifacts}
     networks:
       - them-network
     depends_on:
       - them-postgres
       - them-redis
       - them-clamd
+      - them-minio
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -265,3 +320,5 @@ volumes:
     name: them-clamav-socket
   clamav-db:
     name: them-clamav-db
+  minio-data:
+    name: them-minio-data
