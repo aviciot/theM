@@ -247,7 +247,7 @@ export const themApi = {
       id: `pg-${Date.now()}`,
       method: 'SendStreamingMessage',
       params: {
-        message: { role: 'user', parts: [{ text }] },
+        message: { messageId: `msg-${Date.now()}`, role: 'user', parts: [{ text }] },
       },
     });
     const res = await fetch(`/api/them/a2a/${appSlug}/${slug}`, {
