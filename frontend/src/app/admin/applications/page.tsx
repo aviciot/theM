@@ -6,7 +6,6 @@ import { themApi, type Application, type Agent } from '@/lib/api';
 import { C } from './constants';
 import { CanvasBuilderView } from './components/CanvasBuilderView';
 import { RuntimeView } from './components/RuntimeView';
-import { SessionsView } from './components/SessionsView';
 import { MCPCredentialsView } from './components/MCPCredentialsView';
 import { MonitorView } from './components/MonitorView';
 import { ListView } from './components/ListView';
@@ -16,9 +15,8 @@ export default function ApplicationsPage() {
   const [list, setList] = useState<Application[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'list' | 'definition' | 'sessions' | 'runtime' | 'mcp-credentials' | 'monitor'>('list');
+  const [view, setView] = useState<'list' | 'definition' | 'runtime' | 'mcp-credentials' | 'monitor'>('list');
   const [definitionApp, setDefinitionApp] = useState<Application | null>(null);
-  const [sessionsApp, setSessionsApp] = useState<Application | null>(null);
   const [runtimeApp, setRuntimeApp] = useState<Application | null>(null);
   const [mcpApp, setMcpApp] = useState<Application | null>(null);
   const [monitorApp, setMonitorApp] = useState<Application | null>(null);
@@ -101,7 +99,6 @@ export default function ApplicationsPage() {
   function backToList() {
     setView('list');
     setDefinitionApp(null);
-    setSessionsApp(null);
     setRuntimeApp(null);
     setMcpApp(null);
     setMonitorApp(null);
@@ -117,11 +114,6 @@ export default function ApplicationsPage() {
     setView('mcp-credentials');
   }
 
-  function openSessions(app: Application) {
-    setSessionsApp(app);
-    setView('sessions');
-  }
-
   function openRuntime(app: Application) {
     setRuntimeApp(app);
     setView('runtime');
@@ -133,7 +125,7 @@ export default function ApplicationsPage() {
         <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
           <Sidebar />
           <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-            <MonitorView app={monitorApp} token={token} onBack={backToList} />
+            <MonitorView app={monitorApp} agents={agents} token={token} onBack={backToList} />
           </div>
         </div>
       </AuthGuard>
@@ -162,24 +154,6 @@ export default function ApplicationsPage() {
             <RuntimeView
               app={runtimeApp}
               onBack={backToList}
-            />
-          </div>
-        </div>
-      </AuthGuard>
-    );
-  }
-
-  if (view === 'sessions' && sessionsApp) {
-    return (
-      <AuthGuard>
-        <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
-          <Sidebar />
-          <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-            <SessionsView
-              app={sessionsApp}
-              agents={agents}
-              onBack={backToList}
-              token={token}
             />
           </div>
         </div>
@@ -223,7 +197,7 @@ export default function ApplicationsPage() {
             } catch {/* ignore */}
           }}
           onEdit={(app) => openDefinition(app)}
-          onSessions={openSessions}
+          onSessions={openMonitor}
           onRuntime={openRuntime}
           onMCPCredentials={openMCPCredentials}
           onMonitor={openMonitor}
