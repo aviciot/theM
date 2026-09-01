@@ -168,6 +168,9 @@ func BuildRouter(
 				bindings := NewAgentBindingsHandler(agentDefs.Svc())
 				apps.Routes(tenantScoped, bindings)
 
+				secCfg := NewSecurityConfigHandler(db, redis)
+				secCfg.Routes(tenantScoped)
+
 				mcpServers := NewMCPServersHandler(db, secretKey, mcpServiceURL)
 				mcpServers.Routes(tenantScoped)
 
