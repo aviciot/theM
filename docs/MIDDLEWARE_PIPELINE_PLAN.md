@@ -1,6 +1,7 @@
 # A2A Middleware Pipeline — Implementation Plan
 # the-M platform
 # Created: 2026-09-01
+# Updated: 2026-09-01 — file storage decision, Redis pub/sub progress events
 # Status: DESIGN — not yet implemented
 
 ---
@@ -18,6 +19,22 @@ audit capture follow the same interface.
 
 ---
 
+## Feature Size Estimate
+
+| Phase | What | Sessions |
+|---|---|---|
+| Phase 1 — Foundation | Schema + interfaces + config API + tests | 1 |
+| Phase 2 — AV scan + worker binary + Docker | ClamAV client, worker loop, compose | 1–2 |
+| Phase 3 — Gateway intercept + download gate + WS/Redis | Core integration | 1 |
+| Phase 4 — UI | Canvas config panel, Monitor badges, Runtime audit tab | 1 |
+| Phase 5 — Additional processors | PII, prompt inject, schema, audit capture | 1 |
+| Phase 6 — Playground | Scan spinner on artifact cards | 0.5 |
+
+**Total: ~6 focused sessions.** Phases 1–3 are the hard backend core. Phase 4 is the
+visible payoff. Phases 5–6 are extensions that plug into the same interface.
+
+---
+
 ## Architecture
 
 ```
@@ -25,26 +42,184 @@ Agent (any) returns FilePart / TextPart via A2A
     ↓
 Go gateway (them-go-bridge)
     → intercepts parts at A2A response boundary
+    → stores file bytes temporarily in them.artifacts.file_bytes (BYTEA)
     → creates artifact row  (scan_status = pending)
     → enqueues middleware_job row  (processors = [...])
     → returns artifact reference to user immediately
     ↓
 them-middleware-worker (N replicas, stateless)
     → SELECT FOR UPDATE SKIP LOCKED from them.middleware_jobs
+    → PUBLISH them:scan:<artifact_id> progress events as each processor runs
     → runs enabled processors in order (AV → PII → inject → schema → audit)
-    → updates them.artifacts.scan_status = clean | infected | flagged | error
-    → publishes WS event: artifact_scan_result on run:<run_id> channel
+    → on CLEAN:    clears file_bytes from DB, updates scan_status = clean
+    → on INFECTED: clears file_bytes from DB, updates scan_status = infected (tombstoned)
+    → PUBLISH final result on them:run:<run_id> channel
     ↓
-User
-    → download endpoint: GET /artifacts/{id}/download
-    → returns HTTP 202 + {"status":"scanning"} while pending
-    → returns file bytes when clean
-    → returns HTTP 451 + {"status":"infected","threat":"..."} when blocked
+Dashboard WS (ws/dashboard)
+    → already subscribed to run:<run_id> channels
+    → forwards artifact_scan_result event to connected Monitor clients
     ↓
-Monitor View
-    → receives artifact_scan_result WS event
-    → shows scan badge: scanning… → clean ✓ / infected ✗
+Monitor View (live, via existing WS)
+    → receives per-processor progress events
+    → artifact row updates in place: scanning… → av_scan ✓ → pii_redact… → clean ✓
+    ↓
+User download
+    → GET /admin/artifacts/{id}/download
+    → 202 scanning  — job in progress
+    → 200 + bytes   — clean (bytes still in BYTEA until download, then cleared)
+    → 451 blocked   — infected / flagged as block
 ```
+
+---
+
+## File Storage — Decision
+
+**Problem:** the worker needs the file bytes to scan them. After scanning, the user
+needs to download a clean file. Where do the bytes live between agent output and
+user download?
+
+**Answer: Postgres BYTEA column, temporary, with a 5MB cap.**
+
+```
+Agent sends file
+    ↓
+Gateway stores bytes in them.artifacts.file_bytes (BYTEA)
+    ↓  (seconds to ~1 minute while worker scans)
+Worker scans
+    ↓
+CLEAN    → bytes stay in BYTEA until user downloads
+           → after download (or 1h TTL), bytes cleared — only metadata kept
+INFECTED → bytes deleted immediately, row tombstoned
+           → nobody downloads anything
+```
+
+**Why BYTEA and not a Docker volume:**
+- Simple — no shared volume to mount across gateway + worker replicas
+- No extra infra — bytes live in Postgres which is already required
+- Fine for files up to ~5MB (covers JSON reports, short docs, small images)
+- Files over `max_file_mb` (default 5MB) are rejected at the gateway before storage
+
+**What is BYTEA:** a Postgres column type for raw binary data — just a blob of bytes
+stored inside a database row. The gateway writes the bytes in, the worker reads them
+out to scan, the gateway reads them out again to serve the download, then they are
+deleted. It is purely temporary storage, not long-term file hosting.
+
+**If large file support is needed later:** replace the BYTEA write/read with a
+Docker volume or object storage (S3/MinIO). The `Processor` interface and job queue
+do not change — only the storage backend behind `loadPartBytes()` changes.
+
+**File lifecycle in full:**
+
+```
+created_at + scan pending    → file_bytes = <bytes>, scan_status = pending
+worker claims job            → scan_status = scanning
+worker: clean                → scan_status = clean, file_bytes kept for download
+user downloads               → 200 + bytes streamed, file_bytes cleared after read
+  OR: 1h TTL passes          → file_bytes cleared by cleanup goroutine
+worker: infected             → scan_status = infected, file_bytes = NULL immediately
+worker: error (max retries)  → scan_status = failed, file_bytes kept, X-Scan-Warning header on download
+```
+
+---
+
+## Redis pub/sub — Live Progress Events
+
+The worker publishes two levels of events as it processes each job.
+
+### Channel 1: per-artifact progress (ephemeral, processor-level)
+
+**Key:** `them:scan:<artifact_id>`
+**TTL:** none needed — channel is live only while job runs, subscribers are transient
+**Published by:** middleware worker, once per processor
+
+```json
+{"type":"scan_progress","artifact_id":"uuid","processor":"av_scan","status":"running"}
+{"type":"scan_progress","artifact_id":"uuid","processor":"av_scan","status":"clean","duration_ms":1240}
+{"type":"scan_progress","artifact_id":"uuid","processor":"pii_redact","status":"running"}
+{"type":"scan_progress","artifact_id":"uuid","processor":"pii_redact","status":"skipped","duration_ms":0}
+```
+
+The dashboard WS subscribes to `them:scan:<artifact_id>` when it sees a
+`scan_status = pending` artifact in a run feed. Unsubscribes on final result.
+
+### Channel 2: final result on run channel (persistent in feed)
+
+**Key:** `them:run:<run_id>` — existing channel, Monitor already listens here
+**Published by:** middleware worker, once per job (on completion)
+
+```json
+{
+  "type": "artifact_scan_result",
+  "artifact_id": "uuid",
+  "artifact_name": "report.pdf",
+  "file_size_bytes": 204800,
+  "scan_status": "clean",
+  "processors": [
+    {"name": "av_scan",   "outcome": "clean",   "duration_ms": 1240},
+    {"name": "pii_redact","outcome": "skipped", "duration_ms": 0}
+  ],
+  "threat": null,
+  "total_duration_ms": 1240,
+  "scanned_at": "2026-09-01T14:22:00Z"
+}
+```
+
+On infected:
+```json
+{
+  "type": "artifact_scan_result",
+  "artifact_id": "uuid",
+  "artifact_name": "invoice.pdf",
+  "file_size_bytes": 112640,
+  "scan_status": "infected",
+  "processors": [
+    {"name": "av_scan", "outcome": "infected", "duration_ms": 890,
+     "detail": {"threat": "Win.Trojan.Agent-1234"}}
+  ],
+  "threat": "Win.Trojan.Agent-1234",
+  "total_duration_ms": 890,
+  "scanned_at": "2026-09-01T14:22:01Z"
+}
+```
+
+### How the dashboard WS handles scan channels
+
+The existing `ws/dashboard` multiplexer (`go/internal/ws/`) already handles
+`run:<run_id>` subscriptions. Extend it to also accept `scan:<artifact_id>`
+subscriptions — same pattern, different channel prefix.
+
+When Monitor sees an artifact event with `scan_status = pending`:
+1. Client sends `{"type":"subscribe","channels":["scan:<artifact_id>"]}`
+2. WS forwards `scan_progress` events to client as they arrive
+3. On `artifact_scan_result` (final), client unsubscribes from `scan:<artifact_id>`
+
+---
+
+## Monitor View — Live Scan Display
+
+The artifact event row in the run feed updates in place as progress events arrive.
+No polling — purely push via existing WS connection.
+
+**Progression:**
+
+```
+[artifact]  report.pdf    204 KB    ⟳ scanning…
+[artifact]  report.pdf    204 KB    av_scan ✓ (1.2s)   pii_redact ⟳
+[artifact]  report.pdf    204 KB    clean ✓  1.2s    ↓ Download
+```
+
+```
+[artifact]  invoice.pdf   110 KB    ⟳ scanning…
+[artifact]  invoice.pdf   110 KB    infected ✗   Win.Trojan.Agent-1234   🚫 Blocked
+```
+
+```
+[artifact]  data.json     12 KB     scan disabled   ↓ Download
+```
+
+The `artifact_scan` event row type is new in `MonitorView.tsx`. It subscribes to
+`scan:<artifact_id>` on mount (if scan_status is pending/scanning) and maintains
+local processor state as progress events arrive.
 
 ---
 
@@ -54,7 +229,7 @@ Each processor implements one interface. Enabled/disabled per application in `se
 
 | Processor | Input | Action | Config keys |
 |---|---|---|---|
-| `av_scan` | FilePart bytes | ClamAV scan via Unix socket sidecar | `enabled`, `max_file_bytes`, `block_on_infected` |
+| `av_scan` | FilePart bytes | ClamAV scan via Unix socket | `enabled`, `max_file_mb`, `block_on_infected` |
 | `pii_redact` | TextPart text | Regex + optional LLM — mask SSN/CC/email/phone | `enabled`, `llm_assist`, `block_on_detect` |
 | `prompt_inject` | TextPart text | Pattern + LLM — detect hidden instructions | `enabled`, `block_on_detect`, `sensitivity` |
 | `schema_validate` | DataPart JSON | Validate against declared output schema | `enabled`, `strict` |
@@ -69,38 +244,29 @@ processors are skipped and the artifact is tombstoned.
 
 **Language:** Go
 **Source:** `go/cmd/middleware-worker/` + `go/internal/middleware/`
-**Sidecar:** ClamAV daemon (`clamav/clamav` image) — one per worker pod, Unix socket
+**Sidecar:** ClamAV daemon (`clamav/clamav` image) — one shared container, all workers
+connect via shared Docker volume socket `/var/run/clamav/clamd.sock`
 
-```
-them-middleware-worker pod
-├── middleware-worker binary   (Go)
-└── clamd sidecar              (ClamAV daemon)
-    └── /var/run/clamav/clamd.sock
-```
-
-Worker loop (per goroutine pool, configurable via `MIDDLEWARE_WORKER_CONCURRENCY`):
+Worker loop (per goroutine, pool of `MIDDLEWARE_WORKER_CONCURRENCY`, default 8):
 
 ```go
 for {
-    job := claimNextJob(ctx, db)        // SELECT FOR UPDATE SKIP LOCKED
+    job := claimNextJob(ctx, db)         // SELECT FOR UPDATE SKIP LOCKED
     if job == nil { sleep(pollInterval); continue }
-    result := runPipeline(ctx, job)
-    commitResult(ctx, db, job, result)  // update artifact + publish WS event
+    publishProgress(redis, job, "claimed")
+    result := runPipeline(ctx, job)      // publishes per-processor progress
+    commitResult(ctx, db, redis, job, result) // update artifact + publish final
 }
 ```
 
-**Concurrency model:** Fixed goroutine pool (default 8 per replica). Each goroutine
-claims one job independently. No shared state between goroutines except the DB pool
-and the ClamAV socket client.
-
-**Scaling:** Horizontal — add replicas. `SKIP LOCKED` ensures each job is claimed
-by exactly one worker across all replicas. ClamAV sidecar is per-pod (not shared),
-so AV scan capacity scales linearly with replicas.
+**Scaling:** horizontal — add replicas. `SKIP LOCKED` ensures each job is claimed
+by exactly one worker across all replicas. ClamAV daemon is shared (one container),
+accessed via socket volume mounted into all worker replicas.
 
 **Failure handling:**
 - Job has `attempt_count` and `max_attempts` (default 3)
-- On processor error: increment attempt, release lock, retry after `retry_after`
-- On max attempts exceeded: mark `failed`, publish error event, unblock download with error
+- On processor error: increment attempt, release lock, retry after backoff
+- On max attempts: mark `failed`, publish error event, download returns bytes + warning header
 
 ---
 
@@ -112,18 +278,20 @@ so AV scan capacity scales linearly with replicas.
 -- ── Extend them.artifacts ────────────────────────────────────────────────────
 
 ALTER TABLE them.artifacts
-  ADD COLUMN IF NOT EXISTS scan_status   TEXT NOT NULL DEFAULT 'disabled'
-                           CHECK (scan_status IN ('disabled','pending','scanning','clean','infected','flagged','error','failed')),
-  ADD COLUMN IF NOT EXISTS scan_result   JSONB,          -- final processor results
-  ADD COLUMN IF NOT EXISTS scanned_at    TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS file_bytes    BYTEA,          -- ephemeral: cleared after scan passes
-  ADD COLUMN IF NOT EXISTS file_size     BIGINT,
-  ADD COLUMN IF NOT EXISTS file_name     TEXT,
-  ADD COLUMN IF NOT EXISTS mime_type     TEXT;
+  ADD COLUMN IF NOT EXISTS scan_status TEXT NOT NULL DEFAULT 'disabled'
+    CHECK (scan_status IN
+      ('disabled','pending','scanning','clean','infected','flagged','error','failed')),
+  ADD COLUMN IF NOT EXISTS scan_result  JSONB,       -- final per-processor results
+  ADD COLUMN IF NOT EXISTS scanned_at   TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS file_bytes   BYTEA,       -- temporary: cleared after scan + download
+  ADD COLUMN IF NOT EXISTS file_size    BIGINT,
+  ADD COLUMN IF NOT EXISTS file_name    TEXT,
+  ADD COLUMN IF NOT EXISTS mime_type    TEXT;
 
-CREATE INDEX IF NOT EXISTS artifacts_scan_status_idx
-  ON them.artifacts (scan_status)
-  WHERE scan_status IN ('pending','scanning','failed');
+-- Partial index — only rows that need worker attention
+CREATE INDEX IF NOT EXISTS artifacts_scan_pending_idx
+  ON them.artifacts (scan_status, created_at)
+  WHERE scan_status IN ('pending','scanning');
 
 -- ── New: them.middleware_jobs ────────────────────────────────────────────────
 
@@ -131,57 +299,58 @@ CREATE TABLE IF NOT EXISTS them.middleware_jobs (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   artifact_id     UUID NOT NULL REFERENCES them.artifacts(id) ON DELETE CASCADE,
   application_id  UUID NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
-  run_id          UUID,                  -- for WS publish
-  session_id      UUID,                  -- for WS publish
-  processors      TEXT[] NOT NULL,       -- ordered list of enabled processors
+  run_id          UUID,              -- for WS publish on them:run:<run_id>
+  session_id      UUID,              -- context
+  processors      TEXT[] NOT NULL,   -- ordered: e.g. {av_scan,pii_redact}
   status          TEXT NOT NULL DEFAULT 'pending'
-                  CHECK (status IN ('pending','claimed','done','failed')),
+    CHECK (status IN ('pending','claimed','done','failed')),
   attempt_count   INT NOT NULL DEFAULT 0,
   max_attempts    INT NOT NULL DEFAULT 3,
-  claimed_at      TIMESTAMPTZ,           -- NULL = unclaimed
-  retry_after     TIMESTAMPTZ,           -- NULL = immediately claimable
-  result          JSONB,                 -- per-processor outcomes
+  claimed_at      TIMESTAMPTZ,       -- NULL = unclaimed
+  retry_after     TIMESTAMPTZ,       -- NULL = claimable immediately
+  result          JSONB,             -- per-processor outcomes after completion
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Index for the claim query: only unclaimed/retryable pending rows
 CREATE INDEX IF NOT EXISTS middleware_jobs_claim_idx
-  ON them.middleware_jobs (status, retry_after, created_at)
-  WHERE status IN ('pending','failed') AND attempt_count < max_attempts;
+  ON them.middleware_jobs (created_at)
+  WHERE status = 'pending' AND attempt_count < max_attempts;
 
 -- ── Extend them.applications: security_config ────────────────────────────────
 
 ALTER TABLE them.applications
   ADD COLUMN IF NOT EXISTS security_config JSONB NOT NULL DEFAULT '{}';
 
--- Default shape (stored in applications.security_config):
+-- Default shape written by the API when first saved:
 -- {
 --   "enabled": false,
 --   "processors": {
---     "av_scan":        {"enabled": true,  "max_file_mb": 50, "block_on_infected": true},
---     "pii_redact":     {"enabled": false, "llm_assist": false, "block_on_detect": false},
---     "prompt_inject":  {"enabled": false, "block_on_detect": false, "sensitivity": "medium"},
---     "schema_validate":{"enabled": false, "strict": false},
---     "audit_capture":  {"enabled": false}
+--     "av_scan":         {"enabled": true,  "max_file_mb": 5,  "block_on_infected": true},
+--     "pii_redact":      {"enabled": false, "llm_assist": false, "block_on_detect": false},
+--     "prompt_inject":   {"enabled": false, "block_on_detect": false, "sensitivity": "medium"},
+--     "schema_validate": {"enabled": false, "strict": false},
+--     "audit_capture":   {"enabled": false}
 --   }
 -- }
 
--- ── Audit log table ───────────────────────────────────────────────────────────
+-- ── Audit log ────────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS them.middleware_audit (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  artifact_id     UUID NOT NULL REFERENCES them.artifacts(id) ON DELETE CASCADE,
-  application_id  UUID NOT NULL,
-  session_id      UUID,
-  run_id          UUID,
-  processor       TEXT NOT NULL,
-  outcome         TEXT NOT NULL,  -- clean | infected | flagged | error | skipped
-  detail          JSONB,          -- threat name, PII types found, etc.
-  duration_ms     INT,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  artifact_id    UUID NOT NULL REFERENCES them.artifacts(id) ON DELETE CASCADE,
+  application_id UUID NOT NULL,
+  session_id     UUID,
+  run_id         UUID,
+  processor      TEXT NOT NULL,
+  outcome        TEXT NOT NULL,  -- clean|infected|flagged|error|skipped
+  detail         JSONB,          -- threat name, PII types, etc.
+  duration_ms    INT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS middleware_audit_app_idx
+CREATE INDEX IF NOT EXISTS middleware_audit_app_time_idx
   ON them.middleware_audit (application_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS middleware_audit_artifact_idx
   ON them.middleware_audit (artifact_id);
@@ -202,6 +371,7 @@ go/
         ├── processor.go         # Processor interface + registry
         ├── job.go               # Job claim/release/commit (DAL)
         ├── config.go            # SecurityConfig type, defaults, validation
+        ├── progress.go          # Redis publish helpers (scan_progress, final result)
         ├── av/
         │   └── clamav.go        # ClamAV Unix socket client + scan logic
         ├── pii/
@@ -209,7 +379,7 @@ go/
         ├── inject/
         │   └── detector.go      # Prompt injection pattern + LLM check
         ├── schema/
-        │   └── validator.go     # JSON Schema validation via jsonschema lib
+        │   └── validator.go     # JSON Schema validation
         └── audit/
             └── capture.go       # Write to them.middleware_audit
 ```
@@ -222,17 +392,17 @@ go/
 type Part struct {
     Kind     string  // "file" | "text" | "data"
     Bytes    []byte  // file content (nil for text/data)
-    Text     string  // text content
+    Text     string  // text content (nil for file/data)
     Data     []byte  // JSON bytes for data parts
     MimeType string
     FileName string
 }
 
 type Result struct {
-    Outcome   string         // clean | infected | flagged | error | skipped
-    Modified  *Part          // non-nil if processor modified the part (PII redaction)
-    Block     bool           // true = stop pipeline, tombstone artifact
-    Detail    map[string]any // threat name, PII types, etc.
+    Outcome    string         // clean | infected | flagged | error | skipped
+    Modified   *Part          // non-nil if processor modified the part (e.g. PII redaction)
+    Block      bool           // true = stop pipeline, tombstone artifact
+    Detail     map[string]any // threat name, PII types found, etc.
     DurationMS int64
 }
 
@@ -242,142 +412,129 @@ type Processor interface {
 }
 ```
 
-### Pipeline execution
+### Progress publisher
 
 ```go
-// go/internal/middleware/pipeline.go
+// go/internal/middleware/progress.go
 
-func (p *Pipeline) Run(ctx context.Context, job Job) ([]Result, error) {
-    part := loadPartFromArtifact(job.ArtifactID)
-    var results []Result
-    for _, proc := range p.processors {
-        if !isEnabled(proc.Name(), job.AppConfig) { continue }
-        r, err := proc.Process(ctx, part, procConfig(proc.Name(), job.AppConfig))
-        results = append(results, r)
-        if err != nil || r.Block { break }
-        if r.Modified != nil { part = *r.Modified }
-    }
-    return results, nil
+// PublishProgress publishes a per-processor progress event on them:scan:<artifactID>
+func PublishProgress(ctx context.Context, rc rueidis.Client,
+                     artifactID uuid.UUID, processor, status string,
+                     detail map[string]any, durationMS int64) error {
+    payload, _ := json.Marshal(map[string]any{
+        "type":        "scan_progress",
+        "artifact_id": artifactID,
+        "processor":   processor,
+        "status":      status,
+        "duration_ms": durationMS,
+        "detail":      detail,
+    })
+    return rc.Do(ctx, rc.B().Publish().
+        Channel("them:scan:" + artifactID.String()).
+        Message(string(payload)).Build()).Error()
+}
+
+// PublishFinalResult publishes the completed scan result on them:run:<runID>
+// (existing channel — Monitor already subscribed)
+func PublishFinalResult(ctx context.Context, rc rueidis.Client,
+                        runID, artifactID uuid.UUID, result FinalResult) error {
+    payload, _ := json.Marshal(map[string]any{
+        "type":              "artifact_scan_result",
+        "artifact_id":       artifactID,
+        "artifact_name":     result.FileName,
+        "file_size_bytes":   result.FileSizeBytes,
+        "scan_status":       result.ScanStatus,
+        "processors":        result.Processors,
+        "threat":            result.Threat,
+        "total_duration_ms": result.TotalDurationMS,
+        "scanned_at":        result.ScannedAt,
+    })
+    return rc.Do(ctx, rc.B().Publish().
+        Channel("them:run:" + runID.String()).
+        Message(string(payload)).Build()).Error()
 }
 ```
 
 ---
 
-## Gateway Integration: go/internal/a2a/
+## Redis Keys
 
-The gateway intercepts `FilePart` (and optionally `TextPart`) in A2A task responses
-before forwarding to the user.
+| Key | Published by | Consumed by | Purpose |
+|---|---|---|---|
+| `them:scan:<artifact_id>` | middleware-worker | ws/dashboard → Monitor | Per-processor progress during scan |
+| `them:run:<run_id>` | middleware-worker | ws/dashboard → Monitor (existing) | Final scan result event |
+| `them:security_config:invalidated:<app_id>` | admin API (on PUT) | gateway config cache | Invalidate 30s security config cache |
 
-**Intercept point:** `go/internal/a2a/server.go` — in the artifact forwarding path
-(after `TaskArtifactUpdateEvent` received from agent, before writing to `them.artifacts`
-and before streaming to user session).
+Add `them:scan:` prefix to `docs/REDIS.md` when implementing.
 
-**Flow:**
+---
+
+## Gateway Integration
+
+**Intercept point:** `go/internal/a2a/server.go` — in the artifact forwarding path,
+after `TaskArtifactUpdateEvent` received from agent, before streaming to user session.
 
 ```go
-// pseudocode — actual implementation in go/internal/a2a/server.go
-
 func handleArtifactUpdate(ctx context.Context, appID, runID, sessionID uuid.UUID,
                           artifact A2AArtifact) error {
 
-    cfg := loadSecurityConfig(ctx, appID)    // cached, refreshed every 30s
+    cfg := secCfgCache.Get(appID)   // 30s cached, invalidated via Redis sub
 
-    if !cfg.Enabled {
-        // Fast path — write artifact directly, scan_status = disabled
+    if !cfg.Enabled || len(enabledProcessors(cfg, artifact.Parts)) == 0 {
+        // Fast path — zero overhead, scan_status = disabled
         return recorder.SaveArtifact(ctx, artifact, "disabled")
     }
 
-    // Determine which processors apply to this part type
-    processors := enabledProcessors(cfg, artifact.Parts)
-    if len(processors) == 0 {
-        return recorder.SaveArtifact(ctx, artifact, "disabled")
+    // Reject oversized files before storage
+    if fileSize(artifact) > cfg.MaxFileMB*1024*1024 {
+        return errArtifactTooLarge
     }
 
-    // Save file bytes to artifact row, enqueue job — atomic transaction
+    // Atomic: save artifact with bytes + enqueue job in one transaction
     return db.InTx(ctx, func(tx pgx.Tx) error {
-        artifactID := recorder.SaveArtifactTx(tx, artifact, "pending")
-        enqueueJob(tx, artifactID, appID, runID, sessionID, processors)
+        artifactID := recorder.SaveArtifactWithBytesTx(tx, artifact, "pending")
+        enqueueJob(tx, artifactID, appID, runID, sessionID,
+                   enabledProcessors(cfg, artifact.Parts))
         return nil
     })
-    // Response to user carries artifact reference with scan_status=pending
-    // Download endpoint blocks until scan_status transitions out of pending
+    // Artifact reference returned to user immediately — download gate handles the rest
 }
 ```
 
-**Security config cache:** `sync.Map` keyed by `appID`, refreshed every 30s via
-background goroutine. Zero overhead on the hot path when scanning is disabled.
+**Security config cache:** `sync.Map` keyed by `appID`, refreshed every 30s.
+Invalidated immediately when gateway receives on `them:security_config:invalidated:<app_id>`.
 
 ---
 
-## Download Gate: go/internal/admin/
+## Download Gate
 
 ```
 GET /admin/artifacts/{artifact_id}/download
 
-scan_status = disabled  → 200 + file bytes (or inline part data)
-scan_status = pending   → 202 + {"status":"scanning","artifact_id":"..."}
-scan_status = scanning  → 202 + {"status":"scanning","artifact_id":"..."}
-scan_status = clean     → 200 + file bytes
-scan_status = infected  → 451 + {"status":"infected","threat":"Eicar-Test-Signature"}
-scan_status = flagged   → 200 + redacted bytes (PII redacted in-place)
-scan_status = error     → 200 + original bytes + X-Scan-Warning header
-scan_status = failed    → 200 + original bytes + X-Scan-Warning header
+scan_status = disabled   → 200 + file bytes (or part data inline)
+scan_status = pending    → 202 + {"status":"scanning","artifact_id":"..."}
+scan_status = scanning   → 202 + {"status":"scanning","artifact_id":"..."}
+scan_status = clean      → 200 + file bytes, then clear file_bytes column
+scan_status = infected   → 451 + {"status":"infected","threat":"Win.Trojan..."}
+scan_status = flagged    → 200 + redacted bytes (PII stripped in-place by worker)
+scan_status = error      → 200 + original bytes + X-Scan-Warning: scan-error header
+scan_status = failed     → 200 + original bytes + X-Scan-Warning: scan-failed header
 ```
 
-`451 Unavailable For Legal Reasons` is the correct HTTP status for content blocked
-by policy — semantically correct for AV-blocked content.
+`HTTP 451 Unavailable For Legal Reasons` — correct status for policy-blocked content.
 
----
-
-## WS Event: artifact_scan_result
-
-Published on `run:<run_id>` channel (same channel as existing run events).
-Received by Monitor View for live badge display.
-
-```json
-{
-  "type": "artifact_scan_result",
-  "artifact_id": "uuid",
-  "artifact_name": "report.pdf",
-  "scan_status": "clean",
-  "processors": [
-    {"name": "av_scan",  "outcome": "clean",    "duration_ms": 1240},
-    {"name": "pii_redact","outcome": "skipped", "duration_ms": 0}
-  ],
-  "threat": null,
-  "scanned_at": "2026-09-01T14:22:00Z"
-}
-```
-
-On `infected`:
-```json
-{
-  "type": "artifact_scan_result",
-  "artifact_id": "uuid",
-  "artifact_name": "invoice.pdf",
-  "scan_status": "infected",
-  "processors": [
-    {"name": "av_scan", "outcome": "infected", "duration_ms": 890,
-     "detail": {"threat": "Win.Trojan.Agent-1234"}}
-  ],
-  "threat": "Win.Trojan.Agent-1234",
-  "scanned_at": "2026-09-01T14:22:01Z"
-}
-```
+After serving a clean file: worker has already cleared `file_bytes` OR the download
+handler clears it after streaming (whichever happens first — idempotent NULL set).
 
 ---
 
 ## docker-compose additions
 
 ```yaml
-# docker-compose.yml
-
   them-middleware-worker:
     build:
       context: .
       dockerfile: Dockerfile.middleware-worker
-    image: them-middleware-worker:latest
-    container_name: them-middleware-worker
     restart: unless-stopped
     environment:
       - DATABASE_URL=${DATABASE_URL}
@@ -385,10 +542,9 @@ On `infected`:
       - MIDDLEWARE_WORKER_CONCURRENCY=8
       - MIDDLEWARE_POLL_INTERVAL_MS=500
       - CLAMAV_SOCKET=/var/run/clamav/clamd.sock
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}   # for LLM-assisted processors
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     volumes:
       - clamav-socket:/var/run/clamav
-      - middleware-scratch:/tmp/middleware-scratch  # tmpfs for file bytes during scan
     depends_on:
       - them-postgres
       - them-redis
@@ -396,73 +552,55 @@ On `infected`:
     networks:
       - them-network
     deploy:
-      replicas: 2   # scale up as needed
+      replicas: 2
 
   them-clamd:
     image: clamav/clamav:stable
-    container_name: them-clamd
     restart: unless-stopped
     volumes:
       - clamav-socket:/var/run/clamav
-      - clamav-db:/var/lib/clamav
+      - clamav-db:/var/lib/clamav    # virus definition database (~300MB, downloaded on first start)
     networks:
       - them-network
-    # ClamAV downloads virus definitions on first start (~300MB)
-    # Allow 2-5 minutes on first boot before worker connects
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
 
 volumes:
-  clamav-socket:
-  clamav-db:
-  middleware-scratch:
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
+  clamav-socket:   # shared Unix socket between clamd and all worker replicas
+  clamav-db:       # ClamAV virus definitions — persisted across restarts
 ```
 
-**Scaling:** `docker compose --project-name them_gateway ... scale them-middleware-worker=N`
+**First boot note:** ClamAV downloads ~300MB of virus definitions on first start.
+Allow 2–5 minutes before the worker can connect. Subsequent starts use the cached
+`clamav-db` volume — fast.
 
-Note: ClamAV is a single shared daemon (one container) accessed by all worker replicas
-via the shared socket volume. This is simpler than one-per-replica and sufficient for
-most loads — the ClamAV daemon itself is multi-threaded. If ClamAV becomes a bottleneck,
-move to one daemon per worker pod using a sidecar pattern.
+**Scaling:** `docker compose --project-name them_gateway ... scale them-middleware-worker=N`
+All replicas share the same `clamav-socket` volume — one ClamAV daemon serves all.
 
 ---
 
-## Security Config — API
+## Security Config API
 
 ### GET /admin/applications/{app_id}/security-config
-Returns current security config for the application.
+Returns current config (or defaults if never set).
 
 ### PUT /admin/applications/{app_id}/security-config
-Replaces security config. Validates processor config shapes.
+Validates and saves. Publishes `them:security_config:invalidated:<app_id>` to Redis
+so all gateway instances invalidate their cache immediately.
 
-Response shape:
+**Response shape:**
 ```json
 {
   "enabled": true,
   "processors": {
-    "av_scan": {
-      "enabled": true,
-      "max_file_mb": 50,
-      "block_on_infected": true
-    },
-    "pii_redact": {
-      "enabled": false,
-      "llm_assist": false,
-      "block_on_detect": false
-    },
-    "prompt_inject": {
-      "enabled": false,
-      "block_on_detect": false,
-      "sensitivity": "medium"
-    },
-    "schema_validate": {
-      "enabled": false,
-      "strict": false
-    },
-    "audit_capture": {
-      "enabled": false
-    }
+    "av_scan":         {"enabled": true,  "max_file_mb": 5,  "block_on_infected": true},
+    "pii_redact":      {"enabled": false, "llm_assist": false, "block_on_detect": false},
+    "prompt_inject":   {"enabled": false, "block_on_detect": false, "sensitivity": "medium"},
+    "schema_validate": {"enabled": false, "strict": false},
+    "audit_capture":   {"enabled": false}
   }
 }
 ```
@@ -473,143 +611,130 @@ Response shape:
 
 ### 1. Canvas Builder — design-time default
 
-Location: right-side config panel → "Security" section (same as monitoring thresholds)
+Right-side config panel → "Security" section (same panel as monitoring thresholds):
 
 ```
-┌─ Security ──────────────────────────────────┐
-│  ☑ Enable artifact middleware               │
-│                                             │
-│  Processors:                                │
-│  ☑ AV Scan          Max size: [50] MB       │
-│    Policy: ● Block infected  ○ Warn only    │
-│  ☐ PII Redaction                            │
-│  ☐ Prompt Injection Detection               │
-│  ☐ Schema Validation                        │
-│  ☐ Audit Capture                            │
-└─────────────────────────────────────────────┘
+┌─ Security ───────────────────────────────────────────┐
+│  ☑ Enable artifact middleware                        │
+│                                                      │
+│  ☑ AV Scan         Max file size: [5] MB             │
+│    Policy:  ● Block infected   ○ Warn only           │
+│  ☐ PII Redaction                                     │
+│  ☐ Prompt Injection Detection                        │
+│  ☐ Schema Validation                                 │
+│  ☐ Audit Capture                                     │
+└──────────────────────────────────────────────────────┘
 ```
 
-Saved to `applications.security_config` via PUT /admin/applications/{id}/security-config.
+Calls PUT /admin/applications/{id}/security-config on save.
 
-### 2. Runtime View — operational override
+### 2. Runtime View — operational override + audit log
 
-New "Security" tab in RuntimeView (read + write):
+New "Security" tab:
+- Top half: same toggles as Canvas Builder — live override, takes effect immediately
+- Bottom half: audit log table
 
-- Same toggles as Canvas Builder (live override — takes effect immediately)
-- Audit log table below the config:
-  | Time | Session | File | Processors | Result | Threat | Duration |
-  | --- | --- | --- | --- | --- | --- | --- |
-  | 14:22 | abc123 | report.pdf | av_scan, pii | clean | — | 1.2s |
-  | 14:18 | def456 | invoice.pdf | av_scan | infected | Win.Trojan | 0.9s |
+| Time | Session | File | Size | Processors | Result | Threat | Duration |
+|---|---|---|---|---|---|---|---|
+| 14:22 | abc…123 | report.pdf | 204 KB | av_scan, pii | clean | — | 1.2s |
+| 14:18 | def…456 | invoice.pdf | 110 KB | av_scan | infected | Win.Trojan | 0.9s |
 
-Filterable by: date range, result (clean/infected/flagged), processor.
+Filterable by date range, result, processor.
+Paginated — calls GET /admin/applications/{id}/middleware-audit.
 
-### 3. Monitor View — observation only (no config)
+### 3. Monitor View — live observation (no config)
 
 New `artifact_scan` event row type in the run feed column.
+Driven purely by WS events — no polling.
+
+**In-place progression:**
+```
+[artifact]  report.pdf    204 KB    ⟳ scanning…
+[artifact]  report.pdf    204 KB    av_scan ✓ 1.2s   pii_redact ⟳
+[artifact]  report.pdf    204 KB    ✓ clean  1.2s    ↓ Download
+```
 
 ```
-[scan]  report.pdf          scanning…    ⟳
-[scan]  report.pdf          clean ✓      1.2s
-[scan]  invoice.pdf         infected ✗   Win.Trojan.Agent-1234
+[artifact]  invoice.pdf   110 KB    ✗ infected   Win.Trojan.Agent-1234   🚫 Blocked
 ```
 
-Driven by the `artifact_scan_result` WS event — no polling.
-No config controls in Monitor — read-only observation.
+```
+[artifact]  data.json     12 KB     scan disabled   ↓ Download
+```
 
-### 4. Playground (low priority)
+On mount, if artifact has `scan_status = pending/scanning`:
+→ subscribe to `scan:<artifact_id>` on the dashboard WS
+→ update row as `scan_progress` events arrive
+→ on `artifact_scan_result` (final): unsubscribe, render final state
 
-When a playground run produces an artifact and scanning is enabled on the application:
-- Show a "scanning…" spinner on the artifact card
-- Flip to "clean — download" or "infected — blocked" when WS event arrives
-- No extra config needed — the application's security_config already applies
+### 4. Playground (low priority, Phase 6)
+
+Artifact card in playground chat shows scan spinner while pending.
+Same WS event flow — no extra backend work needed.
 
 ---
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|---|---|---|
-| Gateway overhead (scan disabled) | < 0.5ms | Config cache hit, no DB write |
-| Gateway overhead (scan enabled) | < 5ms | One TX: artifact row + job row |
-| AV scan (1MB file) | < 3s | ClamAV in-memory DB |
-| AV scan (50MB file) | < 30s | Within A2A task timeout |
-| PII redaction (1K tokens) | < 100ms | Regex only (no LLM) |
-| Worker poll latency | < 500ms | `MIDDLEWARE_POLL_INTERVAL_MS` |
-| WS notification to user | < 100ms after job done | Existing pub/sub path |
-| Throughput per worker replica | ~120 small files/min | 8 goroutines × ~1s avg |
+| Metric | Target |
+|---|---|
+| Gateway overhead (scan disabled) | < 0.5ms — config cache hit, no DB write |
+| Gateway overhead (scan enabled) | < 5ms — one atomic TX: artifact row + job row |
+| AV scan (1MB file) | < 3s |
+| AV scan (5MB file, max) | < 15s |
+| PII redaction (1K tokens, regex only) | < 100ms |
+| Worker poll latency (job to claimed) | < 500ms |
+| WS progress event to Monitor client | < 100ms after Redis publish |
+| Throughput per worker replica (8 goroutines) | ~120 small files/min |
 
 ---
 
 ## Implementation Order
 
-Each phase is independently deployable and testable.
-
-### Phase 1 — Foundation (no user-visible change)
-1. `db/049_middleware_pipeline.sql` — schema additions
+### Phase 1 — Foundation
+1. `db/049_middleware_pipeline.sql`
 2. `go/internal/middleware/processor.go` — interface + registry
 3. `go/internal/middleware/job.go` — claim/release/commit DAL
 4. `go/internal/middleware/pipeline.go` — chain runner
 5. `go/internal/middleware/config.go` — SecurityConfig type + validation
-6. `go/internal/admin/` — GET/PUT security-config API endpoints
-7. Tests: `go test ./internal/middleware/...`
+6. `go/internal/middleware/progress.go` — Redis publish helpers
+7. `go/internal/admin/security_config.go` + DAL + service — GET/PUT API
+8. Tests: `go test ./internal/middleware/...`
 
-### Phase 2 — AV Scan processor
+### Phase 2 — AV scan processor + worker binary
 1. `go/internal/middleware/av/clamav.go` — ClamAV Unix socket client
-2. Register `av_scan` processor in pipeline registry
-3. `go/cmd/middleware-worker/main.go` — worker binary, pool, graceful shutdown
-4. `docker-compose.yml` — add `them-clamd` + `them-middleware-worker`
-5. `Dockerfile.middleware-worker`
-6. Tests: mock ClamAV socket, test clean/infected/oversized paths
+2. Register `av_scan` in pipeline registry
+3. `go/cmd/middleware-worker/main.go` — goroutine pool, graceful shutdown
+4. `Dockerfile.middleware-worker`
+5. `docker-compose.yml` — add `them-clamd` + `them-middleware-worker` + volumes
+6. Tests: mock ClamAV socket, clean/infected/oversized/timeout paths
 
-### Phase 3 — Gateway intercept
+### Phase 3 — Gateway intercept + download gate + WS
 1. `go/internal/a2a/server.go` — intercept FilePart, create job atomically
-2. Download gate: `GET /admin/artifacts/{id}/download`
-3. WS publish: `artifact_scan_result` event on `run:<run_id>`
-4. Tests: end-to-end with mock processor (clean path + infected path)
+2. `go/internal/admin/runs.go` — download gate endpoint
+3. `go/internal/ws/` — handle `scan:<artifact_id>` subscription channel
+4. `go/cmd/them/main.go` — register new routes
+5. Tests: end-to-end with mock processor
 
 ### Phase 4 — UI
-1. Canvas Builder: Security config panel
-2. Monitor View: `artifact_scan` event row type
-3. Runtime View: Security tab + audit log table
-4. Frontend API calls: GET/PUT security-config
+1. `SecurityConfigPanel.tsx` — Canvas Builder security section
+2. `MonitorView.tsx` — `artifact_scan` event row type + WS subscription
+3. `SecurityAuditTab.tsx` — Runtime View security tab + audit table
+4. `frontend/src/lib/api.ts` — add securityConfig GET/PUT + audit fetch
 
-### Phase 5 — Additional processors (after Phase 3 is stable)
-1. `pii_redact` — regex patterns (SSN, CC, email, phone, IBAN)
-2. `prompt_inject` — pattern library + optional LLM call
-3. `schema_validate` — jsonschema validation
-4. `audit_capture` — write to `them.middleware_audit`
+### Phase 5 — Additional processors
+1. `pii/redactor.go` — regex (SSN, CC, email, phone, IBAN)
+2. `inject/detector.go` — pattern library + optional LLM
+3. `schema/validator.go` — JSON Schema validation
+4. `audit/capture.go` — write to `them.middleware_audit`
 
-### Phase 6 — Playground integration (low priority)
-1. Scanning spinner on artifact cards in playground
-2. WS event handler for `artifact_scan_result` in playground UI
-
----
-
-## Open Questions (decide before Phase 2)
-
-1. **File storage for pending artifacts** — file bytes written to `them.artifacts.file_bytes`
-   (BYTEA in Postgres) or to a mounted volume? BYTEA is simpler but large files inflate
-   the DB. Volume is faster but adds infra. Recommended: BYTEA up to 10MB, volume for larger.
-   Decide based on expected artifact sizes.
-
-2. **ClamAV topology** — shared daemon (one `them-clamd` container, all workers use the
-   shared socket volume) vs sidecar (one ClamAV per worker pod). Shared is simpler to
-   operate. Sidecar scales better at high replica counts (>5). Start shared, migrate
-   if ClamAV becomes the bottleneck.
-
-3. **LLM-assisted processors** — `pii_redact` and `prompt_inject` can optionally call
-   an LLM for higher accuracy. Uses `ANTHROPIC_API_KEY` already in env. Optional — regex-
-   only mode is the default. LLM mode adds ~500ms latency per TextPart.
-
-4. **Retroactive scan of existing artifacts** — artifacts already in `them.artifacts`
-   have `scan_status = disabled`. If an application enables scanning, should existing
-   artifacts be re-scanned? Recommendation: no — only new artifacts are scanned. Existing
-   ones keep `disabled` status and download unchanged.
+### Phase 6 — Playground (low priority)
+1. Scan spinner on artifact cards in playground UI
+2. Subscribe to `scan:<artifact_id>` WS channel from playground
 
 ---
 
-## Files to Create (summary)
+## Files to Create
 
 | File | Purpose |
 |---|---|
@@ -617,34 +742,36 @@ Each phase is independently deployable and testable.
 | `go/cmd/middleware-worker/main.go` | Worker binary |
 | `go/internal/middleware/processor.go` | Processor interface + registry |
 | `go/internal/middleware/pipeline.go` | Chain runner |
-| `go/internal/middleware/job.go` | Job DAL (claim/release/commit) |
-| `go/internal/middleware/config.go` | SecurityConfig type + validation |
+| `go/internal/middleware/job.go` | Job DAL |
+| `go/internal/middleware/config.go` | SecurityConfig type |
+| `go/internal/middleware/progress.go` | Redis publish helpers |
 | `go/internal/middleware/av/clamav.go` | ClamAV client |
 | `go/internal/middleware/pii/redactor.go` | PII redaction |
 | `go/internal/middleware/inject/detector.go` | Prompt injection |
 | `go/internal/middleware/schema/validator.go` | Schema validation |
 | `go/internal/middleware/audit/capture.go` | Audit capture |
-| `go/internal/admin/security_config.go` | HTTP handler GET/PUT security-config |
-| `go/internal/admin/dal/security_config.go` | DAL for security_config |
+| `go/internal/admin/security_config.go` | HTTP handler |
+| `go/internal/admin/dal/security_config.go` | DAL |
 | `go/internal/admin/service/security_config.go` | Service layer |
-| `Dockerfile.middleware-worker` | Worker container image |
-| `frontend/src/app/admin/applications/components/SecurityConfigPanel.tsx` | Canvas Builder panel |
-| `frontend/src/app/admin/applications/components/SecurityAuditTab.tsx` | Runtime View tab |
+| `Dockerfile.middleware-worker` | Worker image |
+| `frontend/.../SecurityConfigPanel.tsx` | Canvas Builder panel |
+| `frontend/.../SecurityAuditTab.tsx` | Runtime View tab |
 
 ## Files to Modify
 
 | File | Change |
 |---|---|
-| `go/internal/a2a/server.go` | Add FilePart intercept + job enqueue |
-| `go/internal/admin/runs.go` | Add artifact download gate endpoint |
-| `docker-compose.yml` | Add them-clamd + them-middleware-worker services + volumes |
-| `docker-compose.dev.yml` | Dev overrides for worker |
-| `go/cmd/them/main.go` | Register security-config routes |
-| `frontend/src/app/admin/applications/components/MonitorView.tsx` | Add artifact_scan event row |
-| `frontend/src/app/admin/applications/components/CanvasBuilderView.tsx` | Add Security panel |
-| `frontend/src/app/admin/applications/components/RuntimeView.tsx` | Add Security tab |
-| `frontend/src/lib/api.ts` | Add securityConfig GET/PUT + artifact download |
-| `docs/SCHEMA.md` | Document new columns + middleware_jobs + middleware_audit |
+| `go/internal/a2a/server.go` | FilePart intercept + job enqueue |
+| `go/internal/admin/runs.go` | Artifact download gate |
+| `go/internal/ws/handler.go` | Handle `scan:<artifact_id>` subscription |
+| `go/cmd/them/main.go` | Register security-config + audit routes |
+| `docker-compose.yml` | Add clamd + middleware-worker + volumes |
+| `frontend/.../MonitorView.tsx` | artifact_scan event row |
+| `frontend/.../CanvasBuilderView.tsx` | Security config panel |
+| `frontend/.../RuntimeView.tsx` | Security tab |
+| `frontend/src/lib/api.ts` | Security config + audit API calls |
+| `docs/SCHEMA.md` | Document new columns + tables |
+| `docs/REDIS.md` | Document them:scan: + them:security_config:invalidated: keys |
 | `docs/CURRENT.md` | Record next task |
 | `go/TEST_INDEX.md` | Add middleware test rows |
 
@@ -652,12 +779,12 @@ Each phase is independently deployable and testable.
 
 ## Key Constraints
 
-- Never store decrypted file bytes in Redis — Postgres BYTEA or volume only
-- ClamAV socket path must match between clamd container and worker: `/var/run/clamav/clamd.sock`
-- `SKIP LOCKED` is essential — without it all workers race on the same row
-- security_config cache in gateway must be invalidated on PUT — publish invalidation
-  event on Redis channel `them:security_config:invalidated:<app_id>`
-- `scan_status = disabled` must be the default — zero performance impact when feature is off
-- File bytes in `them.artifacts.file_bytes` must be cleared (set NULL) after scan passes,
-  keeping only the scan result metadata. Store bytes only as long as needed for scanning.
-- 500 responses must use static strings — never expose ClamAV or processor error details to users
+- `scan_status = disabled` is the default — zero overhead when feature is off
+- File bytes (`file_bytes` BYTEA) are temporary — cleared after clean download or on infected verdict
+- Files over `max_file_mb` are rejected at the gateway before any DB write
+- `SKIP LOCKED` on the job claim query is non-negotiable — without it replicas race
+- Security config cache in gateway must be invalidated on PUT via Redis pub/sub
+- ClamAV socket path must match across clamd container and worker: `/var/run/clamav/clamd.sock`
+- 500 responses must use static strings — never expose ClamAV error details to users
+- File bytes in BYTEA are cleared after download (or 1h TTL) — not long-term storage
+- `them:scan:<artifact_id>` is an ephemeral channel — no persistence needed, pub/sub only
