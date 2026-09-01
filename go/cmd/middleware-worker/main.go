@@ -30,6 +30,7 @@ import (
 	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/middleware"
 	"github.com/aviciot/them/internal/middleware/av"
+	"github.com/aviciot/them/internal/storage"
 	"github.com/aviciot/them/internal/telemetry"
 )
 
@@ -68,6 +69,26 @@ func run() error {
 	defer redisCache.Close()
 	log.Info("redis connected", "addr", redisAddr)
 
+	// ── Build storage client ──────────────────────────────────────────────────
+	var objStore middleware.ObjectStore
+	if cfg.S3Endpoint != "" {
+		sc, scErr := storage.New(storage.Config{
+			Endpoint:         cfg.S3Endpoint,
+			AccessKey:        cfg.S3AccessKey,
+			SecretKey:        cfg.S3SecretKey,
+			QuarantineBucket: cfg.S3QuarantineBucket,
+			ArtifactsBucket:  cfg.S3ArtifactsBucket,
+		})
+		if scErr != nil {
+			log.Warn("storage client init failed — quarantine path unavailable", "err", scErr)
+		} else {
+			objStore = sc
+			log.Info("storage client initialised", "endpoint", cfg.S3Endpoint)
+		}
+	} else {
+		log.Warn("THE_M_S3_ENDPOINT not set — quarantine path unavailable")
+	}
+
 	// ── Build processor registry ──────────────────────────────────────────────
 	clamavSocket := envStr("CLAMAV_SOCKET", "/var/run/clamav/clamd.sock")
 	reg := middleware.NewRegistry()
@@ -95,7 +116,7 @@ func run() error {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			workerLoop(ctx, log.With("worker_id", workerID), database.Pool(), redisCache, reg, pollInterval)
+			workerLoop(ctx, log.With("worker_id", workerID), database.Pool(), redisCache, reg, objStore, pollInterval)
 		}(i)
 	}
 
@@ -112,6 +133,7 @@ func workerLoop(
 	pool *pgxpool.Pool,
 	redisCache *cache.Cache,
 	reg *middleware.Registry,
+	store middleware.ObjectStore,
 	pollInterval time.Duration,
 ) {
 	dal := middleware.NewJobDAL(&pgxQuerier{pool: pool})
@@ -135,7 +157,6 @@ func workerLoop(
 		}
 
 		if job == nil {
-			// No work available — wait before polling again
 			select {
 			case <-ctx.Done():
 				return
@@ -144,7 +165,7 @@ func workerLoop(
 			continue
 		}
 
-		processJob(ctx, log, dal, pipeline, redisPub, job)
+		processJob(ctx, log, dal, pipeline, redisPub, store, job)
 	}
 }
 
@@ -155,11 +176,12 @@ func processJob(
 	dal *middleware.JobDAL,
 	pipeline *middleware.Pipeline,
 	redisPub *rueidisPublisher,
+	store middleware.ObjectStore,
 	job *middleware.Job,
 ) {
 	log.Info("job claimed", "job_id", job.ID, "artifact_id", job.ArtifactID, "processors", job.Processors)
 
-	if err := dal.LoadFileBytes(ctx, job); err != nil {
+	if err := dal.LoadFileBytes(ctx, job, store); err != nil {
 		log.Error("load file bytes failed", "job_id", job.ID, "err", err)
 		_ = dal.Fail(ctx, job, time.Now().Add(30*time.Second))
 		return
@@ -195,7 +217,7 @@ func processJob(
 		ScannedAt:   time.Now().UTC(),
 	}
 
-	if err := dal.Complete(ctx, job, result); err != nil {
+	if err := dal.Complete(ctx, job, result, store); err != nil {
 		log.Error("commit result failed", "job_id", job.ID, "err", err)
 		_ = dal.Fail(ctx, job, time.Now().Add(30*time.Second))
 		return

@@ -8,19 +8,26 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-// FileGate intercepts file artifacts in the A2A run-stream, stores them in
-// them.run_artifacts with scan_status='pending', and enqueues a middleware job.
-// Callers get back a gated artifact ID they can use to build a download URL.
+// Store is the minimal object-storage interface needed by FileGate.
+// Implemented by *storage.Client in production; a fake in tests.
+type Store interface {
+	PutQuarantine(ctx context.Context, key string, data []byte, contentType string) error
+}
+
+// FileGate intercepts file artifacts in the A2A run-stream. When security
+// scanning is enabled for an application it:
+//   1. Writes bytes to the MinIO quarantine bucket (NOT Postgres)
+//   2. Inserts a quarantine_artifacts metadata row in Postgres
+//   3. Enqueues a middleware_job referencing the quarantine row
 //
-// Security design:
-//   - Files are fetched via HTTP from the internal download_url (agent-supplied)
-//   - Files exceeding MaxFileMB are rejected before storage
-//   - File bytes are stored in the existing run_artifacts.data column
-//   - scan_status starts at 'pending'; worker updates it after scanning
+// Files never touch run_artifacts until the worker confirms them clean.
 type FileGate struct {
 	db         GateQuerier
+	store      Store
 	httpClient *http.Client
 
 	cacheMu sync.Mutex
@@ -33,7 +40,6 @@ type cachedSecCfg struct {
 }
 
 // GateQuerier is the minimal DB interface needed by FileGate.
-// It is a subset of Querier (no multi-row Query needed).
 type GateQuerier interface {
 	Exec(ctx context.Context, sql string, args ...any) error
 	QueryRow(ctx context.Context, sql string, args ...any) SingleRowScanner
@@ -54,9 +60,10 @@ type GateInput struct {
 	TenantID      string
 }
 
-// GateResult is returned by Intercept.
+// GateResult is returned by Intercept / InterceptInline.
 type GateResult struct {
-	// ArtifactID is the UUID of the stored run_artifact row.
+	// ArtifactID is the UUID of the quarantine_artifacts row.
+	// (Becomes a run_artifacts row only after a clean scan.)
 	ArtifactID string
 	// ScanStatus is the initial status ('pending' or 'disabled').
 	ScanStatus string
@@ -64,74 +71,164 @@ type GateResult struct {
 	Enqueued bool
 }
 
-// NewFileGate creates a FileGate.
-func NewFileGate(db GateQuerier) *FileGate {
+// NewFileGate creates a FileGate. store may be nil only when security is always
+// disabled (e.g. in tests that only exercise the disabled path).
+func NewFileGate(db GateQuerier, store Store) *FileGate {
 	return &FileGate{
 		db:         db,
+		store:      store,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		cache:      make(map[string]cachedSecCfg),
 	}
 }
 
 // Intercept processes one file artifact from the A2A run-stream.
-// If security scanning is not enabled for the application, it returns
+// If security scanning is not enabled for the application it returns
 // (GateResult{ScanStatus:"disabled"}, nil) and the caller should proceed
 // with the original download_url unchanged.
 //
 // If scanning is enabled it:
 //  1. Fetches the file bytes from in.DownloadURL
-//  2. Stores them in them.run_artifacts (with scan_status='pending')
-//  3. Enqueues a middleware_job
+//  2. Writes bytes to the MinIO quarantine bucket
+//  3. Inserts a quarantine_artifacts metadata row
+//  4. Enqueues a middleware_job
 //
-// The caller should use the returned ArtifactID to construct a gated
-// download URL: /api/v1/runs/{run_id}/artifacts/{artifact_id}
+// The returned ArtifactID is the quarantine_artifacts UUID; it becomes a
+// run_artifacts UUID only after a clean scan (same UUID is reused).
 func (g *FileGate) Intercept(ctx context.Context, in GateInput) (GateResult, error) {
 	cfg, err := g.loadSecCfg(ctx, in.ApplicationID)
 	if err != nil {
-		return GateResult{ScanStatus: "disabled"}, nil // fail open
+		return GateResult{ScanStatus: "disabled"}, nil
 	}
 	if !cfg.Enabled {
 		return GateResult{ScanStatus: "disabled"}, nil
 	}
 
-	// Determine enabled processors for file parts (canonical order, file-applicable only)
 	processors := enabledFileProcessors(cfg)
 	if len(processors) == 0 {
 		return GateResult{ScanStatus: "disabled"}, nil
 	}
 
-	// Fetch file bytes from the agent-supplied URL
-	maxBytes := int64(5 * 1024 * 1024) // default 5MB
-	if avCfg, ok := cfg.Processors["av_scan"]; ok {
-		var av AVScanConfig
-		if json.Unmarshal(avCfg, &av) == nil && av.MaxFileMB > 0 {
-			maxBytes = int64(av.MaxFileMB) * 1024 * 1024
-		}
-	}
+	maxBytes := maxFileBytesFromCfg(cfg)
 
 	data, err := g.fetchFile(ctx, in.DownloadURL, maxBytes)
 	if err != nil {
-		// Fail open: if we can't fetch the file, don't block the artifact
-		return GateResult{ScanStatus: "disabled"}, nil
+		return GateResult{ScanStatus: "disabled"}, nil // fail open
 	}
 
-	// Store artifact in run_artifacts with scan_status='pending'
-	artifactID, err := g.storeArtifact(ctx, in, data)
+	return g.quarantineAndEnqueue(ctx, in, cfg, data, processors)
+}
+
+// InterceptInline processes an already-decoded file artifact (bytes in memory).
+// Equivalent to Intercept but skips the HTTP fetch step.
+func (g *FileGate) InterceptInline(ctx context.Context, in GateInput, data []byte) (GateResult, error) {
+	cfg, err := g.loadSecCfg(ctx, in.ApplicationID)
 	if err != nil {
 		return GateResult{ScanStatus: "disabled"}, nil
 	}
-
-	// Enqueue middleware job
-	dal := NewJobDAL(g.db)
-	if err := dal.Enqueue(ctx, artifactID, in.ApplicationID, in.RunID, in.SessionID, processors); err != nil {
-		// Non-fatal: artifact is stored; worker may still pick it up
-		return GateResult{ArtifactID: artifactID, ScanStatus: "pending", Enqueued: false}, nil
+	if !cfg.Enabled {
+		return GateResult{ScanStatus: "disabled"}, nil
 	}
 
-	return GateResult{ArtifactID: artifactID, ScanStatus: "pending", Enqueued: true}, nil
+	processors := enabledFileProcessors(cfg)
+	if len(processors) == 0 {
+		return GateResult{ScanStatus: "disabled"}, nil
+	}
+
+	maxBytes := maxFileBytesFromCfg(cfg)
+	if int64(len(data)) > maxBytes {
+		return GateResult{ScanStatus: "disabled"}, nil
+	}
+
+	return g.quarantineAndEnqueue(ctx, in, cfg, data, processors)
 }
 
-// loadSecCfg returns the security config for an application with a 30s in-memory cache.
+// quarantineAndEnqueue is the shared path for Intercept and InterceptInline
+// once bytes are in hand and we know security is enabled.
+func (g *FileGate) quarantineAndEnqueue(
+	ctx context.Context,
+	in GateInput,
+	cfg SecurityConfig,
+	data []byte,
+	processors []string,
+) (GateResult, error) {
+	_ = cfg // reserved for future per-processor options
+
+	ct := in.ContentType
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	fn := in.FileName
+	if fn == "" {
+		fn = "artifact"
+	}
+
+	// Generate a stable UUID for this quarantine entry.
+	qID := uuid.New().String()
+	storageKey := "quarantine/" + qID
+
+	// 1. Write bytes to MinIO quarantine bucket.
+	if err := g.store.PutQuarantine(ctx, storageKey, data, ct); err != nil {
+		// Fail open: can't quarantine → don't block delivery
+		return GateResult{ScanStatus: "disabled"}, nil
+	}
+
+	// 2. Insert quarantine_artifacts metadata row (no file bytes in Postgres).
+	if err := g.storeQuarantine(ctx, qID, storageKey, in, fn, ct, data); err != nil {
+		// Try to clean up quarantine object; ignore error
+		_ = g.cleanupQuarantine(ctx, storageKey)
+		return GateResult{ScanStatus: "disabled"}, nil
+	}
+
+	// 3. Enqueue middleware job with quarantine_id.
+	dal := NewJobDAL(g.db)
+	if err := dal.EnqueueWithQuarantine(ctx, qID, qID, in.ApplicationID, in.RunID, in.SessionID, processors); err != nil {
+		return GateResult{ArtifactID: qID, ScanStatus: "pending", Enqueued: false}, nil
+	}
+
+	return GateResult{ArtifactID: qID, ScanStatus: "pending", Enqueued: true}, nil
+}
+
+// storeQuarantine inserts a row into them.quarantine_artifacts (no BYTEA stored).
+func (g *FileGate) storeQuarantine(
+	ctx context.Context,
+	qID, storageKey string,
+	in GateInput,
+	fn, ct string,
+	data []byte,
+) error {
+	const q = `
+INSERT INTO them.quarantine_artifacts
+  (id, application_id, run_id, session_id, tenant_id, filename, content_type, size, storage_key)
+VALUES
+  ($1::uuid, $2::uuid, $3::uuid,
+   CASE WHEN $4 = '' THEN NULL ELSE $4::uuid END,
+   (SELECT tenant_id FROM them.applications WHERE id = $2::uuid LIMIT 1),
+   $5, $6, $7, $8)`
+
+	return g.db.Exec(ctx, q,
+		qID, in.ApplicationID, in.RunID, in.SessionID,
+		fn, ct, int64(len(data)), storageKey,
+	)
+}
+
+// cleanupQuarantine is a best-effort MinIO delete used on rollback paths.
+// It uses a short context so it doesn't block the caller.
+type storeDeleter interface {
+	Store
+	DeleteQuarantine(ctx context.Context, key string) error
+}
+
+func (g *FileGate) cleanupQuarantine(ctx context.Context, key string) error {
+	if d, ok := g.store.(storeDeleter); ok {
+		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return d.DeleteQuarantine(cctx, key)
+	}
+	return nil
+}
+
+// loadSecCfg returns the security config for an application with a 30s cache.
 func (g *FileGate) loadSecCfg(ctx context.Context, appID string) (SecurityConfig, error) {
 	g.cacheMu.Lock()
 	defer g.cacheMu.Unlock()
@@ -155,15 +252,13 @@ func (g *FileGate) loadSecCfg(ctx context.Context, appID string) (SecurityConfig
 }
 
 // InvalidateCache evicts the security config cache entry for appID.
-// Called when the admin updates the security config via Redis pub/sub.
 func (g *FileGate) InvalidateCache(appID string) {
 	g.cacheMu.Lock()
 	delete(g.cache, appID)
 	g.cacheMu.Unlock()
 }
 
-// fetchFile GETs the URL and returns up to maxBytes. Returns an error if
-// the response exceeds maxBytes or the request fails.
+// fetchFile GETs the URL and returns up to maxBytes.
 func (g *FileGate) fetchFile(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -187,13 +282,24 @@ func (g *FileGate) fetchFile(ctx context.Context, url string, maxBytes int64) ([
 	return data, nil
 }
 
+// maxFileBytesFromCfg reads the av_scan.max_file_mb setting; defaults to 5 MB.
+func maxFileBytesFromCfg(cfg SecurityConfig) int64 {
+	const defaultMB = 5
+	if avCfg, ok := cfg.Processors["av_scan"]; ok {
+		var av AVScanConfig
+		if json.Unmarshal(avCfg, &av) == nil && av.MaxFileMB > 0 {
+			return int64(av.MaxFileMB) * 1024 * 1024
+		}
+	}
+	return defaultMB * 1024 * 1024
+}
+
 // enabledFileProcessors returns the ordered list of processor names applicable
-// to file parts that are enabled in cfg. Does not require a Registry.
+// to file parts that are enabled in cfg.
 func enabledFileProcessors(cfg SecurityConfig) []string {
 	if !cfg.Enabled {
 		return nil
 	}
-	// Canonical file-applicable processors in pipeline order
 	fileProcessors := []string{"av_scan", "audit_capture"}
 	var out []string
 	for _, name := range fileProcessors {
@@ -201,7 +307,6 @@ func enabledFileProcessors(cfg SecurityConfig) []string {
 		if !ok {
 			continue
 		}
-		// Check processor-level enabled flag
 		var base struct {
 			Enabled bool `json:"enabled"`
 		}
@@ -211,79 +316,4 @@ func enabledFileProcessors(cfg SecurityConfig) []string {
 		out = append(out, name)
 	}
 	return out
-}
-
-// InterceptInline processes an inline (already-decoded) file artifact.
-// It is equivalent to Intercept but skips the HTTP fetch step, using the
-// caller-supplied bytes directly. Use this when the file data is already in
-// memory (e.g. base64-decoded artifacts from the orchestrator path).
-func (g *FileGate) InterceptInline(ctx context.Context, in GateInput, data []byte) (GateResult, error) {
-	cfg, err := g.loadSecCfg(ctx, in.ApplicationID)
-	if err != nil {
-		return GateResult{ScanStatus: "disabled"}, nil
-	}
-	if !cfg.Enabled {
-		return GateResult{ScanStatus: "disabled"}, nil
-	}
-
-	processors := enabledFileProcessors(cfg)
-	if len(processors) == 0 {
-		return GateResult{ScanStatus: "disabled"}, nil
-	}
-
-	maxBytes := int64(5 * 1024 * 1024)
-	if avCfg, ok := cfg.Processors["av_scan"]; ok {
-		var av AVScanConfig
-		if json.Unmarshal(avCfg, &av) == nil && av.MaxFileMB > 0 {
-			maxBytes = int64(av.MaxFileMB) * 1024 * 1024
-		}
-	}
-	if int64(len(data)) > maxBytes {
-		return GateResult{ScanStatus: "disabled"}, nil
-	}
-
-	artifactID, err := g.storeArtifact(ctx, in, data)
-	if err != nil {
-		return GateResult{ScanStatus: "disabled"}, nil
-	}
-
-	dal := NewJobDAL(g.db)
-	if err := dal.Enqueue(ctx, artifactID, in.ApplicationID, in.RunID, in.SessionID, processors); err != nil {
-		return GateResult{ArtifactID: artifactID, ScanStatus: "pending", Enqueued: false}, nil
-	}
-
-	return GateResult{ArtifactID: artifactID, ScanStatus: "pending", Enqueued: true}, nil
-}
-
-// storeArtifact inserts one row into them.run_artifacts with scan_status='pending'.
-// Returns the new artifact UUID.
-func (g *FileGate) storeArtifact(ctx context.Context, in GateInput, data []byte) (string, error) {
-	ct := in.ContentType
-	if ct == "" {
-		ct = "application/octet-stream"
-	}
-	fn := in.FileName
-	if fn == "" {
-		fn = "artifact"
-	}
-
-	const q = `
-INSERT INTO them.run_artifacts
-  (run_id, application_id, session_id, filename, content_type, size, data, scan_status, tenant_id)
-VALUES
-  ($1::uuid, $2::uuid,
-   CASE WHEN $3 = '' THEN NULL ELSE $3::uuid END,
-   $4, $5, $6, $7, 'pending',
-   (SELECT tenant_id FROM them.applications WHERE id = $2::uuid LIMIT 1))
-RETURNING id::text`
-
-	var id string
-	err := g.db.QueryRow(ctx, q,
-		in.RunID, in.ApplicationID, in.SessionID,
-		fn, ct, int64(len(data)), data,
-	).Scan(&id)
-	if err != nil {
-		return "", fmt.Errorf("gate: store artifact: %w", err)
-	}
-	return id, nil
 }

@@ -9,11 +9,27 @@ require (
 	github.com/jackc/pgx/v5 v5.6.0
 	github.com/prometheus/client_golang v1.19.1
 	github.com/redis/rueidis v1.0.43
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.11.1
 	go.temporal.io/sdk v1.26.1
 )
 
 require github.com/a2aproject/a2a-go/v2 v2.5.0
+
+require (
+	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/klauspost/compress v1.19.2 // indirect
+	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
+	github.com/klauspost/crc32 v1.3.0 // indirect
+	github.com/minio/crc64nvme v1.1.1 // indirect
+	github.com/minio/md5-simd v1.1.2 // indirect
+	github.com/minio/minio-go/v7 v7.3.0 // indirect
+	github.com/philhofer/fwd v1.2.0 // indirect
+	github.com/rs/xid v1.6.0 // indirect
+	github.com/tinylib/msgp v1.6.4 // indirect
+	github.com/zeebo/xxh3 v1.1.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	gopkg.in/ini.v1 v1.67.3 // indirect
+)
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -35,12 +51,12 @@ require (
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	go.temporal.io/api v1.32.0
-	golang.org/x/crypto v0.51.0
+	golang.org/x/crypto v0.55.0
 	golang.org/x/exp v0.0.0-20231127185646-65229373498e // indirect
-	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sync v0.20.0
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/sync v0.22.0
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260427160629-7cedc36a6bc4 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 // indirect

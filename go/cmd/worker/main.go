@@ -48,6 +48,7 @@ import (
 	"github.com/aviciot/them/internal/history"
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/middleware"
+	"github.com/aviciot/them/internal/storage"
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/runstream"
@@ -136,7 +137,22 @@ func run() error {
 	historyStore := history.NewStore(pool, log)
 
 	// ── 12. Create orchestrator factory ──────────────────────────────────────
-	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(pool))
+	var fileGateStore middleware.Store
+	if cfg.S3Endpoint != "" {
+		sc, scErr := storage.New(storage.Config{
+			Endpoint:         cfg.S3Endpoint,
+			AccessKey:        cfg.S3AccessKey,
+			SecretKey:        cfg.S3SecretKey,
+			QuarantineBucket: cfg.S3QuarantineBucket,
+			ArtifactsBucket:  cfg.S3ArtifactsBucket,
+		})
+		if scErr != nil {
+			log.Warn("storage client init failed — security gate will fail-open", "err", scErr)
+		} else {
+			fileGateStore = sc
+		}
+	}
+	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(pool), fileGateStore)
 	factory := &runOrchestratorFactory{
 		globalProvider: globalLLMProvider,
 		globalAPIKey:   cfg.AnthropicAPIKey,

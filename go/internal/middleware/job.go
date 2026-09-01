@@ -3,13 +3,22 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 )
+
+// ObjectStore is the minimal interface job.go needs from the storage layer.
+type ObjectStore interface {
+	GetQuarantine(ctx context.Context, key string) ([]byte, error)
+	DeleteQuarantine(ctx context.Context, key string) error
+	PutArtifact(ctx context.Context, key string, data []byte, contentType string) error
+}
 
 // Job represents one row from them.middleware_jobs as claimed by a worker.
 type Job struct {
 	ID            string
-	ArtifactID    string
+	ArtifactID    string // quarantine_artifacts.id (= the future run_artifacts.id)
+	QuarantineID  string // same as ArtifactID for quarantine-path jobs
 	ApplicationID string
 	RunID         string // may be empty
 	SessionID     string // may be empty
@@ -17,11 +26,12 @@ type Job struct {
 	AttemptCount  int
 	MaxAttempts   int
 
-	// Artifact fields needed to load the part for processing
-	FileName  string
-	MimeType  string
-	FileSize  int64
-	FileBytes []byte // loaded separately by the worker
+	// Loaded separately by LoadFileBytes
+	FileName    string
+	MimeType    string
+	FileSize    int64
+	FileBytes   []byte
+	StorageKey  string // MinIO quarantine key
 }
 
 // JobResult is written back to the DB after the pipeline completes.
@@ -62,8 +72,26 @@ func NewJobDAL(q Querier) *JobDAL {
 	return &JobDAL{q: q}
 }
 
-// Enqueue inserts a new pending job for the given artifact.
-// Called inside the same transaction that saves the artifact.
+// EnqueueWithQuarantine inserts a pending job linked to a quarantine_artifacts row.
+// artifactID and quarantineID are the same UUID (quarantine_artifacts.id).
+func (d *JobDAL) EnqueueWithQuarantine(
+	ctx context.Context,
+	artifactID, quarantineID, applicationID, runID, sessionID string,
+	processors []string,
+) error {
+	const q = `
+INSERT INTO them.middleware_jobs
+  (artifact_id, quarantine_id, application_id, run_id, session_id, processors)
+VALUES
+  ($1::uuid, $2::uuid, $3::uuid,
+   CASE WHEN $4 = '' THEN NULL ELSE $4::uuid END,
+   CASE WHEN $5 = '' THEN NULL ELSE $5::uuid END,
+   $6)`
+	return d.q.Exec(ctx, q, artifactID, quarantineID, applicationID, runID, sessionID, processors)
+}
+
+// Enqueue inserts a new pending job (legacy path — no quarantine row).
+// Kept for compatibility; new code should use EnqueueWithQuarantine.
 func (d *JobDAL) Enqueue(ctx context.Context, artifactID, applicationID, runID, sessionID string, processors []string) error {
 	const q = `
 INSERT INTO them.middleware_jobs
@@ -93,7 +121,8 @@ WHERE  id = (
   FOR UPDATE SKIP LOCKED
 )
 RETURNING
-  id::text, artifact_id::text, application_id::text,
+  id::text, artifact_id::text, COALESCE(quarantine_id::text,''),
+  application_id::text,
   COALESCE(run_id::text,''), COALESCE(session_id::text,''),
   processors, attempt_count, max_attempts`
 
@@ -101,19 +130,50 @@ RETURNING
 	var procs []string
 	row := d.q.QueryRow(ctx, q)
 	if err := row.Scan(
-		&job.ID, &job.ArtifactID, &job.ApplicationID,
+		&job.ID, &job.ArtifactID, &job.QuarantineID,
+		&job.ApplicationID,
 		&job.RunID, &job.SessionID,
 		&procs, &job.AttemptCount, &job.MaxAttempts,
 	); err != nil {
-		return nil, nil // no rows = no work available
+		return nil, nil // no rows = no work
 	}
 	job.Processors = procs
 	return &job, nil
 }
 
-// LoadFileBytes loads the data, filename, content_type, size for the
-// artifact associated with job from them.run_artifacts. Called after Claim.
-func (d *JobDAL) LoadFileBytes(ctx context.Context, job *Job) error {
+// LoadFileBytes reads file metadata from quarantine_artifacts and fetches
+// the bytes from MinIO quarantine bucket via store.
+// Falls back to reading run_artifacts.data when quarantine_id is empty
+// (legacy jobs created before migration 051).
+func (d *JobDAL) LoadFileBytes(ctx context.Context, job *Job, store ObjectStore) error {
+	if job.QuarantineID != "" {
+		return d.loadFromQuarantine(ctx, job, store)
+	}
+	return d.loadFromArtifacts(ctx, job)
+}
+
+func (d *JobDAL) loadFromQuarantine(ctx context.Context, job *Job, store ObjectStore) error {
+	const q = `
+SELECT COALESCE(filename,''), COALESCE(content_type,''), COALESCE(size,0), COALESCE(storage_key,'')
+FROM   them.quarantine_artifacts
+WHERE  id = $1::uuid`
+	if err := d.q.QueryRow(ctx, q, job.QuarantineID).Scan(
+		&job.FileName, &job.MimeType, &job.FileSize, &job.StorageKey,
+	); err != nil {
+		return fmt.Errorf("load quarantine metadata: %w", err)
+	}
+	if job.StorageKey == "" {
+		return fmt.Errorf("quarantine %s: storage_key is empty (bytes already scrubbed?)", job.QuarantineID)
+	}
+	data, err := store.GetQuarantine(ctx, job.StorageKey)
+	if err != nil {
+		return fmt.Errorf("load quarantine bytes: %w", err)
+	}
+	job.FileBytes = data
+	return nil
+}
+
+func (d *JobDAL) loadFromArtifacts(ctx context.Context, job *Job) error {
 	const q = `
 SELECT COALESCE(data, ''), COALESCE(filename,''), COALESCE(content_type,''), COALESCE(size,0)
 FROM   them.run_artifacts
@@ -137,14 +197,109 @@ func (d *JobDAL) LoadSecurityConfig(ctx context.Context, applicationID string) (
 	return MergeDefaults(cfg), nil
 }
 
-// Complete marks the job done and writes the scan result back to the artifact row.
-func (d *JobDAL) Complete(ctx context.Context, job *Job, res JobResult) error {
-	resultJSON, err := json.Marshal(res.Results)
-	if err != nil {
-		resultJSON = []byte("[]")
+// Complete marks the job done and writes the scan result back.
+//
+// Quarantine-path (job.QuarantineID != ""):
+//   - clean/error: promote bytes from quarantine → artifacts bucket;
+//     INSERT run_artifacts row with the same UUID; delete quarantine bytes.
+//   - infected:    INSERT run_artifacts metadata only (data=NULL, storage_key=NULL);
+//     delete quarantine bytes immediately.
+//
+// Legacy path (job.QuarantineID == ""):
+//   - update run_artifacts scan columns in-place (old behaviour).
+func (d *JobDAL) Complete(ctx context.Context, job *Job, res JobResult, store ObjectStore) error {
+	if job.QuarantineID != "" {
+		return d.completeQuarantinePath(ctx, job, res, store)
+	}
+	return d.completeLegacyPath(ctx, job, res)
+}
+
+func (d *JobDAL) completeQuarantinePath(
+	ctx context.Context,
+	job *Job,
+	res JobResult,
+	store ObjectStore,
+) error {
+	resultJSON, _ := json.Marshal(res.Results)
+
+	artifactsKey := "artifacts/" + job.ArtifactID
+
+	switch res.FinalStatus {
+	case "clean", "error":
+		// Promote bytes to artifacts bucket.
+		if len(job.FileBytes) > 0 {
+			if err := store.PutArtifact(ctx, artifactsKey, job.FileBytes, job.MimeType); err != nil {
+				return fmt.Errorf("promote to artifacts: %w", err)
+			}
+		}
+		// Insert clean run_artifacts row (no BYTEA — bytes in MinIO).
+		const insertClean = `
+INSERT INTO them.run_artifacts
+  (id, run_id, application_id, session_id, filename, content_type, size,
+   storage_key, scan_status, scan_result, scanned_at, tenant_id)
+VALUES
+  ($1::uuid, $2::uuid, $3::uuid,
+   CASE WHEN $4 = '' THEN NULL ELSE $4::uuid END,
+   $5, $6, $7, $8, $9, $10::jsonb, $11,
+   (SELECT tenant_id FROM them.applications WHERE id = $3::uuid LIMIT 1))
+ON CONFLICT (id) DO UPDATE
+  SET scan_status = EXCLUDED.scan_status,
+      scan_result = EXCLUDED.scan_result,
+      scanned_at  = EXCLUDED.scanned_at,
+      storage_key = EXCLUDED.storage_key`
+		if err := d.q.Exec(ctx, insertClean,
+			job.ArtifactID, job.RunID, job.ApplicationID, job.SessionID,
+			job.FileName, job.MimeType, job.FileSize,
+			artifactsKey, res.FinalStatus, resultJSON, res.ScannedAt,
+		); err != nil {
+			return fmt.Errorf("insert clean artifact: %w", err)
+		}
+
+	case "infected":
+		// Insert metadata-only row — no bytes, no storage_key.
+		const insertInfected = `
+INSERT INTO them.run_artifacts
+  (id, run_id, application_id, session_id, filename, content_type, size,
+   data, storage_key, scan_status, scan_result, scanned_at, tenant_id)
+VALUES
+  ($1::uuid, $2::uuid, $3::uuid,
+   CASE WHEN $4 = '' THEN NULL ELSE $4::uuid END,
+   $5, $6, $7,
+   NULL, NULL, 'infected', $8::jsonb, $9,
+   (SELECT tenant_id FROM them.applications WHERE id = $3::uuid LIMIT 1))
+ON CONFLICT (id) DO UPDATE
+  SET scan_status = 'infected',
+      scan_result = EXCLUDED.scan_result,
+      scanned_at  = EXCLUDED.scanned_at,
+      data        = NULL,
+      storage_key = NULL`
+		if err := d.q.Exec(ctx, insertInfected,
+			job.ArtifactID, job.RunID, job.ApplicationID, job.SessionID,
+			job.FileName, job.MimeType, job.FileSize,
+			resultJSON, res.ScannedAt,
+		); err != nil {
+			return fmt.Errorf("insert infected artifact: %w", err)
+		}
+
+	default:
+		return fmt.Errorf("complete: unexpected final status %q", res.FinalStatus)
 	}
 
-	// Update artifact scan columns in them.run_artifacts
+	// Delete quarantine bytes from MinIO (fire and forget errors — bytes will
+	// expire via MinIO lifecycle policy anyway).
+	if job.StorageKey != "" {
+		_ = store.DeleteQuarantine(ctx, job.StorageKey)
+	}
+	// Null out storage_key in quarantine row to signal bytes are gone.
+	_ = d.q.Exec(ctx, `UPDATE them.quarantine_artifacts SET storage_key = NULL WHERE id = $1::uuid`, job.QuarantineID)
+
+	// Update job row.
+	return d.markJobDone(ctx, job, res)
+}
+
+func (d *JobDAL) completeLegacyPath(ctx context.Context, job *Job, res JobResult) error {
+	resultJSON, _ := json.Marshal(res.Results)
+
 	const updateArtifact = `
 UPDATE them.run_artifacts
 SET scan_status = $2,
@@ -156,8 +311,10 @@ WHERE id = $1::uuid`
 	); err != nil {
 		return err
 	}
+	return d.markJobDone(ctx, job, res)
+}
 
-	// Update job
+func (d *JobDAL) markJobDone(ctx context.Context, job *Job, res JobResult) error {
 	jobResultJSON, _ := json.Marshal(map[string]any{
 		"final_status": res.FinalStatus,
 		"threat":       res.Threat,
@@ -185,7 +342,6 @@ WHERE id = $1::uuid`
 }
 
 // WriteAudit inserts one row per processor outcome into them.middleware_audit.
-// The processor name is not on Result — callers must zip processors with results.
 func (d *JobDAL) WriteAudit(ctx context.Context, job *Job, res JobResult) error {
 	names := job.Processors
 	for i, r := range res.Results {

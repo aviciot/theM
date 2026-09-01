@@ -34,6 +34,7 @@ import (
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/health"
 	"github.com/aviciot/them/internal/middleware"
+	"github.com/aviciot/them/internal/storage"
 	"github.com/aviciot/them/internal/ratelimit"
 	"github.com/aviciot/them/internal/reconciler"
 	"github.com/aviciot/them/internal/runrecorder"
@@ -308,7 +309,26 @@ func run() error {
 	a2aTaskStore := agentgen.NewRedisA2ATaskStore(a2aTaskRedis)
 
 	// File gate: intercepts A2A file artifacts when security scanning is enabled.
-	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(database.Pool()))
+	// Build MinIO storage client if S3 config is present; otherwise fail-open.
+	var fileGateStore middleware.Store
+	if cfg.S3Endpoint != "" {
+		sc, scErr := storage.New(storage.Config{
+			Endpoint:         cfg.S3Endpoint,
+			AccessKey:        cfg.S3AccessKey,
+			SecretKey:        cfg.S3SecretKey,
+			QuarantineBucket: cfg.S3QuarantineBucket,
+			ArtifactsBucket:  cfg.S3ArtifactsBucket,
+		})
+		if scErr != nil {
+			log.Warn("storage client init failed — security gate will fail-open", "err", scErr)
+		} else {
+			fileGateStore = sc
+			log.Info("storage client initialised", "endpoint", cfg.S3Endpoint)
+		}
+	} else {
+		log.Warn("THE_M_S3_ENDPOINT not set — security gate will fail-open for all apps")
+	}
+	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(database.Pool()), fileGateStore)
 	// Subscribe to security config invalidation so the 30s cache is busted
 	// immediately when an admin saves a new config via PUT /security-config.
 	go func() {

@@ -96,6 +96,15 @@ type Config struct {
 	// requests to complete after receiving SIGTERM/SIGINT before force-closing.
 	// Parsed from SHUTDOWN_DRAIN_SECONDS; default 30, min 5.
 	ShutdownDrainSeconds int
+
+	// Object storage (MinIO / S3-compatible) — used by the security quarantine flow.
+	// When S3Endpoint is empty, the FileGate is created without a storage client
+	// and security scanning degrades to fail-open (disabled) for all apps.
+	S3Endpoint         string
+	S3AccessKey        string
+	S3SecretKey        string
+	S3QuarantineBucket string
+	S3ArtifactsBucket  string
 }
 
 // DefaultSecretKey is the insecure placeholder that must never reach production.
@@ -146,6 +155,12 @@ func Load() (*Config, error) {
 		ReconcilerDryRun: getEnvBoolSafe("RECONCILER_DRY_RUN", true),
 
 		ShutdownDrainSeconds: parseShutdownDrain(os.Getenv("SHUTDOWN_DRAIN_SECONDS")),
+
+		S3Endpoint:         getEnv("THE_M_S3_ENDPOINT", ""),
+		S3AccessKey:        getEnv("THE_M_S3_ACCESS_KEY", ""),
+		S3SecretKey:        getEnv("THE_M_S3_SECRET_KEY", ""),
+		S3QuarantineBucket: getEnv("THE_M_S3_QUARANTINE_BUCKET", "them-quarantine"),
+		S3ArtifactsBucket:  getEnv("THE_M_S3_ARTIFACTS_BUCKET", "them-artifacts"),
 	}
 
 	if err := cfg.validate(); err != nil {
