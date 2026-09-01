@@ -213,6 +213,48 @@ func enabledFileProcessors(cfg SecurityConfig) []string {
 	return out
 }
 
+// InterceptInline processes an inline (already-decoded) file artifact.
+// It is equivalent to Intercept but skips the HTTP fetch step, using the
+// caller-supplied bytes directly. Use this when the file data is already in
+// memory (e.g. base64-decoded artifacts from the orchestrator path).
+func (g *FileGate) InterceptInline(ctx context.Context, in GateInput, data []byte) (GateResult, error) {
+	cfg, err := g.loadSecCfg(ctx, in.ApplicationID)
+	if err != nil {
+		return GateResult{ScanStatus: "disabled"}, nil
+	}
+	if !cfg.Enabled {
+		return GateResult{ScanStatus: "disabled"}, nil
+	}
+
+	processors := enabledFileProcessors(cfg)
+	if len(processors) == 0 {
+		return GateResult{ScanStatus: "disabled"}, nil
+	}
+
+	maxBytes := int64(5 * 1024 * 1024)
+	if avCfg, ok := cfg.Processors["av_scan"]; ok {
+		var av AVScanConfig
+		if json.Unmarshal(avCfg, &av) == nil && av.MaxFileMB > 0 {
+			maxBytes = int64(av.MaxFileMB) * 1024 * 1024
+		}
+	}
+	if int64(len(data)) > maxBytes {
+		return GateResult{ScanStatus: "disabled"}, nil
+	}
+
+	artifactID, err := g.storeArtifact(ctx, in, data)
+	if err != nil {
+		return GateResult{ScanStatus: "disabled"}, nil
+	}
+
+	dal := NewJobDAL(g.db)
+	if err := dal.Enqueue(ctx, artifactID, in.ApplicationID, in.RunID, in.SessionID, processors); err != nil {
+		return GateResult{ArtifactID: artifactID, ScanStatus: "pending", Enqueued: false}, nil
+	}
+
+	return GateResult{ArtifactID: artifactID, ScanStatus: "pending", Enqueued: true}, nil
+}
+
 // storeArtifact inserts one row into them.run_artifacts with scan_status='pending'.
 // Returns the new artifact UUID.
 func (g *FileGate) storeArtifact(ctx context.Context, in GateInput, data []byte) (string, error) {

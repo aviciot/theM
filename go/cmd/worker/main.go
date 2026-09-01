@@ -47,6 +47,7 @@ import (
 	"github.com/aviciot/them/internal/event"
 	"github.com/aviciot/them/internal/history"
 	"github.com/aviciot/them/internal/llm"
+	"github.com/aviciot/them/internal/middleware"
 	"github.com/aviciot/them/internal/orchestrator"
 	"github.com/aviciot/them/internal/runrecorder"
 	"github.com/aviciot/them/internal/runstream"
@@ -135,6 +136,7 @@ func run() error {
 	historyStore := history.NewStore(pool, log)
 
 	// ── 12. Create orchestrator factory ──────────────────────────────────────
+	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(pool))
 	factory := &runOrchestratorFactory{
 		globalProvider: globalLLMProvider,
 		globalAPIKey:   cfg.AnthropicAPIKey,
@@ -144,6 +146,7 @@ func run() error {
 		historyStore:   historyStore,
 		logger:         log,
 		mcpServiceURL:  cfg.MCPServiceURL,
+		fileGate:       fileGate,
 	}
 
 	// ── 12b. Phase 3 — forward bus events to Redis Streams ───────────────────
@@ -221,6 +224,7 @@ type runOrchestratorFactory struct {
 	historyStore   *history.Store
 	logger         *slog.Logger
 	mcpServiceURL  string
+	fileGate       *middleware.FileGate
 }
 
 // Build creates a per-run orchestrator from the loaded RunConfig.
@@ -244,7 +248,8 @@ func (f *runOrchestratorFactory) Build(cfg workerconfig.RunConfig) (temporal.Orc
 		WithTaskRecorder(f.recorder).
 		WithUsageRecorder(f.recorder).
 		WithStepRecorder(f.recorder).
-		WithArtifactRecorder(f.recorder)
+		WithArtifactRecorder(f.recorder).
+		WithFileGateInliner(&workerFileGateAdapter{gate: f.fileGate})
 
 	// Wire summarizer if memory is enabled and a provider is configured.
 	if cfg.OrchestratorConfig.MemoryEnabled && cfg.SummarizerProvider != "" {
@@ -287,6 +292,25 @@ func (f *runOrchestratorFactory) resolveProvider(cfg workerconfig.RunConfig) (ll
 	default:
 		return nil, fmt.Errorf("provider %q is not yet supported in the Go worker", cfg.LLMProvider)
 	}
+}
+
+// workerFileGateAdapter bridges middleware.FileGate to the orchestrator.FileGateInliner interface.
+type workerFileGateAdapter struct {
+	gate *middleware.FileGate
+}
+
+func (a *workerFileGateAdapter) InterceptInlineArtifact(ctx context.Context, appID, runID, sessionID, filename, contentType string, data []byte) (string, error) {
+	gr, err := a.gate.InterceptInline(ctx, middleware.GateInput{
+		ApplicationID: appID,
+		RunID:         runID,
+		SessionID:     sessionID,
+		FileName:      filename,
+		ContentType:   contentType,
+	}, data)
+	if err != nil {
+		return "", err
+	}
+	return gr.ArtifactID, nil
 }
 
 // resolveSummarizerProvider selects and constructs the LLM provider for the summarizer.

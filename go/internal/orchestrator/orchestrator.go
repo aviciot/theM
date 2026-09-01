@@ -182,6 +182,13 @@ type ArtifactRecorder interface {
 	RecordArtifact(ctx context.Context, in runrecorder.ArtifactInput) (string, error)
 }
 
+// FileGateInliner intercepts inline (already-decoded) file bytes through the
+// security pipeline. Returns the artifact ID stored by the gate (scan_status='pending')
+// when scanning is enabled, or ("", nil) when disabled/not-configured.
+type FileGateInliner interface {
+	InterceptInlineArtifact(ctx context.Context, appID, runID, sessionID, filename, contentType string, data []byte) (artifactID string, err error)
+}
+
 // Orchestrator runs the agentic loop.
 type Orchestrator struct {
 	cfg      Config
@@ -200,6 +207,7 @@ type Orchestrator struct {
 	taskRecorder     TaskRecorder
 	budgetStore      BudgetStore
 	artifactRecorder ArtifactRecorder
+	fileGateInliner  FileGateInliner
 
 	// Summarizer fields (all optional; wired by WithSummarizer).
 	summarizer   Summarizer
@@ -267,6 +275,14 @@ func (o *Orchestrator) WithBudgetStore(bs BudgetStore) *Orchestrator {
 // WithArtifactRecorder attaches an artifact recorder for file artifact persistence.
 func (o *Orchestrator) WithArtifactRecorder(ar ArtifactRecorder) *Orchestrator {
 	o.artifactRecorder = ar
+	return o
+}
+
+// WithFileGateInliner attaches a security gate for inline file bytes.
+// When set, base64-decoded artifacts from agent tool calls are routed through
+// the gate before storage, enabling AV scanning on the orchestrator path.
+func (o *Orchestrator) WithFileGateInliner(fg FileGateInliner) *Orchestrator {
+	o.fileGateInliner = fg
 	return o
 }
 
@@ -606,37 +622,53 @@ func (o *Orchestrator) emitArtifactEvent(ctx context.Context, contextID, runID s
 		return
 	}
 
-	artifactID, recErr := o.artifactRecorder.RecordArtifact(ctx, runrecorder.ArtifactInput{
-		RunID:         runID,
-		ApplicationID: rctx.ApplicationID,
-		SessionID:     rctx.SessionID,
-		Filename:      body.Filename,
-		ContentType:   body.ContentType,
-		Data:          data,
-	})
-	if recErr != nil {
-		if errors.Is(recErr, runrecorder.ErrArtifactTooLarge) {
-			o.logger.Warn("orchestrator: artifact too large — skipping",
-				"run_id", runID, "filename", body.Filename)
-			o.publishJSON(ctx, contextID, runID, "error", map[string]string{
-				"run_id":  runID,
-				"message": "artifact exceeds 1 MiB limit: " + body.Filename,
-			})
-		} else {
-			o.logger.Warn("orchestrator: artifact record failed — skipping",
-				"run_id", runID, "filename", body.Filename, "error", recErr)
+	var artifactID string
+	// Route through security gate when available (stores artifact with scan_status='pending'
+	// and enqueues an AV scan job). Falls back to plain RecordArtifact when gate is
+	// disabled or not configured for this application.
+	if o.fileGateInliner != nil && rctx.ApplicationID != "" {
+		gatedID, gateErr := o.fileGateInliner.InterceptInlineArtifact(
+			ctx, rctx.ApplicationID, runID, rctx.SessionID,
+			body.Filename, body.ContentType, data,
+		)
+		if gateErr == nil && gatedID != "" {
+			artifactID = gatedID
 		}
-		return
+	}
+	if artifactID == "" {
+		var recErr error
+		artifactID, recErr = o.artifactRecorder.RecordArtifact(ctx, runrecorder.ArtifactInput{
+			RunID:         runID,
+			ApplicationID: rctx.ApplicationID,
+			SessionID:     rctx.SessionID,
+			Filename:      body.Filename,
+			ContentType:   body.ContentType,
+			Data:          data,
+		})
+		if recErr != nil {
+			if errors.Is(recErr, runrecorder.ErrArtifactTooLarge) {
+				o.logger.Warn("orchestrator: artifact too large — skipping",
+					"run_id", runID, "filename", body.Filename)
+				o.publishJSON(ctx, contextID, runID, "error", map[string]string{
+					"run_id":  runID,
+					"message": "artifact exceeds 1 MiB limit: " + body.Filename,
+				})
+			} else {
+				o.logger.Warn("orchestrator: artifact record failed — skipping",
+					"run_id", runID, "filename", body.Filename, "error", recErr)
+			}
+			return
+		}
 	}
 
 	// Publish file event — metadata only, no binary data, no internal paths.
 	payload := map[string]any{
-		"artifact_id":   artifactID,
-		"filename":      body.Filename,
-		"content_type":  body.ContentType,
-		"size":          int64(len(data)),
-		"run_id":        runID,
-		"download_url":  "/api/v1/runs/" + runID + "/artifacts/" + artifactID,
+		"artifact_id":  artifactID,
+		"filename":     body.Filename,
+		"content_type": body.ContentType,
+		"size":         int64(len(data)),
+		"run_id":       runID,
+		"download_url": "/api/v1/runs/" + runID + "/artifacts/" + artifactID,
 	}
 	if rctx.ApplicationID != "" {
 		payload["application_id"] = rctx.ApplicationID

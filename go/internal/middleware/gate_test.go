@@ -49,8 +49,11 @@ func (r *fakeRow) Scan(dest ...any) error {
 		return r.err
 	}
 	if len(dest) > 0 {
-		if s, ok := dest[0].(*string); ok {
-			*s = r.val
+		switch d := dest[0].(type) {
+		case *string:
+			*d = r.val
+		case *[]byte:
+			*d = []byte(r.val)
 		}
 	}
 	return nil
@@ -137,4 +140,79 @@ func TestFileGate_InvalidateCache(t *testing.T) {
 	// Invalidate
 	gate.InvalidateCache("app-3")
 	// Should not panic or error
+}
+
+// enabledGateTestDB returns enabled security config with av_scan enabled.
+type enabledGateTestDB struct {
+	nextID       string
+	enqueueCount int
+}
+
+func (d *enabledGateTestDB) Exec(_ context.Context, sql string, _ ...any) error {
+	if findSub(sql, "middleware_jobs") {
+		d.enqueueCount++
+	}
+	return nil
+}
+
+func (d *enabledGateTestDB) QueryRow(_ context.Context, sql string, _ ...any) middleware.SingleRowScanner {
+	if findSub(sql, "run_artifacts") {
+		return &fakeRow{val: d.nextID}
+	}
+	// Security config query returns enabled config.
+	return &fakeRow{val: `{"enabled":true,"processors":{"av_scan":{"enabled":true,"max_file_mb":5}}}`}
+}
+
+func (d *enabledGateTestDB) Query(_ context.Context, _ string, _ ...any) (middleware.RowScanner, error) {
+	return &fakeRows{}, nil
+}
+
+// TestFileGate_InterceptInline_Enabled verifies that InterceptInline stores the
+// artifact and enqueues a job when security scanning is enabled.
+func TestFileGate_InterceptInline_Enabled(t *testing.T) {
+	db := &enabledGateTestDB{nextID: "artifact-inline-uuid"}
+	gate := middleware.NewFileGate(db)
+
+	data := []byte("hello from inline test")
+	res, err := gate.InterceptInline(context.Background(), middleware.GateInput{
+		FileName:      "test.txt",
+		ContentType:   "text/plain",
+		ApplicationID: "app-inline",
+		RunID:         "run-inline",
+		SessionID:     "",
+	}, data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ArtifactID != "artifact-inline-uuid" {
+		t.Errorf("expected artifact-inline-uuid, got %q", res.ArtifactID)
+	}
+	if res.ScanStatus != "pending" {
+		t.Errorf("expected pending, got %q", res.ScanStatus)
+	}
+	if db.enqueueCount != 1 {
+		t.Errorf("expected 1 middleware job enqueued, got %d", db.enqueueCount)
+	}
+}
+
+// TestFileGate_InterceptInline_Disabled verifies that InterceptInline returns
+// disabled when security is not enabled for the application.
+func TestFileGate_InterceptInline_Disabled(t *testing.T) {
+	db := &gateTestDB{nextID: ""}
+	gate := middleware.NewFileGate(db)
+
+	res, err := gate.InterceptInline(context.Background(), middleware.GateInput{
+		FileName:      "file.bin",
+		ApplicationID: "app-dis",
+		RunID:         "run-dis",
+	}, []byte("data"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ScanStatus != "disabled" {
+		t.Errorf("expected disabled, got %q", res.ScanStatus)
+	}
+	if res.ArtifactID != "" {
+		t.Errorf("expected no artifact ID, got %q", res.ArtifactID)
+	}
 }
