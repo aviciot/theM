@@ -39,7 +39,7 @@ interface TrackedSession extends SessionInfo {
   _endedAt?: number; // ms timestamp
 }
 
-const SESSION_TTL_MS = 2 * 60 * 1000; // 2 minutes
+const SESSION_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ── Topology node components (read-only) ──────────────────────────────────────
 
@@ -330,159 +330,6 @@ function RunFeedColumn({ session, token, onUnpin }: {
   );
 }
 
-// ── ConversationFeedColumn — aggregates turns for A2A context_id groups ───────
-
-// A conversation is a group of A2A sessions sharing the same context_id.
-// Each turn is one HTTP request → one session → one run_id.
-// We subscribe to all run_ids in the conversation and render them sequentially.
-interface ConvTurn {
-  session: TrackedSession;
-  runId: string | null;
-}
-
-function ConversationFeedColumn({ turns, token, contextId, onUnpin }: {
-  turns: ConvTurn[];
-  token: string;
-  contextId: string;
-  onUnpin: () => void;
-}) {
-  // Subscribe to each run_id independently; aggregate entries with turn markers
-  const [allEntries, setAllEntries] = useState<Array<{ turnIdx: number; entry: FeedEntry }>>([]);
-  const subscribedRef = useRef<Set<string>>(new Set());
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const seqRef = useRef(0);
-
-  useEffect(() => {
-    if (!token) return;
-    const runIds = turns.map(t => t.runId).filter(Boolean) as string[];
-    const newRunIds = runIds.filter(r => !subscribedRef.current.has(r));
-    if (newRunIds.length === 0) return;
-
-    const wsBase = window.location.origin.replace(/^http/, 'ws').replace(/^https/, 'wss');
-    const wsUrl = `${wsBase}/ws/dashboard?token=${token}`;
-    const cleanups: Array<() => void> = [];
-
-    for (const runId of newRunIds) {
-      subscribedRef.current.add(runId);
-      const turnIdx = turns.findIndex(t => t.runId === runId);
-      let ws: WebSocket;
-      let dead = false;
-
-      function connect() {
-        ws = new WebSocket(wsUrl);
-        ws.onopen = () => {
-          ws.send(JSON.stringify({ type: 'subscribe', channels: [`run:${runId}`] }));
-        };
-        ws.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(ev.data);
-            if (msg.channel !== `run:${runId}`) return;
-            const evt = msg.event as RunEvent;
-            if (!evt?.type) return;
-            const entry: FeedEntry = { id: `${Date.now()}-${seqRef.current++}`, event: evt };
-            setAllEntries(prev => [...prev, { turnIdx, entry }]);
-          } catch { /* ignore */ }
-        };
-        ws.onclose = () => { if (!dead) setTimeout(connect, 4000); };
-        ws.onerror = () => ws.close();
-      }
-      connect();
-      cleanups.push(() => { dead = true; ws?.close(); });
-    }
-
-    return () => cleanups.forEach(c => c());
-  }, [turns, token]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [allEntries.length]);
-
-  const activeTurn = turns.findIndex(t => !t.session._ended);
-  const totalTurns = turns.length;
-  const latestSession = turns[turns.length - 1]?.session;
-
-  // Render turns grouped with dividers
-  const renderedTurns = turns.map((t, i) => {
-    const turnEntries = allEntries.filter(e => e.turnIdx === i).map(e => e.entry);
-    // Group consecutive tokens
-    const rendered: Array<{ key: string; isTokenBlock: boolean; text?: string; entry?: FeedEntry }> = [];
-    let buf = ''; let bufKey = '';
-    for (const e of turnEntries) {
-      if (e.event.type === 'token') {
-        if (!bufKey) bufKey = e.id;
-        buf += String(e.event.content ?? '');
-      } else {
-        if (buf) { rendered.push({ key: bufKey, isTokenBlock: true, text: buf }); buf = ''; bufKey = ''; }
-        rendered.push({ key: e.id, isTokenBlock: false, entry: e });
-      }
-    }
-    if (buf) rendered.push({ key: bufKey, isTokenBlock: true, text: buf });
-
-    const isActive = !t.session._ended;
-    return { turnIdx: i, rendered, isActive, session: t.session };
-  });
-
-  return (
-    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
-      {/* Column header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(245,158,11,0.04)' }}>
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: activeTurn >= 0 ? '#f59e0b' : 'rgba(148,163,184,0.3)', flexShrink: 0, boxShadow: activeTurn >= 0 ? '0 0 6px rgba(245,158,11,0.7)' : 'none' }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'rgba(203,213,225,0.9)', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 12, color: '#f59e0b' }}>robot_2</span>
-            A2A · {latestSession?.ep_slug ?? '—'}
-            <span style={{ fontSize: 10, color: 'rgba(148,163,184,0.4)', fontWeight: 400 }}>{totalTurns} turn{totalTurns !== 1 ? 's' : ''}</span>
-          </div>
-          <div style={{ fontSize: 10, color: 'rgba(148,163,184,0.5)', fontFamily: 'JetBrains Mono, monospace' }}>
-            ctx: {contextId.slice(0, 12)}…
-          </div>
-        </div>
-        <button onClick={onUnpin} title="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(148,163,184,0.4)', padding: 2, display: 'flex', alignItems: 'center' }} onMouseEnter={e => e.currentTarget.style.color = '#f87171'} onMouseLeave={e => e.currentTarget.style.color = 'rgba(148,163,184,0.4)'}>
-          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
-        </button>
-      </div>
-
-      {/* Event stream — all turns in sequence */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 1 }}>
-        {allEntries.length === 0 && (
-          <div style={{ color: 'rgba(148,163,184,0.4)', fontSize: 12, textAlign: 'center', marginTop: 24 }}>
-            {activeTurn >= 0 ? 'Waiting for events…' : 'Session ended'}
-          </div>
-        )}
-        {renderedTurns.map(({ turnIdx, rendered, isActive, session: ts }) => (
-          <div key={turnIdx}>
-            {/* Turn divider */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0 4px', opacity: 0.6 }}>
-              <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.06)' }} />
-              <span style={{ fontSize: 9, color: isActive ? '#f59e0b' : 'rgba(148,163,184,0.4)', fontWeight: 600, letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
-                TURN {turnIdx + 1}{isActive ? ' · active' : ' · done'}
-              </span>
-              <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.06)' }} />
-            </div>
-            {rendered.length === 0 && <div style={{ fontSize: 11, color: 'rgba(148,163,184,0.35)', paddingLeft: 4, marginBottom: 4 }}>waiting…</div>}
-            {rendered.map(r =>
-              r.isTokenBlock
-                ? <span key={r.key} style={{ color: 'rgba(203,213,225,0.9)', fontSize: 12, wordBreak: 'break-word' }}>{r.text}</span>
-                : r.entry ? <EventRow key={r.key} entry={r.entry} /> : null
-            )}
-          </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
-    </div>
-  );
-}
-
-// ── Pinned item — either a single session or an A2A conversation ───────────────
-
-interface PinnedSession { kind: 'session'; session: TrackedSession }
-interface PinnedConversation { kind: 'conversation'; contextId: string; epSlug: string }
-type PinnedItem = PinnedSession | PinnedConversation
-
-function pinnedKey(p: PinnedItem): string {
-  return p.kind === 'session' ? p.session.session_id : `conv:${p.contextId}`;
-}
-
 // ── MonitorView ───────────────────────────────────────────────────────────────
 
 export interface MonitorViewProps {
@@ -496,7 +343,7 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
   const [app] = useState(initialApp);
   const { sessions: liveSessions, connected } = useDashSessions(token, app.id);
   const [trackedSessions, setTrackedSessions] = useState<TrackedSession[]>([]);
-  const [pinned, setPinned] = useState<PinnedItem[]>([]);
+  const [pinned, setPinned] = useState<TrackedSession[]>([]);
   const [selectedSession, setSelectedSession] = useState<TrackedSession | null>(null);
   const [monCfg, setMonCfg] = useState<MonitoringConfig>(MON_DEFAULTS);
   const [canvasOpen, setCanvasOpen] = useState(true);
@@ -552,25 +399,16 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
         }
       }
 
-      // Auto-pin new sessions if there's room — A2A sessions pin as conversation
+      // Auto-pin new sessions if there's room (run outside setTrackedSessions
+      // to avoid nested state updates — schedule via setTimeout)
       if (newSessions.length > 0) {
         setTimeout(() => {
           setPinned(prev => {
             let updated = prev;
             for (const s of newSessions) {
               if (updated.length >= MAX_PINNED) break;
-              const epType = app.entry_points?.find(ep => ep.slug === s.ep_slug)?.entry_point_type;
-              if (epType === 'a2a') {
-                // Pin as conversation (keyed by context_id) — one slot per context
-                const key = `conv:${s.context_id}`;
-                if (!updated.find(p => pinnedKey(p) === key)) {
-                  updated = [...updated, { kind: 'conversation', contextId: s.context_id, epSlug: s.ep_slug ?? '' }];
-                }
-              } else {
-                const key = s.session_id;
-                if (!updated.find(p => pinnedKey(p) === key)) {
-                  updated = [...updated, { kind: 'session', session: s }];
-                }
+              if (!updated.find(p => p.session_id === s.session_id)) {
+                updated = [...updated, s];
               }
             }
             return updated;
@@ -590,51 +428,30 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
         const next = prev.filter(p => !p._ended || !p._endedAt || now - p._endedAt < SESSION_TTL_MS);
         return next.length === prev.length ? prev : next;
       });
-      // For conversations: keep pinned as long as any session in that context is within TTL
       setPinned(prev => {
-        const next = prev.filter(p => {
-          if (p.kind === 'session') {
-            return !p.session._ended || !p.session._endedAt || Date.now() - p.session._endedAt < SESSION_TTL_MS;
-          }
-          // conversation: keep if any tracked session with this context_id is within TTL
-          return trackedSessions.some(s => s.context_id === p.contextId && (!s._ended || !s._endedAt || now - s._endedAt < SESSION_TTL_MS));
-        });
+        const next = prev.filter(p => !p._ended || !p._endedAt || Date.now() - p._endedAt < SESSION_TTL_MS);
         return next.length === prev.length ? prev : next;
       });
     }, 10000);
     return () => clearInterval(iv);
-  }, [trackedSessions]);
+  }, []);
 
-  const pinSession = useCallback((s: TrackedSession) => {
+  const pin = useCallback((s: TrackedSession) => {
     setPinned(prev => {
-      const item: PinnedItem = { kind: 'session', session: s };
-      if (prev.find(p => pinnedKey(p) === pinnedKey(item))) return prev;
+      if (prev.find(p => p.session_id === s.session_id)) return prev;
       if (prev.length >= MAX_PINNED) return prev;
-      return [...prev, item];
+      return [...prev, s];
     });
   }, []);
 
-  const pinConversation = useCallback((contextId: string, epSlug: string) => {
-    setPinned(prev => {
-      const item: PinnedItem = { kind: 'conversation', contextId, epSlug };
-      if (prev.find(p => pinnedKey(p) === pinnedKey(item))) return prev;
-      if (prev.length >= MAX_PINNED) return prev;
-      return [...prev, item];
-    });
+  const unpin = useCallback((sessionId: string) => {
+    setPinned(prev => prev.filter(p => p.session_id !== sessionId));
   }, []);
 
-  const unpinByKey = useCallback((key: string) => {
-    setPinned(prev => prev.filter(p => pinnedKey(p) !== key));
-  }, []);
-
-  // Keep pinned session entries in sync with latest tracked state
+  // Keep pinned entries in sync with latest tracked state (_ended, run_id updates)
   useEffect(() => {
     setPinned(prev => {
-      const next = prev.map(p => {
-        if (p.kind !== 'session') return p;
-        const updated = trackedSessions.find(t => t.session_id === p.session.session_id);
-        return updated ? { kind: 'session' as const, session: updated } : p;
-      });
+      const next = prev.map(p => trackedSessions.find(t => t.session_id === p.session_id) ?? p);
       return next.every((n, i) => n === prev[i]) ? prev : next;
     });
   }, [trackedSessions]);
@@ -694,33 +511,13 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
     return { ...e, animated: false, style: { stroke: 'rgba(148,163,184,0.18)', strokeWidth: 1, strokeDasharray: '4,4' } };
   });
 
-  // Helper: is this EP slug an A2A entry point?
-  function isA2ASlug(slug: string | null): boolean {
-    return app.entry_points?.find(ep => ep.slug === slug)?.entry_point_type === 'a2a';
-  }
-
-  // Separate sessions into A2A conversations (grouped by context_id) and regular sessions
-  const a2aConversations = new Map<string, TrackedSession[]>(); // contextId → sessions
-  const regularByEP: Record<string, TrackedSession[]> = {};
-
-  for (const s of visibleSessions) {
-    if (isA2ASlug(s.ep_slug)) {
-      const ctxId = s.context_id;
-      if (!a2aConversations.has(ctxId)) a2aConversations.set(ctxId, []);
-      a2aConversations.get(ctxId)!.push(s);
-    } else {
-      const k = s.ep_slug ?? 'unknown';
-      if (!regularByEP[k]) regularByEP[k] = [];
-      regularByEP[k].push(s);
-    }
-  }
-
-  // Sort A2A conversations: most recently started first
-  const sortedConversations = Array.from(a2aConversations.entries()).sort((a, b) => {
-    const latestA = a[1].reduce((max, s) => s.started_at > max ? s.started_at : max, '');
-    const latestB = b[1].reduce((max, s) => s.started_at > max ? s.started_at : max, '');
-    return latestB.localeCompare(latestA);
-  });
+  // Group sessions by EP for the sidebar
+  const byEP = visibleSessions.reduce<Record<string, TrackedSession[]>>((acc, s) => {
+    const k = s.ep_slug ?? 'unknown';
+    if (!acc[k]) acc[k] = [];
+    acc[k].push(s);
+    return acc;
+  }, {});
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
@@ -789,63 +586,22 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
               <div style={{ padding: '28px 12px', textAlign: 'center', color: C.textMuted, fontSize: 12 }}>Waiting for sessions…</div>
             )}
             {!connected && <div style={{ padding: '28px 12px', textAlign: 'center', color: C.textMuted, fontSize: 12 }}>Connecting…</div>}
-
-            {/* A2A conversations — grouped by context_id */}
-            {sortedConversations.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 9, fontWeight: 700, color: 'rgba(245,158,11,0.5)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4, paddingLeft: 4 }}>A2A Conversations</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  {sortedConversations.map(([ctxId, ctxSessions]) => {
-                    const isConvPinned = !!pinned.find(p => p.kind === 'conversation' && p.contextId === ctxId);
-                    const hasActive = ctxSessions.some(s => !s._ended);
-                    const turns = ctxSessions.length;
-                    const epSlug = ctxSessions[0]?.ep_slug ?? '—';
-                    const latestSession = ctxSessions[ctxSessions.length - 1];
-                    return (
-                      <div
-                        key={ctxId}
-                        className={`sess-row${isConvPinned ? ' selected' : ''}`}
-                        style={{ opacity: hasActive ? 1 : 0.55, cursor: 'pointer' }}
-                        onClick={() => setSelectedSession(latestSession)}
-                      >
-                        <div style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(245,158,11,0.12)', border: `1.5px solid rgba(245,158,11,${hasActive ? '0.6' : '0.25'})` }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: 13, color: hasActive ? '#f59e0b' : 'rgba(245,158,11,0.4)' }}>robot_2</span>
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 1 }}>
-                            <span style={{ fontSize: 11, fontWeight: 600, color: hasActive ? C.text : C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{epSlug}</span>
-                            <span style={{ fontSize: 9, color: 'rgba(245,158,11,0.7)', background: 'rgba(245,158,11,0.1)', borderRadius: 3, padding: '0 4px', flexShrink: 0 }}>{turns} turn{turns !== 1 ? 's' : ''}</span>
-                            {!hasActive && <span style={{ fontSize: 9, color: 'rgba(148,163,184,0.5)', background: 'rgba(255,255,255,0.05)', borderRadius: 3, padding: '0 4px', flexShrink: 0 }}>ended</span>}
-                          </div>
-                          <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>ctx:{ctxId.slice(0, 10)}…</div>
-                        </div>
-                        <button
-                          title={isConvPinned ? 'Already monitoring' : 'Pin conversation feed'}
-                          onClick={e => { e.stopPropagation(); pinConversation(ctxId, epSlug); }}
-                          style={{ width: 22, height: 22, borderRadius: 5, border: isConvPinned ? '1px solid rgba(245,158,11,0.5)' : `1px solid ${C.outline}`, background: isConvPinned ? 'rgba(245,158,11,0.12)' : 'transparent', cursor: isConvPinned ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: 12, color: isConvPinned ? '#f59e0b' : C.textMuted }}>monitor_heart</span>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Regular (WS/SSE) sessions — grouped by EP */}
-            {Object.entries(regularByEP).map(([ep, epSessions]) => (
+            {Object.entries(byEP).map(([ep, epSessions]) => (
               <div key={ep} style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 9, fontWeight: 700, color: 'rgba(148,163,184,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4, paddingLeft: 4 }}>{ep}</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {epSessions.map(s => {
-                    const key = s.session_id;
-                    const isPinned = !!pinned.find(p => pinnedKey(p) === key);
+                    const isPinned = !!pinned.find(p => p.session_id === s.session_id);
                     const isSelected = selectedSession?.session_id === s.session_id;
-                    const epType = app.entry_points?.find(e => e.slug === s.ep_slug)?.entry_point_type ?? 'websocket';
+                    const epType = app.entry_points?.find(ep => ep.slug === s.ep_slug)?.entry_point_type ?? 'websocket';
                     const epColor = epType === 'sse' ? '#a78bfa' : s._ended ? 'rgba(148,163,184,0.4)' : C.cyan;
                     return (
-                      <div key={s.session_id} className={`sess-row${isSelected ? ' selected' : ''}`} style={{ opacity: s._ended ? 0.55 : 1 }} onClick={() => setSelectedSession(isSelected ? null : s)}>
+                      <div
+                        key={s.session_id}
+                        className={`sess-row${isSelected ? ' selected' : ''}`}
+                        style={{ opacity: s._ended ? 0.55 : 1 }}
+                        onClick={() => setSelectedSession(isSelected ? null : s)}
+                      >
                         <div style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: `${epColor}18`, border: `1.5px solid ${epColor}44` }}>
                           <span className="material-symbols-outlined" style={{ fontSize: 13, color: epColor }}>{EP_MS_ICON[epType] ?? 'bolt'}</span>
                         </div>
@@ -858,12 +614,22 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flexShrink: 0 }}>
                           {!s._ended && (
-                            <button title={isPinned ? 'Already monitoring' : 'Pin to monitor'} onClick={e => { e.stopPropagation(); pinSession(s); }} style={{ width: 22, height: 22, borderRadius: 5, border: isPinned ? '1px solid rgba(99,102,241,0.5)' : `1px solid ${C.outline}`, background: isPinned ? 'rgba(99,102,241,0.15)' : 'transparent', cursor: isPinned ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <button
+                              title={isPinned ? 'Already monitoring' : 'Pin to monitor'}
+                              onClick={e => { e.stopPropagation(); pin(s); }}
+                              style={{ width: 22, height: 22, borderRadius: 5, border: isPinned ? '1px solid rgba(99,102,241,0.5)' : `1px solid ${C.outline}`, background: isPinned ? 'rgba(99,102,241,0.15)' : 'transparent', cursor: isPinned ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            >
                               <span className="material-symbols-outlined" style={{ fontSize: 12, color: isPinned ? '#818cf8' : C.textMuted }}>monitor_heart</span>
                             </button>
                           )}
                           {!s._ended && (
-                            <button title="Terminate session" onClick={e => { e.stopPropagation(); handleTerminate(s.session_id); }} style={{ width: 22, height: 22, borderRadius: 5, border: '1px solid rgba(239,68,68,0.3)', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                            <button
+                              title="Terminate session"
+                              onClick={e => { e.stopPropagation(); handleTerminate(s.session_id); }}
+                              style={{ width: 22, height: 22, borderRadius: 5, border: '1px solid rgba(239,68,68,0.3)', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                              onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'}
+                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                            >
                               <span className="material-symbols-outlined" style={{ fontSize: 12, color: '#ef4444' }}>power_settings_new</span>
                             </button>
                           )}
@@ -874,54 +640,45 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
                 </div>
               </div>
             ))}
+            {visibleSessions.length > 0 && pinned.length < MAX_PINNED && activeSessions.length > 0 && (
+              <div style={{ fontSize: 10, color: 'rgba(148,163,184,0.3)', textAlign: 'center', marginTop: 4, paddingBottom: 8 }}>
+                Click <span className="material-symbols-outlined" style={{ fontSize: 10, verticalAlign: 'middle' }}>monitor_heart</span> to monitor
+              </div>
+            )}
             {pinned.length >= MAX_PINNED && (
               <div style={{ fontSize: 10, color: 'rgba(251,146,60,0.6)', textAlign: 'center', marginTop: 4, paddingBottom: 8 }}>Max {MAX_PINNED} feeds open</div>
             )}
           </div>
 
-          {/* Session / conversation detail drawer */}
+          {/* Session detail drawer */}
           {selectedSession && (() => {
             const s = selectedSession;
             const epType = app.entry_points?.find(ep => ep.slug === s.ep_slug)?.entry_point_type ?? 'websocket';
-            const isA2A = epType === 'a2a';
-            const convSessions = isA2A ? (a2aConversations.get(s.context_id) ?? [s]) : null;
             return (
-              <div style={{ borderTop: `1px solid ${C.outline}`, padding: '12px 14px', background: isA2A ? 'rgba(245,158,11,0.02)' : 'rgba(0,240,255,0.02)', flexShrink: 0, maxHeight: 240, overflowY: 'auto' }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: isA2A ? '#f59e0b' : C.cyan, marginBottom: 8, letterSpacing: 0.3 }}>
-                  {isA2A ? `A2A CONVERSATION · ${convSessions!.length} TURN${convSessions!.length !== 1 ? 'S' : ''}` : 'SESSION DETAIL'}
-                </div>
+              <div style={{ borderTop: `1px solid ${C.outline}`, padding: '12px 14px', background: 'rgba(0,240,255,0.02)', flexShrink: 0, maxHeight: 220, overflowY: 'auto' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.cyan, marginBottom: 8, letterSpacing: 0.3 }}>SESSION DETAIL</div>
                 {[
-                  isA2A ? null : ['Session ID', s.session_id.slice(0, 16) + '…'],
+                  ['Session ID', s.session_id.slice(0, 16) + '…'],
                   ['Entry Point', s.ep_slug ?? '—'],
                   ['EP Type', epType],
                   ['Orchestrator', s.orchestrator_name],
                   ['User ID', String(s.user_id)],
                   ['Context ID', s.context_id.slice(0, 16) + '…'],
-                  isA2A ? ['Turns', String(convSessions!.length)] : null,
-                  isA2A ? null : ['Started', new Date(s.started_at).toLocaleTimeString()],
-                  isA2A ? null : ['Elapsed', elapsed(s.started_at)],
-                  isA2A ? null : ['Pod', s.instance_id.slice(0, 12) + '…'],
-                ].filter((row): row is [string, string] => row !== null).map(([label, value]) => (
+                  ['Started', new Date(s.started_at).toLocaleTimeString()],
+                  ['Elapsed', elapsed(s.started_at)],
+                  ['Pod', s.instance_id.slice(0, 12) + '…'],
+                ].map(([label, value]) => (
                   <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
                     <span style={{ fontSize: 10, color: C.textMuted, flexShrink: 0 }}>{label}</span>
                     <span style={{ fontSize: 10, color: C.text, fontFamily: ['Session ID', 'Context ID', 'Pod'].includes(label) ? 'JetBrains Mono, monospace' : 'inherit', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={value}>{value}</span>
                   </div>
                 ))}
                 <div style={{ display: 'flex', gap: 5, marginTop: 6 }}>
-                  {isA2A ? (
-                    <button
-                      onClick={() => { pinConversation(s.context_id, s.ep_slug ?? ''); setSelectedSession(null); }}
-                      style={{ flex: 1, padding: '5px 0', borderRadius: 5, border: '1px solid rgba(245,158,11,0.45)', background: 'rgba(245,158,11,0.06)', color: '#f59e0b', fontSize: 11, cursor: 'pointer' }}
-                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(245,158,11,0.14)'}
-                      onMouseLeave={e => e.currentTarget.style.background = 'rgba(245,158,11,0.06)'}
-                    >
-                      Open Feed
-                    </button>
-                  ) : !s._ended ? (
+                  {!s._ended && (
                     <button onClick={() => { handleTerminate(s.session_id); setSelectedSession(null); }} style={{ flex: 1, padding: '5px 0', borderRadius: 5, border: '1px solid rgba(239,68,68,0.45)', background: 'rgba(239,68,68,0.06)', color: '#ef4444', fontSize: 11, cursor: 'pointer' }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.14)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.06)'}>
                       Terminate
                     </button>
-                  ) : null}
+                  )}
                   <button onClick={() => setSelectedSession(null)} style={{ flex: 1, padding: '5px 0', borderRadius: 5, border: `1px solid ${C.outline}`, background: 'transparent', color: C.textMuted, fontSize: 11, cursor: 'pointer' }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                     Close
                   </button>
@@ -941,30 +698,9 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
               </span>
             </div>
           ) : (
-            pinned.map(item => {
-              const key = pinnedKey(item);
-              if (item.kind === 'conversation') {
-                const ctxSessions = a2aConversations.get(item.contextId) ?? [];
-                const turns: ConvTurn[] = ctxSessions.map(s => ({ session: s, runId: s.run_id ?? null }));
-                return (
-                  <ConversationFeedColumn
-                    key={key}
-                    turns={turns}
-                    token={token!}
-                    contextId={item.contextId}
-                    onUnpin={() => unpinByKey(key)}
-                  />
-                );
-              }
-              return (
-                <RunFeedColumn
-                  key={key}
-                  session={item.session}
-                  token={token!}
-                  onUnpin={() => unpinByKey(key)}
-                />
-              );
-            })
+            pinned.map(s => (
+              <RunFeedColumn key={s.session_id} session={s} token={token!} onUnpin={() => unpin(s.session_id)} />
+            ))
           )}
         </div>
       </div>
