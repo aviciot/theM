@@ -32,6 +32,7 @@ import (
 // ArtifactGetter retrieves a file artifact from storage.
 type ArtifactGetter interface {
 	GetArtifact(ctx context.Context, runID, artifactID string) (runrecorder.ArtifactMeta, error)
+	GetArtifactScanStatus(ctx context.Context, artifactID string) (string, error)
 }
 
 // Authenticator validates a bearer token and returns its metadata.
@@ -100,6 +101,11 @@ func (h *Handler) requireBearer(next http.Handler) http.Handler {
 // Authorization: authenticated caller + run_id exists + artifact belongs to that run.
 // Cross-run and cross-tenant access is denied by the DB query (WHERE id=$1 AND run_id=$2).
 //
+// Scan gate:
+//   - 'pending' or 'scanning' → 202 Accepted (retry later)
+//   - 'infected' → 451 Unavailable For Legal Reasons
+//   - 'disabled', 'clean', 'error', 'failed' → serve normally
+//
 // SECURITY:
 //   - Artifact data is fetched from the DB, not the filesystem
 //   - Content-Disposition filename is sanitized at response time
@@ -112,6 +118,26 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	if runID == "" || artifactID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "run_id and artifact_id are required"})
 		return
+	}
+
+	// Check scan gate before loading the full artifact bytes.
+	scanStatus, err := h.store.GetArtifactScanStatus(r.Context(), artifactID)
+	if err == nil {
+		switch scanStatus {
+		case "pending", "scanning":
+			writeJSON(w, http.StatusAccepted, map[string]string{
+				"status":      scanStatus,
+				"artifact_id": artifactID,
+				"message":     "artifact is being scanned, retry shortly",
+			})
+			return
+		case "infected":
+			writeJSON(w, http.StatusUnavailableForLegalReasons, map[string]string{
+				"error":       "artifact blocked: malicious content detected",
+				"artifact_id": artifactID,
+			})
+			return
+		}
 	}
 
 	// Fetch artifact — use r.Context() so client disconnect cancels the DB call.

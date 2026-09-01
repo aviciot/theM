@@ -436,6 +436,88 @@ Unique constraint: `(application_id, mcp_server_id)`.
 
 ---
 
+## them.run_artifacts (Phase R-3 binary files)
+Stores binary file artifacts produced by the Go orchestrator/worker. Source of truth: `db/025_run_artifacts.sql` + `db/050_middleware_pipeline.sql`. Contains the file bytes directly (`data BYTEA NOT NULL`).
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| run_id | UUID NOT NULL | parent run |
+| application_id | UUID | parent application (nullable) |
+| session_id | UUID | parent session (nullable) |
+| tenant_id | UUID NOT NULL | tenant (from R-4a) |
+| filename | TEXT NOT NULL | sanitized filename |
+| content_type | TEXT NOT NULL | MIME type |
+| size | BIGINT NOT NULL | byte size |
+| data | BYTEA NOT NULL | file bytes — never log |
+| scan_status | TEXT | `'disabled'`/`'pending'`/`'scanning'`/`'clean'`/`'infected'`/`'flagged'`/`'error'`/`'failed'` (from `db/050_middleware_pipeline.sql`) |
+| scan_result | JSONB | per-processor results from the middleware pipeline |
+| scanned_at | TIMESTAMPTZ | timestamp of last scan completion |
+| created_at | TIMESTAMPTZ | |
+
+**scan_status lifecycle:** `disabled` (scanning not enabled) → `pending` (job enqueued) → `scanning` (worker claimed) → `clean` (OK) | `infected` (blocked) | `flagged` | `error` (scanner unavailable) | `failed` (max retries exceeded)
+
+---
+
+## them.middleware_jobs (Phase 3 middleware pipeline)
+Job queue for artifact processing pipeline. Workers claim rows using `SELECT FOR UPDATE SKIP LOCKED`. Migration: `db/050_middleware_pipeline.sql`.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| artifact_id | UUID FK→run_artifacts | ON DELETE CASCADE |
+| application_id | UUID FK→applications | ON DELETE CASCADE |
+| run_id | UUID | parent run |
+| session_id | UUID | parent session |
+| processors | TEXT[] | ordered processor names (e.g. `['av_scan']`) |
+| status | TEXT | `'pending'`/`'claimed'`/`'done'`/`'failed'` |
+| attempt_count | INT | incremented on failure |
+| max_attempts | INT DEFAULT 3 | |
+| claimed_at | TIMESTAMPTZ | |
+| retry_after | TIMESTAMPTZ | for backoff |
+| result | JSONB | final pipeline result |
+| created_at | TIMESTAMPTZ | |
+| updated_at | TIMESTAMPTZ | |
+
+---
+
+## them.middleware_audit (Phase 3 middleware pipeline)
+Per-processor per-artifact audit trail. Migration: `db/050_middleware_pipeline.sql`.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| artifact_id | UUID FK→run_artifacts | ON DELETE CASCADE |
+| application_id | UUID | |
+| session_id | UUID | |
+| run_id | UUID | |
+| processor | TEXT | processor name (e.g. `'av_scan'`) |
+| outcome | TEXT | `'clean'`/`'infected'`/`'flagged'`/`'skipped'`/`'error'` |
+| detail | JSONB | processor-specific details (e.g. threat name) |
+| duration_ms | INT | processing time |
+| created_at | TIMESTAMPTZ | |
+
+---
+
+## them.applications — security_config column (Phase 3)
+Added by `db/050_middleware_pipeline.sql`:
+
+| Column | Type | Purpose |
+|---|---|---|
+| security_config | JSONB NOT NULL DEFAULT '{}' | per-app middleware pipeline config (see `SecurityConfig` struct in `go/internal/middleware/config.go`) |
+
+Example:
+```json
+{
+  "enabled": true,
+  "processors": {
+    "av_scan": {"enabled": true, "max_file_mb": 5, "block_on_infected": true}
+  }
+}
+```
+
+---
+
 ## auth_service schema (read-only reference)
 Owned by `them-auth-service`. **Never query directly from the bridge** — use `app/services/auth_client.py`.
 
@@ -466,3 +548,4 @@ Key relationships:
 | `db/037_agents_transport_canvas.sql` | Extend `agents_transport_check` to include `'canvas_a2a'` transport |
 | `db/041_mcp_servers.sql` | `them.mcp_servers` table (MCP-1 registry) |
 | `db/042_mcp_app_credentials.sql` | `them.app_mcp_credentials` table (per-app encrypted credentials) |
+| `db/050_middleware_pipeline.sql` | `run_artifacts.scan_status/scan_result/scanned_at`; `them.middleware_jobs`; `them.middleware_audit`; `applications.security_config` |

@@ -241,6 +241,18 @@ func (r *Recorder) RecordArtifact(ctx context.Context, in ArtifactInput) (string
 	return id, nil
 }
 
+// GetArtifactScanStatus returns the scan_status for an artifact.
+// Returns ("disabled", nil) if the column is not present or the row is not found.
+// This is a lightweight query (no BYTEA fetch) used for the download gate check.
+func (r *Recorder) GetArtifactScanStatus(ctx context.Context, artifactID string) (string, error) {
+	const q = `SELECT COALESCE(scan_status, 'disabled') FROM them.run_artifacts WHERE id = $1::uuid`
+	var status string
+	if err := r.db.QueryRow(ctx, q, artifactID).Scan(&status); err != nil {
+		return "disabled", nil // row not found or column missing → treat as disabled
+	}
+	return status, nil
+}
+
 // GetArtifact retrieves a file artifact from them.run_artifacts.
 // The query enforces that artifact.run_id == runID so cross-run access is denied.
 // SECURITY: Returned Data must never appear in log output.

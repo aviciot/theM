@@ -1,31 +1,27 @@
 -- Migration 050: A2A middleware pipeline
--- Adds: them.artifacts scan columns, them.middleware_jobs, them.middleware_audit,
+-- Adds: them.run_artifacts scan columns, them.middleware_jobs, them.middleware_audit,
 --       applications.security_config column.
 
--- ── Extend them.artifacts ────────────────────────────────────────────────────
+-- ── Extend them.run_artifacts ─────────────────────────────────────────────────
 
-ALTER TABLE them.artifacts
+ALTER TABLE them.run_artifacts
   ADD COLUMN IF NOT EXISTS scan_status TEXT NOT NULL DEFAULT 'disabled'
-    CONSTRAINT artifacts_scan_status_check
+    CONSTRAINT run_artifacts_scan_status_check
       CHECK (scan_status IN
         ('disabled','pending','scanning','clean','infected','flagged','error','failed')),
   ADD COLUMN IF NOT EXISTS scan_result  JSONB,
-  ADD COLUMN IF NOT EXISTS scanned_at   TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS file_bytes   BYTEA,
-  ADD COLUMN IF NOT EXISTS file_size    BIGINT,
-  ADD COLUMN IF NOT EXISTS file_name    TEXT,
-  ADD COLUMN IF NOT EXISTS mime_type    TEXT;
+  ADD COLUMN IF NOT EXISTS scanned_at   TIMESTAMPTZ;
 
 -- Partial index: only rows that need worker attention
-CREATE INDEX IF NOT EXISTS artifacts_scan_pending_idx
-  ON them.artifacts (scan_status, created_at)
+CREATE INDEX IF NOT EXISTS run_artifacts_scan_pending_idx
+  ON them.run_artifacts (scan_status, created_at)
   WHERE scan_status IN ('pending','scanning');
 
 -- ── New: them.middleware_jobs ────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS them.middleware_jobs (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  artifact_id     UUID NOT NULL REFERENCES them.artifacts(id) ON DELETE CASCADE,
+  artifact_id     UUID NOT NULL REFERENCES them.run_artifacts(id) ON DELETE CASCADE,
   application_id  UUID NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
   run_id          UUID,
   session_id      UUID,
@@ -56,7 +52,7 @@ ALTER TABLE them.applications
 
 CREATE TABLE IF NOT EXISTS them.middleware_audit (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  artifact_id    UUID NOT NULL REFERENCES them.artifacts(id) ON DELETE CASCADE,
+  artifact_id    UUID NOT NULL REFERENCES them.run_artifacts(id) ON DELETE CASCADE,
   application_id UUID NOT NULL,
   session_id     UUID,
   run_id         UUID,

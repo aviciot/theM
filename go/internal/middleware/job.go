@@ -111,12 +111,12 @@ RETURNING
 	return &job, nil
 }
 
-// LoadFileBytes loads the file_bytes, file_name, mime_type, file_size for the
-// artifact associated with job. Called after Claim.
+// LoadFileBytes loads the data, filename, content_type, size for the
+// artifact associated with job from them.run_artifacts. Called after Claim.
 func (d *JobDAL) LoadFileBytes(ctx context.Context, job *Job) error {
 	const q = `
-SELECT COALESCE(file_bytes, ''), COALESCE(file_name,''), COALESCE(mime_type,''), COALESCE(file_size,0)
-FROM   them.artifacts
+SELECT COALESCE(data, ''), COALESCE(filename,''), COALESCE(content_type,''), COALESCE(size,0)
+FROM   them.run_artifacts
 WHERE  id = $1::uuid`
 	return d.q.QueryRow(ctx, q, job.ArtifactID).Scan(
 		&job.FileBytes, &job.FileName, &job.MimeType, &job.FileSize,
@@ -137,27 +137,22 @@ func (d *JobDAL) LoadSecurityConfig(ctx context.Context, applicationID string) (
 	return MergeDefaults(cfg), nil
 }
 
-// Complete marks the job done and writes the result to both the job and the artifact.
-// Clears file_bytes after a clean scan (bytes no longer needed).
+// Complete marks the job done and writes the scan result back to the artifact row.
 func (d *JobDAL) Complete(ctx context.Context, job *Job, res JobResult) error {
 	resultJSON, err := json.Marshal(res.Results)
 	if err != nil {
 		resultJSON = []byte("[]")
 	}
 
-	clearBytes := res.FinalStatus == "clean" || res.FinalStatus == "infected" || res.FinalStatus == "flagged"
-
-	// Update artifact
+	// Update artifact scan columns in them.run_artifacts
 	const updateArtifact = `
-UPDATE them.artifacts
+UPDATE them.run_artifacts
 SET scan_status = $2,
     scan_result = $3::jsonb,
-    scanned_at  = $4,
-    file_bytes  = CASE WHEN $5 THEN NULL ELSE file_bytes END,
-    updated_at  = now()
+    scanned_at  = $4
 WHERE id = $1::uuid`
 	if err := d.q.Exec(ctx, updateArtifact,
-		job.ArtifactID, res.FinalStatus, resultJSON, res.ScannedAt, clearBytes,
+		job.ArtifactID, res.FinalStatus, resultJSON, res.ScannedAt,
 	); err != nil {
 		return err
 	}

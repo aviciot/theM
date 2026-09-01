@@ -170,6 +170,30 @@ func (s *Server) runWorkflow(
 					json.Unmarshal(p["content_type"], &contentType) //nolint:errcheck
 					json.Unmarshal(p["download_url"], &downloadURL) //nolint:errcheck
 				}
+
+				// ── Security gate intercept ──────────────────────────────────
+				// When a FileInterceptor is attached and the application has
+				// security scanning enabled, the file is stored in run_artifacts
+				// with scan_status='pending' and a middleware job is enqueued.
+				// The user receives a gated download URL pointing at our artifact
+				// endpoint instead of the raw agent URL.
+				if s.fileGate != nil && h.EPConfig != nil {
+					gateIn := FileInterceptInput{
+						DownloadURL:   downloadURL,
+						FileName:      filename,
+						ContentType:   contentType,
+						ApplicationID: h.EPConfig.AppID,
+						RunID:         h.RunID,
+						SessionID:     h.SessionID,
+						TenantID:      h.EPConfig.TenantID,
+					}
+					if gr, err := s.fileGate.Intercept(ctx, gateIn); err == nil && gr.ArtifactID != "" {
+						// Replace download URL with gated artifact endpoint.
+						// URL format: /api/v1/runs/{run_id}/artifacts/{artifact_id}
+						downloadURL = "/api/v1/runs/" + h.RunID + "/artifacts/" + gr.ArtifactID
+					}
+				}
+
 				part := a2a.NewFileURLPart(a2a.URL(downloadURL), contentType)
 				part.Filename = filename
 				if !yield(a2a.NewArtifactEvent(execCtx, part), nil) {

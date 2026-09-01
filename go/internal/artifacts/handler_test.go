@@ -32,8 +32,9 @@ func (f *fakeAuth) Validate(_ context.Context, _ string) (*auth.TokenInfo, error
 
 // fakeStore implements artifacts.ArtifactGetter.
 type fakeStore struct {
-	artifacts map[string]runrecorder.ArtifactMeta // key: runID+":"+artifactID
-	err       error
+	artifacts   map[string]runrecorder.ArtifactMeta // key: runID+":"+artifactID
+	scanStatus  map[string]string                   // key: artifactID → scan_status
+	err         error
 }
 
 func (f *fakeStore) GetArtifact(_ context.Context, runID, artifactID string) (runrecorder.ArtifactMeta, error) {
@@ -46,6 +47,15 @@ func (f *fakeStore) GetArtifact(_ context.Context, runID, artifactID string) (ru
 	}
 	// Simulate "no rows" for unknown combos.
 	return runrecorder.ArtifactMeta{}, errors.New("no rows in result set")
+}
+
+func (f *fakeStore) GetArtifactScanStatus(_ context.Context, artifactID string) (string, error) {
+	if f.scanStatus != nil {
+		if s, ok := f.scanStatus[artifactID]; ok {
+			return s, nil
+		}
+	}
+	return "disabled", nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -262,4 +272,74 @@ func TestArtifactDownload_ResponseBodyEqualsArtifactData(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, expectedData, w.Body.Bytes())
+}
+
+// TestArtifactDownload_ScanPending verifies that a pending artifact returns 202.
+func TestArtifactDownload_ScanPending(t *testing.T) {
+	store := &fakeStore{
+		scanStatus: map[string]string{"art-5": "pending"},
+		artifacts:  map[string]runrecorder.ArtifactMeta{},
+	}
+	h := newHandler(&fakeAuth{valid: true}, store)
+
+	w := httptest.NewRecorder()
+	r := bearerRequest(http.MethodGet, "/runs/run-1/artifacts/art-5", "valid-token")
+	h.ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+	assert.Contains(t, w.Body.String(), "pending")
+}
+
+// TestArtifactDownload_ScanScanning verifies that a scanning artifact returns 202.
+func TestArtifactDownload_ScanScanning(t *testing.T) {
+	store := &fakeStore{
+		scanStatus: map[string]string{"art-6": "scanning"},
+	}
+	h := newHandler(&fakeAuth{valid: true}, store)
+
+	w := httptest.NewRecorder()
+	r := bearerRequest(http.MethodGet, "/runs/run-1/artifacts/art-6", "valid-token")
+	h.ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+}
+
+// TestArtifactDownload_ScanInfected verifies that an infected artifact returns 451.
+func TestArtifactDownload_ScanInfected(t *testing.T) {
+	store := &fakeStore{
+		scanStatus: map[string]string{"art-7": "infected"},
+	}
+	h := newHandler(&fakeAuth{valid: true}, store)
+
+	w := httptest.NewRecorder()
+	r := bearerRequest(http.MethodGet, "/runs/run-1/artifacts/art-7", "valid-token")
+	h.ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusUnavailableForLegalReasons, w.Code)
+	assert.Contains(t, w.Body.String(), "blocked")
+}
+
+// TestArtifactDownload_ScanClean verifies that a clean artifact is served normally.
+func TestArtifactDownload_ScanClean(t *testing.T) {
+	store := &fakeStore{
+		scanStatus: map[string]string{"art-8": "clean"},
+		artifacts: map[string]runrecorder.ArtifactMeta{
+			"run-1:art-8": {
+				ID:          "art-8",
+				RunID:       "run-1",
+				Filename:    "clean.txt",
+				ContentType: "text/plain",
+				Size:        5,
+				Data:        []byte("hello"),
+			},
+		},
+	}
+	h := newHandler(&fakeAuth{valid: true}, store)
+
+	w := httptest.NewRecorder()
+	r := bearerRequest(http.MethodGet, "/runs/run-1/artifacts/art-8", "valid-token")
+	h.ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "hello", w.Body.String())
 }

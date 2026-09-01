@@ -33,6 +33,7 @@ import (
 	"github.com/aviciot/them/internal/execution"
 	"github.com/aviciot/them/internal/gate"
 	"github.com/aviciot/them/internal/health"
+	"github.com/aviciot/them/internal/middleware"
 	"github.com/aviciot/them/internal/ratelimit"
 	"github.com/aviciot/them/internal/reconciler"
 	"github.com/aviciot/them/internal/runrecorder"
@@ -303,6 +304,10 @@ func run() error {
 	// Uses the shared execLifecycle (constructed in section 16).
 	a2aTaskRedis := cache.NewAuthRedisClient(redisCache.Client())
 	a2aTaskStore := agentgen.NewRedisA2ATaskStore(a2aTaskRedis)
+
+	// File gate: intercepts A2A file artifacts when security scanning is enabled.
+	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(database.Pool()))
+
 	a2aServer := a2a.NewServer(
 		execLifecycle,
 		bus,
@@ -313,7 +318,8 @@ func run() error {
 		WithPublicURL(cfg.PublicURL).
 		WithCardLoader(a2a.NewPgxCardLoader(database.Pool())).
 		WithSessionPublisher(sessionPub).
-		WithTaskStore(a2aTaskStore)
+		WithTaskStore(a2aTaskStore).
+		WithFileGate(&fileGateAdapter{gate: fileGate})
 	srv.MountA2A(a2aServer.Routes())
 	log.Info("A2A server mounted")
 
@@ -381,6 +387,30 @@ func appsDispatcher(wsApps, sseApps, voiceApps http.Handler) http.Handler {
 			http.NotFound(w, r)
 		}
 	})
+}
+
+// fileGateAdapter bridges middleware.FileGate to the a2a.FileInterceptor interface.
+type fileGateAdapter struct {
+	gate *middleware.FileGate
+}
+
+func (a *fileGateAdapter) Intercept(ctx context.Context, in a2a.FileInterceptInput) (a2a.FileInterceptResult, error) {
+	gr, err := a.gate.Intercept(ctx, middleware.GateInput{
+		DownloadURL:   in.DownloadURL,
+		FileName:      in.FileName,
+		ContentType:   in.ContentType,
+		ApplicationID: in.ApplicationID,
+		RunID:         in.RunID,
+		SessionID:     in.SessionID,
+		TenantID:      in.TenantID,
+	})
+	if err != nil {
+		return a2a.FileInterceptResult{ScanStatus: "error"}, err
+	}
+	return a2a.FileInterceptResult{
+		ArtifactID: gr.ArtifactID,
+		ScanStatus: gr.ScanStatus,
+	}, nil
 }
 
 // jwtFallbackAuthenticator tries the opaque bearer token cache first.

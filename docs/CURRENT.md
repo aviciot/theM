@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-08-31
+# Last updated: 2026-09-01
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-ca51f2a  refactor(agent-runtime): split main.go (1123 lines) into 5 focused modules
-aa2e360  docs(current): record ChatColumn split (wave 5 complete)
-44a7c8d  refactor(frontend): split ChatColumn.tsx (957 lines) into 3 focused modules
-d47f8c1  refactor(frontend): extract CanvasNodePropertiesPanel from CanvasBuilderView
-9071b15  refactor(docs): flatten docs/architecture-v2/ into docs/
+(pending commit — Phase 3 middleware pipeline gateway intercept + scan gate)
+bab4509  refactor(frontend): split StepConfigSection.tsx (634 lines) into 3 focused modules
+3289813  refactor(agentgen): split compiler.go (1056 lines) into 3 focused modules
+1b74c6c  docs(split): add precise compiler.go split instructions for next session
+66527e4  docs(current): record agent-runtime split + handover for compiler.go split
 ```
 
 ---
@@ -151,22 +151,14 @@ All migrations applied through `db/048_application_slug.sql`:
 ## Test state
 
 ```
-go test ./...  — 44 packages, 0 failures (verified 2026-08-31, A2A SDK migration)
-S1-14: 30 A2A server tests — 3 new compliance tests A2A-WF01 (SendMessage result shape), A2A-WF02 (token streaming), A2A-WF03 (artifact-update wire format); fixtures updated for SDK method names (SendMessage/SendStreamingMessage, TASK_STATE_COMPLETED)
-S1-72: 20 EP compiler tests (+PC-LOOP-1..6: ValidateLoopBodies + compileLoopBodyPlan Branch/Join + resolveLoopOuterNext)
-S1-73: 33 LocalExecutor tests (+EP-LOOP-6/7/8: BranchInsideBody, IterationIsolation, ScopedAccumulation)
-S1-74: 3 DAG E2E smoke tests
-S1-75: 16 Phase 4-A tests (NA-01..NA-16)
-S1-76: 21 Phase 4-B tests (+CT-LOOP-DURABLE-6/7: IterationIsolation, ScopedAccumVar)
-S1-77: 13 Phase 4-C TemporalExecutor tests (TE-01..TE-09, TE-10..13: Submit/Signal/PlanHasHumanWait)
-S1-78: 4 dag-worker SQL tenant scope tests
-S1-79: 11 HITLStore Phase 5-B hardening tests (HS-1..11: state machine, UpdateWaitToken, TrySignal CAS, MarkDone, RepeatedWait)
-S1-80: 5 agent-runtime HITL Phase 5-B handler tests (RT-HITL-1..5: ReturnsWorking, StoresHandle, HITLRequestHandler)
-S1-81: 4 Canvas HITL signal admin endpoint tests (CSIG-1..4: Success, NotFound, CrossTenant, WrongToken)
-S1-82: 18 A2A Call node Phase 5-C + gap tests (A2A-1..18: NodeRegistered, Validate, Execute, self-call, depth, HumanWait backend, HTTPA2ACaller (all 4 headers), DeriveOutputs, fail-closed, stable UUIDs, error sanitization, E2E LocalExecutor, E2E ExecuteNodeForActivity)
-S1-83: 10 StreamOut node Phase 5-D tests (SO-1..10: ReadsFromVar, DefaultMediaType, ExplicitMediaType, MissingVar, DefaultFromVar, Validate_MissingFromVar, Validate_Valid, DeriveInputs, DeriveInputs_DefaultVar, FullPipeline)
+go test ./...  — 49 packages, 0 failures (verified 2026-09-01, Phase 3 middleware pipeline)
+S1-30: 13 artifact download handler tests (+4 scan gate: ScanPending/ScanScanning/ScanInfected/ScanClean)
+S1-84: 3 middleware/gate FileGate tests (Disabled, FetchFailsOpen, InvalidateCache)
+S1-85: 4 admin security_config handler tests (Get returns default, Put valid/invalid/max_file_mb=0)
+S1-14: 30 A2A server tests — 3 new compliance tests A2A-WF01 (SendMessage result shape), A2A-WF02 (token streaming), A2A-WF03 (artifact-update wire format)
+S1-72..S1-83: all prior DAG/canvas/A2A tests passing
 S2-06: 3 integration-tagged Temporal E2E tests
-Total go test ./...: 926
+Total go test ./...: 938
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -450,6 +442,71 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 - `go/internal/agentgen/executor.go` — `ExecutionBackend` interface
 - `go/internal/agentgen/local_executor.go` — `LocalExecutor` with goroutine fan-out + per-goroutine `clone()` + `joinState` + `drainFirstCausalError` + `deepCopyVars`
 - `go/internal/agentgen/nodes.go` — canvas nodes; all fan-out-capable nodes have `MaxOut: 0` (unlimited)
+
+---
+
+## Middleware Security Pipeline — Phase 3 complete (2026-09-01)
+
+### Overview
+Pluggable per-application artifact security middleware that intercepts file artifacts from A2A agents before delivery to users.
+
+### What was built
+
+**Phase 1 — Foundation (prior session)**
+- `db/050_middleware_pipeline.sql` — `run_artifacts.scan_status/scan_result/scanned_at`, `middleware_jobs`, `middleware_audit`, `applications.security_config`
+- `go/internal/middleware/processor.go` — `Processor` interface, `Registry`, `Part`, `Result`
+- `go/internal/middleware/config.go` — `SecurityConfig`, `AVScanConfig`, `MergeDefaults`, `Validate`, `EnabledProcessors`
+- `go/internal/middleware/pipeline.go` — `Pipeline.Run` chaining with block-on-infected semantics
+- `go/internal/middleware/job.go` — `JobDAL`: `Enqueue`, `Claim` (SKIP LOCKED), `LoadFileBytes` (reads `run_artifacts.data`), `Complete` (updates `run_artifacts.scan_status`), `Fail`, `WriteAudit`
+- `go/internal/middleware/progress.go` — `ScanPublisher` → `them:scan:<artifactID>` Redis channel
+- `go/internal/middleware/middleware_test.go` — 15 tests
+- `go/internal/admin/security_config.go` — `GET|PUT /admin/applications/{id}/security-config`
+
+**Phase 2 — ClamAV processor (prior session)**
+- `go/internal/middleware/av/clamav.go` — INSTREAM protocol scanner (fail-open)
+- `go/internal/middleware/av/clamav_test.go` — 9 tests (mock clamd)
+- `go/cmd/middleware-worker/main.go` — worker binary polling middleware_jobs (8 goroutines)
+- `Dockerfile.middleware-worker` — build + test at build time
+- `docker-compose.dev.yml` — `them-clamd` + `them-middleware-worker` services (profile `security`)
+
+**Phase 3 — Gateway intercept + download gate (this session)**
+- `go/internal/middleware/gate.go` — `FileGate.Intercept()`: checks app security config (30s cache), fetches file from agent URL, stores in `run_artifacts` with `scan_status='pending'`, enqueues middleware_job; fail-open on any error
+- `go/internal/middleware/pgx.go` — `PgxQuerier` adapter (implements `Querier` + `GateQuerier`)
+- `go/internal/a2a/server.go` — `FileInterceptor` interface + `FileInterceptInput/Result` types; `WithFileGate` builder
+- `go/internal/a2a/executor.go` — "file" event handler calls `fileGate.Intercept()` when set; replaces `download_url` with gated artifact URL `/api/v1/runs/{run_id}/artifacts/{artifact_id}`
+- `go/internal/runrecorder/recorder.go` — `GetArtifactScanStatus()` lightweight query (no BYTEA)
+- `go/internal/artifacts/handler.go` — Download gate: 202 when pending/scanning, 451 when infected, 200 when clean/disabled
+- `go/cmd/them/main.go` — `fileGateAdapter` bridges `middleware.FileGate` to `a2a.FileInterceptor`; wired into A2A server via `WithFileGate`
+- Tests: S1-30 +4, S1-84 (3), S1-85 (4)
+
+### DB migration required (NOT yet applied)
+```bash
+docker cp db/050_middleware_pipeline.sql them-postgres:/tmp/050.sql
+docker exec them-postgres psql -U them -d them -f /tmp/050.sql
+```
+
+### Containers to rebuild
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-go-bridge
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge
+# Security profile (ClamAV + middleware worker):
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile security up -d
+```
+
+### What's NOT done yet (Phase 4+)
+- Phase 4: UI — Canvas Builder security panel, Monitor `artifact_scan` event row, Runtime View security tab
+- Phase 5: Additional processors: `pii_redact`, `prompt_inject`, `schema_validate`, `audit_capture`
+- WS `scan:<artifact_id>` subscription channel in dashboard WS handler
+- Phase 6: Playground scan spinner (low priority)
+
+### Key design decisions
+- File bytes stay in existing `run_artifacts.data` (no redundant `file_bytes` column)
+- `scan_status` added to `run_artifacts` (not `artifacts` A2A task-parts table)
+- Gateway intercept is fail-open: any fetch/store error → disabled path, original URL used
+- ClamAV socket unavailable → `outcome:"error"`, no block
+- Security scanning is per-application, enabled via `applications.security_config` JSONB
+- Download gate uses 451 Unavailable For Legal Reasons for infected files
+- Redis cache invalidation: `them:security_config:invalidated:{app_id}` pub/sub on PUT
 
 ---
 

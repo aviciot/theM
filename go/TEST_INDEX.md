@@ -2138,6 +2138,10 @@ Route: GET /api/v1/runs/{run_id}/artifacts/{artifact_id}
 | `TestArtifactDownload_SafeContentDisposition` | Content-Disposition header starts with "attachment" |
 | `TestArtifactDownload_CorrectHeaders` | Content-Type and Content-Length set correctly from artifact metadata |
 | `TestArtifactDownload_ResponseBodyEqualsArtifactData` | Response body exactly equals stored artifact bytes |
+| `TestArtifactDownload_ScanPending` | scan_status=pending → 202 Accepted (gate holds download until scan completes) |
+| `TestArtifactDownload_ScanScanning` | scan_status=scanning → 202 Accepted |
+| `TestArtifactDownload_ScanInfected` | scan_status=infected → 451 Unavailable For Legal Reasons |
+| `TestArtifactDownload_ScanClean` | scan_status=clean → 200 with file content served normally |
 
 **Trigger:** any change to `internal/artifacts/handler.go`
 
@@ -2638,7 +2642,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-12 | ws | 24 |
 | S1-13 | sse | 23 |
 | S1-14 | a2a | 30 |
-| S1-15 | admin | 55 |
+| S1-15 | admin | 59 |
 | S1-16 | ratelimit | 3 |
 | S1-17 | gate | 16 |
 | S1-18 | epconfig | 26 |
@@ -2653,7 +2657,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-27 | metrics | 12 |
 | S1-28 | orchestrator | 12 |
 | S1-29 | temporal (worker + serialization + R-4d) | 10 |
-| S1-30 | artifacts (download handler) | 9 |
+| S1-30 | artifacts (download handler) | 13 |
 | S1-31 | auth/tenant_middleware (R-4b) | 15 |
 | S1-32 | tenantctx (R-4b) | 8 |
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
@@ -2697,7 +2701,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-81 | Canvas HITL signal admin endpoint (CSIG-1..4): Success, NotFound, CrossTenant, WrongToken | 4 |
 | S1-82 | A2A Call node Phase 5-C + 5-C gaps (A2A-1..18): NodeRegistered, Validate missing/valid, Execute no-caller/calls-caller/error/depth/self-call/depth-cap+HTTPA2ACaller cap, HumanWait local/temporal, HTTPA2ACaller integration (all 4 headers), DeriveOutputs default, fail-closed no-binding, stable request IDs, remote error sanitization, E2E LocalExecutor (headers+tenant isolation), E2E ExecuteNodeForActivity (depth propagation) | 18 |
 | S1-83 | StreamOut node Phase 5-D (SO-1..10): ReadsFromVar, DefaultMediaType, ExplicitMediaType, MissingVar, DefaultFromVar, Validate_MissingFromVar, Validate_Valid, DeriveInputs, DeriveInputs_DefaultVar, FullPipeline (LLM→stream_out) | 10 |
-| **S1 total** | | **921** |
+| S1-84 | middleware/gate FileGate (Phase 3 intercept): Disabled (no fetch when config disabled), FetchFailsOpen (bad URL → disabled path), InvalidateCache (no panic) | 3 |
+| S1-85 | admin security_config handler (Phase 3): Get returns default, Put valid config 200, Put invalid JSON 400, Put av_scan.max_file_mb=0 → 422 | 4 |
+| **S1 total** | | **938** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

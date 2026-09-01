@@ -43,6 +43,34 @@ import (
 // Authenticator validates bearer tokens. Implemented by auth.Cache.
 type Authenticator = transport.Authenticator
 
+// FileInterceptor intercepts file artifacts from the A2A run-stream before they
+// are delivered to users. When non-nil, the A2A executor calls Intercept for
+// every "file" event. If the application has security scanning enabled, the
+// file is stored and queued; the executor yields a gated download URL.
+type FileInterceptor interface {
+	Intercept(ctx context.Context, in FileInterceptInput) (FileInterceptResult, error)
+}
+
+// FileInterceptInput is the input to FileInterceptor.Intercept.
+type FileInterceptInput struct {
+	DownloadURL   string
+	FileName      string
+	ContentType   string
+	ApplicationID string
+	RunID         string
+	SessionID     string
+	TenantID      string
+}
+
+// FileInterceptResult is the result of FileInterceptor.Intercept.
+type FileInterceptResult struct {
+	// ArtifactID is non-empty when the file was intercepted and stored.
+	// Empty means scanning is disabled for this app; use original DownloadURL.
+	ArtifactID string
+	// ScanStatus is 'pending', 'disabled', or 'error'.
+	ScanStatus string
+}
+
 // Server is the A2A JSON-RPC 2.0 server backed by the official a2a-go/v2 SDK.
 type Server struct {
 	lc            *execution.Lifecycle
@@ -55,6 +83,7 @@ type Server struct {
 	publicURL     string                      // externally-reachable base URL
 	cardLoader    CardLoader                  // optional; nil → minimal fallback card
 	taskStore     *agentgen.RedisA2ATaskStore // optional; nil → SDK in-memory store
+	fileGate      FileInterceptor             // optional; nil → no artifact scanning
 }
 
 // NewServer creates a Server backed by the shared execution Lifecycle.
@@ -106,6 +135,14 @@ func (s *Server) WithTaskStore(ts *agentgen.RedisA2ATaskStore) *Server {
 // in the dashboard Monitor view.
 func (s *Server) WithSessionPublisher(pub *dashboard.SessionPublisher) *Server {
 	s.sessionPub = pub
+	return s
+}
+
+// WithFileGate attaches a FileInterceptor that intercepts file artifacts before
+// delivery to users. When set, file events with security scanning enabled are
+// stored and enqueued for scanning; users receive a gated download URL.
+func (s *Server) WithFileGate(gate FileInterceptor) *Server {
+	s.fileGate = gate
 	return s
 }
 
