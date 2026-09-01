@@ -39,7 +39,7 @@ export function getBridgeWs(): string {
 
 // ── Shared types ──────────────────────────────────────────────────────────
 
-export type FileMsg = { filename: string; media_type: string; text: string };
+export type FileMsg = { filename: string; media_type: string; text: string; download_url?: string };
 export type ChatMsg = { role: 'user' | 'assistant'; text: string; pending?: boolean; file?: FileMsg };
 
 export type AgentActivity = {

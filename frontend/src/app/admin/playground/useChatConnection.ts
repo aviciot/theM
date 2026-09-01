@@ -278,7 +278,12 @@ export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConne
           setStatus(`${slug} done`);
 
         } else if (msg.type === 'file') {
-          const fm: FileMsg = { filename: msg.filename as string, media_type: msg.media_type as string, text: msg.text as string ?? '' };
+          const rawUrl = msg.download_url as string | undefined;
+          // Rewrite /api/v1/... to go through the Next.js proxy at /api/them/...
+          const download_url = rawUrl?.startsWith('/api/v1/')
+            ? '/api/them/' + rawUrl.slice('/api/v1/'.length)
+            : rawUrl;
+          const fm: FileMsg = { filename: msg.filename as string, media_type: msg.media_type as string, text: msg.text as string ?? '', download_url };
           setMessages(prev => {
             const copy = [...prev];
             const last = copy[copy.length - 1];

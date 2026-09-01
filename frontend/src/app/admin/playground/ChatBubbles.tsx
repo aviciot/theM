@@ -63,7 +63,26 @@ export function MsgBubble({ msg, color }: { msg: ChatMsg; color: string }) {
       onMouseLeave={() => setHovered(false)}
     >
       <div style={{ padding: '9px 13px', borderRadius: isUser ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background: isUser ? color : 'var(--tm-surface)', color: isUser ? '#fff' : 'var(--tm-text)', fontSize: 13, lineHeight: 1.5, wordBreak: 'break-word' }}>
-        {msg.pending && !msg.text ? <span style={{ opacity: 0.5 }}>thinking…</span> : isUser ? <span dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</span> : <div dir="auto"><MarkdownText text={msg.text} /></div>}
+        {msg.file ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.7 }}>
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+            </svg>
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{msg.file.filename}</span>
+            {msg.file.download_url && (
+              <a
+                href={msg.file.download_url}
+                download={msg.file.filename}
+                style={{ color: 'inherit', opacity: 0.7, flexShrink: 0 }}
+                title="Download"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+              </a>
+            )}
+          </div>
+        ) : msg.pending && !msg.text ? <span style={{ opacity: 0.5 }}>thinking…</span> : isUser ? <span dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</span> : <div dir="auto"><MarkdownText text={msg.text} /></div>}
       </div>
       <div style={{ height: 24, display: 'flex', alignItems: 'center', paddingTop: 2, opacity: showActions ? 1 : 0, transition: 'opacity 0.12s', pointerEvents: showActions ? 'auto' : 'none' }}>
         <button
