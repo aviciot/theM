@@ -276,9 +276,22 @@ export const themApi = {
         const line = part.trim();
         if (!line.startsWith('data:')) continue;
         try {
-          const frame = JSON.parse(line.slice(5).trim()) as { result?: { event?: Record<string, unknown> } };
-          const event = frame?.result?.event;
-          if (event) yield event;
+          const frame = JSON.parse(line.slice(5).trim()) as {
+            result?: {
+              task?: { id?: string; contextId?: string };
+              artifactUpdate?: { artifact?: { parts?: Array<{ text?: string }> }; taskId?: string; contextId?: string };
+              statusUpdate?: { status?: { state?: string }; taskId?: string; contextId?: string };
+            };
+          };
+          const r = frame?.result;
+          if (!r) continue;
+          if (r.task) {
+            yield { kind: 'run-started', taskId: r.task.id, contextId: r.task.contextId };
+          } else if (r.artifactUpdate) {
+            yield { kind: 'message-delta', parts: r.artifactUpdate.artifact?.parts ?? [], taskId: r.artifactUpdate.taskId, contextId: r.artifactUpdate.contextId };
+          } else if (r.statusUpdate) {
+            yield { kind: 'task-status-update', status: r.statusUpdate.status, taskId: r.statusUpdate.taskId, contextId: r.statusUpdate.contextId };
+          }
         } catch { /* skip malformed */ }
       }
     }
