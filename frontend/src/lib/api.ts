@@ -245,7 +245,7 @@ export const themApi = {
     const body = JSON.stringify({
       jsonrpc: '2.0',
       id: `pg-${Date.now()}`,
-      method: 'message/stream',
+      method: 'SendStreamingMessage',
       params: {
         message: { role: 'user', parts: [{ text }] },
       },
