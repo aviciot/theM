@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-(pending commit — Phase 3 middleware pipeline gateway intercept + scan gate)
+a42fb99  feat(security): quarantine-first file storage via MinIO
+039b76c  feat(infra): add MinIO object storage to dev stack (security profile)
 bab4509  refactor(frontend): split StepConfigSection.tsx (634 lines) into 3 focused modules
 3289813  refactor(agentgen): split compiler.go (1056 lines) into 3 focused modules
 1b74c6c  docs(split): add precise compiler.go split instructions for next session
-66527e4  docs(current): record agent-runtime split + handover for compiler.go split
 ```
 
 ---
@@ -128,7 +128,7 @@ Explicit routers at priority 110–150 still win over the catch-all.
 
 ## DB schema state (live)
 
-All migrations applied through `db/048_application_slug.sql`:
+All migrations applied through `db/051_quarantine.sql`:
 
 | Migration | Status |
 |---|---|
@@ -145,20 +145,26 @@ All migrations applied through `db/048_application_slug.sql`:
 | `db/038_app_agent_params.sql` | ✅ applied — `app_agent_bindings.agent_params` JSONB column |
 | `db/045_app_global_params.sql` | ✅ applied — `applications.app_params` JSONB column |
 | `db/048_application_slug.sql` | ✅ applied — `applications.slug` column, `UNIQUE(tenant_id,slug)`, EP uniqueness relaxed to `UNIQUE(application_id,slug)` |
+| `db/049_ep_agent_card.sql` | ✅ applied |
+| `db/050_middleware_pipeline.sql` | ✅ applied — `run_artifacts` scan columns, `middleware_jobs`, `middleware_audit`, `applications.security_config` |
+| `db/051_quarantine.sql` | ✅ applied — `quarantine_artifacts` table, `run_artifacts.data` nullable + `storage_key` column, `middleware_jobs.quarantine_id` |
 
 ---
 
 ## Test state
 
 ```
-go test ./...  — 49 packages, 0 failures (verified 2026-09-01, Phase 3 middleware pipeline)
-S1-30: 13 artifact download handler tests (+4 scan gate: ScanPending/ScanScanning/ScanInfected/ScanClean)
-S1-84: 3 middleware/gate FileGate tests (Disabled, FetchFailsOpen, InvalidateCache)
-S1-85: 4 admin security_config handler tests (Get returns default, Put valid/invalid/max_file_mb=0)
-S1-14: 30 A2A server tests — 3 new compliance tests A2A-WF01 (SendMessage result shape), A2A-WF02 (token streaming), A2A-WF03 (artifact-update wire format)
+go test ./...  — 53 packages, 0 failures (verified 2026-09-01, quarantine-first MinIO flow)
+S1-84: 6 gate tests (quarantine-first: Disabled, FetchFailsOpen, InvalidateCache, InterceptInline_Enabled, InterceptInline_Disabled, StoreFail_FailsOpen)
+S1-85: 4 admin security_config handler tests
+S1-87: 25 middleware pipeline + AV scanner tests
+S1-88: 5 job DAL quarantine-path tests (EnqueueWithQuarantine, LoadFileBytes, Clean/Infected/Legacy)
+S1-89: 3 storage client tests (Invalid/Valid/HTTPS endpoint)
+S1-30: 13 artifact download handler tests (+4 scan gate)
+S1-14: 30 A2A server tests
 S1-72..S1-83: all prior DAG/canvas/A2A tests passing
 S2-06: 3 integration-tagged Temporal E2E tests
-Total go test ./...: 940
+Total go test ./...: 939
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -479,21 +485,31 @@ Pluggable per-application artifact security middleware that intercepts file arti
 - `go/cmd/them/main.go` — `fileGateAdapter` bridges `middleware.FileGate` to `a2a.FileInterceptor`; wired into A2A server via `WithFileGate`
 - Tests: S1-30 +4, S1-84 (3), S1-85 (4)
 
-### DB migration required (NOT yet applied)
-```bash
-docker cp db/050_middleware_pipeline.sql them-postgres:/tmp/050.sql
-docker exec them-postgres psql -U them -d them -f /tmp/050.sql
+**Phase 4 — Quarantine-first MinIO storage (this session)**
+- `go/internal/storage/storage.go` — `*Client` wrapping minio-go: PutQuarantine, GetQuarantine, DeleteQuarantine, PutArtifact, PresignArtifact
+- `go/go.mod` — added `minio/minio-go/v7 v7.3.0`
+- `go/internal/config/config.go` — S3Endpoint/AccessKey/SecretKey/QuarantineBucket/ArtifactsBucket fields
+- `go/internal/middleware/gate.go` — rewrite: writes bytes to MinIO quarantine, inserts `quarantine_artifacts` row (no BYTEA in Postgres), enqueues job with quarantine_id
+- `go/internal/middleware/job.go` — EnqueueWithQuarantine; LoadFileBytes reads from MinIO; Complete promotes clean bytes to artifacts bucket / inserts infected row with data=NULL
+- `go/cmd/them,worker,middleware-worker/main.go` — build storage.Client from S3 config; pass to NewFileGate / dal.Complete
+- `db/051_quarantine.sql` — `quarantine_artifacts` table; `run_artifacts.data` nullable + `storage_key` column; `middleware_jobs.quarantine_id`
+- Tests: S1-84 (6), S1-88 (5 new job DAL), S1-89 (3 new storage)
+
+### Migrations applied
+```
+db/050_middleware_pipeline.sql  ✅ applied
+db/051_quarantine.sql           ✅ applied
 ```
 
-### Containers to rebuild
+### Containers to rebuild to pick up quarantine-first changes
 ```bash
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-go-bridge
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-go-bridge
-# Security profile (ClamAV + middleware worker):
+# Security profile (ClamAV + middleware worker + MinIO):
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile security up -d
 ```
 
-**Phase 4 — UI + WS scan subscription (this session)**
+**Phase 5 — UI + WS scan subscription (prior session)**
 - `go/internal/dashboard/handler.go` — `scan:<artifact_id>` added to `IsValidChannel`; `sendScanSnapshot` delivers current scan status from `them:scan:state:{artifactID}` Redis key; `sendSnapshots` dispatches to scan channel
 - `go/internal/dashboard/handler_test.go` — `TestDashboard_ScanSnapshot` + `TestIsValidChannel` updated (2 new tests; S1-52: 11→13)
 - `frontend/src/lib/apiTypes.ts` — `SecurityConfig`, `AVScanConfig`, `ArtifactScanEvent` types added
@@ -501,17 +517,22 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 - `frontend/src/app/admin/applications/components/MonitorView.tsx` — `artifact_scan` event row with scan status badge (pending/scanning/clean/infected/error/disabled icons)
 - `frontend/src/app/admin/applications/components/RuntimeView.tsx` — Security section: enable/disable file artifact scanning toggle + Save Security button
 
-### What's NOT done yet (Phase 5+)
-- Phase 5: Additional processors: `pii_redact`, `prompt_inject`, `schema_validate`, `audit_capture`
-- Phase 6: Playground scan spinner (low priority)
+### What's NOT done yet (Session B)
+- `internal/orchestrator/orchestrator.go`: hold file bubble until scan result; emit `file_scanning` event; handle `artifact_ready`/`artifact_blocked` from Redis
+- Frontend: scanning spinner on file bubble in chat; "file blocked" state for infected
+- `internal/artifacts/handler.go`: update `GetArtifact` to serve from MinIO (storage_key) instead of Postgres BYTEA; `data IS NULL && storage_key IS NULL` → 410 Gone (infected scrubbed)
+- Reaper job for stuck quarantine objects (rows with `storage_key IS NOT NULL AND expires_at < now()`)
+- Additional processors: `pii_redact`, `prompt_inject`, `schema_validate`, `audit_capture`
 
 ### Key design decisions
-- File bytes stay in existing `run_artifacts.data` (no redundant `file_bytes` column)
-- `scan_status` added to `run_artifacts` (not `artifacts` A2A task-parts table)
-- Gateway intercept is fail-open: any fetch/store error → disabled path, original URL used
-- ClamAV socket unavailable → `outcome:"error"`, no block
-- Security scanning is per-application, enabled via `applications.security_config` JSONB
-- Download gate uses 451 Unavailable For Legal Reasons for infected files
+- **Quarantine-first**: file bytes go to MinIO quarantine bucket BEFORE any Postgres row; infected bytes never touch `run_artifacts.data`
+- `run_artifacts.data` is now nullable — infected rows have `data=NULL, storage_key=NULL`
+- `run_artifacts.storage_key` holds MinIO artifacts key for clean files (replaces BYTEA streaming)
+- Two MinIO buckets: `them-quarantine` (bytes pre-scan, TTL 1hr) and `them-artifacts` (confirmed clean)
+- Gateway fail-open: MinIO write error → disabled path, original URL used
+- ClamAV via TCP `them-clamd:3310` (Unix socket cross-namespace doesn't work in Docker)
+- Security scanning per-application via `applications.security_config` JSONB
+- Download gate: 451 for infected, 202 for pending/scanning
 - Redis cache invalidation: `them:security_config:invalidated:{app_id}` pub/sub on PUT
 
 ---
