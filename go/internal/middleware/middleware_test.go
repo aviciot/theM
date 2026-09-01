@@ -278,6 +278,36 @@ func TestPipeline_ProgressPublisherCalled(t *testing.T) {
 	}
 }
 
+// TestPipeline_ProcessorError_ReturnsError verifies that when a processor returns
+// outcome="error" with Block=false (fail-open), the pipeline FinalStatus is "error"
+// rather than "clean". This prevents scanner failures from silently marking files clean.
+func TestPipeline_ProcessorError_ReturnsError(t *testing.T) {
+	errorProc := &errorProcessor{name: "av_scan"}
+	reg := newReg(errorProc)
+	p := middleware.NewPipeline(reg)
+	avRaw, _ := json.Marshal(middleware.AVScanConfig{Enabled: true, MaxFileMB: 5, BlockOnInfected: true})
+	cfg := middleware.SecurityConfig{
+		Enabled:    true,
+		Processors: map[string]json.RawMessage{"av_scan": avRaw},
+	}
+	res := p.Run(context.Background(), middleware.Part{Kind: "file", Bytes: []byte("data")}, []string{"av_scan"}, cfg, nil)
+	if res.FinalStatus != "error" {
+		t.Fatalf("expected error when processor fails, got %s", res.FinalStatus)
+	}
+}
+
+// errorProcessor simulates a scanner that fails open (outcome="error", Block=false).
+type errorProcessor struct{ name string }
+
+func (p *errorProcessor) Name() string { return p.name }
+func (p *errorProcessor) Process(_ context.Context, _ middleware.Part, _ json.RawMessage) (middleware.Result, error) {
+	return middleware.Result{
+		Outcome: "error",
+		Block:   false,
+		Detail:  map[string]any{"reason": "scanner unavailable"},
+	}, nil
+}
+
 type capturePublisher struct {
 	fn func(processor, status string)
 }

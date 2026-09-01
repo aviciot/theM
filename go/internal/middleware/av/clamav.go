@@ -1,4 +1,6 @@
-// Package av provides a ClamAV client that scans bytes via the clamd Unix socket.
+// Package av provides a ClamAV client that scans bytes via clamd.
+// Supports both Unix socket ("unix:/path/to/clamd.sock" or a bare path) and
+// TCP ("tcp:host:port" or "host:port") addresses.
 // It implements middleware.Processor under the name "av_scan".
 package av
 
@@ -16,15 +18,20 @@ import (
 
 const Name = "av_scan"
 
-// Scanner implements middleware.Processor using ClamAV clamd over a Unix socket.
+// Scanner implements middleware.Processor using ClamAV clamd.
 type Scanner struct {
-	socketPath string
+	// addr is a dial address: "unix:/path", bare "/path", or "tcp:host:port" / "host:port".
+	addr string
 }
 
-// New creates a Scanner that dials the given Unix socket path.
-// socketPath is typically /var/run/clamav/clamd.sock.
-func New(socketPath string) *Scanner {
-	return &Scanner{socketPath: socketPath}
+// New creates a Scanner for the given clamd address.
+// addr may be:
+//   - "/var/run/clamav/clamd.sock"   — bare Unix socket path
+//   - "unix:/var/run/clamav/clamd.sock" — explicit Unix socket
+//   - "them-clamd:3310"              — TCP host:port
+//   - "tcp:them-clamd:3310"          — explicit TCP
+func New(addr string) *Scanner {
+	return &Scanner{addr: addr}
 }
 
 func (s *Scanner) Name() string { return Name }
@@ -82,6 +89,22 @@ func (s *Scanner) Process(ctx context.Context, part middleware.Part, cfgRaw json
 	return middleware.Result{Outcome: "clean"}, nil
 }
 
+// dialAddr returns (network, address) for net.DialTimeout from s.addr.
+func (s *Scanner) dialAddr() (string, string) {
+	switch {
+	case strings.HasPrefix(s.addr, "unix:"):
+		return "unix", strings.TrimPrefix(s.addr, "unix:")
+	case strings.HasPrefix(s.addr, "tcp:"):
+		return "tcp", strings.TrimPrefix(s.addr, "tcp:")
+	case strings.HasPrefix(s.addr, "/"):
+		// Bare Unix socket path
+		return "unix", s.addr
+	default:
+		// host:port TCP
+		return "tcp", s.addr
+	}
+}
+
 // scan sends bytes to clamd via the INSTREAM command and returns the threat name
 // (empty string = clean). Returns an error only on socket/protocol failure.
 func (s *Scanner) scan(ctx context.Context, data []byte) (string, error) {
@@ -92,7 +115,8 @@ func (s *Scanner) scan(ctx context.Context, data []byte) (string, error) {
 		}
 	}
 
-	conn, err := net.DialTimeout("unix", s.socketPath, 5*time.Second)
+	network, address := s.dialAddr()
+	conn, err := net.DialTimeout(network, address, 5*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("clamd dial: %w", err)
 	}
@@ -138,7 +162,7 @@ func (s *Scanner) scan(ctx context.Context, data []byte) (string, error) {
 		return "", fmt.Errorf("clamd read response: %w", err)
 	}
 
-	return parseClamdResponse(strings.TrimSpace(string(resp)))
+	return parseClamdResponse(strings.Trim(string(resp), " \t\r\n\x00"))
 }
 
 // parseClamdResponse parses a clamd INSTREAM response.

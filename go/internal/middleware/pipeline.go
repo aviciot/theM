@@ -44,6 +44,7 @@ func (p *Pipeline) Run(
 	start := time.Now()
 	var results []Result
 	current := part
+	hadError := false
 
 	for _, name := range names {
 		proc := p.reg.Get(name)
@@ -66,6 +67,9 @@ func (p *Pipeline) Run(
 		if err != nil {
 			r.Outcome = "error"
 			r.Block = false // don't block on processor failure — warn only
+		}
+		if r.Outcome == "error" {
+			hadError = true
 		}
 
 		results = append(results, r)
@@ -93,8 +97,12 @@ func (p *Pipeline) Run(
 		}
 	}
 
+	finalStatus := "clean"
+	if hadError {
+		finalStatus = "error"
+	}
 	return PipelineResult{
-		FinalStatus: "clean",
+		FinalStatus: finalStatus,
 		Results:     results,
 		TotalMS:     time.Since(start).Milliseconds(),
 	}

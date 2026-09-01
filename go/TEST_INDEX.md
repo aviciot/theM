@@ -2233,6 +2233,45 @@ real Anthropic calls.
 
 ---
 
+### S1-87 · Middleware pipeline + AV scanner — `internal/middleware/middleware_test.go`, `internal/middleware/av/clamav_test.go`
+
+**Purpose:** Unit tests for the file-scan middleware pipeline and ClamAV scanner.
+Pipeline tests verify processor ordering, error propagation, and fail-open behaviour.
+AV scanner tests use a mock clamd listener to verify the INSTREAM protocol, threat detection,
+oversized-file blocking, and TCP null-byte response parsing. Live scan covered by `TestAVScanner_LiveClamd` (CLAMAV_SOCKET env).
+
+| Test | What it proves |
+|---|---|
+| `TestRegistry_GetReturnsNilForUnknown` | Unregistered processor → nil |
+| `TestRegistry_PanicOnDuplicate` | Registering same processor name twice → panic |
+| `TestDefaultSecurityConfig_DisabledByDefault` | Default config has Enabled=false (zero overhead) |
+| `TestDefaultSecurityConfig_HasAllProcessors` | Default config has all 5 processor keys |
+| `TestMergeDefaults_FillsMissingKeys` | MergeDefaults fills missing processor configs from defaults |
+| `TestValidate_DisabledIsAlwaysValid` | Disabled config passes validation |
+| `TestValidate_RejectsInvalidMaxFileMB` | max_file_mb=0 → validation error |
+| `TestValidate_RejectsInvalidSensitivity` | sensitivity="extreme" → validation error |
+| `TestEnabledProcessors_EmptyWhenDisabled` | Disabled config → no processors returned |
+| `TestEnabledProcessors_FiltersByPartKind` | file part → av_scan only; text part → pii_redact only |
+| `TestPipeline_NamesEmpty_ReturnsDisabled` | Empty processor list → FinalStatus="disabled" |
+| `TestPipeline_AllClean_ReturnsClean` | All processors return clean → FinalStatus="clean" |
+| `TestPipeline_BlockStopsFurtherProcessors` | Block=true stops chain; threat propagated |
+| `TestPipeline_ModifiedPartPassedToNext` | Modified part passed to next processor; flagged+non-blocking → clean |
+| `TestPipeline_ProgressPublisherCalled` | Publisher called with "running" then result |
+| `TestPipeline_ProcessorError_ReturnsError` | Processor error + Block=false → FinalStatus="error" (not "clean") |
+| `TestAVScanner_CleanFile` | Mock clamd "OK" → outcome="clean", Block=false |
+| `TestAVScanner_InfectedFile_BlockEnabled` | Mock clamd "FOUND" + block_on_infected=true → infected + Block=true |
+| `TestAVScanner_InfectedFile_WarnOnly` | Mock clamd "FOUND" + block_on_infected=false → infected, Block=false |
+| `TestAVScanner_OversizedFile_Blocks` | File > max_file_mb → error outcome + Block=true |
+| `TestAVScanner_NonFilePart_Skips` | text part → outcome="skipped", no dial |
+| `TestAVScanner_Disabled_Skips` | enabled=false → outcome="skipped", no dial |
+| `TestAVScanner_SocketUnavailable_FailsOpen` | Nonexistent socket → error outcome, Block=false (fail-open) |
+| `TestAVScanner_EmptyBytes_ReturnsClean` | Zero-byte file → "clean" immediately without scanning |
+| `TestAVScanner_Name` | Scanner.Name() == "av_scan" |
+
+**Trigger:** any change to `internal/middleware/pipeline.go`, `internal/middleware/config.go`, `internal/middleware/processor.go`, or `internal/middleware/av/clamav.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -2706,7 +2745,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-84 | middleware/gate FileGate (Phase 3 intercept + inline): Disabled (no fetch when config disabled), FetchFailsOpen (bad URL → disabled path), InvalidateCache (no panic), InterceptInline_Enabled (bytes stored + job enqueued), InterceptInline_Disabled (returns disabled) | 5 |
 | S1-85 | admin security_config handler (Phase 3): Get returns default, Put valid config 200, Put invalid JSON 400, Put av_scan.max_file_mb=0 → 422 | 4 |
 | S1-86 | admin services stats handler: GetStats_OK (200 + security key in envelope), WindowParam (24h/7d/30d/"" all accepted) | 2 |
-| **S1 total** | | **944** |
+| S1-87 | middleware pipeline (Registry, Config, Pipeline: 16 tests) + av/clamav scanner (9 tests): TCP+Unix dial, INSTREAM protocol, null-byte response, fail-open, TestPipeline_ProcessorError_ReturnsError | 25 |
+| **S1 total** | | **969** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

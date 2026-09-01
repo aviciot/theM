@@ -158,7 +158,6 @@ services:
     profiles: [security]
     restart: unless-stopped
     volumes:
-      - clamav-socket:/var/run/clamav
       - clamav-db:/var/lib/clamav
     networks:
       - them-network
@@ -196,12 +195,11 @@ services:
       - JWT_SECRET=${THE_M_JWT_SECRET:-}
       - LOG_FORMAT=json
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - CLAMAV_SOCKET=/var/run/clamav/clamd.sock
+      # Use TCP to reach clamd — Unix socket cross-namespace doesn't work in Docker.
+      - CLAMAV_SOCKET=them-clamd:3310
       - MIDDLEWARE_WORKER_CONCURRENCY=${MIDDLEWARE_WORKER_CONCURRENCY:-8}
       - MIDDLEWARE_POLL_INTERVAL_MS=${MIDDLEWARE_POLL_INTERVAL_MS:-500}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-    volumes:
-      - clamav-socket:/var/run/clamav
     networks:
       - them-network
     depends_on:
