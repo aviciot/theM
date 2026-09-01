@@ -2053,8 +2053,10 @@ shutdown on client disconnect. Uses a fakeRedis adapter (no real Redis) so all t
 | `TestDashboard_AgentChannelRelayed` | `agent:<id>` channel → message relayed with correct logical channel name |
 | `TestDashboard_AgentSnapshot` | Agent channel + non-empty HGETALL → snapshot sent before live events |
 | `TestDashboard_PingReceived` | Ping frame format is `{"type":"ping"}` |
-| `TestIsValidChannel` | Channel whitelist: static names + `run:`, `agent:`, `sessions:` prefixes; rejects empty/malformed |
+| `TestIsValidChannel` | Channel whitelist: static names + `run:`, `agent:`, `sessions:`, `scan:` prefixes; rejects empty/malformed |
 | `TestDashboard_CleanShutdownOnDisconnect` | Client closes → server goroutines exit without panic |
+| `TestDashboard_ScanSnapshot` | `scan:<artifact_id>` channel + pre-populated Redis state key → snapshot delivered with `artifact_scan` event |
+| `TestDashboard_AppsSnapshot` | `apps` channel + pre-populated Redis cache → app_status snapshot delivered |
 
 **Trigger:** any change to `internal/dashboard/handler.go`
 
@@ -2676,7 +2678,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-49 | agent definitions (Phase 2 Canvas A2A Builder CRUD) | 21 |
 | S1-50 | agent definition compiler (BuildValidator: Issue type, Validate/CompileForPublish, severity split) | 20 |
 | S1-51 | agent definition publish service | 11 |
-| S1-52 | dashboard WebSocket handler | 11 |
+| S1-52 | dashboard WebSocket handler | 13 |
 | S1-53 | agent-runtime spec cache + skill routing + policy enforcement | 12 |
 | S1-54 | node definition registry (all 12 types, metadata, Validate, ToInfo) | 18 |
 | S1-60 | admin/service provider key encryption | 9 |
@@ -2703,7 +2705,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-83 | StreamOut node Phase 5-D (SO-1..10): ReadsFromVar, DefaultMediaType, ExplicitMediaType, MissingVar, DefaultFromVar, Validate_MissingFromVar, Validate_Valid, DeriveInputs, DeriveInputs_DefaultVar, FullPipeline (LLM→stream_out) | 10 |
 | S1-84 | middleware/gate FileGate (Phase 3 intercept): Disabled (no fetch when config disabled), FetchFailsOpen (bad URL → disabled path), InvalidateCache (no panic) | 3 |
 | S1-85 | admin security_config handler (Phase 3): Get returns default, Put valid config 200, Put invalid JSON 400, Put av_scan.max_file_mb=0 → 422 | 4 |
-| **S1 total** | | **938** |
+| **S1 total** | | **940** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

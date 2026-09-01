@@ -281,9 +281,10 @@ func TestIsValidChannel(t *testing.T) {
 		"run:00000000-0000-0000-0000-000000000001",
 		"agent:00000000-0000-0000-0000-000000000001",
 		"sessions:my-app",
+		"scan:00000000-0000-0000-0000-000000000002",
 	}
 	invalid := []string{
-		"", "run:", "agent:", "sessions:",
+		"", "run:", "agent:", "sessions:", "scan:",
 		"../evil", "__runs__", "RUNS",
 		"them:dash:runs", // must not accept raw Redis key
 	}
@@ -307,6 +308,28 @@ func TestDashboard_CleanShutdownOnDisconnect(t *testing.T) {
 	// Close the client — server goroutines must exit without panic.
 	conn.Close()
 	time.Sleep(50 * time.Millisecond) // give goroutines a moment to exit
+}
+
+func TestDashboard_ScanSnapshot(t *testing.T) {
+	rc := newFakeRedis()
+	artifactID := "aaaaaaaa-0000-0000-0000-000000000001"
+	// Pre-populate the scan state key so the snapshot is sent immediately.
+	rc.setString("them:scan:state:"+artifactID, "clean")
+
+	srv, secret := newTestServer(t, rc)
+	token := makeHS256JWT(secret, "1")
+	conn := dialWS(t, srv, token)
+	subscribe(t, conn, []string{"scan:" + artifactID})
+
+	readJSON(t, conn) // drain ack
+
+	msg := readJSON(t, conn)
+	assert.Equal(t, "scan:"+artifactID, msg["channel"])
+	event, ok := msg["event"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "artifact_scan", event["type"])
+	assert.Equal(t, artifactID, event["artifact_id"])
+	assert.Equal(t, "clean", event["scan_status"])
 }
 
 func TestDashboard_AppsSnapshot(t *testing.T) {

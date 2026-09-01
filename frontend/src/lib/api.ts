@@ -69,6 +69,8 @@ export type {
   MCPServerCreate,
   MCPCredentialMeta,
   AppGlobalParam,
+  SecurityConfig,
+  ArtifactScanEvent,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -115,6 +117,7 @@ import type {
   MCPServerAttachment,
   AppGlobalParam,
   EntryPoint,
+  SecurityConfig,
 } from './apiTypes';
 
 export const themApi = {
@@ -364,6 +367,8 @@ export const themApi = {
   patchOrchestratorMCPServers: (appId: string, orchId: string, mcpServers: MCPServerAttachment[]) => api.patch<{ id: string; mcp_servers: MCPServerAttachment[] }>(`/admin/applications/${appId}/orchestrators/${orchId}/mcp-servers`, { mcp_servers: mcpServers }),
   getMonitoringConfig: () => api.get<MonitoringConfig>('/admin/monitoring-config'),
   putMonitoringConfig: (body: MonitoringConfig) => api.put<MonitoringConfig>('/admin/monitoring-config', body),
+  getSecurityConfig: (appId: string) => api.get<SecurityConfig>(`/admin/applications/${appId}/security-config`),
+  putSecurityConfig: (appId: string, cfg: SecurityConfig) => api.put<SecurityConfig>(`/admin/applications/${appId}/security-config`, cfg),
   // Live reachability check for a deployed application slug
   pingApp: async (slug: string): Promise<boolean> => {
     try {

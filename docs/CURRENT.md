@@ -158,7 +158,7 @@ S1-85: 4 admin security_config handler tests (Get returns default, Put valid/inv
 S1-14: 30 A2A server tests — 3 new compliance tests A2A-WF01 (SendMessage result shape), A2A-WF02 (token streaming), A2A-WF03 (artifact-update wire format)
 S1-72..S1-83: all prior DAG/canvas/A2A tests passing
 S2-06: 3 integration-tagged Temporal E2E tests
-Total go test ./...: 938
+Total go test ./...: 940
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -445,7 +445,7 @@ Goal: upgrade the Canvas execution engine from sequential-only to real DAG fan-o
 
 ---
 
-## Middleware Security Pipeline — Phase 3 complete (2026-09-01)
+## Middleware Security Pipeline — Phase 4 complete (2026-09-01)
 
 ### Overview
 Pluggable per-application artifact security middleware that intercepts file artifacts from A2A agents before delivery to users.
@@ -493,10 +493,16 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile security up -d
 ```
 
-### What's NOT done yet (Phase 4+)
-- Phase 4: UI — Canvas Builder security panel, Monitor `artifact_scan` event row, Runtime View security tab
+**Phase 4 — UI + WS scan subscription (this session)**
+- `go/internal/dashboard/handler.go` — `scan:<artifact_id>` added to `IsValidChannel`; `sendScanSnapshot` delivers current scan status from `them:scan:state:{artifactID}` Redis key; `sendSnapshots` dispatches to scan channel
+- `go/internal/dashboard/handler_test.go` — `TestDashboard_ScanSnapshot` + `TestIsValidChannel` updated (2 new tests; S1-52: 11→13)
+- `frontend/src/lib/apiTypes.ts` — `SecurityConfig`, `AVScanConfig`, `ArtifactScanEvent` types added
+- `frontend/src/lib/api.ts` — `getSecurityConfig(appId)`, `putSecurityConfig(appId, cfg)` added to `themApi`
+- `frontend/src/app/admin/applications/components/MonitorView.tsx` — `artifact_scan` event row with scan status badge (pending/scanning/clean/infected/error/disabled icons)
+- `frontend/src/app/admin/applications/components/RuntimeView.tsx` — Security section: enable/disable file artifact scanning toggle + Save Security button
+
+### What's NOT done yet (Phase 5+)
 - Phase 5: Additional processors: `pii_redact`, `prompt_inject`, `schema_validate`, `audit_capture`
-- WS `scan:<artifact_id>` subscription channel in dashboard WS handler
 - Phase 6: Playground scan spinner (low priority)
 
 ### Key design decisions

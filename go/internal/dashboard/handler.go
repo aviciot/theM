@@ -274,6 +274,9 @@ func (h *Handler) sendSnapshots(ctx context.Context, cw *connWriter, channels []
 		case strings.HasPrefix(ch, "run:"):
 			runID := ch[len("run:"):]
 			h.sendRunSnapshot(ctx, cw, ch, runID)
+		case strings.HasPrefix(ch, "scan:"):
+			artifactID := ch[len("scan:"):]
+			h.sendScanSnapshot(ctx, cw, ch, artifactID)
 		}
 	}
 }
@@ -352,6 +355,23 @@ func (h *Handler) sendRunSnapshot(ctx context.Context, cw *connWriter, ch, runID
 	}
 }
 
+// sendScanSnapshot delivers the current scan status for an artifact.
+// Source: GET them:scan:state:{artifactID} (string value = scan_status).
+// Clients subscribing after a scan completes receive the final status immediately.
+func (h *Handler) sendScanSnapshot(ctx context.Context, cw *connWriter, ch, artifactID string) {
+	val, err := h.redis.Get(ctx, scanStatePrefix+artifactID)
+	if err != nil || val == "" {
+		return
+	}
+	event := map[string]any{
+		"type":        "artifact_scan",
+		"artifact_id": artifactID,
+		"scan_status": val,
+	}
+	eventJSON, _ := json.Marshal(event)
+	_ = cw.writeJSON(map[string]any{"channel": ch, "event": json.RawMessage(eventJSON)})
+}
+
 // pingLoop sends a JSON ping every 30s until ctx is cancelled.
 func (h *Handler) pingLoop(ctx context.Context, cw *connWriter) {
 	ticker := time.NewTicker(pingInterval)
@@ -396,6 +416,9 @@ func IsValidChannel(ch string) bool {
 		return true
 	}
 	if strings.HasPrefix(ch, "sessions:") && len(ch) > 9 {
+		return true
+	}
+	if strings.HasPrefix(ch, "scan:") && len(ch) > 5 {
 		return true
 	}
 	return false

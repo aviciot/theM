@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus } from '@/lib/api';
+import { themApi, type Application, type AgentParamsResponse, type AppGlobalParam, type AgentLLMNodeStatus, type SecurityConfig } from '@/lib/api';
 import { C, PROVIDER_LIST, RUNTIME_MODELS } from '../constants';
 import { Section, sharedField, sharedLbl, badge, makeSaveBtn } from './RuntimeShared';
 import { EPSections } from './RuntimeEPSections';
@@ -75,6 +75,10 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
   const [addParamSaving,  setAddParamSaving]  = useState(false);
   const [addParamMsg,     setAddParamMsg]     = useState('');
 
+  const [secCfg,          setSecCfg]          = useState<SecurityConfig>({ enabled: false });
+  const [secSaving,       setSecSaving]       = useState(false);
+  const [secMsg,          setSecMsg]          = useState('');
+
   useEffect(() => { themApi.getProviderKeys(app.id).then(setKeyStatuses).catch(() => {}); }, [app.id]);
   useEffect(() => {
     themApi.getApplication(app.id).then(fresh => {
@@ -96,6 +100,7 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
     }).catch(() => {});
   }, [app.id]);
   useEffect(() => { themApi.getAppParams(app.id).then(p => setAppParams(p ?? [])).catch(() => {}); }, [app.id]);
+  useEffect(() => { themApi.getSecurityConfig(app.id).then(setSecCfg).catch(() => {}); }, [app.id]);
   useEffect(() => {
     themApi.listAgentBindings(app.id).then(bindings => {
       Promise.all(bindings.map(b => themApi.getAgentParams(app.id, b.agent_id).catch(() => null)))
@@ -186,6 +191,11 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
     try { await themApi.deleteAppParam(app.id, name); setAppParams(await themApi.getAppParams(app.id) ?? []); }
     catch (e: unknown) { setParamMsg(m => ({ ...m, [name]: e instanceof Error ? e.message : 'Failed' })); } finally { setParamSaving(null); }
   }
+  async function handleSaveSecurity() {
+    setSecSaving(true); setSecMsg('');
+    try { await themApi.putSecurityConfig(app.id, secCfg); setSecMsg('Saved'); setTimeout(() => setSecMsg(''), 2500); }
+    catch (e: unknown) { setSecMsg(e instanceof Error ? e.message : 'Failed'); } finally { setSecSaving(false); }
+  }
   async function handleSave() {
     setSaving(true); setError(null);
     try { const parsedUsers = usersInput.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n)); const parsedTokens = tokensInput.split(/\n/).map(s => s.trim()).filter(Boolean); const payload = { ...cfg, blocked_tokens: parsedTokens, blocked_user_ids: parsedUsers }; await themApi.putAppRuntime(app.id, payload); setCfg(payload); setSaved(true); setTimeout(() => setSaved(false), 2500); }
@@ -272,6 +282,31 @@ export function RuntimeView({ app, onBack }: { app: Application; onBack: () => v
           {saved && <span style={{ fontSize: 13, color: C.green }}>Saved</span>}
           {error && <span style={{ fontSize: 13, color: C.error }}>{error}</span>}
         </div>
+
+        <Section title="Security" icon="security" accent="#60a5fa" defaultOpen={false}
+          subtitle={secCfg.enabled ? 'File scanning enabled' : 'File scanning disabled'}>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: -4, marginBottom: 12 }}>
+            When enabled, agent-delivered file artifacts are intercepted, stored, and scanned before serving.
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: `1px solid ${secCfg.enabled ? 'rgba(96,165,250,0.25)' : 'rgba(255,255,255,0.07)'}` }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>File Artifact Scanning</div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>Intercept, store and scan files delivered by agents</div>
+            </div>
+            <button
+              onClick={() => setSecCfg(c => ({ ...c, enabled: !c.enabled }))}
+              style={{ width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer', background: secCfg.enabled ? '#3b82f6' : 'rgba(255,255,255,0.1)', position: 'relative', transition: 'background 0.2s', flexShrink: 0 }}
+            >
+              <span style={{ position: 'absolute', top: 3, left: secCfg.enabled ? 23 : 3, width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
+            </button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+            <button onClick={handleSaveSecurity} disabled={secSaving} style={{ padding: '8px 20px', borderRadius: 7, border: 'none', cursor: secSaving ? 'not-allowed' : 'pointer', background: '#3b82f6', color: '#fff', fontSize: 13, fontWeight: 600, opacity: secSaving ? 0.6 : 1 }}>
+              {secSaving ? 'Saving…' : 'Save Security'}
+            </button>
+            {secMsg && <span style={{ fontSize: 12, color: secMsg === 'Saved' ? C.green : C.error, fontWeight: 600 }}>{secMsg}</span>}
+          </div>
+        </Section>
 
         <Section title="Provider Keys" icon="key" accent="#fb923c" defaultOpen={false}
           subtitle={setProviders.length > 0 ? `${setProviders.length} of ${PROVIDER_LIST.length} configured` : 'No providers configured yet'}>

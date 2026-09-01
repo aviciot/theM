@@ -726,3 +726,22 @@ export interface AppGlobalParam {
   value_hint?: string;
   value?: string;
 }
+
+export interface AVScanConfig {
+  enabled: boolean;
+  max_file_mb: number;
+  block_on_error: boolean;
+}
+
+export interface SecurityConfig {
+  enabled: boolean;
+  processors?: Record<string, AVScanConfig | Record<string, unknown>>;
+}
+
+export interface ArtifactScanEvent {
+  type: 'artifact_scan';
+  artifact_id: string;
+  scan_status: 'pending' | 'scanning' | 'clean' | 'infected' | 'error' | 'disabled';
+  processor?: string;
+  detail?: string;
+}

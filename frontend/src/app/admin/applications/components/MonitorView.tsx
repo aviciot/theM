@@ -10,7 +10,7 @@ import {
   Handle,
   Position,
 } from '@xyflow/react';
-import { themApi, type Application, type Agent, type SessionInfo, type MonitoringConfig } from '@/lib/api';
+import { themApi, type Application, type Agent, type SessionInfo, type MonitoringConfig, type ArtifactScanEvent } from '@/lib/api';
 import { C, CANVAS_STYLES, SESSIONS_STYLES, MON_DEFAULTS } from '../constants';
 import { buildNodesFromApp } from './CanvasHelpers';
 import { useDashSessions } from './AppCard';
@@ -232,6 +232,26 @@ function EventRow({ entry }: { entry: FeedEntry }) {
           <span className="material-symbols-outlined" style={{ fontSize: 11, opacity: 0.6 }}>{open ? 'expand_less' : 'expand_more'}</span>
         </button>
         {open && <pre style={{ margin: '4px 0 0 0', padding: '6px 8px', background: 'rgba(0,0,0,0.3)', borderRadius: 4, fontSize: 10, color: 'rgba(203,213,225,0.7)', overflowX: 'auto', maxHeight: 120 }}>{JSON.stringify(ev.output, null, 2)}</pre>}
+      </div>
+    );
+  }
+
+  if (ev.type === 'artifact_scan') {
+    const scan = ev as unknown as ArtifactScanEvent;
+    const statusMeta: Record<string, { icon: string; color: string; label: string }> = {
+      pending:  { icon: 'hourglass_empty', color: '#94a3b8', label: 'Scanning…' },
+      scanning: { icon: 'security_scan',   color: '#60a5fa', label: 'Scanning…' },
+      clean:    { icon: 'verified_user',   color: C.green,   label: 'Clean' },
+      infected: { icon: 'dangerous',       color: '#f87171', label: 'Blocked' },
+      error:    { icon: 'warning',         color: '#fbbf24', label: 'Scan error' },
+      disabled: { icon: 'shield_off',      color: '#475569', label: 'Scan disabled' },
+    };
+    const meta = statusMeta[scan.scan_status] ?? statusMeta.pending;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '4px 0', padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 13, color: meta.color }}>{meta.icon}</span>
+        <span style={{ fontSize: 11, color: meta.color, fontWeight: 600 }}>{meta.label}</span>
+        <span style={{ fontSize: 10, color: '#475569', fontFamily: 'JetBrains Mono, monospace' }}>{scan.artifact_id.slice(0, 8)}…</span>
       </div>
     );
   }
