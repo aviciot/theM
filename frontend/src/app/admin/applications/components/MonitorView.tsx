@@ -37,9 +37,11 @@ interface FeedEntry {
 interface TrackedSession extends SessionInfo {
   _ended?: boolean;
   _endedAt?: number; // ms timestamp
+  _recent?: boolean; // survived past TTL, kept in recent buffer only
 }
 
 const SESSION_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const MAX_RECENT = 5;
 
 // ── Topology node components (read-only) ──────────────────────────────────────
 
@@ -349,6 +351,9 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
   const [canvasOpen, setCanvasOpen] = useState(true);
   const [tick, setTick] = useState(0);
   const [hiddenSessions, setHiddenSessions] = useState<Set<string>>(new Set());
+  // Rolling buffer of last MAX_RECENT sessions seen — persists across TTL expiry
+  const recentRef = useRef<TrackedSession[]>([]);
+  const [recentSessions, setRecentSessions] = useState<TrackedSession[]>([]);
   const MAX_PINNED = 3;
 
   // Load monitoring config once
@@ -396,6 +401,12 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
           const ts: TrackedSession = { ...s, _ended: false };
           next.push(ts);
           newSessions.push(ts);
+          // Feed recent buffer
+          const buf = recentRef.current;
+          if (!buf.find(r => r.session_id === s.session_id)) {
+            recentRef.current = [...buf, { ...ts, _recent: true }].slice(-MAX_RECENT);
+            setRecentSessions([...recentRef.current]);
+          }
         }
       }
 
@@ -420,11 +431,26 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
     });
   }, [liveSessions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Expire TTL entries every 10s
+  // Expire TTL entries every 10s; keep expired sessions in the recent buffer
   useEffect(() => {
     const iv = setInterval(() => {
       const now = Date.now();
       setTrackedSessions(prev => {
+        const expired = prev.filter(p => p._ended && p._endedAt && now - p._endedAt >= SESSION_TTL_MS);
+        if (expired.length > 0) {
+          // Promote expired sessions into the recent buffer (mark _recent)
+          const buf = recentRef.current;
+          let updated = buf;
+          for (const s of expired) {
+            if (!updated.find(r => r.session_id === s.session_id)) {
+              updated = [...updated, { ...s, _recent: true }];
+            } else {
+              updated = updated.map(r => r.session_id === s.session_id ? { ...r, _recent: true } : r);
+            }
+          }
+          recentRef.current = updated.slice(-MAX_RECENT);
+          setRecentSessions([...recentRef.current]);
+        }
         const next = prev.filter(p => !p._ended || !p._endedAt || now - p._endedAt < SESSION_TTL_MS);
         return next.length === prev.length ? prev : next;
       });
@@ -465,9 +491,13 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
     }
   }
 
-  // Visible sessions: tracked (including TTL) minus hidden
-  const visibleSessions = trackedSessions.filter(s => !hiddenSessions.has(s.session_id));
-  const activeSessions = visibleSessions.filter(s => !s._ended);
+  // Visible sessions: tracked (including TTL) + recent buffer, minus hidden, deduplicated
+  const trackedIds = new Set(trackedSessions.map(s => s.session_id));
+  const visibleSessions = [
+    ...trackedSessions,
+    ...recentSessions.filter(r => !trackedIds.has(r.session_id)),
+  ].filter(s => !hiddenSessions.has(s.session_id));
+  const activeSessions = visibleSessions.filter(s => !s._ended && !s._recent);
 
   // ── Topology canvas data ───────────────────────────────────────────────────
   const epCountBySlug = new Map<string, number>();
@@ -549,8 +579,11 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 20, background: activeSessions.length > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)', border: `1px solid ${activeSessions.length > 0 ? C.cyanBorder : 'rgba(255,255,255,0.08)'}` }}>
           <span className="material-symbols-outlined" style={{ fontSize: 13, color: activeSessions.length > 0 ? C.cyan : C.textMuted }}>person</span>
           <span style={{ fontSize: 13, fontWeight: 700, color: activeSessions.length > 0 ? C.cyan : C.textMuted }}>{activeSessions.length} active</span>
-          {visibleSessions.length > activeSessions.length && (
-            <span style={{ fontSize: 11, color: 'rgba(245,158,11,0.7)', marginLeft: 2 }}>+{visibleSessions.length - activeSessions.length} recent</span>
+          {visibleSessions.filter(s => s._ended && !s._recent).length > 0 && (
+            <span style={{ fontSize: 11, color: 'rgba(245,158,11,0.7)', marginLeft: 2 }}>+{visibleSessions.filter(s => s._ended && !s._recent).length} ended</span>
+          )}
+          {recentSessions.filter(r => !trackedIds.has(r.session_id)).length > 0 && (
+            <span style={{ fontSize: 11, color: 'rgba(148,163,184,0.5)', marginLeft: 2 }}>+{recentSessions.filter(r => !trackedIds.has(r.session_id)).length} recent</span>
           )}
         </div>
       </div>
@@ -594,12 +627,13 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
                     const isPinned = !!pinned.find(p => p.session_id === s.session_id);
                     const isSelected = selectedSession?.session_id === s.session_id;
                     const epType = app.entry_points?.find(ep => ep.slug === s.ep_slug)?.entry_point_type ?? 'websocket';
-                    const epColor = epType === 'sse' ? '#a78bfa' : s._ended ? 'rgba(148,163,184,0.4)' : C.cyan;
+                    const isDimmed = s._ended || s._recent;
+                    const epColor = epType === 'sse' ? '#a78bfa' : isDimmed ? 'rgba(148,163,184,0.4)' : C.cyan;
                     return (
                       <div
                         key={s.session_id}
                         className={`sess-row${isSelected ? ' selected' : ''}`}
-                        style={{ opacity: s._ended ? 0.55 : 1 }}
+                        style={{ opacity: s._recent ? 0.4 : s._ended ? 0.55 : 1 }}
                         onClick={() => setSelectedSession(isSelected ? null : s)}
                       >
                         <div style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: `${epColor}18`, border: `1.5px solid ${epColor}44` }}>
@@ -607,13 +641,14 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 1 }}>
-                            <span style={{ fontSize: 11, fontWeight: 600, color: s._ended ? C.textMuted : C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.ep_slug ?? 'direct'}</span>
-                            {s._ended && <span style={{ fontSize: 9, color: 'rgba(245,158,11,0.65)', background: 'rgba(245,158,11,0.1)', borderRadius: 3, padding: '0 4px', flexShrink: 0 }}>ended</span>}
+                            <span style={{ fontSize: 11, fontWeight: 600, color: isDimmed ? C.textMuted : C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.ep_slug ?? 'direct'}</span>
+                            {s._recent && <span style={{ fontSize: 9, color: 'rgba(148,163,184,0.5)', background: 'rgba(148,163,184,0.08)', borderRadius: 3, padding: '0 4px', flexShrink: 0 }}>recent</span>}
+                            {s._ended && !s._recent && <span style={{ fontSize: 9, color: 'rgba(245,158,11,0.65)', background: 'rgba(245,158,11,0.1)', borderRadius: 3, padding: '0 4px', flexShrink: 0 }}>ended</span>}
                           </div>
                           <div style={{ fontSize: 10, color: C.textMuted }}>{elapsed(s.started_at)}</div>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-                          {!s._ended && (
+                          {!s._ended && !s._recent && (
                             <button
                               title={isPinned ? 'Already monitoring' : 'Pin to monitor'}
                               onClick={e => { e.stopPropagation(); pin(s); }}
@@ -622,7 +657,7 @@ export function MonitorView({ app: initialApp, agents, token, onBack }: MonitorV
                               <span className="material-symbols-outlined" style={{ fontSize: 12, color: isPinned ? '#818cf8' : C.textMuted }}>monitor_heart</span>
                             </button>
                           )}
-                          {!s._ended && (
+                          {!s._ended && !s._recent && (
                             <button
                               title="Terminate session"
                               onClick={e => { e.stopPropagation(); handleTerminate(s.session_id); }}
