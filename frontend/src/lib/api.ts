@@ -273,8 +273,8 @@ export const themApi = {
       const parts = buf.split('\n\n');
       buf = parts.pop() ?? '';
       for (const part of parts) {
-        const line = part.trim();
-        if (!line.startsWith('data:')) continue;
+        const line = part.split('\n').map(l => l.trim()).find(l => l.startsWith('data:')) ?? '';
+        if (!line) continue;
         try {
           const frame = JSON.parse(line.slice(5).trim()) as {
             result?: {
