@@ -101,11 +101,11 @@ WHERE created_at >= $1 AND duration_ms IS NOT NULL AND duration_ms > 0`
 	const trendQ = `
 SELECT
   to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
-  count(*)                                                 AS total,
-  count(*) FILTER (WHERE outcome = 'clean')                AS clean,
-  count(*) FILTER (WHERE outcome = 'infected')             AS infected,
-  count(*) FILTER (WHERE outcome = 'error')                AS error
-FROM them.middleware_audit
+  count(*) FILTER (WHERE scan_status <> 'disabled')        AS total,
+  count(*) FILTER (WHERE scan_status = 'clean')            AS clean,
+  count(*) FILTER (WHERE scan_status = 'infected')         AS infected,
+  count(*) FILTER (WHERE scan_status = 'error')            AS error
+FROM them.run_artifacts
 WHERE created_at >= $1
 GROUP BY 1
 ORDER BY 1`
@@ -158,16 +158,20 @@ LIMIT 20`
 	}
 
 	// ── Recent jobs ───────────────────────────────────────────────────────────
+	// Use run_artifacts.scan_status as the display outcome — it is the
+	// authoritative result written by the middleware worker after scanning.
+	// middleware_audit.outcome records internal processor steps and may differ.
 	const recentQ = `
 SELECT
   j.id::text,
   j.artifact_id::text,
   j.status,
   COALESCE(j.processors[1], '') AS processor,
-  (SELECT ma.outcome FROM them.middleware_audit ma WHERE ma.artifact_id = j.artifact_id ORDER BY ma.created_at DESC LIMIT 1),
+  ra.scan_status,
   (SELECT ma.duration_ms FROM them.middleware_audit ma WHERE ma.artifact_id = j.artifact_id ORDER BY ma.created_at DESC LIMIT 1),
   to_char(j.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
 FROM them.middleware_jobs j
+LEFT JOIN them.run_artifacts ra ON ra.id = j.artifact_id
 ORDER BY j.created_at DESC
 LIMIT 20`
 
