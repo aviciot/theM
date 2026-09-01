@@ -745,3 +745,27 @@ export interface ArtifactScanEvent {
   processor?: string;
   detail?: string;
 }
+
+export interface DailyTrendRow { day: string; total: number; clean: number; infected: number; error: number; }
+export interface AppScanRow { app_id: string; app_slug: string; scanned: number; clean: number; error: number; }
+export interface RecentJobRow { job_id: string; artifact_id: string; status: string; processor: string; outcome: string | null; duration_ms: number | null; created_at: string; }
+
+export interface SecurityScanStats {
+  total_artifacts: number;
+  scanned: number;
+  clean: number;
+  infected: number;
+  error: number;
+  pending: number;
+  disabled: number;
+  success_rate: number;
+  avg_latency_ms: number;
+  p95_latency_ms: number;
+  daily_trend: DailyTrendRow[];
+  app_breakdown: AppScanRow[];
+  recent_jobs: RecentJobRow[];
+}
+
+export interface ServicesStats {
+  security: SecurityScanStats;
+}

@@ -2705,7 +2705,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-83 | StreamOut node Phase 5-D (SO-1..10): ReadsFromVar, DefaultMediaType, ExplicitMediaType, MissingVar, DefaultFromVar, Validate_MissingFromVar, Validate_Valid, DeriveInputs, DeriveInputs_DefaultVar, FullPipeline (LLM→stream_out) | 10 |
 | S1-84 | middleware/gate FileGate (Phase 3 intercept + inline): Disabled (no fetch when config disabled), FetchFailsOpen (bad URL → disabled path), InvalidateCache (no panic), InterceptInline_Enabled (bytes stored + job enqueued), InterceptInline_Disabled (returns disabled) | 5 |
 | S1-85 | admin security_config handler (Phase 3): Get returns default, Put valid config 200, Put invalid JSON 400, Put av_scan.max_file_mb=0 → 422 | 4 |
-| **S1 total** | | **942** |
+| S1-86 | admin services stats handler: GetStats_OK (200 + security key in envelope), WindowParam (24h/7d/30d/"" all accepted) | 2 |
+| **S1 total** | | **944** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

@@ -71,6 +71,11 @@ export type {
   AppGlobalParam,
   SecurityConfig,
   ArtifactScanEvent,
+  ServicesStats,
+  SecurityScanStats,
+  DailyTrendRow,
+  AppScanRow,
+  RecentJobRow,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -118,6 +123,7 @@ import type {
   AppGlobalParam,
   EntryPoint,
   SecurityConfig,
+  ServicesStats,
 } from './apiTypes';
 
 export const themApi = {
@@ -369,6 +375,7 @@ export const themApi = {
   putMonitoringConfig: (body: MonitoringConfig) => api.put<MonitoringConfig>('/admin/monitoring-config', body),
   getSecurityConfig: (appId: string) => api.get<SecurityConfig>(`/admin/applications/${appId}/security-config`),
   putSecurityConfig: (appId: string, cfg: SecurityConfig) => api.put<SecurityConfig>(`/admin/applications/${appId}/security-config`, cfg),
+  getServicesStats: (window: '24h' | '7d' | '30d' = '7d') => api.get<ServicesStats>(`/admin/services/stats?window=${window}`),
   // Live reachability check for a deployed application slug
   pingApp: async (slug: string): Promise<boolean> => {
     try {

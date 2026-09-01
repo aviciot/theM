@@ -192,6 +192,7 @@ func BuildRouter(
 			if sessionReader != nil {
 				NewSessionsHandler(sessionReader).Routes(a)
 			}
+			NewServicesStatsHandler(db, logger).Routes(a)
 		})
 
 		// Runs routes are at /runs (not /admin/runs) to match the existing Traefik

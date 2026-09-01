@@ -15,6 +15,7 @@ const ADMIN_NAV = [
   { href: '/admin/applications',  icon: 'apps',               label: 'Applications' },
   { href: '/admin/tokens',        icon: 'key',           label: 'Access Tokens' },
   { href: '/admin/playground',    icon: 'science',       label: 'Playground' },
+  { href: '/admin/services',      icon: 'monitor_heart', label: 'Services' },
   { href: '/admin/settings',      icon: 'settings',      label: 'Settings' },
 ];
 
