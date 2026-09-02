@@ -170,7 +170,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── 4. Load orchestrator config + build Go orchestrator (no Temporal) ───────
-	runCfg, cfgErr := h.runLoader.LoadRunConfig(ctx, cfg.OrchestratorID, cfg.AppID, "")
+	runCfg, cfgErr := h.runLoader.LoadRunConfig(ctx, cfg.OrchestratorID, cfg.AppID, "", cfg.TenantID)
 	if cfgErr != nil {
 		h.logger.Warn("voice: load run config failed", "ep_slug", epSlug, "orch_id", cfg.OrchestratorID, "error", cfgErr)
 		http.Error(w, `{"error":"orchestrator configuration unavailable"}`, http.StatusInternalServerError)
@@ -301,7 +301,7 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── 4. Load orchestrator config + build provider ──────────────────────────
-	runCfg, cfgErr := h.runLoader.LoadRunConfig(ctx, cfg.OrchestratorID, cfg.AppID, "")
+	runCfg, cfgErr := h.runLoader.LoadRunConfig(ctx, cfg.OrchestratorID, cfg.AppID, "", cfg.TenantID)
 	if cfgErr != nil {
 		h.logger.Warn("voice/stream: load run config failed", "ep_slug", epSlug, "error", cfgErr)
 		http.Error(w, `{"error":"orchestrator configuration unavailable"}`, http.StatusInternalServerError)

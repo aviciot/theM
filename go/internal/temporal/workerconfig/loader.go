@@ -15,15 +15,39 @@ package workerconfig
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aviciot/them/internal/crypto"
 	"github.com/aviciot/them/internal/llm"
 	"github.com/aviciot/them/internal/orchestrator"
 )
+
+// ManagedAppParams holds the resolved parameters from a managed app binding.
+// Non-nil only when the application's app_type is 'managed' and an active binding exists.
+// Config values are substituted into {{PARAMS.KEY}} placeholders in system prompts.
+// Secrets are NOT populated in Step 7 (KMS decision deferred — secrets_enc left NULL).
+type ManagedAppParams struct {
+	Config map[string]any
+}
+
+// ApplyParamSubstitution replaces {{PARAMS.KEY}} placeholders in prompt with values
+// from params.Config. Keys not present in Config are left as-is.
+// Returns prompt unchanged when params is nil.
+func ApplyParamSubstitution(prompt string, params *ManagedAppParams) string {
+	if params == nil || len(params.Config) == 0 {
+		return prompt
+	}
+	for key, val := range params.Config {
+		prompt = strings.ReplaceAll(prompt, "{{PARAMS."+key+"}}", fmt.Sprintf("%v", val))
+	}
+	return prompt
+}
 
 // RunConfig holds everything the worker needs to execute one orchestration run.
 type RunConfig struct {
@@ -45,6 +69,11 @@ type RunConfig struct {
 	// MCPServiceURL is the internal base URL of them-mcp-service, injected by the
 	// worker at build time (not stored in DB). Empty → MCP tool dispatch disabled.
 	MCPServiceURL string
+
+	// ManagedAppParams is non-nil when the application is a managed app and an
+	// active binding exists for the tenant. Config values have been substituted
+	// into OrchestratorConfig.SystemPrompt via {{PARAMS.KEY}} placeholders.
+	ManagedAppParams *ManagedAppParams
 }
 
 // Loader resolves per-run orchestrator config from persistent storage.
@@ -53,7 +82,8 @@ type Loader interface {
 	// LoadRunConfig returns the RunConfig for the given AppOrchestratorID.
 	// ApplicationID is used for provider key lookup and as a cross-check.
 	// EntryPointID is used to load per-EP memory/history configuration.
-	LoadRunConfig(ctx context.Context, appOrchestratorID, applicationID, entryPointID string) (RunConfig, error)
+	// TenantID is used to look up the managed app binding when app_type='managed'.
+	LoadRunConfig(ctx context.Context, appOrchestratorID, applicationID, entryPointID, tenantID string) (RunConfig, error)
 }
 
 // PgxLoader implements Loader against a live PostgreSQL pool.
@@ -72,7 +102,8 @@ func NewPgxLoader(pool *pgxpool.Pool, fernetKey []byte) *PgxLoader {
 // LoadRunConfig resolves orchestrator config + provider key for one run.
 // appOrchestratorID + applicationID load the LLM/agent/loop config.
 // entryPointID loads the per-EP memory/history config (may be empty — disables memory).
-func (l *PgxLoader) LoadRunConfig(ctx context.Context, appOrchestratorID, applicationID, entryPointID string) (RunConfig, error) {
+// tenantID is used to look up the managed app binding (may be empty — skips lookup).
+func (l *PgxLoader) LoadRunConfig(ctx context.Context, appOrchestratorID, applicationID, entryPointID, tenantID string) (RunConfig, error) {
 	const orchQ = `
 SELECT
     ao.system_prompt,
@@ -226,6 +257,18 @@ WHERE ep.id = $1::uuid`
 		}
 	}
 
+	// Resolve managed app binding params (non-fatal — missing binding → proceed without params).
+	var managedParams *ManagedAppParams
+	if tenantID != "" && applicationID != "" {
+		appType := l.loadAppType(ctx, applicationID)
+		if appType == "managed" {
+			managedParams = l.loadBindingParams(ctx, applicationID, tenantID)
+			if managedParams != nil {
+				cfg.SystemPrompt = ApplyParamSubstitution(cfg.SystemPrompt, managedParams)
+			}
+		}
+	}
+
 	return RunConfig{
 		OrchestratorConfig: cfg,
 		LLMProvider:        providerName,
@@ -233,7 +276,49 @@ WHERE ep.id = $1::uuid`
 		SummarizerProvider: sumProvider,
 		SummarizerModel:    sumModel,
 		SummarizerAPIKey:   sumAPIKey,
+		ManagedAppParams:   managedParams,
 	}, nil
+}
+
+// loadAppType returns the app_type for the given applicationID.
+// Returns "tenant" (the default) on any error.
+func (l *PgxLoader) loadAppType(ctx context.Context, applicationID string) string {
+	const q = `SELECT COALESCE(app_type, 'tenant') FROM them.applications WHERE id = $1::uuid`
+	var appType string
+	if err := l.pool.QueryRow(ctx, q, applicationID).Scan(&appType); err != nil {
+		slog.Warn("workerconfig: failed to load app_type — treating as tenant app",
+			"app_id", applicationID, "error", err)
+		return "tenant"
+	}
+	return appType
+}
+
+// loadBindingParams fetches the managed app binding config for (app_id, tenant_id).
+// Returns nil when no enabled binding exists or on any error.
+func (l *PgxLoader) loadBindingParams(ctx context.Context, appID, tenantID string) *ManagedAppParams {
+	const q = `SELECT config FROM them.managed_app_bindings WHERE app_id = $1::uuid AND tenant_id = $2::uuid AND enabled = true`
+	var raw []byte
+	err := l.pool.QueryRow(ctx, q, appID, tenantID).Scan(&raw)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("workerconfig: failed to load managed app binding — params not injected",
+				"app_id", appID, "tenant_id", tenantID, "error", err)
+		}
+		return nil
+	}
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "{}" {
+		return nil
+	}
+	var configMap map[string]any
+	if err := json.Unmarshal(raw, &configMap); err != nil {
+		slog.Warn("workerconfig: failed to parse managed app binding config — params not injected",
+			"app_id", appID, "tenant_id", tenantID, "error", err)
+		return nil
+	}
+	if len(configMap) == 0 {
+		return nil
+	}
+	return &ManagedAppParams{Config: configMap}
 }
 
 // mcpServerEntry is one item in the app_orchestrators.mcp_servers JSONB array.

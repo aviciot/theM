@@ -215,7 +215,7 @@ type fakeConfigLoader struct {
 	err error
 }
 
-func (f *fakeConfigLoader) LoadRunConfig(_ context.Context, _, _, _ string) (workerconfig.RunConfig, error) {
+func (f *fakeConfigLoader) LoadRunConfig(_ context.Context, _, _, _, _ string) (workerconfig.RunConfig, error) {
 	return f.cfg, f.err
 }
 

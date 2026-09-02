@@ -2362,6 +2362,21 @@ Verifies empty-list `[]`, create/get, param-manifest replacement, and binding up
 
 ---
 
+### S1-93 · Workerconfig managed app parameter substitution — `internal/temporal/workerconfig/loader_test.go`
+
+**Purpose:** Verify `ManagedAppParams` struct and `ApplyParamSubstitution` helper for runtime parameter injection (Step 7).
+Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left unchanged; nil params are safe.
+
+| Test | What it proves |
+|---|---|
+| `TestManagedAppParams_ConfigSubstitution` (MAP-01) | `{{PARAMS.KEY}}` replaced; unmatched left as-is; non-string types formatted via `%v` |
+| `TestManagedAppParams_NilSafe` (MAP-02) | `ApplyParamSubstitution` returns prompt unchanged when params is nil |
+| `TestRunConfig_ManagedAppParams_ZeroNil` (MAP-03) | Zero-value `RunConfig.ManagedAppParams` is nil |
+
+**Trigger:** `internal/temporal/workerconfig/loader.go`, `internal/temporal/workerconfig/loader_test.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -2666,7 +2681,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/summarizer/summarizer.go` | S1-47 |
 | `internal/temporal/activities.go`, `internal/temporal/workflow.go` | S1-29 |
 | `internal/temporal/canvas_workflow.go`, `internal/temporal/canvas_activities.go` | S1-76 |
-| `internal/temporal/workerconfig/loader.go` | S1-61 |
+| `internal/temporal/workerconfig/loader.go` | S1-61 + S1-93 |
 | `internal/llm/` (any file) | S1-10 |
 | `internal/agentregistry/registry.go` | S1-11 |
 | `internal/agentgen/` (any file) | S1-48 + S1-50 + S1-54 + S1-65 + S1-71 + S1-72 + S1-73 + S1-74 + S1-75 |
@@ -2821,6 +2836,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-54 | node definition registry (all 12 types, metadata, Validate, ToInfo) | 18 |
 | S1-60 | admin/service provider key encryption | 9 |
 | S1-61 | temporal/workerconfig loader contracts | 2 |
+| S1-93 | temporal/workerconfig managed app param substitution | 3 |
 | S1-62 | admin/service app global params (AGP-1..8) | 8 |
 | S1-63 | agentgen compiler app_param_ref (CMP-10..14) | 5 |
 | S1-64 | agentgen interpreter app_param_ref (INT-10..14) | 5 |
@@ -2850,7 +2866,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-90 | orchestrator scan subscriber: FileScanningEvent (file_scanning emitted when gated), ScanResult_Clean (file event after clean), ScanResult_Infected (file_blocked + threat field), ScanResult_Timeout (fallback file event on timeout) | 4 |
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
 | S1-92 | Managed Apps catalog + bindings (MA-01..10): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig | 10 |
-| **S1 total** | | **999** |
+| S1-93 | workerconfig managed app params (MAP-01..03): ConfigSubstitution, NilSafe, ZeroNil | 3 |
+| **S1 total** | | **1002** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2859,4 +2876,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **951** |
+| **`go test ./...` total** | | **954** |
