@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-01
+# Last updated: 2026-09-02
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+3f74d70  feat(artifacts): serve files from MinIO when storage_key is set (quarantine-first download path)
 a42fb99  feat(security): quarantine-first file storage via MinIO
 039b76c  feat(infra): add MinIO object storage to dev stack (security profile)
 bab4509  refactor(frontend): split StepConfigSection.tsx (634 lines) into 3 focused modules
 3289813  refactor(agentgen): split compiler.go (1056 lines) into 3 focused modules
-1b74c6c  docs(split): add precise compiler.go split instructions for next session
 ```
 
 ---
@@ -154,17 +154,17 @@ All migrations applied through `db/051_quarantine.sql`:
 ## Test state
 
 ```
-go test ./...  — 53 packages, 0 failures (verified 2026-09-01, quarantine-first MinIO flow)
+go test ./...  — 53 packages, 0 failures (verified 2026-09-02, quarantine-first download handler)
 S1-84: 6 gate tests (quarantine-first: Disabled, FetchFailsOpen, InvalidateCache, InterceptInline_Enabled, InterceptInline_Disabled, StoreFail_FailsOpen)
 S1-85: 4 admin security_config handler tests
 S1-87: 25 middleware pipeline + AV scanner tests
 S1-88: 5 job DAL quarantine-path tests (EnqueueWithQuarantine, LoadFileBytes, Clean/Infected/Legacy)
 S1-89: 3 storage client tests (Invalid/Valid/HTTPS endpoint)
-S1-30: 13 artifact download handler tests (+4 scan gate)
+S1-30: 16 artifact download handler tests (MinIO path, 410 infected, MinIO error 500 added)
 S1-14: 30 A2A server tests
 S1-72..S1-83: all prior DAG/canvas/A2A tests passing
 S2-06: 3 integration-tagged Temporal E2E tests
-Total go test ./...: 939
+Total go test ./...: 942
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -517,10 +517,16 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 - `frontend/src/app/admin/applications/components/MonitorView.tsx` — `artifact_scan` event row with scan status badge (pending/scanning/clean/infected/error/disabled icons)
 - `frontend/src/app/admin/applications/components/RuntimeView.tsx` — Security section: enable/disable file artifact scanning toggle + Save Security button
 
-### What's NOT done yet (Session B)
-- `internal/orchestrator/orchestrator.go`: hold file bubble until scan result; emit `file_scanning` event; handle `artifact_ready`/`artifact_blocked` from Redis
+**Session B complete (2026-09-02, commit 3f74d70):**
+- `internal/artifacts/handler.go`: three-path byte resolution: MinIO (storage_key set) → 410 Gone (infected, data=nil) → legacy Postgres BYTEA
+- `internal/runrecorder/recorder.go`: `ArtifactMeta.StorageKey` + `COALESCE(storage_key,'')` in `GetArtifact`
+- `cmd/them/main.go`: `storageClient *storage.Client` (concrete type); `artifacts.NewWithFetcher` wired
+- Tests: S1-30 13→16 (MinIO path, 410 infected, MinIO error 500)
+- them-go-bridge rebuilt and restarted: MinIO client initialised at startup ✅
+
+### What's NOT done yet (Session C)
+- `internal/orchestrator/orchestrator.go`: hold file bubble until scan result; emit `file_scanning` event; handle `artifact_scan_result` from Redis run channel → emit real file bubble or blocked state
 - Frontend: scanning spinner on file bubble in chat; "file blocked" state for infected
-- `internal/artifacts/handler.go`: update `GetArtifact` to serve from MinIO (storage_key) instead of Postgres BYTEA; `data IS NULL && storage_key IS NULL` → 410 Gone (infected scrubbed)
 - Reaper job for stuck quarantine objects (rows with `storage_key IS NOT NULL AND expires_at < now()`)
 - Additional processors: `pii_redact`, `prompt_inject`, `schema_validate`, `audit_capture`
 
