@@ -102,10 +102,12 @@ WHERE created_at >= $1 AND duration_ms IS NOT NULL AND duration_ms > 0`
 	}
 
 	// ── Quarantine health ─────────────────────────────────────────────────────
+	// Only count rows with bytes still in MinIO (storage_key IS NOT NULL).
+	// Rows with storage_key=NULL are post-scan tombstones awaiting the reaper.
 	const quarantineQ = `
 SELECT
-  count(*)                                   AS total,
-  count(*) FILTER (WHERE expires_at < now()) AS expired
+  count(*) FILTER (WHERE storage_key IS NOT NULL)                                   AS total,
+  count(*) FILTER (WHERE storage_key IS NOT NULL AND expires_at < now())            AS expired
 FROM them.quarantine_artifacts`
 
 	qrow := db.QueryRow(ctx, quarantineQ)

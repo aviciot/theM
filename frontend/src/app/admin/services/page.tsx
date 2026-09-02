@@ -114,7 +114,7 @@ function SecurityTab({ stats }: { stats: SecurityScanStats }) {
           <div>
             <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>In quarantine</span>
             <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--tm-text)', marginTop: 2 }}>{stats.quarantine_total ?? 0}</div>
-            <div style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>objects (scan in progress)</div>
+            <div style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>files awaiting scan</div>
           </div>
           <div>
             <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Expired (pending reap)</span>
