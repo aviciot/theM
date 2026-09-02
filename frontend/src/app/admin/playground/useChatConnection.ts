@@ -209,8 +209,11 @@ export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConne
           return copy;
         });
         setStatus(`Error: ${msg}`);
-        setBusy(false); busyRef.current = false;
         dashWsRef.current?.close();
+      } finally {
+        // Ensure busy is always cleared when the A2A stream ends, even if the
+        // stream closes without a completed/failed status event.
+        setBusy(false); busyRef.current = false;
       }
       return;
     }

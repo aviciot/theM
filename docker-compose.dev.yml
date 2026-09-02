@@ -101,6 +101,11 @@ services:
       - TEMPORAL_HOST_PORT=temporal-frontend:7233
       - WORKER_TASK_QUEUE=them-orchestration-go
       - MCP_SERVICE_URL=http://them-mcp-service:8010
+      - THE_M_S3_ENDPOINT=${THE_M_S3_ENDPOINT:-http://them-minio:9000}
+      - THE_M_S3_ACCESS_KEY=${THE_M_S3_ACCESS_KEY:-them-minio}
+      - THE_M_S3_SECRET_KEY=${THE_M_S3_SECRET_KEY:-them-minio-secret}
+      - THE_M_S3_QUARANTINE_BUCKET=${THE_M_S3_QUARANTINE_BUCKET:-them-quarantine}
+      - THE_M_S3_ARTIFACTS_BUCKET=${THE_M_S3_ARTIFACTS_BUCKET:-them-artifacts}
     networks:
       - them-network
     restart: unless-stopped
@@ -137,6 +142,11 @@ services:
       - TEMPORAL_HOST_PORT=temporal-frontend:7233
       - WORKER_TASK_QUEUE=them-orchestration-go
       - MCP_SERVICE_URL=http://them-mcp-service:8010
+      - THE_M_S3_ENDPOINT=${THE_M_S3_ENDPOINT:-http://them-minio:9000}
+      - THE_M_S3_ACCESS_KEY=${THE_M_S3_ACCESS_KEY:-them-minio}
+      - THE_M_S3_SECRET_KEY=${THE_M_S3_SECRET_KEY:-them-minio-secret}
+      - THE_M_S3_QUARANTINE_BUCKET=${THE_M_S3_QUARANTINE_BUCKET:-them-quarantine}
+      - THE_M_S3_ARTIFACTS_BUCKET=${THE_M_S3_ARTIFACTS_BUCKET:-them-artifacts}
     networks:
       - them-network
     restart: unless-stopped
