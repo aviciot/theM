@@ -1,7 +1,7 @@
 # Handover — Multi-Tenancy Step 8
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** (see git log after commit)
+**HEAD:** 99fc33c (feat(multi-tenancy): Step 8 — OIDC JWKS RS256 id_token signature verification)
 **Steps complete:** 1 → 8 (all 46 Go packages pass, 1007 S1 tests)
 
 ---
@@ -55,7 +55,7 @@
 | Step 5 | OIDC login flow | Complete | 2de98f5 |
 | Step 6 | Managed Apps foundation | Complete | 7c056fc |
 | Step 7 | Runtime parameter injection | Complete | 0bbfa28 |
-| Step 8 | OIDC JWKS RS256 id_token signature verification | Complete | (see git log) |
+| Step 8 | OIDC JWKS RS256 id_token signature verification | Complete | 99fc33c |
 
 ---
 
@@ -270,7 +270,7 @@ Current state: Steps 1–8 are complete and committed to main.
 - Step 5: OIDC login flow — PKCE + signed state (2de98f5)
 - Step 6: Managed Apps foundation — catalog CRUD + binding activation (7c056fc)
 - Step 7: Runtime parameter injection — {{PARAMS.KEY}} substitution in system prompts (0bbfa28)
-- Step 8: OIDC JWKS RS256 id_token signature verification (see git log for commit)
+- Step 8: OIDC JWKS RS256 id_token signature verification (99fc33c)
 All 46 Go packages pass (go test ./..., 1007 S1 tests).
 
 Read docs/HANDOVER.md fully before starting — it is the source of truth.
