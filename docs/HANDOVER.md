@@ -53,7 +53,7 @@
 | Step 3 | Temporal workflow ID prefix with `{tenant_id}:` | Complete | 98ccf03 |
 | Step 4 | Tenant CRUD API (`GET/POST /admin/tenants`, `GET /admin/tenants/{id}`) | Complete | a534a54 |
 | Step 5 | OIDC login flow | Complete | 2de98f5 |
-| Step 6 | Managed Apps foundation | Not started | — |
+| Step 6 | Managed Apps foundation | Complete | 7c056fc |
 
 ---
 
@@ -108,29 +108,56 @@ ID token signature is not verified against the IdP's JWKS — trust is anchored 
 
 ---
 
-## Step 6 — Managed Apps foundation (next task)
+## Step 6 — COMPLETE
+
+### What Step 6 built
+
+- `db/055_managed_apps.sql` — adds `app_type TEXT DEFAULT 'tenant'`, `version TEXT DEFAULT '1.0.0'`, `changelog TEXT` to `them.applications`; creates `them.managed_app_params` (parameter manifest) and `them.managed_app_bindings` (per-tenant activation); indexes on `(tenant_id, enabled)` and `(app_id, sort_order)`
+- `go/internal/admin/dal/managed_apps.go` — 8 DAL methods: `ListManagedApps`, `CreateManagedApp`, `GetManagedApp`, `ListManagedAppParams`, `UpsertManagedAppParams` (DELETE+INSERT), `ListBindingsForTenant`, `GetBinding`, `UpsertBinding` (ON CONFLICT DO UPDATE)
+- `go/internal/admin/managed_apps.go` — `ManagedAppsHandler` with:
+  - Platform routes (no tenant scope): `GET /admin/managed-apps`, `POST /admin/managed-apps`, `GET /admin/managed-apps/{id}`, `PUT /admin/managed-apps/{id}/params`
+  - Tenant routes (inside AdminTenantMiddleware): `GET /admin/managed-app-bindings`, `PUT /admin/managed-app-bindings/{app_id}`
+  - TenantID always from `tenantctx.TenantIDFromCtx` — never from headers
+  - All 500 responses use static strings only
+- `go/internal/admin/router.go` — wires `PlatformRoutes` in the platform-global group and `TenantRoutes` in the tenant-scoped group
+- `go/internal/admin/managed_apps_test.go` — 10 tests (MA-01..MA-10)
+- `go/TEST_INDEX.md` — adds S1-92, updates trigger map, total 989 → 999
+
+All 46 packages pass (`go test ./...`).
+
+### Migration note for live DB
+`db/055_managed_apps.sql` has not yet been applied to the live DB. Run before next feature work:
+```bash
+docker cp db/055_managed_apps.sql them-postgres:/tmp/them_055.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_055.sql
+```
+
+---
+
+## Step 7 — Runtime parameter injection (next task)
 
 ### Goal
-Allow platform operators to define "Managed Apps" — pre-configured Application templates
-that can be instantiated per tenant. After this step: onboarding a new tenant automatically
-provisions their Applications from a Managed App catalog.
+Wire the Managed App binding into the agent/orchestrator invocation path so that when a run
+is created under a managed-app entry point, the binding's `config` values are injected into
+the `InvocationContext` — making `{{PARAMS.KEY}}` substitution available to agent prompts.
 
 ### Design summary (from `docs/architecture/MULTI_TENANCY_DESIGN.md` §19)
-- A `managed_apps` table in `them` schema, owned by the platform (not tenants)
-- A `tenant_managed_apps` binding table (tenant + managed_app + overrides)
-- Admin CRUD for managed app catalog (`/admin/managed-apps`)
-- Tenant provisioning creates binding rows when apps are assigned
+- `InvocationContext` gains `ManagedAppParams *ManagedAppParams` field (non-nil only for managed-app runs)
+- `ManagedAppParams.Config map[string]any` — plain config values from the binding
+- `ManagedAppParams.Secrets map[string]string` — decrypted secrets (never logged, never in Temporal history)
+- At run start: load the application → check `app_type`; if `managed`, look up binding for `(app_id, tenant_id)`, populate `ManagedAppParams`
+- Orchestrator uses `ManagedAppParams.Config` for `{{PARAMS.KEY}}` substitution in system prompts
 
 ### Files to read before starting
-- `docs/architecture/MULTI_TENANCY_DESIGN.md` §19 (Managed Apps)
-- `go/internal/admin/` — existing CRUD pattern to follow
-- `go/internal/admin/dal/` — DAL pattern
-- `db/001_schema.sql` — current table list (check no collision with proposed tables)
+- `docs/architecture/MULTI_TENANCY_DESIGN.md` §19 (Runtime injection section)
+- `go/internal/orchestrator/orchestrator.go` — where InvocationContext is built
+- `go/internal/admin/dal/managed_apps.go` — GetBinding method (already implemented)
+- `go/internal/domain/domain.go` — InvocationContext definition
 
-### What NOT to do in Step 6
-- Do not add OIDC JWKS signature verification (hardening, future step)
-- Do not add SAML 2.0
-- Do not add SCIM
+### What NOT to do in Step 7
+- Do not add secret encryption/decryption (secrets_enc BYTEA) — leave secrets_enc NULL for now; encryption requires a KMS decision (deferred per design doc)
+- Do not add OIDC JWKS signature verification
+- Do not add SAML 2.0 or SCIM
 
 ---
 
@@ -142,15 +169,16 @@ cd /opt/docker/them
 # Verify stack is healthy
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml ps
 
+# Apply Step 6 migration if not yet done
+docker cp db/055_managed_apps.sql them-postgres:/tmp/them_055.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_055.sql
+
 # Read before starting
 cat docs/HANDOVER.md
-cat docs/architecture/MULTI_TENANCY_DESIGN.md  # §19 (Managed Apps)
+cat docs/architecture/MULTI_TENANCY_DESIGN.md  # §19 (Runtime injection)
 
 # Run tests to confirm baseline (zero failures required)
 docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
-
-# Check next available migration number
-ls db/*.sql | sort | tail -5
 ```
 
 ---
@@ -158,18 +186,19 @@ ls db/*.sql | sort | tail -5
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 6: Managed Apps foundation.
+Continue multi-tenancy implementation — Step 7: Runtime parameter injection.
 
-Current state: Steps 1–5 are complete and merged to main.
+Current state: Steps 1–6 are complete and merged to main.
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
 - Step 2: All Redis keys tenant-scoped (97c9d71)
 - Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
 - Step 4: Tenant CRUD API — GET/POST /admin/tenants, GET /admin/tenants/{id} (a534a54)
 - Step 5: OIDC login flow — /auth/oidc/start + /auth/oidc/callback with PKCE + signed state (2de98f5)
-All 46 Go packages pass (go test ./..., 50 authserver tests).
+- Step 6: Managed Apps foundation — catalog CRUD + tenant binding activation (7c056fc)
+All 46 Go packages pass (go test ./..., 999 tests).
 
 Read docs/HANDOVER.md fully before starting — it contains all rules, constraints, and the
-exact scope for Step 6. The HANDOVER.md is the source of truth for this session.
+exact scope for Step 7. The HANDOVER.md is the source of truth for this session.
 
 Constraints (all in HANDOVER.md):
 - go test ./... must be zero failures before every commit
@@ -178,6 +207,7 @@ Constraints (all in HANDOVER.md):
 - Go runs inside Docker: docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 - Handler → Service → DAL — no SQL in handlers
 - TEST_INDEX.md updated in same commit as any new test
+- Do NOT add secret encryption (secrets_enc) — leave NULL, KMS decision deferred
 
 After each change run go test ./... before committing. Report: files changed, tests passed, commit hash.
 Update docs/HANDOVER.md at the end.
