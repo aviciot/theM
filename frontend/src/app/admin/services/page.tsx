@@ -7,6 +7,18 @@ import type { ServicesStats, SecurityScanStats, DailyTrendRow, AppScanRow, Recen
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+function timeAgo(isoUtc: string): string {
+  const diffMs = Date.now() - new Date(isoUtc).getTime();
+  const s = Math.floor(diffMs / 1000);
+  if (s < 5)  return 'just now';
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
 function pct(n: number, total: number) {
   if (!total) return '0%';
   return `${((n / total) * 100).toFixed(1)}%`;
@@ -183,7 +195,7 @@ function SecurityTab({ stats }: { stats: SecurityScanStats }) {
                     <span style={{ flex: 1, color: 'var(--tm-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.artifact_id}>{j.artifact_id.slice(0, 8)}…</span>
                     <span style={{ color: 'var(--tm-text-muted)' }}>{j.processor}</span>
                     {j.duration_ms != null && <span style={{ color: 'var(--tm-text-muted)' }}>{j.duration_ms}ms</span>}
-                    <span style={{ color: 'var(--tm-text-muted)', flexShrink: 0 }}>{j.created_at.slice(11, 19)}</span>
+                    <span style={{ color: 'var(--tm-text-muted)', flexShrink: 0 }} title={new Date(j.created_at).toLocaleString()}>{timeAgo(j.created_at)}</span>
                   </div>
                 ))}
               </div>
