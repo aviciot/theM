@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-02
+# Last updated: 2026-09-02 (Session C)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,6 +10,7 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+3cf93b1  feat(orchestrator): hold file bubble until scan result; emit file_scanning/file_blocked (Session C)
 3f74d70  feat(artifacts): serve files from MinIO when storage_key is set (quarantine-first download path)
 a42fb99  feat(security): quarantine-first file storage via MinIO
 039b76c  feat(infra): add MinIO object storage to dev stack (security profile)
@@ -154,17 +155,18 @@ All migrations applied through `db/051_quarantine.sql`:
 ## Test state
 
 ```
-go test ./...  — 53 packages, 0 failures (verified 2026-09-02, quarantine-first download handler)
-S1-84: 6 gate tests (quarantine-first: Disabled, FetchFailsOpen, InvalidateCache, InterceptInline_Enabled, InterceptInline_Disabled, StoreFail_FailsOpen)
+go test ./...  — 53 packages, 0 failures (verified 2026-09-02, Session C scan subscriber)
+S1-84: 6 gate tests (quarantine-first)
 S1-85: 4 admin security_config handler tests
 S1-87: 25 middleware pipeline + AV scanner tests
-S1-88: 5 job DAL quarantine-path tests (EnqueueWithQuarantine, LoadFileBytes, Clean/Infected/Legacy)
-S1-89: 3 storage client tests (Invalid/Valid/HTTPS endpoint)
-S1-30: 16 artifact download handler tests (MinIO path, 410 infected, MinIO error 500 added)
+S1-88: 5 job DAL quarantine-path tests
+S1-89: 3 storage client tests
+S1-30: 16 artifact download handler tests (MinIO path, 410 infected, MinIO error 500)
+S1-90: 4 orchestrator scan subscriber tests (FileScanningEvent, Clean, Infected, Timeout)
 S1-14: 30 A2A server tests
 S1-72..S1-83: all prior DAG/canvas/A2A tests passing
 S2-06: 3 integration-tagged Temporal E2E tests
-Total go test ./...: 942
+Total go test ./...: 946
 
 Live e2e confirmed 2026-08-23:
   - run 23aeb8bf: streaming single zip artifact via a2a-stream ✅
@@ -522,11 +524,17 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 - `internal/runrecorder/recorder.go`: `ArtifactMeta.StorageKey` + `COALESCE(storage_key,'')` in `GetArtifact`
 - `cmd/them/main.go`: `storageClient *storage.Client` (concrete type); `artifacts.NewWithFetcher` wired
 - Tests: S1-30 13→16 (MinIO path, 410 infected, MinIO error 500)
-- them-go-bridge rebuilt and restarted: MinIO client initialised at startup ✅
+- them-go-bridge rebuilt and restarted ✅
 
-### What's NOT done yet (Session C)
-- `internal/orchestrator/orchestrator.go`: hold file bubble until scan result; emit `file_scanning` event; handle `artifact_scan_result` from Redis run channel → emit real file bubble or blocked state
-- Frontend: scanning spinner on file bubble in chat; "file blocked" state for infected
+**Session C complete (2026-09-02, commit 3cf93b1):**
+- `internal/orchestrator/orchestrator.go`: `ScanResult`/`ScanSubscriber` interfaces; `WithScanSubscriber`; `emitArtifactEvent` emits `file_scanning` when gated, then goroutine waits and emits `file` (clean/error/timeout) or `file_blocked` (infected); `copyMap` helper
+- `internal/orchestrator/scan_subscriber.go`: `RedisScanSubscriber` — subscribes to `them:run:<runID>` pub/sub, filters `artifact_scan_result` by artifactID, cancels on first match
+- `cmd/worker/main.go`: `RedisScanSubscriber` wired into factory
+- Tests: S1-90 (4 new orchestrator scan subscriber tests)
+- them-go-worker rebuilt and restarted: polling ✅
+
+### What's NOT done yet (Session D)
+- **Frontend**: `file_scanning` event → show scanning spinner on file bubble in chat; `file_blocked` event → show "file blocked / removed" state on bubble
 - Reaper job for stuck quarantine objects (rows with `storage_key IS NOT NULL AND expires_at < now()`)
 - Additional processors: `pii_redact`, `prompt_inject`, `schema_validate`, `audit_capture`
 
