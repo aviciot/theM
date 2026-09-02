@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 15
+# Handover — Multi-Tenancy Step 16
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** 24ff822 (feat(multi-tenancy): Step 15 — Per-tenant LLM provider key management)
-**Steps complete:** 1 → 15 (all 47 Go packages pass, 1056 S1 tests, 1008 go test ./...)
+**HEAD:** 5ee5a34 (feat(multi-tenancy): Step 16 — Per-tenant RBAC and member management)
+**Steps complete:** 1 → 16 (all 47 Go packages pass, 1065 S1 tests, 1017 go test ./...)
 
 ---
 
@@ -63,6 +63,7 @@
 | Step 13 | Quota enforcement at run start — max_concurrent_runs (DB COUNT) + runs_per_minute (Redis INCR) | Complete | cfaef99 |
 | Step 14 | Monthly run limit enforcement — monthly_runs quota (Redis INCR keyed by YYYY-MM, 48h-past-month TTL) | Complete | 828739b |
 | Step 15 | Per-tenant LLM provider key management — tenant_id on llm_providers, merged list, upsert override, run-time resolution | Complete | 24ff822 |
+| Step 16 | Per-tenant RBAC — tenant_id in /me response, tenant_slug login selection, GET/POST /admin/tenants/{id}/members | Complete | 5ee5a34 |
 
 ---
 
@@ -408,23 +409,41 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_057.sql
 
 ---
 
-## Step 16 — (next task)
+## Step 16 — COMPLETE
 
-### Goal
-Per-tenant RBAC — tenant-level role assignments and JWT claims:
-- `auth_service.tenant_memberships` table already exists (from Step 5: `UpsertOIDCUser`). Verify columns.
-- Extend `GET /auth/me` (auth-go) to return `tenant_id` and `role` from the membership row
-- Update `POST /auth/login` to accept optional `tenant_slug` param and embed `tenant_id` + `role` in the issued JWT
-- Add `GET /admin/tenants/{id}/members` and `POST /admin/tenants/{id}/members` endpoints for managing memberships
-- Enforce tenant_id claim in `AdminTenantMiddleware` — remove bootstrap fallback for users who have an explicit membership
+### What Step 16 built
 
-### Files to read before starting
-- `docs/HANDOVER.md` (this file)
-- `go/internal/authserver/handlers.go` — login + me endpoints
-- `go/internal/authserver/store.go` — `OIDCStore.UpsertOIDCUser` (shows tenant_memberships schema)
-- `go/internal/admin/middleware.go` — `AdminTenantMiddleware` (the bootstrap fallback to remove)
-- `go/internal/authserver/jwt.go` — JWT claims struct (add tenant_id + role fields)
-- `auth_service/SCHEMA.sql` — tenant_memberships table definition
+- `go/internal/authserver/store.go` — `GetTenantMembership` signature extended: new `tenantSlug string` param selects a specific tenant membership when provided; empty string picks `LIMIT 1` (backward-compatible)
+- `go/internal/authserver/pgx.go` — `GetTenantMembership` implementation: if `tenantSlug != ""`, JOINs `them.tenants` on slug+enabled=true; else uses original single-row query
+- `go/internal/authserver/jwt.go` — `verifiedClaims` struct gains `TenantID string` field; populated from `raw.TenantID` in `Verify()`
+- `go/internal/authserver/service.go`:
+  - `LoginInput` gains `TenantSlug string` (optional)
+  - `PublicUser` gains `TenantID string` (populated from JWT claims in `Me()`)
+  - `issuePair` signature: `(ctx, user, tenantSlug)` — passes slug to `GetTenantMembership`
+  - `Me()` now returns `TenantID: claims.TenantID` (no extra DB query)
+- `go/internal/authserver/handlers.go`:
+  - `loginRequest` gains `TenantSlug string` `json:"tenant_slug,omitempty"` — forwarded to `LoginInput`
+  - `meResponse` gains `TenantID string` `json:"tenant_id"` — populated from `PublicUser.TenantID`
+- `go/internal/admin/dal/tenants.go`:
+  - `TenantMember` struct: `id, user_id, tenant_id, role, username, email, created_at`
+  - `TenantMemberInput` struct: `user_id, role`
+  - `ListMembers(ctx, tenantID)` — SELECT from `auth_service.tenant_memberships` LEFT JOIN `auth_service.users`
+  - `AddMember(ctx, tenantID, in)` — INSERT INTO `auth_service.tenant_memberships` RETURNING
+- `go/internal/admin/tenants.go`:
+  - `Routes` extended with `GET /tenants/{id}/members` and `POST /tenants/{id}/members`
+  - `ListMembers` handler: returns `[]` when empty; 500 on DB error
+  - `AddMember` handler: validates user_id+role; maps unique violation→409, FK violation→400
+- Tests: TN-18..22 (member handlers), TestHTTPMeReturnsTenantID, TestHTTPLoginWithTenantSlug
+- `go/TEST_INDEX.md` — S1-40 updated 58→62; S1-94 updated 17→22; totals 1056→1065 S1, 1008→1017 go test
+
+All 47 Go packages pass.
+
+### Step 16 design decisions
+- **tenant_id in /me from JWT** — no extra DB query; the JWT already carries the claim from login; stale only if tenant changes while token is live (acceptable: 1h TTL)
+- **tenant_slug is optional at login** — empty string falls back to LIMIT 1 (first membership); forward-compatible with multi-tenancy UI
+- **AddMember writes to auth_service schema** — the admin bridge queries the auth_service schema directly for membership management (only for admin CRUD, not for auth flows); this is consistent with how OIDCStore.UpsertOIDCUser works
+- **No schema migration needed** — `auth_service.tenant_memberships` was created in Step 5
+- **AdminTenantMiddleware unchanged** — it already has no bootstrap fallback (removed in Step 1)
 
 ---
 
@@ -483,9 +502,9 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 16.
+Continue multi-tenancy implementation — Step 17 (or next planned step).
 
-Current state: Steps 1–15 are complete and pushed to main (HEAD: 80c296f).
+Current state: Steps 1–16 are complete and pushed to main (HEAD: 5ee5a34).
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
 - Step 2: Redis key hardening (97c9d71)
 - Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
@@ -502,11 +521,11 @@ Current state: Steps 1–15 are complete and pushed to main (HEAD: 80c296f).
 - Step 14: Monthly run limit enforcement — monthly_runs quota Redis INCR (828739b)
 - Step 15: Per-tenant LLM provider key management — tenant_id on llm_providers, merged list API,
            upsert override API, run-time resolution in workerconfig (24ff822)
-All 47 Go packages pass (go test ./..., 1056 S1 tests, 1008 go test ./... total).
+- Step 16: Per-tenant RBAC — tenant_id in /me response, tenant_slug login, GET/POST
+           /admin/tenants/{id}/members (5ee5a34)
+All 47 Go packages pass (go test ./..., 1065 S1 tests, 1017 go test ./... total).
 
 Read docs/HANDOVER.md fully before starting — it is the source of truth.
-
-Goal for Step 16: Per-tenant RBAC — see Step 16 section in HANDOVER.md.
 
 Constraints (all in HANDOVER.md):
 - go test ./... must be zero failures before every commit
