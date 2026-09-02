@@ -27,6 +27,7 @@ func (h *TenantsHandler) Routes(r chi.Router) {
 	r.Get("/tenants", h.List)
 	r.Post("/tenants", h.Create)
 	r.Get("/tenants/{id}", h.Get)
+	r.Patch("/tenants/{id}", h.Patch)
 }
 
 // List handles GET /api/v1/admin/tenants.
@@ -90,4 +91,28 @@ func (h *TenantsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, tenant)
+}
+
+// Patch handles PATCH /api/v1/admin/tenants/{id}.
+func (h *TenantsHandler) Patch(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id")
+		return
+	}
+	var in dal.TenantPatch
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	detail, err := h.db.PatchTenant(r.Context(), id, in)
+	if dal.IsNoRows(err) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
 }

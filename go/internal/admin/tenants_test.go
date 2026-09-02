@@ -68,9 +68,10 @@ func (r *tenantFakeRows) Scan(dest ...any) error {
 }
 
 type tenantDB struct {
-	listRows   []*tenantFakeRow // returned by Query
-	getRow     *tenantFakeRow   // returned by QueryRow
-	createRow  *tenantFakeRow   // returned by ExecReturning
+	listRows   []*tenantFakeRow     // returned by Query
+	getRow     *tenantFakeRow       // returned by QueryRow
+	createRow  *tenantFakeRow       // returned by ExecReturning (create)
+	patchRow   admin.SingleRowScanner // returned by ExecReturning (patch); takes priority over createRow
 	execErr    error
 }
 
@@ -90,6 +91,9 @@ func (d *tenantDB) Exec(_ context.Context, _ string, _ ...any) error {
 }
 
 func (d *tenantDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
+	if d.patchRow != nil {
+		return d.patchRow
+	}
 	if d.createRow != nil {
 		return d.createRow
 	}
@@ -97,6 +101,37 @@ func (d *tenantDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.Si
 		return &tenantFakeRow{err: d.execErr}
 	}
 	return &tenantFakeRow{err: pgx.ErrNoRows}
+}
+
+// tenantDetailFakeRow simulates the 7-column RETURNING from PatchTenant.
+type tenantDetailFakeRow struct {
+	id            string
+	slug          string
+	displayName   string
+	enabled       bool
+	idpConfigured bool
+	err           error
+}
+
+func (r *tenantDetailFakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.idpConfigured, testNow, testNow}
+	for i, d := range dest {
+		if i >= len(vals) {
+			break
+		}
+		switch dp := d.(type) {
+		case *string:
+			*dp = vals[i].(string)
+		case *bool:
+			*dp = vals[i].(bool)
+		case *time.Time:
+			*dp = vals[i].(time.Time)
+		}
+	}
+	return nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -252,4 +287,92 @@ func TestTenants_Create_BadJSON(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── TN-09: Patch success — display_name updated ───────────────────────────────
+
+func TestTenants_Patch_Success(t *testing.T) {
+	db := &tenantDB{
+		patchRow: &tenantDetailFakeRow{
+			id:          "00000000-0000-0000-0000-000000000001",
+			slug:        "default",
+			displayName: "Updated Name",
+			enabled:     true,
+		},
+	}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]string{"display_name": "Updated Name"})
+	req := httptest.NewRequest(http.MethodPatch, "/tenants/00000000-0000-0000-0000-000000000001", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, "Updated Name", out["display_name"])
+	assert.Equal(t, false, out["idp_configured"])
+}
+
+// ── TN-10: Patch returns 404 when tenant not found ───────────────────────────
+
+func TestTenants_Patch_NotFound(t *testing.T) {
+	db := &tenantDB{} // patchRow=nil, createRow=nil → pgx.ErrNoRows
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]bool{"enabled": false})
+	req := httptest.NewRequest(http.MethodPatch, "/tenants/00000000-0000-0000-0000-000000000099", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ── TN-11: Patch returns 400 on invalid JSON ──────────────────────────────────
+
+func TestTenants_Patch_BadJSON(t *testing.T) {
+	db := &tenantDB{}
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodPatch, "/tenants/00000000-0000-0000-0000-000000000001", bytes.NewBufferString("not-json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── TN-12: Patch sets idp_configured when idp_config is provided ─────────────
+
+func TestTenants_Patch_IDPConfigured(t *testing.T) {
+	db := &tenantDB{
+		patchRow: &tenantDetailFakeRow{
+			id:            "00000000-0000-0000-0000-000000000001",
+			slug:          "default",
+			displayName:   "Default",
+			enabled:       true,
+			idpConfigured: true,
+		},
+	}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{
+		"idp_config": map[string]string{
+			"discovery_url": "https://accounts.google.com",
+			"client_id":     "my-client-id",
+			"client_secret": "secret",
+			"redirect_uri":  "https://example.com/callback",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPatch, "/tenants/00000000-0000-0000-0000-000000000001", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, true, out["idp_configured"])
 }

@@ -2385,6 +2385,29 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
+### S1-94 · Tenant CRUD + PATCH handler — `internal/admin/tenants_test.go`
+
+**Purpose:** Verify the tenant list/get/create/patch HTTP handlers (Step 4 + Step 10). Covers the PATCH endpoint which updates display_name, enabled, and idp_config (with custom JSON unmarshaling to distinguish absent vs explicit-null for idp_config).
+
+| Test | What it proves |
+|---|---|
+| `TestTenants_List_Empty` (TN-01) | GET /tenants with no rows → 200 with `[]` |
+| `TestTenants_List_Populated` (TN-02) | GET /tenants with 2 rows → both slugs present |
+| `TestTenants_Get_Found` (TN-03) | GET /tenants/{id} → 200 with correct fields |
+| `TestTenants_Get_NotFound` (TN-04) | GET /tenants/{missing} → 404 |
+| `TestTenants_Create_Success` (TN-05) | POST /tenants → 201 with new tenant |
+| `TestTenants_Create_MissingSlug` (TN-06) | POST without slug → 400 |
+| `TestTenants_Create_MissingDisplayName` (TN-07) | POST without display_name → 400 |
+| `TestTenants_Create_BadJSON` (TN-08) | POST invalid JSON → 400 |
+| `TestTenants_Patch_Success` (TN-09) | PATCH display_name → 200 with updated TenantDetail |
+| `TestTenants_Patch_NotFound` (TN-10) | PATCH missing tenant → 404 |
+| `TestTenants_Patch_BadJSON` (TN-11) | PATCH invalid JSON → 400 |
+| `TestTenants_Patch_IDPConfigured` (TN-12) | PATCH with idp_config → 200 with idp_configured=true |
+
+**Trigger:** `internal/admin/tenants.go`, `internal/admin/dal/tenants.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -2744,6 +2767,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/router.go` | S1-43 + S1-44 + S1-45 + S1-49 + S1-71 + S1-92 |
 | `internal/admin/managed_apps.go` | S1-92 |
 | `internal/admin/dal/managed_apps.go` | S1-92 |
+| `internal/admin/tenants.go` | S1-94 |
+| `internal/admin/dal/tenants.go` | S1-94 |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |
@@ -2875,7 +2900,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
 | S1-92 | Managed Apps catalog + bindings (MA-01..10): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig | 10 |
 | S1-93 | workerconfig managed app params (MAP-01..03): ConfigSubstitution, NilSafe, ZeroNil | 3 |
-| **S1 total** | | **1010** |
+| S1-94 | Tenant CRUD + PATCH handler (TN-01..12): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured | 12 |
+| **S1 total** | | **1022** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2884,4 +2910,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **962** |
+| **`go test ./...` total** | | **974** |

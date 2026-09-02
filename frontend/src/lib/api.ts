@@ -76,6 +76,9 @@ export type {
   DailyTrendRow,
   AppScanRow,
   RecentJobRow,
+  TenantRecord,
+  TenantPatch,
+  IDPConfig,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -124,6 +127,8 @@ import type {
   EntryPoint,
   SecurityConfig,
   ServicesStats,
+  TenantRecord,
+  TenantPatch,
 } from './apiTypes';
 
 export const themApi = {
@@ -499,4 +504,12 @@ export const themApi = {
     api.put<void>(`/admin/applications/${appId}/mcp-credentials/${serverId}`, body),
   deleteAppMCPCredential: (appId: string, serverId: string) =>
     api.delete<void>(`/admin/applications/${appId}/mcp-credentials/${serverId}`),
+
+  // Tenant provisioning
+  listTenants: () =>
+    api.get<TenantRecord[]>('/admin/tenants'),
+  createTenant: (input: { slug: string; display_name: string }) =>
+    api.post<TenantRecord>('/admin/tenants', input),
+  patchTenant: (id: string, patch: TenantPatch) =>
+    api.patch<TenantRecord>('/admin/tenants/' + id, patch),
 };

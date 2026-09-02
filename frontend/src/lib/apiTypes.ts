@@ -772,3 +772,28 @@ export interface ServicesStats {
   security: SecurityScanStats;
   worker_up: boolean;
 }
+
+// ── Tenant types ─────────────────────────────────────────────────────────────
+
+export interface IDPConfig {
+  discovery_url: string;
+  client_id: string;
+  redirect_uri: string;
+  client_secret?: string; // write-only — sent on save, never returned by the API
+}
+
+export interface TenantRecord {
+  id: string;
+  slug: string;
+  display_name: string;
+  enabled: boolean;
+  idp_configured: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TenantPatch {
+  display_name?: string;
+  enabled?: boolean;
+  idp_config?: IDPConfig | null; // null = clear IdP config
+}
