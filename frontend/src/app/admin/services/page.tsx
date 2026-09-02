@@ -226,7 +226,7 @@ const SERVICE_TABS = [
 
 export default function ServicesPage() {
   const [tab, setTab] = useState('security');
-  const [window, setWindow] = useState<Window>('7d');
+  const [timeWindow, setTimeWindow] = useState<Window>('7d');
   const [stats, setStats] = useState<ServicesStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -235,14 +235,14 @@ export default function ServicesPage() {
     setLoading(true);
     setError('');
     try {
-      const data = await themApi.getServicesStats(window);
+      const data = await themApi.getServicesStats(timeWindow);
       setStats(data);
     } catch (e) {
       setError((e as Error).message ?? 'Failed to load stats');
     } finally {
       setLoading(false);
     }
-  }, [window]);
+  }, [timeWindow]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -294,7 +294,7 @@ export default function ServicesPage() {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
     };
-  // load is stable (useCallback with [window]), reconnect when window changes
+  // load is stable (useCallback with [timeWindow]), reconnect when timeWindow changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
 
@@ -328,7 +328,7 @@ export default function ServicesPage() {
                   </span>
                 </div>
               )}
-              <WindowPicker value={window} onChange={w => setWindow(w)} />
+              <WindowPicker value={timeWindow} onChange={w => setTimeWindow(w)} />
               <button onClick={load} title="Refresh" style={{ padding: '6px 10px', borderRadius: 7, border: '1px solid var(--tm-border)', background: 'var(--tm-card)', color: 'var(--tm-text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>
               </button>
