@@ -293,6 +293,8 @@ end-to-end with a mock IdP, and secrets never leak into config logs.
 | `TestMeAndRefreshFlow` / `TestRefreshRejectsAccessToken` / `TestMeRejectsEmptyToken` | /me + /refresh semantics; access token rejected on refresh |
 | `TestLogoutRevokesToken` | Logout blacklists token; subsequent /me → `ErrTokenRevoked` |
 | `TestHTTP*` (login/me/refresh/logout/verify/validate/mirror/health) | End-to-end chi router: cookies set/cleared, `{detail}` errors, `/auth/*` Traefik mirror, forwardAuth headers, health/ready |
+| `TestHTTPMeReturnsTenantID` | GET /auth/me response includes `tenant_id` from the JWT claims (Step 16) |
+| `TestHTTPLoginWithTenantSlug` | Login with matching `tenant_slug` succeeds; unknown slug → 403 (Step 16) |
 | `TestOIDCStart_RedirectsToIdP` (OIDC-01) | start→discovery→302 to IdP with code_challenge S256 + signed state cookie set |
 | `TestOIDCStart_MissingTenant` (OIDC-02) | missing `?tenant=` → 400 |
 | `TestOIDCStart_UnknownTenant` (OIDC-03) | unknown slug → 404 |
@@ -2394,9 +2396,9 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
-### S1-94 · Tenant CRUD + PATCH + quota handler — `internal/admin/tenants_test.go`
+### S1-94 · Tenant CRUD + PATCH + quota + members handler — `internal/admin/tenants_test.go`
 
-**Purpose:** Verify the tenant list/get/create/patch/quota HTTP handlers (Steps 4, 10, 12). Covers the PATCH endpoint which updates display_name, enabled, and idp_config, and the GET/PUT quota endpoints.
+**Purpose:** Verify the tenant list/get/create/patch/quota/members HTTP handlers (Steps 4, 10, 12, 16). Covers the PATCH endpoint which updates display_name, enabled, and idp_config; the GET/PUT quota endpoints; and the GET/POST member management endpoints.
 
 | Test | What it proves |
 |---|---|
@@ -2417,6 +2419,11 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | `TestTenants_UpsertQuota_Success` (TN-15) | PUT /tenants/{id}/quota → 200 with saved plan |
 | `TestTenants_UpsertQuota_BadPlan` (TN-16) | PUT with invalid plan value → 400 |
 | `TestTenants_UpsertQuota_BadJSON` (TN-17) | PUT with invalid JSON → 400 |
+| `TestTenants_ListMembers_Empty` (TN-18) | GET /tenants/{id}/members with no rows → 200 with `[]` |
+| `TestTenants_ListMembers_Populated` (TN-19) | GET /tenants/{id}/members with 1 row → username + role present |
+| `TestTenants_AddMember_Success` (TN-20) | POST /tenants/{id}/members → 201 with role |
+| `TestTenants_AddMember_MissingUserID` (TN-21) | POST without user_id → 400 |
+| `TestTenants_AddMember_MissingRole` (TN-22) | POST without role → 400 |
 
 **Trigger:** `internal/admin/tenants.go`, `internal/admin/dal/tenants.go`
 
@@ -2887,7 +2894,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 22 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan) | 8 |
-| S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache) | 58 |
+| S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache + Step 16 RBAC) | 62 |
 | S1-41 | registry (component definition resolver) | 12 |
 | S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
 | S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |
@@ -2935,11 +2942,11 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
 | S1-92 | Managed Apps catalog + platform bindings (MA-01..14): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig, ListBindingsByTenant, ListBindingsByTenant_Empty, UpsertBindingByTenant, UpsertBindingByTenant_MissingConfig | 14 |
 | S1-93 | workerconfig managed app params (MAP-01..04): ConfigSubstitution, NilSafe, ZeroNil, TenantProviderKey_NilPoolSafe | 4 |
-| S1-94 | Tenant CRUD + PATCH + quota handler (TN-01..17): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured, GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON | 17 |
+| S1-94 | Tenant CRUD + PATCH + quota + members handler (TN-01..22): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured, GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON, ListMembers_Empty, ListMembers_Populated, AddMember_Success, AddMember_MissingUserID, AddMember_MissingRole | 22 |
 | S1-95 | quota enforcer (QE-01..09): NilLimits, ConcurrentBelowLimit, ConcurrentAtLimit, RPMBelowLimit, RPMExceeded, DBError, MonthlyNilLimit, MonthlyBelowLimit, MonthlyExceeded | 9 |
 | S1-96 | per-tenant LLM provider service (TLP-01..06): ListForTenant_ReturnsMerged, ListForTenant_EmptyReturnsEmptySlice, Upsert_PlatformNotFound_ReturnsNotFound, Upsert_MissingDefaultModel_ReturnsValidation, Upsert_Success_EncryptsKey, Upsert_InheritsDisplayNameFromPlatform | 6 |
 | S1-97 | per-tenant LLM provider handler (TLP-01..05): List_200_Empty, List_400_MissingID, Upsert_200, Upsert_404_PlatformNotFound, Upsert_400_BadJSON | 5 |
-| **S1 total** | | **1056** |
+| **S1 total** | | **1065** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2948,4 +2955,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **1008** |
+| **`go test ./...` total** | | **1017** |

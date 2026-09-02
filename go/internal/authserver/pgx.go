@@ -72,14 +72,25 @@ func (s *pgxStore) GetUserByID(ctx context.Context, id int64) (*userRecord, erro
 	return scanUser(s.pool.QueryRow(ctx, q, id))
 }
 
-func (s *pgxStore) GetTenantMembership(ctx context.Context, userID int64) (string, string, error) {
-	const q = `
-		SELECT tenant_id::text, role
-		FROM   auth_service.tenant_memberships
-		WHERE  user_id = $1
-		LIMIT  1`
+func (s *pgxStore) GetTenantMembership(ctx context.Context, userID int64, tenantSlug string) (string, string, error) {
 	var tenantID, role string
-	err := s.pool.QueryRow(ctx, q, userID).Scan(&tenantID, &role)
+	var err error
+	if tenantSlug != "" {
+		const q = `
+			SELECT tm.tenant_id::text, tm.role
+			FROM   auth_service.tenant_memberships tm
+			JOIN   them.tenants t ON t.id = tm.tenant_id
+			WHERE  tm.user_id = $1 AND t.slug = $2 AND t.enabled = true
+			LIMIT  1`
+		err = s.pool.QueryRow(ctx, q, userID, tenantSlug).Scan(&tenantID, &role)
+	} else {
+		const q = `
+			SELECT tenant_id::text, role
+			FROM   auth_service.tenant_memberships
+			WHERE  user_id = $1
+			LIMIT  1`
+		err = s.pool.QueryRow(ctx, q, userID).Scan(&tenantID, &role)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", ErrNoMembership
 	}

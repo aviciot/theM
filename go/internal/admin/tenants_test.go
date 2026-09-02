@@ -68,15 +68,20 @@ func (r *tenantFakeRows) Scan(dest ...any) error {
 }
 
 type tenantDB struct {
-	listRows  []*tenantFakeRow      // returned by Query
-	getRow    *tenantFakeRow        // returned by QueryRow
-	createRow *tenantFakeRow        // returned by ExecReturning (create)
-	patchRow  admin.SingleRowScanner // returned by ExecReturning (patch); takes priority over createRow
-	quotaRow  admin.SingleRowScanner // returned by QueryRow/ExecReturning for quota operations
-	execErr   error
+	listRows    []*tenantFakeRow      // returned by Query (tenants list)
+	memberRows  []*memberFakeRow      // returned by Query (members list); takes priority over listRows when set
+	getRow      *tenantFakeRow        // returned by QueryRow
+	createRow   *tenantFakeRow        // returned by ExecReturning (create)
+	patchRow    admin.SingleRowScanner // returned by ExecReturning (patch); takes priority over createRow
+	quotaRow    admin.SingleRowScanner // returned by QueryRow/ExecReturning for quota operations
+	addMemberRow admin.SingleRowScanner // returned by ExecReturning (add member)
+	execErr     error
 }
 
 func (d *tenantDB) Query(_ context.Context, _ string, _ ...any) (admin.RowScanner, error) {
+	if d.memberRows != nil {
+		return &memberFakeRows{rows: d.memberRows}, nil
+	}
 	return &tenantFakeRows{rows: d.listRows}, nil
 }
 
@@ -96,6 +101,9 @@ func (d *tenantDB) Exec(_ context.Context, _ string, _ ...any) error {
 }
 
 func (d *tenantDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
+	if d.addMemberRow != nil {
+		return d.addMemberRow
+	}
 	if d.quotaRow != nil && d.patchRow == nil && d.createRow == nil {
 		return d.quotaRow
 	}
@@ -502,6 +510,148 @@ func TestTenants_UpsertQuota_BadJSON(t *testing.T) {
 	r := newTenantRouter(db)
 
 	req := httptest.NewRequest(http.MethodPut, "/tenants/00000000-0000-0000-0000-000000000001/quota", bytes.NewBufferString("not-json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── Member fake types ─────────────────────────────────────────────────────────
+
+// memberFakeRow simulates one row from the ListMembers query (7 columns).
+type memberFakeRow struct {
+	id        string
+	userID    int64
+	tenantID  string
+	role      string
+	username  string
+	email     string
+	createdAt string
+	err       error
+}
+
+func (r *memberFakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	vals := []any{r.id, r.userID, r.tenantID, r.role, r.username, r.email, r.createdAt}
+	for i, d := range dest {
+		if i >= len(vals) {
+			break
+		}
+		switch dp := d.(type) {
+		case *string:
+			*dp = vals[i].(string)
+		case *int64:
+			*dp = vals[i].(int64)
+		}
+	}
+	return nil
+}
+
+type memberFakeRows struct {
+	rows []*memberFakeRow
+	pos  int
+}
+
+func (r *memberFakeRows) Next() bool   { return r.pos < len(r.rows) }
+func (r *memberFakeRows) Close() error { return nil }
+func (r *memberFakeRows) Scan(dest ...any) error {
+	row := r.rows[r.pos]
+	r.pos++
+	return row.Scan(dest...)
+}
+
+// ── TN-18: ListMembers returns empty array when no members ───────────────────
+
+func TestTenants_ListMembers_Empty(t *testing.T) {
+	db := &tenantDB{memberRows: []*memberFakeRow{}}
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenants/00000000-0000-0000-0000-000000000001/members", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Empty(t, out, "empty list must be []")
+}
+
+// ── TN-19: ListMembers returns members ───────────────────────────────────────
+
+func TestTenants_ListMembers_Populated(t *testing.T) {
+	db := &tenantDB{
+		memberRows: []*memberFakeRow{
+			{
+				id: "aaaaaaaa-0000-0000-0000-000000000001", userID: 1,
+				tenantID: "00000000-0000-0000-0000-000000000001", role: "super_admin",
+				username: "admin", email: "admin@them.local", createdAt: "2026-09-02T12:00:00Z",
+			},
+		},
+	}
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenants/00000000-0000-0000-0000-000000000001/members", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 1)
+	assert.Equal(t, "admin", out[0]["username"])
+	assert.Equal(t, "super_admin", out[0]["role"])
+}
+
+// ── TN-20: AddMember returns 201 with the new member ────────────────────────
+
+func TestTenants_AddMember_Success(t *testing.T) {
+	db := &tenantDB{
+		addMemberRow: &memberFakeRow{
+			id: "aaaaaaaa-0000-0000-0000-000000000002", userID: 2,
+			tenantID: "00000000-0000-0000-0000-000000000001", role: "developer",
+			createdAt: "2026-09-02T12:00:00Z",
+		},
+	}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"user_id": 2, "role": "developer"})
+	req := httptest.NewRequest(http.MethodPost, "/tenants/00000000-0000-0000-0000-000000000001/members", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, "developer", out["role"])
+}
+
+// ── TN-21: AddMember returns 400 when user_id is missing ────────────────────
+
+func TestTenants_AddMember_MissingUserID(t *testing.T) {
+	db := &tenantDB{}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"role": "developer"})
+	req := httptest.NewRequest(http.MethodPost, "/tenants/00000000-0000-0000-0000-000000000001/members", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── TN-22: AddMember returns 400 when role is missing ───────────────────────
+
+func TestTenants_AddMember_MissingRole(t *testing.T) {
+	db := &tenantDB{}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"user_id": 2})
+	req := httptest.NewRequest(http.MethodPost, "/tenants/00000000-0000-0000-0000-000000000001/members", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

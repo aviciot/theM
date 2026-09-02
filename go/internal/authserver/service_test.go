@@ -54,9 +54,13 @@ func (f *fakeStore) addUser(u *userRecord, rawPassword, rawAPIKey string) {
 	f.memberships[u.ID] = struct{ tenantID, role string }{testBootstrapTenantID, u.Role}
 }
 
-func (f *fakeStore) GetTenantMembership(_ context.Context, userID int64) (string, string, error) {
+func (f *fakeStore) GetTenantMembership(_ context.Context, userID int64, tenantSlug string) (string, string, error) {
 	m, ok := f.memberships[userID]
 	if !ok {
+		return "", "", ErrNoMembership
+	}
+	// When tenantSlug is specified, require it to match; otherwise return the stored membership.
+	if tenantSlug != "" && tenantSlug != "default" {
 		return "", "", ErrNoMembership
 	}
 	return m.tenantID, m.role, nil

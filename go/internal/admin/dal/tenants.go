@@ -212,6 +212,69 @@ func (d *DB) UpsertQuota(ctx context.Context, q TenantQuota) (TenantQuota, error
 	return scanQuota(&singleToRow{s: row})
 }
 
+// ── Tenant membership types ───────────────────────────────────────────────────
+
+// TenantMember is one row from auth_service.tenant_memberships.
+type TenantMember struct {
+	ID        string `json:"id"`
+	UserID    int64  `json:"user_id"`
+	TenantID  string `json:"tenant_id"`
+	Role      string `json:"role"`
+	Username  string `json:"username"`
+	Email     string `json:"email"`
+	CreatedAt string `json:"created_at"`
+}
+
+// TenantMemberInput is the request body for adding a membership.
+type TenantMemberInput struct {
+	UserID int64  `json:"user_id"`
+	Role   string `json:"role"`
+}
+
+// ListMembers returns all memberships for the given tenant.
+func (d *DB) ListMembers(ctx context.Context, tenantID string) ([]TenantMember, error) {
+	const q = `
+		SELECT tm.id::text, tm.user_id, tm.tenant_id::text, tm.role,
+		       COALESCE(u.username, '') AS username,
+		       COALESCE(u.email, '') AS email,
+		       to_char(tm.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
+		FROM auth_service.tenant_memberships tm
+		LEFT JOIN auth_service.users u ON u.id = tm.user_id
+		WHERE tm.tenant_id = $1::uuid
+		ORDER BY tm.created_at ASC`
+	rows, err := d.q.Query(ctx, q, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TenantMember
+	for rows.Next() {
+		var m TenantMember
+		if err := rows.Scan(&m.ID, &m.UserID, &m.TenantID, &m.Role, &m.Username, &m.Email, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	if out == nil {
+		out = []TenantMember{}
+	}
+	return out, nil
+}
+
+// AddMember inserts a tenant membership row and returns the created member.
+// Returns a unique-violation error when the (user_id, tenant_id) pair already exists.
+func (d *DB) AddMember(ctx context.Context, tenantID string, in TenantMemberInput) (TenantMember, error) {
+	const q = `
+		INSERT INTO auth_service.tenant_memberships (user_id, tenant_id, role)
+		VALUES ($1, $2::uuid, $3)
+		RETURNING id::text, user_id, tenant_id::text, role,
+		          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+	var m TenantMember
+	err := d.q.ExecReturning(ctx, q, in.UserID, tenantID, in.Role).
+		Scan(&m.ID, &m.UserID, &m.TenantID, &m.Role, &m.CreatedAt)
+	return m, err
+}
+
 // ── PatchTenant ───────────────────────────────────────────────────────────────
 
 // PatchTenant updates a tenant's display_name, enabled, and/or idp_config.

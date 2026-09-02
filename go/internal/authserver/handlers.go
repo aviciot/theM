@@ -31,9 +31,10 @@ const (
 // ── request/response bodies (JSON field names match Python) ──────────────────
 
 type loginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	APIKey   string `json:"api_key"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	APIKey     string `json:"api_key"`
+	TenantSlug string `json:"tenant_slug,omitempty"`
 }
 
 type tokenPairResponse struct {
@@ -48,6 +49,7 @@ type meResponse struct {
 	Name     string `json:"name"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	TenantID string `json:"tenant_id"`
 }
 
 type verifyResponse struct {
@@ -76,6 +78,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	pair, err := h.svc.Login(r.Context(), LoginInput{
 		Username: req.Username, Password: req.Password, APIKey: req.APIKey,
+		TenantSlug: req.TenantSlug,
 	})
 	if err != nil {
 		h.writeServiceError(w, err)
@@ -97,7 +100,8 @@ func (h *Handlers) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, meResponse{
-		ID: user.ID, Email: user.Email, Name: user.Name, Username: user.Username, Role: user.Role,
+		ID: user.ID, Email: user.Email, Name: user.Name, Username: user.Username,
+		Role: user.Role, TenantID: user.TenantID,
 	})
 }
 

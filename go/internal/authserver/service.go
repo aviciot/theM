@@ -46,9 +46,10 @@ func NewService(store Store, cfg *Config, log *slog.Logger) *Service {
 
 // LoginInput carries the two supported login methods.
 type LoginInput struct {
-	Username string
-	Password string
-	APIKey   string
+	Username   string
+	Password   string
+	APIKey     string
+	TenantSlug string // optional: selects which tenant membership to use at login
 }
 
 // TokenPair is the login/refresh response payload.
@@ -65,6 +66,7 @@ type PublicUser struct {
 	Name     string
 	Username string
 	Role     string
+	TenantID string // from the JWT tenant_id claim
 }
 
 // Login authenticates via api key OR username/password, enforces the dashboard
@@ -103,7 +105,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) 
 		return nil, ErrDashboardAccessDenied
 	}
 
-	return s.issuePair(ctx, user)
+	return s.issuePair(ctx, user, in.TenantSlug)
 }
 
 // Refresh validates a refresh token and issues a fresh pair. The token must be of
@@ -126,7 +128,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 	if err != nil {
 		return nil, err
 	}
-	return s.issuePair(ctx, user)
+	return s.issuePair(ctx, user, "")
 }
 
 // Me resolves the current user from an access token (typically the cookie value).
@@ -151,6 +153,7 @@ func (s *Service) Me(ctx context.Context, accessToken string) (*PublicUser, erro
 		Name:     user.Name,
 		Username: user.Username,
 		Role:     user.Role,
+		TenantID: claims.TenantID,
 	}, nil
 }
 
@@ -210,8 +213,10 @@ func (s *Service) Logout(ctx context.Context, accessToken string) {
 // issuePair mints an access+refresh pair, honours the role token_expiry, and
 // records the session best-effort. It resolves the tenant_id from the
 // tenant_memberships table; login fails if no membership row exists.
-func (s *Service) issuePair(ctx context.Context, user *userRecord) (*TokenPair, error) {
-	tenantID, memberRole, err := s.store.GetTenantMembership(ctx, user.ID)
+// tenantSlug selects a specific tenant when the user has multiple memberships;
+// empty string picks the first available membership row.
+func (s *Service) issuePair(ctx context.Context, user *userRecord, tenantSlug string) (*TokenPair, error) {
+	tenantID, memberRole, err := s.store.GetTenantMembership(ctx, user.ID, tenantSlug)
 	if errors.Is(err, ErrNoMembership) {
 		s.log.Warn("login blocked: no tenant membership", "user_id", user.ID, "username", user.Username)
 		return nil, ErrNoTenantMembership

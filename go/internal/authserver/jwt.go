@@ -56,6 +56,7 @@ type verifiedClaims struct {
 	Username string
 	Name     string
 	Role     string
+	TenantID string
 	Exp      int64
 	Iat      int64
 	Type     string
@@ -200,6 +201,7 @@ func (s *tokenSigner) Verify(tokenString string) (*verifiedClaims, error) {
 		Username: raw.Username,
 		Name:     raw.Name,
 		Role:     raw.Role,
+		TenantID: raw.TenantID,
 		Exp:      raw.Exp,
 		Iat:      raw.Iat,
 		Type:     raw.Type,

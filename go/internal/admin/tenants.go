@@ -22,7 +22,7 @@ func NewTenantsHandler(db DBQuerier) *TenantsHandler {
 	return &TenantsHandler{db: dal.NewDB(db)}
 }
 
-// Routes mounts the tenant CRUD + quota endpoints.
+// Routes mounts the tenant CRUD + quota + member endpoints.
 func (h *TenantsHandler) Routes(r chi.Router) {
 	r.Get("/tenants", h.List)
 	r.Post("/tenants", h.Create)
@@ -30,6 +30,8 @@ func (h *TenantsHandler) Routes(r chi.Router) {
 	r.Patch("/tenants/{id}", h.Patch)
 	r.Get("/tenants/{id}/quota", h.GetQuota)
 	r.Put("/tenants/{id}/quota", h.UpsertQuota)
+	r.Get("/tenants/{id}/members", h.ListMembers)
+	r.Post("/tenants/{id}/members", h.AddMember)
 }
 
 // List handles GET /api/v1/admin/tenants.
@@ -168,4 +170,56 @@ func (h *TenantsHandler) UpsertQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, q)
+}
+
+// ListMembers handles GET /api/v1/admin/tenants/{id}/members.
+func (h *TenantsHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id")
+		return
+	}
+	members, err := h.db.ListMembers(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, members)
+}
+
+// AddMember handles POST /api/v1/admin/tenants/{id}/members.
+// Adds a user to the tenant with the given role.
+func (h *TenantsHandler) AddMember(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id")
+		return
+	}
+	var in dal.TenantMemberInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if in.UserID == 0 {
+		writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	if in.Role == "" {
+		writeError(w, http.StatusBadRequest, "role is required")
+		return
+	}
+	m, err := h.db.AddMember(r.Context(), id, in)
+	if dal.IsUniqueViolation(err) {
+		writeError(w, http.StatusConflict, "user is already a member of this tenant")
+		return
+	}
+	if dal.IsForeignKeyViolation(err) {
+		writeError(w, http.StatusBadRequest, "user_id does not exist")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, m)
 }

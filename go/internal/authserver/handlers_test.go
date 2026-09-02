@@ -207,3 +207,42 @@ func TestHTTPHealthReadyDBDown(t *testing.T) {
 		t.Fatalf("ready status = %d, want 503", w.Code)
 	}
 }
+
+// TestHTTPMeReturnsTenantID verifies that GET /auth/me returns the tenant_id
+// from the access token claims. This is Step 16 RBAC: the UI can display
+// which tenant the current session belongs to without a separate DB query.
+func TestHTTPMeReturnsTenantID(t *testing.T) {
+	router, _ := testRouter(t)
+	lw := do(t, router, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"admin123"}`)
+	ac := cookieFrom(lw.Result(), accessCookie)
+
+	mw := do(t, router, http.MethodGet, "/api/v1/auth/me", "", ac)
+	if mw.Code != http.StatusOK {
+		t.Fatalf("me status = %d, body = %s", mw.Code, mw.Body.String())
+	}
+	var me meResponse
+	if err := json.Unmarshal(mw.Body.Bytes(), &me); err != nil {
+		t.Fatal(err)
+	}
+	if me.TenantID != testBootstrapTenantID {
+		t.Fatalf("me.tenant_id = %q, want %q", me.TenantID, testBootstrapTenantID)
+	}
+}
+
+// TestHTTPLoginWithTenantSlug verifies that supplying a matching tenant_slug
+// in the login body selects the correct membership. An unknown slug returns 403.
+func TestHTTPLoginWithTenantSlug(t *testing.T) {
+	router, _ := testRouter(t)
+
+	// Known slug → success
+	w := do(t, router, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"admin123","tenant_slug":"default"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login with valid tenant_slug: status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	// Unknown slug → 403 (no membership for that tenant)
+	w2 := do(t, router, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"admin123","tenant_slug":"nonexistent"}`)
+	if w2.Code != http.StatusForbidden {
+		t.Fatalf("login with unknown tenant_slug: status = %d, want 403", w2.Code)
+	}
+}

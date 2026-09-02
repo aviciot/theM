@@ -38,8 +38,10 @@ type Store interface {
 	GetUserByID(ctx context.Context, id int64) (*userRecord, error)
 
 	// GetTenantMembership returns the tenant_id and role for the given user.
-	// Returns ErrNoMembership when no row exists in tenant_memberships.
-	GetTenantMembership(ctx context.Context, userID int64) (tenantID, role string, err error)
+	// When tenantSlug is non-empty, the membership for that specific tenant is
+	// returned; otherwise the first membership row (arbitrary order) is used.
+	// Returns ErrNoMembership when no matching row exists.
+	GetTenantMembership(ctx context.Context, userID int64, tenantSlug string) (tenantID, role string, err error)
 
 	// TouchLastLogin sets users.last_login_at = now for the given user. Best
 	// effort — errors are logged by the caller but do not fail login.
