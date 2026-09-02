@@ -237,6 +237,10 @@ func processJob(
 	// Publish final result to Redis run channel
 	pub.PublishFinalResult(ctx, result, job.FileName, job.FileSize)
 
+	// Notify the Services page that stats may have changed.
+	// Uses the dashboard WS channel so the frontend can re-fetch without polling.
+	_ = redisPub.Publish(ctx, "them:dash:services:stats", []byte(`{}`))
+
 	log.Info("job complete",
 		"job_id", job.ID,
 		"artifact_id", job.ArtifactID,

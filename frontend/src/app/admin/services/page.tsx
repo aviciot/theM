@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
 import { themApi } from '@/lib/api';
@@ -245,6 +245,58 @@ export default function ServicesPage() {
   }, [window]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Live stats invalidation via the dashboard WebSocket.
+  // The middleware worker publishes to them:dash:services:stats after each scan
+  // job completes. We re-fetch only the stats data — no full page reload.
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsAliveRef = useRef(true);
+  useEffect(() => {
+    wsAliveRef.current = true;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      if (!wsAliveRef.current) return;
+      if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+      fetch('/api/auth/token')
+        .then((r) => r.json())
+        .then((data: { token?: string }) => {
+          if (!wsAliveRef.current || !data.token) return;
+          const wsBase = window.location.origin.replace('http://', 'ws://').replace('https://', 'wss://');
+          const ws = new WebSocket(`${wsBase}/ws/dashboard?token=${data.token}`);
+          wsRef.current = ws;
+          ws.onopen = () => { ws.send(JSON.stringify({ type: 'subscribe', channels: ['services:stats'] })); };
+          ws.onmessage = (e) => {
+            try {
+              const msg = JSON.parse(e.data as string);
+              if (msg.type === 'ping' || msg.type === 'subscribed') return;
+              if (msg.channel === 'services:stats') load();
+            } catch { /* ignore parse errors */ }
+          };
+          ws.onerror = () => { /* handled by onclose */ };
+          ws.onclose = () => {
+            if (wsRef.current === ws) wsRef.current = null;
+            if (!wsAliveRef.current) return;
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(connect, 3000);
+          };
+        })
+        .catch(() => {
+          if (!wsAliveRef.current) return;
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connect, 3000);
+        });
+    };
+
+    connect();
+    return () => {
+      wsAliveRef.current = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+    };
+  // load is stable (useCallback with [window]), reconnect when window changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load]);
 
   return (
     <AuthGuard>

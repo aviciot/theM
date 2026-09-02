@@ -401,6 +401,7 @@ func (h *Handler) extractToken(r *http.Request) string {
 // staticChannels is the whitelist of fixed channel names.
 var staticChannels = map[string]bool{
 	"runs": true, "agents": true, "metrics": true, "apps": true,
+	"services:stats": true, // invalidation signal for the Services page
 }
 
 // IsValidChannel returns true if ch is a permitted channel name.

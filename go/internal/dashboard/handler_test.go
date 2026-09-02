@@ -277,7 +277,7 @@ func TestDashboard_PingReceived(t *testing.T) {
 
 func TestIsValidChannel(t *testing.T) {
 	valid := []string{
-		"runs", "agents", "metrics", "apps",
+		"runs", "agents", "metrics", "apps", "services:stats",
 		"run:00000000-0000-0000-0000-000000000001",
 		"agent:00000000-0000-0000-0000-000000000001",
 		"sessions:my-app",
