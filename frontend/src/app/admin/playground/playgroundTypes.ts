@@ -39,7 +39,17 @@ export function getBridgeWs(): string {
 
 // ── Shared types ──────────────────────────────────────────────────────────
 
-export type FileMsg = { filename: string; media_type: string; text: string; download_url?: string };
+export type FileMsg = {
+  filename: string;
+  media_type: string;
+  text: string;
+  download_url?: string;
+  artifact_id?: string;
+  // Set by the security scan pipeline events.
+  scanning?: boolean;  // true while AV scan is in progress (file_scanning event received)
+  blocked?: boolean;   // true when scan returned infected (file_blocked event)
+  threat?: string;     // ClamAV threat name when blocked
+};
 export type ChatMsg = { role: 'user' | 'assistant'; text: string; pending?: boolean; file?: FileMsg };
 
 export type AgentActivity = {

@@ -402,14 +402,34 @@ export function ChatColumn({ target, color, sharedInput, onSharedSent, showHeade
         {messages.map((m, i) => (
           <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
             {m.file ? (
-              <div style={{ maxWidth: '82%', borderRadius: '14px 14px 14px 4px', border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', overflow: 'hidden' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', borderBottom: '1px solid var(--tm-border)', background: 'rgba(124,58,237,0.08)' }}>
-                  <span style={{ fontSize: 14 }}>{m.file.media_type === 'text/html' ? '🌐' : m.file.media_type === 'text/markdown' ? '📝' : '📄'}</span>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tm-text)', flex: 1 }}>{m.file.filename}</span>
-                  <button onClick={() => { const b = new Blob([m.file!.text], { type: m.file!.media_type }); const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = m.file!.filename; a.click(); URL.revokeObjectURL(u); }} style={{ padding: '3px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600, background: color, color: '#fff', border: 'none', cursor: 'pointer' }}>Download</button>
+              <div style={{ maxWidth: '82%', borderRadius: '14px 14px 14px 4px', border: `1px solid ${m.file.blocked ? 'rgba(239,68,68,0.4)' : 'var(--tm-border)'}`, background: 'var(--tm-surface)', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', borderBottom: `1px solid ${m.file.blocked ? 'rgba(239,68,68,0.4)' : 'var(--tm-border)'}`, background: m.file.blocked ? 'rgba(239,68,68,0.08)' : 'rgba(124,58,237,0.08)' }}>
+                  {m.file.scanning ? (
+                    <span style={{ color: 'var(--tm-text-muted)', display: 'flex', alignItems: 'center' }}><Spinner /></span>
+                  ) : m.file.blocked ? (
+                    <span style={{ fontSize: 14 }}>🚫</span>
+                  ) : (
+                    <span style={{ fontSize: 14 }}>{m.file.media_type === 'text/html' ? '🌐' : m.file.media_type === 'text/markdown' ? '📝' : '📄'}</span>
+                  )}
+                  <span style={{ fontSize: 12, fontWeight: 600, color: m.file.blocked ? '#ef4444' : 'var(--tm-text)', flex: 1 }}>{m.file.filename}</span>
+                  {m.file.scanning && <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', whiteSpace: 'nowrap' }}>Scanning…</span>}
+                  {m.file.blocked && <span style={{ fontSize: 11, color: '#ef4444', whiteSpace: 'nowrap' }}>Blocked</span>}
+                  {!m.file.scanning && !m.file.blocked && (
+                    <button onClick={() => { const b = new Blob([m.file!.text], { type: m.file!.media_type }); const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = m.file!.filename; a.click(); URL.revokeObjectURL(u); }} style={{ padding: '3px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600, background: color, color: '#fff', border: 'none', cursor: 'pointer' }}>Download</button>
+                  )}
                 </div>
-                {m.file.media_type === 'text/html' && <iframe srcDoc={m.file.text} style={{ width: '100%', height: 340, border: 'none', display: 'block' }} sandbox="allow-scripts allow-same-origin" title={m.file.filename} />}
-                {m.file.media_type === 'text/markdown' && <pre style={{ margin: 0, padding: '10px 12px', fontSize: 11, fontFamily: 'monospace', color: 'var(--tm-text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 260, overflowY: 'auto' }}>{m.file.text}</pre>}
+                {m.file.blocked && m.file.threat && (
+                  <div style={{ padding: '6px 12px', fontSize: 11, color: '#ef4444', background: 'rgba(239,68,68,0.05)' }}>
+                    Threat detected: {m.file.threat}
+                  </div>
+                )}
+                {m.file.blocked && !m.file.threat && (
+                  <div style={{ padding: '6px 12px', fontSize: 11, color: '#ef4444', background: 'rgba(239,68,68,0.05)' }}>
+                    File removed — security policy violation
+                  </div>
+                )}
+                {!m.file.scanning && !m.file.blocked && m.file.media_type === 'text/html' && <iframe srcDoc={m.file.text} style={{ width: '100%', height: 340, border: 'none', display: 'block' }} sandbox="allow-scripts allow-same-origin" title={m.file.filename} />}
+                {!m.file.scanning && !m.file.blocked && m.file.media_type === 'text/markdown' && <pre style={{ margin: 0, padding: '10px 12px', fontSize: 11, fontFamily: 'monospace', color: 'var(--tm-text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 260, overflowY: 'auto' }}>{m.file.text}</pre>}
               </div>
             ) : (
               <MsgBubble msg={m} color={color} />

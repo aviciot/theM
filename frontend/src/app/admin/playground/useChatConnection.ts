@@ -277,14 +277,64 @@ export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConne
           const slug = (msg.tool as string).replace(/^agent__/, '');
           setStatus(`${slug} done`);
 
+        } else if (msg.type === 'file_scanning') {
+          // Security gate: scan in progress — show spinner bubble, no download link yet.
+          const fm: FileMsg = {
+            filename: msg.filename as string,
+            media_type: msg.media_type as string ?? '',
+            text: '',
+            artifact_id: msg.artifact_id as string | undefined,
+            scanning: true,
+          };
+          setMessages(prev => {
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last?.role === 'assistant' && last.pending) copy[copy.length - 1] = { ...last, pending: false };
+            return [...copy, { role: 'assistant', text: '', file: fm }];
+          });
+
+        } else if (msg.type === 'file_blocked') {
+          // Security gate: scan found a threat — update the scanning bubble to blocked state.
+          const artifactId = msg.artifact_id as string | undefined;
+          setMessages(prev => {
+            const idx = artifactId
+              ? prev.findLastIndex(m => m.file?.artifact_id === artifactId && m.file?.scanning)
+              : -1;
+            if (idx >= 0) {
+              const copy = [...prev];
+              copy[idx] = { ...copy[idx], file: { ...copy[idx].file!, scanning: false, blocked: true, threat: msg.threat as string | undefined } };
+              return copy;
+            }
+            // No matching scanning bubble — add a new blocked bubble.
+            const fm: FileMsg = {
+              filename: msg.filename as string,
+              media_type: msg.media_type as string ?? '',
+              text: '',
+              artifact_id: artifactId,
+              blocked: true,
+              threat: msg.threat as string | undefined,
+            };
+            return [...prev, { role: 'assistant', text: '', file: fm }];
+          });
+
         } else if (msg.type === 'file') {
           const rawUrl = msg.download_url as string | undefined;
           // Rewrite /api/v1/... to go through the Next.js proxy at /api/them/...
           const download_url = rawUrl?.startsWith('/api/v1/')
             ? '/api/them/' + rawUrl.slice('/api/v1/'.length)
             : rawUrl;
-          const fm: FileMsg = { filename: msg.filename as string, media_type: msg.media_type as string, text: msg.text as string ?? '', download_url };
+          const artifactId = msg.artifact_id as string | undefined;
+          const fm: FileMsg = { filename: msg.filename as string, media_type: msg.media_type as string, text: msg.text as string ?? '', download_url, artifact_id: artifactId };
           setMessages(prev => {
+            // Replace an existing scanning bubble for the same artifact (clean scan result).
+            const idx = artifactId
+              ? prev.findLastIndex(m => m.file?.artifact_id === artifactId && m.file?.scanning)
+              : -1;
+            if (idx >= 0) {
+              const copy = [...prev];
+              copy[idx] = { ...copy[idx], file: fm };
+              return copy;
+            }
             const copy = [...prev];
             const last = copy[copy.length - 1];
             if (last?.role === 'assistant' && last.pending) copy[copy.length - 1] = { ...last, pending: false };
