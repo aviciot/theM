@@ -53,7 +53,10 @@ func run() error {
 	store := authserver.NewPgxStore(database.Pool())
 	svc := authserver.NewService(store, cfg, log)
 	handlers := authserver.NewHandlers(svc, cfg, log)
-	router := authserver.NewRouter(handlers, store, version)
+	oidcStore := authserver.NewPgxOIDCStore(database.Pool())
+	signer := authserver.NewTokenSigner(cfg)
+	oidcHandlers := authserver.NewOIDCHandlers(oidcStore, signer, cfg, log)
+	router := authserver.NewRouter(handlers, oidcHandlers, store, version)
 
 	srv := &http.Server{
 		Addr:              cfg.Addr(),

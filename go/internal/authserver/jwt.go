@@ -76,6 +76,12 @@ type tokenSigner struct {
 	now           func() time.Time // injectable for tests
 }
 
+// NewTokenSigner builds a tokenSigner from the service config. Exported so
+// cmd/auth-server can wire OIDCHandlers without duplicating config parsing.
+func NewTokenSigner(cfg *Config) *tokenSigner {
+	return newTokenSigner([]byte(cfg.JWTSecret), cfg.AccessTokenExpiry, cfg.RefreshTokenExpiry)
+}
+
 func newTokenSigner(secret []byte, accessExpirySec, refreshExpirySec int) *tokenSigner {
 	return &tokenSigner{
 		secret:        secret,

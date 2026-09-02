@@ -19,19 +19,31 @@ type healthChecker interface {
 // /auth/api/v1/auth (the Traefik-mirrored prefix the Python service exposed), so
 // external routing parity is preserved. Health endpoints are registered at
 // /health, /health/live, /health/ready, and mirrored under /auth.
-func NewRouter(h *Handlers, hc healthChecker, version string) http.Handler {
+func NewRouter(h *Handlers, oidc *OIDCHandlers, hc healthChecker, version string) http.Handler {
 	r := chi.NewRouter()
 
 	registerHealth(r, hc, version)
 	registerAuth(r, h, "/api/v1/auth")
+	if oidc != nil {
+		registerOIDC(r, oidc)
+	}
 
 	// Traefik mirror: the Python service mounted the same routers under /auth.
 	r.Route("/auth", func(sub chi.Router) {
 		registerHealth(sub, hc, version)
 		registerAuth(sub, h, "/api/v1/auth")
+		if oidc != nil {
+			registerOIDC(sub, oidc)
+		}
 	})
 
 	return r
+}
+
+// registerOIDC mounts the OIDC start/callback endpoints.
+func registerOIDC(r chi.Router, h *OIDCHandlers) {
+	r.Get("/oidc/start", h.OIDCStart)
+	r.Get("/oidc/callback", h.OIDCCallback)
 }
 
 // registerAuth mounts the auth handlers under the given base path.

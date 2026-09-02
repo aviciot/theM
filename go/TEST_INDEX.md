@@ -274,7 +274,8 @@ a JSON array (not null) even when no component definitions exist.
 
 **Purpose:** the Go replacement for the Python `them-auth-service`. Proves HS256 JWT issuance
 is byte-compatible with what the Go bridge validates, bcrypt passwords verify, the login/me/refresh/
-logout contract behaves like the Python service, and secrets never leak into config logs.
+logout contract behaves like the Python service, OIDC authorization-code flow with PKCE works
+end-to-end with a mock IdP, and secrets never leak into config logs.
 
 | Test | What it proves |
 |---|---|
@@ -292,9 +293,21 @@ logout contract behaves like the Python service, and secrets never leak into con
 | `TestMeAndRefreshFlow` / `TestRefreshRejectsAccessToken` / `TestMeRejectsEmptyToken` | /me + /refresh semantics; access token rejected on refresh |
 | `TestLogoutRevokesToken` | Logout blacklists token; subsequent /me → `ErrTokenRevoked` |
 | `TestHTTP*` (login/me/refresh/logout/verify/validate/mirror/health) | End-to-end chi router: cookies set/cleared, `{detail}` errors, `/auth/*` Traefik mirror, forwardAuth headers, health/ready |
+| `TestOIDCStart_RedirectsToIdP` (OIDC-01) | start→discovery→302 to IdP with code_challenge S256 + signed state cookie set |
+| `TestOIDCStart_MissingTenant` (OIDC-02) | missing `?tenant=` → 400 |
+| `TestOIDCStart_UnknownTenant` (OIDC-03) | unknown slug → 404 |
+| `TestOIDCStart_NoIDPConfig` (OIDC-04) | tenant exists but idp_config=null → 422 |
+| `TestOIDCCallback_MissingParams` (OIDC-05) | callback with no state/code → 400 |
+| `TestOIDCCallback_TamperedState` (OIDC-06) | HMAC mismatch on state → 400 |
+| `TestOIDCCallback_MissingStateCookie` (OIDC-07) | valid state but no PKCE cookie → 400 |
+| `TestOIDCCallback_HappyPath` (OIDC-08) | full flow: state OK → IdP exchange → UpsertOIDCUser → 302 with auth cookies + state cookie cleared + code_verifier forwarded |
+| `TestStateSignVerify` (OIDC-09) | state sign/verify round-trip extracts correct slug |
+| `TestStateVerifyRejectsWrongKey` (OIDC-10) | wrong key → error |
+| `TestPKCECodeChallenge` (OIDC-11) | codeChallenge is deterministic, differs from verifier |
+| `TestOIDCCallback_TokenCarriesTenantID` (OIDC-12) | issued access token carries correct `tenant_id` claim |
 
 **Trigger:** any change to `internal/authserver/` (config, jwt, password, store, pgx, service,
-handlers, router) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
+handlers, router, oidc, oidc_store) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
 
 ---
 
@@ -2767,7 +2780,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 21 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan) | 8 |
-| S1-40 | authserver (Go auth service) | 38 |
+| S1-40 | authserver (Go auth service + OIDC flow) | 50 |
 | S1-41 | registry (component definition resolver) | 12 |
 | S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
 | S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |

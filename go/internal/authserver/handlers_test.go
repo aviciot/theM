@@ -15,7 +15,7 @@ func testRouter(t *testing.T) (http.Handler, *fakeStore) {
 	svc, store := testService(t)
 	cfg := &Config{JWTSecret: testSecret, AccessTokenExpiry: 3600, RefreshTokenExpiry: 604800}
 	h := NewHandlers(svc, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	return NewRouter(h, store, "test"), store
+	return NewRouter(h, nil, store, "test"), store
 }
 
 func do(t *testing.T, router http.Handler, method, path, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
