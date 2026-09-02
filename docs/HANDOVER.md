@@ -463,15 +463,16 @@ cd /opt/docker/them
 # Verify stack is healthy
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml ps
 
-# Apply pending migrations (Step 6 + Step 12) if not yet applied
+# Apply pending migrations if not yet applied
 docker cp db/055_managed_apps.sql them-postgres:/tmp/them_055.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_055.sql
 docker cp db/056_tenant_quotas.sql them-postgres:/tmp/them_056.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_056.sql
+docker cp db/057_tenant_llm_providers.sql them-postgres:/tmp/them_057.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_057.sql
 
 # Read before starting
 cat docs/HANDOVER.md
-cat docs/architecture/MULTI_TENANCY_DESIGN.md
 
 # Run tests to confirm baseline (zero failures required)
 docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
@@ -482,7 +483,41 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 15.
+Continue multi-tenancy implementation — Step 16.
+
+Current state: Steps 1–15 are complete and pushed to main (HEAD: 80c296f).
+- Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
+- Step 2: Redis key hardening (97c9d71)
+- Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
+- Step 4: Tenant CRUD API (a534a54)
+- Step 5: OIDC login flow — PKCE + signed state (2de98f5)
+- Step 6: Managed Apps foundation — catalog CRUD + binding activation (7c056fc)
+- Step 7: Runtime parameter injection — {{PARAMS.KEY}} substitution in system prompts (0bbfa28)
+- Step 8: OIDC JWKS RS256 id_token signature verification — stdlib only (99fc33c)
+- Step 9: OIDC JWKS key caching — TTL-based, rotation-aware (2056550)
+- Step 10: Tenant provisioning UI + PATCH /admin/tenants/{id} (441f9e7)
+- Step 11: Binding management UI — platform-level binding API + frontend Managed Apps page (59105c4)
+- Step 12: Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota (293fe26)
+- Step 13: Quota enforcement at run start — max_concurrent_runs + runs_per_minute (cfaef99)
+- Step 14: Monthly run limit enforcement — monthly_runs quota Redis INCR (828739b)
+- Step 15: Per-tenant LLM provider key management — tenant_id on llm_providers, merged list API,
+           upsert override API, run-time resolution in workerconfig (24ff822)
+All 47 Go packages pass (go test ./..., 1056 S1 tests, 1008 go test ./... total).
+
+Read docs/HANDOVER.md fully before starting — it is the source of truth.
+
+Goal for Step 16: Per-tenant RBAC — see Step 16 section in HANDOVER.md.
+
+Constraints (all in HANDOVER.md):
+- go test ./... must be zero failures before every commit
+- TenantID comes only from JWT claims via tenantctx typed key — never from headers
+- 500 responses use static strings only — never err.Error()
+- Go runs inside Docker: docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
+- Handler → Service → DAL — no SQL in handlers
+- TEST_INDEX.md updated in same commit as any new test
+```
+
+---
 
 Current state: Steps 1–14 are complete and pushed to main.
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
