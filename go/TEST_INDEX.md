@@ -2340,6 +2340,28 @@ scheme detection (HTTP vs HTTPS), and error on malformed endpoint.
 
 ---
 
+### S1-92 · Managed Apps catalog + tenant bindings — `internal/admin/managed_apps_test.go`
+
+**Purpose:** Platform CRUD for the managed-app catalog and per-tenant binding activation.
+Verifies empty-list `[]`, create/get, param-manifest replacement, and binding upsert.
+
+| Test | What it proves |
+|---|---|
+| `TestManagedApps_List_Empty` (MA-01) | GET catalog returns `[]` when no apps |
+| `TestManagedApps_List_Populated` (MA-02) | GET catalog returns populated list |
+| `TestManagedApps_Create_Success` (MA-03) | POST creates managed app → 201 |
+| `TestManagedApps_Create_MissingName` (MA-04) | POST missing name → 400 |
+| `TestManagedApps_Get_Found` (MA-05) | GET /{id} returns app + empty params array |
+| `TestManagedApps_Get_NotFound` (MA-06) | GET /{id} unknown id → 404 |
+| `TestManagedApps_PutParams` (MA-07) | PUT /{id}/params replaces manifest → 200 with updated count |
+| `TestManagedApps_Bindings_List` (MA-08) | GET tenant bindings returns list scoped to context tenant |
+| `TestManagedApps_Binding_Upsert` (MA-09) | PUT binding upserts → 200 with binding row |
+| `TestManagedApps_Binding_MissingConfig` (MA-10) | PUT binding with no config field → 400 |
+
+**Trigger:** `internal/admin/managed_apps.go`, `internal/admin/dal/managed_apps.go`, `internal/admin/router.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -2675,8 +2697,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/execution/errors.go` | S1-35 + S1-13 |
 | `internal/execution/request.go` | S1-35 + S1-13 |
 | `internal/admin/agent_definition_schema.go` | S1-71 |
-| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S1-50 + S1-51 + S1-71 |
-| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S1-51 + S2-05 (integration) |
+| `internal/admin/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S1-50 + S1-51 + S1-71 + S1-92 |
+| `internal/admin/dal/` (any file) | S1-15 + S1-25 + S1-34 + S1-42 + S1-43 + S1-44 + S1-45 + S1-49 + S1-51 + S1-92 + S2-05 (integration) |
 | `internal/admin/dal/agent_definitions_publish.go` | S1-51 |
 | `internal/admin/dal/agent_bindings.go` | S1-51 |
 | `internal/admin/dal/definitions.go` | S1-42 |
@@ -2696,7 +2718,9 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/definitions.go` | S1-42 + S1-43 + S1-44 |
 | `internal/admin/agent_definitions.go` | S1-49 |
 | `internal/admin/registry.go` | S1-45 |
-| `internal/admin/router.go` | S1-43 + S1-44 + S1-45 + S1-49 + S1-71 |
+| `internal/admin/router.go` | S1-43 + S1-44 + S1-45 + S1-49 + S1-71 + S1-92 |
+| `internal/admin/managed_apps.go` | S1-92 |
+| `internal/admin/dal/managed_apps.go` | S1-92 |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |
@@ -2825,7 +2849,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-89 | internal/storage: New_InvalidEndpoint, New_ValidEndpoint, New_HTTPSEndpoint | 3 |
 | S1-90 | orchestrator scan subscriber: FileScanningEvent (file_scanning emitted when gated), ScanResult_Clean (file event after clean), ScanResult_Infected (file_blocked + threat field), ScanResult_Timeout (fallback file event on timeout) | 4 |
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
-| **S1 total** | | **989** |
+| S1-92 | Managed Apps catalog + bindings (MA-01..10): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig | 10 |
+| **S1 total** | | **999** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

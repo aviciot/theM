@@ -128,6 +128,7 @@ func BuildRouter(
 	llmProviders := NewLLMProvidersHandler(db, secretKey)
 	systemAgents := NewSystemAgentsHandler(db, fernetKey)
 	tenants := NewTenantsHandler(db)
+	managedApps := NewManagedAppsHandler(db)
 
 	// Admin routes — all require JWT + super_admin.
 	// Within /admin, tenant-scoped resources also require AdminTenantMiddleware.
@@ -179,6 +180,8 @@ func BuildRouter(
 				if ct := NewCanvasTasksHandler(hitlStore, canvasSignaler); ct != nil {
 					ct.Routes(tenantScoped)
 				}
+
+				managedApps.TenantRoutes(tenantScoped)
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,
@@ -191,6 +194,7 @@ func BuildRouter(
 			llmProviders.Routes(a)
 			systemAgents.Routes(a)
 			tenants.Routes(a)
+			managedApps.PlatformRoutes(a)
 			if sessionReader != nil {
 				NewSessionsHandler(sessionReader).Routes(a)
 			}
