@@ -1,7 +1,7 @@
 # Handover — Multi-Tenancy Step 14
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** (Step 14 commit — see below)
+**HEAD:** 828739b (feat(multi-tenancy): Step 14 — Monthly run limit enforcement)
 **Steps complete:** 1 → 14 (all 47 Go packages pass, 1044 S1 tests, 996 go test ./...)
 
 ---
@@ -61,7 +61,7 @@
 | Step 11 | Binding management UI — platform-level binding API + frontend Managed Apps page | Complete | 59105c4 |
 | Step 12 | Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota + frontend Quotas tab | Complete | 293fe26 |
 | Step 13 | Quota enforcement at run start — max_concurrent_runs (DB COUNT) + runs_per_minute (Redis INCR) | Complete | cfaef99 |
-| Step 14 | Monthly run limit enforcement — monthly_runs quota (Redis INCR keyed by YYYY-MM, 48h-past-month TTL) | Complete | (this commit) |
+| Step 14 | Monthly run limit enforcement — monthly_runs quota (Redis INCR keyed by YYYY-MM, 48h-past-month TTL) | Complete | 828739b |
 
 ---
 
