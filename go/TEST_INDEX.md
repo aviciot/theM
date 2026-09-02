@@ -723,6 +723,11 @@ SQL query strings and scan helpers now live in `internal/admin/dal/`; the handle
 | `TestLLMProvidersHandler_NoPlaintextAPIKeyInResponse` | GET response body never contains `api_key_encrypted` or plaintext key material |
 | `TestWriteServiceError_ErrConflict_Returns409` | POST /llm-providers route is reachable (MF-1 fix: ErrConflict→409 wired in writeServiceError) |
 | `TestLLMProvidersHandler_RequiresSuperAdmin` | Anonymous request to /llm-providers → 401 via RequireSuperAdmin middleware |
+| `TestTenantLLMProviders_List_200_Empty` | TLP-01: GET /admin/tenants/{id}/llm-providers → 200 with empty JSON array |
+| `TestTenantLLMProviders_List_400_MissingID` | TLP-02: missing tenant id segment → non-200 |
+| `TestTenantLLMProviders_Upsert_200` | TLP-03: PUT /admin/tenants/{id}/llm-providers/{name} success → 200; plaintext key not in response |
+| `TestTenantLLMProviders_Upsert_404_PlatformNotFound` | TLP-04: provider name not in platform → 404 |
+| `TestTenantLLMProviders_Upsert_400_BadJSON` | TLP-05: malformed request body → 400 |
 | `TestPutRuntime_Handler_200` | W8-H1: PUT /applications/{id}/runtime → 200 with config |
 | `TestPutRuntime_Handler_404_NotFound` | W8-H2: ExecReturning pgx.ErrNoRows → 404 |
 | `TestPutRuntime_Handler_400_BadJSON` | W8-H3: non-JSON body → 400 |
@@ -2929,10 +2934,12 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-90 | orchestrator scan subscriber: FileScanningEvent (file_scanning emitted when gated), ScanResult_Clean (file event after clean), ScanResult_Infected (file_blocked + threat field), ScanResult_Timeout (fallback file event on timeout) | 4 |
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
 | S1-92 | Managed Apps catalog + platform bindings (MA-01..14): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig, ListBindingsByTenant, ListBindingsByTenant_Empty, UpsertBindingByTenant, UpsertBindingByTenant_MissingConfig | 14 |
-| S1-93 | workerconfig managed app params (MAP-01..03): ConfigSubstitution, NilSafe, ZeroNil | 3 |
+| S1-93 | workerconfig managed app params (MAP-01..04): ConfigSubstitution, NilSafe, ZeroNil, TenantProviderKey_NilPoolSafe | 4 |
 | S1-94 | Tenant CRUD + PATCH + quota handler (TN-01..17): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured, GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON | 17 |
 | S1-95 | quota enforcer (QE-01..09): NilLimits, ConcurrentBelowLimit, ConcurrentAtLimit, RPMBelowLimit, RPMExceeded, DBError, MonthlyNilLimit, MonthlyBelowLimit, MonthlyExceeded | 9 |
-| **S1 total** | | **1044** |
+| S1-96 | per-tenant LLM provider service (TLP-01..06): ListForTenant_ReturnsMerged, ListForTenant_EmptyReturnsEmptySlice, Upsert_PlatformNotFound_ReturnsNotFound, Upsert_MissingDefaultModel_ReturnsValidation, Upsert_Success_EncryptsKey, Upsert_InheritsDisplayNameFromPlatform | 6 |
+| S1-97 | per-tenant LLM provider handler (TLP-01..05): List_200_Empty, List_400_MissingID, Upsert_200, Upsert_404_PlatformNotFound, Upsert_400_BadJSON | 5 |
+| **S1 total** | | **1056** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2941,4 +2948,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **996** |
+| **`go test ./...` total** | | **1008** |

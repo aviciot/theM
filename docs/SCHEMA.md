@@ -9,17 +9,20 @@ Auth schema: `auth_service` (owned by them-auth-service — never access directl
 
 ## them.llm_providers
 LLM provider credentials and config. Encrypted API keys via `crypto.py`.
+Migration 057 adds per-tenant override support: `tenant_id IS NULL` = platform default; non-NULL = tenant override.
+Unique constraints: `llm_providers_name_platform_uq` (name WHERE tenant_id IS NULL) and `llm_providers_name_tenant_uq` (name, tenant_id WHERE tenant_id IS NOT NULL).
 
 | Column | Type | Purpose |
 |---|---|---|
 | id | SERIAL PK | |
-| name | TEXT UNIQUE | provider slug: `"anthropic"`, `"openai"` |
+| name | TEXT | provider slug: `"anthropic"`, `"openai"` |
 | display_name | TEXT | UI label |
 | api_key_encrypted | TEXT | `enc:` Fernet ciphertext |
 | base_url | TEXT | for openai_compat providers |
 | default_model | TEXT | e.g. `"claude-sonnet-4-6"` |
 | model_pricing | JSONB | `{model: {input: float, output: float}}` per million tokens |
 | enabled | BOOL | |
+| tenant_id | UUID FK→them.tenants(id) | NULL = platform default; non-NULL = per-tenant override (added 057) |
 
 ---
 

@@ -233,9 +233,17 @@ WHERE ep.id = $1::uuid`
 	if providerName == "" {
 		providerName = "anthropic"
 	}
-	apiKey, keyErr := l.loadProviderKey(ctx, applicationID, providerName)
-	if keyErr != nil {
-		return RunConfig{}, fmt.Errorf("workerconfig: decrypt provider key for %s: %w", providerName, keyErr)
+
+	// Resolve API key: tenant override in llm_providers takes precedence over
+	// per-app key in applications.provider_keys, which in turn takes precedence
+	// over the global environment variable. Non-fatal: fall through on miss.
+	apiKey := l.loadTenantProviderKey(ctx, tenantID, providerName)
+	if apiKey == "" {
+		var keyErr error
+		apiKey, keyErr = l.loadProviderKey(ctx, applicationID, providerName)
+		if keyErr != nil {
+			return RunConfig{}, fmt.Errorf("workerconfig: decrypt provider key for %s: %w", providerName, keyErr)
+		}
 	}
 
 	// Summarizer key comes from app provider_keys using the EP-configured provider.
@@ -249,11 +257,15 @@ WHERE ep.id = $1::uuid`
 	}
 	sumAPIKey := ""
 	if memoryEnabled && sumProvider != "" {
-		var sumKeyErr error
-		sumAPIKey, sumKeyErr = l.loadProviderKey(ctx, applicationID, sumProvider)
-		if sumKeyErr != nil {
-			slog.Warn("workerconfig: failed to decrypt summarizer key — memory disabled for run",
-				"app_id", applicationID, "provider", sumProvider, "error", sumKeyErr)
+		// Prefer tenant override for summarizer key.
+		sumAPIKey = l.loadTenantProviderKey(ctx, tenantID, sumProvider)
+		if sumAPIKey == "" {
+			var sumKeyErr error
+			sumAPIKey, sumKeyErr = l.loadProviderKey(ctx, applicationID, sumProvider)
+			if sumKeyErr != nil {
+				slog.Warn("workerconfig: failed to decrypt summarizer key — memory disabled for run",
+					"app_id", applicationID, "provider", sumProvider, "error", sumKeyErr)
+			}
 		}
 	}
 
@@ -438,6 +450,54 @@ func (l *PgxLoader) resolveAgentSlugs(ctx context.Context, ids []string) ([]stri
 		slugs = append(slugs, slug)
 	}
 	return slugs, nil
+}
+
+// loadTenantProviderKey looks up a decrypted API key from them.llm_providers,
+// preferring the tenant-scoped override over the platform default.
+// Returns empty string when no enabled row exists or on any error (fail-open).
+func (l *PgxLoader) loadTenantProviderKey(ctx context.Context, tenantID, provider string) string {
+	if tenantID == "" || provider == "" {
+		return ""
+	}
+
+	// Tenant override first.
+	if key := l.lookupLLMProviderKey(ctx, provider, &tenantID); key != "" {
+		return key
+	}
+	// Platform default fallback.
+	return l.lookupLLMProviderKey(ctx, provider, nil)
+}
+
+// lookupLLMProviderKey fetches and decrypts a single llm_providers row.
+// tenantID nil = platform default (tenant_id IS NULL); non-nil = tenant override.
+// Returns empty string on miss or error.
+func (l *PgxLoader) lookupLLMProviderKey(ctx context.Context, provider string, tenantID *string) string {
+	var encPtr *string
+	var err error
+	if tenantID == nil {
+		const q = `SELECT api_key_encrypted FROM them.llm_providers WHERE name=$1 AND tenant_id IS NULL AND enabled=true LIMIT 1`
+		err = l.pool.QueryRow(ctx, q, provider).Scan(&encPtr)
+	} else {
+		const q = `SELECT api_key_encrypted FROM them.llm_providers WHERE name=$1 AND tenant_id=$2::uuid AND enabled=true LIMIT 1`
+		err = l.pool.QueryRow(ctx, q, provider, *tenantID).Scan(&encPtr)
+	}
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("workerconfig: llm_providers key lookup error — skipping",
+				"provider", provider, "has_tenant", tenantID != nil)
+		}
+		return ""
+	}
+	if encPtr == nil || *encPtr == "" {
+		return ""
+	}
+	plain, decErr := l.decryptValue(*encPtr)
+	if decErr != nil {
+		slog.Warn("workerconfig: llm_providers key decrypt failed — skipping",
+			"provider", provider, "has_tenant", tenantID != nil)
+		return ""
+	}
+	return plain
 }
 
 // loadProviderKey reads and decrypts the key for one provider from applications.provider_keys.

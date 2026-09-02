@@ -10,6 +10,7 @@ import (
 	"github.com/aviciot/them/internal/admin/service"
 	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/session"
+	"github.com/jackc/pgx/v5"
 )
 
 // ── Fakes ──────────────────────────────────────────────────────────────────────
@@ -86,17 +87,24 @@ type fakeDal struct {
 	upsertConfigErr   error
 
 	// LLM provider fields
-	providers           []dal.LLMProvider
-	provider            dal.LLMProvider
-	createdProvider     dal.LLMProvider
-	updatedProvider     dal.LLMProvider
-	listProvidersErr    error
-	getProviderErr      error
-	createProviderErr   error
-	updateProviderErr   error
-	deleteProviderErr   error
-	createProviderCalls []dal.LLMProviderInput
-	updateProviderCalls []dal.LLMProviderInput
+	providers              []dal.LLMProvider
+	provider               dal.LLMProvider
+	createdProvider        dal.LLMProvider
+	updatedProvider        dal.LLMProvider
+	listProvidersErr       error
+	getProviderErr         error
+	createProviderErr      error
+	updateProviderErr      error
+	deleteProviderErr      error
+	createProviderCalls    []dal.LLMProviderInput
+	updateProviderCalls    []dal.LLMProviderInput
+	// per-tenant provider fields
+	tenantProviders         []dal.LLMProvider
+	tenantProviderByName    dal.LLMProvider
+	platformProviderByName  dal.LLMProvider
+	upsertedTenantProvider  dal.LLMProvider
+	tenantProviderNotFound  bool
+	upsertTenantProviderErr error
 
 	// token fields
 	tokens            []dal.Token
@@ -365,6 +373,24 @@ func (f *fakeDal) UpdateProvider(_ context.Context, _ int64, in dal.LLMProviderI
 }
 func (f *fakeDal) DeleteProvider(_ context.Context, _ int64) error {
 	return f.deleteProviderErr
+}
+func (f *fakeDal) ListProvidersForTenant(_ context.Context, _ string) ([]dal.LLMProvider, error) {
+	return f.tenantProviders, nil
+}
+func (f *fakeDal) GetProviderByNameForTenant(_ context.Context, _, _ string) (dal.LLMProvider, error) {
+	if f.tenantProviderNotFound {
+		return dal.LLMProvider{}, pgx.ErrNoRows
+	}
+	return f.tenantProviderByName, nil
+}
+func (f *fakeDal) GetProviderByNamePlatform(_ context.Context, _ string) (dal.LLMProvider, error) {
+	if f.tenantProviderNotFound {
+		return dal.LLMProvider{}, pgx.ErrNoRows
+	}
+	return f.platformProviderByName, nil
+}
+func (f *fakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
+	return f.upsertedTenantProvider, f.upsertTenantProviderErr
 }
 
 // Component definitions registry stub.

@@ -11,7 +11,7 @@ import (
 )
 
 // LLMProviderOut is the HTTP response shape for LLM provider endpoints.
-// It mirrors Python's LLMProviderOut exactly.
+// TenantID is null for platform-default rows and non-null for tenant overrides.
 type LLMProviderOut struct {
 	ID           int64          `json:"id"`
 	Name         string         `json:"name"`
@@ -22,6 +22,7 @@ type LLMProviderOut struct {
 	DefaultModel string         `json:"default_model"`
 	ModelPricing map[string]any `json:"model_pricing"`
 	Enabled      bool           `json:"enabled"`
+	TenantID     *string        `json:"tenant_id"` // null = platform default
 }
 
 // LLMProviderCreate is the request body for POST /admin/llm-providers.
@@ -195,6 +196,82 @@ func (s *LLMProviderService) Update(ctx context.Context, id int64, patch LLMProv
 	return s.toOut(updated), nil
 }
 
+// ListForTenant returns the merged view of LLM providers for a tenant:
+// tenant overrides win over platform defaults when name matches.
+func (s *LLMProviderService) ListForTenant(ctx context.Context, tenantID string) ([]LLMProviderOut, error) {
+	rows, err := s.dal.ListProvidersForTenant(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LLMProviderOut, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, s.toOut(r))
+	}
+	return out, nil
+}
+
+// UpsertForTenant creates or replaces a tenant-scoped LLM provider override.
+// name must match an existing platform provider name (validates against platform row).
+// Returns ErrNotFound when name has no platform-default row.
+// Returns ErrValidation for bad field values.
+func (s *LLMProviderService) UpsertForTenant(ctx context.Context, tenantID, name string, body LLMProviderCreate) (LLMProviderOut, error) {
+	if body.DefaultModel == "" {
+		return LLMProviderOut{}, validation("default_model is required")
+	}
+
+	// Fetch the platform row to inherit display_name and model_pricing defaults.
+	platform, err := s.dal.GetProviderByNamePlatform(ctx, name)
+	if err != nil {
+		if dal.IsNoRows(err) {
+			return LLMProviderOut{}, ErrNotFound
+		}
+		return LLMProviderOut{}, err
+	}
+
+	displayName := platform.DisplayName
+	if body.DisplayName != "" {
+		displayName = body.DisplayName
+	}
+
+	var encryptedKey *string
+	if body.APIKey != "" {
+		enc, err := crypto.EncryptStored(s.fernetKey, body.APIKey)
+		if err != nil {
+			slog.Warn("llm_providers: failed to encrypt api_key for tenant override", "error_category", "crypto_encrypt")
+			return LLMProviderOut{}, errors.New("failed to encrypt api_key")
+		}
+		encryptedKey = &enc
+	}
+
+	modelPricingRaw, err := marshalPricing(body.ModelPricing)
+	if err != nil {
+		return LLMProviderOut{}, validation("model_pricing must be a JSON object")
+	}
+	// Default to platform's model_pricing when not provided.
+	if body.ModelPricing == nil {
+		modelPricingRaw = platform.ModelPricingRaw
+		if modelPricingRaw == nil {
+			modelPricingRaw = []byte("{}")
+		}
+	}
+
+	in := dal.LLMProviderInput{
+		Name:            name,
+		DisplayName:     displayName,
+		APIKeyEncrypted: encryptedKey,
+		BaseURL:         body.BaseURL,
+		DefaultModel:    body.DefaultModel,
+		ModelPricingRaw: modelPricingRaw,
+		Enabled:         enabledOrDefault(body.Enabled),
+	}
+
+	row, err := s.dal.UpsertTenantProvider(ctx, tenantID, in)
+	if err != nil {
+		return LLMProviderOut{}, err
+	}
+	return s.toOut(row), nil
+}
+
 // Delete hard-deletes a provider. Returns ErrNotFound when the provider does not exist.
 func (s *LLMProviderService) Delete(ctx context.Context, id int64) error {
 	err := s.dal.DeleteProvider(ctx, id)
@@ -223,6 +300,7 @@ func (s *LLMProviderService) toOut(row dal.LLMProvider) LLMProviderOut {
 		DefaultModel: row.DefaultModel,
 		ModelPricing: dal.ModelPricingOrEmpty(row.ModelPricingRaw),
 		Enabled:      row.Enabled,
+		TenantID:     row.TenantID,
 	}
 }
 

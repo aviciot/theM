@@ -861,10 +861,11 @@ type fakeProviderRow struct {
 	model       string
 	pricing     []byte
 	enabled     bool
+	tenantID    *string // nil = platform default
 }
 
 func (r *fakeProviderRow) Scan(dest ...any) error {
-	fields := []any{&r.id, &r.name, &r.displayName, &r.apiKey, &r.baseURL, &r.model, &r.pricing, &r.enabled}
+	fields := []any{&r.id, &r.name, &r.displayName, &r.apiKey, &r.baseURL, &r.model, &r.pricing, &r.enabled, &r.tenantID}
 	for i, d := range dest {
 		if i >= len(fields) {
 			break
@@ -1164,6 +1165,96 @@ func TestLLMProvidersHandler_RequiresSuperAdmin(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// serveTenantLLMProviders mounts TenantProviderRoutes on a chi router.
+func serveTenantLLMProviders(t *testing.T, db admin.DBQuerier, method, path string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	h := admin.NewLLMProvidersHandler(db, "test-secret-key-for-unit-tests")
+	r := chi.NewRouter()
+	h.TenantProviderRoutes(r)
+	var br *bytes.Reader
+	if body != nil {
+		br = bytes.NewReader(body)
+	} else {
+		br = bytes.NewReader(nil)
+	}
+	req := httptest.NewRequest(method, path, br)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// TLP-01: GET /admin/tenants/{id}/llm-providers — returns 200 with empty slice.
+func TestTenantLLMProviders_List_200_Empty(t *testing.T) {
+	db := &fakeProviderDB{fakeDB: fakeDB{queryRows: newFakeRows(nil)}}
+	w := serveTenantLLMProviders(t, db, http.MethodGet, "/tenants/00000000-0000-0000-0000-000000000001/llm-providers", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.NotNil(t, out)
+	assert.Empty(t, out)
+}
+
+// TLP-02: GET /admin/tenants/{id}/llm-providers — missing id returns 400.
+func TestTenantLLMProviders_List_400_MissingID(t *testing.T) {
+	db := &fakeProviderDB{fakeDB: fakeDB{queryRows: newFakeRows(nil)}}
+	// Without the {id} param in path, chi won't route it.
+	w := serveTenantLLMProviders(t, db, http.MethodGet, "/tenants//llm-providers", nil)
+	// chi returns 404 for an empty path segment.
+	assert.NotEqual(t, http.StatusOK, w.Code)
+}
+
+// TLP-03: PUT /admin/tenants/{id}/llm-providers/{name} — success (200).
+func TestTenantLLMProviders_Upsert_200(t *testing.T) {
+	// QueryRow returns the platform row (for GetProviderByNamePlatform).
+	// ExecReturning returns the upserted row.
+	db := &fakeProviderDB{
+		queryRow8: &fakeProviderRow{
+			id: 1, name: "anthropic", displayName: "Anthropic",
+			model: "claude-sonnet-4-6", enabled: true,
+		},
+		providerRow: &fakeProviderRow{
+			id: 20, name: "anthropic", displayName: "Anthropic",
+			model: "claude-3-opus", enabled: true,
+		},
+	}
+	body, _ := json.Marshal(map[string]any{
+		"default_model": "claude-3-opus",
+		"api_key":       "sk-ant-test-1234567890",
+	})
+	w := serveTenantLLMProviders(t, db, http.MethodPut,
+		"/tenants/00000000-0000-0000-0000-000000000001/llm-providers/anthropic", body)
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, "anthropic", out["name"])
+	// api_key must not appear in plaintext.
+	resp := w.Body.String()
+	assert.NotContains(t, resp, "sk-ant-test-1234567890")
+}
+
+// TLP-04: PUT /admin/tenants/{id}/llm-providers/{name} — platform provider not found → 404.
+func TestTenantLLMProviders_Upsert_404_PlatformNotFound(t *testing.T) {
+	// queryRowErr causes fakeProviderDB.QueryRow to return a fakeRow with pgx.ErrNoRows.
+	// queryRow8 must be nil so the base fakeDB.QueryRow path is taken.
+	db := &fakeProviderDB{
+		fakeDB: fakeDB{queryRowErr: pgx.ErrNoRows},
+	}
+	body, _ := json.Marshal(map[string]any{"default_model": "m"})
+	w := serveTenantLLMProviders(t, db, http.MethodPut,
+		"/tenants/00000000-0000-0000-0000-000000000001/llm-providers/unknown-provider", body)
+	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TLP-05: PUT /admin/tenants/{id}/llm-providers/{name} — invalid JSON → 400.
+func TestTenantLLMProviders_Upsert_400_BadJSON(t *testing.T) {
+	db := &fakeProviderDB{}
+	w := serveTenantLLMProviders(t, db, http.MethodPut,
+		"/tenants/00000000-0000-0000-0000-000000000001/llm-providers/anthropic",
+		[]byte("not json"))
+	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // 5. Signal run — calls Temporal client with "ctx-{context_id}" workflow ID.

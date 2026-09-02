@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 14
+# Handover — Multi-Tenancy Step 15
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** 828739b (feat(multi-tenancy): Step 14 — Monthly run limit enforcement)
-**Steps complete:** 1 → 14 (all 47 Go packages pass, 1044 S1 tests, 996 go test ./...)
+**HEAD:** (Step 15 commit — see git log)
+**Steps complete:** 1 → 15 (all 47 Go packages pass, 1056 S1 tests, 1008 go test ./...)
 
 ---
 
@@ -62,6 +62,7 @@
 | Step 12 | Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota + frontend Quotas tab | Complete | 293fe26 |
 | Step 13 | Quota enforcement at run start — max_concurrent_runs (DB COUNT) + runs_per_minute (Redis INCR) | Complete | cfaef99 |
 | Step 14 | Monthly run limit enforcement — monthly_runs quota (Redis INCR keyed by YYYY-MM, 48h-past-month TTL) | Complete | 828739b |
+| Step 15 | Per-tenant LLM provider key management — tenant_id on llm_providers, merged list, upsert override, run-time resolution | Complete | (see git log) |
 
 ---
 
@@ -355,24 +356,75 @@ No schema migration needed — `monthly_runs` column already exists in `them.ten
 
 ---
 
-## Step 15 — (next task)
+## Step 15 — COMPLETE
+
+### What Step 15 built
+
+- `db/057_tenant_llm_providers.sql` — adds `tenant_id UUID FK→them.tenants(id) ON DELETE CASCADE` (nullable) to `them.llm_providers`; drops old `llm_providers_name_key` UNIQUE; adds partial unique indexes `llm_providers_name_platform_uq` (WHERE tenant_id IS NULL) and `llm_providers_name_tenant_uq` (WHERE tenant_id IS NOT NULL); adds lookup index `llm_providers_tenant_id_idx`
+- `go/internal/admin/dal/llm_providers.go`:
+  - `LLMProvider` struct gains `TenantID *string`
+  - `scanProvider` updated to scan 9 columns (adds tenant_id)
+  - `ListProviders` now filters `WHERE tenant_id IS NULL` (platform defaults only)
+  - `ListProvidersForTenant(ctx, tenantID)` — merged view: tenant overrides + platform defaults not overridden
+  - `GetProviderByNameForTenant(ctx, name, tenantID)` — tenant override by name+tenantID
+  - `GetProviderByNamePlatform(ctx, name)` — platform default by name
+  - `UpsertTenantProvider(ctx, tenantID, in)` — ON CONFLICT(name, tenant_id) WHERE tenant_id IS NOT NULL DO UPDATE
+  - `CreateProvider` INSERT unchanged (no tenant_id column set = NULL = platform)
+  - `UpdateProvider` and `DeleteProvider` RETURNING updated to scan 9 columns
+- `go/internal/admin/service/service.go` — Dal interface: 4 new methods (`ListProvidersForTenant`, `GetProviderByNameForTenant`, `GetProviderByNamePlatform`, `UpsertTenantProvider`)
+- `go/internal/admin/service/llm_providers.go`:
+  - `LLMProviderOut` gains `TenantID *string` field
+  - `toOut` maps `TenantID`
+  - `ListForTenant(ctx, tenantID)` — calls `ListProvidersForTenant`
+  - `UpsertForTenant(ctx, tenantID, name, body)` — validates, inherits display_name from platform row, encrypts key, delegates to `UpsertTenantProvider`
+- `go/internal/admin/llm_providers.go`:
+  - `TenantProviderRoutes(r)` — mounts `GET /tenants/{id}/llm-providers` and `PUT /tenants/{id}/llm-providers/{name}`
+  - `ListForTenant` and `UpsertForTenant` handler methods
+- `go/internal/admin/router.go` — `llmProviders.TenantProviderRoutes(a)` wired into platform-global admin group
+- `go/internal/temporal/workerconfig/loader.go`:
+  - `loadTenantProviderKey(ctx, tenantID, provider)` — prefers tenant override in llm_providers, falls back to platform default
+  - `lookupLLMProviderKey(ctx, provider, tenantID*)` — single-row lookup helper (nil tenantID = platform)
+  - `LoadRunConfig`: main LLM key resolution now calls `loadTenantProviderKey` first, then falls back to `loadProviderKey` (per-app key)
+  - Summarizer key resolution updated the same way
+- Tests: S1-96 (6 service tests), S1-97 (5 handler tests), S1-93 updated (+1 workerconfig test)
+- `docs/SCHEMA.md` — `them.llm_providers` updated with `tenant_id` column and constraint notes
+- `go/TEST_INDEX.md` — S1-93 updated (3→4), S1-96 and S1-97 added; totals 1044→1056 S1, 996→1008 go test
+
+All 47 Go packages pass.
+
+### Migration note
+`db/057_tenant_llm_providers.sql` must be applied to the live DB before the tenant LLM override endpoints are used:
+```bash
+docker cp db/057_tenant_llm_providers.sql them-postgres:/tmp/them_057.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_057.sql
+```
+
+### Step 15 design decisions
+- **NULL = platform default** — existing rows remain valid; no backfill needed
+- **Two partial unique indexes** — avoids complications with NULL equality in standard UNIQUE constraints
+- **Fail-open tenant key lookup** — if tenant has no override, falls back to platform row, then falls back to per-app key in applications.provider_keys; run is never blocked by a missing tenant override
+- **UpsertForTenant requires platform row** — enforces that tenant overrides can only name providers that exist at the platform level (prevents typos creating orphaned rows)
+- **Summarizer key inherits same resolution chain** — tenant override → per-app key → global env; consistent with main LLM key
+
+---
+
+## Step 16 — (next task)
 
 ### Goal
-Per-tenant LLM provider key management:
-- Add `tenant_id UUID REFERENCES them.tenants(id) ON DELETE CASCADE` (nullable) to `them.llm_providers`
-- Add UNIQUE constraint on `(name, tenant_id)` — platform default row has `tenant_id IS NULL`, tenant override has `tenant_id = {uuid}`
-- Extend `ListLLMProviders` DAL to accept optional `tenantID` — returns tenant overrides merged with platform defaults (tenant row wins when name matches)
-- New API routes (platform-admin only): `GET /admin/tenants/{id}/llm-providers`, `PUT /admin/tenants/{id}/llm-providers/{name}` — tenant-scoped create/override
-- LLM provider resolution at run start (in `activities.go` or orchestrator) to prefer tenant override when `app.tenant_id` is set
+Per-tenant RBAC — tenant-level role assignments and JWT claims:
+- `auth_service.tenant_memberships` table already exists (from Step 5: `UpsertOIDCUser`). Verify columns.
+- Extend `GET /auth/me` (auth-go) to return `tenant_id` and `role` from the membership row
+- Update `POST /auth/login` to accept optional `tenant_slug` param and embed `tenant_id` + `role` in the issued JWT
+- Add `GET /admin/tenants/{id}/members` and `POST /admin/tenants/{id}/members` endpoints for managing memberships
+- Enforce tenant_id claim in `AdminTenantMiddleware` — remove bootstrap fallback for users who have an explicit membership
 
 ### Files to read before starting
 - `docs/HANDOVER.md` (this file)
-- `docs/CURRENT.md`
-- `docs/architecture/MULTI_TENANCY_DESIGN.md` §5 (LLM providers), §8 (Secrets isolation)
-- `go/internal/admin/dal/llm_providers.go` — existing DAL
-- `go/internal/llm/provider.go` — provider interface
-- `go/internal/temporal/activities.go` — where LLM provider is resolved today
-- `db/001_schema.sql` — `them.llm_providers` definition (lines ~6-17)
+- `go/internal/authserver/handlers.go` — login + me endpoints
+- `go/internal/authserver/store.go` — `OIDCStore.UpsertOIDCUser` (shows tenant_memberships schema)
+- `go/internal/admin/middleware.go` — `AdminTenantMiddleware` (the bootstrap fallback to remove)
+- `go/internal/authserver/jwt.go` — JWT claims struct (add tenant_id + role fields)
+- `auth_service/SCHEMA.sql` — tenant_memberships table definition
 
 ---
 

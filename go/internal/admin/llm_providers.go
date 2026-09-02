@@ -190,6 +190,57 @@ func (h *LLMProvidersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// TenantProviderRoutes mounts the per-tenant LLM provider override endpoints
+// under a router that already has {id} = tenantID in the path context.
+// Called by BuildRouter inside the platform-global group (no AdminTenantMiddleware).
+func (h *LLMProvidersHandler) TenantProviderRoutes(r chi.Router) {
+	r.Get("/tenants/{id}/llm-providers", h.ListForTenant)
+	r.Put("/tenants/{id}/llm-providers/{name}", h.UpsertForTenant)
+}
+
+// ListForTenant handles GET /admin/tenants/{id}/llm-providers.
+// Returns the merged view: tenant overrides + platform defaults not overridden.
+func (h *LLMProvidersHandler) ListForTenant(w http.ResponseWriter, r *http.Request) {
+	tenantID := chi.URLParam(r, "id")
+	if tenantID == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id")
+		return
+	}
+	providers, err := h.svc.ListForTenant(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, providers)
+}
+
+// UpsertForTenant handles PUT /admin/tenants/{id}/llm-providers/{name}.
+// Creates or replaces a tenant-scoped override for the named platform provider.
+func (h *LLMProvidersHandler) UpsertForTenant(w http.ResponseWriter, r *http.Request) {
+	tenantID := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
+	if tenantID == "" || name == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id or provider name")
+		return
+	}
+
+	var body service.LLMProviderCreate
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	out, err := h.svc.UpsertForTenant(r.Context(), tenantID, name, body)
+	if err != nil {
+		if writeServiceError(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // parseProviderID extracts and validates the {id} path parameter.
 // Writes a 400 error and returns false on failure.
 func parseProviderID(w http.ResponseWriter, r *http.Request) (int64, bool) {

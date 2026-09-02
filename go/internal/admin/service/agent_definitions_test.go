@@ -331,6 +331,20 @@ func (f *agentDefFakeDal) UpsertAppMCPCredential(_ context.Context, _, _, _, _ s
 }
 func (f *agentDefFakeDal) DeleteAppMCPCredential(_ context.Context, _, _ string) error { return nil }
 
+// LLM provider stubs — not exercised by agent-definition tests.
+func (f *agentDefFakeDal) ListProvidersForTenant(_ context.Context, _ string) ([]dal.LLMProvider, error) {
+	return nil, nil
+}
+func (f *agentDefFakeDal) GetProviderByNameForTenant(_ context.Context, _, _ string) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
+func (f *agentDefFakeDal) GetProviderByNamePlatform(_ context.Context, _ string) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
+func (f *agentDefFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
+
 // ── valid canvas JSON helpers ─────────────────────────────────────────────────
 
 func validAgentDef(t *testing.T) json.RawMessage {

@@ -355,6 +355,18 @@ func (f *isolationFakeDal) UpdateProvider(_ context.Context, _ int64, _ dal.LLMP
 	return dal.LLMProvider{}, nil
 }
 func (f *isolationFakeDal) DeleteProvider(_ context.Context, _ int64) error { return nil }
+func (f *isolationFakeDal) ListProvidersForTenant(_ context.Context, _ string) ([]dal.LLMProvider, error) {
+	return nil, nil
+}
+func (f *isolationFakeDal) GetProviderByNameForTenant(_ context.Context, _, _ string) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
+func (f *isolationFakeDal) GetProviderByNamePlatform(_ context.Context, _ string) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
+func (f *isolationFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
 
 // Runtime config + bulk delete stubs — no isolation-specific behavior needed.
 func (f *isolationFakeDal) UpdateRuntimeConfig(_ context.Context, _, _ string, _ []byte) error {

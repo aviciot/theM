@@ -465,3 +465,92 @@ func TestProviderService_Create_EnabledDefaultsToTrue(t *testing.T) {
 		t.Error("enabled must default to true when not provided")
 	}
 }
+
+// ── Per-tenant provider tests (TLP) ──────────────────────────────────────────
+
+func TestTenantProvider_ListForTenant_ReturnsMerged(t *testing.T) {
+	tid := "00000000-0000-0000-0000-000000000001"
+	d := &fakeDal{
+		tenantProviders: []dal.LLMProvider{
+			{ID: 10, Name: "anthropic", DisplayName: "Anthropic (tenant)", DefaultModel: "claude-3-5-sonnet", Enabled: true, TenantID: &tid},
+			{ID: 1, Name: "openai", DisplayName: "OpenAI", DefaultModel: "gpt-4o", Enabled: true},
+		},
+	}
+	svc := newProviderSvc(d)
+	list, err := svc.ListForTenant(context.Background(), tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("want 2 providers, got %d", len(list))
+	}
+}
+
+func TestTenantProvider_ListForTenant_EmptyReturnsEmptySlice(t *testing.T) {
+	d := &fakeDal{tenantProviders: []dal.LLMProvider{}}
+	svc := newProviderSvc(d)
+	list, err := svc.ListForTenant(context.Background(), "00000000-0000-0000-0000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list == nil {
+		t.Error("want non-nil empty slice, got nil")
+	}
+}
+
+func TestTenantProvider_Upsert_PlatformNotFound_ReturnsNotFound(t *testing.T) {
+	d := &fakeDal{tenantProviderNotFound: true}
+	svc := newProviderSvc(d)
+	_, err := svc.UpsertForTenant(context.Background(), "tid", "anthropic", service.LLMProviderCreate{
+		DefaultModel: "m",
+	})
+	if !errors.Is(err, service.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestTenantProvider_Upsert_MissingDefaultModel_ReturnsValidation(t *testing.T) {
+	d := &fakeDal{}
+	svc := newProviderSvc(d)
+	_, err := svc.UpsertForTenant(context.Background(), "tid", "anthropic", service.LLMProviderCreate{})
+	if !errors.Is(err, service.ErrValidation) {
+		t.Errorf("want ErrValidation, got %v", err)
+	}
+}
+
+func TestTenantProvider_Upsert_Success_EncryptsKey(t *testing.T) {
+	platform := dal.LLMProvider{ID: 1, Name: "anthropic", DisplayName: "Anthropic", DefaultModel: "claude-sonnet-4-6"}
+	tid := "00000000-0000-0000-0000-000000000001"
+	upserted := dal.LLMProvider{ID: 20, Name: "anthropic", DisplayName: "Anthropic", DefaultModel: "claude-3-opus", Enabled: true, TenantID: &tid}
+	d := &fakeDal{
+		platformProviderByName: platform,
+		upsertedTenantProvider: upserted,
+	}
+	svc := newProviderSvc(d)
+	out, err := svc.UpsertForTenant(context.Background(), tid, "anthropic", service.LLMProviderCreate{
+		DefaultModel: "claude-3-opus",
+		APIKey:       "sk-ant-test-key-12345678",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ID != 20 {
+		t.Errorf("want ID=20, got %d", out.ID)
+	}
+}
+
+func TestTenantProvider_Upsert_InheritsDisplayNameFromPlatform(t *testing.T) {
+	platform := dal.LLMProvider{ID: 1, Name: "anthropic", DisplayName: "Anthropic Platform", DefaultModel: "claude-sonnet-4-6"}
+	d := &fakeDal{
+		platformProviderByName: platform,
+		upsertedTenantProvider: dal.LLMProvider{ID: 20, Name: "anthropic", DisplayName: "Anthropic Platform", DefaultModel: "m", Enabled: true},
+	}
+	svc := newProviderSvc(d)
+	// No display_name in body — should inherit from platform.
+	_, err := svc.UpsertForTenant(context.Background(), "tid", "anthropic", service.LLMProviderCreate{
+		DefaultModel: "m",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

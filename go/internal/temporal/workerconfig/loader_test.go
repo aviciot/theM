@@ -53,3 +53,13 @@ func TestRunConfig_ManagedAppParams_ZeroNil(t *testing.T) {
 	var cfg workerconfig.RunConfig
 	assert.Nil(t, cfg.ManagedAppParams)
 }
+
+// TestPgxLoader_NewPgxLoader_TenantProviderKey_EmptyInputsFastPath verifies that
+// NewPgxLoader with a nil pool is safe to construct and that the Loader interface
+// is satisfied (compile-time guard). DB-backed resolution is verified by integration tests.
+func TestPgxLoader_NewPgxLoader_TenantProviderKey_NilPoolSafe(t *testing.T) {
+	loader := workerconfig.NewPgxLoader(nil, nil)
+	assert.NotNil(t, loader)
+	// Interface still satisfied after Step 15 additions.
+	var _ workerconfig.Loader = loader
+}

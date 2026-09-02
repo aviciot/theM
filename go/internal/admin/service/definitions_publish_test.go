@@ -213,6 +213,18 @@ func (f *publishFakeDal) GetProvider(_ context.Context, _ int64) (dal.LLMProvide
 func (f *publishFakeDal) CreateProvider(_ context.Context, _ dal.LLMProviderInput) (dal.LLMProvider, error) { return dal.LLMProvider{}, nil }
 func (f *publishFakeDal) UpdateProvider(_ context.Context, _ int64, _ dal.LLMProviderInput) (dal.LLMProvider, error) { return dal.LLMProvider{}, nil }
 func (f *publishFakeDal) DeleteProvider(_ context.Context, _ int64) error              { return nil }
+func (f *publishFakeDal) ListProvidersForTenant(_ context.Context, _ string) ([]dal.LLMProvider, error) {
+	return nil, nil
+}
+func (f *publishFakeDal) GetProviderByNameForTenant(_ context.Context, _, _ string) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
+func (f *publishFakeDal) GetProviderByNamePlatform(_ context.Context, _ string) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
+func (f *publishFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
+	return dal.LLMProvider{}, nil
+}
 func (f *publishFakeDal) ListComponentDefinitions(_ context.Context, _ string) ([]dal.ComponentDefinitionSummary, error) {
 	return []dal.ComponentDefinitionSummary{}, nil
 }

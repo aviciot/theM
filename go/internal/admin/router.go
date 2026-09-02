@@ -192,6 +192,7 @@ func BuildRouter(
 			monitoring.Routes(a)
 			llmRouting.Routes(a)
 			llmProviders.Routes(a)
+			llmProviders.TenantProviderRoutes(a)
 			systemAgents.Routes(a)
 			tenants.Routes(a)
 			managedApps.PlatformRoutes(a)
