@@ -2385,9 +2385,9 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
-### S1-94 · Tenant CRUD + PATCH handler — `internal/admin/tenants_test.go`
+### S1-94 · Tenant CRUD + PATCH + quota handler — `internal/admin/tenants_test.go`
 
-**Purpose:** Verify the tenant list/get/create/patch HTTP handlers (Step 4 + Step 10). Covers the PATCH endpoint which updates display_name, enabled, and idp_config (with custom JSON unmarshaling to distinguish absent vs explicit-null for idp_config).
+**Purpose:** Verify the tenant list/get/create/patch/quota HTTP handlers (Steps 4, 10, 12). Covers the PATCH endpoint which updates display_name, enabled, and idp_config, and the GET/PUT quota endpoints.
 
 | Test | What it proves |
 |---|---|
@@ -2403,6 +2403,11 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | `TestTenants_Patch_NotFound` (TN-10) | PATCH missing tenant → 404 |
 | `TestTenants_Patch_BadJSON` (TN-11) | PATCH invalid JSON → 400 |
 | `TestTenants_Patch_IDPConfigured` (TN-12) | PATCH with idp_config → 200 with idp_configured=true |
+| `TestTenants_GetQuota_NotFound` (TN-13) | GET /tenants/{id}/quota with no quota row → 404 |
+| `TestTenants_GetQuota_Found` (TN-14) | GET /tenants/{id}/quota → 200 with plan field |
+| `TestTenants_UpsertQuota_Success` (TN-15) | PUT /tenants/{id}/quota → 200 with saved plan |
+| `TestTenants_UpsertQuota_BadPlan` (TN-16) | PUT with invalid plan value → 400 |
+| `TestTenants_UpsertQuota_BadJSON` (TN-17) | PUT with invalid JSON → 400 |
 
 **Trigger:** `internal/admin/tenants.go`, `internal/admin/dal/tenants.go`
 
@@ -2900,8 +2905,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
 | S1-92 | Managed Apps catalog + platform bindings (MA-01..14): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig, ListBindingsByTenant, ListBindingsByTenant_Empty, UpsertBindingByTenant, UpsertBindingByTenant_MissingConfig | 14 |
 | S1-93 | workerconfig managed app params (MAP-01..03): ConfigSubstitution, NilSafe, ZeroNil | 3 |
-| S1-94 | Tenant CRUD + PATCH handler (TN-01..12): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured | 12 |
-| **S1 total** | | **1026** |
+| S1-94 | Tenant CRUD + PATCH + quota handler (TN-01..17): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured, GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON | 17 |
+| **S1 total** | | **1031** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2910,4 +2915,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **978** |
+| **`go test ./...` total** | | **983** |

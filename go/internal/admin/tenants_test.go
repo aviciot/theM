@@ -68,18 +68,23 @@ func (r *tenantFakeRows) Scan(dest ...any) error {
 }
 
 type tenantDB struct {
-	listRows   []*tenantFakeRow     // returned by Query
-	getRow     *tenantFakeRow       // returned by QueryRow
-	createRow  *tenantFakeRow       // returned by ExecReturning (create)
-	patchRow   admin.SingleRowScanner // returned by ExecReturning (patch); takes priority over createRow
-	execErr    error
+	listRows  []*tenantFakeRow      // returned by Query
+	getRow    *tenantFakeRow        // returned by QueryRow
+	createRow *tenantFakeRow        // returned by ExecReturning (create)
+	patchRow  admin.SingleRowScanner // returned by ExecReturning (patch); takes priority over createRow
+	quotaRow  admin.SingleRowScanner // returned by QueryRow/ExecReturning for quota operations
+	execErr   error
 }
 
 func (d *tenantDB) Query(_ context.Context, _ string, _ ...any) (admin.RowScanner, error) {
 	return &tenantFakeRows{rows: d.listRows}, nil
 }
 
-func (d *tenantDB) QueryRow(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
+func (d *tenantDB) QueryRow(_ context.Context, sql string, _ ...any) admin.SingleRowScanner {
+	// Quota GET uses QueryRow; detect by checking quotaRow is set and no getRow.
+	if d.quotaRow != nil && d.getRow == nil {
+		return d.quotaRow
+	}
 	if d.getRow != nil {
 		return d.getRow
 	}
@@ -91,6 +96,9 @@ func (d *tenantDB) Exec(_ context.Context, _ string, _ ...any) error {
 }
 
 func (d *tenantDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
+	if d.quotaRow != nil && d.patchRow == nil && d.createRow == nil {
+		return d.quotaRow
+	}
 	if d.patchRow != nil {
 		return d.patchRow
 	}
@@ -375,4 +383,128 @@ func TestTenants_Patch_IDPConfigured(t *testing.T) {
 	var out map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
 	assert.Equal(t, true, out["idp_configured"])
+}
+
+// ── Quota fake row ────────────────────────────────────────────────────────────
+
+// quotaFakeRow simulates the 11-column quota SELECT/RETURNING row.
+type quotaFakeRow struct {
+	tenantID string
+	plan     string
+	err      error
+}
+
+func (r *quotaFakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	// Columns: tenant_id, plan, max_agents, max_apps, max_mcp_servers,
+	//          max_concurrent_runs, max_users, monthly_llm_tokens, monthly_runs,
+	//          api_requests_per_minute, runs_per_minute
+	ptrs := []any{&r.tenantID, &r.plan}
+	nullInts := make([]*int, 7)
+	// All nullable int cols are nil (no limits set)
+	for i := 0; i < 7; i++ {
+		ptrs = append(ptrs, &nullInts[i])
+	}
+	for i, d := range dest {
+		if i >= len(ptrs) {
+			break
+		}
+		switch dp := d.(type) {
+		case *string:
+			*dp = *ptrs[i].(*string)
+		case **int:
+			*dp = nil
+		case **int64:
+			*dp = nil
+		}
+	}
+	return nil
+}
+
+// ── TN-13: GetQuota returns 404 when no quota row exists ─────────────────────
+
+func TestTenants_GetQuota_NotFound(t *testing.T) {
+	db := &tenantDB{} // no quotaRow → pgx.ErrNoRows
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenants/00000000-0000-0000-0000-000000000001/quota", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// ── TN-14: GetQuota returns 200 with quota row ────────────────────────────────
+
+func TestTenants_GetQuota_Found(t *testing.T) {
+	db := &tenantDB{
+		quotaRow: &quotaFakeRow{
+			tenantID: "00000000-0000-0000-0000-000000000001",
+			plan:     "enterprise",
+		},
+	}
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenants/00000000-0000-0000-0000-000000000001/quota", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, "enterprise", out["plan"])
+}
+
+// ── TN-15: UpsertQuota returns 200 with saved row ────────────────────────────
+
+func TestTenants_UpsertQuota_Success(t *testing.T) {
+	db := &tenantDB{
+		quotaRow: &quotaFakeRow{
+			tenantID: "00000000-0000-0000-0000-000000000001",
+			plan:     "pro",
+		},
+	}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"plan": "pro"})
+	req := httptest.NewRequest(http.MethodPut, "/tenants/00000000-0000-0000-0000-000000000001/quota", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, "pro", out["plan"])
+}
+
+// ── TN-16: UpsertQuota returns 400 on invalid plan ───────────────────────────
+
+func TestTenants_UpsertQuota_BadPlan(t *testing.T) {
+	db := &tenantDB{}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"plan": "unknown-plan"})
+	req := httptest.NewRequest(http.MethodPut, "/tenants/00000000-0000-0000-0000-000000000001/quota", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── TN-17: UpsertQuota returns 400 on invalid JSON ───────────────────────────
+
+func TestTenants_UpsertQuota_BadJSON(t *testing.T) {
+	db := &tenantDB{}
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodPut, "/tenants/00000000-0000-0000-0000-000000000001/quota", bytes.NewBufferString("not-json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

@@ -798,6 +798,24 @@ export interface TenantPatch {
   idp_config?: IDPConfig | null; // null = clear IdP config
 }
 
+// ── Tenant quota types ────────────────────────────────────────────────────────
+
+export type QuotaPlan = 'trial' | 'starter' | 'pro' | 'enterprise';
+
+export interface TenantQuota {
+  tenant_id: string;
+  plan: QuotaPlan;
+  max_agents: number | null;
+  max_apps: number | null;
+  max_mcp_servers: number | null;
+  max_concurrent_runs: number | null;
+  max_users: number | null;
+  monthly_llm_tokens: number | null;
+  monthly_runs: number | null;
+  api_requests_per_minute: number | null;
+  runs_per_minute: number | null;
+}
+
 // ── Managed App types ─────────────────────────────────────────────────────────
 
 export interface ManagedApp {

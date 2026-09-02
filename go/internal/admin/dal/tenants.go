@@ -136,6 +136,84 @@ type TenantDetail struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+// ── Tenant quota types ────────────────────────────────────────────────────────
+
+// TenantQuota is a row from them.tenant_quotas.
+// Pointer fields are nullable — nil means "no limit enforced".
+type TenantQuota struct {
+	TenantID             string  `json:"tenant_id"`
+	Plan                 string  `json:"plan"`
+	MaxAgents            *int    `json:"max_agents"`
+	MaxApps              *int    `json:"max_apps"`
+	MaxMCPServers        *int    `json:"max_mcp_servers"`
+	MaxConcurrentRuns    *int    `json:"max_concurrent_runs"`
+	MaxUsers             *int    `json:"max_users"`
+	MonthlyLLMTokens     *int64  `json:"monthly_llm_tokens"`
+	MonthlyRuns          *int    `json:"monthly_runs"`
+	APIRequestsPerMinute *int    `json:"api_requests_per_minute"`
+	RunsPerMinute        *int    `json:"runs_per_minute"`
+}
+
+const tenantQuotaSelectCols = `
+	SELECT tenant_id::text, plan,
+	       max_agents, max_apps, max_mcp_servers, max_concurrent_runs, max_users,
+	       monthly_llm_tokens, monthly_runs,
+	       api_requests_per_minute, runs_per_minute
+	FROM them.tenant_quotas`
+
+func scanQuota(r RowScanner) (TenantQuota, error) {
+	var q TenantQuota
+	err := r.Scan(
+		&q.TenantID, &q.Plan,
+		&q.MaxAgents, &q.MaxApps, &q.MaxMCPServers, &q.MaxConcurrentRuns, &q.MaxUsers,
+		&q.MonthlyLLMTokens, &q.MonthlyRuns,
+		&q.APIRequestsPerMinute, &q.RunsPerMinute,
+	)
+	return q, err
+}
+
+// GetQuota returns the quota row for a tenant. Returns pgx.ErrNoRows when no quota row exists.
+func (d *DB) GetQuota(ctx context.Context, tenantID string) (TenantQuota, error) {
+	row := d.q.QueryRow(ctx, tenantQuotaSelectCols+` WHERE tenant_id = $1::uuid`, tenantID)
+	return scanQuota(&singleToRow{s: row})
+}
+
+// UpsertQuota inserts or updates the quota row for a tenant and returns the resulting row.
+// The tenant must exist (FK enforced).
+func (d *DB) UpsertQuota(ctx context.Context, q TenantQuota) (TenantQuota, error) {
+	const stmt = `
+		INSERT INTO them.tenant_quotas
+		  (tenant_id, plan, max_agents, max_apps, max_mcp_servers, max_concurrent_runs, max_users,
+		   monthly_llm_tokens, monthly_runs, api_requests_per_minute, runs_per_minute, updated_at)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+		ON CONFLICT (tenant_id) DO UPDATE SET
+		  plan                    = EXCLUDED.plan,
+		  max_agents              = EXCLUDED.max_agents,
+		  max_apps                = EXCLUDED.max_apps,
+		  max_mcp_servers         = EXCLUDED.max_mcp_servers,
+		  max_concurrent_runs     = EXCLUDED.max_concurrent_runs,
+		  max_users               = EXCLUDED.max_users,
+		  monthly_llm_tokens      = EXCLUDED.monthly_llm_tokens,
+		  monthly_runs            = EXCLUDED.monthly_runs,
+		  api_requests_per_minute = EXCLUDED.api_requests_per_minute,
+		  runs_per_minute         = EXCLUDED.runs_per_minute,
+		  updated_at              = now()
+		RETURNING tenant_id::text, plan,
+		          max_agents, max_apps, max_mcp_servers, max_concurrent_runs, max_users,
+		          monthly_llm_tokens, monthly_runs,
+		          api_requests_per_minute, runs_per_minute`
+
+	row := d.q.ExecReturning(ctx, stmt,
+		q.TenantID, q.Plan,
+		q.MaxAgents, q.MaxApps, q.MaxMCPServers, q.MaxConcurrentRuns, q.MaxUsers,
+		q.MonthlyLLMTokens, q.MonthlyRuns,
+		q.APIRequestsPerMinute, q.RunsPerMinute,
+	)
+	return scanQuota(&singleToRow{s: row})
+}
+
+// ── PatchTenant ───────────────────────────────────────────────────────────────
+
 // PatchTenant updates a tenant's display_name, enabled, and/or idp_config.
 // When patch.SetIDP is false the idp_config column is left unchanged.
 // When patch.SetIDP is true and patch.IDPConfig is nil the idp_config is set to NULL.

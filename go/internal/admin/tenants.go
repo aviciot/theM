@@ -22,12 +22,14 @@ func NewTenantsHandler(db DBQuerier) *TenantsHandler {
 	return &TenantsHandler{db: dal.NewDB(db)}
 }
 
-// Routes mounts the tenant CRUD endpoints.
+// Routes mounts the tenant CRUD + quota endpoints.
 func (h *TenantsHandler) Routes(r chi.Router) {
 	r.Get("/tenants", h.List)
 	r.Post("/tenants", h.Create)
 	r.Get("/tenants/{id}", h.Get)
 	r.Patch("/tenants/{id}", h.Patch)
+	r.Get("/tenants/{id}/quota", h.GetQuota)
+	r.Put("/tenants/{id}/quota", h.UpsertQuota)
 }
 
 // List handles GET /api/v1/admin/tenants.
@@ -115,4 +117,55 @@ func (h *TenantsHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, detail)
+}
+
+// GetQuota handles GET /api/v1/admin/tenants/{id}/quota.
+// Returns 404 when no quota row has been provisioned for the tenant.
+func (h *TenantsHandler) GetQuota(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id")
+		return
+	}
+	q, err := h.db.GetQuota(r.Context(), id)
+	if dal.IsNoRows(err) {
+		writeError(w, http.StatusNotFound, "quota not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, q)
+}
+
+// UpsertQuota handles PUT /api/v1/admin/tenants/{id}/quota.
+// Creates the quota row when absent; replaces all fields when present.
+func (h *TenantsHandler) UpsertQuota(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id")
+		return
+	}
+	var in dal.TenantQuota
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	validPlans := map[string]bool{"trial": true, "starter": true, "pro": true, "enterprise": true}
+	if !validPlans[in.Plan] {
+		writeError(w, http.StatusBadRequest, "plan must be one of trial, starter, pro, enterprise")
+		return
+	}
+	in.TenantID = id
+	q, err := h.db.UpsertQuota(r.Context(), in)
+	if dal.IsNoRows(err) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, q)
 }

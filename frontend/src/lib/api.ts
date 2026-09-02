@@ -78,6 +78,8 @@ export type {
   RecentJobRow,
   TenantRecord,
   TenantPatch,
+  TenantQuota,
+  QuotaPlan,
   IDPConfig,
   ManagedApp,
   ManagedAppDetail,
@@ -134,6 +136,8 @@ import type {
   ServicesStats,
   TenantRecord,
   TenantPatch,
+  TenantQuota,
+  QuotaPlan,
   ManagedApp,
   ManagedAppDetail,
   ManagedAppBinding,
@@ -521,6 +525,10 @@ export const themApi = {
     api.post<TenantRecord>('/admin/tenants', input),
   patchTenant: (id: string, patch: TenantPatch) =>
     api.patch<TenantRecord>('/admin/tenants/' + id, patch),
+  getTenantQuota: (id: string) =>
+    api.get<TenantQuota>('/admin/tenants/' + id + '/quota'),
+  upsertTenantQuota: (id: string, quota: Omit<TenantQuota, 'tenant_id'>) =>
+    api.put<TenantQuota>('/admin/tenants/' + id + '/quota', quota),
 
   // Managed App catalog (platform-level)
   listManagedApps: () =>

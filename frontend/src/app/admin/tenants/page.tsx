@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
-import { themApi, type TenantRecord, type IDPConfig } from '@/lib/api';
+import { themApi, type TenantRecord, type IDPConfig, type TenantQuota, type QuotaPlan } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 
 const ACCENT = '#818cf8';
@@ -43,12 +43,14 @@ function TenantCard({ tenant, selected, onClick }: { tenant: TenantRecord; selec
 
 // ── Side panel ─────────────────────────────────────────────────────────────────
 
+const PLANS: QuotaPlan[] = ['trial', 'starter', 'pro', 'enterprise'];
+
 function TenantPanel({ tenant, onClose, onPatched }: {
   tenant: TenantRecord;
   onClose: () => void;
   onPatched: (t: TenantRecord) => void;
 }) {
-  const [tab, setTab] = useState<'general' | 'idp'>('general');
+  const [tab, setTab] = useState<'general' | 'idp' | 'quota'>('general');
   const [displayName, setDisplayName] = useState(tenant.display_name);
   const [enabled, setEnabled] = useState(tenant.enabled);
   const [genSaving, setGenSaving] = useState(false);
@@ -61,6 +63,16 @@ function TenantPanel({ tenant, onClose, onPatched }: {
   const [idpSaving, setIdpSaving] = useState(false);
   const [idpMsg, setIdpMsg] = useState('');
 
+  const emptyQuota = (): Omit<TenantQuota, 'tenant_id'> => ({
+    plan: 'trial', max_agents: null, max_apps: null, max_mcp_servers: null,
+    max_concurrent_runs: null, max_users: null, monthly_llm_tokens: null,
+    monthly_runs: null, api_requests_per_minute: null, runs_per_minute: null,
+  });
+  const [quota, setQuota] = useState<Omit<TenantQuota, 'tenant_id'>>(emptyQuota());
+  const [quotaLoading, setQuotaLoading] = useState(false);
+  const [quotaSaving, setQuotaSaving] = useState(false);
+  const [quotaMsg, setQuotaMsg] = useState('');
+
   useEffect(() => {
     setDisplayName(tenant.display_name);
     setEnabled(tenant.enabled);
@@ -70,7 +82,18 @@ function TenantPanel({ tenant, onClose, onPatched }: {
     setRedirectURI('');
     setGenMsg('');
     setIdpMsg('');
+    setQuota(emptyQuota());
+    setQuotaMsg('');
   }, [tenant.id]);
+
+  useEffect(() => {
+    if (tab !== 'quota') return;
+    setQuotaLoading(true);
+    themApi.getTenantQuota(tenant.id)
+      .then(q => setQuota({ plan: q.plan, max_agents: q.max_agents, max_apps: q.max_apps, max_mcp_servers: q.max_mcp_servers, max_concurrent_runs: q.max_concurrent_runs, max_users: q.max_users, monthly_llm_tokens: q.monthly_llm_tokens, monthly_runs: q.monthly_runs, api_requests_per_minute: q.api_requests_per_minute, runs_per_minute: q.runs_per_minute }))
+      .catch(() => { /* quota row may not exist yet — leave form empty */ })
+      .finally(() => setQuotaLoading(false));
+  }, [tab, tenant.id]);
 
   async function saveGeneral() {
     setGenSaving(true); setGenMsg('');
@@ -106,6 +129,33 @@ function TenantPanel({ tenant, onClose, onPatched }: {
     finally { setIdpSaving(false); }
   }
 
+  async function saveQuota() {
+    setQuotaSaving(true); setQuotaMsg('');
+    try {
+      const saved = await themApi.upsertTenantQuota(tenant.id, quota);
+      setQuota({ plan: saved.plan, max_agents: saved.max_agents, max_apps: saved.max_apps, max_mcp_servers: saved.max_mcp_servers, max_concurrent_runs: saved.max_concurrent_runs, max_users: saved.max_users, monthly_llm_tokens: saved.monthly_llm_tokens, monthly_runs: saved.monthly_runs, api_requests_per_minute: saved.api_requests_per_minute, runs_per_minute: saved.runs_per_minute });
+      setQuotaMsg('Saved');
+    } catch { setQuotaMsg('Error saving quotas'); }
+    finally { setQuotaSaving(false); }
+  }
+
+  function numField(label: string, key: keyof Omit<TenantQuota, 'tenant_id' | 'plan'>) {
+    const val = quota[key] as number | null;
+    return (
+      <div style={{ marginBottom: '14px' }}>
+        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--tm-card-text-muted)', display: 'block', marginBottom: '5px' }}>
+          {label} <span style={{ fontWeight: 400 }}>(blank = unlimited)</span>
+        </label>
+        <input
+          type="number" min={1}
+          value={val ?? ''}
+          onChange={e => setQuota(q => ({ ...q, [key]: e.target.value === '' ? null : parseInt(e.target.value, 10) }))}
+          style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px', background: 'var(--tm-inset)', border: '1px solid var(--tm-filter-border)', color: 'var(--tm-card-text)', outline: 'none', boxSizing: 'border-box' as const }}
+        />
+      </div>
+    );
+  }
+
   const inp: React.CSSProperties = {
     width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px',
     background: 'var(--tm-inset)', border: '1px solid var(--tm-filter-border)',
@@ -131,13 +181,13 @@ function TenantPanel({ tenant, onClose, onPatched }: {
       </div>
 
       <div style={{ display: 'flex', gap: '4px', padding: '12px 24px 0', borderBottom: '1px solid rgba(255,255,255,.06)' }}>
-        {(['general', 'idp'] as const).map(t => (
+        {(['general', 'idp', 'quota'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
             padding: '7px 14px', borderRadius: '8px 8px 0 0', fontSize: '13px', fontWeight: tab === t ? 600 : 400,
             background: tab === t ? 'rgba(255,255,255,.07)' : 'transparent',
             border: 'none', color: tab === t ? 'var(--tm-card-text)' : 'var(--tm-card-text-muted)', cursor: 'pointer',
           }}>
-            {t === 'general' ? 'General' : 'Identity Provider'}
+            {t === 'general' ? 'General' : t === 'idp' ? 'Identity Provider' : 'Quotas'}
           </button>
         ))}
       </div>
@@ -196,6 +246,39 @@ function TenantPanel({ tenant, onClose, onPatched }: {
               )}
             </div>
             {idpMsg && <p style={{ fontSize: '12px', color: idpMsg.startsWith('Error') ? '#f87171' : '#34d399', marginTop: '8px' }}>{idpMsg}</p>}
+          </>
+        )}
+
+        {tab === 'quota' && (
+          <>
+            <p style={{ fontSize: '12px', color: 'var(--tm-card-text-muted)', marginTop: 0, marginBottom: '16px' }}>
+              Resource caps and rate limits for this tenant. Leave a field blank to apply no limit.
+            </p>
+            {quotaLoading ? (
+              <p style={{ color: 'var(--tm-card-text-muted)', fontSize: '13px' }}>Loading…</p>
+            ) : (
+              <>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={lbl}>Plan</label>
+                  <select value={quota.plan} onChange={e => setQuota(q => ({ ...q, plan: e.target.value as QuotaPlan }))} style={{ ...inp, cursor: 'pointer' }}>
+                    {PLANS.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                {numField('Max agents', 'max_agents')}
+                {numField('Max applications', 'max_apps')}
+                {numField('Max MCP servers', 'max_mcp_servers')}
+                {numField('Max concurrent runs', 'max_concurrent_runs')}
+                {numField('Max users', 'max_users')}
+                {numField('Monthly LLM tokens', 'monthly_llm_tokens')}
+                {numField('Monthly runs', 'monthly_runs')}
+                {numField('API requests / minute', 'api_requests_per_minute')}
+                {numField('Runs / minute', 'runs_per_minute')}
+                <button onClick={saveQuota} disabled={quotaSaving} style={{ padding: '9px 20px', borderRadius: '10px', fontSize: '13px', fontWeight: 600, background: `${ACCENT}22`, border: `1px solid ${ACCENT_BORDER}`, color: ACCENT, cursor: quotaSaving ? 'not-allowed' : 'pointer', opacity: quotaSaving ? 0.6 : 1 }}>
+                  {quotaSaving ? 'Saving…' : 'Save Quotas'}
+                </button>
+                {quotaMsg && <p style={{ fontSize: '12px', color: quotaMsg === 'Saved' ? '#34d399' : '#f87171', marginTop: '8px' }}>{quotaMsg}</p>}
+              </>
+            )}
           </>
         )}
       </div>
