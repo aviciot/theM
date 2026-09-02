@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 16
+# Handover — Multi-Tenancy Step 17
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** 5ee5a34 (feat(multi-tenancy): Step 16 — Per-tenant RBAC and member management)
-**Steps complete:** 1 → 16 (all 47 Go packages pass, 1065 S1 tests, 1017 go test ./...)
+**HEAD:** f2c6e90 (feat(multi-tenancy): Step 17 — Email-domain → tenant routing)
+**Steps complete:** 1 → 17 (all 47 Go packages pass, 1072 S1 tests, 1024 go test ./...)
 
 ---
 
@@ -64,6 +64,7 @@
 | Step 14 | Monthly run limit enforcement — monthly_runs quota (Redis INCR keyed by YYYY-MM, 48h-past-month TTL) | Complete | 828739b |
 | Step 15 | Per-tenant LLM provider key management — tenant_id on llm_providers, merged list, upsert override, run-time resolution | Complete | 24ff822 |
 | Step 16 | Per-tenant RBAC — tenant_id in /me response, tenant_slug login selection, GET/POST /admin/tenants/{id}/members | Complete | 5ee5a34 |
+| Step 17 | Email-domain → tenant routing — email_domain on tenants, GET /auth/tenant-lookup (public), SSO banner on login page, admin UI field | Complete | f2c6e90 |
 
 ---
 
@@ -447,6 +448,35 @@ All 47 Go packages pass.
 
 ---
 
+## Step 17 — COMPLETE
+
+### What Step 17 built
+- `db/058_tenant_email_domain.sql` — `email_domain TEXT DEFAULT NULL` on `them.tenants` + partial UNIQUE INDEX `(email_domain) WHERE email_domain IS NOT NULL`
+- `go/internal/admin/dal/tenants.go` — `Tenant.EmailDomain *string`; `TenantPatch.SetEmailDomain` sentinel for absent-vs-null PATCH; `GetTenantByEmailDomain` DAL helper; `PatchTenant` lowercases domain; all Tenant-returning queries unified at 7 columns
+- `go/internal/authserver/store.go` — `LookupTenantByEmailDomain(ctx, domain)` on `Store` interface; `ErrTenantDomainNotFound`; `TenantLookupResult{Slug, DisplayName, IDPConfigured}`
+- `go/internal/authserver/pgx.go` — `pgxStore.LookupTenantByEmailDomain` SQL: `WHERE email_domain = lower($1) AND enabled = true`
+- `go/internal/authserver/handlers.go` — `GET /auth/tenant-lookup?email=` handler (public; extracts domain after last `@`, calls store, returns 200/400/404/500)
+- `go/internal/authserver/router.go` — route registered with comment "Public — no JWT required"
+- `go/internal/authserver/service_test.go` — `fakeStore.domainLookup` map + `LookupTenantByEmailDomain` stub
+- `go/internal/authserver/handlers_test.go` — 4 new tests OIDC-21..24 (found, not-found, missing-email, invalid-email)
+- `go/internal/admin/tenants_test.go` — 3 new tests TN-23..25 (patch email domain, clear email domain, list returns email_domain)
+- `go/TEST_INDEX.md` — S1-40 → 66 tests (OIDC-21..24 added); S1-94 → 25 tests (TN-23..25); totals 1065→1072 / 1017→1024
+- `frontend/src/lib/apiTypes.ts` — `email_domain?: string | null` on `TenantRecord` and `TenantPatch`; new `TenantLookup` interface
+- `frontend/src/lib/api.ts` — `TenantLookup` re-exported
+- `frontend/src/app/api/auth/tenant-lookup/route.ts` — Next.js proxy GET route → `them-auth-go:8703/api/v1/auth/tenant-lookup`
+- `frontend/src/app/login/page.tsx` — `lookupDomain()` on email blur; SSO banner when `idp_configured=true` (display_name + "Continue with SSO" button); spinner while looking up; password form always visible
+- `frontend/src/app/admin/tenants/page.tsx` — `emailDomain` state + input field in General tab; PATCH sends `null` to clear
+
+### Step 17 design decisions
+- **Partial UNIQUE INDEX** — allows multiple `NULL` rows (tenants without domain) while enforcing uniqueness among non-null values; standard PostgreSQL pattern
+- **Public endpoint** — `/auth/tenant-lookup` has no JWT middleware; the email is not a credential; 404 leaks only that no tenant claims the domain (acceptable)
+- **lowercase normalization** — `strings.ToLower` at write time (PatchTenant) and at query time (`lower($1)`) ensures case-insensitive matching
+- **SSO banner is additive** — password form always shown; SSO button is a convenience, not a gate
+- **`lastLookupDomain.current` ref** — prevents duplicate network calls if user blurs twice with same domain
+- **Phase 2 complete** — Step 17 was the last remaining item in `docs/architecture/MULTI_TENANCY_DESIGN.md §25` Phase 2 checklist
+
+---
+
 ## Step 7 — Runtime parameter injection (original plan, now complete)
 
 ### Goal
@@ -482,13 +512,13 @@ cd /opt/docker/them
 # Verify stack is healthy
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml ps
 
-# Apply pending migrations if not yet applied
-docker cp db/055_managed_apps.sql them-postgres:/tmp/them_055.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_055.sql
-docker cp db/056_tenant_quotas.sql them-postgres:/tmp/them_056.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_056.sql
-docker cp db/057_tenant_llm_providers.sql them-postgres:/tmp/them_057.sql
-docker exec them-postgres psql -U them -d them -f /tmp/them_057.sql
+# Apply pending migration (058 — email_domain column) if not yet applied
+docker cp db/058_tenant_email_domain.sql them-postgres:/tmp/them_058.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_058.sql
+
+# Rebuild auth-go to pick up the new /tenant-lookup route
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-auth-go
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-auth-go
 
 # Read before starting
 cat docs/HANDOVER.md
@@ -502,9 +532,9 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 17 (or next planned step).
+Continue multi-tenancy implementation — Step 18 (or next planned step).
 
-Current state: Steps 1–16 are complete and pushed to main (HEAD: 5ee5a34).
+Current state: Steps 1–17 are complete and pushed to main (HEAD: f2c6e90).
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
 - Step 2: Redis key hardening (97c9d71)
 - Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
@@ -523,7 +553,10 @@ Current state: Steps 1–16 are complete and pushed to main (HEAD: 5ee5a34).
            upsert override API, run-time resolution in workerconfig (24ff822)
 - Step 16: Per-tenant RBAC — tenant_id in /me response, tenant_slug login, GET/POST
            /admin/tenants/{id}/members (5ee5a34)
-All 47 Go packages pass (go test ./..., 1065 S1 tests, 1017 go test ./... total).
+- Step 17: Email-domain → tenant routing — email_domain on tenants, public /auth/tenant-lookup,
+           SSO banner on login page, email_domain admin UI field (f2c6e90)
+All 47 Go packages pass (go test ./..., 1072 S1 tests, 1024 go test ./... total).
+Phase 2 (docs/architecture/MULTI_TENANCY_DESIGN.md §25) is fully complete.
 
 Read docs/HANDOVER.md fully before starting — it is the source of truth.
 

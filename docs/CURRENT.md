@@ -10,6 +10,7 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+f2c6e90  feat(multi-tenancy): Step 17 — Email-domain → tenant routing
 793e7f6  fix(services): quarantine count only shows files still awaiting scan
 11a6293  fix(services): show local date+time in Recent scan jobs
 86082e8  fix(services): stop screen flash on every heartbeat

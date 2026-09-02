@@ -521,6 +521,27 @@ Example:
 
 ---
 
+## them.tenants (Multi-tenancy Phase 2)
+Tenant registry. Migration: `db/053_tenants.sql` + `db/058_tenant_email_domain.sql`.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | Stable tenant identifier |
+| slug | TEXT UNIQUE NOT NULL | URL-safe name (e.g. `"acme"`) |
+| display_name | TEXT NOT NULL | Human-readable label |
+| enabled | BOOL NOT NULL DEFAULT true | Soft disable without deletion |
+| idp_config | JSONB | OIDC IdP config (null = no SSO). Keys: `issuer`, `client_id`, `client_secret` |
+| email_domain | TEXT UNIQUE (partial) | Domain for auto-routing (e.g. `"acme.com"`); null = disabled. Partial UNIQUE INDEX WHERE NOT NULL. Always stored lowercase. |
+| created_at | TIMESTAMPTZ | |
+| updated_at | TIMESTAMPTZ | |
+
+Bootstrap tenant: `id = 00000000-0000-0000-0000-000000000001`, slug = `"platform"`.
+
+**Partial unique index:** `tenants_email_domain_uq ON tenants (email_domain) WHERE email_domain IS NOT NULL`  
+Multiple rows with `email_domain = NULL` are allowed; at most one row per non-null domain value.
+
+---
+
 ## auth_service schema (read-only reference)
 Owned by `them-auth-service`. **Never query directly from the bridge** — use `app/services/auth_client.py`.
 
@@ -552,3 +573,9 @@ Key relationships:
 | `db/041_mcp_servers.sql` | `them.mcp_servers` table (MCP-1 registry) |
 | `db/042_mcp_app_credentials.sql` | `them.app_mcp_credentials` table (per-app encrypted credentials) |
 | `db/050_middleware_pipeline.sql` | `run_artifacts.scan_status/scan_result/scanned_at`; `them.middleware_jobs`; `them.middleware_audit`; `applications.security_config` |
+| `db/053_tenants.sql` | `them.tenants` table (multi-tenancy Phase 2 foundation) |
+| `db/054_tenant_members.sql` | `them.tenant_members` table |
+| `db/055_tenant_llm_provider_keys.sql` | Per-tenant LLM provider key overrides |
+| `db/056_tenant_rbac.sql` | Per-tenant RBAC (roles, grants) |
+| `db/057_llm_providers_tenant.sql` | `llm_providers.tenant_id` FK (per-tenant overrides) |
+| `db/058_tenant_email_domain.sql` | `tenants.email_domain` — nullable; partial UNIQUE INDEX WHERE NOT NULL |
