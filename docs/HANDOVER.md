@@ -1,89 +1,137 @@
-# Handover — Multi-Tenancy Step 4
+# Handover — Multi-Tenancy Step 5
 **Date:** 2026-09-02
-**Commits:** Step 2: 97c9d71 | Step 3: 98ccf03 | Step 4: a534a54
 **Branch:** main
+**HEAD:** 9d51765 (docs: update HANDOVER.md with Step 4 completion)
+**Steps complete:** 1 → 4 (all 46 Go packages pass)
 
 ---
 
-## What was completed (Step 2 — Redis key hardening)
+## Rules for the new session (read this before touching code)
 
-### Goal
-All tenant-scoped Redis keys must include `{tenant_id}` in the key to prevent cross-tenant data leakage when two tenants have the same slug or agent ID.
+### Standing constraints — non-negotiable
+- **Go runs inside Docker only** — no host `go` binary. Always use:
+  ```bash
+  docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
+  ```
+- **TenantID is NEVER read from HTTP headers or query params** — only from JWT claims via the typed `tenantctx` context key.
+- **500 responses use static strings only** — never `err.Error()` from service or DAL layers.
+- **Secrets never appear in logs** — use `cfg.SafeString()`.
+- **Never commit `.env` or `secrets.local`**.
+- **Never use DB name `odin` or schema `odin`** — everything is `them`.
+- **Never query `auth_service.*` tables directly from the bridge** — Go uses `internal/auth/`.
+- **Never skip git hooks** (`--no-verify`).
+- **Never use `git add .` or `git add -A`** — add only the files relevant to the current task.
+- **`go test ./...` must be zero failures before every commit** — no exceptions.
+- **`TEST_INDEX.md` must be updated in the same commit as any new or changed test.**
+- **Every code change to `internal/` or `cmd/` MUST have a test** — new behavior = new test.
+- **Files must stay under 400 lines** — propose a split before adding more code to a file that is approaching 500 lines.
+- **Handler → Service → DAL** — no SQL in handlers, no business rules in handlers.
+- **All list endpoints return `[]` not `null` when empty.**
 
-### Changes shipped
+### Session workflow
+1. **Plan** — read relevant docs, confirm scope before writing code.
+2. **Implement** — one focused subsystem; do not widen scope mid-task.
+3. **Test** — run `go test ./...`; zero new failures before committing.
+4. **Commit** — all changed files in one commit with a clear message.
+5. **Report** — files changed, tests passed, commit hash.
 
-| File | What changed |
-|---|---|
-| `go/internal/mcp/registry.go` | Removed global `manifestKeyPrefix`/`healthKeyPrefix` constants. Added `manifestKey(tenantID, slug)` and `healthKey(tenantID, slug)` helpers. Updated `CacheManifest`, `GetCachedManifest`, `CacheHealth` to accept `tenantID` param. Keys: `them:{tenant_id}:mcp:manifest:{slug}` / `them:{tenant_id}:mcp:health:{slug}`. |
-| `go/internal/mcp/health.go` | Updated `setStatus` and `setManifest` to pass `w.server.TenantID` to the registry methods. |
-| `go/internal/admin/scanjob.go` | `scanStateHashKey(agentID)` → `scanStateHashKey(tenantID, agentID)`. `runScanJob` gains `tenantID string` as first param. Key: `them:{tenant_id}:scan:state:{agent_id}`. |
-| `go/internal/admin/agents.go` | Updated `runScanJob` call site to pass `tenantID` (already extracted from JWT context). |
-| `go/internal/gate/gate.go` | Added `TenantID string` to `Config`. `rlKey()` now produces `rl:them:{tenant_id}:token:{hash}:{minute}`. |
-| `go/internal/execution/lifecycle.go` | Wired `TenantID: resolvedCfg.TenantID` into `gateCfg`. |
-| `go/internal/ratelimit/limiter.go` | `CheckToken(ctx, tokenHash, limit)` → `CheckToken(ctx, tenantID, tokenHash, limit)`. Key: `rl:them:{tenant_id}:token:{hash}:{minute}`. |
-| `go/internal/ratelimit/limiter_test.go` | Updated `TestCheckTokenAllowed` and `TestCheckTokenDenied` to pass `testTenantID`; updated hard-coded key in `TestCheckTokenDenied`. |
-| `go/internal/dashboard/handler.go` | Removed `scanStatePrefix` constant. `ServeHTTP` now captures `tenantID` from JWT claims (no longer discards them). `sendSnapshots` threads `tenantID` to `sendAgentSnapshot` and `sendScanSnapshot`. Scan state keys are now `them:{tenant_id}:scan:state:{...}`. |
-| `go/internal/dashboard/handler_test.go` | Added `testTenantID` constant. `makeHS256JWT` includes `tenant_id` claim. Updated `TestDashboard_AgentSnapshot` and `TestDashboard_ScanSnapshot` to use tenant-scoped keys. |
-| `docs/REDIS.md` | Updated key patterns for MCP manifest, MCP health, scan state, and rate limit. Added new `rl:them:{tenant_id}:token:...` row. |
-
-### Tests
-- `go test ./...` — zero failures across all 46 packages
-- All gate, ratelimit, dashboard, mcp, admin, authserver packages pass
-
-### Coverage added
-- `TestCheckTokenAllowed` — verifies tenant-scoped rate limit key allows first request
-- `TestCheckTokenDenied` — verifies correct key format for denial (pre-fills tenant-scoped key)
-- `TestDashboard_AgentSnapshot` — verifies snapshot is read from tenant-scoped scan state hash
-- `TestDashboard_ScanSnapshot` — verifies scan snapshot is read from tenant-scoped key
+### When to recommend a new session
+- After each step is complete and committed.
+- When 5–8 meaningful commits have been made.
+- When context reliability is uncertain (re-reading same files, conflicting statements).
+- Before a major architecture decision.
+- **When recommending a new session: update this HANDOVER.md first, then say so.**
 
 ---
 
-## Completed steps so far
+## Completed steps
 
 | Step | Description | Status | Commit |
 |---|---|---|---|
 | Step 1 | JWT + tenant membership foundation | Complete | 4ccb4c4 |
 | Step 2 | Redis key hardening | Complete | 97c9d71 |
 | Step 3 | Temporal workflow ID prefix with `{tenant_id}:` | Complete | 98ccf03 |
-| Step 4 | Tenant CRUD API + provisioning | Complete | a534a54 |
-| Step 5 | OIDC login flow | Not started | — |
+| Step 4 | Tenant CRUD API (`GET/POST /admin/tenants`, `GET /admin/tenants/{id}`) | Complete | a534a54 |
+| Step 5 | OIDC login flow | **Next** | — |
 | Step 6 | Managed Apps foundation | Not started | — |
+
+---
+
+## What Step 4 built
+
+- `go/internal/admin/dal/tenants.go` — `Tenant`, `TenantInput` types; `ListTenants`, `GetTenant`, `CreateTenant` DAL methods
+- `go/internal/admin/dal/dal.go` — added `IsCheckViolation` (SQLSTATE 23514)
+- `go/internal/admin/tenants.go` — `TenantsHandler` with `GET /tenants`, `POST /tenants`, `GET /tenants/{id}`
+- `go/internal/admin/tenants_test.go` — 8 handler tests (TN-01 to TN-08)
+- `go/internal/admin/router.go` — `TenantsHandler` wired into platform-global group
+- **No migration needed** — `them.tenants` table already existed from `026_tenant_foundation.sql`
+- Table columns: `id UUID PK, slug TEXT UNIQUE, display_name TEXT, enabled BOOL, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ`
 
 ---
 
 ## Known constraints and surprises
 
-1. **Go 1.25 is only available inside Docker** — the host has no `go` binary. Always run `go test ./...` and `go build ./...` via `docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go ...`
+1. **Go 1.25 is only available inside Docker** — host has no `go` binary (see run command above).
 
-2. **`ratelimit.Limiter.CheckToken` is defined but currently unused** — main.go assigns `_ = limiter`. The signature was updated to be correct, but nothing calls it yet. It will be wired in when per-token rate limiting is moved out of the Lua gate script.
+2. **`ratelimit.Limiter.CheckToken` is defined but currently unused** — `main.go` assigns `_ = limiter`. Signature is correct (tenant-scoped). Will be wired when per-token rate limiting moves out of the Lua gate script.
 
-3. **Dashboard `sendScanSnapshot`** — The `scan:{artifactID}` channel and `them:{tenant_id}:scan:state:{artifactID}` are actually distinct from the agent scan flow (which uses `agent:{agentID}` channel and `them:{tenant_id}:scan:state:{agentID}` hash). Both now use tenant-scoped keys, but they remain separate flows.
+3. **Dashboard `sendScanSnapshot`** — `scan:{artifactID}` channel and `them:{tenant_id}:scan:state:{artifactID}` are distinct from the agent scan flow. Both now use tenant-scoped keys but remain separate flows.
 
-4. **MCP server `TenantID` field** — `w.server.TenantID` flows from the DB query in the supervisor. Verify this field is populated in `go/internal/mcp/dal.go` scan query if you add a new MCP server.
+4. **MCP server `TenantID` field** — `w.server.TenantID` flows from the DB query in the supervisor. Verify this field is populated in `go/internal/mcp/dal.go` if adding a new MCP server.
+
+5. **Bootstrap tenant UUID** — `00000000-0000-0000-0000-000000000001`, slug `default`. Used in all tests as `testTenantID`.
+
+6. **`them.tenants` table** — `is_bootstrap` column does NOT exist (the design doc is aspirational). Live columns: `id, slug, display_name, enabled, created_at, updated_at`. Verify before adding columns.
 
 ---
 
-## Next recommended task — Step 4: Tenant CRUD API + provisioning
+## Step 5 — OIDC login flow (next task)
 
-**Goal:** Allow new tenants to be created via an admin API. This is the foundation for real multi-tenant onboarding.
+### Goal
+Allow tenants to authenticate via external OIDC providers (Google, GitHub, Azure AD, Okta, Auth0).
+After this step: customers with SSO requirements can use the system.
 
-**What to build:**
-- `POST /admin/tenants` — create a tenant (name, slug, optional config)
-- `GET /admin/tenants` — list tenants (super_admin only)
-- `GET /admin/tenants/{id}` — get tenant by ID
-- DB: a `them.tenants` table (`id UUID PK, slug TEXT UNIQUE, name TEXT, created_at, config JSONB`)
-- Migration: `db/054_tenants.sql`
-- Wire the handler in `go/cmd/them/main.go`
+### Design summary (from `docs/architecture/MULTI_TENANCY_DESIGN.md` §4)
+- **Generic OIDC authorization code flow** in `them-auth-go` (`go/internal/authserver/`)
+- Per-tenant IdP config stored in `tenants.idp_config JSONB` column (needs a migration to add this column)
+- Email-domain → tenant routing on the login page
+- The-M auth service remains the internal JWT issuer — it exchanges the OIDC token for an internal HS256 JWT with `tenant_id` claim. The rest of the system never sees an OIDC token.
+- One OIDC config per tenant (discovery URL, client_id, client_secret)
+- Standard OIDC authorization code flow:
+  1. Browser hits `/auth/oidc/start?tenant={slug}` → auth service redirects to IdP
+  2. IdP redirects to `/auth/oidc/callback?code=...&state=...`
+  3. Auth service exchanges code for ID token, validates claims
+  4. Maps external user email to `auth_service.users` (create on first login)
+  5. Issues internal JWT with `tenant_id`, sets cookie, redirects to UI
 
-**Files to read before starting:**
-- `docs/architecture/MULTI_TENANCY_DESIGN.md` §4 (Tenant Model) and §5 (Identity)
-- `go/internal/admin/` — follow Handler → Service → DAL pattern
-- `db/001_schema.sql` — understand the existing schema
-- `go/CLAUDE.md` — file size and testing rules
+### Files to read before starting
+- `docs/architecture/MULTI_TENANCY_DESIGN.md` §4 (Identity and Authentication) and §4.3 (Tenant routing)
+- `go/internal/authserver/` — all files (this is where the OIDC flow goes)
+- `go/internal/authserver/handlers.go` — existing login/logout/me/refresh handlers
+- `go/internal/authserver/store.go` — user store and session management
+- `go/internal/authserver/jwt.go` — JWT issuance (OIDC callback will call into this)
+- `auth_service/SCHEMA.sql` — `auth_service.users` table schema (tenant_id is NOT there yet)
+- `db/001_schema.sql` — `them.tenants` table (will need `idp_config JSONB` column)
 
-**Test requirement:** Add handler tests following the pattern in `go/internal/admin/tenant_http_test.go`.
+### Implementation scope (Step 5 only — do not start Step 6)
+1. **Migration**: add `idp_config JSONB DEFAULT NULL` column to `them.tenants`
+   - Migration file: `db/027_tenant_idp_config.sql` (check the next available number)
+2. **Migration**: add `tenant_id UUID` to `auth_service.users` and create `auth_service.tenant_memberships` table
+   - File: `auth_service/migrations/XXX_tenant_identity.sql`
+3. **OIDC handler** in `go/internal/authserver/`:
+   - `GET /auth/oidc/start` — load tenant IdP config, redirect to IdP authorize endpoint
+   - `GET /auth/oidc/callback` — exchange code, validate ID token, upsert user, issue JWT
+   - PKCE required (code_verifier/code_challenge) for security
+   - State parameter must be signed (HMAC) to prevent CSRF
+4. **DAL**: tenant IdP config lookup in `go/internal/authserver/store.go` or a new `go/internal/authserver/oidc_store.go`
+5. **Tests**: handler tests for start/callback flows (use a mock IdP HTTP server)
+6. **Update `TEST_INDEX.md`** in the same commit
 
-⚠️ **Session boundary recommendation:** Step 4 is a larger feature (new DB table, migration, handler, service, DAL, tests). This is a good point to start a fresh session to get maximum context for the implementation.
+### What NOT to do in Step 5
+- Do not start SAML 2.0 (Step 6+ scope)
+- Do not start Managed Apps (Step 6)
+- Do not change anything in `go/internal/admin/` (that's Step 4, done)
+- Do not add SCIM
 
 ---
 
@@ -97,11 +145,13 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 
 # Read before starting
 cat docs/HANDOVER.md
-cat docs/architecture/MULTI_TENANCY_DESIGN.md
-cat go/CLAUDE.md
+cat docs/architecture/MULTI_TENANCY_DESIGN.md  # §4 and §4.3
 
-# Run tests before making any changes
+# Run tests to confirm baseline (zero failures required)
 docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
+
+# Check next available migration number
+ls db/*.sql | sort | tail -5
 ```
 
 ---
@@ -109,24 +159,35 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 4: Tenant CRUD API + provisioning.
+Continue multi-tenancy implementation — Step 5: OIDC login flow.
 
-Current state: Steps 1–3 are complete and merged.
-- Step 1: JWT carries tenant_id; bootstrap fallback removed (commit 4ccb4c4)
-- Step 2: All Redis keys tenant-scoped (commit 97c9d71)
-- Step 3: Temporal workflow IDs tenant-prefixed (commit 98ccf03)
+Current state: Steps 1–4 are complete and merged to main.
+- Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
+- Step 2: All Redis keys tenant-scoped (97c9d71)
+- Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
+- Step 4: Tenant CRUD API — GET/POST /admin/tenants, GET /admin/tenants/{id} (a534a54)
 All 46 Go packages pass (go test ./...).
 
-Read docs/HANDOVER.md and docs/architecture/MULTI_TENANCY_DESIGN.md §4–5 before starting.
+Read docs/HANDOVER.md fully before starting — it contains all rules, constraints, and the
+exact scope for Step 5. The HANDOVER.md is the source of truth for this session.
 
-Step 4 scope only:
-1. Create db/054_tenants.sql migration: them.tenants (id UUID PK, slug TEXT UNIQUE, name TEXT, created_at TIMESTAMPTZ, config JSONB DEFAULT '{}')
-2. Apply migration to live DB
-3. Build Go CRUD: POST /admin/tenants, GET /admin/tenants, GET /admin/tenants/{id}
-4. Follow Handler → Service → DAL pattern in go/internal/admin/
-5. Super_admin only — use RequireSuperAdmin middleware
-6. Tests required; follow tenant_http_test.go pattern
+Step 5 scope only:
+1. Migration: add idp_config JSONB column to them.tenants
+2. Migration: add tenant_id to auth_service.users + create tenant_memberships table
+3. OIDC handlers in go/internal/authserver/: GET /auth/oidc/start and GET /auth/oidc/callback
+4. PKCE + signed state parameter (CSRF protection)
+5. User upsert on first OIDC login → issue internal HS256 JWT with tenant_id claim
+6. Tests for start and callback flows (mock IdP HTTP server)
+7. Update TEST_INDEX.md in the same commit
 
-After each change: run go test ./... (zero failures required before commit).
+Constraints (all in HANDOVER.md):
+- go test ./... must be zero failures before every commit
+- TenantID comes only from JWT claims via tenantctx typed key — never from headers
+- 500 responses use static strings only — never err.Error()
+- Go runs inside Docker: docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
+- Handler → Service → DAL — no SQL in handlers
+- TEST_INDEX.md updated in same commit as any new test
+
+After each change run go test ./... before committing. Report: files changed, tests passed, commit hash.
 Update docs/HANDOVER.md at the end.
 ```
