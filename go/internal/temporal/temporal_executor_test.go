@@ -314,8 +314,8 @@ func TestTemporalExecutor_Submit_ReturnsHandleWithoutBlocking(t *testing.T) {
 	res, err := exec.Submit(context.Background(), ic, plan, agentgen.PipelineVars{"input": "hi"})
 	require.NoError(t, err)
 
-	wantWFID := "canvas:ag1:inv-submit-1"
-	assert.Equal(t, wantWFID, res.WorkflowID, "workflow ID must follow canvas:{agentID}:{invID} pattern")
+	wantWFID := "t1:canvas:ag1:inv-submit-1"
+	assert.Equal(t, wantWFID, res.WorkflowID, "workflow ID must follow {tenantID}:canvas:{agentID}:{invID} pattern")
 	assert.Equal(t, "run-42", res.RunID)
 	// ExecuteWorkflow was called; Get was NOT called (no blocking).
 	mockRun.AssertNotCalled(t, "Get", mock.Anything, mock.Anything)
@@ -353,6 +353,20 @@ func TestTemporalExecutor_SignalCanvasStep_Delegates(t *testing.T) {
 }
 
 // ── TE-13: PlanHasHumanWait detects human_wait nodes ─────────────────────────
+
+// ── TE-14: WorkflowIDForContext returns tenant-scoped ID ─────────────────────
+
+func TestWorkflowIDForContext(t *testing.T) {
+	id := temporal.WorkflowIDForContext("ten-1", "ctx-abc")
+	assert.Equal(t, "ten-1:ctx-ctx-abc", id)
+}
+
+// ── TE-15: CanvasWorkflowID returns tenant-scoped canvas ID ──────────────────
+
+func TestCanvasWorkflowID(t *testing.T) {
+	id := temporal.CanvasWorkflowID("ten-1", "agent-2", "inv-3")
+	assert.Equal(t, "ten-1:canvas:agent-2:inv-3", id)
+}
 
 func TestPlanHasHumanWait(t *testing.T) {
 	withHW := &agentgen.ExecutionPlan{

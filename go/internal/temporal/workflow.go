@@ -36,6 +36,20 @@ const (
 	heartbeatInterval    = 5 * time.Second
 )
 
+// WorkflowIDForContext returns the Temporal workflow ID for a WS/SSE orchestration session.
+// Pattern: {tenantID}:ctx-{contextID}
+// All callers that start or signal this workflow MUST use this function — never
+// construct the ID inline — so that the pattern stays consistent.
+func WorkflowIDForContext(tenantID, contextID string) string {
+	return tenantID + ":ctx-" + contextID
+}
+
+// CanvasWorkflowID returns the Temporal workflow ID for a canvas agent invocation.
+// Pattern: {tenantID}:canvas:{agentID}:{invocationID}
+func CanvasWorkflowID(tenantID, agentID, invocationID string) string {
+	return tenantID + ":canvas:" + agentID + ":" + invocationID
+}
+
 // WorkflowInput is the input to OrchestrationWorkflow.
 type WorkflowInput struct {
 	RunID     string

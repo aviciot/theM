@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/temporal"
 )
 
 // RunService owns the business logic for run reads and HITL signals.
@@ -133,8 +134,7 @@ func (s *RunService) Signal(ctx context.Context, tenantID, runID string, payload
 		return fmt.Errorf("db error: %w", err)
 	}
 
-	// "ctx-" prefix matches Python's OrchestrationWorkflow registration convention.
-	workflowID := "ctx-" + contextID
+	workflowID := temporal.WorkflowIDForContext(tenantID, contextID)
 
 	raw, err := json.Marshal(payload)
 	if err != nil {

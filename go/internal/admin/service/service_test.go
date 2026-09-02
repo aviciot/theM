@@ -951,8 +951,8 @@ func TestRunService_Signal_BuildsWorkflowID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(temp.signaled) != 1 || temp.signaled[0] != "ctx-abc-123" {
-		t.Errorf("want [ctx-abc-123], got %v", temp.signaled)
+	if len(temp.signaled) != 1 || temp.signaled[0] != "t1:ctx-abc-123" {
+		t.Errorf("want [t1:ctx-abc-123], got %v", temp.signaled)
 	}
 }
 

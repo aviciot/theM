@@ -334,7 +334,7 @@ func (lc *Lifecycle) Start(ctx context.Context, h *ExecutionHandle, input tempor
 	input.ApplicationID = h.EPConfig.AppID
 
 	wfOpts := temporalclient.StartWorkflowOptions{
-		ID:        "ctx-" + h.ContextID,
+		ID:        temporal.WorkflowIDForContext(h.EPConfig.TenantID, h.ContextID),
 		TaskQueue: temporal.GoTaskQueue,
 	}
 

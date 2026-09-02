@@ -80,7 +80,7 @@ func (e *TemporalExecutor) Execute(
 	if invID == "" {
 		invID = uuid.NewString()
 	}
-	workflowID := fmt.Sprintf("canvas:%s:%s", ic.AgentID, invID)
+	workflowID := CanvasWorkflowID(ic.TenantID, ic.AgentID, invID)
 
 	// Per-invocation concurrency: policy value overrides the struct default.
 	maxConcurrent := e.maxConcurrentTasks
@@ -175,7 +175,7 @@ func (e *TemporalExecutor) Submit(
 	if invID == "" {
 		invID = uuid.NewString()
 	}
-	workflowID := fmt.Sprintf("canvas:%s:%s", ic.AgentID, invID)
+	workflowID := CanvasWorkflowID(ic.TenantID, ic.AgentID, invID)
 
 	maxConcurrent := e.maxConcurrentTasks
 	if ic.Policies.MaxConcurrentTasks > 0 {

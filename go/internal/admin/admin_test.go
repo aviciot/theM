@@ -1185,6 +1185,6 @@ func TestSignalRun(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, temporal.signaled, "ctx-ctx-xyz-123",
-		"Temporal must be signaled with 'ctx-{context_id}' workflow ID, not run_id")
+	assert.Contains(t, temporal.signaled, testTenantID+":ctx-ctx-xyz-123",
+		"Temporal must be signaled with '{tenantID}:ctx-{context_id}' workflow ID")
 }
