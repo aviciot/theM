@@ -310,6 +310,9 @@ end-to-end with a mock IdP, and secrets never leak into config logs.
 | `TestJWKS_UnknownKidRejected` (OIDC-15) | token kid not in JWKS → error (no matching key) |
 | `TestJWKS_WrongAlgRejected` (OIDC-16) | alg=HS256 in header → rejected before JWKS fetch |
 | `TestJWKS_FetchErrorPropagated` (OIDC-17) | JWKS fetch failure → error propagated |
+| `TestJWKSCache_HitAvoidsRefetch` (OIDC-18) | second verify call within TTL window uses cached doc, no second upstream fetch |
+| `TestJWKSCache_ExpiredEntryRefetches` (OIDC-19) | TTL of 1ns → entry expires, next call fetches from upstream (2 total fetches) |
+| `TestJWKSCache_UnknownKidTriggersRefetch` (OIDC-20) | cached doc has old-key; token carries new-key → re-fetch once, finds new key, succeeds |
 
 **Trigger:** any change to `internal/authserver/` (config, jwt, password, store, pgx, service,
 handlers, router, oidc, oidc_store, oidc_jwks) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
@@ -2824,7 +2827,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 21 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan) | 8 |
-| S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification) | 55 |
+| S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache) | 58 |
 | S1-41 | registry (component definition resolver) | 12 |
 | S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
 | S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |
@@ -2872,7 +2875,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
 | S1-92 | Managed Apps catalog + bindings (MA-01..10): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig | 10 |
 | S1-93 | workerconfig managed app params (MAP-01..03): ConfigSubstitution, NilSafe, ZeroNil | 3 |
-| **S1 total** | | **1007** |
+| **S1 total** | | **1010** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2881,4 +2884,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **959** |
+| **`go test ./...` total** | | **962** |

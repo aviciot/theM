@@ -182,3 +182,112 @@ func dotIndex(s string, start int) int {
 	}
 	return -1
 }
+
+// ── countingFetcher wraps fakeJWKSFetcher and records call count ─────────────
+
+type countingFetcher struct {
+	fake  *fakeJWKSFetcher
+	calls int
+}
+
+func (c *countingFetcher) FetchJWKS(ctx context.Context, uri string) (*jwksDocument, error) {
+	c.calls++
+	return c.fake.FetchJWKS(ctx, uri)
+}
+
+// ── OIDC-18: cached document is reused without a second fetch ─────────────────
+
+func TestJWKSCache_HitAvoidsRefetch(t *testing.T) {
+	inner := &countingFetcher{fake: &fakeJWKSFetcher{doc: buildTestJWKS("key-1")}}
+	cache := newJWKSCache(inner, 5*time.Minute)
+
+	token := makeRS256Token(t, testRSAKey, "key-1", validClaims())
+	uri := "https://idp.example.com/jwks"
+
+	// First call — fetches from upstream.
+	if _, err := verifyRS256IDToken(context.Background(), cache, uri, token); err != nil {
+		t.Fatalf("OIDC-18 first call: %v", err)
+	}
+	// Second call — must hit cache, not the upstream fetcher.
+	if _, err := verifyRS256IDToken(context.Background(), cache, uri, token); err != nil {
+		t.Fatalf("OIDC-18 second call: %v", err)
+	}
+	if inner.calls != 1 {
+		t.Errorf("OIDC-18: expected 1 upstream fetch, got %d", inner.calls)
+	}
+}
+
+// ── OIDC-19: expired cache entry triggers a fresh fetch ──────────────────────
+
+func TestJWKSCache_ExpiredEntryRefetches(t *testing.T) {
+	inner := &countingFetcher{fake: &fakeJWKSFetcher{doc: buildTestJWKS("key-1")}}
+	// TTL of 1ns — expires immediately.
+	cache := newJWKSCache(inner, time.Nanosecond)
+
+	token := makeRS256Token(t, testRSAKey, "key-1", validClaims())
+	uri := "https://idp.example.com/jwks"
+
+	if _, err := verifyRS256IDToken(context.Background(), cache, uri, token); err != nil {
+		t.Fatalf("OIDC-19 first call: %v", err)
+	}
+	// Sleep 1ms to ensure expiry.
+	time.Sleep(time.Millisecond)
+	if _, err := verifyRS256IDToken(context.Background(), cache, uri, token); err != nil {
+		t.Fatalf("OIDC-19 second call: %v", err)
+	}
+	if inner.calls != 2 {
+		t.Errorf("OIDC-19: expected 2 upstream fetches (expired TTL), got %d", inner.calls)
+	}
+}
+
+// ── OIDC-20: unknown kid triggers a re-fetch (key rotation path) ─────────────
+
+func TestJWKSCache_UnknownKidTriggersRefetch(t *testing.T) {
+	// First fetch returns "old-key"; re-fetch returns "new-key" (simulates rotation).
+	fetchCount := 0
+	rotatingFetcher := &rotateFetcher{
+		docs: []*jwksDocument{
+			buildTestJWKS("old-key"),
+			buildTestJWKS("new-key"),
+		},
+		count: &fetchCount,
+	}
+	// Long TTL so the first document stays cached.
+	cache := newJWKSCache(rotatingFetcher, 10*time.Minute)
+
+	uri := "https://idp.example.com/jwks"
+
+	// Prime the cache with "old-key".
+	primeToken := makeRS256Token(t, testRSAKey, "old-key", validClaims())
+	if _, err := verifyRS256IDToken(context.Background(), cache, uri, primeToken); err != nil {
+		t.Fatalf("OIDC-20 prime: %v", err)
+	}
+	if fetchCount != 1 {
+		t.Fatalf("OIDC-20: expected 1 fetch after prime, got %d", fetchCount)
+	}
+
+	// Token with new kid — cache has "old-key" but token has "new-key".
+	newToken := makeRS256Token(t, testRSAKey, "new-key", validClaims())
+	if _, err := verifyRS256IDToken(context.Background(), cache, uri, newToken); err != nil {
+		t.Fatalf("OIDC-20 rotation: %v", err)
+	}
+	// Should have triggered 1 more fetch (the re-fetch for unknown kid).
+	if fetchCount != 2 {
+		t.Errorf("OIDC-20: expected 2 total fetches after rotation, got %d", fetchCount)
+	}
+}
+
+// rotateFetcher returns docs in sequence; wraps around on overflow.
+type rotateFetcher struct {
+	docs  []*jwksDocument
+	count *int
+}
+
+func (r *rotateFetcher) FetchJWKS(_ context.Context, _ string) (*jwksDocument, error) {
+	idx := *r.count
+	if idx >= len(r.docs) {
+		idx = len(r.docs) - 1
+	}
+	*r.count++
+	return r.docs[idx], nil
+}

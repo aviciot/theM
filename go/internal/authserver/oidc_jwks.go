@@ -1,11 +1,12 @@
 package authserver
 
-// JWKS-based RS256 ID token signature verification.
+// JWKS-based RS256 ID token signature verification with TTL-keyed cache.
 //
-// The IdP's JWKS endpoint is fetched once per callback to obtain the public
-// keys. The id_token header is decoded first to find the key ID (kid); the
-// matching JWK is selected and used to verify the RS256 signature with stdlib
-// crypto/rsa. No third-party OIDC or JWKS library is used.
+// The IdP's JWKS endpoint is fetched at most once per TTL window per jwks_uri.
+// On an unknown kid the cache is bypassed and the endpoint is re-fetched once
+// (supports IdP key rotation without requiring a restart).
+//
+// No third-party OIDC or JWKS library is used — stdlib only.
 
 import (
 	"context"
@@ -19,6 +20,8 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
 
 // jwksDocument is the JSON Web Key Set returned by the IdP.
@@ -100,15 +103,70 @@ func (f *httpJWKSFetcher) FetchJWKS(ctx context.Context, jwksURI string) (*jwksD
 	return &doc, nil
 }
 
+// ── JWKS TTL cache ────────────────────────────────────────────────────────────
+
+const defaultJWKSCacheTTL = 5 * time.Minute
+
+// jwksCacheEntry holds a fetched document and when it expires.
+type jwksCacheEntry struct {
+	doc       *jwksDocument
+	expiresAt time.Time
+}
+
+// jwksCache wraps a jwksFetcher and caches responses per jwks_uri for ttl.
+// On an unknown kid it skips the cache and re-fetches once to support key rotation.
+// The cache is safe for concurrent use.
+type jwksCache struct {
+	inner   jwksFetcher
+	ttl     time.Duration
+	entries sync.Map // map[string]*jwksCacheEntry
+}
+
+func newJWKSCache(inner jwksFetcher, ttl time.Duration) *jwksCache {
+	if ttl <= 0 {
+		ttl = defaultJWKSCacheTTL
+	}
+	return &jwksCache{inner: inner, ttl: ttl}
+}
+
+// FetchJWKS returns a cached document if still fresh, otherwise fetches a fresh one.
+func (c *jwksCache) FetchJWKS(ctx context.Context, jwksURI string) (*jwksDocument, error) {
+	if v, ok := c.entries.Load(jwksURI); ok {
+		entry := v.(*jwksCacheEntry)
+		if time.Now().Before(entry.expiresAt) {
+			return entry.doc, nil
+		}
+	}
+	return c.fetchAndStore(ctx, jwksURI)
+}
+
+// fetchFresh always fetches from the upstream fetcher, bypassing and replacing the cache.
+// Used when a kid is not found in a cached document (key rotation path).
+func (c *jwksCache) fetchFresh(ctx context.Context, jwksURI string) (*jwksDocument, error) {
+	return c.fetchAndStore(ctx, jwksURI)
+}
+
+func (c *jwksCache) fetchAndStore(ctx context.Context, jwksURI string) (*jwksDocument, error) {
+	doc, err := c.inner.FetchJWKS(ctx, jwksURI)
+	if err != nil {
+		return nil, err
+	}
+	c.entries.Store(jwksURI, &jwksCacheEntry{doc: doc, expiresAt: time.Now().Add(c.ttl)})
+	return doc, nil
+}
+
 // idTokenHeader is the decoded JWT header fields needed for JWKS lookup.
 type idTokenHeader struct {
 	Kid string `json:"kid"`
 	Alg string `json:"alg"`
 }
 
-// verifyRS256IDToken fetches the IdP's JWKS, selects the key matching the
-// id_token's "kid" header, verifies the RS256 signature, and then parses and
-// validates the claims. It replaces parseIDTokenClaims in the OIDC callback.
+// verifyRS256IDToken fetches (or loads from cache) the IdP's JWKS, selects the
+// key matching the id_token's "kid" header, verifies the RS256 signature, and
+// then parses and validates the claims.
+//
+// If the fetcher is a *jwksCache and the kid is not found in the cached document,
+// the cache is bypassed and the JWKS is re-fetched once to handle IdP key rotation.
 //
 // Supported algorithm: RS256 only. Tokens with any other alg are rejected.
 func verifyRS256IDToken(ctx context.Context, fetcher jwksFetcher, jwksURI, idToken string) (*idTokenClaims, error) {
@@ -135,14 +193,19 @@ func verifyRS256IDToken(ctx context.Context, fetcher jwksFetcher, jwksURI, idTok
 	if err != nil {
 		return nil, fmt.Errorf("id_token: %w", err)
 	}
-	var matched *jwk
-	for i := range doc.Keys {
-		k := &doc.Keys[i]
-		if hdr.Kid == "" || k.Kid == hdr.Kid {
-			matched = k
-			break
+	matched := findKey(doc, hdr.Kid)
+
+	// 3. If kid not found and fetcher is a cache, re-fetch once (key rotation path).
+	if matched == nil {
+		if cache, ok := fetcher.(*jwksCache); ok {
+			doc, err = cache.fetchFresh(ctx, jwksURI)
+			if err != nil {
+				return nil, fmt.Errorf("id_token: re-fetch: %w", err)
+			}
+			matched = findKey(doc, hdr.Kid)
 		}
 	}
+
 	if matched == nil {
 		return nil, fmt.Errorf("id_token: no matching key for kid=%q in JWKS", hdr.Kid)
 	}
@@ -151,7 +214,7 @@ func verifyRS256IDToken(ctx context.Context, fetcher jwksFetcher, jwksURI, idTok
 		return nil, err
 	}
 
-	// 3. Verify RS256 signature: SHA-256 hash of "header.payload", then RSA PKCS1v15 verify.
+	// 4. Verify RS256 signature: SHA-256 hash of "header.payload", then RSA PKCS1v15 verify.
 	signingInput := parts[0] + "." + parts[1]
 	digest := sha256.Sum256([]byte(signingInput))
 	sigBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
@@ -162,7 +225,7 @@ func verifyRS256IDToken(ctx context.Context, fetcher jwksFetcher, jwksURI, idTok
 		return nil, fmt.Errorf("id_token: signature verification failed")
 	}
 
-	// 4. Decode and validate the payload claims — identical to parseIDTokenClaims.
+	// 5. Decode and validate the payload claims.
 	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
 		return nil, fmt.Errorf("id_token: payload base64 decode: %w", err)
@@ -178,4 +241,16 @@ func verifyRS256IDToken(ctx context.Context, fetcher jwksFetcher, jwksURI, idTok
 		return nil, fmt.Errorf("id_token: missing email claim")
 	}
 	return &claims, nil
+}
+
+// findKey returns the first JWK whose kid matches kid, or the first key if kid
+// is empty. Returns nil if no match is found.
+func findKey(doc *jwksDocument, kid string) *jwk {
+	for i := range doc.Keys {
+		k := &doc.Keys[i]
+		if kid == "" || k.Kid == kid {
+			return k
+		}
+	}
+	return nil
 }

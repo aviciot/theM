@@ -55,7 +55,7 @@ func NewOIDCHandlers(oidcStore OIDCStore, signer *tokenSigner, cfg *Config, log 
 		cfg:        cfg,
 		log:        log,
 		httpClient: client,
-		jwks:       &httpJWKSFetcher{client: client},
+		jwks:       newJWKSCache(&httpJWKSFetcher{client: client}, defaultJWKSCacheTTL),
 	}
 }
 
