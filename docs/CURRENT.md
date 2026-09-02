@@ -10,13 +10,14 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+793e7f6  fix(services): quarantine count only shows files still awaiting scan
+11a6293  fix(services): show local date+time in Recent scan jobs
+86082e8  fix(services): stop screen flash on every heartbeat
+c3fcc21  fix(services): rename state var 'window' that shadowed globalThis.window
+34d99bd  feat(services): live scanner health badge via Redis TTL heartbeat
+f3ae994  docs: record Session E fixes — middleware FK + playground busy-state
 7a792c4  fix(playground): A2A stream busy state never cleared when stream ends without status event
 fd10362  fix(middleware): fix FK violation in middleware_jobs.artifact_id for quarantine-first flow
-940f72f  fix(a2a): emit internal run_id in task metadata so playground polls correct artifacts
-b2922d2  fix(playground): artifacts/tasks tabs not updating in A2A runs
-7789644  fix(middleware): nil pointer panic in FileGate when S3 not configured
-1111e34  feat(services): live stats refresh via dashboard WebSocket pub/sub
-a174665  feat(frontend): show file scan state in chat bubbles (Session D)
 ```
 
 ---
@@ -535,6 +536,16 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 - `cmd/worker/main.go`: `RedisScanSubscriber` wired into factory
 - Tests: S1-90 (4 new orchestrator scan subscriber tests)
 - them-go-worker rebuilt and restarted: polling ✅
+
+**Session E complete (2026-09-02, commits 34d99bd–793e7f6):**
+- `go/cmd/middleware-worker/main.go`: health heartbeat goroutine — writes `them:dash:services:health` (TTL 30s) every 10s; heartbeat does NOT publish to `services:stats` (scan job completion does)
+- `go/internal/admin/services_stats.go`: reads health key, adds `worker_up bool` to response envelope
+- `go/internal/admin/router.go`: passes `redis` to `NewServicesStatsHandler`
+- `go/internal/dashboard/handler.go`: `sendServicesHealthSnapshot` — pushes `{type:services_health, worker_up}` on subscribe so badge is immediately correct on tab open
+- `frontend/src/app/admin/services/page.tsx`: green/red "Scanner online/offline" badge; `load(showSpinner)` — WS-triggered refreshes are silent (no screen flash); `services_health` event updates badge only without re-fetch; state var `window` renamed to `timeWindow` (was shadowing `globalThis.window`, breaking WS connect); Recent jobs show `toLocaleString()` local time
+- `go/internal/admin/dal/services_stats.go`: quarantine count filters `WHERE storage_key IS NOT NULL` — only counts files genuinely awaiting scan, not post-scan tombstones
+- `frontend/src/lib/apiTypes.ts`: `worker_up: boolean` on `ServicesStats`
+- Scan error decision: `error` outcome passes file through to user (fail-open) — intentional, can be changed to block
 
 **Session D complete (2026-09-02, commit a174665):**
 - `frontend/src/app/admin/playground/playgroundTypes.ts`: `FileMsg` gains `artifact_id`, `scanning`, `blocked`, `threat` fields
