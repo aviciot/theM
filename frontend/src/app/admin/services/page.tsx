@@ -195,7 +195,7 @@ function SecurityTab({ stats }: { stats: SecurityScanStats }) {
                     <span style={{ flex: 1, color: 'var(--tm-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.artifact_id}>{j.artifact_id.slice(0, 8)}…</span>
                     <span style={{ color: 'var(--tm-text-muted)' }}>{j.processor}</span>
                     {j.duration_ms != null && <span style={{ color: 'var(--tm-text-muted)' }}>{j.duration_ms}ms</span>}
-                    <span style={{ color: 'var(--tm-text-muted)', flexShrink: 0 }} title={new Date(j.created_at).toLocaleString()}>{timeAgo(j.created_at)}</span>
+                    <span style={{ color: 'var(--tm-text-muted)', flexShrink: 0 }}>{new Date(j.created_at).toLocaleString()}</span>
                   </div>
                 ))}
               </div>
