@@ -1,6 +1,6 @@
-# Handover — Multi-Tenancy Step 3
+# Handover — Multi-Tenancy Step 4
 **Date:** 2026-09-02
-**Commits:** Step 2: 97c9d71 | Step 3: 98ccf03
+**Commits:** Step 2: 97c9d71 | Step 3: 98ccf03 | Step 4: a534a54
 **Branch:** main
 
 ---
@@ -45,7 +45,7 @@ All tenant-scoped Redis keys must include `{tenant_id}` in the key to prevent cr
 | Step 1 | JWT + tenant membership foundation | Complete | 4ccb4c4 |
 | Step 2 | Redis key hardening | Complete | 97c9d71 |
 | Step 3 | Temporal workflow ID prefix with `{tenant_id}:` | Complete | 98ccf03 |
-| Step 4 | Tenant CRUD API + provisioning | Not started | — |
+| Step 4 | Tenant CRUD API + provisioning | Complete | a534a54 |
 | Step 5 | OIDC login flow | Not started | — |
 | Step 6 | Managed Apps foundation | Not started | — |
 
