@@ -483,6 +483,7 @@ func (h *AgentsHandler) SecurityScan(w http.ResponseWriter, r *http.Request) {
 	// Launch scan in background.
 	if h.redis != nil {
 		go runScanJob(
+			tenantID,
 			id,
 			payload,
 			scanner.EndpointURL,

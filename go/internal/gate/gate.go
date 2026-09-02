@@ -106,6 +106,7 @@ type Result struct {
 type Config struct {
 	EPSlug           string // entry point slug
 	AppID            string // application ID (may be empty)
+	TenantID         string // tenant UUID — scopes the rate-limit key
 	TokenHash        string // sha256 hex of the bearer token — rate limit key
 	SessionID        string // the new session being admitted
 	EPMaxConcurrent  int    // max concurrent sessions for this EP (0 = unlimited)
@@ -147,7 +148,7 @@ func (c *Config) rlKey() string {
 		return ""
 	}
 	minute := time.Now().UTC().Format("200601021504")
-	return "rl:them:token:" + c.TokenHash + ":" + minute
+	return "rl:them:" + c.TenantID + ":token:" + c.TokenHash + ":" + minute
 }
 func (c *Config) queueKey() string { return queueKeyPrefix + c.EPSlug }
 

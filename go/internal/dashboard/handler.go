@@ -35,12 +35,11 @@ import (
 )
 
 const (
-	pingInterval        = 30 * time.Second
-	subscribeDeadline   = 10 * time.Second
-	dashPrefix          = "them:dash:"
-	scanStatePrefix     = "them:scan:state:"
-	sessionStatePrefix  = "them:dash:sessions:state:"
-	appStatusCacheKey   = "them:dash:app_status_cache"
+	pingInterval       = 30 * time.Second
+	subscribeDeadline  = 10 * time.Second
+	dashPrefix         = "them:dash:"
+	sessionStatePrefix = "them:dash:sessions:state:"
+	appStatusCacheKey  = "them:dash:app_status_cache"
 )
 
 // dashRedis is the minimal Redis surface needed by the dashboard handler.
@@ -152,10 +151,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing token", http.StatusUnauthorized)
 		return
 	}
-	if _, err := auth.ValidateHS256JWT(rawToken, h.jwtSecret); err != nil {
+	claims, err := auth.ValidateHS256JWT(rawToken, h.jwtSecret)
+	if err != nil {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}
+	tenantID := claims.TenantID
 
 	// ── 2. Upgrade to WebSocket ───────────────────────────────────────────────
 	conn, err := h.upgrader.Upgrade(w, r, nil)
@@ -222,7 +223,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── 9. Send snapshots ─────────────────────────────────────────────────────
-	h.sendSnapshots(ctx, cw, channels)
+	h.sendSnapshots(ctx, cw, channels, tenantID)
 
 	// ── 10. Ping loop ─────────────────────────────────────────────────────────
 	go h.pingLoop(ctx, cw)
@@ -260,14 +261,14 @@ func (h *Handler) subscribeRedis(ctx context.Context, cw *connWriter, redisChann
 
 // sendSnapshots delivers current state snapshots for channels that support them.
 // Must be called after subscribeRedis signals ready (subscribe-before-snapshot ordering).
-func (h *Handler) sendSnapshots(ctx context.Context, cw *connWriter, channels []string) {
+func (h *Handler) sendSnapshots(ctx context.Context, cw *connWriter, channels []string, tenantID string) {
 	for _, ch := range channels {
 		switch {
 		case ch == "apps":
 			h.sendAppsSnapshot(ctx, cw)
 		case strings.HasPrefix(ch, "agent:"):
 			agentID := ch[len("agent:"):]
-			h.sendAgentSnapshot(ctx, cw, ch, agentID)
+			h.sendAgentSnapshot(ctx, cw, ch, tenantID, agentID)
 		case strings.HasPrefix(ch, "sessions:"):
 			appID := ch[len("sessions:"):]
 			h.sendSessionsSnapshot(ctx, cw, ch, appID)
@@ -276,7 +277,7 @@ func (h *Handler) sendSnapshots(ctx context.Context, cw *connWriter, channels []
 			h.sendRunSnapshot(ctx, cw, ch, runID)
 		case strings.HasPrefix(ch, "scan:"):
 			artifactID := ch[len("scan:"):]
-			h.sendScanSnapshot(ctx, cw, ch, artifactID)
+			h.sendScanSnapshot(ctx, cw, ch, tenantID, artifactID)
 		case ch == "services:stats":
 			h.sendServicesHealthSnapshot(ctx, cw)
 		}
@@ -311,9 +312,9 @@ func (h *Handler) sendAppsSnapshot(ctx context.Context, cw *connWriter) {
 }
 
 // sendAgentSnapshot delivers the current scan state for an agent channel.
-// Source: HGETALL them:scan:state:{agentID}
-func (h *Handler) sendAgentSnapshot(ctx context.Context, cw *connWriter, ch, agentID string) {
-	m, err := h.redis.HGetAll(ctx, scanStatePrefix+agentID)
+// Source: HGETALL them:{tenantID}:scan:state:{agentID}
+func (h *Handler) sendAgentSnapshot(ctx context.Context, cw *connWriter, ch, tenantID, agentID string) {
+	m, err := h.redis.HGetAll(ctx, "them:"+tenantID+":scan:state:"+agentID)
 	if err != nil || len(m) == 0 {
 		return
 	}
@@ -368,10 +369,10 @@ func (h *Handler) sendRunSnapshot(ctx context.Context, cw *connWriter, ch, runID
 }
 
 // sendScanSnapshot delivers the current scan status for an artifact.
-// Source: GET them:scan:state:{artifactID} (string value = scan_status).
+// Source: GET them:{tenantID}:scan:state:{artifactID} (string value = scan_status).
 // Clients subscribing after a scan completes receive the final status immediately.
-func (h *Handler) sendScanSnapshot(ctx context.Context, cw *connWriter, ch, artifactID string) {
-	val, err := h.redis.Get(ctx, scanStatePrefix+artifactID)
+func (h *Handler) sendScanSnapshot(ctx context.Context, cw *connWriter, ch, tenantID, artifactID string) {
+	val, err := h.redis.Get(ctx, "them:"+tenantID+":scan:state:"+artifactID)
 	if err != nil || val == "" {
 		return
 	}

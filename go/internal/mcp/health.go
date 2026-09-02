@@ -142,7 +142,7 @@ func (w *worker) setStatus(ctx context.Context, status, errMsg string) {
 	if err := w.dal.UpdateHealth(ctx, w.server.ID, status, errMsg); err != nil {
 		w.log.Error("update health in DB", "error", err)
 	}
-	if err := w.registry.CacheHealth(ctx, w.server.Slug, status, errMsg); err != nil {
+	if err := w.registry.CacheHealth(ctx, w.server.TenantID, w.server.Slug, status, errMsg); err != nil {
 		w.log.Warn("cache health in Redis", "error", err)
 	}
 
@@ -170,7 +170,7 @@ func (w *worker) setManifest(ctx context.Context, result *DiscoveryResult) {
 		w.log.Error("update manifest in DB", "error", err)
 		return
 	}
-	if err := w.registry.CacheManifest(ctx, w.server.Slug, manifest); err != nil {
+	if err := w.registry.CacheManifest(ctx, w.server.TenantID, w.server.Slug, manifest); err != nil {
 		w.log.Warn("cache manifest in Redis", "error", err)
 	}
 	if err := w.registry.PublishManifestChanged(ctx, w.server.Slug); err != nil {

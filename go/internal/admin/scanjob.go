@@ -44,9 +44,9 @@ type scanAgentPayload struct {
 	HasAuthToken     bool   `json:"has_auth_token"`
 }
 
-// scanStateHashKey returns the Redis Hash key for scan state.
-func scanStateHashKey(agentID string) string {
-	return fmt.Sprintf("them:scan:state:%s", agentID)
+// scanStateHashKey returns the tenant-scoped Redis Hash key for scan state.
+func scanStateHashKey(tenantID, agentID string) string {
+	return fmt.Sprintf("them:%s:scan:state:%s", tenantID, agentID)
 }
 
 // scanDashChannel returns the Redis pub/sub channel for dashboard events.
@@ -76,6 +76,7 @@ func pubJSON(ctx context.Context, rc scanRedis, channel string, event map[string
 // runScanJob is launched as a goroutine. It must not panic — all errors are
 // silently handled and surfaced as scan_failed events.
 func runScanJob(
+	tenantID string,
 	agentID string,
 	payload scanAgentPayload,
 	scannerEndpoint string,
@@ -87,7 +88,7 @@ func runScanJob(
 	log *slog.Logger,
 ) {
 	ctx := context.Background()
-	hashKey := scanStateHashKey(agentID)
+	hashKey := scanStateHashKey(tenantID, agentID)
 	dashCh := scanDashChannel(agentID)
 
 	// Step 1 — Announce scan started.

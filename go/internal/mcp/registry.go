@@ -11,15 +11,25 @@ import (
 )
 
 const (
-	manifestKeyPrefix = "them:mcp:manifest:"
-	healthKeyPrefix   = "them:mcp:health:"
-	manifestTTL       = 5 * time.Minute
-	healthTTL         = 90 * time.Second
+	manifestTTL = 5 * time.Minute
+	healthTTL   = 90 * time.Second
 
 	// ManifestChangedChannel is published to after every discovery run so
 	// them-go-bridge replicas can invalidate their in-process tool-list caches.
 	ManifestChangedChannel = "them:mcp:manifest:changed"
 )
+
+// manifestKey returns the tenant-scoped Redis key for a server's tools manifest.
+// Pattern: them:{tenantID}:mcp:manifest:{slug}
+func manifestKey(tenantID, slug string) string {
+	return "them:" + tenantID + ":mcp:manifest:" + slug
+}
+
+// healthKey returns the tenant-scoped Redis key for a server's health state.
+// Pattern: them:{tenantID}:mcp:health:{slug}
+func healthKey(tenantID, slug string) string {
+	return "them:" + tenantID + ":mcp:health:" + slug
+}
 
 // Registry is an in-process cache of MCP server records backed by Redis.
 // It is safe for concurrent use.
@@ -76,33 +86,36 @@ func (r *Registry) UpdateServer(s Server) {
 }
 
 // CacheManifest writes a server's tools_manifest to Redis with a 5-min TTL.
-func (r *Registry) CacheManifest(ctx context.Context, slug string, manifest json.RawMessage) error {
+// Key: them:{tenantID}:mcp:manifest:{slug}
+func (r *Registry) CacheManifest(ctx context.Context, tenantID, slug string, manifest json.RawMessage) error {
 	cmd := r.redis.B().Set().
-		Key(manifestKeyPrefix + slug).
+		Key(manifestKey(tenantID, slug)).
 		Value(string(manifest)).
 		Ex(manifestTTL).
 		Build()
 	if err := r.redis.Do(ctx, cmd).Error(); err != nil {
-		return fmt.Errorf("registry: cache manifest %s: %w", slug, err)
+		return fmt.Errorf("registry: cache manifest %s/%s: %w", tenantID, slug, err)
 	}
 	return nil
 }
 
 // GetCachedManifest returns a manifest from Redis cache. Returns nil, nil on miss.
-func (r *Registry) GetCachedManifest(ctx context.Context, slug string) (json.RawMessage, error) {
-	cmd := r.redis.B().Get().Key(manifestKeyPrefix + slug).Build()
+// Key: them:{tenantID}:mcp:manifest:{slug}
+func (r *Registry) GetCachedManifest(ctx context.Context, tenantID, slug string) (json.RawMessage, error) {
+	cmd := r.redis.B().Get().Key(manifestKey(tenantID, slug)).Build()
 	val, err := r.redis.Do(ctx, cmd).ToString()
 	if err != nil {
 		if rueidis.IsRedisNil(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("registry: get manifest %s: %w", slug, err)
+		return nil, fmt.Errorf("registry: get manifest %s/%s: %w", tenantID, slug, err)
 	}
 	return json.RawMessage(val), nil
 }
 
 // CacheHealth writes the latest health probe result to Redis with a 90s TTL.
-func (r *Registry) CacheHealth(ctx context.Context, slug, status, lastError string) error {
+// Key: them:{tenantID}:mcp:health:{slug}
+func (r *Registry) CacheHealth(ctx context.Context, tenantID, slug, status, lastError string) error {
 	type healthEntry struct {
 		Status    string `json:"status"`
 		LastError string `json:"last_error,omitempty"`
@@ -114,12 +127,12 @@ func (r *Registry) CacheHealth(ctx context.Context, slug, status, lastError stri
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	cmd := r.redis.B().Set().
-		Key(healthKeyPrefix + slug).
+		Key(healthKey(tenantID, slug)).
 		Value(string(data)).
 		Ex(healthTTL).
 		Build()
 	if err := r.redis.Do(ctx, cmd).Error(); err != nil {
-		return fmt.Errorf("registry: cache health %s: %w", slug, err)
+		return fmt.Errorf("registry: cache health %s/%s: %w", tenantID, slug, err)
 	}
 	return nil
 }

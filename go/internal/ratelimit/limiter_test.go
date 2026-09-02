@@ -46,12 +46,14 @@ func (f *fakeRedis) setCounter(key string, v int64) {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+const testTenantID = "00000000-0000-0000-0000-000000000001"
+
 // 1. First request under limit — allowed.
 func TestCheckTokenAllowed(t *testing.T) {
 	redis := newFakeRedis()
 	l := ratelimit.New(redis)
 
-	allowed, err := l.CheckToken(context.Background(), "abc123", 10)
+	allowed, err := l.CheckToken(context.Background(), testTenantID, "abc123", 10)
 	require.NoError(t, err)
 	assert.True(t, allowed, "first request should be allowed under limit")
 }
@@ -63,11 +65,11 @@ func TestCheckTokenDenied(t *testing.T) {
 
 	// Pre-fill the counter to the limit.
 	minute := time.Now().Unix() / 60
-	key := fmt.Sprintf("rl:them:token:%s:%d", "tokXYZ", minute)
+	key := fmt.Sprintf("rl:them:%s:token:%s:%d", testTenantID, "tokXYZ", minute)
 	redis.setCounter(key, 5) // already at limit
 
 	// The next Incr will make it 6, which exceeds limit=5.
-	allowed, err := l.CheckToken(context.Background(), "tokXYZ", 5)
+	allowed, err := l.CheckToken(context.Background(), testTenantID, "tokXYZ", 5)
 	require.NoError(t, err)
 	assert.False(t, allowed, "request at limit+1 should be denied")
 }

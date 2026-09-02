@@ -44,12 +44,12 @@ func New(redis RedisIncrementer) *Limiter {
 }
 
 // CheckToken checks the per-token rate limit.
-// tokenHash should be the SHA-256 hex of the raw token (matching the DB hash).
-// limit is the maximum number of requests allowed per minute.
+// tenantID scopes the key to the tenant. tokenHash should be the SHA-256 hex
+// of the raw token (matching the DB hash). limit is requests allowed per minute.
 // Returns (true, nil) if the request is allowed; (false, nil) if rate-limited;
 // (false, err) if Redis is unavailable.
-func (l *Limiter) CheckToken(ctx context.Context, tokenHash string, limit int) (bool, error) {
-	key := fmt.Sprintf("rl:them:token:%s:%d", tokenHash, minuteBucket())
+func (l *Limiter) CheckToken(ctx context.Context, tenantID, tokenHash string, limit int) (bool, error) {
+	key := fmt.Sprintf("rl:them:%s:token:%s:%d", tenantID, tokenHash, minuteBucket())
 	return l.check(ctx, key, limit)
 }
 

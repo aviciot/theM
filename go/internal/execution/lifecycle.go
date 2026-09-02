@@ -192,6 +192,7 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	gateCfg := gate.Config{
 		EPSlug:           req.EPSlug,
 		AppID:            resolvedCfg.AppID,
+		TenantID:         resolvedCfg.TenantID,
 		TokenHash:        gateTokenHash,
 		SessionID:        sessionID,
 		EPMaxConcurrent:  resolvedCfg.EPMaxConcurrent,

@@ -90,12 +90,14 @@ func (f *fakeRedis) setString(key, val string) {
 
 // ── JWT helper ────────────────────────────────────────────────────────────────
 
+const testTenantID = "00000000-0000-0000-0000-000000000001"
+
 func makeHS256JWT(secret []byte, subject string) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
 	now := time.Now().Unix()
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(
-		`{"sub":%q,"username":"admin","role":"super_admin","exp":%d,"iat":%d,"type":"access"}`,
-		subject, now+3600, now,
+		`{"sub":%q,"username":"admin","role":"super_admin","tenant_id":%q,"exp":%d,"iat":%d,"type":"access"}`,
+		subject, testTenantID, now+3600, now,
 	)))
 	data := header + "." + payload
 	mac := hmac.New(sha256.New, secret)
@@ -233,7 +235,7 @@ func TestDashboard_AgentChannelRelayed(t *testing.T) {
 
 func TestDashboard_AgentSnapshot(t *testing.T) {
 	rc := newFakeRedis()
-	rc.setHash("them:scan:state:abc123", map[string]string{
+	rc.setHash("them:"+testTenantID+":scan:state:abc123", map[string]string{
 		"status": "complete",
 		"score":  "7",
 	})
@@ -314,7 +316,7 @@ func TestDashboard_ScanSnapshot(t *testing.T) {
 	rc := newFakeRedis()
 	artifactID := "aaaaaaaa-0000-0000-0000-000000000001"
 	// Pre-populate the scan state key so the snapshot is sent immediately.
-	rc.setString("them:scan:state:"+artifactID, "clean")
+	rc.setString("them:"+testTenantID+":scan:state:"+artifactID, "clean")
 
 	srv, secret := newTestServer(t, rc)
 	token := makeHS256JWT(secret, "1")
