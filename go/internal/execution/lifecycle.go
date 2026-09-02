@@ -34,8 +34,8 @@ type RunCreator interface {
 }
 
 // QuotaEnforcer checks per-tenant run quotas before a run is admitted.
-// CheckQuota returns ErrQuotaConcurrentRuns or ErrQuotaRunsPerMinute when
-// a limit is exceeded. The production implementation loads the quota row
+// CheckQuota returns ErrQuotaConcurrentRuns, ErrQuotaRunsPerMinute, or
+// ErrQuotaMonthlyRuns when a limit is exceeded. The production implementation loads the quota row
 // from the DB and delegates to quota.Enforcer.
 type QuotaEnforcer interface {
 	CheckQuota(ctx context.Context, tenantID string) error
@@ -48,6 +48,10 @@ var ErrQuotaConcurrentRuns = errors.New("quota: max concurrent runs exceeded")
 // ErrQuotaRunsPerMinute is the sentinel returned by QuotaEnforcer when
 // runs_per_minute is exceeded. Lifecycle maps it to AdmitErrQuotaRunsPerMinute.
 var ErrQuotaRunsPerMinute = errors.New("quota: runs per minute exceeded")
+
+// ErrQuotaMonthlyRuns is the sentinel returned by QuotaEnforcer when
+// monthly_runs is exceeded. Lifecycle maps it to AdmitErrQuotaMonthlyRuns.
+var ErrQuotaMonthlyRuns = errors.New("quota: monthly run limit exceeded")
 
 // Lifecycle executes the shared admission-and-run-start pipeline used by the WS,
 // SSE, and A2A protocol handlers. It is constructed once at server startup and
@@ -209,6 +213,8 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 				return nil, admitErr(AdmitErrQuotaConcurrentRuns)
 			case errors.Is(qErr, ErrQuotaRunsPerMinute):
 				return nil, admitErr(AdmitErrQuotaRunsPerMinute)
+			case errors.Is(qErr, ErrQuotaMonthlyRuns):
+				return nil, admitErr(AdmitErrQuotaMonthlyRuns)
 			default:
 				lc.logger.Warn("execution: quota check failed", "tenant_id", resolvedCfg.TenantID, "error", qErr)
 				return nil, admitErr(AdmitErrInternal)

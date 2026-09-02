@@ -637,6 +637,7 @@ SSE headers are written AFTER Lifecycle.Admit succeeds — pre-Admit errors retu
 | `TestLifecycle_Start_UpdateRunStatus_AllRetriesExhausted_StartedOKSet` | R-5.2: all 3 UpdateRunStatus retries fail → startedOK=true; Release skips failed update (workflow is executing) |
 | `TestLifecycle_QuotaConcurrentRunsExceeded` | LC-QE-01: QuotaEnforcer returns ErrQuotaConcurrentRuns → AdmitErrQuotaConcurrentRuns (429); gate.Check never called |
 | `TestLifecycle_QuotaRunsPerMinuteExceeded` | LC-QE-02: QuotaEnforcer returns ErrQuotaRunsPerMinute → AdmitErrQuotaRunsPerMinute (429); gate.Check never called |
+| `TestLifecycle_QuotaMonthlyRunsExceeded` | LC-QE-04: QuotaEnforcer returns ErrQuotaMonthlyRuns → AdmitErrQuotaMonthlyRuns (429); gate.Check never called |
 | `TestLifecycle_NilQuotaEnforcer` | LC-QE-03: no quota enforcer wired → quota check skipped; run admitted normally |
 
 **Trigger:** any change to `internal/execution/lifecycle.go`, `internal/execution/errors.go`, `internal/execution/request.go`, or `internal/quota/enforcer.go`
@@ -2418,16 +2419,19 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ### S1-95 · Quota enforcer — `internal/quota/enforcer_test.go`
 
-**Purpose:** Unit tests for `quota.Enforcer.Check` — the per-tenant run limit checker. Covers both enforcement paths (concurrent runs via DB COUNT, runs/min via Redis INCR) and the nil-limit / DB-error cases.
+**Purpose:** Unit tests for `quota.Enforcer.Check` — the per-tenant run limit checker. Covers all three enforcement paths (concurrent runs via DB COUNT, runs/min via Redis INCR, monthly runs via Redis INCR) and the nil-limit / DB-error cases.
 
 | Test | What it proves |
 |---|---|
-| `TestEnforcer_NilLimits` (QE-01) | Both limits nil → always passes; no DB or Redis call needed |
+| `TestEnforcer_NilLimits` (QE-01) | All limits nil → always passes; no DB or Redis call needed |
 | `TestEnforcer_ConcurrentBelowLimit` (QE-02) | Active run count (3) < limit (5) → passes |
 | `TestEnforcer_ConcurrentAtLimit` (QE-03) | Active run count (5) == limit (5) → ErrConcurrentRunsExceeded |
 | `TestEnforcer_RPMBelowLimit` (QE-04) | Redis INCR returns 5 < limit (10) → passes |
 | `TestEnforcer_RPMExceeded` (QE-05) | Redis INCR returns 11 > limit (10) → ErrRunsRateLimited |
 | `TestEnforcer_DBError` (QE-06) | DB error counting active runs → wrapped error surfaced (not ErrConcurrentRunsExceeded) |
+| `TestEnforcer_MonthlyNilLimit` (QE-07) | MonthlyRuns nil → no enforcement; always passes |
+| `TestEnforcer_MonthlyBelowLimit` (QE-08) | Monthly INCR returns 500 < limit (1000) → passes |
+| `TestEnforcer_MonthlyExceeded` (QE-09) | Monthly INCR returns 1001 > limit (1000) → ErrMonthlyRunsExceeded |
 
 **Trigger:** any change to `internal/quota/enforcer.go` or `internal/admin/dal/runs.go` (CountActiveRuns)
 
@@ -2876,7 +2880,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-32 | tenantctx (R-4b) | 8 |
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
-| S1-35 | execution lifecycle (unification refactor) | 21 |
+| S1-35 | execution lifecycle (unification refactor) | 22 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan) | 8 |
 | S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache) | 58 |
 | S1-41 | registry (component definition resolver) | 12 |
@@ -2927,8 +2931,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-92 | Managed Apps catalog + platform bindings (MA-01..14): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig, ListBindingsByTenant, ListBindingsByTenant_Empty, UpsertBindingByTenant, UpsertBindingByTenant_MissingConfig | 14 |
 | S1-93 | workerconfig managed app params (MAP-01..03): ConfigSubstitution, NilSafe, ZeroNil | 3 |
 | S1-94 | Tenant CRUD + PATCH + quota handler (TN-01..17): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured, GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON | 17 |
-| S1-95 | quota enforcer (QE-01..06): NilLimits, ConcurrentBelowLimit, ConcurrentAtLimit, RPMBelowLimit, RPMExceeded, DBError | 6 |
-| **S1 total** | | **1040** |
+| S1-95 | quota enforcer (QE-01..09): NilLimits, ConcurrentBelowLimit, ConcurrentAtLimit, RPMBelowLimit, RPMExceeded, DBError, MonthlyNilLimit, MonthlyBelowLimit, MonthlyExceeded | 9 |
+| **S1 total** | | **1044** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2937,4 +2941,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **992** |
+| **`go test ./...` total** | | **996** |

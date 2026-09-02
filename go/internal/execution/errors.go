@@ -31,6 +31,8 @@ const (
 	AdmitErrQuotaConcurrentRuns
 	// AdmitErrQuotaRunsPerMinute — tenant runs_per_minute quota exceeded.
 	AdmitErrQuotaRunsPerMinute
+	// AdmitErrQuotaMonthlyRuns — tenant monthly_runs quota exceeded.
+	AdmitErrQuotaMonthlyRuns
 )
 
 // AdmitError is the typed error returned by Lifecycle.Admit on failure.
@@ -64,6 +66,8 @@ func (e *AdmitError) Error() string {
 		return "concurrent run limit exceeded"
 	case AdmitErrQuotaRunsPerMinute:
 		return "run rate limit exceeded"
+	case AdmitErrQuotaMonthlyRuns:
+		return "monthly run limit exceeded"
 	default:
 		return "internal error"
 	}
@@ -83,7 +87,7 @@ func httpStatusForKind(k AdmitErrorKind) int {
 		return 401
 	case AdmitErrForbidden:
 		return 403
-	case AdmitErrCapExceeded, AdmitErrRateLimited, AdmitErrQuotaConcurrentRuns, AdmitErrQuotaRunsPerMinute:
+	case AdmitErrCapExceeded, AdmitErrRateLimited, AdmitErrQuotaConcurrentRuns, AdmitErrQuotaRunsPerMinute, AdmitErrQuotaMonthlyRuns:
 		return 429
 	case AdmitErrQueueFull, AdmitErrDBUnavailable:
 		return 503

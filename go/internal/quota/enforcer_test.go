@@ -100,3 +100,34 @@ func TestEnforcer_DBError(t *testing.T) {
 		t.Fatal("QE-06: expected wrapped DB error, not ErrConcurrentRunsExceeded")
 	}
 }
+
+// ── QE-07: monthly runs nil limit → always passes ─────────────────────────────
+
+func TestEnforcer_MonthlyNilLimit(t *testing.T) {
+	e := quota.New(&fakeCounter{}, &fakeRedis{})
+	// MonthlyRuns is nil — no enforcement.
+	if err := e.Check(context.Background(), testTenantID, quota.Quota{}); err != nil {
+		t.Fatalf("QE-07: expected nil, got %v", err)
+	}
+}
+
+// ── QE-08: monthly runs within limit → passes ────────────────────────────────
+
+func TestEnforcer_MonthlyBelowLimit(t *testing.T) {
+	e := quota.New(&fakeCounter{}, &fakeRedis{val: 499}) // next Incr → 500
+	q := quota.Quota{MonthlyRuns: intPtr(1000)}
+	if err := e.Check(context.Background(), testTenantID, q); err != nil {
+		t.Fatalf("QE-08: expected nil, got %v", err)
+	}
+}
+
+// ── QE-09: monthly runs exceeds limit → ErrMonthlyRunsExceeded ───────────────
+
+func TestEnforcer_MonthlyExceeded(t *testing.T) {
+	e := quota.New(&fakeCounter{}, &fakeRedis{val: 1000}) // next Incr → 1001
+	q := quota.Quota{MonthlyRuns: intPtr(1000)}
+	err := e.Check(context.Background(), testTenantID, q)
+	if !errors.Is(err, quota.ErrMonthlyRunsExceeded) {
+		t.Fatalf("QE-09: expected ErrMonthlyRunsExceeded, got %v", err)
+	}
+}

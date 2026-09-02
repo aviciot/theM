@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 13
+# Handover — Multi-Tenancy Step 14
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** cfaef99 (feat(multi-tenancy): Step 13 — Quota enforcement at run start)
-**Steps complete:** 1 → 13 (all 47 Go packages pass, 1040 S1 tests, 992 go test ./...)
+**HEAD:** (Step 14 commit — see below)
+**Steps complete:** 1 → 14 (all 47 Go packages pass, 1044 S1 tests, 996 go test ./...)
 
 ---
 
@@ -61,6 +61,7 @@
 | Step 11 | Binding management UI — platform-level binding API + frontend Managed Apps page | Complete | 59105c4 |
 | Step 12 | Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota + frontend Quotas tab | Complete | 293fe26 |
 | Step 13 | Quota enforcement at run start — max_concurrent_runs (DB COUNT) + runs_per_minute (Redis INCR) | Complete | cfaef99 |
+| Step 14 | Monthly run limit enforcement — monthly_runs quota (Redis INCR keyed by YYYY-MM, 48h-past-month TTL) | Complete | (this commit) |
 
 ---
 
@@ -324,17 +325,54 @@ All 47 packages pass. S1: 1040, go test ./...: 992.
 - **Redis error on RPM** — propagated, mapped to `AdmitErrInternal` (500); acceptable for rare Redis unavailability
 - **No schema migration needed** — `them.tenant_quotas` already created in Step 12
 
-## Step 14 — (next task)
+## Step 14 — COMPLETE
+
+### What Step 14 built
+
+- `go/internal/quota/enforcer.go`:
+  - `ErrMonthlyRunsExceeded` sentinel
+  - `MonthlyRuns *int` field on `Quota` struct
+  - `checkMonthly(ctx, tenantID, limit)` — Redis INCR keyed by `rl:them:{tenant_id}:runs:monthly:{YYYY-MM}`; TTL = seconds remaining in current month + 48 h buffer (only set on first increment); returns `ErrMonthlyRunsExceeded` when limit exceeded
+  - `Check()` updated to call `checkMonthly` after existing checks
+- `go/internal/execution/errors.go`:
+  - `AdmitErrQuotaMonthlyRuns` constant; static string `"monthly run limit exceeded"`; HTTP 429 mapping
+- `go/internal/execution/lifecycle.go`:
+  - `ErrQuotaMonthlyRuns` sentinel; `Check()` switch case maps it to `AdmitErrQuotaMonthlyRuns`
+- `go/cmd/them/main.go`:
+  - `tenantQuotaAdapter` populates `MonthlyRuns: q.MonthlyRuns` in `quota.Quota`
+  - Maps `quota.ErrMonthlyRunsExceeded → execution.ErrQuotaMonthlyRuns`
+- `go/internal/quota/enforcer_test.go`: QE-07..09 (MonthlyNilLimit, MonthlyBelowLimit, MonthlyExceeded)
+- `go/internal/execution/lifecycle_test.go`: LC-QE-04 (QuotaMonthlyRunsExceeded → AdmitErrQuotaMonthlyRuns)
+- `go/TEST_INDEX.md`: S1-95 updated 6→9 tests; S1-35 updated 21→22; totals 1040→1044 S1, 992→996 go test
+
+No schema migration needed — `monthly_runs` column already exists in `them.tenant_quotas` from Step 12.
+
+### Step 14 design decisions
+- **Redis key per calendar month** — `rl:them:{tenant_id}:runs:monthly:{YYYY-MM}` avoids precision loss from UNIX-second month boundaries
+- **TTL set only on first increment** — avoids race where a late Expire call resets the TTL of an already-expiring key
+- **48 h buffer on TTL** — month end is computed from UTC; 48 h absorbs DST surprises and minor clock skew without leaving stale keys indefinitely
+- **Fail-open on Redis error** — same policy as `checkRPM`; Redis unavailability returns a wrapped error that `tenantQuotaAdapter` propagates as `AdmitErrInternal` (500), not a false 429
+
+---
+
+## Step 15 — (next task)
 
 ### Goal
-Candidates from `docs/architecture/MULTI_TENANCY_DESIGN.md`:
-- Per-tenant LLM provider key management — add `tenant_id` (nullable) to `them.llm_providers`; platform defaults when NULL; tenant overrides for specific providers
-- Monthly run limit enforcement (`monthly_runs` quota) — check and increment a monthly counter at run start
+Per-tenant LLM provider key management:
+- Add `tenant_id UUID REFERENCES them.tenants(id) ON DELETE CASCADE` (nullable) to `them.llm_providers`
+- Add UNIQUE constraint on `(name, tenant_id)` — platform default row has `tenant_id IS NULL`, tenant override has `tenant_id = {uuid}`
+- Extend `ListLLMProviders` DAL to accept optional `tenantID` — returns tenant overrides merged with platform defaults (tenant row wins when name matches)
+- New API routes (platform-admin only): `GET /admin/tenants/{id}/llm-providers`, `PUT /admin/tenants/{id}/llm-providers/{name}` — tenant-scoped create/override
+- LLM provider resolution at run start (in `activities.go` or orchestrator) to prefer tenant override when `app.tenant_id` is set
 
 ### Files to read before starting
 - `docs/HANDOVER.md` (this file)
 - `docs/CURRENT.md`
-- `docs/architecture/MULTI_TENANCY_DESIGN.md` §14 (Quotas), §5 (LLM providers)
+- `docs/architecture/MULTI_TENANCY_DESIGN.md` §5 (LLM providers), §8 (Secrets isolation)
+- `go/internal/admin/dal/llm_providers.go` — existing DAL
+- `go/internal/llm/provider.go` — provider interface
+- `go/internal/temporal/activities.go` — where LLM provider is resolved today
+- `db/001_schema.sql` — `them.llm_providers` definition (lines ~6-17)
 
 ---
 
@@ -392,9 +430,9 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 14.
+Continue multi-tenancy implementation — Step 15.
 
-Current state: Steps 1–13 are complete and pushed to main (HEAD: cfaef99).
+Current state: Steps 1–14 are complete and pushed to main.
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
 - Step 2: Redis key hardening (97c9d71)
 - Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
@@ -408,13 +446,12 @@ Current state: Steps 1–13 are complete and pushed to main (HEAD: cfaef99).
 - Step 11: Binding management UI — platform-level binding API + frontend Managed Apps page (59105c4)
 - Step 12: Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota + frontend Quotas tab (293fe26)
 - Step 13: Quota enforcement at run start — max_concurrent_runs (DB COUNT) + runs_per_minute (Redis INCR) wired into Lifecycle.Admit (cfaef99)
-All 47 Go packages pass (go test ./..., 1040 S1 tests, 992 go test ./... total).
+- Step 14: Monthly run limit enforcement — monthly_runs quota (Redis INCR per YYYY-MM, TTL past month end) wired into quota.Enforcer and Lifecycle.Admit
+All 47 Go packages pass (go test ./..., 1044 S1 tests, 996 go test ./... total).
 
 Read docs/HANDOVER.md fully before starting — it is the source of truth.
 
-Goal for Step 14: see Step 14 section in HANDOVER.md for candidates:
-- Per-tenant LLM provider key management
-- Monthly run limit enforcement (monthly_runs quota)
+Goal for Step 15: Per-tenant LLM provider key management — see Step 15 section in HANDOVER.md.
 
 Constraints (all in HANDOVER.md):
 - go test ./... must be zero failures before every commit

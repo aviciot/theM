@@ -636,6 +636,24 @@ func TestLifecycle_QuotaRunsPerMinuteExceeded(t *testing.T) {
 	assert.False(t, g.checkCalled, "gate.Check must not be called when quota blocks")
 }
 
+// ── LC-QE-04: quota enforcer blocks monthly runs ─────────────────────────────
+
+func TestLifecycle_QuotaMonthlyRunsExceeded(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{}, g, s, r, tmp)
+	lc.WithQuotaEnforcer(&fakeQuotaEnforcer{err: ErrQuotaMonthlyRuns})
+
+	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
+	var ae *AdmitError
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, AdmitErrQuotaMonthlyRuns, ae.Kind)
+	assert.False(t, g.checkCalled, "gate.Check must not be called when quota blocks")
+}
+
 // ── LC-QE-03: nil quota enforcer — quota check skipped, run admitted ──────────
 
 func TestLifecycle_NilQuotaEnforcer(t *testing.T) {

@@ -26,6 +26,9 @@ var ErrConcurrentRunsExceeded = errors.New("quota: max concurrent runs exceeded"
 // ErrRunsRateLimited is returned when runs_per_minute is exceeded.
 var ErrRunsRateLimited = errors.New("quota: runs per minute exceeded")
 
+// ErrMonthlyRunsExceeded is returned when monthly_runs is reached.
+var ErrMonthlyRunsExceeded = errors.New("quota: monthly run limit exceeded")
+
 const keyTTL = 90 * time.Second
 
 // RunCounter queries the live count of active runs for a tenant.
@@ -45,6 +48,7 @@ type RedisIncrementer interface {
 type Quota struct {
 	MaxConcurrentRuns *int
 	RunsPerMinute     *int
+	MonthlyRuns       *int
 }
 
 // Enforcer checks quota limits before a run is admitted.
@@ -58,15 +62,18 @@ func New(db RunCounter, redis RedisIncrementer) *Enforcer {
 	return &Enforcer{db: db, redis: redis}
 }
 
-// Check enforces both concurrent-run and per-minute-run limits for tenantID.
-// Returns ErrConcurrentRunsExceeded or ErrRunsRateLimited when a limit is hit.
-// Returns nil when quota is zero-value (both limits nil) — no quota row means no enforcement.
+// Check enforces concurrent-run, per-minute-run, and monthly-run limits for tenantID.
+// Returns ErrConcurrentRunsExceeded, ErrRunsRateLimited, or ErrMonthlyRunsExceeded when hit.
+// Returns nil when quota is zero-value (all limits nil) — no quota row means no enforcement.
 // A Redis or DB error is returned as-is so callers can decide whether to fail open or closed.
 func (e *Enforcer) Check(ctx context.Context, tenantID string, q Quota) error {
 	if err := e.checkConcurrent(ctx, tenantID, q.MaxConcurrentRuns); err != nil {
 		return err
 	}
-	return e.checkRPM(ctx, tenantID, q.RunsPerMinute)
+	if err := e.checkRPM(ctx, tenantID, q.RunsPerMinute); err != nil {
+		return err
+	}
+	return e.checkMonthly(ctx, tenantID, q.MonthlyRuns)
 }
 
 func (e *Enforcer) checkConcurrent(ctx context.Context, tenantID string, limit *int) error {
@@ -100,3 +107,28 @@ func (e *Enforcer) checkRPM(ctx context.Context, tenantID string, limit *int) er
 }
 
 func minuteBucket() int64 { return time.Now().Unix() / 60 }
+
+func (e *Enforcer) checkMonthly(ctx context.Context, tenantID string, limit *int) error {
+	if limit == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	// Key format: rl:them:{tenant_id}:runs:monthly:{YYYY-MM}
+	// TTL: 48 h past end-of-month to survive minor clock skew.
+	key := fmt.Sprintf("rl:them:%s:runs:monthly:%04d-%02d", tenantID, now.Year(), now.Month())
+	count, err := e.redis.Incr(ctx, key)
+	if err != nil {
+		return fmt.Errorf("quota: incr monthly runs key: %w", err)
+	}
+	// Set TTL only on first increment; subsequent calls are no-ops if key already has a TTL.
+	if count == 1 {
+		// Calculate seconds remaining in current month + 48 h buffer.
+		firstOfNext := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+		ttl := firstOfNext.Sub(now) + 48*time.Hour
+		_ = e.redis.Expire(ctx, key, ttl)
+	}
+	if count > int64(*limit) {
+		return ErrMonthlyRunsExceeded
+	}
+	return nil
+}

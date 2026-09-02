@@ -489,6 +489,7 @@ func (a *tenantQuotaAdapter) CheckQuota(ctx context.Context, tenantID string) er
 	qe := quota.Quota{
 		MaxConcurrentRuns: q.MaxConcurrentRuns,
 		RunsPerMinute:     q.RunsPerMinute,
+		MonthlyRuns:       q.MonthlyRuns,
 	}
 	enforceErr := a.enforcer.Check(ctx, tenantID, qe)
 	switch {
@@ -496,6 +497,8 @@ func (a *tenantQuotaAdapter) CheckQuota(ctx context.Context, tenantID string) er
 		return execution.ErrQuotaConcurrentRuns
 	case errors.Is(enforceErr, quota.ErrRunsRateLimited):
 		return execution.ErrQuotaRunsPerMinute
+	case errors.Is(enforceErr, quota.ErrMonthlyRunsExceeded):
+		return execution.ErrQuotaMonthlyRuns
 	default:
 		return enforceErr
 	}
