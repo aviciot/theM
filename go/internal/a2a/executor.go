@@ -60,7 +60,10 @@ func (s *Server) runWorkflow(
 	// ── 0. Yield the initial Task (SDK protocol requirement) ──────────────────
 	// The SDK's taskupdate.Manager requires the first event to be a *a2a.Task.
 	// NewSubmittedTask creates a Task in "submitted" state from the request message.
+	// Embed the internal run_id in metadata so the frontend can poll the correct
+	// /runs/{run_id}/artifacts endpoint (the SDK task ID is a different UUID).
 	initialTask := a2a.NewSubmittedTask(execCtx, execCtx.Message)
+	initialTask.Metadata = map[string]any{"run_id": h.RunID}
 	if !yield(initialTask, nil) {
 		return
 	}

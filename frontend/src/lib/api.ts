@@ -287,7 +287,7 @@ export const themApi = {
         try {
           const frame = JSON.parse(line.slice(5).trim()) as {
             result?: {
-              task?: { id?: string; contextId?: string };
+              task?: { id?: string; contextId?: string; metadata?: Record<string, unknown> };
               artifactUpdate?: { artifact?: { parts?: Array<{ text?: string }> }; taskId?: string; contextId?: string };
               statusUpdate?: { status?: { state?: string }; taskId?: string; contextId?: string };
             };
@@ -295,7 +295,8 @@ export const themApi = {
           const r = frame?.result;
           if (!r) continue;
           if (r.task) {
-            yield { kind: 'run-started', taskId: r.task.id, contextId: r.task.contextId };
+            const runId = (r.task.metadata?.run_id as string | undefined) ?? r.task.id;
+            yield { kind: 'run-started', taskId: r.task.id, runId, contextId: r.task.contextId };
           } else if (r.artifactUpdate) {
             yield { kind: 'message-delta', parts: r.artifactUpdate.artifact?.parts ?? [], taskId: r.artifactUpdate.taskId, contextId: r.artifactUpdate.contextId };
           } else if (r.statusUpdate) {
