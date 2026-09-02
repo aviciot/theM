@@ -25,13 +25,15 @@
 16. [Cross-Tenant Security Risks](#16-cross-tenant-security-risks)
 17. [Tenant Provisioning and Lifecycle](#17-tenant-provisioning-and-lifecycle)
 18. [Migration from Current System](#18-migration-from-current-system)
-19. [Recommended Architecture](#19-recommended-architecture)
-20. [Alternatives Considered](#20-alternatives-considered)
-21. [Key Architectural Decisions Required](#21-key-architectural-decisions-required)
-22. [Components Requiring Changes](#22-components-requiring-changes)
-23. [Complexity and Risk Estimate](#23-complexity-and-risk-estimate)
-24. [Phased Implementation Plan](#24-phased-implementation-plan)
-25. [Diagrams](#25-diagrams)
+19. [Managed Apps — Platform Apps with Tenant Bindings](#19-managed-apps--platform-apps-with-tenant-bindings)
+20. [Recommended Architecture](#20-recommended-architecture)
+21. [Alternatives Considered](#21-alternatives-considered)
+22. [Key Architectural Decisions Required](#22-key-architectural-decisions-required)
+23. [Components Requiring Changes](#23-components-requiring-changes)
+24. [Complexity and Risk Estimate](#24-complexity-and-risk-estimate)
+25. [Phased Implementation Plan](#25-phased-implementation-plan)
+26. [Where to Start — Practical Advice](#26-where-to-start--practical-advice)
+27. [Diagrams](#27-diagrams)
 
 ---
 
@@ -779,7 +781,210 @@ The current system has one bootstrap tenant. Migration to a real multi-tenant sy
 
 ---
 
-## 19. Recommended Architecture
+## 19. Managed Apps — Platform Apps with Tenant Bindings
+
+### The problem this solves
+
+Every organization that wants to use the-M today must build their own agents, orchestrators, and workflows from scratch. For common use cases — customer support bots, document processing pipelines, data extraction workflows — this means every customer reinvents the same wheel.
+
+Managed Apps lets the-M (or a partner) publish a **production-ready application once**, and any number of tenants can activate it with their own credentials, configuration, and data — without touching the underlying implementation.
+
+---
+
+### Mental model
+
+```
+Platform Layer  (the-M team authors this)
+└── Managed App: "Customer Support Bot v2.1"
+      ├── agents: triage-agent, escalation-agent, kb-search-agent
+      ├── workflows: support-ticket-flow, escalation-flow
+      ├── MCP servers: zendesk-connector, confluence-kb
+      └── parameter manifest:
+            - COMPANY_NAME       (string, required)
+            - SUPPORT_EMAIL      (string, required)
+            - ZENDESK_API_KEY    (secret, required)
+            - TONE               (enum: formal|friendly, default: friendly)
+            - MAX_TOKENS_PER_RUN (integer, default: 4000)
+            - ESCALATION_SLACK   (string, optional)
+
+Tenant Layer  (Acme Corp configures this)
+└── Binding: Acme Corp → "Customer Support Bot v2.1"
+      ├── COMPANY_NAME       = "Acme Corp"
+      ├── SUPPORT_EMAIL      = "help@acme.com"
+      ├── ZENDESK_API_KEY    = [encrypted with Acme's data key]
+      ├── TONE               = "formal"
+      ├── MAX_TOKENS_PER_RUN = 8000          ← overrides default
+      └── ESCALATION_SLACK   = "#acme-escalations"
+```
+
+The platform app code never changes. Acme's binding fills the parameter slots. Globex Corp has its own binding with its own keys and config. Neither can see the other's values.
+
+---
+
+### Database schema
+
+```sql
+-- Platform-authored apps: tenant_id IS NULL means platform-owned
+-- Existing them.applications table gains a new type:
+ALTER TABLE them.applications
+  ADD COLUMN app_type TEXT NOT NULL DEFAULT 'tenant'
+    CHECK (app_type IN ('tenant', 'managed'));
+-- tenant_id IS NULL when app_type = 'managed'
+
+-- Parameter manifest declared by the platform app
+CREATE TABLE them.managed_app_params (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  app_id          UUID NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
+  key             TEXT NOT NULL,
+  label           TEXT NOT NULL,
+  description     TEXT,
+  param_type      TEXT NOT NULL CHECK (param_type IN ('string','secret','integer','enum','boolean')),
+  enum_values     TEXT[],          -- populated when param_type = 'enum'
+  required        BOOLEAN NOT NULL DEFAULT true,
+  default_value   TEXT,            -- NULL means no default (required must be true)
+  UNIQUE (app_id, key)
+);
+
+-- Per-tenant activation and configuration of a managed app
+CREATE TABLE them.managed_app_bindings (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  app_id          UUID NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
+  tenant_id       UUID NOT NULL REFERENCES them.tenants(id) ON DELETE CASCADE,
+  enabled         BOOLEAN NOT NULL DEFAULT true,
+  -- Non-secret config values stored as plain JSONB
+  config          JSONB NOT NULL DEFAULT '{}',
+  -- Secret values stored encrypted with the tenant's data key
+  secrets_enc     BYTEA,
+  -- Which version of the managed app this binding targets
+  app_version     TEXT NOT NULL DEFAULT 'latest',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (app_id, tenant_id)
+);
+
+-- Index for fast tenant-side lookup
+CREATE INDEX ON them.managed_app_bindings (tenant_id, enabled);
+```
+
+---
+
+### Parameter manifest — type safety
+
+The manifest declared in `managed_app_params` serves as a schema contract:
+
+| `param_type` | Stored in | Validated at |
+|---|---|---|
+| `string` | `config JSONB` | binding save time |
+| `integer` | `config JSONB` | binding save time |
+| `boolean` | `config JSONB` | binding save time |
+| `enum` | `config JSONB` | binding save time (must be in `enum_values`) |
+| `secret` | `secrets_enc BYTEA` | binding save time (non-empty check only) |
+
+Required parameters without a `default_value` must be provided by the tenant. Missing required parameters block the binding from being enabled.
+
+---
+
+### Runtime injection — how parameters reach the agent
+
+At run start, the agent runtime resolves the binding and injects parameters into the `InvocationContext`:
+
+```go
+// InvocationContext gains a new field
+type InvocationContext struct {
+    TenantID      string
+    ApplicationID string
+    // ... existing fields ...
+
+    // Non-nil only for managed app runs
+    ManagedAppParams *ManagedAppParams
+}
+
+type ManagedAppParams struct {
+    Config  map[string]any    // plain config values
+    Secrets map[string]string // decrypted secrets (never logged, never in Temporal history)
+}
+```
+
+The agent workflow receives `ManagedAppParams` and can reference parameters by key:
+- Plain config values can be passed as agent prompt variables, MCP server config, or workflow branch conditions
+- Secrets are injected as environment variables into MCP server processes or as auth headers in agent HTTP calls — **never serialized into Temporal workflow history**
+
+The agent/workflow code itself is written to reference `{{PARAMS.COMPANY_NAME}}` style slots. The runtime substitutes them at execution time.
+
+---
+
+### Versioning and upgrades
+
+Managed apps are versioned. The platform team can publish `v2.2` of the Customer Support Bot while tenants remain on `v2.1` until they explicitly migrate their binding.
+
+```sql
+ALTER TABLE them.applications
+  ADD COLUMN version TEXT NOT NULL DEFAULT '1.0.0',
+  ADD COLUMN changelog TEXT;
+```
+
+A binding's `app_version` field pins it to a specific version. When a new version is published:
+1. The platform team publishes the new version (new `them.applications` row with same `slug`, incremented `version`)
+2. Tenant admins see a "New version available" banner in the binding settings page
+3. They review the changelog and click "Upgrade" — this updates `app_version` on their binding
+4. If new required parameters were added, the upgrade wizard prompts for them before saving
+
+Breaking changes (removed parameters, changed agent behavior) must bump the major version. Non-breaking changes (new optional parameters, performance improvements) can be minor versions.
+
+---
+
+### Security properties
+
+| Property | How it is enforced |
+|---|---|
+| Tenant A cannot read Tenant B's binding secrets | `secrets_enc` is encrypted with Tenant A's own data key — Tenant B's key cannot decrypt it |
+| Tenant cannot modify the managed app code | `app_type = 'managed'` apps are read-only to tenants; only platform admins can write them |
+| Tenant's run data is isolated | Runs created by the managed app carry `tenant_id` — fully isolated in DB, Redis, logs |
+| Secret values never appear in logs | `ManagedAppParams.Secrets` is excluded from `InvocationContext` serialization and Temporal history |
+| Tenant can revoke at any time | Setting `enabled = false` on the binding immediately blocks new runs; in-flight runs complete |
+
+---
+
+### Access control
+
+Who can do what with Managed Apps:
+
+| Role | Can do |
+|---|---|
+| `super_admin` (platform) | Publish, update, deprecate, delete managed apps |
+| `tenant_admin` | Activate a managed app for their tenant, configure parameters, enable/disable |
+| `developer` (tenant) | View binding config (secrets masked), cannot change |
+| `viewer` (tenant) | Cannot see binding config at all |
+
+---
+
+### UI/UX flow
+
+**Platform admin — publishing a managed app:**
+1. Build the agents, orchestrators, workflows as a normal application
+2. Mark it as `managed` (toggles it to platform-level, removes `tenant_id`)
+3. Define the parameter manifest (key, type, label, required/optional, defaults)
+4. Publish with a version tag and changelog
+
+**Tenant admin — activating a managed app:**
+1. Browse the "App Marketplace" (list of available managed apps)
+2. Click "Activate" → parameter form appears (driven by manifest)
+3. Fill in config values and paste secrets
+4. Click "Enable" → binding is created, app is live for their entry points
+5. Receives upgrade notifications as new versions are published
+
+---
+
+### What this enables commercially
+
+- **ISV partners** can build Managed Apps on the-M platform and sell them to the-M's tenant base — a marketplace model
+- **the-M team** can offer premium pre-built apps as part of higher pricing tiers
+- **Enterprise customers** can publish internal Managed Apps for use across their own business units (departments as tenants)
+- **Faster enterprise sales** — show a prospect a working industry-specific app they activate in minutes rather than a blank canvas
+
+---
+
+## 20. Recommended Architecture
 
 ### Core model
 
@@ -824,7 +1029,7 @@ Tenant
 
 ---
 
-## 20. Alternatives Considered
+## 21. Alternatives Considered
 
 ### Alt A: Schema-per-tenant in Postgres
 
@@ -895,7 +1100,7 @@ Tenant
 
 ---
 
-## 21. Key Architectural Decisions Required
+## 22. Key Architectural Decisions Required
 
 Before implementation, these decisions must be made by the team:
 
@@ -950,7 +1155,7 @@ Before implementation, these decisions must be made by the team:
 
 ---
 
-## 22. Components Requiring Changes
+## 23. Components Requiring Changes
 
 ### High priority (required for any multi-tenant operation)
 
@@ -989,7 +1194,7 @@ Before implementation, these decisions must be made by the team:
 
 ---
 
-## 23. Complexity and Risk Estimate
+## 24. Complexity and Risk Estimate
 
 ### Overall estimate
 
@@ -1016,7 +1221,7 @@ Existing workflow IDs in flight will not have the tenant prefix. Need a cutover 
 
 ---
 
-## 24. Phased Implementation Plan
+## 25. Phased Implementation Plan
 
 ### Phase 1 — Critical Gap Closure (2–3 weeks)
 *Goal: Make the existing bootstrap tenant truly tenant-isolated. No new features; only hardening.*
@@ -1082,7 +1287,204 @@ Existing workflow IDs in flight will not have the tenant prefix. Need a cutover 
 
 ---
 
-## 25. Diagrams
+## 26. Where to Start — Practical Advice
+
+This section answers: **given everything in this document, what do we actually do first?**
+
+---
+
+### The honest reality check
+
+The full multi-tenancy + Managed Apps design is 4 phases and several months of work. You do not need all of it to start selling to customers. You need the minimum that makes the system safe and self-serviceable for a second tenant.
+
+That minimum is smaller than it looks.
+
+---
+
+### The single most important first step
+
+**Fix the JWT.**
+
+Right now `them-auth-go` issues tokens without `tenant_id`. `AdminTenantMiddleware` falls back to the bootstrap tenant when `tenant_id` is empty. This means the entire tenant isolation system is bypassed for every admin user today.
+
+Everything else depends on this being correct. Until the JWT carries a real `tenant_id`, you cannot safely run two tenants in the same stack.
+
+This is a focused, bounded change:
+1. Add `auth_service.tenant_memberships` table
+2. Assign all existing users to the bootstrap tenant (one migration)
+3. Update `them-auth-go` to read the membership and embed `tenant_id` in the issued JWT
+4. Remove the bootstrap fallback from `AdminTenantMiddleware`
+
+Estimated effort: **3–5 days**. Risk: existing sessions break at cutover — plan a maintenance window or a 7-day dual-acceptance period.
+
+---
+
+### Recommended start sequence
+
+Work in this order. Each step is independently shippable and safe to stop after.
+
+#### Step 1 — JWT + membership (days 1–5)
+The foundation. Nothing else works correctly without this.
+- `auth_service.tenant_memberships` table
+- Backfill existing users to bootstrap tenant
+- `them-auth-go` embeds `tenant_id` in JWT
+- Remove bootstrap fallback
+- Add isolation test: user from tenant A cannot read tenant B's agents
+
+#### Step 2 — Redis key hardening (days 6–8)
+Low risk, high value. Four key patterns to fix:
+- MCP manifest/health: `them:{tenant_id}:mcp:manifest:{slug}`
+- Rate-limit: `rl:them:{tenant_id}:token:{hash}:{min}`
+- Scan state: `them:{tenant_id}:scan:state:{agent_id}`
+- Dashboard: `them:{tenant_id}:dash:sessions:state:{app_id}`
+
+These are string changes in known files. Safe to do in one PR.
+
+#### Step 3 — Temporal workflow ID prefix (days 9–10)
+Prefix all workflow IDs with `{tenant_id}-` in canvas worker, dag-worker, middleware-worker.
+Existing in-flight workflows complete unaffected (they finish under old IDs). New workflows use the prefix.
+
+#### Step 4 — Tenant CRUD API + provisioning (days 11–18)
+Now you can create a second tenant:
+- `POST /platform/tenants/` — create tenant (super_admin only)
+- Auto-provision: data key, default quotas, first user with `tenant_admin` role
+- Basic tenant settings page in the frontend
+
+At this point: **you can onboard a second customer**. Create their tenant, assign them a `tenant_admin` user, they log in and see only their data.
+
+#### Step 5 — OIDC login (days 19–25)
+The feature most enterprise customers will ask for on day one.
+- Generic OIDC authorization code flow in `them-auth-go`
+- Per-tenant IdP config stored in `tenants.idp_config`
+- Email-domain → tenant routing on the login page
+- Works immediately for Google, GitHub, Azure AD, Okta (all are OIDC-compliant)
+
+#### Step 6 — Managed Apps foundation (days 26–35)
+Now that tenants are real and isolated, add the Managed Apps layer:
+- `managed_app_params` and `managed_app_bindings` tables
+- Mark `app_type = 'managed'` on the first platform app
+- Parameter manifest definition UI (platform admin)
+- Binding activation UI (tenant admin)
+- Runtime parameter injection into `InvocationContext`
+
+Build one real Managed App end-to-end. Use it to validate the full flow before generalizing.
+
+---
+
+### What to defer
+
+Do not start these until Steps 1–4 are done and tested:
+
+| Feature | Why to defer |
+|---|---|
+| SAML 2.0 | Complex spec, few customers need it before OIDC is available |
+| SCIM provisioning | Requires OIDC working first; adds significant surface area |
+| Postgres RLS | Belt-and-suspenders — add after application-level isolation is proven correct |
+| Temporal per-tenant namespace | Only needed at scale or for enterprise-tier SLA; ID prefixing is sufficient |
+| Envelope encryption / KMS | Important for BYOC; not needed for initial shared SaaS |
+| Per-tenant log sinks | Enterprise feature; defer to Phase 3 |
+| Cross-tenant A2A trust grants | Exotic use case; only build when a customer asks for it |
+
+---
+
+### The right question to ask at each step
+
+Before starting each step, ask: **"Can we safely put a real paying customer's data in the system today?"**
+
+- After Step 1: Yes, but only if they're comfortable sharing infrastructure with the bootstrap tenant and trust the application-layer isolation.
+- After Step 2–3: Yes, with high confidence in isolation.
+- After Step 4: Yes, with full self-service onboarding.
+- After Step 5: Yes, including customers with SSO requirements.
+- After Step 6: Yes, including customers who want pre-built workflows.
+
+---
+
+### Managed Apps — where to start within that feature
+
+Don't try to build the full marketplace on day one. The right first milestone:
+
+1. **Pick one existing application** that could reasonably be parameterized (e.g. a support-bot workflow that references a company name and an LLM key)
+2. **Add the two DB tables** (`managed_app_params`, `managed_app_bindings`)
+3. **Write the manifest** for that one app (5–10 parameters)
+4. **Build the binding activation form** — the simplest possible UI: fill in params, click enable
+5. **Wire up runtime injection** in `InvocationContext` — this is the critical path
+6. **Test with two tenant bindings** — confirm Acme's Zendesk key never appears in Globex's run
+
+Once this works end-to-end with one real app, the pattern is proven. Adding the second and third Managed App is a configuration exercise, not a code change.
+
+---
+
+## 27. Diagrams
+
+### Managed Apps — data model
+
+```mermaid
+erDiagram
+    applications {
+        uuid id PK
+        text slug
+        text app_type "tenant | managed"
+        uuid tenant_id "NULL when managed"
+        text version
+    }
+
+    managed_app_params {
+        uuid id PK
+        uuid app_id FK
+        text key
+        text param_type "string|secret|integer|enum|boolean"
+        boolean required
+        text default_value
+    }
+
+    managed_app_bindings {
+        uuid id PK
+        uuid app_id FK
+        uuid tenant_id FK
+        boolean enabled
+        jsonb config
+        bytea secrets_enc
+        text app_version
+    }
+
+    tenants {
+        uuid id PK
+        text slug
+        bytea data_key_enc
+    }
+
+    applications ||--o{ managed_app_params : "declares params"
+    applications ||--o{ managed_app_bindings : "activated via"
+    tenants ||--o{ managed_app_bindings : "configures"
+```
+
+### Managed Apps — runtime parameter injection flow
+
+```mermaid
+sequenceDiagram
+    participant User as Tenant User<br/>(Acme Corp)
+    participant Bridge as them-go-bridge
+    participant DB as Postgres
+    participant Crypto as Crypto service<br/>(tenant data key)
+    participant Runtime as Agent Runtime<br/>(InvocationContext)
+    participant Agent as Canvas Agent
+
+    User->>Bridge: trigger entry point run
+    Bridge->>DB: resolve application<br/>(app_type=managed, binding for tenant=Acme)
+    DB-->>Bridge: managed_app_binding row<br/>(config JSONB + secrets_enc BYTEA)
+
+    Bridge->>Crypto: decrypt secrets_enc<br/>using Acme's data key
+    Crypto-->>Bridge: secrets map<br/>{ZENDESK_API_KEY: "...", ...}
+
+    Bridge->>Runtime: start run with InvocationContext{<br/>TenantID: Acme,<br/>ManagedAppParams: {<br/>  config: {COMPANY_NAME: "Acme", TONE: "formal"},<br/>  secrets: {ZENDESK_API_KEY: "sk-..."}}<br/>}
+
+    Note over Runtime: secrets are NEVER written<br/>to Temporal history or logs
+
+    Runtime->>Agent: execute with resolved params
+    Agent->>Agent: substitutes {{PARAMS.COMPANY_NAME}}<br/>uses secrets for MCP auth headers
+
+    Agent-->>User: run result<br/>(stored under Acme tenant_id)
+```
 
 ### Tenant data model
 
