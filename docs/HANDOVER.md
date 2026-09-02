@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 12
+# Handover — Multi-Tenancy Step 13
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** 293fe26 (feat(multi-tenancy): Step 12 — Tenant-level quota management)
-**Steps complete:** 1 → 12 (all 46 Go packages pass, 1031 S1 tests, 983 go test ./...)
+**HEAD:** cfaef99 (feat(multi-tenancy): Step 13 — Quota enforcement at run start)
+**Steps complete:** 1 → 13 (all 47 Go packages pass, 1040 S1 tests, 992 go test ./...)
 
 ---
 
@@ -60,6 +60,7 @@
 | Step 10 | Tenant provisioning UI — PATCH /admin/tenants/{id} + frontend Tenants page | Complete | 441f9e7 |
 | Step 11 | Binding management UI — platform-level binding API + frontend Managed Apps page | Complete | 59105c4 |
 | Step 12 | Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota + frontend Quotas tab | Complete | 293fe26 |
+| Step 13 | Quota enforcement at run start — max_concurrent_runs (DB COUNT) + runs_per_minute (Redis INCR) | Complete | cfaef99 |
 
 ---
 
@@ -287,12 +288,48 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_056.sql
 
 ---
 
-## Step 13 — (next task)
+## Step 13 — COMPLETE
+
+### What Step 13 built
+
+- `go/internal/admin/dal/runs.go` — `CountActiveRuns(ctx, tenantID)` — `COUNT(*)` of runs with status `admitted`, `running`, or `input_required` for the tenant. Used by quota enforcement.
+- `go/internal/quota/enforcer.go` — new package:
+  - `RunCounter` interface (DB) + `RedisIncrementer` interface (Redis)
+  - `Quota` struct: `MaxConcurrentRuns *int`, `RunsPerMinute *int`
+  - `Enforcer.Check(ctx, tenantID, quota)` — enforces both limits; nil limit → skip
+  - `ErrConcurrentRunsExceeded`, `ErrRunsRateLimited` sentinels
+  - Redis key: `rl:them:{tenant_id}:runs:{minute}`, TTL 90s (same pattern as ratelimit)
+  - Fail-open on DB error; returns wrapped error
+- `go/internal/quota/enforcer_test.go` — 6 tests (QE-01..06)
+- `go/internal/execution/errors.go` — `AdmitErrQuotaConcurrentRuns`, `AdmitErrQuotaRunsPerMinute` (both HTTP 429; static error strings)
+- `go/internal/execution/lifecycle.go`:
+  - `QuotaEnforcer` interface with `CheckQuota(ctx, tenantID) error`
+  - `ErrQuotaConcurrentRuns`, `ErrQuotaRunsPerMinute` package-level sentinels
+  - `Lifecycle.quota QuotaEnforcer` field (nil = fail-open)
+  - `WithQuotaEnforcer(qe) *Lifecycle` setter (chained after constructor)
+  - Enforcement in `Admit` step 5b (after CheckAccess, before gate.Check)
+- `go/internal/execution/lifecycle_test.go` — 3 tests (LC-QE-01..03)
+- `go/cmd/them/main.go`:
+  - `tenantQuotaAdapter` struct: loads quota row from DB via `dal.DB.GetQuota`; maps errors to execution sentinels; fails-open when no quota row exists
+  - Wired in section 16a: `execLifecycle.WithQuotaEnforcer(quotaAdapter)`
+  - Imports: `admin/dal`, `quota`, `errors`
+
+All 47 packages pass. S1: 1040, go test ./...: 992.
+
+### Step 13 design decisions
+
+- **Fail-open on missing quota row** — `GetQuota` returning `pgx.ErrNoRows` → no enforcement; allows bootstrapping tenants without a quota row
+- **Fail-closed on quota hit** — returns 429 before consuming a gate slot
+- **Fail-open on DB error counting runs** — the quota enforcer propagates the DB error; `tenantQuotaAdapter` returns it to `Lifecycle` which maps it to `AdmitErrInternal` (500) not 429
+- **Redis error on RPM** — propagated, mapped to `AdmitErrInternal` (500); acceptable for rare Redis unavailability
+- **No schema migration needed** — `them.tenant_quotas` already created in Step 12
+
+## Step 14 — (next task)
 
 ### Goal
 Candidates from `docs/architecture/MULTI_TENANCY_DESIGN.md`:
 - Per-tenant LLM provider key management — add `tenant_id` (nullable) to `them.llm_providers`; platform defaults when NULL; tenant overrides for specific providers
-- Quota enforcement at run start — before creating a new run, check `tenant_quotas.max_concurrent_runs` and `runs_per_minute`; return 429/403 when exceeded
+- Monthly run limit enforcement (`monthly_runs` quota) — check and increment a monthly counter at run start
 
 ### Files to read before starting
 - `docs/HANDOVER.md` (this file)
@@ -355,9 +392,9 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 13.
+Continue multi-tenancy implementation — Step 14.
 
-Current state: Steps 1–12 are complete and pushed to main (HEAD: 293fe26).
+Current state: Steps 1–13 are complete and pushed to main (HEAD: cfaef99).
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
 - Step 2: Redis key hardening (97c9d71)
 - Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
@@ -370,13 +407,14 @@ Current state: Steps 1–12 are complete and pushed to main (HEAD: 293fe26).
 - Step 10: Tenant provisioning UI + PATCH /admin/tenants/{id} (441f9e7)
 - Step 11: Binding management UI — platform-level binding API + frontend Managed Apps page (59105c4)
 - Step 12: Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota + frontend Quotas tab (293fe26)
-All 46 Go packages pass (go test ./..., 1031 S1 tests, 983 go test ./... total).
+- Step 13: Quota enforcement at run start — max_concurrent_runs (DB COUNT) + runs_per_minute (Redis INCR) wired into Lifecycle.Admit (cfaef99)
+All 47 Go packages pass (go test ./..., 1040 S1 tests, 992 go test ./... total).
 
 Read docs/HANDOVER.md fully before starting — it is the source of truth.
 
-Goal for Step 13: see Step 13 section in HANDOVER.md for candidates:
+Goal for Step 14: see Step 14 section in HANDOVER.md for candidates:
 - Per-tenant LLM provider key management
-- Quota enforcement at run start (max_concurrent_runs, runs_per_minute)
+- Monthly run limit enforcement (monthly_runs quota)
 
 Constraints (all in HANDOVER.md):
 - go test ./... must be zero failures before every commit
