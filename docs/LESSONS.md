@@ -700,3 +700,31 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 2. At history round-trip time, if `ToolInput` in a stored `ContentPart` is nil or the literal JSON `null`, it is forwarded verbatim to Anthropic — which rejects anything that is not a JSON object.
 **Fix:** At parse time, set `input = map[string]any{}` when unmarshal leaves a nil map. At serialization time in `domainPartsToAnthropicContent`, replace nil/`"null"` `ToolInput` with `json.RawMessage("{}")`.
 **Watch for:** Any tool that takes zero parameters will trigger this. The fix is purely in the LLM layer; no changes to tool definitions or agent code are needed.
+
+---
+
+## 2026-09-02 — middleware_jobs.artifact_id FK violation silently killed every quarantine job
+
+**Symptom:** Security scanner Services tab always showed zeros. All scanned files had `scan_status='disabled'` even with MinIO running and security enabled. `quarantine_artifacts` rows were written but no `middleware_jobs` rows appeared.
+
+**Root cause:** `db/050_middleware_pipeline.sql` defined `middleware_jobs.artifact_id` as `NOT NULL REFERENCES run_artifacts(id)`. `EnqueueWithQuarantine` passed the quarantine UUID as `artifact_id`. That UUID exists only in `quarantine_artifacts` — not yet in `run_artifacts` (promotion happens only after a clean scan). The FK violation caused every INSERT to fail at the DB level.
+
+**Fail-open disguise:** `gate.go` catches the `EnqueueWithQuarantine` error and returns `GateResult{ArtifactID: qID, ScanStatus: "pending", Enqueued: false}`. The non-empty ArtifactID made the orchestrator treat the file as handled, so files were stuck in quarantine forever with no visible error.
+
+**Fix (commit fd10362):**
+1. `db/052_middleware_jobs_nullable_artifact.sql` — drops NOT NULL; drops+re-adds FK allowing NULL.
+2. `EnqueueWithQuarantine` — no longer inserts `artifact_id` (leaves NULL at enqueue time).
+3. `Claim` query — `COALESCE(artifact_id, quarantine_id)` so the worker gets a usable UUID.
+4. `markJobDone` — sets `artifact_id` after promotion creates the `run_artifacts` row.
+
+**Watch for:** Never insert `artifact_id` at enqueue time in the quarantine path. Quarantine flow order: MinIO write → `quarantine_artifacts` row → `middleware_jobs` (artifact_id=NULL) → worker scans → promotes to `run_artifacts` → sets `artifact_id`.
+
+---
+
+## 2026-09-02 — A2A playground requires double-click to send first message
+
+**Symptom:** In the playground, typing a message and clicking Send enters a sending state but nothing happens. Must click Stop then Send again.
+
+**Root cause:** The `for await` SSE loop in `useChatConnection.ts` only cleared `busy=false` inside `completed`/`failed` status event branches. If the stream closed without emitting either event (connection race on the very first request), `busy` stayed `true` permanently.
+
+**Fix (commit 7a792c4):** Changed `try/catch` to `try/catch/finally`. `setBusy(false); busyRef.current = false` moved to the `finally` block so it always runs when the stream ends regardless of whether a terminal status event was received.

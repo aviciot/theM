@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-02 (Session D)
+# Last updated: 2026-09-02 (Session E)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,12 +10,13 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+7a792c4  fix(playground): A2A stream busy state never cleared when stream ends without status event
+fd10362  fix(middleware): fix FK violation in middleware_jobs.artifact_id for quarantine-first flow
+940f72f  fix(a2a): emit internal run_id in task metadata so playground polls correct artifacts
+b2922d2  fix(playground): artifacts/tasks tabs not updating in A2A runs
+7789644  fix(middleware): nil pointer panic in FileGate when S3 not configured
+1111e34  feat(services): live stats refresh via dashboard WebSocket pub/sub
 a174665  feat(frontend): show file scan state in chat bubbles (Session D)
-3cf93b1  feat(orchestrator): hold file bubble until scan result; emit file_scanning/file_blocked (Session C)
-3f74d70  feat(artifacts): serve files from MinIO when storage_key is set (quarantine-first download path)
-a42fb99  feat(security): quarantine-first file storage via MinIO
-039b76c  feat(infra): add MinIO object storage to dev stack (security profile)
-bab4509  refactor(frontend): split StepConfigSection.tsx (634 lines) into 3 focused modules
 ```
 
 ---
@@ -129,7 +130,7 @@ Explicit routers at priority 110–150 still win over the catch-all.
 
 ## DB schema state (live)
 
-All migrations applied through `db/051_quarantine.sql`:
+All migrations applied through `db/052_middleware_jobs_nullable_artifact.sql`:
 
 | Migration | Status |
 |---|---|
@@ -149,6 +150,7 @@ All migrations applied through `db/051_quarantine.sql`:
 | `db/049_ep_agent_card.sql` | ✅ applied |
 | `db/050_middleware_pipeline.sql` | ✅ applied — `run_artifacts` scan columns, `middleware_jobs`, `middleware_audit`, `applications.security_config` |
 | `db/051_quarantine.sql` | ✅ applied — `quarantine_artifacts` table, `run_artifacts.data` nullable + `storage_key` column, `middleware_jobs.quarantine_id` |
+| `db/052_middleware_jobs_nullable_artifact.sql` | ✅ applied — `middleware_jobs.artifact_id` made nullable; FK re-added allowing NULL; fixes quarantine-first FK violation |
 
 ---
 
@@ -499,8 +501,9 @@ Pluggable per-application artifact security middleware that intercepts file arti
 
 ### Migrations applied
 ```
-db/050_middleware_pipeline.sql  ✅ applied
-db/051_quarantine.sql           ✅ applied
+db/050_middleware_pipeline.sql                    ✅ applied
+db/051_quarantine.sql                             ✅ applied
+db/052_middleware_jobs_nullable_artifact.sql      ✅ applied
 ```
 
 ### Containers to rebuild to pick up quarantine-first changes
