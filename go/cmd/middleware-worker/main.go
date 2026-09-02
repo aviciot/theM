@@ -117,6 +117,31 @@ func run() error {
 	go reaper.Run(ctx, reaperInterval)
 	log.Info("quarantine reaper started", "interval", reaperInterval)
 
+	// ── Health heartbeat — writes them:dash:services:health (TTL 30s) every 10s ─
+	// The Services page reads this key on load and via pub/sub to show live
+	// worker status. If this process dies the key expires and the UI shows offline.
+	go func() {
+		rc := redisCache.Client()
+		tick := time.NewTicker(10 * time.Second)
+		defer tick.Stop()
+		writeHeartbeat := func() {
+			cmd := rc.B().Set().Key("them:dash:services:health").Value(`{"status":"up"}`).Ex(30 * time.Second).Build()
+			_ = rc.Do(ctx, cmd).Error()
+			pub := rc.B().Publish().Channel("them:dash:services:stats").Message(`{}`).Build()
+			_ = rc.Do(ctx, pub).Error()
+		}
+		writeHeartbeat() // immediate on startup
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				writeHeartbeat()
+			}
+		}
+	}()
+	log.Info("health heartbeat started", "interval", "10s", "ttl", "30s")
+
 	var wg sync.WaitGroup
 	for i := range concurrency {
 		wg.Add(1)

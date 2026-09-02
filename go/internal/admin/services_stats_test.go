@@ -74,7 +74,7 @@ func (r *emptyRows) Close() error        { return nil }
 // returns HTTP 200 with a JSON envelope containing a "security" key.
 func TestServicesStats_GetStats_OK(t *testing.T) {
 	db := &statsDB{}
-	h := admin.NewServicesStatsHandler(db, nil)
+	h := admin.NewServicesStatsHandler(db, nil, nil)
 	r := chi.NewRouter()
 	h.Routes(r)
 
@@ -86,6 +86,8 @@ func TestServicesStats_GetStats_OK(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Contains(t, body, "security", "response must have 'security' key")
+	assert.Contains(t, body, "worker_up", "response must have 'worker_up' key")
+	assert.Equal(t, false, body["worker_up"], "worker_up must be false when redis is nil")
 }
 
 // TestServicesStats_WindowParam verifies that window=24h and window=30d are
@@ -93,7 +95,7 @@ func TestServicesStats_GetStats_OK(t *testing.T) {
 func TestServicesStats_WindowParam(t *testing.T) {
 	for _, w := range []string{"24h", "7d", "30d", ""} {
 		db := &statsDB{}
-		h := admin.NewServicesStatsHandler(db, nil)
+		h := admin.NewServicesStatsHandler(db, nil, nil)
 		r := chi.NewRouter()
 		h.Routes(r)
 

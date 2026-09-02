@@ -310,6 +310,24 @@ export default function ServicesPage() {
               <div style={{ fontSize: 13, color: 'var(--tm-text-muted)', marginTop: 2 }}>Runtime statistics for platform services</div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {/* Worker health badge — derived from them:dash:services:health Redis key (30s TTL) */}
+              {!loading && stats && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '4px 12px', borderRadius: 20,
+                  background: stats.worker_up ? 'rgba(16,185,129,0.12)' : 'rgba(248,113,113,0.12)',
+                  border: `1px solid ${stats.worker_up ? 'rgba(16,185,129,0.3)' : 'rgba(248,113,113,0.3)'}`,
+                }}>
+                  <div style={{
+                    width: 7, height: 7, borderRadius: '50%',
+                    background: stats.worker_up ? '#10b981' : '#f87171',
+                    boxShadow: stats.worker_up ? '0 0 0 2px rgba(16,185,129,0.3)' : undefined,
+                  }} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: stats.worker_up ? '#10b981' : '#f87171' }}>
+                    {stats.worker_up ? 'Scanner online' : 'Scanner offline'}
+                  </span>
+                </div>
+              )}
               <WindowPicker value={window} onChange={w => setWindow(w)} />
               <button onClick={load} title="Refresh" style={{ padding: '6px 10px', borderRadius: 7, border: '1px solid var(--tm-border)', background: 'var(--tm-card)', color: 'var(--tm-text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>refresh</span>

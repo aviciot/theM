@@ -7,20 +7,22 @@ import (
 	"time"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/redis/rueidis"
 )
 
 // ServicesStatsHandler serves GET /admin/services/stats.
 // Returns a generic envelope with one key per service so new services can be
 // added without breaking existing consumers:
 //
-//	{ "security": { ... }, "future_service": { ... } }
+//	{ "security": { ... }, "worker_up": true, "future_service": { ... } }
 type ServicesStatsHandler struct {
 	db     DBQuerier
+	redis  rueidis.Client
 	logger *slog.Logger
 }
 
-func NewServicesStatsHandler(db DBQuerier, logger *slog.Logger) *ServicesStatsHandler {
-	return &ServicesStatsHandler{db: db, logger: logger}
+func NewServicesStatsHandler(db DBQuerier, redis rueidis.Client, logger *slog.Logger) *ServicesStatsHandler {
+	return &ServicesStatsHandler{db: db, redis: redis, logger: logger}
 }
 
 func (h *ServicesStatsHandler) Routes(r interface{ Get(string, http.HandlerFunc) }) {
@@ -46,8 +48,20 @@ func (h *ServicesStatsHandler) getStats(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Check whether them-middleware-worker is alive.
+	// It writes them:dash:services:health with a 30s TTL every 10s.
+	// Key missing = worker down or security profile not started.
+	workerUp := false
+	if h.redis != nil {
+		res := h.redis.Do(r.Context(), h.redis.B().Get().Key("them:dash:services:health").Build())
+		if res.Error() == nil {
+			workerUp = true
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"security": secStats,
+		"security":   secStats,
+		"worker_up":  workerUp,
 	})
 }

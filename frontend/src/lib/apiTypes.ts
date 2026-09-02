@@ -770,4 +770,5 @@ export interface SecurityScanStats {
 
 export interface ServicesStats {
   security: SecurityScanStats;
+  worker_up: boolean;
 }
