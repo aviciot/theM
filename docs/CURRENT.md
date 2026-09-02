@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-02 (Session C)
+# Last updated: 2026-09-02 (Session D)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,12 +10,12 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+a174665  feat(frontend): show file scan state in chat bubbles (Session D)
 3cf93b1  feat(orchestrator): hold file bubble until scan result; emit file_scanning/file_blocked (Session C)
 3f74d70  feat(artifacts): serve files from MinIO when storage_key is set (quarantine-first download path)
 a42fb99  feat(security): quarantine-first file storage via MinIO
 039b76c  feat(infra): add MinIO object storage to dev stack (security profile)
 bab4509  refactor(frontend): split StepConfigSection.tsx (634 lines) into 3 focused modules
-3289813  refactor(agentgen): split compiler.go (1056 lines) into 3 focused modules
 ```
 
 ---
@@ -533,8 +533,13 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 - Tests: S1-90 (4 new orchestrator scan subscriber tests)
 - them-go-worker rebuilt and restarted: polling ✅
 
-### What's NOT done yet (Session D)
-- **Frontend**: `file_scanning` event → show scanning spinner on file bubble in chat; `file_blocked` event → show "file blocked / removed" state on bubble
+**Session D complete (2026-09-02, commit a174665):**
+- `frontend/src/app/admin/playground/playgroundTypes.ts`: `FileMsg` gains `artifact_id`, `scanning`, `blocked`, `threat` fields
+- `frontend/src/app/admin/playground/useChatConnection.ts`: `file_scanning` handler (spinner bubble); `file_blocked` handler (finds and replaces scanning bubble, or adds new blocked bubble); `file` handler (replaces scanning bubble in-place for clean result)
+- `frontend/src/app/admin/playground/ChatColumn.tsx`: renders three states — scanning (spinner + "Scanning…" label), blocked (red border/icon + threat text), clean (download button + previews)
+- TypeScript `tsc --noEmit` passes with zero errors ✅
+
+### What's NOT done yet
 - Reaper job for stuck quarantine objects (rows with `storage_key IS NOT NULL AND expires_at < now()`)
 - Additional processors: `pii_redact`, `prompt_inject`, `schema_validate`, `audit_capture`
 
