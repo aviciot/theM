@@ -57,6 +57,8 @@ func registerAuth(r chi.Router, h *Handlers, base string) {
 		a.Post("/logout", h.Logout)
 		a.Post("/verify", h.Verify)
 		a.Get("/validate", h.Validate)
+		// Public — no JWT required; used by login page for tenant auto-detection.
+		a.Get("/tenant-lookup", h.TenantLookup)
 	})
 }
 

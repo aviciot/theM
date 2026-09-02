@@ -15,25 +15,27 @@ import (
 // blacklist entries and sessions so revocation and best-effort writes can be
 // asserted without a database.
 type fakeStore struct {
-	byLogin     map[string]*userRecord
-	byAPIHash   map[string]*userRecord
-	byID        map[int64]*userRecord
-	blacklist   map[string]time.Time
-	memberships map[int64]struct{ tenantID, role string } // userID → membership
-	sessions    int
-	touched     int
-	failPing    bool
+	byLogin      map[string]*userRecord
+	byAPIHash    map[string]*userRecord
+	byID         map[int64]*userRecord
+	blacklist    map[string]time.Time
+	memberships  map[int64]struct{ tenantID, role string } // userID → membership
+	domainLookup map[string]TenantLookupResult             // email domain → lookup result
+	sessions     int
+	touched      int
+	failPing     bool
 }
 
 const testBootstrapTenantID = "00000000-0000-0000-0000-000000000001"
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		byLogin:     map[string]*userRecord{},
-		byAPIHash:   map[string]*userRecord{},
-		byID:        map[int64]*userRecord{},
-		blacklist:   map[string]time.Time{},
-		memberships: map[int64]struct{ tenantID, role string }{},
+		byLogin:      map[string]*userRecord{},
+		byAPIHash:    map[string]*userRecord{},
+		byID:         map[int64]*userRecord{},
+		blacklist:    map[string]time.Time{},
+		memberships:  map[int64]struct{ tenantID, role string }{},
+		domainLookup: map[string]TenantLookupResult{},
 	}
 }
 
@@ -110,6 +112,14 @@ func (f *fakeStore) GetPreferences(_ context.Context, _ int64) ([]byte, error) {
 
 func (f *fakeStore) SetPreferences(_ context.Context, _ int64, _ []byte) error {
 	return nil
+}
+
+func (f *fakeStore) LookupTenantByEmailDomain(_ context.Context, domain string) (TenantLookupResult, error) {
+	r, ok := f.domainLookup[domain]
+	if !ok {
+		return TenantLookupResult{}, ErrTenantDomainNotFound
+	}
+	return r, nil
 }
 
 func testService(t *testing.T) (*Service, *fakeStore) {

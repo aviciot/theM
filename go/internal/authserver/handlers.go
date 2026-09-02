@@ -189,6 +189,35 @@ func (h *Handlers) SetPreferences(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(raw)
 }
 
+// TenantLookup handles GET /api/v1/auth/tenant-lookup?email=... — public endpoint
+// that extracts the domain from the supplied email address and returns the matching
+// tenant's slug + display_name + idp_configured flag. Used by the login page to
+// auto-detect the tenant and offer OIDC or password login. No authentication required.
+func (h *Handlers) TenantLookup(w http.ResponseWriter, r *http.Request) {
+	email := strings.TrimSpace(r.URL.Query().Get("email"))
+	if email == "" {
+		writeErr(w, http.StatusBadRequest, "email query parameter required")
+		return
+	}
+	at := strings.LastIndex(email, "@")
+	if at < 0 || at == len(email)-1 {
+		writeErr(w, http.StatusBadRequest, "invalid email address")
+		return
+	}
+	domain := strings.ToLower(email[at+1:])
+	result, err := h.svc.store.LookupTenantByEmailDomain(r.Context(), domain)
+	if err != nil {
+		if errors.Is(err, ErrTenantDomainNotFound) {
+			writeErr(w, http.StatusNotFound, "no tenant found for email domain")
+			return
+		}
+		h.log.Error("tenant lookup error", "domain", domain, "error", err)
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 // Validate handles GET /api/v1/auth/validate — Traefik forwardAuth parity. On
 // success returns 200 with X-User-* headers.
 func (h *Handlers) Validate(w http.ResponseWriter, r *http.Request) {

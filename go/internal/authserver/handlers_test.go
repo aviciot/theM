@@ -246,3 +246,55 @@ func TestHTTPLoginWithTenantSlug(t *testing.T) {
 		t.Fatalf("login with unknown tenant_slug: status = %d, want 403", w2.Code)
 	}
 }
+
+// OIDC-21: TenantLookup returns 200 with slug, display_name, idp_configured when domain matches.
+func TestHTTPTenantLookup_Found(t *testing.T) {
+	router, store := testRouter(t)
+	store.domainLookup["acme.com"] = TenantLookupResult{
+		Slug:          "acme",
+		DisplayName:   "Acme Corp",
+		IDPConfigured: true,
+	}
+
+	w := do(t, router, http.MethodGet, "/api/v1/auth/tenant-lookup?email=alice%40acme.com", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var out TenantLookupResult
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Slug != "acme" || out.DisplayName != "Acme Corp" || !out.IDPConfigured {
+		t.Fatalf("unexpected result: %+v", out)
+	}
+}
+
+// OIDC-22: TenantLookup returns 404 when domain has no tenant.
+func TestHTTPTenantLookup_NotFound(t *testing.T) {
+	router, _ := testRouter(t)
+
+	w := do(t, router, http.MethodGet, "/api/v1/auth/tenant-lookup?email=unknown%40unknown.org", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+}
+
+// OIDC-23: TenantLookup returns 400 when email query param is missing.
+func TestHTTPTenantLookup_MissingEmail(t *testing.T) {
+	router, _ := testRouter(t)
+
+	w := do(t, router, http.MethodGet, "/api/v1/auth/tenant-lookup", "")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+// OIDC-24: TenantLookup returns 400 when email has no @ symbol.
+func TestHTTPTenantLookup_InvalidEmail(t *testing.T) {
+	router, _ := testRouter(t)
+
+	w := do(t, router, http.MethodGet, "/api/v1/auth/tenant-lookup?email=notanemail", "")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}

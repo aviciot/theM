@@ -13,6 +13,16 @@ var ErrUserNotFound = errors.New("authserver: user not found")
 // This blocks login: every user must belong to at least one tenant.
 var ErrNoMembership = errors.New("authserver: user has no tenant membership")
 
+// ErrTenantDomainNotFound is returned when no enabled tenant claims the given email domain.
+var ErrTenantDomainNotFound = errors.New("authserver: no tenant for email domain")
+
+// TenantLookupResult is the public payload returned by the email-domain lookup endpoint.
+type TenantLookupResult struct {
+	Slug          string `json:"slug"`
+	DisplayName   string `json:"display_name"`
+	IDPConfigured bool   `json:"idp_configured"`
+}
+
 // userRecord is the subset of auth_service.users (+ role name) the auth flows
 // need. dashboardAccess drives the login gate (Python rejects 'none').
 type userRecord struct {
@@ -60,6 +70,11 @@ type Store interface {
 	GetPreferences(ctx context.Context, userID int64) ([]byte, error)
 	// SetPreferences replaces the full preferences blob for the given user ID.
 	SetPreferences(ctx context.Context, userID int64, prefs []byte) error
+
+	// LookupTenantByEmailDomain finds an enabled tenant by its registered email domain.
+	// The domain comparison is case-insensitive. Returns ErrTenantDomainNotFound when
+	// no tenant claims the domain.
+	LookupTenantByEmailDomain(ctx context.Context, domain string) (TenantLookupResult, error)
 
 	// Ping checks database reachability for readiness probes.
 	Ping(ctx context.Context) error

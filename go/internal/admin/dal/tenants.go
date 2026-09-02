@@ -3,6 +3,7 @@ package dal
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -12,6 +13,7 @@ type Tenant struct {
 	Slug        string    `json:"slug"`
 	DisplayName string    `json:"display_name"`
 	Enabled     bool      `json:"enabled"`
+	EmailDomain *string   `json:"email_domain,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -25,7 +27,7 @@ type TenantInput struct {
 // ListTenants returns all tenants ordered by created_at ascending.
 func (d *DB) ListTenants(ctx context.Context) ([]Tenant, error) {
 	const q = `
-		SELECT id::text, slug, display_name, enabled, created_at, updated_at
+		SELECT id::text, slug, display_name, enabled, email_domain, created_at, updated_at
 		FROM them.tenants
 		ORDER BY created_at ASC`
 	rows, err := d.q.Query(ctx, q)
@@ -36,7 +38,7 @@ func (d *DB) ListTenants(ctx context.Context) ([]Tenant, error) {
 	var out []Tenant
 	for rows.Next() {
 		var t Tenant
-		if err := rows.Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -50,11 +52,31 @@ func (d *DB) ListTenants(ctx context.Context) ([]Tenant, error) {
 // GetTenant returns a single tenant by ID, or pgx.ErrNoRows if not found.
 func (d *DB) GetTenant(ctx context.Context, id string) (Tenant, error) {
 	const q = `
-		SELECT id::text, slug, display_name, enabled, created_at, updated_at
+		SELECT id::text, slug, display_name, enabled, email_domain, created_at, updated_at
 		FROM them.tenants
 		WHERE id = $1::uuid`
 	var t Tenant
-	err := d.q.QueryRow(ctx, q, id).Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
+	err := d.q.QueryRow(ctx, q, id).Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt)
+	return t, err
+}
+
+// TenantLookup is the public payload for email-domain → tenant routing.
+type TenantLookup struct {
+	Slug          string `json:"slug"`
+	DisplayName   string `json:"display_name"`
+	IDPConfigured bool   `json:"idp_configured"`
+}
+
+// GetTenantByEmailDomain resolves an enabled tenant from its email_domain claim.
+// Returns pgx.ErrNoRows when no tenant matches the domain.
+func (d *DB) GetTenantByEmailDomain(ctx context.Context, domain string) (TenantLookup, error) {
+	const q = `
+		SELECT slug, display_name, idp_config IS NOT NULL AS idp_configured
+		FROM them.tenants
+		WHERE email_domain = lower($1) AND enabled = true
+		LIMIT 1`
+	var t TenantLookup
+	err := d.q.QueryRow(ctx, q, domain).Scan(&t.Slug, &t.DisplayName, &t.IDPConfigured)
 	return t, err
 }
 
@@ -64,10 +86,10 @@ func (d *DB) CreateTenant(ctx context.Context, in TenantInput) (Tenant, error) {
 	const q = `
 		INSERT INTO them.tenants (slug, display_name)
 		VALUES ($1, $2)
-		RETURNING id::text, slug, display_name, enabled, created_at, updated_at`
+		RETURNING id::text, slug, display_name, enabled, email_domain, created_at, updated_at`
 	var t Tenant
 	err := d.q.ExecReturning(ctx, q, in.Slug, in.DisplayName).
-		Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
+		Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 
@@ -85,15 +107,18 @@ type TenantIDPConfig struct {
 // TenantPatch carries optional fields for PATCH /admin/tenants/{id}.
 // SetIDP is true when the "idp_config" key was present in the JSON request body,
 // allowing callers to distinguish "absent" from "explicit null" (which clears the config).
+// SetEmailDomain follows the same convention for email_domain.
 type TenantPatch struct {
-	DisplayName *string         `json:"display_name,omitempty"`
-	Enabled     *bool           `json:"enabled,omitempty"`
-	SetIDP      bool            `json:"-"`
-	IDPConfig   *TenantIDPConfig `json:"idp_config"`
+	DisplayName    *string          `json:"display_name,omitempty"`
+	Enabled        *bool            `json:"enabled,omitempty"`
+	SetIDP         bool             `json:"-"`
+	IDPConfig      *TenantIDPConfig `json:"idp_config"`
+	SetEmailDomain bool             `json:"-"`
+	EmailDomain    *string          `json:"email_domain"`
 }
 
-// UnmarshalJSON implements custom decoding so SetIDP is set whenever the
-// "idp_config" key is present in the JSON body (even as null).
+// UnmarshalJSON implements custom decoding so SetIDP / SetEmailDomain are set
+// whenever the respective key is present in the JSON body (even as null).
 func (p *TenantPatch) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -122,16 +147,27 @@ func (p *TenantPatch) UnmarshalJSON(data []byte) error {
 		}
 		// string(v) == "null" → SetIDP=true, IDPConfig=nil → clears the config
 	}
+	if v, ok := raw["email_domain"]; ok {
+		p.SetEmailDomain = true
+		if string(v) != "null" {
+			var s string
+			if err := json.Unmarshal(v, &s); err == nil {
+				p.EmailDomain = &s
+			}
+		}
+		// string(v) == "null" → SetEmailDomain=true, EmailDomain=nil → clears the domain
+	}
 	return nil
 }
 
-// TenantDetail extends Tenant with IdP configuration status.
+// TenantDetail extends Tenant with IdP configuration status and email domain.
 type TenantDetail struct {
 	ID            string    `json:"id"`
 	Slug          string    `json:"slug"`
 	DisplayName   string    `json:"display_name"`
 	Enabled       bool      `json:"enabled"`
 	IDPConfigured bool      `json:"idp_configured"`
+	EmailDomain   *string   `json:"email_domain,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -277,9 +313,9 @@ func (d *DB) AddMember(ctx context.Context, tenantID string, in TenantMemberInpu
 
 // ── PatchTenant ───────────────────────────────────────────────────────────────
 
-// PatchTenant updates a tenant's display_name, enabled, and/or idp_config.
-// When patch.SetIDP is false the idp_config column is left unchanged.
-// When patch.SetIDP is true and patch.IDPConfig is nil the idp_config is set to NULL.
+// PatchTenant updates a tenant's display_name, enabled, idp_config, and/or email_domain.
+// SetIDP / SetEmailDomain must be true for those columns to be touched;
+// a nil pointer with Set=true sets the column to NULL.
 // Returns TenantDetail with IDPConfigured = true when idp_config IS NOT NULL.
 func (d *DB) PatchTenant(ctx context.Context, id string, patch TenantPatch) (TenantDetail, error) {
 	var idpJSON []byte
@@ -290,23 +326,33 @@ func (d *DB) PatchTenant(ctx context.Context, id string, patch TenantPatch) (Ten
 			return TenantDetail{}, err
 		}
 	}
+	var idpJSONArg interface{}
+	if idpJSON != nil {
+		idpJSONArg = string(idpJSON)
+	}
+	// email_domain stored lowercase for consistent case-insensitive lookup.
+	var emailDomainArg interface{}
+	if patch.SetEmailDomain && patch.EmailDomain != nil {
+		s := strings.ToLower(*patch.EmailDomain)
+		emailDomainArg = s
+	}
 	const q = `
 		UPDATE them.tenants
 		SET
 			display_name = COALESCE($2::text, display_name),
 			enabled      = COALESCE($3::boolean, enabled),
 			idp_config   = CASE WHEN $4 THEN $5::jsonb ELSE idp_config END,
+			email_domain = CASE WHEN $6 THEN $7::text ELSE email_domain END,
 			updated_at   = now()
 		WHERE id = $1::uuid
 		RETURNING id::text, slug, display_name, enabled,
 		          idp_config IS NOT NULL AS idp_configured,
+		          email_domain,
 		          created_at, updated_at`
 	var t TenantDetail
-	var idpJSONArg interface{}
-	if idpJSON != nil {
-		idpJSONArg = string(idpJSON)
-	}
-	err := d.q.ExecReturning(ctx, q, id, patch.DisplayName, patch.Enabled, patch.SetIDP, idpJSONArg).
-		Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IDPConfigured, &t.CreatedAt, &t.UpdatedAt)
+	err := d.q.ExecReturning(ctx, q, id, patch.DisplayName, patch.Enabled,
+		patch.SetIDP, idpJSONArg,
+		patch.SetEmailDomain, emailDomainArg).
+		Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IDPConfigured, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }

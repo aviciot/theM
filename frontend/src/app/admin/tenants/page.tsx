@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
-import { themApi, type TenantRecord, type IDPConfig, type TenantQuota, type QuotaPlan } from '@/lib/api';
+import { themApi, type TenantRecord, type TenantPatch, type IDPConfig, type TenantQuota, type QuotaPlan } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
 
 const ACCENT = '#818cf8';
@@ -53,6 +53,7 @@ function TenantPanel({ tenant, onClose, onPatched }: {
   const [tab, setTab] = useState<'general' | 'idp' | 'quota'>('general');
   const [displayName, setDisplayName] = useState(tenant.display_name);
   const [enabled, setEnabled] = useState(tenant.enabled);
+  const [emailDomain, setEmailDomain] = useState(tenant.email_domain ?? '');
   const [genSaving, setGenSaving] = useState(false);
   const [genMsg, setGenMsg] = useState('');
 
@@ -76,6 +77,7 @@ function TenantPanel({ tenant, onClose, onPatched }: {
   useEffect(() => {
     setDisplayName(tenant.display_name);
     setEnabled(tenant.enabled);
+    setEmailDomain(tenant.email_domain ?? '');
     setDiscoveryURL('');
     setClientID('');
     setClientSecret('');
@@ -98,7 +100,12 @@ function TenantPanel({ tenant, onClose, onPatched }: {
   async function saveGeneral() {
     setGenSaving(true); setGenMsg('');
     try {
-      const t = await themApi.patchTenant(tenant.id, { display_name: displayName, enabled });
+      const patch: TenantPatch = {
+        display_name: displayName,
+        enabled,
+        email_domain: emailDomain.trim() === '' ? null : emailDomain.trim().toLowerCase(),
+      };
+      const t = await themApi.patchTenant(tenant.id, patch);
       onPatched(t);
       setGenMsg('Saved');
     } catch { setGenMsg('Error saving'); }
@@ -207,6 +214,10 @@ function TenantPanel({ tenant, onClose, onPatched }: {
               }}>
                 <span style={{ position: 'absolute', top: '3px', left: enabled ? '21px' : '3px', width: '16px', height: '16px', borderRadius: '50%', background: '#fff', transition: 'left .2s' }} />
               </button>
+            </div>
+            <div style={row}>
+              <label style={lbl}>Email Domain <span style={{ fontWeight: 400, color: 'var(--tm-card-text-muted)' }}>(for SSO routing, e.g. acme.com)</span></label>
+              <input value={emailDomain} onChange={e => setEmailDomain(e.target.value)} style={inp} placeholder="acme.com (leave blank to clear)" />
             </div>
             <button onClick={saveGeneral} disabled={genSaving} style={{ padding: '9px 20px', borderRadius: '10px', fontSize: '13px', fontWeight: 600, background: `${ACCENT}22`, border: `1px solid ${ACCENT_BORDER}`, color: ACCENT, cursor: genSaving ? 'not-allowed' : 'pointer', opacity: genSaving ? 0.6 : 1 }}>
               {genSaving ? 'Saving…' : 'Save'}

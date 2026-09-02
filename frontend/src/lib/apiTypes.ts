@@ -788,6 +788,7 @@ export interface TenantRecord {
   display_name: string;
   enabled: boolean;
   idp_configured: boolean;
+  email_domain?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -796,6 +797,13 @@ export interface TenantPatch {
   display_name?: string;
   enabled?: boolean;
   idp_config?: IDPConfig | null; // null = clear IdP config
+  email_domain?: string | null;  // null = clear domain
+}
+
+export interface TenantLookup {
+  slug: string;
+  display_name: string;
+  idp_configured: boolean;
 }
 
 // ── Tenant quota types ────────────────────────────────────────────────────────

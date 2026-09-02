@@ -166,6 +166,23 @@ func (s *pgxStore) SetPreferences(ctx context.Context, userID int64, prefs []byt
 	return err
 }
 
+func (s *pgxStore) LookupTenantByEmailDomain(ctx context.Context, domain string) (TenantLookupResult, error) {
+	const q = `
+		SELECT slug, display_name, idp_config IS NOT NULL AS idp_configured
+		FROM them.tenants
+		WHERE email_domain = lower($1) AND enabled = true
+		LIMIT 1`
+	var r TenantLookupResult
+	err := s.pool.QueryRow(ctx, q, domain).Scan(&r.Slug, &r.DisplayName, &r.IDPConfigured)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TenantLookupResult{}, ErrTenantDomainNotFound
+	}
+	if err != nil {
+		return TenantLookupResult{}, err
+	}
+	return r, nil
+}
+
 func (s *pgxStore) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }

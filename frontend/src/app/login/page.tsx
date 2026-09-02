@@ -1,7 +1,8 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
+import type { TenantLookup } from '@/lib/apiTypes';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,9 +12,43 @@ export default function LoginPage() {
   const [password, setPassword] = useState(isDev ? 'admin123' : '');
   const [showPw, setShowPw] = useState(false);
 
+  // Email-domain tenant detection
+  const [tenantInfo, setTenantInfo] = useState<TenantLookup | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+  const lastLookupDomain = useRef('');
+
   useEffect(() => {
     fetchUser().then((ok) => { if (ok) router.replace('/dashboard'); });
   }, []);
+
+  async function lookupDomain(emailVal: string) {
+    const at = emailVal.lastIndexOf('@');
+    if (at < 0 || at === emailVal.length - 1) {
+      setTenantInfo(null);
+      return;
+    }
+    const domain = emailVal.slice(at + 1).toLowerCase();
+    if (domain === lastLookupDomain.current) return;
+    lastLookupDomain.current = domain;
+    setLookingUp(true);
+    try {
+      const res = await fetch(`/api/auth/tenant-lookup?email=${encodeURIComponent(emailVal)}`);
+      if (res.ok) {
+        const data: TenantLookup = await res.json();
+        setTenantInfo(data);
+      } else {
+        setTenantInfo(null);
+      }
+    } catch {
+      setTenantInfo(null);
+    } finally {
+      setLookingUp(false);
+    }
+  }
+
+  function handleEmailBlur() {
+    lookupDomain(email);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,6 +58,13 @@ export default function LoginPage() {
       router.replace('/dashboard');
     } catch {}
   }
+
+  function handleSSOLogin() {
+    if (!tenantInfo) return;
+    window.location.href = `/api/auth/oidc/start?tenant=${encodeURIComponent(tenantInfo.slug)}`;
+  }
+
+  const showSSO = tenantInfo?.idp_configured === true;
 
   return (
     <>
@@ -36,11 +78,6 @@ export default function LoginPage() {
         }
         @keyframes pulse-glow { 0%,100%{opacity:.4} 50%{opacity:.7} }
         @keyframes grid-move { 0%{background-position:0 0} 100%{background-position:24px 24px} }
-        @keyframes slow-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-        @keyframes core-pulse {
-          0%,100%{transform:scale(1);filter:drop-shadow(0 0 8px rgba(59,77,255,.6))}
-          50%{transform:scale(1.15);filter:drop-shadow(0 0 15px rgba(59,77,255,.9))}
-        }
         @keyframes fade-slide-up { 0%{opacity:0;transform:translateY(20px)} 100%{opacity:1;transform:translateY(0)} }
         .glow-overlay { animation: pulse-glow 8s ease-in-out infinite; }
         .grid-scanning {
@@ -48,8 +85,6 @@ export default function LoginPage() {
           background-size: 24px 24px;
           animation: grid-move 4s linear infinite;
         }
-        .animate-slow-spin { animation: slow-spin 20s linear infinite; }
-        .logo-core { transform-origin: center; animation: core-pulse 4s ease-in-out infinite; }
         .animate-entrance { animation: fade-slide-up 0.8s cubic-bezier(0.16,1,0.3,1) forwards; }
         .brand-input {
           display: block; width: 100%; background: rgba(2,6,23,.5);
@@ -69,11 +104,9 @@ export default function LoginPage() {
 
         {/* Brand header */}
         <div className="z-10 text-center mb-10 w-full max-w-sm animate-entrance" style={{ animationDelay: '0.1s', opacity: 0 }}>
-          {/* the-M Logo */}
           <div className="mb-6 flex justify-center items-center">
             <img src="/logos/theM-clean.svg" alt="the-M" style={{ height: '132px', width: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 0 12px rgba(255,255,255,0.25)) drop-shadow(0 0 4px rgba(255,255,255,0.15))' }} />
           </div>
-
           <p className="font-bold tracking-widest uppercase text-[10px] mb-4" style={{ color: '#3b4dff' }}>
             Multi-Agent Orchestration Platform
           </p>
@@ -104,6 +137,7 @@ export default function LoginPage() {
             )}
 
             <form onSubmit={handleSubmit} className="space-y-5">
+              {/* Email / username field */}
               <div className="space-y-1.5">
                 <label className="block text-sm font-medium text-slate-300" htmlFor="email">Username or email</label>
                 <div className="relative">
@@ -115,12 +149,42 @@ export default function LoginPage() {
                   <input
                     id="email" type="text" required autoComplete="username"
                     placeholder="admin or admin@them.local"
-                    value={email} onChange={(e) => setEmail(e.target.value)}
+                    value={email}
+                    onChange={(e) => { setEmail(e.target.value); if (tenantInfo) { setTenantInfo(null); lastLookupDomain.current = ''; } }}
+                    onBlur={handleEmailBlur}
                     className="brand-input"
                   />
+                  {lookingUp && (
+                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                      <svg className="animate-spin h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                      </svg>
+                    </div>
+                  )}
                 </div>
               </div>
 
+              {/* SSO banner — shown when tenant has IdP configured */}
+              {showSSO && (
+                <div className="rounded-lg p-3 space-y-2"
+                  style={{ background: 'rgba(59,77,255,.08)', border: '1px solid rgba(59,77,255,.25)' }}>
+                  <p className="text-xs text-slate-300">
+                    <span className="font-semibold text-white">{tenantInfo!.display_name}</span> uses single sign-on.
+                  </p>
+                  <button type="button" onClick={handleSSOLogin}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-bold text-white transition-all active:scale-[0.98]"
+                    style={{ background: 'linear-gradient(135deg, #2563eb 0%, #4338ca 100%)', boxShadow: '0 4px 15px rgba(59,77,255,.35)' }}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                    </svg>
+                    Continue with SSO
+                  </button>
+                  <p className="text-[11px] text-slate-500 text-center">or use username and password below</p>
+                </div>
+              )}
+
+              {/* Password field */}
               <div className="space-y-1.5">
                 <label className="block text-sm font-medium text-slate-300" htmlFor="password">Password</label>
                 <div className="relative">

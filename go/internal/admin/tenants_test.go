@@ -30,21 +30,31 @@ type tenantFakeRow struct {
 	slug        string
 	displayName string
 	enabled     bool
-	err         error // when non-nil, Scan returns this
+	emailDomain *string // nil = no domain
+	err         error   // when non-nil, Scan returns this
 }
 
 func (r *tenantFakeRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	vals := []any{r.id, r.slug, r.displayName, r.enabled, testNow, testNow}
+	// Columns: id, slug, display_name, enabled, email_domain, created_at, updated_at
+	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.emailDomain, testNow, testNow}
 	for i, d := range dest {
 		if i >= len(vals) {
 			break
 		}
 		switch dp := d.(type) {
 		case *string:
-			*dp = vals[i].(string)
+			if s, ok := vals[i].(string); ok {
+				*dp = s
+			}
+		case **string:
+			if vals[i] == nil {
+				*dp = nil
+			} else if s, ok := vals[i].(*string); ok {
+				*dp = s
+			}
 		case *bool:
 			*dp = vals[i].(bool)
 		case *time.Time:
@@ -119,13 +129,15 @@ func (d *tenantDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.Si
 	return &tenantFakeRow{err: pgx.ErrNoRows}
 }
 
-// tenantDetailFakeRow simulates the 7-column RETURNING from PatchTenant.
+// tenantDetailFakeRow simulates the 8-column RETURNING from PatchTenant.
+// Columns: id, slug, display_name, enabled, idp_configured, email_domain, created_at, updated_at
 type tenantDetailFakeRow struct {
 	id            string
 	slug          string
 	displayName   string
 	enabled       bool
 	idpConfigured bool
+	emailDomain   *string
 	err           error
 }
 
@@ -133,14 +145,22 @@ func (r *tenantDetailFakeRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.idpConfigured, testNow, testNow}
+	vals := []any{r.id, r.slug, r.displayName, r.enabled, r.idpConfigured, r.emailDomain, testNow, testNow}
 	for i, d := range dest {
 		if i >= len(vals) {
 			break
 		}
 		switch dp := d.(type) {
 		case *string:
-			*dp = vals[i].(string)
+			if s, ok := vals[i].(string); ok {
+				*dp = s
+			}
+		case **string:
+			if vals[i] == nil {
+				*dp = nil
+			} else if s, ok := vals[i].(*string); ok {
+				*dp = s
+			}
 		case *bool:
 			*dp = vals[i].(bool)
 		case *time.Time:
@@ -657,4 +677,81 @@ func TestTenants_AddMember_MissingRole(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── TN-23: Patch sets email_domain ───────────────────────────────────────────
+
+func TestTenants_Patch_EmailDomain(t *testing.T) {
+	domain := "acme.com"
+	db := &tenantDB{
+		patchRow: &tenantDetailFakeRow{
+			id:          "00000000-0000-0000-0000-000000000001",
+			slug:        "default",
+			displayName: "Default",
+			enabled:     true,
+			emailDomain: &domain,
+		},
+	}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"email_domain": "acme.com"})
+	req := httptest.NewRequest(http.MethodPatch, "/tenants/00000000-0000-0000-0000-000000000001", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, "acme.com", out["email_domain"])
+}
+
+// ── TN-24: Patch clears email_domain when sent as null ───────────────────────
+
+func TestTenants_Patch_EmailDomain_Clear(t *testing.T) {
+	db := &tenantDB{
+		patchRow: &tenantDetailFakeRow{
+			id:          "00000000-0000-0000-0000-000000000001",
+			slug:        "default",
+			displayName: "Default",
+			enabled:     true,
+			// emailDomain = nil → cleared
+		},
+	}
+	r := newTenantRouter(db)
+
+	body := []byte(`{"email_domain":null}`)
+	req := httptest.NewRequest(http.MethodPatch, "/tenants/00000000-0000-0000-0000-000000000001", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	// email_domain omitted (omitempty) when nil
+	_, hasEmailDomain := out["email_domain"]
+	assert.False(t, hasEmailDomain, "nil email_domain must be omitted from response")
+}
+
+// ── TN-25: List returns email_domain in tenant rows when set ─────────────────
+
+func TestTenants_List_WithEmailDomain(t *testing.T) {
+	domain := "corp.example.com"
+	db := &tenantDB{
+		listRows: []*tenantFakeRow{
+			{id: "00000000-0000-0000-0000-000000000001", slug: "corp", displayName: "Corp", enabled: true, emailDomain: &domain},
+		},
+	}
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenants", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 1)
+	assert.Equal(t, "corp.example.com", out[0]["email_domain"])
 }
