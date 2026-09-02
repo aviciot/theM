@@ -1,7 +1,7 @@
 # Handover — Multi-Tenancy Step 15
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** (Step 15 commit — see git log)
+**HEAD:** 24ff822 (feat(multi-tenancy): Step 15 — Per-tenant LLM provider key management)
 **Steps complete:** 1 → 15 (all 47 Go packages pass, 1056 S1 tests, 1008 go test ./...)
 
 ---
@@ -62,7 +62,7 @@
 | Step 12 | Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota + frontend Quotas tab | Complete | 293fe26 |
 | Step 13 | Quota enforcement at run start — max_concurrent_runs (DB COUNT) + runs_per_minute (Redis INCR) | Complete | cfaef99 |
 | Step 14 | Monthly run limit enforcement — monthly_runs quota (Redis INCR keyed by YYYY-MM, 48h-past-month TTL) | Complete | 828739b |
-| Step 15 | Per-tenant LLM provider key management — tenant_id on llm_providers, merged list, upsert override, run-time resolution | Complete | (see git log) |
+| Step 15 | Per-tenant LLM provider key management — tenant_id on llm_providers, merged list, upsert override, run-time resolution | Complete | 24ff822 |
 
 ---
 
