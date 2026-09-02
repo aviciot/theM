@@ -73,7 +73,8 @@ func NewJobDAL(q Querier) *JobDAL {
 }
 
 // EnqueueWithQuarantine inserts a pending job linked to a quarantine_artifacts row.
-// artifactID and quarantineID are the same UUID (quarantine_artifacts.id).
+// artifact_id is left NULL at enqueue time; the middleware worker sets it after
+// promoting a clean file to run_artifacts. quarantineID is the primary reference.
 func (d *JobDAL) EnqueueWithQuarantine(
 	ctx context.Context,
 	artifactID, quarantineID, applicationID, runID, sessionID string,
@@ -81,13 +82,14 @@ func (d *JobDAL) EnqueueWithQuarantine(
 ) error {
 	const q = `
 INSERT INTO them.middleware_jobs
-  (artifact_id, quarantine_id, application_id, run_id, session_id, processors)
+  (quarantine_id, application_id, run_id, session_id, processors)
 VALUES
-  ($1::uuid, $2::uuid, $3::uuid,
+  ($1::uuid, $2::uuid,
+   CASE WHEN $3 = '' THEN NULL ELSE $3::uuid END,
    CASE WHEN $4 = '' THEN NULL ELSE $4::uuid END,
-   CASE WHEN $5 = '' THEN NULL ELSE $5::uuid END,
-   $6)`
-	return d.q.Exec(ctx, q, artifactID, quarantineID, applicationID, runID, sessionID, processors)
+   $5)`
+	// artifactID arg kept for API compat; it becomes artifact_id only after promotion.
+	return d.q.Exec(ctx, q, quarantineID, applicationID, runID, sessionID, processors)
 }
 
 // Enqueue inserts a new pending job (legacy path — no quarantine row).
@@ -121,7 +123,7 @@ WHERE  id = (
   FOR UPDATE SKIP LOCKED
 )
 RETURNING
-  id::text, artifact_id::text, COALESCE(quarantine_id::text,''),
+  id::text, COALESCE(artifact_id, quarantine_id)::text, COALESCE(quarantine_id::text,''),
   application_id::text,
   COALESCE(run_id::text,''), COALESCE(session_id::text,''),
   processors, attempt_count, max_attempts`
@@ -323,9 +325,9 @@ func (d *JobDAL) markJobDone(ctx context.Context, job *Job, res JobResult) error
 	})
 	const updateJob = `
 UPDATE them.middleware_jobs
-SET status = 'done', result = $2::jsonb, updated_at = now()
+SET status = 'done', result = $2::jsonb, artifact_id = $3::uuid, updated_at = now()
 WHERE id = $1::uuid`
-	return d.q.Exec(ctx, updateJob, job.ID, jobResultJSON)
+	return d.q.Exec(ctx, updateJob, job.ID, jobResultJSON, job.ArtifactID)
 }
 
 // Fail increments attempt_count and schedules a retry (or marks permanently failed).
