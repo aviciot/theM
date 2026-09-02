@@ -1,6 +1,6 @@
-# Handover — Multi-Tenancy Step 2
+# Handover — Multi-Tenancy Step 3
 **Date:** 2026-09-02
-**Commit:** TBD (pending)
+**Commits:** Step 2: 97c9d71 | Step 3: 98ccf03
 **Branch:** main
 
 ---
@@ -43,8 +43,8 @@ All tenant-scoped Redis keys must include `{tenant_id}` in the key to prevent cr
 | Step | Description | Status | Commit |
 |---|---|---|---|
 | Step 1 | JWT + tenant membership foundation | Complete | 4ccb4c4 |
-| Step 2 | Redis key hardening | Complete | TBD |
-| Step 3 | Temporal workflow ID prefix with `{tenant_id}-` | Not started | — |
+| Step 2 | Redis key hardening | Complete | 97c9d71 |
+| Step 3 | Temporal workflow ID prefix with `{tenant_id}:` | Complete | 98ccf03 |
 | Step 4 | Tenant CRUD API + provisioning | Not started | — |
 | Step 5 | OIDC login flow | Not started | — |
 | Step 6 | Managed Apps foundation | Not started | — |
@@ -63,22 +63,27 @@ All tenant-scoped Redis keys must include `{tenant_id}` in the key to prevent cr
 
 ---
 
-## Next recommended task — Step 3: Temporal workflow ID prefix
+## Next recommended task — Step 4: Tenant CRUD API + provisioning
 
-**Goal:** Prevent Temporal workflow ID collisions between tenants when two tenants run the same orchestrator or agent workflow.
+**Goal:** Allow new tenants to be created via an admin API. This is the foundation for real multi-tenant onboarding.
 
-**What to change:**
-- In `go/internal/temporal/workflow.go` or `go/internal/execution/lifecycle.go`, prefix the Temporal workflow ID with `{tenant_id}-`.
-- Current pattern: `run-{run_id}` or `{orchestrator_slug}-{run_id}`
-- New pattern: `{tenant_id}-{run_id}` (or similar — check actual pattern in code first)
+**What to build:**
+- `POST /admin/tenants` — create a tenant (name, slug, optional config)
+- `GET /admin/tenants` — list tenants (super_admin only)
+- `GET /admin/tenants/{id}` — get tenant by ID
+- DB: a `them.tenants` table (`id UUID PK, slug TEXT UNIQUE, name TEXT, created_at, config JSONB`)
+- Migration: `db/054_tenants.sql`
+- Wire the handler in `go/cmd/them/main.go`
 
 **Files to read before starting:**
-- `go/internal/temporal/workflow.go`
-- `go/internal/execution/lifecycle.go`
-- `go/cmd/dag-worker/main.go`
-- `docs/CURRENT.md`
+- `docs/architecture/MULTI_TENANCY_DESIGN.md` §4 (Tenant Model) and §5 (Identity)
+- `go/internal/admin/` — follow Handler → Service → DAL pattern
+- `db/001_schema.sql` — understand the existing schema
+- `go/CLAUDE.md` — file size and testing rules
 
-**Test requirement:** After changes, restart `them-dag-worker` and `them-go-worker`, then run `go test ./...`.
+**Test requirement:** Add handler tests following the pattern in `go/internal/admin/tenant_http_test.go`.
+
+⚠️ **Session boundary recommendation:** Step 4 is a larger feature (new DB table, migration, handler, service, DAL, tests). This is a good point to start a fresh session to get maximum context for the implementation.
 
 ---
 
@@ -104,23 +109,24 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 3: Temporal workflow ID prefix.
+Continue multi-tenancy implementation — Step 4: Tenant CRUD API + provisioning.
 
-Current state: Steps 1 and 2 are complete and merged.
+Current state: Steps 1–3 are complete and merged.
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (commit 4ccb4c4)
-- Step 2: All Redis keys now include tenant_id; 46 packages pass (see docs/HANDOVER.md)
+- Step 2: All Redis keys tenant-scoped (commit 97c9d71)
+- Step 3: Temporal workflow IDs tenant-prefixed (commit 98ccf03)
+All 46 Go packages pass (go test ./...).
 
-Read docs/HANDOVER.md for full context before starting.
+Read docs/HANDOVER.md and docs/architecture/MULTI_TENANCY_DESIGN.md §4–5 before starting.
 
-Step 3 scope only: Prefix Temporal workflow IDs with {tenant_id}- to prevent
-cross-tenant workflow ID collisions.
+Step 4 scope only:
+1. Create db/054_tenants.sql migration: them.tenants (id UUID PK, slug TEXT UNIQUE, name TEXT, created_at TIMESTAMPTZ, config JSONB DEFAULT '{}')
+2. Apply migration to live DB
+3. Build Go CRUD: POST /admin/tenants, GET /admin/tenants, GET /admin/tenants/{id}
+4. Follow Handler → Service → DAL pattern in go/internal/admin/
+5. Super_admin only — use RequireSuperAdmin middleware
+6. Tests required; follow tenant_http_test.go pattern
 
-Files to check:
-- go/internal/temporal/workflow.go
-- go/internal/execution/lifecycle.go
-- go/cmd/dag-worker/main.go
-
-After changes: run go test ./... (zero failures required).
-Restart them-dag-worker and them-go-worker after any workflow.go changes.
+After each change: run go test ./... (zero failures required before commit).
 Update docs/HANDOVER.md at the end.
 ```
