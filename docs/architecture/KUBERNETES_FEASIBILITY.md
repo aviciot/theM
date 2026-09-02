@@ -1,5 +1,5 @@
 # Kubernetes Migration Feasibility Assessment — the-M
-**Date:** 2026-08-31  
+**Date:** 2026-09-02 (updated from 2026-08-31)
 **Scope:** Full stack as defined in `docker-compose.yml` + `docker-compose.dev.yml`  
 **Purpose:** Analysis and feasibility only. No implementation.
 
@@ -15,13 +15,16 @@ The blockers are specific and fixable — not structural:
 |---|---|
 | **High** | `agent-runtime` has no SIGTERM handler (container killed mid-request) |
 | **High** | Agent card URL hardcoded as `http://them-agent-runtime:9300/...` in DB — breaks in K8s |
+| **High** | `them-clamd` uses a Unix socket volume for IPC with `middleware-worker` — cross-pod sockets don't work in K8s; must switch to TCP (already supported by the ClamAV client) |
 | **Medium** | Traefik uses Docker socket for service discovery — replace with K8s Ingress controller |
 | **Medium** | MCP leader election uses Redis SETNX — safe but add jitter to avoid thundering herd |
 | **Medium** | No schema migration framework — DB init is currently Postgres init-script based |
+| **Medium** | MinIO runs as a single-node container — needs PVC or replacement with managed S3 in K8s |
 | **Low** | `mcp-service` Postgres pool size hardcoded at 10 — make env-configurable |
 | **Low** | Temporal runs as a single container — needs its own K8s deployment strategy |
+| **Low** | `them-minio-init` is a one-shot bucket setup Job — already Job-shaped but must not re-run on every deploy |
 
-PostgreSQL and Redis should be treated as managed services (AWS RDS/ElastiCache, Azure Database, GCP CloudSQL/Memorystore, or Helm-deployed) rather than in-cluster Deployments on day one.
+PostgreSQL, Redis, and object storage (S3/MinIO) should be treated as managed services rather than in-cluster Deployments on day one.
 
 ---
 
@@ -396,6 +399,128 @@ Each agent is a standalone HTTP service exposing a fixed port. All configuration
 
 ---
 
+### 15. `them-middleware-worker` *(added 2026-09-02)*
+
+| Property | Detail |
+|---|---|
+| **Current role** | Background worker — polls `them.middleware_jobs` for pending artifact scan jobs, runs the processor pipeline (ClamAV AV scan), writes results to Postgres, moves files between MinIO buckets (quarantine → artifacts), publishes progress and completion events to Redis, runs a quarantine reaper goroutine |
+| **Stateful?** | No local state. All job state is in Postgres; file bytes are in MinIO; progress events go to Redis pub/sub |
+| **K8s safe?** | Yes, with the clamd connectivity fix (see below) |
+| **K8s primitive** | **Deployment** |
+
+**How it works:** A pool of goroutines (`MIDDLEWARE_WORKER_CONCURRENCY`, default 8) each run a tight poll loop — `SELECT … FOR UPDATE SKIP LOCKED` claim → load file bytes from MinIO → run pipeline (ClamAV scan) → write result → commit. On clean shutdown (SIGTERM → context cancel), all goroutines drain naturally because the poll loop checks `ctx.Err()` on every iteration. Graceful shutdown is already correct.
+
+**The clamd connectivity issue:** In Docker Compose, `CLAMAV_SOCKET` is set to `them-clamd:3310` (TCP), which works correctly because the ClamAV client supports both Unix socket (`/path/to/clamd.sock`) and TCP (`host:port`) via `net.Dial`. In K8s, as long as `CLAMAV_SOCKET` points to the `them-clamd` K8s Service DNS name and port (`them-clamd:3310`), no code change is needed. Do **not** revert to a Unix socket path in K8s — cross-pod Unix sockets don't work.
+
+**MinIO dependency:** The worker reads artifact bytes from MinIO quarantine bucket and moves clean files to the artifacts bucket. `THE_M_S3_ENDPOINT`, `THE_M_S3_ACCESS_KEY`, `THE_M_S3_SECRET_KEY`, and both bucket names are fully env-configurable. In K8s, point these at managed S3 (AWS S3, GCS, Azure Blob with S3 compat) or an in-cluster MinIO. No code change required.
+
+**Health heartbeat:** Writes `them:dash:services:health` (Redis key, 30s TTL) every 10s. If the worker dies, the key expires and the Services UI shows "offline". In K8s with multiple replicas, every replica writes this key — acceptable since any live replica means the service is up.
+
+**Quarantine reaper:** A single background goroutine runs every `REAPER_INTERVAL_MINUTES` (default 15) and prunes expired quarantine records from Postgres + MinIO. With multiple replicas, every replica spawns a reaper. This is safe because the reaper uses `SELECT … FOR UPDATE SKIP LOCKED` — only one replica processes each record. No code change needed; behavior is idempotent.
+
+**Required changes:** None. Configuration is fully externalized. SIGTERM is handled. All state is external.
+
+**Probes:** No HTTP server. Use `exec` probe:
+- `livenessProbe`: `exec: ["pgrep", "them-middleware-worker"]`, periodSeconds: 30, failureThreshold: 3
+- No `readinessProbe` needed — the worker is ready as soon as it starts polling
+
+**Secrets:** `DATABASE_PASSWORD`, `REDIS_PASSWORD`, `THE_M_S3_ACCESS_KEY`, `THE_M_S3_SECRET_KEY` → K8s Secrets.
+
+**Scaling:** Scale horizontally — each replica adds `MIDDLEWARE_WORKER_CONCURRENCY` goroutines to the shared job pool. The `SELECT … FOR UPDATE SKIP LOCKED` claim pattern is designed for concurrent workers. KEDA can scale based on `COUNT(*)` from `them.middleware_jobs WHERE status = 'pending'` via a Postgres scaler.
+
+**Migration risks:**
+- Confirm `CLAMAV_SOCKET` always uses TCP format in K8s (`them-clamd:3310`) — never a socket path
+- If MinIO is replaced with managed S3, confirm bucket lifecycle policies (quarantine 1-hour TTL) are recreated in the managed service
+
+---
+
+### 16. `them-clamd` *(added 2026-09-02)*
+
+| Property | Detail |
+|---|---|
+| **Current role** | ClamAV daemon — accepts INSTREAM scan requests from `middleware-worker` over TCP port 3310 |
+| **Stateful?** | Yes — virus definition database in a named volume (`clamav-db`), downloaded on first start (~300MB), refreshed by `freshclam` daemon |
+| **K8s safe?** | Yes, with PersistentVolumeClaim for the virus DB |
+| **K8s primitive** | **Deployment** with a `PersistentVolumeClaim` for virus definitions |
+
+**Startup time:** ClamAV downloads and indexes its virus database on first boot (up to 5 minutes — compose `start_period: 300s`). Kubernetes `startupProbe` must reflect this.
+
+**Virus definition freshness:** The `clamav/clamav:stable` image ships with `freshclam` running inside the container, which auto-updates definitions. The volume holding `clamav-db` must persist across pod restarts — otherwise every restart re-downloads the full database (~300MB). Use `ReadWriteOnce` PVC on fast storage.
+
+**Multi-replica consideration:** Running multiple `them-clamd` replicas is valid — each has its own local virus DB copy (refreshed by its own `freshclam`). `middleware-worker` connects to the `them-clamd` K8s Service, which load-balances across replicas. There is no state shared between ClamAV replicas; each scan is independent.
+
+**Required changes:**
+- Create a `PersistentVolumeClaim` for virus definitions (replace named volume `clamav-db`)
+- `CLAMAV_SOCKET` in `middleware-worker` must be the K8s Service DNS name (`them-clamd:3310`) — already the case in Docker Compose TCP mode
+
+**Probes:**
+- `startupProbe`: `exec: ["clamdcheck.sh"]`, failureThreshold: 30, periodSeconds: 10 (allows 300s for first-boot DB download)
+- `readinessProbe`: `exec: ["clamdcheck.sh"]`, periodSeconds: 30, timeoutSeconds: 10
+- `livenessProbe`: `exec: ["clamdcheck.sh"]`, periodSeconds: 60, timeoutSeconds: 10, failureThreshold: 3
+
+**Persistent storage:** `PersistentVolumeClaim`, `ReadWriteOnce`, 1Gi minimum (virus DB is ~300MB, grows over time). Storage class: SSD preferred for scan throughput.
+
+**Networking:** `ClusterIP` Service on port 3310. Not exposed externally.
+
+**Scaling:** 1–3 replicas for HA. Each replica needs its own PVC (use `volumeClaimTemplates` with a `StatefulSet` if you want the DB pre-seeded per replica, or accept that new replicas re-download on first start). For most deployments, a single replica with a PVC is sufficient — AV scanning is not the throughput bottleneck.
+
+**Migration risks:**
+- First-boot 5-minute startup delay requires correct `startupProbe` configuration — if the probe fires before clamd is ready, K8s will restart the pod in a loop
+- Virus definition currency: if the pod is evicted and the PVC is not retained, the next pod re-downloads from scratch
+- If scaling to multiple replicas with `Deployment` (not `StatefulSet`), they cannot share a `ReadWriteOnce` PVC — each replica needs its own PVC or use `ReadWriteMany` (NFS/EFS)
+
+---
+
+### 17. `them-minio` *(added 2026-09-02)*
+
+| Property | Detail |
+|---|---|
+| **Current role** | S3-compatible object store — holds artifact bytes in two buckets: `them-quarantine` (pre-scan, 1-hour lifecycle TTL) and `them-artifacts` (clean, post-scan) |
+| **Stateful?** | Yes — named volume `minio-data` |
+| **K8s safe?** | Conditionally — single-node MinIO is fine for dev/staging; production should use managed S3 |
+| **K8s primitive** | **External managed service** (AWS S3, GCS, Azure Blob) strongly recommended for production; or **StatefulSet** with PVC for self-hosted |
+
+**Why managed S3 is preferred:** Single-node MinIO has no replication, no HA, and its data is coupled to a single PVC. If the pod is evicted or the node fails, artifact storage goes down. AWS S3 / GCS / Azure Blob are natively durable, globally available, and require no in-cluster storage management.
+
+**Migration path:** All connection details (`THE_M_S3_ENDPOINT`, `THE_M_S3_ACCESS_KEY`, `THE_M_S3_SECRET_KEY`, `THE_M_S3_QUARANTINE_BUCKET`, `THE_M_S3_ARTIFACTS_BUCKET`) are already fully env-configurable in both `middleware-worker` and `them-go-bridge`. Switching from MinIO to AWS S3 is an environment variable change — no code change required. The `minio-go` SDK is S3-compatible.
+
+**If running MinIO in-cluster:** Use the [MinIO Operator](https://min.io/docs/minio/kubernetes/upstream/index.html) or a `StatefulSet` with a PVC. Do not use a bare `Deployment` — data loss risk on pod replacement.
+
+**Required changes:**
+- For production: replace with managed S3 and update env vars
+- For dev/staging in-cluster: `StatefulSet` + PVC
+- Bucket lifecycle policy (1-hour TTL on quarantine bucket) must be recreated in the managed service or via MinIO mc CLI after provisioning
+
+**Persistent storage:** PVC, `ReadWriteOnce`, size depends on expected artifact volume. Quarantine bucket has a 1-hour lifecycle TTL — objects are transient. Artifacts bucket holds confirmed-clean files for download.
+
+**Scaling:** Single-node MinIO does not scale horizontally without MinIO distributed mode or the MinIO Operator. For production, this is the strongest reason to use managed S3.
+
+**Migration risks:**
+- Single-node MinIO data is not replicated — a node or disk failure causes data loss
+- Quarantine lifecycle TTL policy must be explicitly configured on the managed service
+
+---
+
+### 18. `them-minio-init` *(added 2026-09-02)*
+
+| Property | Detail |
+|---|---|
+| **Current role** | One-shot container that creates the two MinIO buckets and sets their access policies |
+| **Stateful?** | No — runs once and exits |
+| **K8s safe?** | Yes |
+| **K8s primitive** | **Job** (with `restartPolicy: OnFailure`) |
+
+**This is already Job-shaped.** In Docker Compose it has `restart: "no"`, runs `mc` commands, and exits. In Kubernetes it becomes a `Job` that runs before the `middleware-worker` Deployment is allowed to start.
+
+**Required changes:**
+- Convert to a K8s `Job` manifest
+- If using managed S3 instead of MinIO, this Job is replaced by Terraform/IaC that creates the buckets during infrastructure provisioning
+- Add an `initContainer` in `middleware-worker` that waits for the bucket to exist before the worker starts (or use Helm hooks to order the Job before the Deployment)
+
+**Migration risks:** Low. If the Job runs more than once (accidental re-apply), `mc mb --ignore-existing` makes it idempotent — no harm done.
+
+---
+
 ## Multi-Replica Safety Analysis
 
 Things that could break when multiple pod replicas run simultaneously:
@@ -413,6 +538,10 @@ Things that could break when multiple pod replicas run simultaneously:
 | `appliveness` loop | Runs in every bridge replica | Every replica probes every EP; produces redundant pub/sub traffic | Acceptable at current scale; at high replica count, move to a dedicated liveness worker |
 | `mcp-service` supervisor | Runs goroutines only on leader | Redis SETNX leader election is per-replica | Already safe — no change needed |
 | `pod heartbeat` | Runs in every bridge replica | Independent per-instance_id | Already safe — instance_id is unique |
+| `middleware-worker` quarantine reaper | Runs in every replica | Each replica spawns a reaper goroutine; `SELECT … FOR UPDATE SKIP LOCKED` prevents double-processing | Already safe — no change needed |
+| `middleware-worker` health heartbeat | Runs in every replica | Multiple replicas all write same Redis key | Already safe — any live replica means service is up |
+| `them-clamd` | Stateful (virus DB on PVC) | Multiple replicas can't share a `ReadWriteOnce` PVC | Use per-replica PVC (StatefulSet) or single replica + PVC |
+| `them-minio` | Single-node | No replication | Use managed S3 for production |
 
 ---
 
@@ -661,6 +790,10 @@ Already partially in place:
 | Domain agents (vision, security, etc.) | ✅ Yes | Low | K8s Secrets for API keys | Single replica → HPA | Migrate — Phase 2 |
 | `livekit` | Needs work | High | UDP exposure, NodePort or managed LiveKit | Managed service | LiveKit Cloud strongly recommended |
 | `livekit-agent` | ✅ Yes | Low | Update LiveKit URL to K8s Service | Single replica | Migrate with LiveKit |
+| `them-middleware-worker` | ✅ Yes | Low | Confirm TCP clamd address; managed S3 env vars | HPA or KEDA on pending job count | Migrate — Phase 2 |
+| `them-clamd` | Needs PVC | Medium | PVC for virus DB; correct `startupProbe` (300s); TCP connectivity | 1–2 replicas (each needs own PVC) | Migrate — Phase 2 |
+| `them-minio` | Replace for prod | Medium | Replace with managed S3; update env vars in all consumers | Managed S3 is natively HA | Managed S3 for prod; StatefulSet+PVC for dev |
+| `them-minio-init` | ✅ Yes | Low | Convert to K8s Job; replace with IaC if using managed S3 | Run once (Job) | Phase 1 / IaC |
 
 ---
 
@@ -673,6 +806,7 @@ Already partially in place:
 **Pre-conditions:**
 - Managed PostgreSQL provisioned, schema initialized
 - Managed Redis provisioned
+- Managed S3 provisioned (AWS S3, GCS, or Azure Blob); quarantine lifecycle TTL policy set
 - K8s Ingress controller deployed (Traefik K8s or NGINX)
 - K8s Secrets created for all credentials
 - `THE_M_AGENT_RUNTIME_BASE_URL` env var added (code fix)
@@ -682,7 +816,8 @@ Already partially in place:
 1. `them-auth-go` — Deployment, 2 replicas, HPA
 2. `them-frontend` — Deployment, 2 replicas
 3. A2A test agents — Deployment, 1 replica each (test namespace)
-4. Ingress routing rules for all Phase 1 services
+4. `them-minio-init` equivalent — K8s Job (or IaC bucket creation)
+5. Ingress routing rules for all Phase 1 services
 
 **Validation:** Auth flow, admin login, agent browsing, health endpoints.
 
@@ -703,7 +838,9 @@ Already partially in place:
 3. `them-dag-worker` — Deployment, 1–2 replicas, KEDA ScaledObject
 4. `them-agent-runtime` — Deployment, 2 replicas, HPA (after SIGTERM fix confirmed)
 5. `them-mcp-service` — Deployment, 2 replicas
-6. Domain agents — Deployment, 1 replica each
+6. `them-clamd` — Deployment (or StatefulSet), 1–2 replicas, PVC per replica for virus DB
+7. `them-middleware-worker` — Deployment, 2 replicas, KEDA on pending middleware_jobs count
+8. Domain agents — Deployment, 1 replica each
 
 **Validation:** Full end-to-end run — WS connection, agent invocation, canvas workflow, MCP tool call, HITL flow.
 
@@ -761,7 +898,18 @@ These are the specific code changes needed — none are architectural rewrites:
 | Add `automaxprocs` to all Go binaries for correct GOMAXPROCS under K8s CPU limits | all `cmd/*/main.go` | ~30 min |
 | Add migration framework (Goose recommended) | new `go/cmd/migrate/` + migration files | ~4 hours |
 
-Total estimated effort for required code changes: **~9 hours** across all items.
+**Additional changes for new services (added 2026-09-02):**
+
+| Change | File | Effort |
+|---|---|---|
+| Verify `CLAMAV_SOCKET` always uses TCP in K8s manifests — do not use socket paths | K8s manifests / Helm values | ~15 min |
+| Set quarantine lifecycle TTL policy on managed S3 (was MinIO-local config) | IaC / S3 bucket policy | ~30 min |
+| Convert `them-minio-init` to a K8s Job manifest with `restartPolicy: OnFailure` | new K8s manifest | ~30 min |
+| Add KEDA `ScaledObject` for `middleware-worker` targeting `them.middleware_jobs WHERE status='pending'` count | new K8s manifest | ~1 hour |
+
+Total estimated effort for required code changes: **~11.5 hours** across all items.
+
+*No new Go code changes are required for the security pipeline services — all configuration is already externalized.*
 
 ---
 
