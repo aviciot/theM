@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 5
+# Handover — Multi-Tenancy Step 6
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** 9d51765 (docs: update HANDOVER.md with Step 4 completion)
-**Steps complete:** 1 → 4 (all 46 Go packages pass)
+**HEAD:** 2de98f5 (feat(multi-tenancy): Step 5 — OIDC login flow)
+**Steps complete:** 1 → 5 (all 46 Go packages pass, 50 authserver tests)
 
 ---
 
@@ -52,8 +52,27 @@
 | Step 2 | Redis key hardening | Complete | 97c9d71 |
 | Step 3 | Temporal workflow ID prefix with `{tenant_id}:` | Complete | 98ccf03 |
 | Step 4 | Tenant CRUD API (`GET/POST /admin/tenants`, `GET /admin/tenants/{id}`) | Complete | a534a54 |
-| Step 5 | OIDC login flow | **Next** | — |
+| Step 5 | OIDC login flow | Complete | 2de98f5 |
 | Step 6 | Managed Apps foundation | Not started | — |
+
+---
+
+## What Step 5 built
+
+- `db/054_tenant_idp_config.sql` — adds `idp_config JSONB DEFAULT NULL` to `them.tenants`
+- `go/internal/authserver/oidc_store.go` — `OIDCStore` interface + `pgxOIDCStore`:
+  - `GetTenantIDPConfig(slug)` → tenant UUID + `IDPConfig` (discovery_url, client_id, client_secret, redirect_uri) or `ErrTenantNotFound`/`ErrNoIDPConfig`
+  - `UpsertOIDCUser(tenantID, email, name)` → idempotent ON CONFLICT(email) user upsert + `tenant_memberships` row
+- `go/internal/authserver/oidc.go` — `OIDCHandlers`:
+  - `GET /auth/oidc/start?tenant={slug}` — PKCE code_verifier generated, S256 challenge computed, HMAC-signed state (slug + nonce), cookie set, redirect to IdP
+  - `GET /auth/oidc/callback?code=...&state=...` — state HMAC verified, PKCE cookie read and cleared, code exchanged with IdP, ID token parsed, user upserted, internal HS256 JWT issued with `tenant_id`, auth cookies set, redirect to `/`
+  - OIDC routes registered under `/oidc/start`, `/oidc/callback` AND Traefik mirror `/auth/oidc/start`, `/auth/oidc/callback`
+- `go/internal/authserver/jwt.go` — exported `NewTokenSigner(cfg)` for cmd wiring
+- `go/internal/authserver/oidc_test.go` — 12 tests (OIDC-01 to OIDC-12) with mock IdP HTTP server
+- Migration applied to live DB: `them.tenants.idp_config` column live
+
+### Known Step 5 limitation (to harden in Step 6+)
+ID token signature is not verified against the IdP's JWKS — trust is anchored to the code exchange over HTTPS. JWKS-based RS256 signature verification should be added before production use.
 
 ---
 
@@ -81,56 +100,36 @@
 
 5. **Bootstrap tenant UUID** — `00000000-0000-0000-0000-000000000001`, slug `default`. Used in all tests as `testTenantID`.
 
-6. **`them.tenants` table** — `is_bootstrap` column does NOT exist (the design doc is aspirational). Live columns: `id, slug, display_name, enabled, created_at, updated_at`. Verify before adding columns.
+6. **`them.tenants` table** — `is_bootstrap` column does NOT exist in the live DB (was removed). Live columns after Step 5: `id, slug, display_name, enabled, idp_config, created_at, updated_at`. Verify before adding columns.
 
 ---
 
-## Step 5 — OIDC login flow (next task)
+## Step 5 — COMPLETE (see "What Step 5 built" above)
+
+---
+
+## Step 6 — Managed Apps foundation (next task)
 
 ### Goal
-Allow tenants to authenticate via external OIDC providers (Google, GitHub, Azure AD, Okta, Auth0).
-After this step: customers with SSO requirements can use the system.
+Allow platform operators to define "Managed Apps" — pre-configured Application templates
+that can be instantiated per tenant. After this step: onboarding a new tenant automatically
+provisions their Applications from a Managed App catalog.
 
-### Design summary (from `docs/architecture/MULTI_TENANCY_DESIGN.md` §4)
-- **Generic OIDC authorization code flow** in `them-auth-go` (`go/internal/authserver/`)
-- Per-tenant IdP config stored in `tenants.idp_config JSONB` column (needs a migration to add this column)
-- Email-domain → tenant routing on the login page
-- The-M auth service remains the internal JWT issuer — it exchanges the OIDC token for an internal HS256 JWT with `tenant_id` claim. The rest of the system never sees an OIDC token.
-- One OIDC config per tenant (discovery URL, client_id, client_secret)
-- Standard OIDC authorization code flow:
-  1. Browser hits `/auth/oidc/start?tenant={slug}` → auth service redirects to IdP
-  2. IdP redirects to `/auth/oidc/callback?code=...&state=...`
-  3. Auth service exchanges code for ID token, validates claims
-  4. Maps external user email to `auth_service.users` (create on first login)
-  5. Issues internal JWT with `tenant_id`, sets cookie, redirects to UI
+### Design summary (from `docs/architecture/MULTI_TENANCY_DESIGN.md` §19)
+- A `managed_apps` table in `them` schema, owned by the platform (not tenants)
+- A `tenant_managed_apps` binding table (tenant + managed_app + overrides)
+- Admin CRUD for managed app catalog (`/admin/managed-apps`)
+- Tenant provisioning creates binding rows when apps are assigned
 
 ### Files to read before starting
-- `docs/architecture/MULTI_TENANCY_DESIGN.md` §4 (Identity and Authentication) and §4.3 (Tenant routing)
-- `go/internal/authserver/` — all files (this is where the OIDC flow goes)
-- `go/internal/authserver/handlers.go` — existing login/logout/me/refresh handlers
-- `go/internal/authserver/store.go` — user store and session management
-- `go/internal/authserver/jwt.go` — JWT issuance (OIDC callback will call into this)
-- `auth_service/SCHEMA.sql` — `auth_service.users` table schema (tenant_id is NOT there yet)
-- `db/001_schema.sql` — `them.tenants` table (will need `idp_config JSONB` column)
+- `docs/architecture/MULTI_TENANCY_DESIGN.md` §19 (Managed Apps)
+- `go/internal/admin/` — existing CRUD pattern to follow
+- `go/internal/admin/dal/` — DAL pattern
+- `db/001_schema.sql` — current table list (check no collision with proposed tables)
 
-### Implementation scope (Step 5 only — do not start Step 6)
-1. **Migration**: add `idp_config JSONB DEFAULT NULL` column to `them.tenants`
-   - Migration file: `db/027_tenant_idp_config.sql` (check the next available number)
-2. **Migration**: add `tenant_id UUID` to `auth_service.users` and create `auth_service.tenant_memberships` table
-   - File: `auth_service/migrations/XXX_tenant_identity.sql`
-3. **OIDC handler** in `go/internal/authserver/`:
-   - `GET /auth/oidc/start` — load tenant IdP config, redirect to IdP authorize endpoint
-   - `GET /auth/oidc/callback` — exchange code, validate ID token, upsert user, issue JWT
-   - PKCE required (code_verifier/code_challenge) for security
-   - State parameter must be signed (HMAC) to prevent CSRF
-4. **DAL**: tenant IdP config lookup in `go/internal/authserver/store.go` or a new `go/internal/authserver/oidc_store.go`
-5. **Tests**: handler tests for start/callback flows (use a mock IdP HTTP server)
-6. **Update `TEST_INDEX.md`** in the same commit
-
-### What NOT to do in Step 5
-- Do not start SAML 2.0 (Step 6+ scope)
-- Do not start Managed Apps (Step 6)
-- Do not change anything in `go/internal/admin/` (that's Step 4, done)
+### What NOT to do in Step 6
+- Do not add OIDC JWKS signature verification (hardening, future step)
+- Do not add SAML 2.0
 - Do not add SCIM
 
 ---
@@ -145,7 +144,7 @@ docker compose --project-name them_gateway -f docker-compose.yml -f docker-compo
 
 # Read before starting
 cat docs/HANDOVER.md
-cat docs/architecture/MULTI_TENANCY_DESIGN.md  # §4 and §4.3
+cat docs/architecture/MULTI_TENANCY_DESIGN.md  # §19 (Managed Apps)
 
 # Run tests to confirm baseline (zero failures required)
 docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
@@ -159,26 +158,18 @@ ls db/*.sql | sort | tail -5
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 5: OIDC login flow.
+Continue multi-tenancy implementation — Step 6: Managed Apps foundation.
 
-Current state: Steps 1–4 are complete and merged to main.
+Current state: Steps 1–5 are complete and merged to main.
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
 - Step 2: All Redis keys tenant-scoped (97c9d71)
 - Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
 - Step 4: Tenant CRUD API — GET/POST /admin/tenants, GET /admin/tenants/{id} (a534a54)
-All 46 Go packages pass (go test ./...).
+- Step 5: OIDC login flow — /auth/oidc/start + /auth/oidc/callback with PKCE + signed state (2de98f5)
+All 46 Go packages pass (go test ./..., 50 authserver tests).
 
 Read docs/HANDOVER.md fully before starting — it contains all rules, constraints, and the
-exact scope for Step 5. The HANDOVER.md is the source of truth for this session.
-
-Step 5 scope only:
-1. Migration: add idp_config JSONB column to them.tenants
-2. Migration: add tenant_id to auth_service.users + create tenant_memberships table
-3. OIDC handlers in go/internal/authserver/: GET /auth/oidc/start and GET /auth/oidc/callback
-4. PKCE + signed state parameter (CSRF protection)
-5. User upsert on first OIDC login → issue internal HS256 JWT with tenant_id claim
-6. Tests for start and callback flows (mock IdP HTTP server)
-7. Update TEST_INDEX.md in the same commit
+exact scope for Step 6. The HANDOVER.md is the source of truth for this session.
 
 Constraints (all in HANDOVER.md):
 - go test ./... must be zero failures before every commit
