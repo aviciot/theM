@@ -70,6 +70,13 @@ func IsForeignKeyViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
+// IsCheckViolation reports whether err is a PostgreSQL check-constraint
+// violation (SQLSTATE 23514).
+func IsCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
+}
+
 // ── Agent types ───────────────────────────────────────────────────────────────
 
 // Agent is the JSON representation of a them.agents row.

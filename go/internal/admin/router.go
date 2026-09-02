@@ -127,6 +127,7 @@ func BuildRouter(
 	llmRouting := NewLLMRoutingHandler(db)
 	llmProviders := NewLLMProvidersHandler(db, secretKey)
 	systemAgents := NewSystemAgentsHandler(db, fernetKey)
+	tenants := NewTenantsHandler(db)
 
 	// Admin routes — all require JWT + super_admin.
 	// Within /admin, tenant-scoped resources also require AdminTenantMiddleware.
@@ -189,6 +190,7 @@ func BuildRouter(
 			llmRouting.Routes(a)
 			llmProviders.Routes(a)
 			systemAgents.Routes(a)
+			tenants.Routes(a)
 			if sessionReader != nil {
 				NewSessionsHandler(sessionReader).Routes(a)
 			}
