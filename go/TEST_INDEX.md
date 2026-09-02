@@ -305,9 +305,14 @@ end-to-end with a mock IdP, and secrets never leak into config logs.
 | `TestStateVerifyRejectsWrongKey` (OIDC-10) | wrong key → error |
 | `TestPKCECodeChallenge` (OIDC-11) | codeChallenge is deterministic, differs from verifier |
 | `TestOIDCCallback_TokenCarriesTenantID` (OIDC-12) | issued access token carries correct `tenant_id` claim |
+| `TestJWKS_ValidSignatureAccepted` (OIDC-13) | valid RS256 id_token + matching JWKS key → claims returned |
+| `TestJWKS_TamperedSignatureRejected` (OIDC-14) | altered signature bytes → `verifyRS256IDToken` returns error |
+| `TestJWKS_UnknownKidRejected` (OIDC-15) | token kid not in JWKS → error (no matching key) |
+| `TestJWKS_WrongAlgRejected` (OIDC-16) | alg=HS256 in header → rejected before JWKS fetch |
+| `TestJWKS_FetchErrorPropagated` (OIDC-17) | JWKS fetch failure → error propagated |
 
 **Trigger:** any change to `internal/authserver/` (config, jwt, password, store, pgx, service,
-handlers, router, oidc, oidc_store) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
+handlers, router, oidc, oidc_store, oidc_jwks) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
 
 ---
 
@@ -2819,7 +2824,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 21 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan) | 8 |
-| S1-40 | authserver (Go auth service + OIDC flow) | 50 |
+| S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification) | 55 |
 | S1-41 | registry (component definition resolver) | 12 |
 | S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
 | S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |
@@ -2867,7 +2872,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
 | S1-92 | Managed Apps catalog + bindings (MA-01..10): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig | 10 |
 | S1-93 | workerconfig managed app params (MAP-01..03): ConfigSubstitution, NilSafe, ZeroNil | 3 |
-| **S1 total** | | **1002** |
+| **S1 total** | | **1007** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2876,4 +2881,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **954** |
+| **`go test ./...` total** | | **959** |

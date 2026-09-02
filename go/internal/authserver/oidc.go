@@ -42,17 +42,20 @@ type OIDCHandlers struct {
 	signer     *tokenSigner
 	cfg        *Config
 	log        *slog.Logger
-	httpClient *http.Client // injectable for tests
+	httpClient *http.Client  // injectable for tests
+	jwks       jwksFetcher   // injectable for tests
 }
 
 // NewOIDCHandlers builds the OIDC handler set.
 func NewOIDCHandlers(oidcStore OIDCStore, signer *tokenSigner, cfg *Config, log *slog.Logger) *OIDCHandlers {
+	client := &http.Client{Timeout: 10 * time.Second}
 	return &OIDCHandlers{
 		oidcStore:  oidcStore,
 		signer:     signer,
 		cfg:        cfg,
 		log:        log,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: client,
+		jwks:       &httpJWKSFetcher{client: client},
 	}
 }
 
@@ -115,6 +118,7 @@ func codeChallenge(verifier string) string {
 type oidcDiscovery struct {
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 	TokenEndpoint         string `json:"token_endpoint"`
+	JWKSURI               string `json:"jwks_uri"`
 }
 
 func (h *OIDCHandlers) discover(ctx context.Context, discoveryURL string) (*oidcDiscovery, error) {
@@ -135,7 +139,7 @@ func (h *OIDCHandlers) discover(ctx context.Context, discoveryURL string) (*oidc
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&d); err != nil {
 		return nil, err
 	}
-	if d.AuthorizationEndpoint == "" || d.TokenEndpoint == "" {
+	if d.AuthorizationEndpoint == "" || d.TokenEndpoint == "" || d.JWKSURI == "" {
 		return nil, fmt.Errorf("discovery document missing endpoints")
 	}
 	return &d, nil
@@ -184,40 +188,6 @@ func (h *OIDCHandlers) exchangeCode(ctx context.Context, tokenEndpoint, code, re
 		return nil, err
 	}
 	return &tr, nil
-}
-
-// parseIDTokenClaims decodes the payload of the ID token JWT without verifying
-// the signature. The trust anchor is the code exchange over TLS — signature
-// verification requires fetching the IdP's JWKS, which adds complexity beyond
-// Step 5 scope. This is noted in the function comment so it can be hardened later.
-//
-// NOTE: Signature verification is deferred to a future step. The code exchange
-// itself happens over HTTPS to the trusted IdP token endpoint, so the returned
-// ID token is already authenticated. JWKS-based signature verification should
-// be added in Step 6.
-func parseIDTokenClaims(idToken string) (*idTokenClaims, error) {
-	parts := strings.Split(idToken, ".")
-	if len(parts) != 3 {
-		return nil, fmt.Errorf("id_token: expected 3 segments")
-	}
-	payload, err := base64urlDecode(parts[1])
-	if err != nil {
-		return nil, fmt.Errorf("id_token: base64 decode: %w", err)
-	}
-	var claims idTokenClaims
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return nil, fmt.Errorf("id_token: JSON decode: %w", err)
-	}
-	if claims.Sub == "" {
-		return nil, fmt.Errorf("id_token: missing sub claim")
-	}
-	if claims.Email == "" {
-		return nil, fmt.Errorf("id_token: missing email claim")
-	}
-	if claims.Exp > 0 && time.Now().Unix() > claims.Exp {
-		return nil, fmt.Errorf("id_token: expired")
-	}
-	return &claims, nil
 }
 
 // ── HTTP handlers ─────────────────────────────────────────────────────────────
@@ -359,9 +329,9 @@ func (h *OIDCHandlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := parseIDTokenClaims(tr.IDToken)
+	claims, err := verifyRS256IDToken(r.Context(), h.jwks, disc.JWKSURI, tr.IDToken)
 	if err != nil {
-		h.log.Error("oidc callback: id_token parse failed", "tenant", slug)
+		h.log.Error("oidc callback: id_token verification failed", "tenant", slug)
 		writeErr(w, http.StatusBadGateway, "invalid id_token from IdP")
 		return
 	}

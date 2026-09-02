@@ -2,9 +2,15 @@ package authserver
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +18,60 @@ import (
 	"testing"
 	"time"
 )
+
+// ── test RSA key (generated once, shared across tests in this package) ────────
+
+// testRSAKey is a 2048-bit RSA key used to sign id_tokens in tests.
+// Generated at test init time; never used outside tests.
+var testRSAKey *rsa.PrivateKey
+
+func init() {
+	var err error
+	testRSAKey, err = rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic("oidc_test: failed to generate test RSA key: " + err.Error())
+	}
+}
+
+// signTestIDToken signs a header+payload JWT with the testRSAKey (RS256).
+func signTestIDToken(header, payload string) string {
+	signingInput := header + "." + payload
+	digest := sha256.Sum256([]byte(signingInput))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, testRSAKey, crypto.SHA256, digest[:])
+	if err != nil {
+		panic("oidc_test: sign failed: " + err.Error())
+	}
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+
+// testJWKS returns the JSON Web Key Set for testRSAKey.
+func testJWKS() map[string]any {
+	pub := &testRSAKey.PublicKey
+	n := base64.RawURLEncoding.EncodeToString(pub.N.Bytes())
+	// Encode the exponent as a big-endian byte slice (minimal length).
+	e := pub.E
+	var eBytes []byte
+	for e > 0 {
+		eBytes = append([]byte{byte(e & 0xff)}, eBytes...)
+		e >>= 8
+	}
+	eStr := base64.RawURLEncoding.EncodeToString(eBytes)
+	return map[string]any{
+		"keys": []map[string]any{{
+			"kid": "test-key-1",
+			"kty": "RSA",
+			"alg": "RS256",
+			"use": "sig",
+			"n":   n,
+			"e":   eStr,
+		}},
+	}
+}
+
+// bigIntToBase64URL serialises a *big.Int for use in a JWK.
+func bigIntToBase64URL(n *big.Int) string {
+	return base64.RawURLEncoding.EncodeToString(n.Bytes())
+}
 
 // ── fake OIDC store ───────────────────────────────────────────────────────────
 
@@ -80,7 +140,11 @@ func newMockIdP(t *testing.T) *mockIdP {
 			json.NewEncoder(w).Encode(map[string]string{
 				"authorization_endpoint": base + "/authorize",
 				"token_endpoint":         base + "/token",
+				"jwks_uri":               base + "/jwks",
 			})
+		case "/jwks":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(testJWKS())
 		case "/token":
 			body, _ := io.ReadAll(r.Body)
 			vals, _ := url.ParseQuery(string(body))
@@ -97,9 +161,14 @@ func newMockIdP(t *testing.T) *mockIdP {
 				})
 				payload = encodeBase64URL(raw)
 			}
-			// header.payload.fakesig — signature is not verified in Step 5.
-			const header = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"
-			idToken := header + "." + payload + ".fakesig"
+			// header with kid matching testJWKS.
+			hdrRaw, _ := json.Marshal(map[string]string{
+				"alg": "RS256",
+				"typ": "JWT",
+				"kid": "test-key-1",
+			})
+			header := base64.RawURLEncoding.EncodeToString(hdrRaw)
+			idToken := signTestIDToken(header, payload)
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{
 				"id_token":     idToken,

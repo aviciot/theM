@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 7
+# Handover — Multi-Tenancy Step 8
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** 0bbfa28 (feat(multi-tenancy): Step 7 — Runtime parameter injection for Managed Apps)
-**Steps complete:** 1 → 7 (all 46 Go packages pass, 1002 S1 tests)
+**HEAD:** (see git log after commit)
+**Steps complete:** 1 → 8 (all 46 Go packages pass, 1007 S1 tests)
 
 ---
 
@@ -55,6 +55,7 @@
 | Step 5 | OIDC login flow | Complete | 2de98f5 |
 | Step 6 | Managed Apps foundation | Complete | 7c056fc |
 | Step 7 | Runtime parameter injection | Complete | 0bbfa28 |
+| Step 8 | OIDC JWKS RS256 id_token signature verification | Complete | (see git log) |
 
 ---
 
@@ -72,8 +73,8 @@
 - `go/internal/authserver/oidc_test.go` — 12 tests (OIDC-01 to OIDC-12) with mock IdP HTTP server
 - Migration applied to live DB: `them.tenants.idp_config` column live
 
-### Known Step 5 limitation (to harden in Step 6+)
-ID token signature is not verified against the IdP's JWKS — trust is anchored to the code exchange over HTTPS. JWKS-based RS256 signature verification should be added before production use.
+### Step 5 limitation — resolved in Step 8
+ID token signature is now verified against the IdP's JWKS using RS256 (stdlib only). See Step 8 below.
 
 ---
 
@@ -161,14 +162,44 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_055.sql
 
 ---
 
-## Step 8 — (next task)
+## Step 8 — COMPLETE
+
+### What Step 8 built
+
+- `go/internal/authserver/oidc_jwks.go` — JWKS-based RS256 id_token signature verification (stdlib only):
+  - `jwk` struct + `rsaPublicKey()` — parses JWK RSA fields, rejects keys < 2048 bits
+  - `httpJWKSFetcher` — fetches JWKS from IdP over HTTP (injectable for tests)
+  - `jwksFetcher` interface — injectable in `OIDCHandlers` for test isolation
+  - `verifyRS256IDToken(ctx, fetcher, jwksURI, idToken)` — decodes JWT header, verifies `alg=RS256`, fetches JWKS, selects key by `kid`, verifies PKCS1v15 RS256 signature, then parses claims
+- `go/internal/authserver/oidc.go` changes:
+  - `oidcDiscovery` gains `JWKSURI string` (`jwks_uri` JSON field); discovery now fails if `jwks_uri` is missing
+  - `OIDCHandlers` gains `jwks jwksFetcher` field, wired to `httpJWKSFetcher` in `NewOIDCHandlers`
+  - `OIDCCallback` calls `verifyRS256IDToken` instead of the removed `parseIDTokenClaims`
+  - `parseIDTokenClaims` (unsigned, Step 5 legacy) removed
+- `go/internal/authserver/oidc_test.go` — mock IdP upgraded:
+  - Generates a real RSA 2048-bit test key at `init()` time (`testRSAKey`)
+  - Mock IdP now serves `/jwks` endpoint with `testJWKS()` JWKS document
+  - Discovery document now includes `jwks_uri`
+  - Token endpoint signs id_tokens with `testRSAKey` (RS256, kid=`test-key-1`)
+  - All 12 existing OIDC tests (OIDC-01..12) pass with real signatures
+- `go/internal/authserver/oidc_jwks_test.go` — 5 new unit tests (OIDC-13..OIDC-17):
+  - OIDC-13: valid RS256 token accepted
+  - OIDC-14: tampered signature rejected
+  - OIDC-15: unknown kid rejected (no matching JWKS key)
+  - OIDC-16: non-RS256 alg rejected before JWKS fetch
+  - OIDC-17: JWKS fetch failure propagated
+- `go/TEST_INDEX.md` — S1-40 updated (50→55 tests); totals 1002→1007 S1, 954→959 `go test ./...`
+
+All 46 packages pass (`go test ./...`).
+
+## Step 9 — (next task)
 
 ### Goal
-TBD — candidates from `docs/architecture/MULTI_TENANCY_DESIGN.md`:
-- OIDC JWKS-based token signature verification (harden Step 5 limitation)
+Candidates from `docs/architecture/MULTI_TENANCY_DESIGN.md`:
 - Tenant provisioning UI (create/edit tenants + IdP config in frontend)
 - Binding management UI (activate/configure managed apps per tenant in frontend)
 - Per-tenant LLM provider key management
+- OIDC JWKS key caching (TTL-based, avoid re-fetching on every callback)
 
 ### Files to read before starting
 - `docs/HANDOVER.md` (this file)
@@ -227,6 +258,37 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ---
 
 ## First prompt for next session
+
+```
+Continue multi-tenancy implementation — Step 9.
+
+Current state: Steps 1–8 are complete and committed to main.
+- Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
+- Step 2: Redis key hardening (97c9d71)
+- Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
+- Step 4: Tenant CRUD API (a534a54)
+- Step 5: OIDC login flow — PKCE + signed state (2de98f5)
+- Step 6: Managed Apps foundation — catalog CRUD + binding activation (7c056fc)
+- Step 7: Runtime parameter injection — {{PARAMS.KEY}} substitution in system prompts (0bbfa28)
+- Step 8: OIDC JWKS RS256 id_token signature verification (see git log for commit)
+All 46 Go packages pass (go test ./..., 1007 S1 tests).
+
+Read docs/HANDOVER.md fully before starting — it is the source of truth.
+
+Goal for Step 9: TBD — see Step 9 section in HANDOVER.md for candidates.
+
+Constraints (all in HANDOVER.md):
+- go test ./... must be zero failures before every commit
+- TenantID comes only from JWT claims via tenantctx typed key — never from headers
+- 500 responses use static strings only — never err.Error()
+- Go runs inside Docker: docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
+- Handler → Service → DAL — no SQL in handlers
+- TEST_INDEX.md updated in same commit as any new test
+```
+
+---
+
+## ARCHIVED: First prompt for Step 7 session
 
 ```
 Continue multi-tenancy implementation — Step 7: Runtime parameter injection.
