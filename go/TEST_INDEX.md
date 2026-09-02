@@ -2144,6 +2144,9 @@ Route: GET /api/v1/runs/{run_id}/artifacts/{artifact_id}
 | `TestArtifactDownload_ScanScanning` | scan_status=scanning → 202 Accepted |
 | `TestArtifactDownload_ScanInfected` | scan_status=infected → 451 Unavailable For Legal Reasons |
 | `TestArtifactDownload_ScanClean` | scan_status=clean → 200 with file content served normally |
+| `TestArtifactDownload_MinIO` | storage_key set + ByteFetcher → bytes fetched from MinIO, 200 with correct body |
+| `TestArtifactDownload_InfectedGone` | storage_key="" + data=nil (infected/scrubbed) → 410 Gone |
+| `TestArtifactDownload_MinIOFetchError` | storage_key set but MinIO fetch fails → 500 |
 
 **Trigger:** any change to `internal/artifacts/handler.go`
 
@@ -2730,7 +2733,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-27 | metrics | 12 |
 | S1-28 | orchestrator | 12 |
 | S1-29 | temporal (worker + serialization + R-4d) | 10 |
-| S1-30 | artifacts (download handler) | 13 |
+| S1-30 | artifacts (download handler) | 16 |
 | S1-31 | auth/tenant_middleware (R-4b) | 15 |
 | S1-32 | tenantctx (R-4b) | 8 |
 | S1-33 | admin/service tenant isolation (R-4c1) | 21 |
@@ -2780,7 +2783,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-87 | middleware pipeline (Registry, Config, Pipeline: 16 tests) + av/clamav scanner (9 tests): TCP+Unix dial, INSTREAM protocol, null-byte response, fail-open, TestPipeline_ProcessorError_ReturnsError | 25 |
 | S1-88 | middleware/job quarantine-first DAL: EnqueueWithQuarantine, LoadFileBytes_QuarantinePath (MinIO fetch), Complete_CleanPath (promote + delete quarantine), Complete_InfectedPath (metadata-only + delete quarantine), Complete_LegacyPath (backward compat) | 5 |
 | S1-89 | internal/storage: New_InvalidEndpoint, New_ValidEndpoint, New_HTTPSEndpoint | 3 |
-| **S1 total** | | **982** |
+| **S1 total** | | **985** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2789,4 +2792,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **939** |
+| **`go test ./...` total** | | **942** |

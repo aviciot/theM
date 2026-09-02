@@ -310,6 +310,9 @@ func run() error {
 
 	// File gate: intercepts A2A file artifacts when security scanning is enabled.
 	// Build MinIO storage client if S3 config is present; otherwise fail-open.
+	// storageClient is the concrete MinIO client shared by the gate and artifact handler.
+	// nil when S3 is not configured (both paths fail-open / serve from Postgres BYTEA).
+	var storageClient *storage.Client
 	var fileGateStore middleware.Store
 	if cfg.S3Endpoint != "" {
 		sc, scErr := storage.New(storage.Config{
@@ -322,6 +325,7 @@ func run() error {
 		if scErr != nil {
 			log.Warn("storage client init failed — security gate will fail-open", "err", scErr)
 		} else {
+			storageClient = sc
 			fileGateStore = sc
 			log.Info("storage client initialised", "endpoint", cfg.S3Endpoint)
 		}
@@ -364,7 +368,7 @@ func run() error {
 	// sub-router catch-all at /api/v1. Chi resolves direct routes before Mount
 	// catch-alls, so registration order ensures the specific path wins.
 	// Use Handler() (not Routes()) so no internal chi routing re-matches the path.
-	artifactHandler := artifacts.New(tokenCache, recorder, log)
+	artifactHandler := artifacts.NewWithFetcher(tokenCache, recorder, storageClient, log)
 	srv.MountArtifacts(artifactHandler.Handler())
 	log.Info("artifact download endpoint mounted", "path", "/api/v1/runs/{run_id}/artifacts/{artifact_id}")
 

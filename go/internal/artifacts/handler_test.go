@@ -99,7 +99,7 @@ func TestArtifactDownload_Success(t *testing.T) {
 	assert.Equal(t, "application/pdf", w.Header().Get("Content-Type"))
 	assert.Contains(t, w.Header().Get("Content-Disposition"), "attachment")
 	assert.Contains(t, w.Header().Get("Content-Disposition"), "report.pdf")
-	assert.Equal(t, "7", w.Header().Get("Content-Length"))
+	assert.Equal(t, "8", w.Header().Get("Content-Length")) // len("PDF data") == 8
 	assert.Equal(t, "PDF data", w.Body.String())
 }
 
@@ -342,4 +342,103 @@ func TestArtifactDownload_ScanClean(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "hello", w.Body.String())
+}
+
+// ── MinIO / quarantine-first path tests ───────────────────────────────────────
+
+// fakeFetcher implements artifacts.ByteFetcher.
+type fakeFetcher struct {
+	data map[string][]byte
+	err  error
+}
+
+func (f *fakeFetcher) GetArtifact(_ context.Context, key string) ([]byte, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if d, ok := f.data[key]; ok {
+		return d, nil
+	}
+	return nil, errors.New("not found")
+}
+
+func newHandlerWithFetcher(store artifacts.ArtifactGetter, fetcher artifacts.ByteFetcher) http.Handler {
+	return artifacts.NewWithFetcher(&fakeAuth{valid: true}, store, fetcher, nil).Routes()
+}
+
+// TestArtifactDownload_MinIO verifies that when storage_key is set the handler
+// fetches bytes from the MinIO fetcher instead of Postgres BYTEA.
+func TestArtifactDownload_MinIO(t *testing.T) {
+	store := &fakeStore{
+		artifacts: map[string]runrecorder.ArtifactMeta{
+			"run-minio:art-minio": {
+				ID:          "art-minio",
+				RunID:       "run-minio",
+				Filename:    "report.pdf",
+				ContentType: "application/pdf",
+				Size:        7,
+				Data:        nil,                         // bytes not in Postgres
+				StorageKey:  "artifacts/art-minio",      // bytes in MinIO
+			},
+		},
+	}
+	fetcher := &fakeFetcher{data: map[string][]byte{
+		"artifacts/art-minio": []byte("pdf-data"),
+	}}
+	h := newHandlerWithFetcher(store, fetcher)
+
+	w := httptest.NewRecorder()
+	r := bearerRequest(http.MethodGet, "/runs/run-minio/artifacts/art-minio", "tok")
+	h.ServeHTTP(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "pdf-data", w.Body.String())
+	assert.Contains(t, w.Header().Get("Content-Disposition"), "report.pdf")
+}
+
+// TestArtifactDownload_InfectedGone verifies that an artifact with data=nil and
+// no storage_key (infected, bytes scrubbed) returns 410 Gone.
+func TestArtifactDownload_InfectedGone(t *testing.T) {
+	store := &fakeStore{
+		artifacts: map[string]runrecorder.ArtifactMeta{
+			"run-inf:art-inf": {
+				ID:          "art-inf",
+				RunID:       "run-inf",
+				Filename:    "virus.exe",
+				ContentType: "application/octet-stream",
+				Size:        100,
+				Data:        nil,  // scrubbed
+				StorageKey:  "",   // no storage key → infected
+			},
+		},
+	}
+	fetcher := &fakeFetcher{}
+	h := newHandlerWithFetcher(store, fetcher)
+
+	w := httptest.NewRecorder()
+	r := bearerRequest(http.MethodGet, "/runs/run-inf/artifacts/art-inf", "tok")
+	h.ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusGone, w.Code)
+}
+
+// TestArtifactDownload_MinIOFetchError verifies that a MinIO read failure returns 500.
+func TestArtifactDownload_MinIOFetchError(t *testing.T) {
+	store := &fakeStore{
+		artifacts: map[string]runrecorder.ArtifactMeta{
+			"run-err:art-err": {
+				ID:         "art-err",
+				RunID:      "run-err",
+				StorageKey: "artifacts/art-err",
+			},
+		},
+	}
+	fetcher := &fakeFetcher{err: errors.New("minio unavailable")}
+	h := newHandlerWithFetcher(store, fetcher)
+
+	w := httptest.NewRecorder()
+	r := bearerRequest(http.MethodGet, "/runs/run-err/artifacts/art-err", "tok")
+	h.ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }

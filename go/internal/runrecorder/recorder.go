@@ -201,6 +201,10 @@ type ArtifactMeta struct {
 	ContentType string
 	Size        int64
 	Data        []byte
+	// StorageKey is the MinIO artifacts bucket key (e.g. "artifacts/{uuid}").
+	// Non-empty means bytes live in MinIO, not in Data.
+	// Empty string with Data==nil means infected (bytes scrubbed) → 410 Gone.
+	StorageKey string
 }
 
 // RecordArtifact persists a file artifact to them.run_artifacts.
@@ -256,14 +260,18 @@ func (r *Recorder) GetArtifactScanStatus(ctx context.Context, artifactID string)
 // GetArtifact retrieves a file artifact from them.run_artifacts.
 // The query enforces that artifact.run_id == runID so cross-run access is denied.
 // SECURITY: Returned Data must never appear in log output.
+//
+// StorageKey non-empty: bytes live in MinIO artifacts bucket (quarantine-first path).
+// StorageKey empty + Data nil: infected artifact, bytes scrubbed — caller should 410.
+// StorageKey empty + Data non-nil: legacy path, bytes in Postgres.
 func (r *Recorder) GetArtifact(ctx context.Context, runID, artifactID string) (ArtifactMeta, error) {
 	const q = `
-		SELECT id::text, run_id::text, filename, content_type, size, data
+		SELECT id::text, run_id::text, filename, content_type, size, data, COALESCE(storage_key, '')
 		FROM them.run_artifacts
 		WHERE id = $1::uuid AND run_id = $2::uuid`
 	row := r.db.QueryRow(ctx, q, artifactID, runID)
 	var a ArtifactMeta
-	if err := row.Scan(&a.ID, &a.RunID, &a.Filename, &a.ContentType, &a.Size, &a.Data); err != nil {
+	if err := row.Scan(&a.ID, &a.RunID, &a.Filename, &a.ContentType, &a.Size, &a.Data, &a.StorageKey); err != nil {
 		return a, fmt.Errorf("runrecorder: get artifact %s: %w", artifactID, err)
 	}
 	return a, nil

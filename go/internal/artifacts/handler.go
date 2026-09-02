@@ -3,9 +3,9 @@
 // Security model:
 //   - Bearer token authentication (same as WS/SSE — NOT RequireSuperAdmin JWT)
 //   - run_id + artifact_id pair verified in a single DB query (cross-run denied)
-//   - Artifact data fetched from PostgreSQL, never from the filesystem
+//   - Bytes served from MinIO (storage_key set) or Postgres BYTEA (legacy), never filesystem
 //   - No os.Open, filepath.Join, or os.ReadFile in this path
-//   - Client disconnect cancels the DB fetch via r.Context()
+//   - Client disconnect cancels the DB/MinIO fetch via r.Context()
 //   - Binary data never appears in log output
 //   - Content-Disposition uses RFC 5987 encoding for non-ASCII filenames
 package artifacts
@@ -35,6 +35,13 @@ type ArtifactGetter interface {
 	GetArtifactScanStatus(ctx context.Context, artifactID string) (string, error)
 }
 
+// ByteFetcher retrieves raw bytes from the object store by storage key.
+// Implemented by *storage.Client in production; nil disables MinIO serving
+// (falls back to Postgres BYTEA for legacy artifacts).
+type ByteFetcher interface {
+	GetArtifact(ctx context.Context, key string) ([]byte, error)
+}
+
 // Authenticator validates a bearer token and returns its metadata.
 type Authenticator interface {
 	Validate(ctx context.Context, raw string) (*auth.TokenInfo, error)
@@ -43,17 +50,27 @@ type Authenticator interface {
 // Handler serves artifact download requests.
 // Route: GET /api/v1/runs/{run_id}/artifacts/{artifact_id}
 type Handler struct {
-	auth   Authenticator
-	store  ArtifactGetter
-	logger *slog.Logger
+	auth    Authenticator
+	store   ArtifactGetter
+	fetcher ByteFetcher // may be nil (legacy/no MinIO)
+	logger  *slog.Logger
 }
 
-// New creates a Handler.
+// New creates a Handler without a MinIO fetcher (legacy mode — bytes from Postgres).
 func New(authenticator Authenticator, store ArtifactGetter, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Handler{auth: authenticator, store: store, logger: logger}
+}
+
+// NewWithFetcher creates a Handler with a MinIO byte fetcher for the
+// quarantine-first path. When artifact.StorageKey is set, bytes are fetched
+// from MinIO instead of Postgres BYTEA.
+func NewWithFetcher(authenticator Authenticator, store ArtifactGetter, fetcher ByteFetcher, logger *slog.Logger) *Handler {
+	h := New(authenticator, store, logger)
+	h.fetcher = fetcher
+	return h
 }
 
 // Routes registers the artifact download endpoint on a chi sub-router.
@@ -140,8 +157,7 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Fetch artifact — use r.Context() so client disconnect cancels the DB call.
-	// SECURITY: artifact.Data must never be logged.
+	// Fetch artifact metadata — use r.Context() so client disconnect cancels the DB call.
 	artifact, err := h.store.GetArtifact(r.Context(), runID, artifactID)
 	if err != nil {
 		if isNotFound(err) {
@@ -154,24 +170,46 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve bytes: MinIO (quarantine-first) → Postgres BYTEA (legacy) → 410 (infected/scrubbed).
+	// SECURITY: bytes must never appear in log output.
+	var data []byte
+	switch {
+	case artifact.StorageKey != "" && h.fetcher != nil:
+		// Clean quarantine-first artifact: bytes in MinIO artifacts bucket.
+		data, err = h.fetcher.GetArtifact(r.Context(), artifact.StorageKey)
+		if err != nil {
+			h.logger.Warn("artifacts: MinIO fetch failed",
+				"artifact_id", artifactID, "storage_key", artifact.StorageKey, "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+	case artifact.StorageKey == "" && artifact.Data == nil:
+		// Infected artifact: bytes were scrubbed, no storage key.
+		writeJSON(w, http.StatusGone, map[string]string{
+			"error":       "artifact unavailable: content was removed",
+			"artifact_id": artifactID,
+		})
+		return
+	default:
+		// Legacy path: bytes stored in Postgres BYTEA.
+		data = artifact.Data
+	}
+
 	// Validate and sanitize content type.
 	ct := safeContentType(artifact.ContentType)
 
-	// Sanitize filename again at response time (defense in depth).
+	// Sanitize filename at response time (defense in depth).
 	filename := safeResponseFilename(artifact.Filename)
 
 	// Set response headers.
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Disposition", contentDisposition(filename))
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", artifact.Size))
-	// Prevent caching of sensitive artifact data.
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.WriteHeader(http.StatusOK)
 
-	// Stream bytes to the client. io.Copy respects client disconnects via
-	// the underlying ResponseWriter's write failing if the connection is closed.
-	// SECURITY: artifact.Data is the raw bytes — never log it.
-	_, _ = io.Copy(w, bytes.NewReader(artifact.Data))
+	// SECURITY: data is raw bytes — never log it.
+	_, _ = io.Copy(w, bytes.NewReader(data))
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
