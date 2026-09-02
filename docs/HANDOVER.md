@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 10
+# Handover — Multi-Tenancy Step 11
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** 441f9e7 (feat(multi-tenancy): Step 10 — Tenant provisioning UI + PATCH /admin/tenants/{id})
-**Steps complete:** 1 → 10 (all 46 Go packages pass, 1022 S1 tests)
+**HEAD:** 59105c4 (feat(multi-tenancy): Step 11 — Binding management UI + platform-level binding API)
+**Steps complete:** 1 → 11 (all 45 Go packages pass, 1026 S1 tests, 978 go test ./...)
 
 ---
 
@@ -58,6 +58,7 @@
 | Step 8 | OIDC JWKS RS256 id_token signature verification | Complete | 99fc33c |
 | Step 9 | OIDC JWKS key caching (TTL-based, rotation-aware) | Complete | 2056550 |
 | Step 10 | Tenant provisioning UI — PATCH /admin/tenants/{id} + frontend Tenants page | Complete | 441f9e7 |
+| Step 11 | Binding management UI — platform-level binding API + frontend Managed Apps page | Complete | 59105c4 |
 
 ---
 
@@ -238,12 +239,35 @@ All 46 packages pass.
 
 All 46 Go packages pass (`go test ./...`); 1022 S1 tests, 974 `go test ./...` total. TypeScript: zero new errors.
 
-## Step 11 — (next task)
+## Step 11 — COMPLETE
+
+### What Step 11 built
+
+**Go backend:**
+- `go/internal/admin/managed_apps.go`:
+  - `PlatformRoutes` extended with two new endpoints:
+    - `GET /admin/tenants/{tenant_id}/managed-app-bindings` — list all bindings for any tenant (by path param)
+    - `PUT /admin/tenants/{tenant_id}/managed-app-bindings/{app_id}` — upsert binding for any tenant (by path param)
+  - `ListBindingsByTenant` + `UpsertBindingByTenant` handlers — tenant_id from path, no AdminTenantMiddleware, reuse existing DAL methods
+- `go/internal/admin/managed_apps_test.go`: MA-11..14 (ListBindingsByTenant, ListBindingsByTenant_Empty, UpsertBindingByTenant, UpsertBindingByTenant_MissingConfig)
+- `go/TEST_INDEX.md`: S1-92 updated (10→14 tests); totals 1022→1026 S1, 974→978 go test ./...
+
+**Frontend:**
+- `frontend/src/lib/apiTypes.ts`: `ManagedApp`, `ManagedAppParam`, `ManagedAppDetail`, `ManagedAppBinding`, `ManagedAppBindingInput` types
+- `frontend/src/lib/api.ts`: `listManagedApps`, `getManagedApp`, `listManagedAppBindings`, `upsertManagedAppBinding`
+- `frontend/src/app/admin/managed-apps/page.tsx`: Binding management page:
+  - Tenant selector dropdown in header (loads all tenants, switches binding context)
+  - Managed app catalog grid — each card shows app name/slug/version + binding status (active/inactive/not bound)
+  - `BindingPanel` side panel: active toggle, per-param inputs (text/password/enum), save button
+  - `BindingPanel` pre-fills from existing binding config; inline create on first save
+- `frontend/src/components/Sidebar.tsx`: "Managed Apps" nav entry (`extension` icon); removes pre-existing duplicate Tenants entry
+
+## Step 12 — (next task)
 
 ### Goal
 Candidates from `docs/architecture/MULTI_TENANCY_DESIGN.md`:
-- Binding management UI (activate/configure managed apps per tenant in frontend)
-- Per-tenant LLM provider key management
+- Per-tenant LLM provider key management (tenant-scoped LLM provider overrides)
+- Tenant-level quotas and rate limits UI
 
 ### Files to read before starting
 - `docs/HANDOVER.md` (this file)
@@ -304,9 +328,9 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 11.
+Continue multi-tenancy implementation — Step 12.
 
-Current state: Steps 1–10 are complete and pushed to main (HEAD: 441f9e7).
+Current state: Steps 1–11 are complete and committed to main (HEAD: 59105c4).
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
 - Step 2: Redis key hardening (97c9d71)
 - Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
@@ -317,11 +341,12 @@ Current state: Steps 1–10 are complete and pushed to main (HEAD: 441f9e7).
 - Step 8: OIDC JWKS RS256 id_token signature verification — stdlib only, no third-party (99fc33c)
 - Step 9: OIDC JWKS key caching — TTL-based, rotation-aware (2056550)
 - Step 10: Tenant provisioning UI + PATCH /admin/tenants/{id} (441f9e7)
-All 46 Go packages pass (go test ./..., 1022 S1 tests, 974 go test ./... total).
+- Step 11: Binding management UI — platform-level binding API + frontend Managed Apps page (59105c4)
+All 45 Go packages pass (go test ./..., 1026 S1 tests, 978 go test ./... total).
 
 Read docs/HANDOVER.md fully before starting — it is the source of truth.
 
-Goal for Step 11: see Step 11 section in HANDOVER.md for candidates.
+Goal for Step 12: see Step 12 section in HANDOVER.md for candidates.
 
 Constraints (all in HANDOVER.md):
 - go test ./... must be zero failures before every commit
