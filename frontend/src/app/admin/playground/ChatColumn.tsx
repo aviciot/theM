@@ -110,7 +110,7 @@ export function ChatColumn({ target, color, sharedInput, onSharedSent, showHeade
 
   const conn = useChatConnection({ target, ttsEnabled, orchName });
   const { messages, trace, busy, status, setStatus: connSetStatus, activities, contextId, restoredSession,
-    setRestoredSession, runIdRef, sendText, stopRun, clearChat, resumeSession } = conn;
+    setRestoredSession, runId, runIdRef, sendText, stopRun, clearChat, resumeSession } = conn;
 
   const setSpeaking = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
     setSpeakingLocal(val as boolean);
@@ -503,9 +503,9 @@ export function ChatColumn({ target, color, sharedInput, onSharedSent, showHeade
             <TabBtn label="Sessions" active={debugTab === 'sessions'} onClick={() => setDebugTab('sessions')} />
           </div>
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            {debugTab === 'trace' && <TraceTab trace={trace} traceBottom={traceBottom} runId={runIdRef.current} contextId={contextId} />}
-            {debugTab === 'tasks' && <TasksTab runId={runIdRef.current} busy={busy} />}
-            {debugTab === 'artifacts' && <ArtifactsTab runId={runIdRef.current} busy={busy} />}
+            {debugTab === 'trace' && <TraceTab trace={trace} traceBottom={traceBottom} runId={runId} contextId={contextId} />}
+            {debugTab === 'tasks' && <TasksTab runId={runId} busy={busy} />}
+            {debugTab === 'artifacts' && <ArtifactsTab runId={runId} busy={busy} />}
             {debugTab === 'sessions' && <SessionsTab currentContextId={contextId} onResume={wrappedResumeSession} />}
           </div>
         </div>

@@ -23,6 +23,7 @@ export interface UseChatConnectionResult {
   contextId: string | null;
   restoredSession: ContextSession | null;
   setRestoredSession: React.Dispatch<React.SetStateAction<ContextSession | null>>;
+  runId: string | null;
   runIdRef: React.MutableRefObject<string | null>;
   chatWsRef: React.MutableRefObject<WebSocket | null>;
   dashWsRef: React.MutableRefObject<WebSocket | null>;
@@ -44,6 +45,7 @@ export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConne
   const [activities, setActivities] = useState<AgentActivity[]>([]);
   const [, setSpeakingState] = useState(false);
 
+  const [runId, setRunId] = useState<string | null>(null);
   const activitiesRef = useRef<AgentActivity[]>([]);
   const chatWsRef = useRef<WebSocket | null>(null);
   const dashWsRef = useRef<WebSocket | null>(null);
@@ -146,6 +148,7 @@ export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConne
             const cid = ev.contextId as string | undefined;
             if (rid) {
               runIdRef.current = rid;
+              setRunId(rid);
               setStatus(`Run ${rid.slice(0, 8)}…`);
               openDashWs(rid);
             }
@@ -232,6 +235,7 @@ export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConne
         }
         if (msg.type === 'ready') {
           runIdRef.current = msg.run_id;
+          setRunId(msg.run_id as string);
           if (msg.context_id) setContextId(msg.context_id as string);
           setMessages(prev => [...prev, { role: 'assistant', text: '', pending: true }]);
           setStatus(`Run ${(msg.run_id as string).slice(0, 8)}…`);
@@ -459,7 +463,7 @@ export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConne
   const clearChat = useCallback(() => {
     setMessages([]); setTrace([]); setStatus('');
     setActivities([]); activitiesRef.current = [];
-    setContextId(null); setRestoredSession(null); runIdRef.current = null;
+    setContextId(null); setRestoredSession(null); runIdRef.current = null; setRunId(null);
     const storageKey = `them:playground:ctx:${targetStorageKey(target)}`;
     localStorage.removeItem(storageKey);
   }, [target]);
@@ -491,6 +495,7 @@ export function useChatConnection({ target, ttsEnabled, orchName }: UseChatConne
     activities,
     contextId,
     restoredSession, setRestoredSession,
+    runId,
     runIdRef,
     chatWsRef,
     dashWsRef,
