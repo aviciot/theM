@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 6
+# Handover — Multi-Tenancy Step 7
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** 2de98f5 (feat(multi-tenancy): Step 5 — OIDC login flow)
-**Steps complete:** 1 → 5 (all 46 Go packages pass, 50 authserver tests)
+**HEAD:** 0bbfa28 (feat(multi-tenancy): Step 7 — Runtime parameter injection for Managed Apps)
+**Steps complete:** 1 → 7 (all 46 Go packages pass, 1002 S1 tests)
 
 ---
 
@@ -54,6 +54,7 @@
 | Step 4 | Tenant CRUD API (`GET/POST /admin/tenants`, `GET /admin/tenants/{id}`) | Complete | a534a54 |
 | Step 5 | OIDC login flow | Complete | 2de98f5 |
 | Step 6 | Managed Apps foundation | Complete | 7c056fc |
+| Step 7 | Runtime parameter injection | Complete | 0bbfa28 |
 
 ---
 
@@ -134,7 +135,49 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_055.sql
 
 ---
 
-## Step 7 — Runtime parameter injection (next task)
+## Step 7 — COMPLETE
+
+### What Step 7 built
+
+- `go/internal/temporal/workerconfig/loader.go` — Added:
+  - `ManagedAppParams` struct: `Config map[string]any` (Secrets field deferred — KMS decision pending)
+  - `ApplyParamSubstitution(prompt string, params *ManagedAppParams) string` — replaces `{{PARAMS.KEY}}` placeholders; leaves unmatched keys unchanged; nil-safe
+  - `ManagedAppParams *ManagedAppParams` field on `RunConfig`
+  - `tenantID string` added as 5th parameter to `Loader` interface and `PgxLoader.LoadRunConfig`
+  - `loadAppType(ctx, applicationID)` — queries `applications.app_type`; non-fatal (returns "tenant" on error)
+  - `loadBindingParams(ctx, appID, tenantID)` — queries `managed_app_bindings.config` WHERE `enabled = true`; non-fatal (returns nil on miss or error)
+  - At run start: if `app_type = 'managed'` and binding found, `RunConfig.ManagedAppParams` is populated and `{{PARAMS.KEY}}` is substituted into the system prompt
+- `go/internal/temporal/activities.go` — `LoadRunConfig` call passes `input.TenantID`
+- `go/internal/voice/handler.go` — both `LoadRunConfig` calls pass `cfg.TenantID`
+- `go/internal/temporal/worker_test.go` — fake `LoadRunConfig` updated for new signature
+- `go/internal/temporal/workerconfig/loader_test.go` — 3 new tests (MAP-01..03): substitution, nil-safe, zero-value
+- `go/TEST_INDEX.md` — S1-93 added; totals 999 → 1002 (S1), 951 → 954 (go test ./...)
+
+### Step 7 constraints and notes
+
+- Secrets NOT populated: `ManagedAppParams` has no `Secrets` field — KMS/encryption decision deferred
+- Non-fatal binding lookup: binding not found or DB error → `ManagedAppParams = nil`, run proceeds normally
+- Voice handler passes tenant from resolved EP config (`cfg.TenantID`)
+
+---
+
+## Step 8 — (next task)
+
+### Goal
+TBD — candidates from `docs/architecture/MULTI_TENANCY_DESIGN.md`:
+- OIDC JWKS-based token signature verification (harden Step 5 limitation)
+- Tenant provisioning UI (create/edit tenants + IdP config in frontend)
+- Binding management UI (activate/configure managed apps per tenant in frontend)
+- Per-tenant LLM provider key management
+
+### Files to read before starting
+- `docs/HANDOVER.md` (this file)
+- `docs/CURRENT.md`
+- `docs/architecture/MULTI_TENANCY_DESIGN.md`
+
+---
+
+## Step 7 — Runtime parameter injection (original plan, now complete)
 
 ### Goal
 Wire the Managed App binding into the agent/orchestrator invocation path so that when a run
