@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 8
+# Handover — Multi-Tenancy Step 9
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** 99fc33c (feat(multi-tenancy): Step 8 — OIDC JWKS RS256 id_token signature verification)
-**Steps complete:** 1 → 8 (all 46 Go packages pass, 1007 S1 tests)
+**HEAD:** 2056550 (feat(multi-tenancy): Step 9 — OIDC JWKS key caching (TTL-based, rotation-aware))
+**Steps complete:** 1 → 9 (all 46 Go packages pass, 1010 S1 tests)
 
 ---
 
@@ -56,6 +56,7 @@
 | Step 6 | Managed Apps foundation | Complete | 7c056fc |
 | Step 7 | Runtime parameter injection | Complete | 0bbfa28 |
 | Step 8 | OIDC JWKS RS256 id_token signature verification | Complete | 99fc33c |
+| Step 9 | OIDC JWKS key caching (TTL-based, rotation-aware) | Complete | 2056550 |
 
 ---
 
@@ -192,14 +193,33 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_055.sql
 
 All 46 packages pass (`go test ./...`).
 
-## Step 9 — (next task)
+## Step 9 — COMPLETE
+
+### What Step 9 built
+
+- `go/internal/authserver/oidc_jwks.go` — Added TTL-based JWKS cache:
+  - `jwksCacheEntry` struct: cached `*jwksDocument` + `expiresAt time.Time`
+  - `jwksCache` struct: `sync.Map` keyed by `jwks_uri`, configurable TTL, default 5 minutes
+  - `newJWKSCache(inner jwksFetcher, ttl time.Duration) *jwksCache` — constructor
+  - `FetchJWKS` returns cached entry if still fresh, else fetches from upstream and stores
+  - `fetchFresh` bypasses cache and re-fetches (called on unknown kid — key rotation path)
+  - `findKey` helper extracted (replaces inline loop in `verifyRS256IDToken`)
+  - `verifyRS256IDToken` updated: on kid-not-found with a `*jwksCache` fetcher, calls `fetchFresh` once before failing
+- `go/internal/authserver/oidc.go` — `NewOIDCHandlers` wires `newJWKSCache(httpJWKSFetcher, defaultJWKSCacheTTL)` instead of raw `httpJWKSFetcher`
+- `go/internal/authserver/oidc_jwks_test.go` — 3 new tests (OIDC-18..20):
+  - OIDC-18: second verify call within TTL → only 1 upstream fetch (cache hit)
+  - OIDC-19: TTL=1ns → expires before second call → 2 upstream fetches
+  - OIDC-20: cached doc has "old-key", token carries "new-key" → 1 re-fetch, succeeds
+
+All 46 packages pass.
+
+## Step 10 — (next task)
 
 ### Goal
 Candidates from `docs/architecture/MULTI_TENANCY_DESIGN.md`:
 - Tenant provisioning UI (create/edit tenants + IdP config in frontend)
 - Binding management UI (activate/configure managed apps per tenant in frontend)
 - Per-tenant LLM provider key management
-- OIDC JWKS key caching (TTL-based, avoid re-fetching on every callback)
 
 ### Files to read before starting
 - `docs/HANDOVER.md` (this file)
@@ -249,7 +269,7 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_055.sql
 
 # Read before starting
 cat docs/HANDOVER.md
-cat docs/architecture/MULTI_TENANCY_DESIGN.md  # §19 (Runtime injection)
+cat docs/architecture/MULTI_TENANCY_DESIGN.md
 
 # Run tests to confirm baseline (zero failures required)
 docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
@@ -260,9 +280,9 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 9.
+Continue multi-tenancy implementation — Step 10.
 
-Current state: Steps 1–8 are complete and committed to main.
+Current state: Steps 1–9 are complete and committed to main.
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
 - Step 2: Redis key hardening (97c9d71)
 - Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
@@ -270,12 +290,13 @@ Current state: Steps 1–8 are complete and committed to main.
 - Step 5: OIDC login flow — PKCE + signed state (2de98f5)
 - Step 6: Managed Apps foundation — catalog CRUD + binding activation (7c056fc)
 - Step 7: Runtime parameter injection — {{PARAMS.KEY}} substitution in system prompts (0bbfa28)
-- Step 8: OIDC JWKS RS256 id_token signature verification (99fc33c)
-All 46 Go packages pass (go test ./..., 1007 S1 tests).
+- Step 8: OIDC JWKS RS256 id_token signature verification — stdlib only, no third-party (99fc33c)
+- Step 9: OIDC JWKS key caching — TTL-based, rotation-aware (2056550)
+All 46 Go packages pass (go test ./..., 1010 S1 tests, 962 go test ./... total).
 
 Read docs/HANDOVER.md fully before starting — it is the source of truth.
 
-Goal for Step 9: TBD — see Step 9 section in HANDOVER.md for candidates.
+Goal for Step 10: see Step 10 section in HANDOVER.md for candidates.
 
 Constraints (all in HANDOVER.md):
 - go test ./... must be zero failures before every commit
