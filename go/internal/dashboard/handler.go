@@ -277,8 +277,20 @@ func (h *Handler) sendSnapshots(ctx context.Context, cw *connWriter, channels []
 		case strings.HasPrefix(ch, "scan:"):
 			artifactID := ch[len("scan:"):]
 			h.sendScanSnapshot(ctx, cw, ch, artifactID)
+		case ch == "services:stats":
+			h.sendServicesHealthSnapshot(ctx, cw)
 		}
 	}
+}
+
+// sendServicesHealthSnapshot pushes current worker health on subscribe so the
+// badge is immediately correct without waiting for the next heartbeat publish.
+func (h *Handler) sendServicesHealthSnapshot(ctx context.Context, cw *connWriter) {
+	val, err := h.redis.Get(ctx, "them:dash:services:health")
+	workerUp := err == nil && val != ""
+	event := map[string]any{"type": "services_health", "worker_up": workerUp}
+	eventJSON, _ := json.Marshal(event)
+	_ = cw.writeJSON(map[string]any{"channel": "services:stats", "event": json.RawMessage(eventJSON)})
 }
 
 // sendAppsSnapshot delivers the last known app liveness statuses from the

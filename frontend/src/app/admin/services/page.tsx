@@ -231,8 +231,8 @@ export default function ServicesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (showSpinner = true) => {
+    if (showSpinner) setLoading(true);
     setError('');
     try {
       const data = await themApi.getServicesStats(timeWindow);
@@ -240,7 +240,7 @@ export default function ServicesPage() {
     } catch (e) {
       setError((e as Error).message ?? 'Failed to load stats');
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   }, [timeWindow]);
 
@@ -270,7 +270,15 @@ export default function ServicesPage() {
             try {
               const msg = JSON.parse(e.data as string);
               if (msg.type === 'ping' || msg.type === 'subscribed') return;
-              if (msg.channel === 'services:stats') load();
+              if (msg.channel === 'services:stats') {
+                if (msg.event?.type === 'services_health') {
+                  // Snapshot on subscribe — update badge only, no re-fetch
+                  setStats(prev => prev ? { ...prev, worker_up: msg.event.worker_up } : prev);
+                } else {
+                  // Scan job completed — re-fetch stats silently
+                  load(false);
+                }
+              }
             } catch { /* ignore parse errors */ }
           };
           ws.onerror = () => { /* handled by onclose */ };

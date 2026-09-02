@@ -127,8 +127,9 @@ func run() error {
 		writeHeartbeat := func() {
 			cmd := rc.B().Set().Key("them:dash:services:health").Value(`{"status":"up"}`).Ex(30 * time.Second).Build()
 			_ = rc.Do(ctx, cmd).Error()
-			pub := rc.B().Publish().Channel("them:dash:services:stats").Message(`{}`).Build()
-			_ = rc.Do(ctx, pub).Error()
+			// Do NOT publish to services:stats here — that would cause the
+			// frontend to re-fetch every 10s and flash the screen. Stats
+			// publish only happens after a real scan job completes.
 		}
 		writeHeartbeat() // immediate on startup
 		for {
