@@ -27,6 +27,10 @@ const (
 	AdmitErrNotImplemented
 	// AdmitErrInternal — unexpected internal error (logged internally; static string to client).
 	AdmitErrInternal
+	// AdmitErrQuotaConcurrentRuns — tenant max_concurrent_runs quota exceeded.
+	AdmitErrQuotaConcurrentRuns
+	// AdmitErrQuotaRunsPerMinute — tenant runs_per_minute quota exceeded.
+	AdmitErrQuotaRunsPerMinute
 )
 
 // AdmitError is the typed error returned by Lifecycle.Admit on failure.
@@ -56,6 +60,10 @@ func (e *AdmitError) Error() string {
 		return "service unavailable"
 	case AdmitErrNotImplemented:
 		return "not implemented"
+	case AdmitErrQuotaConcurrentRuns:
+		return "concurrent run limit exceeded"
+	case AdmitErrQuotaRunsPerMinute:
+		return "run rate limit exceeded"
 	default:
 		return "internal error"
 	}
@@ -75,7 +83,7 @@ func httpStatusForKind(k AdmitErrorKind) int {
 		return 401
 	case AdmitErrForbidden:
 		return 403
-	case AdmitErrCapExceeded, AdmitErrRateLimited:
+	case AdmitErrCapExceeded, AdmitErrRateLimited, AdmitErrQuotaConcurrentRuns, AdmitErrQuotaRunsPerMinute:
 		return 429
 	case AdmitErrQueueFull, AdmitErrDBUnavailable:
 		return 503

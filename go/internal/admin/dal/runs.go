@@ -157,6 +157,18 @@ func (d *DB) GetRunStats(ctx context.Context, tenantID string) (RunStats, error)
 	return stats, nil
 }
 
+// CountActiveRuns returns the number of runs for tenantID in an active state
+// (admitted, running, or input_required). Used by quota enforcement to check
+// max_concurrent_runs before admitting a new run.
+func (d *DB) CountActiveRuns(ctx context.Context, tenantID string) (int, error) {
+	const q = `SELECT COUNT(*)::int FROM them.runs
+	           WHERE tenant_id = $1::uuid
+	             AND status IN ('admitted', 'running', 'input_required')`
+	var n int
+	err := d.q.QueryRow(ctx, q, tenantID).Scan(&n)
+	return n, err
+}
+
 // GetRunDetail returns a run with its steps, usage rows, and child runs.
 func (d *DB) GetRunDetail(ctx context.Context, tenantID, runID string) (RunDetail, error) {
 	run, err := d.GetRun(ctx, tenantID, runID)

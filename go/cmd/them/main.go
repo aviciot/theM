@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/aviciot/them/internal/a2a"
 	"github.com/aviciot/them/internal/admin"
+	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/agentregistry"
 	"github.com/aviciot/them/internal/appliveness"
@@ -35,6 +37,7 @@ import (
 	"github.com/aviciot/them/internal/health"
 	"github.com/aviciot/them/internal/middleware"
 	"github.com/aviciot/them/internal/storage"
+	"github.com/aviciot/them/internal/quota"
 	"github.com/aviciot/them/internal/ratelimit"
 	"github.com/aviciot/them/internal/reconciler"
 	"github.com/aviciot/them/internal/runrecorder"
@@ -233,6 +236,15 @@ func run() error {
 		temporalCli,
 		log,
 	)
+
+	// ── 16a. Wire quota enforcer ─────────────────────────────────────────────
+	// Reuses the same RateLimitClient already constructed above for per-token RL.
+	quotaDB := dal.NewDB(admin.NewPgxQuerier(database.Pool()))
+	quotaRedis := cache.NewRateLimitClient(redisCache.Client())
+	quotaEnf := quota.New(quotaDB, quotaRedis)
+	quotaAdapter := &tenantQuotaAdapter{db: quotaDB, enforcer: quotaEnf}
+	execLifecycle.WithQuotaEnforcer(quotaAdapter)
+	log.Info("quota enforcer wired (max_concurrent_runs + runs_per_minute)")
 
 	// ── 16b. Wire dashboard WebSocket handler (/ws/dashboard) ───────────────
 	// Pure Redis pub/sub relay — multiplexes agent scan events, run events,
@@ -458,6 +470,35 @@ func (a *fileGateAdapter) Intercept(ctx context.Context, in a2a.FileInterceptInp
 type jwtFallbackAuthenticator struct {
 	primary   transport.Authenticator
 	jwtSecret []byte
+}
+
+// tenantQuotaAdapter implements execution.QuotaEnforcer. It loads the tenant's
+// quota row from the DB and delegates enforcement to quota.Enforcer. When no
+// quota row exists the check is skipped (fail-open).
+type tenantQuotaAdapter struct {
+	db       *dal.DB
+	enforcer *quota.Enforcer
+}
+
+func (a *tenantQuotaAdapter) CheckQuota(ctx context.Context, tenantID string) error {
+	q, err := a.db.GetQuota(ctx, tenantID)
+	if err != nil {
+		// No quota row → no enforcement. Any other DB error → also fail-open.
+		return nil
+	}
+	qe := quota.Quota{
+		MaxConcurrentRuns: q.MaxConcurrentRuns,
+		RunsPerMinute:     q.RunsPerMinute,
+	}
+	enforceErr := a.enforcer.Check(ctx, tenantID, qe)
+	switch {
+	case errors.Is(enforceErr, quota.ErrConcurrentRunsExceeded):
+		return execution.ErrQuotaConcurrentRuns
+	case errors.Is(enforceErr, quota.ErrRunsRateLimited):
+		return execution.ErrQuotaRunsPerMinute
+	default:
+		return enforceErr
+	}
 }
 
 func (a *jwtFallbackAuthenticator) Validate(ctx context.Context, rawToken string) (*auth.TokenInfo, error) {

@@ -33,6 +33,22 @@ type RunCreator interface {
 	UpdateRunStatus(ctx context.Context, runID string, status domain.RunStatus, errMsg string) error
 }
 
+// QuotaEnforcer checks per-tenant run quotas before a run is admitted.
+// CheckQuota returns ErrQuotaConcurrentRuns or ErrQuotaRunsPerMinute when
+// a limit is exceeded. The production implementation loads the quota row
+// from the DB and delegates to quota.Enforcer.
+type QuotaEnforcer interface {
+	CheckQuota(ctx context.Context, tenantID string) error
+}
+
+// ErrQuotaConcurrentRuns is the sentinel returned by QuotaEnforcer when
+// max_concurrent_runs is reached. Lifecycle maps it to AdmitErrQuotaConcurrentRuns.
+var ErrQuotaConcurrentRuns = errors.New("quota: max concurrent runs exceeded")
+
+// ErrQuotaRunsPerMinute is the sentinel returned by QuotaEnforcer when
+// runs_per_minute is exceeded. Lifecycle maps it to AdmitErrQuotaRunsPerMinute.
+var ErrQuotaRunsPerMinute = errors.New("quota: runs per minute exceeded")
+
 // Lifecycle executes the shared admission-and-run-start pipeline used by the WS,
 // SSE, and A2A protocol handlers. It is constructed once at server startup and
 // shared across all handlers via dependency injection.
@@ -46,6 +62,7 @@ type Lifecycle struct {
 	sessions transport.SessionStore
 	recorder RunCreator
 	temporal transport.TemporalClientExecutor
+	quota    QuotaEnforcer // optional; nil = no quota enforcement
 	logger   *slog.Logger
 }
 
@@ -75,6 +92,14 @@ func NewLifecycle(
 		panic("execution.NewLifecycle: temporal must not be nil")
 	}
 	return newLifecycle(auth, epLoader, gateStore, sessions, recorder, temporal, logger)
+}
+
+// WithQuotaEnforcer attaches a QuotaEnforcer to an existing Lifecycle.
+// Call this after NewLifecycle or NewLifecycleWithRecorder to enable quota
+// enforcement. If not called, quota enforcement is skipped (fail-open).
+func (lc *Lifecycle) WithQuotaEnforcer(qe QuotaEnforcer) *Lifecycle {
+	lc.quota = qe
+	return lc
 }
 
 // NewLifecycleWithRecorder constructs a Lifecycle using any RunCreator.
@@ -172,6 +197,23 @@ func (lc *Lifecycle) Admit(ctx context.Context, req ExecutionRequest) (*Executio
 	if checkErr := epconfig.CheckAccess(resolvedCfg, tokenHash, userID); checkErr != nil {
 		lc.logger.Debug("execution: access denied", "ep_slug", req.EPSlug, "error", checkErr)
 		return nil, admitErr(AdmitErrForbidden)
+	}
+
+	// ── 5b. Quota enforcement ─────────────────────────────────────────────────
+	// Check per-tenant run limits before consuming a gate slot.
+	// Fail-open when no QuotaEnforcer is configured (nil).
+	if lc.quota != nil {
+		if qErr := lc.quota.CheckQuota(ctx, resolvedCfg.TenantID); qErr != nil {
+			switch {
+			case errors.Is(qErr, ErrQuotaConcurrentRuns):
+				return nil, admitErr(AdmitErrQuotaConcurrentRuns)
+			case errors.Is(qErr, ErrQuotaRunsPerMinute):
+				return nil, admitErr(AdmitErrQuotaRunsPerMinute)
+			default:
+				lc.logger.Warn("execution: quota check failed", "tenant_id", resolvedCfg.TenantID, "error", qErr)
+				return nil, admitErr(AdmitErrInternal)
+			}
+		}
 	}
 
 	// ── 6. Generate IDs (UUID v4 — Python worker requires uuid.UUID() parsing) ─

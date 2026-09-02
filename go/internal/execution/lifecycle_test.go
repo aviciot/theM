@@ -577,6 +577,7 @@ func TestNewLifecycle_PanicsOnNilDeps(t *testing.T) {
 	assert.Panics(t, func() {
 		NewLifecycle(a, nil, g, s, nil, tc, devLogger)
 	}, "nil epLoader must panic")
+
 	assert.Panics(t, func() {
 		NewLifecycle(a, ep, nil, s, nil, tc, devLogger)
 	}, "nil gateStore must panic")
@@ -591,4 +592,63 @@ func TestNewLifecycle_PanicsOnNilDeps(t *testing.T) {
 	assert.Panics(t, func() {
 		NewLifecycle(a, ep, g, s, nil, nil, devLogger)
 	}, "nil temporal must panic (reached only if recorder panic removed)")
+}
+
+// ── fakeQuotaEnforcer ─────────────────────────────────────────────────────────
+
+type fakeQuotaEnforcer struct{ err error }
+
+func (f *fakeQuotaEnforcer) CheckQuota(_ context.Context, _ string) error { return f.err }
+
+// ── LC-QE-01: quota enforcer blocks concurrent runs ───────────────────────────
+
+func TestLifecycle_QuotaConcurrentRunsExceeded(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{}, g, s, r, tmp)
+	lc.WithQuotaEnforcer(&fakeQuotaEnforcer{err: ErrQuotaConcurrentRuns})
+
+	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
+	var ae *AdmitError
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, AdmitErrQuotaConcurrentRuns, ae.Kind)
+	assert.False(t, g.checkCalled, "gate.Check must not be called when quota blocks")
+}
+
+// ── LC-QE-02: quota enforcer blocks runs/min ──────────────────────────────────
+
+func TestLifecycle_QuotaRunsPerMinuteExceeded(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{}, g, s, r, tmp)
+	lc.WithQuotaEnforcer(&fakeQuotaEnforcer{err: ErrQuotaRunsPerMinute})
+
+	_, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
+	var ae *AdmitError
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, AdmitErrQuotaRunsPerMinute, ae.Kind)
+	assert.False(t, g.checkCalled, "gate.Check must not be called when quota blocks")
+}
+
+// ── LC-QE-03: nil quota enforcer — quota check skipped, run admitted ──────────
+
+func TestLifecycle_NilQuotaEnforcer(t *testing.T) {
+	g := &fakeGate{}
+	s := &fakeSession{}
+	r := &fakeRecorder{}
+	tmp := &fakeTemporal{run: &fakeWorkflowRun{}}
+
+	lc := buildLifecycle(publicEP("slug"), &fakeAuth{}, g, s, r, tmp)
+	// no WithQuotaEnforcer call — quota is nil
+
+	h, err := lc.Admit(context.Background(), ExecutionRequest{EPSlug: "slug"})
+	require.NoError(t, err)
+	assert.NotNil(t, h)
+	assert.True(t, g.checkCalled, "gate.Check must be called when quota enforcer is nil")
 }
