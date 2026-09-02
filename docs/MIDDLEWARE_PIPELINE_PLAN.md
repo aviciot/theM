@@ -1,8 +1,8 @@
 # A2A Middleware Pipeline — Implementation Plan
 # the-M platform
 # Created: 2026-09-01
-# Updated: 2026-09-01 — file storage decision, Redis pub/sub progress events
-# Status: DESIGN — not yet implemented
+# Updated: 2026-09-02 — Phases 1–4 + frontend complete; actual implementation details added
+# Status: PHASES 1–4 + FRONTEND COMPLETE. Phase 5 (additional processors) and Phase 6 (reaper) pending.
 
 ---
 
@@ -21,104 +21,91 @@ audit capture follow the same interface.
 
 ## Feature Size Estimate
 
-| Phase | What | Sessions |
+| Phase | What | Status |
 |---|---|---|
-| Phase 1 — Foundation | Schema + interfaces + config API + tests | 1 |
-| Phase 2 — AV scan + worker binary + Docker | ClamAV client, worker loop, compose | 1–2 |
-| Phase 3 — Gateway intercept + download gate + WS/Redis | Core integration | 1 |
-| Phase 4 — UI | Canvas config panel, Monitor badges, Runtime audit tab | 1 |
-| Phase 5 — Additional processors | PII, prompt inject, schema, audit capture | 1 |
-| Phase 6 — Playground | Scan spinner on artifact cards | 0.5 |
-
-**Total: ~6 focused sessions.** Phases 1–3 are the hard backend core. Phase 4 is the
-visible payoff. Phases 5–6 are extensions that plug into the same interface.
+| Phase 1 — Foundation | Schema + interfaces + config API + tests | ✅ DONE (commit `a42fb99`) |
+| Phase 2 — AV scan + worker binary + Docker | ClamAV client, worker loop, compose | ✅ DONE (commit `a42fb99`) |
+| Phase 3 — Gateway intercept + download gate + WS/Redis | Core integration | ✅ DONE |
+| Phase 4 — Quarantine-first MinIO redesign | Quarantine bucket, no BYTEA in Postgres | ✅ DONE (commit `a42fb99`) |
+| Session B — Artifact download handler | MinIO fetch, 410 infected, legacy BYTEA | ✅ DONE (commit `3f74d70`) |
+| Session C — Orchestrator scan subscriber | `file_scanning` / `file_blocked` WS events | ✅ DONE (commit `3cf93b1`) |
+| Session D — Frontend chat bubbles | Spinner → blocked/clean state in chat | ✅ DONE (commit `a174665`) |
+| Phase 5 — Additional processors | PII, prompt inject, schema, audit capture | ⏳ pending |
+| Reaper job | Clean up expired MinIO quarantine objects | ⏳ pending |
 
 ---
 
 ## Architecture
 
 ```
-Agent (any) returns FilePart / TextPart via A2A
+Agent (any) returns FilePart via A2A
     ↓
-Go gateway (them-go-bridge)
-    → intercepts parts at A2A response boundary
-    → stores file bytes temporarily in them.artifacts.file_bytes (BYTEA)
-    → creates artifact row  (scan_status = pending)
-    → enqueues middleware_job row  (processors = [...])
-    → returns artifact reference to user immediately
+Go gateway (them-go-bridge) — FileGate.InterceptInline
+    → uploads file bytes to MinIO them-quarantine bucket
+    → inserts quarantine_artifacts row (storage_key = MinIO key)
+    → inserts run_artifacts row (scan_status='pending', data=NULL, storage_key=NULL)
+    → inserts middleware_job row
+    → emits file_scanning WS event to chat (spinner shown)
+    → spawns goroutine: WaitForScanResult on them:run:<runID> pub/sub (5min timeout)
     ↓
-them-middleware-worker (N replicas, stateless)
-    → SELECT FOR UPDATE SKIP LOCKED from them.middleware_jobs
-    → PUBLISH them:scan:<artifact_id> progress events as each processor runs
-    → runs enabled processors in order (AV → PII → inject → schema → audit)
-    → on CLEAN:    clears file_bytes from DB, updates scan_status = clean
-    → on INFECTED: clears file_bytes from DB, updates scan_status = infected (tombstoned)
-    → PUBLISH final result on them:run:<run_id> channel
+them-middleware-worker (polls middleware_jobs, SELECT FOR UPDATE SKIP LOCKED)
+    → reads bytes from MinIO quarantine via storage_key
+    → scans via ClamAV TCP them-clamd:3310 (INSTREAM protocol)
+    → CLEAN:    PUT bytes to them-artifacts, UPDATE run_artifacts storage_key, DELETE quarantine
+    → INFECTED: UPDATE run_artifacts (data=NULL stays), DELETE quarantine bytes
+    → PUBLISHES artifact_scan_result on them:run:<runID>
     ↓
-Dashboard WS (ws/dashboard)
-    → already subscribed to run:<run_id> channels
-    → forwards artifact_scan_result event to connected Monitor clients
-    ↓
-Monitor View (live, via existing WS)
-    → receives per-processor progress events
-    → artifact row updates in place: scanning… → av_scan ✓ → pii_redact… → clean ✓
+Orchestrator goroutine receives artifact_scan_result
+    → CLEAN/error/timeout → emits file WS event (download link shown in chat)
+    → INFECTED            → emits file_blocked WS event (red blocked bubble in chat)
     ↓
 User download
-    → GET /admin/artifacts/{id}/download
-    → 202 scanning  — job in progress
-    → 200 + bytes   — clean (bytes still in BYTEA until download, then cleared)
-    → 451 blocked   — infected / flagged as block
+    → GET /api/v1/runs/{id}/artifacts/{artifact_id}
+    → storage_key set     → 200 + bytes from MinIO them-artifacts
+    → data=NULL, no key   → 410 Gone (infected/scrubbed)
+    → legacy data!=NULL   → 200 + Postgres BYTEA (pre-quarantine rows)
 ```
 
 ---
 
-## File Storage — Decision
+## File Storage — Implemented Design
 
-**Problem:** the worker needs the file bytes to scan them. After scanning, the user
-needs to download a clean file. Where do the bytes live between agent output and
-user download?
+**Answer: MinIO object storage (quarantine-first)** — NOT Postgres BYTEA as originally planned.
 
-**Answer: Postgres BYTEA column, temporary, with a 5MB cap.**
+The original BYTEA plan was discarded because putting suspected malware bytes in the main
+Postgres DB alongside clean data was architecturally wrong. See `docs/SECURITY_QUARANTINE_REDESIGN.md`
+for the full redesign rationale and flow.
+
+**Two MinIO buckets:**
+- `them-quarantine` — pre-scan bytes, 1-hour TTL object policy
+- `them-artifacts` — confirmed-clean bytes, permanent
+
+**File lifecycle:**
 
 ```
 Agent sends file
     ↓
-Gateway stores bytes in them.artifacts.file_bytes (BYTEA)
+Gateway uploads bytes → them-quarantine bucket (MinIO)
+INSERT quarantine_artifacts (storage_key = MinIO key)
+INSERT run_artifacts (scan_status='pending', data=NULL, storage_key=NULL)
+INSERT middleware_jobs (quarantine_id set)
     ↓  (seconds to ~1 minute while worker scans)
-Worker scans
+Worker claims job, reads bytes from MinIO quarantine
+Worker scans via ClamAV TCP (them-clamd:3310)
     ↓
-CLEAN    → bytes stay in BYTEA until user downloads
-           → after download (or 1h TTL), bytes cleared — only metadata kept
-INFECTED → bytes deleted immediately, row tombstoned
-           → nobody downloads anything
+CLEAN    → PUT bytes to them-artifacts bucket
+           UPDATE run_artifacts SET scan_status='clean', storage_key=<artifacts key>
+           DELETE bytes from them-quarantine
+INFECTED → UPDATE run_artifacts SET scan_status='infected' (data=NULL, storage_key=NULL)
+           DELETE bytes from them-quarantine
+           User download returns 410 Gone
+ERROR    → UPDATE run_artifacts SET scan_status='error'
+           Fail-open: bytes promoted, user can download
 ```
 
-**Why BYTEA and not a Docker volume:**
-- Simple — no shared volume to mount across gateway + worker replicas
-- No extra infra — bytes live in Postgres which is already required
-- Fine for files up to ~5MB (covers JSON reports, short docs, small images)
-- Files over `max_file_mb` (default 5MB) are rejected at the gateway before storage
-
-**What is BYTEA:** a Postgres column type for raw binary data — just a blob of bytes
-stored inside a database row. The gateway writes the bytes in, the worker reads them
-out to scan, the gateway reads them out again to serve the download, then they are
-deleted. It is purely temporary storage, not long-term file hosting.
-
-**If large file support is needed later:** replace the BYTEA write/read with a
-Docker volume or object storage (S3/MinIO). The `Processor` interface and job queue
-do not change — only the storage backend behind `loadPartBytes()` changes.
-
-**File lifecycle in full:**
-
-```
-created_at + scan pending    → file_bytes = <bytes>, scan_status = pending
-worker claims job            → scan_status = scanning
-worker: clean                → scan_status = clean, file_bytes kept for download
-user downloads               → 200 + bytes streamed, file_bytes cleared after read
-  OR: 1h TTL passes          → file_bytes cleared by cleanup goroutine
-worker: infected             → scan_status = infected, file_bytes = NULL immediately
-worker: error (max retries)  → scan_status = failed, file_bytes kept, X-Scan-Warning header on download
-```
+**ClamAV:** TCP connection to `them-clamd:3310` via INSTREAM protocol. Unix socket
+was the original plan but doesn't work cross-container in Docker without complex
+volume wiring.
 
 ---
 
@@ -528,57 +515,54 @@ handler clears it after streaming (whichever happens first — idempotent NULL s
 
 ---
 
-## docker-compose additions
+## docker-compose additions (as implemented, in docker-compose.dev.yml, profile: security)
 
 ```yaml
+  them-clamd:
+    image: clamav/clamav:stable
+    restart: unless-stopped
+    # TCP only — no Unix socket volume (doesn't work cross-container in Docker)
+    networks:
+      - them-network
+    healthcheck:
+      test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+
   them-middleware-worker:
     build:
       context: .
       dockerfile: Dockerfile.middleware-worker
     restart: unless-stopped
     environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=${REDIS_URL}
-      - MIDDLEWARE_WORKER_CONCURRENCY=8
-      - MIDDLEWARE_POLL_INTERVAL_MS=500
-      - CLAMAV_SOCKET=/var/run/clamav/clamd.sock
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    volumes:
-      - clamav-socket:/var/run/clamav
+      - CLAMAV_ADDR=them-clamd:3310   # TCP, not Unix socket
+      - S3_ENDPOINT=http://them-minio:9000
+      - S3_ACCESS_KEY=...
+      - S3_SECRET_KEY=...
+      - S3_QUARANTINE_BUCKET=them-quarantine
+      - S3_ARTIFACTS_BUCKET=them-artifacts
     depends_on:
       - them-postgres
       - them-redis
       - them-clamd
-    networks:
-      - them-network
-    deploy:
-      replicas: 2
+      - them-minio
 
-  them-clamd:
-    image: clamav/clamav:stable
-    restart: unless-stopped
+  them-minio:
+    image: minio/minio:latest
+    # ports: 9000 (API), 9001 (console)
     volumes:
-      - clamav-socket:/var/run/clamav
-      - clamav-db:/var/lib/clamav    # virus definition database (~300MB, downloaded on first start)
-    networks:
-      - them-network
-    healthcheck:
-      test: ["CMD", "clamdcheck.sh"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
+      - them-minio-data:/data
+    command: server /data --console-address ":9001"
+```
 
-volumes:
-  clamav-socket:   # shared Unix socket between clamd and all worker replicas
-  clamav-db:       # ClamAV virus definitions — persisted across restarts
+**Start the security profile:**
+```bash
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml --profile security up -d
 ```
 
 **First boot note:** ClamAV downloads ~300MB of virus definitions on first start.
-Allow 2–5 minutes before the worker can connect. Subsequent starts use the cached
-`clamav-db` volume — fast.
-
-**Scaling:** `docker compose --project-name them_gateway ... scale them-middleware-worker=N`
-All replicas share the same `clamav-socket` volume — one ClamAV daemon serves all.
+Allow 2–5 minutes before the worker can connect. MinIO console at `http://<host>:9001`.
 
 ---
 
@@ -667,10 +651,14 @@ On mount, if artifact has `scan_status = pending/scanning`:
 → update row as `scan_progress` events arrive
 → on `artifact_scan_result` (final): unsubscribe, render final state
 
-### 4. Playground (low priority, Phase 6)
+### 4. Playground (Session D — COMPLETE)
 
-Artifact card in playground chat shows scan spinner while pending.
-Same WS event flow — no extra backend work needed.
+Playground chat bubble shows three states:
+- **Scanning** (spinner + "Scanning…", no download link) — on `file_scanning` WS event
+- **Blocked** (red border, 🚫 icon, threat name) — on `file_blocked` WS event
+- **Clean** (download button, preview) — on `file` WS event (replaces spinner bubble in-place)
+
+Files: `frontend/src/app/admin/playground/playgroundTypes.ts`, `useChatConnection.ts`, `ChatColumn.tsx`.
 
 ---
 
