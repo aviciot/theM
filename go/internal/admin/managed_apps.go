@@ -23,13 +23,17 @@ func NewManagedAppsHandler(db DBQuerier) *ManagedAppsHandler {
 	return &ManagedAppsHandler{db: dal.NewDB(db)}
 }
 
-// PlatformRoutes mounts routes that operate on the platform-owned managed app catalog.
-// These require super_admin but are NOT tenant-scoped (managed apps have no tenant_id).
+// PlatformRoutes mounts routes that operate on the platform-owned managed app catalog
+// and platform-level binding management (bindings for any tenant, by ID).
+// These require super_admin but are NOT tenant-scoped.
 func (h *ManagedAppsHandler) PlatformRoutes(r chi.Router) {
 	r.Get("/managed-apps", h.List)
 	r.Post("/managed-apps", h.Create)
 	r.Get("/managed-apps/{id}", h.Get)
 	r.Put("/managed-apps/{id}/params", h.PutParams)
+	// Platform-level binding management — tenant_id comes from the path, not JWT context.
+	r.Get("/tenants/{tenant_id}/managed-app-bindings", h.ListBindingsByTenant)
+	r.Put("/tenants/{tenant_id}/managed-app-bindings/{app_id}", h.UpsertBindingByTenant)
 }
 
 // TenantRoutes mounts routes that operate on per-tenant bindings.
@@ -170,6 +174,56 @@ func (h *ManagedAppsHandler) UpsertBinding(w http.ResponseWriter, r *http.Reques
 	binding, err := h.db.UpsertBinding(r.Context(), appID, tenantID, in)
 	if dal.IsForeignKeyViolation(err) {
 		writeError(w, http.StatusNotFound, "managed app not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, binding)
+}
+
+// ListBindingsByTenant handles GET /admin/tenants/{tenant_id}/managed-app-bindings.
+// Platform-level: tenant_id comes from the path, not from JWT context.
+func (h *ManagedAppsHandler) ListBindingsByTenant(w http.ResponseWriter, r *http.Request) {
+	tenantID := chi.URLParam(r, "tenant_id")
+	if tenantID == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant_id")
+		return
+	}
+	bindings, err := h.db.ListBindingsForTenant(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, bindings)
+}
+
+// UpsertBindingByTenant handles PUT /admin/tenants/{tenant_id}/managed-app-bindings/{app_id}.
+// Platform-level: tenant_id comes from the path, not from JWT context.
+func (h *ManagedAppsHandler) UpsertBindingByTenant(w http.ResponseWriter, r *http.Request) {
+	tenantID := chi.URLParam(r, "tenant_id")
+	appID := chi.URLParam(r, "app_id")
+	if tenantID == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant_id")
+		return
+	}
+	if appID == "" {
+		writeError(w, http.StatusBadRequest, "missing app_id")
+		return
+	}
+	var in dal.ManagedAppBindingInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if len(in.Config) == 0 {
+		writeError(w, http.StatusBadRequest, "config is required")
+		return
+	}
+	binding, err := h.db.UpsertBinding(r.Context(), appID, tenantID, in)
+	if dal.IsForeignKeyViolation(err) {
+		writeError(w, http.StatusNotFound, "managed app or tenant not found")
 		return
 	}
 	if err != nil {

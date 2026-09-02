@@ -17,7 +17,7 @@ const ADMIN_NAV = [
   { href: '/admin/playground',    icon: 'science',       label: 'Playground' },
   { href: '/admin/services',      icon: 'monitor_heart', label: 'Services' },
   { href: '/admin/tenants',        icon: 'domain',         label: 'Tenants' },
-  { href: '/admin/tenants',        icon: 'domain',        label: 'Tenants' },
+  { href: '/admin/managed-apps',   icon: 'extension',      label: 'Managed Apps' },
   { href: '/admin/settings',      icon: 'settings',      label: 'Settings' },
 ];
 

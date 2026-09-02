@@ -797,3 +797,50 @@ export interface TenantPatch {
   enabled?: boolean;
   idp_config?: IDPConfig | null; // null = clear IdP config
 }
+
+// ── Managed App types ─────────────────────────────────────────────────────────
+
+export interface ManagedApp {
+  id: string;
+  name: string;
+  slug: string;
+  version: string;
+  changelog?: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ManagedAppParam {
+  id: string;
+  app_id: string;
+  key: string;
+  label: string;
+  description?: string;
+  param_type: string;
+  enum_values?: string[];
+  required: boolean;
+  default_value?: string;
+  sort_order: number;
+}
+
+export interface ManagedAppDetail extends ManagedApp {
+  params: ManagedAppParam[];
+}
+
+export interface ManagedAppBinding {
+  id: string;
+  app_id: string;
+  tenant_id: string;
+  enabled: boolean;
+  config: Record<string, string>;
+  app_version: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ManagedAppBindingInput {
+  config: Record<string, string>;
+  app_version?: string;
+  enabled?: boolean;
+}

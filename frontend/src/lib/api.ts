@@ -79,6 +79,11 @@ export type {
   TenantRecord,
   TenantPatch,
   IDPConfig,
+  ManagedApp,
+  ManagedAppDetail,
+  ManagedAppParam,
+  ManagedAppBinding,
+  ManagedAppBindingInput,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -129,6 +134,10 @@ import type {
   ServicesStats,
   TenantRecord,
   TenantPatch,
+  ManagedApp,
+  ManagedAppDetail,
+  ManagedAppBinding,
+  ManagedAppBindingInput,
 } from './apiTypes';
 
 export const themApi = {
@@ -512,4 +521,16 @@ export const themApi = {
     api.post<TenantRecord>('/admin/tenants', input),
   patchTenant: (id: string, patch: TenantPatch) =>
     api.patch<TenantRecord>('/admin/tenants/' + id, patch),
+
+  // Managed App catalog (platform-level)
+  listManagedApps: () =>
+    api.get<ManagedApp[]>('/admin/managed-apps'),
+  getManagedApp: (id: string) =>
+    api.get<ManagedAppDetail>('/admin/managed-apps/' + id),
+
+  // Managed App bindings (platform-level — by tenant ID)
+  listManagedAppBindings: (tenantId: string) =>
+    api.get<ManagedAppBinding[]>(`/admin/tenants/${tenantId}/managed-app-bindings`),
+  upsertManagedAppBinding: (tenantId: string, appId: string, input: ManagedAppBindingInput) =>
+    api.put<ManagedAppBinding>(`/admin/tenants/${tenantId}/managed-app-bindings/${appId}`, input),
 };

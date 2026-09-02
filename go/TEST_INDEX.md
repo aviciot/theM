@@ -2898,10 +2898,10 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-89 | internal/storage: New_InvalidEndpoint, New_ValidEndpoint, New_HTTPSEndpoint | 3 |
 | S1-90 | orchestrator scan subscriber: FileScanningEvent (file_scanning emitted when gated), ScanResult_Clean (file event after clean), ScanResult_Infected (file_blocked + threat field), ScanResult_Timeout (fallback file event on timeout) | 4 |
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
-| S1-92 | Managed Apps catalog + bindings (MA-01..10): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig | 10 |
+| S1-92 | Managed Apps catalog + platform bindings (MA-01..14): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig, ListBindingsByTenant, ListBindingsByTenant_Empty, UpsertBindingByTenant, UpsertBindingByTenant_MissingConfig | 14 |
 | S1-93 | workerconfig managed app params (MAP-01..03): ConfigSubstitution, NilSafe, ZeroNil | 3 |
 | S1-94 | Tenant CRUD + PATCH handler (TN-01..12): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured | 12 |
-| **S1 total** | | **1022** |
+| **S1 total** | | **1026** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2910,4 +2910,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **974** |
+| **`go test ./...` total** | | **978** |

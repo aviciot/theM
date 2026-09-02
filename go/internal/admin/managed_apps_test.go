@@ -348,3 +348,93 @@ func TestManagedApps_Binding_MissingConfig(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// ── MA-11: GET /tenants/{tenant_id}/managed-app-bindings returns bindings ──────
+
+func TestManagedApps_ListBindingsByTenant(t *testing.T) {
+	db := &managedAppFakeDB{
+		listRows: []*maFakeRow{
+			maBindingRow(
+				"00000000-0000-0000-0000-000000000020",
+				"00000000-0000-0000-0000-000000000010",
+				testTenantID,
+			),
+		},
+	}
+	r := newManagedAppsPlatformRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenants/"+testTenantID+"/managed-app-bindings", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 1)
+	assert.Equal(t, testTenantID, out[0]["tenant_id"])
+}
+
+// ── MA-12: GET /tenants/{tenant_id}/managed-app-bindings empty → [] ───────────
+
+func TestManagedApps_ListBindingsByTenant_Empty(t *testing.T) {
+	r := newManagedAppsPlatformRouter(&managedAppFakeDB{})
+
+	req := httptest.NewRequest(http.MethodGet, "/tenants/"+testTenantID+"/managed-app-bindings", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Empty(t, out)
+}
+
+// ── MA-13: PUT /tenants/{tenant_id}/managed-app-bindings/{app_id} upserts → 200
+
+func TestManagedApps_UpsertBindingByTenant(t *testing.T) {
+	db := &managedAppFakeDB{
+		createRow: maBindingRow(
+			"00000000-0000-0000-0000-000000000020",
+			"00000000-0000-0000-0000-000000000010",
+			testTenantID,
+		),
+	}
+	r := newManagedAppsPlatformRouter(db)
+
+	body, _ := json.Marshal(map[string]any{
+		"config":      map[string]string{"COMPANY_NAME": "Acme"},
+		"app_version": "1.0.0",
+		"enabled":     true,
+	})
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/tenants/"+testTenantID+"/managed-app-bindings/00000000-0000-0000-0000-000000000010",
+		bytes.NewReader(body),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, testTenantID, out["tenant_id"])
+}
+
+// ── MA-14: PUT /tenants/{tenant_id}/managed-app-bindings/{app_id} missing config → 400
+
+func TestManagedApps_UpsertBindingByTenant_MissingConfig(t *testing.T) {
+	r := newManagedAppsPlatformRouter(&managedAppFakeDB{})
+
+	body, _ := json.Marshal(map[string]any{"app_version": "1.0.0"})
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/tenants/"+testTenantID+"/managed-app-bindings/00000000-0000-0000-0000-000000000010",
+		bytes.NewReader(body),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
