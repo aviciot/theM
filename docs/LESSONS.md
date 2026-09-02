@@ -3,6 +3,13 @@
 
 ---
 
+## 2026-09-02 — them-go-worker panic: nil pointer in FileGate.quarantineAndEnqueue
+
+**Symptom:** Run hangs, never completes. Temporal logs show "activity Heartbeat timeout". Worker logs show `panic: runtime error: invalid memory address or nil pointer dereference` at `gate.go:171` inside `quarantineAndEnqueue`. Worker restarts, run stays stuck in `running`.
+**Root cause:** `FileGate.store` is nil when `THE_M_S3_ENDPOINT` is not set (no MinIO configured). `InterceptInline` checked `cfg.Enabled` and processors but called `g.store.PutQuarantine(...)` without checking `g.store != nil` first.
+**Fix:** Added nil guard at the top of `quarantineAndEnqueue` — returns `{ScanStatus: "disabled"}` (fail-open) when store is nil. Added regression test `TestFileGate_NilStore_DoesNotPanic`.
+**Watch for:** Any new path through FileGate that calls storage methods must guard `g.store != nil`. The same nil-store scenario can occur if `storage.New()` fails at startup — it logs a warning but sets the store to nil and continues.
+
 ## 2026-08-19 — "Failed to load user" after login on HTTP
 
 **Symptom:** Login returns 200, but the page immediately shows "Failed to load user". Auth-go logs show no `/me` request ever arriving.

@@ -152,6 +152,11 @@ func (g *FileGate) quarantineAndEnqueue(
 	data []byte,
 	processors []string,
 ) (GateResult, error) {
+	// Object storage is required for quarantine. If it wasn't configured at
+	// startup (no S3 endpoint), fail open so the run isn't killed.
+	if g.store == nil {
+		return GateResult{ScanStatus: "disabled"}, nil
+	}
 	_ = cfg // reserved for future per-processor options
 
 	ct := in.ContentType

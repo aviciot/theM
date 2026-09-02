@@ -255,3 +255,23 @@ func TestFileGate_StoreFail_FailsOpen(t *testing.T) {
 		t.Errorf("expected fail-open (disabled) on store error, got %q", res.ScanStatus)
 	}
 }
+
+// TestFileGate_NilStore_DoesNotPanic verifies that a nil store (no S3 configured)
+// does not panic when security scanning is enabled for the application.
+// Regression test for the nil pointer dereference that crashed them-go-worker.
+func TestFileGate_NilStore_DoesNotPanic(t *testing.T) {
+	db := &enabledGateTestDB{} // returns enabled security config
+	gate := middleware.NewFileGate(db, nil)
+
+	res, err := gate.InterceptInline(context.Background(), middleware.GateInput{
+		FileName:      "file.bin",
+		ApplicationID: "app-nilstore",
+		RunID:         "00000000-0000-0000-0000-000000000003",
+	}, []byte("some bytes"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.ScanStatus != "disabled" {
+		t.Errorf("expected fail-open (disabled) with nil store, got %q", res.ScanStatus)
+	}
+}
