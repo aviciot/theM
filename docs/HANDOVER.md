@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 9
+# Handover — Multi-Tenancy Step 10
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** 2056550 (feat(multi-tenancy): Step 9 — OIDC JWKS key caching (TTL-based, rotation-aware))
-**Steps complete:** 1 → 9 (all 46 Go packages pass, 1010 S1 tests)
+**HEAD:** 441f9e7 (feat(multi-tenancy): Step 10 — Tenant provisioning UI + PATCH /admin/tenants/{id})
+**Steps complete:** 1 → 10 (all 46 Go packages pass, 1022 S1 tests)
 
 ---
 
@@ -57,6 +57,7 @@
 | Step 7 | Runtime parameter injection | Complete | 0bbfa28 |
 | Step 8 | OIDC JWKS RS256 id_token signature verification | Complete | 99fc33c |
 | Step 9 | OIDC JWKS key caching (TTL-based, rotation-aware) | Complete | 2056550 |
+| Step 10 | Tenant provisioning UI — PATCH /admin/tenants/{id} + frontend Tenants page | Complete | 441f9e7 |
 
 ---
 
@@ -213,11 +214,34 @@ All 46 packages pass (`go test ./...`).
 
 All 46 packages pass.
 
-## Step 10 — (next task)
+## Step 10 — COMPLETE
+
+### What Step 10 built
+
+**Go backend:**
+- `go/internal/admin/dal/tenants.go`:
+  - `TenantIDPConfig` — OIDC IdP config struct (`discovery_url`, `client_id`, `client_secret` write-only, `redirect_uri`)
+  - `TenantPatch` — patch body with custom `UnmarshalJSON` to distinguish "idp_config absent" vs "explicit null" (clears config) via `SetIDP bool`
+  - `TenantDetail` — extends with `IDPConfigured bool` (`idp_config IS NOT NULL`)
+  - `PatchTenant` — COALESCE-based UPDATE with `CASE WHEN $4 THEN $5::jsonb ELSE idp_config END` for idp_config
+- `go/internal/admin/tenants.go`: `Patch` handler + `r.Patch("/tenants/{id}", h.Patch)` route
+- `go/internal/admin/tenants_test.go`: `tenantDetailFakeRow` (7-col), extended `tenantDB.patchRow`; TN-09..12 (Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured) — 8→12 tests; S1-94 covers all 12
+
+**Frontend:**
+- `frontend/src/lib/apiTypes.ts`: `IDPConfig` (with `client_secret?: string` write-only), `TenantRecord`, `TenantPatch` types
+- `frontend/src/lib/api.ts`: `listTenants`, `createTenant`, `patchTenant` methods
+- `frontend/src/app/admin/tenants/page.tsx`: full Tenants admin page with:
+  - Card grid: slug, display_name, enabled badge, IdP badge, created date
+  - Side panel with two tabs — General (display_name + enabled toggle) and Identity Provider (OIDC discovery_url/client_id/client_secret/redirect_uri + Clear button)
+  - Create modal: slug + display_name validation
+- `frontend/src/components/Sidebar.tsx`: "Tenants" nav entry (`domain` icon) added to ADMIN_NAV
+
+All 46 Go packages pass (`go test ./...`); 1022 S1 tests, 974 `go test ./...` total. TypeScript: zero new errors.
+
+## Step 11 — (next task)
 
 ### Goal
 Candidates from `docs/architecture/MULTI_TENANCY_DESIGN.md`:
-- Tenant provisioning UI (create/edit tenants + IdP config in frontend)
 - Binding management UI (activate/configure managed apps per tenant in frontend)
 - Per-tenant LLM provider key management
 
@@ -280,9 +304,9 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 10.
+Continue multi-tenancy implementation — Step 11.
 
-Current state: Steps 1–9 are complete and committed to main.
+Current state: Steps 1–10 are complete and pushed to main (HEAD: 441f9e7).
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
 - Step 2: Redis key hardening (97c9d71)
 - Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
@@ -292,11 +316,12 @@ Current state: Steps 1–9 are complete and committed to main.
 - Step 7: Runtime parameter injection — {{PARAMS.KEY}} substitution in system prompts (0bbfa28)
 - Step 8: OIDC JWKS RS256 id_token signature verification — stdlib only, no third-party (99fc33c)
 - Step 9: OIDC JWKS key caching — TTL-based, rotation-aware (2056550)
-All 46 Go packages pass (go test ./..., 1010 S1 tests, 962 go test ./... total).
+- Step 10: Tenant provisioning UI + PATCH /admin/tenants/{id} (441f9e7)
+All 46 Go packages pass (go test ./..., 1022 S1 tests, 974 go test ./... total).
 
 Read docs/HANDOVER.md fully before starting — it is the source of truth.
 
-Goal for Step 10: see Step 10 section in HANDOVER.md for candidates.
+Goal for Step 11: see Step 11 section in HANDOVER.md for candidates.
 
 Constraints (all in HANDOVER.md):
 - go test ./... must be zero failures before every commit
