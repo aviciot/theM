@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 11
+# Handover — Multi-Tenancy Step 12
 **Date:** 2026-09-02
 **Branch:** main
-**HEAD:** 59105c4 (feat(multi-tenancy): Step 11 — Binding management UI + platform-level binding API)
-**Steps complete:** 1 → 11 (all 45 Go packages pass, 1026 S1 tests, 978 go test ./...)
+**HEAD:** 293fe26 (feat(multi-tenancy): Step 12 — Tenant-level quota management)
+**Steps complete:** 1 → 12 (all 46 Go packages pass, 1031 S1 tests, 983 go test ./...)
 
 ---
 
@@ -59,6 +59,7 @@
 | Step 9 | OIDC JWKS key caching (TTL-based, rotation-aware) | Complete | 2056550 |
 | Step 10 | Tenant provisioning UI — PATCH /admin/tenants/{id} + frontend Tenants page | Complete | 441f9e7 |
 | Step 11 | Binding management UI — platform-level binding API + frontend Managed Apps page | Complete | 59105c4 |
+| Step 12 | Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota + frontend Quotas tab | Complete | 293fe26 |
 
 ---
 
@@ -262,17 +263,41 @@ All 46 Go packages pass (`go test ./...`); 1022 S1 tests, 974 `go test ./...` to
   - `BindingPanel` pre-fills from existing binding config; inline create on first save
 - `frontend/src/components/Sidebar.tsx`: "Managed Apps" nav entry (`extension` icon); removes pre-existing duplicate Tenants entry
 
-## Step 12 — (next task)
+## Step 12 — COMPLETE
+
+### What Step 12 built
+
+- `db/056_tenant_quotas.sql` — creates `them.tenant_quotas` with `tenant_id PK`, `plan TEXT CHECK(...)`, and 9 nullable limit columns (max_agents, max_apps, max_mcp_servers, max_concurrent_runs, max_users, monthly_llm_tokens, monthly_runs, api_requests_per_minute, runs_per_minute); inserts bootstrap tenant default row (plan='enterprise')
+- `go/internal/admin/dal/tenants.go` — added `TenantQuota` struct (nullable int/int64 pointer fields, 11 columns), `GetQuota`, `UpsertQuota` (ON CONFLICT DO UPDATE RETURNING) DAL methods
+- `go/internal/admin/tenants.go` — added `GetQuota` (GET /admin/tenants/{id}/quota) and `UpsertQuota` (PUT /admin/tenants/{id}/quota) handlers; plan validation (trial/starter/pro/enterprise); routes registered in `TenantsHandler.Routes`
+- `go/internal/admin/tenants_test.go` — TN-13..TN-17: GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON; `quotaFakeRow` + `quotaRow` field on `tenantDB`
+- `go/TEST_INDEX.md` — S1-94 updated 12→17 tests; totals 1026→1031 S1, 978→983 go test ./...
+- `frontend/src/lib/apiTypes.ts` — `TenantQuota` interface, `QuotaPlan` type
+- `frontend/src/lib/api.ts` — `getTenantQuota`, `upsertTenantQuota` API methods; types re-exported
+- `frontend/src/app/admin/tenants/page.tsx` — "Quotas" tab added to `TenantPanel`; lazy-loads quota on tab switch; plan `<select>` + 9 nullable number inputs (blank = unlimited); Save Quotas button
+
+All 46 Go packages pass.
+
+### Migration note
+`db/056_tenant_quotas.sql` must be applied to the live DB before the quota routes are used:
+```bash
+docker cp db/056_tenant_quotas.sql them-postgres:/tmp/them_056.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_056.sql
+```
+
+---
+
+## Step 13 — (next task)
 
 ### Goal
 Candidates from `docs/architecture/MULTI_TENANCY_DESIGN.md`:
-- Per-tenant LLM provider key management (tenant-scoped LLM provider overrides)
-- Tenant-level quotas and rate limits UI
+- Per-tenant LLM provider key management — add `tenant_id` (nullable) to `them.llm_providers`; platform defaults when NULL; tenant overrides for specific providers
+- Quota enforcement at run start — before creating a new run, check `tenant_quotas.max_concurrent_runs` and `runs_per_minute`; return 429/403 when exceeded
 
 ### Files to read before starting
 - `docs/HANDOVER.md` (this file)
 - `docs/CURRENT.md`
-- `docs/architecture/MULTI_TENANCY_DESIGN.md`
+- `docs/architecture/MULTI_TENANCY_DESIGN.md` §14 (Quotas), §5 (LLM providers)
 
 ---
 
@@ -311,9 +336,11 @@ cd /opt/docker/them
 # Verify stack is healthy
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml ps
 
-# Apply Step 6 migration if not yet done
+# Apply pending migrations (Step 6 + Step 12) if not yet applied
 docker cp db/055_managed_apps.sql them-postgres:/tmp/them_055.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_055.sql
+docker cp db/056_tenant_quotas.sql them-postgres:/tmp/them_056.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_056.sql
 
 # Read before starting
 cat docs/HANDOVER.md
@@ -328,9 +355,9 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 12.
+Continue multi-tenancy implementation — Step 13.
 
-Current state: Steps 1–11 are complete and committed to main (HEAD: 59105c4).
+Current state: Steps 1–12 are complete and pushed to main (HEAD: 293fe26).
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
 - Step 2: Redis key hardening (97c9d71)
 - Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
@@ -342,11 +369,14 @@ Current state: Steps 1–11 are complete and committed to main (HEAD: 59105c4).
 - Step 9: OIDC JWKS key caching — TTL-based, rotation-aware (2056550)
 - Step 10: Tenant provisioning UI + PATCH /admin/tenants/{id} (441f9e7)
 - Step 11: Binding management UI — platform-level binding API + frontend Managed Apps page (59105c4)
-All 45 Go packages pass (go test ./..., 1026 S1 tests, 978 go test ./... total).
+- Step 12: Tenant quota management — them.tenant_quotas + GET/PUT /admin/tenants/{id}/quota + frontend Quotas tab (293fe26)
+All 46 Go packages pass (go test ./..., 1031 S1 tests, 983 go test ./... total).
 
 Read docs/HANDOVER.md fully before starting — it is the source of truth.
 
-Goal for Step 12: see Step 12 section in HANDOVER.md for candidates.
+Goal for Step 13: see Step 13 section in HANDOVER.md for candidates:
+- Per-tenant LLM provider key management
+- Quota enforcement at run start (max_concurrent_runs, runs_per_minute)
 
 Constraints (all in HANDOVER.md):
 - go test ./... must be zero failures before every commit
