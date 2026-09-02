@@ -913,4 +913,56 @@ Total estimated effort for required code changes: **~11.5 hours** across all ite
 
 ---
 
+## Local K8s Environment — Current State (2026-09-02)
+
+The local dev K8s environment is set up on `billing-43.devlab` (Linux, RHEL 8.10, x86_64) alongside the existing Docker Compose stack. Both run simultaneously without interference — Docker Compose stack continues on port 8088 as normal.
+
+### Installed tooling
+
+| Tool | Version / Details | Status |
+|---|---|---|
+| `kind` | v0.24.0 | Installed at `/usr/local/bin/kind` |
+| `kubectl` | Pre-existing | At `/usr/local/bin/kubectl` |
+| `helm` | v3.16.2 | Installed at `/usr/local/bin/helm` |
+| Local container registry | `registry:2`, port `127.0.0.1:5001` | Running as Docker container `kind-registry` |
+| KEDA | v2.20 (via Helm `kedacore/keda`) | Installed in `keda` namespace |
+
+### Cluster
+
+- **Name:** `them` (kind cluster)
+- **kubectl context:** `kind-them`
+- **Nodes:** 1 control-plane (single-node, default kind config)
+- **K8s version:** 1.31.0
+- **Note:** KEDA 2.20 recommends K8s 1.33+. Works for local dev; upgrade kind node image before production use.
+
+### Kubeconfig (root user)
+
+Kind writes kubeconfig to the invoking user's home. To use `kubectl` as root:
+
+```bash
+kind get kubeconfig --name them > /root/.kube/config
+kubectl config use-context kind-them
+```
+
+### Local registry usage
+
+Push images to the cluster:
+
+```bash
+docker build -t localhost:5001/them-go-bridge:latest ./go
+docker push localhost:5001/them-go-bridge:latest
+```
+
+Reference in K8s manifests as `localhost:5001/<image>:<tag>`.
+
+### Next steps before deploying any service
+
+1. Do the two blocking code fixes (see Appendix above):
+   - Add SIGTERM handler to `agent-runtime`
+   - Replace hardcoded `http://them-agent-runtime:9300` with `THE_M_AGENT_RUNTIME_BASE_URL`
+2. Write Phase 1 manifests — start with `them-auth-go` (stateless, no PVC, simplest service)
+3. Wire the registry into kind's containerd config if image pulls fail (add `--config` to `kind create cluster`)
+
+---
+
 *This document reflects the state of the codebase as of 2026-08-31. Re-verify hardcoded values and env var lists before executing migration.*
