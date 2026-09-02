@@ -21,6 +21,8 @@ var (
 	ErrTokenRevoked = errors.New("authserver: token revoked")
 	// ErrPreferencesTooLarge — preferences payload exceeds the allowed size. 400.
 	ErrPreferencesTooLarge = errors.New("authserver: preferences payload too large")
+	// ErrNoTenantMembership — user has no tenant membership; login is blocked. 403.
+	ErrNoTenantMembership = errors.New("authserver: no tenant membership for user")
 )
 
 // Service holds the auth business logic. It is transport-agnostic: handlers call
@@ -206,9 +208,24 @@ func (s *Service) Logout(ctx context.Context, accessToken string) {
 }
 
 // issuePair mints an access+refresh pair, honours the role token_expiry, and
-// records the session best-effort.
+// records the session best-effort. It resolves the tenant_id from the
+// tenant_memberships table; login fails if no membership row exists.
 func (s *Service) issuePair(ctx context.Context, user *userRecord) (*TokenPair, error) {
-	access, expiresIn, err := s.signer.IssueAccessToken(user.ID, user.Username, user.Name, user.Role, user.TokenExpiry)
+	tenantID, memberRole, err := s.store.GetTenantMembership(ctx, user.ID)
+	if errors.Is(err, ErrNoMembership) {
+		s.log.Warn("login blocked: no tenant membership", "user_id", user.ID, "username", user.Username)
+		return nil, ErrNoTenantMembership
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Use the tenant-scoped role from the membership rather than the global role
+	// on the user record. For now these are the same value (backfilled from
+	// auth_service.roles), but membership role becomes the authority going forward.
+	role := memberRole
+	_ = user.Role // keep userRecord.Role for reference; membership role wins
+
+	access, expiresIn, err := s.signer.IssueAccessToken(user.ID, user.Username, user.Name, role, tenantID, user.TokenExpiry)
 	if err != nil {
 		return nil, err
 	}

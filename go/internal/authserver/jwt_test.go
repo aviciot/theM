@@ -14,9 +14,11 @@ func newTestSigner() *tokenSigner {
 	return newTokenSigner([]byte(testSecret), 3600, 604800)
 }
 
+const testTenantID = "00000000-0000-0000-0000-000000000001"
+
 func TestIssueAndVerifyAccessToken(t *testing.T) {
 	s := newTestSigner()
-	tok, expiresIn, err := s.IssueAccessToken(42, "admin", "Admin User", "super_admin", 0)
+	tok, expiresIn, err := s.IssueAccessToken(42, "admin", "Admin User", "super_admin", testTenantID, 0)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -37,7 +39,7 @@ func TestIssueAndVerifyAccessToken(t *testing.T) {
 
 func TestRoleExpiryOverride(t *testing.T) {
 	s := newTestSigner()
-	_, expiresIn, err := s.IssueAccessToken(1, "u", "n", "r", 7200)
+	_, expiresIn, err := s.IssueAccessToken(1, "u", "n", "r", testTenantID, 7200)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +65,7 @@ func TestRefreshTokenType(t *testing.T) {
 
 func TestVerifyRejectsWrongSecret(t *testing.T) {
 	s := newTestSigner()
-	tok, _, _ := s.IssueAccessToken(1, "u", "n", "r", 0)
+	tok, _, _ := s.IssueAccessToken(1, "u", "n", "r", testTenantID, 0)
 	other := newTokenSigner([]byte("a-completely-different-secret-000"), 3600, 604800)
 	if _, err := other.Verify(tok); err != ErrTokenSignature {
 		t.Fatalf("want ErrTokenSignature, got %v", err)
@@ -74,7 +76,7 @@ func TestVerifyRejectsExpired(t *testing.T) {
 	s := newTestSigner()
 	// Freeze "now" in the past so the issued token is already expired.
 	s.now = func() time.Time { return time.Unix(1000, 0) }
-	tok, _, _ := s.IssueAccessToken(1, "u", "n", "r", 1)
+	tok, _, _ := s.IssueAccessToken(1, "u", "n", "r", testTenantID, 1)
 	s.now = func() time.Time { return time.Unix(1_000_000, 0) }
 	if _, err := s.Verify(tok); err != ErrTokenExpired {
 		t.Fatalf("want ErrTokenExpired, got %v", err)
@@ -95,7 +97,7 @@ func TestVerifyRejectsMalformed(t *testing.T) {
 // same secret and expose the same identity fields.
 func TestBridgeCompatibility(t *testing.T) {
 	s := newTestSigner()
-	tok, _, err := s.IssueAccessToken(99, "alice", "Alice A", "developer", 0)
+	tok, _, err := s.IssueAccessToken(99, "alice", "Alice A", "developer", testTenantID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +113,9 @@ func TestBridgeCompatibility(t *testing.T) {
 	}
 	if len(claims.Roles) != 1 || claims.Roles[0] != "developer" {
 		t.Fatalf("bridge Roles = %v, want [developer]", claims.Roles)
+	}
+	if claims.TenantID != testTenantID {
+		t.Fatalf("bridge TenantID = %q, want %q", claims.TenantID, testTenantID)
 	}
 }
 

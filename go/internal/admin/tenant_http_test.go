@@ -5,18 +5,18 @@ package admin_test
 // These tests exercise tenant-scoped admin routes with a real auth.Cache and
 // real AdminTenantMiddleware wired in via BuildRouter. They prove:
 //
-//   TH-01  missing token → 200 on /admin/agents (JWT alone + bootstrap tenant)
-//   TH-02  bearer token present but admin JWT controls → 200 on /admin/agents
-//   TH-03  valid token but no TenantID → 403 on /admin/agents (tested via bearer-only path)
+//   TH-01  JWT with tenant_id → 200 on /admin/agents (no bearer token needed)
+//   TH-02  bearer token present but JWT tenant_id controls → 200 on /admin/agents
+//   TH-03  valid opaque token but no TenantID in JWT → 403 (JWT missing tenant_id)
 //   TH-04  valid token with TenantID + super_admin JWT → handler reached (200)
 //   TH-05  X-Tenant-ID header cannot override token-derived TenantID
 //   TH-06  ?tenant_id query param cannot override token-derived TenantID
-//   TH-07  super_admin JWT alone → 200 on /admin/applications (bootstrap tenant)
-//   TH-08  super_admin JWT alone → 200 on /runs (JWT + AdminTenantMiddleware, bootstrap tenant)
+//   TH-07  super_admin JWT with tenant_id → 200 on /admin/applications
+//   TH-08  super_admin JWT with tenant_id → 200 on /runs
 //   TH-09  platform-global /admin/llm-providers requires super_admin JWT, not bearer tenant
 //   TH-10  valid token with TenantID → 200 on /admin/orchestrators
 //   TH-11  valid token with TenantID → 200 on /admin/tokens
-//   TH-12  bearer token irrelevant on /runs — JWT controls access (200)
+//   TH-12  bearer token irrelevant on /runs — JWT tenant_id controls access (200)
 
 import (
 	"context"
@@ -111,13 +111,18 @@ func (r *thRedis) Subscribe(_ context.Context, _ string, _ func(string)) error {
 
 const thJWTSecret = "th-test-jwt-secret-do-not-use"
 
-// thBuildHS256Token creates a minimal HS256 JWT with super_admin role.
+// thBootstrapTenantID is the bootstrap tenant used in all admin JWT test tokens.
+const thBootstrapTenantID = "00000000-0000-0000-0000-000000000001"
+
+// thBuildHS256Token creates a minimal HS256 JWT with super_admin role and the
+// bootstrap tenant_id. All admin routes now require tenant_id in the JWT.
 func thBuildHS256Token(t *testing.T, secret []byte) string {
 	t.Helper()
 	now := time.Now().Unix()
 	headerEnc := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
 	payload, err := json.Marshal(map[string]any{
 		"sub": "1", "username": "admin", "role": "super_admin",
+		"tenant_id": thBootstrapTenantID,
 		"exp": now + 3600, "iat": now,
 	})
 	require.NoError(t, err)
@@ -181,6 +186,38 @@ func tenantAdminRouter(t *testing.T, cache *auth.Cache) http.Handler {
 	return admin.BuildRouter(db, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil)
 }
 
+// tenantAdminRouterNoTenant returns a router that auto-injects a super_admin JWT
+// WITHOUT a tenant_id claim — used to verify that AdminTenantMiddleware rejects
+// such tokens with 403 instead of silently falling back to the bootstrap tenant.
+func tenantAdminRouterNoTenant(t *testing.T, cache *auth.Cache) http.Handler {
+	t.Helper()
+	db := &fakeDB{queryRows: newFakeRows(nil)}
+	secret := []byte(thJWTSecret)
+	jwtMW := func(next http.Handler) http.Handler {
+		inner := auth.HS256Middleware(secret)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Build a JWT with NO tenant_id.
+			now := time.Now().Unix()
+			headerEnc := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+			payload, _ := json.Marshal(map[string]any{
+				"sub": "1", "username": "admin", "role": "super_admin",
+				"exp": now + 3600, "iat": now,
+				// tenant_id intentionally absent
+			})
+			payloadEnc := base64.RawURLEncoding.EncodeToString(payload)
+			sigInput := headerEnc + "." + payloadEnc
+			mac := hmac.New(sha256.New, secret)
+			mac.Write([]byte(sigInput))
+			noTenantJWT := sigInput + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+
+			r2 := r.Clone(r.Context())
+			r2.Header.Set("Authorization", "Bearer "+noTenantJWT)
+			inner(next).ServeHTTP(w, r2)
+		})
+	}
+	return admin.BuildRouter(db, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil)
+}
+
 // thGet sends a GET request to path with an Authorization: Bearer <token> header.
 // If token is empty, no Authorization header is sent.
 func thGet(srv *httptest.Server, path, bearerToken string) (*http.Response, error) {
@@ -201,48 +238,44 @@ func thGet(srv *httptest.Server, path, bearerToken string) (*http.Response, erro
 // Runs are now mounted at /runs under AdminTenantMiddleware (JWT-based), so
 // the admin JWT alone is sufficient — bearer tokens are ignored.
 
-// TH-01: valid super_admin JWT → admin/agents accessible without a bearer machine token.
-// Admin routes now use AdminTenantMiddleware which reads tenant from JWT claims
-// (falling back to the bootstrap tenant for super_admin users). No machine token required.
+// TH-01: JWT with tenant_id → admin/agents accessible without a bearer machine token.
 func TestTenantHTTP_MissingToken_Agents_401(t *testing.T) {
 	cache, _ := newTHCache()
 	srv := httptest.NewServer(tenantAdminRouter(t, cache))
 	defer srv.Close()
 
-	// tenantAdminRouter auto-injects a super_admin JWT; no bearer token needed.
+	// tenantAdminRouter auto-injects a super_admin JWT with tenant_id; no bearer token needed.
 	resp, err := thGet(srv, "/admin/agents", "")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	// Admin routes grant access via JWT alone; bootstrap tenant is used.
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-01: super_admin JWT alone must reach admin/agents")
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-01: JWT with tenant_id must reach admin/agents")
 }
 
-// TH-02: a machine bearer token in Authorization does not affect admin access.
-// The JWT is injected via X-Admin-JWT; any bearer token value is irrelevant.
+// TH-02: bearer token in Authorization does not affect admin access; JWT tenant_id controls.
 func TestTenantHTTP_InvalidToken_Agents_401(t *testing.T) {
 	cache, _ := newTHCache()
 	srv := httptest.NewServer(tenantAdminRouter(t, cache))
 	defer srv.Close()
 
-	// An unrecognised bearer token in Authorization: admin JWT still authorises.
+	// An unrecognised bearer token in Authorization does not block access — JWT tenant_id is used.
 	resp, err := thGet(srv, "/admin/agents", "unknown-token-xyz")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-02: unrecognised bearer token does not block admin JWT access")
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-02: bearer token does not affect JWT-based admin access")
 }
 
-// TH-03: admin access uses bootstrap tenant regardless of any bearer token value.
+// TH-03: JWT without tenant_id → 403 on /admin/agents.
+// This verifies that AdminTenantMiddleware rejects tokens with empty tenant_id
+// — the bootstrap fallback no longer exists.
 func TestTenantHTTP_TokenWithoutTenant_Agents_403(t *testing.T) {
-	cache, q := newTHCache()
-	q.addToken("tenantless-token", "") // valid opaque token but no TenantID (irrelevant for admin)
-	srv := httptest.NewServer(tenantAdminRouter(t, cache))
+	cache, _ := newTHCache()
+	srv := httptest.NewServer(tenantAdminRouterNoTenant(t, cache))
 	defer srv.Close()
 
-	// Admin routes do not consult the bearer token for tenant; JWT + bootstrap tenant applies.
-	resp, err := thGet(srv, "/admin/agents", "tenantless-token")
+	resp, err := thGet(srv, "/admin/agents", "")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-03: admin route must succeed via JWT+bootstrap even with tenantless opaque token")
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, "TH-03: JWT missing tenant_id must be rejected with 403")
 }
 
 // TH-04: valid token with TenantID → handler reached (200) on /admin/agents.
@@ -289,7 +322,7 @@ func TestTenantHTTP_QueryTenantIDIgnored(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-06: ?tenant_id query param must not override token tenant")
 }
 
-// TH-07: valid super_admin JWT → admin/applications accessible without bearer machine token.
+// TH-07: super_admin JWT with tenant_id → admin/applications accessible.
 func TestTenantHTTP_MissingToken_Applications_401(t *testing.T) {
 	cache, _ := newTHCache()
 	srv := httptest.NewServer(tenantAdminRouter(t, cache))
@@ -298,11 +331,10 @@ func TestTenantHTTP_MissingToken_Applications_401(t *testing.T) {
 	resp, err := thGet(srv, "/admin/applications", "")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-07: super_admin JWT alone must reach admin/applications")
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-07: super_admin JWT with tenant_id must reach admin/applications")
 }
 
-// TH-08: runs route at /runs uses JWT + AdminTenantMiddleware — super_admin JWT alone is sufficient.
-// tenantAdminRouter auto-injects a super_admin JWT so the request reaches the handler (200).
+// TH-08: runs route at /runs uses JWT + AdminTenantMiddleware — JWT with tenant_id is sufficient.
 func TestTenantHTTP_MissingToken_Runs_401(t *testing.T) {
 	cache, _ := newTHCache()
 	srv := httptest.NewServer(tenantAdminRouter(t, cache))
@@ -311,9 +343,7 @@ func TestTenantHTTP_MissingToken_Runs_401(t *testing.T) {
 	resp, err := thGet(srv, "/runs", "")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	// Runs use AdminTenantMiddleware (JWT-based). The auto-injected super_admin JWT
-	// is sufficient; bootstrap tenant is used.
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-08: super_admin JWT alone must reach /runs (bootstrap tenant)")
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-08: super_admin JWT with tenant_id must reach /runs")
 }
 
 // TH-09: platform-global /admin/llm-providers requires JWT+super_admin, not bearer tenant.
@@ -358,18 +388,17 @@ func TestTenantHTTP_ValidToken_Tokens_200(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-11: valid token on /admin/tokens must reach handler")
 }
 
-// TH-12: runs route at /runs uses AdminTenantMiddleware — bearer token is irrelevant.
-// A tenantless bearer token in Authorization is ignored; the JWT controls access.
+// TH-12: /runs uses AdminTenantMiddleware — opaque bearer token is irrelevant.
+// JWT tenant_id controls; a tenantless opaque token in Authorization is ignored.
 func TestTenantHTTP_TenantlessToken_Runs_403(t *testing.T) {
 	cache, q := newTHCache()
-	q.addToken("old-token", "") // pre-R-4a token, no TenantID
+	q.addToken("old-token", "") // tenantless opaque token — irrelevant for admin routes
 	srv := httptest.NewServer(tenantAdminRouter(t, cache))
 	defer srv.Close()
 
 	resp, err := thGet(srv, "/runs", "old-token")
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	// Runs use AdminTenantMiddleware (JWT-based).
-	// Bearer token is ignored; the auto-injected super_admin JWT allows access (200).
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-12: bearer token irrelevant on /runs — JWT controls access")
+	// Bearer token is ignored; the auto-injected super_admin JWT (with tenant_id) allows access.
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "TH-12: JWT tenant_id controls /runs access; bearer token is irrelevant")
 }

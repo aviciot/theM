@@ -9,6 +9,10 @@ import (
 // ErrUserNotFound is returned when no active user matches the lookup criteria.
 var ErrUserNotFound = errors.New("authserver: user not found")
 
+// ErrNoMembership is returned when a user has no row in tenant_memberships.
+// This blocks login: every user must belong to at least one tenant.
+var ErrNoMembership = errors.New("authserver: user has no tenant membership")
+
 // userRecord is the subset of auth_service.users (+ role name) the auth flows
 // need. dashboardAccess drives the login gate (Python rejects 'none').
 type userRecord struct {
@@ -32,6 +36,10 @@ type Store interface {
 	GetUserByAPIKeyHash(ctx context.Context, apiKeyHash string) (*userRecord, error)
 	// GetUserByID resolves an active user by id.
 	GetUserByID(ctx context.Context, id int64) (*userRecord, error)
+
+	// GetTenantMembership returns the tenant_id and role for the given user.
+	// Returns ErrNoMembership when no row exists in tenant_memberships.
+	GetTenantMembership(ctx context.Context, userID int64) (tenantID, role string, err error)
 
 	// TouchLastLogin sets users.last_login_at = now for the given user. Best
 	// effort — errors are logged by the caller but do not fail login.

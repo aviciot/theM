@@ -22,13 +22,13 @@ var (
 
 // accessClaims is the payload of an access token. Field names and shape MUST
 // stay compatible with:
-//   - Python auth_service/services/token_service.create_access_token
-//   - Go bridge internal/auth.ValidateHS256JWT (reads sub/username/name/role/exp/iat)
+//   - Go bridge internal/auth.ValidateHS256JWT (reads sub/username/name/role/tenant_id/exp/iat)
 type accessClaims struct {
 	Sub         string   `json:"sub"`
 	Username    string   `json:"username"`
 	Name        string   `json:"name"`
 	Role        string   `json:"role"`
+	TenantID    string   `json:"tenant_id"`
 	Permissions []string `json:"permissions"`
 	Exp         int64    `json:"exp"`
 	Iat         int64    `json:"iat"`
@@ -86,8 +86,9 @@ func newTokenSigner(secret []byte, accessExpirySec, refreshExpirySec int) *token
 }
 
 // IssueAccessToken mints a signed access token. expirySec overrides the default
-// access expiry when > 0 (used to honour roles.token_expiry).
-func (s *tokenSigner) IssueAccessToken(userID int64, username, name, role string, expirySec int) (string, int, error) {
+// access expiry when > 0 (used to honour roles.token_expiry). tenantID must be
+// non-empty — the bridge rejects tokens without a tenant_id claim.
+func (s *tokenSigner) IssueAccessToken(userID int64, username, name, role, tenantID string, expirySec int) (string, int, error) {
 	now := s.now().UTC()
 	ttl := s.accessExpiry
 	if expirySec > 0 {
@@ -98,6 +99,7 @@ func (s *tokenSigner) IssueAccessToken(userID int64, username, name, role string
 		Username:    username,
 		Name:        name,
 		Role:        role,
+		TenantID:    tenantID,
 		Permissions: []string{},
 		Exp:         now.Add(ttl).Unix(),
 		Iat:         now.Unix(),

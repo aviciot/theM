@@ -107,14 +107,10 @@ func RequireSuperAdmin(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// bootstrapTenantID is the platform default tenant used for super_admin users
-// whose JWT carries no tenant_id claim (all UI-authenticated admin users).
-const bootstrapTenantID = "00000000-0000-0000-0000-000000000001"
-
-// AdminTenantMiddleware resolves the tenant ID for admin routes.
-// Super_admin users authenticated via a user JWT have no tenant_id claim —
-// they implicitly own the bootstrap tenant. For any other caller the tenant
-// is read from the JWT claim as usual.
+// AdminTenantMiddleware resolves the tenant ID for admin routes from the JWT
+// claim. The JWT must carry a non-empty tenant_id (issued by them-auth-go after
+// migration 053). Tokens without a tenant_id are rejected with 403 — there is
+// no longer a bootstrap fallback.
 func AdminTenantMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,11 +119,11 @@ func AdminTenantMiddleware() func(http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "authentication required")
 				return
 			}
-			tenantID := claims.TenantID
-			if tenantID == "" {
-				tenantID = bootstrapTenantID
+			if claims.TenantID == "" {
+				writeError(w, http.StatusForbidden, "token missing tenant_id; please log in again")
+				return
 			}
-			ctx := tenantctx.WithTenantID(r.Context(), tenantID)
+			ctx := tenantctx.WithTenantID(r.Context(), claims.TenantID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

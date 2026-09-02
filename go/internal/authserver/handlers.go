@@ -242,6 +242,8 @@ func (h *Handlers) writeServiceError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusUnauthorized, "Invalid token type")
 	case errors.Is(err, ErrPreferencesTooLarge):
 		writeErr(w, http.StatusBadRequest, "preferences payload too large")
+	case errors.Is(err, ErrNoTenantMembership):
+		writeErr(w, http.StatusForbidden, "User has no tenant membership; contact your administrator")
 	default:
 		// DB or unexpected error — never leak the underlying message.
 		h.log.Error("auth service error", "error", err)

@@ -2,8 +2,11 @@ package authserver
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -12,21 +15,25 @@ import (
 // blacklist entries and sessions so revocation and best-effort writes can be
 // asserted without a database.
 type fakeStore struct {
-	byLogin   map[string]*userRecord
-	byAPIHash map[string]*userRecord
-	byID      map[int64]*userRecord
-	blacklist map[string]time.Time
-	sessions  int
-	touched   int
-	failPing  bool
+	byLogin     map[string]*userRecord
+	byAPIHash   map[string]*userRecord
+	byID        map[int64]*userRecord
+	blacklist   map[string]time.Time
+	memberships map[int64]struct{ tenantID, role string } // userID → membership
+	sessions    int
+	touched     int
+	failPing    bool
 }
+
+const testBootstrapTenantID = "00000000-0000-0000-0000-000000000001"
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		byLogin:   map[string]*userRecord{},
-		byAPIHash: map[string]*userRecord{},
-		byID:      map[int64]*userRecord{},
-		blacklist: map[string]time.Time{},
+		byLogin:     map[string]*userRecord{},
+		byAPIHash:   map[string]*userRecord{},
+		byID:        map[int64]*userRecord{},
+		blacklist:   map[string]time.Time{},
+		memberships: map[int64]struct{ tenantID, role string }{},
 	}
 }
 
@@ -43,6 +50,16 @@ func (f *fakeStore) addUser(u *userRecord, rawPassword, rawAPIKey string) {
 	if rawAPIKey != "" {
 		f.byAPIHash[hashToken(rawAPIKey)] = u
 	}
+	// Default: assign to bootstrap tenant with the user's role.
+	f.memberships[u.ID] = struct{ tenantID, role string }{testBootstrapTenantID, u.Role}
+}
+
+func (f *fakeStore) GetTenantMembership(_ context.Context, userID int64) (string, string, error) {
+	m, ok := f.memberships[userID]
+	if !ok {
+		return "", "", ErrNoMembership
+	}
+	return m.tenantID, m.role, nil
 }
 
 func (f *fakeStore) GetUserByLogin(_ context.Context, login string) (*userRecord, error) {
@@ -215,5 +232,73 @@ func TestLogoutRevokesToken(t *testing.T) {
 	// Me must now reject the revoked token.
 	if _, err := svc.Me(context.Background(), pair.AccessToken); err != ErrTokenRevoked {
 		t.Fatalf("want ErrTokenRevoked after logout, got %v", err)
+	}
+}
+
+// TestLoginEmbedsTenantID verifies the issued access token carries the tenant_id
+// claim from the tenant_memberships table. This is the core invariant of Step 1.
+func TestLoginEmbedsTenantID(t *testing.T) {
+	svc, _ := testService(t)
+	pair, err := svc.Login(context.Background(), LoginInput{Username: "admin", Password: "admin123"})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	// Decode the access token payload directly to inspect the tenant_id claim.
+	parts := splitJWT(pair.AccessToken)
+	if len(parts) != 3 {
+		t.Fatalf("token does not have 3 parts")
+	}
+	var payload struct {
+		TenantID string `json:"tenant_id"`
+		Role     string `json:"role"`
+	}
+	import_json_unmarshal(t, parts[1], &payload)
+	if payload.TenantID != testBootstrapTenantID {
+		t.Fatalf("token tenant_id = %q, want %q", payload.TenantID, testBootstrapTenantID)
+	}
+	if payload.Role != "super_admin" {
+		t.Fatalf("token role = %q, want super_admin", payload.Role)
+	}
+}
+
+// TestLoginNoMembershipBlocked verifies that a user with no tenant_membership row
+// cannot log in. This enforces the new membership requirement.
+func TestLoginNoMembershipBlocked(t *testing.T) {
+	svc, store := testService(t)
+	// Remove the admin user's membership to simulate a user with no tenant.
+	delete(store.memberships, 1)
+	_, err := svc.Login(context.Background(), LoginInput{Username: "admin", Password: "admin123"})
+	if err != ErrNoTenantMembership {
+		t.Fatalf("want ErrNoTenantMembership, got %v", err)
+	}
+}
+
+// splitJWT splits a JWT into its three base64url parts and base64-decodes the payload.
+func splitJWT(tok string) [][]byte {
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		return nil
+	}
+	out := make([][]byte, 3)
+	for i, p := range parts {
+		switch len(p) % 4 {
+		case 2:
+			p += "=="
+		case 3:
+			p += "="
+		}
+		b, err := base64.URLEncoding.DecodeString(p)
+		if err != nil {
+			return nil
+		}
+		out[i] = b
+	}
+	return out
+}
+
+func import_json_unmarshal(t *testing.T, raw []byte, v any) {
+	t.Helper()
+	if err := json.Unmarshal(raw, v); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
 	}
 }

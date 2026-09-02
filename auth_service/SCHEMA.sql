@@ -127,6 +127,24 @@ CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON auth_service.user_sessio
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON auth_service.user_sessions(expires_at);
 
 -- ============================================================
+-- TENANT MEMBERSHIPS TABLE
+-- ============================================================
+-- Maps users to tenants with a per-tenant role.
+-- Every user must have at least one row here (backfilled by migration 053).
+-- The bootstrap tenant id is 00000000-0000-0000-0000-000000000001.
+CREATE TABLE IF NOT EXISTS auth_service.tenant_memberships (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id    INTEGER     NOT NULL REFERENCES auth_service.users(id) ON DELETE CASCADE,
+    tenant_id  UUID        NOT NULL,
+    role       TEXT        NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, tenant_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_memberships_user_id
+    ON auth_service.tenant_memberships (user_id);
+
+-- ============================================================
 -- BLACKLISTED TOKENS TABLE
 -- ============================================================
 CREATE TABLE IF NOT EXISTS auth_service.blacklisted_tokens (
