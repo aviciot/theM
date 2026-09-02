@@ -1037,3 +1037,196 @@ func (a *rawBase64AgentInvoker) InvokeForRun(ctx context.Context, tenantID, _ st
 func (a *rawBase64AgentInvoker) InvokeForRunStreaming(ctx context.Context, tenantID, appID, slug string, input json.RawMessage, _ func(string, string, string)) (json.RawMessage, error) {
 	return a.InvokeForRun(ctx, tenantID, appID, slug, input)
 }
+
+// ── Scan subscriber tests ─────────────────────────────────────────────────────
+
+// fakeFileGateInliner returns a gated artifact ID to signal scanning is active.
+type fakeFileGateInliner struct {
+	retID string
+}
+
+func (f *fakeFileGateInliner) InterceptInlineArtifact(_ context.Context, _, _, _, _, _ string, _ []byte) (string, error) {
+	return f.retID, nil
+}
+
+// fakeScanSubscriber provides controlled scan results for tests.
+type fakeScanSubscriber struct {
+	result orchestrator.ScanResult
+	ok     bool
+	delay  time.Duration
+}
+
+func (f *fakeScanSubscriber) WaitForScanResult(_ context.Context, _, _ string, _ time.Duration) (orchestrator.ScanResult, bool) {
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
+	return f.result, f.ok
+}
+
+// collectEventsFromBus subscribes to a bus and collects all events emitted
+// during runFn() plus a short grace period for background goroutines.
+func collectEventsFromBus(t *testing.T, bus event.Bus, contextID string, runFn func()) []event.Event {
+	t.Helper()
+	var (
+		mu     sync.Mutex
+		events []event.Event
+	)
+	sub, _, unsub := bus.Subscribe(context.Background(), contextID, 512)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev := range sub {
+			mu.Lock()
+			events = append(events, ev)
+			mu.Unlock()
+		}
+	}()
+
+	runFn()
+	// Allow goroutines (e.g. waitAndEmitScanResult) time to complete.
+	time.Sleep(100 * time.Millisecond)
+	unsub()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	out := make([]event.Event, len(events))
+	copy(out, events)
+	return out
+}
+
+func orchWithArtifactAndScan(gate orchestrator.FileGateInliner, sub orchestrator.ScanSubscriber) (*orchestrator.Orchestrator, event.Bus) {
+	cfg := orchestrator.Config{
+		MaxIterations: 5,
+		AllowedAgents: []string{"doc-writer"},
+	}
+	mock := newMultiCallMockProvider(
+		[]llm.StreamEvent{
+			{
+				Type: "tool_calls",
+				ToolCalls: []llm.ToolCall{{
+					ID:    "tc-scan",
+					Name:  "agent__doc-writer",
+					Input: map[string]any{"input": "generate"},
+				}},
+				StopReason: "tool_use",
+			},
+		},
+		[]llm.StreamEvent{
+			{Type: "stop", StopReason: "end_turn"},
+		},
+	)
+	agentInv := &artifactAgentInvoker{
+		filename: "report.pdf",
+		ct:       "application/pdf",
+		data:     []byte("PDF content"),
+	}
+	ar := &fakeArtifactRecorder{}
+	bus := event.New()
+
+	orch := orchestrator.New(cfg, mock, agentInv, newRecorder(), bus, nil).
+		WithArtifactRecorder(ar).
+		WithFileGateInliner(gate).
+		WithScanSubscriber(sub)
+	return orch, bus
+}
+
+// appRctx is a RunContext with a non-empty ApplicationID to trigger the gate path.
+var appRctx = orchestrator.RunContext{ApplicationID: "app-test-001"}
+
+// TestOrchestrator_FileScanningEvent verifies that when a file gate returns an
+// artifact ID and a scan subscriber is attached, a "file_scanning" event is
+// emitted synchronously (not "file") while scanning is in progress.
+func TestOrchestrator_FileScanningEvent(t *testing.T) {
+	gate := &fakeFileGateInliner{retID: "scanned-art-id"}
+	sub := &fakeScanSubscriber{
+		result: orchestrator.ScanResult{ArtifactID: "scanned-art-id", ScanStatus: "clean"},
+		ok:     true,
+	}
+	orch, bus := orchWithArtifactAndScan(gate, sub)
+
+	ctx := context.Background()
+	allEvents := collectEventsFromBus(t, bus, "ctx-scan-1", func() {
+		_, _ = orch.Run(ctx, "run-scan-1", "ctx-scan-1", domain.TextMessage(domain.RoleUser, "go"), nil, appRctx)
+	})
+
+	types := make([]string, 0, len(allEvents))
+	for _, ev := range allEvents {
+		types = append(types, ev.Type)
+	}
+	assert.Contains(t, types, "file_scanning", "file_scanning event must be emitted while scan is in progress")
+}
+
+// TestOrchestrator_ScanResult_Clean verifies that a clean scan result causes a
+// "file" event to be emitted after scanning completes.
+func TestOrchestrator_ScanResult_Clean(t *testing.T) {
+	gate := &fakeFileGateInliner{retID: "clean-art-id"}
+	sub := &fakeScanSubscriber{
+		result: orchestrator.ScanResult{ArtifactID: "clean-art-id", ScanStatus: "clean"},
+		ok:     true,
+	}
+	orch, bus := orchWithArtifactAndScan(gate, sub)
+
+	ctx := context.Background()
+	allEvents := collectEventsFromBus(t, bus, "ctx-scan-2", func() {
+		_, _ = orch.Run(ctx, "run-scan-2", "ctx-scan-2", domain.TextMessage(domain.RoleUser, "go"), nil, appRctx)
+	})
+
+	types := make([]string, 0, len(allEvents))
+	for _, ev := range allEvents {
+		types = append(types, ev.Type)
+	}
+	assert.Contains(t, types, "file", "file event must be emitted after clean scan")
+	assert.NotContains(t, types, "file_blocked", "file_blocked must NOT be emitted for a clean file")
+}
+
+// TestOrchestrator_ScanResult_Infected verifies that an infected scan result
+// causes a "file_blocked" event with the threat field set.
+func TestOrchestrator_ScanResult_Infected(t *testing.T) {
+	gate := &fakeFileGateInliner{retID: "infected-art-id"}
+	sub := &fakeScanSubscriber{
+		result: orchestrator.ScanResult{
+			ArtifactID: "infected-art-id",
+			ScanStatus: "infected",
+			Threat:     "Eicar.Test.File",
+		},
+		ok: true,
+	}
+	orch, bus := orchWithArtifactAndScan(gate, sub)
+
+	ctx := context.Background()
+	var blockedEvt event.Event
+	allEvents := collectEventsFromBus(t, bus, "ctx-scan-3", func() {
+		_, _ = orch.Run(ctx, "run-scan-3", "ctx-scan-3", domain.TextMessage(domain.RoleUser, "go"), nil, appRctx)
+	})
+
+	for _, ev := range allEvents {
+		if ev.Type == "file_blocked" {
+			blockedEvt = ev
+		}
+	}
+	require.Equal(t, "file_blocked", blockedEvt.Type, "file_blocked event must be emitted for infected file")
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(blockedEvt.Payload, &payload))
+	assert.Equal(t, "Eicar.Test.File", payload["threat"], "threat field must be set in file_blocked event")
+}
+
+// TestOrchestrator_ScanResult_Timeout verifies that when the scan subscriber
+// times out, a "file" event is emitted as a fallback (user not stuck forever).
+func TestOrchestrator_ScanResult_Timeout(t *testing.T) {
+	gate := &fakeFileGateInliner{retID: "timeout-art-id"}
+	sub := &fakeScanSubscriber{ok: false} // simulates timeout
+	orch, bus := orchWithArtifactAndScan(gate, sub)
+
+	ctx := context.Background()
+	allEvents := collectEventsFromBus(t, bus, "ctx-scan-4", func() {
+		_, _ = orch.Run(ctx, "run-scan-4", "ctx-scan-4", domain.TextMessage(domain.RoleUser, "go"), nil, appRctx)
+	})
+
+	types := make([]string, 0, len(allEvents))
+	for _, ev := range allEvents {
+		types = append(types, ev.Type)
+	}
+	assert.Contains(t, types, "file", "file event must be emitted as fallback after scan timeout")
+}

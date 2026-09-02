@@ -2117,8 +2117,12 @@ file artifact detection/recording (Phase R-3), and MCP tool dispatch.
 | `TestOrchestrator_MCPTool_DispatchedToService` | `mcp__<server>__<tool>` call → POST to MCPServiceURL/internal/execute with correct body |
 | `TestOrchestrator_MCPTool_NoServiceURL` | `mcp__*` call with empty MCPServiceURL → tool error, run completes without panic |
 | `TestOrchestrator_MCPTools_InBuildTools` | MCPServerAttachment.ToolDefs appear in tools list passed to LLM |
+| `TestOrchestrator_FileScanningEvent` | File gate returns gated ID + subscriber present → "file_scanning" event emitted synchronously |
+| `TestOrchestrator_ScanResult_Clean` | Scan subscriber returns clean → "file" event emitted after scan |
+| `TestOrchestrator_ScanResult_Infected` | Scan subscriber returns infected → "file_blocked" event with threat field |
+| `TestOrchestrator_ScanResult_Timeout` | Scan subscriber times out (ok=false) → fallback "file" event emitted |
 
-**Trigger:** any change to `internal/orchestrator/orchestrator.go` or `internal/orchestrator/summary.go`
+**Trigger:** any change to `internal/orchestrator/orchestrator.go`, `internal/orchestrator/scan_subscriber.go`, or `internal/orchestrator/summary.go`
 
 ---
 
@@ -2783,7 +2787,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-87 | middleware pipeline (Registry, Config, Pipeline: 16 tests) + av/clamav scanner (9 tests): TCP+Unix dial, INSTREAM protocol, null-byte response, fail-open, TestPipeline_ProcessorError_ReturnsError | 25 |
 | S1-88 | middleware/job quarantine-first DAL: EnqueueWithQuarantine, LoadFileBytes_QuarantinePath (MinIO fetch), Complete_CleanPath (promote + delete quarantine), Complete_InfectedPath (metadata-only + delete quarantine), Complete_LegacyPath (backward compat) | 5 |
 | S1-89 | internal/storage: New_InvalidEndpoint, New_ValidEndpoint, New_HTTPSEndpoint | 3 |
-| **S1 total** | | **985** |
+| S1-90 | orchestrator scan subscriber: FileScanningEvent (file_scanning emitted when gated), ScanResult_Clean (file event after clean), ScanResult_Infected (file_blocked + threat field), ScanResult_Timeout (fallback file event on timeout) | 4 |
+| **S1 total** | | **989** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2792,4 +2797,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **942** |
+| **`go test ./...` total** | | **946** |

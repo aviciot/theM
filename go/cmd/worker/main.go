@@ -153,6 +153,7 @@ func run() error {
 		}
 	}
 	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(pool), fileGateStore)
+	scanSub := orchestrator.NewRedisScanSubscriber(redisCache.Client())
 	factory := &runOrchestratorFactory{
 		globalProvider: globalLLMProvider,
 		globalAPIKey:   cfg.AnthropicAPIKey,
@@ -163,6 +164,7 @@ func run() error {
 		logger:         log,
 		mcpServiceURL:  cfg.MCPServiceURL,
 		fileGate:       fileGate,
+		scanSubscriber: scanSub,
 	}
 
 	// ── 12b. Phase 3 — forward bus events to Redis Streams ───────────────────
@@ -241,6 +243,7 @@ type runOrchestratorFactory struct {
 	logger         *slog.Logger
 	mcpServiceURL  string
 	fileGate       *middleware.FileGate
+	scanSubscriber orchestrator.ScanSubscriber
 }
 
 // Build creates a per-run orchestrator from the loaded RunConfig.
@@ -265,7 +268,8 @@ func (f *runOrchestratorFactory) Build(cfg workerconfig.RunConfig) (temporal.Orc
 		WithUsageRecorder(f.recorder).
 		WithStepRecorder(f.recorder).
 		WithArtifactRecorder(f.recorder).
-		WithFileGateInliner(&workerFileGateAdapter{gate: f.fileGate})
+		WithFileGateInliner(&workerFileGateAdapter{gate: f.fileGate}).
+		WithScanSubscriber(f.scanSubscriber)
 
 	// Wire summarizer if memory is enabled and a provider is configured.
 	if cfg.OrchestratorConfig.MemoryEnabled && cfg.SummarizerProvider != "" {

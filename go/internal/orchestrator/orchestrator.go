@@ -189,6 +189,24 @@ type FileGateInliner interface {
 	InterceptInlineArtifact(ctx context.Context, appID, runID, sessionID, filename, contentType string, data []byte) (artifactID string, err error)
 }
 
+// ScanResult carries the outcome of a completed security scan.
+type ScanResult struct {
+	ArtifactID  string
+	ScanStatus  string // "clean", "infected", "error", "failed"
+	Threat      string // non-empty when infected
+	FileName    string
+	FileSizeBytes int64
+}
+
+// ScanSubscriber waits for the async artifact_scan_result event published by the
+// middleware worker to them:run:<runID> when a scan completes.
+// WaitForScanResult blocks until the result arrives, the context is cancelled, or
+// the timeout elapses. It returns (result, true) on success, ("", false) on timeout
+// or cancellation.
+type ScanSubscriber interface {
+	WaitForScanResult(ctx context.Context, runID, artifactID string, timeout time.Duration) (ScanResult, bool)
+}
+
 // Orchestrator runs the agentic loop.
 type Orchestrator struct {
 	cfg      Config
@@ -208,6 +226,7 @@ type Orchestrator struct {
 	budgetStore      BudgetStore
 	artifactRecorder ArtifactRecorder
 	fileGateInliner  FileGateInliner
+	scanSubscriber   ScanSubscriber
 
 	// Summarizer fields (all optional; wired by WithSummarizer).
 	summarizer   Summarizer
@@ -283,6 +302,14 @@ func (o *Orchestrator) WithArtifactRecorder(ar ArtifactRecorder) *Orchestrator {
 // the gate before storage, enabling AV scanning on the orchestrator path.
 func (o *Orchestrator) WithFileGateInliner(fg FileGateInliner) *Orchestrator {
 	o.fileGateInliner = fg
+	return o
+}
+
+// WithScanSubscriber attaches a subscriber that waits for artifact_scan_result
+// events from the middleware worker. When set, gated artifacts emit "file_scanning"
+// immediately and then "file" or "file_blocked" once the scan completes.
+func (o *Orchestrator) WithScanSubscriber(ss ScanSubscriber) *Orchestrator {
+	o.scanSubscriber = ss
 	return o
 }
 
@@ -623,6 +650,7 @@ func (o *Orchestrator) emitArtifactEvent(ctx context.Context, contextID, runID s
 	}
 
 	var artifactID string
+	gated := false
 	// Route through security gate when available (stores artifact with scan_status='pending'
 	// and enqueues an AV scan job). Falls back to plain RecordArtifact when gate is
 	// disabled or not configured for this application.
@@ -633,6 +661,7 @@ func (o *Orchestrator) emitArtifactEvent(ctx context.Context, contextID, runID s
 		)
 		if gateErr == nil && gatedID != "" {
 			artifactID = gatedID
+			gated = true
 		}
 	}
 	if artifactID == "" {
@@ -661,8 +690,8 @@ func (o *Orchestrator) emitArtifactEvent(ctx context.Context, contextID, runID s
 		}
 	}
 
-	// Publish file event — metadata only, no binary data, no internal paths.
-	payload := map[string]any{
+	// Base metadata shared by all event types.
+	basePayload := map[string]any{
 		"artifact_id":  artifactID,
 		"filename":     body.Filename,
 		"content_type": body.ContentType,
@@ -671,12 +700,69 @@ func (o *Orchestrator) emitArtifactEvent(ctx context.Context, contextID, runID s
 		"download_url": "/api/v1/runs/" + runID + "/artifacts/" + artifactID,
 	}
 	if rctx.ApplicationID != "" {
-		payload["application_id"] = rctx.ApplicationID
+		basePayload["application_id"] = rctx.ApplicationID
 	}
 	if rctx.SessionID != "" {
-		payload["session_id"] = rctx.SessionID
+		basePayload["session_id"] = rctx.SessionID
 	}
-	o.publishJSON(ctx, contextID, runID, "file", payload)
+
+	if gated && o.scanSubscriber != nil {
+		// Scanning in progress — emit file_scanning so the frontend can show a spinner,
+		// then wait for the scan result in a goroutine and emit the final event.
+		o.publishJSON(ctx, contextID, runID, "file_scanning", basePayload)
+
+		// Capture loop variables for the goroutine.
+		capturedContextID := contextID
+		capturedRunID := runID
+		capturedArtifactID := artifactID
+		capturedPayload := copyMap(basePayload)
+		go o.waitAndEmitScanResult(capturedContextID, capturedRunID, capturedArtifactID, capturedPayload)
+		return
+	}
+
+	// Not gated or no subscriber — emit file event directly (legacy / disabled path).
+	o.publishJSON(ctx, contextID, runID, "file", basePayload)
+}
+
+// waitAndEmitScanResult waits up to scanResultTimeout for the middleware worker to
+// publish an artifact_scan_result, then emits "file" (clean) or "file_blocked"
+// (infected/error). Uses a background context so a user disconnect does not cancel
+// the goroutine — the scan continues regardless.
+const scanResultTimeout = 5 * time.Minute
+
+func (o *Orchestrator) waitAndEmitScanResult(contextID, runID, artifactID string, payload map[string]any) {
+	ctx, cancel := context.WithTimeout(context.Background(), scanResultTimeout)
+	defer cancel()
+
+	res, ok := o.scanSubscriber.WaitForScanResult(ctx, runID, artifactID, scanResultTimeout)
+	if !ok {
+		// Timeout or subscriber error — emit the file event anyway so the user isn't stuck.
+		o.logger.Warn("orchestrator: scan result timeout — emitting file event without scan gate",
+			"run_id", runID, "artifact_id", artifactID)
+		o.publishJSON(ctx, contextID, runID, "file", payload)
+		return
+	}
+
+	switch res.ScanStatus {
+	case "clean", "disabled":
+		o.publishJSON(ctx, contextID, runID, "file", payload)
+	case "infected":
+		blocked := copyMap(payload)
+		blocked["threat"] = res.Threat
+		o.publishJSON(ctx, contextID, runID, "file_blocked", blocked)
+	default:
+		// error/failed — emit the file event so the artifact is still accessible.
+		o.publishJSON(ctx, contextID, runID, "file", payload)
+	}
+}
+
+// copyMap shallow-copies a map[string]any so the goroutine has its own copy.
+func copyMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // executeTools invokes all tool calls in parallel (bounded by MaxParallelTools),
