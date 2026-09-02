@@ -95,6 +95,35 @@ function SecurityTab({ stats }: { stats: SecurityScanStats }) {
         <KpiTile label="p95 latency" value={fmt(stats.p95_latency_ms, ' ms')} />
       </div>
 
+      {/* Quarantine health */}
+      <div style={{ background: 'var(--tm-card)', border: `1px solid ${(stats.quarantine_expired ?? 0) > 0 ? 'rgba(245,158,11,0.4)' : 'var(--tm-border)'}`, borderRadius: 10, padding: '14px 20px' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: 'var(--tm-text)' }}>Quarantine</div>
+        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div>
+            <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>In quarantine</span>
+            <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--tm-text)', marginTop: 2 }}>{stats.quarantine_total ?? 0}</div>
+            <div style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>objects (scan in progress)</div>
+          </div>
+          <div>
+            <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Expired (pending reap)</span>
+            <div style={{ fontSize: 22, fontWeight: 700, color: (stats.quarantine_expired ?? 0) > 0 ? '#f59e0b' : 'var(--tm-text)', marginTop: 2 }}>{stats.quarantine_expired ?? 0}</div>
+            <div style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>cleaned up every 15 min</div>
+          </div>
+          {(stats.quarantine_expired ?? 0) === 0 && (stats.quarantine_total ?? 0) === 0 && (
+            <div style={{ fontSize: 12, color: '#10b981', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>check_circle</span>
+              Quarantine clean
+            </div>
+          )}
+          {(stats.quarantine_expired ?? 0) > 0 && (
+            <div style={{ fontSize: 12, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>warning</span>
+              Expired objects awaiting next reaper run
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Daily trend */}
       <div style={{ background: 'var(--tm-card)', border: '1px solid var(--tm-border)', borderRadius: 10, padding: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 16, color: 'var(--tm-text)' }}>Daily trend</div>

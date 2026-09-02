@@ -23,6 +23,10 @@ type SecurityScanStats struct {
 	AvgLatencyMs float64 `json:"avg_latency_ms"`
 	P95LatencyMs float64 `json:"p95_latency_ms"`
 
+	// Quarantine health — rows still in quarantine_artifacts
+	QuarantineTotal   int64 `json:"quarantine_total"`   // all rows (in-progress + expired)
+	QuarantineExpired int64 `json:"quarantine_expired"` // rows past expires_at (reaper hasn't run yet)
+
 	// Per-day trend (last N days)
 	DailyTrend []DailyTrendRow `json:"daily_trend"`
 
@@ -94,6 +98,18 @@ WHERE created_at >= $1 AND duration_ms IS NOT NULL AND duration_ms > 0`
 
 	lrow := db.QueryRow(ctx, latencyQ, since)
 	if err := lrow.Scan(&s.AvgLatencyMs, &s.P95LatencyMs); err != nil {
+		return nil, err
+	}
+
+	// ── Quarantine health ─────────────────────────────────────────────────────
+	const quarantineQ = `
+SELECT
+  count(*)                                   AS total,
+  count(*) FILTER (WHERE expires_at < now()) AS expired
+FROM them.quarantine_artifacts`
+
+	qrow := db.QueryRow(ctx, quarantineQ)
+	if err := qrow.Scan(&s.QuarantineTotal, &s.QuarantineExpired); err != nil {
 		return nil, err
 	}
 

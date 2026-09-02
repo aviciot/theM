@@ -2311,6 +2311,22 @@ scheme detection (HTTP vs HTTPS), and error on malformed endpoint.
 
 ---
 
+### S1-91 · Quarantine reaper — `internal/middleware/reaper_test.go`
+
+**Purpose:** Unit tests for the Reaper that deletes expired quarantine objects from MinIO and the DB.
+
+| Test | What it proves |
+|---|---|
+| `TestReaper_DeletesExpiredRows` | Happy path: expired rows deleted from both MinIO and DB |
+| `TestReaper_NoRows` | No expired rows → no-op, zero deletes |
+| `TestReaper_MinIOErrorDoesNotBlockDBDelete` | MinIO failure → DB row still deleted (fail-forward) |
+| `TestReaper_EmptyStorageKeySkipsMinIO` | Row with no storage_key (already scrubbed) → MinIO call skipped |
+| `TestReaper_QueryErrorIsHandled` | DB query error → handled without panic |
+
+**Trigger:** any change to `internal/middleware/reaper.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
@@ -2680,6 +2696,13 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/runstream/stream.go` | S1-21 |
 | `internal/reconciler/reconciler.go` | S1-22 |
 | `internal/registry/resolver.go`, `internal/registry/pgx.go`, `internal/registry/types.go` | S1-41 + S1-43 + S1-44 |
+| `internal/middleware/reaper.go` | S1-91 |
+| `internal/middleware/job.go` | S1-88 |
+| `internal/middleware/gate.go` | S1-84 |
+| `internal/middleware/pipeline.go`, `internal/middleware/config.go`, `internal/middleware/processor.go` | S1-87 |
+| `internal/middleware/av/clamav.go` | S1-87 |
+| `internal/storage/storage.go` | S1-89 |
+| `cmd/middleware-worker/main.go` | S1-87 + S1-88 + S1-89 + S1-91 |
 | `cmd/them/main.go` | S1-24 + S1 (full suite) |
 | `go.mod` or `go.sum` | S1 (full suite) |
 | `Dockerfile.go` | S1 + rebuild + S2 |
@@ -2788,6 +2811,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-88 | middleware/job quarantine-first DAL: EnqueueWithQuarantine, LoadFileBytes_QuarantinePath (MinIO fetch), Complete_CleanPath (promote + delete quarantine), Complete_InfectedPath (metadata-only + delete quarantine), Complete_LegacyPath (backward compat) | 5 |
 | S1-89 | internal/storage: New_InvalidEndpoint, New_ValidEndpoint, New_HTTPSEndpoint | 3 |
 | S1-90 | orchestrator scan subscriber: FileScanningEvent (file_scanning emitted when gated), ScanResult_Clean (file event after clean), ScanResult_Infected (file_blocked + threat field), ScanResult_Timeout (fallback file event on timeout) | 4 |
+| S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
 | **S1 total** | | **989** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
@@ -2797,4 +2821,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **946** |
+| **`go test ./...` total** | | **951** |

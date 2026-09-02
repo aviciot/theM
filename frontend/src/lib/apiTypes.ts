@@ -761,6 +761,8 @@ export interface SecurityScanStats {
   success_rate: number;
   avg_latency_ms: number;
   p95_latency_ms: number;
+  quarantine_total: number;
+  quarantine_expired: number;
   daily_trend: DailyTrendRow[];
   app_breakdown: AppScanRow[];
   recent_jobs: RecentJobRow[];

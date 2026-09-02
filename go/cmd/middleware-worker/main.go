@@ -111,6 +111,12 @@ func run() error {
 		cancel()
 	}()
 
+	// ── Quarantine reaper ─────────────────────────────────────────────────────
+	reaperInterval := time.Duration(envInt("REAPER_INTERVAL_MINUTES", 15)) * time.Minute
+	reaper := middleware.NewReaper(&pgxQuerier{pool: database.Pool()}, objStore, log)
+	go reaper.Run(ctx, reaperInterval)
+	log.Info("quarantine reaper started", "interval", reaperInterval)
+
 	var wg sync.WaitGroup
 	for i := range concurrency {
 		wg.Add(1)
