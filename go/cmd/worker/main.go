@@ -100,7 +100,13 @@ func run() error {
 		defer rlsPools.Close()
 		log.Info("RLS pools connected (them_app + them_admin)")
 	}
-	_ = rlsPools
+	// When RLS pools are configured, use the Admin pool (BYPASSRLS) for all
+	// long-lived per-service pools. The recorder and registry embed explicit
+	// tenant_id in their queries; BYPASSRLS lets them run without the GUC.
+	activePool := database.Pool()
+	if rlsPools != nil {
+		activePool = rlsPools.Admin
+	}
 
 	// ── 4. Connect to Redis ───────────────────────────────────────────────────
 	redisCache, err := cache.New(ctx, cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)
@@ -115,7 +121,7 @@ func run() error {
 	log.Info("event bus initialised")
 
 	// ── 6. Create run recorder ────────────────────────────────────────────────
-	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(database.Pool()))
+	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(activePool))
 
 	// ── 7. Create global LLM provider (fallback when no per-app key is stored) ──
 	var globalLLMProvider llm.Provider
@@ -128,8 +134,7 @@ func run() error {
 	}
 
 	// ── 8. Create agent registry ─────────────────────────────────────────────
-	pool := database.Pool()
-	agentDB := agentregistry.NewPgxQuerier(pool)
+	agentDB := agentregistry.NewPgxQuerier(activePool)
 	agentCacheRedis := cache.NewAuthRedisClient(redisCache.Client())
 	registry := agentregistry.New(agentDB, agentCacheRedis, log)
 
@@ -143,10 +148,10 @@ func run() error {
 	fernetKey := crypto.DeriveKey(cfg.SecretKey)
 
 	// ── 10. Create per-run config loader ──────────────────────────────────────
-	cfgLoader := workerconfig.NewPgxLoader(pool, fernetKey)
+	cfgLoader := workerconfig.NewPgxLoader(activePool, fernetKey)
 
 	// ── 11. Create history store ──────────────────────────────────────────────
-	historyStore := history.NewStore(pool, log)
+	historyStore := history.NewStore(activePool, log)
 
 	// ── 12. Create orchestrator factory ──────────────────────────────────────
 	var fileGateStore middleware.Store
@@ -164,7 +169,7 @@ func run() error {
 			fileGateStore = sc
 		}
 	}
-	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(pool), fileGateStore)
+	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(activePool), fileGateStore)
 	scanSub := orchestrator.NewRedisScanSubscriber(redisCache.Client())
 	factory := &runOrchestratorFactory{
 		globalProvider: globalLLMProvider,

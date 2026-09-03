@@ -334,12 +334,13 @@ func (r *Recorder) CompleteRootTask(ctx context.Context, runID string, success b
 // CreateRootTask ensures a root task row exists for (contextID, runID).
 // Called before writing task_messages so the FK constraint is satisfied.
 // Idempotent — ON CONFLICT DO NOTHING means repeated calls are safe.
-func (r *Recorder) CreateRootTask(ctx context.Context, contextID, runID string) error {
+// tenantID must be the run's tenant UUID — tasks.tenant_id is NOT NULL.
+func (r *Recorder) CreateRootTask(ctx context.Context, tenantID, contextID, runID string) error {
 	const q = `
-INSERT INTO them.tasks (context_id, run_id, state, kind)
-VALUES ($1::uuid, NULLIF($2, '')::uuid, 'working', 'root')
+INSERT INTO them.tasks (tenant_id, context_id, run_id, state, kind)
+VALUES ($1::uuid, $2::uuid, NULLIF($3, '')::uuid, 'working', 'root')
 ON CONFLICT DO NOTHING`
-	if err := r.db.Exec(ctx, q, contextID, runID); err != nil {
+	if err := r.db.Exec(ctx, q, tenantID, contextID, runID); err != nil {
 		return fmt.Errorf("runrecorder: create root task: %w", err)
 	}
 	return nil

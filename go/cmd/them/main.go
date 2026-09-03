@@ -126,7 +126,14 @@ func run() error {
 	// ── 7. Create run recorder ────────────────────────────────────────────────
 	// Every new run row records events_transport='streams'; the Go worker always
 	// writes run events to Redis Streams and the bridge reads them from there.
-	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(database.Pool()))
+	// When RLS pools are configured, use the Admin pool (BYPASSRLS) — the
+	// recorder embeds explicit tenant_id in every INSERT, so isolation is
+	// preserved without relying on the GUC. UPDATEs use opaque internal IDs.
+	recorderPool := database.Pool()
+	if rlsPools != nil {
+		recorderPool = rlsPools.Admin
+	}
+	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(recorderPool))
 
 	// ── 10. Create rate limiter ───────────────────────────────────────────────
 	rlRedis := cache.NewRateLimitClient(redisCache.Client())
@@ -225,7 +232,11 @@ func run() error {
 	// DryRun is read from RECONCILER_DRY_RUN env var; defaults to true (safe).
 	// Set RECONCILER_DRY_RUN=false to enable actual DB writes.
 	if cfg.TemporalEnabled && temporalCli != nil {
-		recDB := reconciler.NewPgxQuerier(database.Pool())
+		recPool := database.Pool()
+		if rlsPools != nil {
+			recPool = rlsPools.Admin
+		}
+		recDB := reconciler.NewPgxQuerier(recPool)
 		recCfg := reconciler.Config{DryRun: cfg.ReconcilerDryRun}
 		go reconciler.Run(runCtx, recCfg, recDB, temporalCli, log)
 		log.Info("run reconciler started", "dry_run", recCfg.DryRun)
