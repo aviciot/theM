@@ -3,7 +3,7 @@
 # Branch: main
 # Design HEAD: 61730f3
 # Last updated: 2026-09-03
-# Status: IN PROGRESS — Phase A complete, B1+B2 complete, C1+C2 complete, D1+D2 complete, integration tests verified, E0 next
+# Status: IN PROGRESS — Phase A complete, B1+B2 complete, C1+C2 complete, D1+D2 complete, E0+E1+E2 complete, F1 next
 #
 # Context: This is a focused side-track from the main multi-tenancy roadmap
 # (Steps 1–18 complete). Step 19 (RLS) must finish before the tenant roadmap
@@ -248,23 +248,22 @@ Migrate callers → deploy → enable RLS. For each phase, the sequence is:
 
 ### Phase E — Run and task tables
 
-- [ ] **E0** — Prerequisite: `tasks.tenant_id` backfill (Appendix B of design doc):
-  - `db/074_tasks_tenant_backfill.sql` — UPDATE + ALTER COLUMN SET NOT NULL
-  - Verify zero NULL rows
-  - **Commit tag:** `feat(rls): E0 — backfill tasks.tenant_id NOT NULL`
+- [x] **E0** — Prerequisite: `tasks.tenant_id` backfill:
+  - `db/074_tasks_tenant_backfill.sql` — 3 rows via orchestrator FK, 24 rows to bootstrap tenant (pre-multi-tenancy orphans, run_id IS NULL). ALTER COLUMN SET NOT NULL. Guard DO block confirms 0 NULLs.
+  - **Commit:** `e61d81c`
 
-- [ ] **E1** — Migrate callers for `runs`, `run_artifacts`, `tasks`, `quarantine_artifacts`, `managed_app_bindings`:
-  - `runrecorder` → TenantTx
-  - `agent-runtime` (spec.go, llm.go, runtime.go) → TenantTx (tenantID from InvocationContext.TenantID)
-  - `temporal/workerconfig/loader.go` — tenant-scoped lookups → TenantTx; platform lookups → AdminQuerier
-  - `dag-worker/main.go` — split tenant-scoped → TenantTx; cross-tenant → AdminQuerier
-  - `reconciler` → AdminQuerier (cross-tenant by design)
-  - Rebuild and redeploy `them-go-bridge`, `them-go-worker`, `them-agent-runtime`, `them-dag-worker`
-  - **Commit tag:** `feat(rls): E1 — migrate callers for runs/tasks/run_artifacts`
+- [x] **E1** — Migrate callers to Admin pool (BYPASSRLS):
+  - `cmd/them/main.go`: recorder → Admin pool; reconciler → Admin pool (cross-tenant sweep)
+  - `cmd/worker/main.go`: recorder, agentregistry, workerconfig loader, history store, middleware file gate → Admin pool
+  - `internal/runrecorder/recorder.go`: `CreateRootTask` gains `tenantID` param (tasks.tenant_id is NOT NULL)
+  - `them-go-bridge` and `them-go-worker` rebuilt and restarted — both healthy
+  - **NOTE:** `quarantine_artifacts` and `managed_app_bindings` not yet covered — no Go callers yet (handled in later phase)
+  - **Commit:** `3496994`
 
-- [ ] **E2** — Enable RLS on E1 tables:
-  - `db/075_rls_phase_e.sql`
-  - **Commit tag:** `feat(rls): E2 — enable RLS on runs/tasks/run_artifacts/quarantine_artifacts`
+- [x] **E2** — Enable RLS on E1 tables:
+  - `db/075_rls_phase_e.sql` — direct tenant_id policies on runs, tasks, run_artifacts
+  - Smoke-tested: them_app sees 0 runs without GUC; them_admin sees all 347
+  - **Commit:** `3496994` (same commit as E1)
 
 ### Phase F — Child run/task tables
 
@@ -379,6 +378,7 @@ variables are derived from `secrets.local` via HMAC like all other secrets.
 | 2026-09-03 | Implementation session 3 | C1b, C2 | 285e21e | C1b: appliveness Loop uses Admin pool. C2: 072 migration applied, RLS live on 5 tables. go test ./... zero failures, integration tests pass. |
 | 2026-09-03 | Implementation session 4 | D1, D2 | 43b6b41 | D1: agent-runtime + agentregistry use Admin pool for explicit-predicate queries. D2: 073 migration applied, EXISTS-based RLS on 4 child tables. go test ./... zero failures. |
 | 2026-09-03 | Implementation session 5 | Integration tests + schema fix | 1659b34 | TestRLS_TwoTenantFullIsolation: 13/13 pass, 0 skips. Full two-tenant isolation verified across Phases B/C/D tables. db/070_rls_roles.sql: added GRANT USAGE ON SCHEMA them TO them_owner (FK trigger fix). |
+| 2026-09-03 | Implementation session 6 | E0, E1, E2 | e61d81c, 3496994 | E0: tasks.tenant_id backfilled NOT NULL. E1: recorder+reconciler+worker on Admin pool; CreateRootTask gains tenantID param. E2: RLS on runs/tasks/run_artifacts. go test ./... 45 pkgs pass. |
 
 *(Add a row for each session.)*
 

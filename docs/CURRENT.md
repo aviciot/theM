@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-03 (Step 19 D2 + integration tests complete)
+# Last updated: 2026-09-03 (Step 19 E0+E1+E2 complete)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+3496994  feat(rls): E1+E2 — migrate callers; enable RLS on runs/tasks/run_artifacts
+e61d81c  feat(rls): E0 — backfill tasks.tenant_id NOT NULL
+5c56fd7  docs(rls): D2+integration tests complete — update progress tracker and CURRENT.md
 1659b34  test(rls): TestRLS_TwoTenantFullIsolation + fix them_owner schema USAGE
 43b6b41  feat(rls): D1+D2 — migrate callers; enable RLS on app child tables
-285e21e  feat(rls): C1b+C2 — fix appliveness cross-tenant scan; enable RLS on core tables
-3883787  docs(rls): C1 complete — update STEP19 progress tracker and CURRENT.md
-4f3a0e1  feat(rls): C1 — migrate callers for agents/orchestrators/applications/tokens/entry-points
 ```
 
 ---
@@ -50,15 +50,14 @@ Key facts:
 Design: `docs/design/rls-option-a-plan.md` (v3, commit 61730f3) — COMPLETE, reviewed, unblocked.
 Progress tracker: `docs/STEP19_RLS_HANDOVER.md` — read this before starting implementation.
 
-Implementation progress: **A1–A5 done, B1–B2 done, C1+C1b+C2 done, D1+D2 done, integration tests verified (13/13 pass, 0 skips)**. HEAD: `1659b34`.
+Implementation progress: **A1–A5 done, B1–B2 done, C1+C1b+C2 done, D1+D2 done, E0+E1+E2 done**. HEAD: `3496994`.
 
 ### Next recommended task for a new session
 
-Start `docs/STEP19_RLS_HANDOVER.md` sub-step **E0** — backfill `tasks.tenant_id`:
-- `db/074_tasks_tenant_backfill.sql` — UPDATE pre-multi-tenancy NULL rows (27 rows), then ALTER COLUMN SET NOT NULL
-- Verify zero NULL rows after backfill
-- After E0, proceed to E1 (migrate callers for runs/run_artifacts/tasks/quarantine_artifacts/managed_app_bindings)
-- Key callers for E1: `runrecorder` (TenantTx), `agent-runtime` (TenantTx from InvocationContext.TenantID), `reconciler` (AdminQuerier — cross-tenant sweep), `dag-worker`
+Start `docs/STEP19_RLS_HANDOVER.md` sub-step **F1** — verify callers for `run_steps`, `run_usage`, `artifacts`, `task_messages`, `middleware_audit`:
+- These are written by `runrecorder` (already on Admin pool after E1) and read by admin DAL (run detail, get tasks)
+- Confirm all callers are already covered — then F2: enable RLS on these child tables via EXISTS policies through runs/tasks/run_artifacts
+- `db/076_rls_phase_f.sql` — EXISTS-based policies: run_steps/run_usage → through runs; artifacts/task_messages → through tasks/run_artifacts; middleware_audit → through runs
 
 ### Known blockers / pre-conditions
 
