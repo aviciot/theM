@@ -319,6 +319,9 @@ end-to-end with a mock IdP, and secrets never leak into config logs.
 | `TestHTTPTenantLookup_NotFound` (OIDC-22) | email domain not registered → 404 |
 | `TestHTTPTenantLookup_MissingEmail` (OIDC-23) | missing email param → 400 |
 | `TestHTTPTenantLookup_InvalidEmail` (OIDC-24) | no @ in input → 400 |
+| `TestOIDCCallback_GroupsMatchedRoleOverridden` (OIDC-25) | id_token includes groups claim matching a tenant group mapping → UpsertOIDCUser called with mapped role (not "viewer") |
+| `TestOIDCCallback_GroupsUnmatchedDefaultRole` (OIDC-26) | groups present but none match any mapping → UpsertOIDCUser called with "viewer" |
+| `TestOIDCCallback_NoGroupsDefaultRole` (OIDC-27) | id_token has no groups claim → UpsertOIDCUser called with "viewer" even when mappings are configured |
 
 **Trigger:** any change to `internal/authserver/` (config, jwt, password, store, pgx, service,
 handlers, router, oidc, oidc_store, oidc_jwks) or `cmd/auth-server/main.go`. Run `go test ./internal/authserver/...`.
@@ -2428,6 +2431,13 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | `TestTenants_AddMember_Success` (TN-20) | POST /tenants/{id}/members → 201 with role |
 | `TestTenants_AddMember_MissingUserID` (TN-21) | POST without user_id → 400 |
 | `TestTenants_AddMember_MissingRole` (TN-22) | POST without role → 400 |
+| `TestTenants_ListGroupMappings_Empty` (GM-01) | GET /tenants/{id}/group-mappings with no rows → 200 with `[]` |
+| `TestTenants_ListGroupMappings_Populated` (GM-02) | GET /tenants/{id}/group-mappings with 1 row → group_claim + role present |
+| `TestTenants_UpsertGroupMapping_Success` (GM-03) | PUT /tenants/{id}/group-mappings → 200 with mapping fields |
+| `TestTenants_UpsertGroupMapping_MissingGroupClaim` (GM-04) | PUT without group_claim → 400 |
+| `TestTenants_UpsertGroupMapping_InvalidRole` (GM-05) | PUT with role not in {viewer,member,admin,super_admin} → 400 |
+| `TestTenants_DeleteGroupMapping_Success` (GM-06) | DELETE /tenants/{id}/group-mappings/{mapping_id} → 204 |
+| `TestTenants_DeleteGroupMapping_NotFound` (GM-07) | DELETE missing mapping → 404 |
 
 **Trigger:** `internal/admin/tenants.go`, `internal/admin/dal/tenants.go`
 
@@ -2898,7 +2908,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-34 | admin tenant HTTP enforcement (R-4c2) | 12 |
 | S1-35 | execution lifecycle (unification refactor) | 22 |
 | S1-36 | admin agent action endpoints (Wave 8: discover/test/security-scan) | 8 |
-| S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache + Step 16 RBAC + Step 17 tenant-lookup) | 66 |
+| S1-40 | authserver (Go auth service + OIDC flow + JWKS RS256 verification + cache + Step 16 RBAC + Step 17 tenant-lookup + Step 18 OIDC group role mapping) | 69 |
 | S1-41 | registry (component definition resolver) | 12 |
 | S1-42 | admin definitions (Phase B: application definition CRUD) | 12 |
 | S1-43 | admin definitions validate (Phase C: ValidateDefinition) | 10 |
@@ -2946,11 +2956,11 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-91 | quarantine reaper: DeletesExpiredRows, NoRows, MinIOErrorDoesNotBlockDBDelete, EmptyStorageKeySkipsMinIO, QueryErrorIsHandled | 5 |
 | S1-92 | Managed Apps catalog + platform bindings (MA-01..14): List_Empty, List_Populated, Create_Success, Create_MissingName, Get_Found, Get_NotFound, PutParams, Bindings_List, Binding_Upsert, Binding_MissingConfig, ListBindingsByTenant, ListBindingsByTenant_Empty, UpsertBindingByTenant, UpsertBindingByTenant_MissingConfig | 14 |
 | S1-93 | workerconfig managed app params (MAP-01..04): ConfigSubstitution, NilSafe, ZeroNil, TenantProviderKey_NilPoolSafe | 4 |
-| S1-94 | Tenant CRUD + PATCH + quota + members + email domain handler (TN-01..25): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured, GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON, ListMembers_Empty, ListMembers_Populated, AddMember_Success, AddMember_MissingUserID, AddMember_MissingRole, Patch_EmailDomain, Patch_EmailDomain_Clear, List_WithEmailDomain | 25 |
+| S1-94 | Tenant CRUD + PATCH + quota + members + email domain + group mappings handler (TN-01..25 + GM-01..07): List_Empty, List_Populated, Get_Found, Get_NotFound, Create_Success, Create_MissingSlug, Create_MissingDisplayName, Create_BadJSON, Patch_Success, Patch_NotFound, Patch_BadJSON, Patch_IDPConfigured, GetQuota_NotFound, GetQuota_Found, UpsertQuota_Success, UpsertQuota_BadPlan, UpsertQuota_BadJSON, ListMembers_Empty, ListMembers_Populated, AddMember_Success, AddMember_MissingUserID, AddMember_MissingRole, Patch_EmailDomain, Patch_EmailDomain_Clear, List_WithEmailDomain, ListGroupMappings_Empty, ListGroupMappings_Populated, UpsertGroupMapping_Success, UpsertGroupMapping_MissingGroupClaim, UpsertGroupMapping_InvalidRole, DeleteGroupMapping_Success, DeleteGroupMapping_NotFound | 32 |
 | S1-95 | quota enforcer (QE-01..09): NilLimits, ConcurrentBelowLimit, ConcurrentAtLimit, RPMBelowLimit, RPMExceeded, DBError, MonthlyNilLimit, MonthlyBelowLimit, MonthlyExceeded | 9 |
 | S1-96 | per-tenant LLM provider service (TLP-01..06): ListForTenant_ReturnsMerged, ListForTenant_EmptyReturnsEmptySlice, Upsert_PlatformNotFound_ReturnsNotFound, Upsert_MissingDefaultModel_ReturnsValidation, Upsert_Success_EncryptsKey, Upsert_InheritsDisplayNameFromPlatform | 6 |
 | S1-97 | per-tenant LLM provider handler (TLP-01..05): List_200_Empty, List_400_MissingID, Upsert_200, Upsert_404_PlatformNotFound, Upsert_400_BadJSON | 5 |
-| **S1 total** | | **1072** |
+| **S1 total** | | **1082** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
@@ -2959,4 +2969,4 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-05 | admin/dal llm_providers integration | 11 |
 | **S2 total** | | **42** |
 | S3 live | manual | 23 |
-| **`go test ./...` total** | | **1024** |
+| **`go test ./...` total** | | **1034** |

@@ -1,8 +1,8 @@
-# Handover — Multi-Tenancy Step 17
-**Date:** 2026-09-02
+# Handover — Multi-Tenancy Step 18
+**Date:** 2026-09-03
 **Branch:** main
-**HEAD:** f2c6e90 (feat(multi-tenancy): Step 17 — Email-domain → tenant routing)
-**Steps complete:** 1 → 17 (all 47 Go packages pass, 1072 S1 tests, 1024 go test ./...)
+**HEAD:** (pending commit — Step 18 in progress)
+**Steps complete:** 1 → 18 (all 47 Go packages pass, 1082 S1 tests, 1034 go test ./...)
 
 ---
 
@@ -65,6 +65,7 @@
 | Step 15 | Per-tenant LLM provider key management — tenant_id on llm_providers, merged list, upsert override, run-time resolution | Complete | 24ff822 |
 | Step 16 | Per-tenant RBAC — tenant_id in /me response, tenant_slug login selection, GET/POST /admin/tenants/{id}/members | Complete | 5ee5a34 |
 | Step 17 | Email-domain → tenant routing — email_domain on tenants, GET /auth/tenant-lookup (public), SSO banner on login page, admin UI field | Complete | f2c6e90 |
+| Step 18 | OIDC group claims → tenant role mapping — them.tenant_group_mappings, GET/PUT/DELETE /admin/tenants/{id}/group-mappings, group role lookup in OIDCCallback | Complete | (pending) |
 
 ---
 
@@ -448,6 +449,45 @@ All 47 Go packages pass.
 
 ---
 
+## Step 18 — COMPLETE
+
+### What Step 18 built
+
+**Scope:** OIDC group claims → tenant role mapping (Phase 3 of multi-tenancy).
+
+**DB migration:**
+- `db/059_tenant_group_mappings.sql` — `them.tenant_group_mappings(id UUID PK, tenant_id UUID FK→tenants ON DELETE CASCADE, group_claim TEXT NOT NULL, role TEXT CHECK(viewer|member|admin|super_admin), priority INT DEFAULT 0, created_at/updated_at TIMESTAMPTZ)`. UNIQUE `(tenant_id, group_claim)`. Index on `tenant_id`.
+
+**Go changes:**
+- `go/internal/admin/dal/tenants.go` — `GroupMapping` + `GroupMappingInput` structs; `ListGroupMappings`, `UpsertGroupMapping` (ON CONFLICT DO UPDATE RETURNING), `DeleteGroupMapping` (tenant ownership check, pgx.ErrNoRows when not found)
+- `go/internal/admin/tenants.go` — 3 new handlers: `ListGroupMappings` (GET), `UpsertGroupMapping` (PUT, validates group_claim non-empty + role in allowed set), `DeleteGroupMapping` (DELETE, 204 success); routes registered in `Routes()`
+- `go/internal/authserver/oidc_store.go` — `OIDCStore` interface gains `GetGroupRole(ctx, tenantID, groups []string) (role string, found bool, err error)`; `UpsertOIDCUser` signature updated to accept `role string` (4th param); `pgxOIDCStore.GetGroupRole` queries `ORDER BY priority ASC, group_claim ASC LIMIT 1`; `UpsertOIDCUser` uses supplied role (defaults to "viewer" when empty)
+- `go/internal/authserver/oidc.go` — `idTokenClaims` extended with `Groups []string`; `OIDCCallback` calls `GetGroupRole` before `UpsertOIDCUser`; group lookup is non-fatal (no match or error → default "viewer" role)
+
+**Tests:**
+- `go/internal/admin/tenants_test.go` — 7 new tests GM-01..07 (list empty, list populated, upsert success, missing group_claim 400, invalid role 400, delete 204, delete 404)
+- `go/internal/authserver/oidc_test.go` — 3 new tests OIDC-25..27 (matched group → admin, unmatched group → viewer, no groups → viewer); `fakeOIDCStore` updated with `groupRoleMapping map[string]string`; `testOIDCClaimsWithGroups` helper added
+- `go/TEST_INDEX.md` — S1-94 → 32 tests (+7 GM); S1-40 → 69 tests (+3 OIDC-25..27); S1 total 1072→1082; `go test ./...` total 1024→1034
+
+**Docs:**
+- `docs/SCHEMA.md` — `them.tenant_group_mappings` table documented + migration file entry
+
+**Priority semantics:** lower `priority` integer = higher priority (0 is highest). Ties broken alphabetically by `group_claim`. Role resolution is a single SQL query with `ORDER BY priority ASC, group_claim ASC LIMIT 1`.
+
+**Migration note:** `db/059_tenant_group_mappings.sql` must be applied to the live DB before Step 18 features are usable:
+```bash
+docker cp db/059_tenant_group_mappings.sql them-postgres:/tmp/them_059.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_059.sql
+```
+
+### Step 18 design decisions
+- **Non-fatal group lookup** — if `GetGroupRole` returns an error or no match, the OIDC callback falls back to "viewer". This avoids blocking login on a DB error.
+- **Priority integer (ascending)** — 0 = highest priority, matches convention of priority queues and Traefik rules. Negative values are allowed for "super-priority" overrides.
+- **UNIQUE (tenant_id, group_claim)** — each group maps to exactly one role per tenant. Change the role by calling PUT again.
+- **PUT = upsert** — using ON CONFLICT DO UPDATE simplifies the API (no separate POST + PATCH).
+
+---
+
 ## Step 17 — COMPLETE
 
 ### What Step 17 built
@@ -512,13 +552,16 @@ cd /opt/docker/them
 # Verify stack is healthy
 docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml ps
 
-# Apply pending migration (058 — email_domain column) if not yet applied
+# Apply pending migrations if not yet applied
 docker cp db/058_tenant_email_domain.sql them-postgres:/tmp/them_058.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_058.sql
 
-# Rebuild auth-go to pick up the new /tenant-lookup route
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-auth-go
-docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-auth-go
+docker cp db/059_tenant_group_mappings.sql them-postgres:/tmp/them_059.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_059.sql
+
+# Rebuild containers that changed (auth-go picks up oidc_store + oidc group role; go-bridge picks up admin group-mappings routes)
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml build them-auth-go them-go-bridge
+docker compose --project-name them_gateway -f docker-compose.yml -f docker-compose.dev.yml up -d them-auth-go them-go-bridge
 
 # Read before starting
 cat docs/HANDOVER.md
@@ -532,9 +575,9 @@ docker run --rm -v "$(pwd)/go":/src -w /src golang:1.25-alpine go test ./...
 ## First prompt for next session
 
 ```
-Continue multi-tenancy implementation — Step 18 (or next planned step).
+Continue multi-tenancy implementation — Step 19 (or next planned step).
 
-Current state: Steps 1–17 are complete and pushed to main (HEAD: f2c6e90).
+Current state: Steps 1–18 are complete and pushed to main.
 - Step 1: JWT carries tenant_id; bootstrap fallback removed (4ccb4c4)
 - Step 2: Redis key hardening (97c9d71)
 - Step 3: Temporal workflow IDs tenant-prefixed (98ccf03)
@@ -555,8 +598,10 @@ Current state: Steps 1–17 are complete and pushed to main (HEAD: f2c6e90).
            /admin/tenants/{id}/members (5ee5a34)
 - Step 17: Email-domain → tenant routing — email_domain on tenants, public /auth/tenant-lookup,
            SSO banner on login page, email_domain admin UI field (f2c6e90)
-All 47 Go packages pass (go test ./..., 1072 S1 tests, 1024 go test ./... total).
-Phase 2 (docs/architecture/MULTI_TENANCY_DESIGN.md §25) is fully complete.
+- Step 18: OIDC group claims → tenant role mapping — them.tenant_group_mappings (db/059),
+           GET/PUT/DELETE /admin/tenants/{id}/group-mappings, GetGroupRole in OIDCCallback (pending commit)
+All 47 Go packages pass (go test ./..., 1082 S1 tests, 1034 go test ./... total).
+Phase 2 complete. Phase 3 started (Step 18).
 
 Read docs/HANDOVER.md fully before starting — it is the source of truth.
 

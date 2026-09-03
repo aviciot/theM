@@ -146,11 +146,13 @@ func (h *OIDCHandlers) discover(ctx context.Context, discoveryURL string) (*oidc
 }
 
 // idTokenClaims is the minimal set of claims the callback validates.
+// Groups holds OIDC group claims (Azure AD, Google Workspace, Okta all use "groups").
 type idTokenClaims struct {
-	Sub   string `json:"sub"`
-	Email string `json:"email"`
-	Name  string `json:"name"`
-	Exp   int64  `json:"exp"`
+	Sub    string   `json:"sub"`
+	Email  string   `json:"email"`
+	Name   string   `json:"name"`
+	Exp    int64    `json:"exp"`
+	Groups []string `json:"groups"`
 }
 
 type tokenResponse struct {
@@ -336,7 +338,17 @@ func (h *OIDCHandlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.oidcStore.UpsertOIDCUser(r.Context(), tenantUUID, claims.Email, claims.Name)
+	// Resolve tenant role from group claims (if any). Falls back to "" which
+	// UpsertOIDCUser interprets as the default "viewer" role.
+	role := ""
+	if len(claims.Groups) > 0 {
+		if mapped, found, grpErr := h.oidcStore.GetGroupRole(r.Context(), tenantUUID, claims.Groups); grpErr == nil && found {
+			role = mapped
+		}
+		// Non-fatal: group lookup failure or no match → default role used.
+	}
+
+	user, err := h.oidcStore.UpsertOIDCUser(r.Context(), tenantUUID, claims.Email, claims.Name, role)
 	if err != nil {
 		h.log.Error("oidc callback: user upsert failed", "tenant", slug, "email", claims.Email)
 		writeErr(w, http.StatusInternalServerError, "internal error")

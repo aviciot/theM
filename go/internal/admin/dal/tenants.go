@@ -356,3 +356,75 @@ func (d *DB) PatchTenant(ctx context.Context, id string, patch TenantPatch) (Ten
 		Scan(&t.ID, &t.Slug, &t.DisplayName, &t.Enabled, &t.IDPConfigured, &t.EmailDomain, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
+
+// ── Tenant group mappings ─────────────────────────────────────────────────────
+
+// GroupMapping is a row from them.tenant_group_mappings.
+type GroupMapping struct {
+	ID         string    `json:"id"`
+	TenantID   string    `json:"tenant_id"`
+	GroupClaim string    `json:"group_claim"`
+	Role       string    `json:"role"`
+	Priority   int       `json:"priority"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// GroupMappingInput is the request body for creating or updating a group mapping.
+type GroupMappingInput struct {
+	GroupClaim string `json:"group_claim"`
+	Role       string `json:"role"`
+	Priority   int    `json:"priority"`
+}
+
+// ListGroupMappings returns all group mappings for a tenant ordered by priority ASC, group_claim ASC.
+func (d *DB) ListGroupMappings(ctx context.Context, tenantID string) ([]GroupMapping, error) {
+	const q = `
+		SELECT id::text, tenant_id::text, group_claim, role, priority, created_at, updated_at
+		FROM them.tenant_group_mappings
+		WHERE tenant_id = $1::uuid
+		ORDER BY priority ASC, group_claim ASC`
+	rows, err := d.q.Query(ctx, q, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GroupMapping
+	for rows.Next() {
+		var m GroupMapping
+		if err := rows.Scan(&m.ID, &m.TenantID, &m.GroupClaim, &m.Role, &m.Priority, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	if out == nil {
+		out = []GroupMapping{}
+	}
+	return out, nil
+}
+
+// UpsertGroupMapping inserts or updates the group mapping for (tenant_id, group_claim).
+// Returns the resulting row. The tenant must exist (FK enforced).
+func (d *DB) UpsertGroupMapping(ctx context.Context, tenantID string, in GroupMappingInput) (GroupMapping, error) {
+	const q = `
+		INSERT INTO them.tenant_group_mappings (tenant_id, group_claim, role, priority, updated_at)
+		VALUES ($1::uuid, $2, $3, $4, now())
+		ON CONFLICT (tenant_id, group_claim) DO UPDATE
+		SET role       = EXCLUDED.role,
+		    priority   = EXCLUDED.priority,
+		    updated_at = now()
+		RETURNING id::text, tenant_id::text, group_claim, role, priority, created_at, updated_at`
+	var m GroupMapping
+	err := d.q.ExecReturning(ctx, q, tenantID, in.GroupClaim, in.Role, in.Priority).
+		Scan(&m.ID, &m.TenantID, &m.GroupClaim, &m.Role, &m.Priority, &m.CreatedAt, &m.UpdatedAt)
+	return m, err
+}
+
+// DeleteGroupMapping removes a group mapping by ID. The tenantID is included for
+// ownership verification — a mapping not owned by the tenant returns pgx.ErrNoRows.
+func (d *DB) DeleteGroupMapping(ctx context.Context, tenantID, mappingID string) error {
+	const q = `DELETE FROM them.tenant_group_mappings WHERE id = $1::uuid AND tenant_id = $2::uuid RETURNING id`
+	var id string
+	err := d.q.ExecReturning(ctx, q, mappingID, tenantID).Scan(&id)
+	return err
+}

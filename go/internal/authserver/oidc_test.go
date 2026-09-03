@@ -80,7 +80,8 @@ type fakeOIDCStore struct {
 		id  string
 		cfg *IDPConfig
 	}
-	upsertedUsers []*userRecord
+	upsertedUsers    []*userRecord
+	groupRoleMapping map[string]string // group_claim → role; empty = no match
 }
 
 func newFakeOIDCStore() *fakeOIDCStore {
@@ -89,6 +90,7 @@ func newFakeOIDCStore() *fakeOIDCStore {
 			id  string
 			cfg *IDPConfig
 		}{},
+		groupRoleMapping: map[string]string{},
 	}
 }
 
@@ -110,13 +112,25 @@ func (f *fakeOIDCStore) GetTenantIDPConfig(_ context.Context, slug string) (stri
 	return t.id, t.cfg, nil
 }
 
-func (f *fakeOIDCStore) UpsertOIDCUser(_ context.Context, _, email, name string) (*userRecord, error) {
+func (f *fakeOIDCStore) UpsertOIDCUser(_ context.Context, _, email, name, role string) (*userRecord, error) {
+	if role == "" {
+		role = "viewer"
+	}
 	u := &userRecord{
 		ID: 42, Username: email, Name: name, Email: email,
-		Role: "viewer", DashboardAccess: "viewer",
+		Role: role, DashboardAccess: role,
 	}
 	f.upsertedUsers = append(f.upsertedUsers, u)
 	return u, nil
+}
+
+func (f *fakeOIDCStore) GetGroupRole(_ context.Context, _ string, groups []string) (string, bool, error) {
+	for _, g := range groups {
+		if role, ok := f.groupRoleMapping[g]; ok {
+			return role, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // ── mock IdP HTTP server ──────────────────────────────────────────────────────
@@ -225,6 +239,19 @@ func testOIDCClaims(t *testing.T, email, name string) string {
 		"email": email,
 		"name":  name,
 		"exp":   time.Now().Add(1 * time.Hour).Unix(),
+	})
+	return encodeBase64URL(raw)
+}
+
+// testOIDCClaimsWithGroups encodes id_token claims including a groups array.
+func testOIDCClaimsWithGroups(t *testing.T, email, name string, groups []string) string {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]any{
+		"sub":    "ext-user-42",
+		"email":  email,
+		"name":   name,
+		"exp":    time.Now().Add(1 * time.Hour).Unix(),
+		"groups": groups,
 	})
 	return encodeBase64URL(raw)
 }
@@ -538,5 +565,96 @@ func TestOIDCCallback_TokenCarriesTenantID(t *testing.T) {
 	tenantID, _ := claims["tenant_id"].(string)
 	if tenantID != testBootstrapTenantID {
 		t.Errorf("OIDC-12: expected tenant_id %s, got %q", testBootstrapTenantID, tenantID)
+	}
+}
+
+// ── OIDC-25: groups claim matched → role overridden from mapping ──────────────
+//
+// When the id_token includes a "groups" claim that matches a configured tenant
+// group mapping, the OIDC callback must use the mapped role (not the default
+// "viewer") when calling UpsertOIDCUser.
+
+func TestOIDCCallback_GroupsMatchedRoleOverridden(t *testing.T) {
+	idp := newMockIdP(t)
+	idp.idTokenPayload = testOIDCClaimsWithGroups(t, "alice@example.com", "Alice",
+		[]string{"EntraUsers", "OktaAdmins"})
+	h, store := testOIDCHandlers(t, idp.server.URL)
+	// Configure: OktaAdmins → admin
+	store.groupRoleMapping["OktaAdmins"] = "admin"
+
+	cfg := &Config{JWTSecret: testSecret}
+	state := signState("acme", "nonce", []byte(cfg.JWTSecret))
+
+	r := httptest.NewRequest(http.MethodGet,
+		"/auth/oidc/callback?code=code&state="+url.QueryEscape(state), nil)
+	r.AddCookie(&http.Cookie{Name: oidcStateCookie, Value: "verifier"})
+	w := httptest.NewRecorder()
+	h.OIDCCallback(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("OIDC-25: expected 302, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(store.upsertedUsers) != 1 {
+		t.Fatalf("OIDC-25: UpsertOIDCUser must be called exactly once, got %d", len(store.upsertedUsers))
+	}
+	if store.upsertedUsers[0].Role != "admin" {
+		t.Errorf("OIDC-25: matched group must override role to 'admin', got %q", store.upsertedUsers[0].Role)
+	}
+}
+
+// ── OIDC-26: groups claim present but no match → default role used ────────────
+
+func TestOIDCCallback_GroupsUnmatchedDefaultRole(t *testing.T) {
+	idp := newMockIdP(t)
+	idp.idTokenPayload = testOIDCClaimsWithGroups(t, "bob@example.com", "Bob",
+		[]string{"UnmappedGroup"})
+	h, store := testOIDCHandlers(t, idp.server.URL)
+	// No group mappings configured → default role "viewer" used.
+
+	cfg := &Config{JWTSecret: testSecret}
+	state := signState("acme", "nonce", []byte(cfg.JWTSecret))
+
+	r := httptest.NewRequest(http.MethodGet,
+		"/auth/oidc/callback?code=code&state="+url.QueryEscape(state), nil)
+	r.AddCookie(&http.Cookie{Name: oidcStateCookie, Value: "verifier"})
+	w := httptest.NewRecorder()
+	h.OIDCCallback(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("OIDC-26: expected 302, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(store.upsertedUsers) != 1 {
+		t.Fatalf("OIDC-26: UpsertOIDCUser must be called exactly once, got %d", len(store.upsertedUsers))
+	}
+	if store.upsertedUsers[0].Role != "viewer" {
+		t.Errorf("OIDC-26: unmatched groups must use default viewer role, got %q", store.upsertedUsers[0].Role)
+	}
+}
+
+// ── OIDC-27: no groups claim → default role used ─────────────────────────────
+
+func TestOIDCCallback_NoGroupsDefaultRole(t *testing.T) {
+	idp := newMockIdP(t)
+	// Default mock id_token payload has no groups claim.
+	h, store := testOIDCHandlers(t, idp.server.URL)
+	store.groupRoleMapping["SomeGroup"] = "admin" // configured but not in token
+
+	cfg := &Config{JWTSecret: testSecret}
+	state := signState("acme", "nonce", []byte(cfg.JWTSecret))
+
+	r := httptest.NewRequest(http.MethodGet,
+		"/auth/oidc/callback?code=code&state="+url.QueryEscape(state), nil)
+	r.AddCookie(&http.Cookie{Name: oidcStateCookie, Value: "verifier"})
+	w := httptest.NewRecorder()
+	h.OIDCCallback(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("OIDC-27: expected 302, got %d body=%s", w.Code, w.Body.String())
+	}
+	if len(store.upsertedUsers) != 1 {
+		t.Fatalf("OIDC-27: UpsertOIDCUser must be called exactly once, got %d", len(store.upsertedUsers))
+	}
+	if store.upsertedUsers[0].Role != "viewer" {
+		t.Errorf("OIDC-27: absent groups claim must use default viewer role, got %q", store.upsertedUsers[0].Role)
 	}
 }

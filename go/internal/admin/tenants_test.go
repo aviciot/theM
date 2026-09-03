@@ -78,17 +78,22 @@ func (r *tenantFakeRows) Scan(dest ...any) error {
 }
 
 type tenantDB struct {
-	listRows    []*tenantFakeRow      // returned by Query (tenants list)
-	memberRows  []*memberFakeRow      // returned by Query (members list); takes priority over listRows when set
-	getRow      *tenantFakeRow        // returned by QueryRow
-	createRow   *tenantFakeRow        // returned by ExecReturning (create)
-	patchRow    admin.SingleRowScanner // returned by ExecReturning (patch); takes priority over createRow
-	quotaRow    admin.SingleRowScanner // returned by QueryRow/ExecReturning for quota operations
-	addMemberRow admin.SingleRowScanner // returned by ExecReturning (add member)
-	execErr     error
+	listRows         []*tenantFakeRow       // returned by Query (tenants list)
+	memberRows       []*memberFakeRow       // returned by Query (members list); takes priority over listRows when set
+	groupMappingRows []*groupMappingFakeRow // returned by Query (group mappings list); takes priority when set
+	getRow           *tenantFakeRow         // returned by QueryRow
+	createRow        *tenantFakeRow         // returned by ExecReturning (create)
+	patchRow         admin.SingleRowScanner  // returned by ExecReturning (patch); takes priority over createRow
+	quotaRow         admin.SingleRowScanner  // returned by QueryRow/ExecReturning for quota operations
+	addMemberRow     admin.SingleRowScanner  // returned by ExecReturning (add member)
+	groupMappingRow  admin.SingleRowScanner  // returned by ExecReturning (group mapping upsert/delete)
+	execErr          error
 }
 
 func (d *tenantDB) Query(_ context.Context, _ string, _ ...any) (admin.RowScanner, error) {
+	if d.groupMappingRows != nil {
+		return &groupMappingFakeRows{rows: d.groupMappingRows}, nil
+	}
 	if d.memberRows != nil {
 		return &memberFakeRows{rows: d.memberRows}, nil
 	}
@@ -111,6 +116,9 @@ func (d *tenantDB) Exec(_ context.Context, _ string, _ ...any) error {
 }
 
 func (d *tenantDB) ExecReturning(_ context.Context, _ string, _ ...any) admin.SingleRowScanner {
+	if d.groupMappingRow != nil {
+		return d.groupMappingRow
+	}
 	if d.addMemberRow != nil {
 		return d.addMemberRow
 	}
@@ -754,4 +762,181 @@ func TestTenants_List_WithEmailDomain(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
 	require.Len(t, out, 1)
 	assert.Equal(t, "corp.example.com", out[0]["email_domain"])
+}
+
+// ── Group mapping fake rows ───────────────────────────────────────────────────
+
+type groupMappingFakeRow struct {
+	id         string
+	tenantID   string
+	groupClaim string
+	role       string
+	priority   int
+	err        error
+}
+
+func (r *groupMappingFakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	// Columns: id, tenant_id, group_claim, role, priority, created_at, updated_at
+	vals := []any{r.id, r.tenantID, r.groupClaim, r.role, r.priority, testNow, testNow}
+	for i, d := range dest {
+		if i >= len(vals) {
+			break
+		}
+		switch dp := d.(type) {
+		case *string:
+			if s, ok := vals[i].(string); ok {
+				*dp = s
+			}
+		case *int:
+			if n, ok := vals[i].(int); ok {
+				*dp = n
+			}
+		case *time.Time:
+			*dp = vals[i].(time.Time)
+		}
+	}
+	return nil
+}
+
+type groupMappingFakeRows struct {
+	rows []*groupMappingFakeRow
+	pos  int
+}
+
+func (r *groupMappingFakeRows) Next() bool   { return r.pos < len(r.rows) }
+func (r *groupMappingFakeRows) Close() error { return nil }
+func (r *groupMappingFakeRows) Scan(dest ...any) error {
+	row := r.rows[r.pos]
+	r.pos++
+	return row.Scan(dest...)
+}
+
+// ── GM-01: ListGroupMappings returns empty array when no mappings ─────────────
+
+func TestGroupMappings_List_Empty(t *testing.T) {
+	db := &tenantDB{groupMappingRows: []*groupMappingFakeRow{}}
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenants/00000000-0000-0000-0000-000000000001/group-mappings", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Empty(t, out, "empty group mappings must be []")
+}
+
+// ── GM-02: ListGroupMappings returns mappings ordered by priority ─────────────
+
+func TestGroupMappings_List_Populated(t *testing.T) {
+	db := &tenantDB{
+		groupMappingRows: []*groupMappingFakeRow{
+			{id: "aaa", tenantID: "00000000-0000-0000-0000-000000000001", groupClaim: "EntraAdmins", role: "admin", priority: 0},
+			{id: "bbb", tenantID: "00000000-0000-0000-0000-000000000001", groupClaim: "EntraViewers", role: "viewer", priority: 10},
+		},
+	}
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/tenants/00000000-0000-0000-0000-000000000001/group-mappings", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out, 2)
+	assert.Equal(t, "EntraAdmins", out[0]["group_claim"])
+	assert.Equal(t, "admin", out[0]["role"])
+	assert.Equal(t, float64(0), out[0]["priority"])
+	assert.Equal(t, "EntraViewers", out[1]["group_claim"])
+}
+
+// ── GM-03: UpsertGroupMapping returns 200 with created mapping ────────────────
+
+func TestGroupMappings_Upsert_Success(t *testing.T) {
+	db := &tenantDB{
+		groupMappingRow: &groupMappingFakeRow{
+			id:         "ccc",
+			tenantID:   "00000000-0000-0000-0000-000000000001",
+			groupClaim: "OktaAdmins",
+			role:       "admin",
+			priority:   5,
+		},
+	}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"group_claim": "OktaAdmins", "role": "admin", "priority": 5})
+	req := httptest.NewRequest(http.MethodPut, "/tenants/00000000-0000-0000-0000-000000000001/group-mappings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	assert.Equal(t, "OktaAdmins", out["group_claim"])
+	assert.Equal(t, "admin", out["role"])
+	assert.Equal(t, float64(5), out["priority"])
+}
+
+// ── GM-04: UpsertGroupMapping returns 400 when group_claim missing ────────────
+
+func TestGroupMappings_Upsert_MissingGroupClaim(t *testing.T) {
+	db := &tenantDB{}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"role": "admin", "priority": 0})
+	req := httptest.NewRequest(http.MethodPut, "/tenants/00000000-0000-0000-0000-000000000001/group-mappings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── GM-05: UpsertGroupMapping returns 400 for invalid role ───────────────────
+
+func TestGroupMappings_Upsert_InvalidRole(t *testing.T) {
+	db := &tenantDB{}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"group_claim": "SomeGroup", "role": "god", "priority": 0})
+	req := httptest.NewRequest(http.MethodPut, "/tenants/00000000-0000-0000-0000-000000000001/group-mappings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── GM-06: DeleteGroupMapping returns 204 on success ─────────────────────────
+
+func TestGroupMappings_Delete_Success(t *testing.T) {
+	db := &tenantDB{
+		groupMappingRow: &groupMappingFakeRow{id: "ddd"},
+	}
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodDelete, "/tenants/00000000-0000-0000-0000-000000000001/group-mappings/ddd", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+}
+
+// ── GM-07: DeleteGroupMapping returns 404 when mapping not found ──────────────
+
+func TestGroupMappings_Delete_NotFound(t *testing.T) {
+	db := &tenantDB{groupMappingRow: &groupMappingFakeRow{err: pgx.ErrNoRows}}
+	r := newTenantRouter(db)
+
+	req := httptest.NewRequest(http.MethodDelete, "/tenants/00000000-0000-0000-0000-000000000001/group-mappings/nonexistent", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

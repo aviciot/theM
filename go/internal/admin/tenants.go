@@ -22,7 +22,7 @@ func NewTenantsHandler(db DBQuerier) *TenantsHandler {
 	return &TenantsHandler{db: dal.NewDB(db)}
 }
 
-// Routes mounts the tenant CRUD + quota + member endpoints.
+// Routes mounts the tenant CRUD + quota + member + group-mapping endpoints.
 func (h *TenantsHandler) Routes(r chi.Router) {
 	r.Get("/tenants", h.List)
 	r.Post("/tenants", h.Create)
@@ -32,6 +32,9 @@ func (h *TenantsHandler) Routes(r chi.Router) {
 	r.Put("/tenants/{id}/quota", h.UpsertQuota)
 	r.Get("/tenants/{id}/members", h.ListMembers)
 	r.Post("/tenants/{id}/members", h.AddMember)
+	r.Get("/tenants/{id}/group-mappings", h.ListGroupMappings)
+	r.Put("/tenants/{id}/group-mappings", h.UpsertGroupMapping)
+	r.Delete("/tenants/{id}/group-mappings/{mapping_id}", h.DeleteGroupMapping)
 }
 
 // List handles GET /api/v1/admin/tenants.
@@ -222,4 +225,74 @@ func (h *TenantsHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, m)
+}
+
+// ListGroupMappings handles GET /api/v1/admin/tenants/{id}/group-mappings.
+func (h *TenantsHandler) ListGroupMappings(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id")
+		return
+	}
+	mappings, err := h.db.ListGroupMappings(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, mappings)
+}
+
+// UpsertGroupMapping handles PUT /api/v1/admin/tenants/{id}/group-mappings.
+// Creates or updates the mapping for the given group_claim within this tenant.
+func (h *TenantsHandler) UpsertGroupMapping(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id")
+		return
+	}
+	var in dal.GroupMappingInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	in.GroupClaim = strings.TrimSpace(in.GroupClaim)
+	if in.GroupClaim == "" {
+		writeError(w, http.StatusBadRequest, "group_claim is required")
+		return
+	}
+	validRoles := map[string]bool{"viewer": true, "member": true, "admin": true, "super_admin": true}
+	if !validRoles[in.Role] {
+		writeError(w, http.StatusBadRequest, "role must be one of viewer, member, admin, super_admin")
+		return
+	}
+	m, err := h.db.UpsertGroupMapping(r.Context(), id, in)
+	if dal.IsForeignKeyViolation(err) {
+		writeError(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
+// DeleteGroupMapping handles DELETE /api/v1/admin/tenants/{id}/group-mappings/{mapping_id}.
+func (h *TenantsHandler) DeleteGroupMapping(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	mappingID := chi.URLParam(r, "mapping_id")
+	if id == "" || mappingID == "" {
+		writeError(w, http.StatusBadRequest, "missing tenant id or mapping id")
+		return
+	}
+	err := h.db.DeleteGroupMapping(r.Context(), id, mappingID)
+	if dal.IsNoRows(err) {
+		writeError(w, http.StatusNotFound, "group mapping not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

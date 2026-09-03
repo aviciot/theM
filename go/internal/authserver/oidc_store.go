@@ -40,7 +40,16 @@ type OIDCStore interface {
 	// new auth_service.users row and a tenant_memberships row, then returns the user
 	// record. This is best-effort idempotent: if the user already exists the
 	// existing record is returned unchanged.
-	UpsertOIDCUser(ctx context.Context, tenantID, email, name string) (*userRecord, error)
+	// groups is the list of group claim values from the OIDC id_token (may be nil/empty).
+	// When non-empty, the platform resolves a role via tenant group mappings before
+	// calling UpsertOIDCUser — the role is stored in the membership row.
+	UpsertOIDCUser(ctx context.Context, tenantID, email, name, role string) (*userRecord, error)
+
+	// GetGroupRole returns the tenant role mapped to the highest-priority group
+	// (lowest priority integer wins) that appears in the groups slice.
+	// Returns ("", false, nil) when no mapping matches — caller should use the
+	// default role. Returns an error only on DB failure.
+	GetGroupRole(ctx context.Context, tenantID string, groups []string) (role string, found bool, err error)
 }
 
 // pgxOIDCStore is the PostgreSQL-backed OIDCStore.
@@ -81,23 +90,31 @@ func (s *pgxOIDCStore) GetTenantIDPConfig(ctx context.Context, slug string) (str
 	return tenantID, &cfg, nil
 }
 
-func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name string) (*userRecord, error) {
-	// Use the same role for all OIDC-provisioned users. This can be refined later
-	// with per-tenant role mapping stored in idp_config.
-	const defaultRole = "viewer"
+func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name, role string) (*userRecord, error) {
+	// Use the supplied role (may come from group mapping); fall back to "viewer".
+	if role == "" {
+		role = "viewer"
+	}
 
-	// Look up the default role ID.
+	// Look up the role ID for the given role name.
 	var roleID int
 	var roleDashboard string
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, COALESCE(dashboard_access,'none') FROM auth_service.roles WHERE name = $1 LIMIT 1`,
-		defaultRole,
+		role,
 	).Scan(&roleID, &roleDashboard)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Fallback: any role will do — pick the first one.
+		// Fallback to "viewer" if the requested role doesn't exist.
 		if err2 := s.pool.QueryRow(ctx,
-			`SELECT id, COALESCE(dashboard_access,'none') FROM auth_service.roles ORDER BY id LIMIT 1`,
-		).Scan(&roleID, &roleDashboard); err2 != nil {
+			`SELECT id, COALESCE(dashboard_access,'none') FROM auth_service.roles WHERE name = 'viewer' LIMIT 1`,
+		).Scan(&roleID, &roleDashboard); errors.Is(err2, pgx.ErrNoRows) {
+			// Last-resort: any role.
+			if err3 := s.pool.QueryRow(ctx,
+				`SELECT id, COALESCE(dashboard_access,'none') FROM auth_service.roles ORDER BY id LIMIT 1`,
+			).Scan(&roleID, &roleDashboard); err3 != nil {
+				return nil, err3
+			}
+		} else if err2 != nil {
 			return nil, err2
 		}
 	} else if err != nil {
@@ -137,7 +154,7 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 		`SELECT name, COALESCE(dashboard_access,'none') FROM auth_service.roles WHERE id = $1`,
 		roleID,
 	).Scan(&roleStr, &dashAccess); err != nil {
-		roleStr, dashAccess = defaultRole, "none"
+		roleStr, dashAccess = role, "none"
 	}
 
 	// Upsert tenant membership. Role stored in the membership is the canonical
@@ -163,4 +180,31 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 		DashboardAccess: dashAccess,
 	}
 	return u, nil
+}
+
+// GetGroupRole returns the role from the highest-priority tenant group mapping
+// that matches any of the provided group claim values.
+// Priority is ascending (0 = highest priority). When multiple groups match at
+// the same priority, the one with the lowest group_claim (alphabetically) wins.
+// Returns ("", false, nil) when no mapping matches any of the groups.
+func (s *pgxOIDCStore) GetGroupRole(ctx context.Context, tenantID string, groups []string) (string, bool, error) {
+	if len(groups) == 0 {
+		return "", false, nil
+	}
+	const q = `
+		SELECT role
+		FROM them.tenant_group_mappings
+		WHERE tenant_id = $1::uuid
+		  AND group_claim = ANY($2)
+		ORDER BY priority ASC, group_claim ASC
+		LIMIT 1`
+	var role string
+	err := s.pool.QueryRow(ctx, q, tenantID, groups).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return role, true, nil
 }

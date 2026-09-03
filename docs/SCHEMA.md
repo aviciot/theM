@@ -542,6 +542,26 @@ Multiple rows with `email_domain = NULL` are allowed; at most one row per non-nu
 
 ---
 
+## them.tenant_group_mappings (Multi-tenancy Phase 3 — Step 18)
+OIDC group claim → tenant role mapping. Migration: `db/059_tenant_group_mappings.sql`.
+
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | Stable mapping identifier |
+| tenant_id | UUID FK→them.tenants(id) ON DELETE CASCADE | Owning tenant |
+| group_claim | TEXT NOT NULL | Exact value from the OIDC `groups` claim (e.g. `"OktaAdmins"`, `"EntraID-Admin"`) |
+| role | TEXT NOT NULL CHECK (viewer\|member\|admin\|super_admin) | Tenant role assigned when this group matches |
+| priority | INT NOT NULL DEFAULT 0 | Lower integer = higher priority. Ties broken by group_claim ASC. |
+| created_at | TIMESTAMPTZ | |
+| updated_at | TIMESTAMPTZ | |
+
+**UNIQUE:** `(tenant_id, group_claim)` — one role per group per tenant.  
+**Index:** `tenant_group_mappings_tenant_id_idx ON tenant_group_mappings (tenant_id)`
+
+The OIDC callback resolves the role by querying `WHERE tenant_id = $1 AND group_claim = ANY($2) ORDER BY priority ASC, group_claim ASC LIMIT 1`. Non-fatal: no match → default "viewer" role used.
+
+---
+
 ## auth_service schema (read-only reference)
 Owned by `them-auth-service`. **Never query directly from the bridge** — use `app/services/auth_client.py`.
 
@@ -579,3 +599,4 @@ Key relationships:
 | `db/056_tenant_rbac.sql` | Per-tenant RBAC (roles, grants) |
 | `db/057_llm_providers_tenant.sql` | `llm_providers.tenant_id` FK (per-tenant overrides) |
 | `db/058_tenant_email_domain.sql` | `tenants.email_domain` — nullable; partial UNIQUE INDEX WHERE NOT NULL |
+| `db/059_tenant_group_mappings.sql` | `them.tenant_group_mappings` — OIDC group claim → tenant role mapping (Step 18) |
