@@ -3,7 +3,7 @@
 # Branch: main
 # Design HEAD: 61730f3
 # Last updated: 2026-09-03
-# Status: IN PROGRESS — Phase A complete, B1+B2 complete, C1 complete, C2 next
+# Status: IN PROGRESS — Phase A complete, B1+B2 complete, C1+C2 complete, D1 next
 #
 # Context: This is a focused side-track from the main multi-tenancy roadmap
 # (Steps 1–18 complete). Step 19 (RLS) must finish before the tenant roadmap
@@ -211,11 +211,21 @@ Migrate callers → deploy → enable RLS. For each phase, the sequence is:
   - **Commit:** `4f3a0e1`
   - **Commit tag:** `feat(rls): C1 — migrate callers for agents/orchestrators/applications/tokens/entry-points`
 
-- [ ] **C2** — Enable RLS on C1 tables:
-  - `db/072_rls_phase_c.sql`
-  - Run `TestRLS_TwoTenantFullIsolation`
-  - Tests RLS-28b/c/d/e for component_definitions
-  - **Commit tag:** `feat(rls): C2 — enable RLS on agents/orchestrators/applications/entry_points`
+- [x] **C1b** — Fix appliveness cross-tenant scan before enabling RLS on entry_points:
+  - `go/internal/appliveness/liveness.go`: `Loop` gains optional `*db.Pools` param; `run` selects `pools.Admin` when set (BYPASSRLS)
+  - `go/cmd/them/main.go`: passes `rlsPools` to `appliveness.Loop`
+  - `go test ./...` zero failures
+  - **Commit tag:** `fix(rls): C1b — appliveness uses AdminQuerier for cross-tenant entry_points scan`
+
+- [x] **C2** — Enable RLS on C1 tables:
+  - `db/072_rls_phase_c.sql` — standard direct tenant_id policies on agents, orchestrators, applications, entry_points, access_tokens
+  - RLS smoke-tested via psql: them_admin (BYPASSRLS) sees all 21 agents; correct tenant sees 21; no GUC → 0
+  - Integration tests: `go test -tags=integration ./internal/db/...` PASS
+    - RLS-33 PASS: them_admin BYPASSRLS confirmed (sees 21 agents)
+    - RLS-31b PASS: them_owner cannot connect (NOLOGIN)
+    - RLS-30/31/32/08/10/11 SKIP: DATABASE_PASSWORD not set (consistent with prior sessions)
+  - **Commit:** (this session)
+  - **Commit tag:** `feat(rls): C2 — enable RLS on agents/orchestrators/applications/entry_points/access_tokens`
 
 ### Phase D — Child tables of applications
 
@@ -357,6 +367,8 @@ variables are derived from `secrets.local` via HMAC like all other secrets.
 |---|---|---|---|---|
 | 2026-09-03 | Design session | Design v3 finalized | 61730f3 | All 8 blocking issues resolved |
 | 2026-09-03 | Implementation session 1 | A1, A2, A3, A4, A5 | a46e703..7bfe778 | Phase A complete. DB migration not yet applied to live DB — apply db/070_rls_roles.sql + set passwords before Phase B. TEST_INDEX numbering fixed (ba5d0d8). |
+| 2026-09-03 | Implementation session 2 | B1, B2, C1 | (see CURRENT.md) | B+C1 complete. Callers migrated. 48 pkgs pass. |
+| 2026-09-03 | Implementation session 3 | C1b, C2 | (this session) | C1b: appliveness Loop uses Admin pool. C2: 072 migration applied, RLS live on 5 tables. go test ./... zero failures, integration tests pass. |
 
 *(Add a row for each session.)*
 

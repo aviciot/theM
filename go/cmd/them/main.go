@@ -318,7 +318,7 @@ func run() error {
 	// Probes all enabled entry points immediately on startup then every 30s.
 	// Publishes to them:dash:apps (live push) and caches at
 	// them:dash:app_status_cache (snapshot for new WS subscribers).
-	go appliveness.Loop(runCtx, database.Pool(), redisCache.Client(), cfg.AppPort, log)
+	go appliveness.Loop(runCtx, database.Pool(), rlsPools, redisCache.Client(), cfg.AppPort, log)
 	log.Info("app liveness loop started", "interval", "30s")
 
 	// Register runCancel as the pre-drain hook so all subscriber goroutines

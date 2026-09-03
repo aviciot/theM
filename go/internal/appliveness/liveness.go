@@ -21,6 +21,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/rueidis"
+
+	"github.com/aviciot/them/internal/db"
 )
 
 const (
@@ -57,9 +59,13 @@ func (r *rueidisPublisher) publish(ctx context.Context, channel, msg string) err
 
 // Loop probes all enabled entry points immediately on startup, then every 30s.
 // Stops when ctx is cancelled. Run as a background goroutine.
-func Loop(ctx context.Context, pool *pgxpool.Pool, rc rueidis.Client, selfPort int, log *slog.Logger) {
+//
+// pools is optional: when non-nil its Admin pool (BYPASSRLS) is used for the
+// cross-tenant entry_points query so that RLS on entry_points does not filter
+// out non-bootstrap tenants. legacyPool is the fallback used when pools is nil.
+func Loop(ctx context.Context, legacyPool *pgxpool.Pool, pools *db.Pools, rc rueidis.Client, selfPort int, log *slog.Logger) {
 	pub := &rueidisPublisher{rc: rc}
-	run(ctx, pool, pub, selfPort, log)
+	run(ctx, legacyPool, pools, pub, selfPort, log)
 
 	ticker := time.NewTicker(probeInterval)
 	defer ticker.Stop()
@@ -68,14 +74,18 @@ func Loop(ctx context.Context, pool *pgxpool.Pool, rc rueidis.Client, selfPort i
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			run(ctx, pool, pub, selfPort, log)
+			run(ctx, legacyPool, pools, pub, selfPort, log)
 		}
 	}
 }
 
 // run is one full probe-and-publish cycle. Separated from Loop for testability.
-func run(ctx context.Context, pool *pgxpool.Pool, pub publisher, selfPort int, log *slog.Logger) {
-	slugs, err := listEnabledEPSlugs(ctx, pool)
+func run(ctx context.Context, legacyPool *pgxpool.Pool, pools *db.Pools, pub publisher, selfPort int, log *slog.Logger) {
+	queryPool := legacyPool
+	if pools != nil {
+		queryPool = pools.Admin
+	}
+	slugs, err := listEnabledEPSlugs(ctx, queryPool)
 	if err != nil {
 		log.Warn("appliveness: db query failed", "error", err)
 		return

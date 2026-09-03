@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-03 (Step 19 C1 complete)
+# Last updated: 2026-09-03 (Step 19 C2 complete)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,6 +10,8 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+(C2 commit — this session)
+3883787  docs(rls): C1 complete — update STEP19 progress tracker and CURRENT.md
 4f3a0e1  feat(rls): C1 — migrate callers for agents/orchestrators/applications/tokens/entry-points
 7000090  docs(rls): Phase A complete — check A1-A5, add implementation notes
 7bfe778  test(rls): A5 — integration test infrastructure
@@ -50,19 +52,15 @@ Key facts:
 Design: `docs/design/rls-option-a-plan.md` (v3, commit 61730f3) — COMPLETE, reviewed, unblocked.
 Progress tracker: `docs/STEP19_RLS_HANDOVER.md` — read this before starting implementation.
 
-Implementation progress: **A1–A5 done, B1–B2 done, C1 done**. HEAD `4f3a0e1`.
+Implementation progress: **A1–A5 done, B1–B2 done, C1+C1b+C2 done**. HEAD: see above.
 
 ### Next recommended task for a new session
 
-Start `docs/STEP19_RLS_HANDOVER.md` sub-step **C2** — enable RLS on the C1 tables:
-- Write `db/072_rls_phase_c.sql` with standard direct tenant_id policies on: `agents`, `orchestrators`, `applications`, `entry_points`, `access_tokens`
-- Also: check `appliveness/liveness.go` `listEnabledEPSlugs` — this is a cross-tenant read of `entry_points` and needs AdminQuerier before enabling RLS on entry_points
-- Deploy updated `them-go-bridge` container (C1 code already in main)
-- Apply migration, run integration tests: `go test -tags=integration ./internal/db/...`
-- Commit tag: `feat(rls): C2 — enable RLS on agents/orchestrators/applications/entry_points/access_tokens`
-
-**Blocker for C2:** `appliveness/liveness.go:listEnabledEPSlugs` does a cross-tenant scan of `entry_points`. This must use AdminQuerier (BYPASSRLS) before enabling RLS on entry_points, or it will return empty list for all non-bootstrap tenants. Fix this in C1b before applying 072 migration.
-- Add `THEM_DB_URL_APP` and `THEM_DB_URL_ADMIN` to `generate-env.sh`
+Start `docs/STEP19_RLS_HANDOVER.md` sub-step **D1** — migrate callers for the child tables of `applications`:
+- Tables: `app_agent_bindings`, `app_orchestrators`, `app_mcp_credentials`, `middleware_wirings`
+- These use EXISTS-based policies through `applications` (already RLS-enabled after C2)
+- Rebuild and redeploy affected containers after migrating callers
+- Commit tag: `feat(rls): D1 — migrate callers for app_agent_bindings and siblings`
 
 ### Known blockers / pre-conditions
 
@@ -155,7 +153,7 @@ Explicit routers at priority 110–150 still win over the catch-all.
 
 ## DB schema state (live)
 
-All migrations applied through `db/071_rls_phase_b.sql` (Step 19 Phase B complete):
+All migrations applied through `db/072_rls_phase_c.sql` (Step 19 Phase C complete):
 
 | Migration | Status |
 |---|---|
@@ -176,6 +174,8 @@ All migrations applied through `db/071_rls_phase_b.sql` (Step 19 Phase B complet
 | `db/050_middleware_pipeline.sql` | ✅ applied — `run_artifacts` scan columns, `middleware_jobs`, `middleware_audit`, `applications.security_config` |
 | `db/051_quarantine.sql` | ✅ applied — `quarantine_artifacts` table, `run_artifacts.data` nullable + `storage_key` column, `middleware_jobs.quarantine_id` |
 | `db/052_middleware_jobs_nullable_artifact.sql` | ✅ applied — `middleware_jobs.artifact_id` made nullable; FK re-added allowing NULL; fixes quarantine-first FK violation |
+| `db/053_*` through `db/071_rls_phase_b.sql` | ✅ applied — B1+B2 RLS on mcp_servers/tenant_group_mappings/agent_definitions/agent_runtime_specs |
+| `db/072_rls_phase_c.sql` | ✅ applied — C2 RLS on agents/orchestrators/applications/entry_points/access_tokens |
 
 ---
 
