@@ -2463,7 +2463,7 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
-### S1-97 · DB Pools — `internal/db/pools_test.go`
+### S1-98 · DB Pools — `internal/db/pools_test.go`
 
 **Purpose:** Unit tests for the RLS pool infrastructure: error paths on bad DSNs, compile-time interface assertions for TenantTx/AdminTx/adminQuerier, and UUID string format verification for the set_config call.
 
@@ -2478,7 +2478,7 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
-### S1-96 · dbtype Querier interfaces — `internal/dbtype/querier_test.go`
+### S1-99 · dbtype Querier interfaces — `internal/dbtype/querier_test.go`
 
 **Purpose:** Compile-time and runtime verification that `TenantQuerier` and `AdminQuerier` are distinct types with enforced marker methods, preventing wrong-pool wiring at compile time.
 
@@ -2987,7 +2987,9 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-95 | quota enforcer (QE-01..09): NilLimits, ConcurrentBelowLimit, ConcurrentAtLimit, RPMBelowLimit, RPMExceeded, DBError, MonthlyNilLimit, MonthlyBelowLimit, MonthlyExceeded | 9 |
 | S1-96 | per-tenant LLM provider service (TLP-01..06): ListForTenant_ReturnsMerged, ListForTenant_EmptyReturnsEmptySlice, Upsert_PlatformNotFound_ReturnsNotFound, Upsert_MissingDefaultModel_ReturnsValidation, Upsert_Success_EncryptsKey, Upsert_InheritsDisplayNameFromPlatform | 6 |
 | S1-97 | per-tenant LLM provider handler (TLP-01..05): List_200_Empty, List_400_MissingID, Upsert_200, Upsert_404_PlatformNotFound, Upsert_400_BadJSON | 5 |
-| **S1 total** | | **1082** |
+| S1-98 | DB Pools (RLS): BadAppDSN, InterfaceAssertions, Close_NilSafe, TenantIDFormat | 4 |
+| S1-99 | dbtype Querier interfaces (RLS): TestInterfaceDistinction | 1 |
+| **S1 total** | | **1087** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
