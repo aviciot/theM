@@ -1,8 +1,10 @@
-# Handover — Multi-Tenancy Step 18
+# Handover — Multi-Tenancy Step 19 (design complete, implementation pending)
 **Date:** 2026-09-03
 **Branch:** main
-**HEAD:** 7c346da (feat(multi-tenancy): Step 18 — OIDC group claims → tenant role mapping)
+**HEAD:** 61730f3 (docs(rls): v3 design)
 **Steps complete:** 1 → 18 (all 47 Go packages pass, 1082 S1 tests, 1034 go test ./...)
+**Step 19 design:** `docs/design/rls-option-a-plan.md` v3 — approved, no blocking issues
+**Step 19 progress:** `docs/STEP19_HANDOVER.md` — use this for sub-step tracking
 
 ---
 
@@ -66,6 +68,7 @@
 | Step 16 | Per-tenant RBAC — tenant_id in /me response, tenant_slug login selection, GET/POST /admin/tenants/{id}/members | Complete | 5ee5a34 |
 | Step 17 | Email-domain → tenant routing — email_domain on tenants, GET /auth/tenant-lookup (public), SSO banner on login page, admin UI field | Complete | f2c6e90 |
 | Step 18 | OIDC group claims → tenant role mapping — them.tenant_group_mappings, GET/PUT/DELETE /admin/tenants/{id}/group-mappings, group role lookup in OIDCCallback | Complete | 7c346da |
+| Step 19 | Postgres Row-Level Security — new `dbtype` package, two pools (them_app/them_admin), TenantTx/AdminTx, per-table policies, caller migration | Design complete (61730f3) — **implementation next** | — |
 
 ---
 

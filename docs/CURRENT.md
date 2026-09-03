@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-02 (Session E)
+# Last updated: 2026-09-03 (Step 19 design complete)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,15 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-f2c6e90  feat(multi-tenancy): Step 17 — Email-domain → tenant routing
-793e7f6  fix(services): quarantine count only shows files still awaiting scan
-11a6293  fix(services): show local date+time in Recent scan jobs
-86082e8  fix(services): stop screen flash on every heartbeat
-c3fcc21  fix(services): rename state var 'window' that shadowed globalThis.window
-34d99bd  feat(services): live scanner health badge via Redis TTL heartbeat
-f3ae994  docs: record Session E fixes — middleware FK + playground busy-state
-7a792c4  fix(playground): A2A stream busy state never cleared when stream ends without status event
-fd10362  fix(middleware): fix FK violation in middleware_jobs.artifact_id for quarantine-first flow
+61730f3  docs(rls): v3 design — fix import cycle, split cmd policies, role grants, middleware enqueue, caller matrix, cancel handling, test design, PgBouncer
+8b08aaa  docs(rls): v2 design — correct all seven blocking issues in rls-option-a-plan
+86bdadc  docs(rls): add full Option A Row-Level Security design document
+af37bb6  docs: update HANDOVER.md for Step 18 completion
+7c346da  feat(multi-tenancy): Step 18 — OIDC group claims → tenant role mapping
 ```
 
 ---
@@ -44,6 +40,29 @@ Key facts:
 - Frontend `THE_M_API_URL` points to `http://them-traefik:8088`
 - Named Docker volumes: `them-postgres-data`, `them-redis-data` — `external: true` (`them-logs` volume removed — Python bridge is deleted)
 - **Project name: `them_gateway`** — required for all compose commands
+
+---
+
+## Current migration slice
+
+**Step 19 — Postgres Row-Level Security**
+
+Design: `docs/design/rls-option-a-plan.md` (v3, commit 61730f3) — COMPLETE, reviewed, unblocked.
+Progress tracker: `docs/STEP19_HANDOVER.md` — read this before starting implementation.
+
+Implementation: NOT STARTED. Next sub-step is **A1** (DB roles migration).
+
+### Next recommended task for a new session
+
+Start `docs/STEP19_HANDOVER.md` sub-step A1:
+- Create `db/070_rls_roles.sql` with `them_owner` (NOLOGIN/NOBYPASSRLS), `them_admin` (LOGIN/BYPASSRLS), `them_app` (LOGIN, no BYPASSRLS)
+- Transfer table ownership
+- Apply per-table grants from §4.5 of the design doc
+- Add `THEM_DB_URL_APP` and `THEM_DB_URL_ADMIN` to `generate-env.sh`
+
+### Known blockers / pre-conditions
+
+None that block A1. The design is fully approved. Proceed when ready.
 
 Currently running containers (verified):
 ```
