@@ -48,6 +48,9 @@ END $$;
 
 GRANT USAGE ON SCHEMA them        TO them_app;
 GRANT USAGE ON SCHEMA them        TO them_admin;
+-- them_owner needs USAGE on the schema so FK constraint checks (which run as the
+-- table owner) can resolve references across tables during INSERT/UPDATE/DELETE.
+GRANT USAGE ON SCHEMA them        TO them_owner;
 GRANT USAGE ON SCHEMA auth_service TO them_admin;
 
 -- ── 3. Transfer table ownership to them_owner ─────────────────────────────────

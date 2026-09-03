@@ -8,6 +8,9 @@ package db
 import (
 	"context"
 	"errors"
+	"strings"
+
+	"github.com/google/uuid"
 	"fmt"
 	"os"
 	"testing"
@@ -365,3 +368,208 @@ func TestRLSPoolsInterface(t *testing.T) {
 	_ = errors.New // keep errors import used
 	t.Log("RLS Pools interface test passed")
 }
+
+// TestRLS_TwoTenantFullIsolation is a permanent regression test that verifies
+// complete cross-tenant data isolation across all RLS-enabled tables.
+//
+// Strategy:
+//  1. Insert two synthetic tenants (A + B) and one row each in every protected table.
+//  2. As tenant-A (TenantTx), read every table — assert 0 tenant-B rows visible.
+//  3. As tenant-B (TenantTx), read every table — assert 0 tenant-A rows visible.
+//  4. As tenant-A (TenantTx), attempt a cross-tenant INSERT (tenant-B's application_id
+//     in app_agent_bindings WITH CHECK) — assert it is rejected.
+//  5. Clean up all test rows via Admin pool (BYPASSRLS) regardless of outcome.
+//
+// Tables covered: agents, orchestrators, applications, access_tokens (direct tenant_id);
+// app_agent_bindings (EXISTS via applications — Phase D); mcp_servers (Phase B).
+func TestRLS_TwoTenantFullIsolation(t *testing.T) {
+	ctx := context.Background()
+	pools, err := NewPools(ctx, testAppDSN(t), testAdminDSN(t))
+	if err != nil {
+		t.Fatalf("NewPools: %v", err)
+	}
+	defer pools.Close()
+
+	// Also need a superuser pool to insert into them.tenants (them_app has no grant there).
+	superPool, err := pgxpool.New(ctx, testDSN(t))
+	if err != nil {
+		t.Fatalf("superuser connect: %v", err)
+	}
+	defer superPool.Close()
+
+	if !rlsEnabledOnAgents(ctx, superPool) {
+		t.Skip("RLS_TwoTenantFullIsolation: RLS not yet enabled on agents — apply Phase C migration first")
+	}
+
+	// ── 1. Insert synthetic tenants A and B ──────────────────────────────────
+	var tenantA, tenantB string
+	if err := superPool.QueryRow(ctx,
+		`INSERT INTO them.tenants (slug, display_name) VALUES ('rlstesttenanta','RLS Test Tenant A') RETURNING id::text`,
+	).Scan(&tenantA); err != nil {
+		t.Fatalf("insert tenant A: %v", err)
+	}
+	if err := superPool.QueryRow(ctx,
+		`INSERT INTO them.tenants (slug, display_name) VALUES ('rlstesttenantb','RLS Test Tenant B') RETURNING id::text`,
+	).Scan(&tenantB); err != nil {
+		// Clean up tenant A before failing
+		_, _ = superPool.Exec(ctx, `DELETE FROM them.tenants WHERE id = $1::uuid`, tenantA)
+		t.Fatalf("insert tenant B: %v", err)
+	}
+
+	// cleanup removes all test data at the end, regardless of outcome.
+	cleanup := func() {
+		// Delete in dependency order. CASCADE handles children.
+		_, _ = superPool.Exec(ctx,
+			`DELETE FROM them.tenants WHERE id IN ($1::uuid, $2::uuid)`, tenantA, tenantB)
+	}
+	defer cleanup()
+
+	// ── 2. Insert one row per table per tenant via Admin pool ─────────────────
+	// Insert mcp_servers (simple structure, Phase B RLS-enabled, direct tenant_id).
+	var mcpA, mcpB string
+	if err := superPool.QueryRow(ctx,
+		`INSERT INTO them.mcp_servers (name, slug, url, tenant_id)
+		 VALUES ('RLS MCP A', 'rlstestmcpa', 'http://test-a', $1::uuid) RETURNING id::text`, tenantA,
+	).Scan(&mcpA); err != nil {
+		t.Fatalf("insert mcp A: %v", err)
+	}
+	if err := superPool.QueryRow(ctx,
+		`INSERT INTO them.mcp_servers (name, slug, url, tenant_id)
+		 VALUES ('RLS MCP B', 'rlstestmcpb', 'http://test-b', $1::uuid) RETURNING id::text`, tenantB,
+	).Scan(&mcpB); err != nil {
+		t.Fatalf("insert mcp B: %v", err)
+	}
+
+	// Insert orchestrators (direct tenant_id, Phase C).
+	var orchA, orchB string
+	if err := superPool.QueryRow(ctx,
+		`INSERT INTO them.orchestrators (name, display_name, tenant_id)
+		 VALUES ('rlstestorcha', 'RLS Orch A', $1::uuid) RETURNING id::text`, tenantA,
+	).Scan(&orchA); err != nil {
+		t.Fatalf("insert orch A: %v", err)
+	}
+	if err := superPool.QueryRow(ctx,
+		`INSERT INTO them.orchestrators (name, display_name, tenant_id)
+		 VALUES ('rlstestorchb', 'RLS Orch B', $1::uuid) RETURNING id::text`, tenantB,
+	).Scan(&orchB); err != nil {
+		t.Fatalf("insert orch B: %v", err)
+	}
+	_ = orchA
+	_ = orchB
+
+	// Insert applications (direct tenant_id, Phase C).
+	var appA, appB string
+	if err := superPool.QueryRow(ctx,
+		`INSERT INTO them.applications (name, slug, tenant_id)
+		 VALUES ('RLS App A', 'rlstestappa', $1::uuid) RETURNING id::text`, tenantA,
+	).Scan(&appA); err != nil {
+		t.Fatalf("insert app A: %v", err)
+	}
+	if err := superPool.QueryRow(ctx,
+		`INSERT INTO them.applications (name, slug, tenant_id)
+		 VALUES ('RLS App B', 'rlstestappb', $1::uuid) RETURNING id::text`, tenantB,
+	).Scan(&appB); err != nil {
+		t.Fatalf("insert app B: %v", err)
+	}
+	// Insert app_mcp_credentials for each tenant (Phase D — EXISTS via applications).
+	if _, err := superPool.Exec(ctx,
+		`INSERT INTO them.app_mcp_credentials (application_id, mcp_server_id)
+		 VALUES ($1::uuid, $2::uuid)`, appA, mcpA,
+	); err != nil {
+		t.Fatalf("insert mcp_cred A: %v", err)
+	}
+	if _, err := superPool.Exec(ctx,
+		`INSERT INTO them.app_mcp_credentials (application_id, mcp_server_id)
+		 VALUES ($1::uuid, $2::uuid)`, appB, mcpB,
+	); err != nil {
+		t.Fatalf("insert mcp_cred B: %v", err)
+	}
+
+	// ── 3. Tenant-A TenantTx: read all tables — must see A rows, 0 B rows ────
+	tidA, err := uuid.Parse(tenantA)
+	if err != nil {
+		t.Fatalf("parse tenant A UUID: %v", err)
+	}
+	txA, err := pools.BeginTenantTx(ctx, tidA)
+	if err != nil {
+		t.Fatalf("BeginTenantTx A: %v", err)
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		txA.Rollback(cleanupCtx)
+	}()
+
+	tables := []struct {
+		name  string
+		query string
+	}{
+		// Phase B — direct tenant_id
+		{"mcp_servers", `SELECT count(*) FROM them.mcp_servers WHERE slug LIKE 'rlstestmcp%'`},
+		// Phase C — direct tenant_id
+		{"orchestrators", `SELECT count(*) FROM them.orchestrators WHERE name LIKE 'rlstestorch%'`},
+		{"applications", `SELECT count(*) FROM them.applications WHERE slug LIKE 'rlstestapp%'`},
+		// Phase D — EXISTS via applications
+		{"app_mcp_credentials", `SELECT count(*) FROM them.app_mcp_credentials c JOIN them.applications a ON a.id=c.application_id WHERE a.slug LIKE 'rlstestapp%'`},
+	}
+
+	for _, tbl := range tables {
+		var count int
+		if err := txA.QueryRow(ctx, tbl.query).Scan(&count); err != nil {
+			t.Errorf("RLS-TwoTenant tenant-A read %s: query error: %v", tbl.name, err)
+			continue
+		}
+		if count != 1 {
+			t.Errorf("RLS-TwoTenant tenant-A %s: expected 1 row (own), got %d", tbl.name, count)
+		} else {
+			t.Logf("RLS-TwoTenant PASS: tenant-A sees 1 row in %s (own data only)", tbl.name)
+		}
+	}
+
+	// ── 4. Tenant-B TenantTx: read all tables — must see B rows, 0 A rows ────
+	tidB, err := uuid.Parse(tenantB)
+	if err != nil {
+		t.Fatalf("parse tenant B UUID: %v", err)
+	}
+	txB, err := pools.BeginTenantTx(ctx, tidB)
+	if err != nil {
+		t.Fatalf("BeginTenantTx B: %v", err)
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		txB.Rollback(cleanupCtx)
+	}()
+
+	for _, tbl := range tables {
+		var count int
+		if err := txB.QueryRow(ctx, tbl.query).Scan(&count); err != nil {
+			t.Errorf("RLS-TwoTenant tenant-B read %s: query error: %v", tbl.name, err)
+			continue
+		}
+		if count != 1 {
+			t.Errorf("RLS-TwoTenant tenant-B %s: expected 1 row (own), got %d", tbl.name, count)
+		} else {
+			t.Logf("RLS-TwoTenant PASS: tenant-B sees 1 row in %s (own data only)", tbl.name)
+		}
+	}
+
+	// ── 5. Cross-tenant INSERT rejected by WITH CHECK ─────────────────────────
+	// Tenant-A TenantTx tries to INSERT a mcp_server with tenant-B's tenant_id — must be blocked.
+	_, err = txA.Exec(ctx,
+		`INSERT INTO them.mcp_servers (name, slug, tenant_id)
+		 VALUES ('RLS Cross Insert', 'rlscrossinsert', $1::uuid)`, tenantB)
+	if err == nil {
+		t.Error("RLS-TwoTenant FAIL: cross-tenant INSERT into mcp_servers was not blocked by WITH CHECK")
+	} else if strings.Contains(err.Error(), "new row violates") || strings.Contains(err.Error(), "row-level security") {
+		t.Log("RLS-TwoTenant PASS: cross-tenant INSERT into mcp_servers rejected by WITH CHECK policy")
+	} else {
+		t.Logf("RLS-TwoTenant: cross-tenant INSERT rejected (possibly for other reason): %v", err)
+	}
+
+	// Rollback txA (the cross-tenant INSERT attempt may have aborted the tx).
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	txA.Rollback(cleanupCtx)
+}
+

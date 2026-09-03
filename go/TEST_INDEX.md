@@ -2753,6 +2753,7 @@ Tests skip gracefully when prerequisites (roles, RLS enabled on tables) aren't m
 | `TestRLS10_FreshConnectionFailClosed` | Fresh them_app connection is fail-closed (MaxConns=1) | A1 + RLS on agents |
 | `TestRLS11_GUCResetsAfterCommit` | GUC resets to '' after commit; reused connection is fail-closed | A1 + RLS on agents |
 | `TestRLSPoolsInterface` | NewPools connects; App+Admin non-nil; NewAdminQuerier non-nil | THEM_DB_URL_APP + THEM_DB_URL_ADMIN |
+| `TestRLS_TwoTenantFullIsolation` | Full two-tenant isolation: each tenant sees only own rows in mcp_servers, orchestrators, applications, app_mcp_credentials; cross-tenant INSERT blocked by WITH CHECK | A1 + Phase B/C/D migrations deployed |
 
 **Run command:**
 ```bash
@@ -2762,7 +2763,7 @@ THEM_DB_URL_ADMIN=postgres://them_admin:<pw>@them-postgres:5432/them \
 go test -tags=integration -v ./internal/db/... -run 'TestRLS'
 ```
 
-**Trigger:** any change to `internal/db/db.go`, `db/070_rls_roles.sql`, or any `db/07*_rls_phase_*.sql`
+**Trigger:** any change to `internal/db/db.go`, `db/070_rls_roles.sql`, or any `db/07*_rls_phase_*.sql` (Phases A–D and beyond)
 
 ---
 
