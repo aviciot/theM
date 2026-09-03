@@ -166,10 +166,19 @@ Migrate callers → deploy → enable RLS. For each phase, the sequence is:
 4. THEN apply the SQL migration to enable RLS
 5. Run integration tests
 
-- [ ] **B1** — Migrate callers for `mcp_servers`, `tenant_group_mappings`, `agent_definitions`, `agent_runtime_specs`:
-  - DAL functions accepting dbtype.TenantQuerier
-  - authserver `GetGroupRole` → use AdminQuerier (see caller matrix §8.2 of design doc)
-  - Rebuild and redeploy `them-auth-go` BEFORE enabling RLS on `tenant_group_mappings`
+- [x] **B1** — Migrate callers for `mcp_servers`, `tenant_group_mappings`, `agent_definitions`, `agent_runtime_specs`:
+  - `dal/dal.go`: tenantQuerierAdapter + adminQuerierAdapter + dbTypeRowsWrapper;
+    `NewDBFromTenantQuerier` / `NewDBFromAdminQuerier` constructors
+  - `service/mcp_servers.go`: `NewMCPServerServiceFromFernet` (pre-derived key, avoids re-derive per request)
+  - `mcp_servers.go`: dual-path MCPServersHandler (TenantTx when pools != nil, legacySvc otherwise)
+  - `agent_definitions.go`: dual-path AgentDefinitionsHandler; GetParams uses legacySvc (admin/cross-tenant)
+  - `router.go`: BuildRouter gains `pools *db.Pools`; passes to both handlers
+  - `cmd/them/main.go`: rlsPools now passed to BuildRouter (was `_ = rlsPools`)
+  - `tenant_group_mappings` in tenants.go: these are super_admin admin routes; they run via the
+    `them_admin` pool (BYPASSRLS) already — no TenantTx needed; RLS policies won't block them
+  - authserver `GetGroupRole`: already uses admin pool (BYPASSRLS); no code change needed
+  - All 48 packages pass: `go test ./...` zero failures
+  - **Commit:** `5f70499`
   - **Commit tag:** `feat(rls): B1 — migrate callers for mcp_servers/tenant_group_mappings/agent_definitions`
 
 - [ ] **B2** — Enable RLS on B1 tables:
