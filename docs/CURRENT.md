@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-03 (Step 19 design complete)
+# Last updated: 2026-09-03 (Step 19 C1 complete)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-61730f3  docs(rls): v3 design — fix import cycle, split cmd policies, role grants, middleware enqueue, caller matrix, cancel handling, test design, PgBouncer
-8b08aaa  docs(rls): v2 design — correct all seven blocking issues in rls-option-a-plan
-86bdadc  docs(rls): add full Option A Row-Level Security design document
-af37bb6  docs: update HANDOVER.md for Step 18 completion
-7c346da  feat(multi-tenancy): Step 18 — OIDC group claims → tenant role mapping
+4f3a0e1  feat(rls): C1 — migrate callers for agents/orchestrators/applications/tokens/entry-points
+7000090  docs(rls): Phase A complete — check A1-A5, add implementation notes
+7bfe778  test(rls): A5 — integration test infrastructure
+ba5d0d8  docs(rls): fix TEST_INDEX.md suite numbering — S1-98 DB Pools, S1-99 dbtype
+ea6160c  fix(rls): A4 — atomicity bugs before RLS enablement
 ```
 
 ---
@@ -50,14 +50,18 @@ Key facts:
 Design: `docs/design/rls-option-a-plan.md` (v3, commit 61730f3) — COMPLETE, reviewed, unblocked.
 Progress tracker: `docs/STEP19_RLS_HANDOVER.md` — read this before starting implementation.
 
-Implementation: NOT STARTED. Next sub-step is **A1** (DB roles migration).
+Implementation progress: **A1–A5 done, B1–B2 done, C1 done**. HEAD `4f3a0e1`.
 
 ### Next recommended task for a new session
 
-Start `docs/STEP19_HANDOVER.md` sub-step A1:
-- Create `db/070_rls_roles.sql` with `them_owner` (NOLOGIN/NOBYPASSRLS), `them_admin` (LOGIN/BYPASSRLS), `them_app` (LOGIN, no BYPASSRLS)
-- Transfer table ownership
-- Apply per-table grants from §4.5 of the design doc
+Start `docs/STEP19_RLS_HANDOVER.md` sub-step **C2** — enable RLS on the C1 tables:
+- Write `db/072_rls_phase_c.sql` with standard direct tenant_id policies on: `agents`, `orchestrators`, `applications`, `entry_points`, `access_tokens`
+- Also: check `appliveness/liveness.go` `listEnabledEPSlugs` — this is a cross-tenant read of `entry_points` and needs AdminQuerier before enabling RLS on entry_points
+- Deploy updated `them-go-bridge` container (C1 code already in main)
+- Apply migration, run integration tests: `go test -tags=integration ./internal/db/...`
+- Commit tag: `feat(rls): C2 — enable RLS on agents/orchestrators/applications/entry_points/access_tokens`
+
+**Blocker for C2:** `appliveness/liveness.go:listEnabledEPSlugs` does a cross-tenant scan of `entry_points`. This must use AdminQuerier (BYPASSRLS) before enabling RLS on entry_points, or it will return empty list for all non-bootstrap tenants. Fix this in C1b before applying 072 migration.
 - Add `THEM_DB_URL_APP` and `THEM_DB_URL_ADMIN` to `generate-env.sh`
 
 ### Known blockers / pre-conditions

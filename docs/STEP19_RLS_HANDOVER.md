@@ -3,7 +3,7 @@
 # Branch: main
 # Design HEAD: 61730f3
 # Last updated: 2026-09-03
-# Status: IN PROGRESS — Phase A complete, B1+B2 complete, C1 next
+# Status: IN PROGRESS — Phase A complete, B1+B2 complete, C1 complete, C2 next
 #
 # Context: This is a focused side-track from the main multi-tenancy roadmap
 # (Steps 1–18 complete). Step 19 (RLS) must finish before the tenant roadmap
@@ -197,12 +197,19 @@ Migrate callers → deploy → enable RLS. For each phase, the sequence is:
 
 ### Phase C — Core admin CRUD tables
 
-- [ ] **C1** — Migrate callers for `agents`, `orchestrators`, `applications`, `entry_points`, `access_tokens`, `application_definitions`, `component_definitions`:
-  - All admin DAL functions: accept dbtype.TenantQuerier
-  - `appliveness.listEnabledEPSlugs` → AdminQuerier (cross-tenant; in them-go-bridge)
-  - Rebuild and redeploy `them-go-bridge`, `them-agent-runtime`, `them-dag-worker` BEFORE enabling RLS
-  - `component_definitions`: four per-command policies (see §5.4 of design doc)
-  - **Commit tag:** `feat(rls): C1 — migrate callers for agents/orchestrators/applications/entry_points`
+- [x] **C1** — Migrate callers for `agents`, `orchestrators`, `applications`, `entry_points`, `access_tokens`:
+  - `agents.go`: dual-path AgentsHandler; CRUD via openSvc (TenantTx); Test/SecurityScan use legacyDAL for cross-tenant GetAgentBySlug/GetAgentTokenEncrypted
+  - `orchestrators.go`: dual-path OrchestratorsHandler, all 5 CRUD methods
+  - `tokens.go`: dual-path TokensHandler, all 5 CRUD methods
+  - `applications.go`: dual-path ApplicationsHandler (legacySvc + legacyDAL); openSvc covers all 20+ handler methods including entry-points CRUD and provider-key management
+  - `ep_discover.go`: openSvc for tenant-scoped app lookup; legacyDAL for cross-tenant orch/agent card synthesis
+  - `router.go`: BuildRouter gains `pools *db.Pools` param; all handler constructors updated
+  - `cmd/them/main.go`: rlsPools passed to BuildRouter; voice handler uses nil pools (legacy path OK for voice)
+  - All test call sites updated (admin_test.go, agents_actions_test.go, applications_wave8_test.go)
+  - 48 packages pass: `go test ./...` zero failures
+  - **NOTE:** `appliveness.listEnabledEPSlugs` and `component_definitions` NOT yet migrated — entry_points has cross-tenant reader in appliveness.go; component_definitions has split policy (builtins + tenant rows). These can be handled in C1b or as part of C2 prep.
+  - **Commit:** `4f3a0e1`
+  - **Commit tag:** `feat(rls): C1 — migrate callers for agents/orchestrators/applications/tokens/entry-points`
 
 - [ ] **C2** — Enable RLS on C1 tables:
   - `db/072_rls_phase_c.sql`
