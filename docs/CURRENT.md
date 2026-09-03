@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-03 (Step 19 C2 complete)
+# Last updated: 2026-09-03 (Step 19 D2 complete)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -52,15 +52,15 @@ Key facts:
 Design: `docs/design/rls-option-a-plan.md` (v3, commit 61730f3) — COMPLETE, reviewed, unblocked.
 Progress tracker: `docs/STEP19_RLS_HANDOVER.md` — read this before starting implementation.
 
-Implementation progress: **A1–A5 done, B1–B2 done, C1+C1b+C2 done**. HEAD: see above.
+Implementation progress: **A1–A5 done, B1–B2 done, C1+C1b+C2 done, D1+D2 done**. HEAD: see above.
 
 ### Next recommended task for a new session
 
-Start `docs/STEP19_RLS_HANDOVER.md` sub-step **D1** — migrate callers for the child tables of `applications`:
-- Tables: `app_agent_bindings`, `app_orchestrators`, `app_mcp_credentials`, `middleware_wirings`
-- These use EXISTS-based policies through `applications` (already RLS-enabled after C2)
-- Rebuild and redeploy affected containers after migrating callers
-- Commit tag: `feat(rls): D1 — migrate callers for app_agent_bindings and siblings`
+Start `docs/STEP19_RLS_HANDOVER.md` sub-step **E0** — backfill `tasks.tenant_id`:
+- `db/074_tasks_tenant_backfill.sql` — UPDATE pre-multi-tenancy NULL rows (27 rows), then ALTER COLUMN SET NOT NULL
+- Verify zero NULL rows after backfill
+- After E0, proceed to E1 (migrate callers for runs/run_artifacts/tasks/quarantine_artifacts/managed_app_bindings)
+- Key callers for E1: `runrecorder` (TenantTx), `agent-runtime` (TenantTx from InvocationContext.TenantID), `reconciler` (AdminQuerier — cross-tenant sweep), `dag-worker`
 
 ### Known blockers / pre-conditions
 
@@ -176,6 +176,7 @@ All migrations applied through `db/072_rls_phase_c.sql` (Step 19 Phase C complet
 | `db/052_middleware_jobs_nullable_artifact.sql` | ✅ applied — `middleware_jobs.artifact_id` made nullable; FK re-added allowing NULL; fixes quarantine-first FK violation |
 | `db/053_*` through `db/071_rls_phase_b.sql` | ✅ applied — B1+B2 RLS on mcp_servers/tenant_group_mappings/agent_definitions/agent_runtime_specs |
 | `db/072_rls_phase_c.sql` | ✅ applied — C2 RLS on agents/orchestrators/applications/entry_points/access_tokens |
+| `db/073_rls_phase_d.sql` | ✅ applied — D2 EXISTS-based RLS on app_agent_bindings/app_orchestrators/app_mcp_credentials/middleware_wirings |
 
 ---
 

@@ -48,7 +48,14 @@ func main() {
 		}
 		defer rlsPools.Close()
 	}
-	_ = rlsPools
+	// Select the pool for tenant-scoped queries. When RLS pools are configured,
+	// use the Admin pool (BYPASSRLS) for DB lookups that carry explicit tenant_id
+	// predicates in their WHERE clause — the Admin pool bypasses RLS unconditionally
+	// while the explicit predicates still enforce tenant isolation.
+	queryPool := database.Pool()
+	if rlsPools != nil {
+		queryPool = rlsPools.Admin
+	}
 
 	redisCache, err := cache.New(ctx, cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)
 	if err != nil {
@@ -70,13 +77,13 @@ func main() {
 
 	// A2A inter-agent call support: resolve target endpoint from DB, decrypt auth token.
 	a2aResolver := agentgen.NewDBAgentEndpointResolver(
-		&pgxAgentEndpointQueryer{pool: database.Pool()},
+		&pgxAgentEndpointQueryer{pool: queryPool},
 		func(ct string) (string, error) { return crypto.DecryptStored(cryptoKey, ct) },
 	)
 	interpBase.WithA2ACaller(agentgen.NewHTTPA2ACaller(a2aResolver, &http.Client{Timeout: 5 * time.Minute}))
 
 	rt := &Runtime{
-		pool:      database.Pool(),
+		pool:      queryPool,
 		cryptoKey: cryptoKey,
 		taskStore: agentgen.NewRedisA2ATaskStore(taskRedis),
 		hitlStore: agentgen.NewHITLStore(taskRedis),

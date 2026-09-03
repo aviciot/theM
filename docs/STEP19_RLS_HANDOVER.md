@@ -3,7 +3,7 @@
 # Branch: main
 # Design HEAD: 61730f3
 # Last updated: 2026-09-03
-# Status: IN PROGRESS — Phase A complete, B1+B2 complete, C1+C2 complete, D1 next
+# Status: IN PROGRESS — Phase A complete, B1+B2 complete, C1+C2 complete, D1+D2 complete, E1 next
 #
 # Context: This is a focused side-track from the main multi-tenancy roadmap
 # (Steps 1–18 complete). Step 19 (RLS) must finish before the tenant roadmap
@@ -229,13 +229,21 @@ Migrate callers → deploy → enable RLS. For each phase, the sequence is:
 
 ### Phase D — Child tables of applications
 
-- [ ] **D1** — Migrate callers for `app_agent_bindings`, `app_orchestrators`, `app_mcp_credentials`, `middleware_wirings`:
-  - EXISTS-based policies through `applications` (already RLS-enabled after C2)
-  - Rebuild and redeploy affected containers
-  - **Commit tag:** `feat(rls): D1 — migrate callers for app_agent_bindings and siblings`
+- [x] **D1** — Migrate callers for `app_agent_bindings`, `app_orchestrators`, `app_mcp_credentials`, `middleware_wirings`:
+  - `cmd/agent-runtime/main.go`: when `rlsPools != nil` use `rlsPools.Admin` for `Runtime.pool` and `pgxAgentEndpointQueryer` — these carry explicit tenant_id predicates
+  - `cmd/them/main.go`: when `rlsPools != nil` use `rlsPools.Admin` for `agentregistry.NewPgxQuerier` — GetBindingID and QueryAgentsByTenant have explicit predicates
+  - `AppService` (via `ApplicationsHandler.openSvc` → TenantTx) already covers all `dal.DB` methods on these tables ✅
+  - `MCPServersHandler.openSvc` → TenantTx already covers `app_mcp_credentials` ✅
+  - `middleware_wirings` has no Go callers yet ✅
+  - `go test ./...` zero failures
+  - **Commit:** (this session)
+  - **Commit tag:** `feat(rls): D1 — migrate callers for app_agent_bindings/app_orchestrators/app_mcp_credentials`
 
-- [ ] **D2** — Enable RLS on D1 tables:
-  - `db/073_rls_phase_d.sql`
+- [x] **D2** — Enable RLS on D1 tables:
+  - `db/073_rls_phase_d.sql` — EXISTS-based policies on all 4 tables via applications
+  - RLS smoke-tested: admin sees all (10 bindings, 7 orchestrators); correct tenant sees same; no GUC → 0
+  - Integration tests pass; them-go-bridge and them-agent-runtime rebuilt and running
+  - **Commit:** (this session)
   - **Commit tag:** `feat(rls): D2 — enable RLS on app_agent_bindings/app_orchestrators/app_mcp_credentials/middleware_wirings`
 
 ### Phase E — Run and task tables
@@ -368,7 +376,8 @@ variables are derived from `secrets.local` via HMAC like all other secrets.
 | 2026-09-03 | Design session | Design v3 finalized | 61730f3 | All 8 blocking issues resolved |
 | 2026-09-03 | Implementation session 1 | A1, A2, A3, A4, A5 | a46e703..7bfe778 | Phase A complete. DB migration not yet applied to live DB — apply db/070_rls_roles.sql + set passwords before Phase B. TEST_INDEX numbering fixed (ba5d0d8). |
 | 2026-09-03 | Implementation session 2 | B1, B2, C1 | (see CURRENT.md) | B+C1 complete. Callers migrated. 48 pkgs pass. |
-| 2026-09-03 | Implementation session 3 | C1b, C2 | (this session) | C1b: appliveness Loop uses Admin pool. C2: 072 migration applied, RLS live on 5 tables. go test ./... zero failures, integration tests pass. |
+| 2026-09-03 | Implementation session 3 | C1b, C2 | 285e21e | C1b: appliveness Loop uses Admin pool. C2: 072 migration applied, RLS live on 5 tables. go test ./... zero failures, integration tests pass. |
+| 2026-09-03 | Implementation session 4 | D1, D2 | (this session) | D1: agent-runtime + agentregistry use Admin pool for explicit-predicate queries. D2: 073 migration applied, EXISTS-based RLS on 4 child tables. go test ./... zero failures. |
 
 *(Add a row for each session.)*
 

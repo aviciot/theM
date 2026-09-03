@@ -139,7 +139,14 @@ func run() error {
 	log.Info("admission gate initialised")
 
 	// ── 10c. Create agent registry ────────────────────────────────────────────
-	agentDB := agentregistry.NewPgxQuerier(database.Pool())
+	// When RLS pools are configured, use the Admin pool (BYPASSRLS) for registry
+	// queries — agents and app_agent_bindings are now RLS-enabled but the registry
+	// uses explicit tenant_id predicates that still enforce isolation.
+	agentQueryPool := database.Pool()
+	if rlsPools != nil {
+		agentQueryPool = rlsPools.Admin
+	}
+	agentDB := agentregistry.NewPgxQuerier(agentQueryPool)
 	agentCacheRedis := cache.NewAuthRedisClient(redisCache.Client())
 	agentReg := agentregistry.New(agentDB, agentCacheRedis, log)
 	go agentReg.Subscribe(runCtx)
