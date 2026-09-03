@@ -72,6 +72,40 @@
 
 ---
 
+## Current pause point — tenant roadmap status
+
+**Steps 1–18 are complete and fully deployed.**
+
+Step 19 (Postgres Row-Level Security) is a prerequisite infrastructure step before
+the tenant roadmap continues. It is a focused side-track, not part of the original
+numbered feature sequence.
+
+**Do not continue the tenant feature roadmap (Step 20+) until Step 19 is done.**
+
+### Where to pick up Step 19
+
+See `docs/STEP19_RLS_HANDOVER.md` — this is the dedicated, self-contained progress
+tracker for Step 19. It has:
+- The complete sub-step checklist (A1–H7) with commit tags
+- Caller-to-table dependency matrix (which containers must be deployed before each RLS enablement)
+- Known constraints and pre-conditions
+- Progress log (update at the end of each session)
+
+The full RLS design is in `docs/design/rls-option-a-plan.md` (v3, 61730f3).
+
+### What comes after Step 19 (tenant roadmap Step 20+)
+
+Once RLS is fully enabled and all integration tests pass, the next tenant roadmap
+items are (to be decided/scoped in that session — read `docs/architecture/MULTI_TENANCY_DESIGN.md`
+Phase 3 items for candidates):
+- Tenant-scoped audit log UI
+- Tenant self-service provisioning flow
+- Cross-tenant admin observability dashboard
+
+**Do not plan Step 20+ in the Step 19 implementation session.**
+
+---
+
 ## What Step 5 built
 
 - `db/054_tenant_idp_config.sql` — adds `idp_config JSONB DEFAULT NULL` to `them.tenants`

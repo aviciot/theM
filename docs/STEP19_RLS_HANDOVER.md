@@ -1,9 +1,14 @@
-# Step 19 Handover — Postgres Row-Level Security
+# Step 19 — Postgres Row-Level Security (dedicated progress tracker)
 # the-M multi-agent orchestration platform
 # Branch: main
 # Design HEAD: 61730f3
 # Last updated: 2026-09-03
 # Status: DESIGN COMPLETE — implementation not started
+#
+# Context: This is a focused side-track from the main multi-tenancy roadmap
+# (Steps 1–18 complete). Step 19 (RLS) must finish before the tenant roadmap
+# continues. When Step 19 is done, resume the main tenant effort from
+# docs/HANDOVER.md § "Tenant roadmap — next step after Step 19".
 
 ---
 

@@ -48,7 +48,7 @@ Key facts:
 **Step 19 — Postgres Row-Level Security**
 
 Design: `docs/design/rls-option-a-plan.md` (v3, commit 61730f3) — COMPLETE, reviewed, unblocked.
-Progress tracker: `docs/STEP19_HANDOVER.md` — read this before starting implementation.
+Progress tracker: `docs/STEP19_RLS_HANDOVER.md` — read this before starting implementation.
 
 Implementation: NOT STARTED. Next sub-step is **A1** (DB roles migration).
 
