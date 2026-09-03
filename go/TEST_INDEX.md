@@ -2734,6 +2734,38 @@ go test -tags=integration -v -timeout 300s -run "TestMAXLEN|TestIntegration_WS_R
 
 ---
 
+### S2-08 · RLS integration — `internal/db/rls_integration_test.go`
+
+**Purpose:** Verifies RLS role attributes and connection GUC isolation using a live Postgres
+instance with the A1 migration applied (them_owner, them_admin, them_app roles created).
+Tests skip gracefully when prerequisites (roles, RLS enabled on tables) aren't met.
+
+**Build tag:** `//go:build integration`
+
+| Test | What it proves | Prereqs |
+|---|---|---|
+| `TestRLS30_AppRoleNoBypassRLS` | them_app.rolbypassrls = false | A1 migration |
+| `TestRLS31_OwnerRoleNoLogin` | them_owner.rolcanlogin = false | A1 migration |
+| `TestRLS31b_OwnerDirectConnectFails` | them_owner cannot connect as DSN (NOLOGIN) | A1 migration |
+| `TestRLS32_AdminRoleBypassRLS` | them_admin.rolbypassrls = true | A1 migration |
+| `TestRLS33_AdminQueryBypasses` | them_admin bypasses RLS (BYPASSRLS confirmed) | A1 + Phase B deployed |
+| `TestRLS08_AppPoolFailClosed` | them_app without set_config returns 0 rows (fail-closed) | A1 + RLS on agents |
+| `TestRLS10_FreshConnectionFailClosed` | Fresh them_app connection is fail-closed (MaxConns=1) | A1 + RLS on agents |
+| `TestRLS11_GUCResetsAfterCommit` | GUC resets to '' after commit; reused connection is fail-closed | A1 + RLS on agents |
+| `TestRLSPoolsInterface` | NewPools connects; App+Admin non-nil; NewAdminQuerier non-nil | THEM_DB_URL_APP + THEM_DB_URL_ADMIN |
+
+**Run command:**
+```bash
+DATABASE_HOST=them-postgres DATABASE_USER=them DATABASE_NAME=them DATABASE_PASSWORD=<pw> \
+THEM_DB_URL_APP=postgres://them_app:<pw>@them-postgres:5432/them \
+THEM_DB_URL_ADMIN=postgres://them_admin:<pw>@them-postgres:5432/them \
+go test -tags=integration -v ./internal/db/... -run 'TestRLS'
+```
+
+**Trigger:** any change to `internal/db/db.go`, `db/070_rls_roles.sql`, or any `db/07*_rls_phase_*.sql`
+
+---
+
 ## Suite 3 — Live deploy verification (`DEPLOY_AND_TEST.md`)
 
 Manual checklist of 23 tests against a running Docker stack.
@@ -2871,6 +2903,9 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/middleware/av/clamav.go` | S1-87 |
 | `internal/storage/storage.go` | S1-89 |
 | `cmd/middleware-worker/main.go` | S1-87 + S1-88 + S1-89 + S1-91 |
+| `internal/db/db.go` | S1-98 + S2-08 (integration) |
+| `internal/dbtype/querier.go` | S1-99 |
+| `db/070_rls_roles.sql` or any `db/07*_rls_phase_*.sql` | S2-08 (integration) |
 | `cmd/them/main.go` | S1-24 + S1 (full suite) |
 | `go.mod` or `go.sum` | S1 (full suite) |
 | `Dockerfile.go` | S1 + rebuild + S2 |
@@ -2996,6 +3031,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-03 (MAXLEN) | runstream MAXLEN + reconnect + cross-replica | 7 |
 | S2-04 | admin tokens + sessions integration | 11 |
 | S2-05 | admin/dal llm_providers integration | 11 |
-| **S2 total** | | **42** |
+| S2-08 | RLS integration (role attrs + GUC isolation): RLS-30, RLS-31, RLS-31b, RLS-32, RLS-33, RLS-08, RLS-10, RLS-11, PoolsInterface | 9 |
+| **S2 total** | | **51** |
 | S3 live | manual | 23 |
 | **`go test ./...` total** | | **1034** |
