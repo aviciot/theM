@@ -1,7 +1,7 @@
 # Handover — Multi-Tenancy Step 18
 **Date:** 2026-09-03
 **Branch:** main
-**HEAD:** (pending commit — Step 18 in progress)
+**HEAD:** 7c346da (feat(multi-tenancy): Step 18 — OIDC group claims → tenant role mapping)
 **Steps complete:** 1 → 18 (all 47 Go packages pass, 1082 S1 tests, 1034 go test ./...)
 
 ---
@@ -65,7 +65,7 @@
 | Step 15 | Per-tenant LLM provider key management — tenant_id on llm_providers, merged list, upsert override, run-time resolution | Complete | 24ff822 |
 | Step 16 | Per-tenant RBAC — tenant_id in /me response, tenant_slug login selection, GET/POST /admin/tenants/{id}/members | Complete | 5ee5a34 |
 | Step 17 | Email-domain → tenant routing — email_domain on tenants, GET /auth/tenant-lookup (public), SSO banner on login page, admin UI field | Complete | f2c6e90 |
-| Step 18 | OIDC group claims → tenant role mapping — them.tenant_group_mappings, GET/PUT/DELETE /admin/tenants/{id}/group-mappings, group role lookup in OIDCCallback | Complete | (pending) |
+| Step 18 | OIDC group claims → tenant role mapping — them.tenant_group_mappings, GET/PUT/DELETE /admin/tenants/{id}/group-mappings, group role lookup in OIDCCallback | Complete | 7c346da |
 
 ---
 
