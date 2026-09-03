@@ -11,6 +11,7 @@ import (
 	"github.com/aviciot/them/internal/admin/service"
 	"github.com/aviciot/them/internal/agentgen"
 	"github.com/aviciot/them/internal/auth"
+	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/registry"
 	"github.com/aviciot/them/internal/temporal"
 )
@@ -100,7 +101,8 @@ func (a *registryQuerierAdapter) QueryRow(ctx context.Context, sql string, args 
 //	GET    /runs/{run_id}/artifacts
 //	POST   /runs/{run_id}/signal
 func BuildRouter(
-	db DBQuerier,
+	dbq DBQuerier,
+	pools *db.Pools,
 	cache CacheInvalidator,
 	temporalSig TemporalSignaler,
 	sessionReader service.SessionReader,
@@ -117,18 +119,18 @@ func BuildRouter(
 ) http.Handler {
 	r := chi.NewRouter()
 
-	agents := NewAgentsHandler(db, cache, redis, fernetKey)
-	orchs := NewOrchestratorsHandler(db, cache)
-	apps := NewApplicationsHandler(db, cache, fernetKey)
-	defs := NewDefinitionsHandlerWithRegistry(db, registry.NewResolver(&registryQuerierAdapter{db}))
-	runs := NewRunsHandler(db, temporalSig)
-	tokens := NewTokensHandler(db, cache)
-	monitoring := NewMonitoringConfigHandler(db)
-	llmRouting := NewLLMRoutingHandler(db)
-	llmProviders := NewLLMProvidersHandler(db, secretKey)
-	systemAgents := NewSystemAgentsHandler(db, fernetKey)
-	tenants := NewTenantsHandler(db)
-	managedApps := NewManagedAppsHandler(db)
+	agents := NewAgentsHandler(dbq, cache, redis, fernetKey)
+	orchs := NewOrchestratorsHandler(dbq, cache)
+	apps := NewApplicationsHandler(dbq, cache, fernetKey)
+	defs := NewDefinitionsHandlerWithRegistry(dbq, registry.NewResolver(&registryQuerierAdapter{dbq}))
+	runs := NewRunsHandler(dbq, temporalSig)
+	tokens := NewTokensHandler(dbq, cache)
+	monitoring := NewMonitoringConfigHandler(dbq)
+	llmRouting := NewLLMRoutingHandler(dbq)
+	llmProviders := NewLLMProvidersHandler(dbq, secretKey)
+	systemAgents := NewSystemAgentsHandler(dbq, fernetKey)
+	tenants := NewTenantsHandler(dbq)
+	managedApps := NewManagedAppsHandler(dbq)
 
 	// Admin routes — all require JWT + super_admin.
 	// Within /admin, tenant-scoped resources also require AdminTenantMiddleware.
@@ -149,7 +151,7 @@ func BuildRouter(
 				orchs.Routes(tenantScoped)
 				defs.Routes(tenantScoped)
 				tokens.Routes(tenantScoped)
-				reg := NewRegistryHandler(db)
+				reg := NewRegistryHandler(dbq)
 				tenantScoped.Get("/component-definitions", reg.ListComponentDefinitions)
 
 				// Schema + Generate must be registered BEFORE agentDefs.Routes so
@@ -158,11 +160,11 @@ func BuildRouter(
 				if anthropicAPIKey != "" {
 					llmCaller = newAnthropicCompleter(anthropicAPIKey)
 				}
-				schemaHandler := NewAgentDefinitionSchemaHandler(db, llmCaller)
+				schemaHandler := NewAgentDefinitionSchemaHandler(dbq, llmCaller)
 				tenantScoped.Get("/agent-definitions/schema", schemaHandler.Schema)
 				tenantScoped.Post("/agent-definitions/generate", schemaHandler.Generate)
 
-				agentDefs := NewAgentDefinitionsHandler(db, cache, fernetKey)
+				agentDefs := NewAgentDefinitionsHandler(dbq, pools, cache, fernetKey)
 				agentDefs.Routes(tenantScoped)
 
 				// Agent bindings are mounted inside apps.Routes under the /applications/{id}
@@ -170,10 +172,10 @@ func BuildRouter(
 				bindings := NewAgentBindingsHandler(agentDefs.Svc())
 				apps.Routes(tenantScoped, bindings)
 
-				secCfg := NewSecurityConfigHandler(db, redis)
+				secCfg := NewSecurityConfigHandler(dbq, redis)
 				secCfg.Routes(tenantScoped)
 
-				mcpServers := NewMCPServersHandler(db, secretKey, mcpServiceURL)
+				mcpServers := NewMCPServersHandler(dbq, pools, secretKey, mcpServiceURL)
 				mcpServers.Routes(tenantScoped)
 
 				// HITL canvas task signal endpoint — only mounted when Temporal is enabled.
@@ -199,7 +201,7 @@ func BuildRouter(
 			if sessionReader != nil {
 				NewSessionsHandler(sessionReader).Routes(a)
 			}
-			NewServicesStatsHandler(db, redis, logger).Routes(a)
+			NewServicesStatsHandler(dbq, redis, logger).Routes(a)
 		})
 
 		// Runs routes are at /runs (not /admin/runs) to match the existing Traefik

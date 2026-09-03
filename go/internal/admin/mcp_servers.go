@@ -1,34 +1,80 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/crypto"
+	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // MCPServersHandler handles /api/v1/admin/mcp-servers CRUD routes.
 // All mcp-server routes are tenant-scoped: each server belongs to exactly one tenant.
 // Credential values are never returned — only credential_set bool.
+//
+// When pools is non-nil (RLS configured), each request opens a TenantTx so that
+// app.tenant_id is set for the duration of the query — required once RLS is enabled
+// on them.mcp_servers. When pools is nil, falls back to the legacy shared-pool path.
 type MCPServersHandler struct {
-	svc           *service.MCPServerService
+	// RLS path (pools != nil): per-request TenantTx
+	pools     *db.Pools
+	fernetKey []byte
+	// Legacy path (pools == nil): pre-built service backed by shared pool
+	legacySvc     *service.MCPServerService
 	mcpServiceURL string // base URL of them-mcp-service; empty → probe returns 503
 }
 
 // NewMCPServersHandler creates an MCPServersHandler.
 // mcpServiceURL is the internal base URL of them-mcp-service (e.g. "http://them-mcp-service:8010").
 // Pass empty string when the service is not deployed — the probe endpoint will return 503.
-func NewMCPServersHandler(db DBQuerier, secretKey, mcpServiceURL string) *MCPServersHandler {
-	return &MCPServersHandler{
-		svc:           service.NewMCPServerService(dal.NewDB(db), secretKey),
+// When pools is non-nil, each request uses a TenantTx (RLS-ready path).
+// When pools is nil, the handler falls back to the legacy shared-pool path via db.
+func NewMCPServersHandler(legacyDB DBQuerier, pools *db.Pools, secretKey, mcpServiceURL string) *MCPServersHandler {
+	h := &MCPServersHandler{
+		pools:         pools,
+		fernetKey:     crypto.DeriveKey(secretKey),
 		mcpServiceURL: mcpServiceURL,
 	}
+	if pools == nil {
+		h.legacySvc = service.NewMCPServerService(dal.NewDB(legacyDB), secretKey)
+	}
+	return h
+}
+
+// svc returns a MCPServerService backed by a TenantTx for the current request,
+// or the pre-built legacy service when RLS pools are not configured.
+// cancel must be called after the service call completes to roll back the transaction
+// if it has not already been committed.
+func (h *MCPServersHandler) openSvc(ctx context.Context, tenantID string) (svc *service.MCPServerService, commit func(context.Context) error, cancel func(), err error) {
+	if h.pools == nil {
+		return h.legacySvc, func(_ context.Context) error { return nil }, func() {}, nil
+	}
+	tenantUUID, uuidErr := uuid.Parse(tenantID)
+	if uuidErr != nil {
+		return nil, nil, nil, uuidErr
+	}
+	tx, txErr := h.pools.BeginTenantTx(ctx, tenantUUID)
+	if txErr != nil {
+		return nil, nil, nil, txErr
+	}
+	rollback := func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		tx.Rollback(cleanupCtx)
+	}
+	d := dal.NewDBFromTenantQuerier(tx)
+	svc = service.NewMCPServerServiceFromFernet(d, h.fernetKey)
+	return svc, tx.Commit, rollback, nil
 }
 
 // Routes mounts all MCP server endpoints on r.
@@ -58,8 +104,18 @@ func (h *MCPServersHandler) Routes(r chi.Router) {
 // List handles GET /api/v1/admin/mcp-servers
 func (h *MCPServersHandler) List(w http.ResponseWriter, r *http.Request) {
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	out, err := h.svc.List(r.Context(), tenantID)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	out, err := svc.List(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -76,11 +132,21 @@ func (h *MCPServersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := h.svc.Create(r.Context(), tenantID, body)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	out, err := svc.Create(r.Context(), tenantID, body)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -94,7 +160,13 @@ func (h *MCPServersHandler) Get(w http.ResponseWriter, r *http.Request) {
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	id := chi.URLParam(r, "id")
 
-	out, err := h.svc.Get(r.Context(), id, tenantID)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	out, err := svc.Get(r.Context(), id, tenantID)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -102,6 +174,8 @@ func (h *MCPServersHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	// Read-only: rollback is fine; commit is a no-op for reads but closes cleanly.
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -116,11 +190,21 @@ func (h *MCPServersHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := h.svc.Update(r.Context(), id, tenantID, patch)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	out, err := svc.Update(r.Context(), id, tenantID, patch)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -132,10 +216,20 @@ func (h *MCPServersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	id := chi.URLParam(r, "id")
 
-	if err := h.svc.Delete(r.Context(), id, tenantID); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.Delete(r.Context(), id, tenantID); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -143,19 +237,31 @@ func (h *MCPServersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListCredentials handles GET /api/v1/admin/applications/{app_id}/mcp-credentials
+// This uses the tenant context from the request (not app_id) since credentials
+// are scoped to a tenant's application.
 func (h *MCPServersHandler) ListCredentials(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	appID := chi.URLParam(r, "app_id")
-	out, err := h.svc.ListCredentials(r.Context(), appID)
+
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	defer rollback()
+	out, err := svc.ListCredentials(r.Context(), appID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, out)
 }
 
 // SetCredential handles PUT /api/v1/admin/applications/{app_id}/mcp-credentials/{server_id}
 // The request body is NOT logged — it contains a plaintext credential.
 func (h *MCPServersHandler) SetCredential(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	appID := chi.URLParam(r, "app_id")
 	serverID := chi.URLParam(r, "server_id")
 
@@ -165,10 +271,20 @@ func (h *MCPServersHandler) SetCredential(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.svc.SetCredential(r.Context(), appID, serverID, body); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.SetCredential(r.Context(), appID, serverID, body); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -177,13 +293,24 @@ func (h *MCPServersHandler) SetCredential(w http.ResponseWriter, r *http.Request
 
 // DeleteCredential handles DELETE /api/v1/admin/applications/{app_id}/mcp-credentials/{server_id}
 func (h *MCPServersHandler) DeleteCredential(w http.ResponseWriter, r *http.Request) {
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	appID := chi.URLParam(r, "app_id")
 	serverID := chi.URLParam(r, "server_id")
 
-	if err := h.svc.DeleteCredential(r.Context(), appID, serverID); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.DeleteCredential(r.Context(), appID, serverID); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}

@@ -104,7 +104,6 @@ func run() error {
 	} else {
 		log.Info("RLS pools not configured — THEM_DB_URL_APP/THEM_DB_URL_ADMIN not set")
 	}
-	_ = rlsPools // will be wired to DAL callers in later RLS sub-steps
 
 	// ── 4. Connect to Redis ───────────────────────────────────────────────────
 	redisCache, err := cache.New(ctx, cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)
@@ -414,7 +413,7 @@ func run() error {
 	adminFernetKey := crypto.DeriveKey(cfg.SecretKey)
 	adminHITLRedis := cache.NewAuthRedisClient(redisCache.Client())
 	adminHITLStore := agentgen.NewHITLStore(adminHITLRedis)
-	adminRouter := admin.BuildRouter(adminDB, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey, adminHITLStore, temporalCanvasSignaler)
+	adminRouter := admin.BuildRouter(adminDB, rlsPools, adminCache, temporalSignaler, sessionStore, jwtMiddleware, tokenCache, log, cfg.SecretKey, redisCache.Client(), adminFernetKey, cfg.MCPServiceURL, cfg.AnthropicAPIKey, adminHITLStore, temporalCanvasSignaler)
 	srv.MountAdmin(adminRouter)
 	log.Info("admin API mounted", "prefix", "/api/v1")
 

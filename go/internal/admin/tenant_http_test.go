@@ -183,7 +183,7 @@ func tenantAdminRouter(t *testing.T, cache *auth.Cache) http.Handler {
 		})
 	}
 
-	return admin.BuildRouter(db, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil)
+	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil)
 }
 
 // tenantAdminRouterNoTenant returns a router that auto-injects a super_admin JWT
@@ -215,7 +215,7 @@ func tenantAdminRouterNoTenant(t *testing.T, cache *auth.Cache) http.Handler {
 			inner(next).ServeHTTP(w, r2)
 		})
 	}
-	return admin.BuildRouter(db, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil)
+	return admin.BuildRouter(db, nil, nil, nil, nil, jwtMW, cache, nil, "test-secret", nil, nil, "", "", nil, nil)
 }
 
 // thGet sends a GET request to path with an Authorization: Bearer <token> header.

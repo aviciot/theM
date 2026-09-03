@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/aviciot/them/internal/dbtype"
 )
 
 // Querier is the database interface required by all dal functions.
@@ -55,6 +57,72 @@ func NewDB(q Querier) *DB {
 func NewDBWithPool(q Querier, pool *pgxpool.Pool) *DB {
 	return &DB{q: q, pool: pool}
 }
+
+// NewDBFromTenantQuerier wraps a dbtype.TenantQuerier (e.g. *db.TenantTx produced by
+// db.Pools.BeginTenantTx) so it can be used by existing DAL methods on *DB.
+// The adapter bridges the pgx-native types (pgx.Rows, pgx.Row) to the dal
+// RowScanner / SingleRowScanner wrapper types that dal functions expect.
+func NewDBFromTenantQuerier(q dbtype.TenantQuerier) *DB {
+	return &DB{q: &tenantQuerierAdapter{q: q}}
+}
+
+// NewDBFromAdminQuerier wraps a dbtype.AdminQuerier (e.g. *db.adminQuerier or *db.AdminTx)
+// so it can be used by existing DAL methods on *DB.
+func NewDBFromAdminQuerier(q dbtype.AdminQuerier) *DB {
+	return &DB{q: &adminQuerierAdapter{q: q}}
+}
+
+// ── dbtype adapter types ──────────────────────────────────────────────────────
+
+// tenantQuerierAdapter adapts dbtype.TenantQuerier → dal.Querier.
+// It bridges pgx-native row types to the dal wrapper interfaces.
+type tenantQuerierAdapter struct{ q dbtype.TenantQuerier }
+
+func (a *tenantQuerierAdapter) Query(ctx context.Context, sql string, args ...any) (RowScanner, error) {
+	rows, err := a.q.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return &dbTypeRowsWrapper{rows: rows}, nil
+}
+func (a *tenantQuerierAdapter) QueryRow(ctx context.Context, sql string, args ...any) SingleRowScanner {
+	return a.q.QueryRow(ctx, sql, args...)
+}
+func (a *tenantQuerierAdapter) Exec(ctx context.Context, sql string, args ...any) error {
+	_, err := a.q.Exec(ctx, sql, args...)
+	return err
+}
+func (a *tenantQuerierAdapter) ExecReturning(ctx context.Context, sql string, args ...any) SingleRowScanner {
+	return a.q.QueryRow(ctx, sql, args...)
+}
+
+// adminQuerierAdapter adapts dbtype.AdminQuerier → dal.Querier.
+type adminQuerierAdapter struct{ q dbtype.AdminQuerier }
+
+func (a *adminQuerierAdapter) Query(ctx context.Context, sql string, args ...any) (RowScanner, error) {
+	rows, err := a.q.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return &dbTypeRowsWrapper{rows: rows}, nil
+}
+func (a *adminQuerierAdapter) QueryRow(ctx context.Context, sql string, args ...any) SingleRowScanner {
+	return a.q.QueryRow(ctx, sql, args...)
+}
+func (a *adminQuerierAdapter) Exec(ctx context.Context, sql string, args ...any) error {
+	_, err := a.q.Exec(ctx, sql, args...)
+	return err
+}
+func (a *adminQuerierAdapter) ExecReturning(ctx context.Context, sql string, args ...any) SingleRowScanner {
+	return a.q.QueryRow(ctx, sql, args...)
+}
+
+// dbTypeRowsWrapper adapts pgx.Rows to dal.RowScanner.
+type dbTypeRowsWrapper struct{ rows pgx.Rows }
+
+func (w *dbTypeRowsWrapper) Next() bool          { return w.rows.Next() }
+func (w *dbTypeRowsWrapper) Scan(dest ...any) error { return w.rows.Scan(dest...) }
+func (w *dbTypeRowsWrapper) Close() error        { w.rows.Close(); return nil }
 
 // IsNoRows reports whether err represents a "no rows" result from PostgreSQL.
 // Used by the service layer to map DAL errors to service.ErrNotFound without

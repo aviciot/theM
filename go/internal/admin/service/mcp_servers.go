@@ -76,6 +76,12 @@ func NewMCPServerService(d Dal, secretKey string) *MCPServerService {
 	}
 }
 
+// NewMCPServerServiceFromFernet creates an MCPServerService with a pre-derived fernet key.
+// Use this when the key has already been derived at startup to avoid re-deriving per request.
+func NewMCPServerServiceFromFernet(d Dal, fernetKey []byte) *MCPServerService {
+	return &MCPServerService{dal: d, fernetKey: fernetKey}
+}
+
 var validMCPTransports = map[string]bool{"http": true, "sse": true, "streamable-http": true}
 var validMCPAuthTypes = map[string]bool{"none": true, "bearer": true, "header": true, "oauth2": true}
 

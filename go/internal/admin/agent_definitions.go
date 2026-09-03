@@ -1,14 +1,18 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
 	"github.com/aviciot/them/internal/auth"
+	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
@@ -16,18 +20,59 @@ import (
 type AgentDefinition = dal.AgentDefinition
 
 // AgentDefinitionsHandler handles /api/v1/admin/agent-definitions routes.
+//
+// When pools is non-nil (RLS configured), each CRUD/publish request opens a TenantTx
+// so that app.tenant_id is set for the duration of the query — required once RLS is
+// enabled on them.agent_definitions. Svc() returns the startup-time service (backed by
+// the shared legacy pool) for use by AgentBindingsHandler (Phase D — not yet migrated).
 type AgentDefinitionsHandler struct {
-	svc *service.AgentDefinitionService
+	// legacySvc is used by Svc() (consumed by AgentBindingsHandler, Phase D tables).
+	legacySvc *service.AgentDefinitionService
+	// Per-request fields for the RLS-ready path.
+	pools     *db.Pools
+	cache     CacheInvalidator
+	fernetKey []byte
 }
 
 // NewAgentDefinitionsHandler creates an AgentDefinitionsHandler backed by the given DB.
+// When pools is non-nil, CRUD/publish requests use a TenantTx per request.
 // cache and fernetKey may be nil (disables publish pipeline; CRUD still works).
-func NewAgentDefinitionsHandler(db DBQuerier, cache CacheInvalidator, fernetKey []byte) *AgentDefinitionsHandler {
-	return &AgentDefinitionsHandler{svc: service.NewAgentDefinitionService(dal.NewDB(db), cache, fernetKey)}
+func NewAgentDefinitionsHandler(legacyDB DBQuerier, pools *db.Pools, cache CacheInvalidator, fernetKey []byte) *AgentDefinitionsHandler {
+	return &AgentDefinitionsHandler{
+		legacySvc: service.NewAgentDefinitionService(dal.NewDB(legacyDB), cache, fernetKey),
+		pools:     pools,
+		cache:     cache,
+		fernetKey: fernetKey,
+	}
 }
 
-// Svc returns the underlying AgentDefinitionService for use by sibling handlers.
-func (h *AgentDefinitionsHandler) Svc() *service.AgentDefinitionService { return h.svc }
+// Svc returns the startup-time AgentDefinitionService for use by sibling handlers (e.g. AgentBindingsHandler).
+// This uses the shared legacy pool and does NOT use a TenantTx — suitable for Phase D tables.
+func (h *AgentDefinitionsHandler) Svc() *service.AgentDefinitionService { return h.legacySvc }
+
+// openSvc returns a TenantTx-backed service for the current request tenantID,
+// or falls back to the shared legacy service when RLS pools are not configured.
+func (h *AgentDefinitionsHandler) openSvc(ctx context.Context, tenantID string) (svc *service.AgentDefinitionService, commit func(context.Context) error, rollback func(), err error) {
+	if h.pools == nil {
+		return h.legacySvc, func(_ context.Context) error { return nil }, func() {}, nil
+	}
+	tenantUUID, uuidErr := uuid.Parse(tenantID)
+	if uuidErr != nil {
+		return nil, nil, nil, uuidErr
+	}
+	tx, txErr := h.pools.BeginTenantTx(ctx, tenantUUID)
+	if txErr != nil {
+		return nil, nil, nil, txErr
+	}
+	rb := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		tx.Rollback(cleanupCtx)
+	}
+	d := dal.NewDBFromTenantQuerier(tx)
+	svc = service.NewAgentDefinitionService(d, h.cache, h.fernetKey)
+	return svc, tx.Commit, rb, nil
+}
 
 // agentDefinitionInput is the request body for POST and PUT agent definition endpoints.
 type agentDefinitionInput struct {
@@ -73,11 +118,21 @@ func (h *AgentDefinitionsHandler) Create(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	id, rev, err := h.svc.CreateDraft(r.Context(), tenantID, input.AgentSlug, input.Definition, claimsUserID(r))
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "create agent definition")
+		return
+	}
+	defer rollback()
+	id, rev, err := svc.CreateDraft(r.Context(), tenantID, input.AgentSlug, input.Definition, claimsUserID(r))
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "create agent definition")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "create agent definition")
 		return
 	}
@@ -87,11 +142,18 @@ func (h *AgentDefinitionsHandler) Create(w http.ResponseWriter, r *http.Request)
 // List handles GET /api/v1/admin/agent-definitions.
 func (h *AgentDefinitionsHandler) List(w http.ResponseWriter, r *http.Request) {
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	defs, err := h.svc.ListDefinitions(r.Context(), tenantID)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list agent definitions")
 		return
 	}
+	defer rollback()
+	defs, err := svc.ListDefinitions(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list agent definitions")
+		return
+	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, defs)
 }
 
@@ -103,7 +165,13 @@ func (h *AgentDefinitionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	def, err := h.svc.GetDefinition(r.Context(), tenantID, id)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "get agent definition")
+		return
+	}
+	defer rollback()
+	def, err := svc.GetDefinition(r.Context(), tenantID, id)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
@@ -111,6 +179,7 @@ func (h *AgentDefinitionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "get agent definition")
 		return
 	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, def)
 }
 
@@ -131,10 +200,20 @@ func (h *AgentDefinitionsHandler) Update(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.UpdateDraft(r.Context(), tenantID, id, input.Definition); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update agent definition")
+		return
+	}
+	defer rollback()
+	if err := svc.UpdateDraft(r.Context(), tenantID, id, input.Definition); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "update agent definition")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "update agent definition")
 		return
 	}
@@ -149,10 +228,20 @@ func (h *AgentDefinitionsHandler) Delete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.DeleteDraft(r.Context(), tenantID, id); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete agent definition")
+		return
+	}
+	defer rollback()
+	if err := svc.DeleteDraft(r.Context(), tenantID, id); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "delete agent definition")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete agent definition")
 		return
 	}
@@ -176,11 +265,21 @@ func (h *AgentDefinitionsHandler) Clone(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewDecoder(r.Body).Decode(&input)
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	newID, rev, err := h.svc.CloneDraft(r.Context(), tenantID, id, input.AgentSlug, claimsUserID(r))
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "clone agent definition")
+		return
+	}
+	defer rollback()
+	newID, rev, err := svc.CloneDraft(r.Context(), tenantID, id, input.AgentSlug, claimsUserID(r))
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "clone agent definition")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "clone agent definition")
 		return
 	}
@@ -211,7 +310,13 @@ func (h *AgentDefinitionsHandler) Validate(w http.ResponseWriter, r *http.Reques
 	_ = json.NewDecoder(r.Body).Decode(&input)
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	report, err := h.svc.ValidateAgentDefinition(r.Context(), tenantID, id, input.Definition)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "validate agent definition")
+		return
+	}
+	defer rollback()
+	report, err := svc.ValidateAgentDefinition(r.Context(), tenantID, id, input.Definition)
 	if err != nil {
 		var compErr *service.AgentCompileError
 		if err != nil && isAgentCompileError(err, &compErr) {
@@ -227,6 +332,7 @@ func (h *AgentDefinitionsHandler) Validate(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "validate agent definition")
 		return
 	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, report)
 }
 
@@ -240,7 +346,13 @@ func (h *AgentDefinitionsHandler) Publish(w http.ResponseWriter, r *http.Request
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	result, err := h.svc.PublishAgentDefinition(r.Context(), tenantID, id)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "publish agent definition")
+		return
+	}
+	defer rollback()
+	result, err := svc.PublishAgentDefinition(r.Context(), tenantID, id)
 	if err != nil {
 		var compErr *service.AgentCompileError
 		if isAgentCompileError(err, &compErr) {
@@ -255,6 +367,10 @@ func (h *AgentDefinitionsHandler) Publish(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "publish agent definition")
 		return
 	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "publish agent definition")
+		return
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -263,7 +379,9 @@ func (h *AgentDefinitionsHandler) Publish(w http.ResponseWriter, r *http.Request
 // Used by the canvas debugger to show what secrets/params the agent needs.
 func (h *AgentDefinitionsHandler) GetParams(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	result, err := h.svc.GetDefinitionParams(r.Context(), id)
+	// GetDefinitionParams reads from agent_runtime_specs (admin path — no tenant scope needed).
+	// Use the legacy service (shared pool, BYPASSRLS when them_admin).
+	result, err := h.legacySvc.GetDefinitionParams(r.Context(), id)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
