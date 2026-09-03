@@ -2463,6 +2463,21 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
+### S1-97 · DB Pools — `internal/db/pools_test.go`
+
+**Purpose:** Unit tests for the RLS pool infrastructure: error paths on bad DSNs, compile-time interface assertions for TenantTx/AdminTx/adminQuerier, and UUID string format verification for the set_config call.
+
+| Test | What it proves |
+|---|---|
+| `TestNewPools_BadAppDSN` | Invalid app DSN returns error (not nil) |
+| `TestTenantTx_InterfaceAssertions` | Compile-time: TenantTx/AdminTx/adminQuerier satisfy dbtype interfaces |
+| `TestPools_Close_NilSafe` | Close path covered by integration tests (documents gap) |
+| `TestBeginTenantTx_TenantIDFormat` | uuid.UUID.String() produces canonical UUID format for set_config |
+
+**Trigger:** any change to `internal/db/db.go`
+
+---
+
 ### S1-96 · dbtype Querier interfaces — `internal/dbtype/querier_test.go`
 
 **Purpose:** Compile-time and runtime verification that `TenantQuerier` and `AdminQuerier` are distinct types with enforced marker methods, preventing wrong-pool wiring at compile time.

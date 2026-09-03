@@ -105,6 +105,13 @@ type Config struct {
 	S3SecretKey        string
 	S3QuarantineBucket string
 	S3ArtifactsBucket  string
+
+	// DBURLApp is the postgres DSN for the them_app role (no BYPASSRLS).
+	// Read from THEM_DB_URL_APP. Optional — required only after Step 19 deployment.
+	DBURLApp string
+	// DBURLAdmin is the postgres DSN for the them_admin role (BYPASSRLS).
+	// Read from THEM_DB_URL_ADMIN. Optional — required only after Step 19 deployment.
+	DBURLAdmin string
 }
 
 // DefaultSecretKey is the insecure placeholder that must never reach production.
@@ -161,6 +168,9 @@ func Load() (*Config, error) {
 		S3SecretKey:        getEnv("THE_M_S3_SECRET_KEY", ""),
 		S3QuarantineBucket: getEnv("THE_M_S3_QUARANTINE_BUCKET", "them-quarantine"),
 		S3ArtifactsBucket:  getEnv("THE_M_S3_ARTIFACTS_BUCKET", "them-artifacts"),
+
+		DBURLApp:   getEnv("THEM_DB_URL_APP", ""),
+		DBURLAdmin: getEnv("THEM_DB_URL_ADMIN", ""),
 	}
 
 	if err := cfg.validate(); err != nil {

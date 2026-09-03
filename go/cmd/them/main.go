@@ -90,6 +90,22 @@ func run() error {
 	}
 	log.Info("postgres connected", "host", cfg.DBHost, "dbname", cfg.DBName)
 
+	// ── 3b. Create RLS pools (Step 19) — optional until THEM_DB_URL_APP is configured ──
+	var rlsPools *db.Pools
+	if cfg.DBURLApp != "" && cfg.DBURLAdmin != "" {
+		rlsPools, err = db.NewPools(ctx, cfg.DBURLApp, cfg.DBURLAdmin)
+		if err != nil {
+			database.Close()
+			log.Error("failed to create RLS pools", slog.String("error", err.Error()))
+			return fmt.Errorf("startup: rls pools: %w", err)
+		}
+		log.Info("RLS pools connected (them_app + them_admin)")
+		defer rlsPools.Close()
+	} else {
+		log.Info("RLS pools not configured — THEM_DB_URL_APP/THEM_DB_URL_ADMIN not set")
+	}
+	_ = rlsPools // will be wired to DAL callers in later RLS sub-steps
+
 	// ── 4. Connect to Redis ───────────────────────────────────────────────────
 	redisCache, err := cache.New(ctx, cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)
 	if err != nil {

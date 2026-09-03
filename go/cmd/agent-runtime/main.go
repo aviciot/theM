@@ -39,6 +39,17 @@ func main() {
 	}
 	defer database.Close()
 
+	var rlsPools *db.Pools
+	if cfg.DBURLApp != "" && cfg.DBURLAdmin != "" {
+		rlsPools, err = db.NewPools(ctx, cfg.DBURLApp, cfg.DBURLAdmin)
+		if err != nil {
+			logger.Error("rls pools connect failed", "err", err)
+			os.Exit(1)
+		}
+		defer rlsPools.Close()
+	}
+	_ = rlsPools
+
 	redisCache, err := cache.New(ctx, cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)
 	if err != nil {
 		logger.Error("redis connect failed", "err", err)

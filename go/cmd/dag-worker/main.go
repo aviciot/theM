@@ -76,6 +76,17 @@ func run() error {
 	defer database.Close()
 	log.Info("postgres connected", "host", cfg.DBHost, "dbname", cfg.DBName)
 
+	var rlsPools *db.Pools
+	if cfg.DBURLApp != "" && cfg.DBURLAdmin != "" {
+		rlsPools, err = db.NewPools(ctx, cfg.DBURLApp, cfg.DBURLAdmin)
+		if err != nil {
+			return fmt.Errorf("startup: rls pools: %w", err)
+		}
+		defer rlsPools.Close()
+		log.Info("RLS pools connected (them_app + them_admin)")
+	}
+	_ = rlsPools
+
 	// ── 5. Connect to Redis (not directly used by activities but needed for
 	//       any future cache lookups; connection validates network) ────────────
 	redisCache, err := cache.New(ctx, cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)
