@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Querier is the database interface required by all dal functions.
@@ -40,12 +41,19 @@ type SingleRowScanner interface {
 
 // DB wraps a Querier and exposes all dal query methods.
 type DB struct {
-	q Querier
+	q    Querier
+	pool *pgxpool.Pool // optional; non-nil enables atomic multi-statement operations
 }
 
 // NewDB wraps a Querier for use by dal query functions.
 func NewDB(q Querier) *DB {
 	return &DB{q: q}
+}
+
+// NewDBWithPool wraps a Querier and retains the pool for multi-statement atomic
+// operations (e.g. UpsertManagedAppParams, PublishDefinition).
+func NewDBWithPool(q Querier, pool *pgxpool.Pool) *DB {
+	return &DB{q: q, pool: pool}
 }
 
 // IsNoRows reports whether err represents a "no rows" result from PostgreSQL.

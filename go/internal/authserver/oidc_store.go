@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -96,20 +97,31 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 		role = "viewer"
 	}
 
+	// Wrap all queries in a single transaction for atomicity.
+	// A concurrent OIDC login for the same email could otherwise interleave
+	// user upsert and membership upsert, producing an orphaned membership row.
+	pgTx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	defer func() { _ = pgTx.Rollback(cleanupCtx) }()
+
 	// Look up the role ID for the given role name.
 	var roleID int
 	var roleDashboard string
-	err := s.pool.QueryRow(ctx,
+	err = pgTx.QueryRow(ctx,
 		`SELECT id, COALESCE(dashboard_access,'none') FROM auth_service.roles WHERE name = $1 LIMIT 1`,
 		role,
 	).Scan(&roleID, &roleDashboard)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Fallback to "viewer" if the requested role doesn't exist.
-		if err2 := s.pool.QueryRow(ctx,
+		if err2 := pgTx.QueryRow(ctx,
 			`SELECT id, COALESCE(dashboard_access,'none') FROM auth_service.roles WHERE name = 'viewer' LIMIT 1`,
 		).Scan(&roleID, &roleDashboard); errors.Is(err2, pgx.ErrNoRows) {
 			// Last-resort: any role.
-			if err3 := s.pool.QueryRow(ctx,
+			if err3 := pgTx.QueryRow(ctx,
 				`SELECT id, COALESCE(dashboard_access,'none') FROM auth_service.roles ORDER BY id LIMIT 1`,
 			).Scan(&roleID, &roleDashboard); err3 != nil {
 				return nil, err3
@@ -135,7 +147,7 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 	var username2, name2, roleStr, dashAccess string
 	// ON CONFLICT (email) handles idempotent upsert. The username unique constraint
 	// is satisfied on first insert; subsequent logins match via email.
-	err = s.pool.QueryRow(ctx, `
+	err = pgTx.QueryRow(ctx, `
 		INSERT INTO auth_service.users (username, name, email, role_id, active)
 		VALUES ($1, $2, $3, $4, true)
 		ON CONFLICT (email) DO UPDATE
@@ -150,7 +162,7 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 	}
 
 	// Re-read the role details (dashboard_access may differ from what we had).
-	if err := s.pool.QueryRow(ctx,
+	if err := pgTx.QueryRow(ctx,
 		`SELECT name, COALESCE(dashboard_access,'none') FROM auth_service.roles WHERE id = $1`,
 		roleID,
 	).Scan(&roleStr, &dashAccess); err != nil {
@@ -160,7 +172,7 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 	// Upsert tenant membership. Role stored in the membership is the canonical
 	// per-tenant role going forward.
 	var memberRole string
-	err = s.pool.QueryRow(ctx, `
+	err = pgTx.QueryRow(ctx, `
 		INSERT INTO auth_service.tenant_memberships (user_id, tenant_id, role)
 		VALUES ($1, $2::uuid, $3)
 		ON CONFLICT (user_id, tenant_id) DO UPDATE SET role = EXCLUDED.role
@@ -168,6 +180,10 @@ func (s *pgxOIDCStore) UpsertOIDCUser(ctx context.Context, tenantID, email, name
 		userID, tenantID, roleStr,
 	).Scan(&memberRole)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := pgTx.Commit(ctx); err != nil {
 		return nil, err
 	}
 

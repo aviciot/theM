@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
@@ -21,16 +22,26 @@ type DefinitionsHandler struct {
 	svc *service.DefinitionService
 }
 
+// newDAL constructs a dal.DB, using NewDBWithPool when db exposes a pool
+// so that PublishDefinition and UpsertManagedAppParams run atomically.
+func newDAL(db DBQuerier) *dal.DB {
+	type pooler interface{ Pool() *pgxpool.Pool }
+	if p, ok := db.(pooler); ok {
+		return dal.NewDBWithPool(db, p.Pool())
+	}
+	return dal.NewDB(db)
+}
+
 // NewDefinitionsHandler creates a DefinitionsHandler backed by the given DB.
 // Uses NewDefinitionService (no registry) for Phase B CRUD-only endpoints.
 func NewDefinitionsHandler(db DBQuerier) *DefinitionsHandler {
-	return &DefinitionsHandler{svc: service.NewDefinitionService(dal.NewDB(db))}
+	return &DefinitionsHandler{svc: service.NewDefinitionService(newDAL(db))}
 }
 
 // NewDefinitionsHandlerWithRegistry creates a DefinitionsHandler with a
 // registry resolver wired for Validate and Publish endpoints (Phase C).
 func NewDefinitionsHandlerWithRegistry(db DBQuerier, resolver *registry.Resolver) *DefinitionsHandler {
-	return &DefinitionsHandler{svc: service.NewDefinitionServiceWithRegistry(dal.NewDB(db), resolver)}
+	return &DefinitionsHandler{svc: service.NewDefinitionServiceWithRegistry(newDAL(db), resolver)}
 }
 
 // definitionInput is the request body for POST and PUT definition endpoints.

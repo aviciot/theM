@@ -179,10 +179,20 @@ func (d *DB) ListManagedAppParams(ctx context.Context, appID string) ([]ManagedA
 	return out, nil
 }
 
-// UpsertManagedAppParams replaces all params for a managed app.
-// It deletes existing params first then inserts the new set.
+// UpsertManagedAppParams replaces all params for a managed app atomically.
+// When d.pool is set (production), the DELETE+INSERT runs inside a transaction
+// so a partial failure never leaves params in an inconsistent state.
 func (d *DB) UpsertManagedAppParams(ctx context.Context, appID string, params []ManagedAppParamInput) error {
-	if err := d.q.Exec(ctx, `DELETE FROM them.managed_app_params WHERE app_id = $1::uuid`, appID); err != nil {
+	if d.pool != nil {
+		return runInTx(ctx, d.pool, func(q Querier) error {
+			return upsertManagedAppParamsWithQ(ctx, q, appID, params)
+		})
+	}
+	return upsertManagedAppParamsWithQ(ctx, d.q, appID, params)
+}
+
+func upsertManagedAppParamsWithQ(ctx context.Context, q Querier, appID string, params []ManagedAppParamInput) error {
+	if err := q.Exec(ctx, `DELETE FROM them.managed_app_params WHERE app_id = $1::uuid`, appID); err != nil {
 		return err
 	}
 	const ins = `
@@ -190,7 +200,7 @@ func (d *DB) UpsertManagedAppParams(ctx context.Context, appID string, params []
 		  (app_id, key, label, description, param_type, enum_values, required, default_value, sort_order)
 		VALUES ($1::uuid, $2, $3, $4, $5, $6::text[], $7, $8, $9)`
 	for _, p := range params {
-		if err := d.q.Exec(ctx, ins,
+		if err := q.Exec(ctx, ins,
 			appID, p.Key, p.Label, p.Description, p.ParamType,
 			p.EnumValues, p.Required, p.DefaultValue, p.SortOrder,
 		); err != nil {

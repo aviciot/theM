@@ -19,6 +19,12 @@ func NewPgxQuerier(pool *pgxpool.Pool) *PgxQuerier {
 	return &PgxQuerier{pool: pool}
 }
 
+// Pool returns the underlying pgxpool.Pool.
+// Used by handlers that need atomic multi-statement operations via dal.NewDBWithPool.
+func (q *PgxQuerier) Pool() *pgxpool.Pool {
+	return q.pool
+}
+
 // Query runs a SELECT and returns a RowScanner.
 func (q *PgxQuerier) Query(ctx context.Context, sql string, args ...any) (RowScanner, error) {
 	rows, err := q.pool.Query(ctx, sql, args...)

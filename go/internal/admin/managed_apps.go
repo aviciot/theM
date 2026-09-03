@@ -19,8 +19,9 @@ type ManagedAppsHandler struct {
 }
 
 // NewManagedAppsHandler creates a ManagedAppsHandler.
+// When db is a *PgxQuerier, atomic multi-statement operations use a transaction.
 func NewManagedAppsHandler(db DBQuerier) *ManagedAppsHandler {
-	return &ManagedAppsHandler{db: dal.NewDB(db)}
+	return &ManagedAppsHandler{db: newDAL(db)}
 }
 
 // PlatformRoutes mounts routes that operate on the platform-owned managed app catalog

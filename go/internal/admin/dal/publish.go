@@ -72,10 +72,22 @@ type EntryPointRow struct {
 //   - The status must be 'draft' (AND status='draft' in WHERE clause).
 //
 // Returns pgx.ErrNoRows if not found, wrong tenant/app, or not a draft.
-// The caller (service) is responsible for all registry resolution and projection
-// compilation before calling this — this method only persists the final state.
+// When d.pool is set (production), both UPDATEs run in a single transaction.
 func (d *DB) PublishDefinition(ctx context.Context, tenantID, appID, defID, defHash string) (PublishResult, error) {
-	const q = `
+	if d.pool != nil {
+		var res PublishResult
+		err := runInTx(ctx, d.pool, func(q Querier) error {
+			var e error
+			res, e = publishDefinitionWithQ(ctx, q, tenantID, appID, defID)
+			return e
+		})
+		return res, err
+	}
+	return publishDefinitionWithQ(ctx, d.q, tenantID, appID, defID)
+}
+
+func publishDefinitionWithQ(ctx context.Context, q Querier, tenantID, appID, defID string) (PublishResult, error) {
+	const updateDef = `
 		UPDATE them.application_definitions
 		   SET status      = 'published',
 		       published_at = now()
@@ -86,20 +98,18 @@ func (d *DB) PublishDefinition(ctx context.Context, tenantID, appID, defID, defH
 		RETURNING id::text, revision, definition_hash`
 
 	var res PublishResult
-	row := d.q.ExecReturning(ctx, q, defID, appID, tenantID)
+	row := q.ExecReturning(ctx, updateDef, defID, appID, tenantID)
 	if err := row.Scan(&res.DefinitionID, &res.Revision, &res.DefinitionHash); err != nil {
 		return PublishResult{}, err
 	}
 
-	// Update the application's active_definition_id in a separate statement.
-	// Both writes use the same Querier which may be a transaction.
 	const updateApp = `
 		UPDATE them.applications
 		   SET active_definition_id = $1::uuid
 		 WHERE id        = $2::uuid
 		   AND tenant_id = $3::uuid`
 
-	if err := d.q.Exec(ctx, updateApp, defID, appID, tenantID); err != nil {
+	if err := q.Exec(ctx, updateApp, defID, appID, tenantID); err != nil {
 		return PublishResult{}, err
 	}
 
