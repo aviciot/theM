@@ -151,7 +151,7 @@ Explicit routers at priority 110–150 still win over the catch-all.
 
 ## DB schema state (live)
 
-All migrations applied through `db/052_middleware_jobs_nullable_artifact.sql`:
+All migrations applied through `db/071_rls_phase_b.sql` (Step 19 Phase B complete):
 
 | Migration | Status |
 |---|---|

@@ -3,7 +3,7 @@
 # Branch: main
 # Design HEAD: 61730f3
 # Last updated: 2026-09-03
-# Status: IN PROGRESS — Phase A complete, B1 complete, B2 next
+# Status: IN PROGRESS — Phase A complete, B1+B2 complete, C1 next
 #
 # Context: This is a focused side-track from the main multi-tenancy roadmap
 # (Steps 1–18 complete). Step 19 (RLS) must finish before the tenant roadmap
@@ -181,9 +181,18 @@ Migrate callers → deploy → enable RLS. For each phase, the sequence is:
   - **Commit:** `5f70499`
   - **Commit tag:** `feat(rls): B1 — migrate callers for mcp_servers/tenant_group_mappings/agent_definitions`
 
-- [ ] **B2** — Enable RLS on B1 tables:
-  - `db/071_rls_phase_b.sql` — ENABLE/FORCE/CREATE POLICY for the 4 tables
-  - Integration tests RLS-01..09 (adapted for these tables)
+- [x] **B2** — Enable RLS on B1 tables:
+  - `db/071_rls_phase_b.sql` — standard direct tenant_id policy (§5.4) on all 4 tables
+  - RLS isolation smoke-tested via psql: correct tenant → 1 row; wrong tenant → 0; no GUC → 0; them_admin → all rows (BYPASSRLS)
+  - Integration tests: `go test -tags=integration ./internal/db/...` PASS
+    - RLS-33 PASS: them_admin BYPASSRLS confirmed (sees all agents)
+    - RLS-31b PASS: them_owner cannot connect (NOLOGIN)
+    - RLS-30/31/32 SKIP: superuser `them` DSN password mismatch with derived key — role attributes verified directly in psql instead
+    - RLS-08/10/11 SKIP: correct — agents RLS not yet enabled (Phase C)
+  - Prerequisites applied this session: db/053–059 + db/070_rls_roles.sql (roles/ownership/grants)
+  - **NOTE:** `them_admin` lacks DELETE grant on `app_mcp_credentials` (FK cascade target) —
+    070_rls_roles.sql doesn't GRANT DELETE on that table to them_admin. Flag for 070 patch or C1.
+  - **Commit:** `e55437f`
   - **Commit tag:** `feat(rls): B2 — enable RLS on mcp_servers/tenant_group_mappings/agent_definitions`
 
 ### Phase C — Core admin CRUD tables
