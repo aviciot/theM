@@ -117,7 +117,7 @@ Each sub-step is one focused commit. Complete in order. Do not skip.
 
 ### Phase A — Infrastructure (no RLS enabled yet)
 
-- [ ] **A1** — Create DB roles migration (`db/070_rls_roles.sql`):
+- [x] **A1** — Create DB roles migration (`db/070_rls_roles.sql`):
   - `CREATE ROLE them_owner NOLOGIN;`
   - `CREATE ROLE them_admin LOGIN BYPASSRLS;` (password from secrets)
   - `CREATE ROLE them_app LOGIN;` (password from secrets, no BYPASSRLS)
@@ -127,12 +127,12 @@ Each sub-step is one focused commit. Complete in order. Do not skip.
   - Verify: `SELECT rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname IN ('them_owner','them_admin','them_app');`
   - **Commit tag:** `feat(rls): A1 — DB roles, ownership transfer, grants`
 
-- [ ] **A2** — Create `go/internal/dbtype/` package:
+- [x] **A2** — Create `go/internal/dbtype/` package:
   - `querier.go` — `Querier`, `TenantQuerier`, `AdminQuerier` interfaces
   - `querier_test.go` — compile-time interface satisfaction tests
   - **Commit tag:** `feat(rls): A2 — dbtype package with Querier marker interfaces`
 
-- [ ] **A3** — Refactor `go/internal/db/db.go`:
+- [x] **A3** — Refactor `go/internal/db/db.go`:
   - Add `Pools` struct with `App` and `Admin` pools
   - Implement `TenantTx` (wraps pgx.Tx, implements dbtype.TenantQuerier)
   - Implement `AdminTx` (wraps pgx.Tx, implements dbtype.AdminQuerier)
@@ -142,14 +142,14 @@ Each sub-step is one focused commit. Complete in order. Do not skip.
   - Unit tests for BeginTenantTx/BeginAdminTx error paths (mock pool)
   - **Commit tag:** `feat(rls): A3 — Pools struct, TenantTx, AdminTx`
 
-- [ ] **A4** — Fix atomicity bugs (before RLS touches any DAL):
+- [x] **A4** — Fix atomicity bugs (before RLS touches any DAL):
   - `UpsertManagedAppParams`: wrap DELETE+INSERT in `BeginAdminTx`
   - `PublishDefinition`: wrap two UPDATEs in `BeginTenantTx`
   - `UpsertOIDCUser`: wrap 4 queries in `pool.Begin` (auth_service schema, no TenantTx)
   - Update tests for each
   - **Commit tag:** `fix(rls): A4 — atomicity bugs before RLS enablement`
 
-- [ ] **A5** — Integration test infrastructure:
+- [x] **A5** — Integration test infrastructure:
   - `go/internal/db/rls_integration_test.go` with build tag `integration`
   - Tests use REAL production schema (db/001_schema.sql + all migrations), NOT ad-hoc tables
   - Tests use REAL them_app/them_admin roles created by A1 migration
@@ -293,6 +293,14 @@ variables are derived from `secrets.local` via HMAC like all other secrets.
 
 ---
 
+## Constraints discovered during Phase A implementation
+
+7. **`dal.DB` now has optional `pool` field** — `NewDBWithPool(q, pool)` exists for handlers that need atomicity in multi-statement DAL functions. `NewDB(q)` still works unchanged (pool=nil, no transaction wrapping). Handlers that call `UpsertManagedAppParams` or `PublishDefinition` should use `NewDBWithPool` to get atomicity. The `admin.PgxQuerier` now exposes `Pool()` for this.
+
+8. **`dal` package has a `tx.go` file** with `txQuerier`, `txRowsWrapper`, and `runInTx` helper for internal transactional wrappers. This is internal to `dal` — not exported.
+
+9. **TEST_INDEX numbering conflict fixed** — A2/A3 sub-agents used S1-96/S1-97 which were already taken. Fixed to S1-98 (DB Pools) and S1-99 (dbtype). The summary table and section headers now agree.
+
 ## Known constraints discovered during design
 
 1. **`pg_try_advisory_lock` in reconciler is session-scoped** — incompatible with PgBouncer
@@ -323,6 +331,7 @@ variables are derived from `secrets.local` via HMAC like all other secrets.
 | Date | Session | Sub-steps completed | Commit(s) | Notes |
 |---|---|---|---|---|
 | 2026-09-03 | Design session | Design v3 finalized | 61730f3 | All 8 blocking issues resolved |
+| 2026-09-03 | Implementation session 1 | A1, A2, A3, A4, A5 | a46e703..7bfe778 | Phase A complete. DB migration not yet applied to live DB — apply db/070_rls_roles.sql + set passwords before Phase B. TEST_INDEX numbering fixed (ba5d0d8). |
 
 *(Add a row for each session.)*
 
