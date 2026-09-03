@@ -2463,6 +2463,18 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
+### S1-96 · dbtype Querier interfaces — `internal/dbtype/querier_test.go`
+
+**Purpose:** Compile-time and runtime verification that `TenantQuerier` and `AdminQuerier` are distinct types with enforced marker methods, preventing wrong-pool wiring at compile time.
+
+| Test | What it proves |
+|---|---|
+| `TestInterfaceDistinction` (RLS-34/35 compile-time) | `fakeTenantQ` satisfies `TenantQuerier`; `fakeAdminQ` satisfies `AdminQuerier`; marker methods return `struct{}{}` |
+
+**Trigger:** any change to `internal/dbtype/querier.go`
+
+---
+
 ## Suite 2 — Integration tests (`go test -tags=integration ./...`)
 
 Requires live Postgres + Redis + the Go binary. Run after deployment to staging or production.
