@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
@@ -23,24 +25,50 @@ func newMultipartWriter(buf *bytes.Buffer) *multipart.Writer { return multipart.
 
 // ApplicationsHandler handles /api/v1/admin/applications routes.
 type ApplicationsHandler struct {
-	svc       *service.AppService
-	dal       *dal.DB
+	legacySvc *service.AppService
+	legacyDAL *dal.DB
+	pools     *db.Pools
+	cache     CacheInvalidator
 	fernetKey []byte
 }
 
 // NewApplicationsHandler creates an ApplicationsHandler.
+// When pools is non-nil each request uses a TenantTx (RLS-ready path).
 // fernetKey is the AES-GCM key used to encrypt/decrypt provider_keys at rest.
-func NewApplicationsHandler(db DBQuerier, cache CacheInvalidator, fernetKey []byte) *ApplicationsHandler {
+func NewApplicationsHandler(legacyDB DBQuerier, pools *db.Pools, cache CacheInvalidator, fernetKey []byte) *ApplicationsHandler {
+	d := dal.NewDB(legacyDB)
 	return &ApplicationsHandler{
-		svc:       service.NewAppService(dal.NewDB(db), cache, fernetKey),
-		dal:       dal.NewDB(db),
+		legacySvc: service.NewAppService(d, cache, fernetKey),
+		legacyDAL: d,
+		pools:     pools,
+		cache:     cache,
 		fernetKey: fernetKey,
 	}
 }
 
-// Svc returns the underlying AppService so callers (e.g. the voice handler)
+func (h *ApplicationsHandler) openSvc(ctx context.Context, tenantID string) (svc *service.AppService, commit func(context.Context) error, rollback func(), err error) {
+	if h.pools == nil {
+		return h.legacySvc, func(_ context.Context) error { return nil }, func() {}, nil
+	}
+	tenantUUID, uuidErr := uuid.Parse(tenantID)
+	if uuidErr != nil {
+		return nil, nil, nil, uuidErr
+	}
+	tx, txErr := h.pools.BeginTenantTx(ctx, tenantUUID)
+	if txErr != nil {
+		return nil, nil, nil, txErr
+	}
+	rb := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		tx.Rollback(cleanupCtx)
+	}
+	return service.NewAppService(dal.NewDBFromTenantQuerier(tx), h.cache, h.fernetKey), tx.Commit, rb, nil
+}
+
+// Svc returns the underlying AppService so callers (e.g. agent bindings handler)
 // can reuse it without constructing a second service instance.
-func (h *ApplicationsHandler) Svc() *service.AppService { return h.svc }
+func (h *ApplicationsHandler) Svc() *service.AppService { return h.legacySvc }
 
 // RuntimeConfigInput mirrors Python's AppRuntimeConfig schema.
 type RuntimeConfigInput = service.AppRuntimeConfig
@@ -99,11 +127,18 @@ type BindingRouter interface {
 // List handles GET /api/v1/admin/applications.
 func (h *ApplicationsHandler) List(w http.ResponseWriter, r *http.Request) {
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	apps, err := h.svc.List(r.Context(), tenantID)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	defer rollback()
+	apps, err := svc.List(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, apps)
 }
 
@@ -111,20 +146,29 @@ func (h *ApplicationsHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *ApplicationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var input ApplicationInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	id, err := h.svc.Create(r.Context(), tenantID, input.Name, input.Slug, input.Enabled)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	id, err := svc.Create(r.Context(), tenantID, input.Name, input.Slug, input.Enabled)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "create application: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/applications/%s", id))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
 }
@@ -138,11 +182,18 @@ func (h *ApplicationsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	a, err := h.svc.Get(r.Context(), tenantID, id)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	a, err := svc.Get(r.Context(), tenantID, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, a)
 }
 
@@ -156,19 +207,28 @@ func (h *ApplicationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	var input ApplicationInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.Update(r.Context(), tenantID, id, input.Name, input.Slug, input.Enabled); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.Update(r.Context(), tenantID, id, input.Name, input.Slug, input.Enabled); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "update application: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
 
@@ -181,11 +241,20 @@ func (h *ApplicationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
-		writeError(w, http.StatusInternalServerError, "delete application: "+err.Error())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	defer rollback()
+	if err := svc.Delete(r.Context(), tenantID, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
 }
 
@@ -196,7 +265,15 @@ func (h *ApplicationsHandler) ListEntryPoints(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid application id")
 		return
 	}
-	eps := h.svc.ListEntryPoints(r.Context(), appID)
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	eps := svc.ListEntryPoints(r.Context(), appID)
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, eps)
 }
 
@@ -210,19 +287,29 @@ func (h *ApplicationsHandler) CreateEntryPoint(w http.ResponseWriter, r *http.Re
 
 	var input EntryPointInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
-	epID, err := h.svc.CreateEntryPoint(r.Context(), appID, input.Slug, input.EntryPointType, input.Enabled)
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	epID, err := svc.CreateEntryPoint(r.Context(), appID, input.Slug, input.EntryPointType, input.Enabled)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "create entry point: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/applications/%s/entry-points/%s", appID, epID))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": epID})
 }
@@ -238,19 +325,28 @@ func (h *ApplicationsHandler) UpdateEntryPoint(w http.ResponseWriter, r *http.Re
 
 	var input EntryPointInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.UpdateEntryPoint(r.Context(), tenantID, epID, appID, input.Slug, input.EntryPointType, input.Enabled); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.UpdateEntryPoint(r.Context(), tenantID, epID, appID, input.Slug, input.EntryPointType, input.Enabled); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "update entry point: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "updated": true})
 }
 
@@ -263,11 +359,21 @@ func (h *ApplicationsHandler) DeleteEntryPoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := h.svc.DeleteEntryPoint(r.Context(), epID, appID); err != nil {
-		writeError(w, http.StatusInternalServerError, "delete entry point: "+err.Error())
+	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	defer rollback()
+	if err := svc.DeleteEntryPoint(r.Context(), epID, appID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": epID, "deleted": true})
 }
 
@@ -281,17 +387,27 @@ func (h *ApplicationsHandler) PutRuntime(w http.ResponseWriter, r *http.Request)
 
 	var input RuntimeConfigInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	cfg, err := h.svc.PutRuntime(r.Context(), tenantID, id, input)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	cfg, err := svc.PutRuntime(r.Context(), tenantID, id, input)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "update runtime config")
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, cfg)
@@ -306,14 +422,21 @@ func (h *ApplicationsHandler) GetProviderKeys(w http.ResponseWriter, r *http.Req
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	keys, err := h.svc.GetProviderKeys(r.Context(), tenantID, id)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	keys, err := svc.GetProviderKeys(r.Context(), tenantID, id)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "get provider keys")
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, keys)
 }
 
@@ -330,15 +453,25 @@ func (h *ApplicationsHandler) SetProviderKey(w http.ResponseWriter, r *http.Requ
 		Key string `json:"key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.SetProviderKey(r.Context(), tenantID, id, provider, body.Key); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.SetProviderKey(r.Context(), tenantID, id, provider, body.Key); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "set provider key")
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"provider": provider, "updated": true})
@@ -353,11 +486,21 @@ func (h *ApplicationsHandler) DeleteProviderKey(w http.ResponseWriter, r *http.R
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.DeleteProviderKey(r.Context(), tenantID, id, provider); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.DeleteProviderKey(r.Context(), tenantID, id, provider); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "delete provider key")
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"provider": provider, "deleted": true})
@@ -372,14 +515,21 @@ func (h *ApplicationsHandler) GetAppParams(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	params, err := h.svc.GetAppParams(r.Context(), tenantID, id)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	params, err := svc.GetAppParams(r.Context(), tenantID, id)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "get app params")
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, params)
 }
 
@@ -394,15 +544,25 @@ func (h *ApplicationsHandler) SetAppParam(w http.ResponseWriter, r *http.Request
 	}
 	var body service.AppGlobalParamUpsertInput
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.SetAppParam(r.Context(), tenantID, id, name, body); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.SetAppParam(r.Context(), tenantID, id, name, body); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "set app param")
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "updated": true})
@@ -417,11 +577,21 @@ func (h *ApplicationsHandler) DeleteAppParam(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.DeleteAppParam(r.Context(), tenantID, id, name); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.DeleteAppParam(r.Context(), tenantID, id, name); err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "delete app param")
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "deleted": true})
@@ -451,18 +621,26 @@ func (h *ApplicationsHandler) TestLLM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	raw, err := h.svc.GetProviderKeys(r.Context(), tenantID, id)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	raw, err := svc.GetProviderKeys(r.Context(), tenantID, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
 	// raw is []ProviderKeyOut — we need the plaintext key; call DAL directly via svc
-	apiKey, err := h.svc.GetPlaintextProviderKey(r.Context(), tenantID, id, body.Provider)
+	apiKey, err := svc.GetPlaintextProviderKey(r.Context(), tenantID, id, body.Provider)
 	if err != nil || apiKey == "" {
+		_ = commit(r.Context())
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "No API key stored for " + body.Provider + " — save one in Runtime settings first"})
 		return
 	}
 	_ = raw // used above only for not-found check
+	_ = commit(r.Context())
 
 	start := time.Now()
 	ok, testErr := probeLLM(r.Context(), body.Provider, body.Model, apiKey)
@@ -496,8 +674,18 @@ func (h *ApplicationsHandler) PatchOrchestratorLLM(w http.ResponseWriter, r *htt
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.SetOrchestratorLLM(r.Context(), tenantID, id, orchID, body.Provider, body.Model); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.SetOrchestratorLLM(r.Context(), tenantID, id, orchID, body.Provider, body.Model); err != nil {
 		writeServiceError(w, err)
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -534,11 +722,21 @@ func (h *ApplicationsHandler) PatchEntryPointSummarizer(w http.ResponseWriter, r
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.SetEntryPointSummarizer(r.Context(), tenantID, id, epID,
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.SetEntryPointSummarizer(r.Context(), tenantID, id, epID,
 		body.MemoryEnabled, body.SummarizeEveryNCalls, body.MemoryRawFallbackN,
 		body.SummarizerProvider, body.SummarizerModel,
 	); err != nil {
 		writeServiceError(w, err)
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -572,8 +770,18 @@ func (h *ApplicationsHandler) PatchEntryPointLLM(w http.ResponseWriter, r *http.
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.SetEntryPointLLM(r.Context(), tenantID, id, epID, body.LLMProvider, body.LLMModel); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.SetEntryPointLLM(r.Context(), tenantID, id, epID, body.LLMProvider, body.LLMModel); err != nil {
 		writeServiceError(w, err)
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -604,8 +812,18 @@ func (h *ApplicationsHandler) PatchOrchestratorMCPServers(w http.ResponseWriter,
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.SetOrchestratorMCPServers(r.Context(), tenantID, id, orchID, body.MCPServers); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.SetOrchestratorMCPServers(r.Context(), tenantID, id, orchID, body.MCPServers); err != nil {
 		writeServiceError(w, err)
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -722,7 +940,13 @@ func (h *ApplicationsHandler) PatchOrchestratorVoice(w http.ResponseWriter, r *h
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.SetOrchestratorVoice(r.Context(), tenantID, id, orchID, service.VoiceConfig{
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if err := svc.SetOrchestratorVoice(r.Context(), tenantID, id, orchID, service.VoiceConfig{
 		STTProvider:  body.STTProvider,
 		STTModel:     body.STTModel,
 		TTSProvider:  body.TTSProvider,
@@ -731,6 +955,10 @@ func (h *ApplicationsHandler) PatchOrchestratorVoice(w http.ResponseWriter, r *h
 		TTSEnabled:   body.TTSEnabled,
 	}); err != nil {
 		writeServiceError(w, err)
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -764,7 +992,14 @@ func (h *ApplicationsHandler) TestOrchestratorVoice(w http.ResponseWriter, r *ht
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	apiKey, err := h.svc.GetPlaintextProviderKey(r.Context(), tenantID, id, body.Provider)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	apiKey, err := svc.GetPlaintextProviderKey(r.Context(), tenantID, id, body.Provider)
+	_ = commit(r.Context())
 	if err != nil || apiKey == "" {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "no API key stored for provider " + body.Provider})
 		return
@@ -792,7 +1027,14 @@ func (h *ApplicationsHandler) TestOrchestratorTTS(w http.ResponseWriter, r *http
 		return
 	}
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	apiKey, err := h.svc.GetPlaintextProviderKey(r.Context(), tenantID, id, body.Provider)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	apiKey, err := svc.GetPlaintextProviderKey(r.Context(), tenantID, id, body.Provider)
+	_ = commit(r.Context())
 	if err != nil || apiKey == "" {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "no API key stored for provider " + body.Provider})
 		return
@@ -955,17 +1197,27 @@ func probeVoiceTTS(ctx context.Context, w *bytes.Buffer, provider, voice, apiKey
 func (h *ApplicationsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	var input BulkDeleteInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	deleted, err := h.svc.BulkDelete(r.Context(), tenantID, input.AppIDs)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	deleted, err := svc.BulkDelete(r.Context(), tenantID, input.AppIDs)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "bulk delete applications")
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})

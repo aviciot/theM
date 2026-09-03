@@ -119,12 +119,12 @@ func BuildRouter(
 ) http.Handler {
 	r := chi.NewRouter()
 
-	agents := NewAgentsHandler(dbq, cache, redis, fernetKey)
-	orchs := NewOrchestratorsHandler(dbq, cache)
-	apps := NewApplicationsHandler(dbq, cache, fernetKey)
+	agents := NewAgentsHandler(dbq, pools, cache, redis, fernetKey)
+	orchs := NewOrchestratorsHandler(dbq, pools, cache)
+	apps := NewApplicationsHandler(dbq, pools, cache, fernetKey)
 	defs := NewDefinitionsHandlerWithRegistry(dbq, registry.NewResolver(&registryQuerierAdapter{dbq}))
 	runs := NewRunsHandler(dbq, temporalSig)
-	tokens := NewTokensHandler(dbq, cache)
+	tokens := NewTokensHandler(dbq, pools, cache)
 	monitoring := NewMonitoringConfigHandler(dbq)
 	llmRouting := NewLLMRoutingHandler(dbq)
 	llmProviders := NewLLMProvidersHandler(dbq, secretKey)

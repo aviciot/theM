@@ -421,7 +421,7 @@ func run() error {
 	// Voice handler needs AppService (for provider-key decryption), which requires
 	// adminDB and adminFernetKey — so it must be wired here, after section 19.
 	voiceLoader := voice.NewPgxLoader(database.Pool())
-	voiceAppsSvc := admin.NewApplicationsHandler(adminDB, adminCache, adminFernetKey).Svc()
+	voiceAppsSvc := admin.NewApplicationsHandler(adminDB, nil, adminCache, adminFernetKey).Svc()
 	voiceRunLoader := voice.NewWorkerConfigLoader(database.Pool(), adminFernetKey)
 	voiceHandler := voice.NewHandler(voiceLoader, voiceAppsSvc, authenticator, voiceRunLoader, recorder, bus, tenantctx.BootstrapTenantID, log)
 	srv.MountApps(appsDispatcher(wsHandler.AppsWSRoute(), sseHandler.AppsSSERoute(), voiceHandler.Routes()))

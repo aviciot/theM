@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,34 +14,63 @@ import (
 	"unicode"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/redis/rueidis"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
 	"github.com/aviciot/them/internal/crypto"
+	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // AgentsHandler handles /api/v1/admin/agents routes.
 type AgentsHandler struct {
-	svc        *service.AgentService
-	dal        *dal.DB   // direct DAL access for action endpoints
-	redis      rueidis.Client
-	fernetKey  []byte
+	// CRUD path: per-request TenantTx when pools != nil.
+	legacySvc *service.AgentService
+	pools     *db.Pools
+	cache     CacheInvalidator
+	// Action endpoints (Discover, Test, SecurityScan): cross-tenant reads via admin pool.
+	legacyDAL *dal.DB
+	redis     rueidis.Client
+	fernetKey []byte
 }
 
 // NewAgentsHandler creates an AgentsHandler.
 // redis and fernetKey are used by the Discover, Test, and SecurityScan action
 // endpoints. Pass nil redis / empty fernetKey in tests that do not exercise
 // those endpoints.
-func NewAgentsHandler(db DBQuerier, cache CacheInvalidator, redis rueidis.Client, fernetKey []byte) *AgentsHandler {
-	d := dal.NewDB(db)
+// When pools is non-nil, CRUD requests use a TenantTx per request.
+func NewAgentsHandler(legacyDB DBQuerier, pools *db.Pools, cache CacheInvalidator, redis rueidis.Client, fernetKey []byte) *AgentsHandler {
+	d := dal.NewDB(legacyDB)
 	return &AgentsHandler{
-		svc:       service.NewAgentService(d, cache),
-		dal:       d,
+		legacySvc: service.NewAgentService(d, cache),
+		pools:     pools,
+		cache:     cache,
+		legacyDAL: d,
 		redis:     redis,
 		fernetKey: fernetKey,
 	}
+}
+
+func (h *AgentsHandler) openSvc(ctx context.Context, tenantID string) (svc *service.AgentService, commit func(context.Context) error, rollback func(), err error) {
+	if h.pools == nil {
+		return h.legacySvc, func(_ context.Context) error { return nil }, func() {}, nil
+	}
+	tenantUUID, uuidErr := uuid.Parse(tenantID)
+	if uuidErr != nil {
+		return nil, nil, nil, uuidErr
+	}
+	tx, txErr := h.pools.BeginTenantTx(ctx, tenantUUID)
+	if txErr != nil {
+		return nil, nil, nil, txErr
+	}
+	rb := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		tx.Rollback(cleanupCtx)
+	}
+	return service.NewAgentService(dal.NewDBFromTenantQuerier(tx), h.cache), tx.Commit, rb, nil
 }
 
 // Routes mounts the agent CRUD + action endpoints.
@@ -66,11 +96,18 @@ func (h *AgentsHandler) Routes(r chi.Router) {
 // List handles GET /api/v1/admin/agents.
 func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	agents, err := h.svc.List(r.Context(), tenantID)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db error")
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	defer rollback()
+	agents, err := svc.List(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, agents)
 }
 
@@ -78,21 +115,29 @@ func (h *AgentsHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var input AgentInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
 	input.CreatedBy = claimsUserID(r)
-	id, err := h.svc.Create(r.Context(), tenantID, input)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	id, err := svc.Create(r.Context(), tenantID, input)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "create agent: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/agents/%s", id))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
 }
@@ -104,13 +149,19 @@ func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid agent id")
 		return
 	}
-
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	a, err := h.svc.Get(r.Context(), tenantID, id)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	a, err := svc.Get(r.Context(), tenantID, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, a)
 }
 
@@ -121,19 +172,26 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid agent id")
 		return
 	}
-
 	var input AgentInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.Update(r.Context(), tenantID, id, input); err != nil {
-		writeError(w, http.StatusInternalServerError, "update agent: "+err.Error())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	defer rollback()
+	if err := svc.Update(r.Context(), tenantID, id, input); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
 
@@ -144,13 +202,21 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid agent id")
 		return
 	}
-
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
-		writeError(w, http.StatusInternalServerError, "delete agent: "+err.Error())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	defer rollback()
+	if err := svc.Delete(r.Context(), tenantID, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
 }
 
@@ -180,11 +246,11 @@ func (h *AgentsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	// Resolve auth token.
 	authToken := req.AuthToken
 	if authToken == "" && req.AgentID != "" {
-		agent, err := h.dal.GetAgentByID(r.Context(), req.AgentID)
+		agent, err := h.legacyDAL.GetAgentByID(r.Context(), req.AgentID)
 		if err == nil && agent.AuthTokenSet {
 			// We need the raw encrypted token. GetAgentByID doesn't return it.
 			// Use the dedicated method.
-			encrypted, err2 := h.dal.GetAgentTokenEncrypted(r.Context(), req.AgentID)
+			encrypted, err2 := h.legacyDAL.GetAgentTokenEncrypted(r.Context(), req.AgentID)
 			if err2 == nil && encrypted != "" {
 				decrypted, err3 := crypto.DecryptStored(h.fernetKey, encrypted)
 				if err3 == nil {
@@ -303,7 +369,7 @@ func (h *AgentsHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// LLM classifier (best-effort).
-	category, classifierIcon := classifyAgent(r.Context(), h.dal, h.fernetKey, displayName, fullDescription, skills)
+	category, classifierIcon := classifyAgent(r.Context(), h.legacyDAL, h.fernetKey, displayName, fullDescription, skills)
 
 	// Use classifier icon only if no icon was found in the card.
 	if iconVal == "" && classifierIcon != "" {
@@ -338,16 +404,23 @@ func (h *AgentsHandler) Test(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	agent, err := h.svc.Get(r.Context(), tenantID, id)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	agent, err := svc.Get(r.Context(), tenantID, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
+	_ = commit(r.Context())
 
-	// Resolve auth token.
+	// Resolve auth token (cross-tenant read — uses legacy admin pool).
 	var authToken string
 	if agent.AuthTokenSet {
-		encrypted, err := h.dal.GetAgentTokenEncrypted(r.Context(), id)
+		encrypted, err := h.legacyDAL.GetAgentTokenEncrypted(r.Context(), id)
 		if err == nil && encrypted != "" {
 			decrypted, err := crypto.DecryptStored(h.fernetKey, encrypted)
 			if err == nil {
@@ -428,14 +501,21 @@ func (h *AgentsHandler) SecurityScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	target, err := h.svc.Get(r.Context(), tenantID, id)
+	svc2, commit2, rollback2, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback2()
+	target, err := svc2.Get(r.Context(), tenantID, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
+	_ = commit2(r.Context())
 
-	// Load security scanner agent (platform-global).
-	scanner, err := h.dal.GetAgentBySlug(r.Context(), "security_scanner")
+	// Load security scanner agent (platform-global — cross-tenant read via legacy pool).
+	scanner, err := h.legacyDAL.GetAgentBySlug(r.Context(), "security_scanner")
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"detail": "Security scanner agent not registered",
@@ -461,7 +541,7 @@ func (h *AgentsHandler) SecurityScan(w http.ResponseWriter, r *http.Request) {
 	// Resolve scanner encrypted token (need raw from DB).
 	scannerTokenEncrypted := ""
 	if scanner.AuthTokenSet {
-		enc, err := h.dal.GetAgentTokenEncrypted(r.Context(), scanner.ID)
+		enc, err := h.legacyDAL.GetAgentTokenEncrypted(r.Context(), scanner.ID)
 		if err == nil {
 			scannerTokenEncrypted = enc
 		}
@@ -491,7 +571,7 @@ func (h *AgentsHandler) SecurityScan(w http.ResponseWriter, r *http.Request) {
 			h.fernetKey,
 			timeoutSec,
 			h.redis,
-			h.dal,
+			h.legacyDAL,
 			nil,
 		)
 	}

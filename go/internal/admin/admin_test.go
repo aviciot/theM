@@ -281,7 +281,7 @@ func withTestTenant(next http.Handler) http.Handler {
 // 1. List agents — returns empty array not null.
 func TestListAgentsEmptyArray(t *testing.T) {
 	db := &fakeDB{queryRows: newFakeRows(nil)}
-	h := admin.NewAgentsHandler(db, nil, nil, nil)
+	h := admin.NewAgentsHandler(db, nil, nil, nil, nil)
 
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
@@ -303,7 +303,7 @@ func TestListAgentsEmptyArray(t *testing.T) {
 func TestCreateAgent(t *testing.T) {
 	db := &fakeDB{execRetStr: "uuid-42"}
 	cache := &fakeCache{}
-	h := admin.NewAgentsHandler(db, cache, nil, nil)
+	h := admin.NewAgentsHandler(db, nil, cache, nil, nil)
 
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
@@ -330,7 +330,7 @@ func TestCreateAgent(t *testing.T) {
 // 3. Get nonexistent agent — 404.
 func TestGetNonexistentAgent(t *testing.T) {
 	db := &fakeDB{queryRowErr: errors.New("no rows")}
-	h := admin.NewAgentsHandler(db, nil, nil, nil)
+	h := admin.NewAgentsHandler(db, nil, nil, nil, nil)
 
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
@@ -370,7 +370,7 @@ func TestListRunsContextIDFilter(t *testing.T) {
 // withTestTenant is applied so MustTenantIDFromCtx does not panic.
 func serveApps(t *testing.T, db *fakeDB, cache admin.CacheInvalidator, method, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
-	h := admin.NewApplicationsHandler(db, cache, nil)
+	h := admin.NewApplicationsHandler(db, nil, cache, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)
@@ -512,7 +512,7 @@ func TestCreateEntryPoint_DoesNotPublish(t *testing.T) {
 // AZ-1: Anonymous request to admin endpoint returns 401.
 func TestAdminRequiresSuperAdmin_AnonymousRejected(t *testing.T) {
 	db := &fakeDB{queryRows: newFakeRows(nil)}
-	h := admin.NewAgentsHandler(db, nil, nil, nil)
+	h := admin.NewAgentsHandler(db, nil, nil, nil, nil)
 
 	r := chi.NewRouter()
 	r.Use(admin.RequireSuperAdmin(nil))
@@ -589,7 +589,7 @@ func TestUpdateEntryPoint_EmptyEPType_Allowed(t *testing.T) {
 // TestPatchAgentAliasesUpdate verifies PATCH /agents/{id} routes to Update.
 func TestPatchAgentAliasesUpdate(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewAgentsHandler(db, nil, nil, nil)
+	h := admin.NewAgentsHandler(db, nil, nil, nil, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)
@@ -607,7 +607,7 @@ func TestPatchAgentAliasesUpdate(t *testing.T) {
 // TestPatchOrchestratorAliasesUpdate verifies PATCH /orchestrators/{name} routes to Update.
 func TestPatchOrchestratorAliasesUpdate(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewOrchestratorsHandler(db, nil)
+	h := admin.NewOrchestratorsHandler(db, nil, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)
@@ -671,7 +671,7 @@ func (f *fakeSessionReader) SignalDisconnect(_ context.Context, _ string) (bool,
 // TK-1: List tokens — empty slice returned, not null.
 func TestListTokens_EmptyArray(t *testing.T) {
 	db := &fakeDB{queryRows: newFakeRows(nil)}
-	h := admin.NewTokensHandler(db, nil)
+	h := admin.NewTokensHandler(db, nil, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)
@@ -690,7 +690,7 @@ func TestListTokens_EmptyArray(t *testing.T) {
 // TK-2: List tokens with invalid user_id → 400.
 func TestListTokens_InvalidUserID_400(t *testing.T) {
 	db := &fakeDB{queryRows: newFakeRows(nil)}
-	h := admin.NewTokensHandler(db, nil)
+	h := admin.NewTokensHandler(db, nil, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)
@@ -705,7 +705,7 @@ func TestListTokens_InvalidUserID_400(t *testing.T) {
 // TK-3: Get nonexistent token → 404.
 func TestGetToken_NotFound(t *testing.T) {
 	db := &fakeDB{queryRowErr: errors.New("no rows")}
-	h := admin.NewTokensHandler(db, nil)
+	h := admin.NewTokensHandler(db, nil, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)
@@ -720,7 +720,7 @@ func TestGetToken_NotFound(t *testing.T) {
 // TK-4: Create token with missing label → 400.
 func TestCreateToken_MissingLabel_400(t *testing.T) {
 	db := &fakeDB{}
-	h := admin.NewTokensHandler(db, nil)
+	h := admin.NewTokensHandler(db, nil, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)
@@ -738,7 +738,7 @@ func TestCreateToken_MissingLabel_400(t *testing.T) {
 func TestDeleteToken_NotFound(t *testing.T) {
 	// ExecReturning must return pgx.ErrNoRows so IsNoRows detects it.
 	db := &fakeDB{execRetErr: pgx.ErrNoRows}
-	h := admin.NewTokensHandler(db, nil)
+	h := admin.NewTokensHandler(db, nil, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)

@@ -1,25 +1,56 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
+	"github.com/aviciot/them/internal/db"
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
 // OrchestratorsHandler handles /api/v1/admin/orchestrators routes.
 type OrchestratorsHandler struct {
-	svc *service.OrchService
+	legacySvc *service.OrchService
+	pools     *db.Pools
+	cache     CacheInvalidator
 }
 
 // NewOrchestratorsHandler creates an OrchestratorsHandler.
-func NewOrchestratorsHandler(db DBQuerier, cache CacheInvalidator) *OrchestratorsHandler {
-	return &OrchestratorsHandler{svc: service.NewOrchService(dal.NewDB(db), cache)}
+// When pools is non-nil each request uses a TenantTx (RLS-ready path).
+func NewOrchestratorsHandler(legacyDB DBQuerier, pools *db.Pools, cache CacheInvalidator) *OrchestratorsHandler {
+	return &OrchestratorsHandler{
+		legacySvc: service.NewOrchService(dal.NewDB(legacyDB), cache),
+		pools:     pools,
+		cache:     cache,
+	}
+}
+
+func (h *OrchestratorsHandler) openSvc(ctx context.Context, tenantID string) (svc *service.OrchService, commit func(context.Context) error, rollback func(), err error) {
+	if h.pools == nil {
+		return h.legacySvc, func(_ context.Context) error { return nil }, func() {}, nil
+	}
+	tenantUUID, uuidErr := uuid.Parse(tenantID)
+	if uuidErr != nil {
+		return nil, nil, nil, uuidErr
+	}
+	tx, txErr := h.pools.BeginTenantTx(ctx, tenantUUID)
+	if txErr != nil {
+		return nil, nil, nil, txErr
+	}
+	rb := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		tx.Rollback(cleanupCtx)
+	}
+	return service.NewOrchService(dal.NewDBFromTenantQuerier(tx), h.cache), tx.Commit, rb, nil
 }
 
 // Routes mounts the orchestrator CRUD endpoints.
@@ -35,11 +66,18 @@ func (h *OrchestratorsHandler) Routes(r chi.Router) {
 // List handles GET /api/v1/admin/orchestrators.
 func (h *OrchestratorsHandler) List(w http.ResponseWriter, r *http.Request) {
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	orchs, err := h.svc.List(r.Context(), tenantID)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db error: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	defer rollback()
+	orchs, err := svc.List(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, orchs)
 }
 
@@ -47,20 +85,28 @@ func (h *OrchestratorsHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *OrchestratorsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var input OrchestratorInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	id, err := h.svc.Create(r.Context(), tenantID, input)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	id, err := svc.Create(r.Context(), tenantID, input)
 	if err != nil {
 		if writeServiceError(w, err) {
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "create orchestrator: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/orchestrators/%s", input.Name))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": input.Name})
 }
@@ -68,44 +114,65 @@ func (h *OrchestratorsHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Get handles GET /api/v1/admin/orchestrators/{name}.
 func (h *OrchestratorsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	o, err := h.svc.Get(r.Context(), tenantID, name)
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	o, err := svc.Get(r.Context(), tenantID, name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "orchestrator not found")
 		return
 	}
+	_ = commit(r.Context())
 	writeJSON(w, http.StatusOK, o)
 }
 
 // Update handles PUT/PATCH /api/v1/admin/orchestrators/{name}.
 func (h *OrchestratorsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-
 	var input OrchestratorInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.Update(r.Context(), tenantID, name, input); err != nil {
-		writeError(w, http.StatusInternalServerError, "update orchestrator: "+err.Error())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	defer rollback()
+	if err := svc.Update(r.Context(), tenantID, name, input); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "updated": true})
 }
 
 // Delete handles DELETE /api/v1/admin/orchestrators/{name}.
 func (h *OrchestratorsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if err := h.svc.Delete(r.Context(), tenantID, name); err != nil {
-		writeError(w, http.StatusInternalServerError, "delete orchestrator: "+err.Error())
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-
+	defer rollback()
+	if err := svc.Delete(r.Context(), tenantID, name); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if err := commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "deleted": true})
 }

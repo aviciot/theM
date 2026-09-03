@@ -31,13 +31,20 @@ func (h *ApplicationsHandler) DiscoverEP(w http.ResponseWriter, r *http.Request)
 
 	// Verify the app belongs to this tenant.
 	tenantID := tenantctx.MustTenantIDFromCtx(r.Context())
-	if _, err := h.svc.Get(r.Context(), tenantID, appID); err != nil {
+	svc, commit, rollback, err := h.openSvc(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	defer rollback()
+	if _, err := svc.Get(r.Context(), tenantID, appID); err != nil {
 		writeError(w, http.StatusNotFound, "application not found")
 		return
 	}
+	_ = commit(r.Context())
 
 	// Load orchestrator bound to this EP.
-	orch, err := h.dal.GetAppOrchForEP(r.Context(), appID, epID)
+	orch, err := h.legacyDAL.GetAppOrchForEP(r.Context(), appID, epID)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":     false,
@@ -47,7 +54,7 @@ func (h *ApplicationsHandler) DiscoverEP(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Load sub-agent summaries.
-	agentRows, err := h.dal.GetAgentSummariesByIDs(r.Context(), orch.AllowedAgentIDs)
+	agentRows, err := h.legacyDAL.GetAgentSummariesByIDs(r.Context(), orch.AllowedAgentIDs)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":     false,
@@ -73,7 +80,7 @@ func (h *ApplicationsHandler) DiscoverEP(w http.ResponseWriter, r *http.Request)
 	// Call card_synthesizer LLM role.
 	card := synthesizeAppCard(
 		r.Context(),
-		h.dal,
+		h.legacyDAL,
 		h.fernetKey,
 		orch.DisplayName,
 		orch.SystemPrompt,
@@ -93,7 +100,7 @@ func (h *ApplicationsHandler) DiscoverEP(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "marshal card")
 		return
 	}
-	if err := h.dal.SetEPAgentCard(r.Context(), appID, epID, cardBytes); err != nil {
+	if err := h.legacyDAL.SetEPAgentCard(r.Context(), appID, epID, cardBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "save card")
 		return
 	}
