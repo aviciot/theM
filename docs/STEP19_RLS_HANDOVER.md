@@ -3,7 +3,7 @@
 # Branch: main
 # Design HEAD: 61730f3
 # Last updated: 2026-09-03
-# Status: DESIGN COMPLETE — implementation not started
+# Status: IN PROGRESS — Phase A complete, B1 complete, B2 next
 #
 # Context: This is a focused side-track from the main multi-tenancy roadmap
 # (Steps 1–18 complete). Step 19 (RLS) must finish before the tenant roadmap
