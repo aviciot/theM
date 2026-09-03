@@ -2,8 +2,9 @@
 # the-M multi-agent orchestration platform
 # Author: Avi Cohen / chaya.friedman@shift4.com
 # Created: 2026-09-03
-# Revised: 2026-09-03 (v2 — corrects child-table analysis, role design, policy expressions,
-#           deployment ordering, type-level pool separation, and PgBouncer assessment)
+# Revised: 2026-09-03 (v3 — fixes import cycle, component_definitions policies,
+#           role/grant accuracy, middleware enqueue scope, caller deployment matrix,
+#           cancellation handling, test design, PgBouncer prepared-statement facts)
 # Status: DESIGN ONLY — no implementation code exists in this file
 
 ---
@@ -18,440 +19,308 @@ for Step 19 of the multi-tenancy roadmap.
 tenant-scoped queries run through that role, inside explicit transactions that begin with
 `SELECT set_config('app.tenant_id', $1, true)`. A separate `them_admin` role retains
 `BYPASSRLS` for admin and cross-tenant paths. A `them_owner` role owns tables and runs
-migrations; it has `NOLOGIN` and is never used as an application DSN. RLS policies on each
-tenant-scoped table enforce
-`tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid`.
-Child tables that have no direct `tenant_id` column are protected by one of three strategies
-chosen per table, not assumed to inherit protection through a foreign key.
+migrations; it has `NOLOGIN` and `NOBYPASSRLS` and is never used as an application DSN.
+
+RLS policies enforce `tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid`.
+Child tables without a direct `tenant_id` get explicit EXISTS-based policies — FK relationships
+provide no implicit RLS protection.
+
+Type-level pool separation is achieved via a thin `go/internal/dbtype/` package that breaks the
+import cycle between `db` and `dal`.
 
 ---
 
 ## 1. Transaction Architecture
 
-### 1.1 Design choice: explicit `BeginTenantTx` API
+### 1.1 Package dependency graph — resolving the import cycle
 
-Two approaches were evaluated:
+v2 placed `TenantQuerier` and `AdminQuerier` in `go/internal/db/`, which embeds `dal.Querier`
+from `go/internal/admin/dal/`. DAL functions accepting `TenantQuerier` would then import `db`,
+creating a cycle: `db → dal → db`. Additionally, unexported marker methods cannot be
+implemented by structs in other packages.
 
-| Approach | Description | Decision |
-|---|---|---|
-| **Callback-based** `WithinTenantTx(ctx, tenantID, func(tx Tx) error) error` | Caller passes closure; begin / set / commit / rollback are automatic | Rejected: harder to test, fights Go idiomatic style, makes multi-step operations across service boundaries harder to express |
-| **Explicit** `BeginTenantTx(ctx, tenantID) (TenantTx, error)` with `Commit` / `Rollback` | Caller owns lifecycle | **Chosen** |
+**Solution: introduce `go/internal/dbtype/`**
 
-The explicit API preserves `dal.Querier` as the single query-execution interface implemented by
-both `pgxpool.Pool` (for non-transactional admin paths) and `pgx.Tx` (for transactional tenant
-paths). No existing DAL function signatures change; callers are updated to pass a `TenantTx`
-instead of a pool-backed `Querier`.
+This package contains only interfaces. It imports nothing beyond the standard library.
 
-### 1.2 Type-level separation: `TenantQuerier` vs `AdminQuerier`
+```
+dbtype   ← stdlib only
+db       → dbtype          (creates Pools; TenantTx and adminQuerier implement dbtype interfaces)
+dal      → dbtype          (DAL functions accept dbtype.TenantQuerier / dbtype.AdminQuerier)
+handlers → db, dal, dbtype (obtains *TenantTx from db.Pools.BeginTenantTx; passes to dal)
+```
 
-A central requirement is that the Go type system prevents an admin pool from being accidentally
-passed into a tenant-scoped DAL function, and prevents a tenant transaction from being passed
-into an admin DAL function.
+`go/internal/dbtype/dbtype.go` exports:
 
 ```go
-// TenantQuerier is a Querier that has had app.tenant_id set for the current
-// transaction. Only BeginTenantTx (using Pools.App) can produce one.
-// All tenant-scoped DAL functions accept TenantQuerier, not Querier directly.
-type TenantQuerier interface {
-    dal.Querier
-    tenantTxMarker() // unexported: only our package implements this
+package dbtype
+
+import (
+    "context"
+    pgx "github.com/jackc/pgx/v5"
+)
+
+// Querier is the base query-execution interface. Implemented by pgxpool.Pool,
+// pgx.Tx, and any test fake. All DAL functions accept a subtype of this.
+type Querier interface {
+    Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+    QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+    Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// AdminQuerier is a Querier backed by the Pools.Admin connection (BYPASSRLS).
-// Only NewAdminQuerier (using Pools.Admin) can produce one.
-// All cross-tenant/admin DAL functions accept AdminQuerier.
+// TenantQuerier marks a Querier that has had app.tenant_id set for the
+// current transaction via BeginTenantTx. Only db.Pools.BeginTenantTx produces one.
+// DAL functions for tenant-scoped operations accept this type.
+type TenantQuerier interface {
+    Querier
+    IsTenantQuerier() struct{} // exported marker — prevents AdminQuerier from satisfying this
+}
+
+// AdminQuerier marks a Querier backed by the BYPASSRLS admin pool.
+// Only db.Pools.NewAdminQuerier and db.Pools.BeginAdminTx produce one.
+// DAL functions for cross-tenant/admin operations accept this type.
 type AdminQuerier interface {
-    dal.Querier
-    adminQuerierMarker() // unexported: only our package implements this
+    Querier
+    IsAdminQuerier() struct{} // exported marker — prevents TenantQuerier from satisfying this
 }
 ```
 
-`dal.Querier` remains the base interface (Query / QueryRow / Exec / ExecReturning). Neither
-marker type is exported for construction outside the `db` package.
+The exported marker methods (`IsTenantQuerier`, `IsAdminQuerier`) return `struct{}` and serve
+only as compile-time tags. Any package can implement them, but the goal is not unforgeability
+— it is that `TenantQuerier` and `AdminQuerier` are distinct types at compile time so the
+compiler rejects wrong-pool wiring.
 
-**Consequence:** A DAL function declared as `func ListAgents(ctx, q TenantQuerier)` cannot
-receive a raw `pgxpool.Pool` or an `AdminQuerier` — compile error. A DAL function declared as
-`func ListTenants(ctx, q AdminQuerier)` cannot receive a `TenantTx` — compile error.
+`go/internal/admin/dal/dal.go` imports `dbtype` and removes its own `Querier` definition.
+Existing DAL functions that previously accepted `dal.Querier` are updated to accept
+`dbtype.TenantQuerier` (tenant-scoped) or `dbtype.AdminQuerier` (admin-scoped).
 
-DAL functions that legitimately accept either (e.g. test helpers) continue to accept
-`dal.Querier` directly, but no production handler or service is allowed to do this.
-
-### 1.3 `TenantTx` concrete type
+### 1.2 Concrete types in `go/internal/db/`
 
 ```go
-// TenantTx wraps pgx.Tx and marks itself as a TenantQuerier.
-// Obtained only from Pools.BeginTenantTx.
-type TenantTx struct {
-    tx pgx.Tx
-}
-func (t *TenantTx) tenantTxMarker() {}
+// TenantTx wraps pgx.Tx. Produced only by Pools.BeginTenantTx (App pool).
+type TenantTx struct{ tx pgx.Tx }
+func (t *TenantTx) IsTenantQuerier() struct{} { return struct{}{} }
 func (t *TenantTx) Commit(ctx context.Context) error   { return t.tx.Commit(ctx) }
 func (t *TenantTx) Rollback(ctx context.Context) error { return t.tx.Rollback(ctx) }
-// Query / QueryRow / Exec / ExecReturning delegate to t.tx
+// Query / QueryRow / Exec delegate to t.tx
+
+// AdminTx wraps pgx.Tx from the Admin pool. Produced only by Pools.BeginAdminTx.
+type AdminTx struct{ tx pgx.Tx }
+func (a *AdminTx) IsAdminQuerier() struct{} { return struct{}{} }
+func (a *AdminTx) Commit(ctx context.Context) error   { return a.tx.Commit(ctx) }
+func (a *AdminTx) Rollback(ctx context.Context) error { return a.tx.Rollback(ctx) }
+// Query / QueryRow / Exec delegate to a.tx
+
+// adminQuerier wraps the Admin pool for non-transactional admin queries.
+type adminQuerier struct{ pool *pgxpool.Pool }
+func (a *adminQuerier) IsAdminQuerier() struct{} { return struct{}{} }
+// Query / QueryRow / Exec delegate to a.pool
 ```
 
-### 1.4 Transaction lifecycle — exact rules
+### 1.3 `Pools` struct
 
-**Begin:**
-1. `Pools.App.Begin(ctx)` → obtains a `pgx.Tx` from the app pool (no BYPASSRLS).
-2. Immediately execute:
-   ```sql
-   SELECT set_config('app.tenant_id', $1, true)
-   ```
-   where `$1` is the tenant UUID as a string. This is a parameterised query — the tenant ID
-   is never interpolated into SQL.
-   - `true` = transaction-local; the GUC resets automatically on COMMIT or ROLLBACK.
-3. If the `set_config` call fails, call `tx.Rollback(ctx)` and return the error. The connection
-   is returned clean to the pool.
-4. Return a `*TenantTx` wrapping the transaction.
+```go
+type Pools struct {
+    App   *pgxpool.Pool  // them_app — no BYPASSRLS; tenant-scoped ops
+    Admin *pgxpool.Pool  // them_admin — BYPASSRLS; admin/platform/cross-tenant ops
+}
 
-**Pattern at call site:**
+// BeginTenantTx acquires a connection from the App pool and sets app.tenant_id
+// for the duration of the transaction. tenantID comes from JWT claims only —
+// callers must not pass values derived from HTTP headers or query parameters.
+func (p *Pools) BeginTenantTx(ctx context.Context, tenantID uuid.UUID) (*TenantTx, error)
+
+// BeginAdminTx acquires a connection from the Admin pool and begins a transaction.
+// No app.tenant_id is set. Use for atomic admin operations (e.g. DELETE+INSERT pairs).
+func (p *Pools) BeginAdminTx(ctx context.Context) (*AdminTx, error)
+
+// NewAdminQuerier returns a non-transactional AdminQuerier backed by the Admin pool.
+// Use for single-statement admin reads or writes that do not need atomicity.
+func (p *Pools) NewAdminQuerier() dbtype.AdminQuerier
+```
+
+### 1.4 Transaction lifecycle
+
+**BeginTenantTx:**
+1. `p.App.Begin(ctx)` — acquires from the App pool (no BYPASSRLS).
+2. Execute `SELECT set_config('app.tenant_id', $1, true)` with `tenantID.String()` as the
+   parameterised argument. Third argument `true` = transaction-local; resets on COMMIT/ROLLBACK.
+3. If the set_config call fails: call `tx.Rollback` with a cleanup context (not the caller's
+   ctx — see §1.5), return the error.
+4. Return `*TenantTx`.
+
+**BeginAdminTx:**
+1. `p.Admin.Begin(ctx)` — acquires from the Admin pool (BYPASSRLS).
+2. No set_config call. Return `*AdminTx`.
+
+**Call-site pattern (TenantTx):**
 ```go
 tx, err := pools.BeginTenantTx(ctx, tenantID)
 if err != nil { return err }
-defer tx.Rollback(ctx) // safe no-op after Commit
+defer func() {
+    cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    tx.Rollback(cleanupCtx) // no-op after Commit
+}()
 
-result, err := dal.ListAgents(ctx, tx, tenantID)
+result, err := dal.ListAgents(ctx, tx)
 if err != nil { return err }
 
 return tx.Commit(ctx)
 ```
 
-**Commit:** `pgx.Tx.Commit`. The `app.tenant_id` GUC reverts to the session default (empty
-string) automatically.
-
-**Rollback:** `pgx.Tx.Rollback` is idempotent in pgx — safe to call after Commit (returns
-`pgx.ErrTxClosed`, which is silently ignored in the deferred pattern). The deferred `Rollback`
-is therefore always safe regardless of whether Commit succeeded or failed.
-
-**Panic:** the caller must `defer tx.Rollback(ctx)` before any fallible operation. If a panic
-occurs after `Begin` but before `Commit`, the deferred `Rollback` fires during the stack
-unwind. pgx closes the underlying connection on error, so the pool recycles it clean.
-
-**Context cancellation:** pgx propagates context cancellation to the in-flight query. If the
-context is cancelled after `Begin` but before `Commit`, the next operation returns a
-cancellation error. The deferred `Rollback` still fires and succeeds because pgx rolls back the
-server side on error. No special handling is needed beyond the standard `defer tx.Rollback(ctx)`
-pattern.
-
-**Connection reuse safety** (the core guarantee):
-`set_config(..., true)` scopes the GUC strictly to the current transaction. When the
-transaction ends (commit or rollback), Postgres resets `app.tenant_id` to the session default.
-The session default is never set by the application — it is always empty string. A pooled
-connection that is checked out for a new `BeginTenantTx` call always starts with
-`app.tenant_id = ''`. There is no mechanism by which a tenant ID from transaction A can survive
-into transaction B on the same physical connection. This is enforced by Postgres, not by the
-application.
-
-**Nested transactions:** pgx supports savepoints via `pgx.Tx.Begin`. The design does not use
-them. If an existing transaction is detected, `BeginTenantTx` returns an error rather than
-attempting a savepoint nest. This prevents accidental re-entrance.
-
-### 1.5 AdminQuerier concrete type
-
+**Call-site pattern (AdminTx):**
 ```go
-// adminQuerier wraps a Querier backed by Pools.Admin and marks itself AdminQuerier.
-// Obtained only from pools.NewAdminQuerier().
-type adminQuerier struct{ q dal.Querier }
-func (a *adminQuerier) adminQuerierMarker() {}
-// Query / QueryRow / Exec / ExecReturning delegate to a.q
+tx, err := pools.BeginAdminTx(ctx)
+if err != nil { return err }
+defer func() {
+    cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    tx.Rollback(cleanupCtx)
+}()
+
+if err := dal.DeleteManagedAppParams(ctx, tx, appID); err != nil { return err }
+if err := dal.InsertManagedAppParams(ctx, tx, appID, params); err != nil { return err }
+return tx.Commit(ctx)
 ```
 
-Admin DAL functions receive this type. The admin pool connects as `them_admin` (BYPASSRLS) so
-no `set_config` call is needed or made.
+### 1.5 Context cancellation — corrected
 
-### 1.6 Transaction boundary is at the service/handler operation, not per-DAL-call
+v2 stated "the deferred Rollback still fires and succeeds because pgx rolls back the server
+side on error." This is incorrect.
 
-A single handler that calls multiple DAL functions (e.g. `PublishDefinition` which performs two
-sequential UPDATEs) opens **one** transaction and passes it to all DAL calls. The transaction
-commits or rolls back as a unit. This is the correct boundary for atomicity and for RLS
-correctness (the `set_config` call needs to be issued only once per transaction, not once per
-query).
+pgx does NOT automatically roll back the server-side transaction on context cancellation. When
+the request context is cancelled, the in-flight query returns an error, but the server
+transaction remains open on the backend connection. pgxpool marks the connection unhealthy when
+it detects the cancel and destroys it on return — which causes an implicit rollback at the
+server — but this is not guaranteed to complete before the `defer` fires.
+
+More critically: `defer tx.Rollback(ctx)` with a cancelled `ctx` fails immediately because the
+context is already done. pgx checks the context before issuing the network call.
+
+**Rule:** Always use a separate cleanup context for the deferred rollback:
+```go
+defer func() {
+    cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+    tx.Rollback(cleanupCtx)
+}()
+```
+
+After a cancelled context, the caller should expect `context.Canceled` or
+`context.DeadlineExceeded` — not a silent zero-row result.
+
+### 1.6 Trusted tenant-ID sources
+
+`BeginTenantTx` accepts `uuid.UUID`, not `string`. The `.String()` conversion for the GUC
+happens inside `BeginTenantTx` only. This prevents accidental string injection.
+
+| Call context | Source of tenantID | Type |
+|---|---|---|
+| HTTP request handler | `tenantctx.TenantIDFromCtx(ctx)` — populated by `auth.Middleware` from JWT claims | `uuid.UUID` |
+| Temporal activity | `InvocationContext.TenantID` — derived from JWT at workflow initiation | `uuid.UUID` |
+| Background workers | Cross-tenant by design; must use AdminQuerier — no tenantID parameter | — |
+
+TenantID is **never** read from HTTP headers, query parameters, or environment variables.
+
+### 1.7 Transaction boundary rule
+
+One transaction per handler operation, not per DAL call. A handler that calls multiple DAL
+functions opens one `TenantTx` and passes it to all of them. This is the correct atomicity and
+RLS correctness boundary.
 
 ---
 
 ## 2. Complete Database Access Inventory
 
-This section catalogs every location in the codebase that touches Postgres, the scope of each
-operation, and its required pool and transaction context after Step 19 is complete.
-
 **Scope legend:**
-- `T` — tenant-scoped: must run inside `BeginTenantTx` via `Pools.App`
-- `X` — cross-tenant/admin: must run via `AdminQuerier` from `Pools.Admin`
-- `A` — application-scoped: no direct `tenant_id` column, but scoped via FK to `applications`; must run inside `TenantTx` so the parent-table RLS policy (or subquery policy on the child) is satisfied
-- `P` — platform-global: rows with `tenant_id IS NULL`; must run via `AdminQuerier`
-- `G` — global with no tenant dimension: platform config, schema_migrations, etc.; `AdminQuerier`
+- `T` — tenant-scoped: `BeginTenantTx` via `Pools.App`
+- `X` — cross-tenant/admin: `AdminQuerier` or `AdminTx` via `Pools.Admin`
+- `A` — application-scoped (no direct `tenant_id`): `TenantTx` (parent EXISTS policy provides isolation)
+- `P` — platform-global (tenant_id IS NULL): `AdminQuerier`
+- `G` — global (no tenant dimension): `AdminQuerier`
 
-### 2.1 `go/internal/admin/dal/agents.go`
+### 2.1 `go/internal/admin/dal/`
 
-| Function | Scope | Notes |
+| Package | Function | Scope |
 |---|---|---|
-| `ListAgents` | T | |
-| `GetAgent` | T | |
-| `CreateAgent` | T | |
-| `UpdateAgent` | T | |
-| `DeleteAgent` | T | Second DELETE on `component_definitions` uses `agent_id` only — must add `AND tenant_id = $N` or verify cascade |
-| `AgentExists` | X | Cross-tenant uniqueness check by slug |
-| `GetAgentBySlug` | X | Slug is cross-tenant unique |
-| `UpdateAgentScanResult` | X | Called by security scanner; no tenant context at call site |
-| `GetAgentByID` | X | Runtime path; caller asserts ownership |
-| `GetAgentTokenEncrypted` | X | Token introspection; cross-tenant by design |
+| agents.go | ListAgents, GetAgent, CreateAgent, UpdateAgent, DeleteAgent | T |
+| agents.go | AgentExists, GetAgentBySlug, UpdateAgentScanResult, GetAgentByID, GetAgentTokenEncrypted | X |
+| orchestrators.go | All CRUD | T |
+| applications.go | ListApplications…DeleteProviderKey, GetAppParams…DeleteAppParam | T |
+| applications.go | ListEntryPoints, CreateEntryPoint, UpdateEntryPoint, DeleteEntryPoint, listAppOrchSummaries, SetOrchestratorLLM, SetOrchestratorVoice, SetOrchestratorMCPServers | A |
+| applications.go | GetAgentSummariesByIDs | X |
+| runs.go | All run/step/usage reads and writes | T |
+| tokens.go | All CRUD | T |
+| tenants.go | ListTenants…GetTenantByEmailDomain, GetQuota, UpsertQuota, ListMembers, AddMember | X |
+| tenants.go | ListGroupMappings, UpsertGroupMapping, DeleteGroupMapping | T |
+| llm_providers.go | ListProvidersForTenant, GetProviderByNameForTenant, UpsertTenantProvider | T |
+| llm_providers.go | ListProviders (platform), GetProviderByNamePlatform, CreateProvider, UpdateProvider, DeleteProvider | P |
+| managed_apps.go | ListManagedApps, CreateManagedApp, GetManagedApp, ListManagedAppParams, UpsertManagedAppParams ⚠ | X (AdminTx for upsert) |
+| managed_apps.go | ListBindingsForTenant, GetBinding, UpsertBinding | T |
+| managed_apps.go | ListBindingsByTenant (path-param), UpsertBindingByTenant (path-param) | X |
+| mcp_servers.go | ListMCPServers…DeleteMCPServer | T |
+| mcp_servers.go | ListAppMCPCredentials…DeleteAppMCPCredential | A |
+| agent_definitions.go | All CRUD | T |
+| publish.go | PublishDefinition ⚠ (two UPDATEs, needs TenantTx) | T |
+| publish.go | UpsertAppOrchestrator, UpsertEntryPoint, DeactivateStale* | A/T |
+| services_stats.go | GetSecurityScanStats | X |
+| agent_bindings.go | GetAgentParamsForBinding, GetRequiredParamsForAgent | X |
+| agent_bindings.go | Binding CRUD | A |
+| config.go | GetConfig, UpsertConfig | G |
 
-### 2.2 `go/internal/admin/dal/orchestrators.go`
+### 2.2 `go/internal/runrecorder/recorder.go`
 
-| Function | Scope | Notes |
+Writes to `them.runs`, `them.run_steps`, `them.run_usage`. Must use `TenantTx` after Step 19.
+Constructor must accept `dbtype.TenantQuerier`.
+
+### 2.3 `go/internal/authserver/` (pgx.go, oidc_store.go)
+
+- `auth_service.*` queries: no RLS needed (separate schema, them_app has no grants there).
+- `GetTenantIDPConfig` (reads `them.tenants`), `GetGroupRole` (reads `them.tenant_group_mappings`):
+  pre-auth path; must use `Pools.Admin` after Step 19.
+- `UpsertOIDCUser` ⚠: 4+ sequential queries without a transaction; wrap in standard `pool.Begin`
+  (not TenantTx — auth_service schema only).
+
+### 2.4 `go/internal/agentregistry/pgx_querier.go`
+
+- `GetBindingID` (reads `app_agent_bindings` by `application_id`): `TenantTx`.
+- `QueryAgentsByTenant` (reads `agents WHERE tenant_id = $1`): `TenantTx`.
+
+### 2.5 `go/internal/middleware/`
+
+| Function | Context | Required pool |
 |---|---|---|
-| `ListOrchestrators` | T | |
-| `GetOrchestrator` | T | |
-| `CreateOrchestrator` | T | |
-| `UpdateOrchestrator` | T | |
-| `DeleteOrchestrator` | T | |
+| `EnqueueWithQuarantine` / `Enqueue` | Gateway (has tenant context) | `TenantTx` via App pool |
+| `Claim` | Worker — cross-tenant | `AdminQuerier` |
+| `LoadSecurityConfig` (job.go) | Worker — has application_id, no JWT tenant | `AdminQuerier` |
+| `LoadFileBytes` | Worker | `AdminQuerier` |
+| `Complete` / `completeQuarantinePath` / `completeLegacyPath` | Worker | `AdminTx` |
+| `WriteAudit` | Worker | `AdminQuerier` |
+| `LoadSecurityConfig` (gate.go) | Gateway — has tenant context | `TenantTx` |
 
-### 2.3 `go/internal/admin/dal/applications.go`
+### 2.6 `go/internal/temporal/workerconfig/loader.go`
 
-| Function | Scope | Notes |
-|---|---|---|
-| `ListApplications` | T | |
-| `GetApplication` | T | |
-| `CreateApplication` | T | |
-| `UpdateApplication` | T | |
-| `DeleteApplication` | T | |
-| `BulkDeleteApplications` | T | |
-| `UpdateRuntimeConfig` | T | |
-| `GetProviderKeys` | T | |
-| `SetProviderKey` | T | |
-| `DeleteProviderKey` | T | |
-| `GetAppParams` | T | |
-| `SetAppParam` | T | |
-| `DeleteAppParam` | T | |
-| `ListEntryPoints` | A | Scoped by `application_id`; pass inside TenantTx so entry_points subquery RLS passes |
-| `listAppOrchSummaries` | A | |
-| `SetOrchestratorLLM` | A | |
-| `SetOrchestratorVoice` | A | |
-| `SetOrchestratorMCPServers` | A | |
-| `CreateEntryPoint` | A | |
-| `UpdateEntryPoint` | A | |
-| `DeleteEntryPoint` | A | |
-| `GetAgentSummariesByIDs` | X | Cross-tenant agent card synthesis |
+- Tenant-scoped lookups (app runtime config, binding params, entry point config): `TenantTx`.
+- Platform-global lookups (LLM provider defaults, ManagedApp catalog): `AdminQuerier`.
 
-### 2.4 `go/internal/admin/dal/runs.go`
+### 2.7 `go/cmd/agent-runtime/` (spec.go, llm.go, runtime.go)
 
-| Function | Scope | Notes |
-|---|---|---|
-| `ListRuns` | T | |
-| `GetRun` | T | |
-| `GetRunContextID` | T | |
-| `GetRunStats` | T | |
-| `CountActiveRuns` | T | Called from `tenantQuotaAdapter` in `cmd/them/main.go`; must use TenantTx |
-| `GetRunDetail` | T | run_steps / run_usage scanned via run_id FK inside same tx |
-| `GetRunTasks` | T | EXISTS subquery on runs.tenant_id |
-| `GetContextMessages` | T | Uses `tasks.tenant_id`; requires tasks backfill first |
-| `TailRunSteps` | T | |
-| `TailRunUsage` | T | |
+All queries include `tenant_id` predicates. Must use `TenantTx`. `tenantID` comes from
+`InvocationContext.TenantID` (JWT-derived at workflow start).
 
-### 2.5 `go/internal/admin/dal/tokens.go`
+### 2.8 `go/cmd/dag-worker/main.go`
 
-| Function | Scope | Notes |
-|---|---|---|
-| `ListTokens` | T | |
-| `GetToken` | T | |
-| `CreateToken` | T | |
-| `UpdateToken` | T | |
-| `DeleteToken` | T | |
-| `LookupToken` | T | |
+Mixed: tenant-scoped spec loads → `TenantTx`; cross-tenant activity claims → `AdminQuerier`.
 
-### 2.6 `go/internal/admin/dal/tenants.go`
+### 2.9 `go/internal/appliveness/liveness.go`
 
-| Function | Scope | Notes |
-|---|---|---|
-| `ListTenants` | X | Platform admin |
-| `GetTenant` | X | |
-| `CreateTenant` | X | |
-| `PatchTenant` | X | |
-| `GetTenantByEmailDomain` | X | Pre-auth lookup; no tenant context established yet |
-| `GetQuota` | X | Reads `tenant_quotas` by tenantID param; no RLS needed on this table (see §5) |
-| `UpsertQuota` | X | |
-| `ListMembers` | X | Reads `auth_service.tenant_memberships`; no `them`-schema RLS |
-| `AddMember` | X | |
-| `ListGroupMappings` | T | `tenant_group_mappings` is RLS-protected |
-| `UpsertGroupMapping` | T | |
-| `DeleteGroupMapping` | T | |
+`listEnabledEPSlugs`: cross-tenant health probe. Must use `AdminQuerier`.
 
-### 2.7 `go/internal/admin/dal/llm_providers.go`
+### 2.10 `go/internal/reconciler/reconciler.go`
 
-| Function | Scope | Notes |
-|---|---|---|
-| `ListProvidersForTenant` | T | Reads both platform + tenant rows; split policy in §5.3 |
-| `GetProviderByNameForTenant` | T | |
-| `UpsertTenantProvider` | T | |
-| `ListProviders` (platform) | P | `WHERE tenant_id IS NULL`; uses AdminQuerier |
-| `GetProviderByNamePlatform` | P | |
-| `CreateProvider` | P | |
-| `UpdateProvider` | P | |
-| `DeleteProvider` | P | |
-
-### 2.8 `go/internal/admin/dal/managed_apps.go`
-
-| Function | Scope | Notes |
-|---|---|---|
-| `ListManagedApps` | X | Platform-global |
-| `CreateManagedApp` | X | |
-| `GetManagedApp` | X | |
-| `ListManagedAppParams` | X | |
-| `UpsertManagedAppParams` | X ⚠ | DELETE + INSERT without transaction — atomicity bug; fix before Step 19 |
-| `ListBindingsForTenant` | T | |
-| `GetBinding` | T | |
-| `UpsertBinding` | T | |
-| `ListBindingsByTenant` (path-param variant) | X | Platform admin path; uses tenantID from path, not JWT context |
-| `UpsertBindingByTenant` (path-param variant) | X | Same |
-
-### 2.9 `go/internal/admin/dal/mcp_servers.go`
-
-| Function | Scope | Notes |
-|---|---|---|
-| `ListMCPServers` | T | |
-| `GetMCPServer` | T | |
-| `CreateMCPServer` | T | |
-| `UpdateMCPServer` | T | |
-| `DeleteMCPServer` | T | |
-| `ListAppMCPCredentials` | A | Scoped by `application_id`; run inside TenantTx |
-| `GetAppMCPCredential` | A | |
-| `UpsertAppMCPCredential` | A | |
-| `DeleteAppMCPCredential` | A | |
-
-### 2.10 `go/internal/admin/dal/agent_definitions.go`
-
-| Function | Scope | Notes |
-|---|---|---|
-| `ListDefinitionsForAgent` | T | |
-| `GetDefinition` | T | |
-| `CreateDefinition` | T | |
-| `UpdateDefinition` | T | |
-| `DeleteDefinition` | T | |
-
-### 2.11 `go/internal/admin/dal/publish.go`
-
-| Function | Scope | Notes |
-|---|---|---|
-| `PublishDefinition` | T ⚠ | Two sequential UPDATEs currently without an explicit transaction; must be atomically wrapped before Step 19 |
-| `UpsertAppOrchestrator` | A | |
-| `UpsertEntryPoint` | A | |
-| `DeactivateStaleOrchestrators` | T | |
-| `DeactivateStaleEntryPoints` | T | |
-
-### 2.12 `go/internal/admin/dal/services_stats.go`
-
-| Function | Scope | Notes |
-|---|---|---|
-| `GetSecurityScanStats` | X | Platform-wide aggregate; admin-only |
-
-### 2.13 `go/internal/admin/dal/agent_bindings.go`
-
-| Function | Scope | Notes |
-|---|---|---|
-| `GetAgentParamsForBinding` | X | Platform-global spec lookup |
-| `GetRequiredParamsForAgent` | X | |
-| `(binding CRUD fns)` | A | Scoped by `application_id` |
-
-### 2.14 `go/internal/admin/dal/config.go`
-
-| Function | Scope | Notes |
-|---|---|---|
-| `GetConfig` | G | No `tenant_id` column; platform-global |
-| `UpsertConfig` | G | |
-
-### 2.15 `go/internal/runrecorder/recorder.go`
-
-Uses its own `DBQuerier` interface backed by `PgxPoolQuerier`. Writes to `them.runs`,
-`them.run_steps`, `them.run_usage`. Already passes `tenant_id` on INSERT for runs.
-After Step 19 must use a `TenantTx` so the RLS WITH CHECK passes on INSERT.
-
-A `TenantRecorder` wrapper or a recorder constructor that accepts a `TenantQuerier` is needed.
-
-### 2.16 `go/internal/authserver/pgx.go` and `oidc_store.go`
-
-Hold a raw `*pgxpool.Pool`. Queries split into two groups:
-
-- `auth_service.*` tables only (`GetUser`, `GetRole`, `UpsertUser`, `GetTenantMembership`,
-  `UpsertOIDCUser`, `GetUserSessions`, `BlacklistToken`, `LookupTenantByEmailDomain`): these
-  are in the `auth_service` schema which has no RLS policies and which `them_app` has no
-  grants on. No change needed for RLS isolation.
-- `them.*` reads in `oidc_store.go`:
-  - `GetTenantIDPConfig` — reads `them.tenants` (cross-tenant; pre-auth path)
-  - `GetGroupRole` — reads `them.tenant_group_mappings` (cross-tenant; pre-auth path)
-
-  These two must use the `Pools.Admin` pool (BYPASSRLS) after Step 19. Currently they use
-  the main pool which will be the app pool (no BYPASSRLS) once the role is split.
-
-- `UpsertOIDCUser` ⚠ — 4+ sequential queries without a transaction (existing race condition).
-  Fix independently before Step 19: wrap in `pool.Begin(ctx)` (standard transaction, not
-  TenantTx — no `app.tenant_id` needed for auth_service schema writes).
-
-### 2.17 `go/internal/agentregistry/pgx_querier.go`
-
-Direct `pgxpool.Pool` usage:
-- `GetBindingID` — reads `them.app_agent_bindings` by `(application_id, agent_id)`. No tenant
-  column; scoped via `application_id` → `applications.tenant_id`. This is a runtime-path lookup
-  used by the canvas agent executor; it needs a TenantTx and an EXISTS-based subquery policy on
-  `app_agent_bindings` (see §5).
-- `QueryAgentsByTenant` — reads `them.agents WHERE tenant_id = $1`. Needs TenantTx.
-
-### 2.18 `go/internal/middleware/` (gate.go, job.go, pgx.go)
-
-`PgxQuerier` in `pgx.go` wraps `pgxpool.Pool`. Operations split:
-- `EnqueueWithQuarantine` / `Enqueue` — writes `them.middleware_jobs`. No direct tenant_id
-  (scoped via `application_id`). Called from the gateway (has tenant context) → use TenantTx.
-- `Claim` — reads `them.middleware_jobs` cross-tenant (picks next unclaimed job regardless of
-  tenant). Called from middleware worker loop. Must use AdminQuerier / `Pools.Admin`.
-- `LoadSecurityConfig` / `LoadFileBytes` — reads `them.applications`, `them.quarantine_artifacts`.
-  The middleware worker has application context but not a JWT-derived tenant ID. Strategy: use
-  AdminQuerier, and verify ownership via `application_id` explicitly (safe because the worker
-  only processes jobs it claimed from its own queue).
-- `Complete` / `completeQuarantinePath` / `completeLegacyPath` — writes `them.run_artifacts`,
-  `them.quarantine_artifacts`. Same context situation. Use AdminQuerier for the worker path.
-- `WriteAudit` — writes `them.middleware_audit`. Use AdminQuerier for worker path.
-- `LoadSecurityConfig` in `gate.go` — reads `them.applications` by app_id. Called from gateway
-  with tenant context → TenantTx.
-
-### 2.19 `go/internal/temporal/workerconfig/loader.go`
-
-Direct `pgxpool.Pool` usage. All queries pass explicit `applicationID` and `tenantID` WHERE
-clauses already. After Step 19:
-- Tenant-scoped lookups (app runtime config, binding params, entry point config) → TenantTx
-- Platform-global lookups (LLM provider platform defaults, ManagedApp catalog) → AdminQuerier
-
-### 2.20 `go/cmd/agent-runtime/` (spec.go, llm.go, runtime.go)
-
-Direct `pgxpool.Pool` usage. All queries include `tenant_id = $N::uuid` predicates. After Step
-19, must wrap in TenantTx. The `tenantID` comes from `InvocationContext.TenantID` which is
-already derived from JWT claims.
-
-### 2.21 `go/cmd/dag-worker/main.go`
-
-Direct `pgxpool.Pool` usage. Queries join `them.applications` and filter by `applicationID`.
-Mix of tenant-scoped (spec loads) and cross-tenant (activity claims) queries. Must be split:
-tenant-scoped → TenantTx; cross-tenant → AdminQuerier.
-
-### 2.22 `go/internal/appliveness/liveness.go`
-
-`listEnabledEPSlugs` queries `them.entry_points JOIN them.applications` without a tenant filter
-— intentionally cross-tenant (health probe of all enabled EPs). Must use AdminQuerier.
-
-### 2.23 `go/internal/reconciler/reconciler.go`
-
-Queries `them.runs` to detect stale runs and update their status — intentionally cross-tenant
-(platform-level health sweep). Must use AdminQuerier.
-
-Also uses `pg_try_advisory_lock` / `pg_advisory_unlock` via session-scoped calls on the pool
-(not inside a transaction). Advisory locks are session-scoped in Postgres and incompatible with
-PgBouncer transaction mode. See §7.
-
-### 2.24 No direct DB access
-
-The following packages have no direct DB calls and require no changes for RLS:
-`internal/quota/`, `internal/gate/`, `internal/session/`, `internal/llm/`, `internal/ws/`,
-`internal/sse/`, `internal/a2a/`, `internal/orchestrator/` (delegates to runrecorder),
-`cmd/them/main.go` (wiring only).
+Cross-tenant stale-run sweep. Must use `AdminQuerier`. Uses `pg_try_advisory_lock` (session-
+scoped) — see §7.4.
 
 ---
 
@@ -463,283 +332,219 @@ The following packages have no direct DB calls and require no changes for RLS:
 SELECT set_config('app.tenant_id', $1, true)
 ```
 
-- `$1` is the tenant UUID as a string, bound by the pgx driver.
-- The string is never interpolated into SQL text — injection into a GUC value is impossible.
-- Third argument `true` = transaction-local. The GUC resets to its session default (empty
-  string — never set at session level) on COMMIT or ROLLBACK.
+- `$1` is `tenantID.String()` — a validated UUID string, never user-controlled input.
+- Third argument `true` = transaction-local. Resets to `''` on COMMIT or ROLLBACK.
+- Session default is never set by the application; it is always `''`.
 
 ### 3.2 Empty-string-safe policy expression
 
-The original document used `current_setting('app.tenant_id', true)::uuid`. This is not
-empty-string-safe: when `app.tenant_id` is set (not missing) but has value `''`, the cast to
-`uuid` raises `invalid input syntax for type uuid`, causing a query error rather than an
-empty result set.
-
-All RLS policy expressions in this design use:
-
+All RLS policies use:
 ```sql
 NULLIF(current_setting('app.tenant_id', true), '')::uuid
 ```
 
-Behavior table:
+| State of `app.tenant_id` | Result | Policy outcome |
+|---|---|---|
+| GUC never initialized (missing_ok) | `NULL` | No rows match — fail-closed |
+| `''` (reset after tx end, or fresh connection) | `NULL` | No rows match — fail-closed |
+| Valid UUID string | UUID value | Rows for that tenant |
+| Invalid UUID string (unreachable in practice) | Cast error | Query error |
 
-| State of `app.tenant_id` | `current_setting(..., true)` | `NULLIF(..., '')` | `::uuid` cast | Policy result |
-|---|---|---|---|---|
-| GUC not set (never initialized) | `NULL` (missing_ok) | `NULL` | `NULL` | No rows match (fail-closed) |
-| GUC set to `''` (fresh connection after reset) | `''` | `NULL` | `NULL` | No rows match (fail-closed) |
-| GUC set to valid UUID string | `'<uuid>'` | `'<uuid>'` | valid UUID | Rows for that tenant |
-| GUC set to invalid string | `'bad'` | `'bad'` | cast error | Query error |
+The invalid-UUID case is unreachable: `BeginTenantTx` receives a `uuid.UUID` whose `.String()`
+always produces a valid UUID string.
 
-The last case (invalid UUID string) is not reachable in practice: `BeginTenantTx` receives the
-tenant ID from `tenantctx.TenantIDFromCtx`, which is populated exclusively from JWT claims
-validated by `internal/auth/`. However, the policy expression must not fail on an empty string
-because fresh pool connections have the GUC at its session default value of `''` (set_config
-with the `true` flag resets to `''`, not to uninitialized).
+### 3.3 Connection reuse safety
 
-### 3.3 Source of tenant context
-
-`TenantID` is extracted only from JWT claims via the `tenantctx` typed context key (`tenantctx.TenantIDFromCtx`). It is never read from request headers, query parameters, or any
-application-layer setting. This constraint was established in Step 1 and is unchanged.
-
-### 3.4 Connection reuse safety proof
-
-1. Connection checked out from `Pools.App`.
-2. `BEGIN` issued by pgx.
-3. `SELECT set_config('app.tenant_id', $1, true)` — GUC is now tenant-A's UUID.
-4. All tenant-A queries execute; RLS filters to tenant-A rows.
-5. `COMMIT` (or `ROLLBACK`).
-6. Postgres server resets `app.tenant_id` to the session default (`''`) automatically.
-7. Connection returned to pool.
-8. Next checkout: `NULLIF('', '')::uuid = NULL` — no rows match. Fail-closed until a new
-   `set_config` call.
-
-There is no scenario where a pooled connection carries a stale tenant ID into a subsequent
-request, because `set_config(..., true)` is strictly transaction-scoped on the Postgres server.
-
-### 3.5 Missing tenant context fails closed
-
-When `BeginTenantTx` is called but the `set_config` query fails (DB error), the function rolls
-back and returns an error — no queries execute. When code accidentally runs a query outside a
-`TenantTx` via the app pool (bug scenario), `app.tenant_id` is `''`, the policy expression
-evaluates to `NULL`, and the WHERE clause `tenant_id = NULL` matches nothing — zero rows
-returned for SELECT, `WITH CHECK` rejects INSERT/UPDATE.
+`set_config(..., true)` is strictly transaction-scoped at the Postgres server. When a
+transaction ends, the server resets `app.tenant_id` to `''`. A pooled connection checked out
+for a new `BeginTenantTx` call starts with `app.tenant_id = ''` → fail-closed until the new
+`set_config` call executes. Tenant-A's GUC value cannot leak into tenant-B's transaction.
 
 ---
 
 ## 4. Database Roles and Ownership
 
-### 4.1 Current state (requires correction)
+### 4.1 Current state
 
-The live `them` role is a SUPERUSER with BYPASSRLS, LOGIN, CREATEROLE, and CREATEDB. It owns
-all tables and is the sole application DSN. This must be corrected before Step 19.
+The live `them` role is a SUPERUSER with BYPASSRLS and LOGIN. It owns all tables and is the
+sole application DSN. This must be split before Step 19.
 
-### 4.2 Target state
+### 4.2 Target roles
 
-| Role | Purpose | BYPASSRLS | SUPERUSER | LOGIN | Own tables |
+| Role | Purpose | LOGIN | BYPASSRLS | SUPERUSER | Owns tables |
 |---|---|---|---|---|---|
-| `them_owner` | Owns tables, runs migrations | Yes (table owner bypasses RLS) | No | **No** (NOLOGIN) | Yes |
-| `them_admin` | Admin / cross-tenant runtime queries | Yes (explicit) | No | Yes | No |
-| `them_app` | Tenant-scoped runtime queries | **No** | No | Yes | No |
+| `them_owner` | Table owner; runs migrations | **No** (NOLOGIN) | **No** | No | Yes |
+| `them_admin` | Admin / cross-tenant runtime | Yes | **Yes** (explicit) | No | No |
+| `them_app` | Tenant-scoped runtime | Yes | **No** | No | No |
 
-#### Why `them_owner` must be NOLOGIN
+#### them_owner: NOLOGIN and NOBYPASSRLS
 
-`them_owner` owns the tables. Postgres normally allows table owners to bypass RLS even when
-`FORCE ROW LEVEL SECURITY` is set, unless `BYPASSRLS` is explicitly revoked and `FORCE ROW
-LEVEL SECURITY` is applied. Rather than rely on this nuance, `them_owner` must be `NOLOGIN` so
-it can never be used as an application DSN. Migrations run via a superuser connection
-(`postgres` or equivalent) that sets the role: `SET ROLE them_owner` for DDL operations.
+`them_owner` owns the tables. Table owners bypass RLS when only `ENABLE ROW LEVEL SECURITY` is
+set (not FORCE). Since `them_owner` is `NOLOGIN`, it can never be used as an application DSN —
+this is the primary safety guarantee, not the BYPASSRLS attribute. `them_owner` does NOT need
+and does NOT have the BYPASSRLS attribute.
 
-`FORCE ROW LEVEL SECURITY` is still applied to all protected tables (see §5) as defense in
-depth, but the primary guarantee is that `them_owner` cannot be used by the running application.
+`FORCE ROW LEVEL SECURITY` is applied to all tenant-scoped tables as defense in depth. It
+overrides the table-owner bypass but does NOT override the BYPASSRLS role attribute.
 
-#### FORCE ROW LEVEL SECURITY and BYPASSRLS interaction
+#### FORCE ROW LEVEL SECURITY and BYPASSRLS — correct interaction
 
-The Postgres documentation states clearly:
+| Mechanism | What it overrides | What it does NOT override |
+|---|---|---|
+| `ENABLE ROW LEVEL SECURITY` | Normal table access by non-owners | Table owner implicit bypass; BYPASSRLS roles |
+| `FORCE ROW LEVEL SECURITY` | Table owner implicit bypass | BYPASSRLS role attribute |
 
-> Superusers and roles with the `BYPASSRLS` attribute always bypass the row security system,
-> including both `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY`.
+Roles with `BYPASSRLS` (like `them_admin`) skip all RLS unconditionally, regardless of
+`FORCE ROW LEVEL SECURITY`. This is intentional — `them_admin` is the designated bypass role.
 
-`FORCE ROW LEVEL SECURITY` overrides the owner bypass, **but it does not override `BYPASSRLS`.**
-This means `them_admin` (which has BYPASSRLS) will always bypass RLS regardless of FORCE. This
-is intentional: `them_admin` is the designated bypass role. `them_app` has no BYPASSRLS, so
-FORCE is irrelevant to it — it is subject to RLS unconditionally.
+### 4.3 Migration path
 
-`FORCE ROW LEVEL SECURITY` is applied anyway to protect against accidental direct connections
-using `them_owner` credentials (e.g. a misconfigured migration tool, a DBA testing something).
+1. Create `them_owner` (NOLOGIN, NOBYPASSRLS, NOCREATEDB, NOCREATEROLE).
+2. Create `them_admin` (LOGIN, BYPASSRLS, NOCREATEDB, NOCREATEROLE, NOSUPERUSER).
+3. Create `them_app` (LOGIN, NOBYPASSRLS, NOCREATEDB, NOCREATEROLE, NOSUPERUSER).
+4. Transfer ownership of all `them.*` tables to `them_owner`.
+5. Apply minimal grants (§4.4).
+6. Revoke SUPERUSER from the `them` role; retire it after DSN migration.
+7. Add `THEM_DB_URL_APP` and `THEM_DB_URL_ADMIN` to `generate-env.sh`. Never commit.
 
-### 4.3 Migration path for the current `them` role
+### 4.4 Minimal grants for `them_app`
 
-1. Create `them_owner` with NOLOGIN, grant it ownership of all tables.
-2. Create `them_admin` with LOGIN, BYPASSRLS, no SUPERUSER.
-3. Create `them_app` with LOGIN, no BYPASSRLS, no SUPERUSER.
-4. Transfer table ownership: `ALTER TABLE them.<table> OWNER TO them_owner;` (all 32 tables).
-5. Grant DML to `them_app` on tenant-scoped tables only (§4.5).
-6. Grant ALL on all tables to `them_admin`.
-7. Grant USAGE on schema `them` and `auth_service` to both `them_app` and `them_admin`.
-8. Revoke SUPERUSER from `them` and eventually retire it (after DSN migration).
-9. Add `THEM_DB_URL_APP` and `THEM_DB_URL_ADMIN` secrets. Never commit these.
-
-### 4.4 FORCE ROW LEVEL SECURITY
+Exact privileges per table. No blanket `ALL` or unnecessary operations.
 
 ```sql
--- Applied to all tenant-scoped tables listed in §5.1:
-ALTER TABLE them.<table> FORCE ROW LEVEL SECURITY;
-```
-
-This ensures that even if table DDL must be modified by `them_owner` during maintenance, an
-accidental `them_owner` connection cannot read or write rows from all tenants without explicit
-awareness.
-
-### 4.5 Minimal grants for `them_app`
-
-```sql
--- Tenant-scoped tables: SELECT, INSERT, UPDATE, DELETE
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.agents TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.orchestrators TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.applications TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.entry_points TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.access_tokens TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.runs TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.run_steps TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.run_usage TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.run_artifacts TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.tasks TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.task_messages TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.artifacts TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.mcp_servers TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.access_tokens TO them_app;
+-- Full tenant-scoped DML:
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.agents            TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.orchestrators     TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.applications      TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.entry_points      TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.access_tokens     TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.runs              TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.run_steps         TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.run_usage         TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.run_artifacts     TO them_app;
+GRANT SELECT, INSERT, UPDATE    ON them.tasks                  TO them_app;  -- no DELETE
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.task_messages     TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.artifacts         TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.mcp_servers       TO them_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON them.agent_definitions TO them_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON them.agent_runtime_specs TO them_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON them.application_definitions TO them_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON them.managed_app_bindings TO them_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON them.tenant_group_mappings TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.audit_logs TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.quarantine_artifacts TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.middleware_jobs TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.middleware_audit TO them_app;
--- Application-child tables (no direct tenant_id, protected via parent):
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.app_agent_bindings TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.app_orchestrators TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.app_mcp_credentials TO them_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON them.middleware_wirings TO them_app;
--- Read-only reference tables needed by app runtime:
-GRANT SELECT ON them.llm_providers TO them_app;   -- platform rows visible via split policy
-GRANT SELECT ON them.tenants TO them_app;         -- membership lookups at login
--- them_app must NOT have access to: config, schema_migrations, managed_apps, managed_app_params,
--- component_definitions (builtin), middleware_defs (builtin), tenant_quotas (admin-only)
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.component_definitions TO them_app; -- RLS enforces per-cmd
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.app_agent_bindings   TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.app_orchestrators    TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.app_mcp_credentials  TO them_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON them.middleware_wirings    TO them_app;
 
--- Sequences for SERIAL/BIGSERIAL columns:
+-- Restricted operations:
+GRANT SELECT, INSERT        ON them.quarantine_artifacts TO them_app; -- no UPDATE/DELETE
+GRANT INSERT                ON them.audit_logs           TO them_app; -- write-only
+GRANT INSERT                ON them.middleware_jobs      TO them_app; -- gateway enqueue only
+
+-- Read-only reference:
+GRANT SELECT ON them.llm_providers  TO them_app; -- split RLS policy (§5.3)
+GRANT SELECT ON them.middleware_defs TO them_app; -- builtins only; no RLS policy needed
+
+-- them_app has NO access to:
+--   them.tenants (resolved at login via admin path; not needed during request)
+--   them.tenant_quotas (admin-only)
+--   them.config (platform-global)
+--   them.schema_migrations (internal)
+--   them.managed_apps / managed_app_params (platform-global)
+
+-- Sequences:
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA them TO them_app;
 
--- Schema access:
+-- Schema:
 GRANT USAGE ON SCHEMA them TO them_app;
 GRANT USAGE ON SCHEMA them TO them_admin;
-GRANT USAGE ON SCHEMA auth_service TO them_admin;  -- authserver needs auth_service reads
+GRANT USAGE ON SCHEMA auth_service TO them_admin;
+
+-- them_admin: full DML on everything (BYPASSRLS; policies don't apply):
+GRANT ALL ON ALL TABLES IN SCHEMA them TO them_admin;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA them TO them_admin;
+GRANT ALL ON ALL TABLES IN SCHEMA auth_service TO them_admin;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA auth_service TO them_admin;
 ```
 
-### 4.6 Verification queries (run after role setup, before enabling RLS)
+### 4.5 Verification queries
 
 ```sql
--- Confirm them_app has no BYPASSRLS:
-SELECT rolbypassrls FROM pg_roles WHERE rolname = 'them_app';
--- Expected: f
+SELECT rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = 'them_app';
+-- Expected: f, t
 
--- Confirm them_owner has NOLOGIN:
-SELECT rolcanlogin FROM pg_roles WHERE rolname = 'them_owner';
--- Expected: f
+SELECT rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = 'them_owner';
+-- Expected: f, f
 
--- Confirm table ownership transferred:
-SELECT tableowner FROM pg_tables WHERE tablename = 'agents' AND schemaname = 'them';
+SELECT rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = 'them_admin';
+-- Expected: t, t
+
+SELECT tableowner FROM pg_tables WHERE schemaname = 'them' AND tablename = 'agents';
 -- Expected: them_owner
-
--- Confirm them_app can connect but not bypass:
--- (Connect as them_app, try SELECT FROM them.agents without set_config)
--- Expected: 0 rows (once RLS is enabled)
 ```
-
-### 4.7 Connection pool split in Go
-
-`go/internal/db/db.go` currently creates one pool. After Step 19 it creates two:
-
-```go
-type Pools struct {
-    App   *pgxpool.Pool  // them_app role — tenant-scoped ops
-    Admin *pgxpool.Pool  // them_admin role — admin/platform/cross-tenant ops
-}
-
-func (p *Pools) BeginTenantTx(ctx context.Context, tenantID string) (*TenantTx, error)
-func (p *Pools) NewAdminQuerier() AdminQuerier
-```
-
-`BeginTenantTx` always uses `Pools.App`.
-`NewAdminQuerier` always uses `Pools.Admin`.
-
-The two DSNs are read from separate environment variables and derived from `secrets.local`
-via `generate-env.sh`. They are never committed.
 
 ---
 
 ## 5. RLS Policies
 
-### 5.1 Full table classification
+### 5.1 Principle: FK provides no implicit RLS protection
 
-Every table in the `them` schema is classified. The classification is the authoritative record
-— the previous document's claim that FK relationships provide implicit protection is incorrect
-and is retracted here.
+A foreign key from `run_steps.run_id → runs.id` does not cause Postgres to consult `runs`
+policies when querying `run_steps`. Each table's rows are filtered by policies on **that table
+only**. Every child table in this design gets an explicit RLS policy or has them_app access
+revoked entirely.
 
-#### Child tables: FK does NOT provide implicit RLS protection
+### 5.2 Full table classification
 
-A foreign key from `run_steps.run_id → runs.id` does not cause Postgres to apply the RLS
-policy on `runs` when querying `run_steps`. Each table's rows are visible according to
-policies on **that table**, not its parents. A query `SELECT * FROM them.run_steps` by `them_app`
-with no `app.tenant_id` set returns all rows — the runs RLS policy is not consulted.
+| Table | tenant_id | RLS strategy | See |
+|---|---|---|---|
+| `agents` | NOT NULL | Standard direct policy | §5.4 |
+| `orchestrators` | NOT NULL | Standard | §5.4 |
+| `applications` | NOT NULL | Standard | §5.4 |
+| `entry_points` | NOT NULL | Standard (direct preferred over subquery) | §5.4 |
+| `access_tokens` | NOT NULL | Standard | §5.4 |
+| `runs` | NOT NULL | Standard | §5.4 |
+| `run_artifacts` | NOT NULL | Standard | §5.4 |
+| `tasks` | Nullable → backfill required | Standard after backfill | §5.4, Appendix B |
+| `quarantine_artifacts` | NOT NULL | Standard | §5.4 |
+| `agent_definitions` | NOT NULL | Standard | §5.4 |
+| `agent_runtime_specs` | NOT NULL | Standard | §5.4 |
+| `application_definitions` | NOT NULL | Standard | §5.4 |
+| `managed_app_bindings` | NOT NULL | Standard | §5.4 |
+| `audit_logs` | Nullable (NULL = platform event) | Standard; NULL rows visible only to admin | §5.4 |
+| `mcp_servers` | NOT NULL | Standard | §5.4 |
+| `tenant_group_mappings` | NOT NULL | Standard | §5.4 |
+| `llm_providers` | Nullable (NULL = platform) | Split by command | §5.5 |
+| `component_definitions` | Nullable (NULL = builtin) | Per-command split | §5.6 |
+| `run_steps` | None (→ run_id → runs) | EXISTS via runs | §5.7 |
+| `run_usage` | None (→ run_id → runs) | EXISTS via runs | §5.7 |
+| `artifacts` | None (→ task_id → tasks) | EXISTS via tasks | §5.7 |
+| `task_messages` | None (→ task_id → tasks) | EXISTS via tasks | §5.7 |
+| `middleware_audit` | None (→ artifact_id → run_artifacts) | EXISTS via run_artifacts | §5.7 |
+| `app_agent_bindings` | None (→ application_id → applications) | EXISTS via applications | §5.7 |
+| `app_orchestrators` | None (→ application_id) | EXISTS via applications | §5.7 |
+| `app_mcp_credentials` | None (→ application_id) | EXISTS via applications | §5.7 |
+| `middleware_wirings` | None (→ application_id) | EXISTS via applications | §5.7 |
+| `middleware_jobs` | None (→ application_id) | INSERT-only policy for them_app | §5.8 |
+| `managed_app_params` | None (→ managed app) | No them_app grants | §4.4 |
+| `tenants` | N/A | No RLS; them_app has no grants | §4.4 |
+| `tenant_quotas` | PK=tenant_id | No RLS; them_app has no grants | §4.4 |
+| `config` | None | No RLS; them_app has no grants | §4.4 |
+| `schema_migrations` | None | No RLS; them_app has no grants | §4.4 |
+| `middleware_defs` | None | No RLS; them_app has SELECT only | §4.4 |
 
-For each child table (no direct `tenant_id`), the design explicitly chooses one of:
-1. **Direct `tenant_id` + RLS policy** — add the column if missing, enable a direct policy.
-2. **EXISTS-based RLS policy through parent** — policy uses a subquery join.
-3. **Revoke direct `them_app` access** — `them_app` has no grants on this table; it can only
-   reach the rows via a parent query that already applies RLS.
+### 5.3 FORCE ROW LEVEL SECURITY
 
-#### Table classification table
+Applied to every table where them_app has grants and a policy exists:
+```sql
+ALTER TABLE them.<table> ENABLE ROW LEVEL SECURITY;
+ALTER TABLE them.<table> FORCE ROW LEVEL SECURITY;
+```
 
-| Table | `tenant_id` | Direct RLS | Protection strategy | Notes |
-|---|---|---|---|---|
-| `them.agents` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.orchestrators` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.applications` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.entry_points` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | Has both `tenant_id` AND `application_id`; direct policy preferred over subquery |
-| `them.access_tokens` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.runs` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.run_artifacts` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.tasks` | YES (nullable → backfill required) | YES — after backfill | Direct `tenant_id` | NULL rows must be backfilled before policy is created |
-| `them.quarantine_artifacts` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.agent_definitions` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.agent_runtime_specs` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.application_definitions` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.component_definitions` | YES (nullable; NULL = builtin) | Partial — tenant rows only | EXISTS policy for tenant rows; builtin rows excluded | See §5.4 |
-| `them.managed_app_bindings` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.audit_logs` | YES (nullable) | YES — after backfill if needed | Direct `tenant_id` (nullable OK with NULLIF expression) | NULLs = platform audit; policies pass NULL through safely |
-| `them.mcp_servers` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.llm_providers` | YES (nullable; NULL = platform) | Partial — split policy | Read: own rows OR NULL rows; Write: own rows only | See §5.3 |
-| `them.tenant_group_mappings` | YES (NOT NULL) | YES — standard policy | Direct `tenant_id` | |
-| `them.run_steps` | NO (scoped via `run_id`) | YES — EXISTS via runs | EXISTS subquery | See §5.5 |
-| `them.run_usage` | NO (scoped via `run_id`) | YES — EXISTS via runs | EXISTS subquery | See §5.5 |
-| `them.artifacts` | NO (scoped via `task_id`) | YES — EXISTS via tasks | EXISTS subquery | See §5.5 |
-| `them.task_messages` | NO (scoped via `task_id`) | YES — EXISTS via tasks | EXISTS subquery | See §5.5 |
-| `them.middleware_audit` | NO (scoped via `artifact_id`) | YES — EXISTS via run_artifacts | EXISTS subquery | See §5.5 |
-| `them.app_agent_bindings` | NO (scoped via `application_id`) | YES — EXISTS via applications | EXISTS subquery | See §5.5 |
-| `them.app_orchestrators` | NO (scoped via `application_id`) | YES — EXISTS via applications | EXISTS subquery | See §5.5 |
-| `them.app_mcp_credentials` | NO (scoped via `application_id`) | YES — EXISTS via applications | EXISTS subquery | See §5.5 |
-| `them.middleware_wirings` | NO (scoped via `application_id`) | YES — EXISTS via applications | EXISTS subquery | See §5.5 |
-| `them.middleware_jobs` | NO (scoped via `application_id`) | **Revoke them_app + AdminQuerier** | See §5.6 | Worker path is cross-tenant by design |
-| `them.managed_app_params` | NO (FK to managed app) | **Revoke them_app** | them_app has no grants | Managed apps are platform-global; only them_admin writes params |
-| `them.tenants` | N/A (IS the tenant table) | No RLS | No policy needed | them_app has SELECT only for reference lookups |
-| `them.tenant_quotas` | YES (PK = tenant_id) | No RLS needed | them_app has no grants | Admin-only management; enforcement via Redis/service layer |
-| `them.config` | NO | No RLS | them_app has no grants | Platform-global |
-| `them.schema_migrations` | NO | No RLS | them_app has no grants | Internal |
-| `them.middleware_defs` | NO (builtin only in practice) | No RLS | them_app has SELECT only | Builtin definitions; no tenant-specific rows today |
+FORCE overrides the table-owner bypass (them_owner). It does NOT affect them_admin (BYPASSRLS).
 
-### 5.2 Standard policy template
+### 5.4 Standard direct policy
 
 ```sql
 ALTER TABLE them.<table> ENABLE ROW LEVEL SECURITY;
@@ -752,90 +557,78 @@ CREATE POLICY <table>_tenant_isolation ON them.<table>
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 ```
 
-The `TO them_app` clause limits the policy to the runtime role. `them_admin` (BYPASSRLS) is
-never subject to this policy. No policy is needed for `them_admin` — BYPASSRLS skips all
-policies unconditionally.
+`TO them_app` limits the policy to the app role. them_admin (BYPASSRLS) is never subject to it.
 
-### 5.3 Split policy: `them.llm_providers`
-
-`llm_providers` has rows where `tenant_id IS NULL` (platform defaults) and rows where
-`tenant_id = <uuid>` (tenant overrides). `them_app` needs to read both, but may only write
-its own rows:
+### 5.5 Split policy: `them.llm_providers`
 
 ```sql
 ALTER TABLE them.llm_providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE them.llm_providers FORCE ROW LEVEL SECURITY;
 
--- Read: tenant's own rows OR platform defaults (NULL tenant_id)
-CREATE POLICY llm_providers_read ON them.llm_providers
-    AS PERMISSIVE
-    FOR SELECT
-    TO them_app
+-- SELECT: tenant's own rows OR platform defaults
+CREATE POLICY llm_providers_select ON them.llm_providers AS PERMISSIVE FOR SELECT TO them_app
     USING (
         tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
         OR tenant_id IS NULL
     );
 
--- Write: tenant may only write its own rows
-CREATE POLICY llm_providers_write ON them.llm_providers
-    AS PERMISSIVE
-    FOR INSERT
-    TO them_app
+-- INSERT: tenant rows only (no platform rows)
+CREATE POLICY llm_providers_insert ON them.llm_providers AS PERMISSIVE FOR INSERT TO them_app
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
-CREATE POLICY llm_providers_update ON them.llm_providers
-    AS PERMISSIVE
-    FOR UPDATE
-    TO them_app
+-- UPDATE: tenant's own rows only
+CREATE POLICY llm_providers_update ON them.llm_providers AS PERMISSIVE FOR UPDATE TO them_app
     USING      (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
-CREATE POLICY llm_providers_delete ON them.llm_providers
-    AS PERMISSIVE
-    FOR DELETE
-    TO them_app
+-- DELETE: tenant's own rows only
+CREATE POLICY llm_providers_delete ON them.llm_providers AS PERMISSIVE FOR DELETE TO them_app
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 ```
 
-Platform default rows (NULL tenant_id) are created and deleted only by `them_admin`.
+### 5.6 Per-command policies: `them.component_definitions`
 
-### 5.4 Partial policy: `them.component_definitions`
-
-`component_definitions` has `scope = 'builtin'` (NULL tenant_id) and `scope = 'tenant'`
-rows (tenant_id NOT NULL). `them_app` needs to read builtin definitions but may only
-read/write its own tenant definitions:
+A single combined policy is insufficient here. `USING` in a combined policy matches rows for
+the command's scope — builtins (tenant_id IS NULL) would be visible to UPDATE and DELETE via
+USING, allowing modification of non-key columns or deletion unless blocked by WITH CHECK.
+WITH CHECK does not apply to DELETE. Four separate policies are required:
 
 ```sql
 ALTER TABLE them.component_definitions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE them.component_definitions FORCE ROW LEVEL SECURITY;
 
-CREATE POLICY component_definitions_access ON them.component_definitions
-    AS PERMISSIVE
-    TO them_app
+-- SELECT: tenant's own rows + builtins
+CREATE POLICY component_definitions_select ON them.component_definitions
+    AS PERMISSIVE FOR SELECT TO them_app
     USING (
-        tenant_id IS NULL  -- builtins always visible
+        tenant_id IS NULL
         OR tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-    )
-    WITH CHECK (
-        tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
     );
+
+-- INSERT: tenant rows only (never builtins)
+CREATE POLICY component_definitions_insert ON them.component_definitions
+    AS PERMISSIVE FOR INSERT TO them_app
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+
+-- UPDATE: only tenant's own rows; result must remain tenant's own rows
+CREATE POLICY component_definitions_update ON them.component_definitions
+    AS PERMISSIVE FOR UPDATE TO them_app
+    USING      (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+
+-- DELETE: only tenant's own rows (builtins protected via USING)
+CREATE POLICY component_definitions_delete ON them.component_definitions
+    AS PERMISSIVE FOR DELETE TO them_app
+    USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 ```
 
-Builtin rows (tenant_id IS NULL) cannot be written by `them_app` (WITH CHECK rejects NULL).
+### 5.7 EXISTS-based policies for child tables
 
-### 5.5 EXISTS-based policies for child tables
-
-For child tables with no direct `tenant_id`, the policy uses an EXISTS subquery. This is
-checked once per row and indexed on the parent's `tenant_id` column.
-
-**`them.run_steps` (parent: `them.runs`)**
 ```sql
+-- run_steps (parent: runs)
 ALTER TABLE them.run_steps ENABLE ROW LEVEL SECURITY;
 ALTER TABLE them.run_steps FORCE ROW LEVEL SECURITY;
-
-CREATE POLICY run_steps_tenant_isolation ON them.run_steps
-    AS PERMISSIVE
-    TO them_app
+CREATE POLICY run_steps_tenant_isolation ON them.run_steps AS PERMISSIVE TO them_app
     USING (EXISTS (
         SELECT 1 FROM them.runs r
         WHERE r.id = run_steps.run_id
@@ -846,451 +639,366 @@ CREATE POLICY run_steps_tenant_isolation ON them.run_steps
         WHERE r.id = run_steps.run_id
           AND r.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
     ));
+
+-- run_usage: identical pattern (run_id → runs)
+-- artifacts: task_id → tasks
+-- task_messages: task_id → tasks
+-- middleware_audit: artifact_id → run_artifacts
+-- app_agent_bindings, app_orchestrators, app_mcp_credentials, middleware_wirings:
+--   application_id → applications
 ```
 
-**`them.run_usage` (parent: `them.runs`)** — identical pattern, `run_usage.run_id → runs.id`.
+Full SQL for each follows the same template. Verify with `EXPLAIN` after enablement — the
+planner should use an index scan on the parent FK column, not a seq scan.
 
-**`them.artifacts` (parent: `them.tasks`)**
+### 5.8 `them.middleware_jobs` — INSERT-only for them_app, full admin access for worker
+
+The gateway enqueues jobs in a tenant-aware request context → uses `TenantTx` (them_app).
+The worker claims and processes jobs cross-tenant → uses `AdminQuerier`/`AdminTx` (them_admin).
+
 ```sql
-CREATE POLICY artifacts_tenant_isolation ON them.artifacts
-    AS PERMISSIVE
-    TO them_app
-    USING (EXISTS (
-        SELECT 1 FROM them.tasks t
-        WHERE t.id = artifacts.task_id
-          AND t.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-    ))
-    WITH CHECK (EXISTS (
-        SELECT 1 FROM them.tasks t
-        WHERE t.id = artifacts.task_id
-          AND t.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-    ));
-```
+ALTER TABLE them.middleware_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE them.middleware_jobs FORCE ROW LEVEL SECURITY;
 
-**`them.task_messages`** — identical pattern, `task_messages.task_id → tasks.id`.
-
-**`them.middleware_audit` (parent: `them.run_artifacts`)**
-```sql
-CREATE POLICY middleware_audit_tenant_isolation ON them.middleware_audit
-    AS PERMISSIVE
-    TO them_app
-    USING (EXISTS (
-        SELECT 1 FROM them.run_artifacts ra
-        WHERE ra.id = middleware_audit.artifact_id
-          AND ra.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-    ))
-    WITH CHECK (EXISTS (
-        SELECT 1 FROM them.run_artifacts ra
-        WHERE ra.id = middleware_audit.artifact_id
-          AND ra.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-    ));
-```
-
-**`them.app_agent_bindings` (parent: `them.applications`)**
-```sql
-CREATE POLICY app_agent_bindings_tenant_isolation ON them.app_agent_bindings
-    AS PERMISSIVE
-    TO them_app
-    USING (EXISTS (
-        SELECT 1 FROM them.applications a
-        WHERE a.id = app_agent_bindings.application_id
-          AND a.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-    ))
+-- them_app may only insert jobs for its own applications
+CREATE POLICY middleware_jobs_enqueue ON them.middleware_jobs
+    AS PERMISSIVE FOR INSERT TO them_app
     WITH CHECK (EXISTS (
         SELECT 1 FROM them.applications a
-        WHERE a.id = app_agent_bindings.application_id
+        WHERE a.id = middleware_jobs.application_id
           AND a.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
     ));
+
+-- No SELECT/UPDATE/DELETE policy for them_app. Worker uses them_admin (BYPASSRLS).
 ```
 
-**`them.app_orchestrators`**, **`them.app_mcp_credentials`**, **`them.middleware_wirings`**
-— identical pattern through `application_id → applications.tenant_id`.
+them_app has INSERT only on middleware_jobs (§4.4). them_admin has full DML (BYPASSRLS).
 
-Performance note: all EXISTS subqueries join on a single-column FK that is indexed (`application_id`,
-`run_id`, `task_id` all have explicit indexes). The planner uses an index scan on the parent table
-rather than a seq scan. Verify with `EXPLAIN` after enablement.
+### 5.9 Fail-closed behavior summary
 
-### 5.6 `them.middleware_jobs` — revoke direct `them_app` access
-
-`middleware_jobs` is accessed in two contexts:
-- **Gateway** (when a file is intercepted): inserts one row via `EnqueueWithQuarantine`. This
-  happens inside a tenant-aware request context, but the middleware worker is the primary
-  consumer and it is cross-tenant.
-- **Middleware worker** (Claim, Complete, Fail): reads the next pending job from any tenant —
-  intentionally cross-tenant.
-
-To avoid a split policy that is hard to reason about, `middleware_jobs` uses the AdminQuerier
-path exclusively. `them_app` **is not granted** DML on `middleware_jobs`. The gateway's enqueue
-call is moved to use `Pools.Admin` via `AdminQuerier`. No RLS policy is created for this table.
-This is safe because all writes include `application_id` and `run_id`, and the middleware worker
-is a trusted internal component.
-
-### 5.7 Cross-tenant access — preferred approach
-
-The design avoids `SECURITY DEFINER` functions as the primary bypass mechanism. The reasons:
-- SECURITY DEFINER functions run with the definer's privileges, not the caller's — they are
-  hard to audit and can silently elevate privilege in unexpected ways.
-- The `them_admin` role with BYPASSRLS on a separate pool is simpler, auditable (all admin
-  queries go through one pool), and equally secure.
-
-The `them_admin` pool is the designated mechanism for all legitimate cross-tenant operations.
-No SECURITY DEFINER functions are introduced in Step 19.
-
-### 5.8 Behavior when `app.tenant_id` is missing or invalid
-
-| Scenario | SELECT | INSERT/UPDATE | Notes |
+| State | SELECT | INSERT/UPDATE | Notes |
 |---|---|---|---|
-| GUC not set (fresh connection) | 0 rows | Rejected by WITH CHECK | Fail-closed |
-| GUC is `''` (reset after tx end) | 0 rows | Rejected by WITH CHECK | Fail-closed |
-| GUC is valid UUID, no matching rows | 0 rows | Allowed (correct tenant) | Normal |
-| GUC is valid UUID, mismatched tenant | 0 rows | Rejected | Cross-tenant attempt |
-| GUC is invalid UUID string | Query error | Query error | Bug — UUID validation in BeginTenantTx prevents this |
-| them_admin role (BYPASSRLS) | All rows | Allowed | Intentional bypass |
+| GUC not set / empty string | 0 rows | Rejected | Fail-closed |
+| Valid UUID, wrong tenant | 0 rows | Rejected | Cross-tenant blocked |
+| Valid UUID, correct tenant | Matching rows | Allowed | Normal |
+| them_admin (BYPASSRLS) | All rows | Allowed | Intentional bypass |
 
 ---
 
 ## 6. Test Plan
 
-### 6.1 Separation of unit tests and integration tests
+### 6.1 Test infrastructure requirements
 
-**Unit tests** (no live DB) can verify:
-- `TenantTx` and `adminQuerier` implement the correct marker interfaces.
-- `BeginTenantTx` returns an error when `pool.Begin` fails (mock).
-- `BeginTenantTx` rolls back and returns error when `set_config` fails (mock).
-- Deferred `Rollback` after `Commit` does not panic (pgx.ErrTxClosed is ignored).
-- DAL functions that accept `TenantQuerier` do not compile when given a raw pool or `AdminQuerier`.
-- DAL functions that accept `AdminQuerier` do not compile when given a `TenantTx`.
+**Integration tests use real production schema.** Tests run against a live Postgres instance
+that has been initialized with the actual `db/001_schema.sql` + all numbered migrations + the
+production migration that creates `them_owner`, `them_admin`, `them_app` and applies the grants
+from §4.4. Tests must NOT create their own ad-hoc tables or roles — the test schema must match
+production exactly.
 
-**Unit tests cannot verify:**
-- That RLS policies actually filter rows.
-- That `FORCE ROW LEVEL SECURITY` applies to `them_owner`.
-- That connection reuse is safe.
-- Any behavior that depends on real Postgres RLS semantics.
+**Build tag:** `integration`. Location: `go/internal/db/rls_integration_test.go`.
 
-All RLS correctness tests must run against a live Postgres instance using the actual restricted
-roles.
+**Unit tests** (no live DB) cover:
+- `TenantTx` and `adminQuerier` implement the correct dbtype interfaces.
+- `BeginTenantTx` returns error and rolls back when set_config fails (mock pool).
+- Deferred Rollback with cancelled context uses cleanup context (does not hang).
+- DAL function type mismatches fail at compile time (verified by `go build ./...`).
 
-### 6.2 Integration tests (build tag `integration`)
-
-Location: `go/internal/db/rls_integration_test.go`
-
-Test setup: creates `them_app` and `them_admin` roles; creates a minimal schema with one
-tenant-scoped table and one child table; inserts rows for two tenants.
+### 6.2 Integration test table
 
 #### Direct-tenant-id table tests
 
-| Test ID | Description | Assertion |
+| ID | Description | Assertion |
 |---|---|---|
-| RLS-01 | TenantTx for tenant-A: SELECT agents | Only tenant-A rows returned |
-| RLS-02 | TenantTx for tenant-B: SELECT agents | Only tenant-B rows returned |
-| RLS-03 | TenantTx for tenant-A: SELECT by ID where row is tenant-B's | 0 rows (not error) |
-| RLS-04 | TenantTx for tenant-A: INSERT row with tenant_id = tenant-B | WITH CHECK error |
-| RLS-05 | TenantTx for tenant-A: UPDATE row owned by tenant-B | 0 rows updated |
-| RLS-06 | TenantTx for tenant-A: DELETE row owned by tenant-B | 0 rows deleted |
-| RLS-07 | AdminQuerier: SELECT all agents (no app.tenant_id set) | All rows returned |
-| RLS-08 | Missing context: raw pool.Query (no BeginTenantTx) | 0 rows (fail-closed) |
-| RLS-09 | Empty string safe: app.tenant_id = '' explicitly set | 0 rows (fail-closed) |
+| RLS-01 | TenantTx for tenant-A: SELECT agents | Only tenant-A rows |
+| RLS-02 | TenantTx for tenant-B: SELECT agents | Only tenant-B rows |
+| RLS-03 | TenantTx for tenant-A: SELECT agent owned by tenant-B | 0 rows |
+| RLS-04 | TenantTx for tenant-A: INSERT agent with tenant_id = tenant-B | WITH CHECK error |
+| RLS-05 | TenantTx for tenant-A: UPDATE agent owned by tenant-B | 0 rows updated |
+| RLS-06 | TenantTx for tenant-A: DELETE agent owned by tenant-B | 0 rows deleted |
+| RLS-07 | AdminQuerier: SELECT all agents (no set_config) | All rows returned |
+| RLS-08 | them_app raw pool query without BeginTenantTx | 0 rows (fail-closed) |
+| RLS-09 | them_app with app.tenant_id explicitly set to '' | 0 rows (fail-closed) |
 
-#### Fresh and reused connection tests
+#### Connection reuse tests — MaxConns=1 pool required
 
-| Test ID | Description | Assertion |
+Tests RLS-10 through RLS-15 must use a pgxpool configured with `MaxConns: 1` to guarantee
+physical connection reuse. Without this, a test may happen to get a fresh connection, pass
+accidentally, and fail to verify actual GUC isolation.
+
+| ID | Description | Assertion |
 |---|---|---|
-| RLS-10 | Fresh connection from pool with no prior GUC: SELECT | 0 rows without BeginTenantTx |
-| RLS-11 | After tx-A commits (tenant-A): new query on same physical connection | app.tenant_id is '' — 0 rows without new BeginTenantTx |
-| RLS-12 | Back-to-back tx-A (tenant-A) → tx-B (tenant-B) on same connection | tx-B sees only tenant-B rows |
-| RLS-13 | Rollback: tx opened for tenant-A, rolled back; tx-B on same connection | tx-B sees only tenant-B rows |
-| RLS-14 | Panic + recover: deferred Rollback fires; next tx on same connection | Correct isolation |
-| RLS-15 | Context cancelled mid-query: deferred Rollback fires cleanly | No error, no leaked GUC |
+| RLS-10 | Fresh connection, no set_config: SELECT | 0 rows (fail-closed) |
+| RLS-11 | tx-A (tenant-A) commits; raw query on same connection | 0 rows (GUC reset to '') |
+| RLS-12 | tx-A (tenant-A) then tx-B (tenant-B) on same connection | tx-B sees only tenant-B rows |
+| RLS-13 | tx-A rolled back; tx-B on same connection | tx-B sees only tenant-B rows |
+| RLS-14 | Panic + recover inside tx-A; deferred Rollback fires; tx-B on same connection | Correct isolation |
+| RLS-15 | Context cancelled mid-query; expect context.Canceled from query; new ctx tx-B sees no leaked GUC | GUC not leaked; tx-B isolated |
+
+RLS-15 specifically: cancel context, confirm the query returns `context.Canceled` (or
+`context.DeadlineExceeded`), then open a new transaction with a fresh context and verify
+the previous tenant's ID is not visible.
 
 #### Child table tests
 
-| Test ID | Description | Assertion |
+| ID | Description | Assertion |
 |---|---|---|
-| RLS-16 | TenantTx for tenant-A: SELECT run_steps WHERE run_id = tenant-A run | Own run_steps visible |
-| RLS-17 | TenantTx for tenant-A: SELECT run_steps WHERE run_id = tenant-B run | 0 rows |
-| RLS-18 | TenantTx for tenant-A: INSERT run_steps with tenant-B run_id | WITH CHECK error (exists subquery blocks) |
-| RLS-19 | TenantTx for tenant-A: SELECT run_usage for tenant-B run | 0 rows |
-| RLS-20 | TenantTx for tenant-A: SELECT artifacts for tenant-B task | 0 rows |
-| RLS-21 | TenantTx for tenant-A: SELECT task_messages for tenant-B task | 0 rows |
-| RLS-22 | TenantTx for tenant-A: SELECT middleware_audit for tenant-B artifact | 0 rows |
-| RLS-23 | TenantTx for tenant-A: SELECT app_agent_bindings for tenant-B application | 0 rows |
-| RLS-24 | TenantTx for tenant-A: SELECT app_orchestrators for tenant-B application | 0 rows |
+| RLS-16 | TenantTx-A: SELECT run_steps for tenant-A run | Own steps visible |
+| RLS-17 | TenantTx-A: SELECT run_steps for tenant-B run | 0 rows |
+| RLS-18 | TenantTx-A: INSERT run_steps with tenant-B run_id | EXISTS subquery blocks — error |
+| RLS-19 | TenantTx-A: run_usage for tenant-B run | 0 rows |
+| RLS-20 | TenantTx-A: artifacts for tenant-B task | 0 rows |
+| RLS-21 | TenantTx-A: task_messages for tenant-B task | 0 rows |
+| RLS-22 | TenantTx-A: middleware_audit for tenant-B artifact | 0 rows |
+| RLS-23 | TenantTx-A: app_agent_bindings for tenant-B application | 0 rows |
+| RLS-24 | TenantTx-A: app_orchestrators for tenant-B application | 0 rows |
 
-#### Split-policy and special-case tests
+#### Split and per-command policy tests
 
-| Test ID | Description | Assertion |
+| ID | Description | Assertion |
 |---|---|---|
-| RLS-25 | llm_providers: tenant-A reads own rows AND platform (NULL) rows | Both visible |
-| RLS-26 | llm_providers: tenant-A cannot INSERT row with tenant_id = NULL | WITH CHECK error |
+| RLS-25 | llm_providers: tenant-A reads own + platform (NULL) rows | Both visible |
+| RLS-26 | llm_providers: tenant-A INSERT row with tenant_id = NULL | WITH CHECK error |
 | RLS-27 | llm_providers: tenant-A cannot read tenant-B rows | 0 rows |
 | RLS-28 | component_definitions: tenant-A reads own + builtin rows | Both visible |
-| RLS-29 | component_definitions: tenant-A cannot INSERT builtin (NULL tenant_id) | WITH CHECK error |
+| RLS-28b | component_definitions: tenant-A UPDATE a builtin row | 0 rows affected (USING blocks) |
+| RLS-28c | component_definitions: tenant-A DELETE a builtin row | 0 rows deleted (USING blocks) |
+| RLS-28d | component_definitions: tenant-A UPDATE own row to set tenant_id = NULL | WITH CHECK error |
+| RLS-28e | component_definitions: tenant-A INSERT builtin (NULL tenant_id) | WITH CHECK error |
+| RLS-29 | middleware_jobs: tenant-A INSERT job for own application | Succeeds |
+| RLS-29b | middleware_jobs: tenant-A INSERT job for tenant-B application | EXISTS check error |
+| RLS-29c | middleware_jobs: tenant-A SELECT middleware_jobs | 0 rows (no SELECT grant) |
 
-#### FORCE ROW LEVEL SECURITY and role tests
+#### Role attribute tests
 
-| Test ID | Description | Assertion |
+| ID | Description | Assertion |
 |---|---|---|
-| RLS-30 | them_app role exists, has no BYPASSRLS | `rolbypassrls = false` |
-| RLS-31 | them_owner role has NOLOGIN | `rolcanlogin = false` |
-| RLS-32 | them_admin role has BYPASSRLS | `rolbypassrls = true` |
-| RLS-33 | them_admin SELECT with no app.tenant_id set: all rows returned | BYPASSRLS confirmed |
+| RLS-30 | them_app: rolbypassrls | false |
+| RLS-31 | them_owner: rolcanlogin | false |
+| RLS-31b | Direct connect attempt as them_owner | Authentication error (NOLOGIN) |
+| RLS-32 | them_admin: rolbypassrls | true |
+| RLS-33 | them_admin SELECT with no set_config | All rows returned (BYPASSRLS confirmed) |
 
-#### Wrong-pool wiring tests
+#### Wrong-pool wiring (compile-time)
 
-| Test ID | Description | Assertion |
+| ID | Description | Assertion |
 |---|---|---|
-| RLS-34 | Passing AdminQuerier to a TenantQuerier-accepting DAL function | Compile error (type mismatch) |
-| RLS-35 | Passing TenantTx to an AdminQuerier-accepting DAL function | Compile error (type mismatch) |
-| RLS-36 | Test fake that accepts TenantQuerier panics when called with raw pool | Runtime panic on misuse |
+| RLS-34 | Pass `AdminQuerier` to tenant-DAL function | Compile error |
+| RLS-35 | Pass `*TenantTx` to admin-DAL function | Compile error |
+| RLS-36 | Pass `*pgxpool.Pool` to either typed DAL function | Compile error |
 
-#### Atomicity and pre-condition tests
+These are verified by `go build ./...` — no runtime test needed.
 
-| Test ID | Description | Assertion |
+#### Atomicity tests
+
+| ID | Description | Assertion |
 |---|---|---|
-| RLS-37 | UpsertManagedAppParams: simulate crash between DELETE and INSERT | After rollback: original params still present (no partial state) |
-| RLS-38 | PublishDefinition: simulate second UPDATE failure | After rollback: first UPDATE not committed |
+| RLS-37 | UpsertManagedAppParams via AdminTx: crash between DELETE and INSERT | Original params intact after rollback |
+| RLS-38 | PublishDefinition via TenantTx: second UPDATE fails | First UPDATE rolled back |
 
-#### Rollout compatibility tests
+#### Deployment ordering / regression detection
 
-| Test ID | Description | Assertion |
+| ID | Description | Assertion |
 |---|---|---|
-| RLS-39 | RLS enabled on agents; old code path without TenantTx queries agents | 0 rows (not crash) — rollout safe |
-| RLS-40 | RLS disabled on table; code using TenantTx queries it | All matching rows returned (not filtered) — backward compatible |
+| RLS-39 | **Deploy ordering violation detector**: old-path query (no TenantTx) after RLS enabled on that table | Returns 0 rows — this is a **BUG**, not "rollout safe." If this test passes, it means RLS was enabled before the caller was migrated. Fix: migrate and redeploy the caller before enabling RLS. |
+| RLS-40 | TenantTx query on table where RLS is NOT YET enabled | Returns all matching rows — expected during migration window |
+
+RLS-39 exists to detect the failure mode: if it triggers (returns 0 rows from an old path),
+the deployment ordering rule was violated. It is not a pass condition.
 
 ### 6.3 Two-tenant full isolation regression test
 
-`TestRLS_TwoTenantFullIsolation` — permanent member of the integration suite:
-1. Creates tenants A and B with agents, orchestrators, applications, runs, run_steps, tasks,
-   artifacts, task_messages, app_agent_bindings, app_orchestrators, mcp_servers.
-2. Reads every tenant-scoped table as tenant-A; asserts zero tenant-B rows.
-3. Reads every tenant-scoped table as tenant-B; asserts zero tenant-A rows.
-4. Attempts cross-tenant INSERT on every RLS-protected table; asserts all are blocked.
+`TestRLS_TwoTenantFullIsolation` is a permanent member of the integration suite:
+1. Inserts rows for two tenants across every RLS-protected table.
+2. As tenant-A, reads every table — asserts zero tenant-B rows in all.
+3. As tenant-B, reads every table — asserts zero tenant-A rows in all.
+4. Attempts cross-tenant INSERT on every protected table — asserts all rejected.
 
-This test is the permanent regression gate. It must pass on every PR that touches the DB layer.
+Must pass on every PR that touches the DB layer.
 
-### 6.4 Fake / mock updates
+### 6.4 Fake helpers
 
-All existing fake `Querier` implementations in test files must be updated:
-- Fakes that currently accept `dal.Querier` in tenant-scoped functions must be updated to
-  accept `TenantQuerier`. If a test passes a raw fake struct (not obtained from
-  `BeginTenantTx`), it must fail loudly (panic or compile error) — not silently succeed.
-- A `FakeTenantTx` test helper is introduced that implements `TenantQuerier` using an in-memory
-  fake, for unit tests that do not need a real DB.
-- A `FakeAdminQuerier` test helper similarly for admin DAL unit tests.
+- `dbtype.FakeTenantQuerier`: implements `dbtype.TenantQuerier` with in-memory row storage.
+  Used in unit tests that don't need a real DB.
+- `dbtype.FakeAdminQuerier`: same for admin DAL unit tests.
+- Both live in `go/internal/dbtype/fake_test.go` (test-only file).
 
 ---
 
 ## 7. PgBouncer Assessment
 
-### 7.1 Is PgBouncer justified independently of RLS?
+### 7.1 Is PgBouncer justified?
 
-A connection capacity problem would justify PgBouncer regardless of RLS. There is currently no
-measured connection exhaustion: the stack has one `them-go-bridge`, one `them-go-worker`, one
-`them-agent-runtime`, one `them-dag-worker`, one `them-middleware-worker`, and one
-`them-auth-go`, each with a default `pgxpool` of up to 4 connections. The database limit is the
-Postgres default of 100. Current utilization is well below that. There is no independently
-measured connection-capacity problem.
+No independent measurement of connection exhaustion exists. The stack has ~6 services, each
+with a pgxpool of up to 4 connections — well below the Postgres default of 100. **PgBouncer
+is out of scope for Step 19.**
 
-**Decision: PgBouncer is out of scope for Step 19 and should be deferred as a separate
-infrastructure project when connection exhaustion is actually measured.**
+### 7.2 pgx/v5 prepared statements and PgBouncer — current facts
 
-### 7.2 pgx/v5 prepared statement behavior (corrected)
+pgx/v5 defaults to `QueryExecModeCacheStatement` (extended query protocol, automatic named
+prepared statement caching). The compatibility with PgBouncer depends on version:
 
-pgx/v5 uses `QueryExecModeCacheStatement` as its default query execution mode. In this mode,
-pgx automatically prepares and caches named statements using the PostgreSQL extended query
-protocol. Named prepared statements are **session-scoped** in Postgres.
+| PgBouncer version | Transaction mode + pgx default | Notes |
+|---|---|---|
+| < 1.21 | Incompatible | Named prepared statements are session-scoped; transaction mode doesn't guarantee same server connection per named statement |
+| ≥ 1.21 | Compatible when `max_prepared_statements > 0` | PgBouncer 1.21+ added protocol-level prepared statement tracking — it proxies Parse/Bind/Execute and maintains a per-server PS cache |
 
-PgBouncer in **transaction mode** (the mode that actually saves connections by multiplexing
-many app connections onto few server connections) does not support session-scoped prepared
-statements. Each transaction can land on a different server connection, so a prepared statement
-created in one transaction is not guaranteed to be present in the next.
-
-The consequence: if PgBouncer in transaction mode is ever added, pgx must be configured with:
+If PgBouncer < 1.21 is ever used, configure pgx with:
 ```go
 cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
-// or
-cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+// or pgx.QueryExecModeDescribeExec
 ```
 
-`SimpleProtocol` uses the simple query protocol (no prepared statements), which is compatible
-with PgBouncer transaction mode. `DescribeExec` describes each query once per pool connection
-but does not hold a named statement — also compatible.
+Current direct-connection setup has no incompatibility. This section is informational only.
 
-This is relevant only if PgBouncer is added in the future. The current direct-connection setup
-with `QueryExecModeCacheStatement` is fully correct and has no incompatibility.
+### 7.3 `set_config` compatibility
 
-### 7.3 `SET LOCAL` / `set_config` compatibility
+`set_config('app.tenant_id', $1, true)` is transaction-scoped. It is compatible with PgBouncer
+transaction mode (each transaction holds the server connection for its duration; GUC resets on
+commit/rollback). Incompatible only with PgBouncer statement mode (no transaction support).
 
-`SET LOCAL` (and `set_config(..., true)`) scopes the GUC strictly to the current transaction.
-It resets on COMMIT or ROLLBACK regardless of connection pooling. Compatibility:
+### 7.4 Advisory locks — PgBouncer blocker
 
-| Pooling mode | Compatible | Notes |
-|---|---|---|
-| No pooler (current) | Yes | |
-| PgBouncer transaction mode | Yes | Each transaction gets a server connection for its duration; GUC resets between |
-| PgBouncer session mode | Yes | Session is persistent; GUC still resets per transaction |
-| PgBouncer statement mode | No | Transactions not supported; incompatible with BEGIN/COMMIT |
-
-If PgBouncer is added, transaction mode is required. Statement mode must never be used with
-this codebase.
-
-### 7.4 Advisory locks
-
-The reconciler uses `pg_try_advisory_lock` / `pg_advisory_unlock` via session-scoped calls on
-a pool connection (not inside a transaction). Session-scoped advisory locks are incompatible
-with PgBouncer transaction mode because the lock is held on a specific server connection, but
-subsequent calls in the same "session" may land on a different server connection.
-
-If PgBouncer is added, the reconciler must migrate to `pg_advisory_xact_lock` (transaction-
-scoped) or use a different distributed lock mechanism. This is a blocker for PgBouncer adoption
-but does not affect Step 19.
-
-### 7.5 `set_config` and the RLS design are PgBouncer-ready
-
-The RLS design using `set_config('app.tenant_id', $1, true)` inside explicit transactions is
-compatible with a future PgBouncer addition in transaction mode, provided (a) pgx is
-reconfigured to use `SimpleProtocol` or `DescribeExec`, and (b) the reconciler migrates its
-advisory lock. Both are deferred changes; neither blocks Step 19.
+`go/internal/reconciler/reconciler.go` uses `pg_try_advisory_lock` / `pg_advisory_unlock` via
+session-scoped calls. Session advisory locks are incompatible with PgBouncer transaction mode
+(the lock is held on a specific server connection; subsequent calls may route to a different
+connection). If PgBouncer is added: migrate to `pg_advisory_xact_lock` or a Redis-based lock.
+This does not affect Step 19.
 
 ---
 
-## 8. Execution Plan and Rollback
+## 8. Deployment Ordering
 
-### 8.1 Pre-conditions (must be true before any schema change)
+### 8.1 The invariant
 
-- [ ] All existing `go test ./...` pass at HEAD
-- [ ] `tasks.tenant_id` backfilled: zero NULL rows (Appendix B)
-- [ ] `audit_logs.tenant_id` reviewed: NULL rows are platform-level events; document whether
-      to backfill or leave nullable (policy expression handles both via NULLIF)
-- [ ] `UpsertOIDCUser` race fix: 4 queries wrapped in a single transaction
-- [ ] `UpsertManagedAppParams` atomicity fix: DELETE+INSERT in a transaction
-- [ ] `PublishDefinition` atomicity fix: two UPDATEs in a single transaction
-- [ ] `them_owner`, `them_admin`, `them_app` roles created with correct attributes
-- [ ] All table ownership transferred to `them_owner`
-- [ ] Minimal grants applied (§4.5)
-- [ ] `THEM_DB_URL_APP` and `THEM_DB_URL_ADMIN` added to `generate-env.sh` and `.env`
-- [ ] `Pools` struct created in `go/internal/db/db.go`
-- [ ] `BeginTenantTx` and `NewAdminQuerier` implemented and unit-tested
-- [ ] `TenantQuerier` and `AdminQuerier` marker interfaces implemented
-- [ ] Integration test infrastructure exists and passes against the two new roles
+**Every caller of a table must be migrated to use the correct pool/transaction AND deployed
+before RLS is enabled on that table.** Enabling RLS before migrating a caller causes silent
+data loss (0 rows instead of an error) in that caller's path — a live regression.
 
-### 8.2 Deployment ordering rule
+### 8.2 Caller-to-table dependency matrix
 
-**Every caller of a table must be migrated to use the correct pool/transaction before RLS is
-enabled on that table.** Enabling RLS with `them_app` before migrating callers causes those
-callers to return 0 rows (not an error), which is a live production regression.
+For each table group, every caller must use the stated pool/tx before the migration step runs.
 
-The safe sequence for each table group:
-1. Migrate all Go callers to use `TenantTx` or `AdminQuerier` as appropriate.
-2. Deploy new application binary (both pools wired, all callers correct).
-3. Verify deployment is healthy (smoke test, logs, existing tests pass).
-4. Apply migration to enable RLS on the table group.
-5. Verify RLS is enforcing correctly (run integration tests against live DB).
+| Table(s) | Callers | Required pool/tx | Containers to deploy first |
+|---|---|---|---|
+| `tenant_group_mappings` | admin DAL (TenantTx); authserver `GetGroupRole` (AdminQuerier) | TenantTx + AdminQuerier | **them-go-bridge** + **them-auth-go** |
+| `mcp_servers` | admin DAL | TenantTx | them-go-bridge |
+| `agent_definitions`, `agent_runtime_specs`, `application_definitions` | admin DAL | TenantTx | them-go-bridge |
+| `agents` | admin DAL (TenantTx); agent-runtime (TenantTx); workerconfig (TenantTx); dag-worker (TenantTx) | TenantTx | **them-go-bridge** + **them-agent-runtime** + **them-dag-worker** |
+| `orchestrators` | admin DAL | TenantTx | them-go-bridge |
+| `applications` | admin DAL (TenantTx); agent-runtime (TenantTx); workerconfig (TenantTx); dag-worker (TenantTx); appliveness (AdminQuerier); middleware gate.go (TenantTx); middleware job.go (AdminQuerier) | TenantTx + AdminQuerier | **them-go-bridge** + **them-agent-runtime** + **them-dag-worker** + **them-middleware-worker** |
+| `entry_points` | admin DAL (TenantTx); appliveness (AdminQuerier) | TenantTx + AdminQuerier | **them-go-bridge** |
+| `access_tokens` | admin DAL | TenantTx | them-go-bridge |
+| `runs` | admin DAL (TenantTx); runrecorder (TenantTx); reconciler (AdminQuerier) | TenantTx + AdminQuerier | **them-go-bridge** (contains reconciler + runrecorder) |
+| `run_artifacts` | admin DAL (TenantTx); runrecorder (TenantTx); middleware worker (AdminTx) | TenantTx + AdminTx | them-go-bridge + them-middleware-worker |
+| `tasks` | admin DAL (TenantTx); runrecorder (TenantTx) | TenantTx | them-go-bridge |
+| `quarantine_artifacts` | admin DAL (TenantTx); middleware worker (AdminTx) | TenantTx + AdminTx | them-go-bridge + them-middleware-worker |
+| `managed_app_bindings` | admin DAL | TenantTx | them-go-bridge |
+| `run_steps`, `run_usage` | admin DAL (TenantTx); runrecorder (TenantTx); agent-runtime (TenantTx) | TenantTx | **them-go-bridge** + **them-agent-runtime** |
+| `artifacts`, `task_messages` | admin DAL (TenantTx) | TenantTx | them-go-bridge |
+| `middleware_audit` | middleware worker (AdminQuerier) | AdminQuerier | them-middleware-worker |
+| `app_agent_bindings`, `app_orchestrators`, `app_mcp_credentials`, `middleware_wirings` | admin DAL (TenantTx); agentregistry (TenantTx) | TenantTx | them-go-bridge |
+| `middleware_jobs` | middleware gateway enqueue (TenantTx); worker Claim/Complete (AdminQuerier/AdminTx) | TenantTx + AdminQuerier | them-go-bridge + them-middleware-worker |
+| `llm_providers` | admin DAL (T+P split); workerconfig (TenantTx + AdminQuerier) | TenantTx + AdminQuerier | them-go-bridge + them-dag-worker |
+| `audit_logs` | admin DAL (INSERT via TenantTx) | TenantTx | them-go-bridge |
 
-### 8.3 Execution phases
+### 8.3 Derived execution phases
 
-**Phase A — Infrastructure (no RLS enabled yet)**
-1. Create roles, transfer ownership, apply grants (§4.3).
-2. Add DSN secrets, update `generate-env.sh`.
-3. Add `Pools` struct, `BeginTenantTx`, `NewAdminQuerier`, marker interfaces to `go/internal/db/`.
-4. Fix pre-condition atomicity bugs (UpsertManagedAppParams, PublishDefinition, UpsertOIDCUser).
-5. Run full test suite. Deploy. Verify pool connectivity for both roles.
+Each phase follows the rule: **Deploy all containers listed → then enable RLS**.
 
-**Phase B — Low-blast-radius tables**
-Tables: `mcp_servers`, `tenant_group_mappings`, `agent_definitions`, `agent_runtime_specs`.
-These have a small number of DAL callers and no child table complications.
-1. Migrate callers (DAL functions + their call sites in handlers/services).
-2. Deploy. Smoke test.
-3. Enable RLS. Run integration tests.
+**Phase A — Infrastructure (no RLS enabled)**
+1. Create roles, transfer ownership, apply grants (§4.3, §4.4).
+2. Add DSN secrets; update `generate-env.sh`.
+3. Implement `dbtype` package, `Pools` struct, `BeginTenantTx`, `BeginAdminTx`, `NewAdminQuerier`.
+4. Fix atomicity bugs: UpsertManagedAppParams (AdminTx), PublishDefinition (TenantTx), UpsertOIDCUser (pool.Begin).
+5. Run `go test ./...`. Deploy. Verify both pool DSNs connect.
 
-**Phase C — Core admin CRUD tables**
-Tables: `agents`, `orchestrators`, `applications`, `entry_points`, `access_tokens`,
-`application_definitions`, `component_definitions`.
-1. Migrate callers. Note: `entry_points` uses `tenant_id` directly despite also having
-   `application_id` — use the direct policy.
-2. Deploy. Smoke test admin CRUD flows.
-3. Enable RLS. Run `TestRLS_TwoTenantFullIsolation`.
+**Phase B — Auth-go tables**
+Tables: `tenant_group_mappings`.
+Deploy: `them-go-bridge` + `them-auth-go` (authserver GetGroupRole → AdminQuerier).
+Then: enable RLS.
 
-**Phase D — Child tables for core admin (after Phase C)**
+**Phase C — Low-complexity tables**
+Tables: `mcp_servers`, `agent_definitions`, `agent_runtime_specs`, `application_definitions`,
+`orchestrators`, `access_tokens`.
+Deploy: `them-go-bridge`.
+Then: enable RLS.
+
+**Phase D — Core tenant tables**
+Tables: `agents`, `applications`, `entry_points`.
+All four containers have callers. Deploy: `them-go-bridge` + `them-agent-runtime` +
+`them-dag-worker`.
+Wait for all containers healthy.
+Then: enable RLS. Run `TestRLS_TwoTenantFullIsolation`.
+
+**Phase E — Application-child tables**
 Tables: `app_agent_bindings`, `app_orchestrators`, `app_mcp_credentials`, `middleware_wirings`.
-These join through `applications`, which already has RLS from Phase C.
-1. Migrate callers to use TenantTx.
-2. Deploy. Enable RLS via EXISTS subquery policies.
+Parent (`applications`) already has RLS from Phase D.
+Deploy: `them-go-bridge` (agentregistry migration).
+Then: enable EXISTS policies.
 
-**Phase E — Run and task tables**
-Tables: `runs`, `run_artifacts`, `tasks` (after backfill), `quarantine_artifacts`,
-`managed_app_bindings`.
-1. Tasks backfill must be complete before this phase.
-2. Migrate `runrecorder` callers to use TenantTx.
-3. Migrate agent-runtime, workerconfig, and dag-worker tenant-scoped queries.
-4. Deploy. Enable RLS.
+**Phase F — Run and task tables**
+Pre-condition: tasks backfill complete (Appendix B).
+Tables: `runs`, `run_artifacts`, `tasks`, `quarantine_artifacts`, `managed_app_bindings`.
+Deploy: `them-go-bridge` (reconciler → AdminQuerier; runrecorder → TenantTx) +
+`them-middleware-worker` (AdminTx for run_artifacts writes).
+Then: enable RLS.
 
-**Phase F — Child run/task tables**
+**Phase G — Child run/task tables**
 Tables: `run_steps`, `run_usage`, `artifacts`, `task_messages`, `middleware_audit`.
-1. These are protected via EXISTS subquery through their parents (now RLS-enabled).
-2. Enable RLS policies. Deploy. Verify.
+Deploy: `them-go-bridge` + `them-agent-runtime` (run_steps/run_usage writes → TenantTx).
+Then: enable EXISTS policies.
 
-**Phase G — LLM providers, split policy**
-Table: `llm_providers`.
-1. Migrate callers to use TenantTx for tenant paths, AdminQuerier for platform paths.
-2. Enable split RLS policy (§5.3). Verify platform defaults still visible.
+**Phase H — Middleware jobs and remaining**
+Tables: `middleware_jobs`, `llm_providers`, `audit_logs`.
+Deploy: `them-go-bridge` (gateway enqueue → TenantTx; llm_providers split → TenantTx+AdminQuerier) +
+`them-middleware-worker` (Claim/Complete → AdminQuerier/AdminTx; workerconfig → correct split) +
+`them-dag-worker` (workerconfig → correct split).
+Then: enable RLS.
 
-**Phase H — Remaining**
-Tables: `llm_providers` (full rollout), `audit_logs`, `managed_app_bindings`.
-Migrate `middleware_jobs` gateway path to AdminQuerier (§5.6).
-Migrate authserver `them.*` reads to `Pools.Admin` (§2.16).
-Migrate appliveness and reconciler to AdminQuerier (§2.22, §2.23).
-
-### 8.4 Verification steps after each phase
+### 8.4 Verification after each phase
 
 1. `go test ./...` — zero failures.
-2. `go test -tags=integration ./...` — zero failures.
-3. `TestRLS_TwoTenantFullIsolation` against live DB.
-4. `docker logs them-go-bridge` — no unexpected 500s.
-5. E2E test suite: `ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14` — all pass.
-6. Confirm via `psql` as `them_app` that rows outside current tenant are inaccessible.
+2. `go test -tags=integration ./...` — zero failures including `TestRLS_TwoTenantFullIsolation`.
+3. `docker logs them-go-bridge` — no unexpected 500s.
+4. E2E: `ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14` — all pass.
+5. `psql` as `them_app` — confirm rows outside current tenant are inaccessible on enabled tables.
 
-### 8.5 Rollback plan
+### 8.5 Rollback
 
-**Important invariant:** The rollback plan never re-adds `BYPASSRLS` to `them_app`. Doing so
-would silently disable the isolation guarantee without any visible signal. Once `them_app` is
-created without BYPASSRLS, that attribute must not be added.
-
-**Per-table rollback (if one phase fails after RLS is enabled):**
+**Per-table rollback** (after RLS is enabled, a phase fails):
 ```sql
 ALTER TABLE them.<table> DISABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS <table>_tenant_isolation ON them.<table>;
--- FORCE RLS is harmless without a policy; can be left or removed:
 ALTER TABLE them.<table> NO FORCE ROW LEVEL SECURITY;
 ```
-The application continues running. `them_app` still has no BYPASSRLS, but without an active RLS
-policy, it sees all rows it has table-level grants on — same as today's behavior (application-
-layer WHERE clauses provide isolation).
 
-**Full rollback (revert Phase A before any RLS was enabled):**
-1. Revert DSN split: point `Pools.App` and `Pools.Admin` to the same `them` (original) DSN.
-2. Drop `them_app` and `them_admin` roles if they have no active connections.
-3. Table ownership remains with `them_owner` (NOLOGIN — safe).
-4. Revert Go code changes (one commit to revert).
+The application continues running with application-layer WHERE clauses for isolation (same as
+pre-Step-19 behavior). them_app still has no BYPASSRLS.
 
-Notably: the `them_owner` NOLOGIN change is non-reversible in normal operation — it should
-not need to be reversed, and reversing it would require explicit `ALTER ROLE them_owner LOGIN`
-by a superuser.
+**Invariant:** Never add BYPASSRLS to them_app. Doing so silently disables the isolation
+guarantee. Once them_app is created without BYPASSRLS, that attribute must never be added.
+
+**Full rollback** (revert Phase A before any RLS enabled):
+1. Point both Pools.App and Pools.Admin to the original `them` DSN.
+2. Drop them_app, them_admin if no active connections.
+3. Table ownership remains with them_owner (NOLOGIN — safe).
+4. Revert Go code (one commit revert).
 
 ### 8.6 Definition of done for Step 19
 
-- [ ] All tables in §5.1 marked "YES" for direct RLS have `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY` set
+- [ ] All tables in §5.2 with "Standard" strategy have ENABLE RLS + FORCE RLS + policy
 - [ ] All child tables have EXISTS-based policies enabled
-- [ ] `them_app` role has no BYPASSRLS; confirmed by `SELECT rolbypassrls FROM pg_roles WHERE rolname = 'them_app'` = `f`
-- [ ] `them_owner` has NOLOGIN; confirmed by `SELECT rolcanlogin FROM pg_roles WHERE rolname = 'them_owner'` = `f`
-- [ ] All callers use `TenantTx` or `AdminQuerier` — no raw pool passed to DAL
+- [ ] `them_app`: `rolbypassrls = f`, `rolcanlogin = t`
+- [ ] `them_owner`: `rolbypassrls = f`, `rolcanlogin = f`
+- [ ] `them_admin`: `rolbypassrls = t`, `rolcanlogin = t`
+- [ ] All callers use TenantTx, AdminQuerier, or AdminTx — no raw pool in DAL
+- [ ] `dbtype` package exists; import cycle is absent (`go build ./...` succeeds)
 - [ ] All integration tests RLS-01 through RLS-40 pass
-- [ ] `TestRLS_TwoTenantFullIsolation` is a permanent member of the integration suite
+- [ ] `TestRLS_TwoTenantFullIsolation` is in the permanent integration suite
 - [ ] `docs/SCHEMA.md` updated with RLS status per table
 - [ ] `go/TEST_INDEX.md` updated with new integration tests
-- [ ] `docs/CURRENT.md` updated with Step 19 status
-- [ ] `docs/HANDOVER.md` updated for next session
-- [ ] Zero new test failures in `go test ./...`
+- [ ] `docs/CURRENT.md` and `docs/HANDOVER.md` updated
+- [ ] `go test ./...` zero failures
 
 ---
 
@@ -1298,46 +1006,36 @@ by a superuser.
 
 ### A.1 `UpsertManagedAppParams` (`go/internal/admin/dal/managed_apps.go`)
 
-**Current:** DELETE then INSERT in a loop with no transaction wrapper. A crash between the
-DELETE and the last INSERT leaves the table in a partially-updated state.
-**Fix:** Wrap the entire operation in a transaction from `Pools.Admin` (it is a platform-global
-operation). Use a standard `pool.Begin(ctx)` from the admin pool, not a TenantTx.
+Current: DELETE then INSERT in a loop, no transaction.
+Fix: wrap in `BeginAdminTx` (platform-global operation).
 
 ### A.2 `PublishDefinition` (`go/internal/admin/dal/publish.go`)
 
-**Current:** Two sequential UPDATEs with a comment noting "may be a transaction." If the second
-UPDATE fails, the first is committed — partial publish state.
-**Fix:** Wrap both UPDATEs in an explicit `BeginTenantTx`. This is a tenant-scoped operation.
+Current: two sequential UPDATEs, no transaction.
+Fix: wrap in `BeginTenantTx`.
 
 ### A.3 `UpsertOIDCUser` (`go/internal/authserver/oidc_store.go`)
 
-**Current:** 4+ sequential queries (role lookups, user upsert, membership upsert) without a
-transaction. Concurrent OIDC logins for the same email can produce duplicate users or
-inconsistent membership rows.
-**Fix:** Wrap all queries in a single `pool.Begin(ctx)` from the main (or admin) pool. These
-queries touch only `auth_service.*` tables — no TenantTx or `app.tenant_id` needed.
+Current: 4+ sequential queries, no transaction — race condition on concurrent OIDC logins.
+Fix: wrap in `pool.Begin(ctx)` (admin pool, not TenantTx — auth_service schema only).
 
 ---
 
 ## Appendix B — `tasks.tenant_id` Backfill
 
-**Current state:** `them.tasks.tenant_id` is nullable. There are currently 27 NULL rows from
-before multi-tenancy was introduced. These rows belong to the bootstrap tenant
-(`00000000-0000-0000-0000-000000000001`).
+27 NULL rows from before multi-tenancy. All belong to the bootstrap tenant.
 
 **Migration file:** `db/060_tasks_tenant_backfill.sql`
 
 ```sql
--- Step 1: backfill
 UPDATE them.tasks
 SET    tenant_id = '00000000-0000-0000-0000-000000000001'::uuid
 WHERE  tenant_id IS NULL;
 
--- Step 2: add NOT NULL constraint
 ALTER TABLE them.tasks ALTER COLUMN tenant_id SET NOT NULL;
 ```
 
-Apply before Phase E. Verify with:
+Apply before Phase F. Verify:
 ```sql
 SELECT COUNT(*) FROM them.tasks WHERE tenant_id IS NULL;
 -- Expected: 0
@@ -1345,4 +1043,4 @@ SELECT COUNT(*) FROM them.tasks WHERE tenant_id IS NULL;
 
 ---
 
-*End of document. v2.*
+*End of document. v3.*
