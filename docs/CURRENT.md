@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-03 (Step 19 D2 complete)
+# Last updated: 2026-09-03 (Step 19 D2 + integration tests complete)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,13 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-(C2 commit — this session)
+1659b34  test(rls): TestRLS_TwoTenantFullIsolation + fix them_owner schema USAGE
+43b6b41  feat(rls): D1+D2 — migrate callers; enable RLS on app child tables
+285e21e  feat(rls): C1b+C2 — fix appliveness cross-tenant scan; enable RLS on core tables
 3883787  docs(rls): C1 complete — update STEP19 progress tracker and CURRENT.md
 4f3a0e1  feat(rls): C1 — migrate callers for agents/orchestrators/applications/tokens/entry-points
-7000090  docs(rls): Phase A complete — check A1-A5, add implementation notes
-7bfe778  test(rls): A5 — integration test infrastructure
-ba5d0d8  docs(rls): fix TEST_INDEX.md suite numbering — S1-98 DB Pools, S1-99 dbtype
-ea6160c  fix(rls): A4 — atomicity bugs before RLS enablement
 ```
 
 ---
@@ -52,7 +50,7 @@ Key facts:
 Design: `docs/design/rls-option-a-plan.md` (v3, commit 61730f3) — COMPLETE, reviewed, unblocked.
 Progress tracker: `docs/STEP19_RLS_HANDOVER.md` — read this before starting implementation.
 
-Implementation progress: **A1–A5 done, B1–B2 done, C1+C1b+C2 done, D1+D2 done**. HEAD: see above.
+Implementation progress: **A1–A5 done, B1–B2 done, C1+C1b+C2 done, D1+D2 done, integration tests verified (13/13 pass, 0 skips)**. HEAD: `1659b34`.
 
 ### Next recommended task for a new session
 
