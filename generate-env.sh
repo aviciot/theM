@@ -37,6 +37,8 @@ derive() {
 }
 
 DB_PASS=$(derive "db-password")
+DB_ADMIN_PASS=$(derive "db-admin-password")
+DB_APP_PASS=$(derive "db-app-password")
 SECRET_KEY=$(derive "secret-key")
 JWT_SECRET=$(derive "jwt-secret")
 LIVEKIT_API_KEY="APIkey$(derive "livekit-api-key" | cut -c1-20)"
@@ -51,6 +53,15 @@ cat > "$ENV_FILE" <<EOF
 # ─── Database ────────────────────────────────────────────────
 THE_M_DB_USER=them
 THE_M_DB_PASSWORD=$DB_PASS
+
+# RLS roles (Step 19) — set these as role passwords after running db/070_rls_roles.sql
+# See db/070_rls_roles.sql header for the ALTER ROLE commands.
+THEM_DB_ADMIN_PASSWORD=$DB_ADMIN_PASS
+THEM_DB_APP_PASSWORD=$DB_APP_PASS
+
+# DSNs for the two RLS pools (used by Go after Step 19 A3)
+THEM_DB_URL_APP=postgres://them_app:${DB_APP_PASS}@them-postgres:5432/them
+THEM_DB_URL_ADMIN=postgres://them_admin:${DB_ADMIN_PASS}@them-postgres:5432/them
 
 # ─── Security ────────────────────────────────────────────────
 THE_M_SECRET_KEY=$SECRET_KEY
@@ -92,11 +103,13 @@ EOF
 
 echo ".env generated successfully."
 echo ""
-echo "DB password : ${DB_PASS:0:8}..."
-echo "Secret key  : ${SECRET_KEY:0:8}..."
-echo "JWT secret  : ${JWT_SECRET:0:8}..."
-echo "LiveKit key : ${LIVEKIT_API_KEY:0:12}..."
-echo "MinIO user  : $MINIO_ROOT_USER"
-echo "MinIO pass  : ${MINIO_ROOT_PASSWORD:0:8}..."
+echo "DB password      : ${DB_PASS:0:8}..."
+echo "DB admin pass    : ${DB_ADMIN_PASS:0:8}..."
+echo "DB app pass      : ${DB_APP_PASS:0:8}..."
+echo "Secret key       : ${SECRET_KEY:0:8}..."
+echo "JWT secret       : ${JWT_SECRET:0:8}..."
+echo "LiveKit key      : ${LIVEKIT_API_KEY:0:12}..."
+echo "MinIO user       : $MINIO_ROOT_USER"
+echo "MinIO pass       : ${MINIO_ROOT_PASSWORD:0:8}..."
 echo ""
 echo "Add your ANTHROPIC_API_KEY to .env if you need LLM calls."
