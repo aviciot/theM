@@ -2501,7 +2501,6 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | AL-01 | `TestAuditLogs_List_Empty` | No rows → 200 with `[]` (not null) |
 | AL-02 | `TestAuditLogs_List_Populated` | One row returned with correct id, action, entity_type |
 | AL-03 | `TestAuditLogs_List_LimitOffset` | `?limit=10&offset=20` accepted → 200 |
-| AL-05a | `TestMCPServersHandler_NilAudit_NoPanic` | `NewMCPServersHandler` with nil audit writer constructs without panic |
 | AL-05b | `TestMCPServersAuditWriter_NilReceiver_NoPanic` | `(*AuditWriter).Write` with nil receiver does not panic (MCP path) |
 
 **Trigger:** any change to `internal/admin/audit_logs.go`, `internal/admin/dal/audit_logs.go`, `internal/admin/mcp_servers.go`
@@ -3077,8 +3076,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-97 | per-tenant LLM provider handler (TLP-01..05): List_200_Empty, List_400_MissingID, Upsert_200, Upsert_404_PlatformNotFound, Upsert_400_BadJSON | 5 |
 | S1-98 | DB Pools (RLS): BadAppDSN, InterfaceAssertions, Close_NilSafe, TenantIDFormat | 4 |
 | S1-99 | dbtype Querier interfaces (RLS): TestInterfaceDistinction | 1 |
-| S1-100 | Audit Logs handler (AL-01..03, AL-05a/b): List_Empty, List_Populated, List_LimitOffset, NilAudit_NoPanic, NilReceiver_NoPanic | 5 |
-| **S1 total** | | **1094** |
+| S1-100 | Audit Logs handler (AL-01..03, AL-05b): List_Empty, List_Populated, List_LimitOffset, NilReceiver_NoPanic | 4 |
+| **S1 total** | | **1093** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

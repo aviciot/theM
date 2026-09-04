@@ -26,7 +26,8 @@ import (
 
 // AgentsHandler handles /api/v1/admin/agents routes.
 type AgentsHandler struct {
-	// CRUD path: per-request TenantTx when pools != nil.
+	// legacySvc is the fallback service when pools is nil (unit tests only).
+	// In production pools is always non-nil and openSvc uses TenantTx.
 	legacySvc *service.AgentService
 	pools     *db.Pools
 	cache     CacheInvalidator
@@ -38,10 +39,9 @@ type AgentsHandler struct {
 }
 
 // NewAgentsHandler creates an AgentsHandler.
-// redis and fernetKey are used by the Discover, Test, and SecurityScan action
-// endpoints. Pass nil redis / empty fernetKey in tests that do not exercise
-// those endpoints.
-// When pools is non-nil, CRUD requests use a TenantTx per request.
+// legacyDB backs the unit-test fallback (pools=nil) and the action endpoints
+// (Discover, Test, SecurityScan). Pass nil redis / empty fernetKey in tests
+// that do not exercise those endpoints.
 func NewAgentsHandler(legacyDB DBQuerier, pools *db.Pools, cache CacheInvalidator, redis rueidis.Client, fernetKey []byte, audit *AuditWriter) *AgentsHandler {
 	d := dal.NewDB(legacyDB)
 	return &AgentsHandler{

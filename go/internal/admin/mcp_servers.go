@@ -21,16 +21,10 @@ import (
 // MCPServersHandler handles /api/v1/admin/mcp-servers CRUD routes.
 // All mcp-server routes are tenant-scoped: each server belongs to exactly one tenant.
 // Credential values are never returned — only credential_set bool.
-//
-// When pools is non-nil (RLS configured), each request opens a TenantTx so that
-// app.tenant_id is set for the duration of the query — required once RLS is enabled
-// on them.mcp_servers. When pools is nil, falls back to the legacy shared-pool path.
+// Every request opens a per-request TenantTx (RLS-enforced path).
 type MCPServersHandler struct {
-	// RLS path (pools != nil): per-request TenantTx
-	pools     *db.Pools
-	fernetKey []byte
-	// Legacy path (pools == nil): pre-built service backed by shared pool
-	legacySvc     *service.MCPServerService
+	pools         *db.Pools
+	fernetKey     []byte
 	mcpServiceURL string // base URL of them-mcp-service; empty → probe returns 503
 	audit         *AuditWriter
 }
@@ -38,29 +32,16 @@ type MCPServersHandler struct {
 // NewMCPServersHandler creates an MCPServersHandler.
 // mcpServiceURL is the internal base URL of them-mcp-service (e.g. "http://them-mcp-service:8010").
 // Pass empty string when the service is not deployed — the probe endpoint will return 503.
-// When pools is non-nil, each request uses a TenantTx (RLS-ready path).
-// When pools is nil, the handler falls back to the legacy shared-pool path via db.
-func NewMCPServersHandler(legacyDB DBQuerier, pools *db.Pools, secretKey, mcpServiceURL string, audit *AuditWriter) *MCPServersHandler {
-	h := &MCPServersHandler{
+func NewMCPServersHandler(pools *db.Pools, secretKey, mcpServiceURL string, audit *AuditWriter) *MCPServersHandler {
+	return &MCPServersHandler{
 		pools:         pools,
 		fernetKey:     crypto.DeriveKey(secretKey),
 		mcpServiceURL: mcpServiceURL,
 		audit:         audit,
 	}
-	if pools == nil {
-		h.legacySvc = service.NewMCPServerService(dal.NewDB(legacyDB), secretKey)
-	}
-	return h
 }
 
-// svc returns a MCPServerService backed by a TenantTx for the current request,
-// or the pre-built legacy service when RLS pools are not configured.
-// cancel must be called after the service call completes to roll back the transaction
-// if it has not already been committed.
 func (h *MCPServersHandler) openSvc(ctx context.Context, tenantID string) (svc *service.MCPServerService, commit func(context.Context) error, cancel func(), err error) {
-	if h.pools == nil {
-		return h.legacySvc, func(_ context.Context) error { return nil }, func() {}, nil
-	}
 	tenantUUID, uuidErr := uuid.Parse(tenantID)
 	if uuidErr != nil {
 		return nil, nil, nil, uuidErr

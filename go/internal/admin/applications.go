@@ -25,7 +25,11 @@ func newMultipartWriter(buf *bytes.Buffer) *multipart.Writer { return multipart.
 
 // ApplicationsHandler handles /api/v1/admin/applications routes.
 type ApplicationsHandler struct {
+	// legacySvc is used by Svc() to provide a shared AppService for callers
+	// that don't have a per-request TenantTx (e.g. voiceAppsSvc in main.go).
 	legacySvc *service.AppService
+	// legacyDAL is used by action endpoints (ep_discover) that perform
+	// cross-EP admin-pool reads not scoped to a single TenantTx.
 	legacyDAL *dal.DB
 	pools     *db.Pools
 	cache     CacheInvalidator
@@ -35,6 +39,7 @@ type ApplicationsHandler struct {
 
 // NewApplicationsHandler creates an ApplicationsHandler.
 // When pools is non-nil each request uses a TenantTx (RLS-ready path).
+// When pools is nil (e.g. for Svc()-only callers), openSvc falls back to legacySvc.
 // fernetKey is the AES-GCM key used to encrypt/decrypt provider_keys at rest.
 func NewApplicationsHandler(legacyDB DBQuerier, pools *db.Pools, cache CacheInvalidator, fernetKey []byte, audit *AuditWriter) *ApplicationsHandler {
 	d := dal.NewDB(legacyDB)

@@ -18,13 +18,15 @@ import (
 
 // OrchestratorsHandler handles /api/v1/admin/orchestrators routes.
 type OrchestratorsHandler struct {
+	// legacySvc is the fallback service when pools is nil (unit tests only).
+	// In production pools is always non-nil and openSvc uses TenantTx.
 	legacySvc *service.OrchService
 	pools     *db.Pools
 	cache     CacheInvalidator
 }
 
 // NewOrchestratorsHandler creates an OrchestratorsHandler.
-// When pools is non-nil each request uses a TenantTx (RLS-ready path).
+// legacyDB backs the unit-test fallback (pools=nil path).
 func NewOrchestratorsHandler(legacyDB DBQuerier, pools *db.Pools, cache CacheInvalidator) *OrchestratorsHandler {
 	return &OrchestratorsHandler{
 		legacySvc: service.NewOrchService(dal.NewDB(legacyDB), cache),
