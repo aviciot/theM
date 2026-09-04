@@ -134,6 +134,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON them.middleware_wirings      TO them_app
 GRANT SELECT, INSERT ON them.quarantine_artifacts TO them_app; -- no UPDATE/DELETE
 GRANT INSERT         ON them.audit_logs           TO them_app; -- write-only
 GRANT INSERT         ON them.middleware_jobs      TO them_app; -- gateway enqueue only
+GRANT INSERT         ON them.middleware_audit     TO them_app; -- write-only (processor outcomes)
 
 -- Read-only reference:
 GRANT SELECT ON them.llm_providers  TO them_app; -- split RLS policy added in phase G
