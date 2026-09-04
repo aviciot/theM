@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-04 (Step H2 COMPLETE — RLS closure, full superuser removal)
+# Last updated: 2026-09-04 (Step 24 COMPLETE — MCP server audit; RLS closure done)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+9a9fc45  feat(audit): Step 24 — wire mcp_server.create/update/delete into AuditWriter
+ea1039a  docs(rls): Step H2 complete — CURRENT.md and HANDOVER.md
 b0cdb79  test(rls): Step H2 — expand integration tests to 27 tables + catalog verification
 0c96931  feat(rls): Step H2 — enforce required DB pools; replace all superuser pool() calls with rlsPools.Admin
 8649daa  feat(rls): Step H2 — migration 078, apply RLS to application_definitions, managed_app_bindings, quarantine_artifacts, component_definitions
-10628a3  feat(audit): Step 23 — synchronous audit write path for agents, apps, tenants
-e8a288c  docs(audit): Step 22 complete — update CURRENT.md and HANDOVER.md
 ```
 
 ---
@@ -63,14 +63,18 @@ Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
 
 ### Next recommended task for a new session
 
-**Step 24 candidates** (choose one):
+**Step 24 complete** — MCP server audit wiring done (`mcp_server.create/update/delete`).
 
-1. **MCP server audit** — wire `mcp_server.create/update/delete` into `AuditWriter` (same pattern, one more handler). Smallest scope, completes audit coverage.
-2. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (update display name, IdP config, quota visibility). Medium scope.
-3. **Cross-tenant admin observability** — super-admin dashboard: runs/usage/quota consumption across all tenants. Medium scope.
-4. **Audit log enrichment** — add before/after diff on Update operations (SELECT-before-UPDATE in DAL, store `changes` JSONB). Bounded scope.
+**Step 25 candidates** (choose one):
 
-Recommended: **Step 24 = MCP server audit** (smallest scope, completes audit coverage).
+1. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (update display name, IdP config, quota visibility). Medium scope.
+2. **Cross-tenant admin observability** — super-admin dashboard: runs/usage/quota consumption across all tenants. Medium scope.
+3. **Audit log enrichment** — add before/after diff on Update operations (SELECT-before-UPDATE in DAL, store `changes` JSONB). Bounded scope.
+4. **Admin CRUD to TenantTx migration** — migrate agents/apps/orchestrators admin handlers from `rlsPools.Admin` (BYPASSRLS with explicit WHERE) to `TenantTx` (RLS-enforced). Defense-in-depth. MCP servers already use TenantTx as the model.
+
+**RLS status:** All 28 active tenant tables have ENABLE + FORCE RLS with correct policies. Superuser removed from all runtime request paths. Admin CRUD handlers (agents, apps, orchestrators) still use `rlsPools.Admin` (BYPASSRLS) with explicit `WHERE tenant_id` — isolation is SQL-enforced, not RLS-enforced for those paths. This is safe but not defense-in-depth. Full TenantTx migration for admin handlers is Step 25 candidate #4.
+
+Recommended: **Step 25 = Audit log enrichment** (bounded scope, high audit value) or **Admin CRUD TenantTx migration** (completes defense-in-depth).
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
