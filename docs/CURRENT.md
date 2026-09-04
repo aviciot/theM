@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-04 (Step 20 COMPLETE — resource quota enforcement)
+# Last updated: 2026-09-04 (Step 21 COMPLETE — max_users quota enforcement)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-8f8cbc8  feat(quota): Step 20 — enforce max_agents, max_apps, max_mcp_servers on create
-0ad7ccb  docs(rls): H complete — Step 19 closed; SCHEMA.md RLS table, E2E test fix
-a89df32  feat(rls): G1+G2 — migrate callers; enable RLS on llm_providers/middleware_jobs/audit_logs
-61af130  feat(rls): F1+F2 — verify callers; enable RLS on run_steps/run_usage/artifacts/task_messages/middleware_audit
-3496994  feat(rls): E1+E2 — migrate callers; enable RLS on runs/tasks/run_artifacts
+<pending commit>  feat(quota): Step 21 — enforce max_users on AddMember; 3 new tests (TN-23..25)
+8f8cbc8           feat(quota): Step 20 — enforce max_agents, max_apps, max_mcp_servers on create
+0ad7ccb           docs(rls): H complete — Step 19 closed; SCHEMA.md RLS table, E2E test fix
+a89df32           feat(rls): G1+G2 — migrate callers; enable RLS on llm_providers/middleware_jobs/audit_logs
+61af130           feat(rls): F1+F2 — verify callers; enable RLS on run_steps/run_usage/artifacts/task_messages/middleware_audit
 ```
 
 ---
@@ -45,26 +45,27 @@ Key facts:
 
 ## Current migration slice
 
-**Step 20 — Resource quota enforcement**
+**Step 21 — max_users quota enforcement**
 
-Completed: `max_agents`, `max_apps`, `max_mcp_servers` now enforced on Create.
-- New DAL: `CountAgents`, `CountApplications`, `CountMCPServers`
-- New service helper: `checkResourceQuota` (fail-open on missing row)
-- New sentinel: `service.ErrQuotaExceeded` → HTTP 429
-- 9 new tests (S1-AQ, S1-AppQ, S1-MQ series). HEAD: `8f8cbc8`
+Completed: `max_users` now enforced on `AddMember` (POST /admin/tenants/{id}/members).
+- New DAL: `CountTenantMembers(ctx, tenantID) (int, error)` in `go/internal/admin/dal/tenants.go` — `COUNT(*) FROM auth_service.tenant_memberships WHERE tenant_id = $1::uuid`
+- Handler `AddMember` in `go/internal/admin/tenants.go`: calls `GetQuota` → if `MaxUsers != nil` → calls `CountTenantMembers` → 429 when count >= limit. Fail-open on missing quota row or DB error.
+- No service layer change needed (TenantsHandler uses dal.DB directly, not service layer).
+- 3 new tests TN-23..25 in `go/internal/admin/tenants_test.go`: nil limit allows, under limit allows, at-or-over limit returns 429.
+- `go/TEST_INDEX.md` updated: S1-94 count 32→35.
+- `go test ./...` — 49 packages, 0 failures. HEAD: pending commit.
 
-Still unenforced: `max_users`, `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
+Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
 
 ### Next recommended task for a new session
 
-**Step 21 candidates** (choose one):
+**Step 22 candidates** (choose one):
 
 1. **Tenant-scoped audit log UI** — frontend page showing `audit_logs` for the current tenant. Small, bounded. Backend query already exists via admin runs/audit infrastructure.
-2. **`max_users` enforcement** — check `tenant_members` count on `AddMember`. Same pattern as Step 20, very small.
-3. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (update display name, IdP config, quota visibility). Medium scope.
-4. **Cross-tenant admin observability** — super-admin dashboard: runs/usage/quota consumption across all tenants. Medium scope.
+2. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (update display name, IdP config, quota visibility). Medium scope.
+3. **Cross-tenant admin observability** — super-admin dashboard: runs/usage/quota consumption across all tenants. Medium scope.
 
-Recommended: **Step 21 = `max_users` enforcement** (closes the quota gap cheaply) then **Step 22 = audit log UI** (visible user value).
+Recommended: **Step 22 = audit log UI** (visible user value, bounded scope).
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)

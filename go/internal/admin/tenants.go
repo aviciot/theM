@@ -192,6 +192,7 @@ func (h *TenantsHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 
 // AddMember handles POST /api/v1/admin/tenants/{id}/members.
 // Adds a user to the tenant with the given role.
+// Enforces the max_users quota: fails-open when no quota row exists or on DB error.
 func (h *TenantsHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -210,6 +211,13 @@ func (h *TenantsHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	if in.Role == "" {
 		writeError(w, http.StatusBadRequest, "role is required")
 		return
+	}
+	// Quota check: fail-open on missing quota row or DB errors.
+	if q, err := h.db.GetQuota(r.Context(), id); err == nil && q.MaxUsers != nil {
+		if count, err := h.db.CountTenantMembers(r.Context(), id); err == nil && count >= *q.MaxUsers {
+			writeError(w, http.StatusTooManyRequests, "max_users quota exceeded")
+			return
+		}
 	}
 	m, err := h.db.AddMember(r.Context(), id, in)
 	if dal.IsUniqueViolation(err) {

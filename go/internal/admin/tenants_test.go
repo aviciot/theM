@@ -88,6 +88,11 @@ type tenantDB struct {
 	addMemberRow     admin.SingleRowScanner  // returned by ExecReturning (add member)
 	groupMappingRow  admin.SingleRowScanner  // returned by ExecReturning (group mapping upsert/delete)
 	execErr          error
+	// Quota-enforced AddMember: when quotaForMember is set, QueryRow returns it
+	// first (GetQuota call), then countRow (CountTenantMembers call).
+	quotaForMember admin.SingleRowScanner // GetQuota result for AddMember quota check
+	countRow       admin.SingleRowScanner // CountTenantMembers result
+	queryRowCalls  int                    // counts QueryRow invocations when quotaForMember is set
 }
 
 func (d *tenantDB) Query(_ context.Context, _ string, _ ...any) (admin.RowScanner, error) {
@@ -101,6 +106,17 @@ func (d *tenantDB) Query(_ context.Context, _ string, _ ...any) (admin.RowScanne
 }
 
 func (d *tenantDB) QueryRow(_ context.Context, sql string, _ ...any) admin.SingleRowScanner {
+	// Sequenced quota+count path for AddMember quota enforcement tests.
+	if d.quotaForMember != nil {
+		d.queryRowCalls++
+		if d.queryRowCalls == 1 {
+			return d.quotaForMember // GetQuota call
+		}
+		if d.countRow != nil {
+			return d.countRow // CountTenantMembers call
+		}
+		return &tenantFakeRow{err: pgx.ErrNoRows}
+	}
 	// Quota GET uses QueryRow; detect by checking quotaRow is set and no getRow.
 	if d.quotaRow != nil && d.getRow == nil {
 		return d.quotaRow
@@ -687,7 +703,128 @@ func TestTenants_AddMember_MissingRole(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── TN-23: Patch sets email_domain ───────────────────────────────────────────
+// ── TN-23: AddMember allows when max_users limit is nil (no quota row) ───────
+
+// quotaWithMaxUsersFakeRow scans the 11-column quota row with a specific max_users value.
+type quotaWithMaxUsersFakeRow struct {
+	maxUsers *int
+	err      error
+}
+
+func (r *quotaWithMaxUsersFakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	// 11 columns: tenant_id(string), plan(string), then 9 nullable ints/int64s.
+	// Column order: tenant_id, plan, max_agents, max_apps, max_mcp_servers,
+	//               max_concurrent_runs, max_users, monthly_llm_tokens,
+	//               monthly_runs, api_requests_per_minute, runs_per_minute.
+	for i, d := range dest {
+		switch dp := d.(type) {
+		case *string:
+			if i == 0 {
+				*dp = "00000000-0000-0000-0000-000000000001"
+			} else {
+				*dp = "trial"
+			}
+		case **int:
+			if i == 6 { // max_users is column index 6
+				*dp = r.maxUsers
+			} else {
+				*dp = nil
+			}
+		case **int64:
+			*dp = nil
+		}
+	}
+	return nil
+}
+
+// countFakeRow scans a single int (COUNT result).
+type countFakeRow struct {
+	count int
+	err   error
+}
+
+func (r *countFakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	for _, d := range dest {
+		if dp, ok := d.(*int); ok {
+			*dp = r.count
+		}
+	}
+	return nil
+}
+
+func TestTenants_AddMember_QuotaNilLimit_Allows(t *testing.T) {
+	// max_users = nil → no enforcement → 201
+	db := &tenantDB{
+		quotaForMember: &quotaWithMaxUsersFakeRow{maxUsers: nil},
+		addMemberRow: &memberFakeRow{
+			id: "aaaaaaaa-0000-0000-0000-000000000010", userID: 10,
+			tenantID: "00000000-0000-0000-0000-000000000001", role: "member",
+			createdAt: "2026-09-04T00:00:00Z",
+		},
+	}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"user_id": 10, "role": "member"})
+	req := httptest.NewRequest(http.MethodPost, "/tenants/00000000-0000-0000-0000-000000000001/members", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code, "nil max_users must not block AddMember")
+}
+
+// ── TN-24: AddMember allows when current count is under the limit ─────────────
+
+func TestTenants_AddMember_QuotaUnderLimit_Allows(t *testing.T) {
+	// max_users = 5, current count = 4 → 201
+	maxUsers := 5
+	db := &tenantDB{
+		quotaForMember: &quotaWithMaxUsersFakeRow{maxUsers: &maxUsers},
+		countRow:       &countFakeRow{count: 4},
+		addMemberRow: &memberFakeRow{
+			id: "aaaaaaaa-0000-0000-0000-000000000011", userID: 11,
+			tenantID: "00000000-0000-0000-0000-000000000001", role: "viewer",
+			createdAt: "2026-09-04T00:00:00Z",
+		},
+	}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"user_id": 11, "role": "viewer"})
+	req := httptest.NewRequest(http.MethodPost, "/tenants/00000000-0000-0000-0000-000000000001/members", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code, "count < max_users must allow AddMember")
+}
+
+// ── TN-25: AddMember returns 429 when at or over the max_users limit ──────────
+
+func TestTenants_AddMember_QuotaAtLimit_Rejects(t *testing.T) {
+	// max_users = 5, current count = 5 → 429
+	maxUsers := 5
+	db := &tenantDB{
+		quotaForMember: &quotaWithMaxUsersFakeRow{maxUsers: &maxUsers},
+		countRow:       &countFakeRow{count: 5},
+	}
+	r := newTenantRouter(db)
+
+	body, _ := json.Marshal(map[string]any{"user_id": 12, "role": "viewer"})
+	req := httptest.NewRequest(http.MethodPost, "/tenants/00000000-0000-0000-0000-000000000001/members", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusTooManyRequests, w.Code, "count >= max_users must return 429")
+}
+
+// ── TN-26 (old TN-23): Patch sets email_domain ───────────────────────────────
 
 func TestTenants_Patch_EmailDomain(t *testing.T) {
 	domain := "acme.com"

@@ -297,6 +297,15 @@ func (d *DB) ListMembers(ctx context.Context, tenantID string) ([]TenantMember, 
 	return out, nil
 }
 
+// CountTenantMembers returns the current number of memberships for the given tenant.
+// Queries auth_service.tenant_memberships (accessible via the admin pool).
+func (d *DB) CountTenantMembers(ctx context.Context, tenantID string) (int, error) {
+	const q = `SELECT COUNT(*) FROM auth_service.tenant_memberships WHERE tenant_id = $1::uuid`
+	var n int
+	err := d.q.QueryRow(ctx, q, tenantID).Scan(&n)
+	return n, err
+}
+
 // AddMember inserts a tenant membership row and returns the created member.
 // Returns a unique-violation error when the (user_id, tenant_id) pair already exists.
 func (d *DB) AddMember(ctx context.Context, tenantID string, in TenantMemberInput) (TenantMember, error) {
