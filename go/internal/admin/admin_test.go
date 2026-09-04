@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -138,6 +139,15 @@ func scanInto(dest, src any) error {
 			}
 			*d = &n
 		}
+	case *time.Time:
+		switch v := src.(type) {
+		case time.Time:
+			*d = v
+		default:
+			return fmt.Errorf("scanInto: cannot assign %T to *time.Time", src)
+		}
+	case *any:
+		*d = src
 	default:
 		return fmt.Errorf("scanInto: unsupported dest type %T", dest)
 	}

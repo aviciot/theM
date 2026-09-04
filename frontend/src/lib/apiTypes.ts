@@ -870,3 +870,13 @@ export interface ManagedAppBindingInput {
   app_version?: string;
   enabled?: boolean;
 }
+
+export interface AuditLog {
+  id: number;
+  user_id?: number;
+  action: string;
+  entity_type: string;
+  entity_id?: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}

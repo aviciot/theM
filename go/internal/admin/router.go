@@ -184,6 +184,9 @@ func BuildRouter(
 				}
 
 				managedApps.TenantRoutes(tenantScoped)
+
+				auditLogs := NewAuditLogsHandler(dbq, pools)
+				auditLogs.Routes(tenantScoped)
 			})
 
 			// Platform-global sub-group: llm-providers, monitoring-config,

@@ -87,6 +87,7 @@ export type {
   ManagedAppParam,
   ManagedAppBinding,
   ManagedAppBindingInput,
+  AuditLog,
 } from './apiTypes';
 
 export { api, getPreferences, setPreferences } from './apiClient';
@@ -543,4 +544,8 @@ export const themApi = {
     api.get<ManagedAppBinding[]>(`/admin/tenants/${tenantId}/managed-app-bindings`),
   upsertManagedAppBinding: (tenantId: string, appId: string, input: ManagedAppBindingInput) =>
     api.put<ManagedAppBinding>(`/admin/tenants/${tenantId}/managed-app-bindings/${appId}`, input),
+
+  // Audit logs
+  getAuditLogs: (limit = 50, offset = 0) =>
+    api.get<AuditLog[]>(`/admin/audit-logs?limit=${limit}&offset=${offset}`),
 };
