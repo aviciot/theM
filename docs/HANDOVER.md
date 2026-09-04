@@ -1,4 +1,4 @@
-# Handover — Multi-Tenancy Step 19 (design complete, implementation pending)
+# Handover — Multi-Tenancy (Steps 19+20 complete, Step 21 next)
 **Date:** 2026-09-03
 **Branch:** main
 **HEAD:** 61730f3 (docs(rls): v3 design)
@@ -68,7 +68,8 @@
 | Step 16 | Per-tenant RBAC — tenant_id in /me response, tenant_slug login selection, GET/POST /admin/tenants/{id}/members | Complete | 5ee5a34 |
 | Step 17 | Email-domain → tenant routing — email_domain on tenants, GET /auth/tenant-lookup (public), SSO banner on login page, admin UI field | Complete | f2c6e90 |
 | Step 18 | OIDC group claims → tenant role mapping — them.tenant_group_mappings, GET/PUT/DELETE /admin/tenants/{id}/group-mappings, group role lookup in OIDCCallback | Complete | 7c346da |
-| Step 19 | Postgres Row-Level Security — new `dbtype` package, two pools (them_app/them_admin), TenantTx/AdminTx, per-table policies, caller migration | Design complete (61730f3) — **implementation next** | — |
+| Step 19 | Postgres Row-Level Security — new `dbtype` package, two pools (them_app/them_admin), TenantTx/AdminTx, per-table policies, caller migration | Complete | 0ad7ccb |
+| Step 20 | Resource quota enforcement — max_agents, max_apps, max_mcp_servers checked on Create; ErrQuotaExceeded → 429; 9 tests | Complete | 8f8cbc8 |
 
 ---
 

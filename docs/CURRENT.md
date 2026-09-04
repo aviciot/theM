@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-04 (Step 19 COMPLETE — all phases A–H done)
+# Last updated: 2026-09-04 (Step 20 COMPLETE — resource quota enforcement)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-(this commit)  docs(rls): H complete — Step 19 closed; SCHEMA.md RLS table, E2E test fix
-a89df32        feat(rls): G1+G2 — migrate callers; enable RLS on llm_providers/middleware_jobs/audit_logs
-40c3b1f        docs(rls): F1+F2 complete — update progress tracker and CURRENT.md
-61af130        feat(rls): F1+F2 — verify callers; enable RLS on run_steps/run_usage/artifacts/task_messages/middleware_audit
-3496994        feat(rls): E1+E2 — migrate callers; enable RLS on runs/tasks/run_artifacts
+8f8cbc8  feat(quota): Step 20 — enforce max_agents, max_apps, max_mcp_servers on create
+0ad7ccb  docs(rls): H complete — Step 19 closed; SCHEMA.md RLS table, E2E test fix
+a89df32  feat(rls): G1+G2 — migrate callers; enable RLS on llm_providers/middleware_jobs/audit_logs
+61af130  feat(rls): F1+F2 — verify callers; enable RLS on run_steps/run_usage/artifacts/task_messages/middleware_audit
+3496994  feat(rls): E1+E2 — migrate callers; enable RLS on runs/tasks/run_artifacts
 ```
 
 ---
@@ -45,16 +45,26 @@ Key facts:
 
 ## Current migration slice
 
-**Step 19 — Postgres Row-Level Security**
+**Step 20 — Resource quota enforcement**
 
-Design: `docs/design/rls-option-a-plan.md` (v3, commit 61730f3) — COMPLETE, reviewed, unblocked.
-Progress tracker: `docs/STEP19_RLS_HANDOVER.md` — read this before starting implementation.
+Completed: `max_agents`, `max_apps`, `max_mcp_servers` now enforced on Create.
+- New DAL: `CountAgents`, `CountApplications`, `CountMCPServers`
+- New service helper: `checkResourceQuota` (fail-open on missing row)
+- New sentinel: `service.ErrQuotaExceeded` → HTTP 429
+- 9 new tests (S1-AQ, S1-AppQ, S1-MQ series). HEAD: `8f8cbc8`
 
-Implementation progress: **COMPLETE** — All phases A–H done. All `them.*` tables protected by RLS. Step 19 closed.
+Still unenforced: `max_users`, `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
 
 ### Next recommended task for a new session
 
-**Step 19 is done.** Resume the main tenant roadmap from `docs/HANDOVER.md` § "Tenant roadmap — next step after Step 19".
+**Step 21 candidates** (choose one):
+
+1. **Tenant-scoped audit log UI** — frontend page showing `audit_logs` for the current tenant. Small, bounded. Backend query already exists via admin runs/audit infrastructure.
+2. **`max_users` enforcement** — check `tenant_members` count on `AddMember`. Same pattern as Step 20, very small.
+3. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (update display name, IdP config, quota visibility). Medium scope.
+4. **Cross-tenant admin observability** — super-admin dashboard: runs/usage/quota consumption across all tenants. Medium scope.
+
+Recommended: **Step 21 = `max_users` enforcement** (closes the quota gap cheaply) then **Step 22 = audit log UI** (visible user value).
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
