@@ -3,7 +3,7 @@
 # Branch: main
 # Design HEAD: 61730f3
 # Last updated: 2026-09-03
-# Status: IN PROGRESS — Phase A complete, B1+B2 complete, C1+C2 complete, D1+D2 complete, E0+E1+E2 complete, F1 next
+# Status: IN PROGRESS — Phases A–F complete, G1 next
 #
 # Context: This is a focused side-track from the main multi-tenancy roadmap
 # (Steps 1–18 complete). Step 19 (RLS) must finish before the tenant roadmap
@@ -267,15 +267,19 @@ Migrate callers → deploy → enable RLS. For each phase, the sequence is:
 
 ### Phase F — Child run/task tables
 
-- [ ] **F1** — Migrate callers for `run_steps`, `run_usage`, `artifacts`, `task_messages`, `middleware_audit`:
-  - These are written by `runrecorder` (already TenantTx after E1) and read by admin DAL (run detail, get tasks)
-  - Confirm all callers are already using TenantTx after E1 — exists subquery policies only need the callers to be inside TenantTx
-  - Rebuild and redeploy if any additional callers found
-  - **Commit tag:** `feat(rls): F1 — verify callers for run_steps/run_usage/artifacts/task_messages`
+- [x] **F1** — Caller verification:
+  - `runrecorder` (Admin pool after E1): writes run_steps, run_usage
+  - `history.Store` (activePool after E1): writes/reads task_messages
+  - `middleware.JobDAL` (activePool after E1): writes middleware_audit
+  - admin DAL reads use superuser pool (implicit SUPERUSER RLS bypass)
+  - No additional caller migration needed
+  - **Commit:** `61af130`
 
-- [ ] **F2** — Enable RLS on F1 tables:
-  - `db/076_rls_phase_f.sql` — EXISTS-based policies through runs/tasks/run_artifacts
-  - **Commit tag:** `feat(rls): F2 — enable RLS on run_steps/run_usage/artifacts/task_messages/middleware_audit`
+- [x] **F2** — Enable RLS on F1 tables:
+  - `db/076_rls_phase_f.sql` — EXISTS policies: run_steps/run_usage → via runs; artifacts/task_messages → via tasks; middleware_audit → via applications
+  - `db/070_rls_roles.sql`: added GRANT INSERT ON middleware_audit TO them_app (missing grant, write-only like audit_logs)
+  - Smoke-tested: them_app sees 0 rows without GUC; them_admin sees 228/433/1380/32
+  - **Commit:** `61af130` (same commit as F1)
 
 ### Phase G — LLM providers + remaining tables
 
@@ -379,6 +383,7 @@ variables are derived from `secrets.local` via HMAC like all other secrets.
 | 2026-09-03 | Implementation session 4 | D1, D2 | 43b6b41 | D1: agent-runtime + agentregistry use Admin pool for explicit-predicate queries. D2: 073 migration applied, EXISTS-based RLS on 4 child tables. go test ./... zero failures. |
 | 2026-09-03 | Implementation session 5 | Integration tests + schema fix | 1659b34 | TestRLS_TwoTenantFullIsolation: 13/13 pass, 0 skips. Full two-tenant isolation verified across Phases B/C/D tables. db/070_rls_roles.sql: added GRANT USAGE ON SCHEMA them TO them_owner (FK trigger fix). |
 | 2026-09-03 | Implementation session 6 | E0, E1, E2 | e61d81c, 3496994 | E0: tasks.tenant_id backfilled NOT NULL. E1: recorder+reconciler+worker on Admin pool; CreateRootTask gains tenantID param. E2: RLS on runs/tasks/run_artifacts. go test ./... 45 pkgs pass. |
+| 2026-09-04 | Implementation session 7 | F1, F2 | 61af130 | F1: all callers already on Admin pool after E1 — no migration needed. F2: RLS on run_steps/run_usage/artifacts/task_messages/middleware_audit. Missing middleware_audit GRANT fixed. 45 pkgs pass. |
 
 *(Add a row for each session.)*
 
