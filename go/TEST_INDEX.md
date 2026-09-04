@@ -2492,17 +2492,19 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 
 ---
 
-### S1-100 · Audit Logs handler — `internal/admin/audit_logs_test.go`
+### S1-100 · Audit Logs handler — `internal/admin/audit_logs_test.go`, `internal/admin/mcp_servers_audit_test.go`
 
-**Purpose:** `GET /admin/audit-logs` returns tenant-scoped audit log rows with correct fields; pagination params accepted.
+**Purpose:** `GET /admin/audit-logs` returns tenant-scoped audit log rows with correct fields; pagination params accepted. MCP server audit path is nil-safe.
 
 | Test ID | Test | What it proves |
 |---|---|---|
 | AL-01 | `TestAuditLogs_List_Empty` | No rows → 200 with `[]` (not null) |
 | AL-02 | `TestAuditLogs_List_Populated` | One row returned with correct id, action, entity_type |
 | AL-03 | `TestAuditLogs_List_LimitOffset` | `?limit=10&offset=20` accepted → 200 |
+| AL-05a | `TestMCPServersHandler_NilAudit_NoPanic` | `NewMCPServersHandler` with nil audit writer constructs without panic |
+| AL-05b | `TestMCPServersAuditWriter_NilReceiver_NoPanic` | `(*AuditWriter).Write` with nil receiver does not panic (MCP path) |
 
-**Trigger:** any change to `internal/admin/audit_logs.go`, `internal/admin/dal/audit_logs.go`
+**Trigger:** any change to `internal/admin/audit_logs.go`, `internal/admin/dal/audit_logs.go`, `internal/admin/mcp_servers.go`
 
 ---
 
@@ -2933,6 +2935,7 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/dal/tenants.go` | S1-94 |
 | `internal/admin/audit_logs.go` | S1-100 + S2-09 (integration) |
 | `internal/admin/dal/audit_logs.go` | S1-100 + S2-09 (integration) |
+| `internal/admin/mcp_servers.go` | S1-100 (AL-05a/b) |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |
@@ -3074,8 +3077,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-97 | per-tenant LLM provider handler (TLP-01..05): List_200_Empty, List_400_MissingID, Upsert_200, Upsert_404_PlatformNotFound, Upsert_400_BadJSON | 5 |
 | S1-98 | DB Pools (RLS): BadAppDSN, InterfaceAssertions, Close_NilSafe, TenantIDFormat | 4 |
 | S1-99 | dbtype Querier interfaces (RLS): TestInterfaceDistinction | 1 |
-| S1-100 | Audit Logs handler (AL-01..03): List_Empty, List_Populated, List_LimitOffset | 3 |
-| **S1 total** | | **1092** |
+| S1-100 | Audit Logs handler (AL-01..03, AL-05a/b): List_Empty, List_Populated, List_LimitOffset, NilAudit_NoPanic, NilReceiver_NoPanic | 5 |
+| **S1 total** | | **1094** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

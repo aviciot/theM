@@ -32,6 +32,7 @@ type MCPServersHandler struct {
 	// Legacy path (pools == nil): pre-built service backed by shared pool
 	legacySvc     *service.MCPServerService
 	mcpServiceURL string // base URL of them-mcp-service; empty → probe returns 503
+	audit         *AuditWriter
 }
 
 // NewMCPServersHandler creates an MCPServersHandler.
@@ -39,11 +40,12 @@ type MCPServersHandler struct {
 // Pass empty string when the service is not deployed — the probe endpoint will return 503.
 // When pools is non-nil, each request uses a TenantTx (RLS-ready path).
 // When pools is nil, the handler falls back to the legacy shared-pool path via db.
-func NewMCPServersHandler(legacyDB DBQuerier, pools *db.Pools, secretKey, mcpServiceURL string) *MCPServersHandler {
+func NewMCPServersHandler(legacyDB DBQuerier, pools *db.Pools, secretKey, mcpServiceURL string, audit *AuditWriter) *MCPServersHandler {
 	h := &MCPServersHandler{
 		pools:         pools,
 		fernetKey:     crypto.DeriveKey(secretKey),
 		mcpServiceURL: mcpServiceURL,
+		audit:         audit,
 	}
 	if pools == nil {
 		h.legacySvc = service.NewMCPServerService(dal.NewDB(legacyDB), secretKey)
@@ -151,6 +153,10 @@ func (h *MCPServersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: tenantID, UserID: userIDPtr(r),
+		Action: "mcp_server.create", EntityType: "mcp_server", EntityID: out.ID, Actor: actorFromRequest(r),
+	})
 	w.Header().Set("Location", r.URL.Path+"/"+out.ID)
 	writeJSON(w, http.StatusCreated, out)
 }
@@ -208,6 +214,10 @@ func (h *MCPServersHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: tenantID, UserID: userIDPtr(r),
+		Action: "mcp_server.update", EntityType: "mcp_server", EntityID: id, Actor: actorFromRequest(r),
+	})
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -233,6 +243,10 @@ func (h *MCPServersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: tenantID, UserID: userIDPtr(r),
+		Action: "mcp_server.delete", EntityType: "mcp_server", EntityID: id, Actor: actorFromRequest(r),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -176,7 +176,7 @@ func BuildRouter(
 				secCfg := NewSecurityConfigHandler(dbq, redis)
 				secCfg.Routes(tenantScoped)
 
-				mcpServers := NewMCPServersHandler(dbq, pools, secretKey, mcpServiceURL)
+				mcpServers := NewMCPServersHandler(dbq, pools, secretKey, mcpServiceURL, auditWriter)
 				mcpServers.Routes(tenantScoped)
 
 				// HITL canvas task signal endpoint — only mounted when Temporal is enabled.
