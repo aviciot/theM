@@ -1,7 +1,7 @@
-# Handover — Multi-Tenancy (Steps 19+21 complete, Step 22 next)
+# Handover — Multi-Tenancy (Steps 19+22 complete, Step 23 next)
 **Date:** 2026-09-04
 **Branch:** main
-**HEAD:** 61730f3 (docs(rls): v3 design)
+**HEAD:** 557b9dd (feat(audit): Step 22 — audit log UI)
 **Steps complete:** 1 → 18 (all 47 Go packages pass, 1082 S1 tests, 1034 go test ./...)
 **Step 19 design:** `docs/design/rls-option-a-plan.md` v3 — approved, no blocking issues
 **Step 19 progress:** `docs/STEP19_HANDOVER.md` — use this for sub-step tracking
@@ -71,6 +71,7 @@
 | Step 19 | Postgres Row-Level Security — new `dbtype` package, two pools (them_app/them_admin), TenantTx/AdminTx, per-table policies, caller migration | Complete | 0ad7ccb |
 | Step 20 | Resource quota enforcement — max_agents, max_apps, max_mcp_servers checked on Create; ErrQuotaExceeded → 429; 9 tests | Complete | 8f8cbc8 |
 | Step 21 | max_users enforcement — CountTenantMembers DAL; AddMember handler quota check (fail-open); 3 tests TN-23..25 | Complete | d164a4d |
+| Step 22 | Audit log UI — GET /admin/audit-logs (admin pool, BYPASSRLS); paginated frontend page; 3 tests AL-01..03 | Complete | 557b9dd |
 
 ---
 

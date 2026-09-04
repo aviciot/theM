@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-04 (Step 21 COMPLETE — max_users quota enforcement)
+# Last updated: 2026-09-04 (Step 22 COMPLETE — audit log UI)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+557b9dd           feat(audit): Step 22 — audit log UI (GET /admin/audit-logs + frontend page)
 d164a4d           feat(quota): Step 21 — enforce max_users on AddMember; 3 new tests (TN-23..25)
 8f8cbc8           feat(quota): Step 20 — enforce max_agents, max_apps, max_mcp_servers on create
 0ad7ccb           docs(rls): H complete — Step 19 closed; SCHEMA.md RLS table, E2E test fix
 a89df32           feat(rls): G1+G2 — migrate callers; enable RLS on llm_providers/middleware_jobs/audit_logs
-61af130           feat(rls): F1+F2 — verify callers; enable RLS on run_steps/run_usage/artifacts/task_messages/middleware_audit
 ```
 
 ---
@@ -45,27 +45,27 @@ Key facts:
 
 ## Current migration slice
 
-**Step 21 — max_users quota enforcement**
+**Step 22 — Audit log UI**
 
-Completed: `max_users` now enforced on `AddMember` (POST /admin/tenants/{id}/members).
-- New DAL: `CountTenantMembers(ctx, tenantID) (int, error)` in `go/internal/admin/dal/tenants.go` — `COUNT(*) FROM auth_service.tenant_memberships WHERE tenant_id = $1::uuid`
-- Handler `AddMember` in `go/internal/admin/tenants.go`: calls `GetQuota` → if `MaxUsers != nil` → calls `CountTenantMembers` → 429 when count >= limit. Fail-open on missing quota row or DB error.
-- No service layer change needed (TenantsHandler uses dal.DB directly, not service layer).
-- 3 new tests TN-23..25 in `go/internal/admin/tenants_test.go`: nil limit allows, under limit allows, at-or-over limit returns 429.
-- `go/TEST_INDEX.md` updated: S1-94 count 32→35.
-- `go test ./...` — 49 packages, 0 failures. HEAD: pending commit.
+Completed:
+- `go/internal/admin/dal/audit_logs.go`: `ListAuditLogs(ctx, tenantID, limit, offset)` — uses admin pool (BYPASSRLS) because `them_app` has INSERT-only RLS on `them.audit_logs`.
+- `go/internal/admin/audit_logs.go`: `AuditLogsHandler` → `GET /api/v1/admin/audit-logs?limit=&offset=`. Limit capped at 200, default 50. When `pools != nil` uses admin querier; falls back to `legacyDB` in tests.
+- `go/internal/admin/router.go`: wired into tenant-scoped group.
+- 3 unit tests (AL-01..03) — empty list, populated row, limit/offset params. `go/TEST_INDEX.md` updated (S1-100, count 1087→1090).
+- Frontend: `AuditLog` type in `apiTypes.ts`, `themApi.getAuditLogs` in `api.ts`, `admin/audit-logs/page.tsx` (paginated table, action badge colors, expandable details JSON), "Audit Logs" nav entry in `Sidebar.tsx`.
+- `go test ./...` — 48 packages, 0 failures. HEAD: 557b9dd.
 
 Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
 
 ### Next recommended task for a new session
 
-**Step 22 candidates** (choose one):
+**Step 23 candidates** (choose one):
 
-1. **Tenant-scoped audit log UI** — frontend page showing `audit_logs` for the current tenant. Small, bounded. Backend query already exists via admin runs/audit infrastructure.
-2. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (update display name, IdP config, quota visibility). Medium scope.
-3. **Cross-tenant admin observability** — super-admin dashboard: runs/usage/quota consumption across all tenants. Medium scope.
+1. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (update display name, IdP config, quota visibility). Medium scope.
+2. **Cross-tenant admin observability** — super-admin dashboard: runs/usage/quota consumption across all tenants. Medium scope.
+3. **Audit log write path** — instrument key admin handlers (agent create/update/delete, app create/delete, etc.) to write rows to `them.audit_logs` using the service layer. Bounded scope.
 
-Recommended: **Step 22 = audit log UI** (visible user value, bounded scope).
+Recommended: **Step 23 = audit log write path** — the UI now exists; wiring actual writes makes it useful.
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
