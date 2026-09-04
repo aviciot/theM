@@ -199,7 +199,7 @@ func (r *tenantDetailFakeRow) Scan(dest ...any) error {
 func newTenantRouter(db admin.DBQuerier) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(withTestTenant) // inject bootstrap tenant into context
-	admin.NewTenantsHandler(db).Routes(r)
+	admin.NewTenantsHandler(db, nil).Routes(r)
 	return r
 }
 

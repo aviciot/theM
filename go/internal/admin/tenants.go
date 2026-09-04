@@ -14,12 +14,13 @@ import (
 // All routes require super_admin (enforced by the outer router group).
 // Tenants are platform-global — no AdminTenantMiddleware is applied here.
 type TenantsHandler struct {
-	db *dal.DB
+	db    *dal.DB
+	audit *AuditWriter
 }
 
 // NewTenantsHandler creates a TenantsHandler.
-func NewTenantsHandler(db DBQuerier) *TenantsHandler {
-	return &TenantsHandler{db: dal.NewDB(db)}
+func NewTenantsHandler(db DBQuerier, audit *AuditWriter) *TenantsHandler {
+	return &TenantsHandler{db: dal.NewDB(db), audit: audit}
 }
 
 // Routes mounts the tenant CRUD + quota + member + group-mapping endpoints.
@@ -97,6 +98,10 @@ func (h *TenantsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: tenant.ID, UserID: userIDPtr(r),
+		Action: "tenant.create", EntityType: "tenant", EntityID: tenant.ID, Actor: actorFromRequest(r),
+	})
 	writeJSON(w, http.StatusCreated, tenant)
 }
 
@@ -121,6 +126,10 @@ func (h *TenantsHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: id, UserID: userIDPtr(r),
+		Action: "tenant.patch", EntityType: "tenant", EntityID: id, Actor: actorFromRequest(r),
+	})
 	writeJSON(w, http.StatusOK, detail)
 }
 
@@ -232,6 +241,10 @@ func (h *TenantsHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: id, UserID: userIDPtr(r),
+		Action: "tenant.add_member", EntityType: "tenant", EntityID: id, Actor: actorFromRequest(r),
+	})
 	writeJSON(w, http.StatusCreated, m)
 }
 

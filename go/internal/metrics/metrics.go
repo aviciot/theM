@@ -118,6 +118,17 @@ var (
 	})
 )
 
+// ── Audit metrics ─────────────────────────────────────────────────────────────
+
+var (
+	// AuditWriteErrors counts failures writing to them.audit_logs after a
+	// successful primary operation. Non-zero means audit rows may be missing.
+	AuditWriteErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "them_audit_write_errors_total",
+		Help: "Audit log write failures after a successful primary operation",
+	})
+)
+
 func init() {
 	prometheus.MustRegister(
 		// Session
@@ -137,6 +148,8 @@ func init() {
 		RunStatusUpdateFailed,
 		// Shutdown
 		GracefulDrainDuration,
+		// Audit
+		AuditWriteErrors,
 	)
 }
 

@@ -30,6 +30,7 @@ type AgentsHandler struct {
 	legacySvc *service.AgentService
 	pools     *db.Pools
 	cache     CacheInvalidator
+	audit     *AuditWriter
 	// Action endpoints (Discover, Test, SecurityScan): cross-tenant reads via admin pool.
 	legacyDAL *dal.DB
 	redis     rueidis.Client
@@ -41,12 +42,13 @@ type AgentsHandler struct {
 // endpoints. Pass nil redis / empty fernetKey in tests that do not exercise
 // those endpoints.
 // When pools is non-nil, CRUD requests use a TenantTx per request.
-func NewAgentsHandler(legacyDB DBQuerier, pools *db.Pools, cache CacheInvalidator, redis rueidis.Client, fernetKey []byte) *AgentsHandler {
+func NewAgentsHandler(legacyDB DBQuerier, pools *db.Pools, cache CacheInvalidator, redis rueidis.Client, fernetKey []byte, audit *AuditWriter) *AgentsHandler {
 	d := dal.NewDB(legacyDB)
 	return &AgentsHandler{
 		legacySvc: service.NewAgentService(d, cache),
 		pools:     pools,
 		cache:     cache,
+		audit:     audit,
 		legacyDAL: d,
 		redis:     redis,
 		fernetKey: fernetKey,
@@ -138,6 +140,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: tenantID, UserID: userIDPtr(r),
+		Action: "agent.create", EntityType: "agent", EntityID: id, Actor: actorFromRequest(r),
+	})
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/agents/%s", id))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
 }
@@ -192,6 +198,10 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: tenantID, UserID: userIDPtr(r),
+		Action: "agent.update", EntityType: "agent", EntityID: id, Actor: actorFromRequest(r),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
 
@@ -217,6 +227,10 @@ func (h *AgentsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: tenantID, UserID: userIDPtr(r),
+		Action: "agent.delete", EntityType: "agent", EntityID: id, Actor: actorFromRequest(r),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
 }
 

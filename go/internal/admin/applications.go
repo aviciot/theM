@@ -29,19 +29,21 @@ type ApplicationsHandler struct {
 	legacyDAL *dal.DB
 	pools     *db.Pools
 	cache     CacheInvalidator
+	audit     *AuditWriter
 	fernetKey []byte
 }
 
 // NewApplicationsHandler creates an ApplicationsHandler.
 // When pools is non-nil each request uses a TenantTx (RLS-ready path).
 // fernetKey is the AES-GCM key used to encrypt/decrypt provider_keys at rest.
-func NewApplicationsHandler(legacyDB DBQuerier, pools *db.Pools, cache CacheInvalidator, fernetKey []byte) *ApplicationsHandler {
+func NewApplicationsHandler(legacyDB DBQuerier, pools *db.Pools, cache CacheInvalidator, fernetKey []byte, audit *AuditWriter) *ApplicationsHandler {
 	d := dal.NewDB(legacyDB)
 	return &ApplicationsHandler{
 		legacySvc: service.NewAppService(d, cache, fernetKey),
 		legacyDAL: d,
 		pools:     pools,
 		cache:     cache,
+		audit:     audit,
 		fernetKey: fernetKey,
 	}
 }
@@ -169,6 +171,10 @@ func (h *ApplicationsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: tenantID, UserID: userIDPtr(r),
+		Action: "app.create", EntityType: "app", EntityID: id, Actor: actorFromRequest(r),
+	})
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/applications/%s", id))
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
 }
@@ -229,6 +235,10 @@ func (h *ApplicationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: tenantID, UserID: userIDPtr(r),
+		Action: "app.update", EntityType: "app", EntityID: id, Actor: actorFromRequest(r),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
 
@@ -255,6 +265,10 @@ func (h *ApplicationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
+	h.audit.Write(r.Context(), dal.AuditEntry{
+		TenantID: tenantID, UserID: userIDPtr(r),
+		Action: "app.delete", EntityType: "app", EntityID: id, Actor: actorFromRequest(r),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
 }
 

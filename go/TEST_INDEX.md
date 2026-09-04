@@ -2793,6 +2793,25 @@ go test -tags=integration -v ./internal/db/... -run 'TestRLS'
 
 ---
 
+### S2-09 · Audit Logs cross-tenant isolation — `internal/admin/audit_logs_integration_test.go`
+
+**Purpose:** Prove that `ListAuditLogs` WHERE clause enforces tenant isolation against real PostgreSQL. Writes a row scoped to tenant B, queries as tenant A (must not appear), then queries as tenant B (must appear).
+
+Build tag: `//go:build integration`. Package: `admin_test`. Requires `TEST_DATABASE_URL` env var.
+
+| Test ID | Test | What it proves |
+|---|---|---|
+| AL-04 | `TestAuditLogs_CrossTenantIsolation` | Tenant B audit rows are invisible to tenant A queries; visible to tenant B queries |
+
+```bash
+TEST_DATABASE_URL=postgres://them_admin:<pw>@them-postgres:5432/them \
+go test -tags=integration -v ./internal/admin/... -run TestAuditLogs_CrossTenantIsolation
+```
+
+**Trigger:** any change to `internal/admin/audit_logs.go` or `internal/admin/dal/audit_logs.go`
+
+---
+
 ## Suite 3 — Live deploy verification (`DEPLOY_AND_TEST.md`)
 
 Manual checklist of 23 tests against a running Docker stack.
@@ -2910,8 +2929,8 @@ See `DEPLOY_AND_TEST.md` for full instructions.
 | `internal/admin/dal/managed_apps.go` | S1-92 |
 | `internal/admin/tenants.go` | S1-94 |
 | `internal/admin/dal/tenants.go` | S1-94 |
-| `internal/admin/audit_logs.go` | S1-100 |
-| `internal/admin/dal/audit_logs.go` | S1-100 |
+| `internal/admin/audit_logs.go` | S1-100 + S2-09 (integration) |
+| `internal/admin/dal/audit_logs.go` | S1-100 + S2-09 (integration) |
 | `internal/crypto/fernet.go` | S1-26 |
 | `internal/transport/transport.go` | S1-12 + S1-13 |
 | `internal/metrics/metrics.go` | S1-27 |
@@ -3062,6 +3081,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S2-04 | admin tokens + sessions integration | 11 |
 | S2-05 | admin/dal llm_providers integration | 11 |
 | S2-08 | RLS integration (role attrs + GUC isolation): RLS-30, RLS-31, RLS-31b, RLS-32, RLS-33, RLS-08, RLS-10, RLS-11, PoolsInterface | 9 |
-| **S2 total** | | **51** |
+| S2-09 | Audit Logs cross-tenant isolation (AL-04): TestAuditLogs_CrossTenantIsolation | 1 |
+| **S2 total** | | **52** |
 | S3 live | manual | 23 |
 | **`go test ./...` total** | | **1034** |

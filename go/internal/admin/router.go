@@ -119,9 +119,10 @@ func BuildRouter(
 ) http.Handler {
 	r := chi.NewRouter()
 
-	agents := NewAgentsHandler(dbq, pools, cache, redis, fernetKey)
+	auditWriter := NewAuditWriter(pools)
+	agents := NewAgentsHandler(dbq, pools, cache, redis, fernetKey, auditWriter)
 	orchs := NewOrchestratorsHandler(dbq, pools, cache)
-	apps := NewApplicationsHandler(dbq, pools, cache, fernetKey)
+	apps := NewApplicationsHandler(dbq, pools, cache, fernetKey, auditWriter)
 	defs := NewDefinitionsHandlerWithRegistry(dbq, registry.NewResolver(&registryQuerierAdapter{dbq}))
 	runs := NewRunsHandler(dbq, temporalSig)
 	tokens := NewTokensHandler(dbq, pools, cache)
@@ -129,7 +130,7 @@ func BuildRouter(
 	llmRouting := NewLLMRoutingHandler(dbq)
 	llmProviders := NewLLMProvidersHandler(dbq, secretKey)
 	systemAgents := NewSystemAgentsHandler(dbq, fernetKey)
-	tenants := NewTenantsHandler(dbq)
+	tenants := NewTenantsHandler(dbq, auditWriter)
 	managedApps := NewManagedAppsHandler(dbq)
 
 	// Admin routes — all require JWT + super_admin.

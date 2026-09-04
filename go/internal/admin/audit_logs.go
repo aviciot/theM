@@ -1,13 +1,19 @@
 package admin
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aviciot/them/internal/admin/dal"
+	"github.com/aviciot/them/internal/auth"
 	"github.com/aviciot/them/internal/db"
+	"github.com/aviciot/them/internal/metrics"
 	"github.com/aviciot/them/internal/tenantctx"
 )
 
@@ -67,4 +73,60 @@ func (h *AuditLogsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, logs)
+}
+
+// ── AuditWriter ───────────────────────────────────────────────────────────────
+
+// AuditWriter writes audit log entries synchronously after successful operations.
+// It uses the admin pool (BYPASSRLS) so it bypasses the INSERT-only RLS on audit_logs.
+type AuditWriter struct {
+	pools *db.Pools
+}
+
+// NewAuditWriter creates an AuditWriter. Pass nil pools in tests — writes are no-ops.
+func NewAuditWriter(pools *db.Pools) *AuditWriter {
+	return &AuditWriter{pools: pools}
+}
+
+// Write persists one audit entry with a 3-second timeout.
+// On failure it logs a warning and increments them_audit_write_errors_total.
+// It never changes the HTTP response — audit failures must not affect the primary operation.
+func (aw *AuditWriter) Write(ctx context.Context, e dal.AuditEntry) {
+	if aw == nil || aw.pools == nil {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	adb := dal.NewDBFromAdminQuerier(aw.pools.NewAdminQuerier())
+	if err := adb.WriteAuditLog(writeCtx, e); err != nil {
+		slog.WarnContext(ctx, "audit write failed",
+			"action", e.Action,
+			"entity_type", e.EntityType,
+			"entity_id", e.EntityID,
+			"error", err,
+		)
+		metrics.AuditWriteErrors.Inc()
+	}
+}
+
+// actorFromRequest extracts a human-readable actor string from JWT claims.
+// Returns email if present, "user:{id}" if only user ID is known, or "token" for bearer calls.
+func actorFromRequest(r *http.Request) string {
+	if claims, ok := auth.ClaimsFromCtx(r.Context()); ok {
+		if claims.Email != "" {
+			return claims.Email
+		}
+		return fmt.Sprintf("user:%d", claims.UserID)
+	}
+	return "token"
+}
+
+// userIDPtr extracts the UserID from JWT claims as a *int64.
+// Returns nil for bearer-token-authenticated requests (no user claims).
+func userIDPtr(r *http.Request) *int64 {
+	if claims, ok := auth.ClaimsFromCtx(r.Context()); ok && claims.UserID != 0 {
+		id := claims.UserID
+		return &id
+	}
+	return nil
 }

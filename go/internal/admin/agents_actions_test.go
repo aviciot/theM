@@ -146,7 +146,7 @@ func (r *nullStringRow) Scan(dest ...any) error {
 // request, returning the recorder.
 func serveAgentActions(t *testing.T, db admin.DBQuerier, method, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
-	h := admin.NewAgentsHandler(db, nil, nil, nil, nil)
+	h := admin.NewAgentsHandler(db, nil, nil, nil, nil, nil)
 	r := chi.NewRouter()
 	r.Use(withTestTenant)
 	h.Routes(r)
