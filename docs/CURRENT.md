@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-04 (Step 22 COMPLETE — audit log UI)
+# Last updated: 2026-09-04 (Step 23 COMPLETE — audit write path)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+10628a3           feat(audit): Step 23 — synchronous audit write path for agents, apps, tenants
+e8a288c           docs(audit): Step 22 complete — update CURRENT.md and HANDOVER.md
 557b9dd           feat(audit): Step 22 — audit log UI (GET /admin/audit-logs + frontend page)
 d164a4d           feat(quota): Step 21 — enforce max_users on AddMember; 3 new tests (TN-23..25)
 8f8cbc8           feat(quota): Step 20 — enforce max_agents, max_apps, max_mcp_servers on create
-0ad7ccb           docs(rls): H complete — Step 19 closed; SCHEMA.md RLS table, E2E test fix
-a89df32           feat(rls): G1+G2 — migrate callers; enable RLS on llm_providers/middleware_jobs/audit_logs
 ```
 
 ---
@@ -45,27 +45,29 @@ Key facts:
 
 ## Current migration slice
 
-**Step 22 — Audit log UI**
+**Step 23 — Audit write path**
 
 Completed:
-- `go/internal/admin/dal/audit_logs.go`: `ListAuditLogs(ctx, tenantID, limit, offset)` — uses admin pool (BYPASSRLS) because `them_app` has INSERT-only RLS on `them.audit_logs`.
-- `go/internal/admin/audit_logs.go`: `AuditLogsHandler` → `GET /api/v1/admin/audit-logs?limit=&offset=`. Limit capped at 200, default 50. When `pools != nil` uses admin querier; falls back to `legacyDB` in tests.
-- `go/internal/admin/router.go`: wired into tenant-scoped group.
-- 3 unit tests (AL-01..03) — empty list, populated row, limit/offset params. `go/TEST_INDEX.md` updated (S1-100, count 1087→1090).
-- Frontend: `AuditLog` type in `apiTypes.ts`, `themApi.getAuditLogs` in `api.ts`, `admin/audit-logs/page.tsx` (paginated table, action badge colors, expandable details JSON), "Audit Logs" nav entry in `Sidebar.tsx`.
-- `go test ./...` — 48 packages, 0 failures. HEAD: 557b9dd.
+- `go/internal/admin/dal/audit_logs.go`: `AuditEntry` struct + `WriteAuditLog` INSERT (admin pool, BYPASSRLS).
+- `go/internal/admin/audit_logs.go`: `AuditWriter` (nil-safe, 3s timeout, WARN log + `them_audit_write_errors_total` on failure). `actorFromRequest` (email → "user:{id}" → "token"). `userIDPtr` for nullable user_id.
+- `go/internal/admin/router.go`: `NewAuditWriter(pools)` constructed once, passed to agents/apps/tenants handlers.
+- Wired mutations: `agent.create/update/delete`, `app.create/update/delete`, `tenant.create/patch/add_member`.
+- `go/internal/metrics/metrics.go`: `them_audit_write_errors_total` counter registered.
+- AL-04 integration test (`//go:build integration`): real Postgres, two tenant UUIDs, asserts no cross-tenant row leakage. `go/TEST_INDEX.md` updated (S2-09, S2 total 51→52).
+- `go test ./...` — 48 packages, 0 failures. HEAD: 10628a3.
 
 Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
 
 ### Next recommended task for a new session
 
-**Step 23 candidates** (choose one):
+**Step 24 candidates** (choose one):
 
 1. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (update display name, IdP config, quota visibility). Medium scope.
 2. **Cross-tenant admin observability** — super-admin dashboard: runs/usage/quota consumption across all tenants. Medium scope.
-3. **Audit log write path** — instrument key admin handlers (agent create/update/delete, app create/delete, etc.) to write rows to `them.audit_logs` using the service layer. Bounded scope.
+3. **Audit log enrichment** — add before/after diff on Update operations (SELECT-before-UPDATE in DAL, store `changes` JSONB). Bounded scope.
+4. **MCP server audit** — wire `mcp_server.create/update/delete` into `AuditWriter` (same pattern, one more handler).
 
-Recommended: **Step 23 = audit log write path** — the UI now exists; wiring actual writes makes it useful.
+Recommended: **Step 24 = MCP server audit** (smallest scope, completes audit coverage) or **Step 24 = tenant self-service** (most user-visible value).
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
