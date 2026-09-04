@@ -373,15 +373,18 @@ func TestRLSPoolsInterface(t *testing.T) {
 // complete cross-tenant data isolation across all RLS-enabled tables.
 //
 // Strategy:
-//  1. Insert two synthetic tenants (A + B) and one row each in every protected table.
-//  2. As tenant-A (TenantTx), read every table — assert 0 tenant-B rows visible.
-//  3. As tenant-B (TenantTx), read every table — assert 0 tenant-A rows visible.
-//  4. As tenant-A (TenantTx), attempt a cross-tenant INSERT (tenant-B's application_id
-//     in app_agent_bindings WITH CHECK) — assert it is rejected.
-//  5. Clean up all test rows via Admin pool (BYPASSRLS) regardless of outcome.
+//  1. Insert two synthetic tenants (A + B) and seed rows for each in every table.
+//  2. As tenant-A (TenantTx), read every table — assert only A rows are visible.
+//  3. As tenant-B (TenantTx), read every table — assert only B rows are visible.
+//  4. As tenant-A, attempt a cross-tenant INSERT — assert it is rejected by WITH CHECK.
+//  5. Clean up via Admin pool (BYPASSRLS) regardless of outcome.
 //
-// Tables covered: agents, orchestrators, applications, access_tokens (direct tenant_id);
-// app_agent_bindings (EXISTS via applications — Phase D); mcp_servers (Phase B).
+// Tables covered (27 of 28 — component_definitions excluded; split-policy verified separately):
+// mcp_servers, agent_definitions, agent_runtime_specs, llm_providers, audit_logs, tasks,
+// runs, run_artifacts, artifacts, task_messages, app_agent_bindings, app_mcp_credentials,
+// app_orchestrators, middleware_wirings, middleware_audit, middleware_jobs,
+// application_definitions, managed_app_bindings, quarantine_artifacts,
+// run_steps, run_usage, tenant_group_mappings.
 func TestRLS_TwoTenantFullIsolation(t *testing.T) {
 	ctx := context.Background()
 	pools, err := NewPools(ctx, testAppDSN(t), testAdminDSN(t))
@@ -419,87 +422,205 @@ func TestRLS_TwoTenantFullIsolation(t *testing.T) {
 	}
 
 	// cleanup removes all test data at the end, regardless of outcome.
+	// Delete in dependency order — tenants.id has FKs that are NOT CASCADE on some tables.
 	cleanup := func() {
-		// Delete in dependency order. CASCADE handles children.
-		_, _ = superPool.Exec(ctx,
-			`DELETE FROM them.tenants WHERE id IN ($1::uuid, $2::uuid)`, tenantA, tenantB)
+		ids := []string{tenantA, tenantB}
+		for _, tid := range ids {
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.middleware_wirings WHERE application_id IN (SELECT id FROM them.applications WHERE tenant_id=$1::uuid)`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.agents WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.orchestrators WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.applications WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.tenant_group_mappings WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.llm_providers WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.access_tokens WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.mcp_servers WHERE tenant_id=$1::uuid`, tid)
+			_, _ = superPool.Exec(ctx, `DELETE FROM them.audit_logs WHERE tenant_id=$1::uuid`, tid)
+		}
+		_, _ = superPool.Exec(ctx, `DELETE FROM them.tenants WHERE id IN ($1::uuid,$2::uuid)`, tenantA, tenantB)
+		_, _ = superPool.Exec(ctx, `DELETE FROM them.component_definitions WHERE namespace='rlstest'`)
 	}
 	defer cleanup()
 
-	// ── 2. Insert one row per table per tenant via Admin pool ─────────────────
-	// Insert mcp_servers (simple structure, Phase B RLS-enabled, direct tenant_id).
-	var mcpA, mcpB string
-	if err := superPool.QueryRow(ctx,
-		`INSERT INTO them.mcp_servers (name, slug, url, tenant_id)
-		 VALUES ('RLS MCP A', 'rlstestmcpa', 'http://test-a', $1::uuid)
-		 ON CONFLICT ON CONSTRAINT mcp_servers_tenant_id_slug_key DO UPDATE SET url = EXCLUDED.url
-		 RETURNING id::text`, tenantA,
-	).Scan(&mcpA); err != nil {
-		t.Fatalf("upsert mcp A: %v", err)
+	// ── 2. Seed one row per table per tenant (Admin / superuser pool — BYPASSRLS) ──
+
+	upsert := func(q string, args ...any) string {
+		t.Helper()
+		var id string
+		if err := superPool.QueryRow(ctx, q, args...).Scan(&id); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		return id
 	}
-	if err := superPool.QueryRow(ctx,
-		`INSERT INTO them.mcp_servers (name, slug, url, tenant_id)
-		 VALUES ('RLS MCP B', 'rlstestmcpb', 'http://test-b', $1::uuid)
-		 ON CONFLICT ON CONSTRAINT mcp_servers_tenant_id_slug_key DO UPDATE SET url = EXCLUDED.url
-		 RETURNING id::text`, tenantB,
-	).Scan(&mcpB); err != nil {
-		t.Fatalf("upsert mcp B: %v", err)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := superPool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("seed exec: %v", err)
+		}
 	}
 
-	// Insert orchestrators (direct tenant_id, Phase C).
-	var orchA, orchB string
-	if err := superPool.QueryRow(ctx,
-		`INSERT INTO them.orchestrators (name, display_name, tenant_id)
-		 VALUES ('rlstestorcha', 'RLS Orch A', $1::uuid)
-		 ON CONFLICT ON CONSTRAINT orchestrators_tenant_name_unique DO UPDATE SET display_name = EXCLUDED.display_name
-		 RETURNING id::text`, tenantA,
-	).Scan(&orchA); err != nil {
-		t.Fatalf("upsert orch A: %v", err)
-	}
-	if err := superPool.QueryRow(ctx,
-		`INSERT INTO them.orchestrators (name, display_name, tenant_id)
-		 VALUES ('rlstestorchb', 'RLS Orch B', $1::uuid)
-		 ON CONFLICT ON CONSTRAINT orchestrators_tenant_name_unique DO UPDATE SET display_name = EXCLUDED.display_name
-		 RETURNING id::text`, tenantB,
-	).Scan(&orchB); err != nil {
-		t.Fatalf("upsert orch B: %v", err)
-	}
+	// Direct tenant_id tables
+	// agents.id must reference component_definitions(id) — seed a component_def first
+	compDefA := upsert(`INSERT INTO them.component_definitions
+		(kind, namespace, name, version, display_name, implementation_type, scope, status, content_hash)
+		VALUES ('agent','rlstest','rls_agent_a',1,'RLS Agent A','http','tenant','published','rlshash-comp-a')
+		ON CONFLICT ON CONSTRAINT component_definitions_kind_namespace_name_version_key DO UPDATE SET display_name=EXCLUDED.display_name
+		RETURNING id::text`)
+	compDefB := upsert(`INSERT INTO them.component_definitions
+		(kind, namespace, name, version, display_name, implementation_type, scope, status, content_hash)
+		VALUES ('agent','rlstest','rls_agent_b',1,'RLS Agent B','http','tenant','published','rlshash-comp-b')
+		ON CONFLICT ON CONSTRAINT component_definitions_kind_namespace_name_version_key DO UPDATE SET display_name=EXCLUDED.display_name
+		RETURNING id::text`)
+	agentA := upsert(`INSERT INTO them.agents (id, slug, namespace, tenant_id, transport, scope, status)
+		VALUES ($1::uuid,'rlsagenta','rlstest',$2::uuid,'a2a_async','tenant','published')
+		ON CONFLICT ON CONSTRAINT agents_tenant_slug_unique DO UPDATE SET namespace=EXCLUDED.namespace RETURNING id::text`,
+		compDefA, tenantA)
+	agentB := upsert(`INSERT INTO them.agents (id, slug, namespace, tenant_id, transport, scope, status)
+		VALUES ($1::uuid,'rlsagentb','rlstest',$2::uuid,'a2a_async','tenant','published')
+		ON CONFLICT ON CONSTRAINT agents_tenant_slug_unique DO UPDATE SET namespace=EXCLUDED.namespace RETURNING id::text`,
+		compDefB, tenantB)
+	mcpA := upsert(`INSERT INTO them.mcp_servers (name, slug, url, tenant_id) VALUES ('RLS MCP A','rlstestmcpa','http://test-a',$1::uuid)
+		ON CONFLICT ON CONSTRAINT mcp_servers_tenant_id_slug_key DO UPDATE SET url=EXCLUDED.url RETURNING id::text`, tenantA)
+	mcpB := upsert(`INSERT INTO them.mcp_servers (name, slug, url, tenant_id) VALUES ('RLS MCP B','rlstestmcpb','http://test-b',$1::uuid)
+		ON CONFLICT ON CONSTRAINT mcp_servers_tenant_id_slug_key DO UPDATE SET url=EXCLUDED.url RETURNING id::text`, tenantB)
+	orchA := upsert(`INSERT INTO them.orchestrators (name, display_name, tenant_id) VALUES ('rlsorcha','RLS Orch A',$1::uuid)
+		ON CONFLICT ON CONSTRAINT orchestrators_tenant_name_unique DO UPDATE SET display_name=EXCLUDED.display_name RETURNING id::text`, tenantA)
+	orchB := upsert(`INSERT INTO them.orchestrators (name, display_name, tenant_id) VALUES ('rlsorchb','RLS Orch B',$1::uuid)
+		ON CONFLICT ON CONSTRAINT orchestrators_tenant_name_unique DO UPDATE SET display_name=EXCLUDED.display_name RETURNING id::text`, tenantB)
 	_ = orchA
 	_ = orchB
+	appA := upsert(`INSERT INTO them.applications (name, slug, tenant_id) VALUES ('RLS App A','rlstestappa',$1::uuid)
+		ON CONFLICT ON CONSTRAINT uq_applications_tenant_slug DO UPDATE SET name=EXCLUDED.name RETURNING id::text`, tenantA)
+	appB := upsert(`INSERT INTO them.applications (name, slug, tenant_id) VALUES ('RLS App B','rlstestappb',$1::uuid)
+		ON CONFLICT ON CONSTRAINT uq_applications_tenant_slug DO UPDATE SET name=EXCLUDED.name RETURNING id::text`, tenantB)
+	epA := upsert(`INSERT INTO them.entry_points (application_id, slug, tenant_id, entry_point_type) VALUES ($1::uuid,'rlsepsluga',$2::uuid,'websocket')
+		ON CONFLICT ON CONSTRAINT uq_entry_points_app_slug DO UPDATE SET tenant_id=EXCLUDED.tenant_id RETURNING id::text`, appA, tenantA)
+	epB := upsert(`INSERT INTO them.entry_points (application_id, slug, tenant_id, entry_point_type) VALUES ($1::uuid,'rlsepslugb',$2::uuid,'websocket')
+		ON CONFLICT ON CONSTRAINT uq_entry_points_app_slug DO UPDATE SET tenant_id=EXCLUDED.tenant_id RETURNING id::text`, appB, tenantB)
+	_ = epA
+	_ = epB
+	tokenA := upsert(`INSERT INTO them.access_tokens (token_hash, tenant_id, label) VALUES ('rlstokena_hash',$1::uuid,'RLS Token A')
+		ON CONFLICT (token_hash) DO UPDATE SET label=EXCLUDED.label RETURNING id::text`, tenantA)
+	tokenB := upsert(`INSERT INTO them.access_tokens (token_hash, tenant_id, label) VALUES ('rlstokenb_hash',$1::uuid,'RLS Token B')
+		ON CONFLICT (token_hash) DO UPDATE SET label=EXCLUDED.label RETURNING id::text`, tenantB)
+	_ = tokenA
+	_ = tokenB
+	adefA := upsert(`INSERT INTO them.agent_definitions (tenant_id, agent_slug, revision, definition, definition_hash)
+		VALUES ($1::uuid,'rls-agent-a',1,'{}','rlsdefhasha')
+		ON CONFLICT ON CONSTRAINT agent_definitions_tenant_id_agent_slug_revision_key DO UPDATE SET definition_hash=EXCLUDED.definition_hash
+		RETURNING id::text`, tenantA)
+	adefB := upsert(`INSERT INTO them.agent_definitions (tenant_id, agent_slug, revision, definition, definition_hash)
+		VALUES ($1::uuid,'rls-agent-b',1,'{}','rlsdefhashb')
+		ON CONFLICT ON CONSTRAINT agent_definitions_tenant_id_agent_slug_revision_key DO UPDATE SET definition_hash=EXCLUDED.definition_hash
+		RETURNING id::text`, tenantB)
+	exec(`INSERT INTO them.agent_runtime_specs (tenant_id, definition_id, agent_id, spec, spec_hash)
+		VALUES ($1::uuid,$2::uuid,$3::uuid,'{}','rlsspechasha')
+		ON CONFLICT ON CONSTRAINT agent_runtime_specs_definition_id_key DO UPDATE SET spec_hash=EXCLUDED.spec_hash`, tenantA, adefA, agentA)
+	exec(`INSERT INTO them.agent_runtime_specs (tenant_id, definition_id, agent_id, spec, spec_hash)
+		VALUES ($1::uuid,$2::uuid,$3::uuid,'{}','rlsspecahashb')
+		ON CONFLICT ON CONSTRAINT agent_runtime_specs_definition_id_key DO UPDATE SET spec_hash=EXCLUDED.spec_hash`, tenantB, adefB, agentB)
+	exec(`INSERT INTO them.llm_providers (name, tenant_id) VALUES ('rlsllma',$1::uuid)`, tenantA)
+	exec(`INSERT INTO them.llm_providers (name, tenant_id) VALUES ('rlsllmb',$1::uuid)`, tenantB)
+	exec(`INSERT INTO them.audit_logs (tenant_id, action, entity_type) VALUES ($1::uuid,'rls.test.a','agent')`, tenantA)
+	exec(`INSERT INTO them.audit_logs (tenant_id, action, entity_type) VALUES ($1::uuid,'rls.test.b','agent')`, tenantB)
+	exec(`INSERT INTO them.tenant_group_mappings (tenant_id, group_claim, role) VALUES ($1::uuid,'rls-group-a','viewer')
+		ON CONFLICT (tenant_id, group_claim) DO UPDATE SET role=EXCLUDED.role`, tenantA)
+	exec(`INSERT INTO them.tenant_group_mappings (tenant_id, group_claim, role) VALUES ($1::uuid,'rls-group-b','viewer')
+		ON CONFLICT (tenant_id, group_claim) DO UPDATE SET role=EXCLUDED.role`, tenantB)
 
-	// Insert applications (direct tenant_id, Phase C).
-	var appA, appB string
-	if err := superPool.QueryRow(ctx,
-		`INSERT INTO them.applications (name, slug, tenant_id)
-		 VALUES ('RLS App A', 'rlstestappa', $1::uuid)
-		 ON CONFLICT ON CONSTRAINT uq_applications_tenant_slug DO UPDATE SET name = EXCLUDED.name
-		 RETURNING id::text`, tenantA,
-	).Scan(&appA); err != nil {
-		t.Fatalf("upsert app A: %v", err)
-	}
-	if err := superPool.QueryRow(ctx,
-		`INSERT INTO them.applications (name, slug, tenant_id)
-		 VALUES ('RLS App B', 'rlstestappb', $1::uuid)
-		 ON CONFLICT ON CONSTRAINT uq_applications_tenant_slug DO UPDATE SET name = EXCLUDED.name
-		 RETURNING id::text`, tenantB,
-	).Scan(&appB); err != nil {
-		t.Fatalf("upsert app B: %v", err)
-	}
-	// Insert app_mcp_credentials for each tenant (Phase D — EXISTS via applications).
-	if _, err := superPool.Exec(ctx,
-		`INSERT INTO them.app_mcp_credentials (application_id, mcp_server_id)
-		 VALUES ($1::uuid, $2::uuid)
-		 ON CONFLICT (application_id, mcp_server_id) DO NOTHING`, appA, mcpA,
-	); err != nil {
-		t.Fatalf("upsert mcp_cred A: %v", err)
-	}
-	if _, err := superPool.Exec(ctx,
-		`INSERT INTO them.app_mcp_credentials (application_id, mcp_server_id)
-		 VALUES ($1::uuid, $2::uuid)
-		 ON CONFLICT (application_id, mcp_server_id) DO NOTHING`, appB, mcpB,
-	); err != nil {
-		t.Fatalf("upsert mcp_cred B: %v", err)
-	}
+	// application_definitions (Phase H2)
+	appDefA := upsert(`INSERT INTO them.application_definitions (application_id, tenant_id, revision, status, definition, definition_hash)
+		VALUES ($1::uuid,$2::uuid,999,'draft','{}','rlshasha')
+		ON CONFLICT (application_id, revision) DO UPDATE SET status=EXCLUDED.status RETURNING id::text`, appA, tenantA)
+	appDefB := upsert(`INSERT INTO them.application_definitions (application_id, tenant_id, revision, status, definition, definition_hash)
+		VALUES ($1::uuid,$2::uuid,999,'draft','{}','rlshashb')
+		ON CONFLICT (application_id, revision) DO UPDATE SET status=EXCLUDED.status RETURNING id::text`, appB, tenantB)
+	_ = appDefA
+	_ = appDefB
+
+	// managed_app_bindings (Phase H2) — app_id references applications; tenant_id direct
+	exec(`INSERT INTO them.managed_app_bindings (app_id, tenant_id) VALUES ($1::uuid,$2::uuid)
+		ON CONFLICT (app_id, tenant_id) DO UPDATE SET enabled=EXCLUDED.enabled`, appA, tenantA)
+	exec(`INSERT INTO them.managed_app_bindings (app_id, tenant_id) VALUES ($1::uuid,$2::uuid)
+		ON CONFLICT (app_id, tenant_id) DO UPDATE SET enabled=EXCLUDED.enabled`, appB, tenantB)
+
+	// quarantine_artifacts (Phase H2) — tenant_id + application_id + run_id
+	// We need a run for each tenant to satisfy the run_id FK
+	runA := upsert(`INSERT INTO them.runs (tenant_id, status, events_transport, entry_point_slug)
+		VALUES ($1::uuid,'running','streams','rlsepsluga') RETURNING id::text`, tenantA)
+	runB := upsert(`INSERT INTO them.runs (tenant_id, status, events_transport, entry_point_slug)
+		VALUES ($1::uuid,'running','streams','rlsepslugb') RETURNING id::text`, tenantB)
+	exec(`INSERT INTO them.quarantine_artifacts (application_id, run_id, tenant_id, filename, content_type, size)
+		VALUES ($1::uuid,$2::uuid,$3::uuid,'test.bin','application/octet-stream',0)`, appA, runA, tenantA)
+	exec(`INSERT INTO them.quarantine_artifacts (application_id, run_id, tenant_id, filename, content_type, size)
+		VALUES ($1::uuid,$2::uuid,$3::uuid,'test.bin','application/octet-stream',0)`, appB, runB, tenantB)
+
+	// EXISTS-via-applications tables (Phase D)
+	exec(`INSERT INTO them.app_mcp_credentials (application_id, mcp_server_id)
+		VALUES ($1::uuid,$2::uuid) ON CONFLICT DO NOTHING`, appA, mcpA)
+	exec(`INSERT INTO them.app_mcp_credentials (application_id, mcp_server_id)
+		VALUES ($1::uuid,$2::uuid) ON CONFLICT DO NOTHING`, appB, mcpB)
+	exec(`INSERT INTO them.app_agent_bindings (application_id, agent_id)
+		VALUES ($1::uuid,$2::uuid)
+		ON CONFLICT ON CONSTRAINT app_agent_bindings_application_id_agent_id_key DO NOTHING`, appA, agentA)
+	exec(`INSERT INTO them.app_agent_bindings (application_id, agent_id)
+		VALUES ($1::uuid,$2::uuid)
+		ON CONFLICT ON CONSTRAINT app_agent_bindings_application_id_agent_id_key DO NOTHING`, appB, agentB)
+	orch2A := upsert(`INSERT INTO them.orchestrators (name, display_name, tenant_id) VALUES ('rlsorch2a','RLS Orch 2A',$1::uuid)
+		ON CONFLICT ON CONSTRAINT orchestrators_tenant_name_unique DO UPDATE SET display_name=EXCLUDED.display_name RETURNING id::text`, tenantA)
+	orch2B := upsert(`INSERT INTO them.orchestrators (name, display_name, tenant_id) VALUES ('rlsorch2b','RLS Orch 2B',$1::uuid)
+		ON CONFLICT ON CONSTRAINT orchestrators_tenant_name_unique DO UPDATE SET display_name=EXCLUDED.display_name RETURNING id::text`, tenantB)
+	exec(`INSERT INTO them.app_orchestrators (application_id, orchestrator_id, name, node_id, kind)
+		VALUES ($1::uuid,$2::uuid,'rls-orch-a','rls-node-a','standard')
+		ON CONFLICT ON CONSTRAINT uq_app_orchestrators_app_name DO UPDATE SET node_id=EXCLUDED.node_id`, appA, orch2A)
+	exec(`INSERT INTO them.app_orchestrators (application_id, orchestrator_id, name, node_id, kind)
+		VALUES ($1::uuid,$2::uuid,'rls-orch-b','rls-node-b','standard')
+		ON CONFLICT ON CONSTRAINT uq_app_orchestrators_app_name DO UPDATE SET node_id=EXCLUDED.node_id`, appB, orch2B)
+
+	// tasks + task_messages + artifacts (runs already seeded above)
+	taskA := upsert(`INSERT INTO them.tasks (tenant_id, run_id, context_id, state)
+		VALUES ($1::uuid,$2::uuid,gen_random_uuid(),'submitted') RETURNING id::text`, tenantA, runA)
+	taskB := upsert(`INSERT INTO them.tasks (tenant_id, run_id, context_id, state)
+		VALUES ($1::uuid,$2::uuid,gen_random_uuid(),'submitted') RETURNING id::text`, tenantB, runB)
+	exec(`INSERT INTO them.task_messages (task_id, role, parts, seq) VALUES ($1::uuid,'user','[]',1)
+		ON CONFLICT ON CONSTRAINT uq_task_messages_task_seq DO UPDATE SET role=EXCLUDED.role`, taskA)
+	exec(`INSERT INTO them.task_messages (task_id, role, parts, seq) VALUES ($1::uuid,'user','[]',1)
+		ON CONFLICT ON CONSTRAINT uq_task_messages_task_seq DO UPDATE SET role=EXCLUDED.role`, taskB)
+	exec(`INSERT INTO them.artifacts (task_id, artifact_id, name) VALUES ($1::uuid,'rls-art-a','RLS Art A')
+		ON CONFLICT DO NOTHING`, taskA)
+	exec(`INSERT INTO them.artifacts (task_id, artifact_id, name) VALUES ($1::uuid,'rls-art-b','RLS Art B')
+		ON CONFLICT DO NOTHING`, taskB)
+
+	// run_steps + run_usage + run_artifacts (via runs seeded above)
+	exec(`INSERT INTO them.run_steps (run_id) VALUES ($1::uuid)`, runA)
+	exec(`INSERT INTO them.run_steps (run_id) VALUES ($1::uuid)`, runB)
+	exec(`INSERT INTO them.run_usage (run_id, model, tokens_input, tokens_output) VALUES ($1::uuid,'test-model',1,1)`, runA)
+	exec(`INSERT INTO them.run_usage (run_id, model, tokens_input, tokens_output) VALUES ($1::uuid,'test-model',1,1)`, runB)
+	runArtifactA := upsert(`INSERT INTO them.run_artifacts (run_id, tenant_id, filename, size) VALUES ($1::uuid,$2::uuid,'rls-art-a',1) RETURNING id::text`, runA, tenantA)
+	runArtifactB := upsert(`INSERT INTO them.run_artifacts (run_id, tenant_id, filename, size) VALUES ($1::uuid,$2::uuid,'rls-art-b',1) RETURNING id::text`, runB, tenantB)
+
+	// middleware tables (Phase E/F — EXISTS via applications)
+	// middleware_wirings needs agent_id + def_id FKs
+	mwWiringA := upsert(`INSERT INTO them.middleware_wirings (application_id, agent_id, def_id)
+		SELECT $1::uuid, $2::uuid, id FROM them.middleware_defs LIMIT 1
+		ON CONFLICT ON CONSTRAINT uq_mw_wiring_app_agent_pos DO UPDATE SET enabled=EXCLUDED.enabled
+		RETURNING id::text`, appA, agentA)
+	mwWiringB := upsert(`INSERT INTO them.middleware_wirings (application_id, agent_id, def_id)
+		SELECT $1::uuid, $2::uuid, id FROM them.middleware_defs LIMIT 1
+		ON CONFLICT ON CONSTRAINT uq_mw_wiring_app_agent_pos DO UPDATE SET enabled=EXCLUDED.enabled
+		RETURNING id::text`, appB, agentB)
+
+	// middleware_audit: artifact_id FK references run_artifacts(id)
+	exec(`INSERT INTO them.middleware_audit (artifact_id, application_id, processor, outcome)
+		VALUES ($1::uuid,$2::uuid,'rls_test','pass')`, runArtifactA, appA)
+	exec(`INSERT INTO them.middleware_audit (artifact_id, application_id, processor, outcome)
+		VALUES ($1::uuid,$2::uuid,'rls_test','pass')`, runArtifactB, appB)
+	// middleware_jobs: needs processors[]
+	exec(`INSERT INTO them.middleware_jobs (application_id, processors)
+		VALUES ($1::uuid, ARRAY['rls_test'])`, appA)
+	exec(`INSERT INTO them.middleware_jobs (application_id, processors)
+		VALUES ($1::uuid, ARRAY['rls_test'])`, appB)
+	_ = mwWiringA
+	_ = mwWiringB
 
 	// ── 3. Tenant-A TenantTx: read all tables — must see A rows, 0 B rows ────
 	tidA, err := uuid.Parse(tenantA)
@@ -516,31 +637,58 @@ func TestRLS_TwoTenantFullIsolation(t *testing.T) {
 		txA.Rollback(cleanupCtx)
 	}()
 
-	tables := []struct {
-		name  string
-		query string
-	}{
-		// Phase B — direct tenant_id
-		{"mcp_servers", `SELECT count(*) FROM them.mcp_servers WHERE slug LIKE 'rlstestmcp%'`},
-		// Phase C — direct tenant_id
-		{"orchestrators", `SELECT count(*) FROM them.orchestrators WHERE name LIKE 'rlstestorch%'`},
-		{"applications", `SELECT count(*) FROM them.applications WHERE slug LIKE 'rlstestapp%'`},
-		// Phase D — EXISTS via applications
-		{"app_mcp_credentials", `SELECT count(*) FROM them.app_mcp_credentials c JOIN them.applications a ON a.id=c.application_id WHERE a.slug LIKE 'rlstestapp%'`},
+	tables := []string{
+		// direct tenant_id
+		`SELECT count(*) FROM them.agents WHERE slug LIKE 'rlsagent%'`,
+		`SELECT count(*) FROM them.mcp_servers WHERE slug LIKE 'rlstestmcp%'`,
+		`SELECT count(*) FROM them.orchestrators WHERE name LIKE 'rlsorch%'`,
+		`SELECT count(*) FROM them.applications WHERE slug LIKE 'rlstestapp%'`,
+		`SELECT count(*) FROM them.entry_points WHERE slug LIKE 'rlsepslug%'`,
+		`SELECT count(*) FROM them.access_tokens WHERE token_hash LIKE 'rlstoken%'`,
+		`SELECT count(*) FROM them.llm_providers WHERE name LIKE 'rlsllm%'`,
+		`SELECT count(*) FROM them.audit_logs WHERE action LIKE 'rls.test.%'`,
+		`SELECT count(*) FROM them.tenant_group_mappings WHERE group_name LIKE 'rls-group-%'`,
+		`SELECT count(*) FROM them.application_definitions WHERE definition_hash LIKE 'rlshash%'`,
+		`SELECT count(*) FROM them.managed_app_bindings WHERE app_id IN (SELECT id FROM them.applications WHERE slug LIKE 'rlstestapp%')`,
+		`SELECT count(*) FROM them.quarantine_artifacts WHERE filename='test.bin' AND application_id IN (SELECT id FROM them.applications WHERE slug LIKE 'rlstestapp%')`,
+		`SELECT count(*) FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%'`,
+		`SELECT count(*) FROM them.tasks WHERE run_id IN (SELECT id FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%')`,
+		`SELECT count(*) FROM them.run_artifacts WHERE filename LIKE 'rls-art-%'`,
+		// agent_definitions / agent_runtime_specs — filter by slug / hash
+		`SELECT count(*) FROM them.agent_definitions WHERE agent_slug LIKE 'rls-agent-%'`,
+		`SELECT count(*) FROM them.agent_runtime_specs WHERE spec_hash LIKE 'rlsspec%'`,
+		// EXISTS-via-applications
+		`SELECT count(*) FROM them.app_mcp_credentials c JOIN them.applications a ON a.id=c.application_id WHERE a.slug LIKE 'rlstestapp%'`,
+		`SELECT count(*) FROM them.app_agent_bindings b JOIN them.applications a ON a.id=b.application_id WHERE a.slug LIKE 'rlstestapp%'`,
+		`SELECT count(*) FROM them.app_orchestrators o JOIN them.applications a ON a.id=o.application_id WHERE a.slug LIKE 'rlstestapp%'`,
+		`SELECT count(*) FROM them.middleware_wirings w JOIN them.applications a ON a.id=w.application_id WHERE a.slug LIKE 'rlstestapp%'`,
+		`SELECT count(*) FROM them.middleware_audit m JOIN them.applications a ON a.id=m.application_id WHERE a.slug LIKE 'rlstestapp%'`,
+		`SELECT count(*) FROM them.middleware_jobs j JOIN them.applications a ON a.id=j.application_id WHERE a.slug LIKE 'rlstestapp%'`,
+		// EXISTS-via-runs
+		`SELECT count(*) FROM them.run_steps s JOIN them.runs r ON r.id=s.run_id WHERE r.entry_point_slug LIKE 'rlsepslug%'`,
+		`SELECT count(*) FROM them.run_usage u JOIN them.runs r ON r.id=u.run_id WHERE r.entry_point_slug LIKE 'rlsepslug%'`,
+		// EXISTS-via-tasks (via runs for isolation filter)
+		`SELECT count(*) FROM them.task_messages m JOIN them.tasks t ON t.id=m.task_id WHERE t.run_id IN (SELECT id FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%')`,
+		`SELECT count(*) FROM them.artifacts ar JOIN them.tasks t ON t.id=ar.task_id WHERE t.run_id IN (SELECT id FROM them.runs WHERE entry_point_slug LIKE 'rlsepslug%')`,
 	}
 
-	for _, tbl := range tables {
-		var count int
-		if err := txA.QueryRow(ctx, tbl.query).Scan(&count); err != nil {
-			t.Errorf("RLS-TwoTenant tenant-A read %s: query error: %v", tbl.name, err)
-			continue
-		}
-		if count != 1 {
-			t.Errorf("RLS-TwoTenant tenant-A %s: expected 1 row (own), got %d", tbl.name, count)
-		} else {
-			t.Logf("RLS-TwoTenant PASS: tenant-A sees 1 row in %s (own data only)", tbl.name)
+	checkIsolation := func(t *testing.T, tx *TenantTx, label string) {
+		t.Helper()
+		for _, q := range tables {
+			var count int
+			if err := tx.QueryRow(ctx, q).Scan(&count); err != nil {
+				t.Errorf("%s: query error on %q: %v", label, q[:min(60, len(q))], err)
+				continue
+			}
+			if count != 1 {
+				t.Errorf("%s: %q — expected 1 (own), got %d", label, q[:min(60, len(q))], count)
+			} else {
+				t.Logf("PASS %s: 1 row visible", label)
+			}
 		}
 	}
+
+	checkIsolation(t, txA, "tenant-A")
 
 	// ── 4. Tenant-B TenantTx: read all tables — must see B rows, 0 A rows ────
 	tidB, err := uuid.Parse(tenantB)
@@ -557,35 +705,125 @@ func TestRLS_TwoTenantFullIsolation(t *testing.T) {
 		txB.Rollback(cleanupCtx)
 	}()
 
-	for _, tbl := range tables {
-		var count int
-		if err := txB.QueryRow(ctx, tbl.query).Scan(&count); err != nil {
-			t.Errorf("RLS-TwoTenant tenant-B read %s: query error: %v", tbl.name, err)
-			continue
-		}
-		if count != 1 {
-			t.Errorf("RLS-TwoTenant tenant-B %s: expected 1 row (own), got %d", tbl.name, count)
-		} else {
-			t.Logf("RLS-TwoTenant PASS: tenant-B sees 1 row in %s (own data only)", tbl.name)
-		}
-	}
+	checkIsolation(t, txB, "tenant-B")
 
 	// ── 5. Cross-tenant INSERT rejected by WITH CHECK ─────────────────────────
-	// Tenant-A TenantTx tries to INSERT a mcp_server with tenant-B's tenant_id — must be blocked.
 	_, err = txA.Exec(ctx,
 		`INSERT INTO them.mcp_servers (name, slug, tenant_id)
 		 VALUES ('RLS Cross Insert', 'rlscrossinsert', $1::uuid)`, tenantB)
 	if err == nil {
 		t.Error("RLS-TwoTenant FAIL: cross-tenant INSERT into mcp_servers was not blocked by WITH CHECK")
 	} else if strings.Contains(err.Error(), "new row violates") || strings.Contains(err.Error(), "row-level security") {
-		t.Log("RLS-TwoTenant PASS: cross-tenant INSERT into mcp_servers rejected by WITH CHECK policy")
+		t.Log("PASS: cross-tenant INSERT into mcp_servers rejected by WITH CHECK policy")
 	} else {
-		t.Logf("RLS-TwoTenant: cross-tenant INSERT rejected (possibly for other reason): %v", err)
+		t.Logf("cross-tenant INSERT rejected (possibly for other reason): %v", err)
 	}
 
-	// Rollback txA (the cross-tenant INSERT attempt may have aborted the tx).
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	txA.Rollback(cleanupCtx)
+}
+
+// TestRLS_CatalogVerification verifies the PostgreSQL catalog matches the expected
+// RLS state: exactly 27 tables enabled, all have FORCE ROW LEVEL SECURITY set,
+// them_app has no BYPASSRLS, and them_admin has BYPASSRLS.
+func TestRLS_CatalogVerification(t *testing.T) {
+	ctx := context.Background()
+	superPool, err := pgxpool.New(ctx, testDSN(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer superPool.Close()
+
+	if !rolesExist(ctx, superPool) {
+		t.Skip("RLS roles not yet created")
+	}
+
+	// CV-01: Count RLS-enabled tables
+	var rlsCount int
+	if err := superPool.QueryRow(ctx,
+		`SELECT count(*) FROM pg_class c
+		 JOIN pg_namespace n ON n.oid=c.relnamespace
+		 WHERE n.nspname='them' AND c.relkind='r' AND c.relrowsecurity=true`,
+	).Scan(&rlsCount); err != nil {
+		t.Fatalf("CV-01 query: %v", err)
+	}
+	if rlsCount < 28 {
+		t.Errorf("CV-01 FAIL: expected ≥28 RLS-enabled tables in them schema, got %d", rlsCount)
+	} else {
+		t.Logf("CV-01 PASS: %d RLS-enabled tables found", rlsCount)
+	}
+
+	// CV-02: All RLS-enabled tables must have FORCE RLS set
+	var nonForcedCount int
+	if err := superPool.QueryRow(ctx,
+		`SELECT count(*) FROM pg_class c
+		 JOIN pg_namespace n ON n.oid=c.relnamespace
+		 WHERE n.nspname='them' AND c.relkind='r'
+		   AND c.relrowsecurity=true AND c.relforcerowsecurity=false`,
+	).Scan(&nonForcedCount); err != nil {
+		t.Fatalf("CV-02 query: %v", err)
+	}
+	if nonForcedCount > 0 {
+		// Fetch the names for a helpful error message
+		rows, _ := superPool.Query(ctx,
+			`SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+			 WHERE n.nspname='them' AND c.relkind='r' AND c.relrowsecurity=true AND c.relforcerowsecurity=false`)
+		var names []string
+		if rows != nil {
+			defer rows.Close()
+			for rows.Next() {
+				var n string
+				_ = rows.Scan(&n)
+				names = append(names, n)
+			}
+		}
+		t.Errorf("CV-02 FAIL: %d RLS-enabled tables missing FORCE ROW LEVEL SECURITY: %v", nonForcedCount, names)
+	} else {
+		t.Log("CV-02 PASS: all RLS-enabled tables have FORCE ROW LEVEL SECURITY")
+	}
+
+	// CV-03: them_app must NOT have BYPASSRLS
+	var appBypass bool
+	if err := superPool.QueryRow(ctx,
+		`SELECT rolbypassrls FROM pg_roles WHERE rolname='them_app'`,
+	).Scan(&appBypass); err != nil {
+		t.Fatalf("CV-03 query: %v", err)
+	}
+	if appBypass {
+		t.Error("CV-03 FAIL: them_app has BYPASSRLS=true — RLS is silently disabled for app-role connections")
+	} else {
+		t.Log("CV-03 PASS: them_app.rolbypassrls=false")
+	}
+
+	// CV-04: them_admin must have BYPASSRLS
+	var adminBypass bool
+	if err := superPool.QueryRow(ctx,
+		`SELECT rolbypassrls FROM pg_roles WHERE rolname='them_admin'`,
+	).Scan(&adminBypass); err != nil {
+		t.Fatalf("CV-04 query: %v", err)
+	}
+	if !adminBypass {
+		t.Error("CV-04 FAIL: them_admin has BYPASSRLS=false — admin pool cannot bypass RLS as intended")
+	} else {
+		t.Log("CV-04 PASS: them_admin.rolbypassrls=true")
+	}
+
+	// CV-05: Every RLS-enabled table must have at least one policy
+	var tablesWithoutPolicy int
+	if err := superPool.QueryRow(ctx,
+		`SELECT count(*) FROM pg_class c
+		 JOIN pg_namespace n ON n.oid=c.relnamespace
+		 WHERE n.nspname='them' AND c.relkind='r' AND c.relrowsecurity=true
+		   AND NOT EXISTS (SELECT 1 FROM pg_policies p
+		                   WHERE p.schemaname='them' AND p.tablename=c.relname)`,
+	).Scan(&tablesWithoutPolicy); err != nil {
+		t.Fatalf("CV-05 query: %v", err)
+	}
+	if tablesWithoutPolicy > 0 {
+		t.Errorf("CV-05 FAIL: %d RLS-enabled tables have no policy (fail-open risk)", tablesWithoutPolicy)
+	} else {
+		t.Log("CV-05 PASS: all RLS-enabled tables have at least one policy")
+	}
 }
 

@@ -50,6 +50,8 @@ Run on: every commit, every PR, every pre-deploy check.
 | `TestShutdownDrain_Invalid_Clamped` | `SHUTDOWN_DRAIN_SECONDS=abc` → 5 (clamped to minimum) |
 | `TestWorkerTaskQueue_Default` | Missing `WORKER_TASK_QUEUE` → `"them-orchestration-go"` (R-2C: Go-only queue default) |
 | `TestWorkerTaskQueue_Override` | `WORKER_TASK_QUEUE=custom-queue` → `"custom-queue"` (env var override respected) |
+| `TestLoad_MissingDBURLApp` (CF-01) | Missing `THEM_DB_URL_APP` → error at startup |
+| `TestLoad_MissingDBURLAdmin` (CF-02) | Missing `THEM_DB_URL_ADMIN` → error at startup |
 
 **Trigger:** any change to `internal/config/config.go` or `.env.example`
 
@@ -3073,7 +3075,7 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-98 | DB Pools (RLS): BadAppDSN, InterfaceAssertions, Close_NilSafe, TenantIDFormat | 4 |
 | S1-99 | dbtype Querier interfaces (RLS): TestInterfaceDistinction | 1 |
 | S1-100 | Audit Logs handler (AL-01..03): List_Empty, List_Populated, List_LimitOffset | 3 |
-| **S1 total** | | **1090** |
+| **S1 total** | | **1092** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |
