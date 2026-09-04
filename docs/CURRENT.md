@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-04 (Step 23 COMPLETE — audit write path)
+# Last updated: 2026-09-04 (Step H2 COMPLETE — RLS closure, full superuser removal)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-10628a3           feat(audit): Step 23 — synchronous audit write path for agents, apps, tenants
-e8a288c           docs(audit): Step 22 complete — update CURRENT.md and HANDOVER.md
-557b9dd           feat(audit): Step 22 — audit log UI (GET /admin/audit-logs + frontend page)
-d164a4d           feat(quota): Step 21 — enforce max_users on AddMember; 3 new tests (TN-23..25)
-8f8cbc8           feat(quota): Step 20 — enforce max_agents, max_apps, max_mcp_servers on create
+b0cdb79  test(rls): Step H2 — expand integration tests to 27 tables + catalog verification
+0c96931  feat(rls): Step H2 — enforce required DB pools; replace all superuser pool() calls with rlsPools.Admin
+8649daa  feat(rls): Step H2 — migration 078, apply RLS to application_definitions, managed_app_bindings, quarantine_artifacts, component_definitions
+10628a3  feat(audit): Step 23 — synchronous audit write path for agents, apps, tenants
+e8a288c  docs(audit): Step 22 complete — update CURRENT.md and HANDOVER.md
 ```
 
 ---
@@ -45,16 +45,19 @@ Key facts:
 
 ## Current migration slice
 
-**Step 23 — Audit write path**
+**Step H2 — RLS Closure (full superuser removal)**
 
 Completed:
-- `go/internal/admin/dal/audit_logs.go`: `AuditEntry` struct + `WriteAuditLog` INSERT (admin pool, BYPASSRLS).
-- `go/internal/admin/audit_logs.go`: `AuditWriter` (nil-safe, 3s timeout, WARN log + `them_audit_write_errors_total` on failure). `actorFromRequest` (email → "user:{id}" → "token"). `userIDPtr` for nullable user_id.
-- `go/internal/admin/router.go`: `NewAuditWriter(pools)` constructed once, passed to agents/apps/tenants handlers.
-- Wired mutations: `agent.create/update/delete`, `app.create/update/delete`, `tenant.create/patch/add_member`.
-- `go/internal/metrics/metrics.go`: `them_audit_write_errors_total` counter registered.
-- AL-04 integration test (`//go:build integration`): real Postgres, two tenant UUIDs, asserts no cross-tenant row leakage. `go/TEST_INDEX.md` updated (S2-09, S2 total 51→52).
-- `go test ./...` — 48 packages, 0 failures. HEAD: 10628a3.
+- `db/078_rls_phase_h2.sql`: Enables FORCE ROW LEVEL SECURITY on 4 remaining tables — application_definitions, managed_app_bindings, quarantine_artifacts (direct tenant_id isolation), component_definitions (split policy: SELECT own+NULL/platform globals, write own only; DML revoked from them_app). **All 28 them-schema tables now have RLS.**
+- `go/internal/config/config.go`: `THEM_DB_URL_APP` and `THEM_DB_URL_ADMIN` are now required at startup (fail fast if absent).
+- `go/internal/config/config_test.go`: Tests CF-01 + CF-02 cover missing required DB URL detection.
+- `go/cmd/them/main.go`, `go/cmd/worker/main.go`, `go/cmd/dag-worker/main.go`: All binaries fail if rlsPools cannot be created; all tenant data paths use `rlsPools.Admin` (BYPASSRLS); `database.Pool()` retained only for health check pinger (`appliveness.Loop`).
+- `docker-compose.yml` / `docker-compose.dev.yml`: `THEM_DB_URL_APP` + `THEM_DB_URL_ADMIN` injected into all 4 Go service environments (them-go-bridge, them-go-worker, them-go-worker-2, them-dag-worker).
+- `go/internal/db/rls_integration_test.go`: `TestRLS_TwoTenantFullIsolation` covers all 27 tenant-scoped RLS tables; `TestRLS_CatalogVerification` (CV-01..05) asserts catalog invariants. Fixture properly handles FK constraints (middleware_audit uses real run_artifact IDs).
+- `go/TEST_INDEX.md` updated: CF-01, CF-02 added; S1 total → 1092.
+- `go test ./...` — all packages pass, 0 failures. HEAD: b0cdb79.
+
+⚠️ **After next deploy, restart all 4 Go containers** — `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` must be present in `.env` (run `./generate-env.sh` to regenerate).
 
 Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
 
@@ -62,12 +65,12 @@ Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
 
 **Step 24 candidates** (choose one):
 
-1. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (update display name, IdP config, quota visibility). Medium scope.
-2. **Cross-tenant admin observability** — super-admin dashboard: runs/usage/quota consumption across all tenants. Medium scope.
-3. **Audit log enrichment** — add before/after diff on Update operations (SELECT-before-UPDATE in DAL, store `changes` JSONB). Bounded scope.
-4. **MCP server audit** — wire `mcp_server.create/update/delete` into `AuditWriter` (same pattern, one more handler).
+1. **MCP server audit** — wire `mcp_server.create/update/delete` into `AuditWriter` (same pattern, one more handler). Smallest scope, completes audit coverage.
+2. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (update display name, IdP config, quota visibility). Medium scope.
+3. **Cross-tenant admin observability** — super-admin dashboard: runs/usage/quota consumption across all tenants. Medium scope.
+4. **Audit log enrichment** — add before/after diff on Update operations (SELECT-before-UPDATE in DAL, store `changes` JSONB). Bounded scope.
 
-Recommended: **Step 24 = MCP server audit** (smallest scope, completes audit coverage) or **Step 24 = tenant self-service** (most user-visible value).
+Recommended: **Step 24 = MCP server audit** (smallest scope, completes audit coverage).
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
@@ -75,7 +78,7 @@ Key reminder:
 
 ### Known blockers / pre-conditions
 
-None.
+- **THEM_DB_URL_APP and THEM_DB_URL_ADMIN must be in `.env`** before restarting containers — run `./generate-env.sh` if not present. The binaries will now fail fast if these are missing.
 
 Currently running containers (verified):
 ```

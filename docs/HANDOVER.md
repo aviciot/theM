@@ -1,10 +1,10 @@
-# Handover — Multi-Tenancy (Steps 19+23 complete, Step 24 next)
+# Handover — Multi-Tenancy (Steps 19–23 + H2 complete, Step 24 next)
 **Date:** 2026-09-04
 **Branch:** main
-**HEAD:** 10628a3 (feat(audit): Step 23 — synchronous audit write path)
-**Steps complete:** 1 → 18 (all 47 Go packages pass, 1082 S1 tests, 1034 go test ./...)
-**Step 19 design:** `docs/design/rls-option-a-plan.md` v3 — approved, no blocking issues
-**Step 19 progress:** `docs/STEP19_HANDOVER.md` — use this for sub-step tracking
+**HEAD:** b0cdb79 (test(rls): Step H2 — expand integration tests to 27 tables + catalog verification)
+**Steps complete:** 1 → 23 + H2 (RLS closure — 28 tables, full superuser removal)
+**Unit tests:** all packages pass, 0 failures (S1 total: 1092)
+**RLS design:** `docs/design/rls-option-a-plan.md` v3 — complete
 
 ---
 
@@ -73,40 +73,31 @@
 | Step 21 | max_users enforcement — CountTenantMembers DAL; AddMember handler quota check (fail-open); 3 tests TN-23..25 | Complete | d164a4d |
 | Step 22 | Audit log UI — GET /admin/audit-logs (admin pool, BYPASSRLS); paginated frontend page; 3 tests AL-01..03 | Complete | 557b9dd |
 | Step 23 | Audit write path — AuditWriter (3s timeout, fail-open); agent/app/tenant create+update+delete wired; them_audit_write_errors_total metric; AL-04 integration test | Complete | 10628a3 |
+| Step H2 | RLS closure — migration 078 (4 remaining tables); required DB pools config; full superuser removal from cmd/them+worker+dag-worker; 27-table integration test + catalog verification | Complete | b0cdb79 |
 
 ---
 
 ## Current pause point — tenant roadmap status
 
-**Steps 1–18 are complete and fully deployed.**
+**Steps 1–23 + H2 are complete. RLS is fully closed — all 28 them-schema tables have FORCE ROW LEVEL SECURITY enabled.**
 
-Step 19 (Postgres Row-Level Security) is a prerequisite infrastructure step before
-the tenant roadmap continues. It is a focused side-track, not part of the original
-numbered feature sequence.
+### RLS closure summary (Step H2)
 
-**Do not continue the tenant feature roadmap (Step 20+) until Step 19 is done.**
+- **Migration 078** (`db/078_rls_phase_h2.sql`): application_definitions, managed_app_bindings, quarantine_artifacts (direct isolation), component_definitions (split policy: SELECT own+NULL, DML revoked from them_app).
+- **Config validation**: `THEM_DB_URL_APP` and `THEM_DB_URL_ADMIN` required at startup; binaries fail fast if absent.
+- **Superuser removal**: All 3 Go binaries (cmd/them, cmd/worker, cmd/dag-worker) use `rlsPools.Admin` for all tenant data paths. `database.Pool()` retained only for health check pinger.
+- **Docker-compose**: Both env vars injected into all 4 Go service environments.
+- **Integration tests**: `TestRLS_TwoTenantFullIsolation` covers 27 tables. `TestRLS_CatalogVerification` (CV-01..05) asserts catalog invariants.
 
-### Where to pick up Step 19
+⚠️ **After next deploy, restart all 4 Go containers** — `THEM_DB_URL_APP`/`THEM_DB_URL_ADMIN` must be present in `.env` (run `./generate-env.sh` to regenerate).
 
-See `docs/STEP19_RLS_HANDOVER.md` — this is the dedicated, self-contained progress
-tracker for Step 19. It has:
-- The complete sub-step checklist (A1–H7) with commit tags
-- Caller-to-table dependency matrix (which containers must be deployed before each RLS enablement)
-- Known constraints and pre-conditions
-- Progress log (update at the end of each session)
+### Next recommended: Step 24
 
-The full RLS design is in `docs/design/rls-option-a-plan.md` (v3, 61730f3).
+**Step 24 = MCP server audit** (smallest scope, completes audit coverage):
+- Wire `mcp_server.create/update/delete` into `AuditWriter` (same pattern as agents/apps/tenants).
+- Add 3 new AL-* tests.
 
-### What comes after Step 19 (tenant roadmap Step 20+)
-
-Once RLS is fully enabled and all integration tests pass, the next tenant roadmap
-items are (to be decided/scoped in that session — read `docs/architecture/MULTI_TENANCY_DESIGN.md`
-Phase 3 items for candidates):
-- Tenant-scoped audit log UI
-- Tenant self-service provisioning flow
-- Cross-tenant admin observability dashboard
-
-**Do not plan Step 20+ in the Step 19 implementation session.**
+Alternatives: tenant self-service provisioning (medium), cross-tenant observability dashboard (medium), audit log enrichment (before/after diff on Update operations).
 
 ---
 
