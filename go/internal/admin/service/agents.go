@@ -52,6 +52,11 @@ func (s *AgentService) Create(ctx context.Context, tenantID string, in dal.Agent
 	}
 	enabled := enabledOrDefault(in.Enabled)
 
+	if err := checkResourceQuota(ctx, s.dal, tenantID, func(q dal.TenantQuota) *int { return q.MaxAgents },
+		func() (int, error) { return s.dal.CountAgents(ctx, tenantID) }); err != nil {
+		return "", err
+	}
+
 	id, err := s.dal.CreateAgent(ctx, tenantID, in, enabled)
 	if err != nil {
 		return "", err

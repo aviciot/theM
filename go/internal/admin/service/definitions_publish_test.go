@@ -315,6 +315,12 @@ func (f *publishFakeDal) UpsertAppMCPCredential(_ context.Context, _, _, _, _ st
 	return nil
 }
 func (f *publishFakeDal) DeleteAppMCPCredential(_ context.Context, _, _ string) error { return nil }
+func (f *publishFakeDal) GetQuota(_ context.Context, _ string) (dal.TenantQuota, error) {
+	return dal.TenantQuota{}, nil
+}
+func (f *publishFakeDal) CountAgents(_ context.Context, _ string) (int, error)       { return 0, nil }
+func (f *publishFakeDal) CountApplications(_ context.Context, _ string) (int, error) { return 0, nil }
+func (f *publishFakeDal) CountMCPServers(_ context.Context, _ string) (int, error)   { return 0, nil }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 

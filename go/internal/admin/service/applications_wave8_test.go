@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aviciot/them/internal/admin/dal"
 	"github.com/aviciot/them/internal/admin/service"
 )
 
@@ -205,5 +206,40 @@ func TestSetOrchestratorLLM_EmptyModel(t *testing.T) {
 	err := svc.SetOrchestratorLLM(context.Background(), "tenant-1", "app-1", "orch-1", "anthropic", "")
 	if !errors.Is(err, service.ErrValidation) {
 		t.Errorf("want ErrValidation, got %v", err)
+	}
+}
+
+// ── Application quota enforcement (S1-AppQ-01..03) ───────────────────────────
+//
+// S1-AppQ-01  Create — max_apps nil → no enforcement, succeeds
+// S1-AppQ-02  Create — count < limit → succeeds
+// S1-AppQ-03  Create — count >= limit → ErrQuotaExceeded
+
+func intPtrApp(n int) *int { return &n }
+
+func TestAppService_Create_QuotaNotSet_AllowsCreate(t *testing.T) {
+	d := &fakeDal{quota: dal.TenantQuota{MaxApps: nil}, appCount: 100, createdID: "app-id"}
+	svc := service.NewAppService(d, nil, nil)
+	_, err := svc.Create(context.Background(), "t1", "My App", "", nil)
+	if err != nil {
+		t.Fatalf("want nil, got %v", err)
+	}
+}
+
+func TestAppService_Create_QuotaNotReached_AllowsCreate(t *testing.T) {
+	d := &fakeDal{quota: dal.TenantQuota{MaxApps: intPtrApp(10)}, appCount: 3, createdID: "app-id"}
+	svc := service.NewAppService(d, nil, nil)
+	_, err := svc.Create(context.Background(), "t1", "My App", "", nil)
+	if err != nil {
+		t.Fatalf("want nil, got %v", err)
+	}
+}
+
+func TestAppService_Create_QuotaExceeded_ReturnsError(t *testing.T) {
+	d := &fakeDal{quota: dal.TenantQuota{MaxApps: intPtrApp(3)}, appCount: 3}
+	svc := service.NewAppService(d, nil, nil)
+	_, err := svc.Create(context.Background(), "t1", "My App", "", nil)
+	if !errors.Is(err, service.ErrQuotaExceeded) {
+		t.Fatalf("want ErrQuotaExceeded, got %v", err)
 	}
 }

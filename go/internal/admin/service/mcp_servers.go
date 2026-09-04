@@ -133,6 +133,11 @@ func (s *MCPServerService) Create(ctx context.Context, tenantID string, body MCP
 		return MCPServerOut{}, unprocessable("auth_type must be one of: none, bearer, header, oauth2")
 	}
 
+	if err := checkResourceQuota(ctx, s.dal, tenantID, func(q dal.TenantQuota) *int { return q.MaxMCPServers },
+		func() (int, error) { return s.dal.CountMCPServers(ctx, tenantID) }); err != nil {
+		return MCPServerOut{}, err
+	}
+
 	var probeEnc *string
 	if body.ProbeToken != "" {
 		enc, err := crypto.EncryptStored(s.fernetKey, body.ProbeToken)

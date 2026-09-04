@@ -344,6 +344,12 @@ func (f *agentDefFakeDal) GetProviderByNamePlatform(_ context.Context, _ string)
 func (f *agentDefFakeDal) UpsertTenantProvider(_ context.Context, _ string, _ dal.LLMProviderInput) (dal.LLMProvider, error) {
 	return dal.LLMProvider{}, nil
 }
+func (f *agentDefFakeDal) GetQuota(_ context.Context, _ string) (dal.TenantQuota, error) {
+	return dal.TenantQuota{}, nil
+}
+func (f *agentDefFakeDal) CountAgents(_ context.Context, _ string) (int, error)       { return 0, nil }
+func (f *agentDefFakeDal) CountApplications(_ context.Context, _ string) (int, error) { return 0, nil }
+func (f *agentDefFakeDal) CountMCPServers(_ context.Context, _ string) (int, error)   { return 0, nil }
 
 // ── valid canvas JSON helpers ─────────────────────────────────────────────────
 

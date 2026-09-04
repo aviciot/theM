@@ -290,3 +290,53 @@ func TestMCPServerService_SetCredential_DefaultsHeaderName(t *testing.T) {
 		t.Errorf("want header=Authorization, got %q", d.upsertCredHeader)
 	}
 }
+
+// ── MCP server quota enforcement (S1-MQ-01..03) ──────────────────────────────
+//
+// S1-MQ-01  Create — max_mcp_servers nil → no enforcement, succeeds
+// S1-MQ-02  Create — count < limit → succeeds
+// S1-MQ-03  Create — count >= limit → ErrQuotaExceeded
+
+func intPtrMCP(n int) *int { return &n }
+
+func validMCPCreate() service.MCPServerCreate {
+	return service.MCPServerCreate{Name: "test", Slug: "test"}
+}
+
+func TestMCPServerService_Create_QuotaNotSet_AllowsCreate(t *testing.T) {
+	d := &fakeDal{
+		quota:          dal.TenantQuota{MaxMCPServers: nil},
+		mcpServerCount: 100,
+		mcpCreated:     dal.MCPServer{ID: "mcp-id"},
+	}
+	svc := newMCPSvc(d)
+	_, err := svc.Create(context.Background(), "t1", validMCPCreate())
+	if err != nil {
+		t.Fatalf("want nil, got %v", err)
+	}
+}
+
+func TestMCPServerService_Create_QuotaNotReached_AllowsCreate(t *testing.T) {
+	d := &fakeDal{
+		quota:          dal.TenantQuota{MaxMCPServers: intPtrMCP(5)},
+		mcpServerCount: 2,
+		mcpCreated:     dal.MCPServer{ID: "mcp-id"},
+	}
+	svc := newMCPSvc(d)
+	_, err := svc.Create(context.Background(), "t1", validMCPCreate())
+	if err != nil {
+		t.Fatalf("want nil, got %v", err)
+	}
+}
+
+func TestMCPServerService_Create_QuotaExceeded_ReturnsError(t *testing.T) {
+	d := &fakeDal{
+		quota:          dal.TenantQuota{MaxMCPServers: intPtrMCP(5)},
+		mcpServerCount: 5,
+	}
+	svc := newMCPSvc(d)
+	_, err := svc.Create(context.Background(), "t1", validMCPCreate())
+	if !errors.Is(err, service.ErrQuotaExceeded) {
+		t.Fatalf("want ErrQuotaExceeded, got %v", err)
+	}
+}

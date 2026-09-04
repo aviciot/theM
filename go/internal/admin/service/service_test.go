@@ -138,6 +138,13 @@ type fakeDal struct {
 	upsertCredHeader    string
 	lastCreateMCPInput  dal.MCPServerInput
 	lastUpdateMCPInput  dal.MCPServerInput
+
+	// quota + count fields
+	quota           dal.TenantQuota
+	quotaErr        error
+	agentCount      int
+	appCount        int
+	mcpServerCount  int
 }
 
 func (f *fakeDal) ListAgents(_ context.Context, _ string) ([]dal.Agent, error) {
@@ -491,6 +498,18 @@ func (f *fakeDal) UpsertAppMCPCredential(_ context.Context, _, _, _ string, head
 }
 func (f *fakeDal) DeleteAppMCPCredential(_ context.Context, _, _ string) error {
 	return f.deleteCredErr
+}
+func (f *fakeDal) GetQuota(_ context.Context, _ string) (dal.TenantQuota, error) {
+	return f.quota, f.quotaErr
+}
+func (f *fakeDal) CountAgents(_ context.Context, _ string) (int, error) {
+	return f.agentCount, nil
+}
+func (f *fakeDal) CountApplications(_ context.Context, _ string) (int, error) {
+	return f.appCount, nil
+}
+func (f *fakeDal) CountMCPServers(_ context.Context, _ string) (int, error) {
+	return f.mcpServerCount, nil
 }
 
 // fakeCache implements service.Cache.
@@ -1013,5 +1032,54 @@ func TestRunService_List_ForwardsParams(t *testing.T) {
 	}
 	if len(runs) != 1 {
 		t.Errorf("want 1 run, got %d", len(runs))
+	}
+}
+
+// ── Agent quota enforcement (S1-AQ-01..03) ───────────────────────────────────
+//
+// S1-AQ-01  Create — max_agents nil → no enforcement, succeeds
+// S1-AQ-02  Create — count < limit → succeeds
+// S1-AQ-03  Create — count >= limit → ErrQuotaExceeded
+
+func intPtrSvc(n int) *int { return &n }
+
+func TestAgentService_Create_QuotaNotSet_AllowsCreate(t *testing.T) {
+	// S1-AQ-01: nil max_agents → no enforcement
+	d := &fakeDal{
+		quota:      dal.TenantQuota{MaxAgents: nil},
+		agentCount: 100,
+		createdID:  "new-agent-id",
+	}
+	svc := service.NewAgentService(d, nil)
+	_, err := svc.Create(context.Background(), "t1", dal.AgentInput{Slug: "a", DisplayName: "A"})
+	if err != nil {
+		t.Fatalf("want nil, got %v", err)
+	}
+}
+
+func TestAgentService_Create_QuotaNotReached_AllowsCreate(t *testing.T) {
+	// S1-AQ-02: count(3) < max(5) → allowed
+	d := &fakeDal{
+		quota:      dal.TenantQuota{MaxAgents: intPtrSvc(5)},
+		agentCount: 3,
+		createdID:  "new-agent-id",
+	}
+	svc := service.NewAgentService(d, nil)
+	_, err := svc.Create(context.Background(), "t1", dal.AgentInput{Slug: "a", DisplayName: "A"})
+	if err != nil {
+		t.Fatalf("want nil, got %v", err)
+	}
+}
+
+func TestAgentService_Create_QuotaExceeded_ReturnsError(t *testing.T) {
+	// S1-AQ-03: count(5) >= max(5) → ErrQuotaExceeded
+	d := &fakeDal{
+		quota:      dal.TenantQuota{MaxAgents: intPtrSvc(5)},
+		agentCount: 5,
+	}
+	svc := service.NewAgentService(d, nil)
+	_, err := svc.Create(context.Background(), "t1", dal.AgentInput{Slug: "a", DisplayName: "A"})
+	if !errors.Is(err, service.ErrQuotaExceeded) {
+		t.Fatalf("want ErrQuotaExceeded, got %v", err)
 	}
 }

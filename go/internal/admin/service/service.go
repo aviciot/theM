@@ -17,12 +17,16 @@ import (
 // The concrete *dal.DB satisfies this interface structurally; the service
 // package never imports pgx and never sees SQL.
 type Dal interface {
+	// Tenant quotas
+	GetQuota(ctx context.Context, tenantID string) (dal.TenantQuota, error)
+
 	// Agents — tenant-scoped
 	ListAgents(ctx context.Context, tenantID string) ([]dal.Agent, error)
 	GetAgent(ctx context.Context, tenantID, id string) (dal.Agent, error)
 	CreateAgent(ctx context.Context, tenantID string, in dal.AgentInput, enabled bool) (string, error)
 	UpdateAgent(ctx context.Context, tenantID, id string, in dal.AgentInput, enabled bool) error
 	DeleteAgent(ctx context.Context, tenantID, id string) error
+	CountAgents(ctx context.Context, tenantID string) (int, error)
 	// Agent actions — platform-global (no tenant scope)
 	AgentExists(ctx context.Context, id string) (bool, error)
 	GetAgentBySlug(ctx context.Context, slug string) (dal.Agent, error)
@@ -41,6 +45,7 @@ type Dal interface {
 	ListApplications(ctx context.Context, tenantID string) ([]dal.Application, error)
 	GetApplication(ctx context.Context, tenantID, id string) (dal.Application, error)
 	CreateApplication(ctx context.Context, tenantID, name, slug string, enabled bool) (string, error)
+	CountApplications(ctx context.Context, tenantID string) (int, error)
 	UpdateApplication(ctx context.Context, tenantID, id, name, slug string, enabled bool) error
 	DeleteApplication(ctx context.Context, tenantID, id string) error
 	ListEntryPoints(ctx context.Context, appID string) []dal.EntryPoint
@@ -160,6 +165,7 @@ type Dal interface {
 	ListMCPServers(ctx context.Context, tenantID string) ([]dal.MCPServer, error)
 	GetMCPServer(ctx context.Context, id, tenantID string) (dal.MCPServer, error)
 	CreateMCPServer(ctx context.Context, in dal.MCPServerInput) (dal.MCPServer, error)
+	CountMCPServers(ctx context.Context, tenantID string) (int, error)
 	UpdateMCPServer(ctx context.Context, id, tenantID string, in dal.MCPServerInput) (dal.MCPServer, error)
 	DeleteMCPServer(ctx context.Context, id, tenantID string) error
 

@@ -114,6 +114,10 @@ func (s *AppService) Create(ctx context.Context, tenantID, name, slug string, en
 	if slug == "" {
 		slug = SlugifyName(name)
 	}
+	if err := checkResourceQuota(ctx, s.dal, tenantID, func(q dal.TenantQuota) *int { return q.MaxApps },
+		func() (int, error) { return s.dal.CountApplications(ctx, tenantID) }); err != nil {
+		return "", err
+	}
 	id, err := s.dal.CreateApplication(ctx, tenantID, name, slug, enabledOrDefault(enabled))
 	if err != nil {
 		if dal.IsUniqueViolation(err) {

@@ -1020,6 +1020,9 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 | `TestAgentService_Create_EnabledFalse_Respected` | `enabled=false` passed in → DAL called with `enabled=false` (not default-overridden) |
 | `TestAgentService_Update_ReappliesMaxConcurrencyDefault` | `MaxConcurrency=0` on update → defaults to 5 |
 | `TestAgentService_Create_InvalidatesRegistry` | Successful create → `them:agents:registry` deleted from cache |
+| `TestAgentService_Create_QuotaNotSet_AllowsCreate` | S1-AQ-01: max_agents nil → no enforcement, create succeeds |
+| `TestAgentService_Create_QuotaNotReached_AllowsCreate` | S1-AQ-02: count(3) < max(5) → create succeeds |
+| `TestAgentService_Create_QuotaExceeded_ReturnsError` | S1-AQ-03: count(5) >= max(5) → `ErrQuotaExceeded` |
 | `TestTokenService_Create_GeneratesHashAndReturnsPlaintext` | Create generates crypto/rand token, stores hash, returns plaintext in Plaintext field |
 | `TestTokenService_Create_OrchMissing_NotFound` | orchID set but not in DB → `ErrNotFound` |
 | `TestTokenService_Create_NoOrch_SkipsExistsCheck` | nil orchID → OrchestratorExists never called |
@@ -1038,6 +1041,9 @@ invalidation, and error mapping — without any real DB, Redis, or Temporal.
 | `TestOrchService_Create_InvalidatesCache` | Successful create → `them:orchestrators:{name}` deleted from cache |
 | `TestOrchService_Delete_InvalidatesCache` | Delete → `them:orchestrators:{name}` deleted from cache |
 | `TestAppService_Create_MissingName_Validation` | Missing name → `ErrValidation` |
+| `TestAppService_Create_QuotaNotSet_AllowsCreate` | S1-AppQ-01: max_apps nil → no enforcement, create succeeds |
+| `TestAppService_Create_QuotaNotReached_AllowsCreate` | S1-AppQ-02: count(3) < max(10) → create succeeds |
+| `TestAppService_Create_QuotaExceeded_ReturnsError` | S1-AppQ-03: count(3) >= max(3) → `ErrQuotaExceeded` |
 | `TestAppService_CreateEntryPoint_InvalidType_Unprocessable` | `ep_type="grpc"` → `ErrUnprocessable` |
 | `TestAppService_CreateEntryPoint_ValidTypes` | All 5 valid EP types (websocket, sse, voice, webrtc, a2a) → no error |
 | `TestAppService_UpdateEntryPoint_OldSlugBeforeNew` | Rename: old `"{tenantID}:{slug}"` published before new — critical ordering; `UpdateEntryPoint` now takes `tenantID` for fallback |
@@ -2233,6 +2239,9 @@ not-found mapping, and credential encryption — all using the shared `fakeDal`,
 | `TestMCPServerService_SetCredential_Empty` | S1-MCP-09: empty credential → `ErrValidation` |
 | `TestMCPServerService_SetCredential_EncryptsAndUpserts` | S1-MCP-10: valid credential → UpsertAppMCPCredential called |
 | `TestMCPServerService_SetCredential_DefaultsHeaderName` | S1-MCP-11: empty auth_header_name → defaults to "Authorization" |
+| `TestMCPServerService_Create_QuotaNotSet_AllowsCreate` | S1-MQ-01: max_mcp_servers nil → no enforcement, create succeeds |
+| `TestMCPServerService_Create_QuotaNotReached_AllowsCreate` | S1-MQ-02: count(2) < max(5) → create succeeds |
+| `TestMCPServerService_Create_QuotaExceeded_ReturnsError` | S1-MQ-03: count(5) >= max(5) → `ErrQuotaExceeded` |
 
 **Trigger:** any change to `internal/admin/service/mcp_servers.go` or `internal/admin/dal/mcp_servers.go` or `internal/admin/mcp_servers.go`
 

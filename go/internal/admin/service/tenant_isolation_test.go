@@ -536,6 +536,12 @@ func (f *isolationFakeDal) UpsertAppMCPCredential(_ context.Context, _, _, _, _ 
 	return nil
 }
 func (f *isolationFakeDal) DeleteAppMCPCredential(_ context.Context, _, _ string) error { return nil }
+func (f *isolationFakeDal) GetQuota(_ context.Context, _ string) (dal.TenantQuota, error) {
+	return dal.TenantQuota{}, nil
+}
+func (f *isolationFakeDal) CountAgents(_ context.Context, _ string) (int, error)       { return 0, nil }
+func (f *isolationFakeDal) CountApplications(_ context.Context, _ string) (int, error) { return 0, nil }
+func (f *isolationFakeDal) CountMCPServers(_ context.Context, _ string) (int, error)   { return 0, nil }
 
 // ── pgxUniqueViolation stub ───────────────────────────────────────────────────
 //

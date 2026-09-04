@@ -147,6 +147,15 @@ func (d *DB) UpdateApplication(ctx context.Context, tenantID, id, name, slug str
 	return d.q.Exec(ctx, q, id, tenantID, name, slug, enabled)
 }
 
+// CountApplications returns the number of applications belonging to tenantID.
+// Used by quota enforcement to check max_apps before creating a new application.
+func (d *DB) CountApplications(ctx context.Context, tenantID string) (int, error) {
+	const q = `SELECT COUNT(*)::int FROM them.applications WHERE tenant_id = $1::uuid`
+	var n int
+	err := d.q.QueryRow(ctx, q, tenantID).Scan(&n)
+	return n, err
+}
+
 // DeleteApplication soft-deletes an application by setting enabled=false, scoped to the tenant.
 func (d *DB) DeleteApplication(ctx context.Context, tenantID, id string) error {
 	const q = `DELETE FROM them.applications WHERE id=$1::uuid AND tenant_id=$2::uuid`

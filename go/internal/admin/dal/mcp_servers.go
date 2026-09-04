@@ -183,6 +183,15 @@ func (d *DB) DeleteMCPServer(ctx context.Context, id, tenantID string) error {
 	return row.Scan(&deleted)
 }
 
+// CountMCPServers returns the number of MCP servers belonging to tenantID.
+// Used by quota enforcement to check max_mcp_servers before creating a new server.
+func (d *DB) CountMCPServers(ctx context.Context, tenantID string) (int, error) {
+	const q = `SELECT COUNT(*)::int FROM them.mcp_servers WHERE tenant_id = $1::uuid`
+	var n int
+	err := d.q.QueryRow(ctx, q, tenantID).Scan(&n)
+	return n, err
+}
+
 // GetAppMCPCredential returns the credential for (applicationID, serverID). Returns pgx.ErrNoRows when missing.
 func (d *DB) GetAppMCPCredential(ctx context.Context, applicationID, serverID string) (AppMCPCredential, error) {
 	const q = `

@@ -20,6 +20,10 @@ var (
 
 	// ErrTemporalUnavailable signals Temporal is not configured → 503.
 	ErrTemporalUnavailable = errors.New("temporal not configured")
+
+	// ErrQuotaExceeded signals a resource quota limit has been reached → 429 Too Many Requests.
+	// Used when max_agents, max_apps, or max_mcp_servers is exceeded.
+	ErrQuotaExceeded = errors.New("quota exceeded")
 )
 
 // FieldError wraps ErrValidation or ErrUnprocessable with a specific message so

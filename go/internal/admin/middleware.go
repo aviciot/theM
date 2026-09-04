@@ -156,6 +156,8 @@ func writeServiceError(w http.ResponseWriter, err error) bool {
 		writeError(w, http.StatusConflict, "resource already exists")
 	case errors.Is(err, service.ErrTemporalUnavailable):
 		writeError(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, service.ErrQuotaExceeded):
+		writeError(w, http.StatusTooManyRequests, "resource quota exceeded")
 	default:
 		return false
 	}

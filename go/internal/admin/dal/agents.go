@@ -214,6 +214,15 @@ func (d *DB) DeleteAgent(ctx context.Context, tenantID, id string) error {
 		id)
 }
 
+// CountAgents returns the number of agents belonging to tenantID.
+// Used by quota enforcement to check max_agents before creating a new agent.
+func (d *DB) CountAgents(ctx context.Context, tenantID string) (int, error) {
+	const q = `SELECT COUNT(*)::int FROM them.agents WHERE tenant_id = $1::uuid`
+	var n int
+	err := d.q.QueryRow(ctx, q, tenantID).Scan(&n)
+	return n, err
+}
+
 // AgentExists reports whether an agents row with the given id exists.
 // Used by publish.go to give a clear error before attempting a binding that would
 // fail with a FK violation.
