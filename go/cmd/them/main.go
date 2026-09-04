@@ -377,7 +377,11 @@ func run() error {
 	} else {
 		log.Warn("THE_M_S3_ENDPOINT not set — security gate will fail-open for all apps")
 	}
-	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(database.Pool()), fileGateStore)
+	fileGatePool := database.Pool()
+	if rlsPools != nil {
+		fileGatePool = rlsPools.Admin
+	}
+	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(fileGatePool), fileGateStore)
 	// Subscribe to security config invalidation so the 30s cache is busted
 	// immediately when an admin saves a new config via PUT /security-config.
 	go func() {

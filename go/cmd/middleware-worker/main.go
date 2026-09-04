@@ -69,7 +69,12 @@ func run() error {
 		defer rlsPools.Close()
 		log.Info("RLS pools connected (them_app + them_admin)")
 	}
-	_ = rlsPools
+	// middleware_jobs polling (Claim/Complete/Fail) is cross-tenant by design;
+	// use Admin pool (BYPASSRLS) so the worker sees jobs for all tenants.
+	activePool := database.Pool()
+	if rlsPools != nil {
+		activePool = rlsPools.Admin
+	}
 
 	// ── Connect to Redis ──────────────────────────────────────────────────────
 	redisAddr := fmt.Sprintf("%s:%d", cfg.RedisHost, cfg.RedisPort)
@@ -124,7 +129,7 @@ func run() error {
 
 	// ── Quarantine reaper ─────────────────────────────────────────────────────
 	reaperInterval := time.Duration(envInt("REAPER_INTERVAL_MINUTES", 15)) * time.Minute
-	reaper := middleware.NewReaper(&pgxQuerier{pool: database.Pool()}, objStore, log)
+	reaper := middleware.NewReaper(&pgxQuerier{pool: activePool}, objStore, log)
 	go reaper.Run(ctx, reaperInterval)
 	log.Info("quarantine reaper started", "interval", reaperInterval)
 
@@ -159,7 +164,7 @@ func run() error {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			workerLoop(ctx, log.With("worker_id", workerID), database.Pool(), redisCache, reg, objStore, pollInterval)
+			workerLoop(ctx, log.With("worker_id", workerID), activePool, redisCache, reg, objStore, pollInterval)
 		}(i)
 	}
 
