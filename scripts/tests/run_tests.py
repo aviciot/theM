@@ -768,13 +768,20 @@ def test_14_e2e_orchestrate():
         skip("ADMIN_JWT not set — get one via POST /auth/login then re-run with ADMIN_JWT=<token>")
         return
 
-    C, P = "them-bridge", 8001
+    # them-bridge (Python) is retired. Use them-auth-go as curl executor reaching
+    # them-go-bridge:8002 on the internal Docker network.
+    CURL_C, BRIDGE_HOST, P = "them-auth-go", "them-go-bridge", 8002
+    def bridge_json(path, method="GET", body=None, headers=None):
+        return http_json(CURL_C, path, P, method=method, body=body, headers=headers, host=BRIDGE_HOST)
+    def bridge_status(path, method="GET", body=None, headers=None):
+        return http_status(CURL_C, path, P, method=method, body=body, headers=headers, host=BRIDGE_HOST)
+
     auth = [f"Authorization: Bearer {admin_jwt}"]
 
     # 1. Create access token
-    d = http_json(C, "/api/v1/admin/tokens", P, method="POST",
-                  body='{"label":"e2e-test-token","user_id":1}',
-                  headers=auth)
+    d = bridge_json("/api/v1/admin/tokens", method="POST",
+                    body='{"label":"e2e-test-token","user_id":1}',
+                    headers=auth)
     bearer = d.get("token", "")
     token_id = d.get("id", "")
     check("Access token created", bool(bearer), str(d))
@@ -786,8 +793,8 @@ def test_14_e2e_orchestrate():
         "endpoint_url": "http://localhost:9999/",
         "timeout_seconds": 5, "max_concurrency": 1,
     })
-    d = http_json(C, "/api/v1/admin/agents", P, method="POST",
-                  body=agent_body, headers=auth)
+    d = bridge_json("/api/v1/admin/agents", method="POST",
+                    body=agent_body, headers=auth)
     agent_id = d.get("id", "")
     check("Agent created", bool(agent_id), str(d))
 
@@ -797,19 +804,19 @@ def test_14_e2e_orchestrate():
         "allowed_agent_ids": [agent_id] if agent_id else [],
         "max_iterations": 2, "max_parallel_tools": 1,
     })
-    d = http_json(C, "/api/v1/admin/orchestrators", P, method="POST",
-                  body=orch_body, headers=auth)
+    d = bridge_json("/api/v1/admin/orchestrators", method="POST",
+                    body=orch_body, headers=auth)
     orch_id = d.get("id", "")
     check("Orchestrator created", bool(orch_id), str(d))
 
     # 3. WS route reachable
-    s = http_status(C, "/ws/orchestrate/e2e_test_orch", P, headers=auth)
+    s = bridge_status("/ws/orchestrate/e2e_test_orch", headers=auth)
     check("WS route reachable (not 500)", s != "500", f"got {s}")
 
     # 4. Runs API
-    d = http_json(C, "/api/v1/runs", P, headers=auth)
+    d = bridge_json("/api/v1/runs", headers=auth)
     check("Runs list returns list/items", isinstance(d, list) or "items" in d, str(d)[:80])
-    d = http_json(C, "/api/v1/runs/stats", P, headers=auth)
+    d = bridge_json("/api/v1/runs/stats", headers=auth)
     check("Runs stats returns total field", "total" in d, str(d)[:80])
 
     # 5. Cleanup
@@ -820,7 +827,7 @@ def test_14_e2e_orchestrate():
     ):
         if path.endswith("/"):
             continue
-        s = http_status(C, path, P, method="DELETE", headers=auth)
+        s = bridge_status(path, method="DELETE", headers=auth)
         check(label, s in ("200","204"), f"got {s}")
 
 # ─── test 15: compose health ─────────────────────────────────────────────────

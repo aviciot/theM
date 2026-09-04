@@ -1,6 +1,6 @@
 # the-M Database Schema
-# Last updated: 2026-07-11
-# Source of truth: db/001_schema.sql + db/003_phase8.sql + db/004_phase9.sql + db/008_debate_stack.sql
+# Last updated: 2026-09-04
+# Source of truth: db/001_schema.sql + migrations db/003 through db/077
 
 Schema: `them` (owned by them-bridge)
 Auth schema: `auth_service` (owned by them-auth-service — never access directly from bridge; use `app/services/auth_client.py`)
@@ -600,3 +600,58 @@ Key relationships:
 | `db/057_llm_providers_tenant.sql` | `llm_providers.tenant_id` FK (per-tenant overrides) |
 | `db/058_tenant_email_domain.sql` | `tenants.email_domain` — nullable; partial UNIQUE INDEX WHERE NOT NULL |
 | `db/059_tenant_group_mappings.sql` | `them.tenant_group_mappings` — OIDC group claim → tenant role mapping (Step 18) |
+| `db/070_rls_roles.sql` | DB roles: `them_owner` (table owner, NOBYPASSRLS), `them_admin` (BYPASSRLS), `them_app` (app pool). Grants for all `them.*` tables. |
+| `db/071_rls_phase_b.sql` | RLS Phase B: enable RLS on `mcp_servers`, `tenant_group_mappings`, `agent_definitions`, `agent_runtime_specs` |
+| `db/072_rls_phase_c.sql` | RLS Phase C: enable RLS on `tenants`, `tenant_members`, `tenant_rbac_roles`, `tenant_rbac_grants`, `mcp_server_tools`, `app_mcp_credentials` |
+| `db/073_rls_phase_d.sql` | RLS Phase D: enable RLS on `agents`, `orchestrators`, `applications`, `entry_points`, `access_tokens`, `agent_runtime_specs` |
+| `db/074_tasks_tenant_backfill.sql` | E0: backfill `tasks.tenant_id` from orchestrators, set NOT NULL constraint |
+| `db/075_rls_phase_e.sql` | RLS Phase E: enable RLS on `runs`, `tasks`, `run_artifacts` (direct tenant_id policies) |
+| `db/076_rls_phase_f.sql` | RLS Phase F: enable RLS on `run_steps`, `run_usage`, `artifacts`, `task_messages`, `middleware_audit` (EXISTS-based via parent) |
+| `db/077_rls_phase_g.sql` | RLS Phase G: enable RLS on `llm_providers` (split policy: own+NULL for SELECT), `middleware_jobs` (EXISTS via applications), `audit_logs` |
+
+---
+
+## Row-Level Security (Step 19)
+
+All `them.*` tables are protected by Postgres RLS. Three DB roles are in use:
+
+| Role | BYPASSRLS | Purpose |
+|---|---|---|
+| `them_owner` | No (NOBYPASSRLS) | Table owner — DDL only, not used at runtime |
+| `them_admin` | Yes | Admin pool for long-lived workers (recorder, reconciler, middleware, history store). Bypasses RLS; these callers embed explicit `tenant_id` in every INSERT. |
+| `them_app` | No | App pool for per-request tenant context. GUC `app.tenant_id` set by `BeginTenantTx`. |
+
+**GUC pattern:** `set_config('app.tenant_id', $1, true)` in `BeginTenantTx`. Policies read via `NULLIF(current_setting('app.tenant_id', true), '')::uuid`.
+
+### RLS status per table
+
+| Table | RLS | Policy type | Notes |
+|---|---|---|---|
+| `tenants` | ✅ | Direct `tenant_id` | Only own tenant visible |
+| `tenant_members` | ✅ | Direct `tenant_id` | |
+| `tenant_rbac_roles` | ✅ | Direct `tenant_id` | |
+| `tenant_rbac_grants` | ✅ | EXISTS via `tenant_rbac_roles` | |
+| `mcp_servers` | ✅ | Direct `tenant_id` | |
+| `mcp_server_tools` | ✅ | EXISTS via `mcp_servers` | |
+| `app_mcp_credentials` | ✅ | EXISTS via `applications` | |
+| `tenant_group_mappings` | ✅ | Direct `tenant_id` | |
+| `agent_definitions` | ✅ | Direct `tenant_id` | |
+| `agent_runtime_specs` | ✅ | Direct `tenant_id` | |
+| `agents` | ✅ | Direct `tenant_id` | |
+| `orchestrators` | ✅ | Direct `tenant_id` | |
+| `applications` | ✅ | Direct `tenant_id` | |
+| `entry_points` | ✅ | EXISTS via `applications` | |
+| `access_tokens` | ✅ | Direct `tenant_id` | |
+| `runs` | ✅ | Direct `tenant_id` | Admin pool used by recorder |
+| `tasks` | ✅ | Direct `tenant_id` | `tenant_id` NOT NULL after migration 074 |
+| `run_artifacts` | ✅ | Direct `tenant_id` | |
+| `run_steps` | ✅ | EXISTS via `runs` | |
+| `run_usage` | ✅ | EXISTS via `runs` | |
+| `artifacts` | ✅ | EXISTS via `tasks` | |
+| `task_messages` | ✅ | EXISTS via `tasks` | |
+| `middleware_audit` | ✅ | EXISTS via `applications` | INSERT-only for `them_app`; reads via admin pool only |
+| `llm_providers` | ✅ | Split: own OR NULL for SELECT; own-only for write | NULL = platform defaults, always readable by all tenants |
+| `middleware_jobs` | ✅ | EXISTS via `applications` | Worker uses admin pool (cross-tenant by design) |
+| `audit_logs` | ✅ | Direct `tenant_id` | INSERT-only for `them_app` |
+| `config` | ❌ | No RLS — global config, not tenant-scoped | |
+| `schema_migrations` | ❌ | No RLS — DDL tracking table | |

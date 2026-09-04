@@ -401,19 +401,21 @@ func TestRLS_TwoTenantFullIsolation(t *testing.T) {
 		t.Skip("RLS_TwoTenantFullIsolation: RLS not yet enabled on agents — apply Phase C migration first")
 	}
 
-	// ── 1. Insert synthetic tenants A and B ──────────────────────────────────
+	// ── 1. Insert synthetic tenants A and B (upsert so reruns are safe) ─────
 	var tenantA, tenantB string
 	if err := superPool.QueryRow(ctx,
-		`INSERT INTO them.tenants (slug, display_name) VALUES ('rlstesttenanta','RLS Test Tenant A') RETURNING id::text`,
+		`INSERT INTO them.tenants (slug, display_name) VALUES ('rlstesttenanta','RLS Test Tenant A')
+		 ON CONFLICT ON CONSTRAINT tenants_slug_key DO UPDATE SET display_name = EXCLUDED.display_name
+		 RETURNING id::text`,
 	).Scan(&tenantA); err != nil {
-		t.Fatalf("insert tenant A: %v", err)
+		t.Fatalf("upsert tenant A: %v", err)
 	}
 	if err := superPool.QueryRow(ctx,
-		`INSERT INTO them.tenants (slug, display_name) VALUES ('rlstesttenantb','RLS Test Tenant B') RETURNING id::text`,
+		`INSERT INTO them.tenants (slug, display_name) VALUES ('rlstesttenantb','RLS Test Tenant B')
+		 ON CONFLICT ON CONSTRAINT tenants_slug_key DO UPDATE SET display_name = EXCLUDED.display_name
+		 RETURNING id::text`,
 	).Scan(&tenantB); err != nil {
-		// Clean up tenant A before failing
-		_, _ = superPool.Exec(ctx, `DELETE FROM them.tenants WHERE id = $1::uuid`, tenantA)
-		t.Fatalf("insert tenant B: %v", err)
+		t.Fatalf("upsert tenant B: %v", err)
 	}
 
 	// cleanup removes all test data at the end, regardless of outcome.
@@ -429,30 +431,38 @@ func TestRLS_TwoTenantFullIsolation(t *testing.T) {
 	var mcpA, mcpB string
 	if err := superPool.QueryRow(ctx,
 		`INSERT INTO them.mcp_servers (name, slug, url, tenant_id)
-		 VALUES ('RLS MCP A', 'rlstestmcpa', 'http://test-a', $1::uuid) RETURNING id::text`, tenantA,
+		 VALUES ('RLS MCP A', 'rlstestmcpa', 'http://test-a', $1::uuid)
+		 ON CONFLICT ON CONSTRAINT mcp_servers_tenant_id_slug_key DO UPDATE SET url = EXCLUDED.url
+		 RETURNING id::text`, tenantA,
 	).Scan(&mcpA); err != nil {
-		t.Fatalf("insert mcp A: %v", err)
+		t.Fatalf("upsert mcp A: %v", err)
 	}
 	if err := superPool.QueryRow(ctx,
 		`INSERT INTO them.mcp_servers (name, slug, url, tenant_id)
-		 VALUES ('RLS MCP B', 'rlstestmcpb', 'http://test-b', $1::uuid) RETURNING id::text`, tenantB,
+		 VALUES ('RLS MCP B', 'rlstestmcpb', 'http://test-b', $1::uuid)
+		 ON CONFLICT ON CONSTRAINT mcp_servers_tenant_id_slug_key DO UPDATE SET url = EXCLUDED.url
+		 RETURNING id::text`, tenantB,
 	).Scan(&mcpB); err != nil {
-		t.Fatalf("insert mcp B: %v", err)
+		t.Fatalf("upsert mcp B: %v", err)
 	}
 
 	// Insert orchestrators (direct tenant_id, Phase C).
 	var orchA, orchB string
 	if err := superPool.QueryRow(ctx,
 		`INSERT INTO them.orchestrators (name, display_name, tenant_id)
-		 VALUES ('rlstestorcha', 'RLS Orch A', $1::uuid) RETURNING id::text`, tenantA,
+		 VALUES ('rlstestorcha', 'RLS Orch A', $1::uuid)
+		 ON CONFLICT ON CONSTRAINT orchestrators_tenant_name_unique DO UPDATE SET display_name = EXCLUDED.display_name
+		 RETURNING id::text`, tenantA,
 	).Scan(&orchA); err != nil {
-		t.Fatalf("insert orch A: %v", err)
+		t.Fatalf("upsert orch A: %v", err)
 	}
 	if err := superPool.QueryRow(ctx,
 		`INSERT INTO them.orchestrators (name, display_name, tenant_id)
-		 VALUES ('rlstestorchb', 'RLS Orch B', $1::uuid) RETURNING id::text`, tenantB,
+		 VALUES ('rlstestorchb', 'RLS Orch B', $1::uuid)
+		 ON CONFLICT ON CONSTRAINT orchestrators_tenant_name_unique DO UPDATE SET display_name = EXCLUDED.display_name
+		 RETURNING id::text`, tenantB,
 	).Scan(&orchB); err != nil {
-		t.Fatalf("insert orch B: %v", err)
+		t.Fatalf("upsert orch B: %v", err)
 	}
 	_ = orchA
 	_ = orchB
@@ -461,28 +471,34 @@ func TestRLS_TwoTenantFullIsolation(t *testing.T) {
 	var appA, appB string
 	if err := superPool.QueryRow(ctx,
 		`INSERT INTO them.applications (name, slug, tenant_id)
-		 VALUES ('RLS App A', 'rlstestappa', $1::uuid) RETURNING id::text`, tenantA,
+		 VALUES ('RLS App A', 'rlstestappa', $1::uuid)
+		 ON CONFLICT ON CONSTRAINT uq_applications_tenant_slug DO UPDATE SET name = EXCLUDED.name
+		 RETURNING id::text`, tenantA,
 	).Scan(&appA); err != nil {
-		t.Fatalf("insert app A: %v", err)
+		t.Fatalf("upsert app A: %v", err)
 	}
 	if err := superPool.QueryRow(ctx,
 		`INSERT INTO them.applications (name, slug, tenant_id)
-		 VALUES ('RLS App B', 'rlstestappb', $1::uuid) RETURNING id::text`, tenantB,
+		 VALUES ('RLS App B', 'rlstestappb', $1::uuid)
+		 ON CONFLICT ON CONSTRAINT uq_applications_tenant_slug DO UPDATE SET name = EXCLUDED.name
+		 RETURNING id::text`, tenantB,
 	).Scan(&appB); err != nil {
-		t.Fatalf("insert app B: %v", err)
+		t.Fatalf("upsert app B: %v", err)
 	}
 	// Insert app_mcp_credentials for each tenant (Phase D — EXISTS via applications).
 	if _, err := superPool.Exec(ctx,
 		`INSERT INTO them.app_mcp_credentials (application_id, mcp_server_id)
-		 VALUES ($1::uuid, $2::uuid)`, appA, mcpA,
+		 VALUES ($1::uuid, $2::uuid)
+		 ON CONFLICT (application_id, mcp_server_id) DO NOTHING`, appA, mcpA,
 	); err != nil {
-		t.Fatalf("insert mcp_cred A: %v", err)
+		t.Fatalf("upsert mcp_cred A: %v", err)
 	}
 	if _, err := superPool.Exec(ctx,
 		`INSERT INTO them.app_mcp_credentials (application_id, mcp_server_id)
-		 VALUES ($1::uuid, $2::uuid)`, appB, mcpB,
+		 VALUES ($1::uuid, $2::uuid)
+		 ON CONFLICT (application_id, mcp_server_id) DO NOTHING`, appB, mcpB,
 	); err != nil {
-		t.Fatalf("insert mcp_cred B: %v", err)
+		t.Fatalf("upsert mcp_cred B: %v", err)
 	}
 
 	// ── 3. Tenant-A TenantTx: read all tables — must see A rows, 0 B rows ────

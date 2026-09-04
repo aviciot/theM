@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-04 (Step 19 G1+G2 complete — Phases A–G done)
+# Last updated: 2026-09-04 (Step 19 COMPLETE — all phases A–H done)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-a89df32  feat(rls): G1+G2 — migrate callers; enable RLS on llm_providers/middleware_jobs/audit_logs
-40c3b1f  docs(rls): F1+F2 complete — update progress tracker and CURRENT.md
-61af130  feat(rls): F1+F2 — verify callers; enable RLS on run_steps/run_usage/artifacts/task_messages/middleware_audit
-3496994  feat(rls): E1+E2 — migrate callers; enable RLS on runs/tasks/run_artifacts
-e61d81c  feat(rls): E0 — backfill tasks.tenant_id NOT NULL
+(this commit)  docs(rls): H complete — Step 19 closed; SCHEMA.md RLS table, E2E test fix
+a89df32        feat(rls): G1+G2 — migrate callers; enable RLS on llm_providers/middleware_jobs/audit_logs
+40c3b1f        docs(rls): F1+F2 complete — update progress tracker and CURRENT.md
+61af130        feat(rls): F1+F2 — verify callers; enable RLS on run_steps/run_usage/artifacts/task_messages/middleware_audit
+3496994        feat(rls): E1+E2 — migrate callers; enable RLS on runs/tasks/run_artifacts
 ```
 
 ---
@@ -50,21 +50,19 @@ Key facts:
 Design: `docs/design/rls-option-a-plan.md` (v3, commit 61730f3) — COMPLETE, reviewed, unblocked.
 Progress tracker: `docs/STEP19_RLS_HANDOVER.md` — read this before starting implementation.
 
-Implementation progress: **Phases A–G complete** (all tables covered). HEAD: `a89df32`.
+Implementation progress: **COMPLETE** — All phases A–H done. All `them.*` tables protected by RLS. Step 19 closed.
 
 ### Next recommended task for a new session
 
-Start `docs/STEP19_RLS_HANDOVER.md` **Phase H** — Final verification:
-- H1: `go test -tags=integration ./...` — zero failures, zero skips
-- H2: confirm `TestRLS_TwoTenantFullIsolation` still passes (extend coverage to E/F/G tables if gaps exist)
-- H3: E2E suite — `ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14` all pass
-- H4: `docs/SCHEMA.md` — add RLS status column per table
-- H5: `go/TEST_INDEX.md` — confirm all new integration tests documented
-- H6+H7: mark Step 19 complete in this file and `docs/HANDOVER.md`
+**Step 19 is done.** Resume the main tenant roadmap from `docs/HANDOVER.md` § "Tenant roadmap — next step after Step 19".
+
+Key reminder:
+- Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
+- E2E test: `TOKEN=$(docker exec them-auth-go curl -s -X POST http://172.24.0.10:8088/auth/api/v1/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"admin123"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))") && ADMIN_JWT="$TOKEN" python3.12 scripts/tests/run_tests.py 14`
 
 ### Known blockers / pre-conditions
 
-None that block A1. The design is fully approved. Proceed when ready.
+None.
 
 Currently running containers (verified):
 ```
