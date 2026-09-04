@@ -10,7 +10,7 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
-<pending commit>  feat(quota): Step 21 — enforce max_users on AddMember; 3 new tests (TN-23..25)
+d164a4d           feat(quota): Step 21 — enforce max_users on AddMember; 3 new tests (TN-23..25)
 8f8cbc8           feat(quota): Step 20 — enforce max_agents, max_apps, max_mcp_servers on create
 0ad7ccb           docs(rls): H complete — Step 19 closed; SCHEMA.md RLS table, E2E test fix
 a89df32           feat(rls): G1+G2 — migrate callers; enable RLS on llm_providers/middleware_jobs/audit_logs

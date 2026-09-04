@@ -70,7 +70,7 @@
 | Step 18 | OIDC group claims → tenant role mapping — them.tenant_group_mappings, GET/PUT/DELETE /admin/tenants/{id}/group-mappings, group role lookup in OIDCCallback | Complete | 7c346da |
 | Step 19 | Postgres Row-Level Security — new `dbtype` package, two pools (them_app/them_admin), TenantTx/AdminTx, per-table policies, caller migration | Complete | 0ad7ccb |
 | Step 20 | Resource quota enforcement — max_agents, max_apps, max_mcp_servers checked on Create; ErrQuotaExceeded → 429; 9 tests | Complete | 8f8cbc8 |
-| Step 21 | max_users enforcement — CountTenantMembers DAL; AddMember handler quota check (fail-open); 3 tests TN-23..25 | Complete | pending |
+| Step 21 | max_users enforcement — CountTenantMembers DAL; AddMember handler quota check (fail-open); 3 tests TN-23..25 | Complete | d164a4d |
 
 ---
 
