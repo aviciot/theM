@@ -35,6 +35,8 @@ func validEnv() map[string]string {
 		"DATABASE_HOST":     "localhost",
 		"DATABASE_PASSWORD": "supersecret",
 		"SECRET_KEY":        "a-real-secret-key-that-is-long-enough",
+		"THEM_DB_URL_APP":   "postgres://them_app:secret@localhost:5432/them",
+		"THEM_DB_URL_ADMIN": "postgres://them_admin:secret@localhost:5432/them",
 	}
 }
 
@@ -259,4 +261,28 @@ func TestWorkerTaskQueue_Override(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "custom-queue", cfg.WorkerTaskQueue,
 		"WORKER_TASK_QUEUE env var must override the default")
+}
+
+// CF-01: THEM_DB_URL_APP is required — absent must fail.
+func TestLoad_MissingDBURLApp(t *testing.T) {
+	env := validEnv()
+	delete(env, "THEM_DB_URL_APP")
+	setEnv(t, env)
+	os.Unsetenv("THEM_DB_URL_APP")
+
+	_, err := config.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "THEM_DB_URL_APP")
+}
+
+// CF-02: THEM_DB_URL_ADMIN is required — absent must fail.
+func TestLoad_MissingDBURLAdmin(t *testing.T) {
+	env := validEnv()
+	delete(env, "THEM_DB_URL_ADMIN")
+	setEnv(t, env)
+	os.Unsetenv("THEM_DB_URL_ADMIN")
+
+	_, err := config.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "THEM_DB_URL_ADMIN")
 }

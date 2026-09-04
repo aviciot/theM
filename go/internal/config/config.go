@@ -107,10 +107,10 @@ type Config struct {
 	S3ArtifactsBucket  string
 
 	// DBURLApp is the postgres DSN for the them_app role (no BYPASSRLS).
-	// Read from THEM_DB_URL_APP. Optional — required only after Step 19 deployment.
+	// Read from THEM_DB_URL_APP. Required — validated at startup.
 	DBURLApp string
 	// DBURLAdmin is the postgres DSN for the them_admin role (BYPASSRLS).
-	// Read from THEM_DB_URL_ADMIN. Optional — required only after Step 19 deployment.
+	// Read from THEM_DB_URL_ADMIN. Required — validated at startup.
 	DBURLAdmin string
 }
 
@@ -207,6 +207,12 @@ func (c *Config) validate() error {
 	}
 	if c.DBHost == "" {
 		return fmt.Errorf("DATABASE_HOST is required but was not set")
+	}
+	if c.DBURLApp == "" {
+		return fmt.Errorf("THEM_DB_URL_APP is required but was not set")
+	}
+	if c.DBURLAdmin == "" {
+		return fmt.Errorf("THEM_DB_URL_ADMIN is required but was not set")
 	}
 	return nil
 }

@@ -90,23 +90,14 @@ func run() error {
 	defer database.Close()
 	log.Info("postgres connected", "host", cfg.DBHost, "dbname", cfg.DBName)
 
-	var rlsPools *db.Pools
-	if cfg.DBURLApp != "" && cfg.DBURLAdmin != "" {
-		rlsPools, err = db.NewPools(ctx, cfg.DBURLApp, cfg.DBURLAdmin)
-		if err != nil {
-			log.Error("failed to create RLS pools", slog.String("error", err.Error()))
-			return fmt.Errorf("startup: rls pools: %w", err)
-		}
-		defer rlsPools.Close()
-		log.Info("RLS pools connected (them_app + them_admin)")
+	rlsPools, err := db.NewPools(ctx, cfg.DBURLApp, cfg.DBURLAdmin)
+	if err != nil {
+		log.Error("failed to create RLS pools", slog.String("error", err.Error()))
+		return fmt.Errorf("startup: rls pools: %w", err)
 	}
-	// When RLS pools are configured, use the Admin pool (BYPASSRLS) for all
-	// long-lived per-service pools. The recorder and registry embed explicit
-	// tenant_id in their queries; BYPASSRLS lets them run without the GUC.
-	activePool := database.Pool()
-	if rlsPools != nil {
-		activePool = rlsPools.Admin
-	}
+	defer rlsPools.Close()
+	log.Info("RLS pools connected (them_app + them_admin)")
+	activePool := rlsPools.Admin
 
 	// ── 4. Connect to Redis ───────────────────────────────────────────────────
 	redisCache, err := cache.New(ctx, cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)

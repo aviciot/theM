@@ -76,16 +76,12 @@ func run() error {
 	defer database.Close()
 	log.Info("postgres connected", "host", cfg.DBHost, "dbname", cfg.DBName)
 
-	var rlsPools *db.Pools
-	if cfg.DBURLApp != "" && cfg.DBURLAdmin != "" {
-		rlsPools, err = db.NewPools(ctx, cfg.DBURLApp, cfg.DBURLAdmin)
-		if err != nil {
-			return fmt.Errorf("startup: rls pools: %w", err)
-		}
-		defer rlsPools.Close()
-		log.Info("RLS pools connected (them_app + them_admin)")
+	rlsPools, err := db.NewPools(ctx, cfg.DBURLApp, cfg.DBURLAdmin)
+	if err != nil {
+		return fmt.Errorf("startup: rls pools: %w", err)
 	}
-	_ = rlsPools
+	defer rlsPools.Close()
+	log.Info("RLS pools connected (them_app + them_admin)")
 
 	// ── 5. Connect to Redis (not directly used by activities but needed for
 	//       any future cache lookups; connection validates network) ────────────
@@ -107,7 +103,7 @@ func run() error {
 	// ── 7. Build InvocationContext loader ─────────────────────────────────────
 	cryptoKey := crypto.DeriveKey(cfg.SecretKey)
 	loader := &dbContextLoader{
-		pool:      database.Pool(),
+		pool:      rlsPools.Admin,
 		cryptoKey: cryptoKey,
 		logger:    log,
 	}
@@ -124,7 +120,7 @@ func run() error {
 
 	// A2A inter-agent call support: resolve target endpoint from DB, decrypt auth token.
 	a2aResolver := agentgen.NewDBAgentEndpointResolver(
-		&pgxAgentEndpointQueryer{pool: database.Pool()},
+		&pgxAgentEndpointQueryer{pool: rlsPools.Admin},
 		func(ct string) (string, error) { return crypto.DecryptStored(cryptoKey, ct) },
 	)
 	interpTemplate.WithA2ACaller(agentgen.NewHTTPA2ACaller(a2aResolver, &http.Client{Timeout: 5 * time.Minute}))

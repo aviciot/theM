@@ -90,20 +90,15 @@ func run() error {
 	}
 	log.Info("postgres connected", "host", cfg.DBHost, "dbname", cfg.DBName)
 
-	// ── 3b. Create RLS pools (Step 19) — optional until THEM_DB_URL_APP is configured ──
-	var rlsPools *db.Pools
-	if cfg.DBURLApp != "" && cfg.DBURLAdmin != "" {
-		rlsPools, err = db.NewPools(ctx, cfg.DBURLApp, cfg.DBURLAdmin)
-		if err != nil {
-			database.Close()
-			log.Error("failed to create RLS pools", slog.String("error", err.Error()))
-			return fmt.Errorf("startup: rls pools: %w", err)
-		}
-		log.Info("RLS pools connected (them_app + them_admin)")
-		defer rlsPools.Close()
-	} else {
-		log.Info("RLS pools not configured — THEM_DB_URL_APP/THEM_DB_URL_ADMIN not set")
+	// ── 3b. Create RLS pools — required; THEM_DB_URL_APP and THEM_DB_URL_ADMIN must be set ──
+	rlsPools, err := db.NewPools(ctx, cfg.DBURLApp, cfg.DBURLAdmin)
+	if err != nil {
+		database.Close()
+		log.Error("failed to create RLS pools", slog.String("error", err.Error()))
+		return fmt.Errorf("startup: rls pools: %w", err)
 	}
+	log.Info("RLS pools connected (them_app + them_admin)")
+	defer rlsPools.Close()
 
 	// ── 4. Connect to Redis ───────────────────────────────────────────────────
 	redisCache, err := cache.New(ctx, cfg.RedisAddr(), cfg.RedisPassword, cfg.RedisDB)
@@ -126,13 +121,9 @@ func run() error {
 	// ── 7. Create run recorder ────────────────────────────────────────────────
 	// Every new run row records events_transport='streams'; the Go worker always
 	// writes run events to Redis Streams and the bridge reads them from there.
-	// When RLS pools are configured, use the Admin pool (BYPASSRLS) — the
-	// recorder embeds explicit tenant_id in every INSERT, so isolation is
-	// preserved without relying on the GUC. UPDATEs use opaque internal IDs.
-	recorderPool := database.Pool()
-	if rlsPools != nil {
-		recorderPool = rlsPools.Admin
-	}
+	// Use Admin pool (BYPASSRLS) — recorder embeds explicit tenant_id in every
+	// INSERT so isolation is preserved without relying on the GUC.
+	recorderPool := rlsPools.Admin
 	recorder := runrecorder.NewRecorder(runrecorder.NewPgxPoolQuerier(recorderPool))
 
 	// ── 10. Create rate limiter ───────────────────────────────────────────────
@@ -146,13 +137,8 @@ func run() error {
 	log.Info("admission gate initialised")
 
 	// ── 10c. Create agent registry ────────────────────────────────────────────
-	// When RLS pools are configured, use the Admin pool (BYPASSRLS) for registry
-	// queries — agents and app_agent_bindings are now RLS-enabled but the registry
-	// uses explicit tenant_id predicates that still enforce isolation.
-	agentQueryPool := database.Pool()
-	if rlsPools != nil {
-		agentQueryPool = rlsPools.Admin
-	}
+	// Admin pool (BYPASSRLS) — registry uses explicit tenant_id predicates.
+	agentQueryPool := rlsPools.Admin
 	agentDB := agentregistry.NewPgxQuerier(agentQueryPool)
 	agentCacheRedis := cache.NewAuthRedisClient(redisCache.Client())
 	agentReg := agentregistry.New(agentDB, agentCacheRedis, log)
@@ -187,7 +173,7 @@ func run() error {
 	srv := server.NewWithBus(addr, healthHandler, authMW, bus, drainDuration, log, database, redisCache)
 
 	// ── 13. Wire bearer token cache (L1 in-process → L2 Redis → PostgreSQL) ──
-	tokenDB := auth.NewPgxQuerier(database.Pool())
+	tokenDB := auth.NewPgxQuerier(rlsPools.Admin)
 	tokenRedis := cache.NewAuthRedisClient(redisCache.Client())
 	tokenCache := auth.NewCache(tokenDB, tokenRedis, log)
 	// Start cross-pod revocation listener. Blocks until runCtx is cancelled;
@@ -232,18 +218,14 @@ func run() error {
 	// DryRun is read from RECONCILER_DRY_RUN env var; defaults to true (safe).
 	// Set RECONCILER_DRY_RUN=false to enable actual DB writes.
 	if cfg.TemporalEnabled && temporalCli != nil {
-		recPool := database.Pool()
-		if rlsPools != nil {
-			recPool = rlsPools.Admin
-		}
-		recDB := reconciler.NewPgxQuerier(recPool)
+		recDB := reconciler.NewPgxQuerier(rlsPools.Admin)
 		recCfg := reconciler.Config{DryRun: cfg.ReconcilerDryRun}
 		go reconciler.Run(runCtx, recCfg, recDB, temporalCli, log)
 		log.Info("run reconciler started", "dry_run", recCfg.DryRun)
 	}
 
 	// ── 14. Wire EP config loader (shared by WS + SSE) ───────────────────────
-	epDB := epconfig.NewPgxQuerier(database.Pool())
+	epDB := epconfig.NewPgxQuerier(rlsPools.Admin)
 	epLoader := epconfig.NewLoader(epDB, log)
 	// Subscribe for cross-pod cache invalidation. The session Redis client
 	// already satisfies epconfig.RedisSubscriber (same Subscribe signature).
@@ -272,7 +254,7 @@ func run() error {
 
 	// ── 16a. Wire quota enforcer ─────────────────────────────────────────────
 	// Reuses the same RateLimitClient already constructed above for per-token RL.
-	quotaDB := dal.NewDB(admin.NewPgxQuerier(database.Pool()))
+	quotaDB := dal.NewDB(admin.NewPgxQuerier(rlsPools.Admin))
 	quotaRedis := cache.NewRateLimitClient(redisCache.Client())
 	quotaEnf := quota.New(quotaDB, quotaRedis)
 	quotaAdapter := &tenantQuotaAdapter{db: quotaDB, enforcer: quotaEnf}
@@ -377,11 +359,7 @@ func run() error {
 	} else {
 		log.Warn("THE_M_S3_ENDPOINT not set — security gate will fail-open for all apps")
 	}
-	fileGatePool := database.Pool()
-	if rlsPools != nil {
-		fileGatePool = rlsPools.Admin
-	}
-	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(fileGatePool), fileGateStore)
+	fileGate := middleware.NewFileGate(middleware.NewPgxQuerier(rlsPools.Admin), fileGateStore)
 	// Subscribe to security config invalidation so the 30s cache is busted
 	// immediately when an admin saves a new config via PUT /security-config.
 	go func() {
@@ -402,7 +380,7 @@ func run() error {
 		log,
 	).WithRunStreamer(rsStreamer).
 		WithPublicURL(cfg.PublicURL).
-		WithCardLoader(a2a.NewPgxCardLoader(database.Pool())).
+		WithCardLoader(a2a.NewPgxCardLoader(rlsPools.Admin)).
 		WithSessionPublisher(sessionPub).
 		WithTaskStore(a2aTaskStore).
 		WithFileGate(&fileGateAdapter{gate: fileGate})
@@ -422,7 +400,7 @@ func run() error {
 	log.Info("artifact download endpoint mounted", "path", "/api/v1/runs/{run_id}/artifacts/{artifact_id}")
 
 	// ── 19. Wire admin API (/api/v1/admin/*, /api/v1/runs/*) ─────────────────
-	adminDB := admin.NewPgxQuerier(database.Pool())
+	adminDB := admin.NewPgxQuerier(rlsPools.Admin)
 	adminCache := cache.NewAdminCacheClient(redisCache.Client())
 	// Temporal signaler is optional — nil if Temporal is not enabled.
 	var temporalSignaler admin.TemporalSignaler
@@ -442,9 +420,9 @@ func run() error {
 	// ── 19b. Mount /apps/* (WS + SSE + voice) ────────────────────────────────
 	// Voice handler needs AppService (for provider-key decryption), which requires
 	// adminDB and adminFernetKey — so it must be wired here, after section 19.
-	voiceLoader := voice.NewPgxLoader(database.Pool())
+	voiceLoader := voice.NewPgxLoader(rlsPools.Admin)
 	voiceAppsSvc := admin.NewApplicationsHandler(adminDB, nil, adminCache, adminFernetKey, nil).Svc()
-	voiceRunLoader := voice.NewWorkerConfigLoader(database.Pool(), adminFernetKey)
+	voiceRunLoader := voice.NewWorkerConfigLoader(rlsPools.Admin, adminFernetKey)
 	voiceHandler := voice.NewHandler(voiceLoader, voiceAppsSvc, authenticator, voiceRunLoader, recorder, bus, tenantctx.BootstrapTenantID, log)
 	srv.MountApps(appsDispatcher(wsHandler.AppsWSRoute(), sseHandler.AppsSSERoute(), voiceHandler.Routes()))
 	log.Info("apps WS+SSE+voice mounted", "prefix", "/apps")
