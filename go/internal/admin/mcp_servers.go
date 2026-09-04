@@ -198,6 +198,7 @@ func (h *MCPServersHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.audit.Write(r.Context(), dal.AuditEntry{
 		TenantID: tenantID, UserID: userIDPtr(r),
 		Action: "mcp_server.update", EntityType: "mcp_server", EntityID: id, Actor: actorFromRequest(r),
+		Changes: changesOf(patch),
 	})
 	writeJSON(w, http.StatusOK, out)
 }

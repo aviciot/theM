@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/aviciot/them/internal/admin"
+	"github.com/aviciot/them/internal/admin/dal"
 )
 
 // newAuditRouter mounts AuditLogsHandler on a chi router with test tenant context.
@@ -77,4 +78,82 @@ func TestAuditLogs_List_LimitOffset(t *testing.T) {
 	var out []any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
 	assert.Empty(t, out)
+}
+
+// ── AL-06: changesOf converts a struct to map[string]any ────────────────────
+
+func TestAuditLogs_ChangesOf_PopulatesMap(t *testing.T) {
+	type patch struct {
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+	}
+	m := admin.ChangesOf(patch{Name: "updated-name", Enabled: true})
+	require.NotNil(t, m)
+	assert.Equal(t, "updated-name", m["name"])
+	assert.Equal(t, true, m["enabled"])
+}
+
+// ── AL-07: AuditEntry.Changes is included in written details JSON ────────────
+
+func TestAuditLogs_WriteAuditLog_IncludesChanges(t *testing.T) {
+	var capturedDetails []byte
+	db := &fakeDB{
+		execFn: func(_ string, args ...any) error {
+			// args: tenant_id, user_id, action, entity_type, entity_id, details
+			// details is already []byte (JSON) from WriteAuditLog's json.Marshal call.
+			if len(args) >= 6 {
+				if b, ok := args[5].([]byte); ok {
+					capturedDetails = b
+				}
+			}
+			return nil
+		},
+	}
+	d := dal.NewDB(db)
+	err := d.WriteAuditLog(nil, dal.AuditEntry{
+		TenantID:   "00000000-0000-0000-0000-000000000001",
+		Action:     "agent.update",
+		EntityType: "agent",
+		EntityID:   "agent-123",
+		Actor:      "user@example.com",
+		Changes:    map[string]any{"display_name": "new-name"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, capturedDetails, "execFn must have captured details")
+
+	var details map[string]any
+	require.NoError(t, json.Unmarshal(capturedDetails, &details))
+	assert.Equal(t, "user@example.com", details["actor"])
+	changes, ok := details["changes"].(map[string]any)
+	require.True(t, ok, "details must contain a 'changes' object")
+	assert.Equal(t, "new-name", changes["display_name"])
+}
+
+// ── AL-08: AuditEntry without Changes omits 'changes' key ───────────────────
+
+func TestAuditLogs_WriteAuditLog_NoChangesKey_WhenNil(t *testing.T) {
+	var capturedDetails []byte
+	db := &fakeDB{
+		execFn: func(_ string, args ...any) error {
+			if len(args) >= 6 {
+				if b, ok := args[5].([]byte); ok {
+					capturedDetails = b
+				}
+			}
+			return nil
+		},
+	}
+	d := dal.NewDB(db)
+	err := d.WriteAuditLog(nil, dal.AuditEntry{
+		TenantID: "00000000-0000-0000-0000-000000000001",
+		Action:   "agent.create", EntityType: "agent", EntityID: "x", Actor: "admin",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, capturedDetails, "execFn must have captured details")
+
+	var details map[string]any
+	require.NoError(t, json.Unmarshal(capturedDetails, &details))
+	assert.Equal(t, "admin", details["actor"])
+	_, hasChanges := details["changes"]
+	assert.False(t, hasChanges, "create/delete actions must not include 'changes' key")
 }

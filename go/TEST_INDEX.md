@@ -2502,6 +2502,9 @@ Non-nil params replace `{{PARAMS.KEY}}` placeholders; unmatched keys are left un
 | AL-02 | `TestAuditLogs_List_Populated` | One row returned with correct id, action, entity_type |
 | AL-03 | `TestAuditLogs_List_LimitOffset` | `?limit=10&offset=20` accepted → 200 |
 | AL-05b | `TestMCPServersAuditWriter_NilReceiver_NoPanic` | `(*AuditWriter).Write` with nil receiver does not panic (MCP path) |
+| AL-06 | `TestAuditLogs_ChangesOf_PopulatesMap` | `changesOf` converts a struct to `map[string]any` with correct field values |
+| AL-07 | `TestAuditLogs_WriteAuditLog_IncludesChanges` | `WriteAuditLog` with non-nil Changes writes `{"actor":…,"changes":{…}}` to details JSONB |
+| AL-08 | `TestAuditLogs_WriteAuditLog_NoChangesKey_WhenNil` | `WriteAuditLog` without Changes omits the `changes` key from details JSONB |
 
 **Trigger:** any change to `internal/admin/audit_logs.go`, `internal/admin/dal/audit_logs.go`, `internal/admin/mcp_servers.go`
 
@@ -3076,8 +3079,8 @@ If a test is added without updating this index, the PR should not be merged.
 | S1-97 | per-tenant LLM provider handler (TLP-01..05): List_200_Empty, List_400_MissingID, Upsert_200, Upsert_404_PlatformNotFound, Upsert_400_BadJSON | 5 |
 | S1-98 | DB Pools (RLS): BadAppDSN, InterfaceAssertions, Close_NilSafe, TenantIDFormat | 4 |
 | S1-99 | dbtype Querier interfaces (RLS): TestInterfaceDistinction | 1 |
-| S1-100 | Audit Logs handler (AL-01..03, AL-05b): List_Empty, List_Populated, List_LimitOffset, NilReceiver_NoPanic | 4 |
-| **S1 total** | | **1093** |
+| S1-100 | Audit Logs handler (AL-01..03, AL-05b..08): List, NilReceiver, ChangesOf, WriteWithChanges, WriteNoChanges | 7 |
+| **S1 total** | | **1096** |
 | S2-01 | integration | 4 |
 | S2-02 | hybrid integration | 8 |
 | S2-03 (streamer) | runstream streamer (Redis, in S1-23) | 1 |

@@ -129,6 +129,7 @@ func (h *TenantsHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	h.audit.Write(r.Context(), dal.AuditEntry{
 		TenantID: id, UserID: userIDPtr(r),
 		Action: "tenant.patch", EntityType: "tenant", EntityID: id, Actor: actorFromRequest(r),
+		Changes: changesOf(in),
 	})
 	writeJSON(w, http.StatusOK, detail)
 }

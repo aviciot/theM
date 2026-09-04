@@ -50,20 +50,27 @@ func (d *DB) ListAuditLogs(ctx context.Context, tenantID string, limit, offset i
 // AuditEntry holds the data to persist as one audit log row.
 type AuditEntry struct {
 	TenantID   string
-	UserID     *int64 // nil for bearer-token-authenticated requests
-	Action     string // e.g. "agent.create", "app.delete"
-	EntityType string // e.g. "agent", "app", "tenant"
+	UserID     *int64         // nil for bearer-token-authenticated requests
+	Action     string         // e.g. "agent.create", "app.delete"
+	EntityType string         // e.g. "agent", "app", "tenant"
 	EntityID   string
-	Actor      string // email or "user:{id}" or "token" for bearer calls
+	Actor      string         // email or "user:{id}" or "token" for bearer calls
+	Changes    map[string]any // non-nil on update actions: the fields that were changed
 }
 
 // WriteAuditLog inserts one row into them.audit_logs.
 // Must be called with an admin-pool DB (BYPASSRLS).
+// The details JSONB column stores {"actor": "...", "changes": {...}} where
+// "changes" is omitted for create/delete actions and present for updates.
 func (d *DB) WriteAuditLog(ctx context.Context, e AuditEntry) error {
 	const q = `
 		INSERT INTO them.audit_logs (tenant_id, user_id, action, entity_type, entity_id, details)
 		VALUES ($1::uuid, $2, $3, $4, $5, $6)`
-	details, err := json.Marshal(map[string]string{"actor": e.Actor})
+	m := map[string]any{"actor": e.Actor}
+	if len(e.Changes) > 0 {
+		m["changes"] = e.Changes
+	}
+	details, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}

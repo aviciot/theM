@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -86,6 +87,23 @@ type AuditWriter struct {
 // NewAuditWriter creates an AuditWriter. Pass nil pools in tests — writes are no-ops.
 func NewAuditWriter(pools *db.Pools) *AuditWriter {
 	return &AuditWriter{pools: pools}
+}
+
+// ChangesOf converts any JSON-serializable value into a map[string]any suitable
+// for AuditEntry.Changes. Nil-safe: returns nil on marshal/unmarshal failure.
+// Exported for use in tests; call the unexported alias changesOf in handlers.
+func ChangesOf(v any) map[string]any { return changesOf(v) }
+
+func changesOf(v any) map[string]any {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+	return m
 }
 
 // Write persists one audit entry with a 3-second timeout.

@@ -156,14 +156,15 @@ func scanInto(dest, src any) error {
 
 // fakeDB satisfies admin.DBQuerier.
 type fakeDB struct {
-	queryRows       *fakeRows // returned by Query
-	queryRowErr     error     // error returned by QueryRow's Scan
-	queryRowStr     string    // string value scanned by QueryRow (e.g. slug lookup)
-	queryRowStrings []string  // multi-column QueryRow (e.g. tenantID + slug)
-	execErr         error     // returned by Exec
-	execRetStr      string    // string id returned by ExecReturning (UUID)
-	execRetErr      error     // error returned by ExecReturning's Scan
-	querySQLLog     []string  // log of executed SQL
+	queryRows       *fakeRows                    // returned by Query
+	queryRowErr     error                        // error returned by QueryRow's Scan
+	queryRowStr     string                       // string value scanned by QueryRow (e.g. slug lookup)
+	queryRowStrings []string                     // multi-column QueryRow (e.g. tenantID + slug)
+	execErr         error                        // returned by Exec
+	execFn          func(string, ...any) error   // optional: override Exec for arg inspection
+	execRetStr      string                       // string id returned by ExecReturning (UUID)
+	execRetErr      error                        // error returned by ExecReturning's Scan
+	querySQLLog     []string                     // log of executed SQL
 }
 
 func (f *fakeDB) Query(_ context.Context, sql string, _ ...any) (admin.RowScanner, error) {
@@ -213,7 +214,10 @@ func (r *multiStringRow) Scan(dest ...any) error {
 	return nil
 }
 
-func (f *fakeDB) Exec(_ context.Context, _ string, _ ...any) error {
+func (f *fakeDB) Exec(_ context.Context, sql string, args ...any) error {
+	if f.execFn != nil {
+		return f.execFn(sql, args...)
+	}
 	return f.execErr
 }
 

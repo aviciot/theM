@@ -243,6 +243,7 @@ func (h *ApplicationsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.audit.Write(r.Context(), dal.AuditEntry{
 		TenantID: tenantID, UserID: userIDPtr(r),
 		Action: "app.update", EntityType: "app", EntityID: id, Actor: actorFromRequest(r),
+		Changes: changesOf(input),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "updated": true})
 }
