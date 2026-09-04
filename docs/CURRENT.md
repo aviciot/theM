@@ -1,5 +1,5 @@
 # Current Session State — the-M
-# Last updated: 2026-09-04 (Step 19 F1+F2 complete)
+# Last updated: 2026-09-04 (Step 19 G1+G2 complete — Phases A–G done)
 # Replaces: NEXT_SESSION_HANDOVER.md, NEXT_SESSION_BRIDGE_HANDOVER.md
 
 ---
@@ -10,11 +10,11 @@ Branch: `main`
 
 Recent commits (newest first):
 ```
+a89df32  feat(rls): G1+G2 — migrate callers; enable RLS on llm_providers/middleware_jobs/audit_logs
+40c3b1f  docs(rls): F1+F2 complete — update progress tracker and CURRENT.md
 61af130  feat(rls): F1+F2 — verify callers; enable RLS on run_steps/run_usage/artifacts/task_messages/middleware_audit
 3496994  feat(rls): E1+E2 — migrate callers; enable RLS on runs/tasks/run_artifacts
 e61d81c  feat(rls): E0 — backfill tasks.tenant_id NOT NULL
-5031a32  docs(rls): E0+E1+E2 complete — update progress tracker and CURRENT.md
-1659b34  test(rls): TestRLS_TwoTenantFullIsolation + fix them_owner schema USAGE
 ```
 
 ---
@@ -50,16 +50,17 @@ Key facts:
 Design: `docs/design/rls-option-a-plan.md` (v3, commit 61730f3) — COMPLETE, reviewed, unblocked.
 Progress tracker: `docs/STEP19_RLS_HANDOVER.md` — read this before starting implementation.
 
-Implementation progress: **Phases A–F complete**. HEAD: `61af130`.
+Implementation progress: **Phases A–G complete** (all tables covered). HEAD: `a89df32`.
 
 ### Next recommended task for a new session
 
-Start `docs/STEP19_RLS_HANDOVER.md` Phase **G1** — migrate callers for `llm_providers`, `audit_logs`, `middleware_jobs`, `authserver.GetTenantIDPConfig`:
-- `llm_providers` needs a split policy (SELECT allows platform NULLs + own rows; write own only)
-- `audit_logs` — them_app INSERT only (no SELECT, already in 070 grants)
-- `middleware_jobs` — gateway enqueue via TenantTx; worker Claim/Complete/Fail via AdminQuerier
-- authserver `GetTenantIDPConfig` → AdminQuerier (pool via Pools.Admin)
-- After G1, G2: `db/077_rls_phase_g.sql`
+Start `docs/STEP19_RLS_HANDOVER.md` **Phase H** — Final verification:
+- H1: `go test -tags=integration ./...` — zero failures, zero skips
+- H2: confirm `TestRLS_TwoTenantFullIsolation` still passes (extend coverage to E/F/G tables if gaps exist)
+- H3: E2E suite — `ADMIN_JWT=<token> python3.12 scripts/tests/run_tests.py 14` all pass
+- H4: `docs/SCHEMA.md` — add RLS status column per table
+- H5: `go/TEST_INDEX.md` — confirm all new integration tests documented
+- H6+H7: mark Step 19 complete in this file and `docs/HANDOVER.md`
 
 ### Known blockers / pre-conditions
 

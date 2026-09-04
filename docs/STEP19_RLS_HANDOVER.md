@@ -3,7 +3,7 @@
 # Branch: main
 # Design HEAD: 61730f3
 # Last updated: 2026-09-03
-# Status: IN PROGRESS — Phases A–F complete, G1 next
+# Status: IN PROGRESS — Phases A–G complete, H (final verification) next
 #
 # Context: This is a focused side-track from the main multi-tenancy roadmap
 # (Steps 1–18 complete). Step 19 (RLS) must finish before the tenant roadmap
@@ -283,18 +283,20 @@ Migrate callers → deploy → enable RLS. For each phase, the sequence is:
 
 ### Phase G — LLM providers + remaining tables
 
-- [ ] **G1** — Migrate callers for `llm_providers`, `audit_logs`, `middleware_jobs`, `tenants.*` reads in authserver:
-  - `llm_providers` split policy (SELECT allows platform NULLs + own rows; write own only)
-  - `audit_logs` — them_app INSERT only (no SELECT/UPDATE/DELETE)
-  - `middleware_jobs` — gateway enqueue via TenantTx (INSERT EXISTS policy); worker Claim/Complete/Fail via AdminQuerier/AdminTx
-  - authserver `GetTenantIDPConfig` → AdminQuerier (pool via Pools.Admin)
-  - Rebuild and redeploy `them-auth-go`, `them-go-bridge`, middleware worker containers
-  - **Commit tag:** `feat(rls): G1 — migrate callers for llm_providers/audit_logs/middleware_jobs/authserver`
+- [x] **G1** — Migrate callers:
+  - `cmd/them/main.go`: middleware FileGate → Admin pool (queries middleware_wirings + middleware_jobs)
+  - `cmd/middleware-worker/main.go`: worker loop + reaper → activePool (Admin when RLS live). Cross-tenant job poll requires BYPASSRLS.
+  - `admin/dal/llm_providers.go` via `adminDB` (superuser): no change needed — superuser bypasses RLS.
+  - `workerconfig/loader.go` via `activePool`: already Admin pool after E1.
+  - `authserver`: uses superuser `database.Pool()` for `them.tenants` queries — no change needed (superuser bypasses RLS; tenants table intentionally excluded from them_app grants).
+  - No Go callers write `audit_logs` yet.
+  - them-go-bridge and them-middleware-worker rebuilt and restarted — both healthy.
+  - **Commit:** `a89df32`
 
-- [ ] **G2** — Enable RLS on G1 tables:
-  - `db/077_rls_phase_g.sql`
-  - Verify platform LLM defaults still visible via split policy
-  - **Commit tag:** `feat(rls): G2 — enable RLS on llm_providers/audit_logs/middleware_jobs`
+- [x] **G2** — Enable RLS on G1 tables:
+  - `db/077_rls_phase_g.sql`: split policy on llm_providers, EXISTS policy on middleware_jobs, direct policy on audit_logs
+  - Smoke-tested: them_app sees both platform providers without GUC (split policy ✅)
+  - **Commit:** `a89df32` (same commit as G1)
 
 ### Phase H — Final verification
 
@@ -384,6 +386,7 @@ variables are derived from `secrets.local` via HMAC like all other secrets.
 | 2026-09-03 | Implementation session 5 | Integration tests + schema fix | 1659b34 | TestRLS_TwoTenantFullIsolation: 13/13 pass, 0 skips. Full two-tenant isolation verified across Phases B/C/D tables. db/070_rls_roles.sql: added GRANT USAGE ON SCHEMA them TO them_owner (FK trigger fix). |
 | 2026-09-03 | Implementation session 6 | E0, E1, E2 | e61d81c, 3496994 | E0: tasks.tenant_id backfilled NOT NULL. E1: recorder+reconciler+worker on Admin pool; CreateRootTask gains tenantID param. E2: RLS on runs/tasks/run_artifacts. go test ./... 45 pkgs pass. |
 | 2026-09-04 | Implementation session 7 | F1, F2 | 61af130 | F1: all callers already on Admin pool after E1 — no migration needed. F2: RLS on run_steps/run_usage/artifacts/task_messages/middleware_audit. Missing middleware_audit GRANT fixed. 45 pkgs pass. |
+| 2026-09-04 | Implementation session 7 (cont) | G1, G2 | a89df32 | G1: fileGate + middleware-worker → Admin pool. G2: split policy on llm_providers, EXISTS on middleware_jobs, direct on audit_logs. Platform LLM defaults visible without GUC ✅. 45 pkgs pass. |
 
 *(Add a row for each session.)*
 
