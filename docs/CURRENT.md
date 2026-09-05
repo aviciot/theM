@@ -81,11 +81,19 @@ Still unenforced: `monthly_llm_tokens`, `api_requests_per_minute` — deferred.
   - agents.Create and orchestrators.Create now return HTTP 409 for duplicate slug/name (SQLSTATE 23505 → ErrConflict).
 - **Frontend observability page** (`frontend/src/app/admin/observability/page.tsx`): `/admin/observability` table with per-tenant run count (30d), LLM tokens (30d), agent/app quota with color coding. Sidebar entry added.
 
-**HEAD: `537fcb3 test(rls): fix two-tenant integration test + add AR-02/AR-03 handler-path redaction tests`**
+**HEAD: `e455fae fix(e2e): test_14 delete orchestrator by name, not UUID`**
 
-**E2E test 14 verified: 9/9 passed** (2026-09-05 — Agent Create/Delete, Orchestrator Create/Delete, WS reachable, Runs list, Runs stats, Token Create/Delete).
+**E2E test 14 verified: 9/9 passed, rerun-clean** (2026-09-05 — two consecutive runs both 9/9 with no manual cleanup needed).
 
 **RLS CLOSED** (2026-09-05): Two-tenant isolation integration test passes (24 table checks per tenant, cross-tenant INSERT rejected). Catalog verification passes (CV-01..05). AR-02 and AR-03 handler-path redaction tests added. `go test ./...` — 1037 pass, 0 fail. `go test -tags=integration ./internal/db/...` — all pass.
+
+**Step 29 complete** (2026-09-05): Orchestrator hard-delete (`f787894`). E2E test cleanup fixed (`e455fae`) — delete now uses orchestrator name (route `/orchestrators/{name}`) instead of UUID.
+
+### Step 29 — Orchestrator hard-delete: COMPLETE (f787894 + e455fae)
+
+`DeleteOrchestrator` changed from soft-delete (`UPDATE enabled=false`) to hard-delete (`DELETE FROM`). The orchestrator name is now freed immediately for reuse. E2E test 14 cleanup fixed to use `name` (not UUID) in the delete path — test is now rerun-clean (9/9 two consecutive runs).
+
+Also see LESSONS.md entry: "Orchestrator Delete is soft (UPDATE enabled=false), not hard".
 
 ### Step 28 — Admin CRUD TenantTx migration: ALREADY COMPLETE
 
@@ -100,12 +108,11 @@ The following remain on the Admin pool by design (not regressions):
 
 ### Next recommended task for a new session
 
-**Step 29 candidates** (choose one):
+**Step 30 candidates** (choose one):
 
-1. **Orchestrator soft-delete → hard-delete** — `DeleteOrchestrator` currently does `UPDATE ... SET enabled=false` which leaves the name in the DB and prevents re-creation with the same name. Change to a real `DELETE FROM them.orchestrators` (already the pattern for agents and applications). Low scope, high correctness value.
-2. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (display name, IdP config, quota visibility). Medium scope.
-3. **Quota enforcement for monthly_llm_tokens and api_requests_per_minute** — currently deferred.
-4. **Go file-split: `compiler.go`** — see `docs/SPLIT_COMPILER_INSTRUCTIONS.md` for exact steps.
+1. **Tenant self-service provisioning flow** — UI for a tenant admin to manage their own tenant (display name, IdP config, quota visibility). Medium scope.
+2. **Quota enforcement for monthly_llm_tokens and api_requests_per_minute** — currently deferred.
+3. **Go file-split: `compiler.go`** — see `docs/SPLIT_COMPILER_INSTRUCTIONS.md` for exact steps.
 
 Key reminder:
 - Get JWT via: `POST http://localhost:8088/auth/api/v1/auth/login` (not `/auth/login`)
