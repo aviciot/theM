@@ -819,11 +819,11 @@ def test_14_e2e_orchestrate():
     d = bridge_json("/api/v1/runs/stats", headers=auth)
     check("Runs stats returns total field", "total" in d, str(d)[:80])
 
-    # 5. Cleanup
+    # 5. Cleanup — orchestrators are deleted by name (route: /orchestrators/{name})
     for path, label in (
-        (f"/api/v1/admin/orchestrators/{orch_id}", "Orchestrator deleted"),
-        (f"/api/v1/admin/agents/{agent_id}",       "Agent deleted"),
-        (f"/api/v1/admin/tokens/{token_id}",        "Token deleted"),
+        ("/api/v1/admin/orchestrators/e2e_test_orch", "Orchestrator deleted"),
+        (f"/api/v1/admin/agents/{agent_id}",           "Agent deleted"),
+        (f"/api/v1/admin/tokens/{token_id}",            "Token deleted"),
     ):
         if path.endswith("/"):
             continue
